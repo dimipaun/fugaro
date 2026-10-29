@@ -2,13 +2,14 @@ package coordpath
 
 import (
 	"bytes"
-	"errors"
 	"go/ast"
 	"go/parser"
 	"go/printer"
 	"go/token"
 	"io/fs"
 	"os"
+	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -128,38 +129,61 @@ func coordpathDecls(t *testing.T, path string, names []string) map[string]string
 	return out
 }
 
-// TestCoordpathMatchesTheLibrarysCopy: until E2.1b moves the library, the
-// subtree has two definitions — the library's, which writes the documents, and
-// this package's, which the rules grant and the doctor reads — and nothing in
-// the core otherwise holds them together: the library's own state_test.go
-// asserts how the names relate to each other, never what they are. A change to
-// either copy of either value fails here, and the IDs too, since DocumentID's
-// whole body is compared and not merely its shape. Once the library has moved
-// out of internal/coordinator there is nothing left to compare against, which
-// is the state this test is for.
-func TestCoordpathMatchesTheLibrarysCopy(t *testing.T) {
-	const library = "../coordinator/state.go"
-	if _, err := os.Stat(library); errors.Is(err, fs.ErrNotExist) {
-		return
-	} else if err != nil {
-		t.Fatal(err)
-	}
+// TestCoordpathIsTheOnlyCopy: the paths of the coordinator's subtree are
+// declared here and nowhere else in the repository. Until E2.1b the library
+// carried its own copies of all seven names, and two definitions of one subtree
+// is exactly the drift this package exists to end (D195): a second declaration
+// anywhere is a copy that can disagree with the one the rules grant a read on,
+// and the library's own tests would never see it. The walk skips this package,
+// which holds the one definition, and every directory that holds no code.
+//
+// What it refuses is the shape a copy comes back in: a top-level declaration of
+// one of the seven names that spells the subtree — one built on PathRoot, or on
+// the subtree's own name written as a literal. The seven names alone are not the
+// subtree's: internal/budget declares a PathProject of its own and
+// internal/projectpolicy a PathRepo and a PathRepos, each of a different
+// subtree, and none of them is a copy of this one. A use of the names is not a
+// declaration at all and is everywhere.
+func TestCoordpathIsTheOnlyCopy(t *testing.T) {
 	names := []string{
 		"PathRoot", "PathProject", "PathRepos",
 		"PathRepo", "PathProjectDocument", "PathRepoDocument", "DocumentID",
 	}
-	ours := coordpathDecls(t, "coordpath.go", names)
-	theirs := coordpathDecls(t, library, names)
-	for _, name := range names {
-		if ours[name] == "" {
-			t.Fatalf("this package no longer declares %s", name)
+	literal := regexp.MustCompile(`\bPathRoot\s*=\s*"coordinator"`)
+	err := filepath.WalkDir("../..", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
 		}
-		if theirs[name] == "" {
-			t.Errorf("the library no longer declares %s: the two copies are what keeps the subtree that is written and the subtree that is granted the same one", name)
-			continue
+		rel, err := filepath.Rel("../..", path)
+		if err != nil {
+			return err
 		}
-		if ours[name] != theirs[name] {
-			t.Errorf("%s is declared twice and differently:\n  coordpath: %s\n  the library: %s", name, ours[name], theirs[name])
+		if d.IsDir() {
+			if rel == "internal/coordpath" || d.Name() == "testdata" ||
+				d.Name() == ".git" || d.Name() == "node_modules" {
+				return fs.SkipDir
+			}
+			return nil
 		}
+		if !strings.HasSuffix(rel, ".go") {
+			return nil
+		}
+		for name, decl := range coordpathDecls(t, path, names) {
+			if !strings.Contains(decl, "coordinator") && !strings.Contains(decl, "PathRoot") {
+				continue
+			}
+			t.Errorf("%s declares %s of the coordinator's subtree: it has one definition, here, and a second is the copy the rules cannot see (%s)", rel, name, decl)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if m := literal.FindString(string(data)); m != "" {
+			t.Errorf("%s writes the subtree's own name as a literal (%q): it is PathRoot's, and the rules grant a read on the value, not on a copy of it", rel, m)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }

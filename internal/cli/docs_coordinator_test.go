@@ -2836,6 +2836,9 @@ func TestDocsCoordinatorPlanCitationsExist(t *testing.T) {
 			}
 			continue
 		}
+		if eeCitationWithoutEE(t, path) {
+			continue
+		}
 		if _, err := os.Stat("../../" + path); err != nil {
 			if first {
 				t.Errorf("%s cites %q, which does not exist: a plan whose citations have moved is a plan nobody can check (%v)", coordinatorPlan, path, err)
@@ -2914,6 +2917,9 @@ func coordinatorCheckPlanDirectories(t *testing.T, plan string) int {
 				t.Errorf("%s cites the directory %q as new, but it exists now: the part that creates it has landed, so the entry in coordinatorPlanNewDirs must go and the directory must start being checked like any other. It was excused for: %s",
 					coordinatorPlan, dir, reason)
 			}
+			continue
+		}
+		if eeCitationWithoutEE(t, dir) {
 			continue
 		}
 		fi, err := os.Stat("../../" + dir)
@@ -2996,7 +3002,7 @@ func coordinatorCheckPlanSymbols(t *testing.T, plan string) int {
 	}
 	for _, m := range matches {
 		path, symbol := m[1], strings.Join(strings.Fields(m[2]), " ")
-		if _, ok := coordinatorPlanNewPaths[path]; ok {
+		if _, ok := coordinatorPlanNewPaths[path]; ok || eeCitationWithoutEE(t, path) {
 			continue
 		}
 		src, err := os.ReadFile("../../" + path)

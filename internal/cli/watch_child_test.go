@@ -17,10 +17,11 @@ package cli
 // behaviour.
 //
 // It names no path under the console app's own directory, on purpose: Task
-// 0.3's boundary test carries a one-entry allow-list of the Go files permitted
-// to mention one -- docs_desktop_console_test.go, which reads the contract as
-// bytes -- so a second mentioner here would fail it. The contract is referred
-// to by its section numbers instead.
+// 0.3's boundary test carries a closed allow-list of the Go files permitted to
+// mention one -- the core's console contract test, which reads the contract as
+// bytes, and the coordinator command's moved half of that same check under
+// ee/ -- so a mentioner here would fail it. The contract is referred to by its
+// section numbers instead.
 //
 // None of them touches a live installation: the database is
 // internal/gcpfake's Realtime Database fake on loopback, the config is a

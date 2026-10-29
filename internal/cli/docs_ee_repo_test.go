@@ -108,6 +108,22 @@ func readRealEE(t *testing.T, rel string) string {
 	return string(data)
 }
 
+// eeCitationWithoutEE reports whether rel, a module-relative path a core test
+// names, is under ee/ while the repository's ee/ is gone: the tree the "core
+// without ee/" workflow tests. Such a test names an ee/ path without reading
+// ee/ for a fact (an allow-list entry, a doc's citation of where a file moved),
+// so it is not a reader and stays off eeReadingTests; it checks the ee/ entries
+// only when ee/ is there, which a normal checkout always is, so ordinary CI
+// keeps every check.
+func eeCitationWithoutEE(t *testing.T, rel string) bool {
+	t.Helper()
+	if !strings.HasPrefix(rel, eeDirName+"/") {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(consoleBoundaryRoot(t), eeDirName))
+	return os.IsNotExist(err)
+}
+
 // eeRootRelativeReader is this package's own reader of module-root-relative
 // files, and the one call in the scan whose argument is not written from the
 // file's own directory: readDoc prepends "../../" itself, so readDoc(t,

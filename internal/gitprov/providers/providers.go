@@ -129,7 +129,7 @@ func envVars(env []string) map[string]string {
 //
 // It is exported for the caller that mints an installation token of its own
 // rather than letting a provider mint one — the coordinator's read-only token
-// (internal/coordinator.Project) — so that the mint and the opener cannot
+// (ee/coordinator.Project) — so that the mint and the opener cannot
 // disagree about where the App's key is. A caller that mints tokens itself
 // must redact the PEM out of every failure it reports, as FromEnv's own
 // comment says of the value it returns.

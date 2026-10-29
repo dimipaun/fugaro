@@ -64,6 +64,15 @@ func OpenFromConfig(ctx context.Context, lc *localcfg.Config) (*Cloud, error) {
 // Config is the project config this cloud was opened with.
 func (c *Cloud) Config() *localcfg.Config { return c.env.lc }
 
+// CloudOverBucket is a cloud over a runs bucket alone, with no project config
+// and no backend: it is what the coordinator's sweep job needs, since that job
+// runs with no config file at all — Terraform gives it FUGARO_* environment
+// variables and it opens the runs bucket itself. Config answers nil on it, and
+// RunsBucket, ReadRun, RepoProvider and Close are the only methods that mean
+// anything: everything else on this type reads the project config the sweep
+// does not have.
+func CloudOverBucket(b *blobx.Bucket) *Cloud { return &Cloud{env: &cloudEnv{bucket: b}} }
+
 // NoBudgetCheck is --no-budget-check: the launch's own switch for skipping the
 // budget pre-check.
 func (c *Cloud) NoBudgetCheck() bool { return c.env.noBudgetCheck }
@@ -133,7 +142,9 @@ func PaidCommandNames() []string { return slices.Clone(paidCommandNames) }
 func (c *Cloud) RunsBucket() *blobx.Bucket { return c.env.bucket }
 
 // RepoProvider is repo's git provider kind, as Cloud.RepoSlug resolves it: the
-// local config's entry first, then the checkout's fugaro.yaml.
+// local config's entry first, then the checkout's fugaro.yaml. co must be
+// non-nil: the reader CheckoutOf answers can return nil, and a nil co panics on
+// its Git field.
 func (c *Cloud) RepoProvider(repo string, co *config.Config) string {
 	return c.env.repoProvider(repo, co)
 }

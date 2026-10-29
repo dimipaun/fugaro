@@ -10,8 +10,9 @@ package cli
 // true a year after the task that made it:
 //
 //   - TestConsoleIsOutsideTheGoModule -- (a1) no Go file in the module has an
-//     import under console/; (a3) the one-entry allow-list of files permitted
-//     to MENTION a console/ path, plus the two halves of that list's contract;
+//     import under console/; (a3) the allow-list of files permitted to MENTION
+//     a console/ path, plus the two halves of that list's contract -- its size
+//     is pinned, so a third entry cannot arrive quietly;
 //     and that console/ itself holds no Go code, no go.mod and no go.sum.
 //   - TestGoModHasNoConsoleDependency -- (b) go.mod's require block is
 //     unchanged from the baseline recorded in this file, and go.sum names no
@@ -28,12 +29,15 @@ package cli
 // which made Task 0.1 impossible to write. So (a1) matches on IMPORT LINES
 // only -- an import path is a module path, which is the real boundary, while a
 // comment or a string that merely names console/docs/json-contract.md is a read
-// of a document -- and the allow-list below carries exactly one entry today:
-// the one file those reads live in. Its second half is asserted too, because
-// the exception is narrow: an allow-listed file may mention a console/ path and
-// may neither import one nor embed one. Widening the list is a deliberate edit
-// to the slice below, with a test that fails on a second entry, rather than a
-// quiet new reference in some future file.
+// of a document -- and the allow-list below carries the two files those reads
+// live in: this test's own partner for the sections whose command is still in
+// the core, and, since ee-reorg E2.1b moved the coordinator's command and shapes
+// to ee/, that package's copy of the same check for the section that documents
+// it. Its second half is asserted too, because the exception is narrow: an
+// allow-listed file may mention a console/ path and may neither import one nor
+// embed one. Widening the list is a deliberate edit to the slice below, with a
+// test that fails on the size changing, rather than a quiet new reference in
+// some future file.
 //
 // The mention half of (a3) is a heuristic, and the file says which half of it
 // is which. Its floor is the plan's literal rule: a file whose text holds the
@@ -106,16 +110,28 @@ const consoleDirName = "console"
 // and is not on the allow-list -- a loud failure whose fix is this constant.
 const consoleBoundarySelf = "internal/cli/docs_console_boundary_test.go"
 
-// consoleBoundaryAllowList is the ONE-ENTRY allow-list of Go files permitted to
-// mention a path under console/ without importing anything from it: the console
-// contract's own docs test, which reads console/docs/json-contract.md as bytes
-// (Task 0.1, and Task 0.2's sibling test in the same file). Task 0.3 says the
-// exception is declared in the test that grants it rather than assumed, so this
-// slice is that declaration: one entry, a test named for a second one, and a
-// per-entry assertion that the file imports no console/ path and embeds nothing
-// from one.
+// consoleBoundaryAllowList is the allow-list of Go files permitted to mention a
+// path under console/ without importing anything from it: the console contract's
+// own docs tests, which read console/docs/json-contract.md as bytes (Task 0.1,
+// and Task 0.2's sibling test in the same file). Task 0.3 says the exception is
+// declared in the test that grants it rather than assumed, so this slice is that
+// declaration: the entries, a test named for the list's size, and a per-entry
+// assertion that the file imports no console/ path and embeds nothing from one.
+//
+// The second entry arrived with ee-reorg E2.1b, and it is one entry rather than
+// a widening of the rule. The coordinator's command and the shapes §6.13 of the
+// contract documents moved out of the core into ee/coordinator, so the half of
+// the contract check that reads §6.13 back off the tagged tree -- the nine JSON
+// shapes and the command's own flags, which an untagged build compiles neither
+// of -- moved with them (ee/coordinator/cli/console_contract_test.go). That file
+// reads the contract and the design's spawn row for its command exactly as this
+// one does: as bytes, importing nothing and embedding nothing. The core's half
+// keeps every section whose command is still in the core, so between them the
+// two files read the same documents the one file read before, and the case for
+// the second entry is the move itself, argued in the commit that made it.
 var consoleBoundaryAllowList = []string{
 	"internal/cli/docs_desktop_console_test.go",
+	"ee/coordinator/cli/console_contract_test.go",
 }
 
 // consoleGoModRequireBaseline is go.mod's require block as recorded when Task
@@ -641,9 +657,9 @@ func consoleRequireLines(gomod string) []string {
 }
 
 // TestConsoleIsOutsideTheGoModule is (a1) and (a3) of Task 0.3: no Go file in
-// the module builds against a path under console/, the one-entry allow-list of
-// files permitted to mention one is exactly what it says it is, and console/
-// holds no Go code and no Go module of its own.
+// the module builds against a path under console/, the allow-list of files
+// permitted to mention one is exactly what it says it is, and console/ holds no
+// Go code and no Go module of its own.
 func TestConsoleIsOutsideTheGoModule(t *testing.T) {
 	root := consoleBoundaryRoot(t)
 	files := consoleBoundaryGoFiles(t, root)
@@ -714,9 +730,15 @@ func TestConsoleIsOutsideTheGoModule(t *testing.T) {
 		}
 	})
 
-	t.Run("the_allow_list_has_exactly_one_entry", func(t *testing.T) {
-		if len(consoleBoundaryAllowList) != 1 {
-			t.Errorf("consoleBoundaryAllowList carries %d entries, %v: it is the ONE-entry exception the console contract's own docs test is, and a second entry is a deliberate widening of the boundary that must be argued for in the commit that adds it (plan Task 0.3 a3)", len(consoleBoundaryAllowList), consoleBoundaryAllowList)
+	t.Run("the_allow_list_is_exactly_what_it_says_it_is", func(t *testing.T) {
+		// The count is pinned on purpose: a new entry is a deliberate widening
+		// of the boundary, argued for in the commit that adds it (plan Task 0.3
+		// a3) and in a comment on the entry itself. The second one is
+		// ee-reorg E2.1b's -- the console contract test's coordinator half, in
+		// the package the command and the shapes moved to -- and this number is
+		// what makes a third one impossible to add quietly.
+		if len(consoleBoundaryAllowList) != 2 {
+			t.Errorf("consoleBoundaryAllowList carries %d entries, %v: it holds the console contract's own docs tests, the core's and the coordinator command's moved half, and a further entry is a widening of the boundary that must be argued for in the commit that adds it (plan Task 0.3 a3)", len(consoleBoundaryAllowList), consoleBoundaryAllowList)
 		}
 	})
 
@@ -740,7 +762,7 @@ func TestConsoleIsOutsideTheGoModule(t *testing.T) {
 		// this scanner mentions one by necessity and a module-wide count could
 		// therefore never fall to zero.
 		for _, rel := range consoleBoundaryAllowList {
-			if !slices.Contains(mentioning, rel) {
+			if !slices.Contains(mentioning, rel) && !eeCitationWithoutEE(t, rel) {
 				t.Errorf("%s is on consoleBoundaryAllowList but mentions no %s/ path any more: the exception has gone stale and should be removed deliberately, with the commit that stops the file reading the contract (plan Task 0.3 a3)", rel, consoleDirName)
 			}
 		}
@@ -748,6 +770,9 @@ func TestConsoleIsOutsideTheGoModule(t *testing.T) {
 
 	t.Run("an_allow_listed_file_imports_no_console_path_and_embeds_nothing_from_it", func(t *testing.T) {
 		for _, rel := range consoleBoundaryAllowList {
+			if eeCitationWithoutEE(t, rel) {
+				continue
+			}
 			if !slices.Contains(files, rel) {
 				t.Errorf("consoleBoundaryAllowList names %q, which is not a .go file of this module: the walk did not see it", rel)
 				continue

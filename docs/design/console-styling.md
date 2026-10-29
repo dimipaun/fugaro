@@ -2190,11 +2190,12 @@ of both is that no number in this document is a number nobody computed.
 **The citations to the console's own files are deliberately not stat'ed, and the reason is
 a boundary rather than a preference.** `TestConsoleIsOutsideTheGoModule` in
 `internal/cli/docs_console_boundary_test.go` is plan Task 0.3's boundary, and its
-allow-list of Go files permitted to mention a path under `console/` is a **one-entry**
-exception — the console contract's own docs test — asserted to have exactly one entry. A
-second entry would be a deliberate widening of the boundary that this styling work has no
-case for and no mandate to make (the owner accepted C1 as recommended: the test **is** the
-guarantee that the Go module never reaches into `console/`). So this test reads the
+allow-list of Go files permitted to mention a path under `console/` is a **closed**
+exception — the console contract's own docs tests, whose size the boundary test pins —
+its entries asserted one by one. A further entry would be a deliberate widening of the
+boundary that this styling work has no case for and no mandate to make (the owner accepted
+C1 as recommended: the test **is** the guarantee that the Go module never reaches into
+`console/`). So this test reads the
 console-side citations only as text, and this document names them for the reader the design
 is written for. **The first draft of the test failed the boundary test**, which is how the
 rule was found rather than assumed.

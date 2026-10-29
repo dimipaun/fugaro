@@ -18,12 +18,15 @@ nothing from it, and no Go file in this module builds against a path under
 import of a `console/` path, a `go:embed` over one, or a require line added to
 the root module without the baseline being edited fails one of them by name.
 
-One Go file may *mention* a `console/` path without importing anything from it,
-because the console's JSON contract is a document a test reads as bytes:
+Two Go files may *mention* a `console/` path without importing anything from it,
+because the console's JSON contract is a document they read as bytes:
 `internal/cli/docs_desktop_console_test.go`, which reads
-`console/docs/json-contract.md`. It is the single entry on that boundary test's
-allow-list; a second entry is a deliberate edit to the list, with the case for it
-written down, rather than a quiet new reference somewhere else.
+`console/docs/json-contract.md` and pins every section whose command is still in
+the core, and `ee/coordinator/cli/console_contract_test.go`, which moved out of
+the core with the coordinator's command and pins the one section that describes
+it. Each is an entry on that boundary test's allow-list; a further entry is a
+deliberate edit to the list, with the case for it written down, rather than a
+quiet new reference somewhere else.
 
 That mention check is a heuristic, and it is honest about both halves. Its floor
 is the plan's literal rule: a Go file whose text contains the string `console/`
@@ -828,10 +831,11 @@ project, repos, slugs, titles, amounts and verify lines are the ones they were.
 **The vocabularies are derived from the Go source, and a Go test holds them
 there.** Every list in `scrub.ts` names the writer it came from, and
 `TestDocsDesktopConsoleScrubVocabularyMatchesTheGoSource` — in
-`internal/cli/docs_desktop_console_test.go`, the one Go file Task 0.3's boundary
-test allows to mention a `console/` path, reading this file as bytes and
-importing nothing from it, so the allow-list keeps its single entry — reads the
-lists back out of the file and compares them with the constants the source writes
+`internal/cli/docs_desktop_console_test.go`, one of the two Go files Task 0.3's
+boundary test allows to mention a `console/` path (the other is the coordinator
+command's moved copy of that check, `ee/coordinator/cli/console_contract_test.go`),
+reading this file as bytes and importing nothing from it — reads the lists back
+out of the file and compares them with the constants the source writes
 them from: the runs[].stage vocabulary, the config's allowed `agent.auth`, the
 budget's modes, the three verify kinds, the two status words and the rerun flag,
 the one warning sentence and the clean-tree note, the connection, health,

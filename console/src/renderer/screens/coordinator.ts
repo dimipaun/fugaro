@@ -21,7 +21,7 @@
 //     `COORDINATOR_STORED_WORD` ("the last stored view") and an unstored one
 //     with the runs fallback, so neither reads as "current".
 //   - **The view claims no age.** The stored view carries no time by design
-//     (`internal/coordinator/sweep.go`: it is a function of its inputs), so a
+//     (`ee/coordinator/sweep.go`: it is a function of its inputs), so a
 //     screen that turned the marker's `since` into "stale for three hours" would
 //     be claiming a clock the document does not have. The marker is drawn
 //     exactly as stored, and `COORDINATOR_NO_AGE_WORD` is the console's own
@@ -73,7 +73,7 @@ export const COORDINATOR_STORED_WORD = 'the last stored view'
 
 /** COORDINATOR_RUNS_WORD labels the fallback the CLI answers for a repository
  * with no node at all: the runs half alone (`coordinatorStoredLine`,
- * `internal/cli/coordinator_view.go`). */
+ * `ee/coordinator/cli/coordinator_view.go`). */
 export const COORDINATOR_RUNS_WORD = 'no stored view: the runs alone'
 
 /** COORDINATOR_NO_AGE_WORD is the console's own sentence about the one thing a
@@ -262,7 +262,7 @@ export interface CoordinatorInputs {
 /**
  * recordLabel is the record's own naming rule in the console's words: the pull
  * request's number when the record has one, else the newest run's id, else a
- * dash (`internal/coordinator/view.go` names records the same way). It is the
+ * dash (`ee/coordinator/view.go` names records the same way). It is the
  * view's own name for the record and never the host's text.
  */
 function recordLabel(record: CoordinatorRecord): string {

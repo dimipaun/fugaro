@@ -16,7 +16,7 @@
 #
 # What this account may write is not IAM's to say: firebasedatabase.admin is a
 # project-wide role (IAM cannot express a path, D194), so the fence is
-# internal/coordinator's own subtree check (Store's ErrOutsideSubtree) and the
+# ee/coordinator's own subtree check (Store's ErrOutsideSubtree) and the
 # rules' floor. Everything else here is the narrowest grant the job needs:
 # objectViewer on the runs bucket, secretAccessor on the App key's one
 # container, and the job_runner role on this job alone.
@@ -125,7 +125,7 @@ resource "google_cloud_run_v2_job" "coordinator" {
         }
 
         # The job's whole configuration is the environment
-        # internal/cli/coordinator.go's sweep reads: the project, the Firebase
+        # ee/coordinator/cli/coordinator.go's sweep reads: the project, the Firebase
         # project and database it writes, the runs bucket it reads, the
         # repositories one tick reconciles, and the App credential.
         env {

@@ -979,7 +979,7 @@ func testFilesNaming(t *testing.T, needle string) []string {
 //
 // The console's own file paths are cited in the reconciliation's prose and
 // deliberately not spelled here: this is a .go file of the module, and
-// TestConsoleIsOutsideTheGoModule's consoleBoundaryAllowList is a one-entry
+// TestConsoleIsOutsideTheGoModule's consoleBoundaryAllowList is a closed
 // exception, so the pin stops at the module's edge and the prose carries the
 // console citations (the same rule the citations test follows).
 func TestDocsInJobReviewSaysHowTheConsoleReachesAReview(t *testing.T) {
@@ -1088,8 +1088,8 @@ func TestDocsInJobReviewCitationsExist(t *testing.T) {
 		// are deliberately NOT stat'ed here, and the path is not even spelled
 		// out in this comment: this is a .go file of the module, and
 		// TestConsoleIsOutsideTheGoModule's consoleBoundaryAllowList is a
-		// one-entry exception (the console contract's own docs test) that a
-		// second entry may only widen by argument. That boundary scans a Go
+		// closed exception (the console contract's own docs tests) that a new
+		// entry may only widen by argument. That boundary scans a Go
 		// file's text, comments included, but not the markdown of docs/, so the
 		// pin stops at the module's edge and the claim is carried by the prose.
 		"internal/watch/plain.go",

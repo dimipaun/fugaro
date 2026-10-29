@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See ee/LICENSE for the terms.
+
 package coordinator
 
 import (
@@ -9,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/coordpath"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
@@ -92,7 +96,7 @@ func TestReportRefusesADeclarationThatDeclaresNothing(t *testing.T) {
 // and fails here — and the second report spells its paths in another order,
 // because the order a caller lists them in is not part of what it declares.
 //
-// Hand mutation this fails on: DocumentID over the record as it stands, At
+// Hand mutation this fails on: coordpath.DocumentID over the record as it stands, At
 // included.
 func TestReportWritesOneDocumentPerDeclaration(t *testing.T) {
 	r, f := testReporter(t)
@@ -148,7 +152,7 @@ func TestReportWritesOneDocumentPerDeclaration(t *testing.T) {
 	if back.DeclaredBy != first.DeclaredBy || back.Release != "0.11.0" || !back.At.Equal(second.At) {
 		t.Errorf("the stored record = %+v, want the declaration with its own clock", back)
 	}
-	if !strings.HasPrefix(path, PathRepo(slug)+"/intents/") {
+	if !strings.HasPrefix(path, coordpath.PathRepo(slug)+"/intents/") {
 		t.Errorf("the record was written to %q, which is not under the repository's intent node", path)
 	}
 }
