@@ -28,12 +28,23 @@ Only a **baked** workflow — one whose job runs a per-repository derived image 
 lock entry and no shared image, and its job is not moved by anything in this design.
 
 The shared image holds the **dependency layer only**. Today's derived image bakes one repository's
-source at its commit (`images/derived/Dockerfile.tmpl`, `internal/image/render.go`), and
-SECURITY.md's registry note (C6) describes exactly that. The shared image holds no repository's
-source at all: it is built from the key files, and a run still gets its source from the clone at
-launch (`FUGARO_CHECKOUT=clone`), so one repository's readers never read another's source through a
-shared image. C6's paragraph is about the per-repository derived image and needs a second sentence
-for the shared one; that sentence is C8's, not this design's.
+source at its commit (`images/derived/Dockerfile.tmpl`, `internal/image/render.go`), and the
+registry-readers note the plan's task **C6** would add describes that; C6 is not written, so no
+SECURITY.md paragraph exists to amend yet. The shared image holds no repository's source at all, so
+one repository's registry readers never read another's through it.
+
+Where the source then comes from is a constraint, not a detail, and the plan's C8 file list does not
+carry it. A run gets its source from a clone **only when its job is clone-shaped**: `internal/infra/spec.go`
+writes `FUGARO_CHECKOUT=clone` and `FUGARO_REMOTE` on a `checkout: clone` workflow's job and on no
+other, the runner clones at launch only when `r.cloneJob()` is true (`internal/runner/provision.go`;
+`internal/runner/runner.go`'s `openCheckout` clones only on that answer and otherwise opens the
+checkout the image is expected to hold), and `PlanWorkflowJob` refuses a job without the marker for
+exactly this reason — moving its image "would leave a job expecting a baked checkout"
+(`internal/infra/checkjob.go`). A **baked** workflow's job — the kind §10 migrates — carries neither
+marker, so a baked job moved onto a source-less image finds no checkout and no remote and fails at
+bootstrap. §6 is about the fix: C8 must make the job clone-shaped as well as point it at the shared
+image, and `FUGARO_COMMIT` is not an answer — it is a Cloud Build build argument
+(`images/derived/Dockerfile.tmpl`) that no launch reads.
 
 ## 2. The normalised key
 
@@ -204,10 +215,21 @@ Two operators' machines can refresh the same key at the same time. Two mechanism
    refresh that finds the claim adopts the image the first is building (waiting for its lock entry)
    instead of paying for a second build. A claim whose object is older than the build timeout is
    stale and may be replaced, so a crashed refresh does not block the key forever.
-2. The lock write itself is **generation-matched**: `blobx.ReplaceIf(ctx, key, data, gen, prev)` with
-   the generation the refresh read. A write that lost a race fails with `blobx.ErrConflict`, and the
-   refresh re-reads the lock and re-plans once — it never overwrites whatever the other writer
-   recorded. A second conflict exits non-zero naming the two writes, and the operator reruns.
+2. The lock write itself is **generation-matched where the object exists**: `blobx.ReplaceIf(ctx, key,
+   data, gen, prev)` with the generation the refresh read. `ReplaceIf` cannot create the object — on
+   GCS a generation of 0 is "no generation to match", and off GCS it answers `ErrConflict` for a
+   missing one — so the **first** write is a create: `blobx.Create(ctx, key, data, contentType)`,
+   which is create-if-absent and answers `blobx.ErrExists` when another refresh made it first. The two
+   answers are told apart on purpose: `ErrExists` means the writer arrived at an empty lock, so
+   nothing was lost — it re-reads and carries on with the object the other writer made; `ErrConflict`
+   means the object it read has changed, so it re-reads, re-plans once, and a second conflict exits
+   non-zero naming the two writers, leaving the operator to rerun.
+
+   The per-key claim above only serialises refreshes of the *same* key; the create-or-replace pair is
+   what makes two *different* keys' refreshes safe, since both write the one lock object: whichever
+   creates it wins, and the other one — reading before or after — either creates and loses with
+   `ErrExists` or replaces against the generation it read. Either way no entry is lost, and an entry
+   is only ever added by its own key's refresh.
 
 ## 4. Superset lookup, and what it costs
 
@@ -260,17 +282,46 @@ a superset, exits 1 with that reason; a build or a job update that failed remote
 it prints the proposal and, interactively, the exact `fugaro image refresh --on-divergence=…` line to
 run. Sync writes nothing about images; its own confirmation shape is D625's.
 
-## 6. Each repository's own job
+## 6. Each repository's own job: the image **and** the clone shape
 
 Cloud Run cannot vary the image per execution (U4), so the digest lives in the job. After a build, an
-adopt or a pin, the operator's machine updates **only the repository whose refresh this is**: the
-job's container's image alone, through the existing read-modify-write path
-(`internal/infra/checkjob.go`'s `WorkflowJobUpdate`: read the job, refuse anything that is not the
-owner's job by its labels, keep the shape, write the image, never return an execution token). A
-sibling repository's job is not read and not written, which is what makes the divergence local.
-Today that path moves only a `clone` workflow's job, straight to `base_images.base`; C8 extends it so
-a **baked** workflow's job moves to `<image>@<digest>` from the lock — the same shape check, one more
-caller.
+adopt or a pin, the operator's machine updates **only the repository whose refresh this is**: read
+the job, refuse anything that is not the owner's job by its labels, keep the shape, write, never
+return an execution token (`internal/infra/checkjob.go`'s `WorkflowJobUpdate`). A sibling
+repository's job is not read and not written, which is what makes the divergence local.
+
+The update is **not the image alone**. §1's constraint says why: a source-less shared image is only
+runnable by a job that clones at launch, and today only a `checkout: clone` workflow's job carries
+the two variables that say so (`FUGARO_CHECKOUT=clone`, `FUGARO_REMOTE=<the repository's
+credential-free clone URL>`, both written by `internal/infra/spec.go`). So C8's job update writes
+three things — the image (the lock's digest for the repository's key), `FUGARO_CHECKOUT` and
+`FUGARO_REMOTE` — and the workflow's shape joins the key universe only once both are on the job. Two
+routes get there, and they differ in who owns the job's shape:
+
+- **Route A — a third checkout kind in `fugaro.yaml`** (for example `checkout: shared`: "run a shared
+  dependency-layer image and clone the source at launch"). `internal/config/image.go`'s
+  `validateCheckout` refuses `image.tools` and `image.setup` on `checkout: clone` precisely because a
+  clone workflow has no build — so a repository on a shared image cannot be declared `clone` today,
+  and a kind of its own is what lets it declare the dependency-layer keys it needs while still
+  cloning. `internal/infra/spec.go` then writes the two markers from the workflow (the same code
+  that writes every other job env), `NeedsBuild` (`internal/infra/repo.go`) treats it as needing a
+  shared build, `PlanWorkflowJob` accepts the shape, and the runner needs no change beyond the
+  `FUGARO_CHECKOUT` value it already switches on. Files: `internal/config/{config.go,image.go,
+  defaults.go}`, `schemas/fugaro.schema.json`, `internal/infra/{spec.go,repo.go,checkjob.go}`,
+  `internal/runner/provision.go`, and the plugin's `fugaro.yaml` documentation.
+- **Route B — the job's markers only, no new kind.** The workflow stays `checkout: baked` and the
+  update writes the two markers onto the job. This is smaller, and its cost is exactly the drift §1
+  found: the job's env then disagrees with `fugaro.yaml`, and the next `fugaro update` re-derives the
+  env from the spec (`spec.go`), so the spec — not only the refresh — has to know the repository is
+  on a shared key, which means a local-config value or a lock read at update time, and two places
+  deciding what a job's shape is. Files: as C8b's list plus `internal/infra/spec.go`,
+  `internal/runner/provision.go` (or `runner.go`, if the remote is instead derived in the runner, as
+  `internal/runner/projectjob.go`'s `cloneURL` already derives a project job's).
+
+**Route A is the design's recommendation** — one writer for the job's env, so the update and
+`fugaro update` cannot drift — but the choice is the owner's: it is a user-visible `fugaro.yaml` key
+against a smaller diff, and either route needs the same three things on the job. The C8 split's "prerequisites
+the plan's C8 file list omits" carries the files, and the open list carries the question.
 
 ## 7. `fugaro image ls`
 
@@ -320,8 +371,9 @@ The clean-up never removes an image a job still points at — never one a job st
 whatever its age. `fugaro image prune` removes every eligible entry in one pass — the eligibility is
 a rule, so no per-image judgement is asked of the operator — prints each one as it does, asks once
 before the first delete (today's confirmation shape; `--yes` answers it unattended, never in a
-coding agent's session), and has `--dry-run`, which prints the list and deletes nothing. The registry image is deleted first and the lock entry second, generation-matched
-(§3.4), so a crash between the two leaves an entry whose digest the registry no longer has, which
+coding agent's session), and has `--dry-run`, which prints the list and deletes nothing. The registry image is deleted first and the lock entry second, generation-matched by
+the same rule as §3.4's write (`blobx.DeleteIf` for a delete), so a crash between the two leaves an
+entry whose digest the registry no longer has, which
 `doctor` reports and the next `prune` finishes.
 
 **`images.retention_days`, default 30, is proposed, owner to confirm.** The key belongs to the
@@ -376,10 +428,12 @@ the one piece of C8 not covered by its own file list.
 
 The dependency layer, and only it: the toolchain the key names, the packages the key names, and the
 base the key names — everything the warm-up and `mise install` produce. No repository's source, no
-workflow's `commands:`, no repository secret. Source comes from the clone at launch, as it does for
-a `clone` workflow today, and the run's `FUGARO_COMMIT` still decides which commit that is. This is what
-C3's layer order makes possible (the C8 split, below): the key-file layer is the shared image's whole content,
-and the source layer that follows it is the per-run clone, not a build step.
+workflow's `commands:`, no repository secret. The source comes from the clone at launch (§6's clone
+shape), and which commit that is comes from the run itself — the job's base branch and the task —
+not from anything baked here: `FUGARO_COMMIT` is a build argument of the image build and no launch
+reads it. This is what C3's layer order makes possible (the C8 split, below): the key-file layer is
+the shared image's whole content, and the source layer that follows it is the per-run clone, not a
+build step.
 
 ## C8 split and its dependencies
 
@@ -408,16 +462,17 @@ test names are the plan's C8 list, distributed to the task that makes them pass.
 
 ### C8b. Refresh, proposal and the per-repository job update
 
-- **Files (10):** `internal/cli/image_refresh.go`, `internal/cli/image_proposal.go` (new),
+- **Files (12):** `internal/cli/image_refresh.go`, `internal/cli/image_proposal.go` (new),
   `internal/cli/image_refresh_shared_test.go` (new), `internal/cli/image_proposal_test.go` (new),
-  `internal/infra/checkjob.go` (a baked workflow's job moves to the lock's digest),
-  `internal/infra/checkjob_test.go`, `internal/backend/gcp/names.go` (the shared registry
-  repository's name), `internal/backend/gcp/names_test.go`, `internal/image/render.go` (the shared
-  render input: the dependency layer alone), `internal/image/render_test.go`.
+  `internal/infra/checkjob.go` (§6: the image, the clone marker and the remote),
+  `internal/infra/checkjob_test.go`, `internal/infra/spec.go` (route A's two markers),
+  `internal/backend/gcp/names.go` (the shared registry repository's name),
+  `internal/backend/gcp/names_test.go`, `internal/image/render.go` (the shared render input: the
+  dependency layer alone), `internal/image/render_test.go`, `internal/runner/provision.go` (the
+  checkout kind the runner clones on, route A).
 - **Behaviour:** §2.5's key computation on the operator's machine, §4's superset lookup, §5's
-  proposal and `--on-divergence`, §6's single-repository job update, §3.3's write order. The
-  Terraform for §2.6's registry repository and §11's two grants is a prerequisite this file list
-  does not carry (see the C3/C4 note below, and §11).
+  proposal and `--on-divergence`, §6's single-repository job update (the image, the clone marker and
+  the remote), §3.3's write order and §3.4's create-or-replace rule.
 - **Tests:** `TestRefreshBuildsOnceForSharedKey`, `TestRefreshForksOnChange`,
   `TestRefreshNeverOverwritesALockedDigest`, `TestRefreshUpdatesOnlyTheChangedRepositoryJob`,
   `TestDivergenceProposesAndWaits`, `TestDivergenceNonInteractiveRefusesWithoutFlag`,
@@ -450,6 +505,29 @@ test names are the plan's C8 list, distributed to the task that makes them pass.
 - **Depends on:** C8a, C8b.
 - **Commit:** `cli: fugaro image ls and image prune, and the image-count cap in doctor`
 - **Reviewer:** standard.
+
+### Prerequisites the plan's C8 file list omits
+
+Found while writing this design; each one blocks C8b as the plan describes it. The owner may want
+C8b's file list amended — and this design's §6 route chosen — before that task starts.
+
+- **The clone shape (§6).** A job on a source-less shared image must carry `FUGARO_CHECKOUT` and
+  `FUGARO_REMOTE`, which no baked workflow's job has today. Route A adds a `checkout:` kind:
+  `internal/config/{config.go,image.go,defaults.go}`, `schemas/fugaro.schema.json`,
+  `internal/infra/{spec.go,repo.go}`, the plugin's `fugaro.yaml` documentation; route B adds
+  `internal/infra/spec.go` and `internal/runner/provision.go` (or `runner.go`) and a local-config way
+  for the spec to know the repository is on a shared key. Without one of them the job update cannot
+  work at all.
+- **One shared registry repository per installation, and two grants (§2.6, §11).** Terraform in
+  `deploy/terraform/gcp`: write for each repository's build account, read for each repository's job
+  account. Today's per-repository registry repository is not reachable from a sibling's build or job.
+- **SECURITY.md and its website copy.** The shared image bakes no source, and the note C6 would add
+  describes the per-repository image that does, so the paragraph needs a sentence for the shared
+  image: `SECURITY.md` and `website/content/security.md` (regenerated). Neither is in the plan's C8
+  file list, and `SECURITY.md` carries the independent review `.claude/rules/credentials-service.md`
+  requires.
+- **A `### For operators` entry** in the release notes of the release that ships C8 (§10), naming the
+  new registry repository and the grants.
 
 ### What C8 needs from C3 and C4
 
@@ -487,3 +565,7 @@ than decided here):
   layer, applied by `fugaro image prune`, never to an image a job still points at.
 - **The C3/C4 question** (stated as options in the C8 split): whether C8 ships after both, or C8a now with
   C8b/C8c gated on C3 — C8 can ship without C4, and cannot without C3.
+- **How the job becomes clone-shaped (§6)**: route A, a third `checkout:` kind in `fugaro.yaml` (the
+  design's recommendation: one writer for the job's env), or route B, the markers written onto the job
+  alone (a smaller diff, and two places deciding what a job's shape is). C8b cannot work without one
+  of them, and the choice changes its file list.

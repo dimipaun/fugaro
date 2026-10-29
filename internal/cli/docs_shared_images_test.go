@@ -7,19 +7,25 @@ import (
 )
 
 // TestDocsSharedImagesDesign: docs/forge-authorship-images/shared-images.md
-// must carry the design the plan's task C7 asks for and C8 builds. The
-// assertions are per-fact so that a reader of the doc and a reader of this
-// test read the same list: the normalised key and its four inputs, superset
-// reuse and its version requirement, the propose-then-confirm flow and its
-// non-interactive refusal, fork-never-mutate, the prune's one exception, the
-// proposed retention, and the three sub-tasks C8 splits into with what C8
-// needs from C3 and C4.
+// must carry the design the plan's task C7 asks for and C8 builds.
 //
-// Each string below is a sentence the design states, not a label: deleting
-// the control that carries a fact (the normalisation list, the
-// same-versions requirement, the `--on-divergence` refusal, the never-mutate
-// rule, the job-still-points-at exception, the proposed retention) fails this
-// test rather than passing on the section's heading alone.
+// The assertions are two lists, and the difference between them is the point.
+//
+// The first is made of sentences the design states, each naming the control
+// that carries a fact — the four normalisation inputs, the same-versions
+// requirement on superset reuse, the propose-then-confirm rule and the three
+// choices it offers, the unattended refusal and the three spellings of its
+// flag, fork-never-mutate, the prune's job-pointer exception, the proposed
+// retention and the layer that owns it, the lock's home and the schema C8
+// adds, the create-if-absent first write, the clone shape a source-less image
+// needs, and each sub-task's red step. Emptying the control that carries one
+// of them fails its own assertion, rather than passing on a heading that is
+// still there.
+//
+// The second is structural anchors — headings, sub-task labels and the plan's
+// test names — and they are checked so the document keeps the shape C7 asks
+// for and names the tests C8 must make pass. A mutation of a behaviour does
+// not, and cannot be made to, fail on an anchor.
 func TestDocsSharedImagesDesign(t *testing.T) {
 	const path = "../../docs/forge-authorship-images/shared-images.md"
 	data, err := os.ReadFile(path)
@@ -30,41 +36,63 @@ func TestDocsSharedImagesDesign(t *testing.T) {
 	// The whole document: C7's design is its own file. The title is an H1 and
 	// the file holds no other H1, so the section docSection cuts is the file.
 	section := docSection(t, path, doc, "# Shared images keyed by the resolved dependency set")
-	if !strings.Contains(section, "C7") {
-		t.Errorf("%s does not name the plan task C7 it is the design for", path)
-	}
 
-	sharedImagesMustContain(t, section, path, []string{
+	// The facts: each string is a control the design states.
+	sharedImagesMustContain(t, section, path, "fact", []string{
 		// D618 as answered, plus O6's three image-count controls.
 		"only resolved package names, versions, toolchain and base image count",
 		"only when it holds the whole set at the same versions",
 		// T6(c) as resolved: propose-then-confirm, and the unattended refusal.
 		"proposed and confirmed, never forked silently",
 		"refuses to build when there is no terminal",
-		"`--on-divergence`",
-		"`adopt <repository>`",
-		"stays pinned",
+		"`--on-divergence=fork`, `--on-divergence=adopt=<repository>`, `--on-divergence=pin`",
+		"when that image is a superset of this repository's set at the same versions",
+		"keeps the image the repository is on, digest unchanged, and warns",
 		// T6(c): the shared image is never mutated.
 		"never rebuilt or overwritten in place",
-		// The prune's one exception.
+		// The prune's one exception, and its two conditions.
 		"never one a job still points at",
-		// The retention key, its default and its status.
+		"no refresh has placed a repository on",
+		// The retention key, its default, its status and its layer.
 		"`images.retention_days`, default 30, is proposed, owner to confirm",
-		// The lock and the schema C8 adds.
+		"it is shared policy, and only the project layer sets shared policy",
+		// The lock: its home, the schema C8 adds, and its first write.
 		"under `builds/` in the runs bucket",
 		"`schemas/image-lock.schema.json`, which C8 adds",
-		// The C8 split and what C8 needs from C3 and C4.
+		"which is create-if-absent and answers `blobx.ErrExists` when another refresh made it first",
+		// A source-less image needs a clone-shaped job, not a baked one.
+		"`FUGARO_CHECKOUT=clone` and `FUGARO_REMOTE` on a `checkout: clone` workflow's job and on no",
+		"moving its image \"would leave a job expecting a baked checkout\"",
+		"finds no checkout and no remote",
+		"it is a Cloud Build build argument",
+		"Route A is the design's recommendation",
+		// C3's ordering is what lets the shared image hold no source, and C8
+		// can ship without C4's warning but not without C3.
+		"key files before the source layer",
+		"the digest compared against the lock for the repository's key",
+		"C8 cannot ship without it",
+		"C8 can ship without it",
+		// The gap list and the owner's items are in the document.
+		"SECURITY.md and its website copy",
+		"a third `checkout:` kind",
+		"route B, the markers written onto the job",
+		// Each sub-task's red step, which is the behaviour it starts from.
+		"`TestKeyIdenticalForIdenticalDependencySets` fails: there is no `imagecheck.Key`",
+		"`TestRefreshBuildsOnceForSharedKey` fails: two repositories with one set build twice",
+		"`TestPruneKeepsAnImageAJobPointsAt` fails: there is no `fugaro image prune`",
+	})
+
+	// The structure: headings, sub-task labels and the plan's test names.
+	sharedImagesMustContain(t, section, path, "structure", []string{
+		"C7",
 		"## C8 split and its dependencies",
-		"C8a.",
-		"C8b.",
-		"C8c.",
+		"### C8a. The key, the superset and the lock",
+		"### C8b. Refresh, proposal and the per-repository job update",
+		"### C8c. `image ls`, prune, the cap warning, the reference and the skill",
+		"## Open for the owner",
 		"`TestKeyIgnoresOrderCommentsFormattingRepoNameAndCommands`",
 		"`TestDivergenceNonInteractiveRefusesWithoutFlag`",
 		"`TestPruneKeepsAnImageAJobPointsAt`",
-		"key files before the source layer",
-		"the digest compared against the lock",
-		// The open items are the owner's, not the design's.
-		"## Open for the owner",
 	})
 
 	// The folder's index gains one row, and the row links the file it names.
@@ -77,14 +105,15 @@ func TestDocsSharedImagesDesign(t *testing.T) {
 	}
 }
 
-// sharedImagesMustContain fails the test for each want absent from the
-// design, so a mutation of any single control is one failing assertion rather
-// than one indistinguishable failure.
-func sharedImagesMustContain(t *testing.T, got, path string, want []string) {
+// sharedImagesMustContain fails the test for each want absent from the design,
+// so a mutation of any single control is one failing assertion rather than one
+// indistinguishable failure. part names which list the string came from, so a
+// failure says whether a fact or the document's structure went missing.
+func sharedImagesMustContain(t *testing.T, got, path, part string, want []string) {
 	t.Helper()
 	for _, w := range want {
 		if !strings.Contains(got, w) {
-			t.Errorf("%s is missing %q", path, w)
+			t.Errorf("the design's %s is missing %q (%s)", part, w, path)
 		}
 	}
 }
