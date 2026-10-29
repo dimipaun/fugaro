@@ -31,14 +31,15 @@
 // characters rather than as an element. The values that are a document's own go
 // through the console's sanitizer like every other one: `launchResult`'s fields
 // through `putText` with the field's own class (`fact` below), and the recorded
-// repository identities through `sanitizeRefusal` before they reach this file
-// (`entry.ts`'s `railRows` reads them with `stringsOf`), because that string is
-// also the one main matches against its own records.
+// repository identities -- which `entry.ts`'s `railRows` keeps **raw**, because
+// that string is also the one main matches against its own records -- through
+// `refusalText` for the label and nothing at all for the value (`options`).
 //
-// The three caps and the cancel sentence are mirrored rather than imported,
-// because a screen may not read a main-process value: `launch-form.test.ts`
-// holds each mirror to its original, so a drift is a failing test rather than a
-// form that refuses what main accepts or a decline drawn as a refusal.
+// The three caps, the trim behind the counter and the cancel sentence are
+// mirrored rather than imported, because a screen may not read a main-process
+// value: `launch-form.test.ts` holds each mirror to its original, so a drift is
+// a failing test rather than a form that refuses what main accepts or a decline
+// drawn as a refusal.
 
 import { sanitizeRefusal } from '../../shared/sanitize'
 import { LAUNCH_CLI_FLOOR } from '../../shared/version'
@@ -82,6 +83,66 @@ export const LAUNCH_PLAN_TASK_MAX_BYTES = 128
 /** LAUNCH_TASK_LIMIT is the task's cap as the counter spells it, so a counter
  * can never name a number the check does not use. */
 export const LAUNCH_TASK_LIMIT = '16 KiB'
+
+/**
+ * LAUNCH_TRIM_SPACE is `launchrules`' `GO_TRIM_SPACE`: `strings.TrimSpace`'s set
+ * (`unicode.IsSpace`), which is the trim the CLI applies to the task it is
+ * given. It is written out rather than reached for through
+ * `String.prototype.trim`, because the two are **not** the same set: JavaScript
+ * also trims U+FEFF, which Go does not, and JavaScript does *not* trim U+0085,
+ * which Go does. A counter that trimmed like JavaScript would show a task as
+ * fitting that main then refuses -- the defect this mirror exists for -- and one
+ * that trimmed nothing at all would report bytes the run does not keep.
+ *
+ * Every code point in the set is in the BMP, so a scan by code unit is exact and
+ * no member is half of a surrogate pair. The set is read twice per call -- once
+ * from each end -- which is what keeps a task a renderer filled with whitespace
+ * from costing this screen seconds, the reason `launchrules` writes the set out
+ * there rather than using a regular expression.
+ *
+ * `launch-form.test.ts` holds it to `launchrules`' own, code point by code
+ * point, through `checkLaunchTask`.
+ */
+export const LAUNCH_TRIM_SPACE: ReadonlySet<number> = new Set([
+  0x09,
+  0x0a,
+  0x0b,
+  0x0c,
+  0x0d,
+  0x20,
+  0x85,
+  0xa0,
+  0x1680,
+  0x2000,
+  0x2001,
+  0x2002,
+  0x2003,
+  0x2004,
+  0x2005,
+  0x2006,
+  0x2007,
+  0x2008,
+  0x2009,
+  0x200a,
+  0x2028,
+  0x2029,
+  0x202f,
+  0x205f,
+  0x3000,
+])
+
+/** launchTrimmed is the CLI's `strings.TrimSpace`, mirrored: the leading and
+ * trailing run of `LAUNCH_TRIM_SPACE` characters goes and nothing inside the
+ * text does. Two index scans over `charCodeAt`, the way `launchrules`'
+ * `trimTaskText` does it. */
+export function launchTrimmed(text: string): string {
+  let start = 0
+  let end = text.length
+  while (start < end && LAUNCH_TRIM_SPACE.has(text.charCodeAt(start))) start += 1
+  while (end > start && LAUNCH_TRIM_SPACE.has(text.charCodeAt(end - 1))) end -= 1
+  if (start === 0 && end === text.length) return text
+  return text.slice(start, end)
+}
 
 /**
  * LAUNCH_DECLINED_REASON is `DECLINED_CANCELLED`, the main process's sentence
@@ -156,9 +217,10 @@ export const LAUNCH_IDS = Object.freeze({
 })
 
 // The attributes this screen sets are `class`, `id`, `for`, `type`, `hidden`,
-// `aria-live`, `aria-describedby` and `aria-busy`, and nothing else: there is no
-// navigating attribute, no resource attribute, no style and no event handler
-// anywhere in this file.
+// `value` -- on one `<option>`, and inert there (`options`) -- `aria-live`,
+// `aria-describedby` and `aria-busy`, and nothing else: there is no navigating
+// attribute, no resource attribute, no style and no event handler anywhere in
+// this file.
 
 // ---------------------------------------------------------------------------
 // The drawing
@@ -184,17 +246,22 @@ function literal(element: LaunchElement, text: string): LaunchElement {
  * options draws what the select offers: one `<option>` per recorded repository,
  * in the installation's own order.
  *
- * Each option carries **no `value` attribute**, so the select's value is the
- * option's own drawn text rather than a second copy of the identity -- the string
- * main receives is the string the operator read. The text is a sanitizer's own
- * answer: `entry.ts`'s `railRows` reads the row's list through `stringsOf`, which
- * puts every entry through `sanitizeRefusal` before it is stored, so control and
- * invisible characters (a bidi override in a repository name, say) are gone
- * before this file draws anything -- the same door the rail's `checkouts` come
- * through. What that pass keeps, it keeps: an identity is a value main matches
- * against its own records (`launchRepoArgument`, `src/main/launch.ts`), so a copy
- * this console had folded, clipped or rewritten would be a launch refused for the
- * repository the operator did pick.
+ * Each option carries **the recorded identity as its `value`**, and the drawn
+ * text is a sanitizer's own answer for that identity: `entry.ts`'s `railRows`
+ * keeps the row's list raw, and the label goes through `refusalText` here, so a
+ * repository whose name is shaped like a credential is drawn as the marker while
+ * the value the form sends is still the string main matches against its own
+ * records (`launchRepoArgument`, `src/main/launch.ts`). A form that sent the
+ * label would refuse every launch on an installation whose repository is named
+ * like a token, and one that sent a *folded* identity would be refused by main
+ * for a repository the operator did pick -- so the value is written as it came
+ * and nothing here trims or rewrites it.
+ *
+ * The `value` attribute is the one attribute of this file that carries a
+ * document's string, and it is inert: it is never parsed as markup, never
+ * navigated to and never interpreted as a style. It is what a `select` reports,
+ * because this screen cannot hold a value anywhere else -- `textContent` is the
+ * label, and `entry.ts` reads the select's own `value` back.
  */
 function options(
   select: LaunchElement,
@@ -202,7 +269,9 @@ function options(
   repositories: readonly string[],
 ): void {
   for (const recorded of repositories) {
-    const option = literal(make(factory, 'option'), recorded)
+    const option = make(factory, 'option')
+    option.setAttribute('value', recorded)
+    literal(option, refusalText(recorded))
     select.append(option)
   }
 }
@@ -256,7 +325,8 @@ function field(
 
 /** LaunchView is what the control is drawn for: the installation, the repository
  * identities it records (in the CLI's order, deduplicated by the main process,
- * each one already through `sanitizeRefusal` in `entry.ts`'s `railRows`), and
+ * each one the string main matches against its own records -- kept **raw** by
+ * `entry.ts`'s `railRows`, and redacted only for the label `options` draws), and
  * whether this console's CLI may be launched with at all. */
 export interface LaunchView {
   readonly installation: string
@@ -416,13 +486,14 @@ function fieldOf(form: LaunchElement, className: string): LaunchElement {
 // The counter and the convenience check
 // ---------------------------------------------------------------------------
 
-/** launchBytes is the task's own byte count, trimmed: bytes and not characters,
- * because a task is sent as UTF-8 and a three-byte character is three of them.
- * The trim is JavaScript's, which is the same set as Go's for every character
- * an operator types -- and it is a convenience in any case, because main trims
- * again with `launchrules`' own. */
+/** launchBytes is the task's own byte count, trimmed the way the CLI trims it:
+ * bytes and not characters, because a task is sent as UTF-8 and a three-byte
+ * character is three of them. The trim is `launchTrimmed`, which is Go's set and
+ * **not** `String.prototype.trim` -- a counter that trimmed like JavaScript
+ * would show a task at the cap as fitting and main would then refuse it. It is a
+ * convenience in any case, because main trims again with `launchrules`' own. */
 export function launchBytes(text: string): number {
-  return new TextEncoder().encode(text.trim()).length
+  return new TextEncoder().encode(launchTrimmed(text)).length
 }
 
 /** launchCounter is the counter's line: the bytes as typed, against the cap. */
@@ -464,7 +535,13 @@ export function launchCheck(typed: LaunchTyped, repositories: readonly string[])
   if (!repositories.includes(typed.repository)) {
     return 'choose one of the repositories this installation records'
   }
-  if (typed.task.trim() === '') return 'type the task the run is given'
+  // The task is sent **as typed** (`entry.ts`'s `sendLaunch` hands main
+  // `typed.task`), so it is trimmed here with the CLI's own set -- which is what
+  // main trims it with, and what makes the count below the count main makes. The
+  // title and the plan task are the other way round: the entry trims those with
+  // JavaScript's `trim` *before* it sends them, so each is trimmed the same way
+  // here and the byte count is of the value main is handed.
+  if (launchTrimmed(typed.task) === '') return 'type the task the run is given'
   const bytes = launchBytes(typed.task)
   if (bytes > LAUNCH_TASK_MAX_BYTES) {
     return `the task is ${String(bytes)} bytes after the trim, over the ${LAUNCH_TASK_LIMIT} this console sends`
@@ -480,7 +557,7 @@ export function launchCheck(typed: LaunchTyped, repositories: readonly string[])
   }
   const planTask = typed.planTask.trim()
   if (planTask !== '') {
-    const planBytes = launchBytes(typed.planTask)
+    const planBytes = launchBytes(planTask)
     if (planBytes > LAUNCH_PLAN_TASK_MAX_BYTES) {
       return `the plan task is ${String(planBytes)} bytes, over the ${String(LAUNCH_PLAN_TASK_MAX_BYTES)} this console sends`
     }

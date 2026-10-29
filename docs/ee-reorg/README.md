@@ -34,9 +34,9 @@ None. It is byte for byte as received.
 ## Known discrepancy: being fixed
 
 The Subscription Terms (`docs/licensing/subscription-terms.md`, `website/content/subscription-terms.md`)
-still call the coordinator part of the Core. The owner ruled on 2026-10-29 (D531) to edit the text
-now rather than wait for counsel's revision; task E3.6 makes the edit and the owner tells counsel in
-the next revision round.
+section 7.1 now says the coordinator is part of the Software (the business-licensed Subscription
+Edition) and the credentials service is part of the Core. The owner ruled this on 2026-10-29
+(D531), correcting counsel's text, which had called both Core.
 
 ## Key-minting service
 

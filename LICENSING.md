@@ -37,8 +37,9 @@ MIT licence it was published under. Its third-party components keep their own li
 ## `ee/`, the Subscription Edition
 
 [`ee/`](ee/README.md) is excluded from the MIT licence and reserved for net-new organisation
-features, under [`ee/LICENSE`](ee/LICENSE). The directory holds no code yet and nothing under it
-has ever been released, and nothing outside `ee/` imports anything under it.
+features, under [`ee/LICENSE`](ee/LICENSE). Nothing under it has ever been released, and nothing
+outside `ee/` imports anything under it: its first file is the assembly point `ee/register`, which
+only a build with the `ee` build tag compiles in, through [`cmd/fugaro/ee_on.go`](cmd/fugaro/ee_on.go).
 
 ## `.agents/` is third-party code
 

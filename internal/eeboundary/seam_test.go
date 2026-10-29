@@ -15,7 +15,14 @@ package eeboundary
 // and a same-named method on some other type look alike to a scan without type
 // information, which is deliberate: a call the scan does not recognise is a call
 // it does not refuse. Declaring a setter is not calling one, so the core files
-// that publish them are left alone.
+// that publish them are left alone, and a setter named as a value (`f :=
+// runner.SetStage`, `cli.SetEditionEE` passed to a helper) is a use too, so the
+// scan flags it: the name is what the scan reads, whether or not a call follows.
+//
+// The scan sees a setter only where its Go identifier is written down. Two ways
+// reach one without naming it -- reflection (`reflect.ValueOf(...).MethodByName`)
+// and a `//go:linkname` directive -- and this scan cannot see either; they are
+// left to review.
 
 import (
 	"go/ast"
@@ -32,9 +39,10 @@ import (
 // seamRule names the finding this scan produces.
 const seamRule = "only ee/register sets a seam"
 
-// seamSetterNames are the calls only ee/register may make: the setters of the
-// package-level seams (design §5.5). A name is matched on the call's selector,
-// so the package qualifier on the left of the dot is not read.
+// seamSetterNames are the names only ee/register may use: the setters of the
+// package-level seams (design §5.5). A name is matched on the selector's own
+// name or on a bare identifier, so the package qualifier on the left of the dot
+// is not read.
 var seamSetterNames = []string{
 	"SetLaunchDeclarer",
 	"RegisterCommand",
@@ -92,36 +100,56 @@ func seamSetterCalls(root string) ([]finding, int, error) {
 	return findings, parsed, nil
 }
 
-// setterCallsIn is the setter calls in one file, as findings. A file the parser
-// cannot read is one whose calls cannot be checked, and "cannot be checked" is
-// not "is fine": every .go file in this module parses (`gofmt -l .` is a CI
-// gate), so this fires only on a file added with a syntax error.
+// setterCallsIn is the setter uses in one file, as findings: a call to a setter,
+// or the setter named as a value (`f := runner.SetStage`, `cli.SetEditionEE`
+// passed to a helper) — the name is what the scan reads, whether or not a call
+// follows. A file the parser cannot read is one whose uses cannot be checked,
+// and "cannot be checked" is not "is fine": every .go file in this module parses
+// (`gofmt -l .` is a CI gate), so this fires only on a file added with a syntax
+// error.
 func setterCallsIn(path, rel string) []finding {
 	fset := token.NewFileSet()
 	f, perr := parser.ParseFile(fset, path, nil, 0)
 	if perr != nil || f == nil {
-		return []finding{{rule: seamRule, path: rel, detail: "it cannot be parsed, so its calls cannot be checked: " + errText(perr)}}
+		return []finding{{rule: seamRule, path: rel, detail: "it cannot be parsed, so its uses cannot be checked: " + errText(perr)}}
 	}
+	// A selector's Sel and a function's own declaration name are the two
+	// positions that name a setter without using it. Every other occurrence —
+	// the Fun of a call, a bare identifier, a selector used as a value — is a
+	// use, and each is reported once: skipping the Sel keeps a call from being
+	// counted twice.
+	selOfSelector := map[*ast.Ident]bool{}
+	declName := map[*ast.Ident]bool{}
+	ast.Inspect(f, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.SelectorExpr:
+			selOfSelector[x.Sel] = true
+		case *ast.FuncDecl:
+			declName[x.Name] = true
+		}
+		return true
+	})
 	var findings []finding
 	ast.Inspect(f, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
 		name := ""
-		switch fun := call.Fun.(type) {
+		switch x := n.(type) {
 		case *ast.SelectorExpr:
-			name = fun.Sel.Name
+			name = x.Sel.Name
 		case *ast.Ident:
+			if selOfSelector[x] || declName[x] {
+				return true
+			}
 			// A core caller reaches its own package's setter unqualified:
 			// cli.RegisterCommand inside package cli is RegisterCommand.
-			name = fun.Name
+			name = x.Name
+		default:
+			return true
 		}
 		if !slices.Contains(seamSetterNames, name) {
 			return true
 		}
 		findings = append(findings, finding{rule: seamRule, path: rel,
-			detail: "it calls " + name + ", a seam setter only " + eeRegisterDir + " may call"})
+			detail: "it uses " + name + ", a seam setter only " + eeRegisterDir + " may call"})
 		return true
 	})
 	return findings
@@ -151,6 +179,10 @@ func TestSeamSetterScanCatchesPlantedCalls(t *testing.T) {
 		"ee/register/register.go": "package register\n\nimport \"github.com/dimipaun/fugaro/internal/cli\"\n\nfunc init() { _ = cli.SetEditionEE() }\n",
 		// A test file may exercise a setter.
 		"internal/cli/extend_test.go": "package cli\n\nimport \"testing\"\n\nfunc TestX(t *testing.T) { _ = SetLaunchDeclarer(nil) }\n",
+		// A setter named as a value, not called: an assignment and an argument,
+		// one a bare identifier and one a selector, both flagged.
+		"internal/runner/assign.go": "package runner\n\nvar stage = SetStage\n",
+		"internal/web/pass.go":      "package web\n\nimport \"github.com/dimipaun/fugaro/internal/cli\"\n\nfunc helper(f func() error) {}\n\nfunc init() { helper(cli.SetEditionEE) }\n",
 		// Declaring a same-named function is not calling one.
 		"internal/other/w.go": "package other\n\nfunc SetStage() {}\n",
 	} {
@@ -161,8 +193,8 @@ func TestSeamSetterScanCatchesPlantedCalls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parsed != 4 {
-		t.Fatalf("the scan parsed %d non-test files, want 4 (every one but ee/register's and the _test one)", parsed)
+	if parsed != 6 {
+		t.Fatalf("the scan parsed %d non-test files, want 6 (every one but ee/register's and the _test one)", parsed)
 	}
 	got := make([]string, 0, len(findings))
 	for _, f := range findings {
@@ -170,9 +202,11 @@ func TestSeamSetterScanCatchesPlantedCalls(t *testing.T) {
 	}
 	slices.Sort(got)
 	want := []string{
-		"internal/cli/x.go: it calls RegisterCommand, a seam setter only ee/register may call",
-		"internal/web/y.go: it calls SetSections, a seam setter only ee/register may call",
-		"ee/governance/z.go: it calls SetGovernance, a seam setter only ee/register may call",
+		"internal/cli/x.go: it uses RegisterCommand, a seam setter only ee/register may call",
+		"internal/web/y.go: it uses SetSections, a seam setter only ee/register may call",
+		"ee/governance/z.go: it uses SetGovernance, a seam setter only ee/register may call",
+		"internal/runner/assign.go: it uses SetStage, a seam setter only ee/register may call",
+		"internal/web/pass.go: it uses SetEditionEE, a seam setter only ee/register may call",
 	}
 	slices.Sort(want)
 	if !slices.Equal(got, want) {

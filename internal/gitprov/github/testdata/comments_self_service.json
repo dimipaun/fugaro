@@ -1,16 +1,5 @@
 [
   {
-    "method": "GET",
-    "path": "/user",
-    "auth": "Bearer ghs_fixture_service_token",
-    "status": 200,
-    "response": {
-      "login": "fugaro-app[bot]",
-      "id": 900001,
-      "type": "Bot"
-    }
-  },
-  {
     "method": "POST",
     "path": "/graphql",
     "auth": "Bearer ghs_fixture_service_token",

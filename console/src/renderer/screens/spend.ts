@@ -459,9 +459,11 @@ export interface SpendCapRow {
   readonly notional: Reading
   /** compute is the repository's compute dollars, an **estimated** figure by
    * design (`runstore.Cost.ComputeUSD`). The owner approved `compute_usd` on
-   * each `showRepo` on 2026-10-28 and no CLI writes it yet, so this reads
-   * absent and `null` as `n/a` and draws nothing with it: the Spend redesign
-   * is the screen that will.
+   * each `showRepo` on 2026-10-28, and `budget show --compute` writes it since
+   * 2026-10-29 -- but this console's `budget.show` row passes no such flag
+   * (adding one is its own reviewed run), so the key still only arrives in a
+   * document a person hands this reader. It reads absent and `null` as `n/a`
+   * and draws nothing with it: the Spend redesign is the screen that will.
    *
    * A value that is not a number is `n/a` too, and not a refusal, because this
    * reader refuses no document at all -- the caps panel is the console's

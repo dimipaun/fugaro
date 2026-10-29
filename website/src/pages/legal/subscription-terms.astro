@@ -4,9 +4,9 @@
  *
  * The licence of `ee/`, `console/` and `mobile/` names the Terms as published at this URL, so
  * the page exists before counsel has approved the text, and says so in its first line. Every
- * word under that line is the agreement text of `docs/licensing/subscription-terms.md`, sections
- * 1 to 24: `go run ./internal/clidoc` cuts the draft banner, the drafting notes and the two
- * question lists out of it into `website/content/subscription-terms.md`, and this page renders
+ * word under that line is the agreement text of `docs/licensing/subscription-terms.md`, Parts A
+ * to G and sections 1 to 34: `go run ./internal/clidoc` cuts the draft banner, the reading guide
+ * and the question list out of it into `website/content/subscription-terms.md`, and this page renders
  * that file and writes no sentence of its own. Bracketed items are the document's and stay
  * bracketed: they are what the Order Form or counsel fills in.
  *
@@ -34,6 +34,17 @@ function link(href: string): string {
 }
 
 const terms = renderAgreement(document.body, link)
+
+// The contents list numbers its entries itself, so each Part's list starts at the number of
+// its first section, read from the heading the entry leaves out.
+type Section = (typeof terms.sections)[number]
+const parts: { part?: Section['part']; start: number; sections: Section[] }[] = []
+for (const section of terms.sections) {
+  if (section.part || parts.length === 0) {
+    parts.push({ part: section.part, start: Number.parseInt(section.heading, 10) || 1, sections: [] })
+  }
+  parts[parts.length - 1].sections.push(section)
+}
 ---
 
 <Base title="Subscription Terms" description="The Fugaro Subscription Terms: a draft under counsel review, not yet in force.">
@@ -46,20 +57,28 @@ const terms = renderAgreement(document.body, link)
 
     <nav class="terms-contents" aria-labelledby="contents">
       <h2 id="contents">Contents</h2>
-      <ol>
-        {terms.sections.map((section) => (
-          <li>
-            <a href={`#${section.id}`} set:html={section.heading.replace(/^\d+\.\s*/, '')} />
-          </li>
-        ))}
-      </ol>
+      {parts.map((group) => (
+        <Fragment>
+          {group.part && <p class="terms-contents-part"><a href={`#${group.part.id}`} set:html={group.part.heading} /></p>}
+          <ol start={group.start}>
+            {group.sections.map((section) => (
+              <li>
+                <a href={`#${section.id}`} set:html={section.heading.replace(/^\d+\.\s*/, '')} />
+              </li>
+            ))}
+          </ol>
+        </Fragment>
+      ))}
     </nav>
 
     {terms.sections.map((section) => (
-      <section aria-labelledby={section.id}>
-        <h2 id={section.id} set:html={section.heading} />
-        <Fragment set:html={section.html} />
-      </section>
+      <Fragment>
+        {section.part && <h2 class="terms-part" id={section.part.id} set:html={section.part.heading} />}
+        <section aria-labelledby={section.id}>
+          <h2 id={section.id} set:html={section.heading} />
+          <Fragment set:html={section.html} />
+        </section>
+      </Fragment>
     ))}
   </article>
 </Base>
@@ -103,6 +122,19 @@ const terms = renderAgreement(document.body, link)
     columns: 2;
     column-gap: var(--space-lg);
     margin: 0;
+  }
+
+  [data-terms-page] .terms-contents-part {
+    margin: var(--space-md) 0 var(--space-2xs);
+    font-weight: var(--weight-semibold);
+  }
+
+  [data-terms-page] .terms-part {
+    margin-top: var(--space-2xl);
+    padding-top: var(--space-md);
+    border-top: var(--border-width) solid var(--border);
+    font-size: var(--font-size-2xl);
+    scroll-margin-top: var(--space-3xl);
   }
 
   [data-terms-page] section {

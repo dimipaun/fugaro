@@ -58,7 +58,8 @@ owner's answers of 2026-10-27 (kept, with the prices, in the private business re
 entity as Licensor, a merchant of record for self-serve sales, one free seat per organisation and
 other free plans, a seat as anyone who launches jobs (a pricing rule, the command-line tool staying
 MIT), a read-only console and mobile app after a lapse with no perpetual fallback, and a signed
-offline key for every user issued by a hosted service. Prices stay bracketed; it is still **not in
+offline key for every user issued by a hosted service (amended 2026-10-29: one key per Customer
+for its organisation, and one free seat per legal person, in counsel's text). Prices stay bracketed; it is still **not in
 force** and still awaits counsel (plan task L4.5,
 [reconciliation.md](reconciliation.md#amendment-2026-10-27-the-subscription-terms-follow-the-owners-answers)).
 
@@ -84,6 +85,19 @@ The licence files are untouched, the draft is still **not in force**, and the br
 where the coordinator's released MIT versions leave the licence's coverage sentence is still
 counsel's (T10 and F38, in
 [subscriptions/reconciliation.md](../subscriptions/reconciliation.md)).
+
+**Amended 2026-10-29: counsel's restructured Subscription Terms.** [subscription-terms.md](subscription-terms.md)
+now carries counsel's text of 2026-10-28, which reorganises the agreement by plan into Parts A to G
+and renumbers it from 24 sections to 34 (for example: fees, payment and taxes are section 12,
+Enterprise commercial terms section 19, assignment section 31, changes to the Terms section 29).
+It adds a patent licence, an indemnity, resellers, a Quebec language clause and limits for the
+Community Plan, Free Plans and Beta Features, and drops the drafting notes. Two figures in it
+(the late-payment interest rate and the Community liability cap) were first held back as bracketed
+items; the owner ruled on 2026-10-29 that they go in as counsel wrote them. The document still carries counsel's draft banner
+and bracketed party details, so it is still **not in force**; the page at `/legal/subscription-terms`
+is regenerated from it. Section map and open points:
+[reconciliation.md](reconciliation.md#amendment-2026-10-29-counsels-restructured-subscription-terms).
+(amended 2026-10-29: the four owner rulings are applied, counsel approved: read-only use keeps cancel and the kill switch, section 9.1; one License Key per Customer for its organisation, stating its User Seats; no covered-versions date, sections 6.1 and 8.2; one free seat per legal person and its Affiliates, sections 6.3, 7.5 and 10.2(a). Sections 5.1(i), 5.3 and 5.5 are written in the present tense on the owner's word of 2026-10-29, and the roles and the seat estimate must be released before the Terms go public).
 
 Spec owner: the repository owner. Spec received 2026-10-24; reconciled against `origin/main` at
 `e924481cd` the same day.

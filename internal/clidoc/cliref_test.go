@@ -1,134 +1,132 @@
 package main
 
-// The generator's own tests (website plan, Task W0.4).
+// The core's half of the CLI reference's drift check (website plan, Task W0.4).
 //
-// TestCliReferenceIsCurrent is the one that makes "generated" true rather than
-// "generated once": it runs Generate over the real command tree and compares
-// the bytes with the committed website/content/cli-reference.md, so a command
-// or a flag that lands in internal/cli without the reference being regenerated
-// fails here, with the command that regenerates it in the message.
+// website/content/cli-reference.md is generated from the *tagged* command tree
+// by `go run ./ee/clidoc`, because one binary ships and the page describes that
+// binary (design docs/design/ee-boundary-moves.md §9). The core cannot render
+// that tree -- the registrations live under ee/, and nothing outside ee/ may
+// import them -- so the whole-file check lives with the tagged generator
+// (ee/clidoc/cliref_test.go's TestCliReferenceIsCurrent) and this is the
+// subset half: every command and visible flag the core's own tree documents
+// appears in the file. The file may hold more than that, and does as soon as a
+// paid command moves out of the core: those sections are the tagged tree's, and
+// this test must not call them invented.
 //
-// The rest are the generator's own rules, checked on a synthetic tree so they
-// hold whatever the real tree happens to contain: a hidden command and a
-// hidden flag stay out, a required flag is marked as one, and the same tree
-// produces the same bytes twice. The two directions of the drift check against
-// the real tree -- every command and flag named, nothing invented -- live in
-// internal/cli/docs_website_cliref_test.go, which is where the command tree
-// and the other docs tests are; this package cannot be imported from there,
-// because it imports internal/cli.
+// The generator's own rules are beside the generator in
+// internal/clidoc/cliref/cliref_test.go.
 
 import (
 	"os"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/dimipaun/fugaro/internal/cli"
+	"github.com/dimipaun/fugaro/internal/clidoc/cliref"
 )
 
-// TestCliReferenceIsCurrent holds the committed reference to the generator's
-// output. The two files cannot differ: the committed one is the generated one.
-func TestCliReferenceIsCurrent(t *testing.T) {
-	want := Generate(cli.NewRootCmd())
-	got, err := os.ReadFile("../../" + defaultPath)
+// coreRefPath is the generated reference, relative to the repository root.
+const coreRefPath = "website/content/cli-reference.md"
+
+// coreRefHeadingRE matches the one section-heading shape the generator writes:
+// a command's full path, backticked, as an H2. Nothing else in the file is an
+// H2.
+var coreRefHeadingRE = regexp.MustCompile("^## `(.+)`$")
+
+// coreRefFlagCellRE matches a flag-table row's first cell, "| `--name` |" or
+// "| `-h`, `--help` |": the only place a flag is a fact rather than prose. A
+// flag named inside a command's long description is read as text, not as a
+// documented flag.
+var coreRefFlagCellRE = regexp.MustCompile("^\\| (`-{1,2}[A-Za-z0-9][A-Za-z0-9-]*`[^|]*?) \\|")
+
+// coreRefFlagTokenRE finds the flag tokens of a flag-table row's first cell.
+var coreRefFlagTokenRE = regexp.MustCompile("`(-{1,2}[A-Za-z0-9][A-Za-z0-9-]*)`")
+
+// coreRefSections splits the reference into its command sections, keyed by the
+// command path in the heading, with every line below the heading up to the next
+// one.
+func coreRefSections(doc string) map[string][]string {
+	sections := map[string][]string{}
+	var current string
+	for _, line := range strings.Split(doc, "\n") {
+		if m := coreRefHeadingRE.FindStringSubmatch(line); m != nil {
+			if _, seen := sections[m[1]]; !seen {
+				sections[m[1]] = nil
+			}
+			current = m[1]
+			continue
+		}
+		if current != "" {
+			sections[current] = append(sections[current], line)
+		}
+	}
+	return sections
+}
+
+// coreRefFlagRows returns the long flag names a section's flag table names,
+// stripped of the dashes a reader types (pflag's own names carry none).
+func coreRefFlagRows(lines []string) []string {
+	var names []string
+	for _, line := range lines {
+		m := coreRefFlagCellRE.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		for _, tok := range coreRefFlagTokenRE.FindAllStringSubmatch(m[1], -1) {
+			if strings.HasPrefix(tok[1], "--") {
+				names = append(names, tok[1][2:])
+			}
+		}
+	}
+	return names
+}
+
+// coreRefVisibleFlagNames returns a command's own flags a reader may be told
+// about: local and non-inherited, so a flag is expected in the section of the
+// command that defines it, with the hidden ones left out.
+func coreRefVisibleFlagNames(c *cobra.Command) []string {
+	var names []string
+	c.LocalFlags().VisitAll(func(f *pflag.Flag) {
+		if !f.Hidden {
+			names = append(names, f.Name)
+		}
+	})
+	slices.Sort(names)
+	return names
+}
+
+// TestCoreCommandsAreInTheReference asserts the reference covers the core's
+// command tree: every command cliref documents for the untagged tree, and every
+// visible flag of each one, is in the file. It is a subset check by design --
+// the file is the tagged tree's output and may carry the paid commands'
+// sections too, which this test neither knows nor judges.
+func TestCoreCommandsAreInTheReference(t *testing.T) {
+	doc, err := os.ReadFile("../../" + coreRefPath)
 	if err != nil {
-		t.Fatalf("%s: %v (regenerate it with `go run ./internal/clidoc` at the repository root)", defaultPath, err)
+		t.Fatalf("%s: %v (regenerate it with `go run ./ee/clidoc` at the repository root)", coreRefPath, err)
 	}
-	if string(got) != want {
-		t.Errorf("%s is not what the command tree generates: regenerate it with `go run ./internal/clidoc` at the repository root (generated %d bytes, committed %d)", defaultPath, len(want), len(got))
+	sections := coreRefSections(string(doc))
+	root := cliref.Prepare(cli.NewRootCmd())
+	documented := cliref.DocumentedCommands(root)
+	if len(documented) == 0 {
+		t.Fatal("cliref documents no command for the core tree, so an empty pass would prove nothing")
 	}
-}
-
-// TestCliReferenceGeneratorSkipsHiddenCommandsAndFlags: the skip rule is read
-// off the tree (cobra's Hidden), so a hidden command, the subtree under it and
-// a hidden flag of a visible command all stay out of the reference.
-func TestCliReferenceGeneratorSkipsHiddenCommandsAndFlags(t *testing.T) {
-	root := fakeTree()
-	doc := Generate(root)
-	for _, absent := range []string{
-		"`fake secret`",     // the hidden command itself
-		"`fake secret sub`", // and the subtree under it
-		"--internal",        // the visible command's hidden flag
-	} {
-		if strings.Contains(doc, absent) {
-			t.Errorf("the reference names %s, which the tree hides: a hidden command is not user documentation (F38)\n%s", absent, doc)
+	for path, cmd := range documented {
+		lines, ok := sections[path]
+		if !ok {
+			t.Errorf("%s does not name command %q, which the core tree has and does not hide", coreRefPath, path)
+			continue
+		}
+		names := coreRefFlagRows(lines)
+		for _, name := range coreRefVisibleFlagNames(cmd) {
+			if !slices.Contains(names, name) {
+				t.Errorf("%s's %q section does not name the flag --%s, which the command has", coreRefPath, path, name)
+			}
 		}
 	}
-	if !strings.Contains(doc, "## `fake run`") {
-		t.Errorf("the reference leaves out the visible command `fake run`:\n%s", doc)
-	}
-}
-
-// TestCliReferenceDocumentsCobraDefaults is the regression test for the claim
-// the preamble makes: cobra adds its `help` and `completion` commands and the
-// `-h, --help` flag of every command inside Execute, not when the tree is
-// built, and `fugaro --help` lists all three. A reference generated from the
-// un-executed tree would print "every command and flag `fugaro` ships" while
-// omitting them, and no test could catch it, because a test deriving its
-// expectations from the same un-executed tree agrees with the mistake.
-func TestCliReferenceDocumentsCobraDefaults(t *testing.T) {
-	doc := Generate(cli.NewRootCmd())
-	for _, want := range []string{
-		"## `fugaro completion`",
-		"## `fugaro completion bash`",
-		"## `fugaro help`",
-		"| `-h`, `--help` | bool | `false` | no | help for fugaro |",
-		"| `-v`, `--version` | bool | `false` | no | version for fugaro |",
-	} {
-		if !strings.Contains(doc, want) {
-			t.Errorf("the reference does not carry %q, which `fugaro --help` lists:\n%s", want, doc)
-		}
-	}
-}
-
-// TestCliReferenceGeneratorStatesFlags: a flag's type, default, required-ness
-// and description come from the pflag itself, so a required flag is marked
-// required (from cobra's own annotation, not from a reading of the default)
-// and a flag with no default shows the empty string rather than a blank cell.
-func TestCliReferenceGeneratorStatesFlags(t *testing.T) {
-	doc := Generate(fakeTree())
-	for _, want := range []string{
-		"| `--name` | string | \"\" | yes | the task text |",
-		"| `--dry-run` | bool | `false` | no | print what would happen |",
-		"| `--since` | duration | `24h0m0s` | no | how far back to look |",
-	} {
-		if !strings.Contains(doc, want) {
-			t.Errorf("the reference does not carry the flag row %q:\n%s", want, doc)
-		}
-	}
-}
-
-// TestCliReferenceGeneratorIsPure: the same tree produces the same bytes, so a
-// regenerated file diffs only where the tree changed.
-func TestCliReferenceGeneratorIsPure(t *testing.T) {
-	root := fakeTree()
-	first, second := Generate(root), Generate(root)
-	if first != second {
-		t.Errorf("Generate is not deterministic: two runs over one tree differ")
-	}
-}
-
-// fakeTree is the smallest tree that exercises every rule: a visible command
-// with flags (one required, one with a default, one with none), a hidden
-// command with a visible child, and a hidden flag on a visible command.
-func fakeTree() *cobra.Command {
-	root := &cobra.Command{Use: "fake", Short: "a synthetic tree"}
-	run := &cobra.Command{
-		Use:   "run [TEXT]",
-		Short: "launch a task",
-		Long:  "Launch a task in the cloud.\n\nIt always ends with a pull request.",
-	}
-	run.Flags().String("name", "", "the task text")
-	run.Flags().Bool("dry-run", false, "print what would happen")
-	run.Flags().Duration("since", 24*60*60*1e9, "how far back to look")
-	run.Flags().String("internal", "", "tests only")
-	_ = run.Flags().MarkHidden("internal")
-	_ = run.MarkFlagRequired("name")
-
-	secret := &cobra.Command{Use: "secret", Short: "hidden", Hidden: true}
-	secret.AddCommand(&cobra.Command{Use: "sub", Short: "hidden too"})
-
-	root.AddCommand(run, secret)
-	return root
 }

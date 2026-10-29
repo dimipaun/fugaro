@@ -87,7 +87,7 @@ competes with 0.13.0's planned Bitbucket shared-job work (D460–D477), which it
 | Operators | Add versions, list metadata; never read a value | `secretVersionAdder` and `viewer` | `modules/repo/secrets.tf`, `modules/installation/secrets.tf` |
 | Launchers | List names, labels and version counts | `fugaroLauncher` custom role | `modules/installation/iam.tf` |
 | Managed projects' accounts (`fmgd-`) | `fmgd-` secrets a managed plan creates and grants | The managed deployer holds `secretmanager.secrets.setIamPolicy` on its own prefix | `modules/installation/deployer.tf` |
-| Project Owners and Editors | Anything | Basic roles bypass secret-level policy | SECURITY.md "What is not on by default" |
+| Project Owners | Anything: `roles/owner` carries `secretmanager.versions.access` and bypasses secret-level policy | Project IAM, outside every grant Fugaro writes | `SECURITY.md` "The credentials service" |
 
 So **six runtime account classes** (the five above and the Batch VM account when that backend is
 selected; the Go-built build request is how the build account reads) read secret values today, not one, plus humans. Each per-repository
@@ -107,11 +107,23 @@ key (D145). *Consequence:* the principle is an end state reached class by class,
 breaking IAM change (D500).
 
 **F3, Rule.** D148 (2026-10-17) already ruled the wording: "the only Fugaro runtime identity with
-access to model credentials", naming the others. Humans can never be excluded: Project Owners and
-Editors bypass secret-level IAM, the owner reads the bundle to write it (Q6's accepted cost), and
+access to model credentials", naming the others. Humans can never be excluded: Project Owners
+bypass secret-level IAM, the owner reads the bundle to write it (Q6's accepted cost), and
 operators add versions. *Consequence:* the spec's §1 bullet "remove Secret Manager access from every
 service account except the credential service's" is achievable for **service accounts**; SECURITY.md
 must keep saying that humans are outside it.
+
+**F3, corrected 2026-10-29 (owner's ruling, B0.3 follow-up; widened by the independent review of
+2026-10-29).** Owners only. `roles/editor` carries `secretmanager.secrets.getIamPolicy` and delete
+but not `secretmanager.versions.access`, so an Editor is not a reader of every secret and reads one
+**directly** only through a `secretAccessor` grant a container's own policy gives it — a grant the
+per-container sweep reports like any other, and one that naming Editors as readers would hide. It
+reads one **indirectly** as well: `roles/editor` also carries `iam.serviceAccounts.actAs` and
+`run.services.update`, so an Editor can deploy code that runs as an account holding a grant (the
+`credentials-service-deployers` line names the Editor as a deployer for exactly this reason). This
+finding, §3's table, the audit's E12 row, SECURITY.md and `website/content/security.md` are corrected
+together; `fugaro doctor` was right all along
+(`TestDoctorSecretReadersDoesNotCallAnEditorAReader`).
 
 **F4, Rule.** D145 (2026-10-17) kept two classes out of the service on purpose: Bitbucket tokens
 ("cannot be minted per job") and workflow `secrets:` ("the code under test needs them in its env",
@@ -345,6 +357,21 @@ reason, the alternative and its cost, and the owner's answer of 2026-10-27 (rela
 | **D504** | Spec §4's "revocable early" for a run | **The kill switch per repository** (exists) plus `fugaro cancel`; a per-run service-side block only if the owner wants it (a `creds/` mark) | **A per-run revocation list now:** new state and a rules change for a case cancel already covers | **2026-10-27: the recommendation.** The per-repository kill switch plus `fugaro cancel`; no per-run block. Why: cancel already covers the case |
 | **D505** | Bitbucket shared project jobs (D460) under the proxy (F21) | **Proxy first for per-repository jobs.** Shared Bitbucket jobs wait until the service admits shared-job callers by profile (the credentials plan's C3.9) | **Ship shared Bitbucket jobs in 0.13.0 with the token mounted**, as planned, and move them to the proxy later | **2026-10-27: the recommendation.** The proxy first for per-repository jobs; shared Bitbucket jobs wait for the credentials plan's C3.9. Why: the service refuses shared-job callers today (Global Constraint 6) |
 | **D506** | Where the upstream Bitbucket token lives (F18) | **In the bundle** (Q6: one secret, one grant), written by `fugaro creds set bitbucket-token` | **A project secret with a second grant** to the service: keeps teammate write-without-read, breaks Q6 and the rules file's "one grant" | **2026-10-27: the recommendation.** The Bitbucket token lives in the bundle, written by `fugaro creds set bitbucket-token`. Why: Q6's one secret, one grant |
+
+**D503a, extended 2026-10-29 (owner's rulings, B0.3 follow-up).** The B0.3 sweep as merged read one
+role per container (`secretAccessor`) and one member class at the project level (service accounts).
+Four changes, all of them coverage of reads that already existed rather than a new check:
+(a) a container's readers are the members of **every** role carrying `secretmanager.versions.access`
+— `secretAccessor`, `roles/secretmanager.admin`, and a custom role whose own definition lists it —
+with a role nobody could read reported as unknown, not as one that carries nothing;
+(b) the project-level half names a person or a group holding a reading role there, outside the
+Owners, since a project-level grant is every container at once whoever holds it;
+(c) the deployer read (D501) counts a project-level `iam.serviceAccountUser` holder, whose grant is
+`actAs` on every account of the project, the service's own included;
+(d) the remove advice and its `gcloud secrets remove-iam-policy-binding` line are for a container
+carrying Fugaro's managed label only — for a container Fugaro did not create the line reviews its
+readers instead, because they may belong to another application in the same project. The plan's B0.3
+behaviour line carries the same four, and the tests that pin them are named there.
 
 **D497a, amended after review (rounds 1 and 2, 2026-10-27), outside the owner's cell, for the owner to confirm (O5):** the code fact that every runnable branch matches `task.BranchRE` makes the branch rule stronger than the row assumed; and branch binding alone leaves pull-request writes open (F28), so the launcher-minted claim also names the run's pull requests (`fpr`), and is not minted for review and artifact runs, which never push (review round 2); the row's "version-skew constant for old launchers" is dropped because a constant in the new binary cannot stop an older launcher (O3). The owner's intent (a launcher-minted binding, now) is kept; only the claim's content widens B1.1 and B1.4's `fpr` rules wait on O5.
 

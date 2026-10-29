@@ -216,20 +216,51 @@ func (s *Secrets) Delete(ctx context.Context, id string) error {
 // the build account for what its builds read.
 const SecretAccessorRole = "roles/secretmanager.secretAccessor"
 
-// SecretAccessors reads secret id's live IAM policy and returns the members
-// granted SecretAccessorRole, sorted and deduplicated. Metadata only: like
-// every other read here it never touches a version's value.
+// SecretBinding is one binding of a container's IAM policy: the role and the
+// members it is granted to, as the policy lists them.
+type SecretBinding struct {
+	Role    string
+	Members []string
+}
+
+// SecretPolicy reads secret id's live IAM policy and returns its bindings.
+// Metadata only: like every other read here it never touches a version's
+// value.
 //
-// A conditional binding of the same role counts: it is still a grant this
-// caller has to account for. The policy is read at version 3, so a
-// conditional binding is not silently dropped from the answer.
-func (s *Secrets) SecretAccessors(ctx context.Context, id string) ([]string, error) {
+// Bindings rather than the members of one role, because the role is part of
+// the answer: doctor's reader sweep asks which role a member holds it
+// through, and a role other than the one Fugaro grants can carry the read as
+// well.
+//
+// A conditional binding counts: it is still a grant this caller has to
+// account for. The policy is read at version 3, so a conditional binding is
+// not silently dropped from the answer.
+func (s *Secrets) SecretPolicy(ctx context.Context, id string) ([]SecretBinding, error) {
 	p, err := s.svc.Projects.Secrets.GetIamPolicy(s.name(id)).OptionsRequestedPolicyVersion(3).Context(ctx).Do()
 	if err != nil {
 		return nil, fmt.Errorf("reading the IAM policy of secret %s: %w", id, err)
 	}
-	var out []string
+	out := make([]SecretBinding, 0, len(p.Bindings))
 	for _, b := range p.Bindings {
+		if b == nil {
+			continue
+		}
+		out = append(out, SecretBinding{Role: b.Role, Members: b.Members})
+	}
+	return out, nil
+}
+
+// SecretAccessors reads secret id's live IAM policy and returns the members
+// granted SecretAccessorRole, sorted and deduplicated. Metadata only, like
+// SecretPolicy, which it reads through: the one role Fugaro itself grants on
+// a container.
+func (s *Secrets) SecretAccessors(ctx context.Context, id string) ([]string, error) {
+	bindings, err := s.SecretPolicy(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, b := range bindings {
 		if b.Role != SecretAccessorRole {
 			continue
 		}

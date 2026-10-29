@@ -43,32 +43,59 @@ var secretReaderRoles = []string{"roles/secretmanager.admin", "roles/secretmanag
 //
 // Editor is deliberately not here. Secret Manager grants Editor
 // secretmanager.secrets.getIamPolicy and delete but not versions.access: an
-// Editor reads a container only through a secretAccessor grant of its own,
-// which is a grant like any other and the per-container half reports it.
+// Editor reads a container directly only through a secretAccessor grant of its
+// own, which is a grant like any other and the per-container half reports it.
 // Naming Editors as readers would be a claim the live role does not support,
-// and it would hide exactly those grants.
+// and it would hide exactly those grants. (roles/editor also carries
+// iam.serviceAccounts.actAs and run.services.update, so an Editor reaches a
+// value indirectly too — by deploying code that runs as an account holding a
+// grant. That is a deploy, not a container grant, and this check is about the
+// latter.)
 var basicRoles = []string{"roles/owner"}
 
 // runServiceRoles and actAsRoles are the predefined roles that carry
 // run.services.update (deploying a Cloud Run service) and
 // iam.serviceAccounts.actAs (deploying one that runs as another account),
-// recognized by name for secretReaderRoles' reason. The two lists differ:
-// Editor, run.admin and run.developer update a service without carrying actAs,
-// so a holder of one of them on an account's policy is not a deployer of that
-// account — running as an account needs a serviceAccountUser grant of its own,
-// or Owner, which carries actAs with the rest of its roles.
+// recognized by name for secretReaderRoles' reason. The two lists differ by
+// run.admin and run.developer, which update a service without carrying actAs:
+// a holder of one of them on an account's policy is not a deployer of that
+// account through an actAs grant. Editor is in both, because roles/editor carries
+// actAs as well as run.services.update; the two reads produce the same
+// member-and-role pair for a project-level Editor, and the line deduplicates
+// them, so listing it twice costs nothing. Running as an account needs actAs
+// from a serviceAccountUser grant of its own, or from Owner or Editor.
 var (
 	runServiceRoles = []string{"roles/owner", "roles/editor", "roles/run.admin", "roles/run.developer"}
-	actAsRoles      = []string{"roles/owner", "roles/iam.serviceAccountUser"}
+	actAsRoles      = []string{"roles/owner", "roles/editor", "roles/iam.serviceAccountUser"}
 )
 
+// doctorSecretManagerChecks is the plan's B0.3 pair of reads, taken from one
+// pass over the two things they share: the project's IAM policy and the cache
+// of what a custom role carries. Both halves ask that policy a different
+// question, and a second read of it is a second answer to the same question.
+//
+// The reader sweep needs a Secret Manager client and is left out without one;
+// the deployer read does not, so a test configuration still gets its line.
+func doctorSecretManagerChecks(ctx context.Context, lc *localcfg.Config, sm *gcp.Secrets, crmSvc *crm.Service) []doctorCheck {
+	if sm == nil && lc.CredentialsService == nil {
+		return nil
+	}
+	roles := newIAMRoles(ctx, lc)
+	pol, polErr := projectPolicy(ctx, lc, crmSvc)
+	var checks []doctorCheck
+	if sm != nil {
+		checks = append(checks, doctorSecretReaderChecks(ctx, lc, sm, pol, polErr, roles)...)
+	}
+	return append(checks, doctorCredentialsServiceDeployers(ctx, lc, pol, polErr, roles)...)
+}
+
 // doctorSecretReaderChecks is doctor's "secret-readers-unexpected" sweep (plan
-// B0.3, D503a): every member holding secretAccessor on any container of the
-// installation's project that is not one of the account classes Fugaro
-// creates for it, and every service account holding, at the project level, a
-// role that carries secretmanager.versions.access other than the classes
-// Fugaro grants. A member Fugaro never created is what an over-granted or
-// compromised principal looks like from outside, and no other doctor check
+// B0.3, D503a): every member of a role that reads a container's values on any
+// container of the installation's project that is not one of the account
+// classes Fugaro creates for it, and every principal holding, at the project
+// level, a role that carries secretmanager.versions.access other than the
+// classes Fugaro grants. A member Fugaro never created is what an over-granted
+// or compromised principal looks like from outside, and no other doctor check
 // reads a container this installation did not create.
 //
 // A warning, never red: a grant can be a leftover of a hand change or a
@@ -79,11 +106,16 @@ var (
 //
 // Owners are reported once, as information (F3): they can read every
 // container whatever its own policy says, and naming them per container would
-// bury the grants that mean something.
-func doctorSecretReaderChecks(ctx context.Context, lc *localcfg.Config, sm *gcp.Secrets, crmSvc *crm.Service) []doctorCheck {
-	if sm == nil {
-		return nil
-	}
+// bury the grants that mean something. An Editor is not a reader of its own —
+// roles/editor carries no secretmanager.versions.access — so an Editor's
+// container grant is a finding like any other member's.
+//
+// What the sweep advises depends on whose container it is (the owner's ruling
+// of 2026-10-29): a container Fugaro created may be cleaned up, and its
+// readers that Fugaro did not create are removed by hand; a container Fugaro
+// did not create is only reviewed, since its readers may be another
+// application's and are not Fugaro's to remove.
+func doctorSecretReaderChecks(ctx context.Context, lc *localcfg.Config, sm *gcp.Secrets, pol *crm.Policy, polErr error, roles *iamRoles) []doctorCheck {
 	var (
 		owners []string
 		checks []doctorCheck
@@ -99,23 +131,24 @@ func doctorSecretReaderChecks(ctx context.Context, lc *localcfg.Config, sm *gcp.
 		slices.SortFunc(containers, func(a, b gcp.SecretInfo) int { return strings.Compare(a.ID, b.ID) })
 	}
 	known := fugaroSecretReaderMembers(lc)
-	roles := newIAMRoles(ctx, lc)
 	// The project's own policy first: its basic roles are named once, and its
 	// reader roles are a finding of their own, since a project-level grant is
 	// every container at once.
-	pol, err := projectPolicy(ctx, lc, crmSvc)
-	if err != nil {
+	if polErr != nil {
 		checks = append(checks, doctorCheck{ID: "secret-readers-unexpected", Severity: "warning",
-			Problem: "could not read the IAM policy of project " + lc.GCPProject + ", so whether it grants anyone a role that reads every secret is unknown, not no: " + oneLineCLI(err.Error()),
+			Problem: "could not read the IAM policy of project " + lc.GCPProject + ", so whether it grants anyone a role that reads every secret is unknown, not no: " + oneLineCLI(polErr.Error()),
 			Fix:     "rerun fugaro doctor with access to the project, or as an operator"})
 	} else {
 		owners = basicRoleMembers(pol)
-		checks = append(checks, projectLevelReaderChecks(pol, lc.GCPProject, known, roles)...)
+		checks = append(checks, projectLevelReaderChecks(pol, lc.GCPProject, known, owners, roles)...)
 	}
 
-	var unreadPolicy []string
+	var (
+		unreadPolicy []string
+		unreadRoles  []string
+	)
 	for _, s := range containers {
-		members, err := sm.SecretAccessors(ctx, s.ID)
+		bindings, err := sm.SecretPolicy(ctx, s.ID)
 		if err != nil {
 			// Fail closed, as the launcher check does for a job's policy: a
 			// container nobody read is not one nobody can read.
@@ -123,27 +156,62 @@ func doctorSecretReaderChecks(ctx context.Context, lc *localcfg.Config, sm *gcp.
 			continue
 		}
 		var extra []string
-		for _, m := range members {
-			if known[m] || slices.Contains(owners, m) ||
-				(strings.HasPrefix(s.ID, tf.ManagedPrefix) && managedAccountMember(m, lc.GCPProject)) {
+		for _, b := range bindings {
+			carries, errText := secretReaderRole(b.Role, roles)
+			if errText != "" {
+				unreadRoles = append(unreadRoles, "what "+pluginwire.Printable(b.Role)+" carries, on secret "+containerName(s))
 				continue
 			}
-			extra = append(extra, m)
+			if !carries {
+				continue
+			}
+			for _, m := range b.Members {
+				if strings.HasPrefix(m, "deleted:") || known[m] || slices.Contains(owners, m) ||
+					(strings.HasPrefix(s.ID, tf.ManagedPrefix) && managedAccountMember(m, lc.GCPProject)) {
+					continue
+				}
+				extra = append(extra, m+" ("+b.Role+")")
+			}
 		}
 		if len(extra) == 0 {
 			continue
 		}
-		checks = append(checks, doctorCheck{ID: "secret-readers-unexpected", Severity: "warning",
-			Problem: fmt.Sprintf("secret %s grants %s to %s, which Fugaro does not create for it: each of them can read every version of it",
-				containerName(s), gcp.SecretAccessorRole, strings.Join(printableNames(extra), ", ")),
-			Fix: "review each member and remove the ones Fugaro did not create: gcloud secrets remove-iam-policy-binding SECRET --member=MEMBER --role=" + gcp.SecretAccessorRole +
-				" (" + selfCommand() + " secrets ls --json prints each container's id)"})
+		slices.Sort(extra)
+		extra = slices.Compact(extra)
+		problem := fmt.Sprintf("secret %s grants a role that reads every version to %s: each of them can read every version of it",
+			containerName(s), strings.Join(printableNames(extra), ", "))
+		check := doctorCheck{ID: "secret-readers-unexpected", Severity: "warning", Problem: problem}
+		// The managed label chooses only the line's wording — its Problem text
+		// and its fix — and never who is reported: anyone who may add a label to
+		// the container (secretmanager.secrets.update) can write `fugaro=managed`
+		// on one Fugaro did not create, and the worst that buys is the removal
+		// advice in place of the review one, with the ownership clause that goes
+		// with it. The reader is named either way, so the label can never hide
+		// one — which is why the sweep decides its wording from the label rather
+		// than trusting it to bound the finding.
+		if fugaroContainer(s) {
+			check.Problem += ", and Fugaro does not create them for it"
+			check.Fix = "review each member and remove the ones Fugaro did not create: gcloud secrets remove-iam-policy-binding SECRET --member=MEMBER --role=ROLE" +
+				" (" + selfCommand() + " secrets ls --json prints each container's id)"
+		} else {
+			check.Problem += ", and Fugaro did not create this container, so a reader on it may be another application's"
+			check.Fix = "review each member against the application or plan that owns this container: Fugaro did not create it, so its readers are not Fugaro's to remove" +
+				" (gcloud secrets get-iam-policy SECRET prints them)"
+		}
+		checks = append(checks, check)
 	}
 	if len(unreadPolicy) > 0 {
 		checks = append(checks, doctorCheck{ID: "secret-readers-unexpected", Severity: "warning",
 			Problem: fmt.Sprintf("could not read the IAM policy of %d secret container(s): ", len(unreadPolicy)) + strings.Join(unreadPolicy, ", ") +
-				", so whether they grant secretAccessor to anyone else is unknown, not no",
+				", so whether they grant a role that reads them to anyone else is unknown, not no",
 			Fix: "rerun fugaro doctor with access to the project, or as an operator who can read each container (gcloud secrets get-iam-policy SECRET)"})
+	}
+	if len(unreadRoles) > 0 {
+		slices.Sort(unreadRoles)
+		unreadRoles = slices.Compact(unreadRoles)
+		checks = append(checks, doctorCheck{ID: "secret-readers-unexpected", Severity: "warning",
+			Problem: "could not read " + strings.Join(unreadRoles, ", ") + ", so whether they read every version of those containers is unknown, not no",
+			Fix:     "rerun fugaro doctor with access to the project, or as an operator who can read each role (gcloud iam roles describe ROLE)"})
 	}
 	if len(owners) > 0 {
 		checks = append(checks, doctorCheck{ID: "secret-readers-unexpected", Severity: "info",
@@ -151,6 +219,15 @@ func doctorSecretReaderChecks(ctx context.Context, lc *localcfg.Config, sm *gcp.
 			Fix:     "no grant takes this away: review who holds roles/owner (gcloud projects get-iam-policy " + quoteWord(lc.GCPProject) + ") and keep that list short, since every holder can read every credential the installation stores"})
 	}
 	return checks
+}
+
+// fugaroContainer reports whether the container is one Fugaro created, by the
+// managed label it writes on every container it makes. A container without it
+// may belong to another application in the same project: its readers are that
+// application's to decide, so the sweep reviews them instead of advising a
+// removal Fugaro has no business making.
+func fugaroContainer(s gcp.SecretInfo) bool {
+	return s.Labels[gcp.LabelManaged] == gcp.ManagedValue
 }
 
 // projectPolicy reads the installation project's IAM policy at version 3, the
@@ -180,16 +257,17 @@ func basicRoleMembers(pol *crm.Policy) []string {
 }
 
 // projectLevelReaderChecks is the project-level half of the sweep: every
-// service account the project's own policy lets read a secret's value. Only
-// service accounts are named — a project-level grant to a person or a group
-// is a human's, and F3's basic roles are the ones doctor reports as such —
-// and only a role that carries the permission, so a launcher's
-// secretmanager.secrets.list is not mistaken for a reader's.
+// principal the project's own policy lets read a secret's value — a service
+// account of this project or another, and, since a project-level grant is
+// every container at once, a person or a group too. Owners are left out: F3's
+// line names them once, and a holder of roles/owner is on it whatever else
+// the policy binds. Only a role that carries the permission is reported, so a
+// launcher's secretmanager.secrets.list is not mistaken for a reader's.
 //
 // A custom role is expanded through the IAM API, since only its definition
 // says what it carries; one that could not be read is a finding of its own,
 // because whether it reads secrets is then unknown rather than no.
-func projectLevelReaderChecks(pol *crm.Policy, project string, known map[string]bool, roles *iamRoles) []doctorCheck {
+func projectLevelReaderChecks(pol *crm.Policy, project string, known map[string]bool, owners []string, roles *iamRoles) []doctorCheck {
 	var found, unread []string
 	for _, b := range pol.Bindings {
 		if b == nil {
@@ -204,7 +282,7 @@ func projectLevelReaderChecks(pol *crm.Policy, project string, known map[string]
 			continue
 		}
 		for _, m := range b.Members {
-			if !strings.HasPrefix(m, "serviceAccount:") || known[m] || strings.HasPrefix(m, "deleted:") {
+			if strings.HasPrefix(m, "deleted:") || known[m] || slices.Contains(owners, m) {
 				continue
 			}
 			found = append(found, m+" ("+b.Role+")")
@@ -217,7 +295,7 @@ func projectLevelReaderChecks(pol *crm.Policy, project string, known map[string]
 	var out []doctorCheck
 	if len(found) > 0 {
 		out = append(out, doctorCheck{ID: "secret-readers-unexpected", Severity: "warning",
-			Problem: "project " + project + " grants a role that reads every secret to " + strings.Join(printableNames(found), ", ") + ", which Fugaro does not create: a project-level grant is every container at once",
+			Problem: "project " + project + " grants a role that reads every secret to " + strings.Join(printableNames(found), ", ") + ", which Fugaro does not grant: a project-level grant is every container at once",
 			Fix:     "review each grant and remove the ones Fugaro did not create: gcloud projects remove-iam-policy-binding " + quoteWord(project) + " --member=MEMBER --role=ROLE"})
 	}
 	if len(unread) > 0 {
@@ -320,8 +398,10 @@ func fugaroSecretReaderMembers(lc *localcfg.Config) map[string]bool {
 // read (plan B0.3, D501): who may deploy the credentials service — the
 // principals holding, on the project or on the service itself, a role that
 // updates a Cloud Run service, and those holding iam.serviceAccounts.actAs on
-// the account it runs as. It is silent for an installation that has not opted
-// in, which is what the presence of the credentials_service block means.
+// the account it runs as or, through a project-level grant, on every account
+// of the project, its own included. It is silent for an installation that has
+// not opted in, which is what the presence of the credentials_service block
+// means.
 //
 // Information, never a failure: every one of these grants is a legitimate way
 // to operate the installation — an operator deploys the service, the owner
@@ -334,20 +414,28 @@ func fugaroSecretReaderMembers(lc *localcfg.Config) map[string]bool {
 // account; a grant of either is named, and a policy that could not be read is
 // named as unread rather than left out — as is a custom role nobody could
 // resolve, since "not read" and "carries nothing" are not the same answer.
-func doctorCredentialsServiceDeployers(ctx context.Context, lc *localcfg.Config, crmSvc *crm.Service) []doctorCheck {
+func doctorCredentialsServiceDeployers(ctx context.Context, lc *localcfg.Config, pol *crm.Policy, polErr error, roles *iamRoles) []doctorCheck {
 	if lc.CredentialsService == nil {
 		return nil
 	}
-	roles := newIAMRoles(ctx, lc)
 	var (
 		deployers []deployer
 		unread    []string
 	)
-	pol, err := projectPolicy(ctx, lc, crmSvc)
-	if err != nil {
+	if polErr != nil {
 		unread = append(unread, "the IAM policy of project "+lc.GCPProject)
 	} else {
-		got, unknown := deployerMembers(bindingsOf(pol.Bindings, crmBindingFields), roles, runServiceRoles, runServicesUpdate, "the project's policy")
+		// The project's policy is asked twice: once for a role that updates a
+		// service, once for one that acts as an account. A holder of the
+		// latter can deploy a revision that runs as the service's account,
+		// which reads every credential in the bundle — so it is a deployer of
+		// it, even though the deploy itself still needs the update grant
+		// somewhere (the owner's ruling, 2026-10-29).
+		projectBindings := bindingsOf(pol.Bindings, crmBindingFields)
+		got, unknown := deployerMembers(projectBindings, roles, runServiceRoles, runServicesUpdate, "the project's policy")
+		deployers = append(deployers, got...)
+		unread = append(unread, unknown...)
+		got, unknown = deployerMembers(projectBindings, roles, actAsRoles, actAs, "the project's policy")
 		deployers = append(deployers, got...)
 		unread = append(unread, unknown...)
 	}
@@ -404,6 +492,10 @@ func doctorCredentialsServiceDeployers(ctx context.Context, lc *localcfg.Config,
 	})
 	deployers = slices.Compact(deployers)
 	slices.Sort(unread)
+	// The project's policy is asked two questions, so one unread role or
+	// policy can be named twice: the line lists what could not be read, and
+	// the same thing read once is the same gap.
+	unread = slices.Compact(unread)
 	// The count is of principals, not of grants: one person holding two roles
 	// that can deploy is one person who can deploy, and the line exists to say
 	// how many of them there are.

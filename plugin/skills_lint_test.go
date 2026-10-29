@@ -946,6 +946,18 @@ func (ci *commandIndex) checkCommand(f *skillFile, line int, text string, c fuga
 	if len(c.args) == 0 || strings.ContainsAny(c.args[0], "<[…") {
 		return nil // a mention of the program, or a placeholder where the subcommand would be
 	}
+	// A paid command is accepted by NAME: what it answers to below that name,
+	// and every flag it carries, is the tagged tree's to check
+	// (ee/plugincheck/skills_test.go). The core's tree holds the command today
+	// and the flagless stub after the move, and the stub parses no flags and
+	// has no subcommands — so judging either half here would report the lines a
+	// released binary still answers to the moment the command moves out (F18,
+	// design ee-boundary-moves.md §9, D536). The rules that are not about what
+	// the tree has — the owner's commands, the flags an agent must never pass —
+	// are applied to every command, this one included.
+	if paidCommandUnder(c.path) != "" {
+		return nil
+	}
 	if c.cmd == ci.root {
 		return []string{fmt.Sprintf("%s:%d: `%s` names no fugaro command", f.path, line, text)}
 	}
@@ -966,6 +978,22 @@ func (ci *commandIndex) checkCommand(f *skillFile, line int, text string, c fuga
 		}
 	}
 	return out
+}
+
+// paidCommandUnder answers the paid command a resolved command path sits under
+// — the first word after `fugaro`, when cli.PaidCommandNames() holds it — or ""
+// for every other path. The path is what the tree resolved rather than the line
+// as written, so a global flag before the subcommand does not hide the name.
+func paidCommandUnder(path string) string {
+	rest, ok := strings.CutPrefix(path, "fugaro ")
+	if !ok {
+		return ""
+	}
+	name, _, _ := strings.Cut(rest, " ")
+	if slices.Contains(cli.PaidCommandNames(), name) {
+		return name
+	}
+	return ""
 }
 
 // manifestKeys are the keys plugin.json may have: metadata only, nothing that
@@ -1202,6 +1230,23 @@ func TestLintRejectsUnknownSubcommand(t *testing.T) {
 	expectViolation(t, demoTree(t, "Run `fugaro budget sett`.\n"), `has no subcommand "sett"`)
 	expectViolation(t, demoTree(t, "```bash\nfugaro image biuld --local\n```\n"), `has no subcommand "biuld"`)
 	expectClean(t, demoTree(t, "Run `fugaro budget show`, `fugaro image build --local`, then `fugaro budget`.\n"))
+}
+
+// TestLintAcceptsAPaidCommandByName (D536): the core tree answers to a paid
+// command with the stub a build without that code shows, which parses no flags
+// and has no subcommands, so the lint cannot judge a paid command's flags or
+// its group's subcommands and must not report the lines a released binary
+// answers to — the move must not turn them red (F18). The tagged tree is where
+// they are checked (ee/plugincheck/skills_test.go). The owner-command and
+// forbidden-flag rules still apply to these lines, which is why the two below
+// are the flag and subcommand checks and nothing else.
+func TestLintAcceptsAPaidCommandByName(t *testing.T) {
+	expectClean(t, demoTree(t, "```bash\nfugaro report --by repo\nfugaro coordinator status --from-store --all --json\n```\n"))
+	expectClean(t, demoTree(t, "Run `fugaro report --no-such-flag` and `fugaro coordinator nosuch`.\n"))
+	// What the tree has is not the whole lint: the safety rules are judged on
+	// the line whatever command it runs, so a paid name buys no exemption from
+	// them.
+	expectViolation(t, demoTree(t, "```bash\nfugaro report --yes\n```\n"), "a flag the agent must never pass")
 }
 
 func TestLintRejectsUnknownFlag(t *testing.T) {
