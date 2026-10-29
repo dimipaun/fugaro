@@ -2688,7 +2688,17 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       for (const row of classed(drawn, rowClass)) {
         const id = classed(row, idClass)[0]?.textContent ?? ''
         if (!known.has(id)) continue
-        surface.nodeOf(row).addEventListener('click', () => {
+        surface.nodeOf(row).addEventListener('click', (event: Event) => {
+          // **A write the row draws is not the door.** A lost run's Reap is
+          // drawn `aria-disabled` rather than `disabled` so a keyboard reader
+          // reaches it and hears why it does nothing (`writes.ts`) -- which is
+          // what lets its click fire and bubble to this listener. The row is a
+          // door to the run, and a click that landed on a button inside it is
+          // the button's, not the run's.
+          const target = event.target as Element | null
+          if (target !== null && typeof target.closest === 'function' && target.closest('button') !== null) {
+            return
+          }
           void showRun(id)
         })
       }

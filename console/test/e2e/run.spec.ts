@@ -527,7 +527,9 @@ const ARRIVALS: readonly JSONDoc[] = [
 test.describe('the Run detail screen', () => {
   // One window, one page, and the tests in order: each draws the screen it is
   // about into the same document, and the goldens are taken from what the test
-  // before them mounted.
+  // before them mounted. The page is the console's *current* window (`pageNow`)
+  // rather than the one `beforeAll` saw, because the console replaces its window
+  // -- closing that one -- when a lifecycle decision lands.
   test.describe.configure({ mode: 'serial' })
 
   let app: ElectronApplication
@@ -554,6 +556,23 @@ test.describe('the Run detail screen', () => {
     cli.remove()
   })
 
+  /** pageNow is the page of the window the console is showing now.
+   *
+   * It is asked for per mount instead of kept from `beforeAll`: the console
+   * answers a lifecycle decision by opening the window it switches to and
+   * closing the one it replaces (`src/main/window.ts`), so a handle taken once
+   * names a window that can be gone by the time a later case in this serial
+   * describe reads through it -- which is `Target page, context or browser has
+   * been closed` on whichever case is reading when it goes. */
+  async function pageNow(): Promise<Page> {
+    if (!page.isClosed()) return page
+    page =
+      app.windows().find((candidate) => !candidate.isClosed()) ??
+      (await app.waitForEvent('window', { predicate: (candidate: Page) => !candidate.isClosed() }))
+    await page.waitForLoadState('domcontentloaded')
+    return page
+  }
+
   /** mount draws the run and fails with the window's own words if the bundle
    * could not be loaded or the screen refused to draw. */
   async function mount(
@@ -564,12 +583,23 @@ test.describe('the Run detail screen', () => {
     scrubAt: string | null,
     theme: string,
   ): Promise<void> {
-    const result = await app.evaluate(async ({ BrowserWindow }, source) => {
-      const window = BrowserWindow.getAllWindows()[0]
-      if (window === undefined) return { error: 'the console has no window' }
-      return (await window.webContents.executeJavaScript(source, true)) as { error?: string }
-    }, draw(diagnosis, logs, logLink, replay, scrubAt, theme))
+    const shown = await pageNow()
+    // The window the draw goes into is the window this case reads back through:
+    // it is taken from the page rather than as `getAllWindows()[0]`, so a mount
+    // cannot be drawn into one window and read out of another.
+    const window = await app.browserWindow(shown)
+    const result = (await window.evaluate(
+      async (
+        held: { webContents: { executeJavaScript(source: string, userGesture: boolean): Promise<unknown> } },
+        source: string,
+      ) => (await held.webContents.executeJavaScript(source, true)) as { error?: string },
+      draw(diagnosis, logs, logLink, replay, scrubAt, theme),
+    )) as { error?: string }
     expect(result.error).toBeUndefined()
+    // The window's own entry draws the real dashboard into this same document
+    // beside the mount, and a redraw of that is not this case's screen: wait
+    // for the tree this draw made before the case reads it.
+    await shown.locator(`${THE_MOUNT} .run`).waitFor({ state: 'attached' })
   }
 
   test('draws the ledger, the outcome and the halt', async () => {
