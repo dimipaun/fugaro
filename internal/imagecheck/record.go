@@ -91,6 +91,33 @@ func (r *Record) NewerThan(o *Record) bool {
 	return r.SourceCommit == o.SourceCommit && r.BuiltAt.After(o.BuiltAt)
 }
 
+// LatestRef is the reference whose digest is compared with the record's
+// own: the record's image at its latest tag, the tag the build promoted
+// ImageDigest to. ok is false when the record names no image, or no digest
+// of its own — the render half of a record, before the build's record step
+// completed it — and there is then nothing to read or compare.
+func (r *Record) LatestRef() (ref string, ok bool) {
+	if r == nil || r.Image == "" || r.ImageDigest == "" {
+		return "", false
+	}
+	return r.Image + ":latest", true
+}
+
+// DigestMismatch reports whether live, the digest the record's latest tag
+// resolves to now, is not the digest ImageDigest records the build
+// promoted: the drift the daily check rebuilds for (ReasonLatestDrift). A
+// launch warns about it and goes on, since Cloud Run cannot vary the image
+// per execution and nothing pins the digest a build recorded (D619). A
+// record that names no digest, and an unknown live digest, are nothing to
+// compare rather than a mismatch: neither then says anything about the
+// image a job runs.
+func (r *Record) DigestMismatch(live string) bool {
+	if r == nil || r.ImageDigest == "" || live == "" {
+		return false
+	}
+	return live != r.ImageDigest
+}
+
 // ParseRecord decodes a record. Unknown fields are ignored, so a record a
 // newer fugaro wrote still reads.
 func ParseRecord(data []byte) (*Record, error) {

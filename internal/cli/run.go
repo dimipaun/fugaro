@@ -21,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/policy"
@@ -799,6 +800,12 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 					return launchResult{}, err
 				}
 			}
+			// The digest drift, last of this branch's image reads, and the
+			// only one that never refuses: a checkout: clone workflow has no
+			// derived image and so no record to compare (the branch above),
+			// and nothing here can stop a launch D619 ruled may not be
+			// pinned.
+			warnImageDigestDrift(ctx, env, slug, spec, warn)
 		}
 		if spec.Mode == recipe.ModeArtifact {
 			// The mode: artifact gate: a task carrying mode is refused
@@ -891,6 +898,52 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 		res.ProjectLayer = &launchProjectLayer{SHA256: spec.ProjectLayer.SHA256, Generation: spec.ProjectLayer.Generation}
 	}
 	return res, nil
+}
+
+// warnImageDigestDrift warns, once, when the workflow's image is no longer at
+// the digest its build record names: the record and the registry's latest tag
+// disagree, so what the job runs and what the record says it runs are not the
+// same image. It is a warning and never a refusal, and it pins nothing: Cloud
+// Run cannot vary the image per execution, so a launch has no way to run the
+// recorded digest (D619) — it only tells the operator, whose fix is the daily
+// image check or fugaro image refresh. Neither side's read can refuse the
+// launch either: a workflow with no build record at all — a checkout: clone
+// workflow runs the installation's base image and is never built — is silent,
+// and anything the launcher cannot read is a warning.
+func warnImageDigestDrift(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, warn io.Writer) {
+	skip := func(why string) {
+		fmt.Fprintf(warn, "warning: the image digest of %s workflow %s is not compared with its build record: %s\n", spec.Repo, spec.Workflow, why)
+	}
+	b, err := env.recordBucket(ctx)
+	if err != nil {
+		skip(oneLine(err.Error()))
+		return
+	}
+	data, _, err := b.Read(ctx, imagecheck.RecordKey(slug, spec.Workflow))
+	switch {
+	case errors.Is(err, blobx.ErrNotExist):
+		return
+	case err != nil:
+		skip(oneLine(err.Error()))
+		return
+	}
+	rec, err := imagecheck.ParseRecord(data)
+	if err != nil {
+		skip("the record is unreadable (" + oneLine(err.Error()) + ")")
+		return
+	}
+	ref, ok := rec.LatestRef()
+	if !ok {
+		return
+	}
+	live, err := checkRegistry().Digest(ctx, ref)
+	if err != nil {
+		skip(oneLine(err.Error()))
+		return
+	}
+	if rec.DigestMismatch(live) {
+		fmt.Fprintf(warn, "warning: the image of %s workflow %s is at digest %s, not the %s its build record names\n", spec.Repo, spec.Workflow, live, rec.ImageDigest)
+	}
 }
 
 // taskText is the task from exactly one of TEXT and --task-file. With
