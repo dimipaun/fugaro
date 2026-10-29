@@ -53,10 +53,6 @@ func Markdown(d Digest) []byte {
 	block, _ := json.Marshal(d.Summary())
 	b.Write(block)
 	b.WriteString("\n```\n")
-
-	// A build that registered the extra-section hook prints its sections
-	// after the machine-readable block; a build that registered none prints
-	// nothing here and the bytes above are the whole report (section 5.4).
 	b.WriteString(sectionsMarkdown(d))
 	return []byte(b.String())
 }
