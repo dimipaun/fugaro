@@ -16,9 +16,10 @@ this work extends — D236's recommendation — and not 0.11.0**, which the cent
 (`docs/central-orchestrator/implementation-plan.md`) and the rigor modes work (open PR #773) hold.
 No part assumes a release that has not shipped.
 
-**The plan is written to D221–D236, and the owner must answer them.** Each recommendation is the
-one the parts mean, and every part names the decision it would be rewritten for. **The plan is
-also written to a second thing it cannot supply itself**: the mobile work's Phase 6 tasks —
+**The plan is written to D221–D236, and the owner has answered them — all sixteen as recommended,
+on 2026-10-22.** Each recommendation is the one the parts mean, and every part names the decision
+it would be rewritten for. **The plan is also written to a second thing it cannot supply
+itself**: the mobile work's Phase 6 tasks —
 `docs/mobile/implementation-plan.md`'s **P6.6** (`internal/cli/pair.go`,
 `internal/budget/token/device.go`) and **P6.8** (`mobile/src/pairing/`) — are **approved 2026-10-18
 and unbuilt**, and this work extends both. **Nothing here can be merged before they exist**, which
@@ -169,9 +170,10 @@ reviewer, the usual path), **careful** (a reviewer who reads the record, the rul
 model** — this plan asks for Opus — with its own paragraph in the pull request body saying what was
 reviewed and what was not).
 
-**P0 and P1 need no new decision and can start as soon as the owner says so.** P2 needs D222/D225.
-P3 needs the Phase 6 pair to exist. P4 needs Phase 6's P6.8. P5 needs P3. P6 needs only D221's
-answer.
+**P0 and P1 need no new decision, and the owner's approval of 2026-10-22 opens both.** P2 needs
+D222/D225. P3 needs the Phase 6 pair to exist. P4 needs Phase 6's P6.8. P5 needs P3. P6 needs only
+D221's answer. **The decisions are answered and the parts are not**: P0 and P1 are the two the
+owner approved, and every other part is still reviewed on its own, on a branch of its own.
 
 ---
 
@@ -185,7 +187,9 @@ because *"the spec stops being verbatim"* is a thing a later edit can do silentl
 six section headings, and the absence of any decision number, any finding number and any of this
 folder's own vocabulary in it; **the four documents exist** and the index's status line says *"plan
 only; no code is implemented"*; **the decisions are D221–D236**, contiguous, each written as a
-`### D<n> — …` heading with its **Recommendation** first and its **Alternative**/cost after it;
+`### D<n> — …` heading with its **Recommendation** first and its **Alternative**/cost after it
+(D235, which scopes v1 rather than choosing between two things, states none — the guard names it as
+the one exception);
 **the parts are P0–P6**, contiguous and in order; and **the paths the reconciliation and the plan
 cite resolve on disk**, under the rule below. **What the guard does not hold is stated rather than
 implied**: a symbol named beside a citation without the possessive form is outside it, exactly as the
@@ -700,6 +704,13 @@ there is no live action of any kind in this work, and no step of any check is ru
 5. **Naming the release and the branch**: this plan recommends **the first release after the mobile
    Phase 6 tasks — not 0.11.0** (D236), and says that no part assumes a release that has not
    shipped.
+
+**Passed 2026-10-22.** The owner answered **D221–D236, each as recommended** — so §4's clauses 2,
+3 and 4 are answered, clause 5's release is the one D236 recommends, and clause 1's confirmation
+stands on the Phase 6 tasks being the ones that land — and approved **P0 and P1**, the two parts
+the owner approved. **What the gate did not open is as much a part of it**: **P2** waits on
+nothing but its own approval, **P3, P4 and P5 wait on P6.6 and P6.8**, and **P6** waits on nothing
+but D221 — and a part that lands is still reviewed on its own, with its own reviewer tier.
 
 **What this gate is not.** It is not an approval of any part: approving the plan answers §4's
 decisions, and each part is still reviewed on its own — five of them by an independent reviewer on

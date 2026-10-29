@@ -679,7 +679,7 @@ folders have written a pin since** — `main` holds 70 — among them `internal/
 route's Windows forms), `internal/cli/docs_setup_wizard_checks_test.go` (#771, the
 register's Check 27), `internal/cli/docs_live_init_census_test.go` (#772, the
 setup wizard's rename census), `internal/cli/docs_windows_console_test.go`
-(#774, the Console on Windows, whose folder did not exist at `1d325928`) and
+(#774, the Console on Windows, whose folder did not exist at `1d325928`),
 `internal/cli/docs_mobile_release_workflow_test.go` (#777, the mobile release
 workflow while it waits under `docs/pending-workflows/`) and
 `internal/cli/docs_mobile_eas_runbook_test.go` (`docs/mobile/eas-signing-runbook.md`,
@@ -693,7 +693,9 @@ contributor licence agreement), `internal/cli/docs_ee_repo_test.go` and
 last four of which `main` gained before this branch merged it and are why `main`
 holds 70, and on this branch
 `internal/cli/docs_backlog_test.go`, which plan T4.3 wrote as the folder's own
-pin on `docs/backlog/` rather than on this folder. They
+pin on `docs/backlog/` rather than on this folder. (Amended 2026-10-29:
+`internal/cli/docs_mobile_auth_test.go`, the mobile auth folder's pin that its
+plan's P0 wrote, moved the table's row from 84 to 85.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.
@@ -712,7 +714,7 @@ stale has found a merge that did not.
 | Files in `internal/runner` that mention `Severity` at all | 3 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
 | Image-skew `Since` constants | 19 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
-| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 84 | `ls internal/cli/docs_*_test.go \| wc -l` |
+| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 85 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
 | Published project-policy version | 3 | `sed -n 's/^const Version = //p' internal/projectpolicy/version.go` |
 | Blocks the project layer's `defaults:` may set whose value names a repository | 0 | `sed -n '/^type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -ci repo` |
