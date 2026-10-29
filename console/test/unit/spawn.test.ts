@@ -98,13 +98,16 @@ import {
   DEFAULT_BACKOFF,
   WSL_SHELL_FLAG,
   WSL_SHELL_PROGRAM,
-  WSL_WRAPPER_MARKER,
+  WSL_WRAPPER_MARKER_PREFIX,
+  WSL_WRAPPER_NONCE_BYTES,
   VERSION_TIMEOUT_MS,
   withoutWrapperMarker,
   wrapperPidIn,
   wslStopArgs,
+  wslWrapperMarker,
   SpawnTimeout,
 } from '../../src/main/spawn'
+import { WSL_UTF8_VAR, WSL_UTF8_VALUE } from '../../src/main/wsl'
 import type {
   ChildSpawner,
   SpawnCommand,
@@ -201,6 +204,16 @@ afterEach(() => {
   vi.unstubAllEnvs()
   for (const directory of ownedTemporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true })
 })
+
+/** wrapperMarkerOf is the marker **this plan's** script printed: the readers
+ * match that one and no other (a plan carries it because the nonce is drawn per
+ * spawn -- `WslWrapper.marker`), so a case that puts a wrapper's line on a
+ * scripted child's stderr has to ask the plan for it. */
+function wrapperMarkerOf(plan: SpawnPlan): string {
+  const wrapper = plan.wrapper
+  if (wrapper === null) throw new Error('this plan carries no wrapper: it is the host route')
+  return wrapper.marker
+}
 
 /** safeContext is the main-process state a plan is built from in a test.
  * `wsl` is the WSL route (T-C5) and is absent for the host route, which is the
@@ -2210,11 +2223,12 @@ describe('the WSL resolution path', () => {
 
   it('builds the wrapper on the plan: `wsl.exe`, the distribution, the directory, the CLI’s own argv', () => {
     const wsl = installWslStub(freshDirectory(), { distros: TWO_DISTROS })
-    const plan = planFor('budget.show', {}, safeContext({
+    const context = safeContext({
       binaryPath: '',
       directory: '/Users/owner/AppData/Local/Temp/fugaro-console/cwd',
       wsl: { distro: 'Ubuntu', directory: '/home/dimi/src/fugaro', executable: wsl.binary },
-    }))
+    })
+    const plan = planFor('budget.show', {}, context)
     // The program the console starts is `wsl.exe` -- here, the fake -- and not
     // the CLI: on this route there is no host path to the CLI at all.
     expect(plan.command).toBe(wsl.binary)
@@ -2246,7 +2260,17 @@ describe('the WSL resolution path', () => {
     // The marker T-F1 classifies by, the pid T-F4's stop names -- on the same
     // line, because that is the one channel the console reads -- and the CLI's
     // argv, each word quoted, so a project named `$(id)` is a word.
-    expect(script).toContain(`printf '%s %s\\n' '${WSL_WRAPPER_MARKER}' "$$" >&2`)
+    //
+    // The marker carries **this plan's nonce** (review of `#981`): the fixed
+    // prefix a CLI could echo, then `WSL_WRAPPER_NONCE_BYTES` bytes of hex drawn
+    // per spawn. The mutation this catches: print the fixed sentence alone, and
+    // the assertion on the marker's shape fails here -- and the forged-line cases
+    // in `the wrapper's own line` below fail with it.
+    const marker = wrapperMarkerOf(plan)
+    expect(marker).toMatch(
+      new RegExp(`^${WSL_WRAPPER_MARKER_PREFIX} [0-9a-f]{${WSL_WRAPPER_NONCE_BYTES * 2}}$`),
+    )
+    expect(script).toContain(`printf '%s %s\\n' '${marker}' "$$" >&2`)
     expect(script).toContain(`exec 'fugaro' 'budget' 'show' '--json' '--project' '${PROJECT}'`)
     // Nothing is written anywhere: the pid is a number on stderr, so there is no
     // file for the shell to name in a directory the console would then have to
@@ -2255,6 +2279,34 @@ describe('the WSL resolution path', () => {
     // redirection is `>&2`.
     expect(script).not.toMatch(/>\s*'/)
     expect(plan.wrapper?.distro).toBe('Ubuntu')
+  })
+
+  it('draws a fresh nonce for every plan, so the marker is one spawn’s own', () => {
+    // SECURITY-SENSITIVE, and the property the whole fix rests on (review of
+    // `#981`): the marker is unforgeable because nothing the CLI prints can carry
+    // bytes it never saw. A nonce fixed in this module would be as printable by
+    // the CLI as the fixed prefix was, and **nothing else in this file would
+    // notice**: `[0-9a-f]{64}` is a shape a constant satisfies, every reader case
+    // feeds the plan's own marker back in, and the forged-line cases forge the
+    // fixed prefix alone. Hence this case, which is the one that fails when the
+    // draw is hoisted out of `wslWrapperFor`.
+    const wsl = installWslStub(freshDirectory(), { distros: TWO_DISTROS })
+    const context = safeContext({
+      binaryPath: '',
+      directory: '/Users/owner/AppData/Local/Temp/fugaro-console/cwd',
+      wsl: { distro: 'Ubuntu', directory: '/home/dimi/src/fugaro', executable: wsl.binary },
+    })
+    const first = planFor('budget.show', {}, context)
+    const second = planFor('budget.show', {}, context)
+    // One context, two plans, two markers -- and the same script text apart from
+    // the nonce on it, which is what "the same spawn's" means: the marker the
+    // readers accept is the one the script the plan spawns printed.
+    expect(wrapperMarkerOf(second)).not.toBe(wrapperMarkerOf(first))
+    expect(second.wrapper?.words[2]).not.toBe(first.wrapper?.words[2])
+    // A second plan's marker is not one the first plan's readers accept: the two
+    // do not overlap, so a line the first spawn's script printed is not a line
+    // the second spawn reads as its own.
+    expect(wrapperPidIn(`${wrapperMarkerOf(first)} 4321\n`, wrapperMarkerOf(second))).toBeNull()
   })
 
   it('gives the CLI inside the distribution Linux’s PATH, CHILD_ENV_KEYS and an empty WSLENV', () => {
@@ -2274,16 +2326,22 @@ describe('the WSL resolution path', () => {
       },
       wsl: { distro: 'Ubuntu', directory: '/home/dimi/src', executable: wsl.binary },
     }))
-    // Every key is a `CHILD_ENV_KEY` or the share list this route states -- the
-    // allow-list is the enforcement, and the app's own environment is read for
-    // nothing else.
-    for (const key of Object.keys(plan.env)) expect([...CHILD_ENV_KEYS, WSLENV_KEY]).toContain(key)
+    // Every key is a `CHILD_ENV_KEY` or one of the two words this route writes
+    // itself -- the allow-list is the enforcement, and the app's own environment
+    // is read for nothing else.
+    for (const key of Object.keys(plan.env)) expect([...CHILD_ENV_KEYS, WSLENV_KEY, WSL_UTF8_VAR]).toContain(key)
     // The keys are exactly the ones this `appEnv` supplied plus the two this
-    // module always writes (`PATH`, `FUGARO_PROJECT`) and the share list -- a
-    // key that is not on the allow-list would be a key that came from the app's
-    // environment, which is the leak this case exists to refuse.
-    expect(Object.keys(plan.env).sort()).toEqual(['FUGARO_PROJECT', 'HOME', 'PATH', WSLENV_KEY])
+    // module always writes (`PATH`, `FUGARO_PROJECT`), the share list and
+    // `WSL_UTF8` -- a key that is not on the allow-list would be a key that came
+    // from the app's environment, which is the leak this case exists to refuse.
+    expect(Object.keys(plan.env).sort()).toEqual(['FUGARO_PROJECT', 'HOME', 'PATH', WSLENV_KEY, WSL_UTF8_VAR].sort())
     expect(plan.env[WSLENV_KEY]).toBe('')
+    // **`WSL_UTF8=1` on the CLI's plan too** (review of `#981`): it was on the
+    // queries only, and a CLI plan's `wsl.exe` is the one whose stderr carries
+    // both its own warnings and the wrapper's line -- so this is the call the
+    // switch matters most for. It is the console's own constant, and `WSLENV`
+    // empty keeps it on the near side of the distribution.
+    expect(plan.env[WSL_UTF8_VAR]).toBe(WSL_UTF8_VALUE)
     expect(plan.env['PATH']).toBe(childPath(FUGARO_BINARY_NAME, 'linux'))
     expect(plan.env['PATH']).not.toContain('C:\\Windows')
     expect(Object.keys(plan.env)).not.toContain('AWS_SECRET_ACCESS_KEY')
@@ -2709,8 +2767,10 @@ describe('the WSL resolution path', () => {
   //
   // **The claim, in one sentence:** nothing the console's own environment holds
   // reaches the process inside the distribution except the eleven
-  // `CHILD_ENV_KEYS`, and the only key beside them on the way to `wsl.exe` is
-  // the empty `WSLENV` the route states.
+  // `CHILD_ENV_KEYS`, and the only keys beside them on the way to `wsl.exe` are
+  // the two words this console writes itself -- the empty `WSLENV` the route
+  // states (T-E2) and `WSL_UTF8=1` (T-F2). Neither is read from anywhere: they
+  // are constants, and `WSLENV` empty is what keeps them on the near side.
   //
   // **Why it is asserted here and not read off the plan.** A test that inspected
   // `plan.env` would be asserting that the console is self-consistent. The fake
@@ -2727,7 +2787,8 @@ describe('the WSL resolution path', () => {
   //   3. the allow-list widened (a key added to `CHILD_ENV_KEYS`) -- the `wsl.exe`
   //      hop's key set is pinned exactly;
   //   4. `WSLENV` forwarded from the host rather than written empty -- the
-  //      near-side assertion on its value fails;
+  //      near-side assertion on its value fails -- or a word of the operator's
+  //      added beside it, which the pinned key set catches;
   //   5. the double forwarding its own environment to the child -- the child
   //      hop's key set is pinned exactly, and `test/unit/wslstub.test.ts` holds
   //      that half of the double's contract on its own.
@@ -2781,13 +2842,16 @@ describe('the WSL resolution path', () => {
     // through so any other addition still fails.
     const platformKeys = process.platform === 'darwin' ? ['__CF_USER_TEXT_ENCODING'] : []
 
-    // The near side: what `wsl.exe` was handed. The eleven, plus the share list
-    // this route states -- and nothing else, sentinels included.
+    // The near side: what `wsl.exe` was handed. The eleven, plus the two keys
+    // this route writes itself -- `WSLENV` empty (T-E2) and `WSL_UTF8=1` (T-F2,
+    // and on the CLI's own call since the review of `#981`) -- and nothing else,
+    // sentinels included.
     const hop = only(arrangement.wsl.reports().filter((report) => report.kind === 'spawn'))
     expect(hop.envKeys.filter((key) => !platformKeys.includes(key)).sort()).toEqual(
-      [...CHILD_ENV_KEYS, WSLENV_KEY].sort(),
+      [...CHILD_ENV_KEYS, WSLENV_KEY, WSL_UTF8_VAR].sort(),
     )
     expect(hop.env[WSLENV_KEY]).toBe('')
+    expect(hop.env[WSL_UTF8_VAR]).toBe(WSL_UTF8_VALUE)
     // The `PATH` the console hands `wsl.exe` is the **child's** -- Linux's --
     // even though the process that receives it is a Windows one, because it is
     // the environment the distribution's process is built from (F5, T-A2). The
@@ -3316,7 +3380,7 @@ describe('the supervisor', () => {
       timers: secondTimers,
       shutdownGraceMs: 50,
     })
-    reported.emitStderr(`${WSL_WRAPPER_MARKER} 4321\n`)
+    reported.emitStderr(`${wrapperMarkerOf(plan)} 4321\n`)
     secondTimers.fire()
     secondTimers.fire()
     const secondProbe = await second
@@ -4401,6 +4465,17 @@ describe('the wrapper into a distribution', () => {
     status: 'Default Distribution: Ubuntu\r\nDefault Version: 2\r\n',
   }
 
+  /** SOME_NONCE and SOME_MARKER are a marker of the shape a plan builds, for the
+   * cases that read a head rather than a plan: `wslWrapperMarker` is the one
+   * function that composes one, so a case here cannot drift from what
+   * `wslWrapperFor` writes into the script. The nonce is a constant because
+   * these cases are about the *shape*, and the per-plan randomness is what the
+   * end-to-end cases below read off `plan.wrapper.marker`. */
+  const SOME_NONCE = 'a'.repeat(WSL_WRAPPER_NONCE_BYTES * 2)
+  const SOME_OTHER_NONCE = 'b'.repeat(WSL_WRAPPER_NONCE_BYTES * 2)
+  const SOME_MARKER = wslWrapperMarker(SOME_NONCE)
+
+
   /** wslPlanIn is a plan whose `--cd` and whose `cwd` are one directory: what
    * the fake does with a child's directory is not this suite's subject, and one
    * directory keeps the plans here readable. */
@@ -4443,7 +4518,7 @@ describe('the wrapper into a distribution', () => {
     // `wsl.exe`'s own warning is `wsl.exe`'s and stays; the console's own line
     // -- marker and pid together -- does not.
     expect(result.stderr).toBe(preamble)
-    expect(result.stderr).not.toContain(WSL_WRAPPER_MARKER)
+    expect(result.stderr).not.toContain(WSL_WRAPPER_MARKER_PREFIX)
 
     const zero = freshDirectory()
     const answering = installWslStub(join(zero, 'windows'), {
@@ -4575,7 +4650,7 @@ describe('the wrapper into a distribution', () => {
     }) as ChildSpawner
     const timers = manualTimers()
     const pending = runToCompletion(plan, { spawner, timers, timeoutMs: 100, shutdownGraceMs: 50 })
-    child.emitStderr(`${WSL_WRAPPER_MARKER} 4321\n`)
+    child.emitStderr(`${wrapperMarkerOf(plan)} 4321\n`)
     const refusal = pending.then(
       () => {
         throw new Error('the read was expected to be refused')
@@ -4720,7 +4795,7 @@ describe('the wrapper into a distribution', () => {
     timers.fire()
     expect(child.killed).toEqual(['SIGTERM'])
     // The wrapper's line arrives inside the grace window.
-    child.emitStderr(`${WSL_WRAPPER_MARKER} 4321\n`)
+    child.emitStderr(`${wrapperMarkerOf(plan)} 4321\n`)
     timers.fire()
     // The stop names the pid that arrived, and exactly once: the stale read is
     // not used as well.
@@ -4924,7 +4999,7 @@ describe('the wrapper into a distribution', () => {
     const pending = runToCompletion(plan, { spawner, timers, timeoutMs: 100, shutdownGraceMs: 50 })
     // The wrapper's own line, as the shell prints it: the marker and the pid it
     // is about to become, on stderr.
-    child.emitStderr(`${WSL_WRAPPER_MARKER} 4321\n`)
+    child.emitStderr(`${wrapperMarkerOf(plan)} 4321\n`)
     const refusal = pending.then(
       () => {
         throw new Error('the read was expected to be refused')
@@ -4962,7 +5037,7 @@ describe('the wrapper into a distribution', () => {
       timeoutMs: 100,
       shutdownGraceMs: 50,
     })
-    hostile.emitStderr(`${WSL_WRAPPER_MARKER} 4321; rm -rf /\n`)
+    hostile.emitStderr(`${wrapperMarkerOf(plan)} 4321; rm -rf /\n`)
     const secondRefusal = secondPending.then(
       () => {
         throw new Error('the read was expected to be refused')
@@ -4976,6 +5051,105 @@ describe('the wrapper into a distribution', () => {
     // the sentence says so -- refused at the grace, after the second read also
     // found no number to name.
     expect((await secondRefusal).message).toContain('may still be running')
+  })
+
+  it('reads the wrapper’s line through a UTF-16LE warning, and stops the pid it names', async () => {
+    // SECURITY-SENSITIVE, and the first defect the review of `#981` found. A
+    // `wsl.exe` that prints its own relay warning in UTF-16LE -- U9's build,
+    // where the `WSL_UTF8` switch is ignored -- puts `\r\0\n\0` at the end of
+    // the warning, so a reader that split on `\n` looked at a line *beginning
+    // with a NUL* and missed the wrapper's line entirely. What that cost, in the
+    // console's own facts: a CLI that started was reported `wrapperStarted` false
+    // (so `probeVersion` reads `wsl.exe`'s state as the installation's), the
+    // exit status was nulled, and a cancellation named no pid -- which is the
+    // orphan inside the distribution F24 is about.
+    const directory = freshDirectory()
+    const plan = planFor('cli.version', {}, {
+      target: { project: PROJECT },
+      binaryPath: '',
+      directory,
+      appEnv: {},
+      wsl: { distro: 'Ubuntu', executable: '/usr/bin/wsl.exe' },
+    })
+    const calls: string[][] = []
+    const child = scriptedChild()
+    const spawner = ((command: string, args: readonly string[]) => {
+      calls.push([command, ...args])
+      return child
+    }) as ChildSpawner
+    const timers = manualTimers()
+    const pending = runToCompletion(plan, { spawner, timers, timeoutMs: 100, shutdownGraceMs: 50 })
+    // The bytes the warning puts on the pipe, as this console's UTF-8 read sees
+    // them, and then the wrapper's own line -- which the distribution's `printf`
+    // writes as UTF-8.
+    const utf16 = Buffer.from('wsl: a relay warning\r\n', 'utf16le').toString('utf8')
+    child.emitStderr(`${utf16}${wrapperMarkerOf(plan)} 4321\n`)
+    const refusal = pending.then(
+      () => {
+        throw new Error('the read was expected to be refused')
+      },
+      (error: SpawnTimeout) => error,
+    )
+    timers.fire()
+    timers.fire()
+    const refused = await refusal
+    // A child inside the distribution started, so the timeout is the CLI's state
+    // and not "WSL is not installed" (T-F1, F26).
+    expect(refused.wrapperStarted).toBe(true)
+    // ...and the pid was read off the line the NULs were in front of, so the stop
+    // reaches inside the distribution instead of being a residual.
+    expect(calls[1]).toEqual(['/usr/bin/wsl.exe', '-d', 'Ubuntu', '-e', 'sh', '-c', 'kill -TERM 4321'])
+    expect(refused.message).not.toContain('may still be running')
+  })
+
+  it('sends no stop for a pid a line the CLI wrote names', async () => {
+    // SECURITY-SENSITIVE, and the second defect the review of `#981` found: the
+    // reviewer's probe. The line read off stderr becomes a `kill -TERM <pid>` run
+    // inside the distribution **as the operator's user** (`wslStopArgs`), so a
+    // marker a CLI can print is a kill a CLI can aim: the probe was
+    // `<utf16 warning><marker> 4242\n<marker> 1\n` against the fixed sentence,
+    // and it named pid 1 inside the distribution.
+    //
+    // The fix is the nonce, and this is the case that proves it: the CLI echoes
+    // the exact text the console used to accept, twice, with two pids -- and
+    // neither is named. The mutation this catches: match the prefix rather than
+    // the plan's own marker (drop the nonce), and `calls` grows a second entry.
+    const directory = freshDirectory()
+    const plan = planFor('cli.version', {}, {
+      target: { project: PROJECT },
+      binaryPath: '',
+      directory,
+      appEnv: {},
+      wsl: { distro: 'Ubuntu', executable: '/usr/bin/wsl.exe' },
+    })
+    const calls: string[][] = []
+    const child = scriptedChild()
+    const spawner = ((command: string, args: readonly string[]) => {
+      calls.push([command, ...args])
+      return child
+    }) as ChildSpawner
+    const timers = manualTimers()
+    const pending = runToCompletion(plan, { spawner, timers, timeoutMs: 100, shutdownGraceMs: 50 })
+    const utf16 = Buffer.from('Windows Subsystem for Linux has no installed distributions.\r\n', 'utf16le').toString(
+      'utf8',
+    )
+    child.emitStderr(`${utf16}${WSL_WRAPPER_MARKER_PREFIX} 4242\n${WSL_WRAPPER_MARKER_PREFIX} 1\n`)
+    const refusal = pending.then(
+      () => {
+        throw new Error('the read was expected to be refused')
+      },
+      (error: SpawnTimeout) => error,
+    )
+    timers.fire()
+    timers.fire()
+    const refused = await refusal
+    // One child, and it is the CLI's: no stop went into the distribution at all.
+    expect(calls).toHaveLength(1)
+    // A forged line is not the wrapper's, so nothing started as far as this
+    // console can tell, and the refusal says what it could not do rather than
+    // naming a process the CLI chose.
+    expect(refused.wrapperStarted).toBe(false)
+    expect(refused.message).toContain('may still be running')
   })
 
   it('stops a feed inside the distribution too, on the pid the wrapper reported', async () => {
@@ -5011,7 +5185,7 @@ describe('the wrapper into a distribution', () => {
         timers,
       },
     )
-    child.emitStderr(`${WSL_WRAPPER_MARKER} 4321\n`)
+    child.emitStderr(`${wrapperMarkerOf(plan)} 4321\n`)
     const stopping = sidecar.stop()
     expect(child.killed).toEqual(['SIGTERM'])
     timers.fire()
@@ -5087,7 +5261,7 @@ describe('the wrapper into a distribution', () => {
         timers,
       },
     )
-    child.emitStderr(`${WSL_WRAPPER_MARKER} 4321\n`)
+    child.emitStderr(`${wrapperMarkerOf(plan)} 4321\n`)
     const stopping = sidecar.stop()
     expect(child.killed).toEqual(['SIGTERM'])
     child.close(143, 'SIGTERM')
@@ -5136,7 +5310,7 @@ describe('the wrapper into a distribution', () => {
     )
     const stopping = sidecar.stop()
     expect(child.killed).toEqual(['SIGTERM'])
-    child.emitStderr(`${WSL_WRAPPER_MARKER} 4321\n`)
+    child.emitStderr(`${wrapperMarkerOf(plan)} 4321\n`)
     timers.fire()
     expect(calls[1]).toEqual(['/usr/bin/wsl.exe', '-d', 'Ubuntu', '-e', 'sh', '-c', 'kill -TERM 4321'])
     expect(calls).toHaveLength(2)
@@ -5202,40 +5376,115 @@ describe('the wrapper into a distribution', () => {
     // that insisted on offset zero would call a shell that did start a shell
     // that did not, and would leave the console's own sentence -- pid and all --
     // on the operator's screen.
-    const line = `${WSL_WRAPPER_MARKER} 4321`
-    expect(wrapperPidIn(`${line}\n`)).toBe(4321)
-    expect(wrapperPidIn(`wsl: a relay warning\nthe CLI said something\n${line}\n`)).toBe(4321)
+    const marker = SOME_MARKER
+    const line = `${marker} 4321`
+    expect(wrapperPidIn(`${line}\n`, marker)).toBe(4321)
+    expect(wrapperPidIn(`wsl: a relay warning\nthe CLI said something\n${line}\n`, marker)).toBe(4321)
     // A CRLF from a relay that translated line endings is the same line.
-    expect(wrapperPidIn(`${line}\r\n`)).toBe(4321)
+    expect(wrapperPidIn(`${line}\r\n`, marker)).toBe(4321)
     // A line the CLI printed that merely *contains* the text is the CLI's own:
     // only a line that starts with the marker is the wrapper's.
-    expect(wrapperPidIn(`the CLI said: ${line}\n`)).toBeNull()
+    expect(wrapperPidIn(`the CLI said: ${line}\n`, marker)).toBeNull()
     // No line at all is no pid -- and that is a residual, not a guess.
-    expect(wrapperPidIn('the CLI said something\n')).toBeNull()
+    expect(wrapperPidIn('the CLI said something\n', marker)).toBeNull()
     // A pid that is not a plain positive integer is not a pid: `sh -c` is handed
     // a command line, so this is the injection surface.
-    expect(wrapperPidIn(`${WSL_WRAPPER_MARKER} 4321; rm -rf /\n`)).toBeNull()
-    expect(wrapperPidIn(`${WSL_WRAPPER_MARKER} 0\n`)).toBeNull()
-    expect(wrapperPidIn(`${WSL_WRAPPER_MARKER} -4321\n`)).toBeNull()
-    expect(wrapperPidIn(`${WSL_WRAPPER_MARKER} 99999999999\n`)).toBeNull()
-    expect(wrapperPidIn(`${WSL_WRAPPER_MARKER}\n`)).toBeNull()
+    expect(wrapperPidIn(`${marker} 4321; rm -rf /\n`, marker)).toBeNull()
+    expect(wrapperPidIn(`${marker} 0\n`, marker)).toBeNull()
+    expect(wrapperPidIn(`${marker} -4321\n`, marker)).toBeNull()
+    expect(wrapperPidIn(`${marker} 99999999999\n`, marker)).toBeNull()
+    expect(wrapperPidIn(`${marker}\n`, marker)).toBeNull()
+    // **A line for another marker is another spawn's line, and this is the
+    // guard the whole fix turns on** (review of `#981`): a line the CLI wrote --
+    // the fixed prefix, this console's own words, or a nonce that is not this
+    // spawn's -- is not the shell's line, so it names no pid. The mutation this
+    // catches: match the prefix instead of the marker (or drop the nonce from
+    // the marker), and the forged pid below becomes a pid the console kills.
+    expect(wrapperPidIn(`${WSL_WRAPPER_MARKER_PREFIX} 4242\n`, marker)).toBeNull()
+    expect(wrapperPidIn(`${WSL_WRAPPER_MARKER_PREFIX} ${SOME_OTHER_NONCE} 4242\n`, marker)).toBeNull()
+    // The first matching line is the one read, and the second is not consulted:
+    // the wrapper prints one line, before `exec`, so a second is the CLI's own.
+    expect(wrapperPidIn(`${line}\n${marker} 9999\n`, marker)).toBe(4321)
+  })
+
+  it('reads the wrapper’s line through the UTF-16LE warnings a wsl.exe leaves on the pipe', () => {
+    // SECURITY-SENSITIVE, and the defect the review of `#981` found (review
+    // finding 1). `WSL_UTF8=1` is set on every `wsl.exe` call, but U9 records
+    // that the switch is not honoured on every build: on one that is not, this
+    // console reads a warning that is UTF-16LE as UTF-8, which puts a NUL
+    // between every pair of characters and turns its `\r\n` into `\r\0\n\0`.
+    // Before the fix the wrapper's line was then missed entirely -- a started
+    // CLI was reported `wrapperStarted=false`, its status was nulled, and a
+    // cancellation named no pid -- which is what this case holds shut.
+    const marker = SOME_MARKER
+    const line = `${marker} 4321`
+    // The bytes a UTF-16LE warning puts on the pipe, as this console reads them.
+    const warning = (text: string): string => Buffer.from(text, 'utf16le').toString('utf8')
+    // A warning with its own line ending: the NUL after the `\n` is what used to
+    // land in front of the wrapper's line.
+    const withEnding = `${warning('wsl: a relay warning\r\n')}${line}\n`
+    expect(withEnding).toContain('\u0000')
+    expect(wrapperPidIn(withEnding, marker)).toBe(4321)
+    // A warning with **no** trailing newline: its last character's NUL is the
+    // only boundary in front of the marker, and the two are one line.
+    const glued = `${warning('wsl: a relay warning')}${line}\n`
+    expect(wrapperPidIn(glued, marker)).toBe(4321)
+    // A leading BOM is a boundary too: a `wsl.exe` answer that starts with one
+    // must not hide the line behind it.
+    expect(wrapperPidIn(`${'\uFEFF'}${line}\n`, marker)).toBe(4321)
+    // And what the operator reads is the warning `wsl.exe` meant to print, with
+    // the console's own line gone and the NULs with it.
+    expect(withoutWrapperMarker(withEnding, marker)).toBe('wsl: a relay warning\r\n')
+    expect(withoutWrapperMarker(glued, marker)).toBe('wsl: a relay warning')
   })
 
   it('removes the wrapper’s line from the sentence an operator reads', () => {
-    const line = `${WSL_WRAPPER_MARKER} 4321`
+    const marker = SOME_MARKER
+    const line = `${marker} 4321`
     // The wrapper's line goes, wherever it is, and wsl.exe's own warning -- which
     // is wsl.exe's and not the console's -- stays.
-    expect(withoutWrapperMarker(`${line}\nthe CLI said no\n`)).toBe('the CLI said no\n')
-    expect(withoutWrapperMarker(`wsl: a relay warning\n${line}\nthe CLI said no\n`)).toBe(
+    expect(withoutWrapperMarker(`${line}\nthe CLI said no\n`, marker)).toBe('the CLI said no\n')
+    expect(withoutWrapperMarker(`wsl: a relay warning\n${line}\nthe CLI said no\n`, marker)).toBe(
       'wsl: a relay warning\nthe CLI said no\n',
     )
-    expect(withoutWrapperMarker(`wsl: a relay warning\r\n${line}\r\nthe CLI said no\r\n`)).toBe(
+    expect(withoutWrapperMarker(`wsl: a relay warning\r\n${line}\r\nthe CLI said no\r\n`, marker)).toBe(
       'wsl: a relay warning\r\nthe CLI said no\r\n',
     )
     // A CLI line that merely contains the text keeps its own text.
-    expect(withoutWrapperMarker(`the CLI said: ${line}\n`)).toBe(`the CLI said: ${line}\n`)
-    // Nothing to remove: the string is returned as it arrived.
-    expect(withoutWrapperMarker('the CLI said no\n')).toBe('the CLI said no\n')
-    expect(withoutWrapperMarker('')).toBe('')
+    expect(withoutWrapperMarker(`the CLI said: ${line}\n`, marker)).toBe(`the CLI said: ${line}\n`)
+    // A line for another marker is not the console's and stays on the screen --
+    // which is the visible half of "a second line is ignored", and the reason a
+    // CLI cannot use the console's own words to hide its output.
+    const forged = `${WSL_WRAPPER_MARKER_PREFIX} 4242\n`
+    expect(withoutWrapperMarker(forged, marker)).toBe(forged)
+    expect(withoutWrapperMarker(`${line}\n${line}\n`, marker)).toBe(`${line}\n`)
+    // Nothing to remove: what arrived is what comes back, byte for byte.
+    expect(withoutWrapperMarker('the CLI said no\n', marker)).toBe('the CLI said no\n')
+    expect(withoutWrapperMarker('', marker)).toBe('')
+    // ...and a plan with no wrapper at all (the host route) has no marker to look
+    // for, so its stderr is handed back untouched rather than rewritten: this
+    // console wrote nothing into that stream.
+    expect(withoutWrapperMarker('the CLI said \u0000 no\n', null)).toBe('the CLI said \u0000 no\n')
+  })
+
+  it('cleans the UTF-16LE of a wsl.exe that never started a shell', () => {
+    // The case where there is **no line to remove and still text to read** (review
+    // of `#981`): `wsl.exe` failed before the shell ran -- the no-distro failure,
+    // `wrapperStarted === false` -- so its whole stderr is its own warnings, and
+    // on a build that ignores `WSL_UTF8` every byte of them is UTF-16LE. This
+    // text is the whole answer an operator gets: `probeVersion` turns it into its
+    // reason and the picker shows the same sentence, both through `cliSentence`,
+    // which strips no control characters of its own, so the NULs are what the
+    // operator would read. The mutation this catches: hand `stderr` back untouched
+    // when no line matched.
+    const failed = Buffer.from('Windows Subsystem for Linux has no installed distributions.\r\n', 'utf16le').toString(
+      'utf8',
+    )
+    expect(failed).toContain('\u0000')
+    expect(withoutWrapperMarker(failed, SOME_MARKER)).toBe(
+      'Windows Subsystem for Linux has no installed distributions.\r\n',
+    )
+    // A leading BOM goes the same way, with nothing to remove behind it.
+    expect(withoutWrapperMarker(`${'\uFEFF'}wsl: a warning\n`, SOME_MARKER)).toBe('wsl: a warning\n')
   })
 }, 30_000)

@@ -24,7 +24,13 @@ import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { CHILD_ENV_KEYS, FUGARO_BINARY_NAME, WSL_WRAPPER_MARKER, wrapperPidIn } from '../../src/main/spawn'
+import {
+  CHILD_ENV_KEYS,
+  FUGARO_BINARY_NAME,
+  WSL_WRAPPER_NONCE_BYTES,
+  wrapperPidIn,
+  wslWrapperMarker,
+} from '../../src/main/spawn'
 import { DISTRO_DIRECTORY, DISTRO_PATH, installWslStub } from './wslstub'
 import type { WslFixture, WslPathPair, WslStub, WslStubOptions } from './wslstub'
 
@@ -40,6 +46,11 @@ const LINUX_SRC = '/mnt/c/Users/dimi/src'
 /** UNC_SRC is the other direction's vector: the spelling Windows opens a path
  * inside a distribution by (T-D2, T-D3). */
 const UNC_SRC = '\\\\wsl.localhost\\Ubuntu\\home\\dimi\\src'
+
+/** NONCE is the nonce a marker in this suite carries, of the size the plan
+ * draws (`WSL_WRAPPER_NONCE_BYTES`): a case here writes its own `sh -c` script
+ * rather than building a plan, so it names the marker's second half itself. */
+const NONCE = '0'.repeat(WSL_WRAPPER_NONCE_BYTES * 2)
 
 /** PATHS is the translation table, in both directions, and it is the test's own
  * record: the double answers it and never derives one spelling from the other
@@ -141,10 +152,10 @@ async function waitFor(what: string, check: () => boolean): Promise<void> {
 /** waitForPidOnStderr waits for the wrapper's own line to arrive on stderr and
  * reads the pid off it: the shell reports it as its first act, and the test
  * reads it while the CLI it `exec`ed is still alive. */
-async function waitForPidOnStderr(said: () => string): Promise<number> {
+async function waitForPidOnStderr(said: () => string, marker: string): Promise<number> {
   let found = 0
   await waitFor('the wrapper to report its pid', () => {
-    const pid = wrapperPidIn(said())
+    const pid = wrapperPidIn(said(), marker)
     if (pid === null) return false
     found = pid
     return true
@@ -411,7 +422,13 @@ describe('the fake wsl.exe', () => {
     // Linux child is U5's, which no test on this machine settles.
     const root = freshDirectory()
     const { wsl, linux } = install(root, { scenario: { commands: { version: { hold: true } } } })
-    const script = `printf '%s %s\\n' '${WSL_WRAPPER_MARKER}' "$$" >&2; exec ${FUGARO_BINARY_NAME} version`
+    // The script the plan writes, marker and all -- built through the one
+    // function that composes a marker (`wslWrapperMarker`), so this case cannot
+    // drift from what `wslWrapperFor` prints. The nonce is a constant here: what
+    // this case is about is that the wrapper **runs** and that the pid it
+    // reports is the CLI's, and the per-spawn randomness is the plan's business.
+    const marker = wslWrapperMarker(NONCE)
+    const script = `printf '%s %s\\n' '${marker}' "$$" >&2; exec ${FUGARO_BINARY_NAME} version`
     const child = spawn(wsl.binary, ['-d', 'Ubuntu', '--cd', linux, '-e', 'sh', '-c', script], {
       cwd: wsl.directory,
       env: HOST_ENV,
@@ -422,7 +439,7 @@ describe('the fake wsl.exe', () => {
       said += chunk.toString('utf8')
     })
 
-    const pid = await waitForPidOnStderr(() => said)
+    const pid = await waitForPidOnStderr(() => said, marker)
     await waitFor('the CLI inside the wrapper to start', () => wsl.children().length === 1)
     // The pid the wrapper reported is a *live* process -- the one that `exec`ed
     // the CLI -- which is what makes it the pid the console has to kill.

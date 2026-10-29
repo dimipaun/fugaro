@@ -580,6 +580,20 @@ before the grace runs out, and a stop that waited for it to still be alive would
 one platform this route exists for. The only thing the console reads as "the CLI is gone too" is a
 `wsl.exe` that had already exited **before** the stop began, because `wsl.exe` relays the
 distribution's command and one that exited by itself exited because that command had finished.
+**The marker is not a fixed sentence: it carries a fresh random nonce per spawn** (review of #981).
+The line is read off the same pipe as everything the CLI prints, and the pid on it becomes a
+`kill -TERM <pid>` run inside the distribution as the operator's user, so a marker the CLI could write
+is a kill the CLI could aim: an independent review of #981 forged the fixed sentence and named pid 1.
+The marker's second half is `crypto.randomBytes` hex, written into the `sh -c` script as a quoted
+constant and carried on the plan, so the readers accept one line and only the console's own script can
+print it; only the first matching line is read, and a second stays on the operator's screen. The nonce
+is **not a secret** — it is in the script and in the spawn log's `argv` line — it is only required to
+be unguessable by the CLI's output. The same review found the reader missing the line altogether when
+`wsl.exe` prints its own warnings in UTF-16LE (U9's build): the `\n\0` of such a warning left a NUL in
+front of the wrapper's line, so a line beginning with `NUL` — or a warning with no trailing newline at
+all — hid it, and a started CLI was reported as `wsl.exe` never having started one. The reader now
+treats a `NUL` or a `BOM` in front of the marker as a line boundary and removes both code points from
+what it returns, and `WSL_UTF8=1` is set on the CLI's plan as well as on the queries.
 Every `wsl.exe` this part writes — the CLI's plan, the stop and the `wslpath` question — ends its own
 words with `-e` rather than `--`: `--` hands the rest of the line to the distribution's login shell,
 which would re-read the script under whatever shell the operator's account has, while `-e` runs the

@@ -308,6 +308,13 @@ describe('the query is a spawn like any other', () => {
     // allow-list still decides everything that came from outside. The fake's
     // report carries the keys the console passed it, which is the only account
     // of this that is not the console's own word.
+    //
+    // **`WSL_UTF8` is on every `wsl.exe` call, not on the queries alone**
+    // (review of `#981`): the CLI's own plan sets the same key (`planFor`), and
+    // `spawn.test.ts` pins that side. It is not a boundary key -- it is this
+    // console's constant, and `WSLENV` empty is what keeps it out of the
+    // distribution -- so the exception below is "the console's own word on every
+    // call", and every other key is still held to `CHILD_ENV_KEYS` exactly.
     const { wsl, cwd } = install(TWO_DISTROS)
     await wslDistributions({ appEnv: APP_ENV, cwd, wslPath: wsl.binary })
     // macOS adds __CF_USER_TEXT_ENCODING to every process it starts (as in
@@ -317,7 +324,8 @@ describe('the query is a spawn like any other', () => {
       for (const key of report.envKeys.filter((k) => !platformKeys.includes(k))) {
         if (key === WSL_UTF8_VAR) {
           // The one exception, named rather than waved through: the console's
-          // own constant, and its value is the console's too.
+          // own constant, its value the console's too, and it is set on every
+          // `wsl.exe` call this console makes.
           expect(report.env[WSL_UTF8_VAR]).toBe(WSL_UTF8_VALUE)
           continue
         }
@@ -585,10 +593,10 @@ describe('translating a path with wslpath', () => {
     })
     const report = only(wsl.reports())
     const platformKeys = process.platform === 'darwin' ? ['__CF_USER_TEXT_ENCODING'] : []
-    // `WSL_UTF8` is the one word the console adds to a `wsl.exe` *question* of
-    // its own (T-F2): a constant written by this module, never read from the
-    // app's environment, so it is named here with its value rather than
-    // admitted as a class.
+    // `WSL_UTF8` is the one word the console adds to a `wsl.exe` call of its
+    // own (T-F2), question or CLI plan alike (review of `#981`): a constant
+    // written by this console, never read from the app's environment, so it is
+    // named here with its value rather than admitted as a class.
     expect(report.env[WSL_UTF8_VAR]).toBe(WSL_UTF8_VALUE)
     for (const key of report.envKeys.filter((k) => !platformKeys.includes(k) && k !== WSL_UTF8_VAR)) {
       expect(CHILD_ENV_KEYS, `${key} is not a key the child may receive`).toContain(key)
