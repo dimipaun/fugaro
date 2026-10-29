@@ -176,6 +176,50 @@ function launchLines(spawns: readonly SpawnLogEntry[]): readonly SpawnLogEntry[]
 }
 
 /**
+ * CLOSED_PAGE is the family of errors that mean **the window a promise was
+ * awaited in went away**, rather than that the promise failed: Playwright's own
+ * "Target page, context or browser has been closed" and "Execution context was
+ * destroyed", the application's "Application has been closed", and the
+ * renderer's rejection when the frame an `invoke` was sent from is gone.
+ *
+ * It is a list rather than a regex because each phrase is a sentence from a
+ * different layer (Playwright's, Electron's, the IPC's), and a reader checking
+ * this spec's swallows wants to see which ones are covered. The match is
+ * case-insensitive: the layers disagree about casing (`Object has been
+ * destroyed` is Electron's), and a phrase that misses on case is a swallow that
+ * silently never fires.
+ */
+const CLOSED_PAGE = [
+  'has been closed',
+  'Target closed',
+  'Execution context was destroyed',
+  'Render frame was disposed',
+  'WebFrameMain',
+  'Object has been destroyed',
+]
+
+/**
+ * swallowClosedPage awaits a promise this spec expects to be **cut off** by a
+ * window going away, and rethrows anything else. It answers what the promise
+ * answered, for the callers that read a failure back out of the renderer.
+ *
+ * A blanket `.catch(() => undefined)` in its place hides a spec error as well:
+ * a `ReferenceError` raised inside an evaluated function -- which is how a
+ * constant this file's renderer half does not have would arrive -- would look
+ * exactly like the window closing, and the case would pass having proved
+ * nothing.
+ */
+async function swallowClosedPage(promise: Promise<unknown>): Promise<unknown> {
+  try {
+    return await promise
+  } catch (error) {
+    const message = (error instanceof Error ? error.message : String(error)).toLowerCase()
+    if (CLOSED_PAGE.some((phrase) => message.includes(phrase.toLowerCase()))) return undefined
+    throw error
+  }
+}
+
+/**
  * start launches the console against a fresh stub and a fresh profile, with the
  * spawn log switched on at a scratch path.
  *
@@ -189,46 +233,6 @@ function launchLines(spawns: readonly SpawnLogEntry[]): readonly SpawnLogEntry[]
  * control's place, so every case here would fail looking for a button that the
  * version gate is right not to draw.
  */
-/**
- * CLOSED_PAGE is the family of errors that mean **the window a promise was
- * awaited in went away**, rather than that the promise failed: Playwright's own
- * "Target page, context or browser has been closed" and "Execution context was
- * destroyed", the application's "Application has been closed", and the
- * renderer's rejection when the frame an `invoke` was sent from is gone.
- *
- * It is a list rather than a regex because each phrase is a sentence from a
- * different layer (Playwright's, Electron's, the IPC's), and a reader checking
- * this spec's swallows wants to see which ones are covered.
- */
-const CLOSED_PAGE = [
-  'has been closed',
-  'Target closed',
-  'Execution context was destroyed',
-  'Render frame was disposed',
-  'WebFrameMain',
-  'object has been destroyed',
-]
-
-/**
- * swallowClosedPage awaits a promise this spec expects to be **cut off** by a
- * window going away, and rethrows anything else.
- *
- * A blanket `.catch(() => undefined)` in its place hides a spec error as well:
- * a `ReferenceError` raised inside an evaluated function -- which is how a
- * constant this file's renderer half does not have would arrive -- would look
- * exactly like the window closing, and the case would pass having proved
- * nothing.
- */
-async function swallowClosedPage(promise: Promise<unknown>): Promise<void> {
-  try {
-    await promise
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    if (CLOSED_PAGE.some((phrase) => message.includes(phrase))) return
-    throw error
-  }
-}
-
 async function start(records: SeededLaunchRecords = RECORDS): Promise<Running> {
   const stub = installCliStub(LAUNCH_CLI_FLOOR)
   const scratch = mkdtempSync(join(tmpdir(), 'fugaro-console-launch-'))
@@ -323,11 +327,20 @@ function windowTitles(app: ElectronApplication): Promise<string[]> {
 async function doubleAnswer(confirm: Page): Promise<void> {
   // The window is closed by the answer it took, and the page goes with it:
   // this call is expected to be cut off rather than to resolve.
-  await swallowClosedPage(
+  const late = await swallowClosedPage(
     confirm.evaluate(
       async ({ key, closed }) => {
         const bridge = (window as unknown as Record<string, { answer: (yes: boolean) => Promise<unknown> }>)[key]
         if (bridge === undefined) throw new Error('the confirmation document has no bridge')
+        // Held in an object because the assignment is made in a callback this
+        // loop does not await, which a `let` would not be read back with.
+        const unexpected: { message: string | null } = { message: null }
+        const unexpectedFrom = (error: unknown): boolean => {
+          const message = (error instanceof Error ? error.message : String(error)).toLowerCase()
+          if (closed.some((phrase: string) => message.includes(phrase.toLowerCase()))) return false
+          unexpected.message ??= message
+          return true
+        }
         for (let attempt = 0; attempt < 200; attempt += 1) {
           const first = bridge.answer(true)
           const second = bridge.answer(true)
@@ -335,22 +348,31 @@ async function doubleAnswer(confirm: Page): Promise<void> {
           // a refusal the main process sends to a window that is going away.
           // The swallow is written out here rather than called: this function
           // runs in the renderer, where the spec's helper does not exist, and
-          // the phrases come in as an argument for the same reason.
-          void Promise.resolve(second).catch((error: unknown) => {
-            const message = error instanceof Error ? error.message : String(error)
-            if (!closed.some((phrase: string) => message.includes(phrase))) throw error
-          })
+          // the phrases come in as an argument for the same reason. A failure
+          // that is none of those phrases is **returned** rather than thrown: a
+          // throw in a callback this loop never awaits is an unhandled rejection
+          // the case cannot see, and the caller rethrows it in the spec's own
+          // process, where a red case is red.
+          void Promise.resolve(second).catch(unexpectedFrom)
           const taken = await Promise.race([
             Promise.resolve(first).then((reply) => (reply as { ok?: boolean } | null)?.ok === true),
             new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 250)),
           ])
-          if (taken) return
+          if (taken || unexpected.message !== null) {
+            // The second reply is a round trip behind the first: the window is
+            // gone by now in the case this swallow exists for, and where it is
+            // not, the refusal it sent has arrived.
+            await new Promise((resolve) => setTimeout(resolve, 250))
+            return unexpected.message
+          }
           await new Promise((resolve) => setTimeout(resolve, 25))
         }
+        return unexpected.message
       },
       { key: CONFIRM_BRIDGE_KEY, closed: CLOSED_PAGE },
     ),
   )
+  if (typeof late === 'string') throw new Error(late)
 }
 
 /**
@@ -372,8 +394,20 @@ async function confirmWhenReady(confirm: Page): Promise<void> {
       async () => {
         if (confirm.isClosed()) return 'answered'
         // A click that lands while the window is going away is the answer that
-        // was just taken, and the window's own state decides.
-        await swallowClosedPage(confirm.getByRole('button', { name: CONFIRM_LABEL }).click({ timeout: 3_000 }))
+        // was just taken, and the window's own state decides. The button is
+        // built from the reply the main process sends, so a click that arrives
+        // before the button exists is a Playwright timeout: that one is the
+        // poll's to retry, and it is the only failure besides the window going
+        // away that is swallowed here -- everything else is a red case.
+        await swallowClosedPage(
+          confirm
+            .getByRole('button', { name: CONFIRM_LABEL })
+            .click({ timeout: 3_000 })
+            .catch((error: unknown) => {
+              if (error instanceof Error && error.name === 'TimeoutError') return undefined
+              throw error
+            }),
+        )
         return confirm.isClosed() ? 'answered' : 'waiting'
       },
       {
