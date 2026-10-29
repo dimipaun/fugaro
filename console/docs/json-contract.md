@@ -68,10 +68,14 @@ The columns below say which field needs which state. The recurring shapes:
 - **`*float64` / `*int64` / `*string` with no `omitempty`** (the `usdPtr` and
   `jsonLine` conventions): a **null** on the wire means *unavailable*, and a
   present number means *measured*. `daily_cap_usd`, `percent`, `spent_usd`,
-  `age_seconds`, `notional_micros`, `compute_usd` are all this shape — with one
-  exception, §3's `compute_usd`, which is the only number that carries
-  `omitempty`: without `budget show --compute` the key must not be there at all,
-  and with it an unknown figure is `null` (see that section).
+  `age_seconds` and `notional_micros` are all this shape.
+- **`omitempty` on a number** is how a numeric key can be *absent* instead of
+  `null`, and an absent number is never *unavailable*: it means the CLI left the
+  key out on purpose. There are two, both in §3: `compute_usd`, absent unless
+  `budget show --compute` asked for it (the one flag-conditioned key, and a
+  figure the command cannot give is written `null`, never left out), and
+  `showRun`'s `round`, an int whose `0` a run in its first round omits. Every
+  other number here is always present, `null` when it is not known.
 - **`omitempty` on a string or a slice**: an **absent key** means *none* or
   *empty*, which is a fact rather than a gap.
 - **`bool` flags that say "I don't know"**: `JSONBurn.Known` is the one that
@@ -387,8 +391,10 @@ compute dollars for the day: a **number** is the estimate
 (`runstore.Cost.ComputeUSD`, the same account §4 reports — and, like
 `leased_usd`, already a real wire name, on `report --json`'s rows and on
 `runstore.Cost`), and **null** is *unavailable* (`n/a`, never `0`): no run of
-the day recorded an estimate, or the runs bucket could not be read — the
-latter appends a warning saying so, and the command still succeeds. The
+the day recorded an estimate, the run records that did cannot be added up to a
+number (`internal/cli/repoCompute` leaves the row unknown rather than write a
+non-finite figure `json.Marshal` refuses), or the runs bucket could not be read
+— the last two append a warning saying so, and the command still succeeds. The
 console reads it as **optional** — an absent key, `null` and a non-number all
 read as unavailable, because this document's reader refuses nothing (§2 states
 why that is the same rule and not a second one).
@@ -401,9 +407,14 @@ finished runs only, attributed to the UTC day each run *started* on** — a run
 minted before midnight and started after it counts to the day it started, and a
 run still in flight has recorded no result yet — so **today's figure is always
 partial** and a screen must not draw it as a closed day. **(iii) The read is
-one listing per repository plus one record read per run of the day**, which is
-why `--compute` is opt-in: the rail and the Projects screen call this same
-command and pay for no bucket read.
+narrowed to the rows this document carries**: one listing of the bucket's
+repositories, then, for each repository shown, a listing of its runs minted
+since the previous day began and a record read for each of those — a run's
+start day is only known once its record is read, so the reader looks a day
+wider than the day it reports. That cost is why `--compute` is opt-in: the rail
+and the Projects screen call this same command and pay for no bucket read. The
+figure reaches a person too: with the flag the text view prints `compute:` per
+repository, `n/a` where the JSON says `null`.
 
 `showRun`: `slug`, `run`, `repo`°, `workflow`°, `title`°,
 `stage`°, `round` (**int**, `omitempty` — unlike `watch`'s string),

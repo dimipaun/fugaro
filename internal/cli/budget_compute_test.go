@@ -108,6 +108,19 @@ func blockRunsBucket(t *testing.T, f *budgetFixture) {
 	f.rewriteConfig(t, "file://"+f.runsDir(), "file://"+filepath.Join(block, "runs"))
 }
 
+// seedCorruptRecord leaves a result.json the record reader has to refuse under
+// one run of a repository.
+func seedCorruptRecord(t *testing.T, f *budgetFixture, slug, id string) {
+	t.Helper()
+	p := filepath.Join(f.runsDir(), "runs", slug, id, "result.json")
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // computeWarnings is the warnings the --compute read added: the fixture's caps
 // and counters carry warnings of their own, and a record it could not use is
 // reported in the facts reader's own words ("skipping <slug>/<run>: its
@@ -120,6 +133,23 @@ func computeWarnings(doc showComputeDoc) []string {
 		}
 	}
 	return out
+}
+
+// computeLineOf is one repository's compute line in the text view, "" when its
+// block has none.
+func computeLineOf(out, slug string) string {
+	for _, block := range strings.Split(out, "\nrepository ") {
+		head, _, _ := strings.Cut(block, "\n")
+		if !strings.Contains(head, slug) {
+			continue
+		}
+		for _, line := range strings.Split(block, "\n") {
+			if line = strings.TrimSpace(line); strings.HasPrefix(line, "compute:") {
+				return line
+			}
+		}
+	}
+	return ""
 }
 
 // --compute is opt-in: without it the document carries no compute_usd at all,
@@ -251,13 +281,7 @@ func TestShowComputeSkipsAnUnreadableRecord(t *testing.T) {
 	at := computeDay(0)
 	good, bad := at.Add(-4*time.Hour), at.Add(-3*time.Hour)
 	seedComputeRun(t, f, appSlug, computeRunID(good, "aaaa"), computeRecord("acme/app", computeRunID(good, "aaaa"), good, 1, 0.4))
-	p := filepath.Join(f.runsDir(), "runs", appSlug, computeRunID(bad, "bbbb"), "result.json")
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(p, []byte("{not json"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	seedCorruptRecord(t, f, appSlug, computeRunID(bad, "bbbb"))
 
 	doc, _ := showCompute(t, "budget", "show", "--all", "--json", "--compute")
 	if v := computeOf(t, doc, appSlug); v == nil || *v != 0.4 {
@@ -290,7 +314,8 @@ func TestShowComputeReadFailureIsAWarningAndNull(t *testing.T) {
 		t.Errorf("compute warnings = %v, want one saying compute is unavailable", w)
 	}
 
-	// The text view succeeds too, with the same warning and no figure of its own.
+	// The text view succeeds too, with the same warning and the figures it
+	// always printed.
 	out, _, err := execute(t, "budget", "show", "--all", "--compute")
 	if err != nil {
 		t.Fatal(err)
@@ -303,12 +328,16 @@ func TestShowComputeReadFailureIsAWarningAndNull(t *testing.T) {
 	}
 }
 
-// The text view prints no compute figure: what the flag adds is the JSON key,
-// exactly as --json carries leased_usd and the text view does not.
-func TestShowComputeAddsNoTextLine(t *testing.T) {
+// --compute earns its cost in the text view too: a person who asks for the
+// figure sees it, and `n/a` where the day recorded none. A flag that only ever
+// changes --json and otherwise buys a bucket read nobody can see is a flag to
+// refuse without --json, not to leave silent.
+func TestShowComputePrintsTheFigureInText(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	seedCaps(f, 100, 20)
+	other := mustSlug("github", "acme/other")
 	f.db.Set(budget.PathSpendRepo(today(), appSlug), map[string]any{"counted": usd1})
+	f.db.Set(budget.PathSpendRepo(today(), other), map[string]any{"counted": usd1})
 	at := computeDay(0)
 	start := at.Add(-2 * time.Hour)
 	seedComputeRun(t, f, appSlug, computeRunID(start, "aaaa"), computeRecord("acme/app", computeRunID(start, "aaaa"), start, 1, 0.25))
@@ -317,7 +346,84 @@ func TestShowComputeAddsNoTextLine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(strings.ToLower(out), "compute") {
-		t.Errorf("the text view gained a compute figure:\n%s", out)
+	if got := computeLineOf(out, appSlug); got != "compute: $0.25" {
+		t.Errorf("repos[%s] text line = %q, want %q:\n%s", appSlug, got, "compute: $0.25", out)
+	}
+	// The repository the day recorded no estimate for is n/a, never $0.00.
+	if got := computeLineOf(out, other); got != "compute: n/a" {
+		t.Errorf("repos[%s] text line = %q, want %q:\n%s", other, got, "compute: n/a", out)
+	}
+	// And without the flag the text view is what it always was.
+	plain, _, err := execute(t, "budget", "show", "--all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.ToLower(plain), "compute") {
+		t.Errorf("the text view names compute without --compute:\n%s", plain)
+	}
+}
+
+// The read is narrowed to the repositories the document lists: a repository
+// this command does not show keeps its records to itself, so --repo pays for
+// one repository's runs and an unreadable record elsewhere is not reported.
+func TestShowComputeReadsOnlyTheListedRepositories(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	seedCaps(f, 100, 20)
+	other := mustSlug("github", "acme/other")
+	f.db.Set(budget.PathSpendRepo(today(), appSlug), map[string]any{"counted": usd1})
+	f.db.Set(budget.PathSpendRepo(today(), other), map[string]any{"counted": usd1})
+	at := computeDay(0)
+	start := at.Add(-3 * time.Hour)
+	bad := at.Add(-2 * time.Hour)
+	seedComputeRun(t, f, appSlug, computeRunID(start, "aaaa"), computeRecord("acme/app", computeRunID(start, "aaaa"), start, 1, 0.25))
+	seedCorruptRecord(t, f, other, computeRunID(bad, "bbbb"))
+
+	one, _ := showCompute(t, "budget", "show", "--repo", "acme/app", "--json", "--compute")
+	if v := computeOf(t, one, appSlug); v == nil || *v != 0.25 {
+		t.Errorf("repos[%s].compute_usd = %v, want 0.25", appSlug, v)
+	}
+	if w := computeWarnings(one); len(w) != 0 {
+		t.Errorf("--repo read a repository it does not list: %v", w)
+	}
+
+	// --all does list it, and then its unreadable record is a warning like any
+	// other.
+	all, _ := showCompute(t, "budget", "show", "--all", "--json", "--compute")
+	if w := computeWarnings(all); len(w) != 1 || !strings.Contains(w[0], computeRunID(bad, "bbbb")) {
+		t.Errorf("--all compute warnings = %v, want one naming %s", w, computeRunID(bad, "bbbb"))
+	}
+}
+
+// A figure that cannot be added up is no figure. Two runs whose own compute
+// figures are finite but whose sum is not leave the row unknown with a warning,
+// rather than a number json.Marshal refuses -- which would fail a command the
+// console's other screens call and --compute may never fail.
+func TestShowComputeRefusesAFigureItCannotAddUp(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	seedCaps(f, 100, 20)
+	f.db.Set(budget.PathSpendRepo(today(), appSlug), map[string]any{"counted": usd1})
+	at := computeDay(0)
+	first, second := at.Add(-3*time.Hour), at.Add(-2*time.Hour)
+	// runstore.NewCost rounds TotalUSD from compute*100, which is refused past
+	// about 1.8e306, so the huge figure is put on the record after it is built:
+	// each record is finite on its own and only their sum is not.
+	huge := func(start time.Time, id string) runstore.Record {
+		c := runstore.NewCost(1, 1e306, runstore.BasisAPIList)
+		c.ComputeUSD = 1e308
+		fin := start.Add(time.Hour)
+		return runstore.Record{RunID: id, Repo: "acme/app", StartedAt: start, FinishedAt: &fin, Cost: &c}
+	}
+	seedComputeRun(t, f, appSlug, computeRunID(first, "aaaa"), huge(first, computeRunID(first, "aaaa")))
+	seedComputeRun(t, f, appSlug, computeRunID(second, "bbbb"), huge(second, computeRunID(second, "bbbb")))
+
+	doc, out := showCompute(t, "budget", "show", "--all", "--json", "--compute")
+	if v := computeOf(t, doc, appSlug); v != nil {
+		t.Errorf("repos[%s].compute_usd = %v, want null: the day's figures do not add up to a number", appSlug, *v)
+	}
+	if !strings.Contains(out, `"compute_usd": null`) {
+		t.Errorf("the row does not carry null for a figure that cannot be added up:\n%s", out)
+	}
+	if w := computeWarnings(doc); len(w) != 1 || !strings.Contains(w[0], "do not add up to a number") {
+		t.Errorf("compute warnings = %v, want one saying the figures do not add up", w)
 	}
 }
