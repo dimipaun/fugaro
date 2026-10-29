@@ -230,8 +230,10 @@ span.live-connection-dot[data-state='refused'] {
 }
 
 span.live-connection,
-span.live-connection-age {
+span.live-connection-age,
+span.live-connection-reason {
   color: var(--text-2);
+  font-size: var(--text-xs);
 }
 
 /* The second channel on the connection: the age beside the word is the reading,
@@ -247,12 +249,14 @@ span.live-mode {
   border-radius: var(--radius-chip);
   color: var(--text-2);
   font-family: var(--font-mono);
-  font-size: var(--text-label);
+  font-size: var(--text-xs);
+  white-space: nowrap;
 }
 
 span.live-day {
   color: var(--text-2);
   font-family: var(--font-mono);
+  font-size: var(--text-xs);
 }
 
 /* ---------------------------------------------------------------------------
@@ -298,7 +302,13 @@ h2.live-review-title {
   font-weight: var(--weight-semibold);
 }
 
-p.live-review-empty {
+/* The panel's prose is one tone, the redesign's `--text-2`: the sentence the
+ * empty panel draws and the two the capped list draws are the same kind of line
+ * under the same heading, and the panel would read as two panels if one of them
+ * kept the un-rebuilt palette's grey. */
+p.live-review-empty,
+p.live-review-note,
+p.live-review-capped {
   color: var(--text-2);
 }
 
