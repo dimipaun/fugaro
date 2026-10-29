@@ -11,7 +11,7 @@ import (
 
 // The Subscription Terms page is rendered from the draft the licence files
 // point at. The draft carries more than the agreement: a banner, a reading
-// guide, drafting notes for counsel and two question lists. The page carries
+// guide, drafting notes for counsel and a question list. The page carries
 // the agreement text alone, so this generator cuts everything else out
 // mechanically rather than leaving a hand-trimmed copy to drift.
 const (
@@ -29,8 +29,8 @@ var termsHeaderBlock = securityHeader + "\n<!-- source: " + termsSource + " -->\
 var (
 	termsTitle      = regexp.MustCompile(`(?m)^# .+$`)
 	termsDate       = regexp.MustCompile(`\bwritten (\d{4}-\d{2}-\d{2})\b`)
-	termsFirst      = regexp.MustCompile(`(?m)^## 1\. `)
-	termsLast       = regexp.MustCompile(`(?m)^## 24\. .*$`)
+	termsFirst      = regexp.MustCompile(`(?m)^(# Part A\. |## 1\. )`)
+	termsLast       = regexp.MustCompile(`(?m)^## 34\. .*$`)
 	termsNextHead   = regexp.MustCompile(`(?m)^(---|## )`)
 	termsInlineNote = regexp.MustCompile(`[ \t\n]*(\*\*)?\[Note for counsel:[^\]]*\](\*\*)?`)
 	termsLeadNote   = regexp.MustCompile(`[ \t]*\*\*Note for counsel:\*\*(?s:.*)$`)
@@ -56,7 +56,7 @@ func renderTermsPage(source []byte) ([]byte, error) {
 	start := termsFirst.FindStringIndex(src)
 	last := termsLast.FindStringIndex(src)
 	if start == nil || last == nil || last[0] < start[0] {
-		return nil, fmt.Errorf("%s has no sections 1 to 24", termsSource)
+		return nil, fmt.Errorf("%s has no sections 1 to 34", termsSource)
 	}
 	end := len(src)
 	if next := termsNextHead.FindStringIndex(src[last[1]:]); next != nil {

@@ -1,8 +1,9 @@
 // website/src/lib/agreement-markdown.mjs — the Subscription Terms page's renderer.
 //
 // The page renders website/content/subscription-terms.md, which `go run ./internal/clidoc`
-// cuts out of the draft in docs/licensing/. The agreement uses a small Markdown subset —
-// headings, paragraphs, bullet lists, one table, and code, bold, italic and links inline — and
+// cuts out of the draft in docs/licensing/. The agreement uses a small Markdown subset — "#"
+// Part headings that group its "##" sections, paragraphs, bullet lists, one table, and code,
+// bold, italic and links inline — and
 // this renders that subset and refuses anything else: a construct it does not know would
 // otherwise reach a reader as stray punctuation in a contract.
 
@@ -66,7 +67,7 @@ function tableCells(line) {
  * The document's blocks, rendered in order.
  * @param {string} body the generated document below its header
  * @param {(href: string) => string} link
- * @returns {{ title: string, status: string, sections: { id: string, heading: string, html: string }[] }}
+ * @returns {{ title: string, status: string, sections: { id: string, heading: string, html: string, part?: { id: string, heading: string } }[] }}
  */
 export function renderAgreement(body, link) {
   const blocks = body.split(/\n[ \t]*\n/).map((block) => block.replace(/\s+$/, '')).filter((block) => block.trim() !== '')
@@ -76,15 +77,24 @@ export function renderAgreement(body, link) {
   if (/^[#|-]/.test(status)) throw new Error('the Subscription Terms document has no status line under its title')
 
   const sections = []
+  // A Part heading opens the section that follows it, so a Part with no section is refused.
+  let part
   for (const block of blocks) {
+    const partHeading = /^# (Part [A-Z]\. .+)$/.exec(block)
+    if (partHeading) {
+      if (part) throw new Error(`the Subscription Terms document has a Part with no section: ${JSON.stringify(part.heading)}`)
+      part = { id: headingAnchor(headingText(partHeading[1])), heading: inline(partHeading[1], link) }
+      continue
+    }
     const heading = /^## (.+)$/.exec(block)
     if (heading) {
-      sections.push({ id: headingAnchor(headingText(heading[1])), heading: inline(heading[1], link), html: '' })
+      sections.push({ id: headingAnchor(headingText(heading[1])), heading: inline(heading[1], link), html: '', ...(part ? { part } : {}) })
+      part = undefined
       continue
     }
     const section = sections.at(-1)
     if (!section) throw new Error(`the Subscription Terms document carries text before its first section: ${JSON.stringify(block.slice(0, 60))}`)
-    if (/^#/.test(block)) throw new Error(`the Subscription Terms renderer knows only "##" sections: ${JSON.stringify(block.split('\n')[0])}`)
+    if (/^#/.test(block)) throw new Error(`the Subscription Terms renderer knows only "# Part" headings and "##" sections: ${JSON.stringify(block.split('\n')[0])}`)
 
     const lines = block.split('\n')
     if (lines[0].startsWith('|')) {
@@ -114,5 +124,6 @@ export function renderAgreement(body, link) {
     if (paragraph.length > 0) section.html += `<p>${inline(paragraph.join(' '), link)}</p>`
     if (items.length > 0) section.html += `<ul>${items.map((item) => `<li>${inline(item, link)}</li>`).join('')}</ul>`
   }
+  if (part) throw new Error(`the Subscription Terms document has a Part with no section: ${JSON.stringify(part.heading)}`)
   return { title: title[1], status: inline(status, link), sections }
 }
