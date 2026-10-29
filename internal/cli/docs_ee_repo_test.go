@@ -341,7 +341,7 @@ A new reader joins the list in the same commit, and a name whose test no longer 
 		t.Errorf(`a test reads the real %s/ without going through readRealEE:
   %s
 
-ee/ is reserved and the core is expected to build and test without it, so every read of the real directory goes through the one helper in %s and every such test is named in eeReadingTests. A test that only matches content naming ee/ -- a link in LICENSING.md, the workflow's own rm -rf -- is not a read and is not reported here.`,
+ee/ holds the business-licensed features and the core is expected to build and test without it, so every read of the real directory goes through the one helper in %s and every such test is named in eeReadingTests. A test that only matches content naming ee/ -- a link in LICENSING.md, the workflow's own rm -rf -- is not a read and is not reported here.`,
 			eeDirName, strings.Join(found, "\n  "), eeRepoFile)
 	}
 }

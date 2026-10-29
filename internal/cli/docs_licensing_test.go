@@ -121,19 +121,26 @@ func TestDocsLicensingStatement(t *testing.T) {
 
 	// The link to `ee/README.md` is checked against the page it points at: a
 	// statement that pointed a reader at a page contradicting it would read as
-	// correct on both sides. The Subscription Terms being the document the
-	// licence names and does not publish is the fact the two pages share after
-	// D532 (2026-10-29): the page's "reserved for net-new organisation
-	// features" became what the folder holds -- the business-licensed features,
-	// new ones and those the owner moved out of the core -- while
-	// `LICENSING.md`'s own "reserved"/"excluded" wording is re-aligned by task
-	// E3.1, so the cross-check pins the shared fact rather than a word one of
-	// the two is about to drop. This read is why the test's name is in
-	// eeReadingTests.
+	// correct on both sides. D532 (2026-10-29) replaced the page's "reserved
+	// for net-new organisation features" with what the folder now holds, and
+	// the pins here are that statement -- the business-licensed features, new
+	// ones and those moved out of the core, with the released MIT versions
+	// staying MIT -- plus the unpublished Subscription Terms, so the page
+	// cannot drift back to a folder that takes nothing out of the core while
+	// this cross-check is on record. `LICENSING.md` and the website's licence
+	// wording still carry the older "reserved for net-new organisation
+	// features"; task E3.1 and E3.2 realign them, and this cross-check can pin
+	// their agreement again once they have. This read is why the test's name is
+	// in eeReadingTests.
 	eePage := strings.ToLower(flattenDoc(readRealEE(t, "README.md")))
-	for _, want := range []string{"not published yet"} {
+	for _, want := range []string{
+		"business-licensed features",
+		"moved out of the core",
+		"released mit versions stay mit",
+		"not published yet",
+	} {
 		if !strings.Contains(eePage, want) {
-			t.Errorf("ee/README.md, the page %s links for what `ee/` is, never says %q: the statement and the page it points at have to agree that the Subscription Terms are the document the licence names and does not publish, or one of the two is describing a directory that does not exist", path, want)
+			t.Errorf("ee/README.md, the page %s links for what `ee/` is, never says %q: the statement and the page it points at have to agree on what the folder holds -- the business-licensed features, new ones and those the owner moved out of the core -- and on the Subscription Terms being the document the licence names and does not publish, or one of the two is describing a directory that does not exist", path, want)
 		}
 	}
 }
