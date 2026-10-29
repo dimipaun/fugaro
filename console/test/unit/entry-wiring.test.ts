@@ -398,6 +398,43 @@ describe('the dashboard the entry mounts', () => {
     expect(classed(panel, 'live-repo-name')).toEqual([])
   })
 
+  it('does not open Run detail from a click on the Reap a lost row draws', async () => {
+    // A lost run's row draws Reap through `disabledWrite`: `aria-disabled`
+    // rather than `disabled`, so a keyboard reader reaches it and its click
+    // fires and bubbles to the row's own listener. The row is a door to the
+    // run, and a click that landed on the button is the button's.
+    const frame = syntheticDocuments()[syntheticDocuments().length - 1] as Readonly<Record<string, unknown>>
+    const { bridge, calls } = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(frame),
+        diagnoseRun: () => ({ ok: true, data: { document: {} } }),
+        readRunLogs: () => ({ ok: true, data: { document: { entries: [], total: 0, refused: 0 } } }),
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    const panel = panelOf(document)
+    const lost = classed(panel, 'live-run-lost')[0] as FakeNode
+    const reap = classed(lost, 'live-reap')[0]
+    expect(reap?.tagName, 'the lost row drew no Reap to click').toBe('BUTTON')
+
+    lost.click(reap ?? null)
+    await flush()
+    expect(calls.filter((call) => call.name === 'diagnoseRun')).toEqual([])
+    expect(calls.filter((call) => call.name === 'readRunLogs')).toEqual([])
+    expect(
+      (panel.children[0] as FakeNode).attributes.get('class'),
+      'the Reap click left the Live screen',
+    ).toBe('live')
+
+    // And the rest of the row is still the door: a click on the id cell opens
+    // the run it names.
+    lost.click(classed(lost, 'live-run-id')[0] ?? null)
+    await flush()
+    expect(calls.filter((call) => call.name === 'diagnoseRun').map((call) => call.args)).toEqual([
+      { run: '20261015-120000-aa01' },
+    ])
+  })
+
   it('draws a repository’s kill banner, and withholds it in the reduced mode', async () => {
     // The `kill` view is one panel of the Live screen rather than a screen of its
     // own, so the gate decides whether the model the screen is handed carries the
