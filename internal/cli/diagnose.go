@@ -694,7 +694,7 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 		fmt.Fprintf(&b, "Route:    %s\n", oneLine(spendList(d.Route)))
 	}
 	if d.Reported > 0 {
-		fmt.Fprintf(&b, "Reported: providers said $%.4f; charged $%.4f (the table price settles; an unpriced tier's charge is floored by the report)\n", d.Reported, d.Charge)
+		fmt.Fprintf(&b, "Reported: providers said $%.4f; charged $%.4f (the table price settles; an unpriced tier's charge is floored by the report, clamped to the call's reservation)\n", d.Reported, d.Charge)
 	}
 	for _, w := range d.PinWarnings {
 		fmt.Fprintf(&b, "Warning:  %s\n", oneLine(w))
