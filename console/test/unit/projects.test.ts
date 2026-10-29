@@ -58,7 +58,7 @@ import {
   pullRequestUrl,
   renderRun,
 } from '../../src/renderer/screens/run'
-import type { RunInputs } from '../../src/renderer/screens/run'
+import type { RunFactory, RunInputs } from '../../src/renderer/screens/run'
 import { ReplayBuffer } from '../../src/shared/replay'
 import { ADDRESS_PLACEHOLDER, sanitizeText, TOKEN_PLACEHOLDER } from '../../src/shared/sanitize'
 import { githubToken, highEntropyRun } from '../support/fakeSecrets'
@@ -86,7 +86,10 @@ class FakeScreen implements ScreenElement {
     'action',
   ])
 
-  constructor(readonly tag: string) {}
+  constructor(
+    readonly tag: string,
+    readonly namespace: 'html' | 'svg' = 'html',
+  ) {}
 
   setAttribute(name: string, value: string): void {
     const lowered = name.toLowerCase()
@@ -117,8 +120,13 @@ class FakeScreen implements ScreenElement {
   }
 }
 
-/** factory makes fresh fakes, in the shape the renderer is handed. */
-const factory: ScreenFactory = { create: (tag) => new FakeScreen(tag) }
+/** factory makes fresh fakes, in the shape the renderer is handed: Run's stage
+ * timeline draws its icons and bars in the SVG namespace, which is the one
+ * screen that needs the second `create`. */
+const factory: RunFactory = {
+  create: (tag) => new FakeScreen(tag),
+  createNS: (tag) => new FakeScreen(tag, 'svg'),
+}
 
 /** walk visits every node of a tree, the root first. */
 function walk(node: ScreenElement): readonly FakeScreen[] {

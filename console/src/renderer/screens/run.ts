@@ -79,7 +79,7 @@
 // with the class its wire key declares. Nothing here builds markup, sets a
 // navigating attribute or handles an event.
 
-import { measured, notional, readNumber, unavailable } from '../../shared/availability'
+import { UNAVAILABLE_MARK, measured, notional, readNumber, unavailable } from '../../shared/availability'
 import type { Reading } from '../../shared/availability'
 import { ReplayBuffer, REPLAY_MAX_RECORDS, REPLAY_WINDOW_SECONDS } from '../../shared/replay'
 import type { ReplayArrival, ReplayDocument, ReplayRecord } from '../../shared/replay'
@@ -89,6 +89,7 @@ import { readRigor, rigorLayerWord, rigorModeWord } from '../../shared/rigor'
 import type { RigorView } from '../../shared/rigor'
 import type { TextClass } from '../../shared/sanitize'
 import { putLink, putReading, putText } from '../app'
+import { disabledWrite } from '../writes'
 import type { ElementLike } from '../app'
 
 /**
@@ -1030,10 +1031,32 @@ export interface ScreenFactory {
   create(tag: string): ScreenElement
 }
 
+/**
+ * RunFactory is a `ScreenFactory` that can also make an element in the **SVG**
+ * namespace: a stage's mark and its bar are geometry, and an element made with
+ * `create` is in the HTML namespace and is not drawn inside an `svg` at all.
+ *
+ * It is a second interface rather than a method added to `ScreenFactory`, for
+ * the reason `live.ts`'s `LiveFactory` states: the two namespaces are two calls
+ * in the DOM (`createElement` and `createElementNS`), and the cross-screen tests
+ * hold the screens' factories assignable to each other -- a base factory that
+ * had grown an SVG method would make that guard fail for a screen that draws no
+ * SVG. `entry.ts`'s `DomScreenFactory` answers both.
+ */
+export interface RunFactory extends ScreenFactory {
+  createNS(tag: string): ScreenElement
+}
+
 function make(factory: ScreenFactory, tag: string, ...classes: string[]): ScreenElement {
   const element = factory.create(tag)
   element.setAttribute('class', classes.join(' '))
   return element
+}
+
+/** makeNS is `make` in the SVG namespace, so the class is still written in the
+ * one place `make` writes it. */
+function makeNS(factory: RunFactory, tag: string, ...classes: string[]): ScreenElement {
+  return make({ create: (name) => factory.createNS(name) }, tag, ...classes)
 }
 
 function literal(element: ScreenElement, text: string): ScreenElement {
@@ -1074,42 +1097,220 @@ function numberCell(
   return element
 }
 
-/** header draws the run's identity and its outcome: what it is, where it ran,
- * how it ended and what it is doing now. */
-function header(factory: ScreenFactory, model: RunModel): ScreenElement {
+/**
+ * putMaybe writes one of the run's own columns -- the repository, the
+ * workflow, the recipe, the branch, the account, an actor -- or the console's
+ * `n/a` with the reason in the `title` when the record carries none.
+ *
+ * **`n/a` and never an empty cell**, the rule `live.ts`'s `putActor` states: a
+ * branch the record left out is not a run with no branch, and a blank cell says
+ * nothing at all. Nothing is invented here: every value is the document's own
+ * string on the one path and the console's mark on the other.
+ */
+function putMaybe(
+  element: ScreenElement,
+  raw: string | null,
+  textClass: Parameters<typeof putText>[2],
+  field: string,
+): void {
+  if (raw === null || raw === '') {
+    literal(element, UNAVAILABLE_MARK)
+    element.setAttribute('title', `the document carries no ${field}`)
+    return
+  }
+  putText(element, raw, textClass, field)
+}
+
+/** maybeCell is `cell` with one of the run's own columns written into it
+ * through `putMaybe`, in the class `run-meta-absent` when there is no value so
+ * the mark is drawn in the muted tone. */
+function maybeCell(
+  parent: ScreenElement,
+  factory: ScreenFactory,
+  tag: string,
+  raw: string | null,
+  textClass: Parameters<typeof putText>[2],
+  field: string,
+  ...classes: string[]
+): ScreenElement {
+  const element = cell(parent, factory, tag, ...classes, raw === null || raw === '' ? 'run-meta-absent' : 'run-meta-value')
+  putMaybe(element, raw, textClass, field)
+  return element
+}
+
+/** header draws the run's identity, where it ended and what it is doing now:
+ * the breadcrumb, the run id, the meta line, the retry the console refuses, the
+ * Rigor row, the status strip and the halt banner. */
+function header(factory: RunFactory, model: RunModel): ScreenElement {
   const element = make(factory, 'header', 'run-header')
-  const heading = cell(element, factory, 'h1', 'run-id')
+  element.append(breadcrumb(factory, model))
+  const head = cell(element, factory, 'div', 'run-head')
+  const heading = cell(head, factory, 'h1', 'run-id')
   putText(heading, model.row.run, 'runId', 'row.run')
-  if (model.row.repo !== null) textCell(element, factory, 'span', model.row.repo, 'repository', 'row.repo', 'run-repo')
-  if (model.row.workflow !== null) textCell(element, factory, 'span', model.row.workflow, 'label', 'row.workflow', 'run-workflow')
-  // `status` is a string the run's record carries, not a word this console
-  // chose, so it goes through `putText` like every other document string.
-  textCell(element, factory, 'span', model.row.status, 'label', 'row.status', 'run-status')
-  if (model.row.outcome !== null) textCell(element, factory, 'span', model.row.outcome, 'label', 'row.outcome', 'run-outcome')
-  if (model.row.stage !== null) textCell(element, factory, 'span', model.row.stage, 'label', 'row.stage', 'run-stage')
-  if (model.row.branch !== null) textCell(element, factory, 'span', model.row.branch, 'branch', 'row.branch', 'run-branch')
+  // The one write this screen draws and does not perform (`writes.ts`): the
+  // design's primary action, refused in the one place a reviewer reads.
+  head.append(disabledWrite(factory, 'run-retry', 'Retry run'))
+  element.append(metaLine(factory, model))
+  if (model.row.rigor !== null) element.append(rigorLine(factory, model.row.rigor))
+  element.append(statusStrip(factory, model))
+  if (model.halt !== null) element.append(haltLine(factory, model.halt))
+  return element
+}
+
+/**
+ * breadcrumb is where the run sits: the Live view, the repository and the run.
+ *
+ * **The Live crumb is a real `button`.** The console navigates with buttons and
+ * never with a navigating attribute (`entry.ts`'s own note on the view
+ * navigation), and `entry.ts`'s `showRun` binds this one to the Live view's own
+ * `show('live')` -- so the crumb is the way back from a run the operator
+ * opened. The two slashes are `aria-hidden`: they separate the crumbs visually
+ * and are not part of what a breadcrumb reads out.
+ */
+function breadcrumb(factory: RunFactory, model: RunModel): ScreenElement {
+  const element = make(factory, 'nav', 'run-crumb')
+  element.setAttribute('aria-label', 'Breadcrumb')
+  literal(cell(element, factory, 'button', 'run-crumb-live'), 'Live')
+  crumbSeparator(factory, element)
+  // The repository's crumb: the mono value, or the console's mark with its
+  // reason when the record carries no repository.
+  const repo = cell(element, factory, 'span', 'run-crumb-repo', model.row.repo === null || model.row.repo === '' ? 'run-meta-absent' : 'run-meta-value')
+  putMaybe(repo, model.row.repo, 'repository', 'row.repo')
+  crumbSeparator(factory, element)
+  const run = cell(element, factory, 'span', 'run-crumb-run')
+  putText(run, model.row.run, 'runId', 'row.run')
+  return element
+}
+
+/** crumbSeparator is the decorative slash between two crumbs. */
+function crumbSeparator(factory: RunFactory, parent: ScreenElement): void {
+  const element = literal(cell(parent, factory, 'span', 'run-crumb-sep'), '/')
+  element.setAttribute('aria-hidden', 'true')
+}
+
+/**
+ * metaLine is the run's own columns: repository, workflow, recipe, branch,
+ * account, requester and launcher, each a small label over the value's own
+ * string.
+ *
+ * **`workflow` and `recipe` are drawn where the design draws a "profile".** No
+ * document this console reads carries a field called that, and inventing one
+ * from two keys that look like it would be a figure about the run rather than
+ * the run's own record; the two keys the record does carry are drawn instead,
+ * and the departure is named in the pull request.
+ *
+ * An absent value is the console's `n/a` in the muted tone with the reason in
+ * the `title` (`putMaybe`), never a blank cell: "no account was recorded" and
+ * "this build did not ask" look the same on a blank cell and do not on the mark.
+ */
+function metaLine(factory: RunFactory, model: RunModel): ScreenElement {
+  const element = make(factory, 'div', 'run-meta')
+  const repo = cell(element, factory, 'span', 'run-meta-field')
+  literal(cell(repo, factory, 'span', 'run-meta-label'), 'repo')
+  maybeCell(repo, factory, 'span', model.row.repo, 'repository', 'row.repo', 'run-repo')
+  const workflow = cell(element, factory, 'span', 'run-meta-field')
+  literal(cell(workflow, factory, 'span', 'run-meta-label'), 'workflow')
+  maybeCell(workflow, factory, 'span', model.row.workflow, 'label', 'row.workflow', 'run-workflow')
+  const recipe = cell(element, factory, 'span', 'run-meta-field')
+  literal(cell(recipe, factory, 'span', 'run-meta-label'), 'recipe')
+  maybeCell(recipe, factory, 'span', model.row.recipe, 'label', 'row.recipe', 'run-recipe')
+  const branch = cell(element, factory, 'span', 'run-meta-field')
+  literal(cell(branch, factory, 'span', 'run-meta-label'), 'branch')
+  maybeCell(branch, factory, 'span', model.row.branch, 'branch', 'row.branch', 'run-branch')
+  const account = cell(element, factory, 'span', 'run-meta-field')
+  literal(cell(account, factory, 'span', 'run-meta-label'), 'account')
+  maybeCell(account, factory, 'span', model.row.oauthAccount, 'person', 'row.oauth_account', 'run-account')
+  // The two actors keep the `person` class the wire key carries: an address is
+  // drawn as the console's marker and a login as itself, on this line as in
+  // every other cell of the console that draws one. Unlike the five columns
+  // above, an absent actor draws **no field at all** rather than the mark: a
+  // record written before `launch.json` existed has no launcher, and its
+  // `n/a` would read as a launcher the console could not name instead of one
+  // the record never carried.
   if (model.row.requestedBy !== null) {
-    textCell(element, factory, 'span', model.row.requestedBy, 'person', 'row.requested_by', 'run-requested-by')
+    const requested = cell(element, factory, 'span', 'run-meta-field')
+    literal(cell(requested, factory, 'span', 'run-meta-label'), 'requested by')
+    const asked = cell(requested, factory, 'span', 'run-requested-by', 'run-meta-value')
+    putText(asked, model.row.requestedBy, 'person', 'row.requested_by')
   }
   // Who started the run: the **whole** recorded identity, which is what the run
   // view is for -- the Live and Projects columns draw the short form
-  // (`shared/launcher.ts`). It goes through the `person` class, the class the
-  // wire key carries, so an address is the console's marker here as it is in
-  // the requester cell beside it and no address is ever drawn; a login is
-  // drawn as itself. A record with no launcher draws no cell.
+  // (`shared/launcher.ts`).
   const startedBy = launcherFull(model.row.launchedBy)
   if (startedBy !== null) {
-    textCell(element, factory, 'span', startedBy, 'person', 'row.launched_by', 'run-started-by')
+    const started = cell(element, factory, 'span', 'run-meta-field')
+    literal(cell(started, factory, 'span', 'run-meta-label'), 'started by')
+    const value = cell(started, factory, 'span', 'run-started-by', 'run-meta-value')
+    putText(value, startedBy, 'person', 'row.launched_by')
   }
-  // The terminal/settled pair is what says whether the numbers on this screen
-  // can still move, which is a fact about reading them.
-  const flags = cell(element, factory, 'span', 'run-flags')
-  literal(flags, model.row.terminal ? 'terminal' : 'still running')
-  if (model.row.settled) literal(cell(flags, factory, 'span', 'run-settled'), 'settled')
+  return element
+}
+
+/**
+ * RUN_SUCCESS_OUTCOMES and RUN_FAILURE_OUTCOMES are the outcomes this build
+ * knows a tone for. `runstore.Outcome` is the state of the run's **pull
+ * request**, and its own comment supplies the reading: `ready` is the ready PR
+ * the feed's `ready[]` is made of, `reviewed` is a review run that commented on
+ * the pull requests it was pointed at, and `artifacts` is a render run whose
+ * deliverables are in the bucket -- the three outcomes of a run that delivered
+ * what it promised. `draft` is the one the CLI itself calls failed
+ * (`StatusFailed` is "a draft PR exists"). `none` gets **no tone**: runstore
+ * gives it two readings -- a check gate that found nothing to fix, and a review
+ * mode that refused a pull request before checkout -- and painting it as one of
+ * them would be a claim about the run rather than a reading of it.
+ *
+ * **The word is always drawn**: the tone is the second channel and never the
+ * only one (styling design section 3.5), and an outcome a newer CLI resolved is
+ * drawn in the primary tone with no tone of its own.
+ */
+const RUN_SUCCESS_OUTCOMES: readonly string[] = Object.freeze(['ready', 'reviewed', 'artifacts'])
+const RUN_FAILURE_OUTCOMES: readonly string[] = Object.freeze(['draft'])
+
+/** outcomeTone is the tone an outcome's own word earns, or null. */
+function outcomeTone(outcome: string | null): string | null {
+  if (outcome === null) return null
+  if (RUN_SUCCESS_OUTCOMES.includes(outcome)) return 'success'
+  if (RUN_FAILURE_OUTCOMES.includes(outcome)) return 'failure'
+  return null
+}
+
+/** statusStrip is the four readings the run is: its lifecycle, its outcome, the
+ * stage it is on and whether its ledger can still move.
+ *
+ * **The ledger cell is the terminal/settled pair**, which is what says whether
+ * the numbers on this screen can still move -- a fact about reading them rather
+ * than about the run. Each cell is a caption over a value, and the value's word
+ * is drawn on every path: an absent outcome or stage is the console's `n/a`
+ * with its reason, never a blank cell, and a tone is the second channel beside
+ * the word and never the only one.
+ */
+function statusStrip(factory: RunFactory, model: RunModel): ScreenElement {
+  const element = make(factory, 'div', 'run-strip')
+  const lifecycle = cell(element, factory, 'div', 'run-strip-cell')
+  literal(cell(lifecycle, factory, 'span', 'run-strip-label'), 'LIFECYCLE')
+  // `status` is a string the run's record carries, not a word this console
+  // chose, so it goes through `putText` like every other document string.
+  putText(cell(lifecycle, factory, 'span', 'run-strip-value', 'run-status'), model.row.status, 'label', 'row.status')
+  const outcome = cell(element, factory, 'div', 'run-strip-cell')
+  literal(cell(outcome, factory, 'span', 'run-strip-label'), 'OUTCOME')
+  const outcomeValue = cell(outcome, factory, 'span', 'run-strip-value', 'run-outcome')
+  putMaybe(outcomeValue, model.row.outcome, 'label', 'row.outcome')
+  // The tone is one of two closed words, written as a literal for the same
+  // reason the words beside it are: a rule colours the cell by the attribute and
+  // the console never spells a tone the theme has no colour for.
+  const tone = outcomeTone(model.row.outcome)
+  if (tone === 'success') outcomeValue.setAttribute('data-tone', 'success')
+  if (tone === 'failure') outcomeValue.setAttribute('data-tone', 'failure')
+  const stage = cell(element, factory, 'div', 'run-strip-cell')
+  literal(cell(stage, factory, 'span', 'run-strip-label'), 'STAGE')
+  putMaybe(cell(stage, factory, 'span', 'run-strip-value', 'run-stage'), model.row.stage, 'label', 'row.stage')
+  const ledger = cell(element, factory, 'div', 'run-strip-cell')
+  literal(cell(ledger, factory, 'span', 'run-strip-label'), 'LEDGER')
+  const flags = cell(ledger, factory, 'span', 'run-strip-value', 'run-flags')
+  literal(cell(flags, factory, 'span', 'run-settled'), model.row.settled ? 'settled' : 'still moving')
+  literal(cell(flags, factory, 'span', 'run-flags-state'), model.row.terminal ? '· terminal' : '· still running')
   if (model.row.staleDraft) literal(cell(flags, factory, 'span', 'run-stale'), 'stale draft')
   if (model.row.followUp) literal(cell(flags, factory, 'span', 'run-follow-up'), 'follow-up')
-  if (model.row.rigor !== null) element.append(rigorLine(factory, model.row.rigor))
-  if (model.halt !== null) element.append(haltLine(factory, model.halt))
   return element
 }
 
@@ -1173,15 +1374,26 @@ function rigorWord(
   putText(element, value, 'label', field)
 }
 
-/** haltLine is why the run halted: the reason, the scope and the time. A halting
- * is the money decision this console exists to explain, so it is drawn on the
- * header rather than buried in the diagnose view. */
-function haltLine(factory: ScreenFactory, halt: RunHalt): ScreenElement {
+/** haltLine is why the run halted: the word, the reason, and where and when the
+ * halting applied, on the right. A halting is the money decision this console
+ * exists to explain, so it is drawn on the header rather than buried in the
+ * diagnose view -- and the scope and the moment are geometry of the banner
+ * rather than a sentence inside it, because the reason is the half a reader
+ * needs first. */
+function haltLine(factory: RunFactory, halt: RunHalt): ScreenElement {
   const element = make(factory, 'div', 'run-halt')
   literal(cell(element, factory, 'span', 'run-halt-word'), 'HALTED')
   textCell(element, factory, 'span', halt.reason, 'sentence', 'halt.reason', 'run-halt-reason')
-  if (halt.scope !== null) textCell(element, factory, 'span', halt.scope, 'label', 'halt.scope', 'run-halt-scope')
-  if (halt.at !== null) textCell(element, factory, 'span', halt.at, 'label', 'halt.at', 'run-halt-at')
+  const where = cell(element, factory, 'span', 'run-halt-where')
+  if (halt.scope !== null) {
+    literal(cell(where, factory, 'span', 'run-halt-scope-word'), 'scope')
+    textCell(where, factory, 'span', halt.scope, 'label', 'halt.scope', 'run-halt-scope')
+  }
+  if (halt.at !== null) {
+    if (halt.scope !== null) literal(cell(where, factory, 'span', 'run-halt-sep'), '·')
+    literal(cell(where, factory, 'span', 'run-halt-at-word'), 'at')
+    textCell(where, factory, 'span', halt.at, 'label', 'halt.at', 'run-halt-at')
+  }
   if (halt.detail !== null) textCell(element, factory, 'span', halt.detail, 'sentence', 'halt.detail', 'run-halt-detail')
   return element
 }
@@ -1189,6 +1401,7 @@ function haltLine(factory: ScreenFactory, halt: RunHalt): ScreenElement {
 /** ledgerPanel is the three accounts, apart. */
 function ledgerPanel(factory: ScreenFactory, model: RunLedger): ScreenElement {
   const element = make(factory, 'section', 'run-ledger')
+  element.setAttribute('aria-label', LEDGER_PANEL_NAME)
   literal(cell(element, factory, 'h2', 'run-panel-title'), 'ledger')
   const model_ = cell(element, factory, 'p', 'run-ledger-model')
   literal(model_, 'model, as the run was charged:')
@@ -1212,6 +1425,7 @@ function ledgerPanel(factory: ScreenFactory, model: RunLedger): ScreenElement {
  * document carries no stages instead. */
 function spendStagesPanel(factory: ScreenFactory, model: RunModel): ScreenElement {
   const element = make(factory, 'section', 'run-spend-stages')
+  element.setAttribute('aria-label', SPEND_STAGES_PANEL_NAME)
   literal(cell(element, factory, 'h2', 'run-panel-title'), 'spend by stage')
   const list = cell(element, factory, 'ol', 'run-spend-stage-list')
   for (const stage of model.spendStages) {
@@ -1243,6 +1457,7 @@ function spendStagesPanel(factory: ScreenFactory, model: RunModel): ScreenElemen
  * line naming the absent key instead -- see `TOLERATED_ABSENT`. */
 function toleratedPanel(factory: ScreenFactory, tolerated: RunTolerated): ScreenElement {
   const element = make(factory, 'section', 'run-tolerated')
+  element.setAttribute('aria-label', TOLERATED_PANEL_NAME)
   literal(cell(element, factory, 'h2', 'run-panel-title'), 'tolerated by the mode')
   const total = cell(element, factory, 'p', 'run-tolerated-total')
   literal(total, 'findings the mode tolerated:')
@@ -1269,32 +1484,176 @@ function toleratedPanel(factory: ScreenFactory, tolerated: RunTolerated): Screen
   return element
 }
 
-/** stagePanel is the timeline: one row per stage, with its outcome and its
- * counts. Its spend is the figure no document carries -- a verify record has
- * none -- so the cell is an `n/a` naming the panel that does carry the run's
- * spend by stage, or naming the missing key when there is no such panel. */
-function stagePanel(factory: ScreenFactory, model: RunModel): ScreenElement {
+/**
+ * RUN_ICON_BOX is the viewBox a stage's mark is drawn in, and RUN_ICON_SIZE its
+ * drawn size: a 16-unit box with the stroke inside it, so the mark is the same
+ * size whatever the row's type does. The three marks are one shape family -- two
+ * strokes and a dot -- and the geometry is the code's while the tone is the
+ * theme's (`flight-deck.css`), because the tone is what says passed from failed
+ * and the tone is a value set.
+ */
+const RUN_ICON_BOX = '0 0 16 16'
+const RUN_ICON_SIZE = '16'
+const RUN_ICON_CHECK = 'M3.5 8.5 L6.5 11.5 L12.5 4.5'
+const RUN_ICON_CROSS = 'M4 4 L12 12 M12 4 L4 12'
+const RUN_ICON_DOT_X = '5'
+const RUN_ICON_DOT_Y = '5'
+const RUN_ICON_DOT_SIDE = '6'
+const RUN_ICON_DOT_RADIUS = '3'
+
+/**
+ * RUN_BAR_BOX, RUN_BAR_ORIGIN, RUN_BAR_WIDTH and RUN_BAR_HEIGHT are the bar's
+ * own axis: a hundred units wide and eight tall, stretched to the column by
+ * `preserveAspectRatio="none"`. The fill's width is then the share itself -- one
+ * unit on this axis is one percent of the longest stage -- so no pixel of a
+ * layout is ever a number this screen had to know.
+ */
+const RUN_AGENT_ICON = 'M4 5 h8 M4 8 h8 M4 11 h5'
+
+const RUN_BAR_BOX = '0 0 100 8'
+const RUN_BAR_ORIGIN = '0'
+const RUN_BAR_WIDTH = '100'
+const RUN_BAR_HEIGHT = '8'
+
+/**
+ * stageIcon is a stage's mark: a check for a stage that passed, a cross for one
+ * that failed, and a neutral dot for a record whose outcome this build does not
+ * know. It is decorative -- `aria-hidden`, no text of its own -- because the
+ * word beside it is the reading, and a shape a reader cannot inspect is better
+ * hidden than announced as an unlabelled mark (styling design section 3.5).
+ */
+function stageIcon(factory: RunFactory, passed: boolean | null): ScreenElement {
+  const element = makeNS(factory, 'svg', 'run-stage-icon')
+  element.setAttribute('viewBox', RUN_ICON_BOX)
+  element.setAttribute('width', RUN_ICON_SIZE)
+  element.setAttribute('height', RUN_ICON_SIZE)
+  element.setAttribute('aria-hidden', 'true')
+  if (passed === null) {
+    const dot = makeNS(factory, 'rect', 'run-stage-dot')
+    dot.setAttribute('x', RUN_ICON_DOT_X)
+    dot.setAttribute('y', RUN_ICON_DOT_Y)
+    dot.setAttribute('width', RUN_ICON_DOT_SIDE)
+    dot.setAttribute('height', RUN_ICON_DOT_SIDE)
+    dot.setAttribute('rx', RUN_ICON_DOT_RADIUS)
+    element.append(dot)
+    return element
+  }
+  if (passed) {
+    const check = makeNS(factory, 'path', 'run-stage-check')
+    check.setAttribute('d', RUN_ICON_CHECK)
+    element.append(check)
+    return element
+  }
+  const cross = makeNS(factory, 'path', 'run-stage-cross')
+  cross.setAttribute('d', RUN_ICON_CROSS)
+  element.append(cross)
+  return element
+}
+
+/** agentIcon is the decorative mark beside the agent's own message: three
+ * strokes, `aria-hidden`, and the caption below it is the whole of the reading. */
+function agentIcon(factory: RunFactory): ScreenElement {
+  const element = makeNS(factory, 'svg', 'run-agent-icon')
+  element.setAttribute('viewBox', RUN_ICON_BOX)
+  element.setAttribute('width', RUN_ICON_SIZE)
+  element.setAttribute('height', RUN_ICON_SIZE)
+  element.setAttribute('aria-hidden', 'true')
+  const stroke = makeNS(factory, 'path', 'run-agent-stroke')
+  stroke.setAttribute('d', RUN_AGENT_ICON)
+  element.append(stroke)
+  return element
+}
+
+/** longestDuration is the longest **measured** duration on the panel, or null
+ * when no stage's duration was measured. The bars are shares of it: a panel
+ * whose stages were never timed draws tracks and no fill. */
+function longestDuration(stages: readonly RunStage[]): number | null {
+  let longest: number | null = null
+  for (const stage of stages) {
+    const value = stage.duration.value
+    if (value === null) continue
+    longest = longest === null ? value : Math.max(longest, value)
+  }
+  return longest
+}
+
+/**
+ * stageBar is a stage's bar: the track, and -- when the stage has a measured
+ * duration -- the fill, whose width on the bar's own axis is that duration as a
+ * share of the longest one drawn beside it.
+ *
+ * **A stage with no measured duration draws no fill.** Its duration cell still
+ * carries the `n/a` and the reason, so the stage is never silently a zero-length
+ * one; a fill of no width beside a track would say "this stage took no time",
+ * which is a different fact from "nothing timed it".
+ */
+function stageBar(factory: RunFactory, duration: Reading, passed: boolean | null, longest: number | null): ScreenElement {
+  const element = makeNS(factory, 'svg', 'run-stage-bar')
+  element.setAttribute('viewBox', RUN_BAR_BOX)
+  element.setAttribute('preserveAspectRatio', 'none')
+  // The height is the `viewBox`'s own, written as the attribute the fill is
+  // scaled inside: the stylesheet stretches the bar to the column and carries no
+  // length of its own (`live.ts`'s cap bar is drawn the same way).
+  element.setAttribute('height', RUN_BAR_HEIGHT)
+  element.setAttribute('aria-hidden', 'true')
+  const track = makeNS(factory, 'rect', 'run-stage-track')
+  track.setAttribute('x', RUN_BAR_ORIGIN)
+  track.setAttribute('y', RUN_BAR_ORIGIN)
+  track.setAttribute('width', RUN_BAR_WIDTH)
+  track.setAttribute('height', RUN_BAR_HEIGHT)
+  element.append(track)
+  const value = duration.value
+  if (value === null || longest === null || longest <= 0) return element
+  const fill = makeNS(factory, 'rect', passed === false ? 'run-stage-fill-failed' : 'run-stage-fill')
+  fill.setAttribute('x', RUN_BAR_ORIGIN)
+  fill.setAttribute('y', RUN_BAR_ORIGIN)
+  fill.setAttribute('height', RUN_BAR_HEIGHT)
+  fill.setAttribute('width', stageShare(value, longest))
+  element.append(fill)
+  return element
+}
+
+/** stageShare is a measured duration as a percentage of the longest one on the
+ * panel, on the bar's hundred-unit axis. */
+function stageShare(value: number, longest: number): string {
+  return String((value / longest) * 100)
+}
+
+/**
+ * stagePanel is the timeline: one row per stage, with its mark, its outcome, its
+ * bar, its counts and its duration. Its spend is the figure no document carries
+ * -- a verify record has none -- so the cell is an `n/a` naming the panel that
+ * does carry the run's spend by stage, or naming the missing key when there is
+ * no such panel.
+ */
+function stagePanel(factory: RunFactory, model: RunModel): ScreenElement {
   const element = make(factory, 'section', 'run-stages')
+  element.setAttribute('aria-label', STAGES_PANEL_NAME)
   literal(cell(element, factory, 'h2', 'run-panel-title'), 'stages')
   const list = cell(element, factory, 'ol', 'run-stage-list')
+  const longest = longestDuration(model.stages)
   for (const stage of model.stages) {
     const row = cell(list, factory, 'li', 'run-stage')
+    row.append(stageIcon(factory, stage.passed))
     textCell(row, factory, 'span', stage.stage, 'label', 'verify[].kind', 'run-stage-name')
+    const body = cell(row, factory, 'div', 'run-stage-body')
     if (stage.passed !== null) {
-      literal(cell(row, factory, 'span', 'run-stage-passed'), stage.passed ? 'passed' : 'failed')
+      literal(cell(body, factory, 'span', 'run-stage-passed'), stage.passed ? 'passed' : 'failed')
     }
-    numberCell(row, factory, 'span', stage.tests, 'count', 'run-stage-tests')
-    numberCell(row, factory, 'span', stage.failures, 'count', 'run-stage-failures')
-    numberCell(row, factory, 'span', stage.duration, 'seconds', 'run-stage-duration')
-    // The spend is n/a on every document this tree produces, with the sentence
-    // that says so in the cell's title; the deadline is the row's own word when
-    // it has one and the same n/a when it does not.
-    numberCell(row, factory, 'span', stage.spend, 'usd', 'run-stage-spend')
+    body.append(stageBar(factory, stage.duration, stage.passed, longest))
+    const counts = cell(body, factory, 'p', 'run-stage-count')
+    numberCell(counts, factory, 'span', stage.tests, 'count', 'run-stage-tests')
+    literal(cell(counts, factory, 'span', 'run-stage-tests-word'), 'tests ·')
+    numberCell(counts, factory, 'span', stage.failures, 'count', 'run-stage-failures')
+    literal(cell(counts, factory, 'span', 'run-stage-failures-word'), 'failed')
+    const spend = cell(body, factory, 'p', 'run-stage-meta')
+    numberCell(spend, factory, 'span', stage.spend, 'usd', 'run-stage-spend')
     if (stage.deadline !== null) {
-      literal(cell(row, factory, 'span', 'run-stage-deadline'), stage.deadline)
+      literal(cell(spend, factory, 'span', 'run-stage-deadline'), stage.deadline)
     } else {
-      numberCell(row, factory, 'span', unavailable(stage.deadlineBecause ?? DEADLINE_BECAUSE), 'count', 'run-stage-deadline')
+      numberCell(spend, factory, 'span', unavailable(stage.deadlineBecause ?? DEADLINE_BECAUSE), 'count', 'run-stage-deadline')
     }
+    numberCell(row, factory, 'span', stage.duration, 'seconds', 'run-stage-duration')
   }
   return element
 }
@@ -1314,6 +1673,7 @@ function stagePanel(factory: ScreenFactory, model: RunModel): ScreenElement {
  */
 function pullRequestPanel(factory: ScreenFactory, model: RunPullRequest): ScreenElement {
   const element = make(factory, 'section', 'run-pr')
+  element.setAttribute('aria-label', PR_PANEL_NAME)
   literal(cell(element, factory, 'h2', 'run-panel-title'), 'pull request')
   const facts: (() => void)[] = []
   if (model.repository !== null) {
@@ -1337,7 +1697,8 @@ function pullRequestPanel(factory: ScreenFactory, model: RunPullRequest): Screen
 /** logsPanel is the capped window and the link to the transcript. */
 function logsPanel(factory: ScreenFactory, model: RunLogs): ScreenElement {
   const element = make(factory, 'section', 'run-logs')
-  literal(cell(element, factory, 'h2', 'run-panel-title'), 'logs, capped window')
+  element.setAttribute('aria-label', LOGS_PANEL_NAME)
+  literal(cell(element, factory, 'h2', 'run-panel-title'), 'Logs · capped window')
   const list = cell(element, factory, 'ol', 'run-log-list')
   for (const line of model.lines) {
     const row = cell(list, factory, 'li', 'run-log-line')
@@ -1380,19 +1741,23 @@ function logsPanel(factory: ScreenFactory, model: RunLogs): ScreenElement {
 
 /** diagnosePanel is the rest of `diagnose`: everything else the document says
  * about why the run is where it is. */
-function diagnosePanel(factory: ScreenFactory, model: RunModel): ScreenElement {
+function diagnosePanel(factory: RunFactory, model: RunModel): ScreenElement {
   const element = make(factory, 'section', 'run-diagnosis')
+  element.setAttribute('aria-label', DIAGNOSIS_PANEL_NAME)
   literal(cell(element, factory, 'h2', 'run-panel-title'), 'diagnosis')
   const diagnosis = model.diagnosis
+  // The two test lists are chips: the word carries the tone *and* the reading,
+  // because a chip that said only "failed" would be the same chip for every test
+  // in the list (styling design section 3.5).
   for (const test of diagnosis.failed) {
-    const line = cell(element, factory, 'p', 'run-failed')
-    literal(cell(line, factory, 'span', 'run-failed-word'), 'failed:')
-    textCell(line, factory, 'span', test, 'label', 'failed[]', 'run-failed-test')
+    const chip = cell(element, factory, 'span', 'run-failed')
+    literal(cell(chip, factory, 'span', 'run-failed-word'), 'failed:')
+    textCell(chip, factory, 'span', test, 'label', 'failed[]', 'run-failed-test')
   }
   for (const test of diagnosis.flaky) {
-    const line = cell(element, factory, 'p', 'run-flaky')
-    literal(cell(line, factory, 'span', 'run-flaky-word'), 'flaky:')
-    textCell(line, factory, 'span', test, 'label', 'flaky[]', 'run-flaky-test')
+    const chip = cell(element, factory, 'span', 'run-flaky')
+    literal(cell(chip, factory, 'span', 'run-flaky-word'), 'flaky:')
+    textCell(chip, factory, 'span', test, 'label', 'flaky[]', 'run-flaky-test')
   }
   for (const finding of diagnosis.findings) {
     const line = cell(element, factory, 'p', 'run-finding')
@@ -1401,9 +1766,15 @@ function diagnosePanel(factory: ScreenFactory, model: RunModel): ScreenElement {
     textCell(line, factory, 'span', finding.summary, 'sentence', 'findings[].summary', 'run-finding-summary')
   }
   if (diagnosis.agentMessage !== null) {
-    const line = cell(element, factory, 'p', 'run-agent-message')
-    literal(cell(line, factory, 'span', 'run-agent-word'), 'the agent said:')
-    textCell(line, factory, 'span', diagnosis.agentMessage, 'sentence', 'agent_message', 'run-agent-text')
+    // The caption over the message rather than a cell ahead of it: the agent's
+    // own sentence is the largest prose on the screen and reads as the block it
+    // is, with the decorative mark beside it saying where the sentence came
+    // from without a word of it being the mark's.
+    const line = cell(element, factory, 'div', 'run-agent-message')
+    line.append(agentIcon(factory))
+    const said = cell(line, factory, 'div', 'run-agent-said')
+    literal(cell(said, factory, 'span', 'run-agent-word'), 'THE AGENT SAID')
+    textCell(said, factory, 'p', diagnosis.agentMessage, 'sentence', 'agent_message', 'run-agent-text')
   }
   const tail = cell(element, factory, 'ol', 'run-log-tail')
   for (const line of diagnosis.logTail) {
@@ -1456,9 +1827,32 @@ function diagnosePanel(factory: ScreenFactory, model: RunModel): ScreenElement {
   return element
 }
 
+/**
+ * The panel names are what each region is called to a reader who jumps between
+ * them: every panel is a `section`, and a `section` with no name is a landmark
+ * that announces nothing (`live.ts`'s `PANEL_NAME` is the same sentence). The
+ * heading inside each one carries the same words as its caption.
+ */
+const STAGES_PANEL_NAME = 'Stages'
+
+const SPEND_STAGES_PANEL_NAME = 'Spend by stage'
+
+const TOLERATED_PANEL_NAME = 'Tolerated by the mode'
+
+const DIAGNOSIS_PANEL_NAME = 'Diagnosis'
+
+const LOGS_PANEL_NAME = 'Logs'
+
+const REPLAY_PANEL_NAME = 'Replay'
+
+const LEDGER_PANEL_NAME = 'Ledger'
+
+const PR_PANEL_NAME = 'Pull request'
+
 /** replayPanel is the ring: its bound, its span, and the moment scrubbed to. */
 function replayPanel(factory: ScreenFactory, model: RunReplay): ScreenElement {
   const element = make(factory, 'section', 'run-replay')
+  element.setAttribute('aria-label', REPLAY_PANEL_NAME)
   literal(cell(element, factory, 'h2', 'run-panel-title'), 'replay buffer')
   const records = cell(element, factory, 'p', 'run-replay-records')
   literal(records, 'records held:')
@@ -1485,27 +1879,32 @@ function replayPanel(factory: ScreenFactory, model: RunReplay): ScreenElement {
 }
 
 /** renderRun walks the model through Task 2.0's writers. */
-export function renderRun(factory: ScreenFactory, model: RunModel, theme: RunTheme): ScreenElement {
+export function renderRun(factory: RunFactory, model: RunModel, theme: RunTheme): ScreenElement {
   const root = make(factory, 'section', 'run')
   root.setAttribute('data-theme', theme)
   root.append(header(factory, model))
-  root.append(ledgerPanel(factory, model.ledger))
-  // The run's own spend by stage, then what its mode let through: the two
-  // panels are the document's, and neither is drawn when the document carries
-  // nothing for it. An absent `tolerated` block is not the claim that nothing
-  // was tolerated, so the line that stands in for the panel says which key is
-  // missing rather than which fact is true.
-  if (model.spendStages.length > 0) root.append(spendStagesPanel(factory, model))
+  // The main column and the aside: the reading order of the page, which is the
+  // order the brief lists rather than the order the design's panels were built
+  // in. The run's own spend by stage goes under the timeline it belongs to, and
+  // an absent `tolerated` block draws the one line naming the missing key in the
+  // panel's own place, because a run that tolerated nothing, a record written
+  // before the field existed and a run whose record could not be read all write
+  // no block.
+  const layout = cell(root, factory, 'div', 'run-layout')
+  const main = cell(layout, factory, 'div', 'run-main')
+  main.append(stagePanel(factory, model))
+  if (model.spendStages.length > 0) main.append(spendStagesPanel(factory, model))
   if (model.tolerated === null) {
-    literal(cell(root, factory, 'p', 'run-tolerated-absent'), TOLERATED_ABSENT)
+    literal(cell(main, factory, 'p', 'run-tolerated-absent'), TOLERATED_ABSENT)
   } else {
-    root.append(toleratedPanel(factory, model.tolerated))
+    main.append(toleratedPanel(factory, model.tolerated))
   }
-  root.append(stagePanel(factory, model))
-  root.append(pullRequestPanel(factory, model.pullRequest))
-  root.append(logsPanel(factory, model.logs))
-  root.append(diagnosePanel(factory, model))
-  root.append(replayPanel(factory, model.replay))
+  main.append(diagnosePanel(factory, model))
+  main.append(logsPanel(factory, model.logs))
+  main.append(replayPanel(factory, model.replay))
+  const aside = cell(layout, factory, 'aside', 'run-aside')
+  aside.append(ledgerPanel(factory, model.ledger))
+  aside.append(pullRequestPanel(factory, model.pullRequest))
   for (const warning of model.warnings) {
     textCell(root, factory, 'p', warning, 'sentence', 'warnings[]', 'run-warning')
   }

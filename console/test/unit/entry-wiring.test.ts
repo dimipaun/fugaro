@@ -398,6 +398,40 @@ describe('the dashboard the entry mounts', () => {
     expect(classed(panel, 'live-repo-name')).toEqual([])
   })
 
+  it('goes back to Live from the Run screen’s own breadcrumb crumb', async () => {
+    // The breadcrumb's `Live` crumb is the way back from a run the operator
+    // opened, and it is the one listener the Run screen asks for: `showRun`
+    // binds it to the same `show('live')` the nav's own Live button calls. The
+    // crumb is a real `button` rather than a navigating element, because the
+    // console navigates with buttons and the window refuses everything else.
+    const frame = syntheticDocuments()[syntheticDocuments().length - 1] as Readonly<Record<string, unknown>>
+    const { bridge } = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(frame),
+        diagnoseRun: () => ({ ok: true, data: { document: {} } }),
+        readRunLogs: () => ({ ok: true, data: { document: { entries: [], total: 0, refused: 0 } } }),
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    const panel = panelOf(document)
+    const row = classed(panel, 'live-run')[0] as FakeNode
+    row.click()
+    await flush()
+    const crumb = classed(panel, 'run-crumb-live')[0]
+    expect(crumb?.tagName, 'the Run screen drew no Live crumb to click').toBe('BUTTON')
+
+    crumb?.click()
+    await flush()
+    expect(
+      (panel.children[0] as FakeNode).attributes.get('class'),
+      'the crumb left the Run screen',
+    ).toBe('live')
+    expect(classed(panel, 'run-crumb-live')).toEqual([])
+    // And the crumb is bound to the view and to nothing else: the run it left
+    // is not read again by going back.
+    expect(classed(panel, 'live-run')).not.toEqual([])
+  })
+
   it('does not open Run detail from a click on the Reap a lost row draws', async () => {
     // A lost run's row draws Reap through `disabledWrite`: `aria-disabled`
     // rather than `disabled`, so a keyboard reader reaches it and its click

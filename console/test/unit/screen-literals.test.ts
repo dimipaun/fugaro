@@ -207,6 +207,8 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
       'the run suffix as the model\'s `Sanitized` `run` value, which `suffixRefusal` refuses unless it is four characters, under this file\'s own "run …" label -- so the interpolation is a sanitized four-character suffix and never a run id or a path',
   },
   'run.ts': {
+    UNAVAILABLE_MARK:
+      'the console\'s own `n/a` (`src/shared/availability.ts`): an absent repository, workflow, recipe, branch, account, outcome or stage on the run is drawn as the mark and never as an empty cell, and the mark is written here rather than through `putReading` because each of those is a string and not a reading -- the `unit` `putReading` takes is a claim about how a number is formatted (the same reason `live.ts` names)',
     'stage.deadline': '`deadlineState` keeps a word only when it is on `DEADLINE_STATES`, else null',
     '`#${String(model.number)}`': 'a pull request number the model read as a finite integer (`prNumberOf`)',
     'model.because': 'one of two console sentences (`PR_NO_LINK_REASON` or the no-pull-request one)',
@@ -498,6 +500,13 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
   'run.ts': {
     "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
     theme: { within: 'renderRun', reason: 'a `RunTheme`, the closed theme tuple' },
+    '`the document carries no ${field}`':
+      'the console\'s own sentence for a field the record left out of this run, interpolating the wire path the caller passes (`row.repo`, `row.oauth_account`, `row.branch`) and nothing the document chose -- the same sentence `putReading` writes into the `title` of a reading with no number, written here because a column of the header is text rather than a reading',
+    'stageShare(value, longest)': {
+      within: 'stageBar',
+      reason:
+        '`stageShare`: a measured duration as its share of the longest one drawn beside it, on the bar\'s own hundred-unit axis -- geometry rather than text or a style, and the same kind of value `graph.ts` writes through `coord`, with both numbers the model\'s (`measured` readings the panel read) and never a string a document can spell',
+    },
   },
   '../../shared/version.ts': {
     "classes.join(' ')": { within: 'cell', reason: 'the class list of the `cell` helper; every call site passes string-literal class names' },
