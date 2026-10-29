@@ -1,16 +1,23 @@
 package github
 
 // Fugaro's own identity when the App's key is the credentials service's
-// (C2.2). This process holds no JWT to read GET /app with, so the identity
-// comes from the installation token the run already has: GET /user answers
-// an installation token with the bot account it acts as, and that account's
-// login is <slug>[bot] -- the same slug GraphQL names the bot by, and the
-// one every Self comparison uses.
+// (C2.2). This process holds no JWT, and there is no other route to the
+// App's own identity: GitHub refuses an installation token GET /user
+// ("Resource not accessible by integration"), and the endpoints an
+// installation access token may call hold nothing that names the App
+// (docs.github.com/en/rest/authentication/endpoints-available-for-github-app-installation-access-tokens;
+// GET /installation/repositories lists the installation's repositories, not
+// the App, and GET /apps/{app_slug} needs the slug it would return). So the
+// identity is unknown in every run below, and Self is false rather than a
+// guess: a run under the service cannot tell its own comments from anyone
+// else's, which is the fail-closed direction -- review mode's trusted-author
+// gate then wants a collaborator (reviewmode.go), and a follow-up trusts no
+// marker from an author it cannot name.
 //
-// The three answers that matter are here: the bot's own pull request reads
-// as Self, someone else's does not, and an identity that could not be
-// established (a refusal, or an answer that is not a bot account at all) is
-// Self=false rather than a guess.
+// httpfixture is what proves the "no route" half: these fixtures hold no
+// identity read at all, and httpfixture fails the test on a request it does
+// not hold, so a provider that tried GET /user -- or any other route to the
+// App -- would fail here rather than quietly read its 403.
 //
 // The two wants pin Base: "main" as well, which these fixtures have carried
 // all along: FetchPRHead reads the pull request's base branch (the review
@@ -19,6 +26,8 @@ package github
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -60,30 +69,37 @@ func openService(t *testing.T, fixture string, warn func(string)) *Provider {
 	return p
 }
 
-// TestGitHubSelfFromTheRunsOwnToken: with the service on, a review run on
-// Fugaro's own pull request must still read Self=true. Its identity is read
-// with the run's own installation token (GET /user), so no App key is
-// involved and no GET /app is made -- the fixture has none, and httpfixture
+// TestGitHubSelfFailsClosedWithTheService: a review run on Fugaro's own pull
+// request with the service on must still read Self=false. The fixture's
+// author login ("fugaro-app[bot]") is exactly what the App's own bot would
+// be, and the run cannot confirm it: no JWT, no route to the App, so no slug
+// to compare the login against. It is warned about once, naming the reason,
+// and no request is made for it -- the fixture holds none, and httpfixture
 // fails the test on a request it does not hold.
 //
-// Mutation (return "unknown" from appSlug whenever p.app is nil, the
-// behaviour before this): this test fails, wanting Self=true and getting
-// false.
-func TestGitHubSelfFromTheRunsOwnToken(t *testing.T) {
-	got, err := openService(t, "pull_open_head_service.json", nil).FetchPRHead(ctx, 12)
+// Mutation (return a slug from appSlug whenever p.app is nil, or trust every
+// "...[bot]" author when the identity is unknown): this test fails, wanting
+// Self=false and getting true.
+func TestGitHubSelfFailsClosedWithTheService(t *testing.T) {
+	var warns []string
+	got, err := openService(t, "pull_open_head_service.json", func(w string) { warns = append(warns, w) }).FetchPRHead(ctx, 12)
 	want := gitprov.PRHead{SHA: headSHA, Base: "main", Fork: false, Open: true, AuthorID: "900001", AuthorLogin: "fugaro-app[bot]",
-		Association: "NONE", Self: true, SourceRepo: "acme/web"}
+		Association: "NONE", SourceRepo: "acme/web"}
 	if err != nil || got != want {
 		t.Fatalf("got %+v, %v, want %+v", got, err, want)
 	}
+	if len(warns) != 1 || !strings.Contains(warns[0], "no App key in this process") ||
+		!strings.Contains(warns[0], "can't be told apart") {
+		t.Fatalf("warnings = %q, want one naming the missing key and what it costs", warns)
+	}
 }
 
-// TestGitHubSelfFalseForSomeoneElsesPRWithTheService: the same identity read
-// must not make Self true for anyone else. The author here is another bot
-// ("someone-else[bot]"), which is the shape the exact-slug comparison exists
-// to refuse: a "...[bot]" login is not Fugaro's own.
+// TestGitHubSelfFalseForSomeoneElsesPRWithTheService: the same run on another
+// bot's pull request ("someone-else[bot]") reads Self=false too. The identity
+// is unknown here, so the login's shape decides nothing either way: a
+// "...[bot]" login is never Fugaro's own on its own.
 //
-// Mutation (compare only the "[bot]" suffix instead of the whole login):
+// Mutation (compare only the "[bot]" suffix, or the absence of an identity):
 // this test fails, wanting Self=false and getting true.
 func TestGitHubSelfFalseForSomeoneElsesPRWithTheService(t *testing.T) {
 	got, err := openService(t, "pull_other_author_head_service.json", nil).FetchPRHead(ctx, 12)
@@ -94,68 +110,64 @@ func TestGitHubSelfFalseForSomeoneElsesPRWithTheService(t *testing.T) {
 	}
 }
 
-// TestGitHubSelfFailsClosedWhenTheServiceIdentityIsRefused: a GET /user the
-// token may not read is the identity unknown, and Self must then be false
-// even though this fixture's author login is exactly what the App's own bot
-// would be. It is remembered (a 4xx is definite) and warned about once, like
-// every other failed identity read.
+// TestGitHubCommentsSelfUnknownWithTheService: the same unknown identity
+// answers the comment read, which is what a follow-up trusts a marker by.
+// The comments are the ones TestGitHubCommentsSelf uses -- the App's bot as
+// REST spells it, as GraphQL spells it, a person whose login is the slug, and
+// another bot -- and with no route to the App every one of them comes back
+// Self=false, SelfKnown=false, so a marker is honoured from none of them.
 //
-// Mutation (treat a failed read as Self=true, or as every "...[bot]" being
-// Fugaro's): this test fails.
-func TestGitHubSelfFailsClosedWhenTheServiceIdentityIsRefused(t *testing.T) {
-	var warns []string
-	got, err := openService(t, "pull_open_head_service_identity_refused.json", func(w string) { warns = append(warns, w) }).FetchPRHead(ctx, 12)
-	if err != nil || got.Self {
-		t.Fatalf("got %+v, %v, want Self=false (the run's identity could not be confirmed)", got, err)
-	}
-	if len(warns) != 1 || !strings.Contains(warns[0], "GET /user") || !strings.Contains(warns[0], "403") {
-		t.Fatalf("warnings = %q, want one naming GET /user and its 403", warns)
-	}
-}
-
-// TestGitHubCommentsSelfWithTheService: the same identity answers the
-// comment read, which is what a follow-up trusts a marker by. The comments
-// and their expected Self are the ones TestGitHubCommentsSelf uses (the App's
-// bot as REST spells it, as GraphQL spells it, a person whose login is the
-// slug, and another bot); only where the slug comes from is different.
-//
-// Mutation (return "unknown" from appSlug whenever p.app is nil): this test
-// fails, every comment coming back SelfKnown=false.
-func TestGitHubCommentsSelfWithTheService(t *testing.T) {
+// Mutation (return a slug from appSlug whenever p.app is nil): this test
+// fails, one of the five coming back Self=true.
+func TestGitHubCommentsSelfUnknownWithTheService(t *testing.T) {
 	got, err := openService(t, "comments_self_service.json", nil).Comments(ctx, 12)
 	if err != nil {
 		t.Fatal(err)
 	}
-	self := map[string]bool{}
+	want := map[string]bool{"PRRC_21": false, "PRRC_22": false, "PRRC_23": false, "IC_kwDOA621": false, "IC_kwDOA622": false}
+	if len(got) != len(want) {
+		t.Fatalf("comments = %+v", got)
+	}
 	for _, c := range got {
-		if !c.SelfKnown {
-			t.Errorf("%s: SelfKnown is false", c.ID)
+		if c.SelfKnown {
+			t.Errorf("%s: SelfKnown is true with no route to the App's identity", c.ID)
 		}
-		self[c.ID] = c.Self
-	}
-	want := map[string]bool{"PRRC_21": true, "PRRC_22": false, "PRRC_23": false, "IC_kwDOA621": true, "IC_kwDOA622": false}
-	if len(self) != len(want) {
-		t.Fatalf("self = %v", self)
-	}
-	for id, w := range want {
-		if self[id] != w {
-			t.Errorf("%s: Self = %t, want %t", id, self[id], w)
+		if c.Self {
+			t.Errorf("%s: Self is true with no route to the App's identity", c.ID)
+		}
+		if _, ok := want[c.ID]; !ok {
+			t.Errorf("%s: not a comment of this fixture", c.ID)
 		}
 	}
 }
 
-// TestGitHubSelfFailsClosedWhenTheServiceAnswerIsNotABot: an answer that is
-// not a bot account is not the App's identity, whatever its login is
-// spelled like. This fixture answers 200 with an ordinary user account whose
-// login is the App's bare slug -- the shape a naive TrimSuffix would accept
-// and then compare a "<slug>[bot]" author against, making Self true for an
-// account that is not the App's.
+// TestGitHubIdentityWithoutTheAppKeyAsksNothing: with the App's key in the
+// credentials service there is no route to the App's identity, so the
+// provider asks for nothing at all -- the server here fails the test on any
+// request -- and the answer is remembered and warned about once, like every
+// other definite identity failure.
 //
-// Mutation (drop the Type != "Bot" check): this test fails, finding
-// Self=true.
-func TestGitHubSelfFailsClosedWhenTheServiceAnswerIsNotABot(t *testing.T) {
-	got, err := openService(t, "pull_open_head_service_not_a_bot.json", nil).FetchPRHead(ctx, 12)
-	if err != nil || got.Self {
-		t.Fatalf("got %+v, %v, want Self=false (the answer is not the App's bot account)", got, err)
+// Mutation (make the no-key case a passing failure, as a 5xx is): this test
+// fails, on the second warning.
+func TestGitHubIdentityWithoutTheAppKeyAsksNothing(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("the provider sent %s %s with no App key to read the identity with", r.Method, r.URL)
+		http.Error(w, "unexpected", http.StatusTeapot)
+	}))
+	t.Cleanup(srv.Close)
+	var warns []string
+	p, err := New(Options{Owner: "acme", Repo: "web", AppID: "1234", ServiceHeldKey: true, BaseURL: srv.URL,
+		Warn: func(w string) { warns = append(warns, w) }, Now: func() time.Time { return time.Date(2026, 9, 27, 10, 0, 0, 0, time.UTC) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.UseServiceTokens(fixtureSource{})
+	for range 2 {
+		if slug, ok := p.appSlug(ctx); ok || slug != "" {
+			t.Fatalf("slug = %q, %t with no App key in this process", slug, ok)
+		}
+	}
+	if len(warns) != 1 {
+		t.Fatalf("warnings = %q, want one", warns)
 	}
 }
