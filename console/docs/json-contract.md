@@ -68,7 +68,10 @@ The columns below say which field needs which state. The recurring shapes:
 - **`*float64` / `*int64` / `*string` with no `omitempty`** (the `usdPtr` and
   `jsonLine` conventions): a **null** on the wire means *unavailable*, and a
   present number means *measured*. `daily_cap_usd`, `percent`, `spent_usd`,
-  `age_seconds`, `notional_micros`, `compute_usd` are all this shape.
+  `age_seconds`, `notional_micros`, `compute_usd` are all this shape — with one
+  exception, §3's `compute_usd`, which is the only number that carries
+  `omitempty`: without `budget show --compute` the key must not be there at all,
+  and with it an unknown figure is `null` (see that section).
 - **`omitempty` on a string or a slice**: an **absent key** means *none* or
   *empty*, which is a fact rather than a gap.
 - **`bool` flags that say "I don't know"**: `JSONBurn.Known` is the one that
