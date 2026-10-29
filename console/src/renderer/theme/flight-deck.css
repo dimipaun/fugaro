@@ -461,6 +461,13 @@ div.live-orphans {
   gap: var(--section-gap);
 }
 
+/* The orphan table has no panel around it, so its own box is the box that
+ * scrolls: `runTable` draws the table and no box, and a table with a floor and
+ * no scrolling ancestor leaves its last columns off a narrow window. */
+div.live-orphans {
+  overflow-x: auto;
+}
+
 section.live-repo {
   display: grid;
   align-content: start;

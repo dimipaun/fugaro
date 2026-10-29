@@ -276,7 +276,11 @@ builds, and `renderLive` appends exactly five things to the
 root — the header, the total, `div.live-repos`, the optional `div.live-orphans` and
 `section.live-review`.
 A rule that puts the banner below the repos list is a rule that selects it in a place it
-never occupies.
+never occupies. **The orphan box holds the same `table.live-table` as a repository panel
+does**: `runTable` draws the table and no box around it, so each caller draws the box that
+scrolls — `div.live-runs` inside a project, and `div.live-orphans` where there is no panel
+at all — because the table has a `min-width` and a table with a floor and no scrolling
+ancestor leaves its last columns off a narrow window.
 
 **The review inbox is drawn whether or not it has a row**, which is why its section is not
 in the optional list above: "nothing is waiting for you" is an answer, and a section that
@@ -295,7 +299,7 @@ section at all: not an inert one, and not one waiting for a provider.
 | Header | `live-header`, `live-project`, `live-mode`, `live-day`, `live-connection`, `live-connection-age`, `live-connection-reason`, `live-note` |
 | Total | `live-total` (the panel root, with `live-fleet`), `live-counted`, `live-cap`, `live-percent`, `live-total-notional`, `live-total-percent` (the cap bar, an `svg`), `live-fleet-wide` (the wide cell), `live-fleet-cap`, `live-fleet-cap-label`, `live-fleet-hero`, `live-fleet-hero-note`, `live-fleet-bar`, `live-fleet-track`, `live-fleet-segment` (one `rect` per account the bar draws, keyed by `data-account`), `live-fleet-legend`, `live-fleet-key`, `live-fleet-swatch` (one mark per account the bar draws — a row whose account it does not draw has none), `live-fleet-key-word`, `live-fleet-unread` (a value the document does not carry), `live-fleet-counted`, `live-fleet-sep`, `live-fleet-full`, `live-fleet-warn-icon`, `live-fleet-full-word`, `live-fleet-stats`, `live-fleet-stat`, `live-fleet-stat-label`, `live-fleet-burn`, `live-fleet-burn-unit`, `live-fleet-active`, `live-fleet-lost`, `live-fleet-queued`, `live-fleet-waiting` |
 | Repository | `live-repos`, `live-repo` (a `section` with an accessible name — "Project runs"), `live-repo-head`, `live-repo-label`, `live-repo-name`, `live-repo-figures`, `live-repo-figure`, `live-repo-figure-label`, `live-repo-sep`, `live-repo-counted`, `live-repo-cap`, `live-repo-notional`, `live-repo-percent`, `live-repo-meters`, `live-halt` (a `button`, drawn disabled), `live-burn-rate`, `live-burn`, `live-burn-bar`, `live-burn-unit`, `live-runs`, `live-orphans` |
-| Run row | `live-table` (the `table` itself), `live-table-head` (one `th` per column), `live-run` (a `tr`), `live-run-id`, `live-run-title`, `live-run-mode`, `live-pipeline`, `live-pipeline-segments`, `live-pipeline-segment` (one `li` per segment, keyed by `data-mark`), `live-run-when`, `live-run-dot`, `live-run-word`, `live-run-stage`, `live-run-round`, `live-run-state`, `live-run-coder`, `live-run-models`, `live-run-auth`, `live-run-spend`, `live-run-age`, `live-run-status`, `live-run-chip` (the state's own word), `live-run-pip` (the lost chip's decorative mark), `live-run-flag`, `live-run-contradiction`, `live-reap` (a `button`, drawn disabled and only on a lost run) |
+| Run row | `live-table` (the `table` itself), `live-table-head` (one `th` per column), `live-run` (a `tr`), `live-run-id`, `live-run-title`, `live-run-mode`, `live-pipeline`, `live-pipeline-segments`, `live-pipeline-segment` (one `li` per segment, keyed by `data-mark`), `live-run-when`, `live-run-dot`, `live-run-word`, `live-run-stage`, `live-run-round`, `live-run-state`, `live-run-coder`, `live-run-models`, `live-run-auth`, `live-run-spend`, `live-run-age`, `live-run-status`, `live-run-chip` (the state's own word), `live-run-pip` (the lost chip's decorative mark), `live-run-flag` (one per flag **except** a flag whose name is the chip's own word — the health `lost` and the bucket `queued` — which joins the chip's `title` instead, §2.9), `live-run-contradiction`, `live-reap` (a `button`, drawn disabled and only on a lost run) |
 | Condition classes on a row | `live-run-queued`, `live-run-stuck`, `live-run-lost`, `live-run-done` |
 | Review inbox | `live-review`, `live-review-title` (the CLI's one line, `Ready for your review (N)`, drawn as **one text run** — `reviewSection` writes the words, the parentheses and the count together, so no rule can space them apart), `live-review-list`, `live-review-row`, `live-review-repo`, `live-review-number`, `live-review-url`, `live-review-run-title`, `live-review-age`, `live-review-run-id`, `live-review-empty`, `live-review-note`, `live-review-capped`, `live-review-dropped` (the count of rows the cap left out), `live-review-of`, `live-review-total` |
 | Kill banner | `live-kill`, `live-kill-word`, `live-kill-by`, `live-kill-at`, `live-kill-reason` |
@@ -327,9 +331,9 @@ whose mode is the built-in default.
 | `data-mark` | `past` \| `current` \| `future` \| `danger` | what a pipeline segment draws: one `li.live-pipeline-segment` per segment, and the mark is the attribute rather than part of the class name, the shape every other tone on this tree uses (the fleet bar's `data-account`, a row's `data-tone`). **The segments are decoration** — the list is `aria-hidden` and the run's stage, round and state are written as text under it (`div.live-run-when`) — so no rule may read a mark as the only place a state lives. A stage this build does not know draws **no `current` segment at all**: every segment is `future` and the stage's own word is still drawn |
 | `data-tone` | `plain` \| `amber` \| `alarm` \| `queued` | row and flag severity |
 | `data-queued` | `true` \| `false` | |
-| `data-flag` | `silent` \| `lost` \| `near deadline` \| `over deadline` \| `stuck` \| `queued` \| `unknown health` \| `unknown deadline` | one `span.live-run-flag` per flag |
+| `data-flag` | `silent` \| `near deadline` \| `over deadline` \| `stuck` \| `unknown health` \| `unknown deadline` | one `span.live-run-flag` per flag, **except a flag whose name is the state chip's own word** — the health `lost` and the bucket `queued` — which is not drawn as a span at all: the chip already says the word, so the flag's reason joins the chip's `title` and the row says its state once (§2.3) |
 | `data-contradiction` | `true` (present only) | health says quiet longer than the run is old |
-| `data-killed` | `true` \| `false` | **the repository block only** (`li.live-repo`, `true`/`false`), and `true` on the kill banner `div.live-kill`. **Not on the total block** (`section.live-total.live-fleet`): `total()` emits no `data-killed` and appends the banner instead, so a rule that colours the total block by this attribute selects nothing |
+| `data-killed` | `true` \| `false` | **the repository block only** (`section.live-repo`, `true`/`false`), and `true` on the kill banner `div.live-kill`. **Not on the total block** (`section.live-total.live-fleet`): `total()` emits no `data-killed` and appends the banner instead, so a rule that colours the total block by this attribute selects nothing |
 | `data-key` | a sanitized slug, or `''` | the repository |
 | `data-fast` | `true` \| `false` | burn faster than the cap allows |
 | `data-stale` | `true` (present only) | the stale banner |
@@ -341,8 +345,11 @@ State variants and **how each is marked**: killed/halted (`div.live-kill` with
 with `data-stale="true"` and the sentence "…(a feed is stale after 45 s), so the values
 above are the last ones read and the graphs break where the console stopped observing");
 gap (`data-state="gap"`, the mark `—`); silent (`data-flag="silent"`, `data-tone="amber"`);
-lost (`data-flag="lost"`, `data-tone="alarm"`); near/over deadline (`data-flag`, amber and
-alarm); queued (the `live-run-queued` class, `data-queued="true"`, `data-tone="queued"`);
+lost (the state chip's **own word**, `data-tone="alarm"`, the pip `●` beside it and the flag's
+reason in the chip's `title` — the flag is not drawn as a second span, so a rule that paints
+`span.live-run-flag` for `lost` matches nothing); near/over deadline (`data-flag`, amber and
+alarm); queued (the `live-run-queued` class, `data-queued="true"`, `data-tone="queued"`, and
+the chip's own word, its reason in the chip's `title`);
 stuck (`live-run-stuck`, `data-tone="alarm"`); notional (**the text mark `~$` alone** —
 Live's `data-state` comes from a `percent` reading, which is `measured` or `unavailable`, or
 from a sparkline bar's height, which is `measured` or `gap`, so this screen never writes
@@ -596,11 +603,12 @@ carry `data-theme` from code — see [§3.6](#36-how-the-theme-is-chosen).
 
 | State | Screen(s) | How it is marked in the DOM |
 |---|---|---|
-| killed / halted | killed: Live (the repo block, and the banner the total block appends), Spend (the caps panel's banner), Projects (kill panel, banner). halted: Run (`div.run-halt`) | a banner element with `data-killed="true"` and the word `KILLED by` + who, when, why — or, on Run, `div.run-halt` with the word `HALTED` + who, when, why and **no attribute at all** (§2.6: that screen's `data-*` is `data-theme`, plus `data-href` on a log link). **The attribute is on the banner, and on Live's repository block itself** — `li.live-repo` carries `true`/`false` and the banner is appended into that same `li` (`live.ts`), so `.live-repo[data-killed="true"]` is a rule this design allows; the two blocks that only *append* a banner, `section.live-total.live-fleet` and `div.spend-caps`, carry none (§2.3, §2.4) |
+| killed / halted | killed: Live (the repo block, and the banner the total block appends), Spend (the caps panel's banner), Projects (kill panel, banner). halted: Run (`div.run-halt`) | a banner element with `data-killed="true"` and the word `KILLED by` + who, when, why — or, on Run, `div.run-halt` with the word `HALTED` + who, when, why and **no attribute at all** (§2.6: that screen's `data-*` is `data-theme`, plus `data-href` on a log link). **The attribute is on the banner, and on Live's repository block itself** — `section.live-repo` carries `true`/`false` and the banner is appended into that same `section` (`live.ts`), so `.live-repo[data-killed="true"]` is a rule this design allows; the two blocks that only *append* a banner, `section.live-total.live-fleet` and `div.spend-caps`, carry none (§2.3, §2.4) |
 | stale (console clock) | Live | `data-stale="true"` banner + the threshold sentence |
 | stale (document age) | Live | `data-stale-by-age="true"` on the connection cell |
-| silent / lost / near / over deadline | Live run rows | `span.live-run-flag` with `data-flag` and `data-tone` (`amber`/`alarm`) |
-| queued / stuck | Live run rows | the `live-run-queued` / `live-run-stuck` class + `data-queued` + `data-flag` |
+| silent / near / over deadline | Live run rows | `span.live-run-flag` with `data-flag` and `data-tone` (`amber`/`alarm`) |
+| lost / queued | Live run rows | the state chip `span.live-run-chip`'s **own word** (on a `live-run-lost` / `live-run-queued` row), the flag's reason in the chip's `title`, and — for `lost` — the pip `●`. The flag is **not** drawn as a `span.live-run-flag`: the chip already says the word, and the pipeline line above says it again, so the row says its state once |
+| stuck | Live run rows | the `live-run-stuck` class + `data-queued` + `data-flag` |
 | gap | Live, Spend | `data-state="gap"`, the mark `—`, a reason in `title` |
 | unavailable | `data-state="unavailable"`: Live (**the repository's cap bar**, `bar()` — the fleet budget panel writes no state anywhere: its cap, headroom and counts carry the `n/a` and the reason in `title` instead), Spend (a point), Projects (**the panel state**, beside `read` and `not-built`), degraded (the cap line). **Not the sparkline's bars**: their state is the bar's own height, `measured` or `gap` (`spark()`, `live.ts` 896-925), so `[data-state='unavailable']` selects no bar of a burn window. `data-available="false"`: Spend's caps panel. The text `n/a` with a reason in `title`: **every** screen | **Run writes no `data-state` at all** — its numbers go through `putReading`, which sets the text and, for a value with no number, the `title` reason, and nothing else (§2.6), so a `[data-state]` colour rule selects nothing on that screen |
 | notional / estimated | the text marks: Live, Spend, Projects, Run, degraded. The attribute `data-state`: **Spend alone** | `~$` / `est.` are `formatReading`'s marks, so they appear wherever a notional or estimated reading is drawn, on all five screens (Live's repository and total notional figures, §2.3; the subscription model and the estimated compute on Projects and Run, §2.5, §2.6; the degraded compute, §2.7). The **attribute** `data-state="notional"` / `"estimated"` is written by Spend alone, on `.spend-point` (and on the single point an account with nothing to draw appends), and it is the **account's** state, not the breakdown on the axis: `SPEND_ACCOUNTS` is three charts, and each of the three reads its own column into its own state — `model_micros` → `measured`, `notional_micros` → `notional`, `compute_micros` → `estimated` (`microsReading`, `spend.ts` 512-536) — with the point copying that reading's state into the attribute (`point()`, 1521). `data-dimension` is the switch's word for the x-axis (`day\|week\|month\|year\|repo\|model\|person\|mode`) and decides nothing here: the notional chart is notional whether the rows are days or repositories. Projects' `data-state` is its panel state, Live's comes from a `percent` reading, Run writes none, and the degraded cap is always `unavailable` |
@@ -1182,8 +1190,9 @@ the code already emits**, and the stylesheet must never be the only carrier of a
 | the rail's three row states (§4.1) | the **word** `running` / `silent` / `idle` beside its glyph `●` / `▲` / `○`, both in `span.console-rail-state`; the glyph alone is what the collapsed rail draws, and the row's accessible name then carries the word, so the tone is never the only carrier in either state |
 | killed / halted | the banner's **words**: `KILLED by <who> <when> "<reason>"` / `HALTED` |
 | stale | the banner's sentence, naming the 45 s threshold, plus `last read <at>` |
-| silent / lost / near / over deadline | the flag's **text** (`silent`, `lost`, `near deadline`, …) in `span.live-run-flag` |
-| queued / stuck | the flag text plus the all-caps row treatment |
+| silent / near / over deadline | the flag's **text** (`silent`, `near deadline`, …) in `span.live-run-flag` |
+| lost / queued | the state chip's **word** (`lost`, `queued`) in `span.live-run-chip`, with the flag's reason in its `title` — the word is the mark, and the chip's tone is never the only carrier |
+| stuck | the flag text plus the all-caps row treatment |
 | gap | the mark `—` in the cell and a `title` |
 | unavailable | the mark `n/a` and a `title` |
 | notional / estimated | the `~$` / `est.` prefix **in the number itself** |

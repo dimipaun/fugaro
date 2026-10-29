@@ -2454,8 +2454,12 @@ span.coordinator-unread-retry {
   div.spend-kill,
   div.projects-kill,
   div.run-halt,
-  tr.live-run-queued,
-  tr.live-run-stuck,
+  /* The redesign moved the queued and stuck rules off the row and onto its
+   * first cell (`flight-deck.css`), so this arm names the cell that carries the
+   * border: a `tr` in a collapsed table paints no edge of its own, and a rule
+   * naming it here would keep nothing. */
+  tr.live-run-queued td:first-child,
+  tr.live-run-stuck td:first-child,
   div.live-stale,
   section.live-repo[data-killed='true'],
   /* The rigor chips are boundaries and nothing else, so the boundary is what

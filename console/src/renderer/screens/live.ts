@@ -44,6 +44,7 @@
 // policy and an inline style is what it refuses.
 
 import {
+  UNAVAILABLE_MARK,
   formatReading,
   gap,
   measured,
@@ -969,7 +970,20 @@ const MARK_CURRENT = 'current'
 const MARK_FUTURE = 'future'
 const MARK_DANGER = 'danger'
 
-/** stateWordInto writes the console's word for a run's state into an element. */
+/** stateWord is the console's word for a run's state, as one string. It exists
+ * beside `stateWordInto` because the status cell has to *compare* a flag's name
+ * with the word it draws, and a comparison against a second copy of the word
+ * would be a comparison that can drift from the one on screen. */
+function stateWord(state: RunState): string {
+  if (state === 'queued') return RUN_QUEUED_WORD
+  if (state === 'lost') return RUN_LOST_WORD
+  if (state === 'done') return RUN_DONE_WORD
+  return RUN_RUNNING_WORD
+}
+
+/** stateWordInto writes the console's word for a run's state into an element.
+ * It keeps the four branches rather than drawing `stateWord(state)`: each branch
+ * names its constant at the sink, which is the shape the vocabulary scan reads. */
 function stateWordInto(element: ScreenElement, state: RunState): void {
   if (state === 'queued') literal(element, RUN_QUEUED_WORD)
   else if (state === 'lost') literal(element, RUN_LOST_WORD)
@@ -1350,31 +1364,25 @@ function spark(factory: ScreenFactory, line: Sparkline): ScreenElement {
 }
 
 /**
- * wireOrUnavailable draws one of a run's own strings, and the console's
- * unavailable mark when the feed carries none.
- *
- * The CLI writes its own dash for a field it has nothing for (`dash()` in
- * `internal/watch/build.go`, which is why a queued row reads `-` for its stage,
- * round and models), and that is a value the document chose, drawn as itself.
- * An **empty** value is the other case: it is a key the document left out of
- * this run, and `n/a` with the field's name in the `title` is what every other
- * absent value on this screen says. It goes through `putReading` because that is
- * the one writer that draws the console's mark and its reason together;
- * `formatReading` answers the mark for a reading with no value whatever its
- * unit.
- */
-/** putActor writes one of the two actors a run's feed recorded -- its coder and
+ * putActor writes one of the two actors a run's feed recorded -- its coder and
  * its reviewer -- or the console's own `n/a` with the reason in the `title` when
  * the feed carried none.
  *
  * **`n/a` and never an empty cell.** A missing model is not a model that ran for
- * nothing: the cell says the question was asked and could not be answered, which
- * is what `putReading` writes and what an empty span would not (design section
- * 6.1 rule 1). Nothing here is invented -- `models` and `auth` are the two
- * fields the frame carries. */
+ * nothing: the cell says the question was asked and could not be answered -- the
+ * mark, with the reason in the `title` -- where an empty span would say nothing
+ * at all (design section 6.1 rule 1). Nothing here is invented: `models` and
+ * `auth` are the two fields the frame carries. */
 function putActor(element: ScreenElement, raw: string, field: string): void {
   if (raw === '') {
-    putReading(element, unavailable(`the document carries no ${field}`), 'count')
+    // **The mark and its reason are written here rather than through
+    // `putReading`.** An actor is a string and not a number, so a reading's
+    // `unit` would be a claim about a format that never runs -- and §2.10 scopes
+    // Live's one `count` reading to the review inbox, a sentence
+    // `docs_console_styling_test.go` holds. The two lines below are the two
+    // `putReading` writes for a value with no number: the mark, and the reason.
+    literal(element, UNAVAILABLE_MARK)
+    element.setAttribute('title', `the document carries no ${field}`)
     return
   }
   putText(element, raw, 'label', field)
@@ -1438,7 +1446,10 @@ function pipelineCell(factory: ScreenFactory, row: LiveRunRow, state: RunState):
  *
  * The flags are the CLI's own conclusions, drawn as words with their threshold
  * in the `title`, exactly as they were before the row became a table: they moved
- * into this cell and did not disappear.
+ * into this cell and did not disappear. **The one exception is a flag whose name
+ * is the chip's own word** -- the bucket's `queued` and the health `lost` -- and
+ * the loop below says why: it is the same word the chip draws, so its reason
+ * joins the chip's `title` instead of the word being drawn twice.
  */
 function statusCell(factory: ScreenFactory, row: LiveRunRow, state: RunState): ScreenElement {
   const element = make(factory, 'td', 'live-run-status')
@@ -1455,6 +1466,17 @@ function statusCell(factory: ScreenFactory, row: LiveRunRow, state: RunState): S
   stateWordInto(chip, state)
 
   for (const flag of row.flags) {
+    // **A flag that is the chip's own word is not drawn as a second span.** The
+    // two flags this can be are the bucket's `queued` and the health `lost`, and
+    // each of them *is* the state the chip already spells (`runStateOf` reads
+    // them): beside the chip they would say the same word twice in one cell, and
+    // the pipeline line above says it a third time. What the flag carries beyond
+    // the word is its reason, so the reason moves onto the chip -- the same
+    // `title` a reader got from the flag -- and nothing the flag said is lost.
+    if (flag.name === stateWord(state)) {
+      chip.setAttribute('title', flag.because)
+      continue
+    }
     const drawn = cell(element, factory, 'span', 'live-run-flag')
     literal(drawn, flag.name)
     drawn.setAttribute('data-flag', flag.name)

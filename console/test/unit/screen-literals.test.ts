@@ -103,6 +103,8 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
   },
   'live.ts': {
     'flag.name': 'a RunFlag is built only from live.ts\'s own flag table (`runFlags`); an unknown health or deadline is the console\'s "unknown ..." flag, never the document\'s word',
+    UNAVAILABLE_MARK:
+      'the console\'s own `n/a` (`src/shared/availability.ts`), the mark a value with no number is drawn as. An actor the document left out of a run is drawn as the mark and never as an empty cell, and the mark is written here rather than through `putReading` because an actor is a string and not a reading: the `unit` `putReading` takes is a claim about how a number is formatted, and §2.10 scopes Live\'s one `count` reading to the review inbox (`docs_console_styling_test.go` holds that sentence)',
     caption: {
       within: 'fleetStatCell',
       reason:
@@ -404,6 +406,8 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
     'flag.name': 'a RunFlag name from live.ts\'s own flag table (`runFlags`)',
     'flag.tone': '`RunTone`, from the same flag table',
     'flag.because': 'the flag table\'s own sentences, interpolating only console constants',
+    '`the document carries no ${field}`':
+      'the console\'s own sentence for a field the document left out of this run, interpolating the wire path the caller passes (`runs[].models`, `runs[].auth`) and nothing the document chose -- the same sentence `putReading` writes into the `title` of a reading with no number, written here because an actor is text rather than a reading',
     'sanitizedKey(repo.slug)': 'the slug as `sanitizeText` drew it (slug class)',
     "repo.kill === null ? 'false' : 'true'": 'a boolean drawn as one of two literals',
     "connection.textContent ?? ''": 'read back from a cell `putText` wrote, so it is the sanitized text',

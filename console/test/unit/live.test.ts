@@ -1401,7 +1401,10 @@ describe('the rows the fixture does not carry', () => {
     )
     const row = all(tree, 'live-run').find((one) => one.getAttribute('data-queued') === 'false')
     expect(row?.getAttribute('data-tone')).toBe('alarm')
-    expect(texts(tree, 'live-run-flag')).toEqual(expect.arrayContaining(['lost', 'near deadline']))
+    // The health flag is the chip's own word (`lost`), so it is not drawn beside
+    // it; the deadline flag, which is a different word, still is.
+    expect(texts(tree, 'live-run-flag')).toEqual(['near deadline'])
+    expect(all(tree, 'live-run-chip')[0]?.getAttribute('title')).toContain('180 s')
   })
 })
 
@@ -1484,11 +1487,36 @@ describe('the rendered screen', () => {
   })
 
   it('draws a flag as a word with its threshold in the title', () => {
-    const tree = renderLive(factory, modelOf(frameAt('2026-10-15T12:04:20Z')), 'light')
+    // A `silent` health is a flag whose word is not the chip's own (`running`),
+    // so it is drawn beside the chip rather than folded into it.
+    const frame = frameAt('2026-10-15T12:04:20Z')
+    const runs = frame.runs.map((run) => ({ ...run, health: 'silent' }))
+    const tree = renderLive(factory, buildLiveModel({ ...frame, runs }, new BurnHistory()), 'light')
     const flags = all(tree, 'live-run-flag')
-    expect(flags.map((flag) => flag.textContent)).toEqual(['lost'])
-    expect(flags[0]?.getAttribute('title')).toContain('180 s')
-    expect(flags[0]?.getAttribute('data-flag')).toBe('lost')
+    expect(flags.map((flag) => flag.textContent)).toEqual(['silent'])
+    expect(flags[0]?.getAttribute('title')).toContain('no heartbeat for over')
+    expect(flags[0]?.getAttribute('data-flag')).toBe('silent')
+    expect(flags[0]?.getAttribute('data-tone')).toBe('amber')
+  })
+
+  it('says a run\'s state once: a flag that is the chip\'s own word joins its title', () => {
+    // The bucket's `queued` and the health's `lost` are the two flags whose name
+    // *is* the state the chip spells. Drawn beside the chip they would repeat it,
+    // and the pipeline line above says it too, so the word is drawn once and the
+    // flag's reason moves onto the chip's `title`.
+    const tree = renderLive(factory, modelOf(frameAt('2026-10-15T12:04:20Z')), 'light')
+    const chips = all(tree, 'live-run-chip')
+    expect(chips.map((chip) => chip.textContent)).toContain('lost')
+    const lost = chips.find((chip) => chip.textContent === 'lost')
+    expect(lost?.getAttribute('title')).toContain('180 s')
+    expect(texts(tree, 'live-run-flag')).not.toContain('lost')
+
+    // The last frame is the one that carries a queued run (and a lost one).
+    const queued = renderLive(factory, modelOf(theLastFrame()), 'light')
+    const queuedChip = all(queued, 'live-run-chip').find((chip) => chip.textContent === 'queued')
+    expect(queuedChip).toBeDefined()
+    expect(queuedChip?.getAttribute('title')).toContain('runs bucket only')
+    expect(texts(queued, 'live-run-flag')).not.toContain('queued')
   })
 
   it('draws the notional mark on an OAuth run\'s spend', () => {
