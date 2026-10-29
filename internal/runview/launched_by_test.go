@@ -49,16 +49,16 @@ var launchedByReaders = map[string]string{
 	"internal/cli/runs_stats.go": "the runs stats by-person group key, sanitised display text",
 	"internal/watch/plain.go":    "the watch text column",
 	"internal/watch/render.go":   "the interactive screen's expanded run detail",
-	// The coordinator's view (plan P1). The launcher is the ONE thing the
-	// view says about who did the work, and it says it as what it is: the
-	// string the run's own launch record wrote about itself, carried as
-	// declared_by, sanitised before it reaches a cell, and read for nothing
-	// but the row it names. Nothing in internal/coordinator decides anything
-	// by it -- the view is advisory (spec §3) and holds no rule that could --
-	// and its own test refuses an identity-shaped name for the field
-	// (internal/coordinator/view_test.go).
-	"internal/coordinator/view.go": "the view's declared_by field: the launcher as a declaration, never an identity",
-	"internal/cli/coordinator.go":  "reads launch.json for the view's DECLARED BY column",
+	// The coordinator's view (plan P1), which moved to ee/ with its command
+	// (ee-reorg E2.1b). The launcher is the ONE thing the view says about who
+	// did the work, and it says it as what it is: the string the run's own
+	// launch record wrote about itself, carried as declared_by, sanitised
+	// before it reaches a cell, and read for nothing but the row it names.
+	// Nothing in ee/coordinator decides anything by it -- the view is advisory
+	// (spec §3) and holds no rule that could -- and its own test refuses an
+	// identity-shaped name for the field (ee/coordinator/view_test.go).
+	"ee/coordinator/view.go":            "the view's declared_by field: the launcher as a declaration, never an identity",
+	"ee/coordinator/cli/coordinator.go": "reads launch.json for the view's DECLARED BY column",
 }
 
 // TestLaunchedByIsDisplayTextOnly walks every non-test Go file of the module
