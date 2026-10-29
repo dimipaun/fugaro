@@ -17,9 +17,13 @@ import (
 // Both readers are here because they are one mapping: the duration a stage is
 // bounded by, and the key a dropped bound is recorded under
 // (noteStageTimeoutClamped), which have to agree about which key a stage is.
+// The duration is read through stageTimeoutOf — the mapping the core keeps and
+// ee/governance's Timeout is one function with — and not through the runner's
+// stageTimeout, which asks the hook and answers nothing in this build
+// (E2.3, D521, D522).
 func TestStageTimeoutMapsEachStageToItsKey(t *testing.T) {
-	r := &run{policy: policy.Effective{Governance: policy.Governance{StageTimeout: policy.StageTimeout{
-		Implement: time.Minute, Review: 2 * time.Minute, Fix: 3 * time.Minute}}}}
+	g := policy.Governance{StageTimeout: policy.StageTimeout{
+		Implement: time.Minute, Review: 2 * time.Minute, Fix: 3 * time.Minute}}
 	for _, tc := range []struct {
 		stage string
 		key   string
@@ -37,8 +41,8 @@ func TestStageTimeoutMapsEachStageToItsKey(t *testing.T) {
 		if got := stageTimeoutKey(tc.stage); got != tc.key {
 			t.Errorf("stageTimeoutKey(%q) = %q, want %q", tc.stage, got, tc.key)
 		}
-		if got := r.stageTimeout(tc.stage); got != tc.want {
-			t.Errorf("stageTimeout(%q) = %v, want %v", tc.stage, got, tc.want)
+		if got := stageTimeoutOf(g, tc.stage); got != tc.want {
+			t.Errorf("stageTimeoutOf(%q) = %v, want %v", tc.stage, got, tc.want)
 		}
 	}
 }
@@ -48,10 +52,9 @@ func TestStageTimeoutMapsEachStageToItsKey(t *testing.T) {
 // key unset, and a stage bounded by zero would be a stage that cannot run at
 // all.
 func TestStageTimeoutUnsetStageHasNoBound(t *testing.T) {
-	r := &run{policy: policy.Effective{Governance: policy.Governance{StageTimeout: policy.StageTimeout{
-		Implement: time.Minute}}}}
-	if got := r.stageTimeout("fix"); got != 0 {
-		t.Errorf("stageTimeout(fix) = %v, want no bound", got)
+	g := policy.Governance{StageTimeout: policy.StageTimeout{Implement: time.Minute}}
+	if got := stageTimeoutOf(g, "fix"); got != 0 {
+		t.Errorf("stageTimeoutOf(fix) = %v, want no bound", got)
 	}
 	if got := stageTimeoutKey("fix"); got != policy.KeyStageTimeoutFix {
 		t.Errorf("stageTimeoutKey(fix) = %q, want %q", got, policy.KeyStageTimeoutFix)
