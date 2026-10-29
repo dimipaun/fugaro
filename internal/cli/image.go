@@ -589,6 +589,11 @@ func writeCloudOutputs(ctx context.Context, root string, lc *localcfg.Config, rf
 		Version: imagecheck.RecordVersion, Repo: repo, Workflow: name, BuiltAt: time.Now().UTC().Truncate(time.Second),
 		SourceCommit: commit, SourceCommitTime: commitTime.UTC(), BaseBranch: branch,
 		KeyFiles: keys, ImageConfigHash: configHash, FugaroVersion: Version, TemplateSalt: gcp.TemplateSalt(Version),
+		// The edition of the binary rendering this record, which is the
+		// base image's own: the job the image is built for runs THAT fugaro,
+		// so this is the field the launch-side edition warnings judge
+		// (imagecheck.Record.Edition, design ee-boundary-moves §7).
+		Edition: Edition(),
 		// This binary's runner reads the sealed budget token; render runs
 		// the base image's own fugaro, so this is the base's statement
 		// (imagecheck.Record.SealedBudgetToken, what the seal gate trusts).

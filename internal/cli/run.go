@@ -2667,8 +2667,10 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	// only budget admins may write the record, so a refusal is what most
 	// launchers get on every run, and a warning each time would be noise about
 	// something they cannot change (owner ruling 2026-10-24). The error text can
-	// quote what the database answered, so it goes through oneLine.
-	if err := reportLaunchIntent(hctx, env, slug, spec); err != nil && !errors.Is(err, rtdb.ErrPermission) {
+	// quote what the database answered, so it goes through oneLine. The call
+	// goes through the build's declarer (extend.go), whose core default is this
+	// very declarer, so a build whose declarer moved can register its own.
+	if err := declareLaunch(hctx, env, slug, spec); err != nil && !errors.Is(err, rtdb.ErrPermission) {
 		fmt.Fprintf(launchWarn, "warning: the launch was not reported to the coordinator: %s\n", oneLine(err.Error()))
 	}
 	// The run's budget identity: minted, sealed under a key drawn for this

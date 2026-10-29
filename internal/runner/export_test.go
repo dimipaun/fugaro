@@ -11,6 +11,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/lock"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
@@ -343,4 +344,52 @@ func SetArtifactStagedSeam(t *testing.T, f func()) {
 func DigestRecords(ctx context.Context, store *runstore.Store, ids []string) ([]runstore.Record, int, error) {
 	r := &run{d: Deps{Store: store}}
 	return r.digestRecords(ctx, ids)
+}
+
+// StageHook exposes the installed stage hook to the runner_test package.
+var StageHook = stageHook
+
+// SetStageHook is SetStage, so a test can exercise the refusals that keep a
+// tagged binary's enforcement from being replaced or halved (§5.5).
+var SetStageHook = SetStage
+
+// ResetStageHook puts the stage hook back to the core default and clears the
+// "already set" flag, before and after t: SetStage refuses a second call for
+// the life of the process, so a test that calls it would otherwise leave the
+// whole package hooked.
+func ResetStageHook(t *testing.T) {
+	t.Helper()
+	stageHooks, stageHooksSet = coreStageFuncs(), false
+	t.Cleanup(func() { stageHooks, stageHooksSet = coreStageFuncs(), false })
+}
+
+// StageBoundAsked is the untagged build's warning trigger, over the governance
+// blocks one set of layers carries: a test drives it with the state both
+// halves of the off-switch together make — a block in the file layer and no
+// governance resolved from it anywhere — where an end-to-end run can only
+// install one of the two halves at a time, the policy half's off-switch being
+// unimportable from this package's tests.
+func StageBoundAsked(layers []policy.Layer, stage string) bool { return stageBoundAsked(layers, stage) }
+
+// SetCore makes the stage hook the pair an untagged build has after the move
+// to ee/governance (E2.3): the governance block the run resolved is decoded
+// and then ignored — a stage gets no bound of its own and the ceiling that
+// fires leaves no halt. What the build then says about the block is not this
+// pair's to write: the run notes the blocks its layers carried and says the
+// line once, in core code, so it says it whether or not the policy half
+// resolved anything (D522, D523, noteIgnoredStageBound).
+//
+// It lives here rather than in production code because it is the pair that
+// switches enforcement off, and only a test may do that: a production seam
+// would be a way for a core caller to turn governance off in a tagged binary
+// (design §5.5).
+func SetCore(t *testing.T) {
+	t.Helper()
+	prev, wasSet := stageHooks, stageHooksSet
+	stageHooks = StageFuncs{
+		Timeout:  func(StageView) time.Duration { return 0 },
+		TimedOut: func(StageView) StageDecision { return StageDecision{} },
+	}
+	stageHooksSet = false
+	t.Cleanup(func() { stageHooks, stageHooksSet = prev, wasSet })
 }

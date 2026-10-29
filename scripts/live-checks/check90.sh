@@ -862,7 +862,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
 def main():
     global ARGS, TOKEN, DROP
     ap = argparse.ArgumentParser()
-    ap.add_argument("--port", type=int, default=8787)
+    ap.add_argument("--port", type=int, default=0,
+                    help="loopback port to serve on; 0 lets the kernel pick one"
+                         " and the startup line names the one it picked")
     ap.add_argument("--token-file", help="the token attached in place of the client's own")
     ap.add_argument("--no-swap", action="store_true")
     ap.add_argument("--require-credential-file", default="",
@@ -914,6 +916,14 @@ def main():
              "not measured: the upstream is plain http on loopback, so no "
              "certificate is verified")
     server = http.server.ThreadingHTTPServer(("127.0.0.1", ARGS.port), Handler)
+    # The port this listener actually got, before it serves anything: the
+    # script asks for 0 and reads the number back out of the line below, and
+    # the Host check compares against it. It used to be picked by the script
+    # (bind port 0, close, pass the number on) and bound here a second later,
+    # and a port lost in that gap -- to another check running beside this one,
+    # to any outbound loopback connection -- stopped the run with "Address
+    # already in use". Choosing and binding are one step in the kernel.
+    ARGS.port = server.server_address[1]
     print("chk90proxy listening on 127.0.0.1:%d, upstream %s" % (ARGS.port, ARGS.upstream),
           flush=True)
     server.serve_forever()
@@ -983,12 +993,19 @@ start_proxy() { # start_proxy LOGFILE [extra args...]
   # under --no-swap, where the client's own (real) credential is what must
   # pass. The FILE is named, never the placeholder: this proxy's argv is
   # readable by every user of the machine for as long as the phase lasts.
-  python3 "$SCRATCH/proxy.py" --port "$PORT" --upstream "$UPSTREAM" \
+  python3 "$SCRATCH/proxy.py" --port 0 --upstream "$UPSTREAM" \
     --upstream-scheme "$UPSTREAM_SCHEME" --require-credential-file "$PLACEHOLDER_FILE" "$@" >"$log" 2>&1 &
   PROXY_PID=$!
   local i=0
   while [ "$i" -lt $((PROXY_START_SECONDS * 10)) ]; do
     if grep -q 'listening on' "$log" 2>/dev/null; then
+      # The port the kernel gave THIS proxy, out of its own startup line: the
+      # script used to pick a free port up front and hand it over, and the
+      # number was stale by the time the proxy bound it (see free_port's
+      # removal in main). Every phase's proxy has its own, and every call of
+      # that phase is made against the one it is talking to.
+      PORT=$(sed -n 's/^chk90proxy listening on 127\.0\.0\.1:\([0-9]\{1,\}\),.*$/\1/p' "$log" | head -n 1)
+      [ -n "$PORT" ] || stop "the proxy reported that it is listening without naming the port it took: $(tail -n 3 "$log" | tr '\n' ' ')"
       record_ca_bundle "$log"
       return 0
     fi
@@ -1592,27 +1609,24 @@ print_block() { # print_block FACTS STATUS — always on the owner's own stdout
 }
 
 # ----------------------------------------------------------------------- main
-free_port() {
-  python3 - <<'PORT_EOF'
-import socket
-s = socket.socket()
-s.bind(("127.0.0.1", 0))
-print(s.getsockname()[1])
-s.close()
-PORT_EOF
-}
-
 main() {
-  # FIRST, before anything below can use one: free_port and random_placeholder
-  # are python3 programs, and `need python3` is the only place that says so —
-  # checked after them it would be checked after the run had already failed on a
-  # missing interpreter, with python3's own "command not found" instead of the
-  # one line this script promises. It is also the guard that needs nothing: no
-  # scratch directory, no fact file, no call.
+  # FIRST, before anything below can use one: random_placeholder is a python3
+  # program, and `need python3` is the only place that says so — checked after
+  # it, it would be checked after the run had already failed on a missing
+  # interpreter, with python3's own "command not found" instead of the one line
+  # this script promises. It is also the guard that needs nothing: no scratch
+  # directory, no fact file, no call.
   need_tools
 
-  PORT=${CHECK90_PORT:-}
-  [ -n "$PORT" ] || PORT=$(free_port)
+  # 0: the kernel picks the port, when the proxy binds it. This used to be a
+  # free_port() call here -- bind port 0, close the socket, keep the number --
+  # and the proxy bound that number a moment later, so anything on the machine
+  # could take it in between: a shard of this check's own test running beside
+  # this one, an outbound loopback connection, any listener. It reached the
+  # owner as "the proxy did not start: OSError: [Errno 98] Address already in
+  # use", a run that measured nothing, on a machine whose only fault was being
+  # busy. start_proxy reads back the port the proxy actually got.
+  PORT=0
   DELAY=${CHECK90_DELAY:-90}
   CALL_TIMEOUT=${CHECK90_CALL_TIMEOUT:-240}
   TOTAL_SECONDS=${CHECK90_TOTAL_SECONDS:-1800}
