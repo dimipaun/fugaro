@@ -19,5 +19,5 @@ Three rules hold for everything placed here:
 - **A release carries no `ee/` code until it sets the `ee` build tag**, and that tag obliges the
   release to label the binary as carrying code under the enterprise licence.
 
-Nothing else changes: the core stays under the MIT licence in [`LICENSE`](../LICENSE), and this
-folder takes nothing away from it.
+Nothing else changes: the core stays under the MIT licence in [`LICENSE`](../LICENSE), and every
+version already released under it stays MIT.
