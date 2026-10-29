@@ -1,17 +1,17 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See ee/LICENSE for the terms.
+
 package coordinator
 
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 
-	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/coordpath"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
@@ -38,34 +38,18 @@ import (
 // (D194, answered 2026-10-21, and the comment beside the grant in
 // deploy/terraform/gcp/modules/firebase/iam.tf).
 
-// The subtree's own paths. PathRoot is the prefix the rules grant a read on,
-// and nothing the coordinator writes may sit outside it.
-const (
-	// PathRoot is the coordinator's top-level subtree.
-	PathRoot = "coordinator"
-	// PathProject is where the project-wide facts live.
-	PathProject = PathRoot + "/project"
-	// PathRepos is the parent of one child per repository, keyed by the
-	// repository's slug as budget.Key escapes it.
-	PathRepos = PathRoot + "/repos"
-)
-
-// PathRepo is one repository's node: the parent of every document about it.
-func PathRepo(slug string) string { return PathRepos + "/" + budget.Key(slug) }
-
-// PathProjectDocument is one project-wide document, and PathRepoDocument one
-// repository's. id comes from DocumentID.
-func PathProjectDocument(id string) string { return PathProject + "/" + id }
-
-// PathRepoDocument is one repository's document, under that repository.
-func PathRepoDocument(slug, id string) string { return PathRepo(slug) + "/" + id }
+// The subtree's own paths live in internal/coordpath, and this package holds no
+// second copy of them: the project rules grant a read on PathRoot and the
+// doctor reads the marker those rules were generated with, both in the core, so
+// the prefix the rules authorise and the prefix this library writes have to be
+// one definition rather than two that drift.
 
 // PathIntents is one repository's intent records — P4's report path writes
 // there and nothing else does — and PathIntent one of them, keyed by
 // IntentID. The node is named and not derived: a reader of the tree has to be
 // able to tell the declarations from whatever the sweep (P5) keeps beside
 // them under the same repository.
-func PathIntents(slug string) string { return PathRepo(slug) + "/intents" }
+func PathIntents(slug string) string { return coordpath.PathRepo(slug) + "/intents" }
 
 // PathIntent is one intent record.
 func PathIntent(slug, id string) string { return PathIntents(slug) + "/" + id }
@@ -75,54 +59,30 @@ func PathIntent(slug, id string) string { return PathIntents(slug) + "/" + id }
 // requests those runs name (View).
 //
 // It is named rather than derived, like PathIntents beside it and for the
-// same reason: the ID's rule (DocumentID) is that the same thing described
+// same reason: the ID's rule (coordpath.DocumentID) is that the same thing described
 // twice is one node, and what this node describes is the repository's own
 // view, of which there is one at a time and no history. A derived ID would
 // have to be a function of the view's content, which is the one thing a
 // reader cannot know before reading it.
-func PathView(slug string) string { return PathRepo(slug) + "/view" }
+func PathView(slug string) string { return coordpath.PathRepo(slug) + "/view" }
 
 // PathStale is the marker the sweep writes when it could not reconcile a
 // repository (Stale): it says since when and why, and the view at PathView is
 // left exactly as the last sweep that could read everything wrote it.
-func PathStale(slug string) string { return PathRepo(slug) + "/stale" }
+func PathStale(slug string) string { return coordpath.PathRepo(slug) + "/stale" }
 
-// DocumentID is the database key of one coordinator document, derived from the
-// parts that describe the thing it is about — the caller and the declaration
-// for an intent report, the repository and the sweep's own inputs for a view —
-// and from nothing else. No clock, no counter and no random source goes in: the
-// same thing described twice is the same key, which is how "the same event
-// delivered twice is harmless" is satisfied without an Idempotency-Key header
-// (finding #17) and why the same report twice writes one document rather than
-// two.
-//
-// The parts are length-prefixed before hashing, so ("a", "bc") and ("ab", "c")
-// are different documents. The answer is lower-case hex: a Realtime Database
-// key may not hold a dot, a dollar, a hash, a bracket or a slash, and hex makes
-// each of those unrepresentable rather than escaped — the same reason
-// budget.Key exists, for keys that have to stay readable.
-func DocumentID(parts ...string) string {
-	h := sha256.New()
-	for _, p := range parts {
-		h.Write([]byte(strconv.Itoa(len(p))))
-		h.Write([]byte{':'})
-		h.Write([]byte(p))
-	}
-	return hex.EncodeToString(h.Sum(nil))
-}
-
-// ErrOutsideSubtree is Store's refusal of a path that is not under PathRoot.
-// The writer holds roles/firebasedatabase.admin and bypasses the rules, so
-// this check, and not the rules or IAM, is what keeps it to its own subtree
-// (D194).
+// ErrOutsideSubtree is Store's refusal of a path that is not under the
+// coordinator's subtree (coordpath.PathRoot). The writer holds
+// roles/firebasedatabase.admin and bypasses the rules, so this check, and not
+// the rules or IAM, is what keeps it to its own subtree (D194).
 var ErrOutsideSubtree = errors.New("coordinator: the path is outside the coordinator's subtree")
 
-// inSubtree refuses a path outside PathRoot. It trims the one leading or
+// inSubtree refuses a path outside coordpath.PathRoot. It trims the one leading or
 // trailing slash internal/rtdb tolerates, and rtdb itself refuses the empty
 // and dotted segments that could otherwise climb out.
 func inSubtree(path string) error {
 	p := strings.Trim(path, "/")
-	if p == PathRoot || strings.HasPrefix(p, PathRoot+"/") {
+	if p == coordpath.PathRoot || strings.HasPrefix(p, coordpath.PathRoot+"/") {
 		return nil
 	}
 	return fmt.Errorf("%w: /%s", ErrOutsideSubtree, p)

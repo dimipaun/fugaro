@@ -21,7 +21,7 @@
 //     row that drops `--from-store` is refused.
 //
 // **No age is claimed anywhere.** The stored view carries no time by design
-// (`internal/coordinator/sweep.go`), so the screen prints the console's own
+// (`ee/coordinator/sweep.go`), so the screen prints the console's own
 // sentence about that and the stale marker's `since` as the stamp it is --
 // never a derived "5 minutes ago", which would compare two things that are not
 // on the same scale.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See ee/LICENSE for the terms.
+
 package cli
 
 import (
@@ -10,7 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dimipaun/fugaro/internal/coordinator"
+	"github.com/dimipaun/fugaro/ee/coordinator"
+	fcli "github.com/dimipaun/fugaro/internal/cli"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/rtdb"
@@ -191,9 +195,9 @@ func TestCoordinatorStatusFromStoreWithService(t *testing.T) {
 	// The other half of the same rule: without --from-store the command is
 	// still the one that refuses, so this is the flag that decides and not
 	// the environment.
-	if _, _, err := execute(t, "coordinator", "status", "--repo", "acme/app", "--since", "0", "--json"); ExitCode(err) != ExitUserError ||
+	if _, _, err := execute(t, "coordinator", "status", "--repo", "acme/app", "--since", "0", "--json"); fcli.ExitCode(err) != fcli.ExitUserError ||
 		err == nil || !strings.Contains(err.Error(), providers.EnvCredentialsServiceURL) {
-		t.Errorf("status without --from-store: exit %d, err %v; want the credentials-service refusal", ExitCode(err), err)
+		t.Errorf("status without --from-store: exit %d, err %v; want the credentials-service refusal", fcli.ExitCode(err), err)
 	}
 }
 

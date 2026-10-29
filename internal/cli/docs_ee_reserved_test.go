@@ -128,7 +128,7 @@ func TestDocsEELicensed(t *testing.T) {
 		// console's half is spelled from the boundary test's own constant: the
 		// floor of docs_console_boundary_test.go's mention scan is the string a
 		// console path starts with, so writing it here would put this file
-		// outside the one-entry allow-list over wording that is the licence's
+		// outside that closed allow-list over wording that is the licence's
 		// own and not a reference to the directory.
 		"every file under the ee/, " + consoleDirName + "/ and mobile/ directories",
 		"correct number of user seats",

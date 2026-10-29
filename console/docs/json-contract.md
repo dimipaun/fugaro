@@ -1658,10 +1658,10 @@ counting them per release), `--json`, and the cloud flags `--project`,
 
 ### 6.13 `fugaro coordinator status --from-store --all --json` (Bitbucket credentials T1.2)
 
-**Command:** `internal/cli/coordinator.go` `newCoordinatorStatusCmd` / `runCoordinatorStatus`.
+**Command:** `ee/coordinator/cli/coordinator.go` `newCoordinatorStatusCmd` / `runCoordinatorStatus`.
 **Document:** `coordinator.StoredProjectView`, indented (`writeCoordinatorJSON`), with
 the read itself in `runCoordinatorStatusFromStore` and `coordinatorStoredView`
-(`internal/cli/coordinator_view.go`) — cited by symbol, not by line, for §6.11's
+(`ee/coordinator/cli/coordinator_view.go`) — cited by symbol, not by line, for §6.11's
 reason. This is the console's own read (`coordinator.status` in
 `console/src/main/ipc.ts`) and design §5.1 rule 6's
 `coordinator status --from-store --all --json` row: `--from-store` and `--all`
@@ -1769,7 +1769,7 @@ one entry of `collisions`:
 
 | Key | Type | Absent | Null | Notes |
 | --- | --- | --- | --- | --- |
-| `a`, `b` | string | never | never | the two labels of the pair, in the order the view produced them. They are labels a person reads, not ids: a record's label is its pull request reference or its newest run's id (`coordinator.recordLabel`) |
+| `a`, `b` | string | never | never | the two labels of the pair, in the order the view produced them. They are labels a person reads, not ids: a record's label is its pull request reference or its newest run's id (`coordinator.Record.Label`) |
 | `files` | array | never | never | the paths both records touch |
 | `services` | array | never | never | the services both records touch |
 

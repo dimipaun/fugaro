@@ -2,14 +2,17 @@ package cli
 
 // The console's Go-side contract tests (desktop-console plan, Task 0.1).
 //
-// This file is named by Task 0.3's boundary test as the ONE Go file allowed to
-// reference a path under console/ -- and it references it the way every
+// This file is on Task 0.3's boundary test's allow-list as one of the Go files
+// that may reference a path under console/ -- and it references it the way every
 // docs_*_test.go here references docs/: readDoc(t, path) reads the bytes. It
 // imports nothing from console/, embeds nothing from it and adds no go.mod
 // dependency to reach it. Everything below that reads a console/ file reads it
-// as bytes for the same reason, and stays in this file so that the allow-list
-// keeps its single entry: the console's copy of a Go decision is checked here
-// against the Go source, and the second such copy is
+// as bytes for the same reason, and the sections whose command is still in the
+// core keep being read here: the one entry ee-reorg E2.1b added beside this file
+// is the moved coordinator command's own console_contract_test.go, which reads
+// that command's section and skips here (consoleMovedSections). The console's
+// copy of a Go decision is checked here against the Go source, and the second
+// such copy is
 // TestDocsDesktopConsoleScrubVocabularyMatchesTheGoSource, reading
 // console/tools/scrub-fixture/scrub.ts.
 //
@@ -47,7 +50,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
-	"github.com/dimipaun/fugaro/internal/coordinator"
 	"github.com/dimipaun/fugaro/internal/plan"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/report"
@@ -397,18 +399,9 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		reflect.TypeOf(plan.StateStream{}),
 		reflect.TypeOf(planStatusDoc{}),
 		reflect.TypeOf(planStatusTotals{}),
-		// §6.13, the coordinator's stored project view (Bitbucket credentials
-		// T1.2): the envelope and the repository node, the view and the runs
-		// behind it, and the two keys only the sweep writes.
-		reflect.TypeOf(coordinator.StoredProjectView{}),
-		reflect.TypeOf(coordinator.RepoView{}),
-		reflect.TypeOf(coordinator.View{}),
-		reflect.TypeOf(coordinator.Record{}),
-		reflect.TypeOf(coordinator.Run{}),
-		reflect.TypeOf(coordinator.PullRequest{}),
-		reflect.TypeOf(coordinator.Collision{}),
-		reflect.TypeOf(coordinator.Unread{}),
-		reflect.TypeOf(coordinator.Stale{}),
+		// §6.13's coordinator shapes moved to ee/coordinator with the command:
+		// ee/coordinator/cli/console_contract_test.go pins them against the
+		// tagged tree, which is the tree that still serves the console.
 	}
 	for _, name := range jsonTagNames(t, namedTypes(shapes...), shapes...) {
 		if !strings.Contains(doc, "`"+name+"`") {
@@ -526,6 +519,41 @@ var reasonItemRE = regexp.MustCompile("^[0-9]+\\. `([a-z_]+)`")
 // field names of one row, one or more of them.
 var jsonCellRE = regexp.MustCompile("`([A-Za-z_][A-Za-z0-9_]*)`")
 
+// consoleMovedSections are the document's headings whose command and shapes
+// moved out of the core with the coordinator (E2.1b): the code they document is
+// in ee/coordinator, so this build cannot name a field or a flag of it and the
+// checks below would be reading the shapes of a package they cannot import. The
+// same checks run over these sections against the tagged tree, where the code is
+// in the build (ee/coordinator/cli/console_contract_test.go).
+var consoleMovedSections = []string{"### 6.13 "}
+
+// consoleMovedRows are the document's individual lines that name a flag of the
+// moved command without sitting under a moved heading: §8's inventory carries
+// one row per command the console may spawn, and the coordinator's row states
+// its flags there. Like consoleMovedSections, the moved package checks the same
+// lines against the tagged tree.
+var consoleMovedRows = []string{"| `coordinator status`"}
+
+// inMovedSection answers whether heading opens one of consoleMovedSections.
+func inMovedSection(heading string) bool {
+	for _, h := range consoleMovedSections {
+		if strings.HasPrefix(heading, h) {
+			return true
+		}
+	}
+	return false
+}
+
+// inMovedRow answers whether line is one of consoleMovedRows.
+func inMovedRow(line string) bool {
+	for _, r := range consoleMovedRows {
+		if strings.Contains(line, r) {
+			return true
+		}
+	}
+	return false
+}
+
 // TestDocsDesktopConsoleContractNamesNoInventedField is the other direction,
 // and it is the one a review found missing: every backticked name in the
 // document's own field tables must be a real json key of the shape that table
@@ -577,13 +605,8 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		reflect.TypeOf(plan.StatePlan{}), reflect.TypeOf(plan.StateNode{}),
 		reflect.TypeOf(plan.StateRelease{}), reflect.TypeOf(plan.StateStream{}),
 		reflect.TypeOf(planStatusDoc{}), reflect.TypeOf(planStatusTotals{}),
-		// §6.13, the coordinator's stored project view (Bitbucket credentials
-		// T1.2), the same nine shapes as the test above.
-		reflect.TypeOf(coordinator.StoredProjectView{}), reflect.TypeOf(coordinator.RepoView{}),
-		reflect.TypeOf(coordinator.View{}), reflect.TypeOf(coordinator.Record{}),
-		reflect.TypeOf(coordinator.Run{}), reflect.TypeOf(coordinator.PullRequest{}),
-		reflect.TypeOf(coordinator.Collision{}), reflect.TypeOf(coordinator.Unread{}),
-		reflect.TypeOf(coordinator.Stale{}),
+		// §6.13's coordinator shapes moved to ee/coordinator with the command,
+		// as in the test above.
 	}
 	for _, name := range jsonTagNames(t, namedTypes(shapes...), shapes...) {
 		real[name] = true
@@ -622,7 +645,15 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 	approvedAheadOfTheCLI := map[string]bool{}
 	checked := 0
 	namedInTable := map[string]bool{}
+	heading := ""
 	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(line, "#") {
+			heading = line
+			continue
+		}
+		if inMovedSection(heading) {
+			continue
+		}
 		m := tableFieldRE.FindString(line)
 		if m == "" {
 			continue
@@ -812,9 +843,6 @@ func TestDocsDesktopConsoleContractNamesTheFlagInventory(t *testing.T) {
 		"secrets ls":  newSecretsLsCmd,
 		"accounts ls": newAccountsLsCmd,
 		"doctor":      newDoctorCmd,
-		// The project view (Bitbucket credentials T1.2, §6.13): the one read
-		// of the installation's repositories that asks nothing of the host.
-		"coordinator status": newCoordinatorStatusCmd,
 	}
 	for name, newCmd := range spawned {
 		for _, flag := range []string{"project", "config"} {
@@ -877,10 +905,6 @@ var consoleContractCommands = map[string]func() *cobra.Command{
 	// follows -- but the document describes its flags, so they are checked
 	// against this constructor like any other command's.
 	"backlog list": newBacklogListCmd,
-	// §6.13 documents the coordinator's stored project view (Bitbucket
-	// credentials T1.2). The console spawns it, so its flags are checked
-	// against this constructor like any other's.
-	"coordinator status": newCoordinatorStatusCmd,
 	// §6.12 documents the graph joined to the runs (GV1.6, the CLI release after 0.11.4), and the
 	// console spawns it since GV2.1, as §5.1 rule 6's `plan status --json` row. Its flags — including the cloud
 	// ones, which this command carries and `plan graph` does not — are checked
@@ -920,19 +944,33 @@ func TestDocsDesktopConsoleContractNamesOnlyRealFlags(t *testing.T) {
 	// subcommands -- so its own flag is not in `all` either.
 	documentedAbsent := map[string]bool{"version": true}
 
-	// (1) Every flag token in the document.
+	// (1) Every flag token in the document, outside the sections whose command
+	// moved out of the core with the coordinator (see consoleMovedSections).
 	found := map[string]bool{}
-	for _, m := range flagTokenRE.FindAllStringSubmatch(doc, -1) {
-		name := strings.TrimRight(m[1], "-")
-		if name == "" {
+	inMoved := false
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(line, "#") {
+			inMoved = inMovedSection(line)
 			continue
 		}
-		found[name] = true
-		switch {
-		case documentedAbsent[name] && all[name]:
-			t.Errorf("%s documents --%s as absent, but a command has it", path, name)
-		case !documentedAbsent[name] && !all[name]:
-			t.Errorf("%s names --%s, which is not a flag of any command it documents: a flag written rather than read", path, name)
+		if inMoved {
+			continue
+		}
+		if inMovedRow(line) {
+			continue
+		}
+		for _, m := range flagTokenRE.FindAllStringSubmatch(line, -1) {
+			name := strings.TrimRight(m[1], "-")
+			if name == "" {
+				continue
+			}
+			found[name] = true
+			switch {
+			case documentedAbsent[name] && all[name]:
+				t.Errorf("%s documents --%s as absent, but a command has it", path, name)
+			case !documentedAbsent[name] && !all[name]:
+				t.Errorf("%s names --%s, which is not a flag of any command it documents: a flag written rather than read", path, name)
+			}
 		}
 	}
 	if len(found) < 20 {
@@ -958,6 +996,9 @@ func TestDocsDesktopConsoleContractNamesOnlyRealFlags(t *testing.T) {
 	for _, line := range strings.Split(doc, "\n") {
 		if strings.HasPrefix(line, "#") {
 			heading = line
+			continue
+		}
+		if inMovedSection(heading) {
 			continue
 		}
 		trimmed := strings.TrimSpace(line)

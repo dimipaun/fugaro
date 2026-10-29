@@ -9,14 +9,13 @@
 // facts under `coordinator/project/` and per-repository facts under
 // `coordinator/repos/<slug>/`, every document keyed by a deterministic ID.
 //
-// Until E2.1b moves the library out of the core, internal/coordinator's
-// state.go still declares its own copies of these names — the writer's — and
-// this package is what the rules and the doctor read. Two copies of one
-// subtree is the drift this package exists to end, so coordpath_test.go holds
-// the two together declaration by declaration while both exist
-// (TestCoordpathMatchesTheLibrarysCopy); E2.1b deletes the library's copies
-// and imports this package, leaving the one definition the rules cannot drift
-// from.
+// The library that writes the documents declares none of these names: E2.1b
+// moved it to ee/coordinator and it imports this package, so the subtree that
+// is written and the subtree that is granted are one definition rather than two
+// copies kept together by a test. coordpath_test.go walks the repository for a
+// second declaration of any of them (TestCoordpathIsTheOnlyCopy), because a
+// copy is the drift this package exists to end and the rules would grant a read
+// on the copy the writer does not use.
 package coordpath
 
 import (

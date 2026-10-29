@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See ee/LICENSE for the terms.
+
 package cli
 
 import (
@@ -19,14 +22,18 @@ import (
 
 	"gocloud.dev/blob"
 
+	"github.com/dimipaun/fugaro/ee/coordinator"
 	"github.com/dimipaun/fugaro/internal/blobx"
-	"github.com/dimipaun/fugaro/internal/coordinator"
+	fcli "github.com/dimipaun/fugaro/internal/cli"
+	"github.com/dimipaun/fugaro/internal/coordpath"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/gitprov/github"
 	"github.com/dimipaun/fugaro/internal/gitprov/httpfixture"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
+	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -632,9 +639,9 @@ func TestCoordinatorStatusMintsAReadOnlyTokenPerRepository(t *testing.T) {
 	// failure); only this fixture's replaced opener makes the mint the one that
 	// reports.
 	t.Setenv(providers.EnvGitHubAppID, "")
-	if _, _, err := coordinatorMint(context.Background(), "acme/app"); ExitCode(err) != ExitUserError ||
+	if _, _, err := coordinatorMint(context.Background(), "acme/app"); fcli.ExitCode(err) != fcli.ExitUserError ||
 		!strings.Contains(err.Error(), providers.EnvGitHubAppID) {
-		t.Errorf("no App ID: exit %d, %v", ExitCode(err), err)
+		t.Errorf("no App ID: exit %d, %v", fcli.ExitCode(err), err)
 	}
 }
 
@@ -690,9 +697,9 @@ func TestCoordinatorStatusReadsWithTheReadOnlyToken(t *testing.T) {
 	if _, _, err := execute(t, "coordinator", "status", "--repo", "acme/app", "--since", "0"); err == nil ||
 		!strings.Contains(err.Error(), providers.EnvGitHubAppID) {
 		t.Errorf("no App ID: %v, want a failure naming %s", err, providers.EnvGitHubAppID)
-	} else if ExitCode(err) != ExitUserError {
+	} else if fcli.ExitCode(err) != fcli.ExitUserError {
 		t.Errorf("no App ID: exit %d, want %d: the environment the caller holds the credential in is the caller's to fix",
-			ExitCode(err), ExitUserError)
+			fcli.ExitCode(err), fcli.ExitUserError)
 	}
 	// The App's key is the same refusal, from the other side: the ID is there
 	// and the key is not, and that too is the caller's own (exit 1).
@@ -702,8 +709,8 @@ func TestCoordinatorStatusReadsWithTheReadOnlyToken(t *testing.T) {
 	if _, _, err := execute(t, "coordinator", "status", "--repo", "acme/app", "--since", "0"); err == nil ||
 		!strings.Contains(err.Error(), providers.EnvGitHubAppKeyFile) {
 		t.Errorf("no App key: %v, want a failure naming %s", err, providers.EnvGitHubAppKeyFile)
-	} else if ExitCode(err) != ExitUserError {
-		t.Errorf("no App key: exit %d, want %d", ExitCode(err), ExitUserError)
+	} else if fcli.ExitCode(err) != fcli.ExitUserError {
+		t.Errorf("no App key: exit %d, want %d", fcli.ExitCode(err), fcli.ExitUserError)
 	}
 }
 
@@ -732,9 +739,9 @@ func TestCoordinatorStatusRefusesAMalformedAppKeyAsTheCallers(t *testing.T) {
 	if err == nil {
 		t.Fatalf("the App's key is not a key and the command succeeded")
 	}
-	if ExitCode(err) != ExitUserError {
+	if fcli.ExitCode(err) != fcli.ExitUserError {
 		t.Errorf("a malformed App key: exit %d, want %d: the environment the caller holds the key in is the caller's to fix, exactly as it is when the key is missing",
-			ExitCode(err), ExitUserError)
+			fcli.ExitCode(err), fcli.ExitUserError)
 	}
 	if !strings.Contains(err.Error(), "private key") {
 		t.Errorf("a malformed App key: %v, want a failure naming the key", err)
@@ -744,9 +751,9 @@ func TestCoordinatorStatusRefusesAMalformedAppKeyAsTheCallers(t *testing.T) {
 	// the same way. The opener's refusal above is what a person meets; this is
 	// the assertion that the two halves of the command cannot disagree, because
 	// it is the one this command's own wiring does not reach first.
-	if _, _, err := coordinatorMint(context.Background(), "acme/app"); ExitCode(err) != ExitUserError ||
+	if _, _, err := coordinatorMint(context.Background(), "acme/app"); fcli.ExitCode(err) != fcli.ExitUserError ||
 		!strings.Contains(err.Error(), "private key") {
-		t.Errorf("the mint with a malformed App key: exit %d, %v, want exit %d naming the key", ExitCode(err), err, ExitUserError)
+		t.Errorf("the mint with a malformed App key: exit %d, %v, want exit %d naming the key", fcli.ExitCode(err), err, fcli.ExitUserError)
 	}
 }
 
@@ -777,9 +784,9 @@ func TestCoordinatorStatusRefusesToMintWhenTheServiceHoldsTheKey(t *testing.T) {
 	if err == nil {
 		t.Fatalf("the credentials service holds the App's key and the command read one anyway")
 	}
-	if ExitCode(err) != ExitUserError {
+	if fcli.ExitCode(err) != fcli.ExitUserError {
 		t.Errorf("the service holds the key: exit %d, want %d: the environment the caller is running in is the caller's to fix",
-			ExitCode(err), ExitUserError)
+			fcli.ExitCode(err), fcli.ExitUserError)
 	}
 	if !strings.Contains(err.Error(), providers.EnvCredentialsServiceURL) {
 		t.Errorf("the service holds the key: %v, want a failure naming %s", err, providers.EnvCredentialsServiceURL)
@@ -788,10 +795,10 @@ func TestCoordinatorStatusRefusesToMintWhenTheServiceHoldsTheKey(t *testing.T) {
 	// The mint is the second place the credential is read, and it answers the
 	// same way: the opener's refusal above is what a person meets, and this is
 	// the assertion that the two halves of the command cannot disagree.
-	if _, _, err := coordinatorMint(context.Background(), "acme/app"); ExitCode(err) != ExitUserError ||
+	if _, _, err := coordinatorMint(context.Background(), "acme/app"); fcli.ExitCode(err) != fcli.ExitUserError ||
 		!strings.Contains(err.Error(), providers.EnvCredentialsServiceURL) {
 		t.Errorf("the mint with the service holding the key: exit %d, %v, want exit %d naming %s",
-			ExitCode(err), err, ExitUserError, providers.EnvCredentialsServiceURL)
+			fcli.ExitCode(err), err, fcli.ExitUserError, providers.EnvCredentialsServiceURL)
 	}
 }
 
@@ -943,9 +950,9 @@ func TestCoordinatorInstallsItsOwnSourceOnTheProvider(t *testing.T) {
 func TestCoordinatorStatusRefusesABitbucketProject(t *testing.T) {
 	f := newCoordinatorFixture(t, coordinatorSeeds(), coordinatorPRs()...)
 	f.appendConfig(t, "  acme/legacy: { provider: bitbucket, base_branch: main, workflows: [web] }\n")
-	if _, _, err := execute(t, "coordinator", "status", "--all", "--since", "0"); ExitCode(err) != ExitUserError ||
+	if _, _, err := execute(t, "coordinator", "status", "--all", "--since", "0"); fcli.ExitCode(err) != fcli.ExitUserError ||
 		!strings.Contains(err.Error(), "cannot be widened to a project") {
-		t.Fatalf("a bitbucket repository in the project: exit %d, %v", ExitCode(err), err)
+		t.Fatalf("a bitbucket repository in the project: exit %d, %v", fcli.ExitCode(err), err)
 	} else if strings.Contains(err.Error(), "legacy") {
 		t.Errorf("the refusal names the repository rather than the reason: %v", err)
 	}
@@ -1300,7 +1307,7 @@ func recordLabel(r coordinatorRecord) string {
 //   - TestCoordinatorReportPrintsNoAdvice: the part's third red step at the
 //     command — the output is the record and nothing else. The half of it that
 //     is about reading nothing back is the writer's own dependency list
-//     (internal/coordinator's TestReportReadsNothingBack), because a command
+//     (ee/coordinator's TestReportReadsNothingBack), because a command
 //     cannot read back through a writer that has no read.
 //   - TestCoordinatorReportRefusesAWriteTheRulesDeny: a database that refuses
 //     the write is the caller's error and not an outage, and it says what the
@@ -1309,17 +1316,21 @@ func recordLabel(r coordinatorRecord) string {
 //     naming the command that deploys one.
 //   - TestCoordinatorReportText is the same record as the text a person reads,
 //     which is the record and nothing else.
-//   - TestRunDeclaresItselfToTheCoordinator: the launch path calls the same
-//     writer, so a launch declares itself without a second command.
-//   - TestAFailedReportDoesNotFailTheLaunch: the coordinator is advisory, so
-//     its failure is a warning and never a failed run.
-//   - TestARefusedReportIsQuiet: a write the rules refuse, which is what a
-//     launcher who is not a budget admin gets, prints nothing.
-//   - TestAFailedReportWarnsOnOneSafeLine: any other failure is one warning
-//     line, with the remote text's controls removed.
-//   - TestALaunchThatSkipsTheBudgetIsNotDeclared: the declaration follows the
-//     launch's own database switch, so a launch told not to use the budget's
-//     database is not the one call that reaches it.
+//   - TestDeclareWritesTheLaunchsIntent: the writer the launch path reaches
+//     through the build's declarer is the same one this command uses, so a
+//     launch declares itself without a second command.
+//   - TestDeclareWithNoBranchDeclaresTheRunsOwn: the branch a launch declares
+//     is the one it is about to work on, and a spec that names none gets the
+//     run's own.
+//   - TestAFailedDeclareIsTheCallersError: the coordinator is advisory, so the
+//     writer answers the failure and the launch decides what to do with it --
+//     one warning line and never a failed run (internal/cli's declareLaunch).
+//   - TestADeclareAgainstARefusingDatabaseAnswersTheRefusal: a write the rules
+//     refuse, which is what a launcher who is not a budget admin gets, is the
+//     refusal the launch is quiet about.
+//   - TestADeclareThatSkipsTheDatabaseDeclaresNothing: the declaration follows
+//     the launch's own database switch, so a launch told not to use the
+//     budget's database is not the one call that reaches it.
 
 // coordinatorReportFixture is a cloud fixture whose project has the
 // coordinator's database: an RTDB fake, reached the way the budget commands
@@ -1467,8 +1478,8 @@ func TestCoordinatorReportRefusesACallerTheProjectCannotName(t *testing.T) {
 	testutil.IsolateGit(t)
 	t.Setenv("GIT_DIR", t.TempDir())
 	_, _, err := execute(t, "coordinator", "report", "--repo", "acme/app", "--branch", "fugaro/x")
-	if ExitCode(err) != ExitUserError {
-		t.Fatalf("a report from an unnamed caller = %v (exit %d), want a user error", err, ExitCode(err))
+	if fcli.ExitCode(err) != fcli.ExitUserError {
+		t.Fatalf("a report from an unnamed caller = %v (exit %d), want a user error", err, fcli.ExitCode(err))
 	}
 	for _, want := range []string{"user in the local config", "git config user.email"} {
 		if !strings.Contains(err.Error(), want) {
@@ -1485,8 +1496,8 @@ func TestCoordinatorReportRefusesACallerTheProjectCannotName(t *testing.T) {
 func TestCoordinatorReportRefusesADeclarationThatDeclaresNothing(t *testing.T) {
 	f := newCoordinatorReportFixture(t)
 	_, _, err := execute(t, "coordinator", "report", "--repo", "acme/app")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "declare something") {
-		t.Fatalf("an empty declaration = %v (exit %d)", err, ExitCode(err))
+	if fcli.ExitCode(err) != fcli.ExitUserError || !strings.Contains(err.Error(), "declare something") {
+		t.Fatalf("an empty declaration = %v (exit %d)", err, fcli.ExitCode(err))
 	}
 	if n := len(f.intents()); n != 0 {
 		t.Errorf("the refused report wrote %d documents", n)
@@ -1498,7 +1509,7 @@ func TestCoordinatorReportRefusesADeclarationThatDeclaresNothing(t *testing.T) {
 // suggestion, no summary of what is already in flight — because the report
 // path takes nothing back and a command that advised from what it wrote would
 // be advising from nothing. The reading half of the same rule is
-// internal/coordinator's TestReportReadsNothingBack, asserted against the
+// ee/coordinator's TestReportReadsNothingBack, asserted against the
 // writer's own dependency list.
 //
 // Hand mutation this fails on: printing a collision summary under the record.
@@ -1525,10 +1536,10 @@ func TestCoordinatorReportPrintsNoAdvice(t *testing.T) {
 // host's outage — and no document is written.
 func TestCoordinatorReportRefusesAWriteTheRulesDeny(t *testing.T) {
 	f := newCoordinatorReportFixture(t)
-	f.db.Deny(coordinator.PathRoot)
+	f.db.Deny(coordpath.PathRoot)
 	_, _, err := execute(t, "coordinator", "report", "--repo", "acme/app", "--branch", "release/v0.11.0")
-	if ExitCode(err) != ExitUserError {
-		t.Fatalf("a refused write = %v (exit %d), want a user error", err, ExitCode(err))
+	if fcli.ExitCode(err) != fcli.ExitUserError {
+		t.Fatalf("a refused write = %v (exit %d), want a user error", err, fcli.ExitCode(err))
 	}
 	for _, want := range []string{"roles/firebasedatabase.admin", "budget_admins"} {
 		if !strings.Contains(err.Error(), want) {
@@ -1543,161 +1554,148 @@ func TestCoordinatorReportRefusesAWriteTheRulesDeny(t *testing.T) {
 func TestCoordinatorReportNeedsADatabase(t *testing.T) {
 	newCloudFixture(t)
 	_, _, err := execute(t, "coordinator", "report", "--repo", "acme/app", "--branch", "release/v0.11.0")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "update --firebase-project") {
-		t.Fatalf("a project with no database = %v (exit %d)", err, ExitCode(err))
+	if fcli.ExitCode(err) != fcli.ExitUserError || !strings.Contains(err.Error(), "update --firebase-project") {
+		t.Fatalf("a project with no database = %v (exit %d)", err, fcli.ExitCode(err))
 	}
 }
 
-// TestRunDeclaresItselfToTheCoordinator: launchRun calls the same writer, so a
+// TestDeclareWritesTheLaunchsIntent: Declare is the writer the launch path
+// reaches through the build's declarer (internal/cli's declareLaunch), so a
 // launch declares itself without a second command. What a launch can declare
 // before any code exists is who asked for it and the branch it is about to
-// work on — the run's own branch, launchRun's own rule — and the release that
-// branch names.
-func TestRunDeclaresItselfToTheCoordinator(t *testing.T) {
-	f := newLaunchBudget(t, "observe")
-	env := memEnv(t, f.cloudFixture)
-	spec := raceSpec(t, env)
-	spec.RequestedBy = "someone@example.com"
-	spec.Branch = "release/v0.11.0"
-	if _, err := launchRun(context.Background(), env, appSlug, spec, time.Now()); err != nil {
+// work on, and the release that branch names. That the launch calls this, and
+// that a build carrying no declarer declares nothing, is internal/cli's half
+// (D535).
+func TestDeclareWritesTheLaunchsIntent(t *testing.T) {
+	f := newCoordinatorReportFixture(t)
+	spec := &task.Spec{Version: 1, RunID: "20261024-120000-abcd", Repo: "acme/app",
+		RequestedBy: "someone@example.com", Branch: "release/v0.11.0"}
+	if err := Declare(context.Background(), openFromConfig(t, f.cloudFixture), appSlug, spec); err != nil {
 		t.Fatal(err)
 	}
-	m, _ := f.db.Value(coordinator.PathIntents(appSlug)).(map[string]any)
-	if len(m) != 1 {
-		t.Fatalf("the launch declared %d records, want 1: %v", len(m), m)
-	}
-	for _, v := range m {
-		data, err := json.Marshal(v)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var rec coordinator.Intent
-		if err := json.Unmarshal(data, &rec); err != nil {
-			t.Fatal(err)
-		}
-		if rec.DeclaredBy != "someone@example.com" || rec.Branch != "release/v0.11.0" || rec.Release != "0.11.0" {
-			t.Errorf("the launch's declaration = %+v", rec)
-		}
+	rec := f.oneIntent(t)
+	if rec.DeclaredBy != "someone@example.com" || rec.Branch != "release/v0.11.0" || rec.Release != "0.11.0" {
+		t.Errorf("the launch's declaration = %+v", rec)
 	}
 }
 
-// TestAFailedReportDoesNotFailTheLaunch: the coordinator is advisory (spec
-// §3), so a declaration that cannot be written is a warning on stderr and
-// never a failed launch — a run must not wait on a service that may not be
-// deployed. It is the seam's own test: reportLaunchIntent is what would reach
-// a database, and the launch is asserted to start anyway.
-func TestAFailedReportDoesNotFailTheLaunch(t *testing.T) {
-	f := newCloudFixture(t)
-	env := memEnv(t, f)
-	prev := reportLaunchIntent
-	reportLaunchIntent = func(context.Context, *cloudEnv, string, *task.Spec) error {
-		return errors.New("the database is unreachable")
+// TestDeclareWithNoBranchDeclaresTheRunsOwn: the branch a launch declares is
+// the one it is about to work on, and a spec that names none gets the run's
+// own branch, the same fallback the run's records use.
+func TestDeclareWithNoBranchDeclaresTheRunsOwn(t *testing.T) {
+	f := newCoordinatorReportFixture(t)
+	spec := &task.Spec{Version: 1, RunID: "20261024-120000-abcd", RequestedBy: "someone@example.com"}
+	if err := Declare(context.Background(), openFromConfig(t, f.cloudFixture), appSlug, spec); err != nil {
+		t.Fatal(err)
 	}
-	t.Cleanup(func() { reportLaunchIntent = prev })
-	var warned strings.Builder
-	prevWarn := launchWarn
-	launchWarn = &warned
-	t.Cleanup(func() { launchWarn = prevWarn })
-
-	spec := raceSpec(t, env)
-	if _, err := launchRun(context.Background(), env, appSlug, spec, time.Now()); err != nil {
-		t.Fatalf("a failed report failed the launch: %v", err)
-	}
-	if n := len(f.run.Executions()); n != 1 {
-		t.Fatalf("%d executions, want 1", n)
-	}
-	if !strings.Contains(warned.String(), "not reported to the coordinator") {
-		t.Errorf("the failure was silent: %q", warned.String())
+	if rec := f.oneIntent(t); rec.Branch != "fugaro/20261024-120000-abcd" {
+		t.Errorf("a declaration with no branch = %q, want the run's own", rec.Branch)
 	}
 }
 
-// TestARefusedReportIsQuiet: a launcher who is not a budget admin cannot write
-// the coordinator's record, and that is the expected case for most people who
-// launch rather than a fault to tell them about on every run (owner ruling
-// 2026-10-24). The launch still starts, nothing is declared and nothing is
-// printed; `coordinator report`, which a person asks for, keeps its explicit
-// refusal (TestCoordinatorReportRefusesAWriteTheRulesDeny).
-func TestARefusedReportIsQuiet(t *testing.T) {
-	f := newLaunchBudget(t, "observe")
-	f.db.Deny(coordinator.PathRoot)
-	env := memEnv(t, f.cloudFixture)
-	var warned strings.Builder
-	prevWarn := launchWarn
-	launchWarn = &warned
-	t.Cleanup(func() { launchWarn = prevWarn })
+// TestAFailedDeclareIsTheCallersError: the coordinator is advisory (spec §3),
+// so a declaration that cannot be written is the writer's answer and never a
+// failed launch: the launch path turns it into one warning line on stderr and
+// starts the run anyway (internal/cli's declareLaunch, which is where that half
+// lives now). What is held here is the half this package owns — a store that
+// cannot be opened is an error and not a silent success.
+func TestAFailedDeclareIsTheCallersError(t *testing.T) {
+	f := newCoordinatorReportFixture(t)
+	prev := openCoordinatorStore
+	openCoordinatorStore = func(context.Context, *localcfg.Config) (*coordinator.Store, error) {
+		return nil, errors.New("the database is unreachable")
+	}
+	t.Cleanup(func() { openCoordinatorStore = prev })
 
-	spec := raceSpec(t, env)
-	spec.RequestedBy = "someone@example.com"
-	if _, err := launchRun(context.Background(), env, appSlug, spec, time.Now()); err != nil {
-		t.Fatalf("a refused report failed the launch: %v", err)
+	err := Declare(context.Background(), openFromConfig(t, f.cloudFixture), appSlug,
+		&task.Spec{RunID: "20261024-120000-abcd", RequestedBy: "someone@example.com"})
+	if err == nil || !strings.Contains(err.Error(), "unreachable") {
+		t.Fatalf("a declaration whose store could not be opened = %v, want the store's error", err)
 	}
-	if n := len(f.run.Executions()); n != 1 {
-		t.Fatalf("%d executions, want 1", n)
+	if m := f.intents(); len(m) != 0 {
+		t.Errorf("a failed declaration wrote %d records", len(m))
 	}
-	if m, _ := f.db.Value(coordinator.PathIntents(appSlug)).(map[string]any); len(m) != 0 {
+}
+
+// TestADeclareAgainstARefusingDatabaseAnswersTheRefusal: a launcher who is not
+// a budget admin cannot write the coordinator's record, and that is the
+// expected case for most people who launch rather than a fault to tell them
+// about on every run (owner ruling 2026-10-24). The writer answers the refusal
+// and the launch is what stays quiet about it (declareLaunch checks
+// rtdb.ErrPermission); `coordinator report`, which a person asks for, keeps its
+// explicit refusal (TestCoordinatorReportRefusesAWriteTheRulesDeny).
+func TestADeclareAgainstARefusingDatabaseAnswersTheRefusal(t *testing.T) {
+	f := newCoordinatorReportFixture(t)
+	f.db.Deny(coordpath.PathRoot)
+
+	err := Declare(context.Background(), openFromConfig(t, f.cloudFixture), appSlug,
+		&task.Spec{RunID: "20261024-120000-abcd", RequestedBy: "someone@example.com", Branch: "fugaro/x"})
+	if !errors.Is(err, rtdb.ErrPermission) {
+		t.Fatalf("a declaration the rules refused = %v, want the refusal", err)
+	}
+	if m := f.intents(); len(m) != 0 {
 		t.Errorf("a refused write declared %d records", len(m))
 	}
-	if warned.Len() != 0 {
-		t.Errorf("a refused report printed %q, want nothing", warned.String())
-	}
 }
 
-// TestAFailedReportWarnsOnOneSafeLine: any failure other than a refusal is
-// still one warning line, and the error's text, which can quote what a remote
-// database answered, reaches the terminal without its control sequences.
-func TestAFailedReportWarnsOnOneSafeLine(t *testing.T) {
-	f := newCloudFixture(t)
-	env := memEnv(t, f)
-	prev := reportLaunchIntent
-	reportLaunchIntent = func(context.Context, *cloudEnv, string, *task.Spec) error {
-		return errors.New("the database answered \x1b]52;c;cGF3bmVk\x07 503")
-	}
-	t.Cleanup(func() { reportLaunchIntent = prev })
-	var warned strings.Builder
-	prevWarn := launchWarn
-	launchWarn = &warned
-	t.Cleanup(func() { launchWarn = prevWarn })
-
-	if _, err := launchRun(context.Background(), env, appSlug, raceSpec(t, env), time.Now()); err != nil {
-		t.Fatalf("a failed report failed the launch: %v", err)
-	}
-	got := warned.String()
-	if strings.Count(got, "\n") != 1 || !strings.HasPrefix(got, "warning: the launch was not reported to the coordinator") {
-		t.Errorf("the warning = %q, want one line", got)
-	}
-	if strings.ContainsRune(got, '\x1b') || strings.ContainsRune(got, '\x07') {
-		t.Errorf("the warning carries the remote text's controls: %q", got)
-	}
-}
-
-// TestALaunchThatSkipsTheBudgetIsNotDeclared: the declaration follows the
+// TestADeclareThatSkipsTheDatabaseDeclaresNothing: the declaration follows the
 // launch's own database switch rather than sitting beside it. The coordinator
-// keeps its state in the same database the budget uses, and a launch told not
-// to use that database declares nothing: --no-budget-check here, budget.mode:
-// off and a project with no rtdb_url in the config (the same skip, taken from
-// the config, which TestBudgetOffSkipsEverything drives end to end). Nothing
-// is lost by it — the declaration is advisory, and P1's view reads the runs
-// bucket, where the launch's own record lands either way — and what is kept is
-// the property those two tests hold: a launch whose budget is off touches no
-// part of that database beyond the policy read it always makes.
-func TestALaunchThatSkipsTheBudgetIsNotDeclared(t *testing.T) {
-	f := newLaunchBudget(t, "enforce")
-	env := memEnv(t, f.cloudFixture)
-	env.noBudgetCheck = true
-	spec := raceSpec(t, env)
-	spec.RequestedBy = "someone@example.com"
-	if _, err := launchRun(context.Background(), env, appSlug, spec, time.Now()); err != nil {
-		t.Fatal(err)
+// keeps its state in the same database the budget uses, and a launch whose
+// budget is off — or whose project never deployed a database — declares
+// nothing: neither reaches a store at all, which the opener below makes
+// visible. Nothing is lost by it — the declaration is advisory, and the view
+// reads the runs bucket, where the launch's own record lands either way.
+//
+// --no-budget-check is the third spelling of that switch, and it is the
+// launch's own flag rather than part of the project config: it reaches Declare
+// on the cloud the launch opens, which the core's launch path passes through
+// (internal/cli's declareLaunch). No test here builds such a cloud -- the flag
+// is set on a cloud the core opens, and no exported name of the core sets it
+// (design section 10) -- so that branch is reached by a tagged `fugaro run
+// --no-budget-check` and by nothing in this package.
+func TestADeclareThatSkipsTheDatabaseDeclaresNothing(t *testing.T) {
+	for _, tc := range []struct{ what, cfg string }{
+		{"a project whose budget is off", "budget: { mode: off }\n"},
+		{"a project with no database", ""},
+	} {
+		f := newCloudFixture(t)
+		if tc.cfg != "" {
+			f.appendConfig(t, tc.cfg)
+		}
+		prev := openCoordinatorStore
+		opened := false
+		openCoordinatorStore = func(context.Context, *localcfg.Config) (*coordinator.Store, error) {
+			opened = true
+			return nil, errors.New("the store was opened")
+		}
+		t.Cleanup(func() { openCoordinatorStore = prev })
+
+		err := Declare(context.Background(), openFromConfig(t, f), appSlug,
+			&task.Spec{RunID: "20261024-120000-abcd", RequestedBy: "someone@example.com", Branch: "fugaro/x"})
+		if err != nil {
+			t.Errorf("%s: the declaration = %v, want nothing declared and no error", tc.what, err)
+		}
+		if opened {
+			t.Errorf("%s: the declaration opened the database", tc.what)
+		}
 	}
-	if m, _ := f.db.Value(coordinator.PathIntents(appSlug)).(map[string]any); len(m) != 0 {
-		t.Fatalf("a launch that skipped the budget declared %v", m)
+
+	// A launch that names nobody has no one to put on the record, whatever its
+	// project's database says.
+	f := newCoordinatorReportFixture(t)
+	if err := Declare(context.Background(), openFromConfig(t, f.cloudFixture), appSlug,
+		&task.Spec{RunID: "20261024-120000-abcd", Branch: "fugaro/x"}); err != nil {
+		t.Fatalf("a declaration with no caller = %v", err)
+	}
+	if m := f.intents(); len(m) != 0 {
+		t.Errorf("a declaration with no caller wrote %d records", len(m))
 	}
 }
 
 // The aggregation job's entry point (docs/coordinator/implementation-plan.md,
 // part P5). These tests are the command's half — the environment it reads, the
 // database it writes and the exit code it leaves — and not the sweep's own
-// logic, which internal/coordinator's tests hold. What they are here for is the
+// logic, which ee/coordinator's tests hold. What they are here for is the
 // wiring: a tick that reaches the real database, the real runs bucket and P2's
 // own read, driven end to end with fakes at the three seams.
 
@@ -1863,7 +1861,7 @@ func TestCoordinatorSweepRefusesAMissingEnvironment(t *testing.T) {
 		t.Run(k, func(t *testing.T) {
 			t.Setenv(k, "")
 			_, _, err := execute(t, "coordinator", "sweep")
-			if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), k) {
+			if err == nil || fcli.ExitCode(err) != fcli.ExitUserError || !strings.Contains(err.Error(), k) {
 				t.Errorf("without %s: err = %v, want exit 1 naming it", k, err)
 			}
 		})
@@ -1878,7 +1876,7 @@ func TestCoordinatorSweepRefusesAForeignDatabase(t *testing.T) {
 	for _, mark := range []any{"birch", nil, 7} {
 		f.db.Set("fugaro/project", mark)
 		_, _, err := execute(t, "coordinator", "sweep")
-		if err == nil || ExitCode(err) != ExitUserError {
+		if err == nil || fcli.ExitCode(err) != fcli.ExitUserError {
 			t.Fatalf("a database marked %v: err = %v, want exit 1", mark, err)
 		}
 		if v, _ := f.view(); v != nil {
@@ -1894,7 +1892,7 @@ func TestCoordinatorSweepRefusesAURLAsTheBucket(t *testing.T) {
 	newCoordinatorSweepFixture(t, nil)
 	t.Setenv("FUGARO_RUNS_BUCKET", "gs://aurora-runs")
 	_, _, err := execute(t, "coordinator", "sweep")
-	if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "bucket name") {
+	if err == nil || fcli.ExitCode(err) != fcli.ExitUserError || !strings.Contains(err.Error(), "bucket name") {
 		t.Errorf("a URL as the bucket: err = %v, want exit 1", err)
 	}
 }
@@ -1935,7 +1933,7 @@ func TestCoordinatorSweepNeverPrintsACredentialOrTheHostsText(t *testing.T) {
 			t.Errorf("the unread entry = %v, want %q", u, coordinator.UnreadFailed)
 		}
 	}
-	if raw := fmt.Sprint(f.db.Value(coordinator.PathRepo(appSlug))); strings.Contains(raw, secret) || strings.Contains(raw, "401") {
+	if raw := fmt.Sprint(f.db.Value(coordpath.PathRepo(appSlug))); strings.Contains(raw, secret) || strings.Contains(raw, "401") {
 		t.Errorf("the repository's node carries the host's own text: %s", raw)
 	}
 }
@@ -1986,7 +1984,7 @@ func TestCoordinatorSweepWithAnInjectedReader(t *testing.T) {
 // command of the coordinator's surface, so the generated CLI reference leaves
 // it out — the same rule budget history follows.
 func TestCoordinatorSweepIsHidden(t *testing.T) {
-	for _, c := range NewRootCmd().Commands() {
+	for _, c := range coordinatorTestRoot().Commands() {
 		if c.Name() != "coordinator" {
 			continue
 		}

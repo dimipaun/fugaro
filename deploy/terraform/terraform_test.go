@@ -1241,7 +1241,7 @@ func TestHistorySchedulerHoldsJobRunnerOnTheJob(t *testing.T) {
 // read-only installation token, minted from this key, and its database write
 // is its own account (D194). So the key is a secret_key_ref to the
 // project-wide container and never a value, every other entry is the plain
-// environment internal/cli/coordinator.go's sweep requires, and the job runs
+// environment ee/coordinator/cli/coordinator.go's sweep requires, and the job runs
 // as the account the Firebase root grants the FP's database admin to — the
 // account and no default Compute account.
 //
@@ -1318,7 +1318,7 @@ func TestTheCoordinatorJobTakesItsCredentialFromASecretAndNothingElse(t *testing
 		"FUGARO_RUNS_BUCKET", "FUGARO_COORDINATOR_REPOS", "FUGARO_GITHUB_APP_ID",
 	} {
 		if _, ok := plain[want]; !ok {
-			t.Errorf("%s: %s does not set %s, which the sweep refuses to run without (internal/cli/coordinator.go's runCoordinatorSweep)", path, job.name, want)
+			t.Errorf("%s: %s does not set %s, which the sweep refuses to run without (ee/coordinator/cli/coordinator.go's runCoordinatorSweep)", path, job.name, want)
 		}
 	}
 	if len(plain) != 6 {

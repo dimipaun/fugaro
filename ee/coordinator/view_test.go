@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See ee/LICENSE for the terms.
+
 package coordinator
 
 import (
@@ -261,10 +264,10 @@ func TestCoordinatorViewGolden(t *testing.T) {
 	}
 	want, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("no golden file: run go test ./internal/coordinator -run TestCoordinatorViewGolden -update")
+		t.Fatalf("no golden file: run go test ./ee/coordinator -run TestCoordinatorViewGolden -update")
 	}
 	if string(got) != string(want) {
-		t.Errorf("the view changed (go test ./internal/coordinator -update to accept):\ngot:\n%s\nwant:\n%s", got, want)
+		t.Errorf("the view changed (go test ./ee/coordinator -update to accept):\ngot:\n%s\nwant:\n%s", got, want)
 	}
 }
 

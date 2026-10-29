@@ -247,19 +247,19 @@ already done.
 ### P1 — The view, computed: the shape, and the one-repository join
 
 **Scope.** The deterministic half of Q13(A), and nothing else: what the coordinator *shows*, as
-data, with no store, no service, no MCP and no model. A new package `internal/coordinator/` holds
+data, with no store, no service, no MCP and no model. A new package `ee/coordinator/` holds
 the view's types — one repository's record: its pull requests, the runs behind them, the branch
 and the target release each declares, the files and services each touches, and the **collisions**
 between records that are still in flight — and the pure join that builds it from two readers the
 tree already has: a `gitprov.Provider` (`internal/gitprov/gitprov.go`), opened exactly as
 `internal/cli/exec.go`'s `providerOptions` opens one, and the run store
 (`internal/runstore/list.go`). One new read command, **`fugaro coordinator status [--json]`**
-(new `internal/cli/coordinator.go`, registered in `internal/cli/root.go` beside `newWatchCmd`
+(new `ee/coordinator/cli/coordinator.go`, registered in `internal/cli/root.go` beside `newWatchCmd`
 and `newProjectCmd`), renders it. It reads; it writes nothing, anywhere.
 
-**Files.** New `internal/coordinator/` (the view's types, the join, the collision rule); new
-`internal/cli/coordinator.go` and one line of `internal/cli/root.go`; fixtures under
-`internal/coordinator/testdata/`.
+**Files.** New `ee/coordinator/` (the view's types, the join, the collision rule); new
+`ee/coordinator/cli/coordinator.go` and one line of `internal/cli/root.go`; fixtures under
+`ee/coordinator/testdata/`.
 
 **Red step.** Three tests, each failing before the code exists: two in-flight pull requests whose
 tasks name the same file produce **one** collision and the test names both; a run whose
@@ -267,7 +267,7 @@ tasks name the same file produce **one** collision and the test names both; a ru
 never as an identity; a pull request with no run behind it is listed as such rather than dropped
 (mutate the join to skip it and the test must fail).
 
-**Verification.** `GOFLAGS=-p=2 go vet ./...`; `gofmt -l .`; `go test ./internal/coordinator/...
+**Verification.** `GOFLAGS=-p=2 go vet ./...`; `gofmt -l .`; `go test ./ee/coordinator/...
 ./internal/cli/ -run TestCoordinator`; and a fixture-driven goldens read for the rendered view.
 
 **Depends on.** **Nothing but its own answer.** Q13(A) is answered, and this part reads only what
@@ -310,8 +310,8 @@ implementation and not its shape**.
 
 **Files.** `internal/gitprov/github/apptoken.go` (`coordinatorTokenPermissions` and its exported
 accessor, beside `BuildTokenPermissions`); `internal/gitprov/providers/providers.go` (nothing new
-expected); `internal/coordinator/` (the reader, the token cache, the refusal);
-`internal/cli/coordinator.go` (the project-wide view).
+expected); `ee/coordinator/` (the reader, the token cache, the refusal);
+`ee/coordinator/cli/coordinator.go` (the project-wide view).
 
 **Red step.** Four tests: the set a coordinator mints contains no value the word `write` — plant
 `contents: write` and the test must fail (this is Q3's hard rule made mechanical, and finding #14
@@ -320,7 +320,7 @@ repository; two repositories under one App mint two tokens; and a second read of
 repository reuses the cached token rather than minting again.
 
 **Verification.** `GOFLAGS=-p=2 go vet ./...`; `gofmt -l .`; `go test ./internal/gitprov/...
-./internal/coordinator/... ./internal/cli/ -run 'TestCoordinator|TestAppToken'`; and the golden
+./ee/coordinator/... ./internal/cli/ -run 'TestCoordinator|TestAppToken'`; and the golden
 the permission set is asserted against, read rather than accepted.
 
 **Depends on.** **D193.** P1 is not required for the code, but the view it widens is P1's.
@@ -335,9 +335,9 @@ lifetime; and what a coordinator whose token leaked can read.
 
 **Status: built.** On the long-lived `coordinator` branch, in this plan's own commit message. The
 permission set and its exported accessor (`internal/gitprov/github/apptoken.go`), the project-wide
-reader with its per-repository token cache and its Bitbucket refusal (`internal/coordinator/`), the
+reader with its per-repository token cache and its Bitbucket refusal (`ee/coordinator/`), the
 opener and the mint that install the read-only token source on it, and the command's `--all`
-(`internal/cli/coordinator.go`) are in the tree, with the permission set held to the mint's request
+(`ee/coordinator/cli/coordinator.go`) are in the tree, with the permission set held to the mint's request
 body by a golden and the read itself held to the token it was minted — the fixture's own
 `Authorization` header is the read-only one; the plan's status line above moved with them. The
 reader reads a repository's pull requests a few at a time, the width P1's review asked for and the
@@ -386,7 +386,7 @@ authenticate as (Q15 A, D112's shape), added to `internal/budget/rules/rules.jso
 macros in `internal/budget/rules/rules.go`, with `internal/projectpolicy/version.go`'s
 `RulesVersion` bumped and `internal/budget/rules/testdata/rules.golden.json` regenerated.
 
-**Files.** `internal/coordinator/` (the records and the CAS writes over `internal/rtdb`);
+**Files.** `ee/coordinator/` (the records and the CAS writes over `internal/rtdb`);
 `deploy/terraform/gcp/modules/firebase/iam.tf` (the writer grant and the amended comment);
 `internal/budget/rules/rules.go`, `internal/budget/rules/rules.json.tmpl` and the golden;
 `internal/projectpolicy/version.go` (`RulesVersion`); the golden plans under
@@ -398,7 +398,7 @@ a **run's** token may not read it (finding #25's rule is that no run identity re
 has no business in); and a write carrying a stale ETag is refused and the document does not move
 — the mutation-proving test for Q6(A)'s CAS.
 
-**Verification.** `GOFLAGS=-p=2 go vet ./...`; `gofmt -l .`; `go test ./internal/coordinator/...
+**Verification.** `GOFLAGS=-p=2 go vet ./...`; `gofmt -l .`; `go test ./ee/coordinator/...
 ./internal/rtdb/... ./internal/budget/rules/... ./internal/cli/ -run 'TestCoordinator|TestRules'`;
 the rules goldens **regenerated and read diff by diff**; `terraform fmt -check -recursive
 deploy/terraform/` and `terraform validate`, with the golden plans regenerated and read.
@@ -426,7 +426,7 @@ now does only for an installation whose owner opts in (`fugaro update --firebase
 --coordinator`, P5's **For operators**), so the default golden plans still hold no such row, the
 opt-in goldens (`installation-coordinator`, `firebase-coordinator`) hold it, and the module's own
 `terraform test` runs cover it on and off. The
-second is that the writer bypasses the rules, so `internal/coordinator`'s `Store` refuses every
+second is that the writer bypasses the rules, so `ee/coordinator`'s `Store` refuses every
 path outside `coordinator/` itself: that check, not IAM and not the rules, is the fence (D194).
 The third is the rules generation: `RulesVersion` moves from 3 to 4, and once an installation has
 deployed generation 4, an older Fugaro's `fugaro update --firebase-project` is refused rather than
@@ -456,8 +456,8 @@ and the declaration**, so the same report twice writes one document (Q6 A's idem
 `report_intent` (P8) is **this same writer behind the front door**, so the record's shape is
 defined once, here.
 
-**Files.** `internal/coordinator/` (the intent record, its deterministic ID, its validation);
-`internal/cli/coordinator.go` and one line of `internal/cli/root.go`; `internal/cli/run.go`'s
+**Files.** `ee/coordinator/` (the intent record, its deterministic ID, its validation);
+`ee/coordinator/cli/coordinator.go` and one line of `internal/cli/root.go`; `internal/cli/run.go`'s
 `launchRun`; fixtures.
 
 **Red step.** Three tests: a report from a caller the project cannot name is refused, and the
@@ -466,7 +466,7 @@ document (mutate the ID to include the wall clock and the test must fail — tha
 that makes this an idempotency test rather than a round-trip); and the command's output carries no
 advice and reads no state back, asserted against the writer's own dependency list.
 
-**Verification.** `GOFLAGS=-p=2 go vet ./...`; `gofmt -l .`; `go test ./internal/coordinator/...
+**Verification.** `GOFLAGS=-p=2 go vet ./...`; `gofmt -l .`; `go test ./ee/coordinator/...
 ./internal/cli/ -run 'TestCoordinator|TestReport'`.
 
 **Depends on.** P3 (the nodes and the writer), **D195**.
@@ -480,8 +480,8 @@ adds no network surface.
 **Status: built.** Lands on the long-lived `coordinator` branch when its pull request merges, in
 this plan's own commit message, and the plan's status line above moves with it. The record, its
 deterministic ID (`IntentID`, over `DocumentID`'s length-prefixed parts), its two refusals and the
-writer are in `internal/coordinator/intent.go`; the node is
-`internal/coordinator/state.go`'s `PathIntents` and `PathIntent`; `fugaro coordinator report` is
+writer are in `ee/coordinator/intent.go`; the node is
+`ee/coordinator/state.go`'s `PathIntents` and `PathIntent`; `fugaro coordinator report` is
 the transport; and `launchRun` calls the same writer beside `takeClaim`, so a launch declares
 itself without a second command. What a launch can
 declare before any code exists is the caller the task names and the branch the run is about to
@@ -514,7 +514,7 @@ deploys anything or grants anybody: the grant and the rules deployment stay owne
 
 **One deviation from the section above, and one proposal this part does not take.** The **Files**
 line names "one line of `internal/cli/root.go`"; the subcommand is registered beside the others in
-`newCoordinatorCmd` (`internal/cli/coordinator.go`), which is where every coordinator subcommand
+`newCoordinatorCmd` (`ee/coordinator/cli/coordinator.go`), which is where every coordinator subcommand
 is added, and the root command's own file is untouched. And the record carries **no plan task
 id**: `docs/console-dependency-graph/reconciliation.md` **GD5** proposes one recorded in the
 launch record a run already writes, and its §4 item (f) says recording it in this record is
@@ -538,7 +538,7 @@ what makes P4's records readable rather than merely writable.
 
 **Files.** New Terraform in `deploy/terraform/gcp/modules/installation/` beside the history job and
 its scheduler entry, with the golden plans; a new entry point under `cmd/fugaro` and its package
-(the sweep); `internal/coordinator/` (the sweep's own logic: the recompute, the stale marker, the
+(the sweep); `ee/coordinator/` (the sweep's own logic: the recompute, the stale marker, the
 write set); `internal/cli/` for the manual invocation the owner's live check runs.
 
 **Red step.** Three tests: a second sweep over unchanged GitHub writes the same documents and
@@ -549,7 +549,7 @@ environment.
 
 **Verification.** `terraform fmt -check -recursive deploy/terraform/`; `terraform validate`; the
 golden plans regenerated and read; `GOFLAGS=-p=2 go vet ./...`; `gofmt -l .`; `go test
-./internal/coordinator/... ./internal/cli/ -run 'TestCoordinator|TestSweep'`.
+./ee/coordinator/... ./internal/cli/ -run 'TestCoordinator|TestSweep'`.
 
 **Depends on.** P2 (the reader), P3 (the writer and the nodes), P4 (the record it reconciles),
 **D195**.
@@ -563,9 +563,9 @@ read-only set, and that its schedule and timeout carry no unbounded retry.
 
 **Status: built.** Lands on the long-lived `coordinator` branch when its pull request merges, in
 this plan's own commit message, and the plan's status line above moves with it. The sweep is
-`internal/coordinator/sweep.go` (the recompute, the `stale` marker, the write set, and the
-pruning P4's review asked for) and `internal/coordinator/view.go`; `fugaro coordinator sweep` is
-the manual invocation the owner's live check runs, in `internal/cli/coordinator.go`; the job, its
+`ee/coordinator/sweep.go` (the recompute, the `stale` marker, the write set, and the
+pruning P4's review asked for) and `ee/coordinator/view.go`; `fugaro coordinator sweep` is
+the manual invocation the owner's live check runs, in `ee/coordinator/cli/coordinator.go`; the job, its
 account, the runs-bucket reader, the App-key grant and the schedule are
 `deploy/terraform/gcp/modules/installation/coordinator.tf`, wired through the root's variables and
 outputs and the `Coordinator` spec in `internal/infra/firebase.go`, with the golden plans
@@ -602,7 +602,7 @@ not decode is stepped over and counted (`undecodable`) instead of stopping the t
 
 **Two deviations from the section above, and the follow-up it carries.** The **Files** line names
 "a new entry point under `cmd/fugaro` and its package"; `cmd/fugaro` is only `main` in this tree,
-so the sweep lives in `internal/coordinator` with its command in `internal/cli`, beside every
+so the sweep lives in `ee/coordinator` with its command in `internal/cli`, beside every
 other coordinator subcommand. And the job's image is `HistoryImage` — the history job's own
 `fugaro-base/history:latest` — rather than a new one, because the sweep is the same binary the CLI
 is and a second image would be a second thing to build, pin and publish for no difference in what
@@ -620,7 +620,7 @@ job, the account and the schedule are declared in Terraform and applied only by 
 `roles/firebasedatabase.admin` on the Firebase project is granted by the Firebase root in that same
 run — the grant P3 gated off, turned on by this part only where the owner opted in and the account
 it names therefore exists. What
-the account may write is still not IAM's to say (D194): the fence is `internal/coordinator`'s own
+the account may write is still not IAM's to say (D194): the fence is `ee/coordinator`'s own
 subtree check and the deployed rules' floor, which is the one respect the section above calls
 security-sensitive.
 
@@ -737,7 +737,7 @@ This part is therefore the rewritten one, and it is the reason the plan's own st
 (`managedTypes`), `internal/infra/tf/managed_cost.go`, `internal/cli/init_review.go`
 (`notCovered`), new `deploy/terraform/gcp/modules/coordinator/` (the service, its account, its
 IAM, its scale-to-zero settings) wired into `deploy/terraform/gcp/modules/installation/`,
-`internal/cli/coordinator.go` (the ID token), `internal/backend/gcp/gcp.go`,
+`ee/coordinator/cli/coordinator.go` (the ID token), `internal/backend/gcp/gcp.go`,
 `internal/initflow/stage.go` (the stage that carries the grant), and the goldens under
 `internal/infra/tf/`, `internal/cli/` and `deploy/terraform/gcp/`.
 
@@ -784,10 +784,10 @@ link the user did not ask for** (finding #28). The override log's retention is *
 service this runs in is **this work's own**, from P7 — no other document defines its protocol, so
 the protocol and the tools are specified and built together here.
 
-**Files.** `internal/coordinator/` (the handler, the route, the tools, the data-boundary
+**Files.** `ee/coordinator/` (the handler, the route, the tools, the data-boundary
 convention the prompt-free v1 still needs for its text, the override record and its cap); the
 service's entry point under `cmd/fugaro` and its package, beside P7's module; the `record_override`
-reader in `internal/cli/coordinator.go`; and the design text that records the departure.
+reader in `ee/coordinator/cli/coordinator.go`; and the design text that records the departure.
 
 **Red step.** Four tests: a tool call whose input carries an instruction-shaped string behaves
 **identically** to one without it (the mutation-proof for the data boundary — make the handler
@@ -798,7 +798,7 @@ the test must fail); and an answer containing a markdown link is rendered as tex
 not followed — the renderer's rule, asserted here because Q8(A) is what puts this text on a
 screen.
 
-**Verification.** `GOFLAGS=-p=2 go vet ./...`; `gofmt -l .`; `go test ./internal/coordinator/...
+**Verification.** `GOFLAGS=-p=2 go vet ./...`; `gofmt -l .`; `go test ./ee/coordinator/...
 ./internal/cli/ -run 'TestCoordinator|TestTools'`; the console's suite if any of the text reaches
 it; and the Terraform checks if the route changes the service's plan.
 

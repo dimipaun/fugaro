@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"sort"
@@ -11,6 +12,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/coordpath"
+	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -34,6 +37,23 @@ func commandPaths(root *cobra.Command) []string {
 		}
 	}
 	walk(root)
+	sort.Strings(paths)
+	return paths
+}
+
+// builtTreePaths is the tree the CLI builds with nothing registered: the
+// released tree plus a stub for every paid name the core no longer holds the
+// code for. `coordinator` is that name today -- its library and command moved
+// to ee/ in E2.1b -- and a registration is what replaces the stub, so a test
+// that compares a built tree against a baseline asks this rather than spelling
+// the stub out, which is how the baseline went stale when the move landed.
+func builtTreePaths() []string {
+	paths := coreRootPaths()
+	for _, name := range paidCommandNames {
+		if !coreSurface().rootCommands[name] {
+			paths = append(paths, "fugaro "+name)
+		}
+	}
 	sort.Strings(paths)
 	return paths
 }
@@ -88,7 +108,11 @@ func TestRegisteredCommandJoinsTheRoot(t *testing.T) {
 func TestRegisteredCommandCannotShadowACoreCommand(t *testing.T) {
 	extendState(t)
 	want := findCmd(t, newCoreRoot(), "run").Short
-	before := coreRootPaths()
+	// The tree the CLI builds with nothing registered: what a refused
+	// registration must leave exactly as it found it. Building the tree here
+	// would seal the registry and the refusals below would be refusals for the
+	// wrong reason.
+	before := builtTreePaths()
 
 	core := coreSurface()
 	for _, name := range []string{"run", "account", "help", "completion", "__complete", "__completeNoDesc"} {
@@ -283,7 +307,7 @@ func TestRegistrationTakesNoEarlierRegistrationsName(t *testing.T) {
 	}
 
 	root := NewRootCmd()
-	want := append(coreRootPaths(), "fugaro fugaro-test-paid")
+	want := append(builtTreePaths(), "fugaro fugaro-test-paid")
 	sort.Strings(want)
 	if got := commandPaths(root); !slices.Equal(got, want) {
 		t.Errorf("a refused registration reached the tree:\n%v\nwant\n%v", got, want)
@@ -295,14 +319,14 @@ func TestRegistrationTakesNoEarlierRegistrationsName(t *testing.T) {
 	}
 }
 
-// registers nothing, and whose paid names are still core commands, builds
-// exactly the released tree — no stub, no extra command. This is the test that
-// has to change in the commit that makes report and coordinator paid commands:
-// from there the tree gains their stubs and, in a tagged build, the commands
-// themselves.
+// TestNoRegistrationLeavesTheRootUnchanged: a build that registers nothing
+// builds the released tree plus a stub for every paid name the core no longer
+// holds the code for — `coordinator`, whose code moved to ee/ — and nothing
+// else. A registration is what replaces a stub; without one the name is still
+// an answer the CLI gives (D522), not an absence.
 func TestNoRegistrationLeavesTheRootUnchanged(t *testing.T) {
 	extendState(t)
-	got, want := commandPaths(NewRootCmd()), coreRootPaths()
+	got, want := commandPaths(NewRootCmd()), builtTreePaths()
 	if len(got) != len(want) {
 		t.Fatalf("the built tree holds %d commands, the released one %d:\n%v\n%v", len(got), len(want), got, want)
 	}
@@ -313,22 +337,14 @@ func TestNoRegistrationLeavesTheRootUnchanged(t *testing.T) {
 	}
 }
 
+// TestLaunchWithoutADeclarerDeclaresNothing: an untagged build registers no
+// declarer, and the launch path answers nil without opening a database at all
+// (D535). The nil environment is what holds that: a declarer that ran would
+// dereference it.
 func TestLaunchWithoutADeclarerDeclaresNothing(t *testing.T) {
 	extendState(t)
-	SetNoLaunchDeclarer()
-	var declared bool
-	prev := reportLaunchIntent
-	reportLaunchIntent = func(context.Context, *cloudEnv, string, *task.Spec) error {
-		declared = true
-		return nil
-	}
-	t.Cleanup(func() { reportLaunchIntent = prev })
-
 	if err := declareLaunch(context.Background(), nil, appSlug, &task.Spec{}); err != nil {
 		t.Fatalf("a launch with no declarer failed: %v", err)
-	}
-	if declared {
-		t.Error("a launch with no declarer declared something")
 	}
 }
 
@@ -403,64 +419,23 @@ func TestStubIsReplacedOnlyByItsRegistration(t *testing.T) {
 	}
 }
 
-// TestLaunchStillDeclaresBeforeTheMove: the hook's core default is today's
-// declarer (F16a), so a hook that lands before the declarer moves cannot stop
-// every launch declaring itself — and the launch path reaches through the hook,
-// so a build whose declarer moved is the one that runs.
-func TestLaunchStillDeclaresBeforeTheMove(t *testing.T) {
+// TestUntaggedBuildStillLaunches: an untagged build registers no declarer, so
+// a launch succeeds and declares nothing (D535) — the coordinator's record is
+// the coordinator's own, and the code that writes it moved to ee/ with the
+// command. That a tagged build's launch reaches ee/'s Declare instead is
+// ee/register/coordinator_test.go's identity check.
+func TestUntaggedBuildStillLaunches(t *testing.T) {
 	extendState(t)
 	f := newLaunchBudget(t, "observe")
 	env := memEnv(t, f.cloudFixture)
 	spec := raceSpec(t, env)
 	spec.RequestedBy = "owner@example.com"
 
-	var preMove []string
-	prev := reportLaunchIntent
-	reportLaunchIntent = func(_ context.Context, got *cloudEnv, slug string, _ *task.Spec) error {
-		if got != env {
-			t.Error("the core declarer was handed another environment")
-		}
-		preMove = append(preMove, slug)
-		return nil
-	}
-	t.Cleanup(func() { reportLaunchIntent = prev })
-
 	if _, err := launchRun(context.Background(), env, appSlug, spec, time.Now()); err != nil {
-		t.Fatalf("the launch failed: %v", err)
+		t.Fatalf("an untagged launch failed: %v", err)
 	}
-	if len(preMove) != 1 || preMove[0] != appSlug {
-		t.Fatalf("the launch declared %v, want one declaration of %s", preMove, appSlug)
-	}
-
-	var hooked []string
-	wantSpec := spec
-	err := SetLaunchDeclarer(func(_ context.Context, c *Cloud, slug string, got *task.Spec) error {
-		if c == nil || c.env != env {
-			t.Errorf("the hook was handed %v, want the launch's own environment", c)
-		}
-		if got == nil || got.RunID != wantSpec.RunID || got.Task != wantSpec.Task {
-			t.Errorf("the hook was handed the run %v in %q, want the launch's own (%s)", got, got.Task, wantSpec.RunID)
-		}
-		hooked = append(hooked, slug)
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("setting the launch declarer: %v", err)
-	}
-	if err := SetLaunchDeclarer(func(context.Context, *Cloud, string, *task.Spec) error { return nil }); err == nil {
-		t.Error("a second declarer was accepted: nothing may replace what a build installed")
-	}
-
-	next := raceSpecAt(t, env, "20260927-100001-wxyz")
-	wantSpec = next
-	if _, err := launchRun(context.Background(), env, appSlug, next, time.Now()); err != nil {
-		t.Fatalf("the launch failed: %v", err)
-	}
-	if len(hooked) != 1 || hooked[0] != appSlug {
-		t.Errorf("the installed declarer declared %v, want one declaration of %s: the launch does not go through the hook", hooked, appSlug)
-	}
-	if len(preMove) != 1 {
-		t.Errorf("the pre-move declarer ran %d times, want 1 (the first launch alone): the launch does not go through the hook", len(preMove))
+	if v := f.db.Value(coordpath.PathRoot); v != nil {
+		t.Errorf("an untagged launch wrote %v into the coordinator's subtree, want nothing (D535)", v)
 	}
 }
 
@@ -474,4 +449,131 @@ func raceSpecAt(t *testing.T, env *cloudEnv, runID string) *task.Spec {
 		t.Fatal(err)
 	}
 	return spec
+}
+
+// installDeclarer installs d as the build's launch declarer for one test, and
+// sends the launch's warnings to the builder it answers.
+func installDeclarer(t *testing.T, d LaunchDeclarer) *strings.Builder {
+	t.Helper()
+	extendState(t)
+	if err := SetLaunchDeclarer(d); err != nil {
+		t.Fatalf("setting the launch declarer: %v", err)
+	}
+	var warned strings.Builder
+	prevWarn := launchWarn
+	launchWarn = &warned
+	t.Cleanup(func() { launchWarn = prevWarn })
+	return &warned
+}
+
+// TestALaunchHandsTheDeclarerItsOwnRun: the launch path reaches an installed
+// declarer through the hook, once, with the launch's own environment, project
+// and spec -- the declarer moved out of the core, and this is the core's half
+// of the seam it moved through.
+func TestALaunchHandsTheDeclarerItsOwnRun(t *testing.T) {
+	f := newCloudFixture(t)
+	env := memEnv(t, f)
+	spec := raceSpecAt(t, env, "20260927-100001-wxyz")
+	var declared []string
+	installDeclarer(t, func(_ context.Context, c *Cloud, slug string, got *task.Spec) error {
+		if c == nil || c.env != env {
+			t.Errorf("the declarer was handed %v, want the launch's own environment", c)
+		}
+		if got == nil || got.RunID != spec.RunID || got.Task != spec.Task {
+			t.Errorf("the declarer was handed the run %v, want the launch's own (%s)", got, spec.RunID)
+		}
+		declared = append(declared, slug)
+		return nil
+	})
+
+	if _, err := launchRun(context.Background(), env, appSlug, spec, time.Now()); err != nil {
+		t.Fatalf("the launch failed: %v", err)
+	}
+	if len(declared) != 1 || declared[0] != appSlug {
+		t.Errorf("the installed declarer declared %v, want one declaration of %s", declared, appSlug)
+	}
+}
+
+// TestAFailedReportDoesNotFailTheLaunch: the coordinator is advisory (spec
+// §3), so a declaration that cannot be written is a warning on stderr and
+// never a failed launch -- a run must not wait on a service that may not be
+// deployed.
+func TestAFailedReportDoesNotFailTheLaunch(t *testing.T) {
+	f := newCloudFixture(t)
+	env := memEnv(t, f)
+	warned := installDeclarer(t, func(context.Context, *Cloud, string, *task.Spec) error {
+		return errors.New("the database is unreachable")
+	})
+
+	if _, err := launchRun(context.Background(), env, appSlug, raceSpec(t, env), time.Now()); err != nil {
+		t.Fatalf("a failed report failed the launch: %v", err)
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want 1", n)
+	}
+	if !strings.Contains(warned.String(), "not reported to the coordinator") {
+		t.Errorf("the failure was silent: %q", warned.String())
+	}
+}
+
+// TestARefusedReportIsQuiet: a launcher who is not a budget admin cannot write
+// the coordinator's record, and that is the expected case for most people who
+// launch rather than a fault to tell them about on every run (owner ruling
+// 2026-10-24). The launch still starts and nothing is printed.
+func TestARefusedReportIsQuiet(t *testing.T) {
+	f := newCloudFixture(t)
+	env := memEnv(t, f)
+	warned := installDeclarer(t, func(context.Context, *Cloud, string, *task.Spec) error {
+		return fmt.Errorf("writing the intent: %w", rtdb.ErrPermission)
+	})
+
+	if _, err := launchRun(context.Background(), env, appSlug, raceSpec(t, env), time.Now()); err != nil {
+		t.Fatalf("a refused report failed the launch: %v", err)
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want 1", n)
+	}
+	if warned.Len() != 0 {
+		t.Errorf("a refused report printed %q, want nothing", warned.String())
+	}
+}
+
+// TestAFailedReportWarnsOnOneSafeLine: any failure other than a refusal is
+// still one warning line, and the error's text, which can quote what a remote
+// database answered, reaches the terminal without its control sequences.
+func TestAFailedReportWarnsOnOneSafeLine(t *testing.T) {
+	f := newCloudFixture(t)
+	env := memEnv(t, f)
+	warned := installDeclarer(t, func(context.Context, *Cloud, string, *task.Spec) error {
+		return errors.New("the database answered \x1b]52;c;cGF3bmVk\x07 503")
+	})
+
+	if _, err := launchRun(context.Background(), env, appSlug, raceSpec(t, env), time.Now()); err != nil {
+		t.Fatalf("a failed report failed the launch: %v", err)
+	}
+	got := warned.String()
+	if strings.Count(got, "\n") != 1 || !strings.HasPrefix(got, "warning: the launch was not reported to the coordinator") {
+		t.Errorf("the warning = %q, want one line", got)
+	}
+	if strings.ContainsRune(got, '\x1b') || strings.ContainsRune(got, '\x07') {
+		t.Errorf("the warning carries the remote text's controls: %q", got)
+	}
+}
+
+// TestUntaggedPaidCommandSaysWhy: with the coordinator's code moved to ee/,
+// an untagged build holds the name as a stub and nothing more (D522, G3): it
+// exits non-zero with the one Enterprise message, writes nothing to stdout,
+// and is never cobra's "unknown command" — which would tell a source builder
+// and the console that the name was never part of the CLI. `report` is the
+// same shape and E2.2 re-points this test at it; `coordinator` is the one the
+// move flipped.
+func TestUntaggedPaidCommandSaysWhy(t *testing.T) {
+	extendState(t)
+	if slices.Contains(coreRootPaths(), "fugaro coordinator") {
+		t.Fatal("the released tree still holds the coordinator command: the stub is not installed for a name a core command owns")
+	}
+	assertStubSaysWhy(t, "coordinator", "coordinator")
+	// A subcommand and a flag reach the same message: the stub parses neither,
+	// so the console's own argv gets the refusal rather than "unknown flag".
+	assertStubSaysWhy(t, "coordinator", "coordinator", "status", "--json")
 }

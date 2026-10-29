@@ -252,7 +252,7 @@ func TestDocsConsoleStylingDesignIsWritten(t *testing.T) {
 	// it opens, because §1.1 has four rows that name the served document; and it
 	// is not found by its table prefix, because that prefix begins with a path
 	// under the console directory and the boundary case's allow-list is a
-	// one-entry exception this file is not on.
+	// closed exception this file is not on.
 	indexRow := ""
 	for _, line := range strings.Split(mdBetween(t, path, doc, "### 1.1 ", "### 1.2 "), "\n") {
 		if !strings.HasPrefix(line, "| ") || !strings.Contains(line, "is script-only") {
@@ -967,7 +967,7 @@ var mdThemeTreeLineRE = regexp.MustCompile(`(?m)^ {2}src/renderer/theme/[a-z]+\.
 // **The directory the path starts in is matched loosely, and the boundary is
 // why.** `TestConsoleIsOutsideTheGoModule` refuses any Go file whose text holds
 // that directory's name and a separator, and the exception it grants is a
-// one-entry list this file is not on; spelling the prefix here would widen a
+// closed list this file is not on; spelling the prefix here would widen a
 // boundary this change has no business touching. `[a-z/]*` matches it and says
 // nothing about it, which is also all this test needs: the table cell's own path
 // under `src/renderer/theme/` is the fact being read.
@@ -1604,7 +1604,7 @@ func TestDocsConsoleStylingCountsMatch(t *testing.T) {
 	}
 	// The row is found by its file name rather than by its prefix: the prefix
 	// starts with a path under the console directory, and the boundary case's
-	// allow-list is a one-entry exception this file is not on.
+	// allow-list is a closed exception this file is not on.
 	bundleRow := ""
 	for _, line := range strings.Split(mdBetween(t, path, doc, "### 5.6 ", "\n---\n\n## 6. "), "\n") {
 		if strings.HasPrefix(line, "| ") && strings.Contains(line, "bundle.test.ts") {
@@ -1703,7 +1703,7 @@ func taskIndex(t *testing.T, task string) int {
 // The arithmetic is written out rather than shared, because it is four lines
 // and the point is that the test and the document agree on the formula. It is
 // deliberately not the console's own token test (§6.3): that one is TypeScript
-// on the other side of TestConsoleIsOutsideTheGoModule's one-entry allow-list,
+// on the other side of TestConsoleIsOutsideTheGoModule's closed allow-list,
 // which is what keeps a Go file from reaching in there at all — the same
 // boundary that makes this file cite the console's files as text and never stat
 // them. A path under that directory written into a comment here is enough to

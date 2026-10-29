@@ -19,11 +19,12 @@
 // binary that quietly kept a core default would carry the code and not the
 // enforcement.
 //
-// The edition is all that is set here today: every other seam's core default
-// already is today's behaviour, so a tagged build enforces exactly as an
-// untagged one does until the feature that owns the seam moves (G10) — and
-// registering them now would mean the core exporting its own defaults, which is
-// new API and belongs to the tasks that move the features.
+// The edition and the coordinator's two seams are what is set here today. The
+// seams still waiting for their feature to move keep the core's non-nil
+// defaults, so a tagged build behaves exactly as an untagged one does on those
+// paths until the task that owns them lands (G10) — and registering them now
+// would mean the core exporting its own defaults, which is new API and belongs
+// to the tasks that move the features.
 package register
 
 import "github.com/dimipaun/fugaro/internal/cli"
