@@ -1168,7 +1168,8 @@ function breadcrumb(factory: RunFactory, model: RunModel): ScreenElement {
   crumbSeparator(factory, element)
   // The repository's crumb: the mono value, or the console's mark with its
   // reason when the record carries no repository.
-  maybeCell(element, factory, 'span', model.row.repo, 'row.repo', 'run-crumb-repo')
+  const repo = cell(element, factory, 'span', 'run-crumb-repo', model.row.repo === null || model.row.repo === '' ? 'run-meta-absent' : 'run-meta-value')
+  putMaybe(repo, model.row.repo, 'row.repo')
   crumbSeparator(factory, element)
   const run = cell(element, factory, 'span', 'run-crumb-run')
   putText(run, model.row.run, 'runId', 'row.run')
@@ -1215,21 +1216,27 @@ function metaLine(factory: RunFactory, model: RunModel): ScreenElement {
   maybeCell(account, factory, 'span', model.row.oauthAccount, 'row.oauth_account', 'run-account')
   // The two actors keep the `person` class the wire key carries: an address is
   // drawn as the console's marker and a login as itself, on this line as in
-  // every other cell of the console that draws one.
-  const requested = cell(element, factory, 'span', 'run-meta-field')
-  literal(cell(requested, factory, 'span', 'run-meta-label'), 'requested by')
-  const asked = cell(requested, factory, 'span', 'run-requested-by', model.row.requestedBy === null ? 'run-meta-absent' : 'run-meta-value')
-  if (model.row.requestedBy === null) putMaybe(asked, null, 'row.requested_by')
-  else putText(asked, model.row.requestedBy, 'person', 'row.requested_by')
+  // every other cell of the console that draws one. Unlike the five columns
+  // above, an absent actor draws **no field at all** rather than the mark: a
+  // record written before `launch.json` existed has no launcher, and its
+  // `n/a` would read as a launcher the console could not name instead of one
+  // the record never carried.
+  if (model.row.requestedBy !== null) {
+    const requested = cell(element, factory, 'span', 'run-meta-field')
+    literal(cell(requested, factory, 'span', 'run-meta-label'), 'requested by')
+    const asked = cell(requested, factory, 'span', 'run-requested-by', 'run-meta-value')
+    putText(asked, model.row.requestedBy, 'person', 'row.requested_by')
+  }
   // Who started the run: the **whole** recorded identity, which is what the run
   // view is for -- the Live and Projects columns draw the short form
   // (`shared/launcher.ts`).
   const startedBy = launcherFull(model.row.launchedBy)
-  const started = cell(element, factory, 'span', 'run-meta-field')
-  literal(cell(started, factory, 'span', 'run-meta-label'), 'started by')
-  const value = cell(started, factory, 'span', 'run-started-by', startedBy === null ? 'run-meta-absent' : 'run-meta-value')
-  if (startedBy === null) putMaybe(value, null, 'row.launched_by')
-  else putText(value, startedBy, 'person', 'row.launched_by')
+  if (startedBy !== null) {
+    const started = cell(element, factory, 'span', 'run-meta-field')
+    literal(cell(started, factory, 'span', 'run-meta-label'), 'started by')
+    const value = cell(started, factory, 'span', 'run-started-by', 'run-meta-value')
+    putText(value, startedBy, 'person', 'row.launched_by')
+  }
   return element
 }
 
@@ -1275,8 +1282,12 @@ function statusStrip(factory: RunFactory, model: RunModel): ScreenElement {
   literal(cell(outcome, factory, 'span', 'run-strip-label'), 'OUTCOME')
   const outcomeValue = cell(outcome, factory, 'span', 'run-strip-value', 'run-outcome')
   putMaybe(outcomeValue, model.row.outcome, 'row.outcome')
+  // The tone is one of two closed words, written as a literal for the same
+  // reason the words beside it are: a rule colours the cell by the attribute and
+  // the console never spells a tone the theme has no colour for.
   const tone = outcomeTone(model.row.outcome)
-  if (tone !== null) outcomeValue.setAttribute('data-tone', tone)
+  if (tone === 'success') outcomeValue.setAttribute('data-tone', 'success')
+  if (tone === 'failure') outcomeValue.setAttribute('data-tone', 'failure')
   const stage = cell(element, factory, 'div', 'run-strip-cell')
   literal(cell(stage, factory, 'span', 'run-strip-label'), 'STAGE')
   putMaybe(cell(stage, factory, 'span', 'run-strip-value', 'run-stage'), model.row.stage, 'row.stage')
@@ -1511,9 +1522,15 @@ function stageIcon(factory: RunFactory, passed: boolean | null): ScreenElement {
     element.append(dot)
     return element
   }
-  const stroke = makeNS(factory, 'path', passed ? 'run-stage-check' : 'run-stage-cross')
-  stroke.setAttribute('d', passed ? RUN_ICON_CHECK : RUN_ICON_CROSS)
-  element.append(stroke)
+  if (passed) {
+    const check = makeNS(factory, 'path', 'run-stage-check')
+    check.setAttribute('d', RUN_ICON_CHECK)
+    element.append(check)
+    return element
+  }
+  const cross = makeNS(factory, 'path', 'run-stage-cross')
+  cross.setAttribute('d', RUN_ICON_CROSS)
+  element.append(cross)
   return element
 }
 

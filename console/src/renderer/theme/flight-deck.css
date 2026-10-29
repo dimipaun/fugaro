@@ -982,8 +982,10 @@ h1.run-id {
 
 /* The retry is drawn disabled (`writes.ts`): it keeps the primary look so the
  * design's one action is where the design puts it, and `aria-disabled` is what
- * says it does nothing. The look is dimmed and the pointer refuses it, so the
- * two channels agree. */
+ * says it does nothing. The look is dimmed and the pointer refuses it -- the
+ * drawn half of the same sentence the button's own description carries -- and
+ * neither the dimming nor the cursor is a selector on the attribute, the way
+ * `live-halt` and `console-halt` are styled it. */
 button.run-retry {
   min-height: var(--hit-min);
   padding: 0 var(--space-md);
@@ -993,11 +995,8 @@ button.run-retry {
   color: var(--live-text);
   font-size: var(--text-sm);
   font-weight: var(--weight-medium);
-  cursor: not-allowed;
-}
-
-button.run-retry[aria-disabled='true'] {
   opacity: 0.6;
+  cursor: not-allowed;
 }
 
 div.run-meta {

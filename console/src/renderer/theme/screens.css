@@ -999,8 +999,7 @@ span.run-finding-severity {
   letter-spacing: 0.08em;
 }
 
-span.run-finding-summary,
-span.run-agent-text {
+span.run-finding-summary {
   font-size: var(--font-size-base);
 }
 
@@ -2274,7 +2273,6 @@ span.coordinator-unread-retry {
   span.run-rigor-area-mode,
   span.run-status,
   span.run-outcome,
-  span.run-branch,
   span.run-requested-by,
   span.run-started-by,
   span.run-flags,
