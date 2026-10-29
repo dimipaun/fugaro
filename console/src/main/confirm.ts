@@ -117,8 +117,8 @@ export const CONFIRM_ANSWER_REFUSAL = 'a confirmation is answered with a yes or 
 export const CONFIRM_ALREADY_ANSWERED = 'this confirmation has already been answered'
 
 /** CONFIRM_READY_DELAY_MS is how long after the window is **shown and focused**
- * a yes is still refused, and it is the answer to the one way a
- * double-click hazards a spend: the window is built after the records are read
+ * a yes is still refused, and it is the answer to the one hazard a double-click
+ * carries: the window is built after the records are read
  * (`build`), so it can appear under the pointer a few hundred milliseconds after
  * the click that asked for it, and the second click of a double-click in the
  * dashboard lands on the confirming button of a window nobody has seen. Half a
@@ -221,10 +221,10 @@ interface ConfirmEntry {
   readonly contents: BrowserWindow['webContents']
   answered: boolean
   /** readyAt is the instant from which a yes is an answer: `CONFIRM_READY_DELAY_MS`
-   * after the window was last shown or focused. It starts at infinity, because a
-   * window that has not appeared is one nobody has read, and a yes can only
-   * arrive from a document that has loaded -- which is what "not yet" is
-   * measured against rather than an interval anyone starts. */
+   * after the window was last shown or focused. It starts at infinity, so a
+   * window that has not appeared is a window whose yes is refused until it has --
+   * the state a document can only reach by loading and being shown, and never by
+   * waiting. */
   readyAt: number
 }
 
