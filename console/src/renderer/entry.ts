@@ -93,6 +93,15 @@ import { buildProjectsModel, renderProjects } from './screens/projects'
 import { buildRunModel, renderRun } from './screens/run'
 import { refusedState, renderUnavailable } from './screens/degraded'
 import {
+  launchBytes,
+  launchCheck,
+  launchCounter,
+  launchOutcomeOf,
+  renderLaunch,
+  renderLaunchOutcome,
+} from './screens/launch'
+import type { LaunchControl, LaunchFields, LaunchTyped, LaunchView } from './screens/launch'
+import {
   GRAPH_PINCH_STEP,
   GRAPH_REFRESH_MS,
   GRAPH_ZOOM_STEP,
@@ -103,7 +112,7 @@ import {
   tabOf,
 } from './screens/graph'
 import type { GraphScreen } from './screens/graph'
-import { hidesView } from '../shared/version'
+import { hidesView, launchSupported } from '../shared/version'
 import type { ReducedView, SkewElement, SkewFactory, SkewTheme } from '../shared/version'
 
 /**
@@ -404,6 +413,47 @@ export function railBridgeFrom(fugaro: unknown): RailBridge {
     revealInstallation: (args) => ask('revealInstallation', args),
     openInstallations: (args) => ask('openInstallations', args),
   }
+}
+
+/**
+ * LaunchBridge is the one **write** the dashboard makes: `run.launch`, the Live
+ * view's launch control (V2.5.1b). It is a bridge of its own rather than a tenth
+ * member of `ReadBridge`, because that interface is the reads a screen is drawn
+ * from and this one spends money -- a reader looking for what this console can
+ * *do* should not have to find it among the things it can look at.
+ *
+ * It is answered the way `readBridgeFrom` answers: a member that is missing, or
+ * that fails to answer at all, is `null` rather than a rejection -- and the
+ * launch form draws that as a reply it could not read, which is the state that
+ * leaves the operator with the fields they typed and no launch claimed.
+ */
+export interface LaunchBridge {
+  launchRun(args: Readonly<Record<string, unknown>>): Promise<unknown>
+}
+
+export function launchBridgeFrom(fugaro: unknown): LaunchBridge {
+  const ask = (name: string, args: Readonly<Record<string, unknown>>): Promise<unknown> => askMember(fugaro, name, args)
+  return { launchRun: (args) => ask('launchRun', args) }
+}
+
+/**
+ * valueOf is one form control's value, read through the node behind a drawn
+ * element: a screen's interfaces carry text and attributes and never an input's
+ * `value`, so this is the one place this file reads a value *as* a value rather
+ * than as text. A node that carries none -- a fake, or something that is not an
+ * input at all -- answers the empty string, which every check and the CLI both
+ * refuse.
+ */
+function valueOf(surface: DomSurface, element: SkewElement): string {
+  const node = surface.nodeOf(element) as unknown as { readonly value?: unknown }
+  return typeof node.value === 'string' ? node.value : ''
+}
+
+/** setValueOf is the other half: the launch form clears the task it launched, and
+ * a value is written the same way it is read -- on the node behind the element,
+ * because a drawing cannot carry one. */
+function setValueOf(surface: DomSurface, element: SkewElement, value: string): void {
+  ;(surface.nodeOf(element) as unknown as { value: string }).value = value
 }
 
 /** INSTALLATION_UNREADABLE is the console's sentence for an answer to
@@ -937,6 +987,13 @@ export interface RailRow {
   readonly saved: boolean
   readonly checkout: string | null
   readonly checkouts: readonly string[]
+  /** `repositories` is what the installation records as its own, in the CLI's
+   * order and each one once: the `<provider>/<owner>/<name>` identity verbatim.
+   * It is what the launch control offers (V2.5.1b) and it is **not** `checkouts`
+   * -- a launch names a repository, not a directory -- so a row that carries no
+   * parseable list carries none rather than the paths, and the form then draws
+   * its own sentence. */
+  readonly repositories: readonly string[]
 }
 
 /**
@@ -995,6 +1052,11 @@ export function railRows(reply: unknown): readonly RailRow[] | null {
         saved: row['saved'] === true,
         checkout: typeof row['checkout'] === 'string' && row['checkout'] !== '' ? row['checkout'] : null,
         checkouts: stringsOf(row['checkouts']),
+        // Read like `checkouts` and not with the row's own refusal: a list this
+        // field cannot be read from is an installation whose launch control
+        // offers nothing (the form draws its own sentence), which is not a
+        // reason to drop a row the rail can draw in every other respect.
+        repositories: identitiesOf(row['repositories']),
       }),
     )
   }
@@ -1016,6 +1078,26 @@ function stringsOf(raw: unknown): readonly string[] {
   return Object.freeze(
     raw.filter((one): one is string => typeof one === 'string').map((one) => textOf(one, 'the CLI’s own line')),
   )
+}
+
+/**
+ * identitiesOf is a row's recorded repositories as the launch form must hold
+ * them: the strings exactly as the main process wrote them, in their order,
+ * blanks dropped.
+ *
+ * It is **not** `stringsOf`, and the difference is the whole point of the field.
+ * A repository identity is passed back to main, which matches it against the
+ * installation's own records and refuses a launch for anything else
+ * (`launchRepoArgument`, `src/main/launch.ts`) -- so a copy the console had
+ * folded to one line or clipped at the display bound would be a launch refused
+ * for the repository the operator did pick. That is also why the form draws
+ * these as text rather than through a class
+ * (`src/renderer/screens/launch.ts`'s `identity`), and why `checkout` beside it
+ * is read this way too.
+ */
+function identitiesOf(raw: unknown): readonly string[] {
+  if (!Array.isArray(raw)) return Object.freeze([])
+  return Object.freeze(raw.filter((one): one is string => typeof one === 'string' && one !== ''))
 }
 
 /**
@@ -1826,6 +1908,7 @@ export async function bootDashboard(scope: DashboardScope): Promise<void> {
     bridge,
     rail,
     railBridge,
+    launchBridge: launchBridgeFrom(scope.fugaro),
     rows,
     onboarding,
     wiring,
@@ -1868,8 +1951,31 @@ export function currentRailRows(installation: unknown): readonly RailRow[] {
       saved: true,
       checkout: null,
       checkouts: Object.freeze([]),
+      // `installation.current` carries no repository list -- the CLI's list is
+      // the only read that does -- so a console whose list read failed offers no
+      // repository to launch in, and its launch control says so rather than
+      // guessing at one.
+      repositories: Object.freeze([]),
     }),
   ])
+}
+
+/**
+ * LaunchNow is the drawn launch control, the installation it was built for and
+ * whether a call is out.
+ *
+ * The control is **built once per installation and kept**, which is what makes a
+ * form survive the one-second Live poll: the poll replaces the panel, and a
+ * control rebuilt on every frame would be a form that emptied itself while the
+ * operator was typing. It is rebuilt when the open installation changes --
+ * `answered` drops the Live screen for exactly that -- and rebuilding it is the
+ * whole of "switching installation clears the form and any drawn outcome".
+ */
+interface LaunchNow {
+  readonly project: string
+  readonly view: LaunchView
+  readonly control: LaunchControl
+  busy: boolean
 }
 
 /** DashboardDeps is what the dashboard half of `bootDashboard` needs, named so
@@ -1886,6 +1992,9 @@ interface DashboardDeps {
   /** railBridge, rows and wiring are the rail's own operations, the rows it was
    * first drawn with, and the click this function binds. */
   readonly railBridge: RailBridge
+  /** launchBridge is the Live view's one write (`run.launch`, V2.5.1b), the
+   * only operation of this console that spends money. */
+  readonly launchBridge: LaunchBridge
   readonly rows: readonly RailRow[]
   /** onboarding is the screen the list answer names for a machine with no
    * installation, or `null`. */
@@ -1905,7 +2014,7 @@ interface DashboardDeps {
  * figures in it rather than at an empty panel that fills in later.
  */
 async function mountDashboard(deps: DashboardDeps): Promise<void> {
-  const { document, surface, gate, bridge, rail, railBridge, wiring, navigator } = deps
+  const { document, surface, gate, bridge, rail, railBridge, launchBridge, wiring, navigator } = deps
   const factory = surface.factory
   const theme = CONSOLE_THEME
 
@@ -2063,8 +2172,10 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     if (id === 'live') {
       maybeRefreshRigor()
       // A console that opened on an issue has made no Live read yet.
-      if (live.drawn !== null) replace(live.drawn)
-      else void pollLive()
+      if (live.drawn !== null) {
+        replace(live.drawn)
+        placeLaunch()
+      } else void pollLive()
       return
     }
     if (id === 'graph') void showGraph()
@@ -2245,6 +2356,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     live.drawn = drawn
     replace(drawn)
     wireRuns(drawn, model)
+    placeLaunch()
   }
 
   /**
@@ -2946,6 +3058,143 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    */
   let railNow: readonly RailRow[] = deps.rows
   let onboardNow: RailOnboarding | null = deps.onboarding
+
+  // ---- The launch control (V2.5.1b) --------------------------------------
+
+  /**
+   * LaunchNow is the drawn launch control, the installation it was built for and
+   * whether a call is out.
+   *
+   * The control is **built once per installation and kept**, which is what makes
+   * a form survive the one-second Live poll: the poll replaces the panel, and a
+   * control rebuilt on every frame would be a form that emptied itself while the
+   * operator was typing. It is rebuilt when the open installation changes --
+   * `answered` drops the Live screen for that, and this is dropped with it -- and
+   * rebuilding it is the whole of "switching installation clears the form and any
+   * drawn outcome".
+   */
+  let launchNow: LaunchNow | null = null
+
+  /** launchNowOf is the control for the installation the panel is about, built
+   * on first use. `supported` is the handshake's answer about the CLI this
+   * console is driving (design section 5.1 rule 11: below the floor there is no
+   * control at all, and no call is reachable from this file). */
+  const launchNowOf = (): LaunchNow | null => {
+    const open = railNow.find((row) => row.open)
+    if (open === undefined) return null
+    if (launchNow !== null && launchNow.project === open.project) return launchNow
+    const view: LaunchView = {
+      installation: open.project,
+      repositories: open.repositories,
+      supported: launchSupported(gate.compatibility.cliVersion ?? ''),
+    }
+    const control = renderLaunch(factory, view)
+    launchNow = { project: open.project, view, control, busy: false }
+    wireLaunch(launchNow)
+    return launchNow
+  }
+
+  /** countNow writes the task's own byte count, which is the number main counts. */
+  const countNow = (fields: LaunchFields, text: string): void => {
+    fields.count.textContent = launchCounter(launchBytes(text))
+  }
+
+  /** busyNow is the in-flight state, written in one place: the submit is
+   * `disabled` and the form carries `aria-busy`, so a control that was pressed
+   * cannot be pressed again while the confirmation window is open in front of
+   * it. */
+  const busyNow = (held: LaunchNow, busy: boolean): void => {
+    const fields = held.control.fields
+    if (fields === null || held.control.form === null) return
+    ;(surface.nodeOf(fields.submit) as unknown as { disabled: boolean }).disabled = busy
+    held.control.form.setAttribute('aria-busy', busy ? 'true' : 'false')
+  }
+
+  /**
+   * sendLaunch asks the main process for the launch. It is the **only** call
+   * this file makes with a launch's fields, and the object it passes carries
+   * exactly the schema's five keys: the installation, the repository the select
+   * was drawn with, the task, and the title and plan task when the operator
+   * typed one. Nothing here is a path, a flag, a ref or a run id -- main and its
+   * confirmation window own all four -- and `launchCheck` is a convenience in
+   * front of it rather than the boundary: main re-validates every field.
+   *
+   * The outcome is drawn in the region `renderLaunch` marked `aria-live`, and
+   * the task is cleared only when a launch happened: a refusal keeps the fields,
+   * because the operator's next move is to fix one of them.
+   */
+  const sendLaunch = async (held: LaunchNow): Promise<void> => {
+    const fields = held.control.fields
+    if (fields === null || held.busy) return
+    const typed: LaunchTyped = {
+      repository: valueOf(surface, fields.repository),
+      task: valueOf(surface, fields.task),
+      title: valueOf(surface, fields.title),
+      planTask: valueOf(surface, fields.planTask),
+    }
+    const complaint = launchCheck(typed, held.view.repositories)
+    fields.hint.textContent = complaint ?? ''
+    if (complaint !== null) return
+    const title = typed.title.trim()
+    const planTask = typed.planTask.trim()
+    held.busy = true
+    busyNow(held, true)
+    let reply: unknown = null
+    try {
+      reply = await launchBridge.launchRun({
+        installation: held.project,
+        repository: typed.repository,
+        task: typed.task,
+        ...(title === '' ? {} : { title }),
+        ...(planTask === '' ? {} : { planTask }),
+      })
+    } finally {
+      held.busy = false
+      busyNow(held, false)
+    }
+    // A launch that settled after the operator moved to another installation is
+    // an answer about a form that is gone: drawing it would be a sentence about
+    // one installation's launch under another's.
+    if (launchNow !== held) return
+    const read = launchOutcomeOf(reply)
+    surface.nodeOf(held.control.outcome).replaceChildren(surface.nodeOf(renderLaunchOutcome(factory, read)))
+    if (read.kind === 'launched') {
+      setValueOf(surface, fields.task, '')
+      countNow(fields, '')
+      fields.hint.textContent = ''
+    }
+  }
+
+  /** wireLaunch binds the form's own events: the button that reveals it, the
+   * counter that follows the task, and the submit. */
+  const wireLaunch = (held: LaunchNow): void => {
+    const { open, form, fields } = held.control
+    if (open !== null && form !== null) {
+      surface.nodeOf(open).addEventListener('click', () => {
+        surface.nodeOf(form).removeAttribute('hidden')
+      })
+    }
+    if (fields === null) return
+    surface.nodeOf(fields.task).addEventListener('input', () => {
+      countNow(fields, valueOf(surface, fields.task))
+    })
+    surface.nodeOf(fields.submit).addEventListener('click', () => {
+      void sendLaunch(held)
+    })
+  }
+
+  /**
+   * placeLaunch puts the control under the Live screen. It is called from the
+   * two places the Live view is drawn into the panel and from nowhere else, so
+   * "the launch control is on the Runs screen and on no other view" is the call
+   * sites rather than a condition every other screen would have to remember.
+   */
+  const placeLaunch = (): void => {
+    if (currentView !== 'live') return
+    const held = launchNowOf()
+    if (held === null) return
+    surface.nodeOf(panel).appendChild(surface.nodeOf(held.control.root))
+  }
 
   /** showOnboarding puts the first-run screen in the main area: no
    * installation, so nothing to read and no Live refusal in its place. */

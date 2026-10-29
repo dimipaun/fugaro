@@ -1,0 +1,727 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
+//
+// The launch control on the Live view (console v2 plan V2.5.1b; design section
+// 5.1 rule 11).
+//
+// V2.5.1a built the *operation*: `run.launch`, its closed five-field schema, the
+// conversion from a repository identity to a clone URL, and the confirmation
+// window the main process owns. This file is the renderer half of rule 11, and
+// it is written against two rules that are the whole of why the control is safe
+// to have:
+//
+//   - **the renderer adds no confirmation.** Main re-validates every field and
+//     the confirmation window (`src/main/confirm.ts`) is the only confirmation
+//     there is, so this form has no "are you sure", no preview of the argv and
+//     no run id of its own: it says in one sentence that a window will open, and
+//     then asks for it. A second gate here would be a second policy that can
+//     disagree with the first.
+//   - **the renderer cannot name a path, a flag or a ref.** The form's four
+//     controls are a repository chosen from the installation's own recorded
+//     identities, a task, a title and a plan task -- and the launch call carries
+//     exactly those five fields and no other key, which is what makes `--pr=1`,
+//     `/etc/passwd` and `../x` typed into them values rather than arguments.
+//     `launchCheck` below is a **convenience** mirror of `launchrules`' caps, so
+//     an operator is told about an obviously refused value without a round trip.
+//     It is not a boundary, and main refuses what it misses.
+//
+// Every value is a text node -- never `innerHTML`, never a link, never an image
+// -- and every refusal is main's own sentence as text: rule 11 draws the CLI's
+// message verbatim, so a message that carries markup arrives as characters
+// rather than as an element. The two values a class cannot draw are the launch's
+// own recorded ones -- a repository identity and the `launchResult` facts -- and
+// they are written as the strings they are (`identity` and `fact` below say
+// why).
+//
+// The three caps and the cancel sentence are mirrored rather than imported,
+// because a screen may not read a main-process value: `launch-form.test.ts`
+// holds each mirror to its original, so a drift is a failing test rather than a
+// form that refuses what main accepts or a decline drawn as a refusal.
+
+import { sanitizeRefusal } from '../../shared/sanitize'
+import { LAUNCH_CLI_FLOOR } from '../../shared/version'
+import type { ElementLike } from '../app'
+
+/**
+ * LaunchElement is what this screen may draw into: `ElementLike`'s text slot and
+ * attributes, a tag, children and `append`. It is deliberately no wider -- no
+ * markup-parsing slot, no navigating attribute, no event handler and no style --
+ * so a drawing that wanted one of those would have to widen this interface
+ * first, in a diff a reviewer can see, rather than reach for it quietly.
+ */
+export interface LaunchElement extends ElementLike {
+  readonly tag: string
+  append(child: LaunchElement): void
+  childNodes(): readonly LaunchElement[]
+}
+
+/** LaunchFactory is where elements come from: an argument rather than a
+ * `document` reference, so the drawing can be asserted on with no window. */
+export interface LaunchFactory {
+  create(tag: string): LaunchElement
+}
+
+// ---------------------------------------------------------------------------
+// The numbers, mirrored from `src/main/launchrules.ts`
+// ---------------------------------------------------------------------------
+
+/** LAUNCH_TASK_MAX_BYTES is `MAX_LAUNCH_TASK_BYTES`: the task's cap in UTF-8
+ * bytes after the trim. */
+export const LAUNCH_TASK_MAX_BYTES = 16_384
+/** LAUNCH_TITLE_MAX_RUNES is `MAX_LAUNCH_TITLE_RUNES`: the title's cap in
+ * characters. */
+export const LAUNCH_TITLE_MAX_RUNES = 100
+/** LAUNCH_PLAN_TASK_MAX_BYTES is `MAX_LAUNCH_PLAN_TASK_BYTES`: the plan task's
+ * cap in bytes. */
+export const LAUNCH_PLAN_TASK_MAX_BYTES = 128
+
+/** LAUNCH_TASK_LIMIT is the task's cap as the counter spells it, so a counter
+ * can never name a number the check does not use. */
+export const LAUNCH_TASK_LIMIT = '16 KiB'
+
+/**
+ * LAUNCH_DECLINED_REASON is `DECLINED_CANCELLED`, the main process's sentence
+ * for a confirmation window the operator closed. The renderer has to *recognise*
+ * it to tell a decline from every other refusal, and the only way it can is to
+ * hold the same string: `launch-form.test.ts` pins the two equal, so a reworded
+ * cancel sentence is a failing test rather than a decline drawn as a refusal.
+ */
+export const LAUNCH_DECLINED_REASON = 'the launch was not confirmed: nothing was spawned'
+
+// ---------------------------------------------------------------------------
+// The words
+// ---------------------------------------------------------------------------
+
+export const LAUNCH_OPEN_WORD = 'Launch a run'
+export const LAUNCH_SUBMIT_WORD = 'Open the confirmation window'
+export const LAUNCH_OPENS_WINDOW =
+  'a confirmation window will open, showing the installation, the repository as this installation records it and the repository the launch will carry, the ref, the title, the plan task, the run id, the exact command and the whole task; nothing launches until that window’s own Launch button is pressed'
+export const LAUNCH_NEEDS_CLI = `launching needs CLI ${LAUNCH_CLI_FLOOR} or newer`
+export const LAUNCH_NO_REPOSITORY =
+  'this installation records no repository, so there is nothing to launch in'
+export const LAUNCH_LAUNCHED_WORD = 'the run launched'
+export const LAUNCH_ALREADY_WORD = 'the run was already launched'
+export const LAUNCH_REPLAYED_WORD = 'this is the answer this console already gave for this launch'
+export const LAUNCH_DECLINED_WORD = 'not confirmed: nothing was launched'
+export const LAUNCH_OUTCOME_UNKNOWN_WORD = 'the outcome is unknown'
+export const LAUNCH_UNREADABLE =
+  'the console could not read the launch’s answer, so nothing is drawn about it'
+/** LAUNCH_UNDRAWN is what a sentence the sanitizer refused whole is drawn as,
+ * the same marker `entry.ts` uses for its own. */
+export const LAUNCH_UNDRAWN = 'a line the console will not draw'
+
+// ---------------------------------------------------------------------------
+// The selectors
+// ---------------------------------------------------------------------------
+
+export const LAUNCH_CLASS = 'launch'
+export const LAUNCH_OPEN_CLASS = 'launch-open'
+export const LAUNCH_FORM_CLASS = 'launch-form'
+export const LAUNCH_SUBMIT_CLASS = 'launch-submit'
+export const LAUNCH_REPOSITORY_CLASS = 'launch-repository'
+export const LAUNCH_TASK_CLASS = 'launch-task'
+export const LAUNCH_TITLE_CLASS = 'launch-title'
+export const LAUNCH_PLAN_TASK_CLASS = 'launch-plan-task'
+export const LAUNCH_COUNT_CLASS = 'launch-task-count'
+export const LAUNCH_HINT_CLASS = 'launch-hint'
+export const LAUNCH_HELP_CLASS = 'launch-help'
+export const LAUNCH_LABEL_CLASS = 'launch-label'
+export const LAUNCH_OUTCOME_CLASS = 'launch-outcome'
+export const LAUNCH_OUTCOME_BODY_CLASS = 'launch-outcome-body'
+export const LAUNCH_OUTCOME_LINE_CLASS = 'launch-outcome-line'
+export const LAUNCH_FACTS_CLASS = 'launch-facts'
+export const LAUNCH_FACT_LABEL_CLASS = 'launch-fact-label'
+export const LAUNCH_FACT_VALUE_CLASS = 'launch-fact-value'
+export const LAUNCH_FLOOR_CLASS = 'launch-floor'
+export const LAUNCH_EMPTY_CLASS = 'launch-empty'
+
+/** LAUNCH_IDS are the ids the labels point at and `aria-describedby` names. They
+ * are constants rather than literals so a `for` and an `id` cannot be spelled
+ * differently in two places. */
+export const LAUNCH_IDS = Object.freeze({
+  repository: 'launch-repository',
+  repositoryHelp: 'launch-repository-help',
+  task: 'launch-task',
+  count: 'launch-task-count',
+  title: 'launch-title',
+  titleHelp: 'launch-title-help',
+  planTask: 'launch-plan-task',
+  planTaskHelp: 'launch-plan-task-help',
+  hint: 'launch-hint',
+})
+
+// The attributes this screen sets are `class`, `id`, `for`, `type`, `hidden`,
+// `aria-live`, `aria-describedby` and `aria-busy`, and nothing else: there is no
+// navigating attribute, no resource attribute, no style and no event handler
+// anywhere in this file.
+
+// ---------------------------------------------------------------------------
+// The drawing
+// ---------------------------------------------------------------------------
+
+function make(factory: LaunchFactory, tag: string, ...classes: string[]): LaunchElement {
+  const element = factory.create(tag)
+  if (classes.length > 0) element.setAttribute('class', classes.join(' '))
+  return element
+}
+
+/** literal writes the console's own words -- a label, a heading, a whole
+ * sentence -- into an element. It is not `putText`: that is the door a
+ * *document's* string comes through, and running this file's own vocabulary
+ * through the sanitizer would invite a reader to think a screen may write a
+ * value without it. */
+function literal(element: LaunchElement, text: string): LaunchElement {
+  element.textContent = text
+  return element
+}
+
+/**
+ * identity writes one repository identity the installation records --
+ * `<provider>/<owner>/<name>` -- as a text node.
+ *
+ * It is deliberately not `putText`, and there are two reasons, both of them
+ * about this one string. No class admits its shape: `repository` is `owner/name`
+ * with exactly one slash, which is the CLI's `--repo` form and not the form the
+ * records carry, so the class would draw `n/a` for every repository an operator
+ * could launch on. And every class does something to a string on its way to a
+ * screen -- folds it to one line, clips it at the display bound, redacts a run
+ * it reads as a credential -- while this string is also **sent back**: main
+ * matches it against its own records and refuses a launch for anything else
+ * (`launchRepoArgument`, `src/main/launch.ts`), so a copy the console had
+ * rewritten in any way would be a launch refused for the repository the operator
+ * did pick. The confirmation window draws the same value the same way, as text
+ * (`src/renderer/confirm.ts`), for the same reason.
+ */
+function identity(element: LaunchElement, recorded: string): void {
+  element.textContent = recorded
+}
+
+function cell(
+  parent: LaunchElement,
+  factory: LaunchFactory,
+  tag: string,
+  ...classes: string[]
+): LaunchElement {
+  const element = make(factory, tag, ...classes)
+  parent.append(element)
+  return element
+}
+
+/** help is one of a control's own lines: an id for `aria-describedby` to name,
+ * and the console's own words in it. */
+function help(
+  parent: LaunchElement,
+  factory: LaunchFactory,
+  id: string,
+  text: string,
+  ...classes: string[]
+): LaunchElement {
+  const element = cell(parent, factory, 'p', LAUNCH_HELP_CLASS, ...classes)
+  element.setAttribute('id', id)
+  return literal(element, text)
+}
+
+/** field is one labelled control: a `<label for>` before it, the id the label
+ * names, and the lines that describe it. Every control on this form is made
+ * here, so "no control without an accessible name" is a property of one
+ * function rather than of four call sites. */
+function field(
+  parent: LaunchElement,
+  factory: LaunchFactory,
+  tag: string,
+  id: string,
+  className: string,
+  label: string,
+  described: readonly string[],
+): LaunchElement {
+  const labelElement = cell(parent, factory, 'label', LAUNCH_LABEL_CLASS)
+  labelElement.setAttribute('for', id)
+  literal(labelElement, label)
+  const control = cell(parent, factory, tag, className)
+  control.setAttribute('id', id)
+  control.setAttribute('aria-describedby', described.join(' '))
+  return control
+}
+
+/** LaunchView is what the control is drawn for: the installation, the repository
+ * identities it records (in the CLI's order, deduplicated by the main process),
+ * and whether this console's CLI may be launched with at all. */
+export interface LaunchView {
+  readonly installation: string
+  readonly repositories: readonly string[]
+  readonly supported: boolean
+}
+
+/** LaunchFields is the form's own controls, so the wiring does not have to walk
+ * the tree it just drew to find them. */
+export interface LaunchFields {
+  readonly repository: LaunchElement
+  readonly task: LaunchElement
+  readonly title: LaunchElement
+  readonly planTask: LaunchElement
+  readonly count: LaunchElement
+  readonly hint: LaunchElement
+  readonly submit: LaunchElement
+}
+
+/** LaunchControl is the whole control: the button, the sentence beside it, the
+ * inline form, its fields and the region an outcome is drawn in. `open`, `form`
+ * and `fields` are null where the thing itself does not exist -- no launch is
+ * offered at all below the CLI floor, and the form has no fields when the
+ * installation records no repository. */
+export interface LaunchControl {
+  readonly root: LaunchElement
+  readonly open: LaunchElement | null
+  readonly form: LaunchElement | null
+  readonly fields: LaunchFields | null
+  readonly outcome: LaunchElement
+}
+
+/**
+ * renderLaunch draws the whole control. The form is drawn hidden and the wiring
+ * reveals it, because "Launch a run" is a button and a form that was already
+ * open would be a button that did nothing.
+ *
+ * The repository is a `<select>` and never a text field: the identities it
+ * offers are the installation's own recorded ones, and an option carries no
+ * `value` attribute, so the select's value is the option's own drawn text rather
+ * than a second, unsanitised copy of the identity -- the string main receives is
+ * the string the operator read.
+ *
+ * With no repository to offer the form holds a sentence and **no submit at
+ * all** rather than a disabled one: it would have nothing to send, and the
+ * sentence beside the button would be a promise nothing keeps, so it is not
+ * drawn either.
+ */
+export function renderLaunch(factory: LaunchFactory, view: LaunchView): LaunchControl {
+  const root = make(factory, 'section', LAUNCH_CLASS)
+  const outcome = make(factory, 'div', LAUNCH_OUTCOME_CLASS)
+  outcome.setAttribute('aria-live', 'polite')
+
+  if (!view.supported) {
+    literal(cell(root, factory, 'p', LAUNCH_FLOOR_CLASS), LAUNCH_NEEDS_CLI)
+    root.append(outcome)
+    return { root, open: null, form: null, fields: null, outcome }
+  }
+
+  const open = cell(root, factory, 'button', LAUNCH_OPEN_CLASS)
+  open.setAttribute('type', 'button')
+  literal(open, LAUNCH_OPEN_WORD)
+
+  const form = cell(root, factory, 'div', LAUNCH_FORM_CLASS)
+  form.setAttribute('hidden', '')
+
+  if (view.repositories.length === 0) {
+    literal(cell(form, factory, 'p', LAUNCH_EMPTY_CLASS), LAUNCH_NO_REPOSITORY)
+    root.append(outcome)
+    return { root, open, form, fields: null, outcome }
+  }
+
+  literal(cell(root, factory, 'p', LAUNCH_HELP_CLASS), LAUNCH_OPENS_WINDOW)
+
+  const repository = field(
+    form,
+    factory,
+    'select',
+    LAUNCH_IDS.repository,
+    LAUNCH_REPOSITORY_CLASS,
+    'Repository',
+    [LAUNCH_IDS.repositoryHelp, LAUNCH_IDS.hint],
+  )
+  for (const each of view.repositories) {
+    const option = make(factory, 'option')
+    identity(option, each)
+    repository.append(option)
+  }
+  help(form, factory, LAUNCH_IDS.repositoryHelp, 'one of the repositories this installation records')
+
+  field(form, factory, 'textarea', LAUNCH_IDS.task, LAUNCH_TASK_CLASS, 'Task', [
+    LAUNCH_IDS.count,
+    LAUNCH_IDS.hint,
+  ])
+  const count = help(form, factory, LAUNCH_IDS.count, launchCounter(0), LAUNCH_COUNT_CLASS)
+
+  field(form, factory, 'input', LAUNCH_IDS.title, LAUNCH_TITLE_CLASS, 'Title', [
+    LAUNCH_IDS.titleHelp,
+    LAUNCH_IDS.hint,
+  ])
+  help(
+    form,
+    factory,
+    LAUNCH_IDS.titleHelp,
+    `optional, one line, up to ${String(LAUNCH_TITLE_MAX_RUNES)} characters`,
+  )
+
+  field(form, factory, 'input', LAUNCH_IDS.planTask, LAUNCH_PLAN_TASK_CLASS, 'Plan task', [
+    LAUNCH_IDS.planTaskHelp,
+    LAUNCH_IDS.hint,
+  ])
+  help(
+    form,
+    factory,
+    LAUNCH_IDS.planTaskHelp,
+    `optional, <plan>/<task>, up to ${String(LAUNCH_PLAN_TASK_MAX_BYTES)} bytes`,
+  )
+
+  const hint = help(form, factory, LAUNCH_IDS.hint, '')
+  hint.setAttribute('aria-live', 'polite')
+
+  const submit = cell(form, factory, 'button', LAUNCH_SUBMIT_CLASS)
+  submit.setAttribute('type', 'button')
+  literal(submit, LAUNCH_SUBMIT_WORD)
+
+  root.append(outcome)
+  return {
+    root,
+    open,
+    form,
+    fields: {
+      repository,
+      task: fieldOf(form, LAUNCH_TASK_CLASS),
+      title: fieldOf(form, LAUNCH_TITLE_CLASS),
+      planTask: fieldOf(form, LAUNCH_PLAN_TASK_CLASS),
+      count,
+      hint,
+      submit,
+    },
+    outcome,
+  }
+}
+
+/** fieldOf is one control this function just drew, by its class. It is a lookup
+ * rather than a second reference so `field` has one return and the four call
+ * sites stay one line each. */
+function fieldOf(form: LaunchElement, className: string): LaunchElement {
+  const found = form.childNodes().find((element) => element.getAttribute('class') === className)
+  if (found === undefined) throw new Error(`the launch form drew no ${className}`)
+  return found
+}
+
+// ---------------------------------------------------------------------------
+// The counter and the convenience check
+// ---------------------------------------------------------------------------
+
+/** launchBytes is the task's own byte count, trimmed: bytes and not characters,
+ * because a task is sent as UTF-8 and a three-byte character is three of them.
+ * The trim is JavaScript's, which is the same set as Go's for every character
+ * an operator types -- and it is a convenience in any case, because main trims
+ * again with `launchrules`' own. */
+export function launchBytes(text: string): number {
+  return new TextEncoder().encode(text.trim()).length
+}
+
+/** launchCounter is the counter's line: the bytes as typed, against the cap. */
+export function launchCounter(bytes: number): string {
+  return `${String(bytes)} of ${LAUNCH_TASK_LIMIT}`
+}
+
+/** LAUNCH_CONTROL_RE and LAUNCH_FORMAT_RE are `launchrules`' `CONTROL_RE` and
+ * `FORMAT_RE`: the C0 and C1 controls -- the newline and the tab among them --
+ * and the format characters, which pass a control check while still reversing or
+ * joining the line a person reads. */
+const LAUNCH_CONTROL_RE = /\p{Cc}/u
+const LAUNCH_FORMAT_RE = /\p{Cf}/u
+
+/** LaunchTyped is the four controls as the operator left them. */
+export interface LaunchTyped {
+  readonly repository: string
+  readonly task: string
+  readonly title: string
+  readonly planTask: string
+}
+
+/**
+ * launchCheck answers, in the console's own words, the first reason this form
+ * would obviously be refused -- or `null`.
+ *
+ * **It is a convenience and not a boundary.** Main re-validates every field
+ * against `launchrules` and against its own recorded identities *before* a
+ * window opens, and this function's whole job is to spare an operator a round
+ * trip for a mistake they can see. It therefore mirrors only what this slice
+ * fixes -- the three caps, the trim, an empty value after the trim, and the
+ * control and format characters the title and the plan task may not carry -- and
+ * **invents nothing**: a repository outside the recorded list, a plan task that
+ * is not `<plan>/<task>`, a title of nothing but invisible characters are all
+ * main's calls, and a check here that disagreed with main's would be a form that
+ * refuses a launch main would accept.
+ */
+export function launchCheck(typed: LaunchTyped, repositories: readonly string[]): string | null {
+  if (!repositories.includes(typed.repository)) {
+    return 'choose one of the repositories this installation records'
+  }
+  if (typed.task.trim() === '') return 'type the task the run is given'
+  const bytes = launchBytes(typed.task)
+  if (bytes > LAUNCH_TASK_MAX_BYTES) {
+    return `the task is ${String(bytes)} bytes after the trim, over the ${LAUNCH_TASK_LIMIT} this console sends`
+  }
+  const title = typed.title.trim()
+  if (title !== '') {
+    const runes = [...title].length
+    if (runes > LAUNCH_TITLE_MAX_RUNES) {
+      return `the title is ${String(runes)} characters, over the ${String(LAUNCH_TITLE_MAX_RUNES)} this console sends`
+    }
+    const problem = launchCharacterProblem(title, 'the title')
+    if (problem !== null) return problem
+  }
+  const planTask = typed.planTask.trim()
+  if (planTask !== '') {
+    const planBytes = launchBytes(typed.planTask)
+    if (planBytes > LAUNCH_PLAN_TASK_MAX_BYTES) {
+      return `the plan task is ${String(planBytes)} bytes, over the ${String(LAUNCH_PLAN_TASK_MAX_BYTES)} this console sends`
+    }
+    const problem = launchCharacterProblem(planTask, 'the plan task')
+    if (problem !== null) return problem
+  }
+  return null
+}
+
+/** launchCharacterProblem is the rule the title and the plan task share here,
+ * spelled as main spells it: no control character and no format character. */
+function launchCharacterProblem(value: string, noun: string): string | null {
+  if (LAUNCH_CONTROL_RE.test(value)) return `${noun} carries a control character`
+  if (LAUNCH_FORMAT_RE.test(value)) return `${noun} carries a format character`
+  return null
+}
+
+// ---------------------------------------------------------------------------
+// The answer
+// ---------------------------------------------------------------------------
+
+/** LaunchResultView is the part of a `launchResult` this console draws: the six
+ * facts rule 11 names, and the two status words D23 keeps apart. Nothing else of
+ * the CLI's reply reaches a screen -- the recipe and the project layer are drawn
+ * by no view of this console -- and `resultView` is the door that holds the
+ * reply to that. */
+export interface LaunchResultView {
+  readonly run: string
+  readonly repo: string
+  readonly branch: string
+  readonly execution: string
+  readonly logUrl: string
+  readonly status: 'launched' | 'already-launched'
+}
+
+/** LaunchOutcomeRead is one answer, read closed. `unreadable` is a state of its
+ * own rather than an error: a reply this build does not understand draws one
+ * sentence and nothing else, which is the whole of "never a partial draw". */
+export type LaunchOutcomeRead =
+  | { readonly kind: 'launched'; readonly result: LaunchResultView; readonly replayed: boolean }
+  | { readonly kind: 'declined' }
+  | { readonly kind: 'unknown'; readonly reason: string }
+  | { readonly kind: 'refused'; readonly reason: string }
+  | { readonly kind: 'unreadable' }
+
+const UNREADABLE: LaunchOutcomeRead = Object.freeze({ kind: 'unreadable' as const })
+
+/** OUTCOME_KEYS are the six keys `LaunchOutcome` answers with, all of them
+ * always present, and RESULT_KEYS are the thirteen `launchResult` carries: the
+ * seven the CLI always writes and the six `omitempty` ones. A key outside either
+ * set is a reply from a console or a CLI this build does not know, and refusing
+ * the whole answer is what keeps a field a newer main process added from being
+ * drawn by an older renderer's guess. */
+const OUTCOME_KEYS: readonly string[] = Object.freeze([
+  'ok',
+  'runId',
+  'result',
+  'reason',
+  'outcomeUnknown',
+  'replayed',
+])
+const RESULT_KEYS: readonly string[] = Object.freeze([
+  'project',
+  'run',
+  'repo',
+  'runId',
+  'branch',
+  'ref',
+  'execution',
+  'logUrl',
+  'status',
+  'pr',
+  'previousRun',
+  'recipe',
+  'projectLayer',
+])
+const RESULT_STRINGS: readonly string[] = Object.freeze([
+  'project',
+  'run',
+  'repo',
+  'runId',
+  'branch',
+  'ref',
+  'execution',
+  'logUrl',
+])
+
+function record(raw: unknown): Record<string, unknown> | null {
+  return typeof raw === 'object' && raw !== null && !Array.isArray(raw)
+    ? (raw as Record<string, unknown>)
+    : null
+}
+
+/** hasExactly is "this object's key set is this set", which is the closed read:
+ * an object carrying a key outside `keys` is not one of these. */
+function hasExactly(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  const found = Object.keys(value)
+  return found.length === keys.length && found.every((key) => keys.includes(key))
+}
+
+/**
+ * launchOutcomeOf reads one `run.launch` reply: the envelope the main process's
+ * `dispatch` builds (`ConsoleReply`), and inside it the operation's
+ * `LaunchOutcome`. Both are read **closed**, and every door out of this function
+ * is a state `renderLaunchOutcome` draws -- there is no `null` and no throw,
+ * because a reply nobody can read is a sentence rather than a broken screen.
+ *
+ * A **decline** is told from every other refusal by its sentence alone: main
+ * answers a window the operator closed with `DECLINED_CANCELLED`, and this
+ * file's mirror of that string is the only thing that separates "nothing was
+ * launched, because you said so" from "nothing was launched, and here is why".
+ */
+export function launchOutcomeOf(reply: unknown): LaunchOutcomeRead {
+  const envelope = record(reply)
+  if (envelope === null) return UNREADABLE
+  const keys = Object.keys(envelope)
+  if (envelope['ok'] === false) {
+    const reason = envelope['reason']
+    if (keys.length !== 2 || keys.includes('data')) return UNREADABLE
+    return typeof reason === 'string' && reason !== '' ? { kind: 'refused', reason } : UNREADABLE
+  }
+  if (envelope['ok'] !== true || keys.length !== 2 || !keys.includes('data')) return UNREADABLE
+  const data = record(envelope['data'])
+  if (data === null || !hasExactly(data, OUTCOME_KEYS)) return UNREADABLE
+  const reason = data['reason']
+  const runId = data['runId']
+  const replayed = data['replayed']
+  if (typeof data['ok'] !== 'boolean') return UNREADABLE
+  if (typeof data['outcomeUnknown'] !== 'boolean') return UNREADABLE
+  if (typeof replayed !== 'boolean') return UNREADABLE
+  if (typeof reason !== 'string') return UNREADABLE
+  if (runId !== null && typeof runId !== 'string') return UNREADABLE
+  if (data['outcomeUnknown']) {
+    // A launch stopped before it answered is the one state where this console
+    // knows nothing about what the child did, and the run id is the only thing
+    // that can settle it: an answer naming no run is not one to draw a
+    // settlement for, and main's own sentence names both the run and the reads.
+    return typeof runId === 'string' && runId !== ''
+      ? { kind: 'unknown', reason: refusalText(reason) }
+      : UNREADABLE
+  }
+  const result = data['result']
+  if (data['ok']) {
+    const drawn = resultView(result)
+    if (drawn === null || reason !== '') return UNREADABLE
+    return { kind: 'launched', result: drawn, replayed }
+  }
+  // A refused launch carries no result, and its sentence is what is drawn: the
+  // CLI's own words through `refusalText`, or this console's for a cancel.
+  if (result !== null || reason === '') return UNREADABLE
+  return reason === LAUNCH_DECLINED_REASON ? { kind: 'declined' } : { kind: 'refused', reason }
+}
+
+/** resultView reads the six facts this console draws out of a `launchResult`,
+ * closed on the key set and on every type. The two structures nothing draws
+ * (`recipe` and `projectLayer`) are held to "an object or null" and are not read
+ * further: no screen is handed them, so there is nothing for a partial draw to
+ * be partial about. */
+function resultView(raw: unknown): LaunchResultView | null {
+  const value = record(raw)
+  if (value === null || !hasExactly(value, RESULT_KEYS)) return null
+  for (const key of RESULT_STRINGS) {
+    if (typeof value[key] !== 'string') return null
+  }
+  const status = value['status']
+  if (status !== 'launched' && status !== 'already-launched') return null
+  const pr = value['pr']
+  if (pr !== null && typeof pr !== 'number') return null
+  for (const key of ['recipe', 'projectLayer']) {
+    if (value[key] !== null && record(value[key]) === null) return null
+  }
+  return {
+    run: value['run'] as string,
+    repo: value['repo'] as string,
+    branch: value['branch'] as string,
+    execution: value['execution'] as string,
+    logUrl: value['logUrl'] as string,
+    status,
+  }
+}
+
+/** refusalText is one of main's own sentences as this console draws it: through
+ * `sanitizeRefusal`, which keeps a path, a project and a role as they were and
+ * redacts a token, an address or a URL. A sentence the pass refuses whole is
+ * drawn as the marker rather than as nothing, because a screen that silently
+ * dropped the reason would be a refusal with no explanation at all. */
+export function refusalText(raw: string): string {
+  const result = sanitizeRefusal(raw, 'the launch’s refusal')
+  return result.ok ? result.text : LAUNCH_UNDRAWN
+}
+
+/**
+ * fact is one label-and-value line of a launch's outcome: the label this file's
+ * own words, the value the CLI's own, in a `dt`/`dd` pair so the two are lines
+ * of their own rather than one run of text.
+ *
+ * The value is written as text and not through a class, because a `launchResult`
+ * is a document of the CLI's own values rather than free text: `decodeLaunchResult`
+ * keeps every string as text and bounded, reads none of them as a sentence, a
+ * path or a link (`src/main/launchrules.ts`), and rule 11 draws `run`, `repo`,
+ * `branch` and the execution "as the CLI's own values". A validating class here
+ * would draw `n/a` over a run that really did launch -- `execution` is the only
+ * one of the four whose value is even in a class's shape -- and the operator
+ * would be told a launch they just made has no id.
+ */
+function fact(parent: LaunchElement, factory: LaunchFactory, label: string, value: string): void {
+  literal(cell(parent, factory, 'dt', LAUNCH_FACT_LABEL_CLASS), label)
+  literal(cell(parent, factory, 'dd', LAUNCH_FACT_VALUE_CLASS), value)
+}
+
+/** line is one sentence of an outcome, appended to the region's body. */
+function line(parent: LaunchElement, factory: LaunchFactory, text: string): LaunchElement {
+  return literal(cell(parent, factory, 'p', LAUNCH_OUTCOME_LINE_CLASS), text)
+}
+
+/**
+ * renderLaunchOutcome draws one answer as sentences and facts, in the region
+ * `renderLaunch` marked `aria-live` -- so an operator looking elsewhere is told
+ * when the answer arrives.
+ *
+ * The log URL is drawn as **text**: rule 11 carries the CLI's own `log_url`, and
+ * a link here would be one more door out of the console for a string that came
+ * from a run. And there is **no control of any kind** in this tree, whatever the
+ * outcome: open point 6 (a held run id and a retry) is still open, so nothing
+ * here offers to launch again.
+ */
+export function renderLaunchOutcome(factory: LaunchFactory, read: LaunchOutcomeRead): LaunchElement {
+  const root = make(factory, 'div', LAUNCH_OUTCOME_BODY_CLASS)
+  if (read.kind === 'unreadable') {
+    line(root, factory, LAUNCH_UNREADABLE)
+    return root
+  }
+  if (read.kind === 'declined') {
+    line(root, factory, LAUNCH_DECLINED_WORD)
+    return root
+  }
+  if (read.kind === 'refused') {
+    line(root, factory, refusalText(read.reason))
+    return root
+  }
+  if (read.kind === 'unknown') {
+    line(root, factory, LAUNCH_OUTCOME_UNKNOWN_WORD)
+    line(root, factory, read.reason)
+    return root
+  }
+  line(
+    root,
+    factory,
+    read.result.status === 'already-launched' ? LAUNCH_ALREADY_WORD : LAUNCH_LAUNCHED_WORD,
+  )
+  const facts = cell(root, factory, 'dl', LAUNCH_FACTS_CLASS)
+  fact(facts, factory, 'run', read.result.run)
+  fact(facts, factory, 'repository', read.result.repo)
+  fact(facts, factory, 'branch', read.result.branch)
+  fact(facts, factory, 'execution', read.result.execution)
+  if (read.result.logUrl !== '') fact(facts, factory, 'log', read.result.logUrl)
+  if (read.replayed) line(root, factory, LAUNCH_REPLAYED_WORD)
+  return root
+}
