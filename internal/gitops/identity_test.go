@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	// botID and botLogin are a GitHub App's bot account as GET /user spells
-	// it: the account's numeric user ID, and the login GitHub links a commit
+	// botID and botLogin are a GitHub App's bot account as GET /users/<login>
+	// spells it: the account's numeric user ID, and the login GitHub links a commit
 	// to when the commit's email carries both.
 	botID    = "337521588"
 	botLogin = "fugaro-dev[bot]"

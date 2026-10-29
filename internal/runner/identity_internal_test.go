@@ -21,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
+	"github.com/dimipaun/fugaro/internal/gitprov/github"
 )
 
 // botAccountProvider is a provider whose bot account is whatever the test
@@ -33,6 +34,25 @@ type botAccountProvider struct {
 
 func (p botAccountProvider) BotAccount(context.Context) (gitprov.BotAccount, error) {
 	return p.account, p.err
+}
+
+// gitServiceBotID and gitServiceBotLogin are the App's bot account the
+// provider below answers with: the identity a run's commits are attributed to
+// (resolveCommitIdentity).
+const (
+	gitServiceBotID    = "900001"
+	gitServiceBotLogin = "fugaro-app[bot]"
+)
+
+// botAccountGitHub is the github provider a run opened, answering BotAccount
+// with the App's bot account. Its own read needs the App's JWT, which a
+// credentials-service run does not hold (TestCommitIdentityWithTheService),
+// so the answer is the test's; everything else, the service's tokens
+// included, is the real provider's.
+type botAccountGitHub struct{ *github.Provider }
+
+func (botAccountGitHub) BotAccount(context.Context) (gitprov.BotAccount, error) {
+	return gitprov.BotAccount{ID: gitServiceBotID, Login: gitServiceBotLogin}, nil
 }
 
 // TestCommitIdentityIsTheProvidersBotAccount: a github run's commits carry
@@ -52,6 +72,15 @@ func TestCommitIdentityIsTheProvidersBotAccount(t *testing.T) {
 	svc := newGitServiceFake(t, now)
 	r := gitServiceRun(t, svc, gitMetadataFake(t, gitServiceIDToken), gitRunIdentity(t), func(r *run) {
 		r.repo = &gitops.Repo{Dir: t.TempDir(), Env: gitops.IdentityEnv()}
+		open := r.d.OpenProvider
+		r.d.OpenProvider = func(ctx context.Context, kind, repo string) (gitprov.Provider, []string, error) {
+			p, secrets, err := open(ctx, kind, repo)
+			if gh, ok := p.(*github.Provider); ok {
+				return botAccountGitHub{gh}, secrets, err
+			}
+			t.Fatalf("the opener gave a %T, not the github provider", p)
+			return nil, nil, nil
+		}
 	})
 	r.d.Now = func() time.Time { return now }
 
@@ -69,6 +98,24 @@ func TestCommitIdentityIsTheProvidersBotAccount(t *testing.T) {
 	}
 }
 
+// TestCommitIdentityWithTheService: with the App's key in the credentials
+// service the job has no JWT to read the App's slug with, and GitHub refuses
+// GET /user to an installation token, so the run keeps the default identity
+// and goes on (docs/git-providers.md).
+func TestCommitIdentityWithTheService(t *testing.T) {
+	now := time.Date(2026, 10, 22, 10, 0, 0, 0, time.UTC)
+	svc := newGitServiceFake(t, now)
+	r := gitServiceRun(t, svc, gitMetadataFake(t, gitServiceIDToken), gitRunIdentity(t), nil)
+	r.d.Now = func() time.Time { return now }
+
+	if err := r.openProvider(context.Background(), gitprov.KindGitHub, "the --provider flag"); err != nil {
+		t.Fatalf("opening the github provider: %v", err)
+	}
+	if r.identity != nil {
+		t.Errorf("the run took an identity no read gave: %v", r.identity)
+	}
+}
+
 // TestCommitIdentityKeepsTheDefaultWhenTheBotCannotBeRead: a read that fails
 // costs the run its bot identity and nothing else -- the commits keep
 // gitops.Identity, and one line in the log says so, with the reason. A run
@@ -81,7 +128,7 @@ func TestCommitIdentityKeepsTheDefaultWhenTheBotCannotBeRead(t *testing.T) {
 	r := svcRun(t, "api-key", func(r *run) {
 		r.d.Log = slog.New(slog.NewTextHandler(&logs, nil))
 	})
-	r.provider = botAccountProvider{err: errors.New("reading the App's bot account (GET /user): GET /user: HTTP 403")}
+	r.provider = botAccountProvider{err: errors.New("reading the App's bot account (GET /app): GET /app: HTTP 403")}
 	r.providerKind = gitprov.KindGitHub
 
 	r.resolveCommitIdentity(context.Background())
