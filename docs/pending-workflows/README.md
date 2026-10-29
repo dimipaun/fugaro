@@ -48,9 +48,9 @@ pair and `shared-tests.yml`: while a staged copy exists, `images/base_workflow_t
 `readWorkflow` reads *it*, so leaving it in place would freeze those checks on
 its bytes and hide a later edit or deletion of the real file's jobs.
 (3) Update the sentence at the end of `website/README.md` that says what
-`docs/pending-workflows/` holds: it says "now holds **six** pending workflows"
+`docs/pending-workflows/` holds: it says "now holds **four** pending workflows"
 and names `docs/pending-workflows/images.yml` among them; after this copy it
-holds five (fewer if another has been copied in by then), and
+holds three (fewer if another has been copied in by then), and
 `website/test/readme.mjs` checks the count, the names and the directory in both
 directions (it reads the whole flattened page, so the name has to go from
 every backticked mention on it, not only from that sentence). (4) Update **this
@@ -2481,17 +2481,17 @@ Re-staging `ci.yml` therefore means rewriting both guards (and the plan text the
 
 **It runs on a push to `main` and on a manual dispatch, and its `name:` is `core-without-ee`**, so `gh workflow run core-without-ee` finds it. The cost is a run about as long as `ci.yml`'s `test` job, on pushes to `main` only: the file is not in `scripts/release-gate.sh`'s list and gates nothing.
 
-**To copy it in**, from the repository root:
+**To move it in**, from the repository root — **with `ee-edition.yml`, which is due with it** (see `## ee-edition.yml` below): G1 is one claim with two halves, the core builds without `ee/` and the tagged edition builds with it, so the pair moves in one commit, and one commit is what the follow-up count below assumes.
 
 ```sh
-cp docs/pending-workflows/core-without-ee.yml .github/workflows/core-without-ee.yml
-git add .github/workflows/core-without-ee.yml
-git rm docs/pending-workflows/core-without-ee.yml
-git commit -m "workflows: the core builds and tests with ee/ deleted"
+git mv docs/pending-workflows/core-without-ee.yml .github/workflows/core-without-ee.yml
+git mv docs/pending-workflows/ee-edition.yml .github/workflows/ee-edition.yml
+git commit -m "workflows: build and test both editions"
 gh workflow run core-without-ee --ref main
+gh workflow run ee-edition --ref main
 ```
 
-**The `git rm` is load-bearing**, as it is for `images.yml` and `shared-tests.yml`: while the staged copy exists `TestDocsCoreWithoutEEWorkflow` reads *it*, so leaving it in place would freeze those checks on its bytes and hide a later edit — including a deletion — to the file that runs.
+**The `git mv` is load-bearing**, as the `git rm` is for `images.yml` and `shared-tests.yml`: while the staged copy exists `TestDocsCoreWithoutEEWorkflow` reads *it*, so leaving it in place would freeze those checks on its bytes and hide a later edit — including a deletion — to the file that runs.
 
 **Two follow-up edits belong in that commit**, because two sentences count the files still pending here and both are held to the directory: this document's opening line (`TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere`) and the last section of `website/README.md` (`website/test/readme.mjs`, which reads the whole flattened page). Both go from **four** to **two**, and drop this file's name and `ee-edition.yml`'s, because the two move in together (see `## ee-edition.yml` below); the opening line is then:
 
@@ -2509,7 +2509,9 @@ Read the count and the names off `docs/pending-workflows/` before you write them
 
 **It is a file of its own rather than a job in `ci.yml`.** A staged `docs/pending-workflows/ci.yml` turns `TestDocsComputeBackendCIReachMatchesTheTree` red — the compute-backend plan's Global Constraint 3 says its staged request was applied to the workflow instead and nothing was re-staged — and `images/cloudbuild_test.go` reads that path. So the tagged edition is a second staged file, not a staged `ci.yml`.
 
-**What each step checks.** `go vet -tags ee ./...` and `go build -tags ee ./cmd/fugaro` both hand the go tool the `ee` tag, so what is compiled is the tagged edition and the step that fails is the one that catches `ee_on.go` or an `ee/` package that stops compiling under the tag. The `ee/` test step carries **no** tag on purpose: the packages under `ee/` build without `//go:build ee` (only `cmd/fugaro/ee_on.go` carries it), so they are tested in the default build too, which is where the core's own suite sees them once an E2.x move puts one there.
+**What each step checks.** `go vet -tags ee ./...` and `go build -tags ee ./cmd/fugaro` both hand the go tool the `ee` tag, which is what makes them a check on the tagged edition rather than the untagged one — once a file carries the constraint (the next paragraph says what is true until one does) — and the step that fails is the one that catches `ee_on.go` or an `ee/` package that stops compiling under the tag. The `ee/` test step carries **no** tag on purpose: the packages under `ee/` build without `//go:build ee` (only `cmd/fugaro/ee_on.go` carries it), so they are tested in the default build too, which is where the core's own suite sees them once an E2.x move puts one there.
+
+**Both tagged steps are vacuous until a file carries the tag, and that has to be read as a temporary state rather than a claim.** No file in the tree carries `//go:build ee` as E1.6 lands — `cmd/fugaro/ee_on.go` is E1.5's, and the `ee/` packages are the E2.x moves' — so today `-tags ee` selects nothing and the two steps compile exactly the untagged tree: they would pass whatever the tagged edition does, and they prove nothing about it yet. They are staged anyway because they are what the file *is*, and E1.5/E1.1 are the tasks that give them something to compile: the first file with the constraint makes them the real check, with no edit to this file. Until then their value is that they cannot be forgotten — the steps are already in the staged file the owner moves in, rather than in a follow-up staging the edition change would have to remember.
 
 **The `ee/` test step is guarded, and that guard is the one line to read before editing the file.** `ee/` holds no Go package yet — E1.5's assembly file and the E2.x moves add the first ones — and `go test ./ee/...` exits non-zero on a directory with no packages ("no packages to test"). The step lists what is there with `go list ./ee/...` and, when the list is empty, says so in the log and exits zero rather than failing; it never reports a pass it did not run, because the real `go test ./ee/... -count=1` runs the moment a package exists. The guard goes away with the first package under `ee/`.
 

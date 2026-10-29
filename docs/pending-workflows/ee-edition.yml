@@ -20,8 +20,15 @@
 # and the E2.x moves add the first ones -- and `go test ./ee/...` exits
 # non-zero on a directory with no packages ("no packages to test"). The guard
 # lists what is there and says so in the log rather than failing; it is not a
-# stand-in for the run, which happens the moment a package exists. Remove it
-# when ee/ holds its first package.
+# stand-in for the run, which happens the moment a package exists, and it goes
+# with the first package under ee/.
+#
+# Both tagged steps below are vacuous until a file carries the constraint: no
+# file in the tree carries `//go:build ee` as this task lands, so today the
+# `-tags ee` steps compile exactly the untagged tree and prove nothing about
+# the tagged edition yet. They are staged anyway because they are what the
+# file is, and E1.5/E1.1 -- which add cmd/fugaro/ee_on.go -- are what give them
+# something to compile; no edit to this file is needed when they land.
 #
 # Staged under docs/pending-workflows/ because no Fugaro run may write under
 # .github/workflows/ (GitHub refuses the push). Moving it in -- together with
@@ -63,7 +70,9 @@ jobs:
           go-version-file: go.mod
       # The `ee` tag is what compiles cmd/fugaro/ee_on.go and assembles the ee
       # packages into the command tree, so this is the tagged edition's vet --
-      # the build core-without-ee.yml never makes.
+      # the build core-without-ee.yml never makes. Until a file carries the
+      # constraint (the header) it compiles the untagged tree like any other
+      # vet, and it becomes the tagged check the moment one does.
       - run: go vet -tags ee ./...
       # ee/ holds no Go package yet, and `go test ./ee/...` exits non-zero on a
       # directory with no packages. The guard says so rather than failing; the
@@ -80,5 +89,6 @@ jobs:
           go test ./ee/... -count=1
       # The tagged binary, the artifact an Enterprise installation ships. This
       # is the step that fails if ee_on.go or an ee/ package stops compiling
-      # under the tag.
+      # under the tag, and it catches nothing the untagged build would not until
+      # one of them exists (the header).
       - run: go build -tags ee ./cmd/fugaro

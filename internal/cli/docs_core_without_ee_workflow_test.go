@@ -416,8 +416,14 @@ eeReadingTests, in docs_ee_repo_test.go, is the exact list of this package's tes
 	doc := readDoc(t, readme)
 	section := consoleReadmeSection(t, doc, coreWithoutEEReadmeHeading)
 	for _, want := range []string{
-		"cp docs/pending-workflows/core-without-ee.yml .github/workflows/core-without-ee.yml",
-		"git rm docs/pending-workflows/core-without-ee.yml",
+		// The move is two `git mv`s in one commit: ee-edition.yml is the other
+		// half of G1 and the plan's E1.6 OWNER-RUN line moves the pair together,
+		// so a copy-in of this file alone would leave the owner writing a
+		// pending count the directory does not hold. It is a `git mv` rather
+		// than the `cp` + `git rm` a single-file staging used, for the same
+		// reason.
+		"git mv docs/pending-workflows/core-without-ee.yml .github/workflows/core-without-ee.yml",
+		"git mv docs/pending-workflows/ee-edition.yml .github/workflows/ee-edition.yml",
 		"gh workflow run core-without-ee",
 		// The two checks that hold the sentences the copy-in has to update.
 		"TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere",

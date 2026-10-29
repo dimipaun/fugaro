@@ -134,6 +134,16 @@ func eeEditionTriggers(t *testing.T, path string, on yaml.Node) []eeEditionTrigg
 // may write it -- a command line, or a GOFLAGS value in a step's env.
 var eeEditionTagFlagRE = regexp.MustCompile(`-tags[= ]\s*['"]?([^'"\s]*)`)
 
+// eeEditionEmptyBranchRE matches the empty-directory branch of the ee test
+// step: the guard condition, the message it prints, and the `exit 0` that ends
+// the branch before the real command. The exit is what makes the step succeed
+// on today's tree rather than merely say so: with the echo alone the branch
+// falls through to `go test ./ee/...`, which exits non-zero on a directory with
+// no packages, and the job goes red on main on the very tree this file lands
+// on. Pinning the message without the exit is the one text-only pin that would
+// leave that mutation green, so the branch is read as a sequence.
+var eeEditionEmptyBranchRE = regexp.MustCompile(`(?m)^[ \t]*if \[ -z "\$\(go list \./ee/\.\.\. 2>/dev/null\)" \]; then[ \t]*\n[ \t]*echo [^\n]*\n[ \t]*exit 0[ \t]*\n[ \t]*fi[ \t]*$`)
+
 // eeEditionTags is the tag list a step hands the go tool, split on the
 // separators the flag accepts.
 func eeEditionTags(s eeEditionStep) []string {
@@ -317,16 +327,12 @@ func TestStagedCIBuildsBothEditions(t *testing.T) {
 	// The ee test step is guarded on a package listing, because ee/ holds no Go
 	// package yet (E1.5 and the E2.x moves add the first ones) and
 	// `go test ./ee/...` exits non-zero on a directory with no packages. The
-	// guard says so and exits zero; it is not a stand-in for the run, which
-	// happens the moment a package exists.
+	// guard says so and **exits zero**: the exit is what keeps the step green
+	// on today's tree, so the branch is read as the whole sequence -- listing,
+	// message, exit -- rather than as the text of the message alone.
 	_, testStep := find("go test ./ee/... -count=1")
-	if testStep != nil {
-		if !strings.Contains(testStep.Run, "go list ./ee/...") {
-			t.Errorf("%s's ee test step runs %q: it has to list the packages under ee/ first -- ee/ holds no Go package yet, and `go test ./ee/...` fails on an empty directory (E1.6 lands before E1.5 and the E2.x moves)", path, strings.TrimSpace(testStep.Run))
-		}
-		if !strings.Contains(testStep.Run, "nothing to test") {
-			t.Errorf("%s's ee test step runs %q: the empty-directory branch has to say in the log that there is nothing to test, so the run does not read as a suite that ran", path, strings.TrimSpace(testStep.Run))
-		}
+	if testStep != nil && !eeEditionEmptyBranchRE.MatchString(testStep.Run) {
+		t.Errorf("%s's ee test step runs %q: the empty-directory branch has to list the packages under ee/ (`go list ./ee/...`), say in the log that there is nothing to test, and `exit 0` before the real command -- with the echo alone the branch falls through to `go test ./ee/...`, which exits non-zero on a directory with no packages (E1.6 lands before E1.5 and the E2.x moves), so the job would go red on main on the tree this file lands on", path, strings.TrimSpace(testStep.Run))
 	}
 
 	// The job builds the tree, so it must not delete ee/ the way
