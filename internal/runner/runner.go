@@ -986,11 +986,11 @@ func (r *run) openProvider(ctx context.Context, kind, from string) error {
 }
 
 // resolveCommitIdentity sets the identity this run's commits carry, when the
-// provider names one. A GitHub App's commits are linked to its bot account
-// only when the author and committer are that account's own noreply identity
-// (gitops.BotIdentity), so without this every run commit is authored by an
-// address no account owns: GitHub shows no author for it, and CLA Assistant
-// cannot tell whose it is (docs/git-providers.md).
+// provider names one. GitHub links a commit's author and committer to
+// accounts separately, by their own addresses, and a run sets both to that
+// account's own noreply identity (gitops.BotIdentity): without this every
+// run commit is authored by an address no account owns, so GitHub shows no
+// author for it and CLA Assistant cannot tell whose it is (docs/git-providers.md).
 //
 // A provider with no account of its own (Bitbucket's, and the file-backed
 // test provider) keeps gitops.Identity, and so does every failure here: the

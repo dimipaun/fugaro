@@ -99,8 +99,9 @@ func TestGitHubSelfFailsClosedWithTheService(t *testing.T) {
 // is unknown here, so the login's shape decides nothing either way: a
 // "...[bot]" login is never Fugaro's own on its own.
 //
-// Mutation (compare only the "[bot]" suffix, or the absence of an identity):
-// this test fails, wanting Self=false and getting true.
+// Mutation (fall back to the login's shape, `strings.HasSuffix(login,
+// "[bot]")`, when the slug comparison does not match): this test fails,
+// wanting Self=false and getting true.
 func TestGitHubSelfFalseForSomeoneElsesPRWithTheService(t *testing.T) {
 	got, err := openService(t, "pull_other_author_head_service.json", nil).FetchPRHead(ctx, 12)
 	want := gitprov.PRHead{SHA: headSHA, Base: "main", Fork: false, Open: true, AuthorID: "900002", AuthorLogin: "someone-else[bot]",
@@ -144,11 +145,11 @@ func TestGitHubCommentsSelfUnknownWithTheService(t *testing.T) {
 // TestGitHubIdentityWithoutTheAppKeyAsksNothing: with the App's key in the
 // credentials service there is no route to the App's identity, so the
 // provider asks for nothing at all -- the server here fails the test on any
-// request -- and the answer is remembered and warned about once, like every
-// other definite identity failure.
+// request -- and the answer is warned about once, however often it is asked
+// for.
 //
-// Mutation (make the no-key case a passing failure, as a 5xx is): this test
-// fails, on the second warning.
+// Mutation (fall back to GET /user, or any other request, in readAppSlug's
+// no-key branch): this test fails on the request it did not expect.
 func TestGitHubIdentityWithoutTheAppKeyAsksNothing(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Errorf("the provider sent %s %s with no App key to read the identity with", r.Method, r.URL)
