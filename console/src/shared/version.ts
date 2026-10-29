@@ -170,9 +170,12 @@ export function launchSupported(version: string): boolean {
  * 2026-10-29 (`internal/cli/budget.go`'s `newBudgetShowCmd`; the PR that added
  * `compute_usd` to each `showRepo`), and **no released CLI carries it yet** --
  * `v0.12.1` is the newest tag and answers the flag with an unknown-flag error.
- * `0.13.0` is the release that ships it, which is what makes this a floor
- * rather than a range membership: `0.12` is a supported minor the console draws
- * its whole dashboard for, and it is below the flag.
+ * `0.13.0` is the release that ships it.
+ *
+ * It is a patch-level floor rather than a range membership for the reason
+ * `LAUNCH_CLI_FLOOR` is: `0.12.1` passes that floor and is below this one, so
+ * the question a caller asks before passing `--compute` is this constant's, and
+ * neither `SUPPORTED_CLI_MINORS` nor `classifyCliVersion` answers it.
  *
  * It is asked only where the flag would be passed, and this console passes it
  * from exactly one place: the Spend screen's caps read. Nothing else asks,

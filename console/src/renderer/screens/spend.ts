@@ -464,11 +464,11 @@ export interface SpendCapRow {
    * `est. $0.12`, or `n/a` and never `$0.00` where the document carries none --
    * and never adds it to the counted or the notional dollars beside it, which
    * are two other accounts. It reads absent and `null` as `n/a` because that key
-   * is **flag-conditioned**: no released CLI writes it, and this console's
-   * `budget.show` row passes no `--compute` until its caller is flipped behind
-   * `budgetComputeSupported` (`src/shared/version.ts`), so today the cell draws
-   * `n/a` for every document the console itself produced and a figure for the
-   * one a person hands this reader.
+   * is **flag-conditioned**: no released CLI writes it, and no caller of this
+   * console's `budget.show` row passes `--compute` until the Spend screen's read
+   * is flipped behind `budgetComputeSupported` (`src/shared/version.ts`), so
+   * today the cell draws `n/a` for every document the console itself produced
+   * and a figure for the one a person hands this reader.
    *
    * A value that is not a number is `n/a` too, and not a refusal, because this
    * reader refuses no document at all -- the caps panel is the console's
