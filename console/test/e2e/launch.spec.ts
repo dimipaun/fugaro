@@ -18,6 +18,11 @@
 //     The stub's `runs.log` and the console's spawn log are the two witnesses,
 //     and both must be empty of a launch: a window that spawns on its way out is
 //     a spend nobody confirmed.
+//   - **Closing the parent closes the child.** Rule 11 leaves this one to a real
+//     window -- the confirmation is a modal child of the dashboard, and no
+//     hermetic test can show Electron's cascade -- so it is observed here: the
+//     dashboard is closed under an open window, the child goes with it, nothing
+//     is spawned, and the console quits with its last window.
 //   - **A confirmed launch spawns exactly one row, and the row is rule 11's.**
 //     The spawn log's argv is compared word for word -- the frozen row, the
 //     console's own run id, the repository as the installation records it, the
@@ -36,7 +41,12 @@
 //     design's words are "removed or re-chosen": the dashboard is modality-
 //     disabled while the window is open, so what a spec can drive is the
 //     dashboard's own bridge -- `installation.choose` for the project the launch
-//     is for -- which is exactly the path `index.ts` wires `cancelFor` into.
+//     is for -- which is the path `index.ts` wires `cancelFor` into. What the
+//     case *observes* is the rule's outcome and not which mechanism produced it
+//     (the re-choose replaces the dashboard, and the child goes with its
+//     parent); the mechanism itself is pinned in the unit suite, and the
+//     parent-close case above is the one that closes a parent with no
+//     `cancelFor` in play.
 //
 // **How the answers are made, and why not by a sleep.** The window's readiness
 // delay is measured in the main process from the window's own `show` and
@@ -104,6 +114,14 @@ const REPOSITORY = 'github/owner/repo-a'
 const LAUNCHED_REPOSITORY = 'owner/repo-a'
 const BRANCH = 'main'
 
+/** CHECKOUT_PATH is the directory the installation recorded for REPOSITORY, as
+ * `config list --json` prints it: every row of a real document carries the
+ * absolute path it holds, whether or not it still passes re-validation, and the
+ * console is handed a document that says a checkout was recorded. No machine the
+ * console runs on has this directory -- the launch reads the repository and the
+ * branch from the row and never touches the path. */
+const CHECKOUT_PATH = '/Users/owner/repo-a'
+
 /** TITLE is what the operator types, and MARKER is the one word of the task that
  * must never leave the child's stdin: the spawn log is searched for it whole. */
 const TITLE = 'a launch of the recorded repository'
@@ -114,7 +132,7 @@ const TASK = `${MARKER} read the plan and start\nand a second line, so the task 
  * a recorded base branch, which is what makes a launch possible at all. */
 const RECORDS: SeededLaunchRecords = Object.freeze({
   baseBranch: BRANCH,
-  checkouts: Object.freeze([{ repository: REPOSITORY, baseBranch: BRANCH }]),
+  checkouts: Object.freeze([{ repository: REPOSITORY, baseBranch: BRANCH, path: CHECKOUT_PATH }]),
 })
 
 /** Launch is one running console: the app, its dashboard, the stub behind it and
@@ -198,7 +216,11 @@ async function start(records: SeededLaunchRecords = RECORDS): Promise<Running> {
       }
     },
     async close(): Promise<void> {
-      await app.close()
+      // The app may already be gone: the parent-close case takes the whole
+      // console down with it (`window-all-closed`), and closing an exited
+      // process is not a failure of this spec's. The scratch directories are
+      // removed either way, which is the half the spec owns.
+      await app.close().catch(() => undefined)
       rmSync(scratch, { recursive: true, force: true })
       stub.remove()
     },
@@ -350,6 +372,19 @@ function closeFromMain(app: ElectronApplication): Promise<boolean> {
     target.close()
     return true
   }, CONFIRM_WINDOW_TITLE)
+}
+
+/** closeDashboardFromMain closes the dashboard the way its own close box does:
+ * the window goes away, and rule 11's cascade -- the confirmation is a modal
+ * **child** of this window -- is Electron's to perform, with nothing in this
+ * console wired for it. */
+function closeDashboardFromMain(app: ElectronApplication): Promise<boolean> {
+  return app.evaluate(({ BrowserWindow }, url) => {
+    const target = BrowserWindow.getAllWindows().find((window) => window.webContents.getURL() === url)
+    if (target === undefined) return false
+    target.close()
+    return true
+  }, APP_ENTRY_URL)
 }
 
 /**
@@ -559,7 +594,7 @@ test.describe('the launch path, in the real app', () => {
     // other state from "no key at all", whose sentence names an older CLI.
     const records: SeededLaunchRecords = {
       baseBranch: '',
-      checkouts: [{ repository: REPOSITORY, baseBranch: '' }],
+      checkouts: [{ repository: REPOSITORY, baseBranch: '', path: CHECKOUT_PATH }],
     }
     const running = await start(records)
     try {
@@ -588,6 +623,37 @@ test.describe('the launch path, in the real app', () => {
     }
   })
 
+  test('closing the dashboard takes the confirmation window with it, and spawns nothing', async () => {
+    const running = await start()
+    try {
+      const { app, page } = running
+      await askForLaunch(page)
+      const confirm = await confirmWindow(app)
+      await confirm.waitForLoadState('load')
+
+      // Rule 11's own last line: "closing the parent closes the child". The
+      // design reserves this one for a real window, because no hermetic unit
+      // test can show Electron's cascade -- `test/unit/confirm.test.ts` pins
+      // that the window is *given* a parent, and this is the same claim
+      // observed: nothing in the console closes the child here, the parent's
+      // own destruction does.
+      expect(await closeDashboardFromMain(app)).toBe(true)
+      await expect
+        .poll(() => confirm.isClosed(), { timeout: 10_000, intervals: [100], message: 'the child outlived the dashboard' })
+        .toBe(true)
+
+      // A window that goes away without an answer is the cancel and never a
+      // launch: a dashboard closed under a confirmation must not spend.
+      expectNoSpawn(running)
+      // What the console does after that is Electron's `window-all-closed` and
+      // not this file's to assert: it quits on Linux and Windows and stays up
+      // on macOS (`index.ts`), so a case that demanded either would be red on
+      // one of the two platforms this suite runs on.
+    } finally {
+      await running.close()
+    }
+  })
+
   test('a re-chosen installation closes the window as a cancel and spawns nothing', async () => {
     const running = await start()
     try {
@@ -602,6 +668,16 @@ test.describe('the launch path, in the real app', () => {
       // what it makes is the dashboard's own `installation.choose` for the
       // project the launch is for, which is the call `index.ts` wires
       // `launchRunner.cancelFor` into before the lifecycle re-chooses.
+      //
+      // What this case proves is the **observable** half of that rule -- the
+      // window closes and nothing is spawned -- and not which of two mechanisms
+      // closed it: the re-choose replaces the dashboard with a new window, and
+      // the confirmation is a modal child of the old one, so the parent's own
+      // cascade (the case above) takes it down whether or not `cancelFor` is
+      // wired. That the wiring itself is there is pinned in
+      // `test/unit/entry-wiring.test.ts`, and its behaviour in
+      // `test/unit/launch.test.ts`; the parent-close case above is the one that
+      // closes a parent with no `cancelFor` in play.
       void page
         .evaluate(async () => {
           const api = (window as unknown as { fugaro: { chooseInstallation: (args: unknown) => Promise<unknown> } })
