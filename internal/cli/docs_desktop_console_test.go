@@ -47,7 +47,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
-	"github.com/dimipaun/fugaro/internal/coordinator"
 	"github.com/dimipaun/fugaro/internal/plan"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/report"
@@ -397,18 +396,9 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		reflect.TypeOf(plan.StateStream{}),
 		reflect.TypeOf(planStatusDoc{}),
 		reflect.TypeOf(planStatusTotals{}),
-		// §6.13, the coordinator's stored project view (Bitbucket credentials
-		// T1.2): the envelope and the repository node, the view and the runs
-		// behind it, and the two keys only the sweep writes.
-		reflect.TypeOf(coordinator.StoredProjectView{}),
-		reflect.TypeOf(coordinator.RepoView{}),
-		reflect.TypeOf(coordinator.View{}),
-		reflect.TypeOf(coordinator.Record{}),
-		reflect.TypeOf(coordinator.Run{}),
-		reflect.TypeOf(coordinator.PullRequest{}),
-		reflect.TypeOf(coordinator.Collision{}),
-		reflect.TypeOf(coordinator.Unread{}),
-		reflect.TypeOf(coordinator.Stale{}),
+		// §6.13's coordinator shapes moved to ee/coordinator with the command:
+		// ee/coordinator/cli/console_contract_test.go pins them against the
+		// tagged tree, which is the tree that still serves the console.
 	}
 	for _, name := range jsonTagNames(t, namedTypes(shapes...), shapes...) {
 		if !strings.Contains(doc, "`"+name+"`") {
@@ -577,13 +567,8 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		reflect.TypeOf(plan.StatePlan{}), reflect.TypeOf(plan.StateNode{}),
 		reflect.TypeOf(plan.StateRelease{}), reflect.TypeOf(plan.StateStream{}),
 		reflect.TypeOf(planStatusDoc{}), reflect.TypeOf(planStatusTotals{}),
-		// §6.13, the coordinator's stored project view (Bitbucket credentials
-		// T1.2), the same nine shapes as the test above.
-		reflect.TypeOf(coordinator.StoredProjectView{}), reflect.TypeOf(coordinator.RepoView{}),
-		reflect.TypeOf(coordinator.View{}), reflect.TypeOf(coordinator.Record{}),
-		reflect.TypeOf(coordinator.Run{}), reflect.TypeOf(coordinator.PullRequest{}),
-		reflect.TypeOf(coordinator.Collision{}), reflect.TypeOf(coordinator.Unread{}),
-		reflect.TypeOf(coordinator.Stale{}),
+		// §6.13's coordinator shapes moved to ee/coordinator with the command,
+		// as in the test above.
 	}
 	for _, name := range jsonTagNames(t, namedTypes(shapes...), shapes...) {
 		real[name] = true
@@ -812,9 +797,6 @@ func TestDocsDesktopConsoleContractNamesTheFlagInventory(t *testing.T) {
 		"secrets ls":  newSecretsLsCmd,
 		"accounts ls": newAccountsLsCmd,
 		"doctor":      newDoctorCmd,
-		// The project view (Bitbucket credentials T1.2, §6.13): the one read
-		// of the installation's repositories that asks nothing of the host.
-		"coordinator status": newCoordinatorStatusCmd,
 	}
 	for name, newCmd := range spawned {
 		for _, flag := range []string{"project", "config"} {
@@ -877,10 +859,6 @@ var consoleContractCommands = map[string]func() *cobra.Command{
 	// follows -- but the document describes its flags, so they are checked
 	// against this constructor like any other command's.
 	"backlog list": newBacklogListCmd,
-	// §6.13 documents the coordinator's stored project view (Bitbucket
-	// credentials T1.2). The console spawns it, so its flags are checked
-	// against this constructor like any other's.
-	"coordinator status": newCoordinatorStatusCmd,
 	// §6.12 documents the graph joined to the runs (GV1.6, the CLI release after 0.11.4), and the
 	// console spawns it since GV2.1, as §5.1 rule 6's `plan status --json` row. Its flags — including the cloud
 	// ones, which this command carries and `plan graph` does not — are checked
