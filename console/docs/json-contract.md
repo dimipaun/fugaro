@@ -1753,6 +1753,70 @@ is stored), `--all` (every repository the local config lists, one view each),
 the console does not pass), `--json`, and the cloud flags `--project`,
 `--config`, `--gcp-project` and `--region`.
 
+### 6.14 `fugaro run --json` — the launch (design §5.1 rule 11)
+
+**Command:** `internal/cli/run.go` (`newRunCmd`), printed by `printLaunch` with
+`json.Encoder` and `SetIndent("", "  ")`: **one indented object**, the shape
+every command in the console's set prints (§9.2). **This is the one write in the
+whole console** — the operation `run.launch`, whose twenty-fourth row on the IPC
+allow-list V2.5.1a added (2026-10-28/29) — and the only document below that a
+launch produces rather than a read. The argv the console builds from the form's
+five fields, and the confirmation window the main process owns, are design §5.1
+rule 11's and are not repeated here; what this section settles is the shape of
+the answer those fields come back as.
+
+**Document:** `launchResult` —
+
+`project`, `run`, `repo`, `run_id`, `branch`, `ref`°, `execution`, `log_url`°,
+`status`, `pr`° (**int**), `previous_run`°, `recipe`°, `project_layer`°.
+`°` = `omitempty` (as in §3). `recipe` is `launchRecipe`: `name`, `source`.
+`project_layer` is `launchProjectLayer`: `sha256`, `generation`° (**int64** —
+which one layer the stored task actually carries, and never its text).
+
+**Four of the fields are the launch's own identity, and the fifth is a version
+of it the console built.** `project` is the Fugaro project the launch was cut
+for. `run` and `run_id` are the same run id under the CLI's two keys, and it is
+the id the console generated for that one confirmation window, not one the form
+could propose. `branch` is the branch the run's work goes on — a new run's, or,
+for a follow-up, the pull request's — and `ref`° is the ref a new run's branch
+is cut from, which its review measures the work against; `ref` is absent for a
+follow-up and a review run, whose review reads each pull request's own base. And
+**`repo` is the CLI's canonical `owner/name`**, not the `<provider>/<owner>/<name>`
+identity the installation's records carry: the conversion between the two is the
+console's own (`launchrules.launchRepoArgument`), and the main process checks
+this field against the value it asked for before the reply is believed.
+
+**`status` is `launched` or `already-launched` and nothing else.** The second is
+the CLI's own claim already holding this run id, and the design draws it as a
+**fact rather than as an error** (D23). `pr`° and `previous_run`° are a
+follow-up's pull request and the run it continues; `execution` is the execution
+the run is in; and `log_url`° is where the CLI prints the run's logs — **carried
+as text and never drawn as a link** (design §5.1 rule 2).
+
+**A launch that fails prints no document at all.** The CLI's refusals — an
+empty or oversized task, a title or a plan task past its cap, a budget
+pre-check, a claim already held, a credential it could not use — are returned as
+errors: `run` exits non-zero with the CLI's own sentence on stderr, which the
+console draws as text (`sanitizeRefusal`). So the reply this section documents is
+the *successful* launch's, and a screen that waited for a `status` field on the
+failure path would wait for a document no command prints. The one exception is
+inside the CLI, not on this surface: a batch launch prints a batch document once
+per attempt (`printBatch`), and the console never asks for one — the batch flag
+is on rule 11's excluded-flag list — so that shape is not this operation's.
+
+**The decoder is closed, and it is the contract's enforcer.** The main process
+reads this document with `decodeLaunchResult`
+(`console/src/main/launchrules.ts`): the keys must be exactly the ones above, the
+types are the ones the CLI writes, `status` must be one of the two words, and
+**an unknown key or a wrong type refuses the whole reply** rather than being
+ignored (rule 11). Every string is kept as text and bounded — nothing here is
+read as a sentence, a path or a link — and the renderer mirrors that decoder
+(`console/src/renderer/screens/launch.ts`'s `launchOutcomeOf`), so a reply with
+a key of its own draws the console's one "unreadable reply" sentence and never a
+partial set of facts. A replayed answer — a second click on the window's own
+button, or a re-sent call — is the app's own in-memory record of the first
+`launchResult` and reaches no child at all (design §5.1 rule 11).
+
 ## 7. The CLI gaps, settled against the code
 
 The console ships **without any of these** and must work, visibly degraded
@@ -1814,6 +1878,7 @@ and **not** off this document or the design:
 | **`plan graph`** | **no — it reads the graph artifact in the checkout, not a cloud** (`internal/cli/plan.go`, §6.9) |
 | `plan status` | yes (`newPlanStatusCmd`, §6.12) — a task's state is a *run's* state, so it reads the runs bucket too |
 | `coordinator status` | yes (`newCoordinatorStatusCmd`, §6.13) — with `--from-store` it is the one read here that asks nothing of the host (the stored view, through the caller's own credentials), and it is a cloud read all the same: the view lives in the project's database, so it carries `--project` and `--config` like the rest |
+| **`run`** | yes (`newRunCmd`, §6.14) — **the one row here that writes**: the launch (design §5.1 rule 11) is cut for a project like every cloud command, so it carries `--project` and `--config` too, and the task itself arrives on stdin rather than as a flag |
 
 So the console passes `--project <name>` (and `--config <path>` when the
 installation is not the ambient one) on **every spawn except the handshake**,
@@ -1826,13 +1891,17 @@ table against the live constructors.
 
 ## 9. What the console may do with all this
 
-1. **Every document in the console's set is read-only**, and the allow-list is
-   by exact argv (design §5.1 rule 6). Two commands this file describes are
-   writes, and neither is in the console's set: `fugaro cancel RUN --json`
-   (§6.3), which is on the design's "never" table and which no v1 console
-   spawns, and `fugaro accounts clear NAME` (§6.5a, credentials-service C1.21),
-   the operator's own write to the cascade's state. Nothing else here names a
-   write.
+1. **Every document in the console's set is read-only** — with **one exception,
+   the launch** (§6.14, design §5.1 rule 11), which is the console's single
+   write and whose confirmation window is the main process's own. The allow-list
+   is by exact argv (design §5.1 rule 6), and the write is on it: the
+   twenty-fourth operation is `run.launch` (V2.5.1a, 2026-10-28/29), and no other
+   argv that writes is reachable from a renderer. Two further commands this file
+   describes are writes, and **neither is in the console's set**: `fugaro cancel
+   RUN --json` (§6.3), which is on the design's "never" table and which no v1
+   console spawns, and `fugaro accounts clear NAME` (§6.5a, credentials-service
+   C1.21), the operator's own write to the cascade's state. Nothing else here
+   names a write.
 2. **Exactly two of the commands in the console's set are line-delimited:
    `watch --json` and `logs RUN
    --json`** (§2, §6.2 — the feed through
