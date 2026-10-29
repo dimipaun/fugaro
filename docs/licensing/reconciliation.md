@@ -654,6 +654,49 @@ themselves are S1.1 (the design), S1.4 (the coordinator's command and library), 
 about the licence's own coverage sentence and the coordinator's released MIT versions (F38, T10)
 is untouched by this edit.
 
+## Amendment 2026-10-29 (counsel's restructured Subscription Terms)
+
+Counsel returned the Subscription Terms restructured by plan, dated 2026-10-28 by the document
+(its text carries no date or version of its own). [subscription-terms.md](subscription-terms.md)
+now holds that text as written, in Parts A (General) to G (Legal terms for every plan), sections 1
+to 34, with the earlier draft's drafting notes and its two question lists replaced by one list of
+the points still open. `website/content/subscription-terms.md` is regenerated from it, and the page
+renders the Part headings above the sections they group.
+
+**Where the earlier sections went** (earlier draft of 2026-10-27, then counsel's numbering):
+
+| Earlier draft | Counsel's text |
+| --- | --- |
+| 1 Parties and acceptance (1.4 Who sells) | 1 Parties and acceptance; who sells moves to 3.3, 11.5 and 13.1 |
+| 2 Definitions | 2 Definitions |
+| 3 What the Subscription grants | 4 What the Subscription grants (3.3 becomes 5.2 and 9.2; 3.6 becomes a patent licence, 4.5) |
+| 4 Plans and Order Forms | 3 Plans, 10 Community and Free Plans, 11 Order Forms, 17 Discounts and trials |
+| 5 User Seats | 5 User Seats; 11.3 and 11.4 seat changes; 16 True-up; 20 Audit |
+| 6 Term and renewal | 14 Term and renewal (Team); 19 Enterprise commercial terms; 12.4 Price changes; 27.1 Duration |
+| 7 Fees, payment and taxes | 12 Fees, payment and taxes; 15 Refunds |
+| 8 License Keys | 6 License Keys and offline activation; 7.5(b) sign-up data |
+| 9 Customer Data and privacy | 7 Customer Data and Privacy (9.3 Telemetry becomes 7.3 Crash reports and diagnostics) |
+| 10 Support and updates | 8 Support and updates; 9 After the Subscription ends |
+| 11 to 14 | 21 to 24 |
+| 15 Indemnification (placeholder) | 25 Indemnification |
+| 16 Confidentiality | 26 Confidentiality |
+| 17 Suspension and termination | 12.6 Suspension; 27 Duration and termination |
+| 18 to 23 | 28 to 33 |
+| 24 Governing law and venue | 34 Governing law, venue and language |
+
+**Held back from this repository.** Counsel's text states a late-payment interest rate (section
+12.2) and a liability cap for the Community Plan, Free Plans and Beta Features (section 10.5).
+Neither figure was published here before, so both stand as bracketed items until the owner
+decides; every other figure in counsel's text was already in the earlier draft.
+
+**Open**, as the list after the agreement records: counsel's comment on section 4.4
+(Modifications); the provisions counsel's document highlights (5.1(i), 5.3 and 5.5); the owner's
+rulings counsel's text does not carry (read-only use that can still cancel, T12; one key per
+organisation; no covered-versions date, O4; the free seat per legal person, T15); crash reports
+the Customer cannot turn off (section 7.3); publicity without consent (section 30.1); the
+coordinator named as Core in section 7.1 (D531); and whether the licence files need a matching
+revision now that the Terms no longer cite the licence's clauses. The licence files are not edited.
+
 ## UNVERIFIED
 
 - **U1** — **Moot after O2** (`LICENSE` is not changed). What stays unverified is only that GitHub

@@ -85,6 +85,18 @@ where the coordinator's released MIT versions leave the licence's coverage sente
 counsel's (T10 and F38, in
 [subscriptions/reconciliation.md](../subscriptions/reconciliation.md)).
 
+**Amended 2026-10-29: counsel's restructured Subscription Terms.** [subscription-terms.md](subscription-terms.md)
+now carries counsel's text of 2026-10-28, which reorganises the agreement by plan into Parts A to G
+and renumbers it from 24 sections to 34 (for example: fees, payment and taxes are section 12,
+Enterprise commercial terms section 19, assignment section 31, changes to the Terms section 29).
+It adds a patent licence, an indemnity, resellers, a Quebec language clause and limits for the
+Community Plan, Free Plans and Beta Features, and drops the drafting notes. Two figures in it are
+held back from this public repository as bracketed items for the owner to decide (the late-payment
+interest rate and the Community liability cap). The document still carries counsel's draft banner
+and bracketed party details, so it is still **not in force**; the page at `/legal/subscription-terms`
+is regenerated from it. Section map and open points:
+[reconciliation.md](reconciliation.md#amendment-2026-10-29-counsels-restructured-subscription-terms).
+
 Spec owner: the repository owner. Spec received 2026-10-24; reconciled against `origin/main` at
 `e924481cd` the same day.
 

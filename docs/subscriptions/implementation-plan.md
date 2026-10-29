@@ -198,21 +198,24 @@ The owner's answers and rulings that shape it (non-price; figures are private, D
   counsel answers — one exception, edited 2026-10-29 on the owner's ruling D531 (counsel not yet
   consulted: tell counsel in the next revision round).** The owner ruled the coordinator moves
   under `ee/` (the move is S1.4 and has not landed: `ee/` holds only its licence and README, so the
-  coordinator is still Core by the Terms' own definition) and had section 9.1 of
+  coordinator is still Core by the Terms' own definition) and had section 9.1 (now 7.1) of
   [licensing/subscription-terms.md](../licensing/subscription-terms.md) edited at once to stop
   calling the coordinator Core (the only sentence changed; the website page regenerated from it,
   [licensing/reconciliation.md](../licensing/reconciliation.md#amendment-2026-10-29-the-coordinator-leaves-the-terms-core)).
-  Everything below still waits for counsel. Items:
-  - **§10.4 and §17.4:** after the grace period the console and the app can still **cancel**, and
+  **Status 2026-10-29:** counsel returned the Terms, dated 2026-10-28, restructured by plan and
+  renumbered (sections 1 to 34; [licensing/reconciliation.md](../licensing/reconciliation.md#amendment-2026-10-29-counsels-restructured-subscription-terms)),
+  and the tree carries that text as written, but for two figures held back for the owner. It does
+  not carry the items below, which stay open; the section numbers are counsel's. Items:
+  - **§9.1 and §27.4:** after the grace period the console and the app can still **cancel**, and
     the kill switch stays; they cannot launch or change config (T12).
-  - **§8.1 and §8.5:** **one key per organisation**, with its seat count, replacing the per-User
+  - **§6.1 and §6.4:** **one key per organisation**, with its seat count, replacing the per-User
     wording (key-binding ruling).
-  - **§8.1 and §10.2:** drop every mention of the covered-versions date (O4).
-  - **§4.3(a), §8.3 and §1.3:** the free seat and the public-OSI rule apply per legal person, and an
+  - **§6.1 and §8.2:** drop every mention of the covered-versions date (O4).
+  - **§10.2(a), §6.3 and §1.3:** the free seat and the public-OSI rule apply per legal person, and an
     individual is an organisation of one (T15).
-  - **§3.3 note:** the coordinator's command and library and `fugaro report` move, the digest stays
+  - **The earlier draft's §3.3 note (no longer in the text):** the coordinator's command and library and `fugaro report` move, the digest stays
     MIT, and one mixed-licence binary (T10, T11, T21).
-  - **§8.3:**
+  - **§6.3:**
     - the next key issues 30 days before expiry (T26);
     - keys are hand-minted until the key service exists (T13);
     - paid keys follow purchase, renewal and cancellation;

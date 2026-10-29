@@ -35,9 +35,9 @@ func TestWebsiteTermsPageOnlyCutsText(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := strings.SplitN(string(page), "## 1. ", 2)[1]
+	body := strings.SplitN(string(page), "# Part A. ", 2)[1]
 	src := string(source)
-	for _, line := range strings.Split("## 1. "+body, "\n") {
+	for _, line := range strings.Split("# Part A. "+body, "\n") {
 		if line == "" {
 			continue
 		}
@@ -54,7 +54,7 @@ func TestWebsiteTermsPageOnlyCutsText(t *testing.T) {
 			}
 		}
 	}
-	for _, kept := range []string{"[LICENSOR LEGAL NAME]", "[RATE TO BE SET BY COUNSEL]", "[PRICE PER USER SEAT: Order Form]", "**[Placeholder.]**", "## 24. Governing law and venue", termsStatus} {
+	for _, kept := range []string{"[LICENSOR LEGAL NAME]", "[LATE-PAYMENT INTEREST RATE]", "[LIABILITY CAP FOR COMMUNITY, FREE PLANS AND BETA FEATURES]", "# Part G. Legal terms for every plan", "## 34. Governing law, venue and language", termsStatus} {
 		if !strings.Contains(string(page), kept) {
 			t.Errorf("%s lost %q", termsPage, kept)
 		}
@@ -62,7 +62,7 @@ func TestWebsiteTermsPageOnlyCutsText(t *testing.T) {
 }
 
 func TestWebsiteTermsPageRefusesAnUnknownNote(t *testing.T) {
-	src := "# T\n\nwritten 2026-10-27\n\n## 1. A\n\nText. (Note for counsel - a new shape.)\n\n## 24. Z\n\nEnd.\n\n---\n\n## Questions for the owner\n"
+	src := "# T\n\nwritten 2026-10-27\n\n## 1. A\n\nText. (Note for counsel - a new shape.)\n\n## 34. Z\n\nEnd.\n\n---\n\n## Questions for the owner\n"
 	if _, err := renderTermsPage([]byte(src)); err == nil {
 		t.Fatal("renderTermsPage published a note it does not know how to cut")
 	}

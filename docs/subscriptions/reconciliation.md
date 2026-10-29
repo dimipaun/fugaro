@@ -188,7 +188,7 @@ Licensor–Customer agreement whose tax clause assumed the Licensor invoices; th
 merchant's buyer terms remain U3.
 
 **F23 — Exists: no competing-use clause is needed.** The business licence grants nothing beyond
-development, testing and subscribed production use (5.1), and the Terms §3.7 forbids a hosted
+development, testing and subscribed production use (5.1), and the Terms §3.7 (now §4.6) forbids a hosted
 offering. *Consequence:* none.
 
 **F24 — Exists (amended draft): true-up and audit.** The amended draft has §5.6 "True-up (Team)"
@@ -209,7 +209,7 @@ organisations only. An open-source maintainer applying with a repository URL and
 an individual. *Consequence:* D445; T15.
 
 **F28 — Rule: supported versions.** `SECURITY.md` "Supported versions": "Only the latest 0.x
-release is supported." The amended Terms §10.2: "The Licensor supports the current minor release
+release is supported." The amended Terms §10.2 (now §8.2): "The Licensor supports the current minor release
 and the one before it" (B8). *Consequence:* T23.
 
 **F29 — Exists: the CLA allows relicensing.** CLA §3.2 lets the Project Owner relicense
@@ -268,7 +268,7 @@ commit of B9, the Terms revision run and the licence-document changes touch the 
 
 **F37 — Rule (new): post-lapse read-only is not a licence right by itself.** Licence 11.1 ends the
 production right "under clause 1" at lapse, and a console used read-only against a production
-installation is still production use. The amended Terms §10.4 now grants it expressly, with a note
+installation is still production use. The amended Terms §10.4 (now §9.1) now grants it expressly, with a note
 asking counsel to confirm it fits the licence (counsel question 12). *Consequence:* counsel (S8.4).
 
 **F38 — Rule (new): D302's two subjects are reversed in part.** D302 kept "console, mobile,
@@ -340,7 +340,7 @@ in S3.1; the limits stated in the key section below.
 | T5 | Which product is free | **Closed by D432** (the MIT core, plus one evaluation seat per non-subscribing organisation, plus open-source teams) |
 | T6 | Team features already MIT | **Replaced by T10, T11, T20** |
 | T7 | Seller, licensor, copyright holder | **Narrowed by D441 and B9**; sequencing is T18 |
-| T8 | Commercial questions | **Closed by D443** (figures private); the startup discount and programs are in the amended Terms §4.3 |
+| T8 | Commercial questions | **Closed by D443** (figures private); the startup discount and programs are in the amended Terms §4.3 (now §10.2 and §17) |
 | T9 | "Never block work" against a licence state | **Replaced by T12** |
 
 ## Resolutions (one defensible answer each)
@@ -443,7 +443,7 @@ the open items (O1–O3, O5) and counsel's review.
 | **T10** | The coordinator's **command and library** move to the business-licensed folder. **What stays:** the released MIT 0.11.x–0.12.0 stays the fork point. **What changes:** the sweep job's image carries the key-gated build (amended by D524, 2026-10-29: the history image is built with the `ee` tag; no key is mounted); the console's project view, `coordinator status --from-store`, the P5 sweep and the plans that assume the coordinator in core are re-planned. This amends D302, D400 and D434; the core reaches the code only through `ee/register` | **No (not the recommendation**, which was "only new parts") | The owner wants the whole coordinator in the paid line from its next version. The `internal/eeboundary` route the ruling names is **already allowed** (`cmd/fugaro/ee_on.go` → `ee/register`); no boundary-test edit | S1.1, S1.2, S1.3, S1.4, S1.8, S1.9, S1.10 (Check 178) |
 | **T11** | `fugaro report` moves to the business-licensed folder for future versions; **`fugaro runs digest` stays MIT** with a small MIT copy of what it needs | **No (not the recommendation)** | The periodic reviews stay free; the organisation's spend report is paid | S1.1, S1.5 |
 | **Governance** (D520, D521, D527, D530; 2026-10-29) | **Budgets, tiers, tripwires, checkpoints and stage timeouts move to `ee/`** with `fugaro report` and the coordinator (T10, T11), per the ee-reorg plan ([`../ee-reorg/implementation-plan.md`](../ee-reorg/implementation-plan.md)): the layout `ee/governance`, `ee/report`, `ee/coordinator` (with its CLI) and `ee/register`. The spend caps, the daily-cap warning, the kill switch and rigor's per-mode budgets stay MIT; core keeps the `governance:` wire, the halt plumbing the digest and `diagnose` read, and the launch-time skew gates. The key-minting service lives under `ee/keysvc/`, deferred with the key work and owner-run to deploy | Yes (each was the recommendation) | Governance must run where the job runs: F11 (ee-reorg); the caps are the free product's safety net (R4, F8) | E1.1–E1.3, E1.5, E2.3, E4.1 (ee-reorg) |
-| **T12** | After the grace period the console and the app **read and cancel runs**, and the kill switch stays; they cannot launch or change config. The amended Terms §10.4 changes in the one revision after counsel | Yes | Never paywall safety | S0.4, S6.1–S6.3, Checks 176–177 |
+| **T12** | After the grace period the console and the app **read and cancel runs**, and the kill switch stays; they cannot launch or change config. The amended Terms §10.4 (now §9.1) changes in the one revision after counsel | Yes | Never paywall safety | S0.4, S6.1–S6.3, Checks 176–177 |
 | **T13** | The key service is **owner-operated in a dedicated Fugaro GCP project** (Cloud Run, a non-exportable KMS signing key, intake split from signing), **built after the entity exists**; until then keys are **minted by hand** (D440's first recommendation, as an interim) | Yes | One operator and one boundary; nothing hosted before there is a seller | S2.10, S3.1–S3.8 |
 | **T14** | Unchanged: the seat stays a contract pricing rule, and the estimate counts every launcher | Yes | Ruled by D433 | S4.1 |
 | **T15** | An **individual counts as an organisation of one** for the free seat and the public-OSI rule; counsel confirms business-only does not exclude them | Yes | Open-source maintainers are often individuals | S0.2, S0.4, S3.1, S7.1 |
@@ -534,7 +534,7 @@ paywall safety", R4); what a console or app with **no key** shows, including a 0
 upgrading (F43); what a free evaluator's expired key does (F39). Choices: (a) read-only keeps every
 current view and the app's cancel; (b) read-only keeps the free core's views (watch, logs) and
 hides the paid ones; (c) the console and the app stop entirely and the Terms say so. **The amended
-Terms §10.4 already words read-only as "cannot launch, cancel or change anything"**, which would
+Terms §10.4 already words read-only as "cannot launch, cancel or change anything"** (counsel's §9.1 of 2026-10-28 keeps it: "may not initiate, cancel or modify anything"), which would
 take the app's cancel away (against R4); that wording is a draft for counsel, not the owner's
 ruling on this tension, and the owner rules on it.
 
@@ -548,7 +548,7 @@ the service identity the only signer, no agent identity with any access, a key i
 open-source check reads public repositories through the code host's API but cannot see whether a
 project has other, private repositories, so "all repositories public" rests on the applicant's word.
 (3) **Personal data** collected at sign-up (emails, company domains, repository URLs): PIPEDA and
-GDPR, a privacy notice, retention, access and deletion requests; the amended Terms §8.4 covers
+GDPR, a privacy notice, retention, access and deletion requests; the amended Terms §8.4 (now §7.5) covers
 sign-up data (counsel question 14); the merchant of record as a recipient of buyers' data is in no
 notice yet. (4) **Uptime**: a promise for issuance only; validation is offline
 (R2 amended). (5) **Hosting and operation**: where it runs and who operates it are unanswered; the
