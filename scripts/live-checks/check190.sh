@@ -1,0 +1,976 @@
+#!/usr/bin/env bash
+# Check 190 — git fetch and push through a throwaway, IAM-only Cloud Run proxy.
+#
+# It settles the four UNVERIFIED questions the Bitbucket proxy is built on
+# (secrets-brokering/reconciliation.md F13, F14, U2, U7 and U8): whether a pack
+# above 32 MiB can be pushed through Cloud Run on HTTP/1.1 (chunked), the
+# request count and bytes of a full clone and of a blobless one, the cold start
+# of the first git request after idle, and what the front end does with a
+# request held open past its 3600 s timeout. The register's section is
+# docs/gcp-live-checklist.md, "Check 190"; the owner's steps are
+# docs/secrets-brokering/check190-steps.md.
+#
+# Usage:      CHECK190_REPO=<workspace>/<repo> CHECK190_TOKEN_FILE=<file> \
+#               bash scripts/live-checks/check190.sh
+#             bash scripts/live-checks/check190.sh --dry-run   (guards and files
+#             only: nothing is created, built, deployed or deleted; it prints
+#             the commands a real run would run and the cleanup commands)
+# Needs:      bash, mktemp, gcloud, git, curl and awk. Nothing is installed and
+#             nothing is fetched; if one of those is missing the script stops
+#             with one line naming it.
+# Where:      installation `fugaro` ONLY — project fugaro-dev, region us-east5.
+#             The project is HARD-CODED and `fugaro doctor` must answer that
+#             this is the fugaro-dev installation. Never belong, never another
+#             project: you must not run it against any other installation.
+# Creates:    one throwaway Cloud Run service (fugaro-chk190) with IAM required
+#             and no public invoker, the Artifact Registry repository and image
+#             it is built into, the Secret Manager container that holds the
+#             sandbox repository's token for the proxy, and one branch on the
+#             sandbox repository. The Restore deletes all of them and asserts
+#             three counts read 0. A service, repository or secret of those
+#             names that was already there is a hard stop: this check never
+#             adopts, writes into or deletes what it did not create.
+# Costs:      wall clock, not money: around two hours at the terminal. The
+#             cold-start wait is 35 minutes (CHECK190_IDLE_SECONDS) and the
+#             slow push is held open for an hour (CHECK190_SLOW_SECONDS). One
+#             build and one idle Cloud Run instance are billed to the project
+#             while it runs.
+# Runs:       by YOU. No agent runs any step of this, and no agent has: what it
+#             measures is a live project and a real token.
+# Cleanup:    always: the service, the image, the repository, the secret and
+#             the branch are deleted by the Restore, which runs from the exit
+#             trap too — so a Ctrl-C in the middle does not leave a service
+#             running. The three counts are checked before the scratch
+#             directory goes, and the directory is KEPT when a count is not 0,
+#             with a message saying where it is and what to delete by hand.
+# Output:     progress on stderr, ONE block on stdout headed CHECK 190 RESULT,
+#             to copy back to the coordinator. Exit 0 when every fact passed,
+#             1 when one did not (or a hard stop ended the run).
+#
+# The token is never printed, never on a command line and never in a log: it is
+# read out of CHECK190_TOKEN_FILE by gcloud's --data-file (so it is in no argv),
+# put into the Secret Manager container this check creates, and mounted into the
+# service as a file — not as an environment variable, which a `gcloud run
+# services describe` would print back. The identity token each request carries
+# is minted fresh and written into 0600 files in the scratch directory, which
+# the requests name by path (curl's --config and git's GIT_CONFIG_GLOBAL):
+# `ps` shows every process's argv to every user on the machine, and the slow
+# push would hold a token there for an hour.
+#
+# CHECK190_DRY_RUN, CHECK190_REPO, CHECK190_TOKEN_FILE, CHECK190_CURL_SECONDS,
+# CHECK190_IDLE_SECONDS, CHECK190_SLOW_SECONDS, CHECK190_BIG_MIB and
+# CHECK190_BUILD_SA exist for this script's own test: they shorten waits and
+# sizes, and none of them can point the check at another project, another
+# region or another service. CHECK190_REPO and CHECK190_TOKEN_FILE are the two
+# inputs the check cannot invent (the sandbox repository and the token file the
+# owner writes with umask 077); CHECK190_BUILD_SA names the build account when
+# the installation has several.
+set -euo pipefail
+
+# No xtrace, whatever the shell it was started from had. This script's commands
+# carry credentials: the identity token is written into the 0600 files above and
+# the token file is read by gcloud, and `bash -x` would print both. The trace is
+# turned OFF here, BASH_XTRACEFD is unset so a trace redirected to a file this
+# script knows nothing about cannot be reopened, and guard_xtrace REFUSES the
+# run when this shell arrived with tracing on — the case where the flag sits in
+# SHELLOPTS/BASHOPTS and every child would start tracing on its own. Check 90 and
+# Check 91 have the same guard for the same reason.
+XTRACE_AT_START=no
+case "${-:-}" in *x*) XTRACE_AT_START=yes ;; esac
+case "${SHELLOPTS:-}" in *xtrace*) XTRACE_AT_START=yes ;; esac
+case "${BASHOPTS:-}" in *xtrace*) XTRACE_AT_START=yes ;; esac
+{ set +x; } 2>/dev/null
+unset BASH_XTRACEFD 2>/dev/null || true
+
+# The owner's own stdout and stderr, kept on 3 and 4: a trap runs with whatever
+# redirection is in effect when the signal arrives, so the RESULT block is
+# written to the saved descriptors rather than to whatever fd 1 is doing then.
+exec 3>&1 4>&2
+
+PROG=${0##*/}
+say() { printf '%s: %s\n' "$PROG" "$*" >&2; }
+owner() { printf '%s: %s\n' "$PROG" "$*" >&4; }
+die() { say "$*"; exit 1; }
+
+# The two the whole check hangs on. HARD-CODED, never `gcloud config get-value
+# project`: a check that reads the project from the environment can be pointed
+# at another installation by a stray config, and this one must never be.
+P=fugaro-dev
+L=us-east5
+SVC=fugaro-chk190
+SECRET=fugaro-chk190-token
+IMG="${L}-docker.pkg.dev/${P}/${SVC}/${SVC}:chk190"
+CURL_SECONDS=${CHECK190_CURL_SECONDS:-300}
+IDLE_SECONDS=${CHECK190_IDLE_SECONDS:-2100}
+SLOW_SECONDS=${CHECK190_SLOW_SECONDS:-3660}
+BIG_MIB=${CHECK190_BIG_MIB:-33}
+BUILD_SA=${CHECK190_BUILD_SA:-}
+REPO=${CHECK190_REPO:-}
+TOKEN_FILE=${CHECK190_TOKEN_FILE:-}
+# The proxy source is this script's own directory's check190/, so the check
+# builds the main.go that ships beside it rather than anything from $PWD.
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+PROXY_SRC="$HERE/check190"
+# The one deploy line, in one place, so guard_deploy_is_iam_only can read
+# exactly what a real run would run. The token is mounted as a FILE and never as
+# an environment variable.
+DEPLOY_FLAGS=(
+  --project="$P" --region="$L" --image="$IMG"
+  --timeout=3600 --min-instances=0 --max-instances=1
+  --set-secrets="/chk190/token=${SECRET}:latest"
+  --set-env-vars="CHK190_TOKEN_FILE=/chk190/token,CHK190_STALL_SECONDS=${SLOW_SECONDS},CHK190_STALL_PREFIX=/chk190-slow/"
+)
+
+# stop REASON: records a FAILed fact, ends the run. The EXIT trap prints the
+# block, runs the Restore for whatever this run created, and cleans up.
+stop() {
+  fact "aborted" FAIL "$1"
+  owner "stopped: $1"
+  exit 1
+}
+
+FACTS_FILE=""
+fact() { # fact KEY PASS|FAIL|INFO "detail"
+  [ -n "$FACTS_FILE" ] || return 0
+  printf '%s|%s|%s\n' "$1" "$2" "$3" >>"$FACTS_FILE"
+}
+
+DRY_RUN=${CHECK190_DRY_RUN:-}
+case "${1:-}" in
+--dry-run) DRY_RUN=1 ;;
+"") ;;
+*) die "usage: $PROG [--dry-run]" ;;
+esac
+
+# ---------------------------------------------------------------- requirements
+need() { command -v "$1" >/dev/null 2>&1 || die "Check 190 needs '$1' on PATH and it is not there"; }
+need_tools() {
+  need bash
+  need mktemp
+  need gcloud
+  need git
+  need curl
+  need awk
+}
+
+# ------------------------------------------------------------- scratch + trap
+SCRATCH=""
+SCRATCH_MARKER=".chk190-mine"
+SERVICE_MINE=""
+REPO_MINE=""
+SECRET_MINE=""
+PUSHED=""
+SCRATCH_REMOVED=no
+COUNTS_OK=no
+PRINTED=""
+FACTS_CAPTURED=""
+# The two 0600 files the identity token is written into, the name this run gave
+# its branch, the service's host, the build account resolved read-only, the
+# prefix this run staged the build's source under, and the flag that says a
+# build was attempted at all (the Restore removes the image only then).
+AUTH_CONF=""
+GIT_CONF=""
+NAME=""
+HOST=""
+BUILD_ATTEMPTED=no
+STAGING_PREFIX=""
+# The cleanup flag finish sets: a second Ctrl-C while the Restore is running
+# must not kill the shell that is running it (see finish).
+CLEANUP_RUNNING=no
+
+scratch_up() {
+  SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/chk190.XXXXXXXX") || die "Check 190 cannot make a scratch directory"
+  chmod 700 "$SCRATCH"
+  : >"$SCRATCH/$SCRATCH_MARKER"
+  FACTS_FILE="$SCRATCH/facts"
+  : >"$FACTS_FILE"
+  SERVICE_MINE="$SCRATCH/service-mine"
+  REPO_MINE="$SCRATCH/repo-mine"
+  SECRET_MINE="$SCRATCH/secret-mine"
+  PUSHED="$SCRATCH/pushed"
+  AUTH_CONF="$SCRATCH/idt.conf"
+  GIT_CONF="$SCRATCH/gitconfig"
+  # The branch this run pushes: named after the scratch directory's own random
+  # part, so two runs never share one and the Restore can name exactly what it
+  # created.
+  NAME=${SCRATCH##*.}
+  # Nameable by this run alone: the scratch directory's own name is unique and
+  # is deleted with it, so two runs of this check never share a staging prefix.
+  STAGING_PREFIX="gs://${P}_cloudbuild/chk190-source/${SCRATCH##*/}/"
+  if (cd "$SCRATCH" && git rev-parse --show-toplevel >/dev/null 2>&1); then
+    die "Check 190 stopped: $SCRATCH is inside a git work tree, so what it writes could be committed by accident — set TMPDIR outside every repository and run again"
+  fi
+  say "scratch directory: $SCRATCH (mode 0700, removed at the end)"
+  fact "scratch" PASS "$SCRATCH (mode 0700, made by this check, removed by its Restore)"
+}
+
+remove_scratch() {
+  case "$SCRATCH" in
+  "")
+    # A guard stop leaves this empty and there is nothing to refuse: saying
+    # "refusing to remove a scratch directory of ''" for a run that never made
+    # one reads like a cleanup that went wrong. The guard stays for the two
+    # paths that do mean trouble (a bare "/" or the owner's home directory).
+    return 0
+    ;;
+  / | "$HOME" | "$HOME"/)
+    say "refusing to remove a scratch directory of '$SCRATCH'"
+    return 0
+    ;;
+  esac
+  if [ ! -f "$SCRATCH/$SCRATCH_MARKER" ]; then
+    say "refusing to remove $SCRATCH: it carries no marker from this check"
+    return 0
+  fi
+  # Guarded: this runs from the exit trap, where a `rm` that fails would end the
+  # shell under `set -e` before the RESULT block is printed. A directory that is
+  # still there is a FACT, and the block says so — it is not a reason to lose
+  # the rest of the block.
+  rm -rf "$SCRATCH" || true
+  if [ ! -e "$SCRATCH" ]; then SCRATCH_REMOVED=yes; fi
+}
+
+# redact: what a git or gcloud message may carry back into the block. The block
+# is pasted into a pull request, so a credential-shaped run of characters goes,
+# whatever it is: a scheme with a value after it, or any name=value whose name
+# says token or secret.
+redact() {
+  sed -E \
+    -e 's/(Bearer|Basic|x-token-auth)[[:space:]]+[A-Za-z0-9._~+/=-]+/<redacted>/g' \
+    -e 's/[A-Za-z0-9_]*(token|Token|TOKEN|secret|Secret|SECRET)[A-Za-z0-9_]*=[^[:space:]]+/<redacted>/g'
+}
+
+# git_error_excerpt NAME: the last two lines git printed for the step whose
+# stderr went to $SCRATCH/NAME.err, redacted and shortened. Never a body and
+# never a header: git's own messages are all this ever reads.
+git_error_excerpt() {
+  local f="$SCRATCH/$1.err"
+  [ -f "$f" ] || {
+    printf 'no output'
+    return 0
+  }
+  tail -n 2 "$f" | tr -d '\r' | tr '\n' ' ' | redact | cut -c1-400
+}
+
+# The Restore: everything this run created, deleted in the one order that works
+# (the branch needs the service, the service needs the secret, and the image
+# lives in the repository). It runs from the exit trap too, so a Ctrl-C in the
+# middle does not leave a billed service behind.
+restore_run() {
+  if [ ! -f "$SERVICE_MINE" ] && [ ! -f "$REPO_MINE" ] && [ ! -f "$SECRET_MINE" ]; then
+    fact "restore" PASS "nothing of this check's was created (no service, no repository, no secret), so there is nothing to delete"
+    COUNTS_OK=yes
+    return 0
+  fi
+  say "Restore: deleting what this check created"
+  if [ -f "$PUSHED" ]; then
+    # The branch first: deleting it needs the service, which the next lines
+    # delete. A branch that is not there (the push that would have made it
+    # failed, or the front end cut it) is not an error here.
+    local refs
+    refs=$(run_git "$SCRATCH" ls-remote --heads "$(git_url)" "refs/heads/chk190/${NAME}*" 2>/dev/null || true)
+    if [ -n "$refs" ]; then
+      run_git "$SCRATCH" push --quiet "$(git_url)" --delete "chk190/${NAME}" "chk190/${NAME}-slow" >/dev/null 2>&1 || true
+      refs=$(run_git "$SCRATCH" ls-remote --heads "$(git_url)" "refs/heads/chk190/${NAME}*" 2>/dev/null || true)
+    fi
+    if [ -n "$refs" ]; then
+      fact "branch-deleted" FAIL "a branch this run pushed is still on $(repo_name): $(printf '%s' "$refs" | awk '{print $2}' | tr '\n' ' ')— delete it by hand (git push <remote> --delete <branch>)"
+    else
+      fact "branch-deleted" PASS "no branch named chk190/${NAME} or chk190/${NAME}-slow is on $(repo_name) any more"
+    fi
+  else
+    fact "branch-deleted" PASS "no branch was pushed: the run stopped before its first push, so there is none to delete"
+  fi
+  if [ -f "$SERVICE_MINE" ]; then
+    gcloud run services delete "${SVC:?}" --project="${P:?}" --region="${L:?}" --quiet >&2 || true
+  fi
+  if [ "$BUILD_ATTEMPTED" = yes ]; then
+    gcloud artifacts docker images delete "${IMG:?}" --project="${P:?}" --delete-tags --quiet >&2 || true
+  fi
+  if [ -f "$REPO_MINE" ]; then
+    gcloud artifacts repositories delete "${SVC:?}" --project="${P:?}" --location="${L:?}" --quiet >&2 || true
+  fi
+  if [ -f "$SECRET_MINE" ]; then
+    # The container that held the sandbox token: deleting it takes its version
+    # and the accessor binding with it, so no copy of the token outlives this
+    # check inside the project.
+    gcloud secrets delete "${SECRET:?}" --project="${P:?}" --quiet >&2 || true
+  fi
+  if [ "$BUILD_ATTEMPTED" = yes ]; then
+    gcloud storage rm -r "${STAGING_PREFIX:?}" >&2 || true
+  fi
+  local st rp sc
+  st=$(svc_state)
+  rp=$(repo_state)
+  sc=$(secret_state)
+  if [ "$st" = not-there ] && [ "$rp" = not-there ] && [ "$sc" = not-there ]; then
+    COUNTS_OK=yes
+    fact "restore" PASS "the service, the image's repository and the secret container this run created are gone, and the build's staged source was removed from ${STAGING_PREFIX}"
+  else
+    fact "restore" FAIL "counts after the Restore: service ${st}, repository ${rp}, secret ${sc} — each must read not-there. The scratch directory is kept: $SCRATCH. Delete by hand what is still there only if you know it is this check's"
+  fi
+}
+
+cleanup() {
+  restore_run
+  # The two 0600 files hold a minted identity token and go before the scratch
+  # directory, so nothing of the sort survives inside a directory that is KEPT
+  # because a count was not 0.
+  rm -f "$AUTH_CONF" "$GIT_CONF" || true
+  FACTS_CAPTURED=$(cat "$FACTS_FILE" 2>/dev/null || true)
+  if [ "$COUNTS_OK" = yes ]; then
+    remove_scratch
+  else
+    say "the scratch directory is kept: $SCRATCH"
+  fi
+}
+
+finish() {
+  local status=$?
+  trap - EXIT
+  # INT, TERM and HUP are NOT reset here: cleanup is about to run the Restore,
+  # which deletes a service this check created in the owner's project, and a
+  # second Ctrl-C during it would kill this shell with the deletes half done.
+  CLEANUP_RUNNING=yes
+  cleanup
+  local facts=$FACTS_CAPTURED
+  if [ -z "$facts" ]; then facts="aborted|FAIL|the run stopped before it recorded anything"; fi
+  # The scratch directory's row is added before the verdict is taken, because
+  # the verdict is taken from the facts: a directory this check could not remove
+  # is a FAIL, and a block that printed `scratch-removed: FAIL` beside `END
+  # (exit 0)` would read as a pass.
+  if [ -z "$SCRATCH" ]; then
+    facts="${facts}"$'\n'"scratch-removed|PASS|nothing was created: the run stopped before it made a scratch directory, so there is none to remove"
+  else
+    facts="${facts}"$'\n'"scratch-removed|$([ "$SCRATCH_REMOVED" = yes ] && echo PASS || echo FAIL)|the scratch directory $([ "$SCRATCH_REMOVED" = yes ] && echo "is gone" || echo "is still there, at $SCRATCH")"
+  fi
+  if printf '%s\n' "$facts" | grep -q '|FAIL|' && [ "$status" = 0 ]; then
+    status=1
+  fi
+  if [ -z "$PRINTED" ]; then
+    PRINTED=1
+    print_block "$facts" "$status"
+  fi
+  exit "$status"
+}
+
+# --------------------------------------------------------------- the guards
+guard_xtrace() {
+  if [ "$XTRACE_AT_START" = yes ]; then
+    stop "this shell is tracing (bash -x). Run it without -x: bash scripts/live-checks/check190.sh — the check prints its own RESULT block, so a trace is not needed to report a failure, and a trace of this script prints the token file's contents and the identity token it mints"
+  fi
+}
+
+guard_project() {
+  # Hard stop 1: the project and the region are the two the script just set.
+  if [ "$P" != fugaro-dev ] || [ -z "$L" ]; then
+    stop "the project and the region must be fugaro-dev and a region; P=${P} L=${L}"
+  fi
+  # Hard stop 2: this is the fugaro-dev installation, not another one.
+  #
+  # The question is doctor's project: LINE, and its exit status is not the
+  # answer to it: doctor exits 1 whenever any check of its own failed
+  # (emitDoctor returns ExitUserError, internal/cli/doctor.go), and billing,
+  # IAM and the update check have nothing to do with which installation this
+  # is — so the status is not read (`|| true`). Its output is captured rather
+  # than piped into grep for two reasons: `set -o pipefail` would put doctor's
+  # own status into the pipeline and turn a perfectly matched line into "this
+  # is not the fugaro-dev installation", and `grep -q` closes the pipe on its
+  # match while doctor is still printing — so doctor would die on the broken
+  # pipe (141) and pipefail would stop the run just the same. The stop names
+  # all three causes: a foreign checkout, a --project that disagrees with it,
+  # or a doctor that could not run here at all.
+  local doctor_out
+  doctor_out=$(fugaro doctor --project fugaro || true)
+  if ! printf '%s\n' "$doctor_out" | grep '^project: .*(GCP fugaro-dev,' >/dev/null; then
+    stop "this is not the fugaro-dev installation: fugaro doctor --project fugaro printed no 'project: ... (GCP fugaro-dev,' line. Either this is not the fugaro-dev installation, or --project fugaro disagrees with this checkout's project:, or doctor itself failed (doctor is not offline: it needs usable credentials and reads the installation's billing and IAM policy). Run 'fugaro doctor --project fugaro' here yourself and read its output before going on — this check runs on the sandbox installation only, never belong"
+  fi
+  local v
+  v=$(fugaro version 2>/dev/null | head -n 1 || true)
+  fact "fugaro-version" PASS "${v:-fugaro version printed nothing}"
+  fact "project-region" PASS "${P}/${L} (installation fugaro, sandbox only; never belong)"
+}
+
+# guard_inputs: the two inputs the check cannot invent, and the mode the token
+# file must have. The mode is checked BEFORE anything is created and before the
+# file is read: a token file another user can read is a token the owner has
+# already leaked, and this check must not be the thing that copies it into a
+# project.
+guard_inputs() {
+  case "$REPO" in
+  */*/* | "" | /* | */)
+    stop "CHECK190_REPO must be '<workspace>/<repository>' of the sandbox Bitbucket repository, and it is '${REPO:-nothing}'. Nothing was created"
+    ;;
+  */*) ;;
+  *)
+    stop "CHECK190_REPO must be '<workspace>/<repository>' of the sandbox Bitbucket repository, and it is '${REPO:-nothing}'. Nothing was created"
+    ;;
+  esac
+  fact "repo" PASS "$(repo_name) (the sandbox repository named by CHECK190_REPO; the check pushes one branch to it and deletes it again)"
+  if [ -z "$TOKEN_FILE" ]; then
+    stop "CHECK190_TOKEN_FILE must name the file holding the sandbox repository's access token (the owner writes it with 'umask 077 && pbpaste > ~/check190.token'), and it is empty. Nothing was created"
+  fi
+  if [ ! -f "$TOKEN_FILE" ]; then
+    stop "CHECK190_TOKEN_FILE names '${TOKEN_FILE}', which is not a regular file here. Nothing was created"
+  fi
+  local mode
+  # stat's mode flag is -c on GNU and -f on BSD/macOS; the owner runs this on
+  # their own machine, which may be either.
+  mode=$(stat -c %a "$TOKEN_FILE" 2>/dev/null || stat -f %Lp "$TOKEN_FILE" 2>/dev/null || true)
+  if [ "$mode" != 600 ]; then
+    stop "the token file named by CHECK190_TOKEN_FILE is mode ${mode:-unknown}, not 0600: a token file another user can read is a token that has already leaked, and this check will not copy it into a project. Write it with 'umask 077 && pbpaste > <file>' (or 'chmod 600 <file>') and run again. Nothing was created"
+  fi
+  if [ ! -s "$TOKEN_FILE" ]; then
+    stop "the token file named by CHECK190_TOKEN_FILE is empty, so there is no token to hand the proxy. Nothing was created"
+  fi
+  fact "token-file" PASS "mode 0600, non-empty, read from CHECK190_TOKEN_FILE (the path is not printed, and the value is in no log line, no argument and no block)"
+}
+
+# guard_deploy_is_iam_only is here.
+# guard_proxy_source: the proxy this check deploys is the main.go committed
+# beside it, and nothing else. A missing file is a stop before anything exists.
+guard_proxy_source() {
+  if [ ! -f "$PROXY_SRC/main.go" ]; then
+    stop "the proxy source ${PROXY_SRC}/main.go is not there, so there is nothing to build and deploy. Run this check from a checkout that carries scripts/live-checks/check190/main.go. Nothing was created"
+  fi
+  fact "proxy-source" PASS "${PROXY_SRC}/main.go (the throwaway reverse proxy, built into ${IMG})"
+}
+
+# The three existence probes, each one filtered LIST: absence is an empty list,
+# never an error string. The real gcloud says `Cannot find service [NAME]` for a
+# describe of an absent service, with no NOT_FOUND in it, so nothing here reads
+# a message. A failed list is NOT the answer "it is not there": reading one as
+# absent is how this check would adopt a service it did not create — which its
+# Restore would then DELETE — so a failed list is `unreadable` and stops the run.
+list_state() {
+  local want=$1 out rc=0
+  shift
+  out=$("$@" 2>"$SCRATCH/list.err") || rc=$?
+  out=$(printf '%s' "$out" | tr -d '\r' | sed -e 's/[[:space:]]*$//' | grep -v '^$' || true)
+  if [ "$rc" != 0 ]; then
+    printf 'unreadable'
+  elif [ -z "$out" ]; then
+    printf 'not-there'
+  elif [ "$out" = "$want" ]; then
+    printf 'there'
+  else
+    printf 'unreadable'
+  fi
+}
+
+svc_state() {
+  list_state "${SVC:?}" gcloud run services list --project="${P:?}" --region="${L:?}" \
+    --filter="metadata.name=${SVC}" --format='value(metadata.name)'
+}
+repo_state() {
+  list_state "projects/${P:?}/locations/${L:?}/repositories/${SVC:?}" gcloud artifacts repositories list \
+    --project="${P:?}" --location="${L:?}" --filter="name~/repositories/${SVC}\$" --format='value(name)'
+}
+secret_state() {
+  list_state "${SECRET:?}" gcloud secrets list --project="${P:?}" \
+    --filter="name:${SECRET}" --format='value(name)'
+}
+
+guard_resources() {
+  # Hard stop: neither the service nor the repository nor the secret is already
+  # there — unless it is the one this check created, recorded right after its
+  # create.
+  local st
+  st=$(svc_state)
+  if [ "$st" = unreadable ]; then
+    stop "whether ${SVC} is already in ${P}/${L} cannot be read: the list failed (an expired session, a transient API error, or a permission this account does not hold), and a failed call is not the answer 'it is not there'. This guard is what stops this check adopting a service it did not create — one its Restore would then DELETE — so the run stops here rather than guessing. Run 'gcloud run services list --project=${P} --region=${L} --filter=metadata.name=${SVC}' by hand and read its answer, then run this check again. Nothing was created"
+  fi
+  if [ "$st" = there ]; then
+    [ -f "$SERVICE_MINE" ] \
+      || stop "${SVC} already exists in ${P}/${L}, and it is not this check's. This check deletes what it creates and never adopts a service it did not create; delete it yourself if you know it is yours, or give this check a different name, then run again"
+  fi
+  local rp
+  rp=$(repo_state)
+  if [ "$rp" = unreadable ]; then
+    stop "whether a repository named ${SVC} is already in ${P}/${L} cannot be read: the list failed, and a failed call is not the answer 'it is not there'. Run 'gcloud artifacts repositories list --project=${P} --location=${L}' by hand and read its answer, then run this check again. Nothing was created"
+  fi
+  if [ "$rp" = there ]; then
+    [ -f "$REPO_MINE" ] \
+      || stop "a repository named ${SVC} is already in ${P}/${L}, and it is not this check's: this check never adopts, writes into or deletes a repository it did not create. Look at it first (gcloud artifacts docker images list ${L}-docker.pkg.dev/${P}/${SVC} --include-tags --project=${P}) and delete it yourself if it holds nothing but an earlier attempt's image; otherwise give this check a different name. Then run again"
+  fi
+  local sc
+  sc=$(secret_state)
+  if [ "$sc" = unreadable ]; then
+    stop "whether a secret named ${SECRET} is already in ${P} cannot be read: the list failed, and a failed call is not the answer 'it is not there'. Run 'gcloud secrets list --project=${P} --filter=name:${SECRET}' by hand and read its answer, then run this check again. Nothing was created"
+  fi
+  if [ "$sc" = there ]; then
+    [ -f "$SECRET_MINE" ] \
+      || stop "a secret named ${SECRET} is already in ${P}, and it is not this check's: this check never writes into or deletes a secret it did not create, and it will not overwrite one that may hold a real token. Delete it yourself if you know it is a leftover of an earlier attempt, then run again"
+  fi
+  fact "baseline" PASS "no service, repository or secret of this check's names was in ${P} when it started"
+}
+
+# ------------------------------------------------------------- credentials
+# The identity token every request carries, minted FRESH FOR EACH STEP: one
+# minted here expires within the hour, and the idle wait plus the slow push take
+# longer than that — and every 401 that would cause reads exactly like a
+# permission the front end is enforcing. The value is never printed and never on
+# a command line: it goes into two 0600 files, the curl config the probes name
+# with --config and the git config every git command names with
+# GIT_CONFIG_GLOBAL.
+mint_idt() {
+  local tok
+  tok=$(gcloud auth print-identity-token) || return 1
+  (umask 077 && printf 'header = "Authorization: Bearer %s"\n' "$tok" >"$AUTH_CONF") || return 1
+  chmod 600 "$AUTH_CONF" || return 1
+  # user.name and user.email are in here because GIT_CONFIG_GLOBAL replaces the
+  # owner's ~/.gitconfig: without them the commit this check makes in the clone
+  # fails for want of an identity, and asking git for one would mean reading a
+  # config this check deliberately does not read.
+  (umask 077 && printf '[http]\n\textraHeader = Authorization: Bearer %s\n[user]\n\tname = check190\n\temail = check190@example.invalid\n' "$tok" >"$GIT_CONF") || return 1
+  chmod 600 "$GIT_CONF" || return 1
+  unset tok
+  return 0
+}
+
+# run_git DIR ARGS...: every git command goes through here, so every one of them
+# carries GIT_CONFIG_GLOBAL (the 0600 file with the identity token and no
+# credential helper of the owner's) and GIT_TERMINAL_PROMPT=0 (a prompt would
+# hang a headless run for ever rather than fail it).
+run_git() {
+  local dir=$1
+  shift
+  GIT_TERMINAL_PROMPT=0 GIT_CONFIG_GLOBAL="$GIT_CONF" GIT_CONFIG_NOSYSTEM=1 \
+    git -C "$dir" -c credential.helper= "$@"
+}
+
+repo_name() { printf '%s' "$REPO"; }
+branch_name() { printf 'chk190/%s' "$NAME"; }
+git_url() { printf 'https://%s/%s.git' "$HOST" "$REPO"; }
+
+# fetch_stats: the proxy's own counters — requests, bytes in, bytes out — which
+# is what the clone and push rows are measured in. The proxy logs one line per
+# request and serves the aggregate at /chk190/stats; both carry counts and sizes
+# only, never a header and never a body.
+fetch_stats() {
+  curl -sS --max-time "$CURL_SECONDS" --config "$AUTH_CONF" "https://${HOST}/chk190/stats" 2>/dev/null
+}
+
+# fetch_health: the instance that answered and when its process started. This is
+# the check's own service answering about itself — no upstream traffic, no token
+# and no body of the owner's repository is involved.
+fetch_health() {
+  curl -sS --max-time "$CURL_SECONDS" --config "$AUTH_CONF" "https://${HOST}/chk190/health" 2>/dev/null
+}
+
+field_of() { # field_of TEXT NAME: the value of NAME= in TEXT, or nothing
+  printf '%s' "$1" | tr ' ' '\n' | sed -n "s/^$2=//p" | head -n 1
+}
+
+# stats_delta BEFORE AFTER: "N requests, X bytes in, Y bytes out, between the two
+# readings" — the numbers the clone and push rows are made of.
+stats_delta() {
+  local b_req b_in b_out a_req a_in a_out
+  b_req=$(field_of "$1" requests)
+  b_in=$(field_of "$1" in)
+  b_out=$(field_of "$1" out)
+  a_req=$(field_of "$2" requests)
+  a_in=$(field_of "$2" in)
+  a_out=$(field_of "$2" out)
+  awk -v r1="${b_req:-0}" -v i1="${b_in:-0}" -v o1="${b_out:-0}" \
+    -v r2="${a_req:-0}" -v i2="${a_in:-0}" -v o2="${a_out:-0}" \
+    'BEGIN { printf "%d request(s), %d bytes in, %d bytes out", r2-r1, i2-i1, o2-o1 }'
+}
+
+# ------------------------------------------------------ the build and the deploy
+write_dockerfile() {
+  # A throwaway image for a throwaway service: the Go tag matches go.mod's own
+  # `go` directive, the module is made in the image (the proxy is standard
+  # library only and imports nothing outside it), and the binary is the
+  # entrypoint. Nothing here is part of the repository's own images.
+  cat >"$SCRATCH/build/Dockerfile" <<'DOCKER_EOF'
+FROM golang:1.27-alpine
+WORKDIR /src
+COPY main.go ./
+RUN go mod init chk190 && CGO_ENABLED=0 go build -o /chk190 .
+ENV PORT=8080
+ENTRYPOINT ["/chk190"]
+DOCKER_EOF
+}
+
+step_build_deploy() {
+  # The build account: this check never builds as the project's default Compute
+  # account, which on fugaro-dev has had roles/editor removed. It reads the
+  # installation's own build accounts and takes the first, or the one
+  # CHECK190_BUILD_SA names.
+  if [ -z "$BUILD_SA" ]; then
+    BUILD_SA=$(gcloud iam service-accounts list --project="${P:?}" \
+      --filter='email~^fugaro-b-' --format='value(email)' 2>/dev/null | head -n 1 || true)
+  fi
+  if [ -z "$BUILD_SA" ]; then
+    stop "no build service account was found: this check builds the proxy as one of the installation's own accounts (fugaro-b-*), never as the project's default Compute account, and 'gcloud iam service-accounts list --project=${P} --filter=email~^fugaro-b-' printed none. Name one with CHECK190_BUILD_SA=<account>@${P}.iam.gserviceaccount.com and run again. Nothing was created"
+  fi
+  say "building as ${BUILD_SA} (roles/artifactregistry.writer on the project, roles/storage.objectViewer on gs://${P}_cloudbuild, roles/logging.logWriter)"
+
+  # The token's own container, created from the file with --data-file: the value
+  # is in no argv, no log line and no environment variable of the service. The
+  # record is written BEFORE the create, so a run killed in between still leaves
+  # the Restore something that says the secret is this check's.
+  : >"$SECRET_MINE"
+  if ! gcloud secrets create "${SECRET:?}" --project="${P:?}" --replication-policy=automatic \
+    --data-file="${TOKEN_FILE:?}" --quiet >&2; then
+    rm -f "$SECRET_MINE" || true
+    stop "the secret container ${SECRET} could not be created in ${P}, so there is nothing for the proxy to attach. Nothing was deployed and nothing else was created"
+  fi
+  # Cloud Run reads the mounted secret as the service's runtime account, which
+  # is the project's default Compute account unless the deploy names another;
+  # the binding is on this check's own secret, so deleting the secret in the
+  # Restore takes the binding with it.
+  local number runtime_sa
+  number=$(gcloud projects describe "${P:?}" --format='value(projectNumber)' 2>/dev/null || true)
+  if [ -z "$number" ]; then
+    stop "the project number of ${P} cannot be read, so the service's runtime account cannot be named and the mounted secret could not be read by the service. Nothing else was created; the secret container ${SECRET} is deleted by this run's Restore"
+  fi
+  runtime_sa="${number}-compute@developer.gserviceaccount.com"
+  if ! gcloud secrets add-iam-policy-binding "${SECRET:?}" --project="${P:?}" \
+    --member="serviceAccount:${runtime_sa}" --role=roles/secretmanager.secretAccessor --quiet >&2; then
+    stop "the service's runtime account ${runtime_sa} could not be granted roles/secretmanager.secretAccessor on ${SECRET}, so the deployed service could not read the token it attaches. Nothing was deployed; the secret container is deleted by this run's Restore"
+  fi
+
+  # The registry repository the image tag needs. Same record-before-create rule
+  # as the secret, and a create that FAILED takes its record back only when the
+  # repository really is not there.
+  local rp
+  rp=$(repo_state)
+  if [ "$rp" = there ]; then
+    [ -f "$REPO_MINE" ] \
+      || stop "a repository named ${SVC} is in ${P}/${L} and it is not this check's — this check creates its own and never adopts one. Nothing was written"
+  else
+    : >"$REPO_MINE"
+    if ! gcloud artifacts repositories create "${SVC:?}" --project="${P:?}" --location="${L:?}" \
+      --repository-format=docker \
+      --description="throwaway: Check 190's image repository (fugaro-chk190), deleted by its own Restore" --quiet >&2; then
+      local made
+      made=$(repo_state)
+      if [ "$made" = there ]; then
+        stop "the repository create reported failure, but ${SVC} IS there now, so it is this check's: the record says so and this run's Restore deletes it. Nothing else ran"
+      fi
+      if [ "$made" = unreadable ]; then
+        stop "the repository create reported failure and whether ${SVC} is there now cannot be read (the list failed), so the record of it is KEPT: a create that reported failure may still have made the repository, and the record is what makes this run's Restore delete it. Check 'gcloud artifacts repositories list --project=${P} --location=${L}' by hand; if the repository is there, delete it yourself. Nothing else ran"
+      fi
+      rm -f "$REPO_MINE" || true
+      stop "the repository create failed and ${SVC} is not there, so this run made no repository: the record of it is removed again, and the secret container is deleted by this run's Restore"
+    fi
+  fi
+
+  mkdir -p "$SCRATCH/build"
+  cp "$PROXY_SRC/main.go" "$SCRATCH/build/main.go" || stop "the proxy source could not be copied into the scratch directory"
+  write_dockerfile
+  say "building ${IMG} (gcloud builds submit). If it offers to CREATE anything — the staging bucket, an API, a grant — say NO, stop, and report it: those are the installation's and are not this check's to accept"
+  BUILD_ATTEMPTED=yes
+  local build_rc=0
+  gcloud builds submit --project="${P:?}" --tag="${IMG:?}" \
+    --service-account="projects/${P}/serviceAccounts/${BUILD_SA}" \
+    --gcs-source-staging-dir="${STAGING_PREFIX:?}" "$SCRATCH/build" \
+    >&2 2>"$SCRATCH/build.err" || build_rc=$?
+  if [ "$build_rc" != 0 ]; then
+    fact "build-error" FAIL "gcloud builds submit (as ${BUILD_SA}) exited ${build_rc}: $(git_error_excerpt build). Likely causes, most likely first: the identity the build ran as cannot read the source this run staged at ${STAGING_PREFIX} (storage.objects.get; roles/storage.objectViewer on gs://${P}_cloudbuild); it cannot WRITE the image to Artifact Registry (artifactregistry.repositories.uploadArtifacts; roles/artifactregistry.writer on the project, since ${SVC} is created by this run); YOUR account lacks roles/iam.serviceAccountUser on it; the Cloud Build API is not enabled in ${P}; or the Go tag in the Dockerfile is not a tag that registry has. The grants are the installation's IAM, not this check's to change. Nothing was deployed, and the repository, the image, the staged source and the secret container are deleted by this run's Restore"
+    stop "the build failed (exit ${build_rc}), so nothing was deployed: the block's build-error row carries what gcloud said"
+  fi
+
+  # Same rule as the secret's record above: a deploy that is interrupted is the
+  # ordinary way to be left with a service that bills, so the record that says
+  # the service is this check's is on disk BEFORE the deploy starts, and a
+  # deploy that FAILED takes it back.
+  : >"$SERVICE_MINE"
+  if ! gcloud run deploy "${SVC:?}" "${DEPLOY_FLAGS[@]}" --quiet >&2; then
+    local deployed
+    deployed=$(svc_state)
+    if [ "$deployed" = there ]; then
+      stop "the deploy reported failure, but ${SVC} IS there now, so it is this check's: the record says so and this run's Restore deletes it, with the image, the repository and the secret"
+    fi
+    if [ "$deployed" = unreadable ]; then
+      stop "the deploy reported failure and whether ${SVC} is there now cannot be read (the list failed), so the record of it is KEPT: a deploy that reported failure may still be serving and being billed, and the record is what makes this run's Restore delete it. Check 'gcloud run services list --project=${P} --region=${L} --filter=metadata.name=${SVC}' by hand; if the service is there, delete it yourself. Nothing else ran"
+    fi
+    rm -f "$SERVICE_MINE" || true
+    stop "the deploy failed and ${SVC} is not there, so nothing of this check's is running: the record is removed again, and the image, the repository, the staged source and the secret container are deleted by this run's Restore"
+  fi
+  local url_err=$SCRATCH/url.err
+  URL=$(gcloud run services describe "${SVC:?}" --project="${P:?}" --region="${L:?}" --format='value(status.url)' 2>"$url_err") \
+    || stop "the deployed service's URL cannot be read: 'gcloud run services describe ${SVC} --format=value(status.url)' failed with $(tail -n 1 "$url_err" | tr -d '\r' | tr '\n' ' '). The service IS deployed and IS this check's — the record says so, and this run's Restore deletes it, with the image, the repository and the secret. Nothing else ran"
+  [ -n "$URL" ] || stop "the service has no URL"
+  HOST=${URL#https://}
+  HOST=${HOST%%/*}
+  local cfg
+  cfg=$(gcloud run services describe "${SVC:?}" --project="${P:?}" --region="${L:?}" \
+    --format='value(spec.template.spec.containers[0].image,spec.template.spec.timeoutSeconds)' 2>/dev/null | tr '\n' ' ' || true)
+  fact "service-config" PASS "image ${cfg:-$IMG}; --timeout=3600 --min-instances=0 --max-instances=1; the token is mounted as the file /chk190/token and is in no environment variable; URL https://${HOST}"
+
+  # The IAM assertion the plan requires BEFORE any request is sent: the
+  # service's own policy must name no public member. A throwaway service that
+  # answered unauthenticated calls would put the sandbox repository's token
+  # behind a public URL, so this is a stop, not a warning.
+  local pol pol_err=$SCRATCH/iam.err
+  pol=$(gcloud run services get-iam-policy "${SVC:?}" --project="${P:?}" --region="${L:?}" --format=json 2>"$pol_err") \
+    || stop "the deployed service's IAM policy cannot be read: 'gcloud run services get-iam-policy ${SVC} --format=json' failed with $(tail -n 1 "$pol_err" | tr -d '\r' | tr '\n' ' '). No request has been sent, and the service IS this check's — this run's Restore deletes it, with the image, the repository and the secret"
+  case "$pol" in
+  *allUsers* | *allAuthenticatedUsers*)
+    stop "the deployed service's IAM policy names a public member (allUsers or allAuthenticatedUsers), so the proxy is reachable by anyone and the token it attaches is behind a public URL. No request was sent. The service, the image, the repository and the secret are deleted by this run's Restore; report this, and check 'gcloud run services get-iam-policy ${SVC} --project=${P} --region=${L}' by hand"
+    ;;
+  esac
+  fact "iam-policy" PASS "get-iam-policy on ${SVC} names no allUsers and no allAuthenticatedUsers member, read BEFORE any request was sent: the service requires IAM"
+
+  # An unauthenticated call must be refused: that is the second half of the same
+  # assertion, and it is the register's own wording.
+  local code
+  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time "$CURL_SECONDS" "${URL}/chk190/health" 2>/dev/null || true)
+  case "$code" in
+  401 | 403) fact "unauthenticated-request" PASS "an unauthenticated GET /chk190/health was refused with ${code}" ;;
+  *) fact "unauthenticated-request" FAIL "an unauthenticated GET /chk190/health answered ${code:-nothing}, so the service does not refuse unauthenticated calls — stop and fix the deployment before trusting anything else here" ;;
+  esac
+}
+
+# ------------------------------------------------------------------- the clones
+step_clone() {
+  mint_idt || stop "no identity token can be minted here, so no request can be authorised"
+  local before after t0 t1
+  before=$(fetch_stats)
+  [ -n "$before" ] || stop "the proxy's own counters cannot be read (GET /chk190/stats answered nothing), so a clone's request count and bytes could not be measured. The service IS this check's; this run's Restore deletes it"
+  t0=$(date +%s)
+  if ! run_git "$SCRATCH" clone --quiet "$(git_url)" "$SCRATCH/full" 2>"$SCRATCH/clone-full.err"; then
+    fact "clone-full" FAIL "a full clone through the proxy failed: $(git_error_excerpt clone-full)"
+    stop "the full clone failed, so the proxy does not serve a fetch end to end: the block's clone-full row carries what git said. Nothing else ran"
+  fi
+  t1=$(date +%s)
+  after=$(fetch_stats)
+  fact "clone-full" PASS "a full clone through the proxy took $((t1 - t0)) s and cost $(stats_delta "$before" "$after")"
+
+  before=$(fetch_stats)
+  t0=$(date +%s)
+  if ! run_git "$SCRATCH" clone --quiet --filter=blob:none "$(git_url)" "$SCRATCH/blobless" 2>"$SCRATCH/clone-blobless.err"; then
+    fact "clone-blobless" FAIL "a blobless clone through the proxy failed: $(git_error_excerpt clone-blobless)"
+    stop "the blobless clone failed. The full clone's row is in the block"
+  fi
+  t1=$(date +%s)
+  after=$(fetch_stats)
+  # The point of this row (F14): a blobless clone is cheaper in bytes and dearer
+  # in requests, and it is the requests — each one a Cloud Run request with an
+  # identity check and an audit line — that the design pays for.
+  fact "clone-blobless" PASS "a blobless clone (--filter=blob:none) took $((t1 - t0)) s and cost $(stats_delta "$before" "$after")"
+}
+
+# -------------------------------------------------------------------- the pushes
+step_push_small() {
+  local dir=$SCRATCH/full
+  mint_idt || stop "no identity token can be minted here, so the push cannot be authorised"
+  run_git "$dir" checkout --quiet -b "$(branch_name)" || stop "the branch chk190/${NAME} cannot be made in the clone"
+  printf 'check 190: a small push through the proxy\n' >"$dir/chk190-small.txt"
+  run_git "$dir" add chk190-small.txt || stop "the small file could not be staged"
+  run_git "$dir" commit --quiet -m "check 190: a small push through the proxy" || stop "the small commit could not be made"
+  # The record that a branch of this check's is on the sandbox repository: it is
+  # written before the push, so a push that fails half way is still cleaned up.
+  : >"$PUSHED"
+  if run_git "$dir" push --quiet origin "$(branch_name)" 2>"$SCRATCH/push-small.err"; then
+    fact "push-small" PASS "a small push of branch chk190/${NAME} through the proxy succeeded"
+  else
+    fact "push-small" FAIL "a small push through the proxy failed: $(git_error_excerpt push-small)"
+    stop "the small push failed, so the proxy does not serve a push at all: nothing about the large push could be measured. The branch is deleted by this run's Restore"
+  fi
+}
+
+step_push_big() {
+  local dir=$SCRATCH/full bytes t0 t1 rc=0 before after
+  mint_idt || stop "no identity token can be minted here, so the push cannot be authorised"
+  bytes=$((BIG_MIB * 1048576))
+  # Incompressible on purpose: a pack of zeros would be a few hundred bytes on
+  # the wire whatever its size on disk, and the limit this row measures is a
+  # limit on the bytes sent.
+  head -c "$bytes" /dev/urandom >"$dir/chk190-big.bin" \
+    || stop "the ${BIG_MIB} MiB file for the large push could not be written"
+  run_git "$dir" add chk190-big.bin || stop "the large file could not be staged"
+  run_git "$dir" commit --quiet -m "check 190: a push above 32 MiB" || stop "the large commit could not be made"
+  before=$(fetch_stats)
+  say "pushing a ${BIG_MIB} MiB pack on HTTP/1.1 (git uses a chunked body above http.postBuffer, which is 1 MiB by default): this is the row the whole check exists for"
+  t0=$(date +%s)
+  # HTTP/1.1 on purpose: the question is whether Cloud Run's front end accepts a
+  # chunked body above 32 MiB on it, and HTTP/2 would answer a different one.
+  run_git "$dir" -c http.version=HTTP/1.1 push --quiet origin "$(branch_name)" 2>"$SCRATCH/push-big.err" || rc=$?
+  t1=$(date +%s)
+  after=$(fetch_stats)
+  local answer
+  answer=$(git_error_excerpt push-big)
+  if [ "$rc" = 0 ]; then
+    # The gate B0.5 names: with this row PASS, S1 is built on HTTP/1.1.
+    fact "push-big-http1" PASS "a ${BIG_MIB} MiB pack pushed on HTTP/1.1 in $((t1 - t0)) s; the proxy received $(stats_delta "$before" "$after"). The front end accepted a chunked body above 32 MiB, so the proxy path stays HTTP/1.1"
+  else
+    fact "push-big-http1" FAIL "a ${BIG_MIB} MiB pack on HTTP/1.1 was refused after $((t1 - t0)) s; git exited ${rc} and said: ${answer}. The proxy received $(stats_delta "$before" "$after") — if the bytes it received are far below ${BIG_MIB} MiB, the front end refused the body before the container saw it. This is the gate: S1 must serve h2c end to end (B1.0, B1.5) before the proxy is built on HTTP/1.1"
+  fi
+}
+
+# ---------------------------------------------------------------- the cold start
+sleep_bg() { # sleep_bg SECONDS: interruptible, so a Ctrl-C during a 35-minute
+  # wait ends the run at once rather than after the sleep.
+  sleep "$1" &
+  WAIT_PID=$!
+  wait "$WAIT_PID" || true
+  WAIT_PID=""
+}
+
+step_cold_start() {
+  mint_idt || stop "no identity token can be minted here, so the cold-start probe cannot be authorised"
+  local before_h after_h t0 t1
+  before_h=$(fetch_health)
+  [ -n "$before_h" ] || stop "the proxy's health cannot be read (GET /chk190/health answered nothing), so a cold start could not be told from a warm answer. The service IS this check's; this run's Restore deletes it"
+  owner "idle wait: ${IDLE_SECONDS} s — the instance has to be reclaimed before the next request can be a cold start"
+  sleep_bg "$IDLE_SECONDS"
+  # The first request after idle is a GIT request, because that is the cold start
+  # the design pays for (U8): the service is the first hop of every fetch and push.
+  t0=$(date +%s)
+  run_git "$SCRATCH" ls-remote --heads "$(git_url)" >"$SCRATCH/lsremote.out" 2>"$SCRATCH/lsremote.err" || true
+  t1=$(date +%s)
+  after_h=$(fetch_health)
+  [ -n "$after_h" ] || stop "the proxy's health cannot be read after the idle wait"
+  local s1 s2
+  s1=$(field_of "$before_h" start)
+  s2=$(field_of "$after_h" start)
+  if [ -n "$s1" ] && [ -n "$s2" ] && [ "$s1" != "$s2" ]; then
+    fact "cold-start" PASS "the first git request after ${IDLE_SECONDS} s idle took $((t1 - t0)) s and was answered by a NEW instance (start ${s1} → ${s2}), so the figure is a cold start"
+  else
+    fact "cold-start" FAIL "the first git request after ${IDLE_SECONDS} s idle took $((t1 - t0)) s but the SAME instance answered it (start ${s1:-nothing} → ${s2:-nothing}), so this is a warm figure and not a cold start. The service scales to zero (D501), so either the idle wait is shorter than the platform's own, or an instance was kept alive; re-run with a longer CHECK190_IDLE_SECONDS"
+  fi
+}
+
+# ----------------------------------------------------------------- the slow push
+step_slow_push() {
+  local dir=$SCRATCH/full url t0 t1 rc=0
+  mint_idt || stop "no identity token can be minted here, so the slow push cannot be authorised"
+  # Through the proxy's own stall prefix: the proxy holds the receive-pack POST
+  # open for CHECK190_SLOW_SECONDS before it reads it, which is what makes this
+  # a slow push rather than a large one. The GET of info/refs is not stalled, so
+  # the request that hangs is the push itself.
+  url="https://${HOST}/chk190-slow/${REPO}.git"
+  printf 'check 190: a push the front end has to time out\n' >"$dir/chk190-slow.txt"
+  run_git "$dir" add chk190-slow.txt || stop "the slow file could not be staged"
+  run_git "$dir" commit --quiet -m "check 190: a slow push" || stop "the slow commit could not be made"
+  say "slow push: the proxy holds this one receive-pack open for ${SLOW_SECONDS} s, and the front end's own limit is 3600 s"
+  t0=$(date +%s)
+  # http.lowSpeedTime is this side's own cap, set beyond the stall so the front
+  # end's answer is what ends the request when the front end cuts it: without it
+  # a run that the front end never cuts would hang for ever.
+  run_git "$dir" -c http.version=HTTP/1.1 -c http.lowSpeedLimit=1 -c "http.lowSpeedTime=$((SLOW_SECONDS + 120))" \
+    push --quiet "$url" "HEAD:refs/heads/$(branch_name)-slow" 2>"$SCRATCH/push-slow.err" || rc=$?
+  t1=$(date +%s)
+  local took=$((t1 - t0)) answer
+  answer=$(git_error_excerpt push-slow)
+  if [ "$rc" = 0 ]; then
+    fact "timeout-3600" FAIL "a receive-pack held open for ${SLOW_SECONDS} s COMPLETED in ${took} s, so the front end did not end the request: the 3600 s timeout the proxy's design assumes is not enforced on this path"
+  elif [ "$took" -ge 3400 ] && [ "$took" -le 3720 ]; then
+    fact "timeout-3600" PASS "a receive-pack held open by the proxy was ended by the front end after ${took} s (the service's own --timeout is 3600); git exited ${rc} and said: ${answer}"
+  else
+    fact "timeout-3600" INFO "a receive-pack held open by the proxy ended after ${took} s, which is not the 3600 s front-end limit (3400–3720 s counts as it); git exited ${rc} and said: ${answer}. This side's own cap is $((SLOW_SECONDS + 120)) s, so a figure at that cap means the front end did not cut the request"
+  fi
+}
+
+# print_plan: what a real run would run, in order, and what its Restore would
+# delete. Printed by --dry-run; nothing here is run.
+print_plan() {
+  say "dry run: NOTHING below was run. A real run would run, in this order:"
+  say "  [network, writes] gcloud secrets create ${SECRET} --project=${P} --data-file=<CHECK190_TOKEN_FILE>"
+  say "  [network, writes] gcloud secrets add-iam-policy-binding ${SECRET} --project=${P} --member=serviceAccount:<project-number>-compute@developer.gserviceaccount.com --role=roles/secretmanager.secretAccessor"
+  say "  [network, writes] gcloud artifacts repositories create ${SVC} --project=${P} --location=${L} --repository-format=docker"
+  say "  [network, writes] gcloud builds submit --project=${P} --tag=${IMG} --service-account=<build account> --gcs-source-staging-dir=${STAGING_PREFIX} ${SCRATCH}/build"
+  say "  [network, writes] gcloud run deploy ${SVC} ${DEPLOY_FLAGS[*]}"
+  say "  [network] the probes: identity-token requests with curl to the service's own /chk190/stats and /chk190/health, and git clone (full and blobless), git push (small and above ${BIG_MIB} MiB on HTTP/1.1) and the slow push, all through the proxy to bitbucket.org"
+  say "  [network, writes] one branch on $(repo_name): chk190/${NAME}, and its -slow sibling if that push ever completes"
+  say "and its Restore (also from the exit trap) would run:"
+  say "  [network, deletes] git push --delete the branches chk190/${NAME} and chk190/${NAME}-slow"
+  say "  [network, deletes] gcloud run services delete ${SVC} --project=${P} --region=${L}"
+  say "  [network, deletes] gcloud artifacts docker images delete ${IMG} --project=${P} --delete-tags"
+  say "  [network, deletes] gcloud artifacts repositories delete ${SVC} --project=${P} --location=${L}"
+  say "  [network, deletes] gcloud secrets delete ${SECRET} --project=${P}"
+  say "  [network, deletes] gcloud storage rm -r ${STAGING_PREFIX}"
+  say "What needed the network and your credentials in THIS dry run: fugaro doctor, the lists that ask whether the service, the repository and the secret are there, and the build-account list (all reads). Local only: the scratch directory and the Dockerfile in it."
+}
+
+main() {
+  need_tools
+  scratch_up
+  guard_xtrace
+  guard_project
+  guard_inputs
+  guard_proxy_source
+  guard_resources
+
+  if [ -n "$DRY_RUN" ]; then
+    print_plan
+    fact "dry-run" PASS "guards and the baseline only; the commands a real run would run and its cleanup commands were printed, not run"
+    return 0
+  fi
+
+  step_build_deploy
+  step_clone
+  step_push_small
+  step_push_big
+  step_cold_start
+  step_slow_push
+}
+
+# The block's shape does not depend on how far the run got: the keys below are
+# printed in this order whatever happened, one that was never reached reads
+# FAIL — not reached, and any other recorded key follows, in the order the run
+# recorded it. That is what makes the block safe to diff between two runs.
+BLOCK_KEYS=(fugaro-version project-region repo token-file proxy-source baseline scratch
+  service-config iam-policy unauthenticated-request clone-full clone-blobless push-small
+  push-big-http1 cold-start timeout-3600 branch-deleted restore scratch-removed)
+
+print_block() { # print_block FACTS STATUS — always on the owner's own stdout
+  local facts=$1 status=$2
+  local key printed=""
+  printf '\nCHECK 190 RESULT\n' >&3
+  for key in "${BLOCK_KEYS[@]}"; do
+    local line
+    line=$(printf '%s\n' "$facts" | grep -m1 "^$key|" || true)
+    if [ -n "$line" ]; then
+      printf 'FACT %s: %s — %s\n' "$key" \
+        "$(printf '%s' "$line" | cut -d'|' -f2)" \
+        "$(printf '%s' "$line" | cut -d'|' -f3-)" >&3
+    else
+      printf 'FACT %s: FAIL — not reached (the run stopped before this step)\n' "$key" >&3
+    fi
+    printed="$printed$key"$'\n'
+  done
+  printf '%s\n' "$facts" | while IFS='|' read -r key verdict detail; do
+    [ -n "$key" ] || continue
+    case $'\n'"$printed" in *$'\n'"$key"$'\n'*) continue ;; esac
+    printf 'FACT %s: %s — %s\n' "$key" "$verdict" "$detail" >&3
+  done
+  printf 'CHECK 190 RESULT END (exit %s)\n' "$status" >&3
+}
+
+# interrupted: end the idle wait FIRST, then leave. It is a background job this
+# shell is waiting on, and the trap runs as soon as the signal arrives because
+# `wait` is interruptible — killing it here is what keeps the Restore from being
+# held behind a sleep that has 30 minutes left. The rest is the same path as
+# before: exit 130, and the EXIT trap runs the Restore and prints the block.
+interrupted() {
+  local pid
+  for pid in ${WAIT_PID:-}; do
+    kill "$pid" 2>/dev/null || true
+  done
+  WAIT_PID=""
+  owner "interrupted"
+  exit 130
+}
+
+# on_signal: the ONE signal handler, armed for the whole run and never disarmed
+# — including through the cleanup, which is where its second answer matters. A
+# second Ctrl-C during the Restore (or a closing terminal's SIGHUP) would
+# otherwise kill this shell mid-cleanup: the service can be deleted while the
+# image, the repository and the secret are not, the counts are never read, and
+# the RESULT block that says what was left behind is never printed.
+on_signal() {
+  if [ "$CLEANUP_RUNNING" = yes ]; then
+    owner "cleanup is running, do not press Ctrl-C again"
+    return 0
+  fi
+  interrupted
+}
+
+trap finish EXIT
+trap on_signal INT TERM HUP
+main "$@"
