@@ -667,6 +667,53 @@ export interface LiveReviewRow {
   readonly age: Reading
 }
 
+/**
+ * LiveFleet is the fleet budget panel's own figures: everything the panel draws
+ * that is not one of `total`'s readings, and nothing a decoder carries.
+ *
+ * The three counts are taken over the **rows this model built** rather than over
+ * `total.runs`: the total's count is the CLI's, and a row the console could not
+ * place (an orphan) is still a run that is spending, so a panel that counted the
+ * CLI's number would disagree with the list under it. `heartbeatLost` is the
+ * same observation one row at a time -- any drawn run carrying the `lost` flag
+ * (`runFlags`, which is the only thing that turns the document's `health` enum
+ * into a flag) -- and it is a fact about the fleet, not about one row: a panel
+ * that drew "3 active" over a screen where one of them has lost its heartbeat
+ * would be reporting a count nobody can act on.
+ */
+export interface LiveFleet {
+  /** what is left of today's cap: `daily_cap_usd - counted_usd`, floored at
+   * zero, and `unavailable` when either side is not a measurement */
+  readonly headroom: Reading
+  readonly burn: Reading
+  readonly active: number
+  readonly queued: number
+  readonly heartbeatLost: boolean
+}
+
+/**
+ * headroomOf is the cap less what has been counted against it.
+ *
+ * **The floor is zero and not a signed number.** `counted` is open leases plus
+ * settled spend and a cap that is over-committed is a real state (the queue
+ * holds runs until a lease settles), but "minus $4.00 of headroom" is not an
+ * amount anyone can spend, and a negative width on the bar would draw the fill
+ * running backwards out of its own track. An unmeasured side gives `unavailable`
+ * with the console's own reason: a cap nobody read and a spend nobody counted
+ * are both "the console cannot say", and neither is a headroom of zero.
+ */
+export function headroomOf(cap: Reading, counted: Reading): Reading {
+  const limit = cap.value
+  const used = counted.value
+  if (limit === null) {
+    return unavailable('the document carries no total.daily_cap_usd, so the console cannot say what is left of the cap')
+  }
+  if (used === null) {
+    return unavailable('the document carries no total.counted_usd, so the console cannot say what is left of the cap')
+  }
+  return measured(Math.max(0, limit - used))
+}
+
 /** LiveModel is the whole screen as data. */
 export interface LiveModel {
   readonly project: string
@@ -675,6 +722,9 @@ export interface LiveModel {
   readonly now: string
   readonly connection: LiveConnection
   readonly total: TotalsView
+  /** fleet is the budget panel's own figures, derived here rather than decoded
+   * (`LiveFleet`) */
+  readonly fleet: LiveFleet
   readonly repos: readonly LiveRepoRow[]
   /** runs the document lists whose slug names no repository block. The CLI
    * never writes one (`BuildJSON` appends a run inside its repository's loop),
@@ -846,6 +896,12 @@ export function buildLiveModel(
   feed: FeedHealth | null = null,
   rigor: ReadonlyMap<string, RigorView> = NO_RIGOR,
 ): LiveModel {
+  // Every run row is built once and the row lists and the fleet's counts are
+  // both read off these, so the panel counts exactly the runs the screen draws:
+  // a run the console could not place under a repository is in `orphans` and is
+  // still a run that is spending.
+  const runRows = document.runs.map((run) => ({ slug: run.slug, row: rowOf(run, rigor) }))
+
   const repos: LiveRepoRow[] = document.repos.map((repo) => {
     const burn = burnReading(repo.burn)
     // The document's sample is observed once, at the document's own stamp, and
@@ -888,12 +944,26 @@ export function buildLiveModel(
       burnFast: repo.burn.fast,
       spark: sparkline(history, repo.slug, at),
       kill: repo.kill,
-      runs: document.runs.filter((run) => run.slug === repo.slug).map((run) => rowOf(run, rigor)),
+      runs: runRows.filter((entry) => entry.slug === repo.slug).map((entry) => entry.row),
     }
   })
 
   const known = new Set(document.repos.map((repo) => repo.slug))
-  const orphans = document.runs.filter((run) => !known.has(run.slug)).map((run) => rowOf(run, rigor))
+  const orphans = runRows.filter((entry) => !known.has(entry.slug)).map((entry) => entry.row)
+
+  // The fleet's counts, over the rows above. A queued run has no lease and so is
+  // not active; `lost` is the flag `healthFlag` draws for the document's own
+  // `health: 'lost'`, and its being a *flag* here rather than a reading of the
+  // enum is what keeps the one threshold (`LIVE_LOST_AFTER_SECONDS`) in the one
+  // place that owns it.
+  let active = 0
+  let queued = 0
+  let heartbeatLost = false
+  for (const entry of runRows) {
+    if (entry.row.queued) queued += 1
+    else active += 1
+    if (entry.row.flags.some((flag) => flag.name === 'lost')) heartbeatLost = true
+  }
 
   // The review list is the document's own order -- `ReadyForReview` sorts it
   // newest first (`internal/watch/filter.go`), and a console that sorted again
@@ -918,6 +988,16 @@ export function buildLiveModel(
       staleByAge: age.value !== null && age.value > LIVE_STALE_AFTER_SECONDS,
     },
     total: { ...document.total, notionalUsd: notionalReading(document.total.notionalUsd) },
+    fleet: {
+      headroom: headroomOf(document.total.dailyCapUsd, document.total.countedUsd),
+      // The fleet's rate is the *total's* burn and not a repository's: the panel
+      // is the whole fleet's, and a rate summed from the rows would be the
+      // console's arithmetic rather than the CLI's measurement.
+      burn: burnReading(document.total.burn),
+      active,
+      queued,
+      heartbeatLost,
+    },
     repos,
     orphans,
     review: review.slice(0, LIVE_REVIEW_CAP),
@@ -954,18 +1034,45 @@ export interface ScreenFactory {
   create(tag: string): ScreenElement
 }
 
-// The attributes a screen may set are `class`, `title` and `data-*` and nothing
-// else: the first two are how a stylesheet and a tooltip find a node, and the
-// third is where a reading goes when it is a shape rather than a sentence.
-// `live.test.ts` asserts every attribute of every drawn node is one of them,
-// over a fake element whose navigating, resource, `style` and `on*` attributes
-// throw.
+/**
+ * LiveFactory is a `ScreenFactory` that can also make an element in the **SVG**
+ * namespace: the cap bar's segments are geometry, and an element made with
+ * `createElement` is in the HTML namespace and is not drawn inside an `<svg>` at
+ * all.
+ *
+ * It is a second interface rather than a method added to `ScreenFactory` for the
+ * reason `graph.ts`'s `GraphFactory` states: the two namespaces are two
+ * different calls in the DOM (`createElement` and `createElementNS`), and
+ * `spend.test.ts` holds the screens' factories assignable to each other in both
+ * directions -- a base factory that had grown an SVG method would make that
+ * guard fail for a screen that draws no SVG. `entry.ts`'s `DomScreenFactory`
+ * answers both, and wraps one real node either way.
+ */
+export interface LiveFactory extends ScreenFactory {
+  createNS(tag: string): ScreenElement
+}
+
+// The attributes a screen may set are `class`, `title` and `data-*`, the
+// accessibility attributes, and -- on an SVG node alone -- the presentation
+// attributes its geometry needs: the first three are how a stylesheet and a
+// tooltip find a node and where a reading goes when it is a shape rather than a
+// sentence, and the last two cannot make the window do anything. `live.test.ts`
+// asserts every attribute of every drawn node is one of them, over a fake
+// element whose navigating, resource, `style` and `on*` attributes throw.
 
 /** make is a fresh element with its classes. */
 function make(factory: ScreenFactory, tag: string, ...classes: string[]): ScreenElement {
   const element = factory.create(tag)
   element.setAttribute('class', classes.join(' '))
   return element
+}
+
+/** makeNS is `make` in the SVG namespace, for the geometry a screen draws
+ * rather than the elements it arranges. The factory is narrowed per call so the
+ * class is still written in the one place `make` writes it: a second join of the
+ * same list is a second line the class travels through. */
+function makeNS(factory: LiveFactory, tag: string, ...classes: string[]): ScreenElement {
+  return make({ create: (name) => factory.createNS(name) }, tag, ...classes)
 }
 
 /**
@@ -1282,15 +1389,348 @@ function staleBanner(factory: ScreenFactory, feed: FeedHealth): ScreenElement {
  * `LIVE_STALE_AFTER_SECONDS` cannot leave the sentence claiming the old one. */
 const STALE_BANNER_TAIL = ` (a feed is stale after ${String(LIVE_STALE_AFTER_SECONDS)} s), so the values above are the last ones read and the graphs break where the console stopped observing`
 
-/** total draws the global cap bar with today's counted dollars and the cap. */
-function total(factory: ScreenFactory, model: LiveModel): ScreenElement {
-  const element = make(factory, 'div', 'live-total')
-  numberCell(element, factory, 'span', model.total.countedUsd, 'usd', 'live-counted')
-  numberCell(element, factory, 'span', model.total.dailyCapUsd, 'usd', 'live-cap')
-  numberCell(element, factory, 'span', model.total.percent, 'percent', 'live-percent')
-  numberCell(element, factory, 'span', model.total.notionalUsd, 'usd', 'live-total-notional')
-  bar(element, factory, model.total.percent, 'live-total-percent')
-  if (model.total.kill !== null) element.append(killBanner(factory, model.total.kill))
+/** FLEET_BAR_WIDTH and FLEET_BAR_HEIGHT are the cap bar's own axis: a
+ * `viewBox` in the drawing's units rather than pixels, scaled to the panel by
+ * `preserveAspectRatio="none"`, so a segment's width is a share of the cap and
+ * the bar can be any width the panel has. 100 is the whole of it -- every share
+ * below is already a percentage of the cap, so no conversion sits between the
+ * arithmetic and the shape. */
+const FLEET_BAR_WIDTH = 100
+const FLEET_BAR_HEIGHT = 18
+
+/** FLEET_BAR_LENGTH, FLEET_BAR_THICKNESS and FLEET_BAR_BOX are those two
+ * numbers as the attribute values the bar writes, spelled once: `drawGauge`
+ * writes the same three, and a length written out at every call site is a
+ * length that can disagree with itself. */
+const FLEET_BAR_LENGTH = String(FLEET_BAR_WIDTH)
+const FLEET_BAR_THICKNESS = String(FLEET_BAR_HEIGHT)
+const FLEET_BAR_BOX = `0 0 ${FLEET_BAR_LENGTH} ${FLEET_BAR_THICKNESS}`
+
+/** axis is a share of the cap as a coordinate on the bar's own axis: the
+ * attribute of a `rect` is a string, and this is where the share the model
+ * computed becomes the geometry the screen draws. */
+function axis(share: number): string {
+  return String(Math.round(share * FLEET_BAR_WIDTH * 100) / 100)
+}
+
+/** FLEET_SPENT_WORD, FLEET_LEASED_WORD, FLEET_HEADROOM_WORD and
+ * FLEET_COUNTED_WORD are the legend's own words, and they are the design's:
+ * "Spent" is billed money, "Leased" is reserved for an open lease, "Headroom" is
+ * what is left of the cap, and "Counted" is the one figure the document carries
+ * when it does not split the first two. */
+const FLEET_SPENT_WORD = 'Spent'
+const FLEET_LEASED_WORD = 'Leased'
+const FLEET_HEADROOM_WORD = 'Headroom'
+const FLEET_COUNTED_WORD = 'Counted'
+
+/** FLEET_HERO_NOTE is why the hero number is not on the bar: notional dollars
+ * are a subscription's list price, they are billed to nobody and count toward
+ * no cap (design section 6.1 rule 1), so drawing them as a segment beside the
+ * billed dollars would put two different kinds of money on one axis. */
+const FLEET_HERO_NOTE = 'at subscription list price, outside the cap'
+
+/** FLEET_FULL_SENTENCE is the design's full-cap banner, with one word changed
+ * and said here rather than left to be found: the design's hand-off says "fully
+ * leased", and `counted_usd` is *open leases plus settled spend*, so a fleet that
+ * has settled its leases and spent the cap is at its cap with nothing leased at
+ * all. "Committed" is the word that is true of both. */
+const FLEET_FULL_SENTENCE =
+  'the cap is fully committed: new runs wait in the queue until a lease settles'
+
+/** FLEET_CAP_LABEL is the caption over the cap line. */
+const FLEET_CAP_LABEL = 'GLOBAL CAP · TODAY'
+
+/** FLEET_NAME is the panel's accessible name. The caption above says which cap
+ * this is; a section's name is what a reader arriving at it hears first, so it
+ * says what the whole panel is. */
+const FLEET_NAME = 'Fleet budget'
+
+/** FLEET_STAT_LABELS are the three stat cells' captions, in drawing order. */
+const FLEET_BURN_WORD = 'BURN RATE'
+const FLEET_ACTIVE_WORD = 'ACTIVE'
+const FLEET_QUEUED_WORD = 'QUEUED'
+const FLEET_BURN_UNIT = '/min'
+const FLEET_LOST_WORD = 'heartbeat lost'
+const FLEET_WAITING_WORD = 'waiting for a lease'
+
+/** FLEET_WARN_ICON is the banner's mark. It is decorative -- the sentence
+ * beside it is the message -- so it is hidden from a reader who is listening
+ * rather than looking, and the word is what carries the state (design section
+ * 6.1 rule 3, "never colour alone"). */
+const FLEET_WARN_ICON = '⚠'
+
+/** FleetAccount is one money account of the panel: the word it is called by, the
+ * reading behind it, and whether the bar draws a shape for it. */
+interface FleetAccount {
+  readonly name: 'counted' | 'spent' | 'leased' | 'headroom'
+  readonly word: string
+  readonly reading: Reading
+  readonly drawn: boolean
+}
+
+/** FleetSegment is one account the bar draws, carrying the share of the cap it
+ * occupies. */
+interface FleetSegment extends FleetAccount {
+  readonly share: number
+}
+
+/** fleetAccounts is the panel's money accounts, in drawing order: what is under
+ * the cap, the lease beside it, and what is left of the cap.
+ *
+ * **The bar and the legend are both drawn from this one list**, so the legend
+ * cannot come to describe a segment the bar does not draw.
+ *
+ * While the CLI writes no `leased_usd` (`schema.ts`'s `optionalMoneyAt` reads it
+ * as optional, so it is `unavailable` on every document today), the split into
+ * spent and leased cannot be drawn: the bar then carries the one figure the
+ * document does hold -- `counted_usd` -- and the Leased row stays, unmeasured, as
+ * the one place the absence is visible. Drawing "spent" alone and calling the
+ * rest leased would be inventing a division the document does not carry.
+ *
+ * `counted_usd` is the sum of the split's two parts, so it is the account under
+ * the cap in exactly one of the two shapes and never a rule of its own: adding
+ * it beside spent and leased would put the same money on the axis twice.
+ */
+function fleetAccounts(model: LiveModel): readonly FleetAccount[] {
+  const leased = model.total.leasedUsd
+  const split = leased.value !== null
+  return [
+    split
+      ? { name: 'spent', word: FLEET_SPENT_WORD, reading: model.total.spentUsd, drawn: true }
+      : { name: 'counted', word: FLEET_COUNTED_WORD, reading: model.total.countedUsd, drawn: true },
+    { name: 'leased', word: FLEET_LEASED_WORD, reading: leased, drawn: split },
+    { name: 'headroom', word: FLEET_HEADROOM_WORD, reading: model.fleet.headroom, drawn: true },
+  ]
+}
+
+/** fleetSegments is the accounts the bar draws, with each one's share of the cap.
+ *
+ * **The three money accounts are kept apart.** `counted_usd` is what is under
+ * the cap; `notional_usd` is a list price that no cap counts and it is the hero
+ * number instead of a segment; and a cap nobody read draws no segments at all --
+ * an empty track, never a bar at zero.
+ */
+function fleetSegments(model: LiveModel): readonly FleetSegment[] {
+  const cap = model.total.dailyCapUsd.value
+  if (cap === null || cap <= 0) return []
+  const share = (value: number | null): number =>
+    value === null ? 0 : Math.min(1, Math.max(0, value / cap))
+  return fleetAccounts(model)
+    .filter((account) => account.drawn)
+    .map((account) => ({ ...account, share: share(account.reading.value) }))
+}
+
+/** fleetBar draws the cap bar: the empty track, then one rect per segment with
+ * the width its share of the cap asks for.
+ *
+ * The widths are clamped **cumulatively** as well as individually, so a document
+ * whose parts do not add up -- a lease the CLI recorded beside a spend that
+ * moved -- cannot draw segments reaching past the end of the cap's own axis. The
+ * bar is `aria-hidden`: every value on it is written out in the legend, and a
+ * shape a reader cannot inspect is better hidden than announced as an
+ * unlabelled picture.
+ */
+function fleetBar(factory: LiveFactory, segments: readonly FleetSegment[]): ScreenElement {
+  const element = makeNS(factory, 'svg', 'live-fleet-bar', 'live-total-percent')
+  element.setAttribute('viewBox', FLEET_BAR_BOX)
+  element.setAttribute('preserveAspectRatio', 'none')
+  element.setAttribute('height', FLEET_BAR_THICKNESS)
+  element.setAttribute('aria-hidden', 'true')
+
+  const track = makeNS(factory, 'rect', 'live-fleet-track')
+  track.setAttribute('width', FLEET_BAR_LENGTH)
+  track.setAttribute('height', FLEET_BAR_THICKNESS)
+  track.setAttribute('rx', '3')
+  element.append(track)
+
+  let drawn = 0
+  for (const segment of segments) {
+    const share = Math.min(segment.share, 1 - drawn)
+    // The account is an attribute rather than part of the class name: the three
+    // segments share one class so that `data-account` is where a rule reads
+    // which money it is painting, the shape every other tone on this tree uses.
+    const rect = makeNS(factory, 'rect', 'live-fleet-segment')
+    rect.setAttribute('data-account', segment.name)
+    // Rounded the way `drawGauge` rounds: a share of a 100-unit axis is a
+    // fraction of a pixel nobody can see, and the rounding keeps a width from
+    // being drawn as `10.000000000000002`.
+    rect.setAttribute('x', axis(drawn))
+    rect.setAttribute('width', axis(share))
+    rect.setAttribute('height', FLEET_BAR_THICKNESS)
+    element.append(rect)
+    drawn += share
+  }
+  return element
+}
+
+/** fleetLegendRow is one legend row: the swatch for the shape the bar drew, the
+ * account's word and its mono value.
+ *
+ * **The swatch is drawn only for an account the bar draws.** A swatch is a key:
+ * a mark beside a word the bar never painted claims a colour that is nowhere on
+ * the bar, and the Leased row is exactly that row while the CLI writes no
+ * `leased_usd` -- its own `n/a`, with the reading's reason in the title, is what
+ * says the question was asked and could not be answered.
+ *
+ * The swatch is a decorative mark and carries `aria-hidden`; the word and the
+ * value are the text, which is what makes the bar's segments readable at all.
+ */
+function fleetLegendRow(factory: ScreenFactory, account: FleetAccount): ScreenElement {
+  const element = make(factory, 'li', 'live-fleet-key')
+  if (account.drawn) {
+    const swatch = cell(element, factory, 'span', 'live-fleet-swatch')
+    swatch.setAttribute('aria-hidden', 'true')
+    swatch.setAttribute('data-account', account.name)
+  }
+  literal(cell(element, factory, 'span', 'live-fleet-key-word'), account.word)
+  // An unmeasured value is drawn through `putReading` like every other number,
+  // so it is `n/a` with its reason in the title; the class is what lets the
+  // stylesheet paint it as the absent value it is, and it is written only when
+  // there is no number to draw.
+  numberCell(
+    element,
+    factory,
+    'span',
+    account.reading,
+    'usd',
+    ...(account.reading.value === null ? ['live-fleet-unread'] : []),
+  )
+  return element
+}
+
+/** fleetLegend is the legend under the bar: one row per money account, in the
+ * order the bar draws them, and the bar's own list of accounts is what it walks.
+ *
+ * That list keeps the Leased row when the bar draws no lease, which is the
+ * two-segment fallback's whole point: Leased is a segment of the design's bar
+ * whether or not this CLI measures it, and its row -- the word, then `n/a` with
+ * the reading's own reason in the title -- is what says the question was asked
+ * and could not be answered. A legend built from the *segments* would drop the
+ * row exactly when it is the only place the absence is visible.
+ */
+function fleetLegend(factory: ScreenFactory, model: LiveModel): ScreenElement {
+  const element = make(factory, 'ul', 'live-fleet-legend')
+  for (const account of fleetAccounts(model)) element.append(fleetLegendRow(factory, account))
+  return element
+}
+
+/** fleetStatCell is one stat cell: its caption, and whatever the cell's value
+ * builder appends under it through `put`. The caption is the console's own word
+ * and the value is built by the caller so that a figure and the note beside it
+ * -- "heartbeat lost", "waiting for a lease" -- are appended by the same code
+ * that drew the number they qualify. */
+function fleetStatCell(
+  factory: ScreenFactory,
+  caption: string,
+  put: (parent: ScreenElement) => void,
+): ScreenElement {
+  const element = make(factory, 'div', 'live-fleet-stat')
+  literal(cell(element, factory, 'span', 'live-fleet-stat-label'), caption)
+  put(element)
+  return element
+}
+
+/**
+ * fleetStats draws the panel's three stat cells: the fleet's burn rate, and how
+ * many runs are active and queued.
+ *
+ * **The two notes are not decorations, and neither is drawn when it is not true
+ * of the number beside it.** A count of active runs with no word about a lost
+ * heartbeat is a count that hides the one thing a person watching the fleet needs
+ * to know; a queued count with no word about the lease says nothing about why
+ * those runs are not moving; and a fleet with nothing queued is waiting for
+ * nothing, so "QUEUED 0 waiting for a lease" would claim a queue that does not
+ * exist. Both notes are the console's own sentences, drawn as text beside the
+ * number rather than as a colour on it.
+ */
+function fleetStats(factory: ScreenFactory, model: LiveModel): ScreenElement {
+  const element = make(factory, 'div', 'live-fleet-stats')
+
+  element.append(
+    fleetStatCell(factory, FLEET_BURN_WORD, (parent) => {
+      const burn = numberCell(parent, factory, 'span', model.fleet.burn, 'usd', 'live-fleet-burn')
+      literal(cell(burn, factory, 'span', 'live-fleet-burn-unit'), FLEET_BURN_UNIT)
+    }),
+  )
+
+  element.append(
+    fleetStatCell(factory, FLEET_ACTIVE_WORD, (parent) => {
+      const active = numberCell(parent, factory, 'span', measured(model.fleet.active), 'count', 'live-fleet-active')
+      if (model.fleet.heartbeatLost) {
+        literal(cell(active, factory, 'span', 'live-fleet-lost'), FLEET_LOST_WORD)
+      }
+    }),
+  )
+
+  element.append(
+    fleetStatCell(factory, FLEET_QUEUED_WORD, (parent) => {
+      const queued = numberCell(parent, factory, 'span', measured(model.fleet.queued), 'count', 'live-fleet-queued')
+      if (model.fleet.queued > 0) {
+        literal(cell(queued, factory, 'span', 'live-fleet-waiting'), FLEET_WAITING_WORD)
+      }
+    }),
+  )
+
+  return element
+}
+
+/** fleetFullBanner is the design's full-cap banner: shown when the headroom is
+ * *measured* and zero.
+ *
+ * "Measured" is load-bearing: a cap nobody read has no headroom either, and a
+ * banner saying the cap is committed over a document that never carried one
+ * would be the console inventing a cap it cannot see.
+ */
+function fleetFullBanner(factory: ScreenFactory): ScreenElement {
+  const element = make(factory, 'p', 'live-fleet-full')
+  const icon = cell(element, factory, 'span', 'live-fleet-warn-icon')
+  icon.setAttribute('aria-hidden', 'true')
+  literal(icon, FLEET_WARN_ICON)
+  literal(cell(element, factory, 'span', 'live-fleet-full-word'), FLEET_FULL_SENTENCE)
+  return element
+}
+
+/**
+ * total draws the fleet budget panel: the redesign's total block.
+ *
+ * **Three accounts, and none of them added to another.** The cap line carries
+ * today's cap; the hero carries notional spend, which is outside the cap and is
+ * never a segment of the bar; and the bar carries what *is* under the cap --
+ * spent, leased and headroom, or counted and headroom when the CLI does not
+ * write `leased_usd` yet. The legend repeats the bar's own values as text, so
+ * the shape is not the only place a number lives.
+ *
+ * The kill banner is appended, as it was: this panel is where a fleet-wide kill
+ * is announced, and the total is the only block that carries one.
+ */
+function total(factory: LiveFactory, model: LiveModel): ScreenElement {
+  const element = make(factory, 'section', 'live-total', 'live-fleet')
+  element.setAttribute('aria-label', FLEET_NAME)
+
+  const wide = cell(element, factory, 'div', 'live-fleet-wide')
+
+  const capLine = cell(wide, factory, 'p', 'live-fleet-cap')
+  literal(cell(capLine, factory, 'span', 'live-fleet-cap-label'), FLEET_CAP_LABEL)
+  numberCell(capLine, factory, 'span', model.total.dailyCapUsd, 'usd', 'live-cap')
+
+  const hero = cell(wide, factory, 'p', 'live-fleet-hero')
+  numberCell(hero, factory, 'span', model.total.notionalUsd, 'usd', 'live-total-notional')
+  literal(cell(hero, factory, 'span', 'live-fleet-hero-note'), FLEET_HERO_NOTE)
+
+  const segments = fleetSegments(model)
+  wide.append(fleetBar(factory, segments))
+  wide.append(fleetLegend(factory, model))
+
+  const counted = cell(wide, factory, 'p', 'live-fleet-counted')
+  literal(cell(counted, factory, 'span', 'live-fleet-key-word'), FLEET_COUNTED_WORD)
+  numberCell(counted, factory, 'span', model.total.countedUsd, 'usd', 'live-counted')
+  literal(cell(counted, factory, 'span', 'live-fleet-sep'), '·')
+  numberCell(counted, factory, 'span', model.total.percent, 'percent', 'live-percent')
+
+  if (model.fleet.headroom.value === 0) wide.append(fleetFullBanner(factory))
+  if (model.total.kill !== null) wide.append(killBanner(factory, model.total.kill))
+
+  element.append(fleetStats(factory, model))
   return element
 }
 
@@ -1401,7 +1841,7 @@ function reviewRow(factory: ScreenFactory, row: LiveReviewRow): ScreenElement {
  * `live.test.ts` scans this directory for the first and hands the screen a fake
  * element whose navigating attribute throws for the second.
  */
-export function renderLive(factory: ScreenFactory, model: LiveModel, theme: LiveTheme): ScreenElement {
+export function renderLive(factory: LiveFactory, model: LiveModel, theme: LiveTheme): ScreenElement {
   const root = make(factory, 'section', 'live')
   root.setAttribute('data-theme', theme)
   // The arrival stamp of the frame the values came from, on the root as well as
