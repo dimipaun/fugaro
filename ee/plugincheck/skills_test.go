@@ -98,20 +98,20 @@ func paidPathAndFlags(words []string) (path, flags []string) {
 // tree does not answer to, and every flag it names that the command it resolved
 // to does not carry there, with the number of paid command lines it read.
 func paidFlagFindings(root *cobra.Command, dir string) (findings []string, lines int, err error) {
-	err = filepath.WalkDir(dir, func(p string, d fs.DirEntry, e error) error {
-		if e != nil {
-			return e
+	err = filepath.WalkDir(dir, func(p string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
 		}
 		if d.IsDir() || !strings.HasSuffix(d.Name(), ".md") {
 			return nil
 		}
-		data, e := os.ReadFile(p)
-		if e != nil {
-			return e
+		data, readErr := os.ReadFile(p)
+		if readErr != nil {
+			return readErr
 		}
-		rel, e := filepath.Rel(dir, p)
-		if e != nil {
-			return e
+		rel, relErr := filepath.Rel(dir, p)
+		if relErr != nil {
+			return relErr
 		}
 		rel = filepath.ToSlash(rel)
 		for _, l := range paidSkillLines(string(data)) {
