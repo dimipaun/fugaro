@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
 // TestDigestHasNoExtraSectionByDefault pins the core digest (design
@@ -14,6 +16,8 @@ import (
 // (G3). The golden is the same file TestDigestGolden reads, so an extra section
 // arriving in a build that registered none cannot pass as an improvement.
 func TestDigestHasNoExtraSectionByDefault(t *testing.T) {
+	SetCore()
+	t.Cleanup(SetCore)
 	d := Build(goldenRecords(t), week43(t))
 	got := Markdown(d)
 	want, err := os.ReadFile(filepath.Join("testdata", "digest.golden.md"))
@@ -53,6 +57,83 @@ func TestDigestRendersARegisteredSection(t *testing.T) {
 	}
 	if tail := strings.TrimPrefix(out, core); tail != "\n## Tier calibration\n\n"+body {
 		t.Fatalf("the extra section rendered as %q:\n%s", tail, out)
+	}
+}
+
+// TestDigestRendersSectionsWithoutTitles: a section is whatever the hook fills
+// in. A body with no title prints as the body alone, with no empty heading; a
+// section with neither is dropped rather than printing a blank block, so a hook
+// that has nothing for a case prints nothing for it (section 5.4).
+func TestDigestRendersSectionsWithoutTitles(t *testing.T) {
+	SetCore()
+	t.Cleanup(SetCore)
+	d := Build(goldenRecords(t), week43(t))
+	core := string(Markdown(d))
+
+	err := SetSections(func(Digest) []Section {
+		return []Section{
+			{Body: "a body with no heading\n"},
+			{Title: "Titled"},
+			{}, // neither a title nor a body
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out := string(Markdown(d))
+	if !strings.HasPrefix(out, core) {
+		t.Fatalf("the report under the extra sections changed:\n%s\nwant the prefix:\n%s", out, core)
+	}
+	if tail := strings.TrimPrefix(out, core); tail != "\na body with no heading\n\n## Titled\n\n" {
+		t.Fatalf("the sections rendered as %q:\n%s", tail, out)
+	}
+}
+
+// TestCapMeasuresTheCoreReportNotTheSectionHook pins the cap's rule (capTo): it
+// is the CORE report that must fit MaxBytes, and a registered hook's tail is
+// appended after the trim. So the hook is not run once per dropped row — it is
+// run once per Markdown — and its bytes never push the cap into dropping a row
+// the core report did not have to drop.
+func TestCapMeasuresTheCoreReportNotTheSectionHook(t *testing.T) {
+	SetCore()
+	t.Cleanup(SetCore)
+	p := week43(t)
+	// A fresh digest per capTo call: capTo drops rows in place, so two calls
+	// must not share one Digest's backing array.
+	build := func() Digest {
+		return Build([]runstore.Record{
+			run(t, "20261021-090000-0003", "2026-10-21T09:00:00Z", 1, 0),
+			run(t, "20261021-090000-0004", "2026-10-21T09:00:00Z", 2, 0),
+			run(t, "20261021-090000-0005", "2026-10-21T09:00:00Z", 3, 0),
+		}, p)
+	}
+	// One byte under the core report's size, so at least one row must go.
+	budget := len(markdownCore(build())) - 1
+	plain := capTo(build(), budget)
+	if plain.Dropped == 0 {
+		t.Fatalf("capTo dropped nothing from a core report over its %d-byte budget", budget)
+	}
+
+	var calls int
+	if err := SetSections(func(Digest) []Section {
+		calls++
+		return []Section{{Title: "Tier calibration", Body: strings.Repeat("x", 4000) + "\n"}}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	trimmed := capTo(build(), budget)
+	if calls != 0 {
+		t.Errorf("the section hook ran %d times while rows were dropped: the cap must measure the core report alone", calls)
+	}
+	if trimmed.Dropped != plain.Dropped {
+		t.Errorf("a 4000-byte section changed the row count the cap dropped (%d, want %d): its bytes counted toward the cap", trimmed.Dropped, plain.Dropped)
+	}
+	if out := string(Markdown(trimmed)); !strings.HasSuffix(out, "\n"+strings.Repeat("x", 4000)+"\n") {
+		t.Errorf("the section did not print after the capped report:\n%s", out)
+	}
+	if calls != 1 {
+		t.Errorf("Markdown ran the section hook %d times, want once", calls)
 	}
 }
 

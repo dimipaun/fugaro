@@ -354,7 +354,8 @@ corrected model; the bullets below are kept for the record.*
 - **Tests:**
   - `TestRegisteredCommandJoinsTheRoot`
   - `TestRegisteredCommandCannotShadowACoreCommand`
-  - `TestRegisteredCommandCannotReplaceCoreSubcommandsOrPersistentFlags`
+  - `TestRegistrationTakesNoCoreNameAliasOrRootFlag`
+  - `TestRegistrationTakesNoEarlierRegistrationsName`
   - `TestLateOrDuplicateRegistrationIsRefused`
   - `TestNoRegistrationLeavesTheRootUnchanged`
   - `TestLaunchWithoutADeclarerDeclaresNothing`

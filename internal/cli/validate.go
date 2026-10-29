@@ -1574,7 +1574,9 @@ type validateOutput struct {
 // selected for the file's project, a directory that is no checkout of a
 // repository it can name, a bucket this checkout's credentials cannot open —
 // and each is a note and never a problem: the file is valid whichever image it
-// ends up built for.
+// ends up built for. Each such note names the fix that would let the read
+// happen — select the config, run from the checkout, open the bucket — the way
+// the offline note names --offline's.
 //
 // The road is the one every other command in this package takes to an image
 // from a checkout: the project config's own client (openCloudFor), the origin's
@@ -1595,24 +1597,29 @@ func governanceEditions(ctx context.Context, lc *localcfg.Config, cfg *config.Co
 		return nil, "the job images' edition unresolved offline: --offline reads neither the runs bucket nor the published policy, so whether their runners read the governance: block is not known here; run validate without --offline to have the records read"
 	}
 	if lc == nil || lc.Name != cfg.Project {
-		return nil, editionUnresolved("no project config for " + pluginwire.Printable(cfg.Project) + " is selected here")
+		return nil, editionUnresolved("no project config for "+pluginwire.Printable(cfg.Project)+" is selected here",
+			"name the installation with --config or --project, or run fugaro setup to create this project's config")
 	}
 	repo, err := originRepo(ctx)
 	if err != nil {
-		return nil, editionUnresolved(fmt.Sprintf("this directory is no checkout of a repository whose name can be read here (%v)", oneLine(err.Error())))
+		return nil, editionUnresolved(fmt.Sprintf("this directory is no checkout of a repository whose name can be read here (%v)", oneLine(err.Error())),
+			"run validate in the repository's own checkout")
 	}
 	slug, err := repoSlugOf(ctx, lc, repo)
 	if err != nil {
-		return nil, editionUnresolved(fmt.Sprintf("the storage slug of %s could not be resolved (%v)", pluginwire.Printable(repo), oneLine(err.Error())))
+		return nil, editionUnresolved(fmt.Sprintf("the storage slug of %s could not be resolved (%v)", pluginwire.Printable(repo), oneLine(err.Error())),
+			"run validate in the checkout whose origin names the repository")
 	}
 	env, err := openCloudFor(ctx, lc)
 	if err != nil {
-		return nil, editionUnresolved(fmt.Sprintf("the installation's runs bucket could not be opened (%v)", oneLine(err.Error())))
+		return nil, editionUnresolved(fmt.Sprintf("the installation's runs bucket could not be opened (%v)", oneLine(err.Error())),
+			"check that this machine's credentials can read the installation's runs bucket")
 	}
 	defer env.Close()
 	b, err := env.recordBucket(ctx)
 	if err != nil {
-		return nil, editionUnresolved(fmt.Sprintf("the installation's runs bucket could not be opened (%v)", oneLine(err.Error())))
+		return nil, editionUnresolved(fmt.Sprintf("the installation's runs bucket could not be opened (%v)", oneLine(err.Error())),
+			"check that this machine's credentials can read the installation's runs bucket")
 	}
 	editions := make(map[string]string, len(cfg.Workflows))
 	for _, name := range governanceEditionWorkflows(cfg) {
@@ -1625,9 +1632,11 @@ func governanceEditions(ctx context.Context, lc *localcfg.Config, cfg *config.Co
 }
 
 // editionUnresolved is the note for a command that could not read the job
-// images' records for a reason other than --offline.
-func editionUnresolved(why string) string {
-	return "the job images' edition unresolved: " + why + ", so whether their runners read the governance: block is not known here"
+// images' records for a reason other than --offline: why the read could not
+// happen, and the fix that would let it (the wording validation.md documents,
+// and the shape the offline note above already has).
+func editionUnresolved(why, fix string) string {
+	return "the job images' edition unresolved: " + why + ", so whether their runners read the governance: block is not known here; " + fix
 }
 
 // recordEditionIn is the edition the build record of slug's workflow reports,

@@ -776,7 +776,7 @@ func TestDiagnoseReadsACheckpointUntagged(t *testing.T) {
 		Next:        "finish the parser tests",
 	}
 	if d.Checkpoint == nil || *d.Checkpoint != want {
-		t.Fatalf("json checkpoint = %+v (%v):\n%s", d.Checkpoint, err, out)
+		t.Fatalf("json checkpoint = %+v:\n%s", d.Checkpoint, out)
 	}
 	if !strings.Contains(out, `"checkpoint": {`) {
 		t.Fatalf("json has no checkpoint block:\n%s", out)

@@ -15,6 +15,7 @@ import (
 // the tests that launch. It is called before and after each of them.
 func resetExtend() {
 	registrations = map[string]func() *cobra.Command{}
+	registeredNames = map[string]bool{}
 	registrationsSealed = false
 	launchDeclarer, launchDeclarerSet = coreLaunchDeclarer, false
 }

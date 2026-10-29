@@ -13,7 +13,11 @@
 //     checked by shape.
 //   - Deterministic figures. The same records give byte-identical Markdown
 //     (G3): nothing here reads a clock, and every map is walked in sorted key
-//     order.
+//     order. The one byte this package does not write is the tail a registered
+//     section hook returns (section 5.4): it is appended to a report that is
+//     itself byte-identical, and it is byte-identical across runs only if the
+//     hook is a pure function of the digest it is handed -- which is why the
+//     size cap measures the core report alone (capTo).
 //
 // Nothing here reads a record by itself: Build is handed the records of one
 // repository, which is the caller's business (G2).
@@ -546,8 +550,14 @@ func flagCounts(runs []Run) []FlagCount {
 // drop costs bytes of its own: measured against the note-free report, a drop
 // that freed less than the note costs would read as having made the report
 // longer, and the loop would chase its own note.
+//
+// The bytes it measures are the CORE report's (markdownCore), not Markdown's:
+// a registered section hook's tail is appended after the cap, so its bytes
+// never count toward it and the hook is not run once per dropped row. A hook
+// therefore needs no size discipline of its own, and a report that fits the cap
+// does so whatever section a build adds.
 func capTo(d Digest, max int) Digest {
-	if len(Markdown(d)) <= max {
+	if len(markdownCore(d)) <= max {
 		return d
 	}
 	for {
@@ -557,7 +567,7 @@ func capTo(d Digest, max int) Digest {
 		}
 		d.Runs = slices.Delete(d.Runs, i, i+1)
 		d.Dropped++
-		if len(Markdown(d)) <= max {
+		if len(markdownCore(d)) <= max {
 			return d
 		}
 	}

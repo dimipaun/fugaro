@@ -151,8 +151,9 @@ E1.1 and E1.3 (T8.1b edits `internal/cli/run.go`), E1.2 and E2.3 (#1216: `intern
   and a core stub for each paid command name (`report`, `coordinator`) that a registration replaces;
   refuses a name a core command holds.
 - **Tests:** S1.2's six (`TestRegisteredCommandJoinsTheRoot`, `TestRegisteredCommandCannotShadowACoreCommand`,
-  `TestRegisteredCommandCannotReplaceCoreSubcommandsOrPersistentFlags`, `TestLateOrDuplicateRegistrationIsRefused`,
+  `TestRegistrationTakesNoCoreNameAliasOrRootFlag`, `TestLateOrDuplicateRegistrationIsRefused`,
   `TestNoRegistrationLeavesTheRootUnchanged`, `TestLaunchWithoutADeclarerDeclaresNothing`, run against a seam) plus
+  `TestRegistrationTakesNoEarlierRegistrationsName`,
   `TestStubSaysWhyThroughASeam` (a test-only stub name, since `report` and `coordinator` are still
   core commands here; the real `TestUntaggedPaidCommandSaysWhy` is E2.1's and E2.2's),
   `TestStubIsReplacedOnlyByItsRegistration` and `TestLaunchStillDeclaresBeforeTheMove`.
@@ -197,13 +198,16 @@ takes over in untagged builds).
   the image it judges), `internal/cli/validate.go` (its call), plus the carrier E0.3 chooses on the Go
   side.
 - **Tests:** `TestEditionIsCoreUntagged`, `TestGovernanceOnACoreImageWarns`,
-  `TestTaggedImageFromAnUntaggedLauncherDoesNotWarn`, `TestCloneWorkflowOnACoreImageWarns`,
+  `TestTaggedImageFromAnUntaggedLauncherDoesNotWarn`, `TestCloneWorkflowOnACoreRecordDoesNotWarn`
+  (the shipped decision: a `checkout: clone` workflow is never built and runs the installation's base
+  image, so its edition is unknown and it is not warned about),
+  `TestCurrentReleaseImageWithNoEditionDoesNotWarn`,
   `TestValidateWarnsGovernanceOnACoreImage`,
   `TestTierOnACoreImageWarns` (`--tier` judged through `governanceLaunchSources`, so `run.go` is not
   touched), `TestGovernanceOnAnOldImageStillRefuses` (today's skew rule unchanged),
   `TestEditionHasNoLdflagsRoute` (a source scan: the edition is not a package-level string `-X` can
   set, and no build file passes `-X` for it).
-- **Command:** `go test ./internal/cli/ -run 'TestEdition|TestGovernanceOn|TestTaggedImageFrom|TestCloneWorkflowOnACore|TestValidateWarnsGovernance|TestTierOnACore|TestEditionHasNo' -count=1`.
+- **Command:** `go test ./internal/cli/ -run 'TestEdition|TestGovernanceOn|TestTaggedImageFrom|TestCloneWorkflowOnACore|TestCurrentReleaseImage|TestValidateWarnsGovernance|TestTierOnACore|TestEditionHasNo' -count=1`.
 - **Red step:** `TestGovernanceOnACoreImageWarns` fails: today a 0.13.0 core image passes silently.
 - **Depends on:** E0.3, the in-flight gate (T8.1b's `--tier`). **Reviewer:** standard.
 - **Commit:** `cli: the binary knows its edition, and governance on a core image warns (R3)`.

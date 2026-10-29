@@ -581,6 +581,50 @@ func TestCloneWorkflowOnACoreRecordDoesNotWarn(t *testing.T) {
 	}
 }
 
+// TestCurrentReleaseImageWithNoEditionDoesNotWarn: the edition gate warns about
+// one record only — the one that says core. A record written without an edition
+// (one from before the field existed, or a hand-written one) is unknown, and an
+// unknown image is warned about nothing (design ee-boundary-moves §7, which is
+// what every --image-source mirror looks like too). The image is a current
+// release, so the skew half says nothing either: a run of this file onto it
+// carries no edition sentence on stderr, and validate's only stderr is the skew
+// statement about the file, which prints whether or not an image can be judged
+// — never an edition warning and never an unresolved note.
+func TestCurrentReleaseImageWithNoEditionDoesNotWarn(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	configSkewCheckout(t, f, configSkewHead+"governance: { review_ratio: 3 }\n"+configSkewWorkflow)
+	writeEditionBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", releaseTier, "")
+
+	_, errOut, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
+	if err != nil {
+		t.Fatalf("a launch onto a current-release image must not be refused: %v", err)
+	}
+	// The run prints the project and recipe it resolved; what it must not print
+	// is a word about the image's edition.
+	for _, unwanted := range []string{"core build of fugaro", "edition"} {
+		if strings.Contains(errOut, unwanted) {
+			t.Errorf("a run onto a record with no edition wrote %q to stderr, which says %q", errOut, unwanted)
+		}
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want the run launched", n)
+	}
+
+	_, valErr, err := execute(t, "validate")
+	if err != nil {
+		t.Fatalf("validate judged the same file: %v", err)
+	}
+	for _, unwanted := range []string{"core build of fugaro", "edition unresolved"} {
+		if strings.Contains(valErr, unwanted) {
+			t.Errorf("validate's stderr %q says %q about an image with no edition", valErr, unwanted)
+		}
+	}
+	if !strings.Contains(valErr, "needs fugaro "+governanceSince) {
+		t.Errorf("validate's stderr %q lacks the skew half, which is a statement about the file", valErr)
+	}
+}
+
 // TestValidateWarnsGovernanceOnACoreImage: validate holds no cloud env, so the
 // edition half reads the records online, through the road every other command
 // takes to an image from a checkout: the project config's client, the origin's
