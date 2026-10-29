@@ -35,57 +35,64 @@ func TestReadUpdateRequest(t *testing.T) {
 		want []RefUpdate
 	}{
 		{
-			name: "documented example, one update, no capabilities",
-			in:   pkt(oidA+" "+oidB+" refs/heads/main\n") + "0000",
-			want: []RefUpdate{{Old: oidA, New: oidB, Ref: "refs/heads/main"}},
+			// The bytes a push really puts on the wire: no line feed, and the
+			// capability list after the NUL, captured from git 2.47's
+			// send-pack against a local receive-pack.
+			name: "as git's client sends it",
+			in:   pkt(oidA+" "+oidB+" refs/heads/main\x00 report-status-v2 side-band-64k agent=git/2.47.3") + "0000",
+			want: []RefUpdate{{Old: oidA, New: oidB, Ref: "refs/heads/main", HashLen: 40}},
 		},
 		{
-			name: "one update carrying capabilities after a NUL",
+			name: "documented example, one update, no capabilities",
+			in:   pkt(oidA+" "+oidB+" refs/heads/main") + "0000",
+			want: []RefUpdate{{Old: oidA, New: oidB, Ref: "refs/heads/main", HashLen: 40}},
+		},
+		{
+			name: "a line feed at the end of a line is tolerated",
 			in:   pkt(oidA+" "+oidB+" refs/heads/main\x00report-status side-band-64k agent=git/2.42.0\n") + "0000",
-			want: []RefUpdate{{Old: oidA, New: oidB, Ref: "refs/heads/main"}},
+			want: []RefUpdate{{Old: oidA, New: oidB, Ref: "refs/heads/main", HashLen: 40}},
+		},
+		{
+			name: "shallow lines carry no capabilities and no line feed either",
+			in:   pkt("shallow "+oidC) + pkt("shallow "+oidD) + pkt(oidA+" "+oidB+" refs/heads/main") + "0000",
+			want: []RefUpdate{{Old: oidA, New: oidB, Ref: "refs/heads/main", HashLen: 40}},
 		},
 		{
 			name: "a literal length prefix, as the documentation prints one",
 			in:   "0035" + "shallow " + oidA + "\n" + pkt(oidA+" "+oidB+" refs/heads/main\n") + "0000",
-			want: []RefUpdate{{Old: oidA, New: oidB, Ref: "refs/heads/main"}},
-		},
-		{
-			name: "shallow lines come first",
-			in: pkt("shallow "+oidC+"\n") + pkt("shallow "+oidD+"\n") +
-				pkt(oidA+" "+oidB+" refs/heads/main\x00report-status\n") + "0000",
-			want: []RefUpdate{{Old: oidA, New: oidB, Ref: "refs/heads/main"}},
+			want: []RefUpdate{{Old: oidA, New: oidB, Ref: "refs/heads/main", HashLen: 40}},
 		},
 		{
 			name: "shallow of the zero id is a line like any other",
-			in:   pkt("shallow "+zeroOID+"\n") + pkt(oidA+" "+oidB+" refs/heads/main\n") + "0000",
-			want: []RefUpdate{{Old: oidA, New: oidB, Ref: "refs/heads/main"}},
+			in:   pkt("shallow "+zeroOID) + pkt(oidA+" "+oidB+" refs/heads/main") + "0000",
+			want: []RefUpdate{{Old: oidA, New: oidB, Ref: "refs/heads/main", HashLen: 40}},
 		},
 		{
-			name: "several updates",
-			in: pkt(oidA+" "+oidB+" refs/heads/main\x00report-status\n") +
-				pkt(oidC+" "+oidD+" refs/heads/other\n") +
-				pkt(oidE+" "+oidF+" refs/heads/fugaro/20261029-225717-8499\n") + "0000",
+			name: "several updates, only the first with capabilities",
+			in: pkt(oidA+" "+oidB+" refs/heads/main\x00report-status") +
+				pkt(oidC+" "+oidD+" refs/heads/other") +
+				pkt(oidE+" "+oidF+" refs/heads/fugaro/20261029-225717-8499") + "0000",
 			want: []RefUpdate{
-				{Old: oidA, New: oidB, Ref: "refs/heads/main"},
-				{Old: oidC, New: oidD, Ref: "refs/heads/other"},
-				{Old: oidE, New: oidF, Ref: "refs/heads/fugaro/20261029-225717-8499"},
+				{Old: oidA, New: oidB, Ref: "refs/heads/main", HashLen: 40},
+				{Old: oidC, New: oidD, Ref: "refs/heads/other", HashLen: 40},
+				{Old: oidE, New: oidF, Ref: "refs/heads/fugaro/20261029-225717-8499", HashLen: 40},
 			},
 		},
 		{
 			name: "a delete is parsed: rules decide it, not the parser",
-			in:   pkt(oidA+" "+zeroOID+" refs/heads/gone\n") + "0000",
-			want: []RefUpdate{{Old: oidA, New: zeroOID, Ref: "refs/heads/gone"}},
+			in:   pkt(oidA+" "+zeroOID+" refs/heads/gone") + "0000",
+			want: []RefUpdate{{Old: oidA, New: zeroOID, Ref: "refs/heads/gone", HashLen: 40}},
 		},
 		{
 			name: "a create is parsed",
-			in:   pkt(zeroOID+" "+oidB+" refs/heads/new\n") + "0000",
-			want: []RefUpdate{{Old: zeroOID, New: oidB, Ref: "refs/heads/new"}},
+			in:   pkt(zeroOID+" "+oidB+" refs/heads/new") + "0000",
+			want: []RefUpdate{{Old: zeroOID, New: oidB, Ref: "refs/heads/new", HashLen: 40}},
 		},
 		{
-			name: "sha256 object ids",
-			in:   pkt(strings.Repeat("a", 64)+" "+strings.Repeat("b", 64)+" refs/heads/main\n") + "0000",
+			name: "sha256 object ids carry their own width",
+			in:   pkt(strings.Repeat("a", 64)+" "+strings.Repeat("b", 64)+" refs/heads/main") + "0000",
 			want: []RefUpdate{
-				{Old: strings.Repeat("a", 64), New: strings.Repeat("b", 64), Ref: "refs/heads/main"},
+				{Old: strings.Repeat("a", 64), New: strings.Repeat("b", 64), Ref: "refs/heads/main", HashLen: 64},
 			},
 		},
 		{
@@ -168,14 +175,19 @@ func TestReadUpdateRequestRefusals(t *testing.T) {
 			want: ErrPktLineOutOfRange,
 		},
 		{
-			name: "a legal length whose payload has no line feed",
+			name: "a payload at the largest legal length, which is not a command",
 			in:   "fff0" + strings.Repeat("x", maxPktLine-4),
 			max:  1 << 20,
 			want: ErrPktLineMalformed,
 		},
 		{
-			name: "a line with no line feed",
-			in:   pkt(oidA+" "+oidB+" refs/heads/main") + "0000",
+			name: "an empty pkt-line payload",
+			in:   "0004" + "0000",
+			want: ErrPktLineMalformed,
+		},
+		{
+			name: "a line feed and nothing else",
+			in:   pkt("\n") + "0000",
 			want: ErrPktLineMalformed,
 		},
 		{
@@ -212,6 +224,11 @@ func TestReadUpdateRequestRefusals(t *testing.T) {
 			name: "the new object id is refused the same way",
 			in:   pkt(oidA+" "+oidUpper+" refs/heads/main\n") + "0000",
 			want: ErrObjectIDInvalid,
+		},
+		{
+			name: "two object ids of different widths",
+			in:   pkt(oidA+" "+strings.Repeat("b", 64)+" refs/heads/main") + "0000",
+			want: ErrObjectIDWidthMixed,
 		},
 		{
 			name: "a shallow line with no object id",
@@ -280,9 +297,9 @@ func TestReadUpdateRequestRefusals(t *testing.T) {
 			want: ErrUpdateRequestTooLarge,
 		},
 		{
-			name: "a bound of zero",
-			in:   "0000",
-			max:  -1,
+			name: "a bound smaller than the flush packet",
+			in:   pkt(oidA+" "+oidB+" refs/heads/main") + "0000",
+			max:  4,
 			want: ErrUpdateRequestTooLarge,
 		},
 	}
@@ -300,6 +317,57 @@ func TestReadUpdateRequestRefusals(t *testing.T) {
 				t.Errorf("a refusal returned cmds %v and consumed %q, want neither", cmds, consumed)
 			}
 		})
+	}
+}
+
+// TestReadUpdateRequestKeepsTheReadCause: a refused refusal is audited as the
+// class, but "the request had no flush" is not a diagnosis. A disconnect and a
+// timeout must still be readable underneath it, or an operator chasing a
+// failing proxy sees only one sentence that is true of every failure.
+func TestReadUpdateRequestKeepsTheReadCause(t *testing.T) {
+	cause := errors.New("connection reset by peer")
+	tests := []struct {
+		name string
+		r    io.Reader
+	}{
+		{"before the first header", failingReader{cause}},
+		{"between two pkt-lines", io.MultiReader(strings.NewReader(pkt(oidA+" "+oidB+" refs/heads/main")), failingReader{cause})},
+		{"inside a payload", io.MultiReader(strings.NewReader("0100"+oidA), failingReader{cause})},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cmds, consumed, err := ReadUpdateRequest(tc.r, 1<<20)
+			if !errors.Is(err, ErrUpdateRequestNoFlush) {
+				t.Fatalf("got error %v, want %v", err, ErrUpdateRequestNoFlush)
+			}
+			if !errors.Is(err, cause) {
+				t.Errorf("error %v has lost the cause %v", err, cause)
+			}
+			if cmds != nil || consumed != nil {
+				t.Errorf("a refusal returned cmds %v and consumed %q, want neither", cmds, consumed)
+			}
+		})
+	}
+}
+
+type failingReader struct{ err error }
+
+func (r failingReader) Read([]byte) (int, error) { return 0, r.err }
+
+// TestReadUpdateRequestZeroBound pins max == 0 on its own: the refusal table
+// reads 0 as "the table's default", so a case written there would assert
+// nothing about a zero bound. Not even git's four-byte probe fits in zero
+// bytes, and the caller must hear that rather than get an empty list it would
+// pass as a no-op.
+func TestReadUpdateRequestZeroBound(t *testing.T) {
+	for _, in := range []string{"0000", pkt(oidA+" "+oidB+" refs/heads/main") + "0000"} {
+		cmds, consumed, err := ReadUpdateRequest(strings.NewReader(in), 0)
+		if !errors.Is(err, ErrUpdateRequestTooLarge) {
+			t.Fatalf("input %q: got error %v, want %v", in, err, ErrUpdateRequestTooLarge)
+		}
+		if cmds != nil || consumed != nil {
+			t.Errorf("input %q: a refusal returned cmds %v and consumed %q, want neither", in, cmds, consumed)
+		}
 	}
 }
 

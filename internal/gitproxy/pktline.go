@@ -6,6 +6,7 @@ package gitproxy
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 )
@@ -22,6 +23,13 @@ type RefUpdate struct {
 	Old string
 	New string
 	Ref string
+
+	// HashLen is the width both ids were written at: 40 for a sha1
+	// repository, 64 for a sha256 one. A delete is "New is all zeros at this
+	// width", and a rule that does not know the width cannot ask that
+	// question: a 64-zero New is a perfectly ordinary update id to a check
+	// that only ever looks for 40 of them.
+	HashLen int
 }
 
 // The refusals are sentinel values so a caller can name the class of a refusal
@@ -34,6 +42,7 @@ var (
 	ErrPktLineMalformed      = errors.New("a pkt-line length is malformed")
 	ErrPktLineOutOfRange     = errors.New("a pkt-line length is out of range")
 	ErrUpdateRequestNoFlush  = errors.New("the update request does not end at a flush packet")
+	ErrObjectIDWidthMixed    = errors.New("the two object ids of one update are of different widths")
 	ErrPushCertRefused       = errors.New("a signed push is refused: the runner never signs one")
 	ErrObjectIDInvalid       = errors.New("an object id is not 40 or 64 lowercase hex digits")
 	ErrRefNameInvalid        = errors.New("a ref is not a full refs/ name")
@@ -50,10 +59,20 @@ var (
 //
 // It refuses an oversized section, a malformed or out-of-range pkt-line
 // length, a request that never reaches a flush, a push-cert (the runner never
-// signs), an object id that is not 40 or 64 lowercase hex digits and a ref
-// that is not a full refs/... name. An update request of only a flush packet -
-// git's probe before it sends a large chunked push, http.postBuffer - is an
-// empty list and no error, which the rules pass as a no-op.
+// signs), an object id that is not 40 or 64 lowercase hex digits, two ids of
+// one update that are not the same width, and a ref that is not a full
+// refs/... name. An update request of only a flush packet - git's probe before
+// it sends a large chunked push, http.postBuffer - is an empty list and no
+// error, which the rules pass as a no-op.
+//
+// A line feed at the end of a line is tolerated and not required. Git's own
+// server strips one if a client sent it, and its client sends none: a real
+// push reads "old new ref\0capabilities" and then the flush, so requiring the
+// byte would refuse every push that exists.
+//
+// A failure to read classifies as ErrUpdateRequestNoFlush whatever its cause,
+// with the cause wrapped underneath: the class is what a refusal is audited
+// as, and the cause is what an operator needs.
 //
 // The caller decides Content-Encoding before calling this: a body that is not
 // identity is refused there, because nothing here decompresses and a gzip
@@ -77,7 +96,7 @@ func ReadUpdateRequest(r io.Reader, max int) ([]RefUpdate, []byte, error) {
 		}
 		header := make([]byte, 4)
 		if _, err := io.ReadFull(r, header); err != nil {
-			return nil, nil, ErrUpdateRequestNoFlush
+			return nil, nil, noFlush(err)
 		}
 		consumed = append(consumed, header...)
 		length, ok := pktLength(header)
@@ -95,14 +114,14 @@ func ReadUpdateRequest(r io.Reader, max int) ([]RefUpdate, []byte, error) {
 		}
 		payload := make([]byte, length-4)
 		if _, err := io.ReadFull(r, payload); err != nil {
-			return nil, nil, ErrUpdateRequestNoFlush
+			return nil, nil, noFlush(err)
 		}
 		consumed = append(consumed, payload...)
 
-		if len(payload) == 0 || payload[len(payload)-1] != '\n' {
-			return nil, nil, ErrPktLineMalformed
+		line := string(payload)
+		if strings.HasSuffix(line, "\n") {
+			line = line[:len(line)-1]
 		}
-		line := string(payload[:len(payload)-1])
 		// The first line carries the capability list after a NUL, and a
 		// capability may contain spaces, slashes and equals signs - everything
 		// a ref may not. Splitting first is what makes "the ref" the same
@@ -115,7 +134,7 @@ func ReadUpdateRequest(r io.Reader, max int) ([]RefUpdate, []byte, error) {
 			if !shallow {
 				return nil, nil, ErrPktLineMalformed
 			}
-			if !validObjectID(strings.TrimPrefix(line, "shallow ")) {
+			if _, ok := objectIDWidth(strings.TrimPrefix(line, "shallow ")); !ok {
 				return nil, nil, ErrObjectIDInvalid
 			}
 			continue
@@ -130,13 +149,18 @@ func ReadUpdateRequest(r io.Reader, max int) ([]RefUpdate, []byte, error) {
 			return nil, nil, ErrPktLineMalformed
 		}
 		old, new := fields[0], fields[1]
-		if !validObjectID(old) || !validObjectID(new) {
+		oldWidth, oldOK := objectIDWidth(old)
+		newWidth, newOK := objectIDWidth(new)
+		if !oldOK || !newOK {
 			return nil, nil, ErrObjectIDInvalid
+		}
+		if oldWidth != newWidth {
+			return nil, nil, ErrObjectIDWidthMixed
 		}
 		if !validRefName(fields[2]) {
 			return nil, nil, ErrRefNameInvalid
 		}
-		updates = append(updates, RefUpdate{Old: old, New: new, Ref: fields[2]})
+		updates = append(updates, RefUpdate{Old: old, New: new, Ref: fields[2], HashLen: oldWidth})
 	}
 }
 
@@ -162,20 +186,31 @@ func pktLength(header []byte) (int, bool) {
 	return n, true
 }
 
-// validObjectID accepts the two id widths git has: sha1's 40 and sha256's 64,
-// lowercase hex only. Git writes them that way, and an id that is not that is
-// a caller asking the rules to compare something they never see.
-func validObjectID(id string) bool {
+// objectIDWidth accepts the two id widths git has - sha1's 40 and sha256's
+// 64, lowercase hex only - and returns which one it read. Git writes them that
+// way, and an id that is not that is a caller asking the rules to compare
+// something they never see. The width is the answer to "is this a delete",
+// so it is worth more than a yes.
+func objectIDWidth(id string) (int, bool) {
 	if len(id) != 40 && len(id) != 64 {
-		return false
+		return 0, false
 	}
 	for i := 0; i < len(id); i++ {
 		c := id[i]
 		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			return false
+			return 0, false
 		}
 	}
-	return true
+	return len(id), true
+}
+
+// noFlush classifies a read that could not produce the rest of the request.
+// The class is what a refusal is audited as - no flush is no flush, whether
+// the client disconnected, the upstream timed out or the body simply ended -
+// but the cause is kept, because "the request had no flush" alone tells an
+// operator nothing about a transport that is failing.
+func noFlush(cause error) error {
+	return fmt.Errorf("%w: %w", ErrUpdateRequestNoFlush, cause)
 }
 
 // validRefName is git-check-ref-format's rule set, because the name that
