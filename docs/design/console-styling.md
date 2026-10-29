@@ -311,18 +311,22 @@ class, and **nothing in the section carries `data-href`** — the one attribute
 repository is on (v1 design §5.1 rule 2 and its gap 7; design F26). There is no `<a>` in the
 section at all: not an inert one, and not one waiting for a provider.
 
-**Its box is dashed, and its empty state has two sentences.** The panel is a dashed
+**Its box is dashed, and its empty state is one sentence.** The panel is a dashed
 `--control-border` outline rather than the solid hairline the other panels carry, because a
 solid box the size of a figure would read as one more figure of the day, while a dashed one
 reads as the place a thing arrives in; the mark above the heading
 (`svg.live-review-icon`, a check in a box, `aria-hidden`) is decorative and the heading is
-the whole of the reading. Which sentence the empty panel says is **whether the feed could be
-read**: with no `queued_note` in the frame the document was read and nothing in it is
-waiting, so the panel says `Nothing waiting. Finished runs with a pull request land here.`
-(`LIVE_REVIEW_NOTHING_WAITING`, the design's own words); with a `queued_note` the runs
-bucket could not be read, and the panel keeps the hedged sentence
-(`LIVE_REVIEW_EMPTY`) while the note in the header is the reason. A screen that could not
-see may not claim there is nothing to see.
+the whole of the reading. **The empty panel says the hedged sentence and not the design's
+positive one**, and the reason is what the document does *not* carry: `ready[]` ships empty
+both when nothing is waiting and when the runs bucket has not been read, and `queued_note`
+does not separate the two — it is absent when the read succeeded **and** when the read has
+not happened yet (`fugaro watch`'s first frame never waits for the bucket scan,
+`internal/cli/watch_queued.go`'s `queuedSource`; `watch.View.QueuedNote` documents `""` as
+"when it was, or when nobody asked"), so on those frames the panel holds a feed nobody has
+read. The design's own sentence for an empty inbox — "Nothing waiting. Finished runs with a
+pull request land here." — is therefore **not drawn**: it asserts an empty inbox, and the
+signal that would earn it (a note for the not-yet-read state) is not in this document.
+`LIVE_REVIEW_EMPTY`'s hedged "in this feed" is true of both.
 
 | Group | Class hooks |
 |---|---|
@@ -689,7 +693,7 @@ carry `data-theme` from code — see [§3.6](#36-how-the-theme-is-chosen).
 | skew (refused / reduced) | chrome | the version-skew banner; the nav is missing the withheld buttons |
 | the rail's row states (§4.1) | chrome (the installation rail) | `span.console-rail-state` with the **word** `running` / `silent` / `idle` beside its glyph `●` / `▲` / `○`. **Not a state the code emits today** — the rail is the canvas's addition, and what a row reads is §4.1's open item — so whichever task draws the row draws the word with it: the word is what makes the tone redundant, and the collapsed rail keeps it in the row's accessible name |
 | not built | Projects (`policy`, `enrollment`) | `data-state="not-built"` + a `projects-because` sentence |
-| empty | picker (status line), Live (a `gap` bar, and `p.live-review-empty` with the review inbox's own sentence), Spend (a `gap` point, a caps note) | the console's own sentence, never an empty box. The inbox's sentence says "in this feed" on purpose: `ready[]` ships empty when the runs bucket could not be read as well as when nothing is waiting, and the CLI's own `queued_note` — drawn in the header as `p.live-note` — is what tells the two apart |
+| empty | picker (status line), Live (a `gap` bar, and `p.live-review-empty` with the review inbox's own sentence), Spend (a `gap` point, a caps note) | the console's own sentence, never an empty box. The inbox's sentence says "in this feed" on purpose: `ready[]` ships empty when the runs bucket could not be read as well as when nothing is waiting, and nothing in the document separates them — `queued_note` is absent both when the read succeeded and when it has not happened yet (§2.3) |
 | cap reached | **no attribute — not a state in the code.** The cap is a `percent` reading and the repository bar's `data-fill`; the fleet budget panel draws instead a sentence, `p.live-fleet-full` ("the cap is fully committed: new runs wait in the queue until a lease settles"), when a measured headroom is 0 | the stylesheet may colour a threshold; the code emits no flag — and a rule keyed on `p.live-fleet-full` may not read it as a state (§2.3) |
 | loading | **none — not a state in the code** | the entry draws nothing before the handshake answers |
 

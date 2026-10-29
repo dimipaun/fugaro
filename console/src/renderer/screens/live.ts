@@ -144,24 +144,24 @@ export const LIVE_REVIEW_CAP = 50
 export const LIVE_REVIEW_TITLE = 'Ready for your review'
 
 /**
- * LIVE_REVIEW_EMPTY is what the section says with no row to draw **when the
- * feed could not be read**. `ready[]` ships empty when the runs bucket could
- * not be read as well as when nothing is waiting, and the difference between
- * those two is the CLI's own `queued_note`, which the header draws
- * (`live-note`): a screen that could not see may not claim there is nothing to
- * see, so this hedged sentence is the one that holds when the note is there.
+ * LIVE_REVIEW_EMPTY is what the section says whenever it has no row to draw.
+ *
+ * **There is one sentence and not two, because the document cannot say whether
+ * the runs bucket was read.** `ready[]` ships empty both when nothing is waiting
+ * and when the bucket could not be read, and the CLI's own `queued_note` -- the
+ * `live-note` line the header draws -- does not separate them: it is absent when
+ * the read succeeded **and** when the read has not happened yet, since `fugaro
+ * watch`'s first frame never waits for the bucket scan
+ * (`internal/cli/watch_queued.go`'s `queuedSource`) and `watch.View.QueuedNote`
+ * is documented as `""` "when it was, or when nobody asked". So a frame can
+ * carry no note over a feed nobody has read -- the console's own committed
+ * fixture's first frame is that shape -- and there the positive sentence the
+ * design words ("Nothing waiting. Finished runs with a pull request land
+ * here.") would be a claim about an inbox no one has looked at. Drawing it needs
+ * a signal this document does not carry: a note for the not-yet-read state. This
+ * hedged sentence is true of both, so it is the one every empty panel says.
  */
 export const LIVE_REVIEW_EMPTY = 'no finished run in this feed is ready for review'
-
-/**
- * LIVE_REVIEW_NOTHING_WAITING is the other half of that pair, and the design's
- * own words for it: what the panel says when the document was read and nothing
- * in it is waiting. It is the sentence `LIVE_REVIEW_EMPTY` may not be -- see
- * there for why the choice between them is `queued_note`'s and not this
- * section's.
- */
-export const LIVE_REVIEW_NOTHING_WAITING =
-  'Nothing waiting. Finished runs with a pull request land here.'
 
 /**
  * LIVE_PR_NO_LINK_REASON is the sentence the section carries beneath its rows,
@@ -2227,8 +2227,8 @@ function reviewIcon(factory: LiveFactory): ScreenElement {
  *
  * The section is drawn whether or not it has a row: "nothing is waiting for
  * you" is an answer, and a section that vanishes when it is empty is a section
- * whose absence the operator has to interpret. Which of the two sentences it
- * gives that answer in is `queued_note`'s to decide, in the branch below.
+ * whose absence the operator has to interpret. It gives that answer in one
+ * sentence whatever the document says, and `LIVE_REVIEW_EMPTY` says why.
  */
 function reviewSection(factory: LiveFactory, model: LiveModel): ScreenElement {
   const element = make(factory, 'section', 'live-review')
@@ -2250,14 +2250,12 @@ function reviewSection(factory: LiveFactory, model: LiveModel): ScreenElement {
   const list = cell(element, factory, 'ol', 'live-review-list')
   for (const row of model.review) list.append(reviewRow(factory, row))
   if (model.reviewCount === 0) {
-    // Two sentences, and `queued_note` is what chooses: the document says the
-    // runs bucket could not be read, so the console has no empty feed to
-    // describe and keeps the hedged one (`LIVE_REVIEW_EMPTY`); with no note the
-    // feed was read, and the design's own sentence is what it says.
-    literal(
-      cell(element, factory, 'p', 'live-review-empty'),
-      model.queuedNote === null ? LIVE_REVIEW_NOTHING_WAITING : LIVE_REVIEW_EMPTY,
-    )
+    // **One sentence, and `queued_note` is not what picks it.** An absent note
+    // covers both "the bucket was read and nothing is waiting" and "the bucket
+    // has not been read yet", and the screen cannot tell them apart
+    // (`LIVE_REVIEW_EMPTY`); the hedge is true of both, so it is what an empty
+    // panel always says.
+    literal(cell(element, factory, 'p', 'live-review-empty'), LIVE_REVIEW_EMPTY)
   }
   if (model.review.length > 0) {
     // Once per section rather than once per row: the reason is a fact about

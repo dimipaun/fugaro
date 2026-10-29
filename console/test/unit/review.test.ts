@@ -26,11 +26,12 @@
 //      builds no link from it, because no document on this tree says which
 //      provider the run's repository is on (gap 7, still open).
 //   3. **the section is drawn whether or not it has a row.** "Nothing is waiting
-//      for you" is an answer, and the console says it in one of two sentences:
-//      the design's own when the feed was read, and the hedged "in this feed"
-//      one when `ready[]` shipped empty beside the CLI's own `queued_note` --
-//      the runs bucket could not be read, so "nothing waiting" is a fact this
-//      console does not have.
+//      for you" is an answer, and the console says it in one sentence: the hedged
+//      "in this feed" one. A frame with no `queued_note` does not say the runs
+//      bucket was read -- `watch`'s first frame never waits for the bucket scan,
+//      and an absent note covers "nobody asked" as well as "it was read" -- so
+//      the design's positive "nothing waiting" sentence is not one this console
+//      can support, and `queued_note`'s presence picks nothing.
 //
 // The last case in this file drives the whole entry, which is the only way to
 // make the plan's `openExternal` claim about the *wiring* rather than about the
@@ -50,7 +51,6 @@ import {
   LIVE_PR_NO_LINK_REASON,
   LIVE_REVIEW_CAP,
   LIVE_REVIEW_EMPTY,
-  LIVE_REVIEW_NOTHING_WAITING,
   LIVE_REVIEW_TITLE,
   buildLiveModel,
   renderLive,
@@ -439,7 +439,7 @@ describe('the review inbox’s drawing', () => {
     // is what gives it -- and the count in the heading is drawn the way every
     // other count is, which is what the assertion is for.
     expect(one(section, 'live-review-title').textContent).toBe(`${LIVE_REVIEW_TITLE} (0)`)
-    expect(one(section, 'live-review-empty').textContent).toBe(LIVE_REVIEW_NOTHING_WAITING)
+    expect(one(section, 'live-review-empty').textContent).toBe(LIVE_REVIEW_EMPTY)
     expect(all(section, 'live-review-row')).toEqual([])
     // With no row there is no link to explain, so the reason is not drawn --
     // a sentence about a pull request that is not on the screen would be the
@@ -447,26 +447,27 @@ describe('the review inbox’s drawing', () => {
     expect(all(section, 'live-review-note')).toEqual([])
   })
 
-  it('picks its empty sentence by whether the feed could be read', () => {
-    // `ready[]` ships empty when nothing is waiting **and** when the runs bucket
-    // could not be read at all, and the CLI's own `queued_note` -- drawn in the
-    // header as `p.live-note` -- is what tells the two apart. So the panel makes
-    // the claim the design words ("nothing waiting") only when the document says
-    // the bucket was read, and keeps the hedged sentence when it says it was
-    // not: "nothing waiting" is a fact about a feed the console could see, and a
-    // feed it could not see has no such fact to report.
-    expect(LIVE_REVIEW_NOTHING_WAITING).toBe(
-      'Nothing waiting. Finished runs with a pull request land here.',
-    )
+  it('says the hedge whatever the document says about the runs bucket', () => {
+    // **One sentence for every empty panel, and this is the case that keeps it
+    // honest.** `ready[]` ships empty when nothing is waiting **and** when the
+    // runs bucket has not been read, and the two are not distinguishable from
+    // the document: `queued_note` is absent both when the read succeeded and
+    // when it has not happened yet -- `watch`'s first frame never waits for the
+    // bucket scan (`internal/cli/watch_queued.go`'s `queuedSource`), and
+    // `watch.View.QueuedNote`'s comment says `""` is "when it was, or when
+    // nobody asked". So "nothing waiting" is not a fact this screen can have:
+    // over a feed nobody has read it would assert an empty inbox, which is the
+    // claim the hedge exists to avoid. The design words that positive sentence
+    // and it waits on a not-yet-read signal the CLI does not emit.
     expect(LIVE_REVIEW_EMPTY).toBe('no finished run in this feed is ready for review')
 
-    const read = drawnSection(aModel([]))
-    expect(one(read, 'live-review-empty').textContent).toBe(LIVE_REVIEW_NOTHING_WAITING)
+    const silent = drawnSection(aModel([]))
+    expect(one(silent, 'live-review-empty').textContent).toBe(LIVE_REVIEW_EMPTY)
 
-    const unread = drawnSection(
+    const noted = drawnSection(
       aModel([], { queued_note: 'the runs bucket could not be read (retrying)' }),
     )
-    expect(one(unread, 'live-review-empty').textContent).toBe(LIVE_REVIEW_EMPTY)
+    expect(one(noted, 'live-review-empty').textContent).toBe(LIVE_REVIEW_EMPTY)
   })
 
   it('draws the panel as the design’s box: a decorative mark, the CLI’s line, the list', () => {
