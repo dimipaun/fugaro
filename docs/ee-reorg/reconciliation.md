@@ -316,12 +316,15 @@ All answered (2026-10-29). D523, D531 and D533 are NOT the recommendation; the r
 
 ## 5. Open tensions and open items for the owner
 
-- **O7 (D533 against D523 and D524). OPEN, the owner's to decide; not decided here.** D524 ships
+- **O7 (D533 against D523 and D524). ANSWERED 2026-10-29 by the owner: choice (b).** D524 ships
   governance in a tagged base image, so on an installation that never refreshes its images
   governance stays refused (F9) although D523 says everything is available to all: it is available
   only after the operator refreshes images, and the 0.13.0 notes (D533) give no operator step. The
-  choices: (a) accept it; (b) add a one-line "refresh images to get governance" note to the notes
-  without making it a required step.
+  choices were: (a) accept it; (b) add a one-line "refresh images to get governance" note to the notes
+  without making it a required step. The owner took (b): the 0.13.0 notes carry that ONE line, it is
+  **not** a required operator step, and an installation that never refreshes its images keeps refusing
+  `governance:` — today's behaviour anyway. E3.3 owns the line; `docs/design/ee-boundary-moves.md`
+  §12 records the same answer.
 - **O1 (D526). ANSWERED 2026-10-29 by the owner: publish the CLA Gist URL first, then release**
   (not the recommendation, which was to ask counsel and hold). The owner creates the Gist from
   `docs/licensing/CLA.md` and sends its Raw URL; a docs PR replaces `[CLA URL TO BE PUBLISHED]`

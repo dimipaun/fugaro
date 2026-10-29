@@ -7,7 +7,7 @@ wins), including the owner's correction of 2026-10-29: **the digest stays MIT**.
 at `028b46357`, 2026-10-28.
 
 **Status: plan only. Nothing is implemented, and NO TASK IS APPROVED.** Each task needs the owner's
-explicit go. Decisions D520–D536 are all **answered** (2026-10-29: the recommendations taken except D523, D531 and D533; O1 is answered by the owner as "publish the CLA Gist URL first, then release", so the 0.13.0 tag stays held until E3.5 has merged and the E-slices are done). **D523 (no notice at all until the verifier, the key-minting service and the launch are ready), D531 (edit the Terms text now, E3.6) and D533 (0.13.0 notes: no operator steps) re-plan the tasks below**; O3 stays the owner's confirmation and O7 is a new open tension. Every task names the decisions it assumes.
+explicit go. Decisions D520–D536 are all **answered** (2026-10-29: the recommendations taken except D523, D531 and D533; O1 is answered by the owner as "publish the CLA Gist URL first, then release", so the 0.13.0 tag stays held until E3.5 has merged and the E-slices are done). **D523 (no notice at all until the verifier, the key-minting service and the launch are ready), D531 (edit the Terms text now, E3.6) and D533 (0.13.0 notes: no operator steps) re-plan the tasks below**; O3 stays the owner's confirmation, and O7 is answered (2026-10-29): the 0.13.0 notes carry one line — refresh images to get governance — and it is not a required operator step, which E3.3 owns. Every task names the decisions it assumes.
 
 It **supersedes** subscriptions tasks S1.1, S1.2, S1.3, S1.4, S1.5, S1.7 and S1.9 (their content is
 carried here, task by task, with the changes the ruling forces) and **depends on** S1.6 (carried as
