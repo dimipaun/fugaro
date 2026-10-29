@@ -127,6 +127,7 @@ const MODULES: readonly string[] = Object.freeze([
   'shared/stringify.js',
   'shared/replay.js',
   'renderer/app.js',
+  'renderer/writes.js',
   'renderer/screens/run.js',
 ])
 

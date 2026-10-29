@@ -1399,6 +1399,7 @@ li.run-log-line {
   flex-wrap: nowrap;
   gap: var(--space-sm);
   white-space: nowrap;
+  border-bottom: var(--rule-width) solid var(--line);
 }
 
 span.run-log-time {
