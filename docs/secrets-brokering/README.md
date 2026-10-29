@@ -24,6 +24,8 @@ forward before the PR.
 | [spec.md](spec.md) | The owner's spec, "Fugaro Secrets and Credential Brokering" (2026-10-27), verbatim. The customer it names is replaced by a placeholder |
 | [reconciliation.md](reconciliation.md) | What exists (§2); who reads Secret Manager today (§3); findings F1–F28 (§4); decisions D490–D506 with the owner's answers and resolutions R1–R4 (§5); 0.12.1 meanwhile (§6); tensions T1–T6 as the rulings handle them and open items O1–O8 (§7); UNVERIFIED U1–U8 (§9). **Where it disagrees with `spec.md`, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Slices S0–S5; tasks B0.1–B0.6, B1.0 (conditional) and B1.1–B1.16 with files, tests, red steps, commands and reviewer tiers; the re-planned Bitbucket S2; levels, critical path, shared files; Checks 190–192. **Nothing in it is approved** |
+| [secret-readers.md](secret-readers.md) | The S0 audit (task B0.1, as a tested doc): one row per reader of a Secret Manager value today, each carrying the decision that keeps it reading and the slice that ends it. Its `E<number>` IDs are the key B0.2's guard lists in its own exceptions table, so a hit with no row and a row with no hit both fail the build |
+| [check190-steps.md](check190-steps.md) | The owner's own steps for Check 190 (written by task B0.4, run by the owner in task B0.5): the token file at mode `0600`, the `--dry-run`, the run, the block to paste back and the `rm`. The script is `scripts/live-checks/check190.sh` and the register's section is `docs/gcp-live-checklist.md`, "Check 190" |
 
 ## Typos fixed in the spec
 
@@ -34,7 +36,7 @@ None.
 | Block | Use |
 | --- | --- |
 | **D490–D519** | D490–D506 written and answered 2026-10-27; D507–D519 reserved and unused. Above the Bitbucket workspace-token work's D460–D489, on `main` and in every open PR |
-| **Checks 190–199** | 190–192 assigned by the plan (owner-run, not written); 193–199 reserved and unused. Above Checks 180–189 |
+| **Checks 190–199** | 190–192 assigned by the plan (owner-run): 190 is written by B0.4 and waits for the owner's run (B0.5), 191–192 are not written; 193–199 reserved and unused. Above Checks 180–189 |
 
 ## Related
 

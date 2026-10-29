@@ -766,6 +766,7 @@ probe account carries predefined grants only).
 | 145 | The Bitbucket read consumer's facts ([`docs/bitbucket-credentials/`](bitbucket-credentials/implementation-plan.md), its Check 145, task T2.8 and the script T2.7 writes; the reconciliation's U1–U5, U8, U11, U12, U14 and U15): the sandbox consumer read from a file **you** name and never printed — the token's lifetime (U1); whether the `client_credentials` grant returns a refresh token and whether a single minted token can be revoked (U2); whether the token reaches a second workspace you belong to (U3); whether the sandbox's plan admits consumers (U4); the workspace's seat count before and after (U5); whether IP allowlisting applies to OAuth tokens, and U8 stays **UNVERIFIED** if the plan offers none (U8); whether the token response lists the granted scopes (U11); whether two grants return distinct tokens (U12); whether creating a consumer needs workspace-admin rights and whether the token then reaches admin endpoints (U14); and whether the consumer must be marked private (U15). **It gates the read mint (O4):** tasks T2.3 and T3.1 do not merge before this check passes, and if U3 shows reach beyond the workspace, D360 and D361 go back to the owner before T2.3 merges. It also shows that a write with the read token is refused | See "Check 145" below; **you** run it at your own terminal, on sandbox workspaces only, never `belong`, with the consumer file you name and the script never printing it, and **no agent runs any step of it**. The script lands with task **T2.7**; this section is task **T0.2**'s and carries no steps of its own until then | A sandbox workspace and a second one you belong to, one read consumer created as the installing person, and two `client_credentials` grants; the script's own Restore says what it leaves behind. **USER-RUN, NOT RUN.** |
 | 146 | The coordinator sweep reads a Bitbucket repository through the service, and its GitHub views are unchanged ([`docs/bitbucket-credentials/`](bitbucket-credentials/implementation-plan.md), its Check 146, task T2.10 and the script T2.9 writes; D361 and D362): on a sandbox installation with the credentials service on, the sweep's stored view for a Bitbucket repository is **read** rather than `StaleUnsupported`, and the installation's GitHub views — the ones the sweep already writes — are unchanged | See "Check 146" below; **you** run it on a sandbox installation, never `belong`, and **no agent runs any step of it**: `scripts/live-checks/check146.sh --installation <sandbox>`. The script lands with task **T2.9**; this section is task **T0.2**'s and carries no steps of its own until then | One sandbox installation with the service on and one sweep; the script's own Restore says what it leaves behind. **USER-RUN, NOT RUN.** |
 | 149 | The console shows the stored view on the owner's own machine ([`docs/bitbucket-credentials/`](bitbucket-credentials/implementation-plan.md), its Check 149 and task T1.3; D364, and U9 end to end): `fugaro coordinator status --from-store --all --json --project <name>` reads the stored view as the signed-in person with **no key**, and the console's project view renders it — the read the console could not make while it had to run `coordinator status` itself | See "Check 149" below; **you** run it at your own terminal, on your own machine, read-only, and **no agent runs any step of it** | Nothing: two reads and one window. No project is written, no run is launched and no credential is minted. **USER-RUN, NOT RUN.** |
+| 190 | git fetch, a blobless clone and a >32 MiB push through a throwaway, IAM-only Cloud Run proxy ([`docs/secrets-brokering/`](secrets-brokering/implementation-plan.md), its task **B0.4** and its "Checks 190–192"; the reconciliation's **F13**, **F14**, **U2**, **U7** and **U8**): against a sandbox Bitbucket repository, through a Cloud Run service deployed **with IAM required and no public invoker** — a **full clone** and a **blobless clone** (request count, bytes and time each), a **push above 32 MiB** on HTTP/1.1 (chunked) and what the front end answers, a **small push**, the **cold start** of the first git request after 35 idle minutes (D501: the service keeps scaling to zero), and what the front end does with a push held open past the service's **3600 s** timeout. It is the measurement S1's proxy is designed against: a large push that passes on HTTP/1.1 is what S1 is built on, and one that does not is what makes B1.5 serve h2c end to end | See "Check 190" below; **you** run it, on installation `fugaro` only (project `fugaro-dev`, region `us-east5`, hard-coded — the check refuses another installation), against a sandbox repository only, never `belong`, with the token file at mode `0600` that [secrets-brokering/check190-steps.md](secrets-brokering/check190-steps.md) writes; the script is `scripts/live-checks/check190.sh`, its own test `scripts/live-checks/check190_test.sh`, and **no agent runs any step of it** | One throwaway Cloud Run service with IAM required and no public invoker, the Artifact Registry repository and the image it is built into, the Secret Manager container that holds the sandbox repository's token for the proxy, and one branch on the sandbox repository — every one of them deleted by the Restore, which asserts three counts read `0`. **Wall clock, not money: about two hours at the terminal**, one build and one idle instance billed to the project while it runs. **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -11102,3 +11103,53 @@ machine.
 **Restore.** Nothing is created, so there is nothing to undo: two reads and one window. No project
 is written, no run is launched, no credential is minted, and the check holds no secret to paste
 back. **No agent runs any step of it.**
+
+## Check 190: git fetch, a blobless clone and a >32 MiB push through a throwaway, IAM-only Cloud Run proxy (installation `fugaro` only, sandbox repository only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **B0.4** of the secrets-brokering plan
+([secrets-brokering/implementation-plan.md](secrets-brokering/implementation-plan.md), its "B0.4: Check
+190 written"), and **run by the owner** in task **B0.5**, whose steps are
+[secrets-brokering/check190-steps.md](secrets-brokering/check190-steps.md) — this section carries no
+steps of its own. The script is `scripts/live-checks/check190.sh`, with the test that drives it
+(`scripts/live-checks/check190_test.sh`) and the throwaway proxy it deploys
+(`scripts/live-checks/check190/main.go`).
+
+**What the check settles.** Five things the Bitbucket proxy is designed against and that cannot be
+answered offline (reconciliation.md, F13, F14, U2, U7, U8): whether a pack above **32 MiB** can be
+pushed through Cloud Run on **HTTP/1.1** (chunked) at all, and what the front end answers when it
+cannot; what a **full clone** and a **blobless clone** cost in requests, bytes and time; how large the
+**cold start** of the first git request after idle is (D501: the service keeps scaling to zero); and
+what happens to a request held open past the service's **3600 s** timeout. It is the gate the run's
+result feeds: a large push that passes on HTTP/1.1 is what S1 is built on, and one that does not is
+what makes B1.5 serve h2c end to end.
+
+**Prerequisites.** Installation `fugaro` only: the project (`fugaro-dev`) and the region (`us-east5`)
+are hard-coded and `fugaro doctor` must answer that this is the `fugaro-dev` installation, so the
+check cannot be pointed at another one and refuses to run if it is. Never `belong`. A **sandbox**
+repository you may push a throwaway branch to, and its access token in a file at mode `0600`
+(`CHECK190_TOKEN_FILE`; any other mode, and an empty file, are refused). `bash`, `gcloud`, `git`,
+`curl` and `awk` on PATH, `gcloud` authenticated as you. About **two hours** at the terminal: the
+cold-start wait is 35 minutes and the slow push is held open for an hour.
+
+**What you type** (the full text, and what to do when a stop ends the run early, are in
+[secrets-brokering/check190-steps.md](secrets-brokering/check190-steps.md)):
+
+1. `umask 077 && pbpaste > ~/check190.token`
+2. `CHECK190_REPO=<workspace>/<sandbox repository> CHECK190_TOKEN_FILE=~/check190.token bash scripts/live-checks/check190.sh --dry-run`
+3. the same without `--dry-run`; paste the `CHECK 190 RESULT` block back
+4. `rm ~/check190.token`
+
+**What the check holds before it sends a request.** The deploy line carries
+`--no-allow-unauthenticated`, and the check reads the argv a real run would pass rather than trusting
+the flag to be there; `gcloud run services get-iam-policy` is read back, and the run stops before any
+request if the policy names `allUsers` or `allAuthenticatedUsers`. A service, repository or secret of
+the check's own names that was **already there** is a hard stop too: it never adopts, writes into or
+deletes what it did not create. The token reaches the service as a **file** out of its own Secret
+Manager container, never as an environment variable — `gcloud run services describe` prints an
+environment variable back — and the block carries counts, sizes and times, never the token, a header
+or a body.
+
+**Restore.** The service, the image, the Artifact Registry repository, the Secret Manager container
+and the throwaway branch are deleted, from the exit trap too, so a Ctrl-C in the middle still leaves
+nothing running; three counts are asserted `0` before the scratch directory goes, and the directory
+is **kept** with a message saying where it is when one is not. **No agent runs any step of it.**
