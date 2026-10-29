@@ -43,9 +43,12 @@ is what keeps the guard below honest: every wire name in a field table outside
 that list is still refused as a field invented from the design.
 `TestDocsDesktopConsoleContractNamesNoInventedField` also fails if a listed key
 later becomes a real JSON key of a shape here, so the list cannot outlive its
-reason. The two keys today are `leased_usd` (§2) and `compute_usd` (§3) — the
-latter is already a real key of `report --json` (§4), which is why it needs no
-guard entry and `leased_usd` does.
+reason. **The list is empty today**: `leased_usd` (§2) left it when the CLI
+started writing the key, so it now stands on the structs like every other field
+— a console still reads it as optional, because an older CLI writes no such key.
+`compute_usd` (§3) is the one key still named ahead of the CLI that will write
+it, and it needs no guard entry: it is already a real key of `report --json`
+(§4).
 
 ## 1. The five availability states
 
@@ -133,7 +136,7 @@ permission refusal, which `watchStream` emits once and then returns `dbErr`
 | `counted_usd` | float64 | USD | no | measured |
 | `spent_usd` | float64 | USD | no | measured |
 | `notional_usd` | float64 | USD | no | **notional** — never billed, never capped, never summed into a real total |
-| `leased_usd` | `*float64` | USD | — (not emitted yet) | **optional** (§intro's bounded exception): absent or `null` = unavailable (`n/a`, never `0`); present is measured. The **outstanding** leased dollars — the amount a lease currently holds, where `max_reserve_usd` (§3) is the **ceiling** on one lease. No CLI release writes it yet |
+| `leased_usd` | float64 | USD | no | measured — **`BuildJSON` writes it**, so it is always present and `0` when nothing is leased (the console still reads it as optional, for a CLI older than the release that added it). The **outstanding** leased dollars: `counted_usd − spent_usd`, floored at zero (`watch.LeasedUSD`, `internal/watch/json.go`), where `max_reserve_usd` (§3) is the **ceiling** on one lease. The label is *leased, not yet spent*, never "live leases": the sweeper never releases a lease (`internal/budget/sweep.go`), so a crashed run's stays in the figure for the rest of the day |
 | `daily_cap_usd` | `*float64` | USD | no | **null = unavailable** (no cap set) |
 | `percent` | `*float64` | 0–100 | no | **null = unavailable**, together with `daily_cap_usd` (`usdPtr`) |
 | `burn` | `JSONBurn` | — | no | see below |
@@ -169,7 +172,7 @@ drift from it.
 | `repo` | string | `owner/name` | no | measured |
 | `counted_usd` / `spent_usd` | float64 | USD | no | measured |
 | `notional_usd` | float64 | USD | no | **notional** |
-| `leased_usd` | `*float64` | USD | — (not emitted yet) | **optional** (§intro's bounded exception): absent or `null` = unavailable (`n/a`, never `0`); present is measured. As on `JSONTotal`: the **outstanding** leased dollars, never the ceiling. No CLI release writes it yet |
+| `leased_usd` | float64 | USD | no | measured — as on `JSONTotal`, written by `BuildJSON` and read as optional for an older CLI. The **outstanding** leased dollars of this repository, never the ceiling; the same *leased, not yet spent* caveat, and the same floor at zero |
 | `daily_cap_usd` / `percent` | `*float64` | USD / 0–100 | no | **null = unavailable** |
 | `burn` | `JSONBurn` | — | no | as above |
 | `kill` | `*JSONKill` | — | no | **null = not killed** |
@@ -184,16 +187,16 @@ and §3's `global`/`showRepo` carry the rest.
 
 **How the console reads it — one rule, stated once.** Absent and `null` are
 **unavailable** (`n/a`, never `0` — a document with nothing to say about a lease
-has not leased nothing); a finite, non-negative number is **measured**. Any
-other value — a string, a boolean, a negative — is handled **the way the decoder
-that owns the document handles a shape it cannot read**, which is the whole of
-the rule:
+has not leased nothing), which is the shape a CLI older than the key's release
+writes; a finite, non-negative number is **measured**. Any other value — a
+string, a boolean, a negative — is handled **the way the decoder that owns the
+document handles a shape it cannot read**, which is the whole of the rule:
 
   * the **closed** decoders (the console's `src/shared/schema.ts`, and the shared
     package's `shared/digest`, consumed by the mobile app today) refuse the
     document by the field's wire path (`total.leased_usd`, `repos[0].leased_usd`).
-    That is deliberate for a key named ahead of its release: no document has ever
-    carried it, so a value of a shape the decoder does not expect is a document
+    That is deliberate: a value of a shape the decoder does not expect — or a
+    negative one, which no money field of this contract can hold — is a document
     that decoder does not understand, not one it merely has not learned to read —
     the same judgement `closed` makes about an unknown key *name*;
   * `budget show`'s caps reader is the console's **tolerant** reader: it refuses
@@ -210,7 +213,8 @@ package's digest a non-finite number is refused** (`RANGE`,
 `shared/digest/index.js`) — which is a fact about their code, not a case a screen
 reading a document will meet.
 
-**No screen draws it yet**; the Spend redesign is the reader.
+**No console release draws it yet**: the Live screen's redesign (console
+0.114.0) is the reader.
 
 ### `JSONRun` (`internal/watch/json.go`) — a live or queued run
 
@@ -339,7 +343,10 @@ spaces (`enc.SetIndent("", "  ")`, `internal/cli/budget.go`).
 
 `showGlobal`: `daily_cap_usd` `*float64`, `per_run_cap_usd`
 `*float64`, `counted_usd`/`spent_usd` float64, `notional_usd` float64
-(**notional**), `headroom_usd` `*float64` (**null = unavailable**),
+(**notional**), `leased_usd` float64 (no `omitempty` — the same figure §2's
+`leased_usd` carries, computed the same way, `runBudgetShow` through
+`watch.LeasedUSD`; it is *leased, not yet spent*, and `0` when nothing is
+leased), `headroom_usd` `*float64` (**null = unavailable**),
 `kill` `*showKill` (null = not killed). All caps are **null = unavailable** and
 never `0`.
 
@@ -351,7 +358,9 @@ both `*float64`.
 **`repo`, `default` or `none`**), `per_run_cap_usd` `*float64`,
 **`per_run_cap_source`** (string, no `omitempty` — `repo`, `default`, `global`
 or `none`; `perRunCapSource`), `counted_usd`, `spent_usd`,
-`notional_usd`, `headroom_usd` `*float64`, `kill` `*showKill`,
+`notional_usd`, `leased_usd` float64 (no `omitempty`, as on `showGlobal` and
+floored the same way: the repository's own outstanding lease),
+`headroom_usd` `*float64`, `kill` `*showKill`,
 `running` `[]showRun`. **`per_run_cap_source` is the "binding scope named"
 the design's §6.2 Spend screen draws** — it is already in the document and
 needs no CLI change (§4.3's "not a gap" note).
@@ -359,8 +368,8 @@ needs no CLI change (§4.3's "not a gap" note).
 **`compute_usd` is approved on each `showRepo` and no CLI release writes it
 yet** (the owner approved it on 2026-10-28, with §2's `leased_usd`): a
 `*float64` of the repository's compute dollars, an **estimate** by design
-(`runstore.Cost.ComputeUSD`, the same account §4 reports — and unlike
-`leased_usd` it is already a real wire name, on `report --json`'s rows and on
+(`runstore.Cost.ComputeUSD`, the same account §4 reports — and, like
+`leased_usd` now, already a real wire name, on `report --json`'s rows and on
 `runstore.Cost`). The console reads it as **optional** — an absent key or `null`
 is **unavailable** (`n/a`, never `0`), a number is **estimated** — and **no
 screen draws it yet**; the Spend redesign is the reader. It is the one key of

@@ -507,21 +507,20 @@ function readingOf(raw: Record<string, unknown>, key: string, field: string): Re
   return readNumber(raw[key], field === '' ? key : `${field}.${key}`)
 }
 
-/** optionalMoneyAt reads a money key the console's shapes carry but no CLI
- * writes yet (`leased_usd`, owner-approved 2026-10-28 for `total` and every
- * `repos[]` entry). Absent, `null` and a non-finite number are all
- * *unavailable*: the document has nothing to say about a lease, which is not a
- * lease of nothing, so it is `n/a` and never `0`. A finite non-negative number
- * is measured.
+/** optionalMoneyAt reads a money key a CLI older than the release that added it
+ * does not write (`leased_usd`, on `total` and on every `repos[]` entry).
+ * Absent, `null` and a non-finite number are all *unavailable*: the document
+ * has nothing to say about a lease, which is not a lease of nothing, so it is
+ * `n/a` and never `0`. A finite non-negative number is measured.
  *
  * It is deliberately stricter than `readingOf` about what it *does* carry. The
- * other money keys are numbers the CLI has written since the shape existed, so
- * a string at one of them is a document this console has merely not learned to
- * read, drawn `n/a`; `leased_usd` is a key no version writes, so a value of the
- * wrong shape there -- or a negative one, which no money field of this contract
- * can hold -- is a document this console does not understand, and it is refused
- * by name rather than half-read. That is the shape's own rule for every key it
- * does not know (`closed`), applied to the value rather than the name. */
+ * other money keys are numbers every CLI writes, so a string at one of them is
+ * a document this console has merely not learned to read, drawn `n/a`; a
+ * value of the wrong shape at `leased_usd` -- or a negative one, which no money
+ * field of this contract can hold -- is a document this console does not
+ * understand, and it is refused by name rather than half-read. That is the
+ * shape's own rule for every key it does not know (`closed`), applied to the
+ * value rather than the name. */
 function optionalMoneyAt(raw: Record<string, unknown>, key: string, field: string, where: string): Reading {
   const at = field === '' ? key : `${field}.${key}`
   const value = raw[key]
@@ -566,9 +565,10 @@ export interface TotalsView {
   readonly countedUsd: Reading
   readonly spentUsd: Reading
   readonly notionalUsd: Reading
-  /** leasedUsd is the dollars a lease currently holds reserved. The key is
-   * approved but not emitted yet (2026-10-28), so it is available on every
-   * document until a CLI writes it: absent or `null` is `n/a`, never `0`. */
+  /** leasedUsd is the dollars a lease has reserved and not yet spent
+   * (`counted_usd - spent_usd`, floored at zero). A CLI since the release that
+   * added the key writes it; an older one leaves it out, which is `n/a` and
+   * never `0` -- see `optionalMoneyAt`. */
   readonly leasedUsd: Reading
   /** null on the wire = no cap set, which is unavailable and not a cap of zero */
   readonly dailyCapUsd: Reading
@@ -797,9 +797,9 @@ export const TOTAL_KEYS = [
   'counted_usd',
   'spent_usd',
   'notional_usd',
-  // The one key here no `JSONTotal` writes yet (owner, 2026-10-28): approved
-  // ahead of the CLI that will emit it, and accepted as optional for the same
-  // reason `REPO_KEYS` carries it -- see `optionalMoneyAt`.
+  // Written by the CLI since the release that added it, and still read as
+  // optional: a document from an older CLI does not carry it -- see
+  // `optionalMoneyAt`.
   'leased_usd',
   'daily_cap_usd',
   'percent',
@@ -819,13 +819,10 @@ export const TOTAL_KEYS = [
  * decision about repositories too. Exported so `schema.test.ts` can pin it
  * against the struct the way it pins `RECORD_KEYS`.
  *
- * **`leased_usd` is the one entry no `JSONRepo` writes yet.** The owner
- * approved it (2026-10-28) for both `total` and every `repos[]` entry, ahead of
- * the CLI release that will emit it, so it is here -- and in `TOTAL_KEYS` -- as
- * an *optional* money key rather than something that would refuse every
- * document the day the CLI starts writing it. The recorded entry
- * `schema.test.ts` pins this list against cannot carry it, which is why that
- * test separates the struct's own keys from this approved addition. */
+ * **`leased_usd` is written by `BuildJSON` on both `total` and every `repos[]`
+ * entry** (counted minus spent, floored at zero: the money leased and not yet
+ * spent), and is read here as an *optional* money key all the same, because a
+ * document from an older CLI carries no such key at all (`optionalMoneyAt`). */
 export const REPO_KEYS = [
   'slug',
   'repo',

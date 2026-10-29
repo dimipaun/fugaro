@@ -618,9 +618,9 @@ function scrubTotalOrRepo(value: unknown, path: string, repoN: number | undefine
     counted_usd: num, spent_usd: num, notional_usd: num, runs: num, run_hours: num, // recomputed below
     // `daily_cap_usd` and `percent` are the two *float64 of
     // internal/watch/json.go's JSONTotal and JSONRepo: the document writes null
-    // for both when the repository has no cap. `leased_usd` is the
-    // owner-approved key (2026-10-28) no release writes yet, named so a later
-    // recording is not refused whole; its amount is invented like the other
+    // for both when the repository has no cap. `leased_usd` is a plain float64
+    // there -- counted minus spent, floored at zero -- and a recording older
+    // than the key carries none at all; its amount is invented like the other
     // dollar figures.
     percent: nullableNum,
     leased_usd: (v, p) => (v === null ? null : typeof v === 'number' ? INVENTED_LEASE_USD : refuse(p, 'not a number')),

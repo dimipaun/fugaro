@@ -39,6 +39,14 @@
 // and does nothing. That is "Cancel is the default button" carried through to
 // the last input device, and it is why a task box an operator is scrolling with
 // Space cannot confirm the run underneath them.
+//
+// The delay a yes waits out is deliberately **not** here. It belongs to the main
+// process (`CONFIRM_READY_DELAY_MS` in `src/main/confirm.ts`), which measures it
+// from the window's own `show` and `focus`, because the hazard is a document
+// that appears late: a timer in this document would be started by the very thing
+// that arrived late. This view reads no clock at all -- it answers the moment the
+// button is clicked, and a yes the main process refused comes back as a refusal
+// and is drawn as the operator's sentence.
 
 import type { ConfirmBridge } from '../preload/confirm'
 
@@ -221,7 +229,14 @@ export async function mountConfirm(document: ConfirmDocument, bridge: ConfirmBri
     // answer: confirming is a deliberate click, and this is where that is
     // enforced in the document.
     if (event.detail < 1) return
-    await bridge.answer(true)
+    const reply = await bridge.answer(true)
+    // A yes the main process refused decides nothing and leaves this window open
+    // -- the readiness delay is the common one, and it is the main process's
+    // because it is measured from the window's own `show` and `focus`. The
+    // operator reads the sentence rather than pressing a button that silently
+    // did nothing, and the confirming button stays where it is: the click after
+    // the delay is the one that counts.
+    if (!reply.ok && status !== null) status.textContent = reply.reason
   })
 
   if (actions !== null) actions.replaceChildren(confirm, cancel)

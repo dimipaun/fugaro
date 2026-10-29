@@ -304,7 +304,7 @@ func SetLaunchDeclarer(d LaunchDeclarer) error
   `TestLaunchStillDeclaresBeforeTheMove`). E2.1 flips the default to **declare nothing** and
   `ee/register/coordinator.go` registers today's declarer (D535).
 - **Paid-command stubs**: a core stub for each name whose code is absent (`report`, `coordinator`),
-  which exits non-zero with D522's message — that the command is part of Fugaro Enterprise and this
+  which exits non-zero with D522's message — that the command is part of Fugaro Subscription Edition and this
   build does not include it — rather than cobra's "unknown command", which would mislead a source
   builder and the console. Seen through a seam in E1.1 (`TestStubSaysWhyThroughASeam`, a test-only
   stub name) and for real in E2.1/E2.2 (`TestUntaggedPaidCommandSaysWhy`, G3).
