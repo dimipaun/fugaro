@@ -763,7 +763,7 @@ describe('renderProjects', () => {
     expect(drawn(rows[0] as FakeScreen)).toContain(ADDRESS_PLACEHOLDER)
     expect(drawn(rows[0] as FakeScreen)).not.toContain('operator@example.test')
     // The notional account is marked as notional wherever it is drawn.
-    expect(drawn(rows[1] as FakeScreen)).toContain('NOTIONAL~')
+    expect(drawn(rows[1] as FakeScreen)).toContain('~$')
   })
 
   it('draws who started a job, and no cell for a job the record does not name', () => {

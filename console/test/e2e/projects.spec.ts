@@ -623,7 +623,7 @@ test.describe('the Projects screen', () => {
     expect(drawn.jobs).toBe(2)
     // A subscription's model dollars are notional, and the job's model, compute
     // and total are never added into one figure.
-    expect(drawn.text).toContain('NOTIONAL~')
+    expect(drawn.text).toContain('~$')
     expect(drawn.text).toContain('$1.75')
   })
 

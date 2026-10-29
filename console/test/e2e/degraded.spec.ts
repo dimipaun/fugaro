@@ -570,7 +570,7 @@ test.describe('the console with nothing to read', () => {
     // The plan's red step: a cap the console cannot read is `n/a`, and never a
     // zero drawn as one -- a project whose cap is unreadable is not a project
     // that has spent nothing, and `$0.00` of a $50 cap says it has. (A
-    // subscription row's model figure is `NOTIONAL~$0.00` and is a different
+    // subscription row's model figure is `~$0.00` and is a different
     // statement, which is why this is asserted on the cap and not on the text:
     // the notional marker is what keeps the two apart.)
     expect(screen.caps).toBe('n/a')
@@ -583,7 +583,7 @@ test.describe('the console with nothing to read', () => {
     // Two run records, one of them a subscription's and marked notional.
     expect(screen.runIds).toEqual(['20261015-123000-bb01', '20261015-121000-bb02'])
     expect(screen.notionalRows).toBe(1)
-    expect(screen.text).toContain('NOTIONAL~')
+    expect(screen.text).toContain('~$')
     // The row whose compute was not estimated is `n/a`, and the totals built
     // over it are lower bounds rather than sums of a zero.
     expect(screen.runComputes[1]).toBe('n/a')
