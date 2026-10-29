@@ -21,9 +21,10 @@ import (
 
 // skillCommand is one command a skill names, resolved against a CLI tree.
 //
-// paid marks a name in cli.PaidCommandNames(): it is accepted by name and by
-// nothing deeper, and cmd is nil for it — the tree that answers to the name
-// spells no command here the core could read a flag off. Every other name
+// paid marks a path whose first word is in cli.PaidCommandNames(): it is
+// accepted by name — the name and whatever the skill spells below it — and cmd
+// is nil for it, because the tree that answers to the name spells no command
+// here the core could read a flag or a subcommand off. Every other name
 // resolves to the command the tree holds, exactly as before the move.
 type skillCommand struct {
 	cmd   *cobra.Command
@@ -45,7 +46,13 @@ func resolveSkillCommand(root *cobra.Command, words ...string) skillCommand {
 		}
 		path = append(path, w)
 	}
-	if len(path) == 1 && slices.Contains(cli.PaidCommandNames(), path[0]) {
+	// A paid name answers for everything below it, because the core cannot tell
+	// what is below it: after the move the tree holds the stub, which has no
+	// subcommands, so `fugaro coordinator status` — a line the released binary
+	// runs — would read as an invented subcommand and be refused (F18). The
+	// path and the flags are checked where the command is, in the tagged tree
+	// (ee/plugincheck/skills_test.go).
+	if len(path) > 0 && slices.Contains(cli.PaidCommandNames(), path[0]) {
 		return skillCommand{paid: true, words: path}
 	}
 	cmd, _, err := root.Find(words)
@@ -54,8 +61,7 @@ func resolveSkillCommand(root *cobra.Command, words ...string) skillCommand {
 	}
 	// cobra hands back the deepest command it found with the rest as its
 	// arguments, so a path deeper than the tree is not a name this answers to:
-	// a paid command's subcommand is not invented here, and neither is a core
-	// one's.
+	// a subcommand the tree does not have is not invented here.
 	if len(strings.Fields(cmd.CommandPath())) != len(path)+1 {
 		return skillCommand{words: path}
 	}
@@ -67,9 +73,11 @@ func resolveSkillCommand(root *cobra.Command, words ...string) skillCommand {
 // flags, so `fugaro report --by repo` (the working skill's line,
 // plugin/skills/working/SKILL.md) must pass without the core reading --by off a
 // tree that cannot have it. The move must not turn a skill naming a command the
-// released binary still has into a failure (F18). The other half is the guard:
-// a name no build has still fails, and a paid name does not make a subcommand
-// path under it resolve.
+// released binary still has into a failure (F18). The other half is the guard,
+// which stays where it can be kept: a name no build has fails, and so does a
+// subcommand the tree does not have under a core name. Under a paid name the
+// core keeps no guard, because after the move the tree holds no subcommand of
+// it to judge (ee/plugincheck resolves the whole path in the tagged tree).
 func TestCoreSkillCheckAcceptsAPaidCommandByName(t *testing.T) {
 	root := &cobra.Command{Use: "fugaro"}
 	root.AddCommand(&cobra.Command{
@@ -90,7 +98,10 @@ func TestCoreSkillCheckAcceptsAPaidCommandByName(t *testing.T) {
 	if c := resolveSkillCommand(root, "nosuch"); c.known() {
 		t.Errorf("`fugaro nosuch` resolved to %+v, want it refused: a name that is not paid and not in the tree is not a command", c)
 	}
-	if c := resolveSkillCommand(root, "report", "sub"); c.known() {
-		t.Errorf("`fugaro report sub` resolved to %+v, want it refused: the paid name is accepted by name, and a path under it is the tagged tree's to resolve, not invented here", c)
+	if c := resolveSkillCommand(root, "runs", "nosuch"); c.known() {
+		t.Errorf("`fugaro runs nosuch` resolved to %+v, want it refused: a subcommand the tree does not have is not invented here", c)
+	}
+	if c := resolveSkillCommand(root, "report", "sub", "--json"); !c.known() || !c.paid {
+		t.Errorf("`fugaro report sub --json` resolved to %+v, want the paid name accepted with its subcommand: the core tree holds no subcommand of a paid name after the move, so a line the released binary answers to must not be refused here (F18)", c)
 	}
 }

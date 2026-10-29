@@ -57,7 +57,11 @@ func paidSkillLines(text string) []skillLine {
 	for i, raw := range strings.Split(text, "\n") {
 		for _, seg := range shellSplitRE.Split(shellNoiseRE.Replace(raw), -1) {
 			words := strings.Fields(seg)
-			j := slices.Index(words, "fugaro")
+			// The word is matched by its base name, as the core lint does: a
+			// skill may write `./fugaro`, `/usr/local/bin/fugaro` or `go run
+			// ./cmd/fugaro`, and a paid line behind a path would otherwise go
+			// unread here while the core check skips it for being paid.
+			j := slices.IndexFunc(words, func(w string) bool { return filepath.Base(w) == "fugaro" })
 			if j < 0 {
 				continue
 			}
@@ -180,16 +184,23 @@ func TestSkillsNamePaidFlagsThatExist(t *testing.T) {
 		t.Errorf("%s: a skill names a paid command, and the tagged tree is the tree that has to answer for it (D536)", f)
 	}
 
-	// The planted line: a flag no command carries is caught here. Without it
-	// the check could pass by never comparing a flag with the tree.
+	// The planted lines: a flag no command carries is caught here, whether the
+	// skill writes `fugaro` or a path to it. Without this the check could pass
+	// by never comparing a flag with the tree, or by reading only the bare
+	// spelling.
 	planted := t.TempDir()
-	writeSkill(t, planted, "fugaro report --no-such-flag")
+	writeSkill(t, planted, "fugaro report --no-such-flag\n./fugaro report --no-such-flag\n")
 	findings, lines, err = paidFlagFindings(root, planted)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if lines != 1 || len(findings) != 1 || !strings.Contains(findings[0], "--no-such-flag") {
-		t.Errorf("a skill naming `fugaro report --no-such-flag` read %d paid line(s) and answered %q, want the one missing flag reported: this is the planted case, and a check that misses it misses a real skill's typo too", lines, findings)
+	if lines != 2 || len(findings) != 2 {
+		t.Errorf("a skill naming `fugaro report --no-such-flag` twice, once behind a path, read %d paid line(s) and answered %q, want both missing flags reported: this is the planted case, and a check that misses it misses a real skill's typo too", lines, findings)
+	}
+	for _, f := range findings {
+		if !strings.Contains(f, "--no-such-flag") {
+			t.Errorf("the planted case answered %q, want the missing flag named", f)
+		}
 	}
 }
 
