@@ -562,7 +562,9 @@ describe('the spawn table and the argv it builds', () => {
     // (`console/docs/json-contract.md` §3): it costs a listing of the runs
     // bucket, so it is an argument a caller opts into rather than a word of the
     // row, and the argv without it is byte for byte the one this console has
-    // always spawned.
+    // always spawned. The row's arguments are emitted in the order the table
+    // declares them -- `--all`'s own place -- and the installation's `--project`
+    // and `--config` follow every row's flags, this one included.
     expect([...argvFor('budget.show', { compute: true }, safeContext())]).toEqual([
       'budget',
       'show',
