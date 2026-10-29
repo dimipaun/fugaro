@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"io"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -539,5 +541,85 @@ func TestAPIPaidCommandNamesIsACopy(t *testing.T) {
 	first[0] = "not-a-command"
 	if again := PaidCommandNames(); again[0] == "not-a-command" {
 		t.Error("PaidCommandNames answered the slice a caller had already changed")
+	}
+}
+
+// TestAPISelectProjectAnswersTheCoresSelection: the moved command selects its
+// project through this wrapper, so it has to be the core's own selection —
+// same config, same refusal — and it has to open nothing eagerly, or a
+// Firestore-only path pays for a runs bucket it never reads.
+func TestAPISelectProjectAnswersTheCoresSelection(t *testing.T) {
+	f := newCloudFixture(t)
+	path := os.Getenv("FUGARO_CONFIG")
+	stderr := func() io.Writer { return io.Discard }
+	flags := &CloudFlags{o: cloudOptions{config: path, stderr: stderr}}
+
+	got, err := SelectProject(context.Background(), flags)
+	if err != nil {
+		t.Fatalf("SelectProject: %v", err)
+	}
+	_, want, err := selectProject(context.Background(), cloudOptions{config: path, stderr: stderr})
+	if err != nil {
+		t.Fatalf("selectProject: %v", err)
+	}
+	if !reflect.DeepEqual(got.Config(), want) {
+		t.Errorf("SelectProject's config = %+v, want the core's %+v", got.Config(), want)
+	}
+	if got.env.bucket != nil || got.env.be != nil {
+		t.Error("SelectProject opened the runs bucket or the backend: a path that reads no run record pays for neither")
+	}
+	// The refusals are the core's too: a config file that is not there is the
+	// user error the core's own selection raises, not a second wording.
+	_, err = SelectProject(context.Background(), &CloudFlags{o: cloudOptions{config: filepath.Join(f.dir, "absent.yaml"), stderr: stderr}})
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Errorf("SelectProject over an absent config = %v (exit %d), want the core's user error", err, ExitCode(err))
+	}
+}
+
+// TestAPIRefuseHTTP2DebugAnswersTheCoresRefusal: the refusal protects a
+// credential from landing on stderr, so the published one has to judge the
+// environment exactly as the core does, word for word.
+func TestAPIRefuseHTTP2DebugAnswersTheCoresRefusal(t *testing.T) {
+	for _, godebug := range []string{"", "http2debug=1", "http2debug=0", "http2client=0", "x=1,http2debug=2", "HTTP2DEBUG=1"} {
+		getenv := func(key string) string {
+			if key == "GODEBUG" {
+				return godebug
+			}
+			return ""
+		}
+		got, want := RefuseHTTP2Debug(getenv), refuseHTTP2Debug(getenv)
+		if (got == nil) != (want == nil) {
+			t.Errorf("RefuseHTTP2Debug(GODEBUG=%q) = %v, refuseHTTP2Debug = %v", godebug, got, want)
+			continue
+		}
+		if got != nil && got.Error() != want.Error() {
+			t.Errorf("RefuseHTTP2Debug(GODEBUG=%q) refused with %q, refuseHTTP2Debug with %q", godebug, got, want)
+		}
+	}
+}
+
+// TestAPILiveFactsAnswersTheCoresReader: the days a project has not archived
+// are computed from the bucket, and the moved command reads them through this
+// handle. Both sides have to answer the same facts for the same project.
+func TestAPILiveFactsAnswersTheCoresReader(t *testing.T) {
+	newCloudFixture(t)
+	lc, err := localcfg.Load(os.Getenv("FUGARO_CONFIG"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	got := NewLiveFacts(lc, func(string) {}, nil)
+	defer got.Close()
+	want := &lazyFacts{lc: lc, warn: func(string) {}, slugs: nil}
+	defer want.close()
+
+	from, to := budget.Day(time.Now().UTC()), budget.Day(time.Now().UTC())
+	gotFacts, gotMissing, gotErr := got.Facts(ctx, from, to)
+	wantFacts, wantMissing, wantErr := want.Facts(ctx, from, to)
+	if (gotErr == nil) != (wantErr == nil) {
+		t.Fatalf("LiveFacts.Facts = %v, lazyFacts.Facts = %v", gotErr, wantErr)
+	}
+	if !reflect.DeepEqual(gotFacts, wantFacts) || !reflect.DeepEqual(gotMissing, wantMissing) {
+		t.Errorf("LiveFacts.Facts = %v, %v; lazyFacts.Facts = %v, %v", gotFacts, gotMissing, wantFacts, wantMissing)
 	}
 }

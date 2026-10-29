@@ -53,19 +53,29 @@ export interface FakeEvent {
   readonly metaKey: boolean
   readonly ctrlKey: boolean
   readonly defaultPrevented: boolean
+  /** target is where the event happened, which is the node a listener reads to
+   * tell a click on a control *inside* it from a click on itself. */
+  readonly target: FakeNode | null
   preventDefault(): void
 }
 
 /** fakeEvent builds one, with `defaultPrevented` flipped by its own
  * `preventDefault` -- which is what lets a case assert that the console took the
  * key rather than letting the window scroll under it. */
-function fakeEvent(key: string, code: string, metaKey: boolean, ctrlKey: boolean): FakeEvent {
+function fakeEvent(
+  key: string,
+  code: string,
+  metaKey: boolean,
+  ctrlKey: boolean,
+  target: FakeNode | null = null,
+): FakeEvent {
   const event = {
     key,
     code,
     metaKey,
     ctrlKey,
     defaultPrevented: false,
+    target,
     preventDefault(): void {
       event.defaultPrevented = true
     },
@@ -149,7 +159,14 @@ export class FakeNode {
     this.attributes.delete(name)
   }
 
+  /** parent is the node this one was appended to, and `null` for a node nothing
+   * holds. A real event's target answers `closest` by walking exactly this, so
+   * the fake keeps it rather than leaving a nested control with no way back up
+   * to the row whose listener it bubbles to. */
+  parent: FakeNode | null = null
+
   appendChild(child: FakeNode): FakeNode {
+    child.parent = this
     this.children.push(child)
     return child
   }
@@ -161,7 +178,9 @@ export class FakeNode {
    * fake exists to keep out of the entry.
    */
   replaceChildren(...nodes: FakeNode[]): void {
+    for (const node of this.children) node.parent = null
     this.children.length = 0
+    for (const node of nodes) node.parent = this
     this.children.push(...nodes)
   }
 
@@ -180,9 +199,26 @@ export class FakeNode {
     this.listeners.set(type, found)
   }
 
-  /** click fires this node's click listeners, in the order they were added. */
-  click(): void {
-    for (const listener of this.listeners.get('click') ?? []) listener(fakeEvent('', '', false, false))
+  /** closest answers the nearest ancestor-or-self carrying a tag name, which is
+   * the one selector the console's listeners ask for: they tell a click on a
+   * control nested in a row from a click on the row. */
+  closest(selector: string): FakeNode | null {
+    const wanted = selector.toLowerCase()
+    for (let node: FakeNode | null = this; node !== null; node = node.parent) {
+      if (node.tagName.toLowerCase() === wanted) return node
+    }
+    return null
+  }
+
+  /** click fires this node's click listeners, in the order they were added, with
+   * `target` where the click happened -- this node when a case does not say
+   * otherwise.
+   *
+   * The fake fires no ancestor's listeners: a real click on a control drawn
+   * inside a row bubbles to the row, and a case that means that click says so
+   * by firing the row's own with the control as the target. */
+  click(target: FakeNode | null = this): void {
+    for (const listener of this.listeners.get('click') ?? []) listener(fakeEvent('', '', false, false, target))
   }
 
   /** press fires this node's keydown listeners with one key and the modifiers a

@@ -582,7 +582,7 @@ const CLI_COMMANDS: readonly CliCommand[] = [
   // operation, and it arrived on 2026-10-18, after this snapshot's date.
   { command: 'watch', kind: 'allowed', where: 'internal/cli/watch.go:134' },
   { command: 'budget show', kind: 'allowed', where: 'internal/cli/budget.go:214' },
-  { command: 'report', kind: 'allowed', where: 'internal/cli/report.go:53' },
+  { command: 'report', kind: 'allowed', where: 'ee/report/cli/report.go:70' },
   { command: 'runs ls', kind: 'allowed', where: 'internal/cli/runs.go:87' },
   { command: 'runs stats', kind: 'allowed', where: 'internal/cli/runs_stats.go:110' },
   // Plan GV2.1: the graph screen's read, and the one command of this list whose

@@ -1177,6 +1177,7 @@ var coordinatorCitationExceptions = map[string]string{
 	"docs/design/console-styling.md":        "the console styling design, in open PR #634 and not on main; U7 says so",
 	"docs/design/credentials-service*.md":   "§0.3 quotes the brief's own glob, which names no file: the documents are at docs/credentials-service/, and the point of the sentence is that docs/design/ has no such subdirectory",
 	"docs/releases/vX.Y.Z.md":               "the naming pattern of the release notes, not one file",
+	"internal/cli/report.go":                "the report command moved to ee/report/cli/report.go in E2.2b (D444); this reconciliation is dated and stays unedited, so the citation is recorded here rather than re-pointed",
 	"internal/cli/docs_*_test.go":           "§0.4 names the pattern of the docs packages' pinning tests -- `*.go` is not a filename -- as the shape this file's tests were written from",
 }
 

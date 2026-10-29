@@ -8,14 +8,14 @@
 // design rather than a preference:
 //
 //   1. **no screen ever adds a notional to a real total.** The plan says it, the
-//      design's first rule says it, and `internal/report/report.go`'s package
+//      design's first rule says it, and `ee/report/report.go`'s package
 //      comment says it in the CLI's own voice ("Model dollars, notional dollars
 //      ... and compute dollars are three separate columns and are never added
 //      together"). The test below pins it to the *series model* -- the number
 //      the chart is drawn from -- and compares it against the sum, so a model
 //      that started adding them fails here with both figures named;
 //   2. **a partial day is hollow** -- `(partial)` is the CLI's own word
-//      (`internal/report/render.go`'s table appends it to the row key) and the
+//      (`ee/report/render.go`'s table appends it to the row key) and the
 //      design draws a day that is not final yet as a hollow bar;
 //   3. **the person breakdown is off by default** (design D15). The rows are in
 //      the document; the screen draws none of them until it is asked to, and it
@@ -97,7 +97,7 @@ const DOLLARS = 1_000_000
  * 2026-10-15 with **three** rows: the 14th has no document at all, which is the
  * gap the series has to break on. The 15th carries `partial: true` and the
  * totals row does too, which is what `report` writes when the range includes a
- * day that is not final (`internal/cli/report.go`: today and yesterday keep
+ * day that is not final (`ee/report/cli/report.go`: today and yesterday keep
  * changing).
  */
 const DAY_ROWS = [
@@ -480,7 +480,7 @@ const PERSON_REPORT: JSONDoc = {
 /**
  * MODE_ROWS is a by-mode report: `report --by mode` reads the run records
  * rather than the spend history (`source: "run-records"`, and not degraded), so
- * a row's key is a rigor mode or the CLI's own `none` (`internal/report/
+ * a row's key is a rigor mode or the CLI's own `none` (`ee/report/
  * report.go`'s `ModeNone`) for a run whose record carries no mode -- or one
  * this build does not know, which reads as `none` rather than as the raw text.
  * There is no `start` (a mode is not a period), `calls` is 0 and `run_hours` is
@@ -824,12 +824,12 @@ function sourceConstant(relative: string, name: string): string {
 
 describe('the Spend screen constants', () => {
   it('are the CLI\'s eight breakdowns, by name, and cannot drift from them', () => {
-    // `internal/report/report.go`'s `Dim` values, one by one: the switch draws
+    // `ee/report/report.go`'s `Dim` values, one by one: the switch draws
     // the CLI's vocabulary, and a word the CLI renamed would leave the switch
     // offering a breakdown `report` refuses. The whole list against the CLI's
     // own `--by` help is `report-dimensions.test.ts`; this is the same fact
     // held name by name.
-    const go = 'internal/report/report.go'
+    const go = 'ee/report/report.go'
     expect(sourceConstant(go, 'ByDay')).toBe('"day"')
     expect(sourceConstant(go, 'ByWeek')).toBe('"week"')
     expect(sourceConstant(go, 'ByMonth')).toBe('"month"')
@@ -844,10 +844,10 @@ describe('the Spend screen constants', () => {
 
   it('bounds a day series at the CLI\'s own reportMaxDays, on both sides of it', () => {
     // The CLI bounds `--since` and the resolved range with `reportMaxDays`
-    // (`internal/cli/report.go:40`), and `src/main/ipc.ts` restates the bound
+    // (`ee/report/cli/report.go`'s `reportMaxDays`), and `src/main/ipc.ts` restates the bound
     // for the argument side. The console's series honours the same number: a
     // document claiming a longer range is one `report` itself refuses.
-    expect(sourceConstant('internal/cli/report.go', 'reportMaxDays')).toBe('3660')
+    expect(sourceConstant('ee/report/cli/report.go', 'reportMaxDays')).toBe('3660')
     expect(sourceConstant('console/src/main/ipc.ts', 'REPORT_MAX_DAYS')).toBe('3660')
     expect(SPEND_MAX_RANGE_DAYS).toBe(3660)
   })
@@ -1006,7 +1006,7 @@ describe('the three accounts', () => {
 
   it('keeps compute in the estimated state wherever the document carries it', () => {
     // `compute_estimated` is true whenever `compute_micros` is set
-    // (`internal/report/render.go`'s `jsonLine`), and an estimate drawn as a
+    // (`ee/report/render.go`'s `jsonLine`), and an estimate drawn as a
     // measurement is the exact error the `est.` mark exists to prevent.
     const compute = pointFor(seriesOf(modelOf(), 'compute'), '2026-10-12')
     expect(compute.reading.state).toBe('estimated')

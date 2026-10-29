@@ -171,6 +171,15 @@ func (e *Effective) tightenTier(cur *TierExpectation, v TierExpectation, t tier.
 	e.tightenInt(&cur.MaxSubagents, v.MaxSubagents, TierKey(t, KeyMaxSubagents), src)
 }
 
+// TightenDuration is tightenDuration for the packages outside this one: the
+// governance policy's tightenGovernance and tightenTier move to ee/governance
+// (plan task E2.3, design ee-boundary-moves.md §5.2) and cannot reach an
+// unexported method, so the moved code calls the rule here rather than keeping
+// a copy of it that would drift from this one.
+func (e *Effective) TightenDuration(cur *time.Duration, v time.Duration, key, src string) {
+	e.tightenDuration(cur, v, key, src)
+}
+
 // tightenDuration is tightenInt for a stage timeout: a duration that is not
 // positive is unset.
 func (e *Effective) tightenDuration(cur *time.Duration, v time.Duration, key, src string) {
@@ -183,6 +192,13 @@ func (e *Effective) tightenDuration(cur *time.Duration, v time.Duration, key, sr
 	case v > *cur:
 		e.Ignored = append(e.Ignored, Ignored{key, v.String(), cur.String(), e.Sources[key]})
 	}
+}
+
+// TightenCap is tightenCap for the packages outside this one, on the same
+// terms as TightenDuration: the governance policy moves to ee/governance and
+// calls the one rule rather than a copy of it.
+func (e *Effective) TightenCap(cur *float64, v float64, key, src string) {
+	e.tightenCap(cur, v, key, src)
 }
 
 // tightenCap is tightenInt for a positive float limit: a dollar cap, or a
@@ -198,6 +214,12 @@ func (e *Effective) tightenCap(cur *float64, v float64, key, src string) {
 		e.Ignored = append(e.Ignored, Ignored{key, strconv.FormatFloat(v, 'f', -1, 64),
 			strconv.FormatFloat(*cur, 'f', -1, 64), e.Sources[key]})
 	}
+}
+
+// TightenInt is tightenInt for the packages outside this one, on the same
+// terms as TightenDuration.
+func (e *Effective) TightenInt(cur *int64, v int64, key, src string) {
+	e.tightenInt(cur, v, key, src)
 }
 
 // tightenInt applies a layer's positive limit v to *cur: smaller wins, a

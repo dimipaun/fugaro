@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See ee/LICENSE for the terms.
+
 package report
 
 import (

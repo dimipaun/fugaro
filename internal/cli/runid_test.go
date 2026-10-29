@@ -484,8 +484,11 @@ var recencyWindows = []recencyWindow{
 	// entry points look alike.
 	{cmd: "stats runs", window: statsDefaultSince, run: []string{"stats", "runs"},
 		mint: []string{"wallRunID", "wallRunIDAt"}, since: true},
-	{cmd: "report", window: reportDefaultSince, run: []string{"report"},
-		seam: regexp.MustCompile(`budgetNow\s*=`), since: true},
+	// report's own case left with the command: it reads its --since window back
+	// from the budget clock, but the command and its tests are in ee/report/cli
+	// since E2.2b, so no test in this package drives it and the entry here could
+	// only fail as stale. The moved package carries the case
+	// (ee/report/cli/runid_test.go).
 	// coordinator status's own case left with the command: it lists the runs of
 	// a repository's bucket over lsDefaultSince, from lsNow, but the command and
 	// its tests are in ee/coordinator/cli since E2.1b, so no test in this

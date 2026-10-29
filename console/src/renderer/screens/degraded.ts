@@ -30,7 +30,7 @@
 //     absent").
 //   - a refused read is drawn with **the CLI's own sentence, character for
 //     character** (`SourceRefusal.sentence`, `src/source/source.ts`). The
-//     remedy is inside it: `internal/cli/report.go`'s `firestoreErr` names
+//     remedy is inside it: `internal/cli/reportcore.go`'s `firestoreErr` names
 //     `roles/datastore.viewer` and `roles/serviceusage.serviceUsageConsumer`
 //     in the sentence itself, which is why nothing here adds a second line
 //     about roles -- a console that restated the fix could restate it wrongly,
@@ -521,7 +521,7 @@ export interface NoBinaryState {
 }
 
 /** RefusedState is a read the CLI refused: which read, and the CLI's sentence
- * **verbatim** -- including the remedy, which `internal/cli/report.go`'s
+ * **verbatim** -- including the remedy, which `internal/cli/reportcore.go`'s
  * `firestoreErr` writes into that same sentence. */
 export interface RefusedState {
   readonly kind: 'refused'
