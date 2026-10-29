@@ -191,26 +191,49 @@ plan; this table says what happens to each task, and the levels below include th
 
 #### B0.3: Doctor's Secret Manager sweep and the deployer read (D503a, D501)
 
-- **Files:** `internal/cli/doctor_secret_readers.go` (new); `internal/cli/doctor_secret_readers_test.go` (new); `internal/cli/doctor.go` (registration only); `internal/gcpfake/runservices.go` (new: a Cloud Run v2 services fake with `getIamPolicy`), `internal/gcpfake/runservices_test.go` (new).
-- **Behaviour:** `secret-readers-unexpected` (warning): every `secretAccessor` member on every
+- **Files:** `internal/cli/doctor_secret_readers.go` (new); `internal/cli/doctor_secret_readers_test.go` (new); `internal/cli/doctor.go` (registration only); `internal/backend/gcp/secrets.go` (`SecretPolicy`: a container's policy as bindings, since the role is part of the answer); `internal/gcpfake/runservices.go` (new: a Cloud Run v2 services fake with `getIamPolicy`), `internal/gcpfake/runservices_test.go` (new).
+- **Behaviour:** `secret-readers-unexpected` (warning): every member of a role that reads a
+  container's values — `roles/secretmanager.secretAccessor`, `roles/secretmanager.admin`, or a
+  custom role whose own definition lists `secretmanager.versions.access` — on every
   container of the installation's project that is not one of the account classes Fugaro creates
   for that container (computed forward, as `doctorProjectSecretAccessorChecks` does; the managed
   `fmgd-` accounts on `fmgd-` containers are a known class), or is a principal outside the
-  installation; and every service account holding, **at the project level**, a role that carries
+  installation; and every principal holding, **at the project level**, a role that carries
   `secretmanager.versions.access` (a predefined Secret Manager role or a custom role listing it),
-  other than the classes Fugaro grants. The account classes are the guard's exception rows (B0.2).
-  Owners and Editors are reported once, as info (F3).
+  other than the classes Fugaro grants — service accounts, and, because a project-level grant is
+  every container at once, a person or a group. The account classes are the guard's exception rows
+  (B0.2). Owners are reported once, as info (F3); an Editor is not a reader, and its container grant
+  is a finding like any other. **The remove advice and its
+  `gcloud secrets remove-iam-policy-binding` line belong to a container carrying Fugaro's managed
+  label**: for a container Fugaro did not create the line reviews its readers instead, because they
+  may belong to another application in the same project (the owner's ruling, 2026-10-29). A policy
+  or a role that could not be read is named as unread rather than counted as one that grants
+  nothing.
   `credentials-service-deployers` (info, only when the installation opted in): the principals that
   hold, on the project or on the service, `roles/owner`, `roles/editor`, `roles/run.admin`,
   `roles/run.developer` or a custom role whose permissions include `run.services.update`, and those
-  holding `iam.serviceAccounts.actAs` on the service's account (D501).
+  holding `iam.serviceAccounts.actAs` on the service's account or, through a project-level grant, on
+  every account of the project (D501). The two reads take the project's policy and the custom-role
+  cache from one lookup each.
 - **Tests:** `TestDoctorSecretReadersFlagsAnUnknownAccessor`, `TestDoctorSecretReadersAcceptsFugaroAccounts`, `TestDoctorSecretReadersFlagsProjectLevelAccess`,
   `TestDoctorCredentialsServiceDeployersListsPrincipals`, `TestDoctorCredentialsServiceDeployersExpandsCustomRoles`,
-  `TestDoctorCredentialsServiceDeployersSilentWhenNotOptedIn` (all on `internal/gcpfake`).
-- **Command:** `go test ./internal/cli/ -run 'TestDoctorSecretReaders|TestDoctorCredentialsServiceDeployers' -count=1 && go test ./internal/gcpfake/ -count=1`
+  `TestDoctorCredentialsServiceDeployersSilentWhenNotOptedIn` (all on `internal/gcpfake`), and the
+  2026-10-29 follow-up's `TestDoctorSecretReadersAdvisesReviewForAContainerFugaroDidNotCreate`,
+  `TestDoctorSecretReadersFlagsEveryRoleThatReadsAContainer`,
+  `TestDoctorSecretReadersReportsAContainerRoleItCouldNotRead`,
+  `TestDoctorSecretReadersFlagsProjectLevelReadersWhoAreNotServiceAccounts`,
+  `TestDoctorCredentialsServiceDeployersCountsProjectLevelActAs`,
+  `TestDoctorSecretManagerChecksReadsTheProjectPolicyOnce`,
+  `TestDoctorSecretManagerChecksReadsACustomRoleOnce`.
+- **Command:** `go test ./internal/cli/ -run 'TestDoctorSecretReaders|TestDoctorCredentialsServiceDeployers|TestDoctorSecretManagerChecks' -count=1 && go test ./internal/gcpfake/ -count=1`
 - **Red step:** the unknown-accessor test, with a fake policy carrying a stray user: no finding yet.
+  The follow-up's seven tests were run against the merged code before it changed: each failed on the
+  behaviour it pins (the foreign container's fix still advised a removal; a container's
+  `secretmanager.admin` grant was not named; a person at the project level was not; the project
+  policy was read twice without the credentials service and three times with it).
 - **Depends on:** none. **Reviewer tier:** standard (read-only, reports).
 - **Commit:** `doctor: report every Secret Manager reader Fugaro did not create, and who may deploy the credentials service`
+- **Follow-up (2026-10-29, owner's rulings):** `doctor: the sweep's advice for a container Fugaro did not create, and every role it reads` — the four coverage changes above, the Editor wording aligned to the code, and this plan's, `reconciliation.md`'s, `secret-readers.md`'s and `SECURITY.md`'s sentences corrected with it.
 
 #### B0.4: Check 190 written
 

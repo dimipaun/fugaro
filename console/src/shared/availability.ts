@@ -97,7 +97,7 @@ export const GAP_MARK = '—'
 export const LOWER_BOUND_MARK = '≥'
 
 /** Unit is how a measured number is drawn: dollars, a share, a duration. */
-export type Unit = 'usd' | 'percent' | 'seconds' | 'minutes' | 'hours' | 'count'
+export type Unit = 'usd' | 'percent' | 'seconds' | 'minutes' | 'hours' | 'duration' | 'count'
 
 /**
  * Reading is one number and its state.
@@ -286,6 +286,30 @@ function fixed(value: number, digits: number): string {
   return `${negative ? '-' : ''}${grouped}${fraction === '' ? '' : `.${fraction}`}`
 }
 
+/**
+ * durationText draws a span of seconds the way a person says it, in the three
+ * scales a run's age reaches: `21s`, `29m 21s`, `1h 02m`.
+ *
+ * **It is not `seconds`**, and the difference is the whole reason it exists: a
+ * raw second count (`1,505 s`) is a measurement, and an operator reading a run
+ * row wants the span. The scales change at the unit and never before it -- 59 s
+ * is still seconds, 3,599 s is still minutes and seconds, and the hour form
+ * drops the seconds rather than growing a third part -- so the digits only
+ * change when the unit does. The minutes of the hour form are padded to two so
+ * that a column of ages aligns; the seconds of the minute form are padded for
+ * the same reason. A span below zero is not a span: it is drawn as `0s` rather
+ * than with a sign, because there is no such age to report.
+ */
+function durationText(seconds: number): string {
+  const total = Math.round(seconds)
+  if (total <= 0) return '0s'
+  if (total < 60) return `${String(total)}s`
+  if (total < 3600) {
+    return `${String(Math.floor(total / 60))}m ${String(total % 60).padStart(2, '0')}s`
+  }
+  return `${String(Math.floor(total / 3600))}h ${String(Math.floor((total % 3600) / 60)).padStart(2, '0')}m`
+}
+
 /** formatValue draws one number in its unit. */
 function formatValue(value: number, unit: Unit): string {
   switch (unit) {
@@ -303,6 +327,8 @@ function formatValue(value: number, unit: Unit): string {
       return `${fixed(value, 1)} min`
     case 'hours':
       return `${fixed(value, 2)} h`
+    case 'duration':
+      return durationText(value)
     case 'count':
       return fixed(value, 0)
   }
