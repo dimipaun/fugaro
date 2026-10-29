@@ -205,7 +205,10 @@ The owner's answers and rulings that shape it (non-price; figures are private, D
   **Status 2026-10-29:** counsel returned the Terms, dated 2026-10-28, restructured by plan and
   renumbered (sections 1 to 34; [licensing/reconciliation.md](../licensing/reconciliation.md#amendment-2026-10-29-counsels-restructured-subscription-terms)),
   and the tree carries that text as written; the two figures first held back for the owner went in on 2026-10-29. It does
-  not carry the items below, which stay open; the section numbers are counsel's. Items:
+  not carry the items below, which stay open; the section numbers are counsel's (amended
+  2026-10-29: the T12, key-binding, O4 and T15 items below are applied, counsel approved; the
+  key binding also touched §2, §5.3, §6.3, §7.5 and §9.1, and the free seat §7.5; §1.3 is
+  unchanged). Items:
   - **§9.1 and §27.4:** after the grace period the console and the app can still **cancel**, and
     the kill switch stays; they cannot launch or change config (T12).
   - **§6.1 and §6.4:** **one key per organisation**, with its seat count, replacing the per-User

@@ -584,7 +584,8 @@ L4.5). What changed in the draft:
   sale, with the copyright assigned to it; a merchant of record may sell self-serve purchases under
   its own buyer terms; Enterprise is invoiced directly.
 - **Plans and free use** (section 4): Community, Team and Enterprise; one free seat per organisation
-  without a subscription, for proof of concept and evaluation; Team free for entirely open-source
+  (amended 2026-10-29: per legal person and its Affiliates, counsel's section 10.2(a)) without a
+  subscription, for proof of concept and evaluation; Team free for entirely open-source
   teams (checked from the repository URLs) and academic institutions; discounts for nonprofits and
   startups by application, their amounts on the Order Form; the free seat's three-month key is the
   trial.
@@ -696,6 +697,7 @@ organisation; no covered-versions date, O4; the free seat per legal person, T15)
 the Customer cannot turn off (section 7.3); publicity without consent (section 30.1); the
 coordinator named as Core in section 7.1 (D531); and whether the licence files need a matching
 revision now that the Terms no longer cite the licence's clauses. The licence files are not edited.
+(amended 2026-10-29: the four owner rulings are applied, counsel approved: read-only use keeps cancel and the kill switch, section 9.1; one License Key per Customer for its organisation, stating its User Seats; no covered-versions date, sections 6.1 and 8.2; one free seat per legal person and its Affiliates, sections 6.3, 7.5 and 10.2(a). Sections 5.1(i), 5.3 and 5.5 are written in the present tense on the owner's word of 2026-10-29, and the roles and the seat estimate must be released before the Terms go public).
 
 ## UNVERIFIED
 

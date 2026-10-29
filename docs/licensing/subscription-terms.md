@@ -79,8 +79,9 @@ Capitalised words have these meanings.
 - **"Job"**: a single task that the Core runs in the Customer's cloud project.
 - **"Key Service"**: the hosted service the Licensor operates to issue License Keys (section 6.3
   (Issue of License Keys)).
-- **"License Key"**: a signed key the Licensor issues to a User that enables the Software for that
-  User (section 6 (License Keys and offline activation)).
+- **"License Key"**: a signed key the Licensor issues to a Customer for its organisation that
+  enables the Software for the Customer's Users and states the number of User Seats (section 6
+  (License Keys and offline activation)).
 - **"Modifications"**: modifications of and patches to the Software made by or for the Customer.
 - **"Merchant of Record"**: the Reseller that the Licensor appoints to sell Team Subscriptions
   online as seller of record (section 13.1 (Merchant of Record)).
@@ -207,19 +208,20 @@ the Fugaro name or logo.
 Customer's behalf, (a) initiates a Job by any means, including through the desktop console, the
 mobile app, the Command-line tool, or any AI agent or automated process directed by that
 individual, or (b) otherwise makes Production Use of the Software. Notwithstanding the foregoing,
-no User Seat is required for an individual who (i) only views information, once the Software
-provides a viewer role (section 5.3 (Roles)), or (ii) only reviews pull requests opened by Jobs and
-does not otherwise use the Software or initiate Jobs.
+no User Seat is required for an individual who (i) only views information while holding the
+viewer role (section 5.3 (Roles)), or (ii) only reviews pull requests opened by Jobs and does not
+otherwise use the Software or initiate Jobs.
 
 5.2 **Command-line tool.** The Command-line tool is licensed under the MIT licence and is not part
 of the Software. Section 5.1 (Seats required) determines only the number of User Seats, and
 therefore the Fees, payable under the Customer's Subscription, and does not limit any right granted
 under the MIT licence.
 
-5.3 **Roles.** The Licensor intends to introduce viewer, operator and administrator roles, enforced
-across the whole system, including its cloud components. Until the Software provides a viewer role,
-each individual who uses the desktop console or the mobile app is a User, requires a User Seat, and
-shall hold a License Key under section 6 (License Keys and offline activation).
+5.3 **Roles.** The Software provides viewer, operator and administrator roles, enforced across the
+whole system, including its cloud components. An individual who holds only the viewer role does
+not require a User Seat. Each individual who holds the operator or administrator role is a User and
+requires a User Seat under the Customer's License Key (section 6 (License Keys and offline
+activation)).
 
 5.4 **One individual per seat.** Each User Seat may be assigned to only one individual at a time,
 and shall not be shared between individuals or used by a shared or generic account. The Customer
@@ -227,20 +229,18 @@ may reassign a User Seat to another individual no more than once in any 30-day p
 it may reassign a User Seat at any time when the individual holding it leaves the Customer's
 organisation.
 
-5.5 **Seat estimate.** The Licensor intends that the Software will display, beside the number of
-licensed User Seats, an advisory estimate of the number of individuals who initiate Jobs,
-calculated on the Customer's machines from the Customer's own records, without storing the estimate
-or sending it to the Licensor. The estimate is provided for convenience only and does not determine
-the number of User Seats required. The Customer remains responsible for counting its Users from its
-own records.
+5.5 **Seat estimate.** The Software displays, beside the number of licensed User Seats, an
+advisory estimate of the number of individuals who initiate Jobs, calculated on the Customer's
+machines from the Customer's own records, without storing the estimate or sending it to the
+Licensor. The estimate is provided for convenience only and does not determine the number of User
+Seats required. The Customer remains responsible for counting its Users from its own records.
 
 ## 6. License Keys and offline activation
 
 6.1 **License Keys.** The Licensor shall provide a License Key, under section 6.3 (Issue of License
-Keys), to each User under a Paid Plan or a Free Plan, and the Software requires a valid License Key
-to operate, subject to section 4.2 (Development and testing). Each License Key states the plan, the
-features it enables, the number of User Seats of the Subscription, its expiry date, and the date up
-to which released versions of the Software are covered.
+Keys), to each Customer under a Paid Plan or a Free Plan, and the Software requires a valid License
+Key to operate, subject to section 4.2 (Development and testing). Each License Key states the plan,
+the features it enables, the number of User Seats of the Subscription and its expiry date.
 
 6.2 **Verification.** The Software verifies License Keys without contacting the Licensor or the Key
 Service, so an outage of the Key Service does not affect any License Key already installed. When a
@@ -257,19 +257,19 @@ self-serve website, as follows:
 - **Free seat** (section 10.2(a) (Free Plans)): the applicant provides a work email address on the
   organisation's own domain; addresses at free email providers are not accepted. The Key Service
   issues a renewable License Key valid for three months, and issues no more than one free seat per
-  organisation, determined by email domain.
-- **Paid Subscriptions**: the Licensor issues License Keys for the User Seats purchased, following
-  purchase.
+  legal person, determined by email domain and, where it is known, by the legal person's identity.
+- **Paid Subscriptions**: the Licensor issues the Customer a License Key stating the User Seats
+  purchased, following purchase.
 - **Other requests** (for example, from an individual without an email address on their
   organisation's domain, or for a multi-seat trial or an academic or nonprofit application): the
   applicant may submit the manual request form. The Licensor may approve or decline any such
   request at its discretion.
 
 6.4 **Protection of License Keys.** Each License Key is the Licensor's property and the Licensor's
-Confidential Information. The Customer shall not share a License Key with anyone other than the
-User to whom it was issued, alter it, or circumvent its verification. The Customer acknowledges
-that, because verification is offline, the Licensor relies on these Terms, and not on technical
-controls, to enforce User Seat limits.
+Confidential Information. The Customer shall not share a License Key with anyone other than its
+Users, alter it, or circumvent its verification. The Customer acknowledges that, because
+verification is offline, the Licensor relies on these Terms, and not on technical controls, to
+enforce User Seat limits.
 
 ## 7. Customer Data and Privacy
 
@@ -307,10 +307,10 @@ organisation's domain and, for open-source teams, the repository URLs; (c) the c
 diagnostic data described in section 7.3 (Crash reports and diagnostics); and (d) any information
 the Customer chooses to send it for support under section 8.3 (Support data). The Licensor shall
 use that information only to provide the Subscription, License Keys, support and billing, to verify
-eligibility for a Free Plan and enforce the limit of one free seat per organisation, to contact
-Users about their License Keys, and to comply with its legal obligations. The Licensor shall handle
-all of the information it collects and processes in accordance with its privacy notice at
-**[PRIVACY NOTICE URL]** and applicable law.
+eligibility for a Free Plan and enforce the limit of one free seat per legal person, to contact
+the Customer and its Users about the Customer's License Key, and to comply with its legal
+obligations. The Licensor shall handle all of the information it collects and processes in
+accordance with its privacy notice at **[PRIVACY NOTICE URL]** and applicable law.
 
 ## 8. Support and updates
 
@@ -329,8 +329,7 @@ The Licensor does not provide round-the-clock support. Response times are target
 guarantees. No service-level commitment applies.
 
 8.2 **Updates.** During the Subscription Term, the Customer may use, on these Terms, each new
-version of the Software that the Licensor releases up to the covered-versions date stated in its
-License Key. The Licensor may change or remove features of the Software between versions. The
+version of the Software that the Licensor releases during the Subscription Term. The Licensor may change or remove features of the Software between versions. The
 Licensor shall support the current minor release of the Software and the minor release immediately
 before it.
 
@@ -344,12 +343,12 @@ material as Confidential Information.
 every version of the Software, ends when its Subscription ends, and no perpetual licence survives.
 However, the Licensor grants the following rights after that time:
 
-- **Grace period.** For 30 days after a User's License Key expires, the User may continue to use
-  the Software as that License Key permitted.
+- **Grace period.** For 30 days after the Customer's License Key expires, its Users may continue
+  to use the Software as that License Key permitted.
 - **Read-only use.** After the grace period, each User may continue to use the desktop console and
   the mobile app in read-only mode, to view the Customer's installations, Jobs and their records.
-  In read-only mode, the User may not initiate, cancel or modify anything through them, and no paid
-  feature is available.
+  In read-only mode, the User may not initiate or modify anything through them, except that the
+  User may cancel a Job and use the kill switch, and no paid feature is available.
 
 9.2 **Unaffected uses.** Nothing in this section limits the use of the Command-line tool under the
 MIT licence, including to initiate and cancel Jobs, or the use of the Software for development and
@@ -368,9 +367,10 @@ section 8.1 (Support).
 the Customer no longer meets the conditions of a Free Plan, the Licensor may end that Free Plan at
 the end of the term of its License Key. The Free Plans are:
 
-- **(a) One free seat per organisation.** An organisation that has no Paid Plan may hold one free
-  User Seat, intended for proof of concept and evaluation, under a License Key issued as section
-  6.3 (Issue of License Keys) provides. A Customer that has a Paid Plan has no free seat and shall
+- **(a) One free seat per legal person.** A legal person that has no Paid Plan may hold one free
+  User Seat, and a legal person and its Affiliates together hold no more than one, intended for
+  proof of concept and evaluation, under a License Key issued as section 6.3 (Issue of License
+  Keys) provides. A Customer that has a Paid Plan has no free seat and shall
   pay for every User.
 - **(b) Open-source teams.** A team whose projects are all public under a licence approved by the
   Open Source Initiative receives the Team plan's features without charge. The Key Service
@@ -774,12 +774,15 @@ Quebec language clause, the late-payment rate, resellers and the merchant of rec
    contributor licence agreement alone. The earlier draft's assignment of rights in Modifications
    to the Licensor is not in counsel's text.
 3. **Provisions counsel's document marks** (highlighted in the source): section 5.1(i) (no seat for
-   a viewer once a viewer role exists), section 5.3 (Roles) and section 5.5 (Seat estimate), each
-   describing something the Software does not do yet.
-4. **The owner's rulings counsel's text does not carry** (subscriptions plan task S0.4): read-only
-   use after the grace period that can still cancel Jobs (section 9.1 says it may not); one key per
-   organisation instead of one per User (sections 6.1 and 6.4); no covered-versions date (sections
-   6.1 and 8.2); the free seat applied per legal person (sections 1.3, 6.3 and 10.2(a)).
+   a viewer), section 5.3 (Roles) and section 5.5 (Seat estimate), which counsel's text wrote as
+   features to come. Applied: present tense, owner 2026-10-29; the roles and the seat estimate must
+   be released before the Terms go public.
+4. **The owner's rulings counsel's text did not carry** (subscriptions plan task S0.4): applied
+   (counsel approved 2026-10-29). Read-only use after the grace period can still cancel a Job and
+   use the kill switch (section 9.1, ruling T12); one License Key per Customer for its
+   organisation, stating its User Seats, instead of one per User (sections 2, 5.3, 6.1, 6.3, 6.4,
+   7.5 and 9.1); no covered-versions date (sections 6.1 and 8.2, ruling O4); the free seat applied
+   per legal person and its Affiliates (sections 6.3, 7.5 and 10.2(a), ruling T15).
 5. **Crash reports** (section 7.3): counsel's text lets the Software send crash reports and
    diagnostics that the Customer cannot turn off. The console and the mobile app send none today,
    and the earlier draft promised any telemetry would be opt-in.

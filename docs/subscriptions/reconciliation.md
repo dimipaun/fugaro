@@ -534,7 +534,7 @@ paywall safety", R4); what a console or app with **no key** shows, including a 0
 upgrading (F43); what a free evaluator's expired key does (F39). Choices: (a) read-only keeps every
 current view and the app's cancel; (b) read-only keeps the free core's views (watch, logs) and
 hides the paid ones; (c) the console and the app stop entirely and the Terms say so. **The amended
-Terms §10.4 already words read-only as "cannot launch, cancel or change anything"** (counsel's §9.1 of 2026-10-28 keeps it: "may not initiate, cancel or modify anything"), which would
+Terms §10.4 already words read-only as "cannot launch, cancel or change anything"** (counsel's §9.1 of 2026-10-28 keeps it: "may not initiate, cancel or modify anything"; amended 2026-10-29: §9.1 now lets the User cancel a Job and use the kill switch, T12 applied, counsel approved), which would
 take the app's cancel away (against R4); that wording is a draft for counsel, not the owner's
 ruling on this tension, and the owner rules on it.
 
@@ -627,6 +627,10 @@ run (S0.2, S0.4); this PR does not edit the Terms:
 | §8.4, §9.5 | The merchant of record as a recipient of buyers' personal data | T13 |
 | §3.3 note | The released binary carrying `ee/` code under one key-gated build is not addressed | T21 |
 | Counsel questions 12–18 | Cover O3; S0.2 adds T15, T21, T23 and the rows above | O3 |
+
+(amended 2026-10-29: in counsel's renumbered text the T12, O4, key-binding and T15 rows are applied,
+counsel approved: §9.1, §6.1 and §8.2, §2, §5.3, §6.1, §6.3, §6.4, §7.5 and §9.1, and §6.3, §7.5
+and §10.2(a).)
 
 **T20 — (D435) Orchestrators in the business-licensed folder against PR #831.** #831 builds P2 of
 the central orchestrators (the access record, the `orchestrators` block, `fugaro orchestrator
