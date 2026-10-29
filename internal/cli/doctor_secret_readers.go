@@ -174,13 +174,20 @@ func doctorSecretReaderChecks(ctx context.Context, lc *localcfg.Config, sm *gcp.
 		problem := fmt.Sprintf("secret %s grants a role that reads every version to %s: each of them can read every version of it",
 			containerName(s), strings.Join(printableNames(extra), ", "))
 		check := doctorCheck{ID: "secret-readers-unexpected", Severity: "warning", Problem: problem}
+		// The managed label chooses the advice and nothing else: anyone who may
+		// add a label to the container (secretmanager.secrets.update) can write
+		// `fugaro=managed` on one Fugaro did not create, and the worst that buys
+		// is the removal advice in place of the review one. The reader is named
+		// either way, so the label can never hide one — which is why the sweep
+		// decides its advice from the label rather than trusting it to bound the
+		// finding.
 		if fugaroContainer(s) {
 			check.Problem += ", and Fugaro does not create them for it"
 			check.Fix = "review each member and remove the ones Fugaro did not create: gcloud secrets remove-iam-policy-binding SECRET --member=MEMBER --role=ROLE" +
 				" (" + selfCommand() + " secrets ls --json prints each container's id)"
 		} else {
 			check.Problem += ", and Fugaro did not create this container, so a reader on it may be another application's"
-			check.Fix = "review each member against the application or plan that owns this container: Fugaro did not create it, so its readers are not Fugaro's to remove by hand" +
+			check.Fix = "review each member against the application or plan that owns this container: Fugaro did not create it, so its readers are not Fugaro's to remove" +
 				" (gcloud secrets get-iam-policy SECRET prints them)"
 		}
 		checks = append(checks, check)

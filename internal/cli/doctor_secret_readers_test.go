@@ -284,6 +284,12 @@ func TestDoctorSecretReadersAdvisesReviewForAContainerFugaroDidNotCreate(t *test
 	if !strings.Contains(theirs.Fix, "review") {
 		t.Errorf("the fix for a container Fugaro did not create does not ask for a review: %q", theirs.Fix)
 	}
+	if !strings.Contains(theirs.Fix, "so its readers are not Fugaro's to remove") {
+		t.Errorf("the fix for a container Fugaro did not create does not say its readers are not Fugaro's to remove: %q", theirs.Fix)
+	}
+	if strings.Contains(theirs.Fix, "by hand") {
+		t.Errorf("the fix for a container Fugaro did not create says `by hand`, which reads as a boundary the removal advice does not draw: %q", theirs.Fix)
+	}
 	if strings.Contains(theirs.Fix, "remove-iam-policy-binding") {
 		t.Errorf("the fix for a container Fugaro did not create advises a removal: %q", theirs.Fix)
 	}
