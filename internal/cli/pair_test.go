@@ -317,7 +317,9 @@ func TestPairRefusalCodesNameTheCase(t *testing.T) {
 		},
 		{
 			name: "a config with no api key",
-			edit: func(cfg *string, _ *pairFixture) { *cfg = strings.Replace(*cfg, ", firebase_api_key: "+pairAPIKey, "", 1) },
+			edit: func(cfg *string, _ *pairFixture) {
+				*cfg = strings.Replace(*cfg, ", firebase_api_key: "+pairAPIKey, "", 1)
+			},
 			code: pairRefusedAPIKey,
 		},
 		{name: "the debug env", env: map[string]string{"GODEBUG": "http2debug=1"}, code: pairRefusedEnv},
