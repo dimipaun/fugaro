@@ -71,11 +71,10 @@ var errNoAppKey = errors.New("no endpoint an installation access token may call 
 // asks again. A failure is warned about once.
 //
 // The one read that names the App is GET /app, and only the App's own JWT
-// can make it. Neither route hands this process a key (C2.2): with the key
-// in this process the JWT reads it, and with the key in the credentials
-// service there is no read at all to make, because an installation token has
-// none. So the identity stays unknown there and every caller that needs it
-// fails closed: Self stays false (reviewmode.go's trusted gate then wants a
+// can make it. With the key in the credentials service (C2.2) this process
+// has no JWT and no other route to the App, so there is no read to make at
+// all: the identity stays unknown and every caller that needs it fails
+// closed -- Self stays false (reviewmode.go's trusted gate then wants a
 // collaborator) and a follow-up's comments are not read as Fugaro's.
 func (p *Provider) appSlug(ctx context.Context) (slug string, ok bool) {
 	p.identityMu.Lock()
@@ -103,17 +102,18 @@ func (p *Provider) appSlug(ctx context.Context) (slug string, ok bool) {
 // that is nil only when there is a slug to return.
 //
 // An installation token is not a second route. GitHub refuses it GET /user
-// ("Resource not accessible by integration"), which is the read this branch
-// used to make, and GitHub's list of the endpoints an installation access
-// token may call holds nothing that names the App: GET /installation/repositories
-// lists the installation's repositories, not the App, and GET /apps/{app_slug}
-// needs the slug it would return. So with the key in the credentials service
-// the identity is unknown rather than guessed -- a slug read from any other
-// account would make Self true for an author the run is not.
+// ("Resource not accessible by integration"), which is the read the adapter
+// made here before, and GitHub's list of the endpoints an installation
+// access token may call holds nothing else that names the App:
+// GET /installation/repositories lists the installation's repositories, not
+// the App, and GET /apps/{app_slug} needs the slug it would return. So with
+// the key in the credentials service the identity is unknown rather than
+// guessed -- a slug taken from any other account would make Self true for an
+// author the run is not.
 //
-// The JWT route is deliberately strict about the answer for the same reason:
-// an App with no slug has no identity to compare a login against, so it is
-// refused rather than compared against.
+// The answer is deliberately strict for the same reason: an App with no slug
+// has no identity to compare a login against, so the empty slug is refused
+// rather than used.
 func (p *Provider) readAppSlug(ctx context.Context) (slug, what string, err error) {
 	if p.app == nil {
 		return "", "no App key in this process", errNoAppKey
