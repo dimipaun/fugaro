@@ -22,8 +22,16 @@
 //          stricter than "on the allowed list": `allowed_hosts` lists the hosts the site LINKS
 //          to (github.com, raw.githubusercontent.com), and a link target is not a host the
 //          project may execute or style a page from (D106: no CDN).
-//        - images, media and embeds: first-party, or a host on `allowed_hosts` — which is the
+//        - images and media: first-party, or a host on `allowed_hosts` — which is the
 //          rule W2.4's video slot will meet: a player host that is not on the list fails here.
+//        - embedded documents (`iframe`, `frame`, `embed`, `object`): FIRST-PARTY ONLY, and
+//          never a host the site LINKS to. This is the correction G2.3 made to G2.2: the
+//          campaign's booking link put `calendly.com` on `allowed_hosts` so the plain `<a
+//          href>` would resolve, and reading that list for embeds too admitted the same host
+//          as a frame on every page of the site. A link target and an embed origin are
+//          different questions, and the one place the site frames a vendor is the campaign
+//          page's inline booking widget, which the consent gate builds at runtime (D401) —
+//          a built page never carries the frame, so a built page may frame nobody.
 //      `http:`, protocol-relative `//host`, `javascript:` and (for anything executable)
 //      `data:` URLs are refused outright, and so are `<base>`, `<meta http-equiv=refresh>`,
 //      `ping`, `iframe[srcdoc]` and every inline `on*=` handler.
@@ -49,9 +57,22 @@
 //      configuration (never as a `script[src]`, a preload or a preconnect), no second
 //      analytics origin appears anywhere, the page carries no inline script, and the gate that
 //      reads that configuration and fetches the script is the site's one script file.
-//   5. The deployed policy, in `firebase.json`, admits exactly the origins Google documents
-//      for Google Analytics 4 without any Ads features and nothing else — no `'unsafe-inline'`,
-//      no `'unsafe-eval'`, no nonce, no hash, no wildcard beyond the two documented ones.
+//
+//   5. **The campaign pages' own measurement, behind its own consent (G2.3, D401).** The four
+//      campaign pages carry three further vendors — Meta's pixel, LinkedIn's insight tag and
+//      Calendly's booking widget — under a consent of their own (its own key, its own
+//      question), and this file holds the same two halves for them: no page carries a vendor
+//      request, a vendor origin outside the gate's own configuration attributes, or a framed
+//      document; the configuration is written once, on the four campaign pages and on no other
+//      page, and it is complete (the page it was built for, the two ids, the three origins and
+//      the booking link); and the gate that reads it is the site's one script file, which
+//      names none of those origins itself. The origins reach the loader through the banner's
+//      markup exactly as the analytics origin does, so a page that carries none of them loads
+//      none of them.
+//   6. The deployed policy, in `firebase.json`, admits exactly the origins Google documents
+//      for Google Analytics 4 without any Ads features, the exact three the campaign's three
+//      vendors document, and nothing else — no `'unsafe-inline'`, no `'unsafe-eval'`, no
+//      nonce, no hash, and no wildcard beyond the two Google documents.
 //
 // The red step this file was written against: the check, run over a page carrying a Google
 // Fonts stylesheet, has to report `fonts.googleapis.com is not on the allowed-host list` —
@@ -83,6 +104,10 @@ import {
   walk,
 } from './lib/html.mjs'
 import { buildCopy } from './lib/build.mjs'
+// The four campaign pages, from the data file rather than from a list here: the paths a
+// configuration is allowed to appear on are `website/data/landing.yaml`'s own (G2.1), and a
+// fifth campaign is a row in that file (G2.3).
+import { loadLanding } from '../src/lib/landing.mjs'
 
 // ---- the allow-lists -------------------------------------------------------------------
 
@@ -122,6 +147,63 @@ const SITE_SCRIPT = '/scripts/site.js'
 const EARLY_SCRIPT = '/scripts/consent-early.js'
 const BANNER_ID = 'consent-banner'
 
+// The campaign pages' own gate (G2.3, D401): its consent key, the attributes its configuration
+// is written in, and the identifiers `site.js` reads it out of the markup with. The key is the
+// same value `src/lib/consent-key.mjs` holds, and a change to it is a change to the gate.
+export const MARKETING_CONSENT_KEY = 'fugaro:marketing-consent'
+export const MARKETING_KEY_ATTR = 'data-marketing-consent-key'
+const MARKETING_PATH_ATTR = 'data-marketing-path'
+const META_ID_ATTR = 'data-meta-pixel-id'
+const META_ORIGIN_ATTR = 'data-meta-origin'
+const LINKEDIN_ID_ATTR = 'data-linkedin-partner-id'
+const LINKEDIN_ORIGIN_ATTR = 'data-linkedin-origin'
+const CALENDLY_URL_ATTR = 'data-calendly-url'
+const CALENDLY_ORIGIN_ATTR = 'data-calendly-origin'
+// The attribute's own name, as it is written in markup: `site.js` reads the campaign decision
+// through a variable holding this string, and a file that names it is a file that asks the
+// campaign's question — which is what `gateFailures` scopes the whole campaign rule to.
+const MARKETING_KEY_LITERAL = 'data-marketing-consent-key'
+// The eight attributes together, which is what says "this element is the campaign gate's
+// configuration": the one the loader keys off is the first, and the rest are what it then reads.
+const MARKETING_ATTRS = [
+  MARKETING_KEY_ATTR,
+  MARKETING_PATH_ATTR,
+  META_ID_ATTR,
+  META_ORIGIN_ATTR,
+  LINKEDIN_ID_ATTR,
+  LINKEDIN_ORIGIN_ATTR,
+  CALENDLY_URL_ATTR,
+  CALENDLY_ORIGIN_ATTR,
+]
+
+/**
+ * The three vendors' origins, from site.yaml: the campaign page's configuration carries these
+ * and the deployed policy admits these, and a page naming one of their hosts anywhere else has
+ * wired a request around the gate.
+ */
+function marketingOrigins(facts) {
+  return [facts.marketing.metaOrigin, facts.marketing.linkedinOrigin, facts.marketing.calendlyOrigin]
+}
+
+/** The three hosts above, as the strings a scan for a stray request matches on. */
+function marketingHosts(facts) {
+  return new Set(marketingOrigins(facts).map((origin) => new URL(origin).host))
+}
+
+/**
+ * The registrable domain of a URL: its host without its leftmost labels. It is how the two
+ * ends of an embed are held to one vendor — the widget's `assets.` host and the booking page
+ * it loads are the same company, and `site.yaml` names only the first of them because the
+ * second is a link the pages already carry (G2.3).
+ */
+function vendorOf(url) {
+  try {
+    return new URL(url).host.split('.').slice(-2).join('.')
+  } catch {
+    return null
+  }
+}
+
 // `link` relations that make the browser fetch, and the ones that are only a reference.
 const FETCHING_RELS = new Set([
   'stylesheet', 'preload', 'modulepreload', 'prefetch', 'preconnect', 'dns-prefetch', 'prerender',
@@ -137,7 +219,8 @@ const DATA_BLOCK = new Set(['application/ld+json', 'application/json'])
 
 /**
  * Why `raw` may not be loaded in `context`, or null when it may. `context` is one of
- * 'first-party' (scripts, styles, fonts, forms, CSS) or 'media' (images, media, embeds).
+ * 'first-party' (scripts, styles, fonts, forms, CSS), 'media' (images and media) or 'embed'
+ * (a framed document).
  */
 export function refuse(raw, context, facts) {
   // Read the URL the way a browser's URL parser does before deciding it is relative: it
@@ -160,6 +243,13 @@ export function refuse(raw, context, facts) {
     return `${url} is not a URL`
   }
   if (host === facts.canonicalHost) return null
+  if (context === 'embed') {
+    // Nothing a build emits frames another host. The campaign page's inline booking widget is
+    // the site's one third-party frame and the consent gate builds it at runtime, after a
+    // grant — so a frame in the markup is a frame nobody consented to, and a host the site
+    // LINKS to is exactly the host this must not admit (G2.2's `calendly.com`, D401).
+    return `${host} is framed by the page: a built page embeds nothing but itself, because the campaign's booking widget is built by the consent gate after a grant and a link target is not an embed origin (D106, D401)`
+  }
   if (context === 'media' && facts.allowedHosts.has(host)) return null
   if (context !== 'media' && facts.allowedHosts.has(host)) {
     return `${host} is on the allowed-host list as a link target, but a script, stylesheet, font, preload or form may only come from this site (D106: no CDN)`
@@ -223,6 +313,12 @@ export function pageOriginFailures(html, rel, facts, { analyticsEnabled = facts.
   // The elements carrying the gate's configuration: the consent banner, with the property id
   // and the one admitted origin as attributes (W3.2).
   const configs = []
+  // And the campaign gate's configuration, which is the same element on the four campaign
+  // pages: the eight attributes are what say an element carries it (G2.3, D401), and the page
+  // it was built for is the one only the configuration carries.
+  const campaignConfigs = []
+  const campaignKeys = []
+  const campaignHosts = marketingHosts(facts)
 
   for (const el of walk(doc)) {
     for (const [name, value] of el.attrs) {
@@ -237,6 +333,18 @@ export function pageOriginFailures(html, rel, facts, { analyticsEnabled = facts.
         }
       }
       if (name === ANALYTICS_ORIGIN_ATTR) configs.push(el)
+      if (name === MARKETING_KEY_ATTR) campaignKeys.push(el)
+      if (name === MARKETING_PATH_ATTR) campaignConfigs.push(el)
+      // The three vendors' hosts, anywhere but the gate's own configuration attributes: an
+      // attribute naming one is a request wired around the gate, whatever element carries it —
+      // a preconnect, a `data-` hook a smaller script of someone's reads, a form action.
+      if (!MARKETING_ATTRS.includes(name)) {
+        for (const host of campaignHosts) {
+          if (value.includes(host)) {
+            at(el, `${name} names ${host}, one of the campaign gate's three origins: they reach the loader through the gate's own configuration attributes, so a page naming one anywhere else has wired a request around the consent (D401)`)
+          }
+        }
+      }
       // An `<a href>` is a reference the reader follows, not something the page loads or runs,
       // so a LINK is not read here — the privacy statement's software part names Google and
       // links Google's own Firebase policy in both flag states (the owner's request of
@@ -319,13 +427,13 @@ export function pageOriginFailures(html, rel, facts, { analyticsEnabled = facts.
       case 'iframe':
       case 'frame':
         if (el.attrs.has('srcdoc')) at(el, 'srcdoc embeds a document this check does not read')
-        check(el, 'src', 'media')
+        check(el, 'src', 'embed')
         break
       case 'embed':
-        check(el, 'src', 'media')
+        check(el, 'src', 'embed')
         break
       case 'object':
-        check(el, 'data', 'media')
+        check(el, 'data', 'embed')
         break
       case 'form':
         check(el, 'action', 'first-party')
@@ -352,6 +460,7 @@ export function pageOriginFailures(html, rel, facts, { analyticsEnabled = facts.
   if (!analyticsEnabled) {
     if (named.length) out.push(`${rel}: ${named.join(', ')} names analytics while site.yaml's analytics.enabled is false: nothing analytics-shaped may reach a page until the owner turns it on (W3.2), and then only behind the consent gate (W1.12)`)
     if (configs.length) out.push(`${rel}: carries the gate's analytics configuration while site.yaml's analytics.enabled is false: the banner and its configuration are emitted only when the flag is on`)
+    if (campaignConfigs.length) out.push(`${rel}: carries the campaign gate's configuration while site.yaml's analytics.enabled is false: the site has one consent banner and it carries both questions, and the flag decides whether it is emitted at all`)
   } else {
     if (gatedLoaders.length) out.push(`${rel}: carries an inline script naming ${ANALYTICS_HOST}; the gate is code in ${SITE_SCRIPT}, and the site ships no inline script at all (D183, W3.2)`)
     if (configs.length !== 1) {
@@ -378,6 +487,71 @@ export function pageOriginFailures(html, rel, facts, { analyticsEnabled = facts.
     const scripts = [...walk(doc)].filter((el) => el.name === 'script' && el.attrs.get('src') === SITE_SCRIPT)
     if (scripts.length !== 1) out.push(`${rel}: carries ${scripts.length} ${SITE_SCRIPT} tags; the gate that reads the configuration above is that one file, loaded once (D183, W3.2)`)
   }
+
+  // The campaign gate's configuration (G2.3, D401). A page that carries it carries the whole
+  // of it — the loader reads eight attributes and a missing one is a loader that silently does
+  // nothing — and the three origins it names are site.yaml's own, so a page cannot point a
+  // vendor's script somewhere else. Which pages carry it is held by the case below, over the
+  // built artifact: this reads the configuration, that one reads who has it.
+  if (campaignConfigs.length !== 0 && campaignConfigs.length !== 1) {
+    out.push(`${rel}: ${campaignConfigs.length} elements carry ${MARKETING_PATH_ATTR}; the campaign gate's configuration is written once, in the banner the visitor answers`)
+  }
+  // Two other elements may carry the campaign's key and nothing else, and each is a page where
+  // the decision is read or taken back rather than asked:
+  //
+  //   - the banner's early-decision tag (`consent-early.js`, the owner's ruling of 2026-10-23),
+  //     which is the whole reason a campaign page carries the key where the banner is drawn from
+  //     the first frame; and
+  //   - the bar that always offers the choice — the privacy page, where a visitor withdraws
+  //     (`data-consent-always`). A campaign page's bar is gone once it has been answered, so
+  //     without this the campaign decision could be granted and never taken back; the key is
+  //     what `site.js` writes the refusal under, and the refusal is the only answer that bar may
+  //     give (a page that never named the three vendors grants nothing).
+  //
+  // Anywhere else, a key without a configuration is a decision nothing reads.
+  for (const el of campaignKeys) {
+    if (el === campaignConfigs[0]) continue
+    const carried = MARKETING_ATTRS.filter((name) => el.attrs.has(name))
+    const early = el.name === 'script' && el.attrs.get('src') === EARLY_SCRIPT && carried.length === 1
+    const withdrawing = el.name === 'aside' && el.attrs.get('id') === BANNER_ID && el.attrs.get('data-consent-always') === 'true' && carried.length === 1
+    if (!early && !withdrawing) {
+      out.push(`${rel}: <${el.name}> carries ${MARKETING_KEY_ATTR} and is neither the consent banner, its early decision (${EARLY_SCRIPT}) nor the bar that always offers the choice: the campaign's key belongs to the banner that asks the campaign question, or to the page a visitor withdraws on, and a key anywhere else is a decision nothing reads`)
+    }
+  }
+  for (const el of campaignConfigs) {
+    if (!el.attrs.has(MARKETING_KEY_ATTR)) {
+      out.push(`${rel}: the campaign gate's configuration carries no ${MARKETING_KEY_ATTR}, so the question it asks stores no answer`)
+    }
+    const missing = MARKETING_ATTRS.filter((name) => !el.attrs.has(name))
+    if (missing.length) {
+      out.push(`${rel}: the campaign gate's configuration carries no ${missing.join(', no ')}: the loader reads every one of them, and a missing one is a loader that does nothing`)
+    }
+    if (el.attrs.get('id') !== BANNER_ID || !el.attrs.has('data-consent-key')) {
+      out.push(`${rel}: the campaign gate's configuration is not on the consent banner: the element that asks the campaign's question is the element that carries its key and its configuration`)
+    }
+    if (el.attrs.get(MARKETING_KEY_ATTR) !== MARKETING_CONSENT_KEY) {
+      out.push(`${rel}: the campaign gate stores its decision under ${el.attrs.get(MARKETING_KEY_ATTR)}, and the site's own key is ${MARKETING_CONSENT_KEY}: the two decisions are two questions and two keys (F17, D401)`)
+    }
+    // The path the loader runs on, which is the page's own route: a configuration built for
+    // another page is a bar that loads on the page it was not asked on (F18).
+    const here = `/${rel.replace(/index\.html$/, '').replace(/\/$/, '')}`
+    if (el.attrs.get(MARKETING_PATH_ATTR) !== here) {
+      out.push(`${rel}: the campaign gate's configuration is built for ${el.attrs.get(MARKETING_PATH_ATTR)} and this page is ${here}, so the loader would run on the page it was not built for (F18)`)
+    }
+    for (const [attr, origin] of [
+      [META_ORIGIN_ATTR, facts.marketing.metaOrigin],
+      [LINKEDIN_ORIGIN_ATTR, facts.marketing.linkedinOrigin],
+      [CALENDLY_ORIGIN_ATTR, facts.marketing.calendlyOrigin],
+    ]) {
+      if (el.attrs.get(attr) !== origin) {
+        out.push(`${rel}: ${attr} is ${el.attrs.get(attr)} and site.yaml names ${origin}: the three loaders' origins are one fact each, and the deployed policy admits those exact hosts (O3)`)
+      }
+    }
+    const booking = el.attrs.get(CALENDLY_URL_ATTR) ?? ''
+    if (vendorOf(booking) !== vendorOf(el.attrs.get(CALENDLY_ORIGIN_ATTR))) {
+      out.push(`${rel}: the embed's booking link is ${JSON.stringify(booking)}, which is not hosted by the vendor the widget's script comes from (${el.attrs.get(CALENDLY_ORIGIN_ATTR)}): a booking address somewhere else is the widget framing a page nobody admitted (D401, O3)`)
+    }
+  }
   return out
 }
 
@@ -399,6 +573,30 @@ export function gateFailures(js, rel, facts) {
   // decision stored and watches for the request this contract is about.
   if (!/(?:stored\s*\([^)]*\)|getItem\s*\([^)]*\))[^;{}]*===\s*(?:GRANTED|'granted'|"granted")/.test(js)) {
     out.push(`${rel}: the gate never compares the decision it read out of storage with 'granted', so the flag alone would decide whether a Google script loads (D93)`)
+  }
+  // The campaign's own half of the same contract (G2.3, D401): one file, two questions. Every
+  // part of the campaign configuration is read out of the campaign page's banner — the page the
+  // loader was built for, the two vendor ids, the three origins their scripts come from and the
+  // booking link the embed is made of — so a non-campaign page, which carries none of them,
+  // loads none of the three. And the decision is compared with the one answer that loads
+  // anything, in one statement, the way the analytics decision is: a second question is not a
+  // second rule.
+  //
+  // It binds a file that reads the campaign decision at all: the rule is that a gate which asks
+  // the campaign's question reads the whole configuration the banner carries for it, so this is
+  // scoped to the attribute that makes the file a campaign gate, not to scripts in general.
+  if (js.includes(MARKETING_KEY_LITERAL)) {
+    for (const name of [
+      'MARKETING_KEY_ATTR', 'MARKETING_PATH_ATTR', 'META_ID_ATTR', 'META_ORIGIN_ATTR',
+      'LINKEDIN_ID_ATTR', 'LINKEDIN_ORIGIN_ATTR', 'CALENDLY_URL_ATTR', 'CALENDLY_ORIGIN_ATTR',
+    ]) {
+      if (!js.includes(name)) {
+        out.push(`${rel}: the gate does not read ${name}: the campaign page's banner carries the whole configuration, and a part of it the loader never reads is a part of it that does nothing (G2.3)`)
+      }
+    }
+    if (!/(?:read|stored|getItem)\s*\([^)]*MARKETING_KEY_ATTR[^;{}]*===\s*(?:GRANTED|'granted'|"granted")/.test(js)) {
+      out.push(`${rel}: the gate never compares the campaign decision it read out of storage with 'granted', so a campaign page's three vendors would load on the flag alone (D401)`)
+    }
   }
   return out
 }
@@ -431,13 +629,27 @@ export function gateFailures(js, rel, facts) {
 // `'unsafe-inline'` because Astro inlines small stylesheets, and there is no `'unsafe-inline'`,
 // `'unsafe-eval'`, nonce or hash in `script-src` — the site ships no inline script, so a hash
 // would admit nothing and the two unsafe keywords would admit everything.
+//
+// **The campaign measurement's entries (G2.3, F18, O3).** Three more vendors arrive with the
+// campaign pages, each behind the campaign's own consent, and each is admitted as the exact
+// host its documentation names — never a wildcard, which is the failure mode this list exists
+// against: `https://connect.facebook.net` (the pixel's script), `https://snap.licdn.com` (the
+// insight tag's), `https://assets.calendly.com` (the booking widget's script and stylesheet),
+// `https://www.facebook.com` and `https://px.ads.linkedin.com` (the two beacons, which are
+// image requests, and the pixel's own collect calls). The policy is written per directive
+// because the site's consent does not distinguish between them at the browser's level: a
+// visitor who declines loads nothing, so what the policy admits is what a consenting visitor
+// may reach, host by host, and nothing else. `frame-src` is the new directive: Calendly's
+// widget embeds the booking page in an iframe, and the host is the booking link's own — the
+// one `landing.yaml` writes — rather than the assets host its script comes from.
 export const CSP_DIRECTIVES = new Map([
   ['default-src', ["'self'"]],
-  ['script-src', ["'self'", ANALYTICS_ORIGIN]],
-  ['style-src', ["'self'", "'unsafe-inline'"]],
-  ['img-src', ["'self'", 'data:', ANALYTICS_ORIGIN, 'https://*.google-analytics.com']],
+  ['script-src', ["'self'", ANALYTICS_ORIGIN, 'https://connect.facebook.net', 'https://snap.licdn.com', 'https://assets.calendly.com']],
+  ['style-src', ["'self'", "'unsafe-inline'", 'https://assets.calendly.com']],
+  ['img-src', ["'self'", 'data:', ANALYTICS_ORIGIN, 'https://*.google-analytics.com', 'https://www.facebook.com', 'https://px.ads.linkedin.com']],
   ['font-src', ["'self'"]],
-  ['connect-src', ["'self'", ANALYTICS_ORIGIN, 'https://*.google-analytics.com', 'https://*.google.com']],
+  ['connect-src', ["'self'", ANALYTICS_ORIGIN, 'https://*.google-analytics.com', 'https://*.google.com', 'https://connect.facebook.net', 'https://www.facebook.com', 'https://px.ads.linkedin.com']],
+  ['frame-src', ['https://calendly.com']],
   ['manifest-src', ["'self'"]],
   ['object-src', ["'none'"]],
   ['base-uri', ["'self'"]],
@@ -469,7 +681,7 @@ export function cspFailures(policy) {
     for (const value of values) {
       if (!allowed.includes(value)) {
         out.push(
-          `${name} admits ${value}: the policy may carry only the origins Google documents for Google Analytics 4 without Ads features (${ANALYTICS_ORIGIN}, https://*.google-analytics.com, https://*.google.com) and this site's own, and no 'unsafe-inline', 'unsafe-eval', nonce, hash or wildcard in script-src`,
+          `${name} admits ${value}: the policy carries exactly the tokens this contract lists for ${name} (${allowed.join(', ')}) — the origins Google documents for Google Analytics 4 without Ads features, the exact three the campaign's vendors document, and this site's own — and no 'unsafe-inline', 'unsafe-eval', nonce, hash or wildcard beyond the two Google documents`,
         )
       }
     }
@@ -564,6 +776,91 @@ test('with analytics on, the one admitted origin is the banner configuration, an
   }
 })
 
+test('the campaign gate\'s configuration is on the four campaign pages and on no other page', () => {
+  // **This case is the red step G2.3 was written against.** Run over the build before the task
+  // existed, it failed twice over: the four campaign pages carried no `data-marketing-path` (so
+  // the list below was empty against a list of four), and the contract below required three
+  // tokens of the deployed policy that the pre-task `firebase.json` did not carry — the two
+  // halves of one defect read from two ends, a configuration nothing carries and a policy that
+  // would block the load that configuration makes.
+  //
+  // The configuration is keyed on `data-marketing-path`, not on the key: the key is also what
+  // the page a visitor withdraws on carries, without any of the configuration, so a bar that
+  // carries the key is not a page that has the vendors' addresses in it.
+  const campaign = builtPages(DIST).filter((page) => page.html.includes(`${MARKETING_PATH_ATTR}="`))
+  assert.deepEqual(
+    campaign.map((page) => page.rel).sort(),
+    loadLanding()
+      .variants.map((variant) => `${variant.name}/index.html`)
+      .sort(),
+    `${campaign.length} built pages carry the campaign gate's configuration, and the pages that carry it are the four campaigns website/data/landing.yaml writes: the three vendors load on those pages and nowhere else (spec §6, F18)`,
+  )
+
+  for (const page of campaign) {
+    const configs = [...tokenize(page.html)].filter((t) => t.kind === 'start' && t.attrs.has(MARKETING_PATH_ATTR))
+    assert.equal(configs.length, 1, `${page.rel}: ${configs.length} elements carry ${MARKETING_PATH_ATTR}; the campaign gate's configuration is written once`)
+    assert.equal(configs[0].attrs.get('id'), BANNER_ID, `${page.rel}: the campaign gate's configuration is not on the consent banner`)
+    assert.equal(
+      configs[0].attrs.get(MARKETING_KEY_ATTR),
+      MARKETING_CONSENT_KEY,
+      `${page.rel}: the campaign decision is stored under ${configs[0].attrs.get(MARKETING_KEY_ATTR)}; it is a second question under its own key, not a second value under the site's (F17, D401)`,
+    )
+    for (const [attr, name] of [
+      [META_ORIGIN_ATTR, 'metaOrigin'],
+      [LINKEDIN_ORIGIN_ATTR, 'linkedinOrigin'],
+      [CALENDLY_ORIGIN_ATTR, 'calendlyOrigin'],
+    ]) {
+      assert.equal(configs[0].attrs.get(attr), FACTS.marketing[name], `${page.rel}: ${attr} is not the origin site.yaml names`)
+    }
+    // The two ids are carried even while they are empty, and the empty state is the loader
+    // switched off: no identifier the owner has not supplied is anywhere in the artifact (R3).
+    for (const [attr, name] of [[META_ID_ATTR, 'metaPixelID'], [LINKEDIN_ID_ATTR, 'linkedinPartnerID']]) {
+      assert.ok(configs[0].attrs.has(attr), `${page.rel}: the campaign gate's configuration carries no ${attr}, so the loader has nothing to switch on when the owner supplies one`)
+      assert.equal(configs[0].attrs.get(attr), FACTS.marketing[name], `${page.rel}: ${attr} is not the id site.yaml carries`)
+    }
+    assert.equal(
+      configs[0].attrs.get(CALENDLY_URL_ATTR),
+      loadLanding().calendlyURL,
+      `${page.rel}: the embed is built from ${configs[0].attrs.get(CALENDLY_URL_ATTR)}, and landing.yaml writes ${loadLanding().calendlyURL}: the booking link has one home`,
+    )
+  }
+
+  // And the other half, read from the other end: a page that does not carry the configuration
+  // carries none of the three origins and none of the campaign's configuration, so a visitor who
+  // never opens a campaign page is unchanged by any of this (F17).
+  const hosts = [...marketingHosts(FACTS)]
+  const campaignRels = new Set(campaign.map((page) => page.rel))
+  for (const page of builtPages(DIST).filter((one) => !campaignRels.has(one.rel))) {
+    for (const host of hosts) {
+      assert.ok(!page.html.includes(host), `${page.rel} names ${host}, one of the campaign gate's three origins, and it is not a campaign page: the origins reach the loader through the four campaign pages' own banner (F18)`)
+    }
+    // The key may be here, on one element only: the bar that always offers the choice, which is
+    // the page a visitor withdraws on — it carries the decision's key and none of the
+    // configuration, and `site.js` writes a refusal with it and never a grant. The key's literal
+    // is also a disclosure, and the privacy statement is the one page outside the four that
+    // names it, exactly as it names the analytics key.
+    if (page.rel !== 'privacy/index.html') {
+      assert.ok(!page.html.includes(MARKETING_CONSENT_KEY), `${page.rel} names the campaign decision's key and is neither a campaign page nor the privacy statement that discloses it`)
+    }
+    for (const el of [...tokenize(page.html)].filter((t) => t.kind === 'start' && t.attrs.has(MARKETING_KEY_ATTR))) {
+      assert.equal(
+        el.attrs.get('data-consent-always'),
+        'true',
+        `${page.rel} carries the campaign decision's key on <${el.name}> and is not a campaign page: outside the four, the key belongs to the bar that always offers the choice, which is where a decision is taken back (W1.12). The gate's configuration — ${MARKETING_PATH_ATTR}, the ids and the three origins — is the four pages' alone (F18)`,
+      )
+    }
+    assert.ok(!page.html.includes(MARKETING_PATH_ATTR), `${page.rel} carries the campaign gate's configuration and is not a campaign page`)
+  }
+  for (const rel of filesUnder(DIST)) {
+    if (!/\.(html|css|js|mjs|json|webmanifest|svg|xml|txt)$/.test(rel)) continue
+    if (campaign.some((page) => page.rel === rel)) continue
+    const body = readFileSync(path.join(DIST, rel), 'utf8')
+    for (const host of hosts) {
+      assert.ok(!body.includes(host), `${rel} names ${host}: the campaign's origins reach the artifact through the four campaign pages' banner and nowhere else, and the site's one script names no host at all (G2.3)`)
+    }
+  }
+})
+
 test('with analytics off, no page and no file of the artifact names the analytics origin', async (t) => {
   // The state the site shipped in before W3.2, built from a copy with the flag cleared: it is
   // the other half of the promise, and the half a flag alone could quietly break.
@@ -603,8 +900,15 @@ const FIXTURE_FACTS = siteFacts(`canonical_url: https://site.example
 analytics:
   enabled: false
   measurement_id: ""
+marketing:
+  meta_pixel_id: ""
+  meta_origin: "https://connect.facebook.net"
+  linkedin_partner_id: ""
+  linkedin_origin: "https://snap.licdn.com"
+  calendly_origin: "https://assets.calendly.com"
 allowed_hosts:
   - github.com
+  - calendly.com
   - site.example
 `)
 
@@ -626,7 +930,11 @@ test('every way a page can fetch from another host is refused', () => {
     ['a remote @font-face', { head: '<style>@font-face{font-family:x;src:url(https://fonts.gstatic.com/x.woff2)}</style>' }, /fonts\.gstatic\.com/],
     ['a CSS @import', { head: '<style>@import url("https://fonts.googleapis.com/css?family=x");</style>' }, /@import .*fonts\.googleapis\.com/],
     ['a remote background in a style attribute', { body: '<div style="background:url(https://pixel.example.net/p.gif)"></div>' }, /pixel\.example\.net/],
-    ['an embedded player', { body: '<iframe src="https://www.youtube-nocookie.com/embed/x" title="v"></iframe>' }, /youtube-nocookie\.com is not on the allowed-host list/],
+    ['an embedded player', { body: '<iframe src="https://www.youtube-nocookie.com/embed/x" title="v"></iframe>' }, /youtube-nocookie\.com is framed by the page/],
+    ['a booking embed framed from the link host', { body: '<iframe src="https://calendly.com/dimi-fugaro/demo" title="Book a demo"></iframe>' }, /calendly\.com is framed by the page/],
+    ['an <object> pointing at a vendor', { body: '<object data="https://snap.licdn.com/x.svg"></object>' }, /snap\.licdn\.com is framed by the page/],
+    ['a vendor script', { head: '<script src="https://connect.facebook.net/en_US/fbevents.js"></script>' }, /connect\.facebook\.net is not on the allowed-host list/],
+    ['a vendor preconnect', { head: '<link rel="preconnect" href="https://assets.calendly.com">' }, /assets\.calendly\.com is not on the allowed-host list/],
     ['a tracking pixel', { body: '<img src="https://pixel.example.net/p.gif" alt="">' }, /pixel\.example\.net/],
     ['an image in srcset', { body: '<img src="/a.png" srcset="/a.png 1x, https://img.example.net/a@2x.png 2x" alt="">' }, /img\.example\.net/],
     ['a script from an allowed link host', { head: '<script src="https://github.com/x.js"></script>' }, /link target.*D106/],
@@ -684,6 +992,15 @@ test('first-party, data: images and the allowed media hosts pass', () => {
     body: '<img src="/a.svg" alt="a"><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" alt=""><img src="https://github.com/a.png" alt="b"><script type="application/ld+json">{"a":1}</script>',
   })
   assert.deepEqual(failuresOf(ok), [])
+})
+
+test('a link to a host the site links to is still a link, and the embed rule does not reach it', () => {
+  // The pair the G2.2 correction is about, read from both ends in one place: the campaign page's
+  // `Book a demo` is a plain `<a href>` to a host on `allowed_hosts`, and it is not a frame. The
+  // case above refuses the same host as an `iframe`; this one keeps the link working, because a
+  // visitor who declines the marketing consent keeps a way to book (spec §6, F17, D401).
+  const link = page({ body: '<a href="https://calendly.com/dimi-fugaro/demo">Book a demo</a><img src="https://calendly.com/a.png" alt="">' })
+  assert.deepEqual(failuresOf(link), [], 'a link to a listed host, or an image from one, is read as an embed')
 })
 
 test('with analytics on, a page that loads Google as markup, carries no configuration, or carries two, is refused', () => {
@@ -777,6 +1094,21 @@ test('the deployed policy carries what Google documents for GA4 without Ads feat
   // would block is the same defect read from the other end: the admitted origin is in it.
   assert.ok(policy.includes(ANALYTICS_ORIGIN), 'the deployed policy does not admit the analytics origin the banner names')
   assert.ok(policy.includes('https://*.google-analytics.com'), 'the deployed policy does not admit the collect endpoint Google documents')
+
+  // And the campaign's three, each of which the four campaign pages' banner names — so a policy
+  // that dropped one would block a load a consenting visitor asked for, and this is the half of
+  // the plan's red step that reads the deployed file (G2.3, F18, O3).
+  for (const origin of marketingOrigins(FACTS)) {
+    assert.ok(policy.includes(origin), `the deployed policy does not admit ${origin}, whose script a campaign page's own configuration loads after the visitor accepts`)
+  }
+  // `frame-src` is the new directive, and the frame it admits is the booking page the campaign's
+  // `Book a demo` link points at — one value, from `landing.yaml`, so the widget's frame and the
+  // link a visitor who declines keeps cannot point at two different places.
+  assert.deepEqual(
+    CSP_DIRECTIVES.get('frame-src'),
+    [new URL(loadLanding().calendlyURL).origin],
+    'the policy frames a page and website/data/landing.yaml writes another: the campaign has one booking address',
+  )
 })
 
 test('a shipped stylesheet or script file naming another host is refused', () => {
