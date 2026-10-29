@@ -1,0 +1,134 @@
+---
+/**
+ * website/src/components/CampaignCalls.astro — the calls to action (go-to-market plan, Task
+ * G2.2; spec §6, section 5; reconciliation F17, F22, D401).
+ *
+ * **Two links and no form.** The spec's calls to action are a booking, an install and a chat,
+ * and this section renders the first two: **Book a demo** as a plain `<a href>` to the Calendly
+ * link `website/data/landing.yaml` writes, and **Install free** as a link to the repository
+ * `website/data/site.yaml` names. The page asks a visitor for nothing — there is no waitlist and
+ * no email field anywhere on a campaign page — which is why the plain link and not an embed is
+ * the booking's first form here.
+ *
+ * **Why a plain link and not the embed.** G2.3 renders the Calendly embed inline behind the
+ * marketing consent (D401), and G2.4 owns the `wa.me` link and the events both of them fire.
+ * Neither is this task's, and both need this link to already exist: a visitor who declines the
+ * marketing consent keeps a working way to book, and the plain link is the thing the consent
+ * gate is measured against. So this component names no vendor asset, carries no `iframe`, and
+ * passes no query of its own — the UTM parameters G2.4 passes through are added at the link
+ * (F17, F22).
+ *
+ * **The two links are the file's, not this component's.** The booking URL is read from
+ * `website/data/landing.yaml` and the repository from `website/data/site.yaml`, both passed in
+ * by the page: a link typed here would be a second copy of a fact, and the copy that drifts.
+ */
+interface Props {
+  /** The owner's booking link, from `website/data/landing.yaml`. */
+  calendlyURL: string
+  /** The repository, from `website/data/site.yaml`. */
+  repository: string
+}
+
+const { calendlyURL, repository } = Astro.props
+---
+
+<section class="campaign-calls" data-section="calls-to-action">
+  <h2 class="campaign-calls-title display-md">See it run on your own repository</h2>
+  <p class="campaign-calls-line">Book half an hour, bring a repository, and watch a task become a pull request under your own caps.</p>
+  <ul class="campaign-calls-list">
+    <li>
+      <a class="campaign-calls-primary" href={calendlyURL}>Book a demo</a>
+    </li>
+    <li>
+      <a class="campaign-calls-secondary" href={repository} rel="noopener">Install free</a>
+    </li>
+  </ul>
+</section>
+
+<style>
+  /* Tokens only (W1.2). The two calls stack on a phone — the primary one first, at the width of
+     a thumb — and sit side by side from the wide breakpoint, which is the layout the static half
+     of `website/test/landing-pages.mjs` reads; the rendered reading at both widths is the
+     owner's check (G2.5). */
+  .campaign-calls {
+    padding-block: var(--space-xl) var(--space-3xl);
+    padding-inline: var(--frame-gutter);
+  }
+
+  .campaign-calls-title {
+    margin: 0;
+  }
+
+  .campaign-calls-line {
+    margin: var(--space-sm) 0 0;
+    max-width: var(--measure);
+    color: var(--text-muted);
+  }
+
+  .campaign-calls-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    margin: var(--space-lg) 0 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  /* The primary call to action: the accent as its fill and the ground as its label, the pair
+     `website/test/a11y.mjs` computes for a filled button. It is the same shape the homepage's
+     own button is, at full width in the column so a thumb finds it. */
+  .campaign-calls-primary,
+  .campaign-calls-secondary {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    min-height: 56px;
+    padding: 0 var(--space-xl);
+    border-radius: var(--radius-sm);
+    font-size: var(--font-size-lg);
+    font-weight: var(--weight-black);
+    text-decoration: none;
+  }
+
+  .campaign-calls-primary {
+    background: var(--accent);
+    color: var(--ground);
+  }
+
+  /* The secondary one: the repository, drawn as a quiet outline so the two are told apart
+     without a second colour, and it keeps the focus ring every link has. */
+  .campaign-calls-secondary {
+    border: var(--border-width) solid var(--border);
+    color: var(--text);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .campaign-calls-primary:hover {
+      background: var(--accent-on-dark);
+    }
+
+    .campaign-calls-secondary:hover {
+      color: var(--accent-on-dark);
+    }
+  }
+
+  @media (max-width: 30rem) {
+    /* The phone's own block: the section's closing air is a step smaller, so the last thing on
+       the page is the two buttons rather than a screen of empty ground under them. */
+    .campaign-calls {
+      padding-block: var(--space-lg) var(--space-2xl);
+    }
+  }
+
+  @media (min-width: 48rem) {
+    .campaign-calls {
+      padding-block: var(--space-2xl) var(--space-4xl);
+    }
+
+    .campaign-calls-list {
+      flex-direction: row;
+      align-items: center;
+    }
+  }
+</style>

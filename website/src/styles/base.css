@@ -62,14 +62,17 @@ main {
   overflow-wrap: break-word;
 }
 
-main:has(> .hero, > [data-security-page]) {
+main:has(> .hero, > [data-security-page], > .campaign-hero) {
   padding: 0;
 }
 
-/* The home page's blocks are full-width bands (a field of colour runs to the window's edges)
- * that pad their own content onto the page's one pair of margins with `--frame-gutter` (the
- * owner's ruling of 2026-10-23, lever 6), so `main` does not narrow them. */
-main:has(> .hero) {
+/* The home page's blocks and the campaign pages' five sections are full-width bands (a field of
+ * colour runs to the window's edges) that pad their own content onto the page's one pair of
+ * margins with `--frame-gutter` (the owner's ruling of 2026-10-23, lever 6), so `main` does not
+ * narrow them either: that gutter is a percentage of the box it is used in, so a narrowed box
+ * resolves it against the wrong width and every band's content lands a gutter right of the
+ * header and the footer. */
+main:has(> .hero, > .campaign-hero) {
   max-width: none;
 }
 

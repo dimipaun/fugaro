@@ -130,10 +130,12 @@ min_runs: 20
 # site actually links -- github.com for the repository, the Releases page and
 # the issue templates, raw.githubusercontent.com for the documents the docs hub
 # renders, firebase.google.com for Google's own Firebase privacy policy, which
-# the privacy statement links rather than restating -- and the site's own
-# canonical origin, and nothing else. The one third-party origin the owner
-# decided on (D93's analytics script, loaded only after consent) is admitted by
-# the consent task's own check, not by an entry here.
+# the privacy statement links rather than restating, calendly.com for the
+# booking link the four campaign pages carry as a plain `Book a demo` anchor
+# (G2.2; the inline embed G2.3 adds is the consent check's, not this list's) --
+# and the site's own canonical origin, and nothing else. The one third-party
+# origin the owner decided on (D93's analytics script, loaded only after
+# consent) is admitted by the consent task's own check, not by an entry here.
 #
 # The last entry is the canonical URL's own host, so it moves with
 # `canonical_url` above -- W2.2 replaced both lines in the same commit, which is
@@ -144,4 +146,5 @@ allowed_hosts:
   - github.com
   - raw.githubusercontent.com
   - firebase.google.com
+  - calendly.com
   - fugaro.dev
