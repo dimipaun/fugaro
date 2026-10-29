@@ -35,7 +35,7 @@ answered 2026-10-29** (one keychain item per pairing; the role inherited from th
 Nothing in this list approves a task or changes one.
 
 **Merged on `main` today, and this plan is written against it — every one of them read, not
-recalled:** **P6.4** (rules generation 3: the `config/pairing/$uid` subtree, the
+recalled:** **P6.4** (rules generation 3: the `pairing/$uid` subtree, the
 `config/admin/devices/$uid` node `USER` now requires, `RulesVersion = 3`) with
 `internal/budget/rules/emulator_pairing_test.go`; **P6.3**'s schema (`mac` on every message of every
 kind and on the heartbeat, the action record, `canonicalBytes`, `vectors.json`); **P6.2**
@@ -114,7 +114,7 @@ recommended), [mobile/reconciliation.md](../mobile/reconciliation.md) (D110–D1
 
 - **`fugaro pair`** (P6.6) is a **visible** CLI command an operator runs beside the phone: it mints
   a one-shot pairing token for a fresh `p~<random>` uid, shows a QR holding the project's bootstrap
-  configuration and that token, waits for the phone's public key in `config/pairing/<uid>/request`
+  configuration and that token, waits for the phone's public key in `pairing/<uid>/request`
   and for the operator to type the code the phone shows, and then — only then — mints the device
   token (`m~<random>`, `mu = uid`), writes the device node `config/admin/devices/$uid`, generates
   the per-pairing MAC key into the OS keychain, and delivers the token, the key and the
@@ -452,7 +452,7 @@ read, which is every launcher-level principal (`rules.go`'s `userClaim` comment 
 
 ### M14 — No rules generation is forced by anything in this plan
 
-P6.6 writes `config/pairing/$uid/delivery` (no `.validate`), the device node (no `.validate`) and
+P6.6 writes `pairing/$uid/delivery` (no `.validate`), the device node (no `.validate`) and
 deletes both; P6.7 writes only the mailbox's inbox/outbox/heartbeat, whose fields P6.4 already
 validates; P6.13 deletes. **So no part of these three tasks changes `rules.json.tmpl`, the golden or
 `RulesVersion`, and no owner-run deploy is forced by them.** This is the claim mobile-auth §F29 makes
@@ -554,8 +554,8 @@ in the **encrypted pairing payload**. Both can hold, and here is how:
 | Carrier | Holds | Does not hold | Why |
 | --- | --- | --- | --- |
 | **The QR** (on screen, photographable) | the project id, the database URL and the Identity Toolkit API key — **the bootstrap configuration the phone needs to exchange a custom token at all** — and the one-shot `p~` pairing token | the MAC key (D171), the device token, **the identity** (#787), the code (M3) | the phone cannot sign in before it knows where to sign in; a photograph of the QR yields a token that reaches two nodes and nothing else |
-| **`config/pairing/$uid/request`** (written by the phone) | `key` (the phone's X25519 public key, one pinned spelling) and `at` | everything else — the template's `$other` refuses it | §2 (a); the code is derived by both ends and never written |
-| **`config/pairing/$uid/delivery`** (written by the CLI, read once by the phone) | **the authoritative configuration the app stores** (D199), the device token (`m~`, `mu = uid`), and the per-pairing MAC key — all inside the sealed envelope | anything in clear | §2 (a) 4: no `.validate`, so no generation (M14); D199 |
+| **`pairing/$uid/request`** (written by the phone) | `key` (the phone's X25519 public key, one pinned spelling) and `at` | everything else — the template's `$other` refuses it | §2 (a); the code is derived by both ends and never written |
+| **`pairing/$uid/delivery`** (written by the CLI, read once by the phone) | **the authoritative configuration the app stores** (D199), the device token (`m~`, `mu = uid`), and the per-pairing MAC key — all inside the sealed envelope | anything in clear | §2 (a) 4: no `.validate`, so no generation (M14); D199 |
 | **`config/admin/devices/$uid`** (written by the CLI) | the name, the administered email (D226), the role (D225), the pairing time | any token, any key, any fingerprint (M13) | §2 (b) |
 
 **The resolution in one sentence:** the QR's copy of the configuration is a **bootstrap** — what the
@@ -583,7 +583,7 @@ One object per act, always with `project`:
   "pairing": { "uid": "p~…", "state": "completed", "expires_at": "…" },
   "request": { "key_fingerprint": "K7QM-3X2B", "at": "…" },
   "device": { "uid": "m~…", "name": "…", "email": "…", "role": "admin" },
-  "wrote": ["config/admin/devices/m~…", "config/pairing/p~…/delivery"],
+  "wrote": ["config/admin/devices/m~…", "pairing/p~…/delivery"],
   "refused": [],
   "warnings": []
 }
@@ -647,8 +647,8 @@ with it, verified against the tree:
 | State | Where | Who may write it | Written how |
 | --- | --- | --- | --- |
 | The pairing token | nowhere (minted, shown in the QR, discarded) | — | `token.Mint` with `uid = pu = p~<random>`, `exp = iat + min(5m, timeout + 30s)` |
-| The phone's public key | `config/pairing/$uid/request` = `{key, at}` | **the phone**, under the `p~` token | once only; the template's write-once rule and `$other` fence it (§2 (a)) |
-| The pairing payload | `config/pairing/$uid/delivery` | **the CLI**, with **database admin** | sealed to the phone's key; read once by the phone (§8) |
+| The phone's public key | `pairing/$uid/request` = `{key, at}` | **the phone**, under the `p~` token | once only; the template's write-once rule and `$other` fence it (§2 (a)) |
+| The pairing payload | `pairing/$uid/delivery` | **the CLI**, with **database admin** | sealed to the phone's key; read once by the phone (§8) |
 | The device node | `config/admin/devices/$uid` = name, administered email, role, at | **the CLI**, with **database admin** | written **before** the token is delivered (M4); no secret (M13) |
 | The device token | nowhere on the laptop (minted, sealed, delivered) | — | `uid = mu = m~<random>`; `token.Lifetime` |
 | The phone's copy of the device token | the phone's **secure store** (P3.1's rule) | the phone | out of this plan's remit; the contract is §4.4 |
@@ -657,7 +657,7 @@ with it, verified against the tree:
 | The dedupe ledger, the used action and confirmation ids, the window state, the expiry records | `$XDG_STATE_HOME/fugaro/mailbox/<project>/ledger.json` | the consumer | P4.1's tmp+rename, `0o600`; P6.7 extends the key spaces (M7) |
 | Prompts waiting for an answer | `$XDG_STATE_HOME/fugaro/mailbox/<project>/pending.json` | the consumer | P4.1's; the entry's shape is P6.5's |
 | A stored prompt past the TTL | `mailbox/$mb/**` | **the owner-run sweeper** — P6.13's delete set (M8) | deleted, never answered |
-| An orphaned `p~` Auth user and its `pairing/$uid` node | the Identity Toolkit and `config/pairing/$uid` | **the history sweep**, which holds `roles/firebaseauth.admin` (`iam.tf`'s `history_auth`) | decision 1; the CLI's own deletion needs a role no Terraform grant gives the operator |
+| An orphaned `p~` Auth user and its `pairing/$uid` node | the Identity Toolkit and `pairing/$uid` | **the history sweep**, which holds `roles/firebaseauth.admin` (`iam.tf`'s `history_auth`) | decision 1; the CLI's own deletion needs a role no Terraform grant gives the operator |
 | An orphaned `m~` Auth user whose device node is gone | the Identity Toolkit | **the history sweep** | D166's own answer; P6.6's `m~` rule (T4) |
 | The installation's Firebase configuration | the QR (bootstrap) and the delivery (the stored record) | — | D199; §4.4 |
 
@@ -692,7 +692,7 @@ extending it is **P6.6's** — the one file the mobile plan gives it for this. I
    why `--timeout`'s own ceiling is `4m30s`; §4.1). **Draw the seal key and the ephemeral key pair
    only after this**, so a refusal above has no side effect at all.
 4. **Show the QR** and wait, with `--timeout`, for **both**: the phone's key in
-   `config/pairing/$uid/request` (read with database admin, `.read: false`) and the operator's typed
+   `pairing/$uid/request` (read with database admin, `.read: false`) and the operator's typed
    code.
 5. **On the typed code**: decode the key from its one pinned spelling (M3, §2 (e)), derive the
    fingerprint from the **decoded bytes**, compare, and **refuse on any mismatch with no side
@@ -702,8 +702,8 @@ extending it is **P6.6's** — the one file the mobile plan gives it for this. I
    (32 bytes, `crypto/rand`) and write it to the OS keychain under the project's item name.
 7. **Write `config/admin/devices/$uid`** — the name, the administered email, the role, `at` — with
    database admin. **Before the delivery** (M4).
-8. **Seal and write `config/pairing/$uid/delivery`** (§8) with database admin.
-9. **Delete `config/pairing/$uid`** — the whole subtree — so the payload does not sit readable for the
+8. **Seal and write `pairing/$uid/delivery`** (§8) with database admin.
+9. **Delete `pairing/$uid`** — the whole subtree — so the payload does not sit readable for the
    hour the `p~` ID token lives. **The Auth user is not deleted here and cannot be** (decision 1):
    the CLI's credential does not carry `roles/firebaseauth.admin`, and the sweep is what removes the
    orphan (decision 2). The command says so in its output.
@@ -713,8 +713,8 @@ extending it is **P6.6's** — the one file the mobile plan gives it for this. I
 ### 7.2 The phone's half, stated as a contract (P6.8 consumes it)
 
 Scan → parse and **validate before anything is stored** → generate an X25519 key pair → show the code
-derived from the public key → write `{key, at}` to `config/pairing/$uid/request` once → sign in with
-the pairing token → read `config/pairing/$uid/delivery` → **refuse the whole payload unless the
+derived from the public key → write `{key, at}` to `pairing/$uid/request` once → sign in with
+the pairing token → read `pairing/$uid/delivery` → **refuse the whole payload unless the
 envelope opens, the version byte is this build's, and the AAD names this uid and this key** (§4.4) →
 store the device token and the MAC key **in secure storage only** (P3.1's rule) → store the
 configuration from the payload, not the scan (D199). The code is derived per pairing and never

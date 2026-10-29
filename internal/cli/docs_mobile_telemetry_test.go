@@ -402,7 +402,7 @@ func TestTelemetryPlanNamesTheFlagsItDependsOn(t *testing.T) {
 }
 
 // TestTelemetryPlanRecordsTheSecretItemsDebtAsStillOpen: the plan says D259's
-// accepted four-item answer is **recorded and not implementable**, because
+// D259's four-item list was superseded by the owner's D232 ruling, because
 // `SECRET_ITEMS` is an exhaustive allow-list of D111's two items that no task of
 // Phase 7 widens (§4.4, §11). That is a claim about the tree, and it is the kind
 // that goes quietly wrong: the day someone widens the list, the plan's own
@@ -420,11 +420,11 @@ func TestTelemetryPlanNamesTheFlagsItDependsOn(t *testing.T) {
 func TestTelemetryPlanRecordsTheSecretItemsDebtAsStillOpen(t *testing.T) {
 	secret := readDoc(t, "mobile/src/accounts/secret.js")
 	if !strings.Contains(secret, "Object.freeze(['idToken', 'macKey'])") {
-		t.Errorf("mobile/src/accounts/secret.js no longer freezes SECRET_ITEMS to ['idToken', 'macKey']: the plan's §4.4 and §11 say the four-item list is not implementable until that list is widened, and no Phase 7 task owns widening it - if the widening has landed, both sections are now wrong and must be rewritten with it")
+		t.Errorf("mobile/src/accounts/secret.js no longer freezes SECRET_ITEMS to ['idToken', 'macKey']: the plan's §4.4 and §11 say D232 stands and the list is not widened - if a widening has landed, both sections are now wrong and must be rewritten with it")
 	}
 	store := readDoc(t, "mobile/src/accounts/secure-store.js")
 	if !strings.Contains(store, "UNKNOWN_ITEM") {
-		t.Errorf("mobile/src/accounts/secure-store.js no longer refuses an unknown secret item: the plan's §4.4 names that refusal as half of the fence the four-item answer is blocked on")
+		t.Errorf("mobile/src/accounts/secure-store.js no longer refuses an unknown secret item: the plan's §4.4 names that refusal as half of the fence D232's standing keeps shut")
 	}
 	privacy := readDoc(t, "website/test/privacy.mjs")
 	if !strings.Contains(privacy, "'idToken,macKey'") {
@@ -435,12 +435,12 @@ func TestTelemetryPlanRecordsTheSecretItemsDebtAsStillOpen(t *testing.T) {
 	// is about the sentence, not about where the line broke.
 	plan := flattenDoc(readDoc(t, telemetryPlan))
 	for _, want := range []string{
-		"**So the four-item list is not implementable until `SECRET_ITEMS` is widened**",
-		"**That widening is not a Phase 7 task, and this plan does not pretend it is.**",
-		"**This is the one thing in this plan that is recorded and not implementable**",
+		"**The owner ruled on 2026-10-29 that D232 stands, so `SECRET_ITEMS` is not widened**",
+		"**Where the pairing-delivered configuration is stored is task P6.8's choice, and no Phase 7 task writes a secure-storage item.**",
+		"**The code allows only the two `SECRET_ITEMS` (`idToken`, `macKey`), and `website/test/privacy.mjs` pins exactly that.**",
 	} {
 		if !strings.Contains(plan, flattenDoc(want)) {
-			t.Errorf("%s does not say %q: D259's accepted answer widens D111 to four items and the fence that blocks it must be named where the widening is recorded", telemetryPlan, want)
+			t.Errorf("%s does not say %q: the owner's D232 ruling keeps D111 at two items and the fence that keeps it so must be named where the ruling is recorded", telemetryPlan, want)
 		}
 	}
 }

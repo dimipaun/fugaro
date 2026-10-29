@@ -923,9 +923,7 @@ channel does not give. Three facts bound what the phone can do:
   **touches D111**: tension (b2) resolved that the phone holds exactly two items per account
   "in these words and no wider ones", and a second process reading them is a widening of where
   they may be reached, not just where they are stored. **(Amended 2026-10-22: the telemetry
-  plan's D259 was accepted on 2026-10-19, so D111's list is now four items per account
-  — the ID token, the per-pairing MAC key, the installation's Realtime Database URL and its web
-  API key. This paragraph is unaffected: Q6's question is about *where* the items may be
+  plan's D259 was accepted on 2026-10-19, but the owner ruled on 2026-10-29 that D232 stands, so D111's list stays two items (idToken, macKey) plus the pairing-delivered configuration (the installation's database URL and web API key, ordinary configuration, not secret). This paragraph is unaffected: Q6's question is about *where* the items may be
   reached, not how many there are, and it now covers four rather than two.)** **Q6 now asks this**, with the
   alternatives (a visible generic payload instead of local text; a publisher relay that renders
   the notification server-side; or iOS notifications off, which is the honest baseline).
@@ -1601,9 +1599,9 @@ really compose the lock-screen text?**
     **visible** app-composed alert needs an NSE (`mutable-content`) — which has to authenticate,
     which means sharing `idToken`/`macKey` through a **keychain access group**, which **touches
     D111** ("Exactly two items, per account, both in platform secure storage (Keychain / Keystore)
-    … and nothing else" — amended 2026-10-22: the list is now four items per account under
-    the telemetry plan's D259, accepted 2026-10-19; Q6's question is unchanged and covers
-    all four). **Q6 now asks the owner for that.**
+    … and nothing else" — amended 2026-10-22 for the telemetry plan's D259, and again 2026-10-29: the owner
+    ruled that D232 stands, so the list is two items (idToken, macKey) plus the pairing-delivered configuration (the installation's database URL and web API key, ordinary configuration, not secret); Q6's question is unchanged and covers
+    both secret items). **Q6 now asks the owner for that.**
     Where the platform allows is "Android freely; iOS only with an NSE and a D111 amendment".
 - *(ii) Category plus a random opaque id*, mapped server-side to the detail: useful only if the
   app ever needs to know *which* thing changed before it can read (it does not), and it adds a
