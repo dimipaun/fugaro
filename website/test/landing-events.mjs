@@ -167,11 +167,20 @@ function press(dom, id) {
 }
 
 /**
- * A message at the page's window, as a frame's own report arrives: the sender's origin, the
- * window that sent it, and whatever the sender chose to say.
+ * The booking frame's own report, as Calendly's widget posts one: the frame the page embedded,
+ * the origin the booking link names, and a payload of the vendor's own.
  */
-function report(dom, { origin = BOOKING_ORIGIN, source = frameWindow(dom), data = {} } = {}) {
-  dom.window.dispatchEvent({ type: 'message', origin, source, data })
+function report(dom, data = {}) {
+  dom.window.dispatchEvent({ type: 'message', origin: BOOKING_ORIGIN, source: frameWindow(dom), data })
+}
+
+/**
+ * A message at the page's window that is NOT the booking frame's own: another origin, a sender
+ * that is not the embedded frame, or a message that names no sender at all (which is what a
+ * `null` source is in a browser).
+ */
+function foreignReport(dom, { origin = BOOKING_ORIGIN, source = {} } = {}) {
+  dom.window.dispatchEvent({ type: 'message', origin, source, data: {} })
 }
 
 // ---- 1. nothing before the grant ----------------------------------------------------------
@@ -251,24 +260,23 @@ test('each key event is sent once, on the action it is about, and only after the
 
 test('a booking is taken only from the embedded frame, reporting from the booking link\'s origin', () => {
   const dom = run()
-  const source = frameWindow(dom)
 
   // Another origin, from the frame the page embedded: a frame that navigated away, or a
   // document served by somebody else, is not Calendly's report.
-  report(dom, { origin: 'https://not-the-booking-host.example', source })
+  foreignReport(dom, { origin: 'https://not-the-booking-host.example' })
   assert.deepEqual(sent(dom), [], 'a message from another origin was taken as a booking')
 
   // The right origin, from a window that is not the frame: the page's own window, a popup, or
   // a second frame the vendor's script did not build here.
-  report(dom, { origin: BOOKING_ORIGIN, source: {} })
+  foreignReport(dom, { source: {} })
   assert.deepEqual(sent(dom), [], 'a message from a window that is not the embedded frame was taken as a booking')
 
-  // A message with no sender named at all is the same answer as the wrong one.
-  report(dom, { origin: BOOKING_ORIGIN, source: undefined })
+  // A message that names no sender at all is the same answer as the wrong one.
+  foreignReport(dom, { source: null })
   assert.deepEqual(sent(dom), [], 'a message with no sender was taken as a booking')
 
   // And the frame's own report, which is the booking.
-  report(dom, { origin: BOOKING_ORIGIN, source })
+  report(dom)
   assert.deepEqual(sent(dom), ['demo_booked'], `the booking frame's own report sent ${JSON.stringify(sent(dom))}`)
 })
 
@@ -278,9 +286,7 @@ test('a booking forwards no field of the message that reported it', () => {
   // visitor's own details sent to a third party the privacy text does not name for them (F22).
   const marker = 'a-field-of-the-vendors-message'
   const dom = run()
-  report(dom, {
-    data: { event: 'calendly.event_scheduled', payload: { invitee: { email: marker }, event: { uri: marker } } },
-  })
+  report(dom, { event: 'calendly.event_scheduled', payload: { invitee: { email: marker }, event: { uri: marker } } })
   assert.deepEqual(sent(dom), ['demo_booked'], `the booking frame's own report sent ${JSON.stringify(sent(dom))}`)
   assert.ok(
     !JSON.stringify(queued(dom)).includes(marker),

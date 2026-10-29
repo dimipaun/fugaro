@@ -1791,9 +1791,26 @@ test("the privacy defaults the page states are the ones the site's script makes"
 
   // The two defaults whose other half is the script's text rather than its options table.
   assert.match(text, /one page view per page/i, 'the privacy page no longer says how much is asked for')
+  // The events are the one thing this site asks GA4 for beyond the page view (G2.4), and the
+  // page names all three — so the pair is read in both directions, exactly as the options are:
+  // an event the script can send that the page does not name is a measurement the reader was
+  // not told about, and a name the page keeps that the script no longer sends is a sentence the
+  // page may not keep. The names are read off the two call shapes the one helper has.
+  const events = [...script.matchAll(/(?:keyEvent|press)\([^)]*['"]([a-z]+_[a-z]+)['"]/g)].map((m) => m[1]).sort()
+  assert.deepEqual(
+    events,
+    ['demo_booked', 'install_click', 'whatsapp_click'],
+    `the script sends ${JSON.stringify(events)}: the campaign pages' three key events are the whole of what this site asks GA4 for beyond the page view (G2.4)`,
+  )
+  for (const name of events) {
+    // A plain substring: the page's text is read with the tags taken out, so two words that meet
+    // across a tag boundary — "and<code>whatsapp_click</code>" — arrive here with no space
+    // between them, and a word-boundary anchor would fail on the page that reads correctly.
+    assert.ok(text.includes(name), `the script sends the ${name} event and the privacy page does not name it`)
+  }
   assert.ok(
-    !/gtag\(\s*['"]event['"]/.test(script),
-    "the script queues an `event` call and the privacy page says one page view per page is all it asks for",
+    !/gtag\(\s*['"]event['"]\s*,\s*['"]/.test(script),
+    'the script queues an `event` call whose name is written at the call site: every event this site sends is one the privacy page names, and this case reads them off the one helper that sends them',
   )
   assert.match(text, /no user id/i, 'the privacy page no longer says it sends no user id')
   assert.ok(

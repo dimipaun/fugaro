@@ -838,6 +838,11 @@
   var CALENDLY_URL_ATTR = 'data-calendly-url'
   var CALENDLY_ORIGIN_ATTR = 'data-calendly-origin'
   var EMBED_ID = 'calendly-embed'
+  // The two calls to action a key event is about (G2.4): the ids the calls-to-action section
+  // gives the repository link and the chat link. They are the page's own, so the script knows
+  // the two links by the name the markup gives them rather than by where they sit.
+  var INSTALL_ID = 'campaign-install'
+  var CHAT_ID = 'campaign-whatsapp'
 
   // The decision, as the browser stored it, or null when there is none to read. Storage the
   // browser refuses is not a decision: an unreadable answer is no answer rather than a guess,
@@ -990,6 +995,18 @@
     'li_gc',
   ]
 
+  // Whether GA4 is loaded, which is the one thing the key events of the campaign pages wait
+  // for (G2.4): `load()` sets it, a withdrawal clears it, and nothing else reads or writes it.
+  // It is the gate's own state rather than a second reading of storage, so a visitor who has
+  // just answered the banner is measured from the same press that loaded the tag.
+  var measuring = false
+
+  // One call into the tag's queue. The queue is created by `load()` below, and the two callers
+  // are both behind a check that it exists: this is the gate's own voice and not a second one.
+  function gtag() {
+    window.dataLayer.push(arguments)
+  }
+
   function analytics(banner) {
     var id = banner.getAttribute(ANALYTICS_ID_ATTR)
     var origin = banner.getAttribute(ANALYTICS_ORIGIN_ATTR)
@@ -998,12 +1015,9 @@
     var loaded = false
     var OPT_OUT = 'ga-disable-' + id
 
-    function gtag() {
-      window.dataLayer.push(arguments)
-    }
-
     function load() {
       window[OPT_OUT] = false
+      measuring = true
       if (loaded) {
         gtag('consent', 'update', { analytics_storage: GRANTED })
         return
@@ -1032,6 +1046,7 @@
 
     function withdraw() {
       window[OPT_OUT] = true
+      measuring = false
       if (!loaded) return
       gtag('consent', 'update', { analytics_storage: DENIED })
       forget()
@@ -1087,6 +1102,47 @@
   // anywhere else loads nothing there (F18's "those pages only", O2). (This file names no host,
   // not even in a comment: the origins reach it through the markup, and a build of a
   // non-campaign page carries none of them.)
+  // The campaign parameters the page may pass on, by name (G2.4, spec §6): the five the
+  // agenda's links carry. A key outside this list is dropped rather than forwarded — the page
+  // adds a query to one address, and that address is the owner's, so what goes on it is a list
+  // this file states rather than whatever the visitor's link happened to carry.
+  var UTM_KEYS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content']
+
+  // And how long one value may be. A longer one is dropped rather than truncated: half a
+  // campaign name is a campaign this page cannot name, and a link that carried one would
+  // attribute a booking to a name nobody chose.
+  var UTM_MAX = 100
+
+  // The booking address, with the campaign parameters the visitor arrived through and only
+  // those (F22): each value is decoded and encoded again, so a value that carries an address's
+  // own characters stays one parameter, and a link with no campaign parameter is returned
+  // exactly as the owner wrote it. The parameters go here and nowhere else — not into the chat
+  // message, which the visitor would read and a vendor the privacy text does not name would
+  // receive, not into GA4, and not onto the plain booking link a visitor who declines the
+  // marketing consent keeps.
+  function bookingURL(url) {
+    var search = (window.location && window.location.search) || ''
+    var pairs = String(search).replace(/^\?/, '').split('&')
+    var query = []
+    for (var i = 0; i < pairs.length; i++) {
+      var eq = pairs[i].indexOf('=')
+      if (eq < 1) continue
+      var key = pairs[i].slice(0, eq)
+      if (UTM_KEYS.indexOf(key) === -1) continue
+      var value
+      try {
+        value = decodeURIComponent(pairs[i].slice(eq + 1))
+      } catch (err) {
+        // A value the browser cannot decode is not a campaign name this page can pass on.
+        continue
+      }
+      if (!value || value.length > UTM_MAX) continue
+      query.push(key + '=' + encodeURIComponent(value))
+    }
+    if (!query.length) return url
+    return url + (url.indexOf('?') === -1 ? '?' : '&') + query.join('&')
+  }
+
   function campaign(banner) {
     var key = banner.getAttribute(MARKETING_KEY_ATTR)
     if (!key) return
@@ -1142,12 +1198,15 @@
     // The embed: the container the calls-to-action section emits hidden, made a Calendly
     // inline widget, and Calendly's own script to build it. Nothing about the embed is
     // fetched before this runs, so a visitor who declines has the page's plain booking link
-    // and no iframe.
+    // and no iframe. The address it is built from is the owner's link with the campaign
+    // parameters the visitor arrived through on it (G2.4) — and it is the same address the
+    // booking frame's report is accepted from, so the two cannot disagree about which host
+    // this page books through.
     function embed(origin, url) {
       if (!origin || !url) return
       var host = document.getElementById(EMBED_ID)
       if (host) {
-        host.setAttribute('data-url', url)
+        host.setAttribute('data-url', bookingURL(url))
         host.hidden = false
       }
       fetchScript(origin, '/assets/external/widget.js')
@@ -1187,6 +1246,60 @@
       if (decision !== GRANTED && decision !== DENIED) return
       if (decision === GRANTED) load()
       else withdraw()
+    })
+  }
+
+  // ---- the campaign's key events (G2.4, spec §13) -----------------------------------------
+  //
+  // The funnel's three events, and the two things that make them worth reading. They are GA4's,
+  // so they wait for the analytics grant: `keyEvent` sends nothing while `measuring` is false,
+  // which is the state a visitor who has not answered the site's question is in and the state a
+  // withdrawal puts them back in. None of them carries a parameter — the count is the funnel,
+  // the page's own address reaches GA4 through the tag's `config` call, and a campaign
+  // parameter is the booking link's business and not GA4's (F22) — and nothing a vendor said is
+  // forwarded either.
+  //
+  // Two of the three are the page's own calls to action, found by the ids the calls-to-action
+  // section gives them. The third is the embed's report, and it is taken from exactly one
+  // sender: the frame Calendly's script built inside this page's booking container, reporting
+  // from the origin the booking link names. Anything else that says `demo_booked` — another
+  // origin, another window of this page, a message this page never asked for — is dropped
+  // unread, and no field of the message that is accepted goes anywhere.
+  function keyEvents(banner) {
+    function keyEvent(name) {
+      if (!measuring) return
+      gtag('event', name)
+    }
+
+    function press(id, name) {
+      var link = document.getElementById(id)
+      if (!link || !link.addEventListener) return
+      link.addEventListener('click', function () {
+        keyEvent(name)
+      })
+    }
+
+    press(INSTALL_ID, 'install_click')
+    press(CHAT_ID, 'whatsapp_click')
+
+    // The origin the frame reports from, read out of the booking link rather than typed here:
+    // this file names no host, and the host it takes a booking report from is the one the
+    // owner's link names — the same one the deployed policy's `frame-src` admits (G2.3). A
+    // booking link that is not an address, and a browser too old to parse one, are the same
+    // answer: no report is taken, and the two events above are unaffected.
+    var origin = ''
+    try {
+      origin = new URL(banner.getAttribute(CALENDLY_URL_ATTR)).origin
+    } catch (err) {
+      return
+    }
+
+    window.addEventListener('message', function (event) {
+      if (!event || event.origin !== origin) return
+      var host = document.getElementById(EMBED_ID)
+      var frame = host && host.querySelector ? host.querySelector('iframe') : null
+      if (!frame || !frame.contentWindow || event.source !== frame.contentWindow) return
+      keyEvent('demo_booked')
     })
   }
 
@@ -1316,6 +1429,7 @@
 
     analytics(banner)
     campaign(banner)
+    keyEvents(banner)
   }
 
   // ---- the hero's live card (the owner's ruling of 2026-10-23, the redesign's lever 3) -------

@@ -17,9 +17,10 @@
  * invented. The page reads `site.yaml` through the content pipeline, exactly as the layout
  * does, and branches on `analytics.enabled`: with the flag off it says the site collects
  * nothing, and it names no vendor, because there is no vendor to name. With the flag on it
- * states what the site's own gate does — Google Analytics 4, one page view per page, no event
- * and no user id, Google Signals and ads personalisation off, GA4's own IP anonymisation —
- * and it does not restate Google's policy for Google. Four of its claims are held to the
+ * states what the site's own gate does — Google Analytics 4, one page view per page and, on the
+ * four campaign pages, the three key events G2.4 names; no user id, Google Signals and ads
+ * personalisation off, GA4's own IP anonymisation — and it does not restate Google's policy for
+ * Google. Four of its claims are held to the
  * artifact by `website/test/consent.mjs`: that no page carries a form or a field; that the
  * tool it names is the tool the build would load (the page names Google Analytics, and the
  * origin the gate loads from must be Google's); that the withdrawal it describes deletes the
@@ -131,9 +132,14 @@ const repo = site.facts.repository
               client id, in cookies or similar storage.
             </p>
             <p>
-              The site's own code asks for one page view per page: no event, no user id, Google
-              Signals and ads personalisation off. Google Analytics 4 anonymises your IP address
-              by default.
+              The site's own code asks for one page view per page and no user id, with Google
+              Signals and ads personalisation off. The four campaign pages are the one place it
+              asks for more: three events to the same property, under their own names —
+              <code>demo_booked</code> when a booking is made in Calendly's widget,
+              <code>install_click</code> on a press of <strong>Install free</strong> and
+              <code>whatsapp_click</code> on a press of the chat link — each carrying nothing but
+              its own name, so no campaign parameter and no field of Calendly's message reaches
+              Google. Google Analytics 4 anonymises your IP address by default.
             </p>
           </div>
 
