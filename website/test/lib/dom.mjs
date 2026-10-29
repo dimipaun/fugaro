@@ -10,7 +10,7 @@
 // What the stub is: the built page parsed by `lib/html.mjs` and wrapped in the handful of DOM
 // calls the script makes — `querySelector(All)`, `getAttribute`/`setAttribute`, `classList`,
 // `closest`, `contains`, `getClientRects`, `focus`, `addEventListener`/`dispatch`, `hidden`,
-// `textContent` — plus the four pieces of browser behaviour the script's duties depend on and
+// `textContent` — plus the five pieces of browser behaviour the script's duties depend on and
 // nothing more:
 //
 //   - **the clipboard** (`navigator.clipboard`), which may be absent, may accept or may refuse,
@@ -24,7 +24,11 @@
 //     is about by hand;
 //   - **a scroll box**: one width for every element, which is all the script asks for — it reads
 //     `clientWidth` of the slider's track and nothing else's — and a `scrollLeft` per element
-//     that `scrollTo({ left })` moves, so a case can read where a press sent the track.
+//     that `scrollTo({ left })` moves, so a case can read where a press sent the track;
+//   - **the page's own address, and its frames** (`location`, and a `contentWindow` per
+//     element): the address a page reports to a vendor and reads its campaign parameters out
+//     of, and the sender a message from a frame is taken from. A case that gives no address
+//     gets no `location`, which is the state every case that is not about one runs in.
 //
 // **It is a stub, and it says so.** No layout, no real event loop, no rendering: what a real
 // clipboard does with a real click, what a swipe does with a real trackpad and what a real
@@ -96,6 +100,12 @@ export class FakeElement {
   // other element's) and a scroll offset of its own that a move keeps.
   get clientWidth() {
     return this.dom.width
+  }
+  // The window inside a frame, one object per element: a booking report is taken from the
+  // frame the page embedded and from no other sender, and the two are told apart by comparing
+  // the sender with this — which is the whole of what a case needs to hand one in.
+  get contentWindow() {
+    return this.dom.frameWindow(this.node)
   }
   get scrollLeft() {
     return this.dom.scrollOf(this.node)
@@ -182,10 +192,11 @@ export class FakeCustomEvent {
  * the page's scroll boxes already are when it loads, by selector — a deep link into a slide, or
  * a position the browser restored; `reduce` is the visitor's motion preference; `hidden` is
  * whether the tab is in the background; and `matchMedia: false` is a browser old enough to have
- * none. `script` is the source run in the page, which is the file the site ships unless a case
- * hands in a defect planted in it.
+ * none. `location` is the address the page was served from, for the cases that read one: a page
+ * the case gives none answers no `location` at all. `script` is the source run in the page,
+ * which is the file the site ships unless a case hands in a defect planted in it.
  */
-export function fakeDOM(html, { clipboard = 'ok', undrawn = () => false, storage = {}, width = 0, scroll = {}, reduce = false, hidden = false, matchMedia = true, script = SCRIPT_SOURCE } = {}) {
+export function fakeDOM(html, { clipboard = 'ok', undrawn = () => false, storage = {}, width = 0, scroll = {}, reduce = false, hidden = false, matchMedia = true, location = null, script = SCRIPT_SOURCE } = {}) {
   const root = parse(html)
   const wrapped = new Map()
   const written = []
@@ -202,12 +213,19 @@ export function fakeDOM(html, { clipboard = 'ok', undrawn = () => false, storage
   const byId = new Map()
   const scrolled = new Map()
   const scrolls = []
+  const frameWindows = new Map()
   for (const el of walk(root)) if (el.attrs.has('id')) byId.set(el.attrs.get('id'), el)
   const dom = {
     width,
     scrolled,
     scrolls,
     scrollOf: (node) => scrolled.get(node) ?? 0,
+    // The window inside a frame: one object per element, so a case can hand in the frame the
+    // page embedded as the sender of a message and anything else as a sender that is not it.
+    frameWindow(node) {
+      if (!frameWindows.has(node)) frameWindows.set(node, {})
+      return frameWindows.get(node)
+    },
     wrap(node) {
       if (!wrapped.has(node)) wrapped.set(node, new FakeElement(node, dom))
       return wrapped.get(node)
@@ -272,6 +290,9 @@ export function fakeDOM(html, { clipboard = 'ok', undrawn = () => false, storage
     }
   }
   const window = {
+    // The address the page was served from, when the case gave one: `site.js` reads it for the
+    // campaign parameters a visitor arrived through and for the path it was built for.
+    location,
     setTimeout: (fn, ms) => timers.push({ fn, ms }),
     setInterval(fn, ms) {
       const timer = { fn, ms, cancelled: false }
@@ -329,9 +350,13 @@ export function fakeDOM(html, { clipboard = 'ok', undrawn = () => false, storage
     assert.ok(node, `the page carries no ${selector} to have scrolled`)
     scrolled.set(node, Number(left))
   }
-  vm.runInNewContext(script, { window, document, navigator, CustomEvent: FakeCustomEvent })
+  // `URL` is a global of the browser the script runs in and not of a bare `vm` context, so it is
+  // handed in with the rest: the booking frame's origin is read out of the booking link, which
+  // is one parsing of an address this harness has to be able to do.
+  vm.runInNewContext(script, { window, document, navigator, CustomEvent: FakeCustomEvent, URL })
   return {
     document,
+    window,
     written,
     timers,
     intervals,

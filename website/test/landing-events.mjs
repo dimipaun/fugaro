@@ -1,0 +1,387 @@
+// website/test/landing-events.mjs — the campaign pages' key events, and the campaign
+// parameters the booking link carries (go-to-market plan, Task G2.4; spec §6 and §13;
+// reconciliation F22, D401).
+//
+// **What this file holds.** The four landing pages are where the ads send people, so the
+// agenda measures them: `demo_booked`, `install_click` and `whatsapp_click` are the funnel's
+// key events in GA4 (spec §13), and the campaign parameters a visitor arrived through are
+// passed on to the booking link so that a booking can be attributed to the campaign that
+// paid for it. Three promises come out of that, and each is a case below.
+//
+//   1. **The events are GA4's, so they wait for the analytics grant.** A visitor who has not
+//      granted it is measured by nothing — not by the tag, and not by an event the tag would
+//      have carried. The queue they go into (`dataLayer`) does not exist before a grant, and
+//      the cases below watch it rather than the source: the two links are pressed and the
+//      booking frame reports on a page that has granted nothing, and the queue is still absent.
+//   2. **A booking report is taken from one sender only.** `demo_booked` is a message from
+//      Calendly's own widget, so it is accepted only from the frame that widget built inside
+//      this page's booking container AND from the origin the booking link names. Anything else
+//      that says `demo_booked` — another origin, another window of this page, a message the
+//      page never asked for — is dropped, and no field of the message is forwarded: the event
+//      is the funnel's count, and the vendor's payload is the visitor's (F22).
+//   3. **The campaign parameters go into the booking link and nowhere else.** They are
+//      allow-listed by key, capped in length and encoded (F22): not into the chat message,
+//      which the visitor would read and a vendor the privacy text does not name would receive;
+//      not into GA4; and not onto the plain link a visitor who declined the marketing consent
+//      keeps. A value the page cannot vouch for is dropped rather than passed on, and a visit
+//      with no campaign parameters leaves the link exactly as `website/data/landing.yaml`
+//      writes it.
+//
+// **The red step, and what it was.** The plan's red step reads: "the tests fail because the
+// events are not emitted." That is what they did: with G2.3 merged and G2.4 unwritten, the
+// booking address on the embed was the file's link with no query (no parameter ever reached
+// it) and no `event` call was queued for any of the three actions, so every case below failed
+// on the thing it is about rather than on a missing fixture. The `wa.me` link the chat event
+// belongs to did not exist on the page either — G2.2 left the calls to action as the booking
+// and the repository, and the plan gives the chat link to this task (spec §6) — so the chat
+// case failed on a page with no such link until G2.4 rendered it.
+//
+// **It runs the page the way a browser does**, in the same stub the other gates that run
+// `site.js` use (`test/lib/dom.mjs`), against the artifact `npm run check` builds: the built
+// campaign page, the site's one script file read out of `dist/`, the address a browser serves
+// the page at, and the storage a visitor who has already answered brings with them. The
+// booking frame is planted into the page's own booking container, because the build ships that
+// container empty — Calendly's script fills it after a grant — and a booking report can only
+// come from a frame that exists. Standard library only; no network, no browser: what a real
+// Calendly widget posts, and what a real GA4 property records, is the owner's live check
+// (Check 160, and Check 161 for the attribution a test booking carries).
+
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { fakeDOM } from './lib/dom.mjs'
+import { DIST, builtPages, findAll, parse, textOf } from './lib/html.mjs'
+import { loadLanding } from '../src/lib/landing.mjs'
+import { CONSENT_KEY, MARKETING_CONSENT_KEY } from '../src/lib/consent-key.mjs'
+
+// ---- the facts the cases read --------------------------------------------------------------
+
+// The booking link, and the four variants: both are `website/data/landing.yaml`'s, read through
+// the same loader the pages read them through, so a case that compares the booking address with
+// a literal of its own would be the second copy this repository refuses.
+const LANDING = loadLanding()
+
+// The campaign page the cases below run, and the path the browser serves it at: the pages are
+// directories, so a visitor is at `/save/`, and that is the spelling the loader's path check
+// reads (`site.js`'s `route`).
+const CAMPAIGN_REL = 'save/index.html'
+const CAMPAIGN_PATH = '/save/'
+const PAGE_ORIGIN = 'https://site.example'
+
+// The ids the calls-to-action section gives the two links a key event is about, and the
+// container the booking frame is built inside. `site.js` reads them out of the markup rather
+// than out of a list of its own.
+const INSTALL_ID = 'campaign-install'
+const WHATSAPP_ID = 'campaign-whatsapp'
+const EMBED_ID = 'calendly-embed'
+
+// The two links as the page words them, which is how a case finds them in the built markup.
+const DEMO_LABEL = 'Book a demo'
+const CHAT_LABEL = 'Chat with the founder'
+
+// The origin the booking frame reports from: the booking link's own, which is what `site.js`
+// derives and what the deployed policy's `frame-src` admits (G2.3). It is not written here as a
+// literal — it is the file's link, read the way the script reads it.
+const BOOKING_ORIGIN = new URL(LANDING.calendlyURL).origin
+
+/** The built campaign page, as the artifact serves it. */
+function builtPage(rel = CAMPAIGN_REL) {
+  const found = builtPages(DIST).find((one) => one.rel === rel)
+  assert.ok(found, `${rel} is not in the built artifact: the four campaign pages are G2.2's, and this case reads one of them`)
+  return found.html
+}
+
+/**
+ * The address a browser serves the page at, with the query a visitor arrived through. The
+ * `search` is the campaign parameters the ads carry — and, in the cases below, the ones the
+ * page must not pass on.
+ */
+function address(search = '') {
+  return {
+    href: `${PAGE_ORIGIN}${CAMPAIGN_PATH}${search}`,
+    origin: PAGE_ORIGIN,
+    hostname: 'site.example',
+    pathname: CAMPAIGN_PATH,
+    search,
+    hash: '',
+  }
+}
+
+/**
+ * The page with the booking frame in it, as Calendly's own script leaves the page: the widget
+ * builds an `iframe` inside the container the calls-to-action section emits, and the script
+ * takes a booking report from that frame. The build ships the container empty — it is hidden
+ * until the visitor grants the marketing consent, and no frame exists before the vendor's
+ * script has run — so the cases that are about a booking plant it, the way `consent.mjs` plants
+ * the two vendor ids.
+ */
+function withFrame(html) {
+  const planted = html.replace(/(<div[^>]*id="calendly-embed"[^>]*>)/, '$1<iframe src="about:blank"></iframe>')
+  assert.notEqual(planted, html, `the campaign page carries no #${EMBED_ID} to plant the booking frame in, so no booking case below could run`)
+  return planted
+}
+
+/**
+ * A campaign page, run the way a browser runs it. `storage` is what the visitor's browser
+ * already holds — the answers they have given on other pages — and `granted` presses the
+ * banner's own yes, which on a campaign page answers both questions at once.
+ */
+function run({ search = '', storage = {}, granted = true, html = withFrame(builtPage()) } = {}) {
+  const dom = fakeDOM(html, { location: address(search), storage })
+  if (granted) dom.choose('granted')
+  return dom
+}
+
+/** Every call the page queued for GA4, as plain arrays: what `gtag` was asked for, in order. */
+function queued(dom) {
+  // `Array.from` rather than the queue's own `map`: the queue is built inside the page's own
+  // realm, and an array of that realm is not `deepStrictEqual` to one of this file's.
+  return Array.from(dom.window.dataLayer ?? [], (call) => Array.from(call))
+}
+
+/** The key events the page sent, in order, and nothing else it queued. */
+function sent(dom) {
+  return queued(dom)
+    .filter((call) => call[0] === 'event')
+    .map((call) => call[1])
+}
+
+/** The booking address the page handed the embed, which is what Calendly's script builds from. */
+function bookingAddress(dom) {
+  const embed = dom.document.getElementById(EMBED_ID)
+  assert.ok(embed, `the campaign page carries no #${EMBED_ID} for the booking address to be written on`)
+  return embed.getAttribute('data-url')
+}
+
+/** The window inside the page's booking frame, which is the one sender a booking is taken from. */
+function frameWindow(dom) {
+  const frame = dom.document.getElementById(EMBED_ID).querySelector('iframe')
+  assert.ok(frame, 'the planted booking frame is not in the page, so no booking case below could run')
+  return frame.contentWindow
+}
+
+/** Press one of the calls to action, as a pointer or a keyboard does. */
+function press(dom, id) {
+  const link = dom.document.getElementById(id)
+  assert.ok(link, `the campaign page carries no #${id} link to press, and a key event is about one of its calls to action`)
+  link.dispatch('click', { type: 'click' })
+}
+
+/**
+ * A message at the page's window, as a frame's own report arrives: the sender's origin, the
+ * window that sent it, and whatever the sender chose to say.
+ */
+function report(dom, { origin = BOOKING_ORIGIN, source = frameWindow(dom), data = {} } = {}) {
+  dom.window.dispatchEvent({ type: 'message', origin, source, data })
+}
+
+// ---- 1. nothing before the grant ----------------------------------------------------------
+
+test('no key event is sent before the visitor grants the analytics consent', () => {
+  // A first visit to a campaign page: the banner is offered and nothing is granted. Every
+  // action a key event is about is taken — both links are pressed and the booking frame
+  // reports — and the queue GA4's events go into does not exist at all, which is the same
+  // promise `consent.mjs` holds the tag to from the other end.
+  const dom = run({ granted: false })
+  press(dom, INSTALL_ID)
+  press(dom, WHATSAPP_ID)
+  report(dom)
+  assert.equal(
+    dom.window.dataLayer,
+    undefined,
+    `the page queued ${JSON.stringify(queued(dom))} before the visitor granted the analytics consent: the three key events are GA4's, and a visitor who has not granted it is measured by nothing (D93, W3.2)`,
+  )
+
+  // And the answer they wait for is the analytics one. A visitor who granted the campaign
+  // measurement on this page and has not answered the site's question sends nothing: the two
+  // are two questions with two answers, and the second does not stand for the first (F17).
+  const campaignOnly = run({ granted: false, storage: { [MARKETING_CONSENT_KEY]: 'granted' } })
+  press(campaignOnly, INSTALL_ID)
+  press(campaignOnly, WHATSAPP_ID)
+  report(campaignOnly)
+  assert.equal(
+    campaignOnly.window.dataLayer,
+    undefined,
+    `the page queued ${JSON.stringify(queued(campaignOnly))} for a visitor who answered the campaign question and not the site's: the key events are GA4's, and GA4 loads on the analytics answer alone`,
+  )
+})
+
+// ---- 2. each event, once, on its own action ------------------------------------------------
+
+test('each key event is sent once, on the action it is about, and only after the grant', () => {
+  const dom = run()
+  assert.deepEqual(sent(dom), [], 'the page sent a key event on its own load, and every one of the three is about something a visitor did')
+
+  // One press is one event: a listener bound twice would send the same event twice, which is
+  // the defect a case that only ever pressed once could not see.
+  press(dom, INSTALL_ID)
+  assert.deepEqual(sent(dom), ['install_click'], `pressing Install free sent ${JSON.stringify(sent(dom))}`)
+  press(dom, INSTALL_ID)
+  assert.deepEqual(sent(dom), ['install_click', 'install_click'], `the second press of Install free sent ${JSON.stringify(sent(dom))}: one press is one event`)
+
+  press(dom, WHATSAPP_ID)
+  assert.deepEqual(sent(dom), ['install_click', 'install_click', 'whatsapp_click'], `pressing the chat link sent ${JSON.stringify(sent(dom))}`)
+
+  report(dom)
+  assert.deepEqual(
+    sent(dom),
+    ['install_click', 'install_click', 'whatsapp_click', 'demo_booked'],
+    `the booking frame's own report sent ${JSON.stringify(sent(dom))}`,
+  )
+
+  // And the events carry nothing: the funnel counts them, the page's own address reaches GA4
+  // through the tag's `config` call, and no campaign parameter is put beside an event (F22).
+  assert.deepEqual(
+    queued(dom).filter((call) => call[0] === 'event'),
+    [['event', 'install_click'], ['event', 'install_click'], ['event', 'whatsapp_click'], ['event', 'demo_booked']],
+    `a key event was sent with more than its own name: ${JSON.stringify(queued(dom).filter((call) => call[0] === 'event'))}`,
+  )
+
+  // The state most visitors arrive in: the analytics answer was given on another page, so the
+  // gate loads at the page's own start and the events are sent from the first action.
+  const returning = run({ granted: false, storage: { [CONSENT_KEY]: 'granted' } })
+  press(returning, INSTALL_ID)
+  assert.deepEqual(
+    sent(returning),
+    ['install_click'],
+    `a visitor who granted analytics on another page sent ${JSON.stringify(sent(returning))}: a stored answer is an answer, and the campaign question left open does not take it back`,
+  )
+})
+
+// ---- 3. a booking comes from one sender, and says one thing --------------------------------
+
+test('a booking is taken only from the embedded frame, reporting from the booking link\'s origin', () => {
+  const dom = run()
+  const source = frameWindow(dom)
+
+  // Another origin, from the frame the page embedded: a frame that navigated away, or a
+  // document served by somebody else, is not Calendly's report.
+  report(dom, { origin: 'https://not-the-booking-host.example', source })
+  assert.deepEqual(sent(dom), [], 'a message from another origin was taken as a booking')
+
+  // The right origin, from a window that is not the frame: the page's own window, a popup, or
+  // a second frame the vendor's script did not build here.
+  report(dom, { origin: BOOKING_ORIGIN, source: {} })
+  assert.deepEqual(sent(dom), [], 'a message from a window that is not the embedded frame was taken as a booking')
+
+  // A message with no sender named at all is the same answer as the wrong one.
+  report(dom, { origin: BOOKING_ORIGIN, source: undefined })
+  assert.deepEqual(sent(dom), [], 'a message with no sender was taken as a booking')
+
+  // And the frame's own report, which is the booking.
+  report(dom, { origin: BOOKING_ORIGIN, source })
+  assert.deepEqual(sent(dom), ['demo_booked'], `the booking frame's own report sent ${JSON.stringify(sent(dom))}`)
+})
+
+test('a booking forwards no field of the message that reported it', () => {
+  // What Calendly posts is its own payload — the invitee, the event, the times. None of it is
+  // GA4's: the event is the funnel's count, and a field the page forwarded would be the
+  // visitor's own details sent to a third party the privacy text does not name for them (F22).
+  const marker = 'a-field-of-the-vendors-message'
+  const dom = run()
+  report(dom, {
+    data: { event: 'calendly.event_scheduled', payload: { invitee: { email: marker }, event: { uri: marker } } },
+  })
+  assert.deepEqual(sent(dom), ['demo_booked'], `the booking frame's own report sent ${JSON.stringify(sent(dom))}`)
+  assert.ok(
+    !JSON.stringify(queued(dom)).includes(marker),
+    `a field of the message that reported the booking reached GA4: ${JSON.stringify(queued(dom))}`,
+  )
+})
+
+// ---- 4. the campaign parameters, into the booking link and nowhere else --------------------
+
+test('the campaign parameters a visitor arrived through reach the booking address', () => {
+  const dom = run({ search: '?utm_source=newsletter&utm_medium=email&utm_campaign=save-launch' })
+  assert.equal(
+    bookingAddress(dom),
+    `${LANDING.calendlyURL}?utm_source=newsletter&utm_medium=email&utm_campaign=save-launch`,
+    `the booking address is ${JSON.stringify(bookingAddress(dom))}, and the parameters the visitor arrived through are passed on to the link landing.yaml writes (spec §6)`,
+  )
+})
+
+test('a visit with no campaign parameters leaves the booking address as the file writes it', () => {
+  // The plain link's own address, and a query that carries something other than a campaign
+  // parameter: the page adds nothing it cannot vouch for, and the link is left exactly as
+  // `website/data/landing.yaml` writes it.
+  for (const search of ['', '?token=leaked-query', '?q=leaked&page=2#leaked-fragment']) {
+    const dom = run({ search })
+    assert.equal(
+      bookingAddress(dom),
+      LANDING.calendlyURL,
+      `a visit to ${JSON.stringify(search || 'the page with no query')} produced the booking address ${JSON.stringify(bookingAddress(dom))}, and only an allow-listed campaign parameter may change it`,
+    )
+  }
+})
+
+test('a campaign parameter is allow-listed, capped and encoded before it reaches the booking address', () => {
+  // Markup: the value is a string a visitor's link carried, so it is encoded rather than
+  // pasted into an address the vendor's script builds a frame from.
+  const markup = run({ search: '?utm_source=%3Cscript%3Ealert(1)%3C%2Fscript%3E' })
+  assert.ok(
+    !/[<>]/.test(bookingAddress(markup)),
+    `a campaign parameter reached the booking address as markup: ${JSON.stringify(bookingAddress(markup))}`,
+  )
+  assert.equal(
+    bookingAddress(markup),
+    `${LANDING.calendlyURL}?utm_source=%3Cscript%3Ealert(1)%3C%2Fscript%3E`,
+    `the encoded value is ${JSON.stringify(bookingAddress(markup))}`,
+  )
+
+  // A value with the characters an address is made of: encoded, so the campaign name is one
+  // parameter and not three.
+  const breaking = run({ search: '?utm_campaign=a%26b%3Dc%23d' })
+  assert.equal(bookingAddress(breaking), `${LANDING.calendlyURL}?utm_campaign=a%26b%3Dc%23d`, `a value that carries an address's own characters produced ${JSON.stringify(bookingAddress(breaking))}`)
+
+  // Over-long: dropped rather than truncated, because half a campaign name is a campaign the
+  // page cannot name — and the other parameter of the same visit is untouched.
+  const overLong = run({ search: `?utm_source=${'a'.repeat(101)}&utm_medium=email` })
+  assert.equal(
+    bookingAddress(overLong),
+    `${LANDING.calendlyURL}?utm_medium=email`,
+    `a 101-character value produced ${JSON.stringify(bookingAddress(overLong))}: a value longer than the cap is dropped, and a shorter one beside it is not`,
+  )
+
+  // A key that is not one of the agenda's five: dropped, whether it merely resembles one, is
+  // spelled differently, or carries nothing.
+  for (const search of ['?utm_evil=x', '?utm=x', '?UTM_SOURCE=y', '?utm_source=', '?utm_source']) {
+    const dom = run({ search })
+    assert.equal(
+      bookingAddress(dom),
+      LANDING.calendlyURL,
+      `${JSON.stringify(search)} produced the booking address ${JSON.stringify(bookingAddress(dom))}: the page passes on the parameters it allow-lists by name and nothing else`,
+    )
+  }
+})
+
+test('the campaign parameters reach the booking link and no other address on the page', () => {
+  // The three other places a parameter could leak (F22): the chat message, which the visitor
+  // reads and WhatsApp receives; the plain booking link, which is the one a visitor who
+  // declined the marketing consent keeps; and GA4, which the reconciliation records as
+  // receiving the page's origin and path only.
+  const search = '?utm_source=newsletter&utm_campaign=save-launch'
+  const dom = run({ search })
+  press(dom, INSTALL_ID)
+  press(dom, WHATSAPP_ID)
+  report(dom)
+  assert.ok(
+    !JSON.stringify(queued(dom)).includes('newsletter'),
+    `a campaign parameter reached GA4: ${JSON.stringify(queued(dom))}`,
+  )
+
+  const doc = parse(withFrame(builtPage()))
+  const links = (label) => findAll(doc, (el) => el.name === 'a' && textOf(el).trim() === label)
+  const demo = links(DEMO_LABEL)
+  assert.equal(demo.length, 1, `the campaign page carries ${demo.length} "${DEMO_LABEL}" links`)
+  assert.equal(
+    demo[0].attrs.get('href'),
+    LANDING.calendlyURL,
+    `the plain booking link is ${JSON.stringify(demo[0].attrs.get('href'))}: it is the link landing.yaml writes, with no query of its own, and it is what a visitor who declined the marketing consent keeps (F22)`,
+  )
+  const chat = links(CHAT_LABEL)
+  assert.equal(chat.length, 1, `the campaign page carries ${chat.length} "${CHAT_LABEL}" links: the spec's third call to action is the WhatsApp chat, and the pre-fill message names the page the visitor came from`)
+  assert.equal(
+    chat[0].attrs.get('href'),
+    LANDING.variants.find((variant) => variant.path === '/save').whatsappURL,
+    `the chat link is ${JSON.stringify(chat[0].attrs.get('href'))}: it is the wa.me link the loader derives from the number and the message landing.yaml writes, and no campaign parameter goes into it (F22)`,
+  )
+})
