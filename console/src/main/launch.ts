@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The launch, which is the console's **one write** (design section 5.1 rule 11,
 // D22, 2026-10-16). Everything in this file exists because of one fact: a

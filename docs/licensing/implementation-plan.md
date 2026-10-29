@@ -98,7 +98,7 @@ workspaces plan, which takes D302, D303, D308 and D309 as inputs.
 | No non-`ee/` Go file of any build tag imports the ee path (matched by path segment) except `cmd/fugaro/ee_on.go`, which must carry `//go:build ee` and blank-import only `…/ee/register`; no symlink, `//go:embed`, `//go:generate`, cgo include, `replace` or nested module reaches into `ee/` | L1.1 `TestCoreNeverImportsEE`, `TestCoreNeverEmbedsEE`, `TestNoModuleRouteIntoEE` |
 | Every `ee/` source file (any file but `README.md` and `LICENSE`) starts with the two-line notice, and `ee/LICENSE` exists whenever one source file does (R3, amended) | L1.1 `TestEEFilesCarryTheNotice`, `TestEESourceNeedsTheLicence` |
 | The core builds and tests with `ee/` deleted; the only tests skipped there are the ones that read the real `ee/` through the one helper | L1.2 `TestEEReadersAreListed`; L1.7 `TestDocsCoreWithoutEEWorkflow`; run after L1.8 |
-| The release build (D303 as amended): every goreleaser build's `main` is `./cmd/fugaro`; its build tags are empty at 0.11.0; a non-empty effective tag set may hold only `ee`, and only when the cask `license`, the plugin manifest `license`, README, `LICENSING.md` and the website elements name the enterprise licence (`LicenseRef-Fugaro-Enterprise` and `ee/LICENSE`); `before.hooks` is an exact list; no archive file glob reaches `ee/` | L2.1 `TestGoreleaserReleaseBuild`, `TestEETagNeedsTheLabels` |
+| The release build (D303 as amended): every goreleaser build's `main` is `./cmd/fugaro`; its build tags are empty at 0.11.0; a non-empty effective tag set may hold only `ee`, and only when the cask `license`, the plugin manifest `license`, README, `LICENSING.md` and the website elements name the enterprise licence (`LicenseRef-Fugaro-Subscription` and `ee/LICENSE`); `before.hooks` is an exact list; no archive file glob reaches `ee/` | L2.1 `TestGoreleaserReleaseBuild`, `TestEETagNeedsTheLabels` |
 | Both website licence elements (the Licence card and the `#licence` section) state the split and link `LICENSING.md`; "the only text that governs" is gone | L1.5 |
 | `ee/README.md` says the folder is reserved and carries no licence yet, until L4.1 | L1.2 creates it, L4.1 switches it |
 | The CLI archive carries a notice for every linked third-party module | L2.1 `TestThirdPartyNoticesCoverEveryLinkedModule` |
@@ -433,8 +433,8 @@ setting — stay unchecked here, and the three licence files keep their placehol
   is empty at 0.11.0, or holds only `ee`); `TestEETagNeedsTheLabels` (the coupling: if the effective
   tag set holds `ee`, then each label **names the enterprise licence**, defined as: the Homebrew
   cask `license` and `plugin/.claude-plugin/plugin.json`'s `license` are SPDX expressions holding
-  `LicenseRef-Fugaro-Enterprise`, and the README Licensing section, `LICENSING.md` and the
-  website's two licence elements each contain `LicenseRef-Fugaro-Enterprise` or link `ee/LICENSE`;
+  `LicenseRef-Fugaro-Subscription`, and the README Licensing section, `LICENSING.md` and the
+  website's two licence elements each contain `LicenseRef-Fugaro-Subscription` or link `ee/LICENSE`;
   at 0.11.0 the set is empty and the test holds trivially. Plants refused: `tags: [ee]` with MIT
   labels; `flags: [-tags=ee]`; `GOFLAGS=-tags=ee` in a build's `env`, in the top-level `env`, in an
   `overrides[]` entry, and in the release workflow's goreleaser step. Positive plant accepted:

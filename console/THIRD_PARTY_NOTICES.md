@@ -1,4 +1,4 @@
-<!-- SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise -->
+<!-- SPDX-License-Identifier: LicenseRef-Fugaro-Subscription -->
 <!-- See console/LICENSE.md for the terms. -->
 # Third-party notices
 

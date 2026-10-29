@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The launch helper's ETXTBSY retry, driven with a fake spawn (review of the
 // `console (ubuntu-latest)` flake: `Error: electron.launch: spawn ETXTBSY`).

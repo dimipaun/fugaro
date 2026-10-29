@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See mobile/LICENSE.md for the terms.
 // The four families the phone may read, and the gate every read passes
 // (mobile plan, Task P3.2; D112 answered 2026-10-17, tension (b1)).

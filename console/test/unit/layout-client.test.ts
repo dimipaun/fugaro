@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 import { describe, expect, it } from 'vitest'
 import { LayoutClient, WORKER_URL, type LayoutGraph, type WorkerLike } from '../../src/renderer/graph/layout-client.js'

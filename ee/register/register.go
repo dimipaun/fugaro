@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See ee/LICENSE for the terms.
 
 // Package register is the one place the seams the moved enterprise features

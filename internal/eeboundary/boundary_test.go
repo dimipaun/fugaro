@@ -97,7 +97,7 @@ const (
 
 	// The SPDX line R3 asks every file in a licence directory to carry. The
 	// pointer below it names that directory's own licence file.
-	noticeSPDX = "SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise"
+	noticeSPDX = "SPDX-License-Identifier: LicenseRef-Fugaro-Subscription"
 
 	// The rules, named as the tests below name them.
 	ruleImports = "core never imports ee/"

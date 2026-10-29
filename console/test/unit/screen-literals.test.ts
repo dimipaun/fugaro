@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // Every screen's `literal` writes the console's own vocabulary and never a
 // document's string (design section 5.1 rule 7; desktop-console plan Task 2.3).

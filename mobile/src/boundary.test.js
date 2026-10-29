@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See mobile/LICENSE.md for the terms.
 // Where a credential may be written, named as a list of files
 // (mobile plan, Task P3.1; D111, D114, and reconciliation §4 tension (b2)

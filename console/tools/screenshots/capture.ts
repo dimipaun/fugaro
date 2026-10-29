@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The screenshot run's entry point (owner ruling 2026-10-20): it launches the
 // **built** console against a **fake** CLI and the fixture documents beside the

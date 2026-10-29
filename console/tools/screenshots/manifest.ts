@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The manifest the screenshot run leaves beside its pictures (owner ruling
 // 2026-10-20, step 3): one entry per capture, with its pixel size, its sha256

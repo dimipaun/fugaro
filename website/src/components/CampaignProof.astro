@@ -1,0 +1,74 @@
+---
+/**
+ * website/src/components/CampaignProof.astro — the proof band (go-to-market plan, Task G2.2;
+ * spec §6, section 2; reconciliation F6).
+ *
+ * **The band publishes a figure nothing backs, or it publishes nothing.** `website/data/landing.yaml`
+ * carries either a figure beside the entry of `website/data/typical-costs.yaml` it was drawn
+ * from, or the sentinel `unmeasured` in both fields, and the loader refuses every other
+ * combination (G2.1). While the sentinel is there the band prints **no digit at all**: it says
+ * the figure is not measured yet, in the big type the spec asks the figure to be set in, and
+ * the sentence under it says what would have to exist for one to appear. A placeholder — a
+ * round number, an example, a figure from the campaign's own copy — is exactly the claim F6
+ * refuses, and this is the one band on the page where one could be typed.
+ *
+ * **The figure is the band's heading.** It is the page's first `h2`, which is what keeps the
+ * hero's supporting line the whole of the page's lead — a reader meets the headline, one
+ * sentence and then the number, and no third paragraph has to be invented to fill the space
+ * between them.
+ *
+ * **The measured branch names its source and not its own arithmetic.** A figure this page
+ * prints came out of a measurement the repository holds, so the sentence under it names the
+ * entry; a page that restated the measurement's window, its sample or its definition would be a
+ * second copy of the file to keep in step (Global Constraint 6, D96).
+ */
+interface Props {
+  /** The variant's figure, or the sentinel `unmeasured`. */
+  value: string
+  /** The `website/data/typical-costs.yaml` entry the figure was drawn from, or the sentinel. */
+  source: string
+}
+
+const { value, source } = Astro.props
+
+// The one place the sentinel is spelled on the page's side. `website/src/lib/landing.mjs` owns
+// the word; this file reads it and writes no figure of its own in its place.
+const SENTINEL = 'unmeasured'
+const measured = value !== SENTINEL
+---
+
+<section class="campaign-proof" data-section="proof" data-source="website/data/landing.yaml">
+  <h2 class="campaign-proof-figure display-lg">{measured ? value : 'Not measured yet'}</h2>
+  <p class="campaign-proof-note">
+    {measured
+      ? `Backed by this project's own measured runs, the entry ${source} of its cost file.`
+      : "This page prints a figure here only when a measured run of this project's own backs it, and there is none yet."}
+  </p>
+</section>
+
+<style>
+  .campaign-proof {
+    padding-block: var(--space-xl);
+    padding-inline: var(--frame-gutter);
+  }
+
+  /* The number in the big type the spec asks for, in the accent's legible tone on the ground:
+     the pair `website/test/a11y.mjs` computes for text at this size. */
+  .campaign-proof-figure {
+    margin: 0;
+    color: var(--accent-on-dark);
+  }
+
+  .campaign-proof-note {
+    margin: var(--space-sm) 0 0;
+    max-width: var(--measure);
+    color: var(--text-muted);
+    font-size: var(--font-size-base);
+  }
+
+  @media (min-width: 48rem) {
+    .campaign-proof {
+      padding-block: var(--space-2xl);
+    }
+  }
+</style>

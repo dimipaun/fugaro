@@ -7,7 +7,7 @@
 are F1…; resolutions R1…; open items O1…; unverified facts U1….
 
 **Every decision row is answered (2026-10-29):** each is the recommendation except D618, which the
-owner chose against it (T6, O6). Answers are not task approvals.
+owner chose against it (T6 and O6, resolved 2026-10-29). Answers are not task approvals.
 
 ## 1. Summary
 
@@ -401,7 +401,7 @@ owner's answer (all answered 2026-10-29: every one is the recommendation except 
 | **D615** | Merge order enforcement (F10, F18) | **Advisory**: the order is written in each PR and shown by the coordinator; no blocking | A blocking status check: new App permission (Commit statuses or Checks write) every installation must accept, and reverses "never blocks or reorders merges" | **2026-10-29:** Merge order advisory. Why: a blocking check needs a new App permission and reverses the coordinator's ruling. |
 | **D616** | Where change sets live (licence) | **`ee/` behaviour on core mechanism** (amended in review rounds 2 and 3): the task fields, the hold and the status line are core mechanism (ee-reorg D521: core keeps wire and mechanism); the settle step and ordering are under `ee/`; `--change-set` is refused by an untagged build (the paid-command stub pattern of D522, applied to a flag) and by every build until the settle step ships, so no change set is stuck in draft | Linking and hold usable in core, settle in `ee/`: a core build's change sets never leave draft. All in core: puts coordinator behaviour outside `ee/`. The cost of the recommendation: an untagged build has no change sets at all | **2026-10-29:** `ee/` behaviour on a core mechanism. Why: core keeps wire and mechanism; the settle step is paid. |
 | **D617** | Where the project's intent lives (F19, F20) | **The published policy** (`allow_repos`, `fugaro project repos`, `fugaro project sync`) as the intent; a generated lock stored in the runs bucket beside the build records | The spec's project Git repository with `fugaro.yaml` as intent and `fugaro.lock`: changes `fugaro.yaml`'s meaning, duplicates the policy, adds a repository every project must have | **2026-10-29:** The policy is the intent; the lock lives in the bucket. Why: no second source of truth and no new repository. |
-| **D618** | Per-project images (spec) vs per-repository (today) | **Keep per-(repository, workflow) images**; a project image is designed later as an opt-in, after context repositories (D613 step 1) show a need | Replace per-repository images: migrates every installation, the registry layout, job definitions and `fugaro image refresh` | **2026-10-29:** NOT THE RECOMMENDATION: shared images across repos, scoped (on being asked) to the recommended scope: an image is shared only between repos with an identical resolved dependency set, and a change to one forks it automatically. Why: one build serves many repos at no isolation cost. Follow-through: plan C7 and C8, T6, O6. |
+| **D618** | Per-project images (spec) vs per-repository (today) | **Keep per-(repository, workflow) images**; a project image is designed later as an opt-in, after context repositories (D613 step 1) show a need | Replace per-repository images: migrates every installation, the registry layout, job definitions and `fugaro image refresh` | **2026-10-29:** NOT THE RECOMMENDATION: shared images across repos, scoped (on being asked) to the recommended scope: an image is shared only between repos with an identical resolved dependency set, and a change to one forks it automatically. Why: one build serves many repos at no isolation cost. Follow-through: plan C7 and C8, T6, O6. **2026-10-29 (T6 resolved):** a divergence is never forked automatically: `fugaro image refresh` and `project sync` propose fork, adopt or stay pinned and wait (propose-then-confirm, as D625); the shared image is never mutated; the bucket lock is the one source. |
 | **D619** | Content-hash tags and digest pins (F22) | **Record and check the digest at launch (warn on mismatch)**; no pinning, since Cloud Run cannot vary the image per execution | Pin by updating the job definition per build: an infra apply per build | **2026-10-29:** Warn on digest mismatch. Why: Cloud Run cannot vary the image per execution, so no pinning. |
 | **D620** | Layer order (F23) | **Yes, as its own task**: lockfiles and tool files extracted at the pinned commit before the warm-up, source last | Keep today's order: every source change re-runs the warm-up | **2026-10-29:** Lockfiles before source. Why: a source change should not re-run the warm-up. |
 | **D621** | Rebuild cadence (F24) | **Keep trigger-based rebuilds** (lockfiles, base, age); no blanket nightly rebuild; state that builds are outside the run budget | Nightly rebuild plus on main moving: Cloud Build cost per repository per night, unmetered | **2026-10-29:** Trigger-based rebuilds. Why: a blanket nightly rebuild costs per repository and is unmetered. |
@@ -474,6 +474,28 @@ owner's answer (all answered 2026-10-29: every one is the recommendation except 
   hash changes and that repository forks to a new image; the shared image is never mutated in place,
   so the other repository is untouched. The owner is asked to confirm all three (O6).
 
+  **Resolved 2026-10-29 (original text above kept).**
+  - **(a) Job digest:** as recommended: each repository's job points at the shared digest and the job
+    is updated per build, an operator-machine step. The image-count question ("how do we make sure we
+    do not explode the number of images on trivial differences?") is answered by three controls the
+    owner accepted: (1) a **normalised hash key**: only resolved package names, versions, toolchain
+    and base image count; file order, comments, formatting, the repository name and build or test
+    commands are ignored; (2) **superset reuse**: before building, use an existing image that already
+    contains the repository's whole dependency set at the same versions, even with extras (the cost:
+    a wider supply-chain surface in that image than the repository needs); (3) an **image-count cap
+    warning** in `doctor` and `fugaro image ls`, and automatic clean-up of images no job has used for
+    N days (proposed N = 30; the owner confirms the value). The owner did not choose "dev-only
+    dependencies create no image".
+  - **(b) Interplay:** as recommended: the bucket lock (hash to digest) is the one source. D619 warns
+    on a digest mismatch against the lock; D621 rebuilds only when an input hash changes; derived
+    images are built from the shared base for that hash.
+  - **(c) Blast radius: NOT THE RECOMMENDATION.** The recommendation was an automatic fork. The owner
+    chose a fork under user control: when a repository's hash diverges from its shared image,
+    `fugaro image refresh` and `project sync` propose and wait (propose-then-confirm, the shape of
+    D625): fork to a new image, adopt another repository's compatible image, or stay pinned to the
+    old image with a warning. Nothing is built silently, and a shared image is never mutated in
+    place.
+
 ## 6. Open items for the owner
 
 - **O1. Every decision D600–D649** is answered (2026-10-29). Every answer is the recommendation
@@ -485,7 +507,9 @@ owner's answer (all answered 2026-10-29: every one is the recommendation except 
 - **O4. Seat wording** for suspension (D629): counsel.
 - **O5.** The roles design (D446) is a prerequisite of Slice E's writes; nobody owns it yet.
 - **O6. Confirm T6** (shared images, D618): the job-update-per-build cost, the interplay with D619,
-  D621 and the derived images, and fork-never-mutate. Not yet confirmed.
+  D621 and the derived images, and fork-never-mutate. **Resolved 2026-10-29:** (a) and (b) as
+  recommended with the three image-count controls; (c) a fork under user control, not the
+  recommendation (see T6). Still open: the unused-image retention N (proposed 30 days).
 
 ## UNVERIFIED
 

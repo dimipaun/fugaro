@@ -176,7 +176,7 @@ built, "read-only after lapse" can only hide or keep paid views (Spend, the coor
 view, seats); console v2's planned launch would be the first action a lapse could gate. T12; S6.1.
 
 **F21 — Rule: who the licensor is.** `LICENSE`, `ee/LICENSE`, `console/LICENSE.md`,
-`mobile/LICENSE.md` and `LICENSES/LicenseRef-Fugaro-Enterprise.txt` each say `Copyright (c) 2026`
+`mobile/LICENSE.md` and `LICENSES/LicenseRef-Fugaro-Subscription.txt` each say `Copyright (c) 2026`
 the owner personally; the licence names the Licensor only through the Terms (§1.1,
 `[LICENSOR LEGAL NAME]`); the CLA's "Project Owner" is "the copyright holder named in the Project's
 root `LICENSE` file" and anyone to whom that holder transfers the Project or its copyright.
@@ -261,7 +261,7 @@ has a key" means every console and app installation holds its organisation's key
 **F36 — Rule (new): a PR edited the four licence files** (#1140 merged on 2026-10-27 as
 `dcee3c963`; the sequencing below is history). #1140 ("the Subscription Terms URL
 in the four licence files") changes `ee/LICENSE`, `console/LICENSE.md`, `mobile/LICENSE.md`,
-`LICENSES/LicenseRef-Fugaro-Enterprise.txt`, `LICENSING.md`, `ee/README.md`,
+`LICENSES/LicenseRef-Fugaro-Subscription.txt`, `LICENSING.md`, `ee/README.md`,
 `docs/licensing/subscription-terms.md`, `docs/licensing/implementation-plan.md`,
 `docs/licensing/reconciliation.md` and `internal/cli/docs_ee_reserved_test.go`; the copyright-line
 commit of B9, the Terms revision run and the licence-document changes touch the same files. *Consequence:* sequencing (T18).
@@ -601,7 +601,7 @@ live (S3.7) and the production public key in the verifiers (S2.9). The owner cho
 **T18 — (D441, B9) Copyright to the new entity now.** One commit must change the copyright line in
 `LICENSE` (which, through the CLA's definition, also changes the CLA's Project Owner),
 `ee/LICENSE`, `console/LICENSE.md`, `mobile/LICENSE.md` and
-`LICENSES/LicenseRef-Fugaro-Enterprise.txt`, after the assignment is signed (the licensing plan
+`LICENSES/LicenseRef-Fugaro-Subscription.txt`, after the assignment is signed (the licensing plan
 allows this edit only on the owner's go, the licensing reconciliation's F27, fact 4). The Terms' Licensor placeholder (§1.1),
 the website, the Paddle account and the signing service's issuer follow. Open PR #1140 edits the
 same licence files (F36) and should land or close first. Counsel: whether the approved licence

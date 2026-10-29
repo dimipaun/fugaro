@@ -25,13 +25,13 @@ import (
 
 // eeLicenceTitle is the first line of `ee/LICENSE`: counsel's text carries no
 // draft banner, so a banner that comes back means an older draft was restored.
-const eeLicenceTitle = "Fugaro Enterprise Edition Licence"
+const eeLicenceTitle = "Fugaro Subscription Edition Licence"
 
 // eeNotice is the two-line notice R3 puts at the top of every file that lands
-// under ee/. The identifier is the one `LICENSES/LicenseRef-Fugaro-Enterprise.txt`
+// under ee/. The identifier is the one `LICENSES/LicenseRef-Fugaro-Subscription.txt`
 // resolves, and the pointer names the terms the file is under.
 var eeNotice = [2]string{
-	"SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise",
+	"SPDX-License-Identifier: LicenseRef-Fugaro-Subscription",
 	"See ee/LICENSE for the terms.",
 }
 
@@ -102,7 +102,7 @@ func TestDocsEELicensed(t *testing.T) {
 		"](license)",
 		"not published yet",
 		"nothing outside `ee/` imports anything under `ee/`",
-		"spdx-license-identifier: licenseref-fugaro-enterprise",
+		"spdx-license-identifier: licenseref-fugaro-subscription",
 	} {
 		if !strings.Contains(flat, want) {
 			t.Errorf("ee/README.md lacks %q", want)
@@ -115,8 +115,8 @@ func TestDocsEELicensed(t *testing.T) {
 	}
 	flatLicence := flattenDoc(licence)
 	for _, want := range []string{
-		"Fugaro Enterprise Edition",
-		"LicenseRef-Fugaro-Enterprise",
+		"Fugaro Subscription Edition",
+		"LicenseRef-Fugaro-Subscription",
 		// Without the scheme: flattenDoc turns "//" into a space.
 		"fugaro.dev/legal/subscription-terms",
 		// The CLA's published URL (plan task L0.2's last step, 2026-10-29),
@@ -224,7 +224,7 @@ func TestDocsEEAdmitsTheNotice(t *testing.T) {
 		{
 			name:     "the two exempt paths, notice or none",
 			file:     "README.md",
-			content:  "# ee/ is the Fugaro Enterprise Edition\n",
+			content:  "# ee/ is the Fugaro Subscription Edition\n",
 			siblings: []string{"LICENSE", "README.md"},
 			admitted: true,
 		},

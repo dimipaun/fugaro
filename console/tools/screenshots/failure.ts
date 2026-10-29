@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The run's failure path: the one sentence a failed run ends with, and the
 // handler that makes Node print that sentence rather than dying on a library's

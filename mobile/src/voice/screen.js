@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See mobile/LICENSE.md for the terms.
 // The voice screen: the interrupt switch, the queue it gates, the offline
 // refusal and the lease (mobile plan, Task P3.5; D122, D127, D126, D118).

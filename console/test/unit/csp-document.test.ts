@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The documents the console serves, and the CSP that governs them
 // (desktop-console plan Task 3.4a, steps 4 and 5; design section 5.1 rules 1, 2,

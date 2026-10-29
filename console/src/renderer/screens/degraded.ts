@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The console's own states, for the four conditions design section 6.3 lists:
 // a project with no Firebase budget backend, a feed that has gone quiet, no

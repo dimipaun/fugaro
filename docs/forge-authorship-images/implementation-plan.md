@@ -8,8 +8,8 @@ go, and answering a decision is not approving a task.** It builds [spec.md](spec
 
 **The owner answered D600–D649 on 2026-10-29: every answer is the recommendation except D618**
 (shared images across repos, scoped to repos with an identical resolved dependency set), which
-slice C below follows (C7, C8) and which is an open tension awaiting confirmation (reconciliation
-T6, O6). Answers are not task approvals: slice A still needs the owner's explicit go. Every task
+slice C below follows (C7, C8). Its tension T6 (open item O6) was resolved on 2026-10-29: shared
+images stay under user control, a divergence is proposed and confirmed, never forked silently. Answers are not task approvals: slice A still needs the owner's explicit go. Every task
 names the decisions it rests on. Tasks marked **GATED** are not planned in detail
 because their decision may remove them.
 
@@ -19,7 +19,7 @@ Slices, each independent and orderable (D600 recommends A first, alone):
 | --- | --- | --- | --- |
 | **A** Authorship and trailers | Commits authored by the launcher when a repository opts in; `Fugaro-Run`, `Fugaro-Rigor`, `Fugaro-Model` trailers on the commits the runner pushes, on by default (D647) | MIT | D600–D606, D644, D645, D647–D649 |
 | **B** Forge cleanup, CI status, GitLab | One list of forge kinds; a CI-status read; GitLab only after its own reconciliation | MIT | D610, D611; D614/D615 for B2 |
-| **C** Repositories and images | Bitbucket listing in `fugaro project sync`; lockfile-first image layers; a digest check at launch; images shared between repos with the same resolved dependency set; read-only context repositories; a SECURITY.md registry note | MIT | D613, D617–D625 (D618 answered against the recommendation) |
+| **C** Repositories and images | Bitbucket listing in `fugaro project sync`; lockfile-first image layers; a digest check at launch; images shared between repos with the same normalised dependency set, under user control; read-only context repositories; a SECURITY.md registry note | MIT | D613, D617–D625 (D618 answered against the recommendation) |
 | **D** Change sets | Linked runs created together, a draft hold, a settle step, advisory merge order | `ee/` (D616, amended in round 2); the task's wire fields in core (ee-reorg D521) | D613–D616, D641, D642; ee-reorg's coordinator move |
 | **E** People and tokens | The roles design (D446) first; `fugaro user` over the existing IAM lists | MIT for E1; the rest per E0 | D627–D638 |
 
@@ -442,33 +442,65 @@ baked (today's derived image bakes one repository's source at its commit, so the
 only the dependency set and each run still gets its source from the clone); the migration from
 per-(repository, workflow) images; the build's credential; and the local resolver command (withdrawn
 C2) as the key's input. `fugaro project sync` never un-enrolls; removed repositories are dropped from
-the lock only. It answers reconciliation T6 (a)-(c) and cannot start C8 until the owner confirms T6.
+the lock only. It answers reconciliation T6 (a)-(c) as resolved on 2026-10-29 and adds the three image-count
+controls: the key is **normalised** (only resolved package names, versions, toolchain and base image;
+file order, comments, formatting, repository name and build or test commands are ignored); a
+**superset** lookup reuses an existing image that holds the repository's whole dependency set at the
+same versions, even with extras (the wider supply-chain surface is the stated cost); and a cap
+warning plus clean-up of images unused for N days (proposed N = 30; the owner confirms). Dev-only
+dependencies still make a key: the owner did not choose to exempt them. A divergence is never forked
+automatically (not the recommendation): the design specifies the proposal and its non-interactive
+behaviour (C8). C8 may start once the owner gives the go; T6 is no longer a gate.
 
-#### C8. Build, lock and job update for shared images (GATED: C7 and the owner's confirmation of T6)
+#### C8. Build, lock, proposal and job update for shared images (after C7; the owner's go)
 
 - **Decisions:** D617, D618, D619, D620, D621.
-- **Interfaces:** `imagecheck.Key(resolved) string` (the hash), `imagecheck.Lock` (hash to digest, a
-  JSON object in the runs bucket under `builds/`, decoded strictly, schema in `schemas/`),
-  `imagecheck.Record` gains `Key`; the job update takes the lock's digest for a repository's hash.
+- **Interfaces:** `imagecheck.Key(resolved) string` (the normalised hash: package names, versions,
+  toolchain, base image only), `imagecheck.Lock` (hash to digest, a JSON object in the runs bucket
+  under `builds/`, decoded strictly, schema in `schemas/`; the one source), `imagecheck.Superset(lock,
+  resolved)` (an existing image holding the whole set at the same versions), `imagecheck.Record`
+  gains `Key`; the job update takes the lock's digest for a repository's hash; a proposal type with
+  the choices fork, adopt `<repository>` and stay-pinned; `fugaro image ls` (images, their hashes,
+  the repositories on each, last use) and `fugaro image refresh --on-divergence=fork|adopt=<repo>|pin`
+  (the flag that names the choice); a retention value, `images.retention_days`, default 30 (owner to
+  confirm) and an image-count cap value.
 - **Files:** `internal/imagecheck/record.go`, `internal/imagecheck/lock.go` (new),
   `internal/imagecheck/lock_test.go` (new), `internal/image/render.go`, `internal/cli/image_refresh.go`,
-  `internal/cli/image_record.go`, `internal/backend/gcp/` (the per-repository job update),
-  `schemas/` (the lock). `internal/cli/run.go` is not touched here (C4 reads the lock through
+  `internal/cli/image_record.go`, `internal/imagecheck/key.go` and `superset.go` (new, with tests),
+  `internal/cli/image_ls.go` (new), `internal/cli/image_proposal.go` (new), `internal/cli/doctor.go`
+  (the cap warning), `internal/cli/image_prune.go` (new, the unused-image clean-up),
+  `internal/backend/gcp/` (the per-repository job update), `schemas/` (the lock). `internal/cli/run.go` is not touched here (C4 reads the lock through
   `imagecheck`), so it stays within its existing writers.
-- **Behaviour:** `fugaro image refresh` computes each repository's key; repositories with the same
-  key build once and share the digest; a repository whose key changes builds or adopts another
-  image and updates only its own job; an image already in the lock is never rebuilt or overwritten
-  in place; the lock is written after a successful build; D621's triggers apply per key.
+- **Behaviour:** `fugaro image refresh` computes each repository's normalised key; before building it
+  looks up an existing image whose set is a superset at the same versions and uses it; repositories
+  with the same key build once, from the shared base for that key, and share the digest. When a
+  repository's key diverges from its shared image, `fugaro image refresh` and `project sync`
+  **propose and wait** (propose-then-confirm, as D625): fork to a new image, adopt another
+  repository's compatible image, or stay pinned to the old image with a warning. Nothing is built
+  silently. Non-interactive (no terminal, or `--json`): it refuses to build, prints the proposal and
+  exits non-zero unless `--on-divergence` names the choice. A choice updates only that repository's
+  job. An image already in the lock is never rebuilt or overwritten in place; the lock is written
+  after a successful build; D621's triggers fire per key only when an input hash changes; D619's
+  launch warning compares the job's digest with the lock's. `doctor` and `fugaro image ls` warn when
+  the image count passes the cap; images no job has used for N days (`images.retention_days`,
+  proposed 30) are cleaned up automatically, never one a job still points at.
 - **Tests:** `TestKeyIdenticalForIdenticalDependencySets`, `TestKeyChangesWithAnyLockfile`,
   `TestRefreshBuildsOnceForSharedKey`, `TestRefreshForksOnChange`,
   `TestRefreshNeverOverwritesALockedDigest`, `TestRefreshUpdatesOnlyTheChangedRepositoryJob`,
-  `TestLockDecodesStrictly`, `TestRunDigestComparesAgainstTheLockForItsKey` (extends C4).
-- **Command:** `go test ./internal/imagecheck/ ./internal/image/ ./internal/cli/ -run 'Key|Lock|Refresh|TestRunDigest' -count=1`
+  `TestLockDecodesStrictly`, `TestRunDigestComparesAgainstTheLockForItsKey` (extends C4),
+  `TestKeyIgnoresOrderCommentsFormattingRepoNameAndCommands`, `TestKeyChangesWithVersionToolchainOrBase`,
+  `TestSupersetReusesAnImageWithExtras`, `TestSupersetRequiresSameVersions`,
+  `TestDivergenceProposesAndWaits`, `TestDivergenceNonInteractiveRefusesWithoutFlag`,
+  `TestDivergenceFlagNamesTheChoice`, `TestStayPinnedWarns`, `TestImageLsListsHashesAndRepos`,
+  `TestDoctorWarnsOverImageCap`, `TestPruneRemovesImagesUnusedForRetentionDays`,
+  `TestPruneKeepsAnImageAJobPointsAt`.
+- **Command:** `go test ./internal/imagecheck/ ./internal/image/ ./internal/cli/ -run 'Key|Lock|Superset|Refresh|Divergence|ImageLs|Prune|DoctorWarnsOverImageCap|TestRunDigest' -count=1`
 - **Depends on:** C3 and C4 (the same files, earlier level), C7 (the design).
 - **Red step:** `TestRefreshBuildsOnceForSharedKey` fails: two repositories build twice.
 - **Commit:** `image: repositories with the same resolved dependency set share one image`
 - **OWNER-RUN:** a sandbox refresh across two repositories with one set and one with another;
-  confirm one build, two jobs on one digest, and a fork on a dependency change (a new live check
+  confirm one build, two jobs on one digest, a proposal (not a build) on a dependency change, and
+  each of fork, adopt and stay-pinned (a new live check
   number is taken from the reserved 236-249 block when X1 is next amended).
 - **Reviewer:** opus + mandatory independent review (the registry layout and job definitions of
   every installation change).
@@ -616,7 +648,7 @@ from E0.
 | D614 | D2, D3; B2 if needed |
 | D615 | D4; B2 if blocking is chosen |
 | D616, D637 | D3, D4 (`ee/`); all others MIT |
-| D617, D618, D622 | C7, C8 |
+| D617, D618 (T6 resolved 2026-10-29), D622 | C7, C8 (normalised key, superset reuse, lock, proposal, `image ls`, cap warning, clean-up) |
 | D619 (with D618) | C4, C8 |
 | D619 | C4 |
 | D620 | C3 |
@@ -695,7 +727,7 @@ runs beside A2a).
 | the next release's notes file under `docs/releases/` | B2 (L1), A4 (L3), C5c (L4) |
 | `internal/config/config.go`, `internal/config/validate.go`, `schemas/fugaro.schema.json`, `schemas/schemas_test.go` | A2a (L0) |
 | `internal/imagecheck/record.go` | C4 (L0), C8 (L1) |
-| `internal/imagecheck/lock.go`, `internal/cli/image_refresh.go`, `internal/cli/image_record.go`, `internal/backend/gcp/` job update | C8 (L1) |
+| `internal/imagecheck/lock.go`, `key.go`, `superset.go`, `internal/cli/image_refresh.go`, `image_record.go`, `image_ls.go`, `image_proposal.go`, `image_prune.go`, `internal/cli/doctor.go`, `internal/backend/gcp/` job update | C8 (L1) |
 | `images/derived/Dockerfile.tmpl` | C3 (L0) |
 | `internal/image/render.go` | C3 (L0), C8 (L1) |
 | `internal/gitprov/providers/providers.go` | B1 (L0) |

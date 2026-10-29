@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The text path: every string a job wrote is untrusted, and this is where it
 // stops being able to be anything but text (desktop-console plan Task 2.0;

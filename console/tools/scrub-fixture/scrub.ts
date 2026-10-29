@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The hand-scrub of a real `fugaro watch --json` document (owner decision
 // 2026-10-19: "record from the real installation, scrub by hand").

@@ -1,4 +1,4 @@
-<!-- SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise -->
+<!-- SPDX-License-Identifier: LicenseRef-Fugaro-Subscription -->
 <!-- See mobile/LICENSE.md for the terms. -->
 # `mailbox/` — the app's mailbox client
 

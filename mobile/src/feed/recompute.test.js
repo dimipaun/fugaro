@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See mobile/LICENSE.md for the terms.
 // The two recomputed figures (mobile plan, Task P3.2, the 2026-10-17
 // resolution: the burn rate and the cap fractions are recomputed on the phone).

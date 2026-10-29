@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The graph's motion (console GV2.4; design section 3.9's amendment of
 // 2026-10-24, and section 2.11's inventory of the screen).

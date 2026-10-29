@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // playwright.config.ts's parallelism, held to the invariant the e2e spec is
 // written against (desktop-console plan Task 1.1, review round on PR #437).

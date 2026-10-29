@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The launch's value rules and its reply decoder (docs/design/desktop-console.md
 // §5.1 rule 11; the reply is `internal/cli/run.go`'s `launchResult`).

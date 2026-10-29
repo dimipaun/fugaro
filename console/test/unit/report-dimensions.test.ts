@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The `--by` vocabulary, held in one place: `report`'s own list of breakdowns
 // (`internal/report/report.go`, `ParseDim`) and the three copies the console

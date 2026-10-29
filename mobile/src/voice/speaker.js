@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See mobile/LICENSE.md for the terms.
 // The seam the mailbox client speaks through, now that there is an audio tree
 // to speak through (mobile plan, Task P3.5; Global Constraint 10, Voice D52).

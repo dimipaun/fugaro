@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The console's project view (Bitbucket credentials T1.2; coordinator plan P6,
 // docs/coordinator/implementation-plan.md, as amended by D364).

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The IPC allow-list, held to its own rules (desktop-console plan Task 1.2;
 // design section 5.1 rule 5, section 9.2's mutation-proof form, D14).

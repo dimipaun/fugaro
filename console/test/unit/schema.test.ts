@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // Both document shapes, and nothing else (desktop-console plan Task 2.0;
 // design section 5.1 rule 3; console/docs/json-contract.md sections 2 and 5).

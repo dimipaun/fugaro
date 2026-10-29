@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The screen the screenshot run has to pass before it is allowed to start the
 // console (owner ruling 2026-10-20: the website's console pictures are taken

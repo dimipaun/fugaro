@@ -3,7 +3,8 @@
 **Status: plan only; nothing is implemented; no task is approved.** Decisions D600–D649 are
 **answered** (2026-10-29): every answer is the recommendation except D618, where the owner chose
 shared images across repos, scoped to repos with an identical resolved dependency set (plan C7 and
-C8; the open tension T6 awaits the owner's confirmation, O6). Answering a decision does not approve
+C8). Tension T6 and open item O6 are resolved (2026-10-29): shared images stay under user control, a
+divergence is proposed and confirmed, never forked silently (not the recommendation). Answering a decision does not approve
 a task; each task, slice A included, needs the owner's own go.
 
 **Spec:** "Fugaro Forge, Authorship & Image Spec", draft, October 2026. **Spec owner:** the Fugaro

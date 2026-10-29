@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See mobile/LICENSE.md for the terms.
 // The session machine: a pure reducer over the spec's §5 event stream
 // (voice-session plan, Task VS0.2; D205, D206, D201, D208, P8, F3, F9).
