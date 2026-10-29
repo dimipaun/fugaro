@@ -15,7 +15,6 @@ import (
 
 	"gocloud.dev/blob"
 	"gocloud.dev/blob/driver"
-	"gocloud.dev/gcerrors"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget"
@@ -467,16 +466,11 @@ func (countListOpener) OpenBucketURL(context.Context, *url.URL) (*blob.Bucket, e
 // marker is served because the project-name check every cloud command makes
 // reads it, and that read is not the one under test.
 type countListDriver struct {
-	driver.Bucket // nil: only the methods below are reached
-	marker        []byte
-	mu            sync.Mutex
-	listing       int
+	stubBucket
+	marker  []byte
+	mu      sync.Mutex
+	listing int
 }
-
-func (d *countListDriver) ErrorCode(error) gcerrors.ErrorCode { return gcerrors.Unknown }
-func (d *countListDriver) As(any) bool                        { return false }
-func (d *countListDriver) ErrorAs(error, any) bool            { return false }
-func (d *countListDriver) Close() error                       { return nil }
 
 // listings is how many listings the bucket has been asked for.
 func (d *countListDriver) listings() int {
@@ -527,12 +521,14 @@ func installCountListBucket(t *testing.T, f *budgetFixture) {
 	f.rewriteConfig(t, "file://"+f.runsDir(), countListScheme+"://runs")
 }
 
-// A document that lists no repository reads nothing: budget.BucketFacts treats
-// an empty Slugs as every repository in the bucket, so `--compute` on a
-// document with no row (--all over an empty database, or every key failing
-// Unkey) would otherwise read about two days of records across every repository
-// in the bucket -- the read the long help promises the flag avoids. The
-// counting bucket is the whole assertion: no listing is asked for.
+// A document whose repository list is empty reads nothing:
+// budget.BucketFacts treats an empty Slugs as every repository in the bucket,
+// so `--compute` on such a document (--all over a database that names no
+// repository, or a project config that names none) would otherwise read about
+// two days of records across every repository in the bucket -- the read the
+// long help promises the flag avoids. A key `budget.Unkey` refuses is not this
+// case: its row is still listed, under the raw key, and it is unknown either
+// way. The counting bucket is the whole assertion: no listing is asked for.
 func TestShowComputeOnAnEmptyDocumentReadsNothing(t *testing.T) {
 	// The control: the same bucket on a document that does list a repository is
 	// asked for a listing, so the zero below is a read the command did not make

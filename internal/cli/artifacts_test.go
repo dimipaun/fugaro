@@ -19,7 +19,6 @@ import (
 
 	"gocloud.dev/blob"
 	"gocloud.dev/blob/driver"
-	"gocloud.dev/gcerrors"
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
@@ -1908,17 +1907,12 @@ func TestArtifactsGetAsksForTheStrictClassification(t *testing.T) {
 // the read is a point a test can hang a write on — so this is what a race with
 // another process looks like from inside `artifacts get`.
 type appearDriver struct {
-	driver.Bucket
+	stubBucket
 	data   []byte
 	appear string // the path a file appears at
 	at     string // what that file holds
 	done   bool
 }
-
-func (d *appearDriver) ErrorCode(error) gcerrors.ErrorCode { return gcerrors.Unknown }
-func (d *appearDriver) As(any) bool                        { return false }
-func (d *appearDriver) ErrorAs(error, any) bool            { return false }
-func (d *appearDriver) Close() error                       { return nil }
 
 func (d *appearDriver) NewRangeReader(context.Context, string, int64, int64, *driver.ReaderOptions) (driver.Reader, error) {
 	return &appearReader{Reader: bytes.NewReader(d.data), d: d}, nil

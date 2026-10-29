@@ -78,8 +78,10 @@ The columns below say which field needs which state. The recurring shapes:
   `JSONFinished`) is the same rule for a run that has recorded no pull request
   — absent, never `0`, which no repository numbering from 1 issues — as is §3's
   `showRun` `round`, an int whose `0` a run in its first round omits. Which
-  numbers a shape leaves out is its own rows' business; a number whose row
-  carries no `omitempty` is always present, `null` when it is not known.
+  numbers a shape leaves out is its own rows' business; a **pointer** number
+  whose row carries no `omitempty` is always present, `null` when it is not
+  known, and a plain number that can be `0` and mean nothing carries its own
+  flag instead (`JSONBurn.Known`, below).
 - **`omitempty` on a string or a slice**: an **absent key** means *none* or
   *empty*, which is a fact rather than a gap.
 - **`bool` flags that say "I don't know"**: `JSONBurn.Known` is the one that
