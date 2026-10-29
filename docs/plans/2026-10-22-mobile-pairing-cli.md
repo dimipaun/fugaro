@@ -28,10 +28,11 @@ still holds. (4) **`fugaro pair` is placed in the MIT core** (`internal/cli`) by
 licence split since (LICENSING.md, `ee/README.md`, D637's split for `fugaro user`, the Subscription
 Terms §5.2 "the Command-line tool is licensed under the MIT licence") is consistent with that, but
 subscriptions task S5.1 lists "Pairing: `fugaro pair`" inside the roles design (D446) without
-placing it, so the placement is the owner's to confirm (§18, decision 12). (5) **The role words and
-the per-pairing keychain item** meet later work — the Terms' viewer, operator and administrator
-roles (§5.3), D628's minter, and the merged one-item config — and are decisions 9 and 13. Nothing in
-this list approves a task or changes one.
+placing it, so the placement was the owner's to confirm (§18, decision 12: **answered 2026-10-29, core**). (5) **The role and
+the per-pairing keychain item** met later work — the Terms' viewer, operator and administrator
+roles (§5.3), D628's minter, and the merged one-item config — and are decisions 9 and 13, **both
+answered 2026-10-29** (one keychain item per pairing; the role inherited from the pairing user).
+Nothing in this list approves a task or changes one.
 
 **Merged on `main` today, and this plan is written against it — every one of them read, not
 recalled:** **P6.4** (rules generation 3: the `config/pairing/$uid` subtree, the
@@ -473,7 +474,7 @@ fugaro pair [--name NAME] [--email ADDRESS] [--role ROLE] [--timeout D] [--json]
 | --- | --- | --- | --- |
 | `--name` | string | `""` | the device's name, for `pair ls` and the node's own field |
 | `--email` | string | `""` | **D226's administered email**; refused unless it is a verified address of the pairing operator (§12) |
-| `--role` | string | `admin` | **D225's role**, one of the CLI's own role words; a field on the node, read by no rule in v1 *(amended 2026-10-29: the CLI has no such word set — its lists are launchers and operators (`internal/cli/roles.go`); the word set is decision 13's)* |
+| `--role` | string | **the pairing user's own role** | **D225's role**, a field on the node, read by no rule in v1. **Inherited, not free** *(amended 2026-10-29, decision 13 answered)*: the device's role defaults to the role of the user doing the pairing, and `--role` may only **lower** it (`admin` > `operator` > `viewer`), never raise it above that user's role; a word above it is refused. Until the roles design (D446/S5.1) provides verified roles, the pairing user's role is read from the CLI's existing lists (`internal/cli/roles.go`: launchers and operators), launcher mapping to the device word `operator`; the lists hold no viewer or admin, so a `viewer` device is reached only by lowering |
 | `--timeout` | duration | `2m` | how long to wait for the phone's key and the typed code; **refused above `4m30s`** |
 
 **`--timeout` is capped below D165's token, and the token is sized to the wait.** The pairing token's
@@ -873,7 +874,7 @@ which the tree already has** — so decision 1's number is a sum of two existing
 | --- | --- | --- | --- |
 | (the node's existence) | `fugaro pair` | **the rules**, in `userClaim` | the whole of the allowlist (D166) |
 | `email` | `fugaro pair --email`, or the operator's own verified address (D224, D226) | `pair ls`, and the operator | the **administered** email — a field on the entry, never a key (#787's amendment, mobile-auth D222) |
-| `role` | `fugaro pair --role` (D225) | `pair ls`, and later work | **no rule reads it in v1** (D225) |
+| `role` | the pairing user's role, lowered by `fugaro pair --role` (D225, decision 13) | `pair ls`, and later work | **no rule reads it in v1** (D225); never a token claim |
 | `name`, `at` | `fugaro pair` | `pair ls` | what `ls` needs to be legible |
 
 **The refusals D226 requires, and where they happen.** An address that is not **verified** is
@@ -1002,6 +1003,12 @@ not. *(Amended 2026-10-29: the reference commands are now `go run ./ee/clidoc` a
 `go test ./ee/clidoc/ ./internal/clidoc/... -count=1` beside the `./internal/cli` run, §5 item 1.)*
 **Red step.** Add the command without regenerating the reference and watch
 `TestCliReferenceIsCurrent` fail with the regenerating command in the message.
+**`--role` (amended 2026-10-29, decision 13).** The flag's default is the pairing user's own role,
+read from the CLI's launcher and operator lists (`internal/cli/roles.go`) and mapped to the device
+words (launcher to `operator`); `--role` only **lowers** it. Tests: `--role` above the pairing
+user's role **is refused** (exit 1, before any side effect); the default **inherits** the pairing
+user's role; a `viewer` device is reached **by lowering** an operator's role; a caller the lists
+cannot place has no role to inherit and is refused. Pairing counts **no seat** (decision 13).
 **Reviewer tier.** SECURITY-SENSITIVE — independent opus review. What a reviewer must confirm: that
 **nothing in the QR is a key or an identity**, and that the token's claims are `pu` alone.
 
@@ -1015,7 +1022,7 @@ with a fake key pair and a fake signer: a wrong typed code writes **nothing** �
 token, no keychain write, no delivery; **no device node is written before the typed code matches**;
 the device token's `uid == mu` and begins `m~`, never `r~`; the code is derived from the **decoded
 key bytes**, so the two spellings of one key give one code; an unverified email is refused; an
-invalid `--role` is refused; the node holds no token, no key and no fingerprint (M13); the minter
+invalid `--role`, or one above the pairing user's role, is refused (decision 13); the node holds no token, no key and no fingerprint (M13); the minter
 role and database admin are each refused with a message naming the missing one and no side effect
 (**two tests**).
 **Red step.** Write the device node before the comparison and watch
@@ -1027,14 +1034,20 @@ fingerprint's input, and that the failure path has **no** side effect.
 
 **Mobile task.** P6.6, part 3. **Files.** `internal/budget/token/device.go`'s envelope (same file as
 T2, one writer per task — T2 lands the file, T3 extends it in a dependent task, exactly as P4.1's
-T2/T2a do for `mac.go`); `internal/cli/pair.go`'s step 8 and step 9.
+T2/T2a do for `mac.go`); `internal/cli/pair.go`'s step 8 and step 9; **`internal/localcfg/localcfg.go`** (and its test file) *(added
+2026-10-29, decision 9)*: the `mailbox.keychain_item` block widens from one item name to **one item
+per pairing uid**, validated by `keychain.ParseItem` as today, with the shared-config publish and
+merge rules kept.
 **Depends on.** T2; **D171, D199**; M5, M6, M14; §4.4, §8.
 **Verification.** `GOFLAGS=-p=2 go test ./internal/budget/token ./internal/cli -run 'Delivery|Envelope|Pair' -count=1`:
 the payload does not open without the phone's private key; a wrong version byte, a different uid and
 a different public key are each refused (three mutations, one per AAD part); the MAC key appears in
 no output, no log line, no `--json` document and no fixture; the payload carries D199's
 configuration; `go.mod` gains **no module** (`crypto/ecdh` and `crypto/hkdf` only); the pairing node
-is deleted after the delivery is written.
+is deleted after the delivery is written; the widened block parses, round-trips and merges with
+**two** pairings holding two items, refuses an item name of the wrong shape, and a project that
+holds the old single name is migrated by re-running init (no compatibility shim, pre-1.0); the
+consumer reads each pairing's own item.
 **Red step.** Drop the uid from the AAD and watch `TestEnvelopeBindsThePairingUID` fail.
 **Reviewer tier.** SECURITY-SENSITIVE — independent opus review. What a reviewer must confirm: that
 the envelope is claimed as **a capability, not a boundary** (§8), and that the key is never printed.
@@ -1138,6 +1151,7 @@ agree on every row.
 | File | Tasks | Note |
 | --- | --- | --- |
 | `internal/cli/root.go` | **T1** | **one line**; P4.1's line (`newMailboxCmd()`) is its own and the two are independent — the mobile plan reserves one line for each |
+| `internal/localcfg/localcfg.go` + `mailbox_test.go` | **T3** | *(added 2026-10-29, decision 9)* the `mailbox` block widened to one keychain item per pairing; P4.1 owns the merged one-item form, so this is a dependent edit |
 | `internal/cli/pair.go` | T1, T2, T3, T4 | one writer per task: T1 the surface and the QR, T2 the wait and the compare, T3 the delivery, T4 `ls` and `revoke` |
 | `internal/budget/token/device.go` | **T2 and T3** | the one deliberate two-writer file: T2 lands the device token and the fingerprint, T3 extends it with the delivery envelope in a dependent task — the precedent is P4.1's `mac.go` (T2 `verify`, T2a `sign`) |
 | `internal/budget/sweep.go` | **T4** | the prefix rule and the report field; **P6.13's delete set is not here** — the merged plan's decision 8 keeps the two apart, and a task that puts a `mailbox/` path in this file is a finding |
@@ -1283,6 +1297,9 @@ plan diverges from the mobile plan's task text**, and they are the ones that hol
    gives no task. The owner chooses: one paired device per project in v1, which fits the merged
    config unchanged, or the widened block, added to T3's files. **Recommended: the widened block in
    T3**, since D171's per-pairing key is what makes `revoke` revoke one phone.)*
+    **ANSWERED 2026-10-29 (owner): one keychain item PER PAIRING (amended).** Widen the
+    `mailbox.keychain_item` config block in `internal/localcfg` and add it to T3's files (§15, §16):
+    a per-pairing key lets `revoke` revoke exactly one phone.
 10. **Does this plan ship a pin?**
     **Recommended: no.** The owner's ruling for this change is **docs only, no code**, and a pin is a
     Go test. **Cost, stated plainly:** nothing reads this document, so its citations, its §8.4
@@ -1312,6 +1329,7 @@ plan diverges from the mobile plan's task text**, and they are the ones that hol
     alternative** — an `ee/` command — moves T1–T4's files under `ee/`, registers through
     `ee/register` and `cli.RegisterCommand`, adds a core stub through the paid-command list, and
     leaves an untagged build with no way to pair a phone.
+    **ANSWERED 2026-10-29 (owner): `fugaro pair` is a CORE (MIT) command**, as the plan has it.
 13. **Added 2026-10-29: which words may `--role` take, and is a pairing a seat?**
     **Recommended:** v1 accepts `viewer`, `operator` and `admin` — `docs/mobile-auth/spec.md`'s
     table and the Subscription Terms §5.3's viewer, operator and administrator — stored on the node
@@ -1322,6 +1340,19 @@ plan diverges from the mobile plan's task text**, and they are the ones that hol
     design; the Terms make an operator or administrator a User needing a seat (§5.1, §5.3), and
     pairing records the role but counts nothing — the seat estimate (§5.5) is the console's.
     **The alternative** — no `--role` until the roles design — leaves D225's field unwritten.
+    **ANSWERED 2026-10-29 (owner), and it is NOT the recommendation above** (the recommendation was
+    the fixed words `viewer`, `operator` and `admin`, free to choose; that text is kept visible and
+    is **superseded**). The role is **inherited from the user doing the pairing**: the paired device's
+    role defaults to the pairing user's own role, and `--role` may only **lower** it, never raise it
+    above the pairing user's role. Until the roles design (D446/S5.1) provides verified roles, the
+    pairing user's role comes from the CLI's existing role lists (`internal/cli/roles.go`:
+    launcher and operator lists) mapped to the device words (launcher to `operator`; the lists hold
+    no viewer or admin yet, so a `viewer` device is reachable only by lowering). The role stays a
+    **field on the device node** (D225), not a token claim. Pairing counts **no seats**: the seat
+    estimate (Terms 5.5) is the console's.
+    **Open point.** The exact source of the inherited role depends on the roles design (D446/S5.1)
+    landing: the lists are a stand-in, and when verified roles exist T1's lookup is the one place
+    that changes; the rule (inherit, lower only) does not.
 
 ---
 
@@ -1385,7 +1416,8 @@ plan diverges from the mobile plan's task text**, and they are the ones that hol
 1. **The owner answers decisions 1, 2, 3 and 5** — the four that hold P6.6 back (1 and 2 are the two
    divergences from the task text) — and 4 and 6–10 if convenient. Answering them approves no task:
    P6.6, P6.7 and P6.13 are already approved, and this document is their shape. *(Amended
-   2026-10-29: decisions 9, 12 and 13 also come before T1.)*
+   2026-10-29: decisions 9, 12 and 13 also came before T1; the owner **answered all three on
+   2026-10-29**, §18. No task is approved by this plan: T1–T8 stay unapproved.)*
 2. **P4.1 must land before T5, T6 or T7.** They extend `internal/cli/mailbox.go` and
    `internal/mailbox/expiry.go`, neither of which exists. **T1–T4 do not depend on P4.1** beyond the
    `root.go` list they both append to, and they are what makes the merged MAC code reachable in
