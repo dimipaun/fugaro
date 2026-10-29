@@ -516,6 +516,41 @@ var reasonItemRE = regexp.MustCompile("^[0-9]+\\. `([a-z_]+)`")
 // field names of one row, one or more of them.
 var jsonCellRE = regexp.MustCompile("`([A-Za-z_][A-Za-z0-9_]*)`")
 
+// consoleMovedSections are the document's headings whose command and shapes
+// moved out of the core with the coordinator (E2.1b): the code they document is
+// in ee/coordinator, so this build cannot name a field or a flag of it and the
+// checks below would be reading the shapes of a package they cannot import. The
+// same checks run over these sections against the tagged tree, where the code is
+// in the build (ee/coordinator/cli/console_contract_test.go).
+var consoleMovedSections = []string{"### 6.13 "}
+
+// consoleMovedRows are the document's individual lines that name a flag of the
+// moved command without sitting under a moved heading: §8's inventory carries
+// one row per command the console may spawn, and the coordinator's row states
+// its flags there. Like consoleMovedSections, the moved package checks the same
+// lines against the tagged tree.
+var consoleMovedRows = []string{"| `coordinator status`"}
+
+// inMovedSection answers whether heading opens one of consoleMovedSections.
+func inMovedSection(heading string) bool {
+	for _, h := range consoleMovedSections {
+		if strings.HasPrefix(heading, h) {
+			return true
+		}
+	}
+	return false
+}
+
+// inMovedRow answers whether line is one of consoleMovedRows.
+func inMovedRow(line string) bool {
+	for _, r := range consoleMovedRows {
+		if strings.Contains(line, r) {
+			return true
+		}
+	}
+	return false
+}
+
 // TestDocsDesktopConsoleContractNamesNoInventedField is the other direction,
 // and it is the one a review found missing: every backticked name in the
 // document's own field tables must be a real json key of the shape that table
@@ -607,7 +642,15 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 	approvedAheadOfTheCLI := map[string]bool{}
 	checked := 0
 	namedInTable := map[string]bool{}
+	heading := ""
 	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(line, "#") {
+			heading = line
+			continue
+		}
+		if inMovedSection(heading) {
+			continue
+		}
 		m := tableFieldRE.FindString(line)
 		if m == "" {
 			continue
@@ -898,19 +941,33 @@ func TestDocsDesktopConsoleContractNamesOnlyRealFlags(t *testing.T) {
 	// subcommands -- so its own flag is not in `all` either.
 	documentedAbsent := map[string]bool{"version": true}
 
-	// (1) Every flag token in the document.
+	// (1) Every flag token in the document, outside the sections whose command
+	// moved out of the core with the coordinator (see consoleMovedSections).
 	found := map[string]bool{}
-	for _, m := range flagTokenRE.FindAllStringSubmatch(doc, -1) {
-		name := strings.TrimRight(m[1], "-")
-		if name == "" {
+	inMoved := false
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(line, "#") {
+			inMoved = inMovedSection(line)
 			continue
 		}
-		found[name] = true
-		switch {
-		case documentedAbsent[name] && all[name]:
-			t.Errorf("%s documents --%s as absent, but a command has it", path, name)
-		case !documentedAbsent[name] && !all[name]:
-			t.Errorf("%s names --%s, which is not a flag of any command it documents: a flag written rather than read", path, name)
+		if inMoved {
+			continue
+		}
+		if inMovedRow(line) {
+			continue
+		}
+		for _, m := range flagTokenRE.FindAllStringSubmatch(line, -1) {
+			name := strings.TrimRight(m[1], "-")
+			if name == "" {
+				continue
+			}
+			found[name] = true
+			switch {
+			case documentedAbsent[name] && all[name]:
+				t.Errorf("%s documents --%s as absent, but a command has it", path, name)
+			case !documentedAbsent[name] && !all[name]:
+				t.Errorf("%s names --%s, which is not a flag of any command it documents: a flag written rather than read", path, name)
+			}
 		}
 	}
 	if len(found) < 20 {
@@ -936,6 +993,9 @@ func TestDocsDesktopConsoleContractNamesOnlyRealFlags(t *testing.T) {
 	for _, line := range strings.Split(doc, "\n") {
 		if strings.HasPrefix(line, "#") {
 			heading = line
+			continue
+		}
+		if inMovedSection(heading) {
 			continue
 		}
 		trimmed := strings.TrimSpace(line)

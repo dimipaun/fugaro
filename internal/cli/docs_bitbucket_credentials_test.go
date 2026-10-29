@@ -328,6 +328,27 @@ var bitbucketWillCreate = map[string]string{
 	"scripts/live-checks/check147_test.sh":        "T3.5 (parked)",
 }
 
+// bitbucketMoved are the paths this dated plan cites that the tree has since
+// moved, each with where it went. The plan is a record of the task as it was
+// written and is not edited when code it names moves, so the move is recorded
+// here instead — narrowly, one entry per citation, and held in three directions:
+// the old path must NOT resolve any more (a copy left behind would make this a
+// hiding place), the new path must, and the folder must still cite the old one,
+// or the entry is excusing a citation that is gone.
+//
+// The coordinator's library and command left `internal/` for `ee/` in E2.1b
+// (ee-reorg, D434), the move that put these eight here.
+var bitbucketMoved = map[string]string{
+	"internal/cli/coordinator.go":           "ee/coordinator/cli/coordinator.go",
+	"internal/cli/coordinator_view.go":      "ee/coordinator/cli/coordinator_view.go",
+	"internal/cli/coordinator_view_test.go": "ee/coordinator/cli/coordinator_view_test.go",
+	"internal/coordinator/project.go":       "ee/coordinator/project.go",
+	"internal/coordinator/project_test.go":  "ee/coordinator/project_test.go",
+	"internal/coordinator/state.go":         "ee/coordinator/state.go",
+	"internal/coordinator/state_test.go":    "ee/coordinator/state_test.go",
+	"internal/coordinator/sweep.go":         "ee/coordinator/sweep.go",
+}
+
 // TestDocsBitbucketCredentialsEveryCitedPathExists: every backticked repository
 // path and every link target the folder names resolves in the tree — or is one
 // of the paths this plan's tasks create, each of which must still be absent and
@@ -355,8 +376,22 @@ func TestDocsBitbucketCredentialsEveryCitedPathExists(t *testing.T) {
 			}
 			continue
 		}
+		if to, ok := bitbucketMoved[p]; ok {
+			if _, err := os.Stat("../../" + p); err == nil {
+				t.Errorf("%s cites %s, which resolves again, so it is no longer a path the tree moved: it must leave bitbucketMoved and be checked like any other", bitbucketCredentialsPlan, p)
+			}
+			if !pathExists(to) {
+				t.Errorf("bitbucketMoved sends %s to %s, which is not in the tree: the record of a move has to name where the file went", p, to)
+			}
+			continue
+		}
 		if !pathExists(p) {
 			t.Errorf("docs/bitbucket-credentials/ cites %s, which is not in the tree: a path the plan names and cannot be found is a later implementer's dead end", p)
+		}
+	}
+	for p, to := range bitbucketMoved {
+		if !paths[p] {
+			t.Errorf("bitbucketMoved names %s (%s), which the folder no longer cites: the list must only excuse paths the documents actually name", p, to)
 		}
 	}
 	for p, why := range bitbucketWillCreate {
