@@ -189,6 +189,46 @@ function launchLines(spawns: readonly SpawnLogEntry[]): readonly SpawnLogEntry[]
  * control's place, so every case here would fail looking for a button that the
  * version gate is right not to draw.
  */
+/**
+ * CLOSED_PAGE is the family of errors that mean **the window a promise was
+ * awaited in went away**, rather than that the promise failed: Playwright's own
+ * "Target page, context or browser has been closed" and "Execution context was
+ * destroyed", the application's "Application has been closed", and the
+ * renderer's rejection when the frame an `invoke` was sent from is gone.
+ *
+ * It is a list rather than a regex because each phrase is a sentence from a
+ * different layer (Playwright's, Electron's, the IPC's), and a reader checking
+ * this spec's swallows wants to see which ones are covered.
+ */
+const CLOSED_PAGE = [
+  'has been closed',
+  'Target closed',
+  'Execution context was destroyed',
+  'Render frame was disposed',
+  'WebFrameMain',
+  'object has been destroyed',
+]
+
+/**
+ * swallowClosedPage awaits a promise this spec expects to be **cut off** by a
+ * window going away, and rethrows anything else.
+ *
+ * A blanket `.catch(() => undefined)` in its place hides a spec error as well:
+ * a `ReferenceError` raised inside an evaluated function -- which is how a
+ * constant this file's renderer half does not have would arrive -- would look
+ * exactly like the window closing, and the case would pass having proved
+ * nothing.
+ */
+async function swallowClosedPage(promise: Promise<unknown>): Promise<void> {
+  try {
+    await promise
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (CLOSED_PAGE.some((phrase) => message.includes(phrase))) return
+    throw error
+  }
+}
+
 async function start(records: SeededLaunchRecords = RECORDS): Promise<Running> {
   const stub = installCliStub(LAUNCH_CLI_FLOOR)
   const scratch = mkdtempSync(join(tmpdir(), 'fugaro-console-launch-'))
@@ -220,7 +260,7 @@ async function start(records: SeededLaunchRecords = RECORDS): Promise<Running> {
       // console down with it (`window-all-closed`), and closing an exited
       // process is not a failure of this spec's. The scratch directories are
       // removed either way, which is the half the spec owns.
-      await app.close().catch(() => undefined)
+      await swallowClosedPage(app.close())
       rmSync(scratch, { recursive: true, force: true })
       stub.remove()
     },
@@ -281,9 +321,11 @@ function windowTitles(app: ElectronApplication): Promise<string[]> {
  * case's assertions are on what the pair did rather than on which click it was.
  */
 async function doubleAnswer(confirm: Page): Promise<void> {
-  await confirm
-    .evaluate(
-      async ({ key }) => {
+  // The window is closed by the answer it took, and the page goes with it:
+  // this call is expected to be cut off rather than to resolve.
+  await swallowClosedPage(
+    confirm.evaluate(
+      async ({ key, closed }) => {
         const bridge = (window as unknown as Record<string, { answer: (yes: boolean) => Promise<unknown> }>)[key]
         if (bridge === undefined) throw new Error('the confirmation document has no bridge')
         for (let attempt = 0; attempt < 200; attempt += 1) {
@@ -291,7 +333,13 @@ async function doubleAnswer(confirm: Page): Promise<void> {
           const second = bridge.answer(true)
           // The second answer is the one this loop does not follow: its reply is
           // a refusal the main process sends to a window that is going away.
-          void Promise.resolve(second).catch(() => undefined)
+          // The swallow is written out here rather than called: this function
+          // runs in the renderer, where the spec's helper does not exist, and
+          // the phrases come in as an argument for the same reason.
+          void Promise.resolve(second).catch((error: unknown) => {
+            const message = error instanceof Error ? error.message : String(error)
+            if (!closed.some((phrase: string) => message.includes(phrase))) throw error
+          })
           const taken = await Promise.race([
             Promise.resolve(first).then((reply) => (reply as { ok?: boolean } | null)?.ok === true),
             new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 250)),
@@ -300,11 +348,9 @@ async function doubleAnswer(confirm: Page): Promise<void> {
           await new Promise((resolve) => setTimeout(resolve, 25))
         }
       },
-      { key: CONFIRM_BRIDGE_KEY },
-    )
-    // The window is closed by the answer it took, and the page goes with it:
-    // this call is expected to be cut off rather than to resolve.
-    .catch(() => undefined)
+      { key: CONFIRM_BRIDGE_KEY, closed: CLOSED_PAGE },
+    ),
+  )
 }
 
 /**
@@ -325,7 +371,9 @@ async function confirmWhenReady(confirm: Page): Promise<void> {
     .poll(
       async () => {
         if (confirm.isClosed()) return 'answered'
-        await confirm.getByRole('button', { name: CONFIRM_LABEL }).click({ timeout: 3_000 }).catch(() => undefined)
+        // A click that lands while the window is going away is the answer that
+        // was just taken, and the window's own state decides.
+        await swallowClosedPage(confirm.getByRole('button', { name: CONFIRM_LABEL }).click({ timeout: 3_000 }))
         return confirm.isClosed() ? 'answered' : 'waiting'
       },
       {
@@ -686,18 +734,22 @@ test.describe('the launch path, in the real app', () => {
       // `test/unit/entry-wiring.test.ts`, and its behaviour in
       // `test/unit/launch.test.ts`; the parent-close case above is the one that
       // closes a parent with no `cancelFor` in play.
-      void page
-        // The project goes in as an argument: the function runs in the
-        // renderer, where this file's constants do not exist, and a
-        // ReferenceError there would be swallowed by the catch below.
-        .evaluate(async (project) => {
-          const api = (window as unknown as { fugaro: { chooseInstallation: (args: unknown) => Promise<unknown> } })
-            .fugaro
-          return await api.chooseInstallation({ project })
-        }, PROJECT)
-        // The dashboard this ran in is replaced by the re-choose once the new
-        // window is up, so the answer may never reach it.
-        .catch(() => undefined)
+      // The dashboard this ran in is replaced by the re-choose once the new
+      // window is up, so the answer may never reach it.
+      void swallowClosedPage(
+        page.evaluate(
+          // The project goes in as an argument: the function runs in the
+          // renderer, where this file's constants do not exist, and a
+          // ReferenceError there is rethrown by the swallow rather than
+          // passing for the window closing.
+          async (project) => {
+            const api = (window as unknown as { fugaro: { chooseInstallation: (args: unknown) => Promise<unknown> } })
+              .fugaro
+            return await api.chooseInstallation({ project })
+          },
+          PROJECT,
+        ),
+      )
 
       await expect
         .poll(() => confirm.isClosed(), { timeout: 20_000, intervals: [100], message: 'the re-choose did not close the window' })
