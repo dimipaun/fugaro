@@ -188,7 +188,7 @@ func doctorSecretReaderChecks(ctx context.Context, lc *localcfg.Config, sm *gcp.
 	if len(unreadPolicy) > 0 {
 		checks = append(checks, doctorCheck{ID: "secret-readers-unexpected", Severity: "warning",
 			Problem: fmt.Sprintf("could not read the IAM policy of %d secret container(s): ", len(unreadPolicy)) + strings.Join(unreadPolicy, ", ") +
-				", so whether they grant secretAccessor to anyone else is unknown, not no",
+				", so whether they grant a role that reads them to anyone else is unknown, not no",
 			Fix: "rerun fugaro doctor with access to the project, or as an operator who can read each container (gcloud secrets get-iam-policy SECRET)"})
 	}
 	if len(unreadRoles) > 0 {
