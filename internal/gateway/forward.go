@@ -1033,6 +1033,16 @@ func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, w pricing.Micros, p
 	o.amount = max(pricing.WithFee(satMul(rates.Cost(charged), mult), fee), floor)
 	o.unreconciled = max(o.amount-reported, 0)
 	o.settled = settledPartial
+	if floor > 0 {
+		// A partial call whose charge the report floors records it exactly as
+		// a complete call's does: without it the stage's Reported, the run's
+		// reported_usd and the call log would leave out the one figure that
+		// explains the charge, and diagnose's Tier clause -- printed only
+		// where the record carries a report -- would go silent on the run
+		// that needs it. A partial call the floor does not price keeps
+		// recording nothing, as it always has.
+		o.charge.reported = t.acc.reported
+	}
 	return o
 }
 
