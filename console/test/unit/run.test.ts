@@ -402,15 +402,21 @@ describe('renderRun: the status strip', () => {
     expect(ready.textContent).toBe('ready')
     expect(ready.getAttribute('data-tone')).toBe('success')
 
-    const failed = one(renderRun(factory, model({}, { outcome: 'failed' }), 'light'), 'run-outcome')
-    expect(failed.textContent, 'the word is always drawn').toBe('failed')
+    // `draft` is the failure tone: runstore's own `StatusFailed` is "a draft PR
+    // exists".
+    const failed = one(renderRun(factory, model({}, { outcome: 'draft' }), 'light'), 'run-outcome')
+    expect(failed.textContent, 'the word is always drawn').toBe('draft')
     expect(failed.getAttribute('data-tone')).toBe('failure')
 
-    // A word this build does not know is drawn in the primary tone with no tone
-    // of its own: painting it as a failure would be a claim about the run.
-    const other = one(renderRun(factory, model({}, { outcome: 'draft' }), 'light'), 'run-outcome')
-    expect(other.textContent).toBe('draft')
-    expect(other.getAttribute('data-tone')).toBeNull()
+    // `none` and a word this build does not know are drawn in the primary tone
+    // with no tone of their own: runstore gives `none` two readings, and
+    // painting either of them would be a claim about the run rather than a
+    // reading of it.
+    for (const word of ['none', 'wrapped-up']) {
+      const other = one(renderRun(factory, model({}, { outcome: word }), 'light'), 'run-outcome')
+      expect(other.textContent).toBe(word)
+      expect(other.getAttribute('data-tone')).toBeNull()
+    }
   })
 
   it('draws the ledger cell as the settled/terminal pair, in words', () => {

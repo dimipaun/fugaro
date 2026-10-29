@@ -567,8 +567,10 @@ after both.
 
 States: terminal / still running / settled / stale draft / follow-up (header flags, as
 text); halted (`div.run-halt`, the word `HALTED`); the outcome's tone (`span.run-outcome`
-with `data-tone`, the word `ready`/`reviewed`/`failed` drawn either way and the tone only
-ever beside it); stage passed/failed (`run-stage-passed`
+with `data-tone`: `success` for the three outcomes of a run that delivered what it
+promised -- `ready`, `reviewed`, `artifacts` -- and `failure` for `draft`, which runstore's
+own `StatusFailed` calls a draft PR; the word is drawn either way and the tone only ever
+beside it, and `none` or a word a newer CLI resolved carries no tone at all); stage passed/failed (`run-stage-passed`
 with `passed`/`failed`, and the stage's decorative icon, which is `path.run-stage-check`,
 `path.run-stage-cross` or `rect.run-stage-dot` -- `aria-hidden` and never the only
 channel); deadline ok/near/over (`run-stage-deadline`), or `n/a` when the

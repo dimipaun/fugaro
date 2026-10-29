@@ -1248,16 +1248,23 @@ function metaLine(factory: RunFactory, model: RunModel): ScreenElement {
 
 /**
  * RUN_SUCCESS_OUTCOMES and RUN_FAILURE_OUTCOMES are the outcomes this build
- * knows a tone for. `runstore.Outcome` is `ready`, `draft`, `none`, `reviewed`
- * and `artifacts`; the CLI also writes a run that failed. The two lists are
- * closed and everything else -- `draft`, `none`, and an outcome a newer CLI
- * resolved -- is drawn in the primary tone with no tone of its own, because
- * painting a word this build does not know as a failure would be a claim about
- * the run rather than a reading of it. **The word is always drawn**: the tone is
- * the second channel and never the only one (styling design section 3.5).
+ * knows a tone for. `runstore.Outcome` is the state of the run's **pull
+ * request**, and its own comment supplies the reading: `ready` is the ready PR
+ * the feed's `ready[]` is made of, `reviewed` is a review run that commented on
+ * the pull requests it was pointed at, and `artifacts` is a render run whose
+ * deliverables are in the bucket -- the three outcomes of a run that delivered
+ * what it promised. `draft` is the one the CLI itself calls failed
+ * (`StatusFailed` is "a draft PR exists"). `none` gets **no tone**: runstore
+ * gives it two readings -- a check gate that found nothing to fix, and a review
+ * mode that refused a pull request before checkout -- and painting it as one of
+ * them would be a claim about the run rather than a reading of it.
+ *
+ * **The word is always drawn**: the tone is the second channel and never the
+ * only one (styling design section 3.5), and an outcome a newer CLI resolved is
+ * drawn in the primary tone with no tone of its own.
  */
-const RUN_SUCCESS_OUTCOMES: readonly string[] = Object.freeze(['ready', 'reviewed'])
-const RUN_FAILURE_OUTCOMES: readonly string[] = Object.freeze(['failed', 'failure', 'error', 'cancelled', 'canceled', 'aborted', 'halted'])
+const RUN_SUCCESS_OUTCOMES: readonly string[] = Object.freeze(['ready', 'reviewed', 'artifacts'])
+const RUN_FAILURE_OUTCOMES: readonly string[] = Object.freeze(['draft'])
 
 /** outcomeTone is the tone an outcome's own word earns, or null. */
 function outcomeTone(outcome: string | null): string | null {
