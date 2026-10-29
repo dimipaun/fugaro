@@ -100,8 +100,12 @@ var governancePair = []string{"SetGovernance", "SetStage"}
 // over the real tree and over planted ones:
 //
 //  1. the governance pair is called both or neither;
-//  2. every seam setter's error reaches a panic — a bare call, a deferred one
-//     or `_ = …` is a registration that was refused and went on anyway.
+//  2. every seam setter's error reaches a panic — the call's result bound in an
+//     if-init named err, checked against nil and panicked on. A bare call, a
+//     deferred or go one, `_ = …`, a result assigned and never checked, an if
+//     whose body is empty or logs instead of panicking, and a setter taken as a
+//     function value are each a registration that was refused and went on
+//     anyway, or one the scan cannot follow at all.
 //
 // It is a source scan for the reason internal/eeboundary's is one: the calls
 // are legal Go wherever they sit, and a build would not notice. The name is
@@ -152,6 +156,26 @@ func TestRegisterWiresTheGovernancePair(t *testing.T) {
 			name:     "a setter called as a bare statement",
 			body:     "package register\n\nimport \"github.com/dimipaun/fugaro/internal/cli\"\n\nfunc init() { cli.SetEditionEE() }\n",
 			expected: []string{"SetEditionEE", "discard"},
+		},
+		{
+			name:     "a setter whose error reaches an empty if body",
+			body:     "package register\n\nimport \"github.com/dimipaun/fugaro/internal/cli\"\n\nfunc init() {\n\tif err := cli.SetEditionEE(); err != nil {\n\t}\n}\n",
+			expected: []string{"SetEditionEE", "empty"},
+		},
+		{
+			name:     "a setter whose error is assigned to a variable and never checked",
+			body:     "package register\n\nimport \"github.com/dimipaun/fugaro/internal/cli\"\n\nfunc init() {\n\terr := cli.SetEditionEE()\n\t_ = err\n}\n",
+			expected: []string{"SetEditionEE", "if-init"},
+		},
+		{
+			name:     "a setter whose error is logged rather than panicked on",
+			body:     "package register\n\nimport (\n\t\"log\"\n\n\t\"github.com/dimipaun/fugaro/internal/cli\"\n)\n\nfunc init() {\n\tif err := cli.SetEditionEE(); err != nil {\n\t\tlog.Print(err)\n\t}\n}\n",
+			expected: []string{"SetEditionEE", "not a panic"},
+		},
+		{
+			name:     "a setter taken as a function value",
+			body:     "package register\n\nimport \"github.com/dimipaun/fugaro/internal/cli\"\n\nfunc init() {\n\tf := cli.SetEditionEE\n\t_ = f()\n}\n",
+			expected: []string{"SetEditionEE", "function value"},
 		},
 		{
 			name:     "both halves of the pair registered in defer statements",
@@ -251,16 +275,25 @@ func other(name string) string {
 	return ""
 }
 
-// setterCallsIn is one file's seam setter calls: the names it calls, from every
-// position, and a finding for each call whose error it discards. Every
-// *ast.CallExpr in the file is read, the way internal/eeboundary's scan reads
-// them, so a registration cannot hide from the pair rule inside a defer, a go
-// statement or a call to something else.
+// panicShape is the one shape both rules accept, spelled out in every finding
+// so a reader can act on one without the design doc.
+const panicShape = "`if err := …; err != nil { panic(…) }` is the one shape a seam setter's call may take"
+
+// setterCallsIn is one file's seam setter uses: the names it uses, from every
+// position, and a finding for each use whose error does not reach a panic.
+// Every *ast.CallExpr and every *ast.SelectorExpr in the file is read, the way
+// internal/eeboundary's scan reads them, so a registration cannot hide from the
+// pair rule inside a defer, a go statement or a call to something else.
 //
-// A call in an if-init — `if err := …; err != nil { panic(err) }` — is the
-// shape both rules ask for and is not a finding. Discarded is a call that is a
-// statement of its own, the call of a defer or a go statement, or an
-// assignment's right-hand side whose left-hand side is the blank identifier.
+// The one shape both rules accept is `if err := …; err != nil { panic(…) }`: the
+// call bound in an if-init named err, whose body checks that err against nil and
+// panics. Discarded is a call that is a statement of its own, the call of a defer
+// or a go statement, an assignment whose left-hand side is the blank identifier,
+// an assignment whose result is never checked that way, a result consumed
+// somewhere else, or an if whose body is empty or does something other than
+// panic. Taking a setter as a function value — a selector naming one where a call
+// is not — is a finding too: the name flows into something the scan cannot
+// follow, so nothing tells whether the error it answers reaches a panic.
 //
 // A file the parser cannot read is one whose calls cannot be checked, and
 // "cannot be checked" is not "is fine": `gofmt -l .` is a gate, so this fires
@@ -275,7 +308,7 @@ func setterCallsIn(path, rel string) ([]string, []string, error) {
 		called   []string
 		findings []string
 		// ancestry is the nodes currently open above the one being read, its
-		// last entry being the call's own parent: ast.Inspect answers nil when
+		// last entry being the node's own parent: ast.Inspect answers nil when
 		// it leaves a node, which is where one is dropped.
 		ancestry []ast.Node
 	)
@@ -286,12 +319,18 @@ func setterCallsIn(path, rel string) ([]string, []string, error) {
 			}
 			return false
 		}
-		if call, ok := n.(ast.Expr); ok {
-			if name, isSetter := setterName(call); isSetter {
+		switch node := n.(type) {
+		case *ast.CallExpr:
+			if name, isSetter := setterName(node); isSetter {
 				called = append(called, name)
-				if why, discarded := discardedResult(ancestry, call); discarded {
+				if why, unchecked := uncheckedResult(ancestry, node); unchecked {
 					findings = append(findings, rel+": it calls "+name+why)
 				}
+			}
+		case *ast.SelectorExpr:
+			if slices.Contains(seamSetters, node.Sel.Name) && !callPosition(ancestry, node) {
+				called = append(called, node.Sel.Name)
+				findings = append(findings, rel+": it takes "+node.Sel.Name+" as a function value rather than calling it, so nothing tells whether the error it answers reaches a panic: "+panicShape)
 			}
 		}
 		ancestry = append(ancestry, n)
@@ -300,33 +339,140 @@ func setterCallsIn(path, rel string) ([]string, []string, error) {
 	return called, findings, nil
 }
 
-// discardedResult answers whether the setter call call, whose parent is the last
-// node of its ancestry, throws its error away, and says how in words a reader
-// can act on. It reads the one position that decides it: an expression
-// statement runs for its effect alone, a defer or a go statement cannot carry a
-// result anywhere, and `_ = …` names the result and drops it.
-func discardedResult(ancestry []ast.Node, call ast.Expr) (string, bool) {
+// callPosition answers whether expr is the Fun of the call it sits in: the
+// setter's own call, the one shape both rules have something to say about,
+// rather than a setter named where a value is wanted.
+func callPosition(ancestry []ast.Node, expr ast.Expr) bool {
+	if len(ancestry) == 0 {
+		return false
+	}
+	call, ok := ancestry[len(ancestry)-1].(*ast.CallExpr)
+	return ok && call.Fun == expr
+}
+
+// uncheckedResult answers whether the setter call call, whose parent is the last
+// node of its ancestry, lets its error go unchecked, and says how in words a
+// reader can act on. It reads the one shape that decides it: `if err := …;
+// err != nil { panic(…) }`. Everything else is a refused registration that went
+// on anyway, whose error nothing panics on.
+func uncheckedResult(ancestry []ast.Node, call ast.Expr) (string, bool) {
 	if len(ancestry) == 0 {
 		return "", false
 	}
 	switch parent := ancestry[len(ancestry)-1].(type) {
 	case *ast.ExprStmt:
-		return " as a statement of its own, so the error it answers is discarded", true
+		return " as a statement of its own, so the error it answers is discarded and a refused registration panics nothing: " + panicShape, true
 	case *ast.DeferStmt:
-		return " in a defer statement, so the error it answers is discarded when it finally runs", true
+		return " in a defer statement, so the error it answers is discarded when it finally runs and a refused registration panics nothing: " + panicShape, true
 	case *ast.GoStmt:
-		return " in a go statement, so the error it answers is discarded in another goroutine", true
+		return " in a go statement, so the error it answers is discarded in another goroutine and a refused registration panics nothing: " + panicShape, true
 	case *ast.AssignStmt:
-		for i, rhs := range parent.Rhs {
-			if rhs != call || i >= len(parent.Lhs) {
-				continue
+		if blankTarget(parent, call) {
+			return " and assigns its error to the blank identifier, so the error it answers is discarded and a refused registration panics nothing: " + panicShape, true
+		}
+		if init := ifInit(ancestry); init != nil {
+			if why := notPanicked(init, parent, call); why != "" {
+				return why, true
 			}
-			if id, ok := parent.Lhs[i].(*ast.Ident); ok && id.Name == "_" {
-				return " and assigns its error to the blank identifier, so the error it answers is discarded and a refused registration panics nothing", true
-			}
+			return "", false
+		}
+		return " and its result is not the if-init the shape asks for, so the error it answers is never checked and a refused registration panics nothing: " + panicShape, true
+	}
+	return " where its result is used rather than checked, so the error it answers reaches no if that panics on it: " + panicShape, true
+}
+
+// ifInit answers the if statement whose init is the assignment holding the call
+// whose ancestry this is, or nil when the assignment is not an if-init: the
+// call's own parent is the last entry of the ancestry and the statement above it
+// the one before.
+func ifInit(ancestry []ast.Node) *ast.IfStmt {
+	if len(ancestry) < 2 {
+		return nil
+	}
+	stmt, ok := ancestry[len(ancestry)-2].(*ast.IfStmt)
+	if !ok || stmt.Init != ancestry[len(ancestry)-1] {
+		return nil
+	}
+	return stmt
+}
+
+// notPanicked answers why the if statement init leaves the setter's error
+// unchecked, and "" when it is the shape both rules ask for: the init binds the
+// call's result to err, the condition checks that err against nil, and the body
+// is exactly one panic call.
+func notPanicked(init *ast.IfStmt, assign *ast.AssignStmt, call ast.Expr) string {
+	if assign.Tok != token.DEFINE || len(assign.Lhs) != 1 || len(assign.Rhs) != 1 || assign.Rhs[0] != call {
+		return " and binds its result outside the if-init the shape asks for, so the error it answers is never checked and a refused registration panics nothing: " + panicShape
+	}
+	if name, ok := assign.Lhs[0].(*ast.Ident); !ok || name.Name != "err" {
+		return " and binds its result in the if-init to a name other than err, so what its nil check reads is not the error it answers: " + panicShape
+	}
+	if !checksNil(init.Cond, "err") {
+		return " and its if-init does not check err against nil, so a refused registration panics nothing: " + panicShape
+	}
+	if len(init.Body.List) == 0 {
+		return " and its if-init body is empty, so a refused registration panics nothing: " + panicShape
+	}
+	if !panicsOnIt(init.Body) {
+		return " and its if-init body is not a panic call, so a refused registration panics nothing: " + panicShape
+	}
+	return ""
+}
+
+// checksNil answers whether cond is name compared against nil, in either order:
+// the check that keeps the panic below it off a registration that was accepted.
+func checksNil(cond ast.Expr, name string) bool {
+	bin, ok := cond.(*ast.BinaryExpr)
+	if !ok || bin.Op != token.NEQ {
+		return false
+	}
+	if ident, ok := bin.X.(*ast.Ident); ok && ident.Name == name {
+		return isNilIdent(bin.Y)
+	}
+	if ident, ok := bin.Y.(*ast.Ident); ok && ident.Name == name {
+		return isNilIdent(bin.X)
+	}
+	return false
+}
+
+// isNilIdent answers whether expr is the predeclared nil.
+func isNilIdent(expr ast.Expr) bool {
+	ident, ok := expr.(*ast.Ident)
+	return ok && ident.Name == "nil"
+}
+
+// panicsOnIt answers whether body is exactly one panic call — `panic(…)`, whose
+// argument is not read: a panic that names the error, one that wraps it and one
+// the compiler rejects all read the same here, and the rule is that the failure
+// to register stops the build rather than being written down somewhere.
+func panicsOnIt(body *ast.BlockStmt) bool {
+	if body == nil || len(body.List) != 1 {
+		return false
+	}
+	stmt, ok := body.List[0].(*ast.ExprStmt)
+	if !ok {
+		return false
+	}
+	call, ok := stmt.X.(*ast.CallExpr)
+	if !ok {
+		return false
+	}
+	fun, ok := call.Fun.(*ast.Ident)
+	return ok && fun.Name == "panic"
+}
+
+// blankTarget answers whether the assignment parent drops call's result: the
+// right-hand side is the call and the left-hand side names it `_`.
+func blankTarget(parent *ast.AssignStmt, call ast.Expr) bool {
+	for i, rhs := range parent.Rhs {
+		if rhs != call || i >= len(parent.Lhs) {
+			continue
+		}
+		if id, ok := parent.Lhs[i].(*ast.Ident); ok && id.Name == "_" {
+			return true
 		}
 	}
-	return "", false
+	return false
 }
 
 // setterName answers the seam setter an expression calls, by the selector's own
