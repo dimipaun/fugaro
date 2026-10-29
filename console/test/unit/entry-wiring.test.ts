@@ -1419,6 +1419,35 @@ describe('the view navigation', () => {
     expect((panelOf(document).children[0] as FakeNode).attributes.get('class')).toBe('run')
     for (const button of navButtons(document)) expect(button.attributes.has('aria-current')).toBe(false)
   })
+
+  it('draws Halt project and Reap disabled, and neither asks the main process for anything', async () => {
+    // The redesign (step 2b) draws the two controls a reader of a project panel
+    // and of a lost run expects. They are **drawn** and not wired: the console's
+    // one approved write is launch-from-console, so both go through `writes.ts`'s
+    // `disabledWrite` and neither is a channel, a preload member or a spawn
+    // entry. `live.ts` being a pure drawing file is what makes that true; this
+    // reads it off the booted window rather than off the source.
+    const documents = syntheticDocuments()
+    const frame = documents[documents.length - 1] as Readonly<Record<string, unknown>>
+    const { bridge, calls } = fakeBridge({
+      replies: { subscribeLive: () => snapshotReply(frame) },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    const panel = panelOf(document)
+    for (const className of ['live-halt', 'live-reap']) {
+      const drawn = classed(panel, className)[0] as FakeNode | undefined
+      expect(drawn, `.${className} was not drawn`).toBeDefined()
+      const button = drawn as FakeNode
+      expect(button.tagName).toBe('BUTTON')
+      expect(button.attributes.get('aria-disabled')).toBe('true')
+      expect(button.attributes.get('title')).toBe(WRITE_UNAVAILABLE)
+      expect(button.listeners.size).toBe(0)
+      const before = calls.length
+      button.click()
+      await flush()
+      expect(calls.length, `.${className} asked the main process for something`).toBe(before)
+    }
+  })
 })
 
 describe('the installation rail’s keyboard', () => {
