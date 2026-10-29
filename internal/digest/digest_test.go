@@ -15,7 +15,6 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/recipe"
-	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
@@ -28,7 +27,7 @@ var updateDigestGolden = flag.Bool("update-digest", false, "rewrite testdata/dig
 // the week of 2026-10-19 to 2026-10-25.
 func week43(t *testing.T) Period {
 	t.Helper()
-	p, err := NewPeriod(report.ByWeek, "2026-10-21")
+	p, err := NewPeriod(ByWeek, "2026-10-21")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -418,7 +417,7 @@ func TestDigestFlagsRepeatsAndReviewScopeDrift(t *testing.T) {
 // runs that finished in it. 2026-12-31 and 2027-01-01 are both ISO week
 // 2026-W53.
 func TestDigestClosedPeriodsUTC(t *testing.T) {
-	p, err := NewPeriod(report.ByWeek, "2026-12-31")
+	p, err := NewPeriod(ByWeek, "2026-12-31")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -441,7 +440,7 @@ func TestDigestClosedPeriodsUTC(t *testing.T) {
 		}
 	}
 
-	day, err := NewPeriod(report.ByDay, "2026-12-31")
+	day, err := NewPeriod(ByDay, "2026-12-31")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -532,7 +531,7 @@ func TestDigestARepoRecipeIsNotTheCatalogRecipe(t *testing.T) {
 		{"other", "9.000000"},    // the two shadowing runs, never under "standard"
 	} {
 		if got[want.name] != mustMicros(t, want.usd) {
-			t.Errorf("the median for %s = %s, want %s: %v", want.name, report.USD6(got[want.name]), want.usd, got)
+			t.Errorf("the median for %s = %s, want %s: %v", want.name, USD6(got[want.name]), want.usd, got)
 		}
 	}
 	if len(got) != 3 {
@@ -622,7 +621,7 @@ func TestDigestSizeCap(t *testing.T) {
 		for _, s := range shown {
 			if len(s.Flags) == 0 && cost(s) < cost(r) {
 				t.Errorf("capTo dropped %s (%s) and kept the cheaper %s (%s)",
-					r.ID, report.USD(cost(r)), s.ID, report.USD(cost(s)))
+					r.ID, USD(cost(r)), s.ID, USD(cost(s)))
 			}
 		}
 	}

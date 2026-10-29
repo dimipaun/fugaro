@@ -29,7 +29,6 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/digest"
-	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -607,7 +606,7 @@ func TestRunsDigestYearRollsUpMonths(t *testing.T) {
 // pattern rules' history, without a run record per week.
 func digestSeedWeek(t *testing.T, dir, date, flag string) string {
 	t.Helper()
-	p, err := digest.NewPeriod(report.ByWeek, date)
+	p, err := digest.NewPeriod(digest.ByWeek, date)
 	if err != nil {
 		t.Fatal(err)
 	}

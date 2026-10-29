@@ -32,7 +32,6 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
-	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/stats"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -144,17 +143,17 @@ var (
 // Period is one report period: the time grouping, its key and its first and
 // last day.
 type Period struct {
-	Dim   report.Dim
+	Dim   Dim
 	Key   string
 	Start string
 	End   string
 }
 
 // NewPeriod is the period date ("2006-01-02") falls in. It reuses
-// report.PeriodKey's clock, so a week here is the ISO week in UTC every other
+// PeriodKey's clock, so a week here is the ISO week in UTC every other
 // period in this tree is: 2026-12-31 and 2027-01-01 are both 2026-W53.
-func NewPeriod(dim report.Dim, date string) (Period, error) {
-	key, start, err := report.PeriodKey(dim, date)
+func NewPeriod(dim Dim, date string) (Period, error) {
+	key, start, err := PeriodKey(dim, date)
 	if err != nil {
 		return Period{}, err
 	}
@@ -164,11 +163,11 @@ func NewPeriod(dim report.Dim, date string) (Period, error) {
 	}
 	end := start
 	switch dim {
-	case report.ByWeek:
+	case ByWeek:
 		end = t.AddDate(0, 0, 6).Format("2006-01-02")
-	case report.ByMonth:
+	case ByMonth:
 		end = t.AddDate(0, 1, -1).Format("2006-01-02")
-	case report.ByYear:
+	case ByYear:
 		end = t.AddDate(1, 0, -1).Format("2006-01-02")
 	}
 	return Period{Dim: dim, Key: key, Start: start, End: end}, nil
@@ -178,7 +177,7 @@ func NewPeriod(dim report.Dim, date string) (Period, error) {
 // runs that finished in it (G4), so a run that has not finished is in no
 // period, and a finish time is read in UTC whatever zone the record wrote.
 func (p Period) Holds(t time.Time) bool {
-	key, _, err := report.PeriodKey(p.Dim, t.UTC().Format("2006-01-02"))
+	key, _, err := PeriodKey(p.Dim, t.UTC().Format("2006-01-02"))
 	return err == nil && key == p.Key
 }
 

@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-
-	"github.com/dimipaun/fugaro/internal/report"
 )
 
 // Markdown is d as the report's file: the tables a person reads and the
@@ -35,7 +33,7 @@ func markdownCore(d Digest) []byte {
 	fmt.Fprintf(&b, "# Run digest: %s\n\n", d.Period.Key)
 	fmt.Fprintf(&b, "Runs of this repository that finished in %s (%s to %s): %d in all, %d shown, %d flagged. Billed %s, notional %s.\n\n",
 		d.Period.Key, d.Period.Start, d.Period.End, d.Total.Runs, len(d.Runs), d.Total.Flagged,
-		report.USD(d.Total.Billed), report.USD(d.Total.Notional))
+		USD(d.Total.Billed), USD(d.Total.Notional))
 
 	if len(d.Runs) == 0 {
 		b.WriteString("No run of this repository finished in this period.\n\n")
@@ -80,7 +78,7 @@ func RunsTable(runs []Run) string {
 	for _, r := range runs {
 		fmt.Fprintf(&b, "| `%s` | %s | %s | %s | %d | %s | %s | %s |\n",
 			r.ID, r.Status, pr(r.PR), yesNo(r.Base), r.Reviews,
-			report.USD(r.Billed), report.USD(r.Notional), flagCell(r.Flags))
+			USD(r.Billed), USD(r.Notional), flagCell(r.Flags))
 	}
 	b.WriteString("\n")
 	return b.String()
@@ -120,8 +118,8 @@ func (d Digest) Summary() Summary {
 	s := Summary{
 		Period: d.Period.Key, Start: d.Period.Start, End: d.Period.End,
 		Runs: d.Total.Runs, Shown: len(d.Runs), Flagged: d.Total.Flagged, Dropped: d.Dropped,
-		Billed: report.USD6(d.Total.Billed), Notional: report.USD6(d.Total.Notional),
-		Review: report.USD6(d.Total.Review), Halts: d.Total.Halts,
+		Billed: USD6(d.Total.Billed), Notional: USD6(d.Total.Notional),
+		Review: USD6(d.Total.Review), Halts: d.Total.Halts,
 	}
 	for _, f := range d.Flags {
 		if s.Flags == nil {
@@ -133,7 +131,7 @@ func (d Digest) Summary() Summary {
 		if s.Recipes == nil {
 			s.Recipes = map[string]string{}
 		}
-		s.Recipes[name] = report.USD6(med)
+		s.Recipes[name] = USD6(med)
 	}
 	return s
 }
