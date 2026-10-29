@@ -361,12 +361,11 @@ func TestRecordNewerThan(t *testing.T) {
 	}
 }
 
-// TestRecordLatestRefAndDigestMismatch: the two halves of the launch's
-// digest comparison are pure — a record that names no image or no digest of
-// its own has nothing to compare, which is not a mismatch, and neither is an
-// unknown live digest. Only two digests that are both known and different
-// are drift.
-func TestRecordLatestRefAndDigestMismatch(t *testing.T) {
+// TestRecordDigestMismatch: the launch's digest comparison is pure — a
+// record that names no digest of its own has nothing to compare, which is
+// not a mismatch, and neither is an unknown live digest. Only two digests
+// that are both known and different are drift.
+func TestRecordDigestMismatch(t *testing.T) {
 	const (
 		img    = "europe-docker.pkg.dev/p/r/app-web"
 		ours   = "sha256:" + "11"
@@ -376,22 +375,15 @@ func TestRecordLatestRefAndDigestMismatch(t *testing.T) {
 		name     string
 		rec      *Record
 		live     string
-		ref      string
-		ok       bool
 		mismatch bool
 	}{
-		{"matching", &Record{Image: img, ImageDigest: ours}, ours, img + ":latest", true, false},
-		{"differing", &Record{Image: img, ImageDigest: ours}, theirs, img + ":latest", true, true},
-		{"no image", &Record{ImageDigest: ours}, ours, "", false, false},
-		{"no digest of its own", &Record{Image: img}, ours, "", false, false},
-		{"unknown live digest", &Record{Image: img, ImageDigest: ours}, "", img + ":latest", true, false},
-		{"render half only", &Record{}, "", "", false, false},
-		{"no record", nil, ours, "", false, false},
+		{"matching", &Record{Image: img, ImageDigest: ours}, ours, false},
+		{"differing", &Record{Image: img, ImageDigest: ours}, theirs, true},
+		{"no digest of its own", &Record{Image: img}, ours, false},
+		{"unknown live digest", &Record{Image: img, ImageDigest: ours}, "", false},
+		{"render half only", &Record{}, "", false},
+		{"no record", nil, ours, false},
 	} {
-		ref, ok := tc.rec.LatestRef()
-		if ref != tc.ref || ok != tc.ok {
-			t.Errorf("%s: LatestRef = %q, %v, want %q, %v", tc.name, ref, ok, tc.ref, tc.ok)
-		}
 		if got := tc.rec.DigestMismatch(tc.live); got != tc.mismatch {
 			t.Errorf("%s: DigestMismatch = %v, want %v", tc.name, got, tc.mismatch)
 		}

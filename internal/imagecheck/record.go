@@ -63,10 +63,11 @@ type Record struct {
 	// build's render step (images/derived/cloudbuild.yaml): the field says
 	// only that the base image's own build step recorded it. It does not say
 	// which fugaro the launched image runs: a dockerfile: workflow's image is
-	// the repository's to build, its fugaro included, and a job runs the
-	// repository's :latest, which no launch compares with ImageDigest (nor
-	// does base_ref's release gate). The launcher's seal gate trusts it as
-	// far as that goes; a record without it says nothing either way.
+	// the repository's to build, its fugaro included. A launch that compares
+	// ImageDigest with the image's latest tag reports drift between the two,
+	// never what binary the image carries, and base_ref's release gate judges
+	// the base image, not this one. The launcher's seal gate trusts the field
+	// as far as that goes; a record without it says nothing either way.
 	SealedBudgetToken bool   `json:"sealed_budget_token,omitempty"`
 	TemplateSalt      string `json:"template_salt"`
 	// Adopted is reserved for a record written for an image the build
@@ -91,19 +92,7 @@ func (r *Record) NewerThan(o *Record) bool {
 	return r.SourceCommit == o.SourceCommit && r.BuiltAt.After(o.BuiltAt)
 }
 
-// LatestRef is the reference whose digest is compared with the record's
-// own: the record's image at its latest tag, the tag the build promoted
-// ImageDigest to. ok is false when the record names no image, or no digest
-// of its own — the render half of a record, before the build's record step
-// completed it — and there is then nothing to read or compare.
-func (r *Record) LatestRef() (ref string, ok bool) {
-	if r == nil || r.Image == "" || r.ImageDigest == "" {
-		return "", false
-	}
-	return r.Image + ":latest", true
-}
-
-// DigestMismatch reports whether live, the digest the record's latest tag
+// DigestMismatch reports whether live, the digest the workflow's latest tag
 // resolves to now, is not the digest ImageDigest records the build
 // promoted: the drift the daily check rebuilds for (ReasonLatestDrift). A
 // launch warns about it and goes on, since Cloud Run cannot vary the image
