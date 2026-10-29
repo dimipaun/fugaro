@@ -1,7 +1,7 @@
 # Governance, the cost report and the coordinator move under `ee/`
 
 **Status: all decisions answered; plan only; nothing is implemented; no task approved.** Decisions D520–D536 are written
-with recommendations; all are answered (2026-10-29), D523, D531 and D533 NOT as recommended: **no licence notice at all until the verifier, the key-minting service and the launch are ready (the warn tasks are deferred); the Terms text is edited now (E3.6); the 0.13.0 notes carry no operator steps.** O1 and O2 are answered; O3 (the agent-code reading) is still the owner's confirmation; **O7 is a new open tension (D533 against D524: governance is available only after an image refresh)**. The CLI 0.13.0 tag is held until governance is under
+with recommendations; all are answered (2026-10-29), D523, D531 and D533 NOT as recommended: **no licence notice at all until the verifier, the key-minting service and the launch are ready (the warn tasks are deferred); the Terms text is edited now (E3.6); the 0.13.0 notes carry no operator steps.** O1 and O2 are answered; O3 (the agent-code reading) is still the owner's confirmation; **O7 is answered (2026-10-29): the 0.13.0 notes carry one line — refresh images to get governance — and it is not a required operator step** (D533 against D524: governance is available only after an image refresh). The CLI 0.13.0 tag is held until governance is under
 `ee/` and the CLA placeholder is replaced (the owner's rulings).
 
 **Spec owner:** the Fugaro owner. **Ruling:** 2026-10-29. **Reconciled against** `origin/main` at

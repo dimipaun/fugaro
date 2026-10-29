@@ -7,7 +7,7 @@ wins), including the owner's correction of 2026-10-29: **the digest stays MIT**.
 at `028b46357`, 2026-10-28.
 
 **Status: plan only. Nothing is implemented, and NO TASK IS APPROVED.** Each task needs the owner's
-explicit go. Decisions D520–D536 are all **answered** (2026-10-29: the recommendations taken except D523, D531 and D533; O1 is answered by the owner as "publish the CLA Gist URL first, then release", so the 0.13.0 tag stays held until E3.5 has merged and the E-slices are done). **D523 (no notice at all until the verifier, the key-minting service and the launch are ready), D531 (edit the Terms text now, E3.6) and D533 (0.13.0 notes: no operator steps) re-plan the tasks below**; O3 stays the owner's confirmation and O7 is a new open tension. Every task names the decisions it assumes.
+explicit go. Decisions D520–D536 are all **answered** (2026-10-29: the recommendations taken except D523, D531 and D533; O1 is answered by the owner as "publish the CLA Gist URL first, then release", so the 0.13.0 tag stays held until E3.5 has merged and the E-slices are done). **D523 (no notice at all until the verifier, the key-minting service and the launch are ready), D531 (edit the Terms text now, E3.6) and D533 (0.13.0 notes: no operator steps) re-plan the tasks below**; O3 stays the owner's confirmation, and O7 is answered (2026-10-29): the 0.13.0 notes carry one line — refresh images to get governance — and it is not a required operator step, which E3.3 owns. Every task names the decisions it assumes.
 
 It **supersedes** subscriptions tasks S1.1, S1.2, S1.3, S1.4, S1.5, S1.7 and S1.9 (their content is
 carried here, task by task, with the changes the ruling forces) and **depends on** S1.6 (carried as
@@ -228,7 +228,7 @@ takes over in untagged builds).
   tag is set and before the label, E3.2's extended `TestEETagNeedsTheLabels` fails.
 - **Depends on:** E3.2 (the relabel and the label gate over the images land first, F16c), D524,
   D525. **Reviewer:** opus + mandatory independent review (licence and supply chain).
-- **For operators:** none in the 0.13.0 notes (D533, 2026-10-29); see open item O7.
+- **For operators:** none in the 0.13.0 notes (D533, 2026-10-29); O7 answered: one non-required "refresh images to get governance" line, E3.3.
 - **Commit:** `images: base and history carry the ee build; credentials stays core (D524)`.
 
 #### E1.5 `ee/register` and the assembly file
@@ -414,8 +414,8 @@ reused.*
   `website/data/release-summaries.yaml` (one line, no backticks).
 - **Content (D533, 2026-10-29): the notes only say that licensing updates, with NO operator steps
   ("nothing to do for now") and NO licence warning (D523); no `### For operators` entry for this.
-  Open tension O7: governance reaches an installation only after it refreshes its images; the owner
-  decides whether to add a one-line "refresh images to get governance" note, not a required step.**
+  O7 (answered 2026-10-29, choice (b)): the notes carry ONE line, "refresh images to get governance",
+  which is not a required operator step. Placement (owner, 2026-10-29): a plain sentence in `### Known limits`: installations on older images keep refusing governance: until images are refreshed (`fugaro update` / `fugaro image refresh`); not a required operator step.**
   The older content below is superseded where it conflicts: the Licensing highlight; what 0.12.x users keep (R1, with F3's corrected
   facts: `fugaro report` since v0.1.0, `calls`/`agents` since v0.11.6); the superseded `### For operators` text: **per
   installation** `fugaro update` (the base pin and the history image the sweep runs; U5 confirms the
@@ -558,7 +558,7 @@ not needed while T27 (b) holds and no key is mounted (D524); E0.1 marks it defer
 ## Release actions
 
 - **0.13.0 (D533, 2026-10-29): no operator steps in the notes** ("nothing to do for now"); O7 is
-  the owner's open tension. The text below is the superseded plan: per installation `fugaro update`, so jobs run the tagged base and the coordinator's
+  answered (b): one non-required line. The text below is the superseded plan: per installation `fugaro update`, so jobs run the tagged base and the coordinator's
   sweep runs the tagged history image (U5 confirms the command). **Per repository:** `fugaro image
   refresh` in each repository's checkout, so its workflow images rebuild on the tagged base. Without
   them an installation on a 0.12.x image keeps refusing `governance:` as it does today.
