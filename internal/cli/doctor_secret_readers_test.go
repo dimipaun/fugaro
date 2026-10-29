@@ -284,6 +284,12 @@ func TestDoctorSecretReadersAdvisesReviewForAContainerFugaroDidNotCreate(t *test
 	if !strings.Contains(theirs.Fix, "review") {
 		t.Errorf("the fix for a container Fugaro did not create does not ask for a review: %q", theirs.Fix)
 	}
+	if !strings.Contains(theirs.Fix, "so its readers are not Fugaro's to remove") {
+		t.Errorf("the fix for a container Fugaro did not create does not say its readers are not Fugaro's to remove: %q", theirs.Fix)
+	}
+	if strings.Contains(theirs.Fix, "by hand") {
+		t.Errorf("the fix for a container Fugaro did not create says `by hand`, which reads as a boundary the removal advice does not draw: %q", theirs.Fix)
+	}
 	if strings.Contains(theirs.Fix, "remove-iam-policy-binding") {
 		t.Errorf("the fix for a container Fugaro did not create advises a removal: %q", theirs.Fix)
 	}
@@ -586,6 +592,36 @@ func TestDoctorCredentialsServiceDeployersCountsPrincipalsNotGrants(t *testing.T
 		if !strings.Contains(c.Problem, want) {
 			t.Errorf("problem %q lacks %q", c.Problem, want)
 		}
+	}
+}
+
+// TestDoctorCredentialsServiceDeployersNamesAProjectLevelEditorOnce: roles/editor
+// carries both run.services.update and iam.serviceAccounts.actAs, so both reads
+// of the project's policy match a project-level Editor — and the line names it
+// once, because the two reads produce the same member-and-role pair and the line
+// deduplicates them. The Editor is a deployer either way, which is what
+// SECURITY.md's indirect-read sentence rests on (the independent review's
+// finding, 2026-10-29).
+func TestDoctorCredentialsServiceDeployersNamesAProjectLevelEditorOnce(t *testing.T) {
+	r := newSecretReadersRig(t)
+	r.withCredentialsService(t)
+	r.svcs.AddService(infra.CredentialsServiceName)
+	r.iam.AddServiceAccount("proj-1234", credentialsSA, "credentials service")
+	r.crm.SetPolicy("proj-1234", gcpfake.Binding{Role: "roles/editor", Members: []string{"user:editor@example.com"}})
+
+	o, err := r.doctor(t)
+	if err != nil {
+		t.Fatalf("an info check must not fail doctor: %v", err)
+	}
+	c, ok := doctorCheckByID(o.Checks, "credentials-service-deployers")
+	if !ok || c.OK || c.Severity != "info" {
+		t.Fatalf("credentials-service-deployers = %+v (%+v)", c, o.Checks)
+	}
+	if got := strings.Count(c.Problem, "user:editor@example.com (roles/editor)"); got != 1 {
+		t.Errorf("problem %q names the Editor's roles/editor grant %d times, want once: the two reads of the project policy produce the same member-and-role pair and the line deduplicates them", c.Problem, got)
+	}
+	if !strings.Contains(c.Problem, "1 principal(s)") {
+		t.Errorf("problem %q does not count the Editor as one principal", c.Problem)
 	}
 }
 

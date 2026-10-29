@@ -43,23 +43,30 @@ var secretReaderRoles = []string{"roles/secretmanager.admin", "roles/secretmanag
 //
 // Editor is deliberately not here. Secret Manager grants Editor
 // secretmanager.secrets.getIamPolicy and delete but not versions.access: an
-// Editor reads a container only through a secretAccessor grant of its own,
-// which is a grant like any other and the per-container half reports it.
+// Editor reads a container directly only through a secretAccessor grant of its
+// own, which is a grant like any other and the per-container half reports it.
 // Naming Editors as readers would be a claim the live role does not support,
-// and it would hide exactly those grants.
+// and it would hide exactly those grants. (roles/editor also carries
+// iam.serviceAccounts.actAs and run.services.update, so an Editor reaches a
+// value indirectly too — by deploying code that runs as an account holding a
+// grant. That is a deploy, not a container grant, and this check is about the
+// latter.)
 var basicRoles = []string{"roles/owner"}
 
 // runServiceRoles and actAsRoles are the predefined roles that carry
 // run.services.update (deploying a Cloud Run service) and
 // iam.serviceAccounts.actAs (deploying one that runs as another account),
-// recognized by name for secretReaderRoles' reason. The two lists differ:
-// Editor, run.admin and run.developer update a service without carrying actAs,
-// so a holder of one of them on an account's policy is not a deployer of that
-// account — running as an account needs a serviceAccountUser grant of its own,
-// or Owner, which carries actAs with the rest of its roles.
+// recognized by name for secretReaderRoles' reason. The two lists differ by
+// run.admin and run.developer, which update a service without carrying actAs:
+// a holder of one of them on an account's policy is not a deployer of that
+// account through an actAs grant. Editor is in both, because roles/editor carries
+// actAs as well as run.services.update; the two reads produce the same
+// member-and-role pair for a project-level Editor, and the line deduplicates
+// them, so listing it twice costs nothing. Running as an account needs actAs
+// from a serviceAccountUser grant of its own, or from Owner or Editor.
 var (
 	runServiceRoles = []string{"roles/owner", "roles/editor", "roles/run.admin", "roles/run.developer"}
-	actAsRoles      = []string{"roles/owner", "roles/iam.serviceAccountUser"}
+	actAsRoles      = []string{"roles/owner", "roles/editor", "roles/iam.serviceAccountUser"}
 )
 
 // doctorSecretManagerChecks is the plan's B0.3 pair of reads, taken from one
@@ -174,13 +181,21 @@ func doctorSecretReaderChecks(ctx context.Context, lc *localcfg.Config, sm *gcp.
 		problem := fmt.Sprintf("secret %s grants a role that reads every version to %s: each of them can read every version of it",
 			containerName(s), strings.Join(printableNames(extra), ", "))
 		check := doctorCheck{ID: "secret-readers-unexpected", Severity: "warning", Problem: problem}
+		// The managed label chooses only the line's wording — its Problem text
+		// and its fix — and never who is reported: anyone who may add a label to
+		// the container (secretmanager.secrets.update) can write `fugaro=managed`
+		// on one Fugaro did not create, and the worst that buys is the removal
+		// advice in place of the review one, with the ownership clause that goes
+		// with it. The reader is named either way, so the label can never hide
+		// one — which is why the sweep decides its wording from the label rather
+		// than trusting it to bound the finding.
 		if fugaroContainer(s) {
 			check.Problem += ", and Fugaro does not create them for it"
 			check.Fix = "review each member and remove the ones Fugaro did not create: gcloud secrets remove-iam-policy-binding SECRET --member=MEMBER --role=ROLE" +
 				" (" + selfCommand() + " secrets ls --json prints each container's id)"
 		} else {
 			check.Problem += ", and Fugaro did not create this container, so a reader on it may be another application's"
-			check.Fix = "review each member against the application or plan that owns this container: Fugaro did not create it, so its readers are not Fugaro's to remove by hand" +
+			check.Fix = "review each member against the application or plan that owns this container: Fugaro did not create it, so its readers are not Fugaro's to remove" +
 				" (gcloud secrets get-iam-policy SECRET prints them)"
 		}
 		checks = append(checks, check)
