@@ -687,11 +687,14 @@ test.describe('the launch path, in the real app', () => {
       // `test/unit/launch.test.ts`; the parent-close case above is the one that
       // closes a parent with no `cancelFor` in play.
       void page
-        .evaluate(async () => {
+        // The project goes in as an argument: the function runs in the
+        // renderer, where this file's constants do not exist, and a
+        // ReferenceError there would be swallowed by the catch below.
+        .evaluate(async (project) => {
           const api = (window as unknown as { fugaro: { chooseInstallation: (args: unknown) => Promise<unknown> } })
             .fugaro
-          return await api.chooseInstallation({ project: PROJECT })
-        })
+          return await api.chooseInstallation({ project })
+        }, PROJECT)
         // The dashboard this ran in is replaced by the re-choose once the new
         // window is up, so the answer may never reach it.
         .catch(() => undefined)
