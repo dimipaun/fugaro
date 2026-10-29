@@ -2403,17 +2403,36 @@ export function navFailures(html, rel) {
 
   const navs = all.filter((el) => el.name === 'nav' && (el.attrs.get('class') ?? '').split(/\s+/).includes('site-nav'))
 
+  // The way home on a phone: the wordmark's text is in its own element, because that element is
+  // what the phone breakpoint takes out of the header's row (the owner's ruling of 2026-10-19:
+  // the mark stays, the text goes). Loose text in the link is text nothing can hide.
+  //
+  // It is a rule of the chrome rather than of the menu, so it is read on both shapes of page: the
+  // campaign mode's header is the wordmark and nothing else, and that one link is the page's whole
+  // way home.
+  const wordmarkRule = () => {
+    const wordmark = all.find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('site-wordmark'))
+    const wordmarkName = wordmark && [...walk(wordmark)].find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('site-wordmark-name'))
+    if (!wordmark) {
+      fail('the page carries no wordmark link to the home page')
+    } else if (!wordmarkName || !textOf(wordmarkName).trim()) {
+      fail("the wordmark's text is not in its own element (.site-wordmark-name), so the phone breakpoint has nothing to take out of the header's row and the row is wider than the viewport at 375 px")
+    }
+  }
+
   // **A campaign page carries no menu at all** (go-to-market plan, Task G2.2; spec §6). The four
   // landing pages `/save`, `/control`, `/scale` and `/crew` are one message for one audience, so
   // the site's nine sections are not a choice a visitor who arrived from an ad is offered: the
   // page's own calls to action are, and the footer keeps the three links a reader looks for.
   // The mode is read off the page's own chrome rather than off a list of routes, so a campaign
   // page that grew the menu back is refused here instead of passing because its path is listed —
-  // and the wordmark, which is the whole of that chrome, is still held to its own rule below.
+  // and what this branch leaves behind is the menu's own checks, not the wordmark's: the header
+  // is the wordmark alone, so that link is read here like any other page's.
   if (all.some((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('campaign-header'))) {
     if (navs.length !== 0) {
       return [`${rel}: the page is a campaign page and carries ${navs.length} section navs; a campaign page has none — the campaign mode's header is the wordmark alone (spec §6, G2.2)`]
     }
+    wordmarkRule()
     return out
   }
 
@@ -2528,16 +2547,7 @@ export function navFailures(html, rel) {
     }
   }
 
-  // The way home on a phone: the wordmark's text is in its own element, because that element is
-  // what the phone breakpoint takes out of the header's row (the owner's ruling of 2026-10-19:
-  // the mark stays, the text goes). Loose text in the link is text nothing can hide.
-  const wordmark = all.find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('site-wordmark'))
-  const wordmarkName = wordmark && [...walk(wordmark)].find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('site-wordmark-name'))
-  if (!wordmark) {
-    fail('the page carries no wordmark link to the home page')
-  } else if (!wordmarkName || !textOf(wordmarkName).trim()) {
-    fail("the wordmark's text is not in its own element (.site-wordmark-name), so the phone breakpoint has nothing to take out of the header's row and the row is wider than the viewport at 375 px")
-  }
+  wordmarkRule()
 
   // Keyboard reachability, and the current page.
   const links = [...walk(nav)].filter((el) => el.name === 'a')
@@ -2606,17 +2616,20 @@ function navRefusals(html, rel = 'docs/index.html') {
 }
 
 // A campaign page in the shape the layout's campaign mode writes it (G2.2): the chrome class
-// and the wordmark, and no menu. The refusal below grows the menu back onto it.
+// and the wordmark, and no menu. The refusals below grow the menu back onto it and take the
+// wordmark out of it.
 const CAMPAIGN_HEADER = `<header class="campaign-header">${FIXTURE_WORDMARK}</header>`
+const campaignPage = (header = CAMPAIGN_HEADER) => `<!DOCTYPE html><html lang="en"><head><title>t</title></head><body>${header}</body></html>`
 
 test('the menu passes its own rule, so each refusal below is the one thing it breaks', () => {
   assert.deepEqual(navRefusals(fixturePage()), [])
   // The home page: the menu's own Home link is the one element marked current, and the wordmark
   // — the other link to `/` — carries no mark of its own (the owner's feedback of 2026-10-21).
   assert.deepEqual(navRefusals(fixturePage({ nav: fixtureNav({ current: '/' }) }), 'index.html'), [])
-  // A campaign page is the second shape that passes, and it passes by having no menu: the page
-  // is one message for one audience and the header is the wordmark alone (spec §6, G2.2).
-  assert.deepEqual(navRefusals(`<!DOCTYPE html><html lang="en"><head><title>t</title></head><body>${CAMPAIGN_HEADER}</body></html>`, 'save/index.html'), [])
+  // A campaign page is the second shape that passes, and it passes by having no menu and by
+  // carrying the wordmark that header is made of: the page is one message for one audience and
+  // its chrome is the wordmark alone (spec §6, G2.2).
+  assert.deepEqual(navRefusals(campaignPage(), 'save/index.html'), [])
 })
 
 test('every menu refusal fires on the defect it names', () => {
@@ -2692,8 +2705,17 @@ test('every menu refusal fires on the defect it names', () => {
     ['no wordmark at all', fixturePage({ wordmark: '' }), /no wordmark link to the home page/],
     [
       'a campaign page that grew the menu back',
-      `<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><header class="campaign-header">${FIXTURE_WORDMARK}${fixtureNav()}</header></body></html>`,
+      campaignPage(`<header class="campaign-header">${FIXTURE_WORDMARK}${fixtureNav()}</header>`),
       /is a campaign page and carries 1 section navs/,
+    ],
+    // The wordmark is the campaign header's whole content, so the two defects a menu page is
+    // refused for are refused here too: the campaign branch leaves the menu's checks behind, not
+    // this one (G2.2).
+    ['a campaign page whose header carries no wordmark', campaignPage('<header class="campaign-header"></header>'), /no wordmark link to the home page/],
+    [
+      "a campaign page whose wordmark text is loose in the link",
+      campaignPage('<header class="campaign-header"><a class="site-wordmark" href="/" rel="home">Fugaro</a></header>'),
+      /not in its own element/,
     ],
   ]
   for (const [what, html, expected] of cases) {
@@ -2763,4 +2785,226 @@ test('the copy confirmation sits over its button and never moves the command', (
   const inFlow = css.replace(/(\.copy-status\{[^}]*?)position:absolute;?/, '$1')
   assert.notEqual(inFlow, css, 'this fixture removes the confirmation\'s positioning, and the built stylesheet no longer carries it')
   assert.ok(copyStatusFailures(inFlow).some((line) => /takes width from the command/.test(line)), 'a confirmation in the row was not refused')
+})
+
+// ---- the campaign pages' content lands on the chrome's left edge (G2.2) --------------------
+//
+// The four campaign pages are five full-width bands, each padding its own content onto the page's
+// one pair of margins with `--frame-gutter`, the expression the site's own header and footer
+// carry, so the headline starts on the wordmark's left edge and the two margins are equal. That
+// holds only while `main` contributes nothing: the gutter is a percentage of the box it is used
+// in, so a `main` that pads the bands or caps their width resolves it against a box that is not
+// the page and every band's content lands one gutter step right of the chrome — 16 px on a phone
+// and 24 px at 1280, which is the second left edge the review of round 3 measured on How It
+// Works. It is read the way that one is: the pixels the chrome's edge is at and the pixels a
+// band's content is at, at a phone and at a desktop width, out of the built page's own
+// stylesheet rather than left to the eye.
+//
+// **Both halves of the pair pass, and the pair in force at once is what is refused.** `main`
+// dropped with the bands carrying the gutter is what the site writes; `main` kept with the bands
+// carrying none is the other shape that puts their content on the chrome's edge. A page where
+// both are in force is the defect.
+
+/** The five sections a campaign page is built from, and the two chrome blocks its mode draws. */
+const CAMPAIGN_BLOCKS = ['campaign-hero', 'campaign-proof', 'campaign-steps', 'campaign-social-proof', 'campaign-calls']
+const CAMPAIGN_CHROME = ['campaign-header', 'campaign-footer']
+
+/** The two widths the reading is taken at: a phone, and a desktop. The campaign mode's own
+ * breakpoint is 48 rem, so the two sit on either side of it and each shape is read. */
+const EDGE_WIDTHS = [375, 1280]
+
+/**
+ * A selector list split on its own commas. The commas inside `:has(…)` separate that
+ * pseudo-class's arguments rather than the rule's selectors, and the rule this reading is drawn
+ * to — `main:has(> .hero, > [data-security-page], > .campaign-hero)` — is three arguments and
+ * one selector.
+ */
+function selectorParts(selector) {
+  const parts = []
+  let depth = 0
+  let start = 0
+  for (let at = 0; at < selector.length; at += 1) {
+    const char = selector[at]
+    if (char === '(') depth += 1
+    else if (char === ')') depth -= 1
+    else if (char === ',' && depth === 0) {
+      parts.push(selector.slice(start, at).trim())
+      start = at + 1
+    }
+  }
+  parts.push(selector.slice(start).trim())
+  return parts.filter(Boolean)
+}
+
+/**
+ * A gutter declaration as pixels, resolved against the box that carries it. The site writes it
+ * as `max(var(--space-sm), calc((100% - var(--page-max)) / 2 + var(--space-sm)))`, redefines it
+ * at the wide breakpoint with `--space-md`, and a band writes `var(--frame-gutter)`: the token
+ * in force at a width is the one read, and the box width is the caller's, because `100%` is the
+ * width of whichever box the value is used in. A shape this reader does not know is `NaN`, which
+ * the caller refuses rather than compares.
+ */
+function gutterPx(css, value, boxWidth, width, tokens) {
+  const shape =
+    /^max\(\s*var\(--([a-z0-9-]+)\)\s*,\s*calc\(\s*\(100%\s*-\s*var\(--page-max\)\)\s*\/\s*2\s*\+\s*var\(--([a-z0-9-]+)\)\s*\)\s*\)$/
+  const resolve = (text) => {
+    const m = shape.exec((text ?? '').trim())
+    if (m === null) return NaN
+    const floor = tokens.get(m[1])
+    const margin = tokens.get(m[2])
+    const page = tokens.get('page-max')
+    if ([floor, margin, page].some((px) => px === undefined)) return NaN
+    return Math.max(floor, (boxWidth - page) / 2 + margin)
+  }
+  if ((value ?? '').trim() !== 'var(--frame-gutter)') return resolve(value)
+  const declared = allRules(css)
+    .filter((rule) => selectorParts(rule.selector).some((part) => [':root', 'html'].includes(part)) && appliesAt(width)(rule))
+    .map((rule) => declarations(rule)['--frame-gutter'])
+    .filter((text) => text !== undefined)
+    .pop()
+  return resolve(declared)
+}
+
+/**
+ * Every way a campaign page's content does not land on the chrome's left edge, for one built
+ * page's stylesheet and markup. Returns nothing on a page that carries no campaign section, so
+ * it can be run over every built page.
+ */
+export function campaignLeftEdgeFailures(css, html) {
+  const out = []
+  const classesOf = (el) => (el.attrs.get('class') ?? '').split(/\s+/).filter(Boolean)
+  const doc = parse(html)
+  const bands = [...walk(doc)].filter((el) => classesOf(el).some((name) => CAMPAIGN_BLOCKS.includes(name)))
+  if (bands.length === 0) return out
+
+  const rules = allRules(css)
+  const tokens = lengthTokens(css)
+  const declared = (klass, property, width) =>
+    rules
+      .filter((rule) => new RegExp(`\\.${klass}(?![\\w-])`).test(rule.selector) && appliesAt(width)(rule))
+      .map((rule) => declarations(rule)[property])
+      .filter((value) => value !== undefined)
+      .pop()
+
+  const main = [...walk(doc)].find((el) => el.name === 'main')
+  if (main === undefined) return ['the campaign page carries no <main>, so there is no box its bands pad inside (G2.2)']
+  const held = new Set(main.children.filter((child) => child.name !== undefined).flatMap(classesOf))
+  // A `main:has(> .x)` rule is in force only on a page whose `main` holds an `.x`: the campaign's
+  // rule matches here and the homepage's hero rule does not, which is the whole reason this
+  // reading is taken per built page rather than off the stylesheet alone.
+  const matches = (part) => {
+    if (part === 'main') return true
+    const has = /^main:has\((.+)\)$/.exec(part)
+    return has !== null && has[1].split(',').some((condition) => held.has(condition.trim().replace(/^>\s*/, '').replace(/^\./, '')))
+  }
+  const mainRules = rules
+    .map((rule) => ({ rule, parts: selectorParts(rule.selector).filter(matches) }))
+    .filter((entry) => entry.parts.length > 0)
+    .map((entry) => ({ ...entry.rule, specific: entry.parts.some((part) => part !== 'main') }))
+
+  // What `main`'s own box is at a width: a `:has()` selector is the more specific of the two
+  // ranks, so its declarations win, and within a rank the last applicable declaration is the one
+  // a browser applies.
+  const mainAt = (width, property) => {
+    let value
+    for (const rank of [false, true]) {
+      for (const rule of mainRules) {
+        if (rule.specific !== rank || !appliesAt(width)(rule)) continue
+        const text = declarations(rule)[property]
+        if (text !== undefined) value = text
+      }
+    }
+    return value
+  }
+  const sidePx = (value, boxWidth, width) => {
+    const gutter = gutterPx(css, value, boxWidth, width, tokens)
+    return Number.isFinite(gutter) ? gutter : toPx(value, tokens)
+  }
+
+  for (const width of EDGE_WIDTHS) {
+    const chrome = gutterPx(css, declared('site-header', 'padding-inline', width), width, width, tokens)
+    const mainInline = mainAt(width, 'padding-inline') ?? inlineToken(mainAt(width, 'padding') ?? '0')
+    const inset = toPx(mainInline, tokens)
+    const ceiling = mainAt(width, 'max-width')
+    const box = Math.min(width, ceiling === undefined || ceiling.trim() === 'none' ? Infinity : toPx(ceiling, tokens))
+    if (![chrome, box, inset].every(Number.isFinite)) {
+      out.push(
+        `the campaign page's left edge at ${width} px cannot be read out of its stylesheet: the chrome's gutter is \`${declared('site-header', 'padding-inline', width) ?? '(nothing declared)'}\`, \`main\`'s inline room is \`${mainInline}\` and its ceiling is \`${ceiling ?? '(nothing declared)'}\`, and an edge this check cannot turn into pixels is one nothing measured — write the gutter in the shape the site writes it (G2.2)`,
+      )
+      continue
+    }
+    const content = box - 2 * inset
+    const mainLeft = (width - box) / 2 + inset
+
+    for (const klass of CAMPAIGN_CHROME) {
+      const value = declared(klass, 'padding-inline', width)
+      if (value === undefined) continue
+      const edge = sidePx(value, width, width)
+      if (!Number.isFinite(edge) || Math.abs(edge - chrome) > 0.5) {
+        out.push(
+          `at ${width} px the campaign chrome \`.${klass}\` pads its content to ${Number.isFinite(edge) ? Math.round(edge) : value} px and the site's own header pads to ${Math.round(chrome)} px: a campaign page keeps the site's chrome, so its wordmark and its footer links start where the site's header's own content does (G2.2)`,
+        )
+      }
+    }
+
+    for (const klass of CAMPAIGN_BLOCKS) {
+      if (!bands.some((el) => classesOf(el).includes(klass))) continue
+      const inline = declared(klass, 'padding-inline', width) ?? inlineToken(declared(klass, 'padding', width) ?? '0')
+      const room = sidePx(inline, content, width)
+      if (!Number.isFinite(room)) {
+        out.push(`at ${width} px the \`.${klass}\` band's inline room cannot be read from \`${inline}\`, and a room this check cannot turn into pixels is one nothing measured (G2.2)`)
+        continue
+      }
+      if (Math.abs(mainLeft + room - chrome) > 0.5) {
+        out.push(
+          `at ${width} px \`main\` starts the campaign bands at ${Math.round(mainLeft)} px and \`.${klass}\` pads ${Math.round(room)} px more, so their content lands at ${Math.round(mainLeft + room)} px while the chrome is at ${Math.round(chrome)} px: the five bands are as wide as the page and carry the page's one gutter, so \`main\` gives them neither a gutter nor a ceiling of its own — the two in force at once is the second left edge (G2.2)`,
+        )
+      }
+    }
+  }
+  return out
+}
+
+test('the campaign pages put their content on the chrome’s left edge', () => {
+  // The page's own markup, not its stylesheet: every page carries `.campaign-hero` in the CSS
+  // now — `base.css` names it in the rule that drops `main`'s gutter (`main:has(> .campaign-hero)`)
+  // — and the four pages are the ones that render the section.
+  const pages = builtPages().filter(({ html }) =>
+    [...walk(parse(html))].some((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('campaign-hero')),
+  )
+  const seen = pages.map(({ rel }) => rel)
+  assert.equal(seen.length, 4, `the build produced ${seen.length} campaign page(s) — ${seen.join(', ') || '(none)'} — and the spec's four paths are four (G2.2)`)
+  const failures = pages.flatMap(({ rel, html }) => campaignLeftEdgeFailures(pageCss(html), html).map((line) => `${rel}: ${line}`))
+  assert.deepEqual(failures, [], `a campaign page has two left edges:\n  ${failures.join('\n  ')}`)
+})
+
+test('the campaign left-edge refusal fires on the two in force at once, and passes on either half alone', () => {
+  const page = readFileSync(path.join(DIST, 'save', 'index.html'), 'utf8')
+  const css = pageCss(page)
+  assert.deepEqual(campaignLeftEdgeFailures(css, page), [], `the built campaign page does not pass the shape its own cases are drawn from:\n  ${campaignLeftEdgeFailures(css, page).join('\n  ')}`)
+
+  // The defect as it shipped before this check existed: `main` keeps the gutter and the ceiling
+  // the bare rule gives it, so each band's `--frame-gutter` resolves against a narrower box.
+  const before = css.replace(/main:has\([^)]*campaign-hero[^)]*\)\{[^}]*\}/g, '')
+  assert.notEqual(before, css, 'this fixture removes the campaign `main` rule, and the built stylesheet no longer carries it')
+  const refused = campaignLeftEdgeFailures(before, page)
+  assert.ok(
+    refused.some((line) => /at 1280 px `main` starts the campaign bands at 56 px/.test(line)) &&
+      refused.some((line) => /at 375 px `main` starts the campaign bands at 16 px/.test(line)),
+    `the second left edge at both widths was not refused; the check said:\n  ${refused.join('\n  ') || '(nothing)'}`,
+  )
+
+  // The other half of the pair: `main` keeps its own gutter and its ceiling, and the bands carry
+  // none of their own. It is the alternative the finding names, and it passes — what is refused
+  // is the two in force at once, not either of them.
+  const unguttered = CAMPAIGN_BLOCKS.reduce(
+    (text, klass) => text.replace(new RegExp(`\\.${klass}\\[[^}]*\\}`), (rule) => rule.replace(/padding-inline:var\(--frame-gutter\);?/, '')),
+    before,
+  )
+  assert.notEqual(unguttered, before, 'this fixture strips the bands’ own gutter, and the built stylesheet no longer carries one')
+  assert.deepEqual(
+    campaignLeftEdgeFailures(unguttered, page),
+    [],
+    `a page whose bands carry no gutter inside \`main\`'s own has the one left edge too:\n  ${campaignLeftEdgeFailures(unguttered, page).join('\n  ')}`,
+  )
 })

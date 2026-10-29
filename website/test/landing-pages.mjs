@@ -47,7 +47,7 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 
 import { loadLanding } from '../src/lib/landing.mjs'
-import { DIST, SITE, builtPages, cssRules, findAll, parse, servedFile, siteFacts, textOf, walk } from './lib/html.mjs'
+import { DIST, SITE, builtPages, cssRules, filesUnder, findAll, parse, servedFile, siteFacts, textOf, walk } from './lib/html.mjs'
 
 const LANDING = loadLanding()
 const FACTS = siteFacts()
@@ -103,7 +103,7 @@ test('the four campaign paths build, one page each', () => {
 })
 
 test('each campaign page is noindex, canonical to the home page, and absent from every sitemap', () => {
-  for (const { variant, rel } of PAGES) {
+  for (const { rel } of PAGES) {
     const { html } = pageOf(rel)
     const doc = parse(html)
 
@@ -120,22 +120,39 @@ test('each campaign page is noindex, canonical to the home page, and absent from
       HOME,
       `${rel} is canonical to ${JSON.stringify(canonical[0].attrs.get('href'))}: the four pages are variants of the home page's promise and point at it, so the four do not compete with each other or with the site's own page for one query (spec §6, F14)`,
     )
-    assert.ok(!(canonical[0].attrs.get('href') ?? '').includes(variant.path), `${rel} is canonical to itself`)
   }
 
-  // The sitemap half: the build produces none today (astro.config.mjs carries no sitemap
-  // integration, `loadSitemapHref` returns null), so this holds the moment one arrives rather
-  // than now — and the pages themselves are held to it either way, by carrying no sitemap hint.
-  const files = builtPages(DIST).map((page) => page.rel)
-  for (const rel of files.filter((name) => /(^|\/)sitemap[^/]*\.xml$/.test(name))) {
-    const body = readFileSync(path.join(DIST, rel), 'utf8')
-    for (const { variant } of PAGES) {
-      assert.ok(
-        !body.includes(`${variant.path}<`),
-        `${rel} lists ${variant.path}, which is a noindex campaign page: a sitemap is the list of the pages a site offers a crawler, and offering one it refuses to index is a contradiction (spec §6, F14)`,
-      )
-    }
+  // The campaign pages a sitemap body lists, as the route each `<loc>` resolves to: the four
+  // routes are served at `/save/` and the file names them `/save`, so the trailing slash is
+  // what the comparison is made without.
+  const listedCampaigns = (body) =>
+    [...body.matchAll(/<loc>\s*([^<\s]+)\s*<\/loc>/g)]
+      .map((match) => new URL(match[1], HOME).pathname.replace(/\/$/, ''))
+      .filter((route) => PAGES.some(({ variant }) => variant.path.replace(/\/$/, '') === route))
+
+  // The build produces no sitemap today (astro.config.mjs carries no sitemap integration,
+  // `loadSitemapHref` returns null), so this loop runs over nothing — the planted body below is
+  // what proves the reading, and it goes through the same call the real files would. The pages
+  // are held to it either way, by carrying no sitemap hint of their own.
+  for (const rel of filesUnder(DIST).filter((name) => /(^|\/)sitemap[^/]*\.xml$/.test(name))) {
+    const listed = listedCampaigns(readFileSync(path.join(DIST, rel), 'utf8'))
+    assert.deepEqual(
+      listed,
+      [],
+      `${rel} lists ${listed.join(', ')}, which ${listed.length === 1 ? 'is a noindex campaign page' : 'are noindex campaign pages'}: a sitemap is the list of the pages a site offers a crawler, and offering one it refuses to index is a contradiction (spec §6, F14)`,
+    )
   }
+  const planted = `<?xml version="1.0" encoding="UTF-8"?><urlset><url><loc>${HOME}</loc></url><url><loc>${HOME}save/</loc></url></urlset>`
+  assert.deepEqual(
+    listedCampaigns(planted),
+    ['/save'],
+    'the sitemap reading does not see a campaign page a sitemap lists, which is the check this case is: the four pages are not offered to a crawler (spec §6, F14)',
+  )
+  assert.deepEqual(
+    listedCampaigns(`<urlset><url><loc>${HOME}</loc></url></urlset>`),
+    [],
+    `the sitemap reading counts ${HOME} as a campaign page, and the home page is the page the four campaign pages are canonical to (spec §6, F14)`,
+  )
   for (const { rel } of PAGES) {
     assert.ok(!/<link[^>]*rel="sitemap"/.test(pageOf(rel).html), `${rel} carries a sitemap hint, and the four campaign pages are not in any sitemap`)
   }
