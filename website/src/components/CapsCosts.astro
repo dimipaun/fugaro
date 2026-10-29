@@ -87,9 +87,10 @@ interface ReferenceCommand {
 
 /**
  * The reference's budget sections: its heading, its one-line description and its usage
- * line. The generated document's shape is fixed by `internal/clidoc` (`## \`fugaro x\``,
- * then the short description, then the long one, then `Usage: \`...\``), and this reader
- * takes exactly those three facts and refuses to guess at anything else.
+ * line. The reference's shape is fixed by the renderer `internal/clidoc/cliref` that
+ * `go run ./ee/clidoc` writes it with (`## \`fugaro x\``, then the short description, then
+ * the long one, then `Usage: \`...\``), and this reader takes exactly those three facts and
+ * refuses to guess at anything else.
  */
 function readReference(body: string): Map<string, ReferenceCommand> {
   const commands = new Map<string, ReferenceCommand>()
@@ -165,7 +166,7 @@ for (const path of ['fugaro budget', ...GUIDE]) {
   const command = commands.get(path)
   if (command === undefined || command.short === '' || command.usage === '') {
     throw new Error(
-      `website/content/cli-reference.md carries no usable section for \`${path}\`: the caps guide prints the CLI reference's own usage lines and one-line descriptions, so a command the reference does not carry is a command this page cannot print. Regenerate the reference with \`go run ./internal/clidoc\` (W0.4, W1.5).`,
+      `website/content/cli-reference.md carries no usable section for \`${path}\`: the caps guide prints the CLI reference's own usage lines and one-line descriptions, so a command the reference does not carry is a command this page cannot print. Regenerate the reference with \`go run ./ee/clidoc\` (W0.4, W1.5).`,
     )
   }
 }

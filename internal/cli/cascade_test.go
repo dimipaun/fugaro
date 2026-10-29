@@ -508,7 +508,8 @@ func TestValidateCascadeReadsNoPolicyOffline(t *testing.T) {
 // well — and for a cascade file that is the difference between O2's switch being
 // read and the file being refused unproven. The usage string is what `fugaro
 // validate --help` prints and what the generated CLI reference's row repeats
-// (website/content/cli-reference.md, internal/clidoc), so both are read here: a
+// (website/content/cli-reference.md, rendered by internal/clidoc/cliref and written
+// by `go run ./ee/clidoc`), so both are read here: a
 // reader who takes the old sentence for the whole flag reads --offline as a way
 // to skip the bucket and still get a verdict, not as the state that refuses
 // their cascade workflow.
@@ -534,7 +535,7 @@ func TestValidateOfflineHelpNamesThePolicyRead(t *testing.T) {
 		t.Fatal("the reference's validate section carries no `--offline` row: the row moved and this scan no longer reads it")
 	}
 	if !strings.Contains(row, "policy") {
-		t.Errorf("the generated reference's --offline row does not name the published policy (regenerate with `go run ./internal/clidoc` after the flag's help changes): %q", row)
+		t.Errorf("the generated reference's --offline row does not name the published policy (regenerate with `go run ./ee/clidoc` after the flag's help changes): %q", row)
 	}
 }
 
