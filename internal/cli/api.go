@@ -3,12 +3,17 @@ package cli
 import (
 	"context"
 	"slices"
+	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/firestore"
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/runview"
 )
 
 // This file is the one exported surface the core offers the commands the owner
@@ -123,3 +128,100 @@ func ClipRunes(s string, n int) string { return clipRunes(s, n) }
 // (ee/plugincheck). It answers a copy, so a caller that appends to it changes
 // nothing.
 func PaidCommandNames() []string { return slices.Clone(paidCommandNames) }
+
+// RunsBucket is the bucket the project's runs are stored in.
+func (c *Cloud) RunsBucket() *blobx.Bucket { return c.env.bucket }
+
+// RepoProvider is repo's git provider kind, as Cloud.RepoSlug resolves it: the
+// local config's entry first, then the checkout's fugaro.yaml.
+func (c *Cloud) RepoProvider(repo string, co *config.Config) string {
+	return c.env.repoProvider(repo, co)
+}
+
+// Close releases the cloud's bucket and its build-record bucket.
+func (c *Cloud) Close() { c.env.Close() }
+
+// RunObjects is what the runs bucket holds about one run, before its execution
+// is joined, opaque so that a moved command reads what the coordinator's sweep
+// reads and nothing else.
+type RunObjects struct{ o runObjects }
+
+// ReadRun reads what the bucket knows about one run; it makes no backend call.
+func (c *Cloud) ReadRun(ctx context.Context, slug, id string) (*RunObjects, error) {
+	o, err := readRun(ctx, c.env, slug, id)
+	if err != nil {
+		return nil, err
+	}
+	return &RunObjects{o: o}, nil
+}
+
+// Input is the run's own objects, as the other views of one run read them.
+func (r *RunObjects) Input() runview.Input { return r.o.in }
+
+// Warning is what the read could not make sense of, for the command's stderr.
+func (r *RunObjects) Warning() string { return r.o.warning }
+
+// CheckoutOf is a memoized lookup of the working directory's fugaro.yaml, for
+// repo only: what the commands that name a repository read it through.
+func CheckoutOf(ctx context.Context, repo string) func() *config.Config {
+	return checkoutOf(ctx, repo)
+}
+
+// ParseSince parses a --since value: a positive number of days (7d), a
+// positive Go duration (36h, 90m), or 0 for no bound.
+func ParseSince(s string) (time.Duration, error) { return parseSince(s) }
+
+// LsDefaultSince is the default window of a listing, which the coordinator's
+// own default --since is.
+func LsDefaultSince() string { return lsDefaultSince }
+
+// LsNow is the clock a --since window is measured back from: a fixed one is
+// how the listing's own tests pin that window, and the coordinator's do too.
+func LsNow() time.Time { return lsNow() }
+
+// Parallel calls fn(0) … fn(n-1) on up to the listing's own bound of
+// goroutines.
+func Parallel(n int, fn func(i int)) { parallel(n, fn) }
+
+// OpenProvider turns the process environment into the project's code-host
+// settings, the way a launch with no --provider override does: the kind to
+// open and how to open it, with warn receiving the adapters' warnings.
+func OpenProvider(env []string, warn func(string)) (string, gitprov.Opener, error) {
+	return providerOptions(execOptions{}, env, warn)
+}
+
+// NewBudgetClient is the client of the project's database at url, acting as
+// the person (ADC with the budget scopes); noAuth (fakes only) sends no
+// credentials. The URL is validated first.
+func NewBudgetClient(ctx context.Context, url string, noAuth bool) (*rtdb.Client, error) {
+	return newBudgetClient(ctx, url, noAuth)
+}
+
+// BudgetScopes are the OAuth scopes a database token is minted with. It
+// answers a copy, so a caller cannot change what the core mints for the next
+// one.
+func BudgetScopes() []string { return slices.Clone(budgetScopes) }
+
+// CheckDatabaseHost refuses a database URL that is not the named Firebase
+// project's own: the sweep writes only to this Fugaro project's database.
+func CheckDatabaseHost(rawURL, firebaseProject string) error {
+	return checkDatabaseHost(rawURL, firebaseProject)
+}
+
+const (
+	// EnvProject is the project's name, which the sweep job reads out of the
+	// environment Terraform sets on it.
+	EnvProject = envProject
+	// EnvFirebaseFP is the Firebase project the database has to belong to.
+	EnvFirebaseFP = envFirebaseFP
+	// EnvRTDBURL is the database to sweep.
+	EnvRTDBURL = envRTDBURL
+	// EnvRunsBucket is the bucket the runs are read from.
+	EnvRunsBucket = envRunsBucket
+)
+
+// ReportIntentTimeout bounds one launch's declaration, as the core's own
+// declarer bounds it: the declaration is advisory, and a database that is slow
+// or unreachable must cost the launch a few seconds rather than the hold it is
+// working inside.
+const ReportIntentTimeout = reportIntentTimeout

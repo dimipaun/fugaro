@@ -604,9 +604,13 @@ D525 keeps the tagged images public: anyone may pull them, and the licence gover
 
 ## 10. The helper API an `ee/` command needs from `internal/cli`
 
-S1.1's list, made concrete: `internal/cli/api.go` (E1.1) publishes exactly these, and nothing more.
-An `ee/` command that needs something outside this list either imports a leaf package that already
-exists (`internal/safetext` for terminal-safe text) or adds a helper here, in the open.
+S1.1's list, made concrete: `internal/cli/api.go` (E1.1, plus E2.1a for the coordinator's move)
+publishes exactly these, and nothing more. An `ee/` command that needs something outside this list
+either imports a leaf package that already exists (`internal/safetext` for terminal-safe text) or
+adds a helper here, in the open.
+
+The first block is E1.1's; the second is E2.1a's, which publishes what the coordinator's command and
+library read beside the cloud.
 
 | Core helper today | Published in `api.go` | Signature |
 | --- | --- | --- |
@@ -627,6 +631,21 @@ exists (`internal/safetext` for terminal-safe text) or adds a helper here, in th
 | `oneLine` (`safetext.go:18`) | — (import `internal/safetext` directly) | `safetext.OneLine(string) string` |
 | `clipRunes` (`budget.go:118`) | `ClipRunes` | `func ClipRunes(s string, n int) string` |
 | `paidCommandNames` (`extend.go:159`) | `PaidCommandNames` | `func PaidCommandNames() []string` |
+| `(*cloudEnv).bucket` (`cloud.go`) | `Cloud.RunsBucket` | `func (c *Cloud) RunsBucket() *blobx.Bucket` |
+| `(*cloudEnv).repoProvider` (`project_job.go:224`) | `Cloud.RepoProvider` | `func (c *Cloud) RepoProvider(repo string, co *config.Config) string` |
+| `(*cloudEnv).Close` (`cloud.go:186`) | `Cloud.Close` | `func (c *Cloud) Close()` |
+| `readRun` (`runs.go:414`), `runObjects` (`runs.go:402`) | `Cloud.ReadRun`, `RunObjects` (opaque: `Input`, `Warning`) | `func (c *Cloud) ReadRun(ctx context.Context, slug, id string) (*RunObjects, error)` |
+| `checkoutOf` (`run.go:2261`) | `CheckoutOf` | `func CheckoutOf(ctx context.Context, repo string) func() *config.Config` |
+| `parseSince` (`runs.go:532`) | `ParseSince` | `func ParseSince(s string) (time.Duration, error)` |
+| `lsDefaultSince` (`runs.go:61`) | `LsDefaultSince` | `func LsDefaultSince() string` |
+| `lsNow` (`runs.go:69`) | `LsNow` | `func LsNow() time.Time` |
+| `parallel` (`runs.go:358`) | `Parallel` | `func Parallel(n int, fn func(i int))` |
+| `providerOptions` (`exec.go:324`), called with a zero `execOptions` | `OpenProvider` | `func OpenProvider(env []string, warn func(string)) (string, gitprov.Opener, error)` |
+| `newBudgetClient` (`cloud.go:378`) | `NewBudgetClient` | `func NewBudgetClient(ctx context.Context, url string, noAuth bool) (*rtdb.Client, error)` |
+| `budgetScopes` (`cloud.go:344`) | `BudgetScopes` | `func BudgetScopes() []string` |
+| `checkDatabaseHost` (`history.go:187`) | `CheckDatabaseHost` | `func CheckDatabaseHost(rawURL, firebaseProject string) error` |
+| `envProject`, `envFirebaseFP`, `envRTDBURL`, `envRunsBucket` (`history.go:34`) | `EnvProject`, `EnvFirebaseFP`, `EnvRTDBURL`, `EnvRunsBucket` | consts |
+| `reportIntentTimeout` (`run.go:2918`) | `ReportIntentTimeout` | const |
 
 Notes that make this list the right size:
 
@@ -638,7 +657,12 @@ Notes that make this list the right size:
   exporting the classification.
 - The moved commands' own error wording stays theirs; only the prefix kinds move.
 - `OneLine` stays out of `api.go` on purpose: `safetext.OneLine` is already an importable leaf, and
-  a wrapper would be a second name for one function.
+  a wrapper would be a second name for one function. The same holds for the terminal-safe text
+  beside it — `cellOneLine` is `safetext.TableCell` and `multiLine` is `safetext.MultiLine`, both
+  one-line wrappers today — so a moved command imports `internal/safetext` and no name is published
+  for any of the three.
+- `RunObjects` is opaque and answers only `Input` and `Warning`, which is all the sweep reads of it;
+  the store behind a run stays the core's, as `Cloud` and `CloudFlags` do.
 - `PaidCommandNames` is here for the core's own skill checks, not for a moved command: E1.7b's
   shared check in `plugin/skillcli_test.go`, the plugin lint and `ee/plugincheck` all read the list
   of names whose code moves, so none of them has to write it down a second time. It is a **reader,
