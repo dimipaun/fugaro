@@ -324,6 +324,65 @@ describe('the rows the rail draws', () => {
     expect(reply.rows[0]?.state.command).toBe(FUGARO_INSTALL_COMMAND)
     expect(firstReadableIndex(reply.rows.map((row) => row.state))).toBe(-1)
   })
+
+  it('carries what each installation records as repositories, and no path', async () => {
+    // The Live view's launch control (V2.5.1b) offers these and passes the chosen
+    // one back to the main process, which matches it against the installation's
+    // own records -- so the field is the identities themselves, in the CLI's
+    // order, each one once, and the checkout paths beside them are not in it.
+    const userData = store([
+      { id: '0123456789abcdef', project: 'aurora', checkout: '/home/operator/src/aurora' },
+      { id: 'fedcba9876543210', project: 'vega' },
+    ])
+    const { ipcMain } = over({ userData, stub: stubWith(DOCUMENT, [CONFIG_LINE]) })
+    const reply = await list(ipcMain)
+
+    // `orbit`'s document lists its one repository twice, as two checkouts of it,
+    // one of them under the machine's temporary directory: one identity, and no
+    // path from either row.
+    expect(rowOf(reply, 'orbit').repositories).toEqual(['github/owner/orbit'])
+    // `aurora`'s config could not be read, so it records no repository at all --
+    // `[]` is a fact, and the form draws its own sentence for it rather than an
+    // empty control.
+    expect(rowOf(reply, 'aurora').repositories).toEqual([])
+    // `vega` is in the console's own store and in no CLI list, which is the
+    // ordinary case for a store written by an older console, and it records none
+    // either.
+    expect(rowOf(reply, 'vega').listed).toBe(false)
+    expect(rowOf(reply, 'vega').repositories).toEqual([])
+    for (const row of reply.rows) {
+      expect(row.repositories.filter((one) => one.includes('/home/') || one.startsWith(TMP))).toEqual([])
+    }
+  })
+
+  it('keeps the CLI’s order, drops the repeat, and keeps a repository whose path has moved', async () => {
+    // A launch names a repository, not a directory, so none of the three flags a
+    // checkout row carries (`enrolled`, `valid`, `path`) decides whether a
+    // repository is offered: a repository this machine once checked out and no
+    // longer has is still one a run can be launched on.
+    const document = {
+      installations: [
+        {
+          name: 'orbit',
+          gcp_project: 'orbit-482301',
+          region: 'europe-west4',
+          checkouts: [
+            { repository: 'bitbucket/team/orbit', path: '/home/operator/src/orbit', enrolled: true, valid: true },
+            { repository: 'github/owner/orbit', path: '/home/operator/src/orbit', enrolled: true, valid: true },
+            { repository: 'bitbucket/team/orbit', path: '/home/operator/gone', enrolled: false, valid: false },
+          ],
+        },
+      ],
+    }
+    const userData = store([{ id: '0123456789abcdef', project: 'orbit' }])
+    const { ipcMain } = over({ userData, stub: stubWith(document) })
+    const reply = await list(ipcMain)
+
+    expect(rowOf(reply, 'orbit').repositories).toEqual([
+      'bitbucket/team/orbit',
+      'github/owner/orbit',
+    ])
+  })
 })
 
 describe('the console’s own open rule at startup', () => {
