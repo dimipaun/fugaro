@@ -20,6 +20,12 @@ import (
 // of a code the phone photographs, and it is the whole point of the event.
 const pairEventVersion = 1
 
+// pairQRVersion is the QR payload's own version, and it is deliberately not
+// pairEventVersion: the phone pins the payload it scanned (P6.8), so a bump of
+// the console's stream must not silently re-version every code already in a
+// phone's hands.
+const pairQRVersion = 1
+
 // The five events the stream defines. qr, waiting and refused are written by
 // this command; code and done are the wait's and the delivery's (T2b, T3),
 // and their shapes live here beside the rest so the console is written against
@@ -34,16 +40,23 @@ const (
 
 // The stable refusal codes, one per refusal §4.6 classes as exit 1, plus the
 // one that is exit 2. They are wire values: a console switches on them, so a
-// spelling here is a spelling it may rely on.
+// spelling here is a spelling it may rely on, and a code that names the wrong
+// case sends an operator to fix the wrong thing.
 const (
-	pairRefusedTimeout       = "timeout_above_cap"
-	pairRefusedInvalidRole   = "invalid_role"
-	pairRefusedRoleAbove     = "role_above_caller"
-	pairRefusedUnplaced      = "caller_unplaced"
-	pairRefusedEmail         = "email_unverified"
-	pairRefusedMinter        = "minter_role_missing"
-	pairRefusedDatabaseAdmin = "database_admin_missing"
-	pairRefusedUnreachable   = "database_unreachable"
+	pairRefusedTimeout            = "timeout_above_cap"
+	pairRefusedTimeoutNotPositive = "timeout_not_positive"
+	pairRefusedEnv                = "http2debug_set"
+	pairRefusedProject            = "project_not_selectable"
+	pairRefusedBudget             = "budget_backend_missing"
+	pairRefusedAPIKey             = "api_key_missing"
+	pairRefusedMismatch           = "database_not_this_projects"
+	pairRefusedInvalidRole        = "invalid_role"
+	pairRefusedRoleAbove          = "role_above_caller"
+	pairRefusedUnplaced           = "caller_unplaced"
+	pairRefusedEmail              = "email_unverified"
+	pairRefusedMinter             = "minter_role_missing"
+	pairRefusedDatabaseAdmin      = "database_admin_missing"
+	pairRefusedUnreachable        = "database_unreachable"
 )
 
 // pairEvent is one line of the stream. Every event carries the version, its

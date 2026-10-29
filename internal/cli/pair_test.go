@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -44,7 +45,10 @@ const (
 
 var pairT0 = time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)
 
-func newPairFixture(t *testing.T, me string) *pairFixture {
+// newPairFixture builds the fixture; edit, where a test gives one, rewrites the
+// config text before it is written, which is how a test asks for a config that
+// is missing something.
+func newPairFixture(t *testing.T, me string, edit ...func(*string, *pairFixture)) *pairFixture {
 	t.Helper()
 	f := &pairFixture{db: gcpfake.NewRTDB(t), iam: gcpfake.NewIAMCredentials(t), dir: t.TempDir()}
 	f.iam.AddSigner(pairSigner)
@@ -58,6 +62,9 @@ func newPairFixture(t *testing.T, me string) *pairFixture {
 		"endpoints: { no_auth: true, iam_credentials: " + f.iam.URL + "/ }\n" +
 		"terraform: { operators: [user:" + pairMe + "], launchers: [user:" + pairLauncher + "] }\n" +
 		"repos:\n  acme/app: { provider: github, base_branch: main, workflows: [web] }\n"
+	for _, e := range edit {
+		e(&cfg, f)
+	}
 	path := isolateProjects(t, f.dir)
 	if err := os.WriteFile(path, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
@@ -236,12 +243,16 @@ func TestPairMinterRoleMissingNamed(t *testing.T) {
 func TestPairDatabaseAdminMissingNamed(t *testing.T) {
 	f := newPairFixture(t, pairMe)
 	f.db.DenyRead("config/admin/devices")
-	_, _, err := pairRun(t)
+	out, _, err := pairRun(t, "--json")
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v, want exit 1", err)
 	}
 	if !strings.Contains(err.Error(), "roles/firebasedatabase.admin") {
 		t.Fatalf("refusal = %q, want the missing role named", err)
+	}
+	events := pairLines(t, out)
+	if len(events) != 1 || events[0].Event != pairEventRefused || events[0].Code != pairRefusedDatabaseAdmin {
+		t.Fatalf("events = %v, want one refused with code %q", events, pairRefusedDatabaseAdmin)
 	}
 	if n := len(f.iam.SignCalls()); n != 0 {
 		t.Fatalf("a database-admin refusal still minted (%d signJwt calls)", n)
@@ -264,6 +275,80 @@ func TestPairUnverifiedEmailRefused(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not verified") {
 		t.Fatalf("refusal = %q", err)
+	}
+}
+
+func TestPairAPIKeyMissingRefused(t *testing.T) {
+	f := newPairFixture(t, pairMe, func(cfg *string, _ *pairFixture) {
+		*cfg = strings.Replace(*cfg, ", firebase_api_key: "+pairAPIKey, "", 1)
+	})
+	_, _, err := pairRun(t, "--json")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want exit 1", err)
+	}
+	for _, want := range []string{"budget.firebase_api_key", "fugaro update --firebase-project proj-1234"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("refusal %q does not name %q", err, want)
+		}
+	}
+	if n := len(f.iam.SignCalls()); n != 0 {
+		t.Fatalf("a missing api key still minted (%d signJwt calls)", n)
+	}
+}
+
+// TestPairRefusalCodesNameTheCase holds the wire codes to the case they report:
+// a console switches on them, so a refusal that is not a database failure must
+// not be spelled as one.
+func TestPairRefusalCodesNameTheCase(t *testing.T) {
+	cases := []struct {
+		name  string
+		args  []string
+		edit  func(*string, *pairFixture)
+		after func(*pairFixture)
+		env   map[string]string
+		code  string
+	}{
+		{name: "a wait that is not a wait", args: []string{"--timeout", "0"}, code: pairRefusedTimeoutNotPositive},
+		{name: "a project that cannot be selected", args: []string{"--project", "no-such-project"}, code: pairRefusedProject},
+		{
+			name: "a config with no budget backend",
+			edit: func(cfg *string, f *pairFixture) { *cfg = strings.Replace(*cfg, ", rtdb_url: "+f.db.URL, "", 1) },
+			code: pairRefusedBudget,
+		},
+		{
+			name: "a config with no api key",
+			edit: func(cfg *string, _ *pairFixture) { *cfg = strings.Replace(*cfg, ", firebase_api_key: "+pairAPIKey, "", 1) },
+			code: pairRefusedAPIKey,
+		},
+		{name: "the debug env", env: map[string]string{"GODEBUG": "http2debug=1"}, code: pairRefusedEnv},
+		{
+			name:  "a database that is not this project's",
+			after: func(f *pairFixture) { f.db.Set("fugaro/project", "somewhere-else") },
+			code:  pairRefusedMismatch,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var edits []func(*string, *pairFixture)
+			if tc.edit != nil {
+				edits = append(edits, tc.edit)
+			}
+			f := newPairFixture(t, pairMe, edits...)
+			if tc.after != nil {
+				tc.after(f)
+			}
+			for k, v := range tc.env {
+				t.Setenv(k, v)
+			}
+			out, _, err := pairRun(t, append([]string{"--json"}, tc.args...)...)
+			if err == nil || ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v, want exit 1", err)
+			}
+			events := pairLines(t, out)
+			if len(events) != 1 || events[0].Event != pairEventRefused || events[0].Code != tc.code {
+				t.Fatalf("events = %v, want one refused with code %q", events, tc.code)
+			}
+		})
 	}
 }
 
@@ -345,7 +430,9 @@ func pairEventLines(t *testing.T, out string) []string {
 
 // pairFixedRand pins the pairing uid: crypto/rand.Reader is the one source
 // pairing.go draws from, so replacing it fixes the uid, the token the fake
-// signer returns and every byte of the golden stream.
+// signer returns and every byte of the golden stream. The reader repeats rather
+// than running out, so a second draw in the same test returns the same bytes
+// instead of an error.
 func pairFixedRand(t *testing.T) string {
 	t.Helper()
 	fixed := make([]byte, 32)
@@ -353,9 +440,31 @@ func pairFixedRand(t *testing.T) string {
 		fixed[i] = byte(i)
 	}
 	prev := rand.Reader
-	rand.Reader = bytes.NewReader(fixed)
+	rand.Reader = pairCyclicRand{fixed}
 	t.Cleanup(func() { rand.Reader = prev })
 	return "p~" + base64.RawURLEncoding.EncodeToString(fixed)
+}
+
+type pairCyclicRand struct{ b []byte }
+
+func (r pairCyclicRand) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = r.b[i%len(r.b)]
+	}
+	return len(p), nil
+}
+
+// pairTokenRE finds the pairing token inside a stream line. The qr event
+// carries the payload as a JSON string, so the token's own quotes are escaped.
+var pairTokenRE = regexp.MustCompile(`(\\"token\\":\\"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.)[A-Za-z0-9_-]*`)
+
+// pairNoSignature replaces the token's signature with a fixed marker, in the
+// stream and in the golden alike. The IAM fake keys its HMAC with the test's
+// own name, so those bytes are the fake's and not the command's: what the
+// golden pins is the header and the payload — the claims the command asked for
+// — and a renamed or subtested test must not turn into an opaque byte diff.
+func pairNoSignature(line string) string {
+	return pairTokenRE.ReplaceAllString(line, "${1}signature")
 }
 
 // pairGoldenDoc is the done event's example document, the shape T2b fills in.
@@ -405,7 +514,7 @@ func TestPairJSONEventsGolden(t *testing.T) {
 	// The fake's URL carries the port it was given, which is a new one every
 	// run: the golden pins everything else about it.
 	for i, line := range got {
-		got[i] = strings.ReplaceAll(line, f.db.URL, pairDBPlaceholder)
+		got[i] = pairNoSignature(strings.ReplaceAll(line, f.db.URL, pairDBPlaceholder))
 	}
 
 	want, err := os.ReadFile(filepath.Join("testdata", "pair-events.golden.jsonl"))

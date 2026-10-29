@@ -94,49 +94,60 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 	ev := &pairEventWriter{w: cmd.OutOrStdout(), now: pairNow}
 
 	if reason := pairTimeoutRefusal(o.timeout); reason != "" {
-		return pairRefuse(ev, o, pairRefusedTimeout, false, reason)
+		code := pairRefusedTimeout
+		if o.timeout <= 0 {
+			code = pairRefusedTimeoutNotPositive
+		}
+		return pairRefuse(ev, o, code, errors.New(reason))
 	}
 
 	// The project is selected before the database is opened, not through
 	// openBudget, because a refusal below carries the project's name and
 	// openBudget answers no config when the database cannot be reached.
 	if err := refuseHTTP2Debug(os.Getenv); err != nil {
-		return pairRefuse(ev, o, pairRefusedUnreachable, false, oneLine(err.Error()))
+		return pairRefuse(ev, o, pairRefusedEnv, err)
 	}
 	_, lc, err := selectProject(ctx, o.cloudOptions)
 	if err != nil {
-		return pairRefuse(ev, o, pairRefusedUnreachable, ExitCode(err) == ExitRemoteError, oneLine(err.Error()))
+		return pairRefuse(ev, o, pairRefusalCode(err, pairRefusedProject), err)
 	}
 	ev.project = lc.Name
 	lc, db, err := budgetDBFor(ctx, lc)
 	if err != nil {
-		return pairRefuse(ev, o, pairRefusedUnreachable, ExitCode(err) == ExitRemoteError, oneLine(err.Error()))
+		return pairRefuse(ev, o, pairRefusalCode(err, pairRefusedBudget), err)
+	}
+	// The config layer validates the key only when it is set, so an installation
+	// that never ran `fugaro update --firebase-project` would otherwise print a
+	// code whose api_key is empty and which the phone cannot exchange a custom
+	// token with at all.
+	if strings.TrimSpace(lc.Budget.FirebaseAPIKey) == "" {
+		return pairRefuse(ev, o, pairRefusedAPIKey, fmt.Errorf("project %s has no budget.firebase_api_key: the phone exchanges the pairing token with it, and a code without one scans into a phone that cannot sign in; restore it with 'fugaro update --firebase-project %s', which writes budget.rtdb_url and budget.firebase_api_key", lc.Name, lc.GCPProject))
 	}
 	if err := checkDBProject(ctx, db, lc); err != nil {
-		return pairRefuse(ev, o, pairRefusedUnreachable, ExitCode(err) == ExitRemoteError, oneLine(err.Error()))
+		return pairRefuse(ev, o, pairRefusalCode(err, pairRefusedMismatch), err)
 	}
 	if err := pairDatabaseAdminProbe(ctx, db, lc); err != nil {
-		if !errors.Is(err, rtdb.ErrPermission) {
-			return pairRefuse(ev, o, pairRefusedUnreachable, ExitCode(err) == ExitRemoteError, oneLine(err.Error()))
+		if errors.Is(err, rtdb.ErrPermission) {
+			return pairRefuse(ev, o, pairRefusedDatabaseAdmin, err)
 		}
-		return pairRefuse(ev, o, pairRefusedDatabaseAdmin, false, oneLine(err.Error()))
+		return pairRefuse(ev, o, pairRefusalCode(err, pairRefusedUnreachable), err)
 	}
 
 	me, _ := lc.Me(ctx)
 	role, ok := pairInheritedRole(lc, me)
 	if !ok {
-		return pairRefuse(ev, o, pairRefusedUnplaced, false,
-			fmt.Sprintf("%s is on neither of this installation's lists (terraform.operators, terraform.launchers), so a device it paired would have no role to inherit; ask an operator of %s to add you",
+		return pairRefuse(ev, o, pairRefusedUnplaced,
+			fmt.Errorf("%s is on neither of this installation's lists (terraform.operators, terraform.launchers), so a device it paired would have no role to inherit; ask an operator of %s to add you",
 				meMember(me), lc.Name))
 	}
 	if o.role != "" {
 		switch want, known := mobileauth.ParseRole(o.role); {
 		case !known:
-			return pairRefuse(ev, o, pairRefusedInvalidRole, false,
-				fmt.Sprintf("--role %s is not a role: this installation's roles are %s", o.role, pairRoleNames()))
+			return pairRefuse(ev, o, pairRefusedInvalidRole,
+				fmt.Errorf("--role %s is not a role: this installation's roles are %s", o.role, pairRoleNames()))
 		case !role.AtLeast(want):
-			return pairRefuse(ev, o, pairRefusedRoleAbove, false,
-				fmt.Sprintf("--role %s is above your own role (%s): a paired device inherits your role and --role may only lower it, so a device like this one cannot be more than you are", want, role))
+			return pairRefuse(ev, o, pairRefusedRoleAbove,
+				fmt.Errorf("--role %s is above your own role (%s): a paired device inherits your role and --role may only lower it, so a device like this one cannot be more than you are", want, role))
 		default:
 			role = want
 		}
@@ -145,27 +156,27 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 	email := strings.TrimSpace(o.email)
 	if email == "" {
 		if email, err = authenticatedUser(ctx, lc); err != nil {
-			return pairRefuse(ev, o, pairRefusedEmail, false, oneLine(err.Error()))
+			return pairRefuse(ev, o, pairRefusedEmail, err)
 		}
 	} else if email, err = mobileauth.NormalizeEmail(email); err != nil {
-		return pairRefuse(ev, o, pairRefusedEmail, false, oneLine(err.Error()))
+		return pairRefuse(ev, o, pairRefusedEmail, err)
 	}
 
 	signer, err := (&cloudEnv{lc: lc}).tokenSigner(ctx)
 	if err != nil {
-		return pairRefuse(ev, o, pairRefusedUnreachable, ExitCode(err) == ExitRemoteError, oneLine(err.Error()))
+		return pairRefuse(ev, o, pairRefusalCode(err, pairRefusedUnreachable), err)
 	}
 	pairingToken, uid, err := token.MintPairing(ctx, signer, o.timeout, now)
 	if err != nil {
 		if errors.Is(err, token.ErrNotMinter) {
-			return pairRefuse(ev, o, pairRefusedMinter, false,
-				fmt.Sprintf("%s; pairing mints the one-shot pairing token with your own credential, which needs the fugaroTokenMinter role on the signer account %s (the installation's launchers and operators hold it)", oneLine(err.Error()), lc.Budget.TokenSigner))
+			return pairRefuse(ev, o, pairRefusedMinter,
+				fmt.Errorf("%s; pairing mints the one-shot pairing token with your own credential, which needs the fugaroTokenMinter role on the signer account %s (the installation's launchers and operators hold it)", oneLine(err.Error()), lc.Budget.TokenSigner))
 		}
-		return pairRefuse(ev, o, pairRefusedUnreachable, ExitCode(err) == ExitRemoteError, oneLine(err.Error()))
+		return pairRefuse(ev, o, pairRefusalCode(err, pairRefusedUnreachable), err)
 	}
 
 	payload, err := json.Marshal(pairQR{
-		V:           pairEventVersion,
+		V:           pairQRVersion,
 		Project:     lc.Name,
 		GCPProject:  lc.GCPProject,
 		DatabaseURL: lc.Budget.RTDBURL,
@@ -247,7 +258,10 @@ func pairDatabaseAdminProbe(ctx context.Context, db *rtdb.Client, lc *localcfg.C
 	var raw json.RawMessage
 	if _, err := db.Get(ctx, rules.PathDevices, &raw); err != nil {
 		if errors.Is(err, rtdb.ErrPermission) {
-			return userErr("%s refused the read: pairing writes the device node there and the delivery node with roles/firebasedatabase.admin, which this credential does not hold on project %s's Firebase project (its owners and editors hold it, and terraform.budget_admins)", rules.PathDevices, lc.Name)
+			// %w keeps the sentinel in the chain: the call site tells this
+			// refusal from an unreachable database by errors.Is, and the code it
+			// emits is the one a console switches on.
+			return &ExitError{Code: ExitUserError, Err: fmt.Errorf("%s refused the read: pairing writes the device node there and the delivery node with roles/firebasedatabase.admin, which this credential does not hold on project %s's Firebase project (its owners and editors hold it, and terraform.budget_admins): %w", rules.PathDevices, lc.Name, err)}
 		}
 		return dbErr(lc, err, false)
 	}
@@ -272,17 +286,25 @@ func renderPairQR(w io.Writer, payload string) error {
 // pairRefuse is the command's one way out. Under --json it writes the refused
 // event first, so the stream says what happened before the exit code does, and
 // either way it exits with §4.6's class for that refusal.
-func pairRefuse(ev *pairEventWriter, o *pairOptions, code string, remote bool, reason string) error {
+func pairRefuse(ev *pairEventWriter, o *pairOptions, code string, err error) error {
+	reason := oneLine(err.Error())
 	if o.asJSON {
 		if err := ev.emit(pairEvent{Event: pairEventRefused, Code: code, Reason: reason}); err != nil {
 			return err
 		}
 	}
-	exit := ExitUserError
-	if remote {
-		exit = ExitRemoteError
+	return &ExitError{Code: ExitCode(err), Err: errors.New(reason)}
+}
+
+// pairRefusalCode is the wire code for a refusal at a call site that can fail
+// both ways: the site's own code when the operator can fix it there, and the
+// unreachable one when the failure is remote — so a console is never told the
+// project is unselectable when the answer was the network.
+func pairRefusalCode(err error, local string) string {
+	if ExitCode(err) == ExitRemoteError {
+		return pairRefusedUnreachable
 	}
-	return &ExitError{Code: exit, Err: errors.New(reason)}
+	return local
 }
 
 func pairRoleNames() string {
