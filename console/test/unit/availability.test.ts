@@ -148,6 +148,15 @@ describe('a value that is not a plain measurement', () => {
     expect(text).toContain('$3.25')
   })
 
+  it('never spells the notional state out in the text it writes', () => {
+    // The `~` is the whole mark: a screen that also wrote the state's name
+    // would put a word the reader has to decode beside a figure that carries
+    // its own meaning.
+    for (const value of [0, 3.25, -0.001, 1250]) {
+      expect(formatReading(notional(value), 'usd')).not.toContain('NOTIONAL')
+    }
+  })
+
   it('marks compute as the estimate it is', () => {
     // `JSONLine.ComputeEstimated` / `runstore.Cost.ComputeEstimated`: when
     // compute is not estimated, compute_usd is 0 and means "not estimated",
@@ -215,7 +224,7 @@ describe('formatting', () => {
     expect(formatReading(measured(-1.5), 'usd')).toBe('-$1.50')
     // And a state's marker is not a sign: the marks go before the number, not
     // before the minus.
-    expect(formatReading(notional(-0.001), 'usd')).toBe('NOTIONAL~$0.00')
+    expect(formatReading(notional(-0.001), 'usd')).toBe('~$0.00')
     expect(formatReading(estimated(-0.001), 'usd')).toBe('est. $0.00')
   })
 })

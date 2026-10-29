@@ -47,7 +47,7 @@
 // screens cannot disagree about a dollar figure. The three accounts stay apart
 // here too: a job draws the **billed** part of its model figure as its model
 // dollars -- `model_usd` minus `model_notional_usd`, C1.16/P12 -- and
-// `NOTIONAL~` only when that part is the plan's whole figure, exactly as the
+// `~$` only when that part is the plan's whole figure, exactly as the
 // Live and Spend screens do.
 //
 // Everything else is Task 2.0's two rules, unchanged: every number enters

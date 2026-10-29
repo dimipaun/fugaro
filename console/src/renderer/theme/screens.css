@@ -35,7 +35,7 @@
  * that paints a state paints it *beside* a word, a mark or a number the code
  * already emits: `KILLED by`, `HALTED`, `silent`, `lost`, `near deadline`,
  * `queued`, `stuck`, the em dash of a gap, `n/a` with its reason in `title`, the
- * `NOTIONAL~` / `est.` marks, `(partial)`, `degraded`, `polling`, and the cap's
+ * `~$` / `est.` marks, `(partial)`, `degraded`, `polling`, and the cap's
  * own percentage. A reader who sees no hue difference at all still reads every
  * state.
  *
@@ -755,7 +755,7 @@ span.spend-degraded[data-degraded='true'] {
 /* The three account charts. A point is a figure like any other: mono, tabular,
  * and the tone of the account whose column it reads -- measured, notional or
  * estimated (design section 2.9). The mark that carries the state is the
- * `NOTIONAL~` / `est.` prefix inside the number itself. */
+ * `~$` / `est.` prefix inside the number itself. */
 div.spend-account {
   margin-bottom: var(--space-sm);
 }
