@@ -635,6 +635,7 @@ library read beside the cloud.
 | `(*cloudEnv).repoProvider` (`project_job.go:224`) | `Cloud.RepoProvider` | `func (c *Cloud) RepoProvider(repo string, co *config.Config) string` |
 | `(*cloudEnv).Close` (`cloud.go:186`) | `Cloud.Close` | `func (c *Cloud) Close()` |
 | `readRun` (`runs.go:414`), `runObjects` (`runs.go:402`) | `Cloud.ReadRun`, `RunObjects` (opaque: `Input`, `Warning`) | `func (c *Cloud) ReadRun(ctx context.Context, slug, id string) (*RunObjects, error)` |
+| a `cloudEnv` built over one bucket and nothing else (the coordinator's sweep, which runs with no config file and opens the runs bucket itself) | `CloudOverBucket` | `func CloudOverBucket(b *blobx.Bucket) *Cloud` |
 | `checkoutOf` (`run.go:2261`) | `CheckoutOf` | `func CheckoutOf(ctx context.Context, repo string) func() *config.Config` |
 | `parseSince` (`runs.go:532`) | `ParseSince` | `func ParseSince(s string) (time.Duration, error)` |
 | `lsDefaultSince` (`runs.go:61`) | `LsDefaultSince` | `func LsDefaultSince() string` |

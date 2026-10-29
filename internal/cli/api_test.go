@@ -8,7 +8,12 @@ import (
 	"testing"
 	"time"
 
+	"gocloud.dev/blob"
+
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // TestCloudBudgetDBRefusesAnotherProjectsDatabase: the opened handle is the
@@ -233,11 +238,13 @@ func TestAPICheckDatabaseHostRefusesWhatTheCoreRefuses(t *testing.T) {
 }
 
 // TestAPICheckoutOfAnswersTheCoresCheckout: the sweep reads each repository's
-// fugaro.yaml through the checkout lookup, memoized the way the core memoizes
-// it, so the published one has to be that lookup. The comparison is made
-// inside a checkout of the repository: outside one both lookups answer nil
-// whatever they do, so the first assertion is what keeps this test from
-// passing on two empty answers.
+// fugaro.yaml through the checkout lookup, so the published one has to be that
+// lookup. The comparison is made inside a checkout of the repository: outside
+// one both lookups answer nil whatever they do, so the first assertion is what
+// keeps this test from passing on two empty answers. That the looked-up config
+// is memoized is the core's own business and is pinned there, where two calls
+// can be counted (checkoutOf); counting them here would take a hook in the
+// production path, which is a higher price than the claim is worth.
 func TestAPICheckoutOfAnswersTheCoresCheckout(t *testing.T) {
 	ctx := context.Background()
 	dir := checkoutsAt(t, filepath.Join(t.TempDir(), "app"), checkoutsYAML, "https://github.com/acme/app.git")
@@ -250,9 +257,6 @@ func TestAPICheckoutOfAnswersTheCoresCheckout(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got(), want()) {
 		t.Errorf("CheckoutOf answered %+v, checkoutOf %+v, in the same checkout", got(), want())
-	}
-	if !reflect.DeepEqual(got(), got()) {
-		t.Error("CheckoutOf's lookup is not memoized: two calls answered differently")
 	}
 }
 
@@ -270,5 +274,44 @@ func TestAPIEnvNamesAreTheCoresNames(t *testing.T) {
 		if tc.got != tc.want {
 			t.Errorf("published %q, want the core's %q", tc.got, tc.want)
 		}
+	}
+}
+
+// TestAPICloudOverBucketReadsTheBucket: CloudOverBucket is the cloud a moved
+// command builds with no config at all — the coordinator's sweep job, which
+// Terraform gives environment variables and which opens the runs bucket itself.
+// What it must be is a cloud over exactly that bucket: RunsBucket answers it,
+// and a run the bucket holds reads back through it. Config answers nil by
+// design, which CloudOverBucket's own doc says, so nothing here asks it for a
+// project.
+func TestAPICloudOverBucketReadsTheBucket(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	raw, err := blob.OpenBucket(ctx, "file://"+dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { raw.Close() })
+	b := blobx.Wrap(raw)
+
+	const id = "20261024-120000-abcd"
+	spec := &task.Spec{Version: 1, RunID: id, Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x"}
+	if err := runstore.Open(b.Bucket, appSlug, id).CreateTask(ctx, spec); err != nil {
+		t.Fatal(err)
+	}
+
+	c := CloudOverBucket(b)
+	if c.RunsBucket() != b {
+		t.Error("CloudOverBucket answered a cloud over another bucket")
+	}
+	if c.Config() != nil {
+		t.Error("CloudOverBucket answered a project config it was never given")
+	}
+	o, err := c.ReadRun(ctx, appSlug, id)
+	if err != nil {
+		t.Fatalf("reading a run out of the cloud's own bucket: %v", err)
+	}
+	if got := o.Input().Task; got == nil || got.RunID != id {
+		t.Errorf("the run read back = %+v, want the task the bucket holds", got)
 	}
 }
