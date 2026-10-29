@@ -79,8 +79,9 @@ section.console-unavailable {
  * its own block box, and `base.css` sets the document's colour on `body`. */
 
 /* A screen's `h1` block has `--space-md` below it and nothing above it
- * (design section 3.8). */
-h1.live-project,
+ * (design section 3.8). Live's heading is a cell of the redesign's title row now:
+ * its type and the row's own space below it live in `flight-deck.css` against
+ * `h1.live-project` and `header.live-header` (console redesign, step 2c). */
 h1.spend-project,
 h1.projects-project,
 h1.run-id,
@@ -238,7 +239,6 @@ ol.run-log-list,
 ol.run-log-tail,
 div.spend-accounts,
 div.spend-totals,
-section.live-review,
 section.spend-caps,
 section.spend-people,
 section.projects-panel,
@@ -262,7 +262,11 @@ div.degraded-totals {
 /* A repository's block and its run rows are the redesign's panel and table now:
  * the ground, the border and the row treatment live in `flight-deck.css` against
  * `section.live-repo` and `tr.live-run` (console redesign, step 2b), so the two
- * rules that painted a flex row here have nothing left to select. */
+ * rules that painted a flex row here have nothing left to select. The review
+ * inbox is the redesign's dashed panel for the same reason: its box is in
+ * `flight-deck.css` against `section.live-review` (step 2c), and what is left of
+ * it here is the heading, the row's pieces and the sentence it draws when it has
+ * no row. */
 
 /* ---- Identity: an id, a repository, a slug, a path, a timestamp ------------
  *
@@ -322,29 +326,13 @@ code.unavailable-install-command {
 
 /* ---- Live ----------------------------------------------------------------- */
 
-header.live-header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-sm);
-}
-
-span.live-mode,
-span.live-day,
-span.live-connection,
-span.live-connection-age,
-span.live-connection-reason {
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-}
-
-/* The connection cell's own word, and its own tone: the cell draws the CLI's
- * connection state, and a state the console could not read is `n/a` with its
- * reason in `title`. `data-stale-by-age` is the second channel and never the
- * only one -- the age beside it is the reading. */
-span.live-connection[data-stale-by-age='true'] {
-  color: var(--warn);
-}
+/* The header is the redesign's title row now: the row, the heading, the
+ * connection's dot and word, the mode chip and the day live in
+ * `flight-deck.css` against `header.live-header` and its cells (console
+ * redesign, step 2c), so the flex row that used to be here has nothing left to
+ * select. What is left below is the two lines the header appends after its own
+ * cells -- the last-read line and the stale banner -- which the design does not
+ * redraw. */
 
 p.live-since,
 div.live-stale {
@@ -545,21 +533,13 @@ span.run-rigor-area {
 
 /* The review inbox (design F26; desktop-console v2 plan Task V2.7.1): the
  * section the Live screen ends with -- the finished runs that are ready for a
- * look, as rows of **text**. Its box is the panel group above, so what is here
- * is the heading and the row's own pieces. The rows carry no link of any kind:
+ * look, as rows of **text**. Its box is the redesign's dashed panel now, and its
+ * heading carries the redesign's type: both are in `flight-deck.css` against
+ * `section.live-review` and `h2.live-review-title` (console redesign, step 2c).
+ * What is here is the row's own pieces. The rows carry no link of any kind:
  * the pull request's number and URL are drawn as text, and `data-href` -- the
  * one attribute `link.openExternal` acts on -- is written nowhere in this
  * section (`review.test.ts` walks it and asserts exactly that). */
-/* The heading is **one text run** (`reviewSection`): the CLI's own line,
- * `Ready for your review (52)`, with its parentheses hugging the number. It is
- * not laid out as a flex row of pieces -- a `display: flex` here is what spaced
- * a word, a `(`, a count and a `)` apart into `( 52 )`, text the CLI never
- * prints and both design docs disagree with (a 0.10.x review) -- so this rule
- * carries the type and nothing that can space it. */
-h2.live-review-title {
-  font-size: var(--font-size-md);
-  font-weight: var(--weight-semibold);
-}
 
 /* The title is a job's own sentence, so it takes the readable size the run
  * rows' titles take; the age beside it is the `live-num` hook's, and the

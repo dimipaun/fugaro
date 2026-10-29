@@ -1468,6 +1468,60 @@ describe('the rendered screen', () => {
     expect(texts(tree, 'live-runs')).toHaveLength(1)
   })
 
+  it('keeps the title row’s hooks, and draws the connection state as a word', () => {
+    // The redesign's title row is the same facts in the design's order: the
+    // project, then the connection -- a decorative dot, the CLI's own state word
+    // and the age reading beside it -- then the mode and the day. **The word is
+    // the state**: the dot's tone is the second channel and never the only one,
+    // which is why the dot carries the same `data-state` the word does (the word
+    // as drawn, read back off the cell, exactly as the connection cell does it)
+    // and why this case reads the word.
+    const model = modelOf(theLastFrame())
+    const tree = renderLive(factory, model, 'light')
+    const header = one(tree, 'live-header')
+    expect(header.tag).toBe('header')
+    expect(
+      header.childNodes().slice(0, 4).map((node) => (node as FakeScreen).classes.join(' ')),
+    ).toEqual([
+      'live-project',
+      'live-connection-dot',
+      'live-connection',
+      // The age is the numeric cell's own hook as well: it is a reading, drawn
+      // through `numberCell` like every other figure on this screen.
+      'live-num live-connection-age',
+    ])
+    expect(texts(header, 'live-project')).toEqual(['<project>'])
+    expect(texts(header, 'live-connection')).toEqual(['live'])
+    expect(texts(header, 'live-connection-age')).toEqual([
+      formatReading(model.connection.age, 'seconds'),
+    ])
+    expect(texts(header, 'live-mode')).toEqual(['observe'])
+    expect(texts(header, 'live-day')).toEqual(['2026-10-15'])
+
+    const dot = one(header, 'live-connection-dot')
+    expect(dot.getAttribute('aria-hidden')).toBe('true')
+    expect(dot.textContent).toBeNull()
+    expect(dot.getAttribute('data-state')).toBe('live')
+  })
+
+  it('tones the dot and the word by the state the CLI reported', () => {
+    // A state that is not live is drawn twice over -- the dot's tone and the
+    // word -- because a colour alone is not a status (design section 3.5). The
+    // attribute is the word as drawn on both, so a rule can key either on it,
+    // and a state `putText` refused is `n/a` on both rather than the raw string.
+    for (const state of ['stale', 'offline', 'refused']) {
+      const frame = theLastFrame()
+      const document: LiveDocument = { ...frame, connection: { ...frame.connection, state } }
+      const header = one(
+        renderLive(factory, buildLiveModel(document, new BurnHistory()), 'light'),
+        'live-header',
+      )
+      expect(texts(header, 'live-connection')).toEqual([state])
+      expect(one(header, 'live-connection-dot').getAttribute('data-state')).toBe(state)
+      expect(one(header, 'live-connection').getAttribute('data-state')).toBe(state)
+    }
+  })
+
   it('draws each theme into the same screen', () => {
     for (const theme of LIVE_THEMES) {
       const tree = renderLive(factory, modelOf(theLastFrame()), theme)
@@ -1571,9 +1625,21 @@ describe('the rendered screen', () => {
     // submission), and -- **on a node the SVG namespace made, and only there**
     // -- the presentation attributes the cap bar's geometry is built from. The
     // namespace is what the fake records, not the tag: a `rect` made with
-    // `create` is an HTML element and is not held to this set.
-    const MAXIMAL = new Set(['svg', 'rect'])
-    const SVG_ATTRIBUTES = new Set(['viewBox', 'preserveAspectRatio', 'width', 'height', 'x', 'y', 'rx'])
+    // `create` is an HTML element and is not held to this set. `path` and its
+    // `d` join it with the review panel's decorative mark (console redesign,
+    // step 2c): the geometry of a shape is the one thing a stylesheet cannot
+    // carry, and the stroke, the fill and the joins are all `flight-deck.css`'s.
+    const MAXIMAL = new Set(['svg', 'rect', 'path'])
+    const SVG_ATTRIBUTES = new Set([
+      'viewBox',
+      'preserveAspectRatio',
+      'width',
+      'height',
+      'x',
+      'y',
+      'rx',
+      'd',
+    ])
     // `aria-disabled` joins the set with the redesign: the Halt project and
     // Reap buttons are real `button`s a reader is told are not available. The
     // attribute describes the element to assistive technology, it schedules no

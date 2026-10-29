@@ -144,13 +144,24 @@ export const LIVE_REVIEW_CAP = 50
 export const LIVE_REVIEW_TITLE = 'Ready for your review'
 
 /**
- * LIVE_REVIEW_EMPTY is what the section says with no row to draw. It says it
- * about **this feed** on purpose: `ready[]` ships empty when the runs bucket
- * could not be read as well as when nothing is waiting, and the difference
- * between those two is the CLI's own `queued_note`, which the header draws
- * (`live-note`) rather than this section inventing a second reason.
+ * LIVE_REVIEW_EMPTY is what the section says with no row to draw **when the
+ * feed could not be read**. `ready[]` ships empty when the runs bucket could
+ * not be read as well as when nothing is waiting, and the difference between
+ * those two is the CLI's own `queued_note`, which the header draws
+ * (`live-note`): a screen that could not see may not claim there is nothing to
+ * see, so this hedged sentence is the one that holds when the note is there.
  */
 export const LIVE_REVIEW_EMPTY = 'no finished run in this feed is ready for review'
+
+/**
+ * LIVE_REVIEW_NOTHING_WAITING is the other half of that pair, and the design's
+ * own words for it: what the panel says when the document was read and nothing
+ * in it is waiting. It is the sentence `LIVE_REVIEW_EMPTY` may not be -- see
+ * there for why the choice between them is `queued_note`'s and not this
+ * section's.
+ */
+export const LIVE_REVIEW_NOTHING_WAITING =
+  'Nothing waiting. Finished runs with a pull request land here.'
 
 /**
  * LIVE_PR_NO_LINK_REASON is the sentence the section carries beneath its rows,
@@ -1718,14 +1729,23 @@ function labelBurnRate(parent: ScreenElement, factory: ScreenFactory, repo: Live
   element.setAttribute('data-fast', repo.burnFast ? 'true' : 'false')
 }
 
-/** header draws the project line: project, mode, day, connectivity. */
+/** header draws the title row: the project, the connection, the mode and the
+ * day, in one wrapping row.
+ *
+ * The connection is drawn as **two channels and never one**: a decorative dot
+ * whose tone is the state, and the CLI's own state word beside it, so a state
+ * is readable without the colour (design section 3.5). The dot carries
+ * `data-state` -- the word **as drawn**, read back off the cell, for the reason
+ * the connection cell does -- because a dot before the word it tones cannot be
+ * selected by the word's own attribute.
+ */
 function header(factory: ScreenFactory, model: LiveModel): ScreenElement {
   const element = make(factory, 'header', 'live-header')
   const heading = cell(element, factory, 'h1', 'live-project')
   putText(heading, model.project, 'project', 'project')
-  textCell(element, factory, 'span', model.mode, 'label', 'mode', 'live-mode')
-  textCell(element, factory, 'span', model.day, 'label', 'day', 'live-day')
 
+  const dot = cell(element, factory, 'span', 'live-connection-dot')
+  dot.setAttribute('aria-hidden', 'true')
   const connection = textCell(
     element,
     factory,
@@ -1742,10 +1762,13 @@ function header(factory: ScreenFactory, model: LiveModel): ScreenElement {
   // has `sanitizedKey`.
   connection.setAttribute('data-state', connection.textContent ?? '')
   connection.setAttribute('data-stale-by-age', model.connection.staleByAge ? 'true' : 'false')
+  dot.setAttribute('data-state', connection.textContent ?? '')
   numberCell(element, factory, 'span', model.connection.age, 'seconds', 'live-connection-age')
   if (model.connection.reason !== null) {
     textCell(element, factory, 'span', model.connection.reason, 'sentence', 'connection.reason', 'live-connection-reason')
   }
+  textCell(element, factory, 'span', model.mode, 'label', 'mode', 'live-mode')
+  textCell(element, factory, 'span', model.day, 'label', 'day', 'live-day')
   if (model.queuedNote !== null) {
     // The one-line reason the runs bucket could not be read for queued rows
     // (`JSONDoc.QueuedNote`): without it, a screen with no queued rows looks
@@ -2145,9 +2168,50 @@ function total(factory: LiveFactory, model: LiveModel): ScreenElement {
   return element
 }
 
+/** The check-in-a-box's geometry, as the attribute strings the `svg` and its two
+ * shapes carry: the design's 28 px square, a box inset by 2.5 px inside it so the
+ * 1.5 px stroke the stylesheet draws is not clipped by the `viewBox` (28 - 2 x 2.5
+ * is the 23 px side), and the tick as path data. The stroke, the fill and the
+ * joins are `flight-deck.css`'s; the geometry is the one thing a stylesheet
+ * cannot carry. The strings are written out rather than built, because every one
+ * of them is an attribute value and this file's attribute writes take a constant
+ * (`screen-literals.test.ts`). */
+const LIVE_REVIEW_ICON_SIZE = '28'
+const LIVE_REVIEW_ICON_BOX = '0 0 28 28'
+const LIVE_REVIEW_ICON_INSET = '2.5'
+const LIVE_REVIEW_ICON_SIDE = '23'
+const LIVE_REVIEW_ICON_RADIUS = '4'
+const LIVE_REVIEW_ICON_CHECK = 'M8.5 14.6l3.5 3.5 7.4-7.9'
+
+/** reviewIcon is the review inbox's decorative mark: a check in a box, drawn at
+ * `--decor` by the stylesheet and hidden from a reader, because the heading
+ * beside it already says everything the shape says (design section 4.3's rule
+ * for a decorative mark). */
+function reviewIcon(factory: LiveFactory): ScreenElement {
+  const element = makeNS(factory, 'svg', 'live-review-icon')
+  element.setAttribute('viewBox', LIVE_REVIEW_ICON_BOX)
+  element.setAttribute('width', LIVE_REVIEW_ICON_SIZE)
+  element.setAttribute('height', LIVE_REVIEW_ICON_SIZE)
+  element.setAttribute('aria-hidden', 'true')
+
+  const box = makeNS(factory, 'rect', 'live-review-icon-box')
+  box.setAttribute('x', LIVE_REVIEW_ICON_INSET)
+  box.setAttribute('y', LIVE_REVIEW_ICON_INSET)
+  box.setAttribute('width', LIVE_REVIEW_ICON_SIDE)
+  box.setAttribute('height', LIVE_REVIEW_ICON_SIDE)
+  box.setAttribute('rx', LIVE_REVIEW_ICON_RADIUS)
+  element.append(box)
+
+  const check = makeNS(factory, 'path', 'live-review-icon-check')
+  check.setAttribute('d', LIVE_REVIEW_ICON_CHECK)
+  element.append(check)
+  return element
+}
+
 /**
- * reviewSection draws the review inbox: the heading with its count, one row per
- * ready run, and the sentence about the link the console does not build.
+ * reviewSection draws the review inbox: the decorative mark, the heading with
+ * its count, one row per ready run, and the sentence about the link the console
+ * does not build.
  *
  * **The pull request is text and is not a control.** The number is drawn with
  * this screen's `literal` (it is an integer the model already filtered,
@@ -2163,10 +2227,12 @@ function total(factory: LiveFactory, model: LiveModel): ScreenElement {
  *
  * The section is drawn whether or not it has a row: "nothing is waiting for
  * you" is an answer, and a section that vanishes when it is empty is a section
- * whose absence the operator has to interpret.
+ * whose absence the operator has to interpret. Which of the two sentences it
+ * gives that answer in is `queued_note`'s to decide, in the branch below.
  */
-function reviewSection(factory: ScreenFactory, model: LiveModel): ScreenElement {
+function reviewSection(factory: LiveFactory, model: LiveModel): ScreenElement {
   const element = make(factory, 'section', 'live-review')
+  element.append(reviewIcon(factory))
   // **The heading is one text run, and the parentheses hug the number.** It is
   // the CLI's own line, `Ready for your review (%d)`, and the four elements a
   // word-plus-`(`-plus-count-plus-`)` drawing needs are four flex items -- the
@@ -2184,7 +2250,14 @@ function reviewSection(factory: ScreenFactory, model: LiveModel): ScreenElement 
   const list = cell(element, factory, 'ol', 'live-review-list')
   for (const row of model.review) list.append(reviewRow(factory, row))
   if (model.reviewCount === 0) {
-    literal(cell(element, factory, 'p', 'live-review-empty'), LIVE_REVIEW_EMPTY)
+    // Two sentences, and `queued_note` is what chooses: the document says the
+    // runs bucket could not be read, so the console has no empty feed to
+    // describe and keeps the hedged one (`LIVE_REVIEW_EMPTY`); with no note the
+    // feed was read, and the design's own sentence is what it says.
+    literal(
+      cell(element, factory, 'p', 'live-review-empty'),
+      model.queuedNote === null ? LIVE_REVIEW_NOTHING_WAITING : LIVE_REVIEW_EMPTY,
+    )
   }
   if (model.review.length > 0) {
     // Once per section rather than once per row: the reason is a fact about
