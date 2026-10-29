@@ -8,18 +8,20 @@
 //
 // **What this file is, and what it deliberately is not.** V2.5.1a is split in
 // three: part 1 (the pure rules: `launchrules.ts`, `installlist.ts`'s
-// `base_branch` read, `launchSupported` in `src/shared/version.ts`), this part
+// `base_branch` read, `launchSupported` in `src/shared/version.ts`), part 2a
 // (the fence move: the operation, its spawn row, the frozen spawn and the
-// limits) and part 2b (the confirmation window). So the confirmation here is a
-// **seam** -- `LaunchConfirmer` -- and the production implementation declines
-// every launch with `DECLINED_UNBUILT`. That is not a placeholder to be tidied
-// away later: it is the property that makes this part shippable at all, because
-// it means **no `fugaro run` child can be spawned by the shipped app until the
-// window exists**, while the operation, the argv, the reachability table and the
-// limits are all in place and tested with a fake confirmer.
+// limits) and part 2b (the confirmation window, `confirm.ts`). The confirmation
+// here is a **seam** -- `LaunchConfirmer` -- because the window is Electron's
+// own and cannot be driven under plain Node: everything above the seam is
+// unit-tested with a fake confirmer, and the shipped wiring is `index.ts`'s.
+// Since part 2b-3b-1 that wiring is the real window, built in `main()` once the
+// session exists, and only a yes from that window's own top frame reaches
+// `spawn`.
 //
-// Nothing here opens a window. `index.ts` wires the handler with
-// `DECLINING_CONFIRMER`; nothing else may.
+// Nothing here opens a window. `index.ts` builds the window
+// (`createConfirmWindow`) and the launcher over it, and the module-scope runner
+// it starts the process with -- the one that answers before `main` has built
+// either -- is over `DECLINING_CONFIRMER`; nothing else may.
 
 import { randomBytes } from 'node:crypto'
 
@@ -81,15 +83,21 @@ export const MAX_IN_FLIGHT = 2
  * an answer for it spawns nothing. */
 export const MAX_RECORDED_OUTCOMES = 256
 
-/** DECLINED_UNBUILT is the production confirmer's answer, and the sentence is
- * deliberately about this tree rather than about the operator's click: nothing
- * asked them anything. It is the refusal a shipped console gives every launch
- * until V2.5.1b's window lands. */
+/** DECLINED_UNBUILT is what a launch meets before `main` has built the
+ * confirmation window, and the sentence is deliberately about this tree rather
+ * than about the operator's click: nothing asked them anything. It is the
+ * fail-closed default's answer (`DECLINING_CONFIRMER`), not a sentence an
+ * operator is expected to read: the surface is registered only from `onDecided`,
+ * which only `lifecycle.start()` and `choose` reach, both from inside `main`
+ * and after the window is built. */
 export const DECLINED_UNBUILT = 'the launch confirmation window is not built yet'
 
-/** DECLINED_CANCELLED is what a declined window answers with once 2b builds it:
- * declining spawns nothing, and the sentence says so rather than looking like a
- * failure. */
+/** DECLINED_CANCELLED is the console's cancel sentence, and it is the answer to
+ * every way a launch is declined: the operator answered no, pressed Escape or
+ * Enter, or closed the window; the installation the launch was cut for was
+ * removed or re-chosen while it was open (`cancelFor`); or the still-recorded
+ * check found the installation had moved. Declining spawns nothing, and the
+ * sentence says that rather than looking like a failure. */
 export const DECLINED_CANCELLED = 'the launch was not confirmed: nothing was spawned'
 
 /** RUN_ID_DIGITS is the shape `task.NewRunID` builds, `<UTC 20060102-150405>-<4
@@ -317,7 +325,9 @@ export function confirmView(launch: FrozenLaunch): ConfirmView {
 }
 
 /**
- * LaunchConfirmer is the seam V2.5.1b fills with the window. `open` is handed the
+ * LaunchConfirmer is the seam the confirmation window fills: `confirm.ts`'s
+ * `createConfirmWindow` is the shipped implementation, and `index.ts` builds one
+ * in `main()` and hands it to `createLaunchRunner`. `open` is handed the
  * **display-only view** of the frozen launch and a `decide` it calls when the
  * operator answers -- the main process's own path, which is what `answer(runId,
  * yes)` reaches from the window's preload; the renderer asks for the window and
@@ -325,27 +335,31 @@ export function confirmView(launch: FrozenLaunch): ConfirmView {
  *
  * `decide`'s second parameter is **the confirmer's own sentence for a decline**,
  * and it exists for exactly one reason: the sentence the operator is shown for a
- * decline is the console's, not the CLI's, and V2.5.1a's confirmer declines for
- * a reason the operator must be able to read -- the window does not exist yet
- * (`DECLINED_UNBUILT`) -- which is not the same sentence as a window the
- * operator closed (`DECLINED_CANCELLED`). It is optional, and the window's own
- * main-side path (`answer(runId, yes)`) never passes one: a decline that came
- * from the operator is the cancel sentence and nothing else.
+ * decline is the console's, not the CLI's, and a confirmer can decline for a
+ * reason of its own -- the fail-closed default declines because there is no
+ * window at all yet (`DECLINED_UNBUILT`) -- which is not the same sentence as a
+ * window the operator closed (`DECLINED_CANCELLED`). It is optional, and the
+ * window's own main-side path (`answer(runId, yes)`) never passes one: a decline
+ * that came from the operator is the cancel sentence and nothing else.
  *
  * `close` is the seam's **second half**, and it is here because rule 11's "an
  * installation removed or re-chosen while the window is open closes the window
  * as a cancel" is a thing the caller knows and the window does not: the caller
- * names the run whose window should go away, the window decides no, and the
- * cancel that follows is the ordinary decline -- nothing is spawned, and the
- * frozen launch the run id holds is not touched.
+ * names the run whose window should go away (`LaunchRunner.cancelFor`, which is
+ * where a project becomes that run id), the window decides no, and the cancel
+ * that follows is the ordinary decline -- nothing is spawned, and the frozen
+ * launch the run id holds is not touched. A run whose window is not open is
+ * nothing here to close, and nothing here decides.
  */
 export interface LaunchConfirmer {
   open(view: ConfirmView, decide: (yes: boolean, reason?: string) => void): void
   close(runId: string): void
 }
 
-/** DECLINING_CONFIRMER is V2.5.1a's production implementation: it declines every
- * launch, by name, so the shipped app has no way to a `run` child at all. */
+/** DECLINING_CONFIRMER is the fail-closed default `index.ts` starts the process
+ * with, before `main` has built the confirmation window: there is no window to
+ * ask, so every launch is declined by name (`DECLINED_UNBUILT`) and nothing
+ * reaches `spawn`. `main` replaces it with the window's own confirmer. */
 export const DECLINING_CONFIRMER: LaunchConfirmer = Object.freeze({
   open: (_view: ConfirmView, decide: (yes: boolean, reason?: string) => void): void => {
     decide(false, DECLINED_UNBUILT)
@@ -417,6 +431,33 @@ export interface LaunchRunner {
    * from its own record, and one it never opened answers `undefined` and spawns
    * nothing. */
   answer(runId: string, yes: boolean): Promise<LaunchOutcome | undefined>
+  /** cancelFor is rule 11's "an installation **removed or re-chosen** while the
+   * window is open closes the window as a cancel", reached from the two places
+   * the entry point learns that an installation moved: a choose, and a removal
+   * from the rail.
+   *
+   * It takes a **project** rather than a run id because that is what those two
+   * callers know, and it lives on the runner rather than on the confirmer
+   * because the runner is the one structure that maps one to the other
+   * (`inFlightByInstallation`): which launch -- if any -- is in flight for a
+   * project, and under which run id, is exactly that map's answer.
+   *
+   * How it cancels depends on how far that launch has got, and both halves are
+   * a decline that spawns nothing. Once the launch is built the entry is its
+   * run id, and `confirmer.close(runId)` takes the window away. Before that --
+   * while `build` is still reading the records, when the entry is the
+   * reservation **token** -- there is no run id and no window yet, so the
+   * reservation is marked here and the launch declines the moment its build
+   * returns, **without opening a window**: closing the run id alone would miss
+   * the window that opens a moment later, which is the window rule 11 says must
+   * not be there.
+   *
+   * A project with nothing in flight is a no-op. So is one whose child is
+   * already running: no window is open by then, so `close` decides nothing --
+   * the same answer it gives a spent run id -- and a launch this process has
+   * spawned is not cancellable from here. There is never a second `decide` for
+   * one launch. */
+  cancelFor(project: string): void
 }
 
 /** LaunchAnswer is what an open window's `decide` resolves with: the operator's
@@ -491,6 +532,13 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
   const RESERVATION_PREFIX = 'reservation:'
   /** a window that is open: the run id to the `decide` its answer resolves */
   const pending = new Map<string, (answer: LaunchAnswer) => void>()
+  /** the reservations a removal or a re-choose cancelled while their launch was
+   * still being built, so the launch declines instead of opening a window. A
+   * token enters it (`cancelFor`) only while the token is in
+   * `inFlightByInstallation`, and `launch`'s `finally` drops it on every path
+   * out, so it holds at most the reservations in flight -- never a token per
+   * launch this process has ever seen. */
+  const cancelledReservations = new Set<string>()
   /** the outcome promise of every launch this process has opened a window for
    * and not yet finished: the run id to the promise `launch` itself resolves
    * with. It is what an answer attaches to, so a second answer for a window that
@@ -1013,6 +1061,17 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
         // are freed, because nothing is in flight.
         if (!built.ok) return refusedOutcome(built.reason)
 
+        // An installation removed or re-chosen while this launch was still
+        // being built: the window it would open now is the one rule 11 says
+        // must not be there, so it is declined here instead -- no window, no
+        // child, and the reservation released on the way out. The id was drawn
+        // and claimed but never issued, so there is no outcome to record: no
+        // sender ever saw it.
+        if (cancelledReservations.delete(token)) {
+          const declined = refusedOutcome(DECLINED_CANCELLED, built.launch.runId)
+          return declined
+        }
+
         frozen.set(built.launch.runId, built.launch)
         commit(token, built.launch)
 
@@ -1063,6 +1122,11 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
         // reaches `commit`. `release` is idempotent, so the ordinary paths
         // through `settle` are unaffected by it, and `runId` is null only when
         // the draw itself threw.
+        //
+        // The reservation's cancel mark goes with them: whether the launch
+        // declined on it or the mark was never read, this call is over and the
+        // token will never be looked up again.
+        cancelledReservations.delete(token)
         release(token, request.installation)
         if (runId !== null) {
           release(runId, request.installation)
@@ -1083,14 +1147,28 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
         pending.delete(runId)
         resolve({ yes })
       }
-      const inFlight = settling.get(runId)
-      if (inFlight !== undefined) return await inFlight
+      const attached = settling.get(runId)
+      if (attached !== undefined) return await attached
       // The replay case: a second answer for a run id that has been answered is
       // answered from this process's own record, and never spawns again.
       const recorded = outcomes.get(runId)
       if (recorded !== undefined) return Object.freeze({ ...recorded, replayed: true })
       // A run id this process knows nothing about: it spawns nothing, ever.
       return undefined
+    },
+
+    cancelFor(project: string): void {
+      const inFlight = inFlightByInstallation.get(project)
+      if (inFlight === undefined) return
+      // The entry is the reservation token while `build` is reading the records,
+      // and the run id from `commit` until the launch is released: the token has
+      // no window to close, so it is marked and the launch declines when its
+      // build returns.
+      if (inFlight.startsWith(RESERVATION_PREFIX)) {
+        cancelledReservations.add(inFlight)
+        return
+      }
+      deps.confirmer.close(inFlight)
     },
   }
 }

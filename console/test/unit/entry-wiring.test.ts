@@ -987,6 +987,70 @@ describe('the fixture source', () => {
   })
 })
 
+// The confirmation window (V2.5.1a part 2b-3b-1): the one place in this app a
+// `fugaro run` child becomes possible.
+// ---------------------------------------------------------------------------
+
+describe('the launch the entry wires', () => {
+  it('builds the confirmation window inside main, over the default session, and rebuilds the runner over it', () => {
+    // The window needs `session.defaultSession` and it registers its two IPC
+    // channels once, so it cannot be built at module scope -- and it has to
+    // exist before a renderer can reach `run.launch`. What makes building it in
+    // `main` safe is that the handler reads `launchRunner` at message time and
+    // the surface goes on `ipcMain` only from `onDecided`, which only
+    // `lifecycle.start()` and `choose` reach, both from inside `main`.
+    //
+    // This file imports Electron's runtime, so the claims are read off `index.ts`
+    // as **text**, and the *function bodies* are what is read: naming a constant
+    // in prose elsewhere in the file cannot satisfy any of them.
+    const index = readFileSync(join(CONSOLE_ROOT, 'src', 'main', 'index.ts'), 'utf8')
+    const main = /async function main\(\): Promise<void> \{[\s\S]*?\n\}\n/.exec(index)
+    if (main === null) throw new Error('the scan found no main(): it would pass by finding nothing')
+    // The **code**, with the comments blanked: a comment inside these bodies can
+    // name a call to say why another one comes first, so a scan that read prose
+    // would answer about that sentence rather than about the call.
+    const body = withoutComments(main[0])
+
+    // The window is built in `main`'s own body, before the startup opens a
+    // window -- the first moment a renderer could ask for a launch -- and on
+    // `session.defaultSession`, which is the only session the `app://` handler
+    // serves: a window on a partition would issue its document request where
+    // nothing answers it, and every launch would be declined.
+    expect(body).toContain('createConfirmWindow(')
+    expect(body).toContain('session: session.defaultSession')
+    expect(body.indexOf('createConfirmWindow(')).toBeLessThan(body.indexOf('await lifecycle.start()'))
+    expect(index).not.toContain('fromPartition')
+
+    // The module-scope runner is the fail-closed default: the declining
+    // confirmer is what answers a launch before `main` has built the window.
+    const declared = /let launchRunner = createLaunchRunner\(\{[\s\S]*?\n\}\)\n/.exec(index)
+    if (declared === null) throw new Error('the entry has no module-scope launchRunner to read')
+    expect(declared[0]).toContain('confirmer: DECLINING_CONFIRMER')
+
+    // And the runner built in `main` is over the window's own confirmer, never
+    // over the declining one.
+    expect(body).toContain('confirmer: createConfirmWindow(')
+    expect(body).not.toContain('DECLINING_CONFIRMER')
+
+    // Both places the entry learns an installation moved cancel the launch its
+    // project has in flight: the choose -- "re-chosen" is that installation
+    // being chosen again, since a launch names its own installation -- and the
+    // rail's removal. The cancel comes before `lifecycle.choose`, so the window
+    // is already gone by the time the new installation's window opens.
+    const chosen = /onChosen: \(chosen\) => \{[\s\S]*?\n    \},\n/.exec(body)
+    if (chosen === null) throw new Error('the entry has no onChosen to read')
+    expect(chosen[0]).toContain('launchRunner.cancelFor(chosen.project)')
+    expect(chosen[0].indexOf('launchRunner.cancelFor(chosen.project)')).toBeLessThan(
+      chosen[0].indexOf('lifecycle.choose'),
+    )
+    expect(chosen[0]).toContain('lifecycle.choose')
+
+    const removed = /onRecordRemoved: \(project\) => \{[\s\S]*?\n    \},\n/.exec(body)
+    if (removed === null) throw new Error('the entry has no onRecordRemoved to read')
+    expect(removed[0]).toContain('launchRunner.cancelFor(project)')
+  })
+})
+
 // The entry spec draws nothing into its window by hand.
 // ---------------------------------------------------------------------------
 

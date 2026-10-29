@@ -24,11 +24,21 @@ import { describe, expect, it } from 'vitest'
 
 import type { Session } from 'electron'
 
-import { DECLINED_CANCELLED, confirmView, createLaunchRunner } from '../../src/main/launch'
+import {
+  CONFIRM_RATE_APP,
+  CONFIRM_RATE_PER_INSTALLATION,
+  CONFIRM_RATE_WINDOW_MS,
+  DECLINED_CANCELLED,
+  LAUNCH_COOL_DOWN_MS,
+  MAX_IN_FLIGHT,
+  confirmView,
+  createLaunchRunner,
+} from '../../src/main/launch'
 import type {
   ConfirmView,
   FrozenLaunch,
   LaunchConfirmer,
+  LaunchOutcome,
   LaunchRunner,
   LaunchTarget,
 } from '../../src/main/launch'
@@ -50,6 +60,7 @@ import { displayTaskText } from '../../src/main/launchrules'
 import { consoleWebPreferences } from '../../src/main/window'
 
 const PROJECT = 'sandbox'
+const OTHER_PROJECT = 'staging'
 const RECORDED_REPOSITORY = 'github/owner/repo-a'
 const REPOSITORY = 'owner/repo-a'
 const BRANCH = 'main'
@@ -268,8 +279,17 @@ function keyEvent(): { prevented: boolean; preventDefault(): void } {
 // ---------------------------------------------------------------------------
 
 /** runnerOver builds the real launcher over this test's own records and one
- * spawner, so a refused answer's consequence is a child that was not started. */
-function runnerOver(confirmer: LaunchConfirmer, spawner: ChildSpawner): LaunchRunner {
+ * spawner, so a refused answer's consequence is a child that was not started.
+ *
+ * The records answer any name with a target of that name -- the console's own
+ * shape, and what the limit cases need to reach a second installation -- and the
+ * limits' clock is `NOW` unless a case says otherwise, since the rate windows
+ * and the cool-down are only reachable by moving it. */
+function runnerOver(
+  confirmer: LaunchConfirmer,
+  spawner: ChildSpawner,
+  options: { readonly now?: () => number } = {},
+): LaunchRunner {
   const target: LaunchTarget = {
     project: PROJECT,
     binaryPath: BINARY,
@@ -281,9 +301,9 @@ function runnerOver(confirmer: LaunchConfirmer, spawner: ChildSpawner): LaunchRu
     confirmer,
     lookUp: (project: string) =>
       Promise.resolve(
-        project === PROJECT
-          ? { ok: true as const, target }
-          : { ok: false as const, reason: `no installation named ${project}` },
+        project === ''
+          ? { ok: false as const, reason: 'no installation named' }
+          : { ok: true as const, target: project === PROJECT ? target : { ...target, project } },
       ),
     stillRecorded: () => true,
     appEnv: { HOME: '/home/person-1' },
@@ -292,10 +312,24 @@ function runnerOver(confirmer: LaunchConfirmer, spawner: ChildSpawner): LaunchRu
       setTimeout: () => 0 as unknown as ReturnType<typeof setTimeout>,
       clearTimeout: () => undefined,
     },
-    now: () => NOW,
+    now: options.now ?? (() => NOW),
     wallClock: () => NOW,
-    random: () => 0xa2fc / 0x10000,
+    random: countingRandom(),
   })
+}
+
+/** countingRandom is the id's four hex digits, one draw per attempt: the first
+ * is `0xa2fc`, so a case's first launch is `RUN_ID`, and every later launch of
+ * that runner gets an id of its own. A source that answered one value for ever
+ * would make the launcher refuse every launch after the first as an id it
+ * already holds, which is a different property (`launch.test.ts` holds it). */
+function countingRandom(): () => number {
+  let tail = 0xa2fc
+  return () => {
+    const value = tail
+    tail += 1
+    return value / 0x10000
+  }
 }
 
 /** countingSpawner counts the children started and answers none of them: the
@@ -317,6 +351,61 @@ function countingSpawner(): ChildSpawner & { readonly calls: readonly (readonly 
   return spawner as ChildSpawner & { readonly calls: readonly (readonly [string, readonly string[]])[] }
 }
 
+/** launchReply is `fugaro run --json`'s document for one call's own argv: the
+ * run id and the repository are read back off the words the console emitted, so
+ * a reply is about this launch by construction. */
+function launchReply(argv: readonly string[]): string {
+  const flag = (name: string): string => {
+    const at = argv.indexOf(name)
+    return at === -1 ? '' : (argv[at + 1] ?? '')
+  }
+  return JSON.stringify({
+    project: PROJECT,
+    run: 'run-1',
+    repo: flag('--repo'),
+    run_id: flag('--run-id'),
+    branch: BRANCH,
+    ref: 'refs/heads/main',
+    execution: 'execution-1',
+    log_url: 'https://example.invalid/run-1',
+    status: 'launched',
+  })
+}
+
+/** replyingSpawner starts a child that answers at once and closes, so a launch
+ * settles: the cool-down an **accepted** launch leaves on its installation is
+ * only reachable once the launch before it is done. */
+function replyingSpawner(): ChildSpawner & { readonly calls: readonly (readonly [string, readonly string[]])[] } {
+  const calls: (readonly [string, readonly string[]])[] = []
+  const spawner = ((command: string, args: readonly string[], _options: SpawnOptionsLike) => {
+    calls.push([command, args])
+    const stdout: ((chunk: string) => void)[] = []
+    const closes: ((code: number | null, signal: string | null) => void)[] = []
+    const child = {
+      stdout: {
+        on: (_event: string, listener: (chunk: string) => void): void => {
+          stdout.push(listener)
+        },
+      },
+      stderr: { on: () => undefined },
+      stdin: { write: () => undefined, end: () => undefined, on: () => undefined },
+      on: (event: string, listener: (code: number | null, signal: string | null) => void): undefined => {
+        if (event === 'close') closes.push(listener)
+        return undefined
+      },
+      kill: () => true,
+    }
+    const reply = launchReply(args)
+    queueMicrotask(() => {
+      for (const listener of stdout) listener(reply)
+      for (const listener of closes) listener(0, null)
+    })
+    return child
+  }) as unknown as ChildSpawner
+  Object.defineProperty(spawner, 'calls', { get: () => calls })
+  return spawner as ChildSpawner & { readonly calls: readonly (readonly [string, readonly string[]])[] }
+}
+
 /** untilSettled waits out one launch's microtasks: the records read, the window
  * and the answer. A fixed number of turns rather than a poll, as
  * `launch.test.ts` does, so the assertions are about order. */
@@ -325,8 +414,13 @@ async function untilSettled(): Promise<void> {
 }
 
 /** aLaunch runs one launch of this test's own request through `runner`. */
-function aLaunch(runner: LaunchRunner): Promise<unknown> {
+function aLaunch(runner: LaunchRunner): Promise<LaunchOutcome> {
   return runner.launch({ installation: PROJECT, repository: RECORDED_REPOSITORY, task: TASK })
+}
+
+/** aLaunchIn runs one launch of `project` through `runner`. */
+function aLaunchIn(runner: LaunchRunner, project: string): Promise<LaunchOutcome> {
+  return runner.launch({ installation: project, repository: RECORDED_REPOSITORY, task: TASK })
 }
 
 describe('the confirmation window’s sender gate', () => {
@@ -763,6 +857,260 @@ describe('the confirmation window, and how it is cancelled', () => {
       ok: false,
       reason: SENDER_REFUSAL,
     })
+  })
+})
+
+describe('the launch, through the real confirmation window', () => {
+  it('spawns nothing for a yes from any sender but the window’s own top frame, and one child for the real one', async () => {
+    // The shipped chain, end to end: the surface the entry registers, the real
+    // `createConfirmWindow`, and the real launcher over it. "The operator said
+    // yes" is the only thing that reaches `spawn`, and it is a message that
+    // arrives from the window's own top frame.
+    const { confirmer, ipcMain, windows } = confirmOver()
+    const spawner = countingSpawner()
+    const runner = runnerOver(confirmer, spawner)
+    void aLaunch(runner)
+    await untilSettled()
+    const window = windows[0] as FakeWindow
+    expect(window).toBeDefined()
+
+    // The dashboard's own `webContents`, a subframe of this window, and another
+    // window's `webContents`: each is refused, and none of them decides.
+    const dashboard = fakeContents(CONFIRM_ENTRY_URL)
+    expect(
+      await ask(ipcMain, confirmChannel('answer'), { sender: dashboard, senderFrame: dashboard.mainFrame }, true),
+    ).toStrictEqual({ ok: false, reason: SENDER_REFUSAL })
+    expect(
+      await ask(ipcMain, confirmChannel('answer'), { sender: window.webContents, senderFrame: { url: CONFIRM_ENTRY_URL } }, true),
+    ).toStrictEqual({ ok: false, reason: SENDER_REFUSAL })
+    const another = fakeContents(CONFIRM_ENTRY_URL)
+    expect(
+      await ask(ipcMain, confirmChannel('answer'), { sender: another, senderFrame: another.mainFrame }, true),
+    ).toStrictEqual({ ok: false, reason: SENDER_REFUSAL })
+    await untilSettled()
+    expect(spawner.calls).toStrictEqual([])
+    expect(window.closeRequested()).toBe(false)
+
+    // The window's own top frame, and the one yes: exactly one child.
+    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true)).toStrictEqual({
+      ok: true,
+      data: { answered: true },
+    })
+    await untilSettled()
+    expect(spawner.calls).toHaveLength(1)
+  })
+
+  it('spawns nothing, and answers the cancel sentence, for a no on the window’s own channel', async () => {
+    const { confirmer, ipcMain, windows } = confirmOver()
+    const spawner = countingSpawner()
+    const launched = aLaunch(runnerOver(confirmer, spawner))
+    await untilSettled()
+
+    expect(
+      await ask(ipcMain, confirmChannel('answer'), fromWindow(windows[0] as FakeWindow), false),
+    ).toStrictEqual({ ok: true, data: { answered: true } })
+    expect((await launched).reason).toBe(DECLINED_CANCELLED)
+    expect(spawner.calls).toStrictEqual([])
+  })
+
+  it('spawns nothing for Escape and for Enter, the window’s own two ways out', async () => {
+    for (const key of ['Escape', 'Enter']) {
+      const { confirmer, windows } = confirmOver()
+      const spawner = countingSpawner()
+      const launched = aLaunch(runnerOver(confirmer, spawner))
+      await untilSettled()
+      const window = windows[0] as FakeWindow
+
+      const event = keyEvent()
+      window.webContents.fire('before-input-event', event, { type: 'keyDown', key })
+      expect(event.prevented, key).toBe(true)
+      expect((await launched).reason).toBe(DECLINED_CANCELLED)
+      expect(spawner.calls, key).toStrictEqual([])
+    }
+  })
+
+  it('spawns nothing when the window is closed', async () => {
+    const { confirmer, windows } = confirmOver()
+    const spawner = countingSpawner()
+    const launched = aLaunch(runnerOver(confirmer, spawner))
+    await untilSettled()
+
+    ;(windows[0] as FakeWindow).fire('closed')
+    expect((await launched).reason).toBe(DECLINED_CANCELLED)
+    expect(spawner.calls).toStrictEqual([])
+  })
+
+  it('spawns nothing when the project’s launch is cancelled while its window is open', async () => {
+    const { confirmer, windows } = confirmOver()
+    const spawner = countingSpawner()
+    const runner = runnerOver(confirmer, spawner)
+    const launched = aLaunch(runner)
+    await untilSettled()
+    const window = windows[0] as FakeWindow
+
+    runner.cancelFor(PROJECT)
+    expect(window.closeRequested()).toBe(true)
+    expect((await launched).reason).toBe(DECLINED_CANCELLED)
+    expect(spawner.calls).toStrictEqual([])
+  })
+
+  it('spawns nothing, and opens no window, when the project’s launch is cancelled while it is still being built', async () => {
+    const { confirmer, windows } = confirmOver()
+    const spawner = countingSpawner()
+    const runner = runnerOver(confirmer, spawner)
+    // Before the launch's first `await`: the project's entry is the reservation
+    // token, and the window that would open a moment later is exactly the one
+    // rule 11 says must not be there.
+    const launched = aLaunch(runner)
+    runner.cancelFor(PROJECT)
+
+    expect((await launched).reason).toBe(DECLINED_CANCELLED)
+    expect(windows).toStrictEqual([])
+    expect(spawner.calls).toStrictEqual([])
+  })
+
+  it('opens no second window for the same installation, and refuses a third app-wide', async () => {
+    const { confirmer, windows } = confirmOver()
+    const spawner = countingSpawner()
+    const runner = runnerOver(confirmer, spawner)
+
+    const first = aLaunch(runner)
+    await untilSettled()
+    expect(windows).toHaveLength(1)
+
+    const same = await aLaunch(runner)
+    expect(same.ok).toBe(false)
+    expect(same.reason).toContain('already in flight')
+    expect(windows).toHaveLength(1)
+
+    const second = aLaunchIn(runner, OTHER_PROJECT)
+    await untilSettled()
+    expect(windows).toHaveLength(2)
+
+    const third = await aLaunchIn(runner, 'third')
+    expect(third.ok).toBe(false)
+    expect(third.reason).toContain(`at most ${String(MAX_IN_FLIGHT)} at a time`)
+    expect(windows).toHaveLength(2)
+    expect(spawner.calls).toStrictEqual([])
+
+    for (const open of windows) open.fire('closed')
+    void first
+    void second
+  })
+
+  it('asks one installation to confirm at most three launches a minute', async () => {
+    let at = NOW
+    const { confirmer, windows } = confirmOver()
+    const spawner = countingSpawner()
+    const runner = runnerOver(confirmer, spawner, { now: () => at })
+
+    for (let attempt = 0; attempt < CONFIRM_RATE_PER_INSTALLATION; attempt += 1) {
+      const launched = aLaunch(runner)
+      await untilSettled()
+      ;(windows[windows.length - 1] as FakeWindow).fire('closed')
+      expect((await launched).reason).toBe(DECLINED_CANCELLED)
+    }
+    expect(windows).toHaveLength(CONFIRM_RATE_PER_INSTALLATION)
+
+    const refused = await aLaunch(runner)
+    expect(refused.ok).toBe(false)
+    expect(refused.reason).toContain(`${String(CONFIRM_RATE_PER_INSTALLATION)} launches`)
+    expect(windows).toHaveLength(CONFIRM_RATE_PER_INSTALLATION)
+
+    // The window is on the request and not on the answer, and it is a window:
+    // once the minute it was taken in has passed, the installation is asked
+    // again.
+    at += CONFIRM_RATE_WINDOW_MS
+    const later = aLaunch(runner)
+    await untilSettled()
+    expect(windows).toHaveLength(CONFIRM_RATE_PER_INSTALLATION + 1)
+    ;(windows[windows.length - 1] as FakeWindow).fire('closed')
+    expect((await later).reason).toBe(DECLINED_CANCELLED)
+    expect(spawner.calls).toStrictEqual([])
+  })
+
+  it('asks the whole app to confirm at most six launches a minute', async () => {
+    const { confirmer, windows } = confirmOver()
+    const spawner = countingSpawner()
+    const runner = runnerOver(confirmer, spawner)
+
+    for (let attempt = 0; attempt < CONFIRM_RATE_APP; attempt += 1) {
+      const launched = aLaunchIn(runner, `installation-${String(attempt)}`)
+      await untilSettled()
+      ;(windows[windows.length - 1] as FakeWindow).fire('closed')
+      expect((await launched).reason).toBe(DECLINED_CANCELLED)
+    }
+    expect(windows).toHaveLength(CONFIRM_RATE_APP)
+
+    const refused = await aLaunchIn(runner, 'one-too-many')
+    expect(refused.ok).toBe(false)
+    expect(refused.reason).toContain(`${String(CONFIRM_RATE_APP)} launches`)
+    expect(windows).toHaveLength(CONFIRM_RATE_APP)
+    expect(spawner.calls).toStrictEqual([])
+  })
+
+  it('pauses an installation for ten seconds after an accepted launch', async () => {
+    let at = NOW
+    const { confirmer, ipcMain, windows } = confirmOver()
+    const spawner = replyingSpawner()
+    const runner = runnerOver(confirmer, spawner, { now: () => at })
+
+    const launched = aLaunch(runner)
+    await untilSettled()
+    expect(
+      await ask(ipcMain, confirmChannel('answer'), fromWindow(windows[0] as FakeWindow), true),
+    ).toStrictEqual({ ok: true, data: { answered: true } })
+    expect((await launched).ok).toBe(true)
+    expect(spawner.calls).toHaveLength(1)
+
+    const paused = await aLaunch(runner)
+    expect(paused.ok).toBe(false)
+    expect(paused.reason).toContain('10 seconds')
+
+    at += LAUNCH_COOL_DOWN_MS
+    const later = aLaunch(runner)
+    await untilSettled()
+    expect(
+      await ask(ipcMain, confirmChannel('answer'), fromWindow(windows[1] as FakeWindow), true),
+    ).toStrictEqual({ ok: true, data: { answered: true } })
+    expect((await later).ok).toBe(true)
+    expect(spawner.calls).toHaveLength(2)
+  })
+
+  it('drops the window’s own entry once it is gone, however it was answered', async () => {
+    // Cancel is a default and an answer is spent, and the window is gone from
+    // the module's map as well as from the screen: a later message from that
+    // `webContents` is refused like any stranger's, and a close of its run id
+    // decides nothing a second time.
+    for (const way of ['yes', 'no', 'closed'] as const) {
+      const { confirmer, ipcMain, windows } = confirmOver()
+      const decider = recordingDecider()
+      confirmer.open(viewFixture(), decider.decide)
+      const window = windows[0] as FakeWindow
+      const sender = window.webContents
+
+      if (way === 'closed') {
+        window.fire('closed')
+      } else {
+        await ask(ipcMain, confirmChannel('answer'), fromWindow(window), way === 'yes')
+        // Electron's own order: the decision closes the window, and the `closed`
+        // that follows is what takes it out of the map.
+        window.fire('closed')
+      }
+      expect(decider.calls, way).toStrictEqual([[way === 'yes', undefined]])
+
+      expect(
+        await ask(ipcMain, confirmChannel('fields'), { sender, senderFrame: sender.mainFrame }),
+        way,
+      ).toStrictEqual({ ok: false, reason: SENDER_REFUSAL })
+      expect(
+        await ask(ipcMain, confirmChannel('answer'), { sender, senderFrame: sender.mainFrame }, true),
+        way,
+      ).toStrictEqual({ ok: false, reason: SENDER_REFUSAL })
+
+      confirmer.close(RUN_ID)
+      expect(decider.calls, way).toStrictEqual([[way === 'yes', undefined]])
+    }
   })
 })
 

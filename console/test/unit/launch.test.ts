@@ -352,6 +352,48 @@ function answeringConfirmer(yes: boolean): LaunchConfirmer & { readonly opened: 
   }
 }
 
+/** closingConfirmer is `heldConfirmer` with the run ids it was asked to close
+ * kept: `cancelFor` names a **project**, so which run id -- if any -- reached
+ * the confirmer's `close` is the whole of what it can be observed to have
+ * done. */
+function closingConfirmer(): {
+  readonly confirmer: LaunchConfirmer
+  readonly opened: readonly ConfirmView[]
+  readonly closed: readonly string[]
+  readonly openRunIds: () => readonly string[]
+  decide(yes: boolean): void
+  decideWindow(runId: string, yes: boolean): void
+} {
+  const opened: ConfirmView[] = []
+  const closed: string[] = []
+  const waiting = new Map<string, (yes: boolean, reason?: string) => void>()
+  const decideWindow = (runId: string, yes: boolean): void => {
+    const held = waiting.get(runId)
+    waiting.delete(runId)
+    held?.(yes)
+  }
+  return {
+    opened,
+    closed,
+    openRunIds: () => [...waiting.keys()],
+    decide(yes: boolean) {
+      const oldest = [...waiting.keys()][0]
+      if (oldest !== undefined) decideWindow(oldest, yes)
+    },
+    decideWindow,
+    confirmer: {
+      open(view, decide) {
+        opened.push(view)
+        waiting.set(view.runId, decide)
+      },
+      close(runId) {
+        closed.push(runId)
+        decideWindow(runId, false)
+      },
+    },
+  }
+}
+
 /** untilSettled waits out every microtask a launch makes on its way to a spawn:
  * the records read, the answer, and the still-recorded check. A fixed number of
  * turns rather than a poll, so the assertions are about the order the launcher
@@ -846,7 +888,7 @@ describe('the run id, and the second it is cut in', () => {
 })
 
 describe('the confirmation seam', () => {
-  it('declines every launch in the shipped app, by name, and spawns nothing', async () => {
+  it('refuses every launch by name as the entry point’s fail-closed default, and spawns nothing', async () => {
     const spawner = quietSpawner()
     const held = runner({ confirmer: DECLINING_CONFIRMER, spawner })
 
@@ -960,6 +1002,96 @@ describe('the confirmation seam', () => {
     expect(declined?.reason).toBe(DECLINED_CANCELLED)
     expect((await launched).reason).toBe(DECLINED_CANCELLED)
     expect(spawner.calls).toHaveLength(0)
+  })
+})
+
+describe('the cancel a removal or a re-choose asks for', () => {
+  it('decides nothing for a project with no launch in flight', async () => {
+    const closing = closingConfirmer()
+    const spawner = quietSpawner()
+    const held = runner({ confirmer: closing.confirmer, spawner })
+
+    // The first run of the console, an installation never launched, and a
+    // project whose launch has already settled: there is no window to close and
+    // nothing here decides.
+    held.cancelFor('no-such-project')
+    held.cancelFor(PROJECT)
+    await untilSettled()
+    expect(closing.closed).toStrictEqual([])
+    expect(closing.opened).toStrictEqual([])
+    expect(spawner.calls).toStrictEqual([])
+  })
+
+  it('closes the window the project has open, and spawns nothing', async () => {
+    const closing = closingConfirmer()
+    const spawner = quietSpawner()
+    const held = runner({ confirmer: closing.confirmer, spawner })
+    const launched = held.launch(request())
+    await untilSettled()
+    expect(closing.opened).toHaveLength(1)
+
+    held.cancelFor(PROJECT)
+    expect(closing.closed).toStrictEqual([RUN_ID])
+    const outcome = await launched
+    expect(outcome.ok).toBe(false)
+    expect(outcome.reason).toBe(DECLINED_CANCELLED)
+    expect(spawner.calls).toStrictEqual([])
+
+    // The window is spent with its answer: a second cancel names nothing more.
+    held.cancelFor(PROJECT)
+    expect(closing.closed).toStrictEqual([RUN_ID])
+  })
+
+  it('declines a launch whose build is still running, without opening a window', async () => {
+    const closing = closingConfirmer()
+    const spawner = quietSpawner()
+    const held = runner({ confirmer: closing.confirmer, spawner })
+    // Called before the launch's first `await`, so the project's entry is the
+    // reservation **token** and there is no run id to close yet: closing the run
+    // id alone would miss the window that opens a moment later.
+    const launched = held.launch(request())
+    held.cancelFor(PROJECT)
+
+    const outcome = await launched
+    expect(outcome.ok).toBe(false)
+    expect(outcome.reason).toBe(DECLINED_CANCELLED)
+    expect(closing.opened).toStrictEqual([])
+    expect(closing.closed).toStrictEqual([])
+    expect(spawner.calls).toStrictEqual([])
+
+    // And the installation is not locked out by it: the slot went back with the
+    // decline, so the next request opens its window as usual.
+    const again = held.launch(request())
+    await untilSettled()
+    expect(closing.opened).toHaveLength(1)
+    closing.decide(false)
+    expect((await again).reason).toBe(DECLINED_CANCELLED)
+  })
+
+  it('leaves a child that is already running alone', async () => {
+    const closing = closingConfirmer()
+    const spawner = quietSpawner()
+    const held = runner({ confirmer: closing.confirmer, spawner })
+    const caught = catchLaunchMaps()
+    try {
+      const launched = held.launch(request())
+      await untilSettled()
+      closing.decide(true)
+      await untilSettled()
+      expect(spawner.calls).toHaveLength(1)
+      expect(closing.openRunIds()).toStrictEqual([])
+
+      // A launch this process has spawned is not cancellable from here: no
+      // window is open, so `close` decides nothing, and no second child starts.
+      held.cancelFor(PROJECT)
+      await untilSettled()
+      expect(closing.closed).toStrictEqual([RUN_ID])
+      expect(spawner.calls).toHaveLength(1)
+      expect(caught.outcomes()).toBeUndefined()
+      void launched
+    } finally {
+      caught.restore()
+    }
   })
 })
 

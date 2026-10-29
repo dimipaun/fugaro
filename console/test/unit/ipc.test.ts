@@ -1946,8 +1946,9 @@ describe('the spend read’s arguments', () => {
  * twenty-two exactly where they were. **The console v2 plan's V2.5.1a added the
  * twenty-fourth** (`run.launch` / `launchRun`, the console's one write and the
  * only operation here that is not a read, rule 11) and left the other twenty-
- * three exactly where they were: its confirmation is a seam the production app
- * declines, so the surface grew and the app still spawns nothing.
+ * three exactly where they were. V2.5.1a's part 2b-3b-1 then built the
+ * confirmation window into the entry point, so that row's spawn happens on a yes
+ * from the window's own top frame and on nothing else.
  */
 const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['live.watch', 'subscribeLive'],

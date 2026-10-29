@@ -230,6 +230,22 @@ export interface InstallationPickerDeps {
   /** onRemoved is the same seam for a removal that took the active installation
    * away: the console has none, and its dashboard must say so. */
   readonly onRemoved?: (id: string) => void
+  /**
+   * onRecordRemoved is the removal's other half, and it fires after **every**
+   * successful removal -- the active row's and any other's -- with the
+   * **project** those rows are keyed by.
+   *
+   * It exists beside `onRemoved` rather than inside it because the two answer
+   * different questions. `onRemoved` is about the dashboard: it fires only when
+   * the removal took the active installation away, and it hands over the record
+   * id the dashboard keys its own state by. A launch in flight is not about the
+   * active installation at all -- it names its own -- so a window open for a
+   * project whose record has just gone must close whether or not that row was
+   * the active one, and the launcher maps a **project** to the run id to close
+   * (`LaunchRunner.cancelFor`). Folding it into `onRemoved` would make the
+   * cancel fire for the wrong removals and hand it an id it cannot use.
+   */
+  readonly onRecordRemoved?: (project: string) => void
 }
 
 /** InstallationPicker is what the entry point holds. */
@@ -953,11 +969,15 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
    * that tells the dashboard it has **no** installation, so it fires only when
    * the removal took the active one away -- firing it for a non-active row would
    * tell the dashboard it has nothing to drive while `active` still names an
-   * installation the operator can use. */
+   * installation the operator can use. `onRecordRemoved` is the removal's other
+   * reader and fires for every one that happened, with the project: a launch in
+   * flight names its own installation, so its window must close whichever row was
+   * active. */
   const removeInstallation = async (project: string): Promise<unknown> => {
     if (registry.entry(project) === null) return { ok: false, reason: 'no such installation' }
     const before = current()
     registry.remove(project)
+    deps.onRecordRemoved?.(project)
     const wasOpen = before.chosen && before.project === project
     if (wasOpen) deps.onRemoved?.(before.id)
     // A removal re-reads, so the answer the screen draws from and the session it
@@ -1143,6 +1163,7 @@ export function installInstallationPicker(options: {
   readonly fs?: InstallationFs
   readonly onChosen?: InstallationPickerDeps['onChosen']
   readonly onRemoved?: InstallationPickerDeps['onRemoved']
+  readonly onRecordRemoved?: InstallationPickerDeps['onRecordRemoved']
 }): InstallationPicker {
   const { electron } = options
   // **The home is this app's own environment's, and not `app.getPath('home')`.**
@@ -1205,6 +1226,7 @@ export function installInstallationPicker(options: {
     ...(options.fs === undefined ? {} : { fs: options.fs }),
     ...(options.onChosen === undefined ? {} : { onChosen: options.onChosen }),
     ...(options.onRemoved === undefined ? {} : { onRemoved: options.onRemoved }),
+    ...(options.onRecordRemoved === undefined ? {} : { onRecordRemoved: options.onRecordRemoved }),
   })
 }
 
