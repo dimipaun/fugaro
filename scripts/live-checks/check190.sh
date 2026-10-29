@@ -15,9 +15,9 @@
 #             bash scripts/live-checks/check190.sh --dry-run   (guards and files
 #             only: nothing is created, built, deployed or deleted; it prints
 #             the commands a real run would run and the cleanup commands)
-# Needs:      bash, mktemp, gcloud, git, curl and awk. Nothing is installed and
-#             nothing is fetched; if one of those is missing the script stops
-#             with one line naming it.
+# Needs:      bash, mktemp, gcloud, git, curl, awk and fugaro. Nothing is
+#             installed and nothing is fetched; if one of those is missing the
+#             script stops with one line naming it.
 # Where:      installation `fugaro` ONLY — project fugaro-dev, region us-east5.
 #             The project is HARD-CODED and `fugaro doctor` must answer that
 #             this is the fugaro-dev installation. Never belong, never another
@@ -37,12 +37,15 @@
 #             while it runs.
 # Runs:       by YOU. No agent runs any step of this, and no agent has: what it
 #             measures is a live project and a real token.
-# Cleanup:    always: the service, the image, the repository, the secret and
-#             the branch are deleted by the Restore, which runs from the exit
-#             trap too — so a Ctrl-C in the middle does not leave a service
+# Cleanup:    always: the service, the image, the repository, the secret, the
+#             branch and the source it staged under the installation's own
+#             bucket are deleted by the Restore, which runs from the exit trap
+#             too — so a Ctrl-C in the middle does not leave a service
 #             running. The three counts are checked before the scratch
 #             directory goes, and the directory is KEPT when a count is not 0,
-#             with a message saying where it is and what to delete by hand.
+#             with a message saying where it is and what to delete by hand. The
+#             staging bucket itself is never created here: it must already be
+#             there and readable, or the run stops before anything is made.
 # Output:     progress on stderr, ONE block on stdout headed CHECK 190 RESULT,
 #             to copy back to the coordinator. Exit 0 when every fact passed,
 #             1 when one did not (or a hard stop ended the run).
@@ -152,6 +155,11 @@ need_tools() {
   need git
   need curl
   need awk
+  # fugaro is checked here rather than left to guard_project's own call: a
+  # machine without it would otherwise fail as "this is not the fugaro-dev
+  # installation", which reads like the wrong installation rather than a
+  # missing tool.
+  need fugaro
 }
 
 # ------------------------------------------------------------- scratch + trap
@@ -266,18 +274,26 @@ restore_run() {
   say "Restore: deleting what this check created"
   if [ -f "$PUSHED" ]; then
     # The branch first: deleting it needs the service, which the next lines
-    # delete. A branch that is not there (the push that would have made it
-    # failed, or the front end cut it) is not an error here.
-    local refs
-    refs=$(run_git "$SCRATCH" ls-remote --heads "$(git_url)" "refs/heads/chk190/${NAME}*" 2>/dev/null || true)
-    if [ -n "$refs" ]; then
-      run_git "$SCRATCH" push --quiet "$(git_url)" --delete "chk190/${NAME}" "chk190/${NAME}-slow" >/dev/null 2>&1 || true
-      refs=$(run_git "$SCRATCH" ls-remote --heads "$(git_url)" "refs/heads/chk190/${NAME}*" 2>/dev/null || true)
-    fi
-    if [ -n "$refs" ]; then
-      fact "branch-deleted" FAIL "a branch this run pushed is still on $(repo_name): $(printf '%s' "$refs" | awk '{print $2}' | tr '\n' ' ')— delete it by hand (git push <remote> --delete <branch>)"
+    # delete. Both listings are read with a freshly minted token, and a listing
+    # that cannot be read is NOT the answer "the branch is not there" — see
+    # branch_refs for why that is the ordinary case here rather than a corner.
+    local refs rc=0
+    refs=$(branch_refs) || rc=$?
+    if [ "$rc" != 0 ]; then
+      fact "branch-deleted" FAIL "whether this run's branches (chk190/${NAME}, chk190/${NAME}-slow) are on $(repo_name) cannot be read: 'git ls-remote' failed even with a freshly minted identity token ($(git_error_excerpt ls-remote)). A failed listing is not the answer 'there is no branch', so this run does not claim either was deleted — read it yourself (git ls-remote <remote> 'refs/heads/chk190/*') and delete what is there (git push <remote> --delete <branch>)"
     else
-      fact "branch-deleted" PASS "no branch named chk190/${NAME} or chk190/${NAME}-slow is on $(repo_name) any more"
+      if [ -n "$refs" ]; then
+        run_git "$SCRATCH" push --quiet "$(git_url)" --delete "chk190/${NAME}" "chk190/${NAME}-slow" >/dev/null 2>&1 || true
+        rc=0
+        refs=$(branch_refs) || rc=$?
+      fi
+      if [ "$rc" != 0 ]; then
+        fact "branch-deleted" FAIL "the delete of this run's branches (chk190/${NAME}, chk190/${NAME}-slow) was attempted on $(repo_name), and whether they are gone cannot be read: the listing that followed failed ($(git_error_excerpt ls-remote)). Nothing is claimed about them — read it yourself (git ls-remote <remote> 'refs/heads/chk190/*') and delete what is still there"
+      elif [ -n "$refs" ]; then
+        fact "branch-deleted" FAIL "a branch this run pushed is still on $(repo_name): $(printf '%s' "$refs" | awk '{print $2}' | tr '\n' ' ')— delete it by hand (git push <remote> --delete <branch>)"
+      else
+        fact "branch-deleted" PASS "no branch named chk190/${NAME} or chk190/${NAME}-slow is on $(repo_name) any more"
+      fi
     fi
   else
     fact "branch-deleted" PASS "no branch was pushed: the run stopped before its first push, so there is none to delete"
@@ -299,6 +315,21 @@ restore_run() {
   fi
   if [ "$BUILD_ATTEMPTED" = yes ]; then
     gcloud storage rm -r "${STAGING_PREFIX:?}" >&2 || true
+    # Read back rather than asserted: the rm above is best-effort (a failure
+    # there must not lose the rest of the block), so the row says what a listing
+    # found and not what the command was asked to do. `gcloud storage ls` on a
+    # prefix with nothing under it exits non-zero and says so on stderr
+    # ("matched no objects"), so the status alone does not separate "gone" from
+    # "could not be read": the message does.
+    local staged st_rc=0
+    staged=$(gcloud storage ls "${STAGING_PREFIX:?}" 2>"$SCRATCH/staged.err" | tr -d '\r' | { grep -v '^$' || true; } | wc -l | tr -d ' ') || st_rc=$?
+    if [ "$staged" != 0 ]; then
+      fact "restore-staged-source" FAIL "the build's source this run staged at ${STAGING_PREFIX} is still there (${staged} object(s)); the scratch directory does not help here, so remove it by hand: gcloud storage rm -r ${STAGING_PREFIX}"
+    elif [ "$st_rc" = 0 ] || grep -q 'matched no objects' "$SCRATCH/staged.err"; then
+      fact "restore-staged-source" PASS "the build's source this run staged at ${STAGING_PREFIX} is gone (the prefix is empty, and no bucket-wide delete was attempted)"
+    else
+      fact "restore-staged-source" FAIL "whether the build's source at ${STAGING_PREFIX} is still there cannot be read (the list exited ${st_rc} for a reason other than an empty prefix), so nothing is claimed about it: check it by hand with gcloud storage ls ${STAGING_PREFIX} and remove it with gcloud storage rm -r ${STAGING_PREFIX} if it is there"
+    fi
   fi
   local st rp sc
   st=$(svc_state)
@@ -306,7 +337,7 @@ restore_run() {
   sc=$(secret_state)
   if [ "$st" = not-there ] && [ "$rp" = not-there ] && [ "$sc" = not-there ]; then
     COUNTS_OK=yes
-    fact "restore" PASS "the service, the image's repository and the secret container this run created are gone, and the build's staged source was removed from ${STAGING_PREFIX}"
+    fact "restore" PASS "the service, the image's repository and the secret container this run created are gone"
   else
     fact "restore" FAIL "counts after the Restore: service ${st}, repository ${rp}, secret ${sc} — each must read not-there. The scratch directory is kept: $SCRATCH. Delete by hand what is still there only if you know it is this check's"
   fi
@@ -560,6 +591,24 @@ repo_name() { printf '%s' "$REPO"; }
 branch_name() { printf 'chk190/%s' "$NAME"; }
 git_url() { printf 'https://%s/%s.git' "$HOST" "$REPO"; }
 
+# branch_refs: this run's branches on the sandbox repository, one line per ref,
+# read with a FRESHLY minted identity token. Both halves matter in the Restore:
+# the token GIT_CONF holds was minted before the slow push, and that push is
+# held open for an hour, so by the time the Restore runs it has usually expired
+# and every call answers 403 — which an `ls-remote` reads exactly like an absent
+# branch. A listing that cannot be read therefore returns 1 and is never the
+# answer "the branch is gone": read as one, it would leave a branch carrying a
+# ${BIG_MIB} MiB blob on the sandbox repository while the block claimed it had
+# been deleted.
+branch_refs() {
+  mint_idt || return 1
+  local out rc=0
+  out=$(run_git "$SCRATCH" ls-remote --heads "$(git_url)" "refs/heads/chk190/${NAME}*" 2>"$SCRATCH/ls-remote.err") || rc=$?
+  [ "$rc" = 0 ] || return 1
+  printf '%s\n' "$out" | tr -d '\r' | grep -v '^$' || true
+  return 0
+}
+
 # fetch_stats: the proxy's own counters — requests, bytes in, bytes out — which
 # is what the clone and push rows are measured in. The proxy logs one line per
 # request and serves the aggregate at /chk190/stats; both carry counts and sizes
@@ -623,6 +672,18 @@ step_build_deploy() {
     stop "no build service account was found: this check builds the proxy as one of the installation's own accounts (fugaro-b-*), never as the project's default Compute account, and 'gcloud iam service-accounts list --project=${P} --filter=email~^fugaro-b-' printed none. Name one with CHECK190_BUILD_SA=<account>@${P}.iam.gserviceaccount.com and run again. Nothing was created"
   fi
   say "building as ${BUILD_SA} (roles/artifactregistry.writer on the project, roles/storage.objectViewer on gs://${P}_cloudbuild, roles/logging.logWriter)"
+
+  # The staging bucket is the INSTALLATION's, not this check's: `gcloud builds
+  # submit` CREATES gs://<project>_cloudbuild when it is missing, and this run's
+  # Restore removes only its own prefix under it — so a bucket created here
+  # would outlive the check, with no record and nothing that deletes it. An
+  # unreadable bucket is therefore a stop BEFORE anything is created, and a
+  # failed listing is not the answer "it is not there" (see list_state).
+  if ! gcloud storage ls "gs://${P}_cloudbuild/" >/dev/null 2>"$SCRATCH/bucket.err"; then
+    fact "build-staging" FAIL "gs://${P}_cloudbuild/ could not be listed here (it is not there, or this account cannot read it), so the build was NOT started: 'gcloud builds submit' would create that staging bucket for this run's source, and the bucket is the installation's — this check creates only what its own Restore deletes. Nothing was created, built or deployed"
+    stop "gs://${P}_cloudbuild/ cannot be listed, and 'gcloud builds submit' would CREATE it to stage this run's source: a bucket is the installation's own (not this check's), so this check never creates one and has no record by which to remove it. Fix, per INSTALLATION fugaro (${P}), run by YOU: if the bucket exists, give YOUR account read on it (gcloud storage buckets add-iam-policy-binding gs://${P}_cloudbuild --member=user:YOUR-EMAIL --role=roles/storage.objectViewer); if it does not exist, create it once (gcloud storage buckets create gs://${P}_cloudbuild --project=${P} --location=${L} --uniform-bucket-level-access). Then run this check again. Nothing was created, built or deployed by this run"
+  fi
+  fact "build-staging" PASS "this run stages the build's source under ${STAGING_PREFIX}, inside the installation's own staging bucket (listed before anything was created, so gcloud creates nothing), and its Restore deletes that prefix again"
 
   # The token's own container, created from the file with --data-file: the value
   # is in no argv, no log line and no environment variable of the service. The
@@ -733,12 +794,19 @@ step_build_deploy() {
   fact "iam-policy" PASS "get-iam-policy on ${SVC} names no allUsers and no allAuthenticatedUsers member, read BEFORE any request was sent: the service requires IAM"
 
   # An unauthenticated call must be refused: that is the second half of the same
-  # assertion, and it is the register's own wording.
+  # assertion, and it is the register's own wording. A project-level allUsers or
+  # run.invoker binding does NOT appear in the service's own get-iam-policy, so
+  # this probe is the only thing that sees it — and the run stops here rather
+  # than cloning, pushing a ${BIG_MIB} MiB pack and holding a push open for an
+  # hour behind a public URL with the sandbox repository's token attached.
   local code
   code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time "$CURL_SECONDS" "${URL}/chk190/health" 2>/dev/null || true)
   case "$code" in
   401 | 403) fact "unauthenticated-request" PASS "an unauthenticated GET /chk190/health was refused with ${code}" ;;
-  *) fact "unauthenticated-request" FAIL "an unauthenticated GET /chk190/health answered ${code:-nothing}, so the service does not refuse unauthenticated calls — stop and fix the deployment before trusting anything else here" ;;
+  *)
+    fact "unauthenticated-request" FAIL "an unauthenticated GET /chk190/health answered ${code:-nothing}, so the service does not refuse unauthenticated calls"
+    stop "an unauthenticated GET /chk190/health answered ${code:-nothing}: the service answers unauthenticated calls, so the proxy and the sandbox repository's token it attaches are behind a public URL. The service's own get-iam-policy names no public member, so this is a project-level binding (allUsers or allAuthenticatedUsers with roles/run.invoker) — the one thing only this probe sees. Nothing was cloned and nothing was pushed, and the run stops here rather than spending the next two hours behind it: the service, the image, the repository and the secret container are deleted by this run's Restore, and the project's IAM is yours to fix"
+    ;;
   esac
 }
 
@@ -887,6 +955,7 @@ step_slow_push() {
 # delete. Printed by --dry-run; nothing here is run.
 print_plan() {
   say "dry run: NOTHING below was run. A real run would run, in this order:"
+  say "  [network] gcloud storage ls gs://${P}_cloudbuild/ (a read, and a stop if it fails: the build's staging bucket must already be there, because 'gcloud builds submit' would CREATE it, and it is the installation's rather than this check's)"
   say "  [network, writes] gcloud secrets create ${SECRET} --project=${P} --data-file=<CHECK190_TOKEN_FILE>"
   say "  [network, writes] gcloud secrets add-iam-policy-binding ${SECRET} --project=${P} --member=serviceAccount:<project-number>-compute@developer.gserviceaccount.com --role=roles/secretmanager.secretAccessor"
   say "  [network, writes] gcloud artifacts repositories create ${SVC} --project=${P} --location=${L} --repository-format=docker"
@@ -901,6 +970,7 @@ print_plan() {
   say "  [network, deletes] gcloud artifacts repositories delete ${SVC} --project=${P} --location=${L}"
   say "  [network, deletes] gcloud secrets delete ${SECRET} --project=${P}"
   say "  [network, deletes] gcloud storage rm -r ${STAGING_PREFIX}"
+  say "  [network] gcloud storage ls ${STAGING_PREFIX} (the read-back that says the staged source is gone; a prefix that cannot be read is a FAIL, not a PASS)"
   say "What needed the network and your credentials in THIS dry run: fugaro doctor, the lists that ask whether the service, the repository and the secret are there, and the build-account list (all reads). Local only: the scratch directory and the Dockerfile in it."
 }
 
@@ -933,8 +1003,8 @@ main() {
 # FAIL — not reached, and any other recorded key follows, in the order the run
 # recorded it. That is what makes the block safe to diff between two runs.
 BLOCK_KEYS=(fugaro-version project-region repo token-file deploy-iam-only proxy-source baseline scratch
-  service-config iam-policy unauthenticated-request clone-full clone-blobless push-small
-  push-big-http1 cold-start timeout-3600 branch-deleted restore scratch-removed)
+  build-staging service-config iam-policy unauthenticated-request clone-full clone-blobless push-small
+  push-big-http1 cold-start timeout-3600 branch-deleted restore-staged-source restore scratch-removed)
 
 print_block() { # print_block FACTS STATUS — always on the owner's own stdout
   local facts=$1 status=$2

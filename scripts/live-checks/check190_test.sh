@@ -176,7 +176,15 @@ elif sub == ("projects", "describe"):
 elif sub == ("iam", "service-accounts", "list"):
     emit("fugaro-b-1@fugaro-dev.iam.gserviceaccount.com")
 elif sub == ("storage", "ls"):
-    emit("")
+    # The bucket guard and the staged-source read-back are both this call. A
+    # real listing of a prefix with nothing under it prints nothing and exits 0
+    # (an empty prefix is a `matched no objects` error only for the `**` form),
+    # so an empty listing here is the honest answer.
+    if mode == "bucket-missing":
+        sys.stderr.write("ERROR: (gcloud) gs://fugaro-dev_cloudbuild/ not found: 404\n")
+        sys.exit(1)
+    if mode == "staged-left":
+        emit("gs://fugaro-dev_cloudbuild/chk190-source/x/main.go")
 elif sub == ("storage", "rm"):
     pass
 elif sub == ("secrets", "create"):
@@ -330,6 +338,11 @@ if sub == "clone":
     os.makedirs(os.path.join(dest, ".git"), exist_ok=True)
 elif sub == "ls-remote":
     forwarded()
+    if mode == "ls-remote-fails":
+        # What an expired identity token looks like: the Restore runs an hour
+        # after the token in GIT_CONF was minted.
+        sys.stderr.write("fatal: could not read Username for 'https://bitbucket.org': terminal prompts disabled\n")
+        sys.exit(128)
     for b in branches():
         sys.stdout.write("0000000000000000000000000000000000000000\t%s\n" % b)
 elif sub == "push":
@@ -429,8 +442,13 @@ def forwarded():
 
 
 if not authed:
-    # Cloud Run with IAM required: no credential, no request.
-    status, body = 401, ""
+    # Cloud Run with IAM required: no credential, no request. `public` is the
+    # service a project-level allUsers/run.invoker binding would leave behind,
+    # which the service's own get-iam-policy cannot show.
+    if mode == "public":
+        status, body = 200, "start=1 instance=chk190-1\n"
+    else:
+        status, body = 401, ""
 elif "/chk190/stats" in url:
     # The proxy counts the requests it forwards upstream, so the counters here
     # are the fake git's own forwarded requests and never this call itself.
@@ -730,6 +748,67 @@ test_restore_leftover() {
   fi
 }
 
+# The Restore reads the branch back with a freshly minted identity token, and a
+# listing that FAILS is not the answer "the branch is gone". That is the
+# ordinary case rather than a corner: the token GIT_CONF holds was minted before
+# the slow push, which is held open for an hour, so by the time the Restore runs
+# every call answers 403 — and reading that as "gone" is how a branch carrying
+# the large blob would stay on the sandbox repository while the block said it
+# had been deleted.
+test_a_branch_listing_that_fails_is_not_the_branch_is_gone() {
+  local dir=$work/lsfail
+  prepare "$dir"
+  run190 "$dir" FAKE_GIT_MODE=ls-remote-fails
+  expect_status "$status" 1 "failed branch listing: the verdict"
+  expect_contains "$out" "FACT branch-deleted: FAIL — whether this run's branches" "failed branch listing: the row says the listing failed"
+  expect_contains "$out" "cannot be read" "failed branch listing: the reason"
+  expect_absent "$out" "no branch named chk190/" "failed branch listing: the block does not claim the branch is gone"
+}
+
+# The unauthenticated probe is a stop and not a row. A project-level allUsers or
+# run.invoker binding does not appear in the service's own get-iam-policy, so
+# this probe is the only thing that sees it — and a run that carried on would
+# spend the next two hours cloning, pushing and holding a request open behind a
+# public URL with the sandbox repository's token attached.
+test_a_service_that_answers_unauthenticated_calls_stops_the_run() {
+  local dir=$work/publicsvc
+  prepare "$dir"
+  run190 "$dir" FAKE_CURL_MODE=public
+  expect_status "$status" 1 "public service: the verdict"
+  expect_contains "$out" "FACT unauthenticated-request: FAIL — an unauthenticated GET /chk190/health answered 200" "public service: the row"
+  expect_contains "$out" "FACT clone-full: FAIL — not reached" "public service: nothing was cloned"
+  expect_absent "$(cat "$dir/logs/git.calls")" "clone" "public service: no git request was sent"
+}
+
+# The staging bucket is the installation's and not this check's: `gcloud builds
+# submit` CREATES gs://<project>_cloudbuild when it is missing, and this run's
+# Restore removes only its own prefix under it. So a bucket that cannot be
+# listed is a stop BEFORE anything is created, and nothing is created.
+test_an_unreadable_staging_bucket_stops_before_anything_is_created() {
+  local dir=$work/bucket
+  prepare "$dir"
+  run190 "$dir" FAKE_GCLOUD_MODE=bucket-missing
+  expect_status "$status" 1 "staging bucket: the verdict"
+  expect_contains "$out" "FACT build-staging: FAIL" "staging bucket: the row"
+  expect_contains "$err" "would CREATE it to stage this run's source" "staging bucket: the stop names what gcloud would do"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "secrets create" "staging bucket: no secret was created"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "repositories create" "staging bucket: no repository was created"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "run deploy" "staging bucket: nothing was deployed"
+}
+
+# The `gcloud storage rm -r` above the read-back is best-effort — a failure
+# there must not lose the rest of the block — so the row says what a listing
+# found rather than what the command was asked to do. Check 91's Restore reads
+# its own staged source back for the same reason.
+test_a_staged_source_left_behind_is_a_failure() {
+  local dir=$work/staged
+  prepare "$dir"
+  run190 "$dir" FAKE_GCLOUD_MODE=staged-left
+  expect_status "$status" 1 "staged source: the verdict"
+  expect_contains "$out" "FACT restore-staged-source: FAIL — the build's source this run staged at gs://fugaro-dev_cloudbuild/chk190-source/" "staged source: the row names the prefix it read back"
+  expect_contains "$out" "is still there" "staged source: the row says the listing found it"
+}
+
 # This check is the sandbox installation's and nobody else's: the project is
 # hard-coded, the doctor stop names it, and no executed command may ever name
 # another installation's project.
@@ -779,6 +858,10 @@ t test_happy_path
 t test_a_public_iam_policy_stops_before_any_request
 t test_a_slow_push_that_completes_is_a_failure
 t test_a_refused_large_push_is_recorded_with_the_front_ends_answer
+t test_a_branch_listing_that_fails_is_not_the_branch_is_gone
+t test_a_service_that_answers_unauthenticated_calls_stops_the_run
+t test_an_unreadable_staging_bucket_stops_before_anything_is_created
+t test_a_staged_source_left_behind_is_a_failure
 t test_restore_leftover
 t test_never_belong
 
