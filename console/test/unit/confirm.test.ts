@@ -517,8 +517,7 @@ describe('the confirmation window’s sender gate', () => {
     await untilSettled()
 
     const window = windows[0] as FakeWindow
-    appears(window)
-    clock.advance(CONFIRM_READY_DELAY_MS)
+    ready(window, clock)
     expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true)).toStrictEqual({
       ok: true,
       data: { answered: true },
