@@ -1629,6 +1629,41 @@ test("the privacy defaults the page states are the ones the site's script makes"
   )
 })
 
+test('the privacy statement names the campaign pages\' three vendors, as the script and the landing data have them', () => {
+  // The page is the claim and this file is the fact (W3.2), and G2.3 adds three claims to it:
+  // which three vendors the four campaign pages may load, which pages those are, and what
+  // withdrawing deletes. Each is held to the artifact that makes it true rather than to a list
+  // kept here, so a vendor, a page or a cookie that moves takes the sentence with it.
+  const text = textOf(parse(pageOf(SHIPPED, 'privacy/index.html')))
+  const script = readFileSync(path.join(DIST, SITE_SCRIPT.replace(/^\//, '')), 'utf8')
+
+  for (const vendor of ['Meta', 'LinkedIn', 'Calendly']) {
+    assert.match(text, new RegExp(vendor), `the privacy page does not name ${vendor}, one of the three the campaign pages load (G2.3, D401)`)
+  }
+  for (const variant of loadLanding().variants) {
+    assert.ok(text.includes(variant.path), `the privacy page does not name ${variant.path}, one of the four campaign pages the second question is asked on, so a reader cannot tell where it applies`)
+  }
+  assert.match(text, new RegExp(MARKETING_CONSENT_KEY), 'the privacy page does not say where the campaign answer is kept')
+  assert.match(text, /apart from the analytics answer/i, 'the privacy page does not say the campaign answer is separate from the analytics one')
+
+  // Withdrawing deletes the first-party cookies the vendors set, and the list is read out of
+  // the script rather than restated: a cookie the script stops deleting is a sentence the page
+  // may not keep, and one it starts deleting is a sentence the page owes.
+  const cookies = /var MARKETING_COOKIES = \[([^\]]*)\]/.exec(script)
+  assert.ok(cookies, `${SITE_SCRIPT} no longer carries the list of cookies the campaign withdrawal deletes, so the page's claim about it has nothing to be held to`)
+  const named = [...cookies[1].matchAll(/'([^']+)'/g)].map((m) => m[1])
+  assert.ok(named.length > 0, `${SITE_SCRIPT} deletes no campaign cookie, and the privacy page says withdrawing deletes Meta's`)
+  for (const cookie of named) {
+    assert.ok(text.includes(cookie), `the privacy page does not name ${cookie}, which withdrawing deletes`)
+  }
+  assert.ok(/'consent',\s*'revoke'/.test(script), "the privacy page says withdrawing stops the pixel and the script no longer revokes its consent")
+
+  // And the limit the page states rather than hides: what it cannot remove is a vendor's own
+  // cookie on the vendor's domain, and a script already fetched runs until the reader reloads.
+  assert.match(text, /keeps running until you reload/i, 'the privacy page no longer says a script already fetched keeps running until the reader reloads')
+  assert.match(text, /the vendor's to remove/i, "the privacy page no longer says a cookie on the vendor's own domain is the vendor's to remove")
+})
+
 test('the claims the privacy page makes about the site are held to the artifact', () => {
   for (const page of [...SHIPPED]) {
     for (const el of walk(parse(page.html))) {
