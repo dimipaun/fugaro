@@ -614,7 +614,7 @@ test.describe('the Live screen', () => {
 
     const forced = await page.evaluate(() => {
       const scope: ParentNode = document.getElementById('live-mount') ?? document.createDocumentFragment()
-      const row = scope.querySelector('li.live-run')
+      const row = scope.querySelector('tr.live-run')
       const computed = row === null ? null : getComputedStyle(row)
       const number = scope.querySelector('.live-num')
       return {

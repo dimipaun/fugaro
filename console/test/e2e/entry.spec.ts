@@ -679,11 +679,11 @@ test.describe('the renderer entry, in the real window', () => {
       expect(shape.bodyText).not.toContain('It has no data yet')
 
       const panel = launched.page.locator('div.console-panel')
-      await expect(panel.locator('li.live-repo')).toHaveCount(1)
+      await expect(panel.locator('section.live-repo')).toHaveCount(1)
       await expect(panel.locator('span.live-repo-name')).toHaveText('r-4c25cf20/r-f1aa9214')
       // The last frame of the recording carries both runs.
-      await expect(panel.locator('li.live-run')).toHaveCount(2)
-      await expect(panel.locator('li.live-run span.live-run-id')).toHaveText([
+      await expect(panel.locator('tr.live-run')).toHaveCount(2)
+      await expect(panel.locator('tr.live-run td.live-run-id')).toHaveText([
         '20261015-120000-aa01',
         '20261015-120400-aa03',
       ])
@@ -730,7 +730,7 @@ test.describe('the renderer entry, in the real window', () => {
     try {
       // Drawn first, then the media emulated: what forced colors is asked about is
       // the chrome this console drew, not a page that never saw it.
-      await expect(launched.page.locator('div.console-panel li.live-repo')).toHaveCount(1)
+      await expect(launched.page.locator('div.console-panel section.live-repo')).toHaveCount(1)
       await expect(launched.page.locator('aside.console-rail span.console-rail-state')).toHaveText(
         '● running',
       )
