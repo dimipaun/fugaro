@@ -430,12 +430,11 @@ describe('the confirmation document and its view', () => {
   })
 
   it('draws a refused answer’s own sentence, and leaves the window open on it', async () => {
-    // The main process refuses a yes that arrives before the window has been on
-    // screen, focused, for its own delay (`CONFIRM_READY_DELAY_MS`): that click
-    // is not an answer and spawns nothing, so the window shows the sentence
-    // rather than a button that appears to do nothing. The confirming button is
-    // still there -- a refused answer is not a decision, and the click that
-    // comes after the delay is the one that counts.
+    // The main process refuses a yes that arrives before the window has settled
+    // (`CONFIRM_READY_DELAY_MS`): that click is not an answer and spawns nothing,
+    // so the window shows the sentence rather than a button that appears to do
+    // nothing. The confirming button is still there -- a refused answer is not a
+    // decision, and the click that comes after the delay is the one that counts.
     const refused = await mount({
       fields: { ok: true, data: aView() },
       answerReply: { ok: false, reason: 'the confirmation window is not ready for an answer yet' },

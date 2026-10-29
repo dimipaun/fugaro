@@ -20,7 +20,7 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import type { Session } from 'electron'
 
@@ -212,9 +212,13 @@ function fakeSession(): FakeSession {
  *
  * `now` is the clock the window's own delay is measured on, and it is a test's
  * rather than the process's for the same reason the rate limits' is
- * (`runnerOver`): the delay is time a case moves rather than waits. */
+ * (`runnerOver`): the delay is time a case moves rather than waits. Passing
+ * `null` is the one case that asks for the **shipped default** instead, which is
+ * what `reads the delay off a clock that only moves forward` drives: a helper
+ * that always supplied a clock would keep every case green through a default
+ * reverted to `Date.now`. */
 function confirmOver(
-  options: { readonly parent?: () => FakeWindow | null; readonly now?: () => number } = {},
+  options: { readonly parent?: () => FakeWindow | null; readonly now?: (() => number) | null } = {},
 ): {
   readonly confirmer: LaunchConfirmer
   readonly ipcMain: ReturnType<typeof fakeIpcMain>
@@ -236,7 +240,7 @@ function confirmOver(
     appPath: APP_PATH,
     entryUrl: CONFIRM_ENTRY_URL,
     session: session.value,
-    now: options.now ?? (() => NOW),
+    ...(options.now === null ? {} : { now: options.now ?? ((): number => NOW) }),
   })
   return { confirmer, ipcMain, windows, session }
 }
@@ -264,10 +268,10 @@ function appears(window: FakeWindow): void {
   window.fire('focus')
 }
 
-/** ready leaves the window as the delay leaves it: on screen, focused, and past
- * the delay. A case whose subject is not the delay drives this before its yes,
- * so that the yes is an answer; the delay's own cases (`describe('the delay
- * before a yes is an answer')`) drive `appears` and the clock themselves. */
+/** ready leaves the window as the delay leaves it: on screen, and past the delay.
+ * A case whose subject is not the delay drives this before its yes, so that the
+ * yes is an answer; the delay's own cases (`describe('the delay before a yes is
+ * an answer')`) drive `appears` and the clock themselves. */
 function ready(window: FakeWindow, clock: { readonly advance: (ms: number) => void }): void {
   appears(window)
   clock.advance(CONFIRM_READY_DELAY_MS)
@@ -986,6 +990,37 @@ describe('the delay before a yes is an answer', () => {
     expect(spawner.calls).toHaveLength(1)
   })
 
+  it('makes a window that is never focused answerable anyway, since focus only extends the delay', async () => {
+    // The delay runs from `show` **or** `focus`, whichever came last: the window
+    // is answerable once it has been on screen for the delay, and a focus is not
+    // required to answer it. Requiring one would make a window Electron never
+    // focuses -- a platform behaviour this suite asserts rather than observes --
+    // one that no answer can ever reach, where every launch it was opened for is
+    // refused. What a focus does is push the delay further out.
+    const clock = aClock()
+    const { confirmer, ipcMain, windows } = confirmOver({ now: clock.now })
+    const spawner = countingSpawner()
+    void aLaunch(runnerOver(confirmer, spawner))
+    await untilSettled()
+    const window = windows[0] as FakeWindow
+    window.fire('ready-to-show')
+    window.fire('show')
+
+    clock.advance(CONFIRM_READY_DELAY_MS - 1)
+    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true)).toStrictEqual({
+      ok: false,
+      reason: CONFIRM_NOT_YET,
+    })
+
+    clock.advance(1)
+    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true)).toStrictEqual({
+      ok: true,
+      data: { answered: true },
+    })
+    await untilSettled()
+    expect(spawner.calls).toHaveLength(1)
+  })
+
   it('cancels on the instant, whatever the delay still has to run', async () => {
     // Cancel is the default button and the way out: it takes no delay, because
     // the thing the delay protects is a spend and not an exit. A window that
@@ -1005,6 +1040,57 @@ describe('the delay before a yes is an answer', () => {
     })
     expect((await launched).reason).toBe(DECLINED_CANCELLED)
     expect(spawner.calls).toStrictEqual([])
+  })
+
+  it('reads the delay off a clock that only moves forward, never from the wall clock', async () => {
+    // The delay is an elapsed-time bound, like the launcher's limits
+    // (`launch.test.ts` reads the same clock for the same reason): the wall clock
+    // is a value the operator, NTP or a machine waking from sleep can move, and a
+    // `readyAt` read from `Date.now` is an hour in the past the moment the clock
+    // is set forward -- which makes an appeared window answerable on the instant,
+    // the spend the delay exists to refuse. The shipped default is therefore a
+    // monotonic reading (`performance.now`).
+    //
+    // The confirmer is built here with **no** clock of the test's (`now: null`),
+    // so what this case exercises is the production default itself and not the
+    // helper's stand-in for it: a default reverted to `Date.now` would pass every
+    // case whose clock the helper supplies.
+    let at = NOW
+    const realNow = performance.now
+    ;(performance as { now: () => number }).now = (): number => at
+    const realDate = Date.now
+    const moved = vi.spyOn(Date, 'now').mockImplementation(() => realDate() + 3_600_000)
+    try {
+      const { confirmer, ipcMain, windows } = confirmOver({ now: null })
+      const spawner = countingSpawner()
+      void aLaunch(runnerOver(confirmer, spawner))
+      await untilSettled()
+      const window = windows[0] as FakeWindow
+      appears(window)
+
+      // An hour of wall clock, and the yes is still not an answer to this
+      // window.
+      expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true)).toStrictEqual({
+        ok: false,
+        reason: CONFIRM_NOT_YET,
+      })
+      await untilSettled()
+      expect(spawner.calls).toStrictEqual([])
+
+      // And the clock the default does read still ends the delay: the refusal
+      // above is the wall clock being ignored, not a window that can never be
+      // answered.
+      at += CONFIRM_READY_DELAY_MS
+      expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true)).toStrictEqual({
+        ok: true,
+        data: { answered: true },
+      })
+      await untilSettled()
+      expect(spawner.calls).toHaveLength(1)
+    } finally {
+      moved.mockRestore()
+      ;(performance as { now: () => number }).now = realNow
+    }
   })
 })
 
