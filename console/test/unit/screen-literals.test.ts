@@ -103,6 +103,16 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
   },
   'live.ts': {
     'flag.name': 'a RunFlag is built only from live.ts\'s own flag table (`runFlags`); an unknown health or deadline is the console\'s "unknown ..." flag, never the document\'s word',
+    caption: {
+      within: 'fleetStatCell',
+      reason:
+        'the parameter of the `fleetStatCell` helper itself; every call site passes one of this file\'s own caption constants (`FLEET_BURN_WORD`, `FLEET_ACTIVE_WORD`, `FLEET_QUEUED_WORD`)',
+    },
+    'account.word': {
+      within: 'fleetLegendRow',
+      reason:
+        'a `FleetSegment`\'s `word`, which this file assigns from its own table: `fleetSegments` gives a segment the money word of the account it draws (`FLEET_SPENT_WORD`, `FLEET_LEASED_WORD`, `FLEET_HEADROOM_WORD`) and `fleetLegend` builds its rows the same way -- the model carries dollars and states, never a word',
+    },
     '`#${String(row.prNumber)}`':
       'a ready run\'s pull request number, filtered by `prNumberAt` to a positive integer (`schema.ts`\'s `optionalInt` guarantees a finite number and not a whole one) -- the same rule and the same entry `run.ts` keeps for `#${String(model.number)}`, and the review inbox draws the fact the same way: as text, this screen\'s own mark in front of a number the document carried',
     '`${LIVE_REVIEW_TITLE} (${formatReading(measured(model.reviewCount), \'count\')})`':
@@ -371,6 +381,26 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
     "formatReading(feedReading(feed), 'seconds')": '`formatReading` of a Reading: the console\'s own number formatting or its unavailable mark',
     "model.feed === null ? '' : (model.feed.since ?? '')":
       'the arrival stamp `src/source/cli.ts` wrote on the frame (or the empty string when the caller keeps no feed reading), used as a key rather than as text',
+    'segment.name': {
+      within: 'fleetBar',
+      reason:
+        'the money account of the segment `fleetSegments` built -- one of this file\'s own four words (`counted`, `spent`, `leased`, `headroom`) -- written as the `data-account` hook the stylesheet paints a shape by, never drawn as text',
+    },
+    'account.name': {
+      within: 'fleetLegendRow',
+      reason:
+        'the same money account for the legend row\'s swatch: `fleetLegend` builds its rows from this file\'s own table, so the attribute carries a word of the console\'s and not one from the document',
+    },
+    'axis(drawn)': {
+      within: 'fleetBar',
+      reason:
+        '`axis` of a share this file\'s own arithmetic clamped to the cap: the x of a segment on a 100-unit axis, which is geometry rather than text, and the same kind of value `graph.ts` writes through `coord`',
+    },
+    'axis(share)': {
+      within: 'fleetBar',
+      reason:
+        '`axis` of the same share as the segment\'s own width: the axis is this file\'s constant rather than a number from the document, so the value is the shape\'s size and nothing a document can spell',
+    },
     theme: { within: 'renderLive', reason: 'a `LiveTheme`, the closed theme tuple' },
   },
   'projects.ts': {
