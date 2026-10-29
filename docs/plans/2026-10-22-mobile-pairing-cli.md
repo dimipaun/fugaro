@@ -14,6 +14,25 @@ on 2026-10-18, so **P6.6, P6.7 and P6.13 are approved tasks with no approval of 
 and this plan is that shape. Nothing below is a new approval: where this document diverges from the
 task text (owner decisions 1 and 2 do), it says so and asks.
 
+**Amended 2026-10-29: re-read against `main` after the ee/ re-organisation; the text below is kept
+as written on 2026-10-22, and each place a later change reaches carries its own dated note.** What
+moved under it, in one list: (1) **P4.1 has partly landed** — `internal/mailbox/mac.go` (T2, T2a),
+`internal/mailbox/keychain/`, `lease.go` (T3), `ledger.go` (T4) and `outbox.go` are merged, and the
+`mailbox:` block of `internal/localcfg` holds **one** `keychain_item`; `internal/cli/mailbox.go`,
+`internal/mailbox/expiry.go`, the hidden sweeper and the parity corpus are still unbuilt.
+(2) **The CLI reference is generated from the tagged tree** — `go run ./ee/clidoc`, with
+`TestCliReferenceIsCurrent` in `ee/clidoc/cliref_test.go` and the core's subset half in
+`internal/clidoc/coreref_test.go`. (3) **The rules generation is 4** (`projectpolicy.RulesVersion`,
+the coordinator's read grant); the pairing and device nodes this plan quotes are unchanged, so M14
+still holds. (4) **`fugaro pair` is placed in the MIT core** (`internal/cli`) by this plan; the
+licence split since (LICENSING.md, `ee/README.md`, D637's split for `fugaro user`, the Subscription
+Terms §5.2 "the Command-line tool is licensed under the MIT licence") is consistent with that, but
+subscriptions task S5.1 lists "Pairing: `fugaro pair`" inside the roles design (D446) without
+placing it, so the placement is the owner's to confirm (§18, decision 12). (5) **The role words and
+the per-pairing keychain item** meet later work — the Terms' viewer, operator and administrator
+roles (§5.3), D628's minter, and the merged one-item config — and are decisions 9 and 13. Nothing in
+this list approves a task or changes one.
+
 **Merged on `main` today, and this plan is written against it — every one of them read, not
 recalled:** **P6.4** (rules generation 3: the `config/pairing/$uid` subtree, the
 `config/admin/devices/$uid` node `USER` now requires, `RulesVersion = 3`) with
@@ -25,7 +44,11 @@ merged P4.1 plan. **Not built, and this is the whole of what these three tasks b
 `internal/cli/pair.go`, `internal/budget/token/device.go`, `internal/budget/sweep_device_test.go`,
 `internal/cli/mailbox.go`, and every file under `internal/mailbox/` except `message.go`. So the
 rules **can** hold a pairing session today and **nothing can start one**: `p~` is a prefix the
-template and `pairingClaim` admit and no program mints.
+template and `pairingClaim` admit and no program mints. *(Amended 2026-10-29: of `internal/mailbox/`,
+`mac.go`, `keychain/`, `lease.go`, `ledger.go` and `outbox.go` have since merged as P4.1 T2, T2a, T3
+and T4; `internal/cli/pair.go`, `internal/budget/token/device.go`,
+`internal/budget/sweep_device_test.go`, `internal/cli/mailbox.go` and `internal/mailbox/expiry.go`
+still do not exist, and nothing can start a pairing session.)*
 
 **The three tasks, and their file boundaries are not this plan's to draw — they are already drawn.**
 `docs/plans/2026-10-18-mobile-mailbox-consumer.md` (the merged P4.1 plan) §8.4 is a table assigning
@@ -116,10 +139,10 @@ recommended), [mobile/reconciliation.md](../mobile/reconciliation.md) (D110–D1
 | Custom-token minting | `internal/budget/token`'s `Mint`/`MintAt`, `Lifetime`, `UID` | **reuses** it; adds the two new uid shapes and the delivery envelope |
 | A versioned AEAD envelope with AAD | `internal/budget/token/seal.go` (`Seal`/`Unseal`, `KeySize`, `EnvelopeVersion`, `nonceSize`, `tagSize`, `aad`) | **reuses the shape and the reasoning**, not the key-based API — §8 |
 | The sweep's user deletion and its report | `internal/budget/sweep.go`'s `deleteUsers`, `uidPrefix`, `SweepReport`, `RunUID` | **extends** the prefix test and the report — T4, decisions 1 and 6 |
-| The message binding and its vectors | `internal/mailbox/message.go` (P4.1 T1, merged) | **reused as-is**; the MAC function itself is P4.1 T2/T2a, unbuilt |
+| The message binding and its vectors | `internal/mailbox/message.go` (P4.1 T1, merged) | **reused as-is**; the MAC function itself is P4.1 T2/T2a, unbuilt *(amended 2026-10-29: merged — `mac.go`'s `MacOf`, `VerifyMAC` and `NewOutboxSigner`)* |
 | The confirmation machine and its vectors | `shared/confirm` (`index.js`, `vectors.json`), merged (P6.2) | **read** by P6.7's Go re-validation; never edited |
 | The prompt TTL and the queue | `shared/prompts`' `PROMPT_TTL_MS`, merged (P6.5) | **read**; the Go side declares no second number (§11) |
-| The mailbox consumer | `internal/cli/mailbox.go`, P4.1 T5–T7, **unbuilt** | **extended** by P6.7 and P6.13, per §8.4's table |
+| The mailbox consumer | `internal/cli/mailbox.go`, P4.1 T5–T7, **unbuilt** (still, 2026-10-29) | **extended** by P6.7 and P6.13, per §8.4's table |
 | The hidden-subcommand precedent | `internal/cli/history.go`'s `newBudgetHistoryCmd` (`Hidden: true`) | **followed** for `fugaro mailbox sweep`; `fugaro pair` is **visible** |
 | The retired-verb rename | `internal/cli/retired.go` (`fugaro init` is now `fugaro setup` / `fugaro update`) | **obeyed**: this plan names the live doors |
 
@@ -283,7 +306,10 @@ root.AddCommand(
 )
 ```
 
-§5 says what P6.6's addition drags with it.
+§5 says what P6.6's addition drags with it. *(Amended 2026-10-29: the list now continues past
+`newPlanCmd()` — `newReaperCmd()`, `newBacklogCmd()` and the hidden `newCredentialsCmd()` — and
+`internal/cli/extend.go`'s `RegisterCommand` is the seam an `ee/` command joins the tree through
+instead; a core command is still one line in this list.)*
 
 ---
 
@@ -366,7 +392,9 @@ record, the ledger's new key spaces, the pending prompts, the expiry, the revoke
 `agents` list — and **`internal/mailbox/mac.go` keeps one function** (`sign`/`verify` over
 `canonicalBytes`), which P4.1 lands and P6.7 calls. The split is §8.4 of the merged plan, row by
 row, and this plan adds nothing to either side of it. **Cost if wrong:** two implementations of a
-MAC is two chances to disagree about what is covered.
+MAC is two chances to disagree about what is covered. *(Amended 2026-10-29: the merged function's
+names are `MacOf` and `VerifyMAC`, with `Signer`/`NewOutboxSigner` for the outbound half; "sign" and
+"verify" above are the P4.1 plan's words for them.)*
 
 ### M8 — The sweeper's remit grows by exactly one delete set, and P6.13 writes it
 
@@ -445,7 +473,7 @@ fugaro pair [--name NAME] [--email ADDRESS] [--role ROLE] [--timeout D] [--json]
 | --- | --- | --- | --- |
 | `--name` | string | `""` | the device's name, for `pair ls` and the node's own field |
 | `--email` | string | `""` | **D226's administered email**; refused unless it is a verified address of the pairing operator (§12) |
-| `--role` | string | `admin` | **D225's role**, one of the CLI's own role words; a field on the node, read by no rule in v1 |
+| `--role` | string | `admin` | **D225's role**, one of the CLI's own role words; a field on the node, read by no rule in v1 *(amended 2026-10-29: the CLI has no such word set — its lists are launchers and operators (`internal/cli/roles.go`); the word set is decision 13's)* |
 | `--timeout` | duration | `2m` | how long to wait for the phone's key and the typed code; **refused above `4m30s`** |
 
 **`--timeout` is capped below D165's token, and the token is sized to the wait.** The pairing token's
@@ -594,7 +622,11 @@ with it, verified against the tree:
    `TestCliReferenceIsCurrent` compares the committed `website/content/cli-reference.md` with
    `Generate(cli.NewRootCmd())`, and the failure message carries the regenerating command.
    `internal/cli/docs_website_cliref_test.go` holds the other direction. `fugaro pair` is **visible**,
-   so it appears; `pair ls` and `pair revoke` appear as its subcommands.
+   so it appears; `pair ls` and `pair revoke` appear as its subcommands. *(Amended 2026-10-29: the
+   generator is now `go run ./ee/clidoc`, rendering the tagged tree; `TestCliReferenceIsCurrent`
+   is in `ee/clidoc/cliref_test.go`, and `internal/clidoc/coreref_test.go`'s
+   `TestCoreCommandsAreInTheReference` is the core's subset half. A core `fugaro pair` is held by
+   both.)*
 2. **`docs/design/v1.md` §9.1 gains a `fugaro pair` row**, and its `--json` paragraph covers it.
    **No test enforces this** — the same gap the P4.1 plan states for its own row — so it is a duty of
    the commit and a line in T8's review checklist.
@@ -966,7 +998,8 @@ a finding.**
 token's `uid` and `pu` begin with `p~` and never `r~`; `exp − iat ≤ 5m`; **`exp ≥ iat + --timeout`**,
 so the token always outlives the wait; `--timeout` above `4m30s` is refused; the command is
 **visible** in the reference and the hidden sweeper is
-not.
+not. *(Amended 2026-10-29: the reference commands are now `go run ./ee/clidoc` and
+`go test ./ee/clidoc/ ./internal/clidoc/... -count=1` beside the `./internal/cli` run, §5 item 1.)*
 **Red step.** Add the command without regenerating the reference and watch
 `TestCliReferenceIsCurrent` fail with the regenerating command in the message.
 **Reviewer tier.** SECURITY-SENSITIVE — independent opus review. What a reviewer must confirm: that
@@ -1144,7 +1177,9 @@ P6.13 are each SECURITY-SENSITIVE** (the mobile plan's group P-F and Global Cons
 2. **It approves nothing.** The mobile plan's Phase 6 approval of 2026-10-18 stands on its own; this
    plan is the shape those three tasks will take, and the owner approves or refuses it.
 3. **It does not build P4.1.** The consumer's surface, the MAC function, the lease, the ledger and
-   the hidden sweeper are P4.1's and are **unbuilt**; T5, T6 and T7 extend them. If the owner wants
+   the hidden sweeper are P4.1's and are **unbuilt**; T5, T6 and T7 extend them. *(Amended
+   2026-10-29: the MAC function, the lease and the ledger have merged; the consumer's surface and
+   the hidden sweeper have not.)* If the owner wants
    the pairing CLI without the consumer, T1–T4 stand alone and are useful — they are what makes the
    merged MAC code reachable in production.
 4. **It does not build the app's half.** P6.8 (the app's pairing and overview) and P3.1's secure-store
@@ -1239,6 +1274,15 @@ plan diverges from the mobile plan's task text**, and they are the ones that hol
    **Cost:** `revoke` must name the pairing whose item it deletes, and the item name must therefore
    be derivable from the device uid — which is why the local config holds the name **and** the
    pairing's uid. **The alternative** — one item per project — is D232's rejected shape.
+   *(Amended 2026-10-29: two corrections. D232 is about the **phone's** secure store — two items,
+   `idToken` and `macKey` — and does not rule on the laptop's keychain; the per-pairing ground is
+   D171 alone. And the merged P4.1 config holds **one** item name per project
+   (`internal/localcfg`'s `Mailbox.KeychainItem`, validated by `keychain.ParseItem`), which the
+   consumer reads once. So "one per pairing" with more than one paired phone needs that block to
+   hold one name per pairing uid — a change to `internal/localcfg` that §16's table
+   gives no task. The owner chooses: one paired device per project in v1, which fits the merged
+   config unchanged, or the widened block, added to T3's files. **Recommended: the widened block in
+   T3**, since D171's per-pairing key is what makes `revoke` revoke one phone.)*
 10. **Does this plan ship a pin?**
     **Recommended: no.** The owner's ruling for this change is **docs only, no code**, and a pin is a
     Go test. **Cost, stated plainly:** nothing reads this document, so its citations, its §8.4
@@ -1258,6 +1302,26 @@ plan diverges from the mobile plan's task text**, and they are the ones that hol
     attributes, which is a second way to set a claim, and the rules' `userClaim` comment already
     treats claim-setting as the launcher-equivalent power. So the recommendation is to drop the
     column rather than hand every launcher and operator that role for a column in a listing.
+12. **Added 2026-10-29: is `fugaro pair` core (MIT) or an `ee/` command?**
+    **Recommended: core**, as this plan has it — `internal/cli/pair.go` and one `root.AddCommand`
+    line. The Subscription Terms §5.2 put the Command-line tool under the MIT licence; the merged
+    P4.1 consumer is core; the device node and the rules are core mechanism (ee-reorg D521's
+    reading); and D637 places `fugaro user` over the IAM lists in the core while "roles enforcement
+    beyond the lists" goes to `ee/`. **Cost:** subscriptions S5.1 lists "Pairing: `fugaro pair`"
+    under the roles design (D446) without placing it, so this is the owner's word to give. **The
+    alternative** — an `ee/` command — moves T1–T4's files under `ee/`, registers through
+    `ee/register` and `cli.RegisterCommand`, adds a core stub through the paid-command list, and
+    leaves an untagged build with no way to pair a phone.
+13. **Added 2026-10-29: which words may `--role` take, and is a pairing a seat?**
+    **Recommended:** v1 accepts `viewer`, `operator` and `admin` — `docs/mobile-auth/spec.md`'s
+    table and the Subscription Terms §5.3's viewer, operator and administrator — stored on the node
+    as D225 says and read by no rule; the roles design (D446, subscriptions S5.1) replaces the word
+    set when it lands. The role stays a **node field** and not a claim: D628's "role as a claim"
+    concerns a person's sign-in through a minter the ranked people cannot call, which pairing does
+    not use, and the device token carries `mu` alone. **Cost:** a word set chosen before the roles
+    design; the Terms make an operator or administrator a User needing a seat (§5.1, §5.3), and
+    pairing records the role but counts nothing — the seat estimate (§5.5) is the console's.
+    **The alternative** — no `--role` until the roles design — leaves D225's field unwritten.
 
 ---
 
@@ -1320,7 +1384,8 @@ plan diverges from the mobile plan's task text**, and they are the ones that hol
 
 1. **The owner answers decisions 1, 2, 3 and 5** — the four that hold P6.6 back (1 and 2 are the two
    divergences from the task text) — and 4 and 6–10 if convenient. Answering them approves no task:
-   P6.6, P6.7 and P6.13 are already approved, and this document is their shape.
+   P6.6, P6.7 and P6.13 are already approved, and this document is their shape. *(Amended
+   2026-10-29: decisions 9, 12 and 13 also come before T1.)*
 2. **P4.1 must land before T5, T6 or T7.** They extend `internal/cli/mailbox.go` and
    `internal/mailbox/expiry.go`, neither of which exists. **T1–T4 do not depend on P4.1** beyond the
    `root.go` list they both append to, and they are what makes the merged MAC code reachable in
