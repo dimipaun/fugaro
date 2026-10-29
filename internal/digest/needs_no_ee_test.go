@@ -15,9 +15,9 @@ import (
 
 // TestDigestNeedsNoEE: the digest is MIT and stays MIT (D444, T11), so this
 // package and everything it imports must build with ee/ deleted, and it must
-// not read internal/report either, since that moves to ee/report. The digest
-// carries its own copy of the period vocabulary and the dollar rendering
-// (period.go) for exactly this reason.
+// not read the report library either: that moved to ee/report, which an
+// untagged build does not carry. The digest carries its own copy of the period
+// vocabulary and the dollar rendering (period.go) for exactly this reason.
 //
 // The two halves below are what that costs: the package still writes a digest
 // from an untagged build, and nothing its own .go files import -- test files
@@ -62,7 +62,7 @@ func TestDigestNeedsNoEE(t *testing.T) {
 					t.Fatalf("internal/digest reaches %s from %s; the digest is MIT and must build with ee/ deleted", imp, s.chain)
 				}
 				if imp == reportPath || strings.HasPrefix(imp, reportPath+"/") {
-					t.Fatalf("internal/digest reaches %s from %s; it moves to ee/report, and the digest must build without it", imp, s.chain)
+					t.Fatalf("internal/digest reaches %s from %s; that moved to ee/report, and the digest must build without it", imp, s.chain)
 				}
 				if !strings.HasPrefix(imp, module) {
 					continue

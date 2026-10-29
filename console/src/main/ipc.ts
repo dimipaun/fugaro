@@ -1373,7 +1373,7 @@ export const NEVER_REACHABLE: readonly NeverReachable[] = Object.freeze([
     shape: 'flag',
     value: '--csv',
     why: 'a second document format the console does not read: the surface asks for `--json`',
-    where: 'ee/report/cli/report.go:92',
+    where: 'ee/report/cli/report.go:110',
   },
   {
     shape: 'flag',
