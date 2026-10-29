@@ -276,8 +276,8 @@ controls, to enforce User Seat limits.
 7.1 **Customer environment.** The Software is not a hosted service. The Core runs each Job in the
 Customer's own cloud project and against the Customer's own repositories; the desktop console runs
 on the Customer's machines and operates the Command-line tool; the mobile app reads the Customer's
-own Firebase database; and the optional credentials service and the coordinator, which are part of
-the Core and not of the Software, run in the Customer's own cloud project. Subject to section 7.3
+own Firebase database; and the optional credentials service, which is part of the Core and not of the
+Software, and the coordinator, which is part of the Software, run in the Customer's own cloud project. Subject to section 7.3
 (Crash reports and diagnostics), none of these components reports to a server operated by the
 Licensor, and the Software does not contact the Key Service.
 
@@ -785,11 +785,10 @@ Quebec language clause, the late-payment rate, resellers and the merchant of rec
    and the earlier draft promised any telemetry would be opt-in.
 6. **Publicity** (section 30.1): the Licensor may name a Customer as a customer unless an
    Enterprise Order Form says otherwise; the earlier draft required consent both ways.
-7. **The coordinator** (section 7.1): counsel's text calls the credentials service and the
-   coordinator "part of the Core and not of the Software". The owner's ruling D531 had the words
-   that classed the coordinator as Core removed from the earlier draft; the coordinator has not
-   moved under `ee/` yet, so the sentence is accurate today, and counsel was to be told of D531 in
-   this revision round.
+7. **The coordinator** (section 7.1): counsel's text called the credentials service and the
+   coordinator "part of the Core and not of the Software". Resolved by the owner on 2026-10-29:
+   the coordinator is part of the Software (the business-licensed Subscription Edition), and
+   section 7.1 is corrected; the credentials service stays part of the Core.
 8. **The licence's wording**: counsel's text no longer cites the licence's clauses (the "Licence"
    definition is gone, and the Subscription is not described in the licence's words); whether the
    licence files need a matching revision is counsel's.

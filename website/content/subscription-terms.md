@@ -259,8 +259,8 @@ controls, to enforce User Seat limits.
 7.1 **Customer environment.** The Software is not a hosted service. The Core runs each Job in the
 Customer's own cloud project and against the Customer's own repositories; the desktop console runs
 on the Customer's machines and operates the Command-line tool; the mobile app reads the Customer's
-own Firebase database; and the optional credentials service and the coordinator, which are part of
-the Core and not of the Software, run in the Customer's own cloud project. Subject to section 7.3
+own Firebase database; and the optional credentials service, which is part of the Core and not of the
+Software, and the coordinator, which is part of the Software, run in the Customer's own cloud project. Subject to section 7.3
 (Crash reports and diagnostics), none of these components reports to a server operated by the
 Licensor, and the Software does not contact the Key Service.
 
