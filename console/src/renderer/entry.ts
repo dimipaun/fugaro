@@ -1038,13 +1038,15 @@ export function railRows(reply: unknown): readonly RailRow[] | null {
         saved: row['saved'] === true,
         checkout: typeof row['checkout'] === 'string' && row['checkout'] !== '' ? row['checkout'] : null,
         checkouts: stringsOf(row['checkouts']),
-        // Read like `checkouts` and through the same pass: a list this field
-        // cannot be read from is an installation whose launch control has nothing
-        // to offer (the panel draws its own sentence), which is not a reason to
-        // drop a row the rail can draw in every other respect. The identities are
-        // a document's strings, so they go through `sanitizeRefusal` before a
-        // screen draws one.
-        repositories: stringsOf(row['repositories']),
+        // Read like `checkouts` except for the one thing this field is not: an
+        // identity main matches against its own records, so it is kept **raw**.
+        // A list this field cannot be read from is an installation whose launch
+        // control has nothing to offer (the panel draws its own sentence), which
+        // is not a reason to drop a row the rail can draw in every other
+        // respect. The launch form draws each identity through `sanitizeRefusal`
+        // and keeps the raw string beside the drawn label -- a repository whose
+        // name is shaped like a credential must still launch.
+        repositories: rawStringsOf(row['repositories']),
       }),
     )
   }
@@ -1066,6 +1068,17 @@ function stringsOf(raw: unknown): readonly string[] {
   return Object.freeze(
     raw.filter((one): one is string => typeof one === 'string').map((one) => textOf(one, 'the CLI’s own line')),
   )
+}
+
+/** rawStringsOf is a list of strings with nothing done to them: the same filter
+ * `stringsOf` applies, and no sanitiser. It is for a list of *identities* --
+ * today the repository list a launch names, which main matches against the
+ * records it read from the CLI -- where a folded or redacted copy would be a
+ * value main refuses. The screen that draws one redacts the label it draws and
+ * keeps the raw string beside it (`screens/launch.ts`'s `options`). */
+function rawStringsOf(raw: unknown): readonly string[] {
+  if (!Array.isArray(raw)) return Object.freeze([])
+  return Object.freeze(raw.filter((one): one is string => typeof one === 'string'))
 }
 
 /**
@@ -2253,12 +2266,17 @@ export function currentRailRows(installation: unknown): readonly RailRow[] {
  * LaunchNow is the drawn launch control, the installation it was built for and
  * whether a call is out.
  *
- * The control is **built once per installation and kept**, which is what makes a
- * form survive the one-second Live poll: the poll replaces the panel, and a
- * control rebuilt on every frame would be a form that emptied itself while the
- * operator was typing. It is rebuilt when the open installation changes --
- * `answered` drops the Live screen for exactly that -- and rebuilding it is the
- * whole of "switching installation clears the form and any drawn outcome".
+ * The control is **built once per offer of repositories and kept**, which is
+ * what makes a form survive the one-second Live poll: the poll replaces the
+ * panel, and a control rebuilt on every frame would be a form that emptied
+ * itself while the operator was typing. "The same offer" is the installation
+ * **and** the repository identities it records: a row's list can change while
+ * its project does not -- a checkout added or removed under the open
+ * installation, whose answer replaces the rail rows without dropping the Live
+ * screen -- and a kept control would then offer a list the installation no
+ * longer has, refusing the repository the operator picked from the CLI's own
+ * list. Rebuilding it is also the whole of "switching installation clears the
+ * form and any drawn outcome" (`sameOffer` and `launchNowOf` below).
  */
 interface LaunchNow {
   readonly project: string
@@ -3352,22 +3370,6 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
 
   // ---- The launch control (V2.5.1b) --------------------------------------
 
-  /**
-   * LaunchNow is the drawn launch control, the installation it was built for and
-   * whether a call is out.
-   *
-   * The control is **built once per offer of repositories and kept**, which is
-   * what makes a form survive the one-second Live poll: the poll replaces the
-   * panel, and a control rebuilt on every frame would be a form that emptied
-   * itself while the operator was typing. "The same offer" is the installation
-   * **and** the repository identities it records: a row's list can change while
-   * its project does not -- a checkout added or removed under the open
-   * installation, whose answer replaces the rail rows without dropping the Live
-   * screen -- and a kept control would then offer a list the installation no
-   * longer has, refusing the repository the operator picked from the CLI's own
-   * list. Rebuilding it is also the whole of "switching installation clears the
-   * form and any drawn outcome".
-   */
   let launchNow: LaunchNow | null = null
 
   /** sameOffer is whether the control that is held was built for the repositories
@@ -3418,10 +3420,12 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * sendLaunch asks the main process for the launch. It is the **only** call
    * this file makes with a launch's fields, and the object it passes carries
    * exactly the schema's five keys: the installation, the repository the select
-   * was drawn with, the task, and the title and plan task when the operator
-   * typed one. Nothing here is a path, a flag, a ref or a run id -- main and its
-   * confirmation window own all four -- and `launchCheck` is a convenience in
-   * front of it rather than the boundary: main re-validates every field.
+   * holds -- the identity the installation records, which is the option's own
+   * `value` and not the label drawn beside it -- the task, and the title and plan
+   * task when the operator typed one. Nothing here is a path, a flag, a ref or a
+   * run id -- main and its confirmation window own all four -- and `launchCheck`
+   * is a convenience in front of it rather than the boundary: main re-validates
+   * every field.
    *
    * The outcome is drawn in the region `renderLaunch` marked `aria-live`, and
    * the task is cleared only when a launch happened: a refusal keeps the fields,

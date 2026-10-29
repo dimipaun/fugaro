@@ -103,6 +103,13 @@ import {
 import { decodeSnapshot } from '../../src/shared/schema'
 import { WRITE_UNAVAILABLE } from '../../src/renderer/writes'
 import {
+  LAUNCH_FORM_CLASS,
+  LAUNCH_OPEN_CLASS,
+  LAUNCH_REPOSITORY_CLASS,
+  LAUNCH_TASK_CLASS,
+  LAUNCH_TITLE_CLASS,
+} from '../../src/renderer/screens/launch'
+import {
   FakeDocument,
   FakeNode,
   aReducedCompatibility,
@@ -1907,6 +1914,75 @@ describe('the rail over the installation list', () => {
     add?.click()
     await flush()
     expect(rail.at(-1)).toEqual({ name: 'openInstallations', args: {} })
+  })
+})
+
+// The launch control the Live poll redraws around (V2.5.1b follow-up).
+// ---------------------------------------------------------------------------
+
+/** launchField is one of the launch form's controls, by its class. */
+function launchField(document: FakeDocument, className: string): FakeNode {
+  const found = classed(document.body, className)[0]
+  if (found === undefined) throw new Error(`the launch form drew no .${className}`)
+  return found
+}
+
+/** valueOf is the value a control carries, which the fake holds only where the
+ * entry (or a case) put one. */
+function valueOf(node: FakeNode): string {
+  const value = (node as unknown as { readonly value?: unknown }).value
+  return typeof value === 'string' ? value : ''
+}
+
+/** typeInto writes one control's value the way an operator's typing would. */
+function typeInto(document: FakeDocument, className: string, value: string): void {
+  ;(launchField(document, className) as unknown as { value: string }).value = value
+}
+
+describe('the launch control the Live poll redraws around', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('keeps the form, the task, the title and the repository across a poll tick', async () => {
+    // The poll replaces the Live screen under the control once a second, and a
+    // control **rebuilt** on that tick would be a form that emptied itself while
+    // the operator was typing: the typed task and title and the repository the
+    // select holds all have to survive it. The entry keeps the control it built
+    // for the same offer of repositories and appends the same element back --
+    // this case is that claim, driven through a real tick.
+    const frame = syntheticDocuments()[0] as Readonly<Record<string, unknown>>
+    const row = {
+      ...listRow('aurora', { open: true }),
+      repositories: ['github/owner/repo-a', 'github/owner/repo-b'],
+    }
+    const { bridge, calls } = railBridge([row], { subscribeLive: () => snapshotReply(frame, nowStamp()) })
+    const document = await boot(bridge, new FakeDocument())
+
+    ;(launchField(document, LAUNCH_OPEN_CLASS) as FakeNode).click()
+    await flush()
+    const form = launchField(document, LAUNCH_FORM_CLASS)
+    const screen = panelOf(document).children[0]
+    typeInto(document, LAUNCH_TASK_CLASS, 'summarise the alerting backlog')
+    typeInto(document, LAUNCH_TITLE_CLASS, 'the nightly backlog')
+    typeInto(document, LAUNCH_REPOSITORY_CLASS, 'github/owner/repo-b')
+
+    await vi.advanceTimersByTimeAsync(LIVE_POLL_MS)
+    await flush()
+
+    // The tick really happened: a second watch, and the Live screen under the
+    // control is a new element. Without this the assertions below would hold for
+    // a poll that drew nothing at all.
+    expect(calls.filter((call) => call.name === 'subscribeLive')).toHaveLength(2)
+    expect(panelOf(document).children[0], 'the tick replaced no screen').not.toBe(screen)
+    // ...and through it the form is the one the operator was typing into.
+    expect(launchField(document, LAUNCH_FORM_CLASS), 'the poll rebuilt the launch form').toBe(form)
+    expect(valueOf(launchField(document, LAUNCH_TASK_CLASS))).toBe('summarise the alerting backlog')
+    expect(valueOf(launchField(document, LAUNCH_TITLE_CLASS))).toBe('the nightly backlog')
+    expect(valueOf(launchField(document, LAUNCH_REPOSITORY_CLASS))).toBe('github/owner/repo-b')
   })
 })
 
