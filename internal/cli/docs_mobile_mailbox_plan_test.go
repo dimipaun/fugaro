@@ -378,15 +378,23 @@ func TestMailboxPlanCitationsExist(t *testing.T) {
 		"internal/watch/acks.go":         {"func AckPath("},
 		"internal/watch/prstate.go":      {"func (p *PRState) ask("},
 		"internal/runstore/launch.go":    {"func (s *Store) Claim(", "ClaimTTL"},
-		"internal/clidoc/cliref.go":      {"defaultPath"},
-		"internal/clidoc/cliref_test.go": {"func TestCliReferenceIsCurrent("},
-		"shared/mailbox/index.js":        {"DEFAULT_WINDOW_MS", "MIN_WINDOW_MS", "MAX_WINDOW_MS", "MAX_PROMPT_TTL_MS", "DEFAULT_MAX_SEEN", "defaultMaxPerSender", "export function step(", "export function initialState("},
-		"shared/lease/index.js":          {"CLAIM_TTL", "MAX_CLOCK_SKEW", "export function takeLease(", "export function readLease(", "export function releaseLease(", "export function validateLease("},
-		"shared/presence/index.js":       {"export function evaluatePresence(", "MAX_BOOT_ID_LENGTH"},
-		"shared/digest/index.js":         {"export function digest(", "REDACTED", "redact"},
-		"shared/mailbox-sim/index.js":    {"export function createSimulator(", "export function scheduleFromSeed(", "export function faultFor(", "export function scheduleText(", "export function parseScheduleText(", "export function replyId("},
-		"shared/mailbox-schema/index.js": {"FIELDS", "REQUIRED_FIELDS", "KINDS", "ACTIONS", "DIRECTIONS", "validateMessage", "isMessage", "validateHeartbeat", "export function canonicalBytes(", "REFUSALS"},
-		"shared/mailbox-schema/mac.js":   {"export function macOf(", "export function verifyMac("},
+		// The reference's generator moved out of the core (ee-reorg E1.7a). The
+		// plan's citation of `internal/clidoc/cliref.go` is about rendering the
+		// reference from the tree, and the renderer is what is still here: the
+		// file the plan names is pinned by the anchor list above, and the half
+		// of its drift check the core can run is beside it. The released tree's
+		// own generator and the whole-file check are under ee/, which this test
+		// never reads -- the "core without ee/" workflow deletes that directory
+		// and runs this suite.
+		"internal/clidoc/cliref/cliref.go": {"func Generate(", "func Prepare("},
+		"internal/clidoc/cliref_test.go":   {"func TestCoreCommandsAreInTheReference("},
+		"shared/mailbox/index.js":          {"DEFAULT_WINDOW_MS", "MIN_WINDOW_MS", "MAX_WINDOW_MS", "MAX_PROMPT_TTL_MS", "DEFAULT_MAX_SEEN", "defaultMaxPerSender", "export function step(", "export function initialState("},
+		"shared/lease/index.js":            {"CLAIM_TTL", "MAX_CLOCK_SKEW", "export function takeLease(", "export function readLease(", "export function releaseLease(", "export function validateLease("},
+		"shared/presence/index.js":         {"export function evaluatePresence(", "MAX_BOOT_ID_LENGTH"},
+		"shared/digest/index.js":           {"export function digest(", "REDACTED", "redact"},
+		"shared/mailbox-sim/index.js":      {"export function createSimulator(", "export function scheduleFromSeed(", "export function faultFor(", "export function scheduleText(", "export function parseScheduleText(", "export function replyId("},
+		"shared/mailbox-schema/index.js":   {"FIELDS", "REQUIRED_FIELDS", "KINDS", "ACTIONS", "DIRECTIONS", "validateMessage", "isMessage", "validateHeartbeat", "export function canonicalBytes(", "REFUSALS"},
+		"shared/mailbox-schema/mac.js":     {"export function macOf(", "export function verifyMac("},
 		// P6.5, merged: the TTL this plan binds rather than declares (M3).
 		"shared/prompts/index.js": {"export const PROMPT_TTL_MS", "export const EXPIRED_REPLY", "export const QUEUE_FULL_REPLY", "export const initialQueue", "export const enqueue", "export const expire", "export const answer", "export const pending", "export const announce", "export const evaluateInterrupt"},
 	} {
