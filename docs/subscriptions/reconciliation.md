@@ -358,7 +358,7 @@ in S3.1; the limits stated in the key section below.
   component is the issuing service, reached when a person asks for a key, never by the product.
 - **R3** — Every version released under MIT stays MIT: the coordinator and the reports of v0.11.0
   through **v0.12.1**, and the console up to 0.112.0. D434 and D444 move **future** versions only;
-  **extended by ee-reorg R1 (2026-10-29).**
+  **extended by ee-reorg R1 (2026-10-29, `docs/ee-reorg/reconciliation.md`).**
 - **R4** — The safety features stay in the MIT core (F8). The kill switch stays reachable from the
   MIT CLI at every licence state, and after ruling T12 also from the console and the app after the
   grace period.

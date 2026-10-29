@@ -33,7 +33,7 @@ the earlier version kept visible:
   default).
 - Check 178 measured the release date before; it now measures the coordinator's key-gated job.
 
-**Updated 2026-10-29 (the ee-reorg rulings, D520–D530).** The ee-reorg plan
+**Updated 2026-10-29 (the ee-reorg rulings, D520–D536).** The ee-reorg plan
 ([`../ee-reorg/implementation-plan.md`](../ee-reorg/implementation-plan.md)) **supersedes** S1.1,
 S1.2, S1.3, S1.4, S1.5, S1.7 and S1.9, carrying each task by task: S1.1 → E0.3, S1.2 → E1.1,
 S1.3 → E1.5, S1.4 → E2.1, S1.5 → E2.2, S1.7 → E1.4, S1.9 → E1.4. Their text and numbers stay below
@@ -466,8 +466,9 @@ stays MIT with its own copy of the period helpers.*
   && cd website && npm run check`.
 - **Red step:** set the tag first; `TestEETagNeedsTheLabels` fails until every label says MIT core
   plus the business licence.
-- **Depends on:** E2.2, E1.4 (ee-reorg; were S1.5, S1.9), S2.9, S7.1 (`community.astro`); T27, ruled (b) 2026-10-29 (deferred
-  with the key work, D523).
+- **Depends on:** E2.2 (ee-reorg; was S1.5), S2.9, S7.1 (`community.astro`); the images task
+  E1.4 (was S1.9) lands **after** this release (E3.2 → E1.4), not before. T27, ruled (b) 2026-10-29
+  (deferred with the key work, D523).
   **Reviewer:** opus + mandatory independent review.
 - **Commit:** `release: one binary, MIT core plus business-licensed parts (D447, T21)`.
 
