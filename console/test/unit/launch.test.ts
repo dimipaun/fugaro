@@ -888,7 +888,7 @@ describe('the run id, and the second it is cut in', () => {
 })
 
 describe('the confirmation seam', () => {
-  it('declines every launch in the shipped app, by name, and spawns nothing', async () => {
+  it('refuses every launch by name as the entry point’s fail-closed default, and spawns nothing', async () => {
     const spawner = quietSpawner()
     const held = runner({ confirmer: DECLINING_CONFIRMER, spawner })
 

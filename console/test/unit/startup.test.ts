@@ -855,7 +855,18 @@ describe('the entry point is wired to the handshake', () => {
     expect(indexSource).toContain('readVersion: readCliVersion')
     expect(indexSource).not.toContain('openWindowFor(')
     expect(indexSource).not.toContain('createConsoleWindow')
-    expect(indexSource).not.toContain('APP_ENTRY_URL')
+    // The two doors are shut above; what is left of the old third assertion --
+    // `APP_ENTRY_URL` named nowhere in the entry point -- is a proxy for them,
+    // and V2.5.1a part 2b-3b-1 needs the URL to *recognise* a dashboard window
+    // that is already open, as the confirmation window's parent. Recognising is
+    // not opening, so the rule is spelled out instead: the entry point loads no
+    // URL of its own, and the one place the URL is named is the recogniser,
+    // where it is compared against a window that exists rather than handed to a
+    // load.
+    const dashboard = bodyOf('function dashboardWindow(')
+    expect(indexSource).not.toContain('loadURL')
+    expect(dashboard, 'the recogniser compares a window that exists').toContain('APP_ENTRY_URL')
+    expect(dashboard, 'and reads the window rather than loading it').toContain('getURL()')
   })
 
   it('reads the version through the resolver, not through a path of its own', () => {

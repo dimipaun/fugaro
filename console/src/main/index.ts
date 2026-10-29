@@ -37,8 +37,7 @@ import { join } from 'node:path'
 
 import { app, BrowserWindow, Menu, ipcMain, protocol, session, shell } from 'electron'
 
-import { handleAppRequests, registerAppScheme } from './protocol'
-import { APP_ENTRY_URL } from './protocol'
+import { APP_ENTRY_URL, handleAppRequests, registerAppScheme } from './protocol'
 import { consoleIconPath, installDevDockIcon } from './icon'
 import { installInstallationPicker } from './picker'
 import type { InstallationPicker } from './picker'

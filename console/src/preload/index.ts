@@ -200,10 +200,11 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   // The launch, and the surface's **one write** (V2.5.1a, design section 5.1
   // rule 11, D22). One row, like every other: the five fields are the
   // operation's own closed schema. What this method *does* is ask the main
-  // process for a confirmation window -- it cannot answer for the operator, and
-  // the app it ships in declines every launch until V2.5.1b's window lands
-  // (`DECLINING_CONFIRMER`, `src/main/launch.ts`), so no renderer can reach a
-  // `fugaro run` child through this row today.
+  // process for a confirmation window: it cannot answer for the operator, and
+  // since V2.5.1a's part 2b-3b-1 the main process spawns on a yes from that
+  // window's own top frame and on nothing else (`createConfirmWindow`,
+  // `src/main/confirm.ts`), so no renderer reaches a `fugaro run` child through
+  // this row by itself.
   ['run.launch', 'launchRun'],
 ] as const) satisfies readonly (readonly [string, string])[]
 

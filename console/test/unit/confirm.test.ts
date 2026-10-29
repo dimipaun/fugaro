@@ -289,7 +289,8 @@ function runnerOver(
   confirmer: LaunchConfirmer,
   spawner: ChildSpawner,
   options: { readonly now?: () => number } = {},
-): LaunchRunner {  const target: LaunchTarget = {
+): LaunchRunner {
+  const target: LaunchTarget = {
     project: PROJECT,
     binaryPath: BINARY,
     cliVersion: CLI_VERSION,
