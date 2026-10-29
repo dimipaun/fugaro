@@ -74,18 +74,18 @@ const NEXT_SECTION = '## 3.'
  * adds each: Task 6.3 wrote `base.css` and Task 6.4 appends `screens.css` here,
  * in the same commit that creates it -- a stylesheet the bundler serves and this
  * scan does not read is a stylesheet whose selectors nothing checks. */
-const SCANNED: readonly string[] = Object.freeze(['base.css', 'screens.css'])
+const SCANNED: readonly string[] = Object.freeze(['flight-deck.css', 'base.css', 'screens.css'])
 
-/** RAIL_HOOKS is the rail's fifteen classes, which §2.1 names and §4.1 draws as
- * sixteen elements (the name line, the warning mark and the empty-state line
- * are the owner's design ruling of 2026-10-25). They are listed here because the
- * count is the claim: the stylesheet selects these fifteen and no sixteenth, and
- * a case below says so. */
+/** RAIL_HOOKS is the rail's fourteen classes, which §2.1 names and §4.1 draws as
+ * fifteen elements (the name line, the warning mark and the empty-state line
+ * are the owner's design ruling of 2026-10-25; the collapse control went with
+ * the rail's column when the header switcher replaced it on 2026-10-28). They
+ * are listed here because the count is the claim: the stylesheet selects these
+ * fourteen and no fifteenth, and a case below says so. */
 const RAIL_HOOKS: readonly string[] = Object.freeze([
   'console-rail',
   'console-rail-head',
   'console-rail-title',
-  'console-rail-collapse',
   'console-rail-list',
   'console-rail-row',
   'console-rail-nameline',
@@ -103,7 +103,7 @@ const RAIL_HOOKS: readonly string[] = Object.freeze([
  * (`div.console-rail-head`, `header.degraded-header`). Stripping one is what
  * turns a token into the class a rule would select; a token with any other
  * prefix is not a hook. */
-const ELEMENT_PREFIX = /^(?:a|aside|button|code|details|div|dl|figure|form|g|h1|h2|h3|header|input|label|li|nav|ol|p|path|pre|rect|section|span|summary|svg|table|tbody|td|text|th|tr|tspan|ul)\./
+const ELEMENT_PREFIX = /^(?:a|aside|button|code|details|div|dl|figure|form|g|h1|h2|h3|header|input|label|li|main|nav|ol|p|path|pre|rect|section|span|summary|svg|table|tbody|td|text|th|tr|tspan|ul)\./
 
 /** HOOK is what a token has to look like to be a hook rather than a word of
  * prose. A class hook carries one of the prefixes §2's tables and prose are
@@ -239,7 +239,7 @@ function inventoryHooks(): readonly string[] {
  * and the attributes (`[name`), in name order, with the comments removed so the
  * file's own prose is not read as a selector. */
 function selectorsIn(css: string): { readonly classes: readonly string[]; readonly attributes: readonly string[] } {
-  const stripped = css.replace(/\/\*[\s\S]*?\*\//g, '')
+  const stripped = css.replace(/\/\*[\s\S]*?\*\//g, '').replace(/url\([^)]*\)/g, 'url()')
   return {
     classes: [...new Set([...stripped.matchAll(/\.([a-z][a-z0-9-]*)/g)].map((match) => match[1] ?? ''))].sort(),
     attributes: [...new Set([...stripped.matchAll(/\[([a-z][a-z0-9-]*)/g)].map((match) => match[1] ?? ''))].sort(),
@@ -392,7 +392,7 @@ function drawnPairs(): ReadonlySet<string> {
     // `factory.create('p')` followed by `setAttribute('class', …)`: the shape
     // `entry.ts` draws through. When the class is a parameter, the tag is paired
     // with what the helper's own call sites pass it.
-    for (const match of text.matchAll(/factory\.create\('([a-z][a-z0-9]*)'\)/g)) {
+    for (const match of text.matchAll(/factory\.create(?:NS)?\('([a-z][a-z0-9]*)'\)/g)) {
       const tag = match[1] ?? ''
       const after = text.slice(match.index, match.index + 1200)
       for (const stamp of after.matchAll(/setAttribute\('class',\s*(?:'([^']*)'|(\w+))\)/g)) {
@@ -407,6 +407,13 @@ function drawnPairs(): ReadonlySet<string> {
           pairs.add(`${tag}.${call[1] ?? ''}`)
         }
       }
+    }
+    // `disabledWrite(factory, CLASS, label)` (`src/renderer/writes.ts`) draws a
+    // `button` carrying the class it is handed: the one helper every write the
+    // console draws and does not perform goes through.
+    for (const match of text.matchAll(/disabledWrite\(\s*\w+,\s*(?:'([^']*)'|(\w+))/g)) {
+      const literal = match[1] ?? constants.get(match[2] ?? '')
+      if (literal !== undefined) pairs.add(`button.${literal}`)
     }
   }
   return pairs
@@ -486,7 +493,7 @@ function drawnAttributes(): ReadonlyMap<string, ReadonlySet<string>> {
       }
       events.push({ at: match.index, apply: () => bindings.set(name, { tag, classes }) })
     }
-    for (const match of text.matchAll(/(?:const|let)\s+(\w+)\s*=\s*factory\.create\('([a-z][a-z0-9]*)'\)/g)) {
+    for (const match of text.matchAll(/(?:const|let)\s+(\w+)\s*=\s*factory\.create(?:NS)?\('([a-z][a-z0-9]*)'\)/g)) {
       const name = match[1] ?? ''
       const tag = match[2] ?? ''
       events.push({ at: match.index, apply: () => bindings.set(name, { tag, classes: [] }) })
@@ -595,7 +602,7 @@ function compoundSelectors(selector: string): readonly string[] {
  * (so the file's own prose claims nothing) and each rule's list split at its
  * own commas. */
 function selectorList(css: string): readonly string[] {
-  const stripped = css.replace(/\/\*[\s\S]*?\*\//g, '')
+  const stripped = css.replace(/\/\*[\s\S]*?\*\//g, '').replace(/url\([^)]*\)/g, 'url()')
   const selectors: string[] = []
   for (const rule of stripped.matchAll(/([^{}]+)\{/g)) {
     let depth = 0
@@ -637,12 +644,12 @@ function codedAttributes(css: string): readonly QualifiedAttribute[] {
 
 /** elementQualified is every `tag.class` pair the stylesheets select. */
 function elementQualified(css: string): readonly string[] {
-  const stripped = css.replace(/\/\*[\s\S]*?\*\//g, '')
+  const stripped = css.replace(/\/\*[\s\S]*?\*\//g, '').replace(/url\([^)]*\)/g, 'url()')
   return [...new Set([...stripped.matchAll(ELEMENT_QUALIFIED)].map((match) => `${match[1] ?? ''}.${match[2] ?? ''}`))].sort()
 }
 
 describe('the theme’s selectors against the design’s §2 inventory', () => {
-  it('reads the inventory out of the design, and it names the rail’s fifteen hooks', () => {
+  it('reads the inventory out of the design, and it names the rail’s fourteen hooks', () => {
     // The non-vacuity guard for every case below: an extraction that found
     // nothing, or that read the wrong section, would pass a scan against an
     // empty list. The rail's twelve are the hooks this task adds, and §2.1 is
@@ -652,7 +659,6 @@ describe('the theme’s selectors against the design’s §2 inventory', () => {
     for (const hook of RAIL_HOOKS) expect(hooks, `§2.1 does not name ${hook}`).toContain(hook)
     // And the two `data-*` hooks this task's rules select: a rule that wants one
     // adds it to the table **first** (design §2's licence rule).
-    expect(hooks).toContain('data-collapsed')
     expect(hooks).toContain('data-state')
   })
 
@@ -732,9 +738,9 @@ describe('the theme’s selectors against the design’s §2 inventory', () => {
     expect(unknown, 'a rule selects an attribute the design’s §2 does not name').toEqual([])
   })
 
-  it('selects the rail’s fifteen hooks and no sixteenth', () => {
-    // "Fifteen hooks on sixteen elements" (design §2.1 and §4.1): the foot row
-    // and the button inside it share `console-rail-add`. A sixteenth
+  it('selects the rail’s fourteen hooks and no fifteenth', () => {
+    // "Fourteen hooks on fifteen elements" (design §2.1 and §4.1): the foot row
+    // and the button inside it share `console-rail-add`. A fifteenth
     // `console-rail-*` class in the stylesheet would be a hook either the entry
     // does not draw or §2.1 does not list, and both are the same defect.
     const rail = selectorsIn(readTheme('base.css')).classes.filter((name) => name.startsWith('console-rail'))

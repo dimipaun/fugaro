@@ -125,8 +125,20 @@ func NormalizeArgs(args []string) []string {
 	return NormalizeVersionArgs(NormalizeRepoArgs(args))
 }
 
-// NewRootCmd builds the fugaro command tree.
+// NewRootCmd builds the fugaro command tree: the released commands, then what
+// this build registered for them and the stubs for the paid names it carries
+// no code for (extend.go). With nothing registered the tree is exactly the
+// released one.
 func NewRootCmd() *cobra.Command {
+	root := newCoreRoot()
+	applyExtensions(root)
+	return root
+}
+
+// newCoreRoot builds the released tree. It is separate from NewRootCmd so that
+// the extensions above are the only difference between the tree the core
+// builds and the tree a build with paid commands ships.
+func newCoreRoot() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "fugaro",
 		Short:         "Fleeting cloud workers for coding agents",

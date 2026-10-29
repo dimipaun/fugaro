@@ -52,6 +52,7 @@ import { describe, expect, it } from 'vitest'
 import { SERVED_FILES } from '../../src/main/protocol'
 import {
   BundleRefusal,
+  FONT_FILES,
   THEME_STYLESHEETS,
   buildConsole,
   bundleRenderer,
@@ -160,7 +161,7 @@ describe('the served root npm run build leaves', () => {
     // The non-vacuity guard first: an empty list would make the comparison
     // below pass against an empty directory, and the list is what the handler's
     // root is supposed to be.
-    expect(SERVED_FILES.length, 'SERVED_FILES names nothing: the comparison below would be vacuous').toBe(9)
+    expect(SERVED_FILES.length, 'SERVED_FILES names nothing: the comparison below would be vacuous').toBe(16)
     expect(builtListing('bundle')).toEqual(servedNames())
   })
 
@@ -291,15 +292,15 @@ describe('the served root npm run build leaves', () => {
     expect(consoleBundles(CONSOLE_ROOT).map((bundle) => [bundle.out, bundle.siblings])).toEqual([
       [
         join(CONSOLE_ROOT, 'dist', 'bundle', 'console.js'),
-        ['installations.js', 'confirm.js', 'console.css', 'elk-worker.min.js'],
+        ['installations.js', 'confirm.js', 'console.css', 'elk-worker.min.js', ...FONT_FILES.map(({ file }) => file)],
       ],
       [
         join(CONSOLE_ROOT, 'dist', 'bundle', 'installations.js'),
-        ['console.js', 'confirm.js', 'console.css', 'elk-worker.min.js'],
+        ['console.js', 'confirm.js', 'console.css', 'elk-worker.min.js', ...FONT_FILES.map(({ file }) => file)],
       ],
       [
         join(CONSOLE_ROOT, 'dist', 'bundle', 'confirm.js'),
-        ['console.js', 'installations.js', 'console.css', 'elk-worker.min.js'],
+        ['console.js', 'installations.js', 'console.css', 'elk-worker.min.js', ...FONT_FILES.map(({ file }) => file)],
       ],
     ])
     // And the stylesheet's own paths are what this build writes: the theme
@@ -436,7 +437,7 @@ describe('the bundle', () => {
     ]
     // Non-vacuity: an empty `SERVED_FILES` would make the loop below assert
     // nothing at all, and the loop is the whole claim.
-    expect(required.length, 'SERVED_FILES names nothing: the check below would be vacuous').toBe(12)
+    expect(required.length, 'SERVED_FILES names nothing: the check below would be vacuous').toBe(19)
     const files = pkg.build?.files
     if (files === undefined) {
       context.skip(
@@ -515,14 +516,15 @@ describe('the bundle in a document', () => {
     // A bundle that threw on load, or one whose guard skipped it, draws nothing
     // too -- and this says which happened.
     expect(asked(), 'the entry never asked the bridge: nothing here was drawn or refused').toBe(1)
-    // The four drawings of a console whose handshake is in range: the
-    // installation rail (Task 6.3, the canvas's structural addition -- the
-    // grid's first column, and the body's first child after any banner), D13's
-    // no-installation state (Task 3.4b, step 4), the navigation, and the panel
-    // the screens are drawn into (Task 3.4c).
-    expect(document.body.children).toHaveLength(4)
-    const rail = document.body.children[0] as FakeNode
-    expect(rail.attributes.get('class')).toBe('console-rail')
+    // The two drawings of a console whose handshake is in range: the header
+    // (the redesign's shell; its switcher's menu holds the installation rail and
+    // D13's no-installation state, Task 3.4b step 4) and the page holding the
+    // panel the screens are drawn into (Task 3.4c).
+    expect(document.body.children).toHaveLength(2)
+    const header = document.body.children[0] as FakeNode
+    expect(header.attributes.get('class')).toBe('console-header')
+    const rail = everyNode(header).find((node) => node.attributes.get('class') === 'console-rail') as FakeNode
+    expect(rail, 'the switcher holds no rail').toBeDefined()
     // The rail's row is the *chosen* installation's, and this bridge answered
     // `chosen: false` -- so the region is drawn and holds no row: no
     // installation is being read, and a row invented for one would be a row
@@ -530,12 +532,10 @@ describe('the bundle in a document', () => {
     expect(
       everyNode(rail).filter((node) => node.attributes.get('class') === 'console-rail-row'),
     ).toEqual([])
-    const root = document.body.children[1] as FakeNode
-    expect(root.attributes.get('class')).toBe('console-installation')
+    const root = everyNode(header).find((node) => node.attributes.get('class') === 'console-installation') as FakeNode
     expect(root.attributes.get('data-installation')).toBe('none')
     expect(textOf(root)).toContain('no installation has been chosen')
-    const nav = document.body.children[2] as FakeNode
-    expect(nav.attributes.get('class')).toBe('console-views')
+    const nav = everyNode(header).find((node) => node.attributes.get('class') === 'console-views') as FakeNode
     expect(nav.children.map((button) => button.attributes.get('data-view'))).toEqual([
       'live',
       'graph',
@@ -548,7 +548,9 @@ describe('the bundle in a document', () => {
     // all**, so the read the screen opens with is one the console could not
     // make. `renderUnavailable` draws no figure, which is the whole point of
     // answering a read like this with a refusal.
-    const panel = document.body.children[3] as FakeNode
+    const page = document.body.children[1] as FakeNode
+    expect(page.attributes.get('class')).toBe('console-page')
+    const panel = page.children[0] as FakeNode
     expect(panel.attributes.get('class')).toBe('console-panel')
     const drawn = panel.children[0] as FakeNode
     expect(drawn.attributes.get('data-kind')).toBe('refused')
@@ -571,7 +573,7 @@ describe('the bundle in a document', () => {
         },
       },
     )
-    const text = textOf(document.body.children[1] as FakeNode)
+    const text = textOf(document.body.children[0] as FakeNode)
     expect(text).toContain('/home/owner/.config/fugaro-console/installations.json could not be read: the file is not JSON')
   })
 
@@ -583,15 +585,17 @@ describe('the bundle in a document', () => {
         data: { chosen: true, id: '0123456789abcdef', project: 'acme', binary: '/opt/fugaro/bin/fugaro', cliVersion: '9.9.9', mode: 'reduced' },
       },
     )
-    // The banner first, then the rail, then the installation.
-    const section = document.body.children[2] as FakeNode
+    // The banner first, then the header, whose switcher's menu holds the
+    // installation line and the rail.
+    const header = document.body.children[1] as FakeNode
+    const section = everyNode(header).find((node) => node.attributes.get('class') === 'console-installation') as FakeNode
     expect(section.attributes.get('data-installation')).toBe('chosen')
     expect(section.attributes.get('data-mode')).toBe('reduced')
     const lines = section.children.map((child) => child.textContent)
     expect(lines).toEqual(['acme', '/opt/fugaro/bin/fugaro', '9.9.9 · reduced'])
     // And the rail's own row for the same installation: one row, because one
     // installation is what `installation.current` answers.
-    const rail = document.body.children[1] as FakeNode
+    const rail = everyNode(header).find((node) => node.attributes.get('class') === 'console-rail') as FakeNode
     const rows = everyNode(rail).filter((node) => node.attributes.get('class') === 'console-rail-row')
     expect(rows).toHaveLength(1)
     const drawnName = everyNode(rows[0] as FakeNode).find(
@@ -1367,6 +1371,8 @@ function plantedConsoleRoot(extra: Readonly<Record<string, string>> = {}): strin
     // The worker is a *source* of the build -- elkjs's own file, copied verbatim --
     // so a planted root must hold one, exactly as it holds the theme sources.
     [join('node_modules', 'elkjs', 'lib', 'elk-worker.min.js')]: WORKER,
+    // The vendored fonts are sources of the build too, copied verbatim.
+    ...Object.fromEntries(FONT_FILES.map(({ family, file }) => [join('src', 'renderer', 'fonts', family, file), 'wOF2'])),
     [join('dist', 'renderer', 'entry.js')]: `'use strict';\n`,
     [join('dist', 'renderer', 'installations.js')]: `'use strict';\n`,
     [join('dist', 'renderer', 'confirm.js')]: `'use strict';\n`,

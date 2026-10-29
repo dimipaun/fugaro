@@ -261,8 +261,12 @@ type StageTimeout struct{ Implement, Review, Fix time.Duration }
 // governance value asks DefaultGovernanceKeys before it says "ceiling", the
 // way policySources renames the ceiling for the keys the published node set
 // (H1).
+//
+// The shipped figures arrive through the policy hook (hook.go), whose default
+// is DefaultGovernance: the values move to ee/governance and this is the one
+// place the core asks for them (§5.2).
 func (g Governance) WithDefaults() Governance {
-	d := DefaultGovernance()
+	d := governanceHook().Defaults()
 	if g.ReviewRatio == 0 {
 		g.ReviewRatio = d.ReviewRatio
 	}
@@ -295,7 +299,8 @@ func (g Governance) WithDefaults() Governance {
 }
 
 // DefaultGovernanceKeys are the keys of g whose value is the one Fugaro ships
-// for them (DefaultGovernance), keyed as Effective.Sources and Ignored.Key
+// for them (DefaultGovernance, through the hook as WithDefaults reads it),
+// keyed as Effective.Sources and Ignored.Key
 // spell them. It is how a consumer tells a guardrail Fugaro itself set from
 // one a layer chose: the ceiling every run starts under is built with the
 // defaults (WithDefaults), so a key whose effective value is still the shipped
@@ -309,7 +314,7 @@ func (g Governance) WithDefaults() Governance {
 // default, so a key of theirs is either unset (and has no source at all) or a
 // layer's own.
 func (g Governance) DefaultGovernanceKeys() map[string]bool {
-	d := DefaultGovernance()
+	d := governanceHook().Defaults()
 	out := map[string]bool{}
 	mark := func(key string, isDefault bool) {
 		if isDefault {

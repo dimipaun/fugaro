@@ -144,6 +144,32 @@ func targetFor(path string) (noticeTarget, bool) {
 	return noticeTarget{}, false
 }
 
+// thirdPartyDir is a directory of vendored third-party files under a licence
+// directory. Those files are not Fugaro's to license (the console's own
+// `LICENSE.md`, §7.1), so they carry their own licence instead of the notice: the
+// licence text sits in the directory as `licence`, and every other file has a
+// sibling `<name>.license` whose first line names that licence's SPDX
+// identifier, as REUSE spells a third-party file's notice.
+type thirdPartyDir struct {
+	spdx    string
+	licence string
+}
+
+// thirdPartyDirs is the closed list. The console redesign vendored its two web
+// fonts (owner's ruling of 2026-10-28); a new entry is a licence decision, not
+// a convenience.
+var thirdPartyDirs = map[string]thirdPartyDir{
+	consoleDirName + "/src/renderer/fonts/instrument-sans/": {spdx: "OFL-1.1", licence: "OFL.txt"},
+	consoleDirName + "/src/renderer/fonts/ibm-plex-mono/":   {spdx: "OFL-1.1", licence: "LICENSE.txt"},
+}
+
+// thirdPartyFor answers the third-party directory a path sits directly in.
+func thirdPartyFor(path string) (thirdPartyDir, bool) {
+	dir := path[:strings.LastIndex(path, "/")+1]
+	tp, ok := thirdPartyDirs[dir]
+	return tp, ok
+}
+
 // noticeRuleFor answers the notice rule's name for one directory, for a caller
 // that holds the name rather than the target.
 func noticeRuleFor(dir string) string { return noticeTarget{dir: dir}.rule() }
@@ -747,6 +773,10 @@ func (s *scanner) checkNoticeFile(f trackedFile) error {
 		return err
 	}
 	base := filepath.Base(f.path)
+	if tp, ok := thirdPartyFor(f.path); ok {
+		s.checkThirdPartyFile(target, tp, f.path, base, data)
+		return nil
+	}
 	lines := fileLines(data)
 	shebang := len(lines) > 0 && strings.HasPrefix(lines[0], "#!")
 	// An XML declaration is the one other line that has to stay first, so the
@@ -779,6 +809,25 @@ func (s *scanner) checkNoticeFile(f trackedFile) error {
 		s.add(target.rule(), f.path, "it does not start with the two-line notice, which for this file type reads `"+style.render(noticeSPDX)+"` then `"+pointer+"`")
 	}
 	return nil
+}
+
+// checkThirdPartyFile holds a vendored third-party file to its own licence: the
+// licence text itself is exempt, a `.license` sibling names the licence's SPDX
+// identifier on its first line, and every other file has such a sibling.
+func (s *scanner) checkThirdPartyFile(target noticeTarget, tp thirdPartyDir, path, base string, data []byte) {
+	if base == tp.licence {
+		return
+	}
+	want := "SPDX-License-Identifier: " + tp.spdx
+	if strings.HasSuffix(base, eeSiblingSuffix) {
+		if lines := fileLines(data); len(lines) == 0 || strings.TrimSpace(lines[0]) != want {
+			s.add(target.rule(), path, "a third-party file's sibling notice must start with `"+want+"`")
+		}
+		return
+	}
+	if !s.tracked[path+eeSiblingSuffix] {
+		s.add(target.rule(), path, "a vendored third-party file needs a sibling "+path+eeSiblingSuffix+" naming its licence")
+	}
 }
 
 // checkEELicence holds R3's last clause: the licence text exists as soon as
@@ -1249,6 +1298,27 @@ func TestEEBoundaryScanCatchesPlantedViolations(t *testing.T) {
 				mobileDirName + "/scripts/run.sh": noticeText("# ", "", mobilePointer) + "#!/bin/sh\n",
 			},
 			want: []string{mobileDirName + "/scripts/run.sh: a shebang on line 3 rather than the first line"},
+		},
+		{
+			name: "a vendored font with its licence and its sibling",
+			files: map[string]string{
+				consoleDirName + "/src/renderer/fonts/ibm-plex-mono/LICENSE.txt":                       "SIL Open Font License\n",
+				consoleDirName + "/src/renderer/fonts/ibm-plex-mono/IBMPlexMono-Regular.woff2":         "wOF2",
+				consoleDirName + "/src/renderer/fonts/ibm-plex-mono/IBMPlexMono-Regular.woff2.license": "SPDX-License-Identifier: OFL-1.1\n",
+			},
+			none: true,
+		},
+		{
+			name: "a vendored font with no sibling, and a sibling naming the wrong licence",
+			files: map[string]string{
+				consoleDirName + "/src/renderer/fonts/ibm-plex-mono/IBMPlexMono-Medium.woff2":          "wOF2",
+				consoleDirName + "/src/renderer/fonts/ibm-plex-mono/IBMPlexMono-Regular.woff2":         "wOF2",
+				consoleDirName + "/src/renderer/fonts/ibm-plex-mono/IBMPlexMono-Regular.woff2.license": noticeText("", "", consolePointer),
+			},
+			want: []string{
+				consoleDirName + "/src/renderer/fonts/ibm-plex-mono/IBMPlexMono-Medium.woff2: a vendored third-party file needs a sibling",
+				consoleDirName + "/src/renderer/fonts/ibm-plex-mono/IBMPlexMono-Regular.woff2.license: a third-party file's sibling notice must start with",
+			},
 		},
 		{
 			name:  "a symlink under the console",

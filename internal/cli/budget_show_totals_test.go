@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"math"
 	"strings"
 	"testing"
@@ -73,5 +74,71 @@ func TestShowNegativeMismatchHasSign(t *testing.T) {
 	}
 	if !strings.Contains(out, "do not add up") || !strings.Contains(out, "counted -$0.01") {
 		t.Fatalf("the negative difference is not signed:\n%s", out)
+	}
+}
+
+// show --json carries leased_usd on `global` and on every repository row: the
+// money open leases hold and have not yet spent, from the two counters the
+// document already carries -- counted minus spent, floored at zero, always
+// present (0 when nothing is leased, never a negative).
+func TestShowJSONCarriesLeasedUSD(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	seedCaps(f, 100, 20)
+	d := today()
+	f.db.Set(budget.PathSpendGlobal(d), map[string]any{"counted": 47*usd1 + 310_000, "spent": 47*usd1 + 110_000})
+	f.db.Set(budget.PathSpendRepo(d, appSlug), map[string]any{"counted": 47*usd1 + 310_000, "spent": 47*usd1 + 110_000})
+	f.db.Set(budget.PathSpendRepo(d, "github/acme/under"), map[string]any{"counted": usd1, "spent": 2 * usd1})
+
+	out, _, err := execute(t, "budget", "show", "--all", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Global struct {
+			LeasedUSD float64 `json:"leased_usd"`
+		} `json:"global"`
+		Repos []struct {
+			Slug      string  `json:"slug"`
+			LeasedUSD float64 `json:"leased_usd"`
+		} `json:"repos"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if doc.Global.LeasedUSD != 0.2 {
+		t.Errorf("global.leased_usd = %v, want 0.20 (counted 47.31 - spent 47.11)", doc.Global.LeasedUSD)
+	}
+	got := map[string]float64{}
+	for _, r := range doc.Repos {
+		got[r.Slug] = r.LeasedUSD
+	}
+	if got[appSlug] != 0.2 {
+		t.Errorf("repos[%s].leased_usd = %v, want 0.20", appSlug, got[appSlug])
+	}
+	// counted below spent is a state no normal write makes: the figure is
+	// floored, never negative.
+	if v, ok := got["github/acme/under"]; !ok || v != 0 {
+		t.Errorf("repos[github/acme/under].leased_usd = %v (present %v), want 0", v, ok)
+	}
+
+	// Nothing leased: a project with no counters at all still carries the key,
+	// as 0.
+	empty := newBudgetFixture(t, "")
+	seedCaps(empty, 100, 20)
+	out, _, err = execute(t, "budget", "show", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `"leased_usd": 0`) {
+		t.Errorf("a document with nothing leased does not carry leased_usd: 0:\n%s", out)
+	}
+
+	// The text view is unchanged: it does not print the figure.
+	out, _, err = execute(t, "budget", "show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "leased") {
+		t.Errorf("the text view gained a leased figure:\n%s", out)
 	}
 }

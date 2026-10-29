@@ -128,6 +128,12 @@ export const PICKER_ENTRY_URL = `${APP_ORIGIN}${PICKER_ENTRY_PATH}`
  * `<link>` is not a fetch `connect-src` governs). `mediaTypeFor` already maps
  * `.css`, so this entry is the whole of the handler's change.
  *
+ * **The seven `.woff2` files are the redesign's vendored fonts** (owner's ruling
+ * of 2026-10-28): Instrument Sans and IBM Plex Mono, OFL-1.1, copied byte for byte
+ * from `src/renderer/fonts/` by the build. `font-src 'self'` was always the fifth
+ * directive below and admits `app://console/*.woff2`, and `mediaTypeFor` already
+ * maps `.woff2`, so no directive is added and none is loosened.
+ *
  * It is a list of URL paths rather than of file names because that is how the
  * handler speaks, and it is deliberately **not** a second filter inside
  * `resolveBundleRequest`: the root's contents are already decided by the build,
@@ -137,6 +143,13 @@ export const PICKER_ENTRY_URL = `${APP_ORIGIN}${PICKER_ENTRY_PATH}`
  * it does not list.
  */
 export const SERVED_FILES: readonly string[] = Object.freeze([
+  '/IBMPlexMono-Medium.woff2',
+  '/IBMPlexMono-Regular.woff2',
+  '/IBMPlexMono-SemiBold.woff2',
+  '/InstrumentSans-Bold.woff2',
+  '/InstrumentSans-Medium.woff2',
+  '/InstrumentSans-Regular.woff2',
+  '/InstrumentSans-SemiBold.woff2',
   '/confirm.html',
   '/confirm.js',
   '/console.css',
