@@ -335,10 +335,19 @@ async function doubleAnswer(confirm: Page): Promise<void> {
         // Held in an object because the assignment is made in a callback this
         // loop does not await, which a `let` would not be read back with.
         const unexpected: { message: string | null } = { message: null }
+        // recorded is resolved the instant a non-closed failure is recorded, so
+        // the loop below can read it back from a page that is still there
+        // rather than after the readiness delay, by which time the first
+        // answer's close has taken the page and this call with it.
+        let signal: (() => void) | null = null
+        const recorded = new Promise<void>((resolve) => {
+          signal = resolve
+        })
         const unexpectedFrom = (error: unknown): boolean => {
           const message = (error instanceof Error ? error.message : String(error)).toLowerCase()
           if (closed.some((phrase: string) => message.includes(phrase.toLowerCase()))) return false
           unexpected.message ??= message
+          if (signal !== null) signal()
           return true
         }
         for (let attempt = 0; attempt < 200; attempt += 1) {
@@ -359,10 +368,12 @@ async function doubleAnswer(confirm: Page): Promise<void> {
             new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 250)),
           ])
           if (taken || unexpected.message !== null) {
-            // The second reply is a round trip behind the first: the window is
-            // gone by now in the case this swallow exists for, and where it is
-            // not, the refusal it sent has arrived.
-            await new Promise((resolve) => setTimeout(resolve, 250))
+            // The second reply is a round trip behind the first: wait for it or
+            // the readiness delay, whichever lands first, and return the moment
+            // a non-closed failure is recorded. The window is closing on the
+            // first answer, and a value read back here after the delay is a
+            // value read from a page that is already gone.
+            await Promise.race([recorded, new Promise((resolve) => setTimeout(resolve, 250))])
             return unexpected.message
           }
           await new Promise((resolve) => setTimeout(resolve, 25))
@@ -646,7 +657,12 @@ test.describe('the launch path, in the real app', () => {
       const { app, page } = running
       await askForLaunch(page)
       const confirm = await confirmWindow(app)
-      await confirm.getByRole('button', { name: CANCEL_LABEL }).click()
+      // The Cancel click is the one that closes this window: the click itself
+      // is taken and the window goes away with it, so Playwright's post-click
+      // wait can land on a page that is already closed. Everything the case
+      // proves is still proved below: the window's own `isClosed` and the
+      // console having spawned nothing.
+      await swallowClosedPage(confirm.getByRole('button', { name: CANCEL_LABEL }).click())
       await expect.poll(() => confirm.isClosed(), { timeout: 10_000 }).toBe(true)
 
       expectNoSpawn(running)
