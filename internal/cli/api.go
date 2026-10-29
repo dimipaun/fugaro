@@ -64,6 +64,51 @@ func OpenFromConfig(ctx context.Context, lc *localcfg.Config) (*Cloud, error) {
 	return &Cloud{env: env}, nil
 }
 
+// SelectProject selects the project config (the stderr header, --gcp-project
+// and --region exactly as the core's own selection) and answers a cloud handle
+// over it that has opened NOTHING yet: the bucket and the backend stay
+// unopened, so a command whose path reads no run record pays for neither, the
+// way the core's own readers open one only where they need it. Config,
+// RepoSlug, BudgetDB, DBErr, Firestore and FirestoreErr read the project
+// config alone and work on the handle as it is; RunsBucket, LsSlugs, LoadRows
+// and ReadRunRecords need an opened one, which is OpenFromConfig over
+// Config().
+func SelectProject(ctx context.Context, f *CloudFlags) (*Cloud, error) {
+	_, lc, err := selectProject(ctx, f.o)
+	if err != nil {
+		return nil, err
+	}
+	return &Cloud{env: &cloudEnv{lc: lc}}, nil
+}
+
+// RefuseHTTP2Debug refuses GODEBUG=http2debug, which prints every HTTP/2
+// frame — request bodies, headers and credentials included — to stderr.
+// getenv is the environment reader, so a test drives the refusal without
+// setting the process environment.
+func RefuseHTTP2Debug(getenv func(string) string) error { return refuseHTTP2Debug(getenv) }
+
+// LiveFacts is the runs bucket the days a project has not archived yet are
+// computed from, opaque so that a moved command reads it through
+// budget.LiveDays and nothing else.
+type LiveFacts struct{ f *lazyFacts }
+
+// NewLiveFacts is the facts reader of a project's runs bucket, narrowed to
+// slugs (empty reads every repository in the bucket). The bucket is opened on
+// the first Facts call and not before, so a project with nothing live pays for
+// no bucket read; Close releases it. The core's `budget show --compute` reads
+// the same reader.
+func NewLiveFacts(lc *localcfg.Config, warn func(string), slugs []string) *LiveFacts {
+	return &LiveFacts{f: &lazyFacts{lc: lc, warn: warn, slugs: slugs}}
+}
+
+// Facts answers the runs the bucket holds, by launch day.
+func (l *LiveFacts) Facts(ctx context.Context, from, to int64) (map[int64][]budget.RunFact, map[string]string, error) {
+	return l.f.Facts(ctx, from, to)
+}
+
+// Close releases the bucket the first Facts call opened, if it did.
+func (l *LiveFacts) Close() { l.f.close() }
+
 // Config is the project config this cloud was opened with.
 func (c *Cloud) Config() *localcfg.Config { return c.env.lc }
 

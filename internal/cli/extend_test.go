@@ -560,20 +560,26 @@ func TestAFailedReportWarnsOnOneSafeLine(t *testing.T) {
 	}
 }
 
-// TestUntaggedPaidCommandSaysWhy: with the coordinator's code moved to ee/,
-// an untagged build holds the name as a stub and nothing more (D522, G3): it
-// exits non-zero with the one Enterprise message, writes nothing to stdout,
-// and is never cobra's "unknown command" — which would tell a source builder
-// and the console that the name was never part of the CLI. `report` is the
-// same shape and E2.2 re-points this test at it; `coordinator` is the one the
-// move flipped.
+// TestUntaggedPaidCommandSaysWhy: with the coordinator's and the report's code
+// moved to ee/, an untagged build holds each name as a stub and nothing more
+// (D522, G3): it exits non-zero with the one Enterprise message, writes nothing
+// to stdout, and is never cobra's "unknown command" — which would tell a source
+// builder and the console that the name was never part of the CLI.
 func TestUntaggedPaidCommandSaysWhy(t *testing.T) {
 	extendState(t)
-	if slices.Contains(coreRootPaths(), "fugaro coordinator") {
-		t.Fatal("the released tree still holds the coordinator command: the stub is not installed for a name a core command owns")
+	for _, held := range []string{"fugaro coordinator", "fugaro report"} {
+		if slices.Contains(coreRootPaths(), held) {
+			t.Fatalf("the released tree still holds %s: the stub is not installed for a name a core command owns", held)
+		}
 	}
 	assertStubSaysWhy(t, "coordinator", "coordinator")
 	// A subcommand and a flag reach the same message: the stub parses neither,
 	// so the console's own argv gets the refusal rather than "unknown flag".
 	assertStubSaysWhy(t, "coordinator", "coordinator", "status", "--json")
+
+	assertStubSaysWhy(t, "report", "report")
+	// The console spawns `report --json`, so that argv reaches the stub rather
+	// than a parse error about a flag the stub does not have.
+	assertStubSaysWhy(t, "report", "report", "--json")
+	assertStubSaysWhy(t, "report", "report", "--by", "mode", "--json")
 }

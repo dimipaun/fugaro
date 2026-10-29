@@ -52,7 +52,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/plan"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
-	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
@@ -520,19 +519,20 @@ var reasonItemRE = regexp.MustCompile("^[0-9]+\\. `([a-z_]+)`")
 var jsonCellRE = regexp.MustCompile("`([A-Za-z_][A-Za-z0-9_]*)`")
 
 // consoleMovedSections are the document's headings whose command and shapes
-// moved out of the core with the coordinator (E2.1b): the code they document is
-// in ee/coordinator, so this build cannot name a field or a flag of it and the
-// checks below would be reading the shapes of a package they cannot import. The
-// same checks run over these sections against the tagged tree, where the code is
-// in the build (ee/coordinator/cli/console_contract_test.go).
-var consoleMovedSections = []string{"### 6.13 "}
+// moved out of the core — the coordinator's with E2.1b, the report's with
+// E2.2b: the code they document is under ee/, so this build cannot name a field
+// or a flag of it and the checks below would be reading the shapes of a package
+// they cannot import. The same checks run over these sections against the
+// tagged tree, where the code is in the build
+// (ee/coordinator/cli/console_contract_test.go, ee/report/cli/console_contract_test.go).
+var consoleMovedSections = []string{"### 6.13 ", "## 4. `fugaro report --json`"}
 
-// consoleMovedRows are the document's individual lines that name a flag of the
+// consoleMovedRows are the document's individual lines that name a flag of a
 // moved command without sitting under a moved heading: §8's inventory carries
-// one row per command the console may spawn, and the coordinator's row states
-// its flags there. Like consoleMovedSections, the moved package checks the same
-// lines against the tagged tree.
-var consoleMovedRows = []string{"| `coordinator status`"}
+// one row per command the console may spawn, and the coordinator's and the
+// report's rows state their flags there. Like consoleMovedSections, the moved
+// packages check the same lines against the tagged tree.
+var consoleMovedRows = []string{"| `coordinator status`", "| `report`"}
 
 // inMovedSection answers whether heading opens one of consoleMovedSections.
 func inMovedSection(heading string) bool {
@@ -581,8 +581,10 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		reflect.TypeOf(showGlobal{}), reflect.TypeOf(showDefaults{}),
 		reflect.TypeOf(showRepo{}), reflect.TypeOf(showRun{}), reflect.TypeOf(showKill{}),
 		reflect.TypeOf(doctorOutput{}), reflect.TypeOf(doctorCheck{}),
-		reflect.TypeOf(report.JSONDoc{}), reflect.TypeOf(report.JSONLine{}),
-		reflect.TypeOf(report.JSONTokens{}), reflect.TypeOf(Diagnosis{}),
+		// The report's three shapes moved to ee/report with the command
+		// (E2.2b), as §6.13's did with the coordinator; ee/report/cli's
+		// console contract test carries them, as that one does.
+		reflect.TypeOf(Diagnosis{}),
 		reflect.TypeOf(configListDoc{}), reflect.TypeOf(configListInstallation{}),
 		reflect.TypeOf(configListCheckout{}),
 		reflect.TypeOf(plan.Document{}), reflect.TypeOf(plan.Node{}),
@@ -832,8 +834,10 @@ func TestDocsDesktopConsoleContractNamesTheFlagInventory(t *testing.T) {
 	spawned := map[string]func() *cobra.Command{
 		"watch":       newWatchCmd,
 		"budget show": newBudgetShowCmd,
-		"report":      newReportCmd,
-		"runs ls":     newLsCmd,
+		// `report` is not here: the command moved to ee/report/cli (E2.2b), and
+		// an untagged build's tree holds only its stub. ee/report/cli's own
+		// contract test checks its row of this inventory.
+		"runs ls": newLsCmd,
 		// The Spend screen's by-person view (console L5b, design §5.1 rule 6):
 		// the console spawns it with --since, so it carries --project and
 		// --config like every other dashboard read.
@@ -877,7 +881,6 @@ func TestDocsDesktopConsoleContractNamesTheFlagInventory(t *testing.T) {
 var consoleContractCommands = map[string]func() *cobra.Command{
 	"watch":       newWatchCmd,
 	"budget show": newBudgetShowCmd,
-	"report":      newReportCmd,
 	"runs ls":     newLsCmd,
 	// §6.10 documents the by-person aggregate (CLI 0.9.0), and it is now on
 	// the design's spawn allow-list too (console L5b, §5.1 rule 6): the Spend
