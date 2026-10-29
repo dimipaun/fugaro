@@ -48,6 +48,8 @@ import {
   CONFIRM_CHANNEL_PREFIX,
   CONFIRM_ENTRY_PATH,
   CONFIRM_ENTRY_URL,
+  CONFIRM_NOT_YET,
+  CONFIRM_READY_DELAY_MS,
   CONFIRM_WINDOW_TITLE,
   confirmChannel,
   confirmPreloadPath,
@@ -206,8 +208,14 @@ function fakeSession(): FakeSession {
 }
 
 /** confirmOver builds the confirmer over fakes, and keeps the windows and the
- * session it built them with. */
-function confirmOver(options: { readonly parent?: () => FakeWindow | null } = {}): {
+ * session it built them with.
+ *
+ * `now` is the clock the window's own delay is measured on, and it is a test's
+ * rather than the process's for the same reason the rate limits' is
+ * (`runnerOver`): the delay is time a case moves rather than waits. */
+function confirmOver(
+  options: { readonly parent?: () => FakeWindow | null; readonly now?: () => number } = {},
+): {
   readonly confirmer: LaunchConfirmer
   readonly ipcMain: ReturnType<typeof fakeIpcMain>
   readonly windows: FakeWindow[]
@@ -228,8 +236,41 @@ function confirmOver(options: { readonly parent?: () => FakeWindow | null } = {}
     appPath: APP_PATH,
     entryUrl: CONFIRM_ENTRY_URL,
     session: session.value,
+    now: options.now ?? (() => NOW),
   })
   return { confirmer, ipcMain, windows, session }
+}
+
+/** aClock is a clock a case moves by hand: `CONFIRM_READY_DELAY_MS` is measured
+ * from the window's own `show` and `focus`, so a case advances time rather than
+ * waiting it out. */
+function aClock(start: number = NOW): { readonly now: () => number; readonly advance: (ms: number) => void } {
+  let at = start
+  return {
+    now: () => at,
+    advance: (ms: number): void => {
+      at += ms
+    },
+  }
+}
+
+/** appears runs what Electron runs when the window comes up: the `ready-to-show`
+ * handler calls `window.show()`, which emits `show`, and the window then emits
+ * `focus`. The delay is measured from those two events, so a case that answers a
+ * yes without this is answering a window that never appeared. */
+function appears(window: FakeWindow): void {
+  window.fire('ready-to-show')
+  window.fire('show')
+  window.fire('focus')
+}
+
+/** ready leaves the window as the delay leaves it: on screen, focused, and past
+ * the delay. A case whose subject is not the delay drives this before its yes,
+ * so that the yes is an answer; the delay's own cases (`describe('the delay
+ * before a yes is an answer')`) drive `appears` and the clock themselves. */
+function ready(window: FakeWindow, clock: { readonly advance: (ms: number) => void }): void {
+  appears(window)
+  clock.advance(CONFIRM_READY_DELAY_MS)
 }
 
 /** ask delivers one message over one channel with a forged event: the whole of
@@ -468,13 +509,16 @@ describe('the confirmation window’s sender gate', () => {
   })
 
   it('decides yes once for the right sender, and a second answer decides nothing more', async () => {
-    const { confirmer, ipcMain, windows } = confirmOver()
+    const clock = aClock()
+    const { confirmer, ipcMain, windows } = confirmOver({ now: clock.now })
     const spawner = countingSpawner()
     const runner = runnerOver(confirmer, spawner)
     void aLaunch(runner)
     await untilSettled()
 
     const window = windows[0] as FakeWindow
+    appears(window)
+    clock.advance(CONFIRM_READY_DELAY_MS)
     expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true)).toStrictEqual({
       ok: true,
       data: { answered: true },
@@ -698,10 +742,12 @@ describe('the confirmation window, and how it is cancelled', () => {
   })
 
   it('does not decide again when a decided window is closed', async () => {
-    const { confirmer, ipcMain, windows } = confirmOver()
+    const clock = aClock()
+    const { confirmer, ipcMain, windows } = confirmOver({ now: clock.now })
     const decider = recordingDecider()
     confirmer.open(viewFixture(), decider.decide)
     const window = windows[0] as FakeWindow
+    ready(window, clock)
 
     await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true)
     window.fire('closed')
@@ -755,10 +801,12 @@ describe('the confirmation window, and how it is cancelled', () => {
   })
 
   it('decides nothing when the named run has no window open', async () => {
-    const { confirmer, ipcMain, windows } = confirmOver()
+    const clock = aClock()
+    const { confirmer, ipcMain, windows } = confirmOver({ now: clock.now })
     const decider = recordingDecider()
     confirmer.open(viewFixture(), decider.decide)
     const window = windows[0] as FakeWindow
+    ready(window, clock)
 
     // A run id nothing is open for -- the answer already arrived, or the window
     // never opened. Rule 11's close is not a way to decide a spent run id.
@@ -860,13 +908,115 @@ describe('the confirmation window, and how it is cancelled', () => {
   })
 })
 
+describe('the delay before a yes is an answer', () => {
+  it('refuses a yes the moment the window appears, and spawns nothing', async () => {
+    // The bug this holds shut: the window is built after the records are read,
+    // so it can appear under the pointer a few hundred milliseconds after the
+    // click that asked for it -- and a double-click in the dashboard lands its
+    // second click on the confirming button of a window nobody has seen yet.
+    // The measure is the main process's own, taken from the window's `show` and
+    // `focus`, because a timer in the page is a timer started by the document
+    // whose late arrival is the whole problem.
+    const clock = aClock()
+    const { confirmer, ipcMain, windows } = confirmOver({ now: clock.now })
+    const spawner = countingSpawner()
+    void aLaunch(runnerOver(confirmer, spawner))
+    await untilSettled()
+    const window = windows[0] as FakeWindow
+
+    // Not yet: a window that has not appeared has no answer to give.
+    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true)).toStrictEqual({
+      ok: false,
+      reason: CONFIRM_NOT_YET,
+    })
+
+    appears(window)
+    // And the click already on its way lands the instant the window does.
+    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true)).toStrictEqual({
+      ok: false,
+      reason: CONFIRM_NOT_YET,
+    })
+    await untilSettled()
+    expect(spawner.calls).toStrictEqual([])
+    // A refusal, and not a decision: the window is still open on its frozen
+    // launch, and the click that comes after it is the one that counts.
+    expect(window.closeRequested()).toBe(false)
+    expect(window.shown()).toBe(1)
+
+    clock.advance(CONFIRM_READY_DELAY_MS)
+    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true)).toStrictEqual({
+      ok: true,
+      data: { answered: true },
+    })
+    await untilSettled()
+    expect(spawner.calls).toHaveLength(1)
+  })
+
+  it('restarts the delay when the window is focused again', async () => {
+    // A window the operator comes back to is a window the operator is looking
+    // at again: the delay runs from the last time it was shown or focused, not
+    // from the first.
+    const clock = aClock()
+    const { confirmer, ipcMain, windows } = confirmOver({ now: clock.now })
+    const spawner = countingSpawner()
+    void aLaunch(runnerOver(confirmer, spawner))
+    await untilSettled()
+    const window = windows[0] as FakeWindow
+    appears(window)
+
+    clock.advance(CONFIRM_READY_DELAY_MS - 1)
+    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true)).toStrictEqual({
+      ok: false,
+      reason: CONFIRM_NOT_YET,
+    })
+
+    window.fire('focus')
+    clock.advance(CONFIRM_READY_DELAY_MS - 1)
+    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true)).toStrictEqual({
+      ok: false,
+      reason: CONFIRM_NOT_YET,
+    })
+    expect(spawner.calls).toStrictEqual([])
+
+    clock.advance(1)
+    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true)).toStrictEqual({
+      ok: true,
+      data: { answered: true },
+    })
+    await untilSettled()
+    expect(spawner.calls).toHaveLength(1)
+  })
+
+  it('cancels on the instant, whatever the delay still has to run', async () => {
+    // Cancel is the default button and the way out: it takes no delay, because
+    // the thing the delay protects is a spend and not an exit. A window that
+    // made the operator wait to decline would be one that traps them in the
+    // moment the window appears under their pointer.
+    const clock = aClock()
+    const { confirmer, ipcMain, windows } = confirmOver({ now: clock.now })
+    const spawner = countingSpawner()
+    const launched = aLaunch(runnerOver(confirmer, spawner))
+    await untilSettled()
+    const window = windows[0] as FakeWindow
+    appears(window)
+
+    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), false)).toStrictEqual({
+      ok: true,
+      data: { answered: true },
+    })
+    expect((await launched).reason).toBe(DECLINED_CANCELLED)
+    expect(spawner.calls).toStrictEqual([])
+  })
+})
+
 describe('the launch, through the real confirmation window', () => {
   it('spawns nothing for a yes from any sender but the window’s own top frame, and one child for the real one', async () => {
     // The shipped chain, end to end: the surface the entry registers, the real
     // `createConfirmWindow`, and the real launcher over it. "The operator said
     // yes" is the only thing that reaches `spawn`, and it is a message that
     // arrives from the window's own top frame.
-    const { confirmer, ipcMain, windows } = confirmOver()
+    const clock = aClock()
+    const { confirmer, ipcMain, windows } = confirmOver({ now: clock.now })
     const spawner = countingSpawner()
     const runner = runnerOver(confirmer, spawner)
     void aLaunch(runner)
@@ -891,7 +1041,11 @@ describe('the launch, through the real confirmation window', () => {
     expect(spawner.calls).toStrictEqual([])
     expect(window.closeRequested()).toBe(false)
 
-    // The window's own top frame, and the one yes: exactly one child.
+    // The window's own top frame, and the one yes: exactly one child. The window
+    // has appeared and settled by now (`appears`), because a yes before that is
+    // refused by the delay rather than accepted -- the case below is that one.
+    appears(window)
+    clock.advance(CONFIRM_READY_DELAY_MS)
     expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true)).toStrictEqual({
       ok: true,
       data: { answered: true },
@@ -1051,12 +1205,14 @@ describe('the launch, through the real confirmation window', () => {
 
   it('pauses an installation for ten seconds after an accepted launch', async () => {
     let at = NOW
-    const { confirmer, ipcMain, windows } = confirmOver()
+    const clock = aClock()
+    const { confirmer, ipcMain, windows } = confirmOver({ now: clock.now })
     const spawner = replyingSpawner()
     const runner = runnerOver(confirmer, spawner, { now: () => at })
 
     const launched = aLaunch(runner)
     await untilSettled()
+    ready(windows[0] as FakeWindow, clock)
     expect(
       await ask(ipcMain, confirmChannel('answer'), fromWindow(windows[0] as FakeWindow), true),
     ).toStrictEqual({ ok: true, data: { answered: true } })
@@ -1070,6 +1226,7 @@ describe('the launch, through the real confirmation window', () => {
     at += LAUNCH_COOL_DOWN_MS
     const later = aLaunch(runner)
     await untilSettled()
+    ready(windows[1] as FakeWindow, clock)
     expect(
       await ask(ipcMain, confirmChannel('answer'), fromWindow(windows[1] as FakeWindow), true),
     ).toStrictEqual({ ok: true, data: { answered: true } })
@@ -1083,11 +1240,14 @@ describe('the launch, through the real confirmation window', () => {
     // `webContents` is refused like any stranger's, and a close of its run id
     // decides nothing a second time.
     for (const way of ['yes', 'no', 'closed'] as const) {
-      const { confirmer, ipcMain, windows } = confirmOver()
+      const clock = aClock()
+      const { confirmer, ipcMain, windows } = confirmOver({ now: clock.now })
       const decider = recordingDecider()
       confirmer.open(viewFixture(), decider.decide)
       const window = windows[0] as FakeWindow
       const sender = window.webContents
+      // `closed` decides whatever the delay is; a yes has to be an answer.
+      if (way === 'yes') ready(window, clock)
 
       if (way === 'closed') {
         window.fire('closed')

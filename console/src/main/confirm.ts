@@ -11,7 +11,7 @@
 // cannot show a 16 KiB task scrollably, and the design names the window for
 // exactly that reason.
 //
-// **The two properties that make it a confirmation rather than a prompt.**
+// **The three properties that make it a confirmation rather than a prompt.**
 //
 //   1. **Cancel is the default, and it is enforced here.** Escape, Enter and the
 //      window's own close all decline; only a deliberate answer on the window's
@@ -27,6 +27,15 @@
 //      dashboard's and the picker's gate and cannot express this: it asks whether
 //      a frame is on a *document*, and what this needs is whether the sender is
 //      *this window*.
+//   3. **A yes is refused until the window has been on screen, focused.** The
+//      spawn is built before the window opens, so the window can appear under the
+//      pointer a few hundred milliseconds after the click that asked for it, and
+//      the second click of a double-click in the dashboard lands on the
+//      confirming button of a window nobody has seen yet. The delay
+//      (`CONFIRM_READY_DELAY_MS`) is measured in this process from the window's
+//      own `show` and `focus` events -- never by a timer in the page -- a yes
+//      inside it is answered with `CONFIRM_NOT_YET` and decides nothing, and a
+//      re-focus starts it over. Cancel takes no delay at all.
 //
 // What the window is shown is `ConfirmView`, a deep-frozen copy built once by
 // `confirmView` -- never the `FrozenLaunch`, which carries the plan, the child's
@@ -107,6 +116,22 @@ export const CONFIRM_ANSWER_REFUSAL = 'a confirmation is answered with a yes or 
  * nothing more. */
 export const CONFIRM_ALREADY_ANSWERED = 'this confirmation has already been answered'
 
+/** CONFIRM_READY_DELAY_MS is how long after the window is **shown and focused**
+ * a yes is still refused, and it is the answer to the one way a
+ * double-click hazards a spend: the window is built after the records are read
+ * (`build`), so it can appear under the pointer a few hundred milliseconds after
+ * the click that asked for it, and the second click of a double-click in the
+ * dashboard lands on the confirming button of a window nobody has seen. Half a
+ * second is longer than that gap and shorter than a deliberate click on a button
+ * the operator is reading. */
+export const CONFIRM_READY_DELAY_MS = 500
+
+/** CONFIRM_NOT_YET is what a yes that arrives before the window has settled is
+ * answered with. The click decides nothing and is **not** a decline: the window
+ * stays open on its frozen launch, so the operator's next click -- by then looking
+ * at the window -- is the one that counts. Cancel takes no such delay. */
+export const CONFIRM_NOT_YET = 'the confirmation window is not ready for an answer yet'
+
 /** ConfirmWindowDeps is everything the confirmation window is built from, and it
  * is injected for the reason every other window's dependencies are: the unit test
  * drives all of this under plain Node. */
@@ -122,6 +147,12 @@ export interface ConfirmWindowDeps {
   /** the document this window loads, which is `CONFIRM_ENTRY_URL` in the shipped
    * app and an argument here so a test can read which URL was loaded. */
   readonly entryUrl: string
+  /** now is the clock the readiness delay is measured on, and it is a dependency
+   * for the reason `LaunchDeps.now` is: a unit test advances it rather than
+   * waiting half a second, and the shipped default is a **monotonic** reading
+   * rather than the wall clock, so a machine whose clock is moved cannot make an
+   * appeared window answerable sooner than the delay allows. */
+  readonly now?: () => number
   /** session is the Electron `Session` the confirmation window is built on **and**
    * has its permissions denied on: `confirmOptions` sets it as the window's
    * `webPreferences.session`, so the denial and the window name the same session.
@@ -189,6 +220,12 @@ interface ConfirmEntry {
   readonly window: BrowserWindow
   readonly contents: BrowserWindow['webContents']
   answered: boolean
+  /** readyAt is the instant from which a yes is an answer: `CONFIRM_READY_DELAY_MS`
+   * after the window was last shown or focused. It starts at infinity, because a
+   * window that has not appeared is one nobody has read, and a yes can only
+   * arrive from a document that has loaded -- which is what "not yet" is
+   * measured against rather than an interval anyone starts. */
+  readyAt: number
 }
 
 /**
@@ -202,6 +239,7 @@ interface ConfirmEntry {
  */
 export function createConfirmWindow(deps: ConfirmWindowDeps): LaunchConfirmer {
   const entries = new Map<object, ConfirmEntry>()
+  const now = deps.now ?? ((): number => performance.now())
 
   /** entryFor is the whole gate: the message's sender is the `webContents` of an
    * open window, and the frame that sent it is that `webContents`'s own
@@ -249,6 +287,11 @@ export function createConfirmWindow(deps: ConfirmWindowDeps): LaunchConfirmer {
     if (entry === null) return { ok: false, reason: SENDER_REFUSAL }
     if (typeof raw !== 'boolean') return { ok: false, reason: CONFIRM_ANSWER_REFUSAL }
     if (entry.answered) return { ok: false, reason: CONFIRM_ALREADY_ANSWERED }
+    // The readiness delay is on the yes alone. A no is the window's own way out
+    // and is answered at the instant it is clicked, delay or no delay: what the
+    // delay protects is a spend, and an operator who wants out of a window that
+    // just appeared under their pointer must never have to wait for it.
+    if (raw && now() < entry.readyAt) return { ok: false, reason: CONFIRM_NOT_YET }
     finish(entry, raw)
     return { ok: true, data: { answered: true } }
   })
@@ -271,8 +314,21 @@ export function createConfirmWindow(deps: ConfirmWindowDeps): LaunchConfirmer {
       // listener below (and the `closed` one especially) has to be able to name
       // it after the window is destroyed, and the getter throws by then.
       const contents = window.webContents
-      const entry: ConfirmEntry = { view, decide, window, contents, answered: false }
+      const entry: ConfirmEntry = { view, decide, window, contents, answered: false, readyAt: Number.POSITIVE_INFINITY }
       entries.set(contents, entry)
+
+      // The readiness delay is measured here, from the two events that mean the
+      // window is on screen and in front: `show` fires when it is put on screen
+      // and `focus` when it takes the keyboard -- including when the operator
+      // comes back to it, which starts the delay over. It is deliberately not a
+      // timer in the page: the page is the document whose late arrival is the
+      // hazard, and a document shown late, or never shown, must not be able to
+      // time its own answerability.
+      for (const event of ['show', 'focus'] as const) {
+        window.on(event, () => {
+          entry.readyAt = now() + CONFIRM_READY_DELAY_MS
+        })
+      }
 
       // The three denials every window of this app gets: no navigation, no
       // popup and no `<webview>`, on this window's own `webContents`.

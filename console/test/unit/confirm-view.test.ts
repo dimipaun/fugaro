@@ -204,7 +204,11 @@ function aView(overrides: Partial<ConfirmFields> = {}): ConfirmFields {
 /** fakeBridge is the confirmation window's whole surface, recording what it was
  * asked. */
 function fakeBridge(
-  options: { readonly fields?: ConfirmReply; readonly fieldsError?: Error } = {},
+  options: {
+    readonly fields?: ConfirmReply
+    readonly fieldsError?: Error
+    readonly answerReply?: ConfirmReply
+  } = {},
 ): {
   readonly bridge: ConfirmBridge
   readonly answered: readonly boolean[]
@@ -221,7 +225,7 @@ function fakeBridge(
     answer: async (yes: boolean) => {
       calls.push('answer')
       answered.push(yes)
-      return { ok: true, data: { answered: true } }
+      return options.answerReply ?? { ok: true, data: { answered: true } }
     },
   }
   return { bridge, answered, calls }
@@ -423,6 +427,43 @@ describe('the confirmation document and its view', () => {
     await actions.button(CANCEL_LABEL).fire('click', 0)
     expect(answered).toEqual([false])
     expect(calls).toEqual(['fields', 'answer'])
+  })
+
+  it('draws a refused answer’s own sentence, and leaves the window open on it', async () => {
+    // The main process refuses a yes that arrives before the window has been on
+    // screen, focused, for its own delay (`CONFIRM_READY_DELAY_MS`): that click
+    // is not an answer and spawns nothing, so the window shows the sentence
+    // rather than a button that appears to do nothing. The confirming button is
+    // still there -- a refused answer is not a decision, and the click that
+    // comes after the delay is the one that counts.
+    const refused = await mount({
+      fields: { ok: true, data: aView() },
+      answerReply: { ok: false, reason: 'the confirmation window is not ready for an answer yet' },
+    })
+    const actions = refused.element('confirm-actions')
+    await actions.button(CONFIRM_LABEL).fire('click', 1)
+    expect(refused.answered).toEqual([true])
+    expect(refused.element('confirm-status').textContent).toBe(
+      'the confirmation window is not ready for an answer yet',
+    )
+    expect(actions.button(CONFIRM_LABEL).tabIndex).toBe(-1)
+
+    // An accepted answer draws nothing: the window's life is over and its own
+    // close is the main process's.
+    const accepted = await mount()
+    await accepted.element('confirm-actions').button(CONFIRM_LABEL).fire('click', 1)
+    expect(accepted.element('confirm-status').textContent).toBe('')
+  })
+
+  it('holds no clock of its own: the delay is the main process’s', () => {
+    // The delay is measured where the events are, and the events are the main
+    // process's: a timer in this document would be started by the document whose
+    // late arrival is the whole hazard, and the operator's click decides nothing
+    // until the main process says so.
+    const source = readFileSync(fileURLToPath(new URL('../../src/renderer/confirm.ts', import.meta.url)), 'utf8')
+    for (const clock of ['setTimeout', 'setInterval', 'requestAnimationFrame', 'performance.now', 'Date.now']) {
+      expect(source, `the view reached for ${clock}`).not.toContain(clock)
+    }
   })
 
   it('leaves a focused Cancel in place when reading the launch throws', async () => {
