@@ -209,7 +209,11 @@ func haltReasonText(h runstore.Halt) string {
 // way haltNow does.
 //
 // detail is the runner's own account of what the tripwire saw — a count, a
-// figure, a stage name — and never task text. The checkpoint's trigger,
+// figure, a stage name — and never task text. A stage's own bound arrives as a
+// stage hook's decision (governance_hook.go), and the reason and detail it
+// leaves are still the runner's words: haltReasonText reads the reason out of
+// its own table and the checkpoint records both as prose a person reads. The
+// checkpoint's trigger,
 // why_over and estimate_usd are the runner's own too: the reason it was
 // handed, its words for that reason, and the model spend the record had
 // reached. done, next and hard_instructions stay empty until the stopping

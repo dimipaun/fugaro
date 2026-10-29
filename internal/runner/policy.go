@@ -132,7 +132,9 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 			MaxOutputCoder: p.MaxOutputTokens.Coder, MaxOutputReviewer: p.MaxOutputTokens.Reviewer, Governance: p.Governance}
 	}
 
-	e := policy.Merge(ceiling, def, FileLayer(cfg))
+	layers := []policy.Layer{ceiling, def, FileLayer(cfg)}
+	r.govLayers = layers
+	e := policy.Merge(layers[0], layers[1:]...)
 	if found {
 		// The merge names the first layer "ceiling": for the keys the node
 		// set, that layer is the node and not the job environment, and a

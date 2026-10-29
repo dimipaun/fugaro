@@ -726,6 +726,81 @@ func TestDiagnosePrintsCheckpoint(t *testing.T) {
 	}
 }
 
+// TestDiagnoseReadsACheckpointUntagged pins G6 (D521, D529) in this core
+// build: a record with a governance stop and the checkpoint report the stop
+// left is read and shown by diagnose, in the text a person reads and in the
+// JSON the console reads, with nothing under ee/ in the binary. diagnose reads
+// the record's own fields -- the halt, its reason, and the checkpoint -- and
+// the governance vocabulary they arrive in is the core's (D522: an untagged
+// build decodes a governance block and never refuses it), so a halt a tagged
+// runner wrote is explained here exactly as it is there. This file carries no
+// build tag and registers no seam, so it is the untagged reader's own test.
+func TestDiagnoseReadsACheckpointUntagged(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260927-090000-abcf"
+	exec := seedRun(t, f, id, "", "", true)
+	f.run.SetState(exec, backend.StateSucceeded)
+	at := time.Date(2026, 9, 27, 9, 4, 0, 0, time.UTC)
+	rec := prRecord(id, exec, 6, 1.75)
+	rec.Status = runstore.StatusHalted
+	rec.Reason = "halted: stage_budget: implement spent $1.20 of $0.90"
+	rec.Halt = &runstore.Halt{Reason: runstore.HaltStageBudget, Scope: "run", At: at,
+		Detail: "implement spent $1.20 of $0.90"}
+	rec.Checkpoint = runstore.NewCheckpoint(runstore.Checkpoint{
+		Trigger:     string(runstore.HaltStageBudget),
+		WhyOver:     "the implement stage passed the budget the repository set for it",
+		EstimateUSD: 1.2,
+		Next:        "finish the parser tests",
+	})
+	writeRecord(t, f, id, rec)
+
+	if !slices.Contains(runstore.GovernanceHaltReasons(), runstore.HaltStageBudget) {
+		t.Fatalf("this build does not decode stage_budget as a governance stop: %v", runstore.GovernanceHaltReasons())
+	}
+
+	out, _, err := execute(t, "diagnose", "--json", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d Diagnosis
+	if err := json.Unmarshal([]byte(out), &d); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if d.Halt == nil || d.Halt.Reason != runstore.HaltStageBudget {
+		t.Fatalf("json halt = %+v:\n%s", d.Halt, out)
+	}
+	want := runstore.Checkpoint{
+		Trigger:     "stage_budget",
+		WhyOver:     "the implement stage passed the budget the repository set for it",
+		EstimateUSD: 1.2,
+		Next:        "finish the parser tests",
+	}
+	if d.Checkpoint == nil || *d.Checkpoint != want {
+		t.Fatalf("json checkpoint = %+v (%v):\n%s", d.Checkpoint, err, out)
+	}
+	if !strings.Contains(out, `"checkpoint": {`) {
+		t.Fatalf("json has no checkpoint block:\n%s", out)
+	}
+
+	human, _, err := execute(t, "diagnose", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{
+		"Status:   halted (stage writeback)\n",
+		"Halted:   stage_budget (run) at 2026-09-27T09:04:00Z: implement spent $1.20 of $0.90\n",
+		"\nCheckpoint\n",
+		"  Trigger:  stage_budget\n",
+		"  Why over: the implement stage passed the budget the repository set for it\n",
+		"  Estimate: $1.2000\n",
+		"  Next:     finish the parser tests\n",
+	} {
+		if !strings.Contains(human, line) {
+			t.Fatalf("diagnose lacks %q:\n%s", line, human)
+		}
+	}
+}
+
 func staleRecord(id, exec string, statusAt time.Time) *runstore.Record {
 	rec := prRecord(id, exec, 7, 2)
 	rec.Status, rec.Outcome, rec.Stage = runstore.StatusRunning, "", "review"

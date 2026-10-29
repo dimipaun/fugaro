@@ -204,6 +204,26 @@ test('a null cap is unavailable, and a notional total is not a real one', () => 
   for (const fig of figures(full.document)) assert.notEqual(fig.state, STATE.ESTIMATED);
 });
 
+test('a document carrying leased_usd is read, and nothing is drawn from it', () => {
+  // `leased_usd` -- the money open leases hold and have not yet spent -- is on
+  // `total` and on every `repos[]` entry now, so a document from this CLI
+  // carries a key the phone's own shape did not have; without it named, every
+  // live document would be refused whole as `unknown-field`. The phone reads
+  // no figure from it, because no screen draws a lease and a figure nothing
+  // renders is one nobody checked.
+  const repo = {
+    slug: 'acme/app', repo: 'acme/app', counted_usd: 1, spent_usd: 0.8, notional_usd: 0,
+    leased_usd: 0.2, daily_cap_usd: null, percent: null,
+    burn: { known: true, usd_per_min: 0, fast: false }, kill: null,
+  };
+  const judged = validateDocument(wire({ total: { ...wire().total, leased_usd: 2.5 }, repos: [repo] }));
+  assert.equal(judged.ok, true);
+  // Nothing about the totals changes, and the repository carries none of it.
+  assert.deepEqual(judged.document.total, validateDocument(wire()).document.total);
+  assert.equal(Object.hasOwn(judged.document.repos[0], 'leasedUsd'), false);
+  assert.equal(judged.document.repos[0].spent.value, 0.8);
+});
+
 test('a kill switch is a fact, and an absent one is not a killed project', () => {
   const killed = validateDocument(
     wire({ total: { ...wire().total, kill: { by: 'operator', at: '2025-11-09T11:00:00Z', reason: 'cap' } } }),

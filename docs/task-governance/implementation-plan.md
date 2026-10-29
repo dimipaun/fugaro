@@ -5,8 +5,20 @@
 This plan builds [spec.md](spec.md) (task governance, 2026-10-22) and
 [spec-periodic-reviews.md](spec-periodic-reviews.md) (periodic run reviews, 2026-10-25) **as
 amended by [reconciliation.md](reconciliation.md)**, whose decisions D320–D333 the owner answered on
-2026-10-26. **Nothing in it is implemented. No task is approved:** the answers settle questions, and
-each task still needs the owner's own explicit go.
+2026-10-26. **Partly implemented, and what remains is born in `ee/`.**
+
+On `main` (2026-10-29), task by task: T1.1, T1.2, T1.3, T1.4, T2.1, T2.2, T2.3, T3.1, T3.2, T3.3,
+T3.5, T3.6, T4.1, T4.2, T4.3, T5.1, T5.2, T6.1, T6.2, T7.1, T7.6, T8.1a (the tier vocabulary and
+the task fields) and T8.1b (`fugaro run --tier`). **T3.4 and T4.4 are not started.**
+
+**The cut-off (D527, 2026-10-29): the in-flight governance work finishes in `internal/` and moves
+once; the rest is born in `ee/governance`.** `ee-reorg` D527 puts the cut-off at the first move pull
+request: `#1216`, `#1215`, `#1196`, T8.1b and any task approved before it. Everything after it is
+written in `ee/` rather than moved into it, so **T7.2, T7.3, T7.4, T7.5, T8.2 and T8.3's
+calibration half are re-targeted to `ee/governance` and are not started**. Each plugs into one of
+the core hooks the ee-reorg plan's E1.2 adds, plus the gateway stage-limit hook T7.2 adds itself;
+[§"Where the remaining tasks live"](#where-the-remaining-tasks-live-ee-d530) names the hook and the
+file for each. Each moving task still needs the owner's own explicit go.
 
 The answers that shape the plan:
 
@@ -28,6 +40,43 @@ The answers that shape the plan:
   instruction pre-flight deferred (no task here).
 - **R1–R8** of the reconciliation stand as written.
 
+## Where the remaining tasks live (`ee/`, D530)
+
+The move series (`ee-reorg` E2.3) splits governance by D521: **the wire and the mechanism stay in
+`internal/` under MIT, the policy goes to `ee/governance` under the enterprise licence**
+(`docs/design/ee-boundary-moves.md` §4). The line runs through the shared packages rather than
+around one of them. What this plan's remaining tasks touch, and where each part ends:
+
+| Part | Lives in |
+| --- | --- |
+| The `governance:` YAML types, their strict decoding and shape validation, the schemas | `internal/config`, `internal/policy`, `schemas/` — core |
+| `task.Spec.Tier`/`ExpectedScope`, `internal/tier`, the record fields (`calls`, `agents`, `repeats`, `review_scope`, `checkpoint`) and the five governance halt reasons | `internal/task`, `internal/tier`, `internal/runstore`, `schemas/` — core |
+| The runner's halt-with-checkpoint plumbing (`governanceHalt`, `checkpointPR`, `checkpointReportPart`, `readReviewScope`) | `internal/runner` — core |
+| The `ExpectedScope` drift flag and the digest's halt accounting | `internal/digest` — **core, stays MIT** (D528) |
+| The policy hooks' core defaults (decode, warn once, ignore) | `internal/policy/hook.go`, `internal/runner/governance_hook.go`, `internal/digest/section.go` — core, added by E1.2 |
+| `DefaultGovernance`, the tier defaults, `tightenGovernance`/`tightenTier` | `ee/governance/policy.go` |
+| The stage timeout's enforcement and every tripwire that halts (stage budget, tokens, review ratio, fan-out, review-scope stop, expected cost), the checkpoint model call, the tier expected-cost checkpoint, the tier calibration | `ee/governance/runner.go`, `ee/governance/gateway.go`, `ee/governance/calibrate.go` |
+| The first governance command, if one is ever added | `ee/governance/cli` |
+| The wiring: one `Set*` call per hook, once | `ee/register/governance.go` |
+
+The four seams the remaining tasks plug into, from `docs/design/ee-boundary-moves.md` §5: the
+**governance policy hook** (`internal/policy/hook.go`, E1.2), the **runner stage hook**
+(`internal/runner/governance_hook.go`, E1.2 — `SetStage` with `Timeout` and `TimedOut`), the
+**digest section hook** (`internal/digest/section.go`, E1.2 — `SetSections`, core default none), and
+the **gateway stage-limit hook** (a stage limit beside `Cap` and `Lease` on `gateway.Options`, core
+default nil — **not** in E1.2: T7.2 wires it as its first step).
+
+Every hook's core default is today's behaviour, and a `Set*` refuses a second call, so a tagged
+binary cannot be left with a hook unset or an untagged one enforcing anything. T8.3 keeps its two
+halves on opposite sides of the line: the calibration is born in `ee/governance` and joins the
+digest through the section hook, while the `ExpectedScope` drift flag stays in `internal/digest`
+(D528), so the MIT digest keeps the flag and an untagged build omits the calibration section.
+
+**D523 (2026-10-29): no licence notice or warning at all until the verifier, the key-minting service
+and the launch are ready.** No task here adds a licence notice, a stderr line, a paid-command
+warning or a run-log licence line: where one would go, the task says **deferred with the key work
+(D523)**.
+
 ## 0. What this plan does not do
 
 - No Fugaro-side scheduler, service or Cloud Scheduler job for the reviews (R8): the user's own
@@ -42,6 +91,9 @@ The answers that shape the plan:
 - No idle-spin or edits-back-and-forth tripwire: nothing records file changes per model call, so
   there is no data to flag them from. The loop tripwire this plan builds is the repeated identical
   command (T1.4); scope drift is a digest flag once tasks carry an expected scope (T8.3).
+- No licence notice or warning of any kind yet (D523, 2026-10-29): no stderr line on a paid command,
+  no run-log line for a tagged job that enforces `governance:`, until the verifier, the key-minting
+  service and the launch are ready. For now everything is available to all.
 - No live cloud action by an agent. Checks 135–139 are the owner's.
 
 ## 1. The slices, in one table
@@ -54,8 +106,8 @@ The answers that shape the plan:
 | **4 — the practice** | the `working` skill rewritten around the digest and its cadence, the submission draft, the issue form, the contribution note (R2, R6, D327, D328) | every user gets it with the next release |
 | **5 — small guards** | the 80% cap warning (R5); the review-scope mismatch recorded (F2) | each is a one-file change with its own value |
 | **6 — checkpoints** | halt + checkpoint report on the record and the PR, the governance halt reasons, `diagnose` and the skill (D329) | the stopping point every governance trip uses |
-| **7 — stage budgets and fan-out** | per-stage call and dollar budgets and the review ratio in the gateway, the fan-out stop, the review-scope stop (D331, D332) | governance steps G§7.3 and G§7.4 |
-| **8 — expectations** | the optional tier on a task, its expected-cost checkpoint, self-calibration suggestions in the digest (D330, F33) | governance steps G§7.6 and G§7.9 |
+| **7 — stage budgets and fan-out** | per-stage call and dollar budgets and the review ratio in the gateway, the fan-out stop, the review-scope stop (D331, D332) — **born in `ee/governance` (D527)** | governance steps G§7.3 and G§7.4 |
+| **8 — expectations** | the optional tier on a task, its expected-cost checkpoint, self-calibration suggestions in the digest (D330, F33) — the tier is core (merged), the checkpoint and the calibration are **born in `ee/governance`** | governance steps G§7.6 and G§7.9 |
 
 **The smallest useful first slice** is Slice 1 + Slice 2 + T4.1: the record, the command, and the
 skill telling every user to run it. Slice 3 (the owner's run-based delivery) follows on top of it.
@@ -104,6 +156,13 @@ Only the ones this plan's areas trigger; `CLAUDE.md` and the rules files hold th
 9. **Comments explain why.** No TODOs, no section-header comments.
 10. **Targeted tests only**, `GOFLAGS=-p=2`; `internal/runner` and `internal/cli` are never run
     whole by a task.
+11. **`ee/` files carry the two-line notice** (`.claude/rules/ee.md`): `SPDX-License-Identifier:
+    LicenseRef-Fugaro-Enterprise`, then `See ee/LICENSE for the terms.` Nothing outside `ee/`
+    imports it except `cmd/fugaro/ee_on.go`, and a task that lands a file under `ee/governance/`
+    runs `go test ./internal/eeboundary/ -count=1` after it. A test that would switch behaviour off
+    lives in an `export_test.go`, never in production code, and only `ee/register` calls a `Set*`.
+    **D523 defers every licence notice and warning**: where one would go, the task says **deferred
+    with the key work (D523)**.
 
 ## 4. Global constraints and review focus
 
@@ -528,12 +587,24 @@ routine launches it: `fugaro run --recipe run-digest "periodic run review"` (R8)
 - **Commit.** `config: governance budgets, tighten-only`
 
 **T7.2 — the gateway enforces them**
-- **Files.** `internal/gateway/gateway.go` (`Stage` gains the limits; counters in the stage state),
-  `internal/gateway/ledger.go` (`reserve`, the refusal path the cap uses: its `s.halt` is run-wide,
-  so a governance stop is a **stage-scoped** halt that refuses the stopped stage and leaves the
-  checkpoint stage admissible), `internal/gateway/forward.go`, `internal/gateway/lease.go` if the
-  stage budget is a sub-lease, `internal/runner/gateway.go` (`beginGatewayStage` passes the
-  resolved `governance.*` limits into `gateway.Stage`: the wiring from the config to the gateway).
+- **Born in `ee/governance` (D527, D530).** Its **first step is the fourth seam**: the gateway
+  stage-limit hook, which E1.2 does not land because it is the gateway half of governance rather
+  than something to keep inert. Everything this task enforces then grows in `ee/governance`, behind
+  it.
+- **Files.**
+  - **The hook, in the core (step 1).** `internal/gateway/gateway.go` (`Options` gains a stage limit
+    beside `Cap` and `Lease`, of the same kind, carrying the gateway's own `Stage` and
+    `StageReport`; counters in the stage state), `internal/gateway/ledger.go` (`reserve`, the
+    refusal path the cap uses: its `s.halt` is run-wide, so a governance stop is a **stage-scoped**
+    halt that refuses the stopped stage and leaves the checkpoint stage admissible),
+    `internal/gateway/forward.go`, `internal/gateway/lease.go` if the stage budget is a sub-lease,
+    `internal/runner/gateway.go` (`beginGatewayStage` passes the resolved `governance.*` limits into
+    the hook: the wiring from the config to the gateway). **Core default: nil**, exactly today's
+    behaviour — the gateway enforces the run's spend cap and the lease sub-cap (D520, core) and no
+    per-stage budget.
+  - **The limits, in `ee/governance` (step 2).** `ee/governance/gateway.go`,
+    `ee/governance/gateway_test.go` (the stage budget, tokens, review ratio and fan-out limits),
+    wired once by `ee/register/governance.go`.
 - **Behaviour.** Per stage: refuse and raise a halt when the stage's dollars, calls or tokens pass
   its budget, when review calls pass max(floor, N × implement calls), or when the stage's distinct
   sub-agents pass the maximum. A governance halt refuses every later call of the stopped stage,
@@ -546,43 +617,66 @@ routine launches it: `fugaro run --recipe run-digest "periodic run review"` (R8)
   alone. Oauth runs are flagged by the digest. Residual, accepted as low: the loopback gateway has
   no caller identity, so a process that escaped the stage's process group could spend the one
   checkpoint call; the cost is only empty checkpoint fields.
-- **Tests.** `TestStageBudgetHalts`, `TestStageTokensHalt`, `TestReviewRatioHaltsAboveFloorOnly`,
+- **Licence notice.** **deferred with the key work (D523)**: a tagged job that enforced governance
+  would carry one run-log line here, and until the verifier, the key-minting service and the launch
+  are ready it carries none.
+- **Tests.** In the core (the hook's default and the wiring): `TestStageLimitHookDefaultsToNil` (no
+  limit set behaves exactly as today), `TestStageLimitsWiredFromConfig`. In `ee/governance` (run
+  through `internal/runner/runnertest`, since the runner's own harness cannot be imported from
+  `ee/`): `TestStageBudgetHalts`, `TestStageTokensHalt`, `TestReviewRatioHaltsAboveFloorOnly`,
   `TestFanoutHalts`, `TestReviewOnlyRunHasNoRatio` (F6), `TestCheckpointAllowanceOneCallWithinCap`,
   `TestNoCheckpointAllowanceAfterCapHalt`, `TestCheckpointStageRefusesStoppedStageCalls`,
-  `TestReviewFirstCountsAsReview`, `TestStageLimitsWiredFromConfig`.
-- **Command.** `GOFLAGS=-p=2 go test ./internal/gateway ./internal/runner -run 'StageBudget|StageTokens|ReviewRatio|Fanout|CheckpointAllowance|StageLimits' -count=1 -timeout 30m`
+  `TestReviewFirstCountsAsReview`.
+- **Command.** `GOFLAGS=-p=2 go test ./internal/gateway -run 'StageLimit' -count=1 && GOFLAGS=-p=2 go test ./internal/runner -run 'StageLimits' -count=1 -timeout 30m && go test ./ee/governance/ -count=1 && go test ./internal/eeboundary/ -count=1`
 - **Red step.** A stage over its budget is served.
-- **Depends on.** T1.2, T7.1. **Reviewer.** opus + mandatory independent review (money path).
-- **Commit.** `gateway: stage budgets, the review ratio and the fan-out stop`
+- **Depends on.** T1.2, T7.1, T3.5 (Check 139 written and run), E1.2 (the policy and runner hooks
+  the resolved `governance.*` limits reach the gateway through). **Reviewer.** opus + mandatory
+  independent review (money path).
+- **Commit.** `governance: stage budgets, the review ratio and the fan-out stop (ee/)`
 
 **T7.3 — the runner turns gateway stops and the review-scope mismatch into checkpoints**
-- **Files.** `internal/runner/gateway.go` (map the new gateway halts; after one, stop the agent and
-  run the dedicated checkpoint stage that fills `done`/`next`/`hard_instructions`),
-  `internal/runner/diffbase.go`
-  (a non-empty `review_scope.outside` before review halts with `review_scope`; a not-applicable
-  scope (T5.2) never halts).
+- **Born in `ee/governance` (D527, D530), behind the runner stage hook** (`internal/runner/governance_hook.go`,
+  E1.2's `SetStage`: its `TimedOut` is where a tripwire's decision lands, and its `Timeout` is the
+  stage's own ceiling). The halt plumbing this task calls stays core: `governanceHalt`,
+  `checkpointPR`, `checkpointReportPart`, `readReviewScope` (D521).
+- **Files.**
+  - **In `ee/governance`:** `ee/governance/runner.go` (map the new gateway halts; after one, stop the
+    agent and run the dedicated checkpoint stage that fills `done`/`next`/`hard_instructions`; the
+    review-scope stop), `ee/governance/runner_test.go`, and `ee/register/governance.go` (the
+    `SetStage` call that installs them).
+  - **In the core, unchanged:** `internal/runner/diffbase.go` keeps recording the comparison
+    (`readReviewScope`) — a non-empty `review_scope.outside` before review is the fact `ee/`'s stop
+    reads, and a not-applicable scope (T5.2) never halts. `internal/runner/governance_hook.go`'s
+    core default stays ignore-and-warn-once.
 - **Tests.** `TestGatewayStageHaltBecomesCheckpoint`, `TestCheckpointCallFailureStillHalts`,
   `TestReviewScopeMismatchHaltsBeforeReview`,
   `TestReviewScopeNotApplicableNeverHalts` (wide range kept by design, follow-up, review run,
   autofix `Fixed`; the digest run's case is T3.2's),
-  `TestReportOnlyTripwiresDoNotHalt` (G8: a stage with the repeated-command flag of T1.4 runs on).
-- **Command.** `GOFLAGS=-p=2 go test ./internal/runner -run 'StageHalt|ReviewScope|ReportOnly' -count=1 -timeout 30m`
+  `TestReportOnlyTripwiresDoNotHalt` (G8: a stage with the repeated-command flag of T1.4 runs on) —
+  all in `ee/governance`, run through `internal/runner/runnertest`.
+- **Command.** `go test ./ee/governance/ -count=1 && GOFLAGS=-p=2 go test ./internal/runner -run 'ReviewScope' -count=1 -timeout 30m && go test ./internal/eeboundary/ -count=1`
 - **Red step.** The gateway's stop ends the run as failed, not halted.
-- **Depends on.** T6.1, T7.2, T1.4 (the flag the G8 test uses). **Reviewer.** opus + mandatory
-  independent review.
-- **Commit.** `runner: governance stops become checkpoints`
+- **Depends on.** T6.1, T7.2, T1.4 (the flag the G8 test uses), E1.2 (the stage hook it plugs
+  into). **Reviewer.** opus + mandatory independent review.
+- **Commit.** `governance: stops become checkpoints, in ee/`
 
 **T7.4 — operators and docs**
 - **Files.** `docs/releases/` next notes (`### For operators`: the defaults now stop runs; how to
   loosen in the project layer and publish it with `fugaro config publish FILE`, per installation), `docs/recipes.md` (budgets are not a recipe key),
-  `plugin/skills/setup/reference/decisions.md` (the governance block).
+  `plugin/skills/setup/reference/decisions.md` (the governance block). The behaviour these docs
+  describe is `ee/governance`'s (D527, D530): the keys are core, the defaults that stop runs are not.
+  It plugs into no hook of its own — it documents the ones T7.2 and T7.3 fill.
+- **Licence notice.** **deferred with the key work (D523)**: a licensing line in the release notes
+  for a build that enforces governance would go here, and there is none — the 0.13.0 notes carry no
+  licence warning.
 - **Tests.** `GOFLAGS=-p=2 go test ./internal/cli -run Docs -count=1`; the plugin lint.
 - **Depends on.** T7.3. **Reviewer.** standard.
 - **Commit.** `docs: governance budgets, for operators`
 
 **T7.5 — Checks 137 and 138**
 - **Files.** `docs/gcp-live-checklist.md` (two sections and their two index-table rows), `docs/coordinator/README.md` (register
-  line).
+  line). The two checks exercise the `ee/governance` code T7.2 and T7.3 build (D527, D530); they are
+  owner-run docs, so nothing of theirs moves.
 - **OWNER-RUN.** The owner runs, in the sandbox repository only: `fugaro run --task-file
   <a task file for a review-heavy change, under a project layer with a tiny review stage budget>`,
   waits for it to settle (`fugaro runs ls`), and `fugaro diagnose RUN`; then a task whose review is
@@ -620,27 +714,42 @@ routine launches it: `fugaro run --recipe run-digest "periodic run review"` (R8)
 - **Commit.** `task: an optional tier, an expectation and never a cap`
 
 **T8.2 — the expected-cost checkpoint**
-- **Files.** `internal/gateway/gateway.go` and `internal/gateway/ledger.go` (a run-level expectation
-  threshold beside T7.2's budgets), `internal/runner/gateway.go`.
+- **Born in `ee/governance` (D527, D530), behind two hooks:** T7.2's gateway stage-limit hook
+  carries the run-level expectation threshold, and E1.2's runner stage hook
+  (`internal/runner/governance_hook.go`, `SetStage`'s `TimedOut`) is where the decision to halt
+  lands. The tier vocabulary and the record fields it reads are core (T8.1).
+- **Files.** `ee/governance/gateway.go` (a run-level expectation threshold beside T7.2's budgets),
+  `ee/governance/runner.go` (the halt), `ee/governance/gateway_test.go`.
 - **Behaviour.** At 100% of the tier's expected cost the run halts with `expected_exceeded` and a
   checkpoint (D329); no tier, no threshold.
-- **Tests.** `TestExpectedCostHalts`, `TestNoTierNoExpectation`.
-- **Command.** `GOFLAGS=-p=2 go test ./internal/gateway ./internal/runner -run Expected -count=1 -timeout 30m`
-- **Depends on.** T8.1, T7.3. **Reviewer.** opus + mandatory independent review.
-- **Commit.** `gateway: a tier's expected cost is a checkpoint`
+- **Tests.** `TestExpectedCostHalts`, `TestNoTierNoExpectation` — in `ee/governance`, run through
+  `internal/runner/runnertest`.
+- **Command.** `go test ./ee/governance/ -count=1 && go test ./internal/eeboundary/ -count=1`
+- **Depends on.** T8.1, T7.3, T7.2 (the gateway hook). **Reviewer.** opus + mandatory independent
+  review.
+- **Commit.** `governance: a tier's expected cost is a checkpoint (ee/)`
 
-**T8.3 — self-calibration in the digest**
-- **Files.** new `internal/digest/calibrate.go`, `internal/digest/calibrate_test.go`,
-  `internal/digest/render.go` (the suggestions section), `internal/digest/digest.go` (the
-  scope-drift flag: changed files outside the task's `ExpectedScope`, report only, G8).
+**T8.3 — self-calibration in `ee/`, the scope-drift flag in the digest**
+- **Two halves, on opposite sides of the D521 line.** The **calibration** is born in
+  `ee/governance` (D527, D530) and joins the digest through E1.2's digest section hook
+  (`internal/digest/section.go`, `SetSections`, core default none), so an untagged digest omits the
+  section. The **`ExpectedScope` drift flag stays in `internal/digest` (D528)**: it halts nothing,
+  and the digest stays MIT.
+- **Files.** In `ee/governance`: `ee/governance/calibrate.go`, `ee/governance/calibrate_test.go`
+  (the per-tier suggestion, joining the digest through the section hook), wired once by
+  `ee/register/governance.go`. In the core, unchanged: `internal/digest/digest.go` and
+  `internal/digest/render.go` carry the scope-drift flag (changed files outside the task's
+  `ExpectedScope`, report only, G8) and the digest's own sections — **no
+  `internal/digest/calibrate.go` is created**.
 - **Behaviour.** Per tier, over the last 20 runs or 14 days (whichever is fewer), the median
   actual/expected ratio for cost and duration; governance-halted runs left out; a weekly report
   prints suggested defaults within bounds (0.5×–2×). Nothing is applied (G9).
 - **Tests.** `TestCalibrationExcludesGovernanceHalts`, `TestCalibrationBounds`,
-  `TestCalibrationAppliesNothing`, `TestScopeDriftFlagOnly`.
-- **Command.** `GOFLAGS=-p=2 go test ./internal/digest -run Calibrat -count=1`
-- **Depends on.** T8.1, T2.2. **Reviewer.** standard.
-- **Commit.** `digest: suggest tier defaults from the last twenty runs`
+  `TestCalibrationAppliesNothing` — in `ee/governance`, through the section hook;
+  `TestScopeDriftFlagOnly` — in `internal/digest`, core.
+- **Command.** `go test ./ee/governance/ -count=1 && GOFLAGS=-p=2 go test ./internal/digest -run 'ScopeDrift|DigestHasNoExtraSection' -count=1 && go test ./internal/eeboundary/ -count=1`
+- **Depends on.** T8.1, T2.2, E1.2 (the digest section hook). **Reviewer.** standard.
+- **Commit.** `governance: tier calibration in ee/, the scope-drift flag stays MIT (D528)`
 
 ## 6. Parallel execution
 
@@ -662,13 +771,13 @@ routine launches it: `fugaro run --recipe run-digest "periodic run review"` (R8)
 | T5.2 | T1.1 |
 | T6.1 | T5.2 |
 | T6.2 | T6.1, T4.1 |
-| T7.2 | T1.2, T7.1, T3.5 (Check 139 written and run) |
-| T7.3 | T6.1, T7.2, T1.4 |
+| T7.2 | T1.2, T7.1, T3.5 (Check 139 written and run), E1.2 (the policy and runner hooks) |
+| T7.3 | T6.1, T7.2, T1.4, E1.2 (the stage hook) |
 | T7.4, T7.5 | T7.3 |
 | T7.6 | T6.1, T7.1 |
 | T8.1 | T7.1, T6.1 |
-| T8.2 | T8.1, T7.3 |
-| T8.3 | T8.1, T2.2 |
+| T8.2 | T8.1, T7.3, T7.2 |
+| T8.3 | T8.1, T2.2, E1.2 (the digest section hook) |
 
 ### Levels (tasks in one level run concurrently)
 
@@ -680,6 +789,12 @@ routine launches it: `fugaro run --recipe run-digest "periodic run review"` (R8)
 | **L3** | T1.4, T2.3, T3.2 | T7.6 and T8.1 are ready here but wait a level: T7.6 shares `internal/runner/runner.go` with T3.2; T8.1 shares `internal/runstore/runstore.go` and `schemas/result.schema.json` with T1.4 and `website/content/cli-reference.md` with T2.3 |
 | **L4** | T3.3, T4.1, T7.3, T7.6, T8.1 | T4.2 is ready here but waits a level: it shares `website/content/cli-reference.md` with T8.1 |
 | **L5** | T4.2, T4.4, T6.2, T7.4, T7.5, T8.2, T8.3 | |
+
+**The move (D527) sits before every remaining level.** T7.2–T7.5, T8.2 and T8.3's calibration half
+are born in `ee/governance`, behind the E1.2 hooks — and, for T7.2, the gateway stage-limit hook it
+wires first — so each also depends on E1.2 and, for its tests, on the exported
+`internal/runner/runnertest` harness E1.2 adds. The levels above keep their order; the move is one
+gate ahead of all of them.
 
 **The smallest useful first slice** (T1.1–T1.3, T2.1–T2.3, T4.1) is done at L4.
 
@@ -696,19 +811,21 @@ dependencies.
 | File | Writers (level) |
 | --- | --- |
 | `internal/runstore/runstore.go`, `schemas/result.schema.json` | T1.1 (L0), T5.2 (L1), T6.1 (L2), T1.4 (L3), T8.1 (L4) |
-| `internal/gateway/gateway.go` | T1.2 (L0), T7.2 (L2), T8.2 (L5) |
-| `internal/gateway/ledger.go` | T1.2 (L0), T7.2 (L2), T8.2 (L5) |
+| `internal/gateway/gateway.go`, `internal/gateway/ledger.go` | T1.2 (L0), T7.2 (L2, the stage-limit hook) |
 | `internal/gateway/forward.go`, `internal/gateway/lease.go` | T7.2 (L2) |
-| `internal/runner/gateway.go` | T7.2 (L2), T7.3 (L4), T8.2 (L5) |
+| `internal/runner/gateway.go` | T7.2 (L2, the hook's wiring from the resolved config) |
 | `internal/runner/cost.go`, `internal/agent/relay.go`, `internal/agent/agent.go` | T1.3 (L1), T1.4 (L3) |
-| `internal/runner/diffbase.go` | T5.2 (L1), T7.3 (L4) |
+| `internal/runner/diffbase.go` | T5.2 (L1) — T7.3's stop reads the comparison from `ee/` |
 | `internal/runner/halt.go`, `internal/runner/prflow.go`, `internal/runner/prompts.go` | T6.1 (L2) |
 | `internal/runner/runner.go` | T1.3 (L1), T3.2 (L3), T7.6 (L4) |
 | `internal/runner/digest.go` (new) | T3.2 (L3), T3.3 (L4) |
-| `internal/digest/digest.go` (new) | T2.1 (L1), T1.4 (L3), T8.3 (L5) |
-| `internal/digest/render.go` (new) | T2.1 (L1), T8.3 (L5) |
+| `internal/digest/digest.go` (new) | T2.1 (L1), T1.4 (L3), T8.3 (L5, the scope-drift flag) |
+| `internal/digest/render.go` (new) | T2.1 (L1) — E1.2's section hook extends it |
 | `internal/digest/patterns.go` (new) | T2.2 (L2) |
-| `internal/digest/calibrate.go` (new) | T8.3 (L5) |
+| `ee/governance/gateway.go` (new) | T7.2 (L2), T8.2 (L5) |
+| `ee/governance/runner.go` (new) | T7.3 (L4), T8.2 (L5) |
+| `ee/governance/calibrate.go` (new) | T8.3 (L5) |
+| `ee/register/governance.go` (new) | T7.2 (L2: the gateway hook's limits), T7.3 (L4: the stage hook's `Timeout`/`TimedOut`), T8.3 (L5, the digest section) |
 | `internal/cli/runs.go` | T2.3 (L3) |
 | `internal/cli/runs_digest.go` (new) | T2.3 (L3), T4.2 (L5) |
 | `internal/cli/runs_digest_submit.go` (new) | T4.2 (L5) |
@@ -738,8 +855,12 @@ A change to any task's **Files** re-checks this table.
 - Slice 3 (T3.4): per repository, the user schedules `fugaro run --recipe run-digest` themselves;
   each run costs one senior review stage. No installation step: the job's grant is unchanged.
 - Slice 7 (T7.4): per installation, the governance defaults now stop runs; the project layer
-  loosens them up to the per-run cap, and `fugaro config publish FILE` publishes it.
+  loosens them up to the per-run cap, and `fugaro config publish FILE` publishes it. The defaults
+  that stop runs are `ee/governance`'s (D527, D530), so they run only in a build carrying the `ee`
+  tag — a core job image warns and ignores the block (D522).
 - Every other slice changes no deployed resource.
+- **D523**: no release action and no licence line for any of this until the verifier, the key-minting
+  service and the launch are ready; the 0.13.0 notes carry no licence warning.
 
 ## 8. Risks
 

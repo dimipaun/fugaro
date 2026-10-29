@@ -5,7 +5,7 @@
 
 ## Validate
 
-`fugaro validate --json` prints `{"valid": ..., "problems": [{"path": ..., "message": ...}]}`. It may also print `"warnings"` in the same shape (a value the project's ceiling would clamp): warnings don't make the file invalid, but tell the user. A third array, `"notes"` (also the same shape, omitted when empty), is neither: something the run will need in a case that only the cloud can settle offline — today, a stored Anthropic API key when a call will go to Anthropic. Pass a note on to the user as information (its message says the fix), never as a problem, and never change the file to silence it: `valid` stays true with notes. Fix each problem at its `path` and run it again until `valid` is true. Don't silence a problem by deleting something the build needs.
+`fugaro validate --json` prints `{"valid": ..., "problems": [{"path": ..., "message": ...}]}`. It may also print `"warnings"` in the same shape (a value the project's ceiling would clamp): warnings don't make the file invalid, but tell the user. A third array, `"notes"` (also the same shape, omitted when empty), is neither: something the run will need that only the cloud can settle — today, a stored Anthropic API key when a call will go to Anthropic, and, for a file that writes `governance:`, the edition of the job images, which `--offline` leaves unresolved, so whether their runners read the block is not known here. Pass a note on to the user as information (its message says the fix), never as a problem, and never change the file to silence it: `valid` stays true with notes. Fix each problem at its `path` and run it again until `valid` is true. Don't silence a problem by deleting something the build needs.
 
 ## Build the image
 
