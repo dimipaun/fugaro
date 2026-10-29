@@ -35,7 +35,7 @@ The spec reads greenfield. It is not. Of its five parts:
   needs a hosted launch path first. **Token pooling already exists** as the credentials service's
   Tier A cascade, so the terms question the spec raises applies to code on `main` today (F28–F38).
 
-The spec says "Open questions: none". This reconciliation finds **forty** that need the owner
+The spec says "Open questions: none". This reconciliation finds **forty-six** that need the owner
 (§4), plus the ones only counsel or the owner can answer (§6).
 
 ## 2. Spec concept → what the repository already has
@@ -79,14 +79,23 @@ commits only leftovers and its own steps (`Repo.CommitAll` in `gate.go`, `digest
 Fugaro has **no agent sandbox** (docs/secrets-brokering §1), so the agent can set any author, any
 trailer or none, and while it holds a git credential in a stage it can push itself. *Consequence:*
 author and trailers set by the environment are a **default, not a guarantee**. A runner-side stamp
-must rewrite every unpushed commit after each agent stage, and the finalize push must refuse or
-re-stamp anything unstamped (D603). Trailers are a record, not proof.
+must rewrite the stage's unpushed **own** commits (`gitops.Repo.OwnCommits`: commits no branch on
+origin holds, so an integration branch's foreign commits are never re-authored) after each agent
+stage, and finalize must re-stamp any commit whose ID is not one the runner itself stamped (the
+runner keeps the list; a trailer's presence proves nothing, since the agent knows the run ID) (D603).
+The rewrite runs with the agent-writable `.git/config` neutralised (`trailer.*`, `commit.gpgsign`,
+`gpg.program`, hooks), as `ScanWork` already defends against `diff.external`. Trailers are a record,
+not proof: the agent can also push other branches with its token.
 
 **F2, Gap.** Readiness is tied to commit IDs. `Decide(records, finalSHA, …)`
 (`internal/runner/outcome.go`) compares the verified test records with the final SHA. Re-stamping a
 commit changes its ID even when the tree is the same. *Consequence:* the stamp must run **before**
-verification and before any checkpoint or early-draft push (after each stage, in `afterStage`'s
-order), never at push time, or a passed run reads as unverified.
+verification and before the boundary checkpoint or early-draft push (when the agent's stage returns,
+before `afterStage`), never at push time, or a passed run reads as unverified. **Mid-stage checkpoints
+are a second constraint** (review round 1): `internal/runner/checkpoint.go` pushes fast-forward only
+while the agent still works and "never commits and never touches the working tree or the index", so
+the runner cannot rewrite commits under a running agent. Commits a mid-stage checkpoint has pushed
+stay as the agent made them; only the unpushed range is stamped at the boundary (D640).
 
 **F3, Rule.** The launcher identity is self-declared. `localcfg.Config.Me` answers the local
 config's `user:`, else `git config user.email`; `docs/coordinator/reconciliation.md` #11 calls it "a
@@ -109,7 +118,8 @@ operator's own"). Erasure under GDPR or PIPEDA cannot remove it from forks and c
 the owner and counsel decide (D606); the plan supports a per-person noreply override.
 
 **F6, Exists / Gap.** `Fugaro-Job:` names a **run** in this repository. A *job* here is the Cloud
-Run job, one per repository and workflow (`docs/design/project-centric.md` §4.1); the per-execution
+Run job, one per repository and workflow (`gcp.JobName(slug, workflow)`, `gcp.WorkflowVariant`) or
+one per profile and account for shared jobs (`docs/design/project-centric.md` §4.1); the per-execution
 ID is the run ID (`task.ValidRunID`, `^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$`). The model is recorded per
 stage as the **configured pin** (`StageTiming.Model`), not the served model; a commit's stage is
 knowable only if the stamp runs per stage (F2). Rigor is `Record.Rigor.Mode`. (D601, D602)
@@ -156,6 +166,12 @@ adds no new long-lived job secret (Global Constraint 3).
 but D474 (2026-10-27) admits an **owner-allow-listed** Bitbucket API root for self-managed use. The
 two are reconciled by "supported = cloud; an allow-listed root is accepted, unsupported" (D612).
 
+**F40, Gap (review round 1).** Open PR #1264 ("run commits carry a GitHub-linkable identity") changes,
+for GitHub only, author **and** committer to the App's `[bot]` noreply identity, as "a single
+overridable value in one place", and says it stays compatible with this spec. *Consequence:* this
+plan never hard-codes `Fugaro <fugaro@users.noreply.invalid>` as the committer; it uses the run's
+identity as `main` has it when A1 starts (D645).
+
 **F14, Gap (signing).** Today nothing is signed. The spec's three per-forge paths:
 (a) GitHub **API commits** would replace `gitops`' commit-and-push and the checkpoint pushes: a
 rewrite of the push path for one forge, and whether an App-created commit with a *user* author shows
@@ -172,7 +188,15 @@ branch, which humans merge into. (D608, D609)
 with `seniorReview`; `runstore.TierSenior`; the first tier never decides readiness). The independent
 review this repository uses on its **own** PRs (local agents outside the cloud loop, the owner's
 process) is not the product and is not this rule. A change set needs a **hold**: no single run may
-flip its PR ready alone (D614).
+flip its PR ready alone (D614). **The hold binds the runner, not the agent** (review round 1): the
+agent holds a token with `pull_requests: write` and can mark its PR ready or edit its body (sibling
+links, merge order). The settle step must re-read every PR's state rather than trust it, and a
+follow-up run (`fugaro run --pr N`) on a member PR must inherit the hold.
+
+**F41, Gap (review round 1).** Self-approval. The PR is opened by the bot, so a launcher may approve
+a PR whose commits now name them as author; the forge's "not your own PR" rule does not see it.
+Authorship does not create this (the launcher can approve the bot's PR today) but it is now visible
+in blame with no second person. (D643)
 
 ### Multiple repositories
 
@@ -192,7 +216,12 @@ widens what one run's agent can read (and, with no sandbox, exfiltrate) to every
 (D613, D617)
 
 **F18, Rule.** The coordinator is advisory: "It never blocks or reorders merges"
-(`docs/coordinator/spec.md`), and "Fugaro never merges" (`docs/design/v1.md`). Its collision model
+(`docs/coordinator/spec.md`), and "Fugaro never merges" (`docs/design/v1.md`), with one qualification:
+the mobile mailbox's `merge` action has the consumer run `gh pr merge` on a person's command
+(`internal/mailbox/message.go`), with no knowledge of a merge order. The coordinator's GitHub token
+is `pull_requests: read` (`coordinatorTokenPermissions`, Q3(A)), and a writing coordinator was refused
+(Q10 C, `internal/gitprov/github/apptoken.go`): a settle step that flips PRs ready reverses that
+(D641). Its collision model
 is per repository (`internal/coordinator/view.go` `View.Repo`). It moves under `ee/` (ee-reorg D530).
 The spec's "coordinator enforces merge order and blocks a consumer merge" reverses the advisory
 ruling and needs a forge write (F10). (D615, D616)
@@ -220,8 +249,8 @@ credential's `allow_data_to` does not still cannot use that credential (R4).
 **F22, Differs.** Tags and pins: builds push `candidate-$BUILD_ID`, smoke-test it by digest, retag
 `:latest`; jobs run `:latest` (`internal/infra/spec.go`), and "a job runs the repository's :latest,
 which no launch compares with ImageDigest" (`internal/imagecheck/record.go`). Pinning a digest per
-build means changing the job definition per build, or a per-execution image override, whose
-availability on Cloud Run jobs is UNVERIFIED (U4). (D619)
+build means changing the job definition per build: "Cloud Run cannot vary the image, service
+account, CPU or memory per execution" (`docs/design/project-centric.md` §4.1). (D619)
 
 **F23, Differs.** Layer order: the template clones the source **before** `mise install`, the
 warm-up and `image.setup`, because they read the repository's files (lockfiles, `mise.toml`). "Source
@@ -241,10 +270,10 @@ own registry. SECURITY.md has no statement about baked source in registries. (Ta
 can hurt. On the operator's machine it is their own risk; in a job or Cloud Build it runs with
 installation credentials. Intersecting its output with `allow_repos` is the existing check (D622).
 
-**F27, Rule.** The monorepo state branch: the spec's orphan `fugaro-state` branch reverses the
-owner's D14 (2026-10-15, `docs/design/project-centric.md` §8): folder `fugaro-project/`, branch
-`fugaro-project`, bootstrapped from the default branch, not orphan, PR mode opt-in; phase 6, not
-built. The spec's ".fugaro/ holds the config" also overloads `.fugaro/`, which holds recipes and
+**F27, Rule.** The monorepo state branch: the spec's orphan `fugaro-state` branch departs from the
+owner's D14 (2026-10-15, `docs/design/project-centric.md` §8: folder `fugaro-project/`, branch
+`fugaro-project`, PR mode opt-in) and from the same section's design text that the branch is
+"bootstrapped from the default branch, not created orphan"; phase 6, not built. The spec's ".fugaro/ holds the config" also overloads `.fugaro/`, which holds recipes and
 Dockerfiles. (D626)
 
 ### Developer onboarding
@@ -270,15 +299,29 @@ substitute. Roles exist in docs only (`docs/mobile-auth/spec.md`).
 GCP and Firebase directly and the console spawns the CLI. (D627)
 
 **F32, Rule.** Suspended users "don't count as seats" lets a customer suspend and resume to rotate a
-seat faster than §5.3's once in 30 days (D629).
+seat faster than §5.3's once in 30 days, which already allows a move at any time "when the person
+leaves the Customer" (D629).
+
+**F42, Gap (review round 1).** `fugaro user` over the IAM lists has two traps. `localcfg`'s
+`memberRE` accepts `domain:`, so the spec's `--domain` would grant a whole domain the launcher roles,
+the signer's token-minter role included (`budget_admins` already refuses `domain:`). And the lists
+live in each operator's local config (`Terraform` is not in the shared config), so one admin's stale
+list plus `fugaro update` silently revokes members another admin added. (E1)
+
+**F43, Gap (review round 1).** `localcfg.Config.Shared()` copies every field and blanks named ones
+(`internal/localcfg/shared.go`). A new local-config field (a commit address, a resolver command) is
+published to the runs bucket, which a launcher can write, unless it is blanked there.
 
 **F33, Deferred.** "The CLI issues the seat licence automatically": the key-minting service is
 deferred under `ee/` and D523 forbids any licence notice for now (D630).
 
 **F34, Exists / Rule.** Contributed tokens: `fugaro secrets set claude-oauth-token-<name>
 --project-wide` (stdin or hidden prompt only, never argv) and `claude_accounts.<name>` with
-`allow_data_to` exist (`docs/project-claude-accounts.md`); the credentials service reads **one**
-bundle secret through **one unconditioned grant**, and the comment on it records that the prefix
+`allow_data_to` exist (`docs/project-claude-accounts.md`), and they are **operator** acts: a
+teammate's machine "holds the same file but not the rights". A named account is selectable by any
+launcher of an admitted repository (`fugaro run --token`, `agent.oauth_token`): it is scoped by
+repository, not by person, so **"Own" is not expressible today**. The credentials service reads **one**
+bundle secret through **one unconditioned Secret Manager grant** (it also holds its RTDB role), and the comment on it records that the prefix
 fence was replaced (Q6, 2026-10-19; `TestCredentialsServiceGrantsAreTheOneBundle`). The service
 has **no write route** (`/v1/messages`, `/v1/messages/count_tokens`,
 `/v1/github/installation-token`). *Consequence:* the spec's `user-token-` prefix with create and
@@ -310,10 +353,10 @@ licence notices (D523). The go-to-market spec lists "SSO and roles" as `ee/`. Th
 proxy is MIT (its R4). Nothing rules on authorship, forge adapters, user management, token pooling
 or change sets (D637).
 
-## 4. Decisions (D600–D639), for the owner
+## 4. Decisions (D600–D645), for the owner
 
 Each row: the question, the recommendation and its reason, the alternative and its cost, and an
-**empty** answer cell. D640–D679 are reserved and unused.
+**empty** answer cell. D640–D645 were added in review round 1. D646–D679 are reserved and unused.
 
 | # | Question | Recommendation | Alternative and cost | Owner's answer |
 | --- | --- | --- | --- | --- |
@@ -336,32 +379,38 @@ Each row: the question, the recommendation and its reason, the alternative and i
 | **D616** | Where change sets live (licence) | **Linking and the draft hold in core (MIT); the change-set step that flips ready and orders merges under `ee/coordinator`** (D530) | All in core: puts coordinator behaviour outside `ee/`. All in `ee/`: untagged runs cannot even link PRs | |
 | **D617** | Where the project's intent lives (F19, F20) | **The published policy** (`allow_repos`, `fugaro project repos`, `fugaro project sync`) as the intent; a generated lock stored in the runs bucket beside the build records | The spec's project Git repository with `fugaro.yaml` as intent and `fugaro.lock`: changes `fugaro.yaml`'s meaning, duplicates the policy, adds a repository every project must have | |
 | **D618** | Per-project images (spec) vs per-repository (today) | **Keep per-(repository, workflow) images**; a project image is designed later as an opt-in, after context repositories (D613 step 1) show a need | Replace per-repository images: migrates every installation, the registry layout, job definitions and `fugaro image refresh` | |
-| **D619** | Content-hash tags and digest pins (F22) | **Record and check the digest at launch (warn on mismatch) first**; pin only after Check 233 shows a per-execution image override works | Pin by updating the job definition per build: an infra apply per build | |
+| **D619** | Content-hash tags and digest pins (F22) | **Record and check the digest at launch (warn on mismatch)**; no pinning, since Cloud Run cannot vary the image per execution | Pin by updating the job definition per build: an infra apply per build | |
 | **D620** | Layer order (F23) | **Yes, as its own task**: lockfiles and tool files extracted at the pinned commit before the warm-up, source last | Keep today's order: every source change re-runs the warm-up | |
 | **D621** | Rebuild cadence (F24) | **Keep trigger-based rebuilds** (lockfiles, base, age); no blanket nightly rebuild; state that builds are outside the run budget | Nightly rebuild plus on main moving: Cloud Build cost per repository per night, unmetered | |
 | **D622** | The generator command (F26) | **Only on the operator's machine**, inside `fugaro project sync`; its output intersected with `allow_repos`, dropped entries warned | Run it in a cloud job: runs arbitrary code with installation credentials | |
 | **D623** | `fugaro repo sync` (F19) | **Extend `fugaro project sync`** (Bitbucket workspace listing, `--check`), no new command family | A new `fugaro repo` family: two commands for one allow-list | |
-| **D624** | Repo markers | **The committed `fugaro.yaml`'s `gcp_project:` is the marker** (exists); the require-marker setting is deferred | Build require-marker now: an extra fetch per repository on every sync | |
+| **D624** | Repo markers | **The committed `fugaro.yaml`'s `gcp_project:` is the marker** (exists; a marker-only file does not validate, U8); the require-marker setting is deferred | Build require-marker now: an extra fetch per repository on every sync | |
 | **D625** | Auto-add on sync | **Propose, then confirm** (today's `project sync`); a setup run for a failing repository only on an explicit flag | Fully automatic add, rebuild and setup run: spends budget and opens PRs unattended | |
 | **D626** | Monorepo state branch (F27) | **Keep D14**: `fugaro-project/` on branch `fugaro-project`, bootstrapped from the default branch (project-centric phase 6) | The spec's orphan `fugaro-state`: reverses an owner ruling | |
 | **D627** | Developer onboarding without IAM (F28, F31) | **Design first (D446)**; meanwhile `fugaro user` is a front for the existing `launchers`/`operators` lists (each change is an owner-run `fugaro update`) | Build Firebase Auth users and a hosted launch API now: the central orchestrator's scale, new trust boundary | |
 | **D628** | Sign-in shape (F29) | **Google sign-in exchanged for a custom token minted by Fugaro's signer**, role as a claim; public sign-up stays refused | Enable Firebase's Google provider directly: reverses `refusePublicSignUp` and mobile-auth D221's recommendation | |
 | **D629** | Suspension and seats (F32) | **A suspended person keeps the seat until the 30-day move rule allows moving it**; counsel words it | Suspended users free their seat at once: seat rotation by suspend/resume | |
 | **D630** | Seat licence on join (F33) | **No licence step in `fugaro join`** until the key-minting service ships (D523) | Issue keys now: needs the deferred `ee/` service | |
-| **D631** | Where contributed tokens live (F34) | **Bundle entries** (Q6's one secret, one grant), written through a new authenticated service route once E's identity exists; until then owner-run `fugaro creds set` | The spec's `user-token-` prefix with create rights: reverses Q6 and gives the service create rights in Secret Manager | |
+| **D631** | Where contributed tokens live (F34) | **Bundle entries** (Q6's one secret, one grant), written through a new authenticated service route once E's identity exists; until then an operator stores a teammate's token with today's `fugaro secrets set` or `fugaro creds set`, as now | The spec's `user-token-` prefix with create rights: reverses Q6 and gives the service create rights in Secret Manager | |
 | **D632** | Does `fugaro token add` run `claude setup-token` (F35) | **No**: the person runs it and pipes the token to stdin, as `secrets set` does | The CLI runs it and captures the output: output format unverified (U5), token in the CLI's memory and scrollback | |
-| **D633** | Token policy default (F36) | **Own** for personally contributed tokens; pooling stays where it exists (Tier A) pending O2 | Pool by default: the terms question unresolved | |
+| **D633** | Token policy default (F36) | **Own** for personally contributed tokens, which needs a per-person binding that does not exist (F34: accounts are scoped by repository), so it is built from E0; pooling stays where it exists (Tier A) pending O2 | Pool by default: the terms question unresolved | |
 | **D634** | Reserve thresholds (F37) | **Not built until U6 is verified**; exhaustion marks remain the mechanism | Build on assumed headers: may read nothing, or the wrong thing | |
 | **D635** | Console Members tab (F38) | **Read-only list first**; every write waits for E's identity and a separate go | The spec's tab with writes: moves the console's fence past D22/D34 | |
 | **D636** | Mobile suspend (F38) | **Deferred until `fugaro user suspend` exists**; then a mailbox action with confirmation | Build now: an action with nothing behind it | |
 | **D637** | Licence placement (F39) | **MIT:** authorship, forge adapters (GitLab included), context repositories, linking, `fugaro user` over the IAM lists, token storage. **`ee/`:** change-set ordering and the ready-together step, SSO and domain or workspace invites, roles enforcement beyond the lists | Roles and user management in core: conflicts with go-to-market's `ee/` list | |
 | **D638** | Workspace-level invites | **Wait for the workspaces spec**, not in the repository | Build project-by-project invites now and fold later: rework | |
 | **D639** | Spec's "Open questions: none" | **Replace with §6 of this file** | — | |
+| **D640** | Mid-stage checkpoint pushes (F2) | **Keep them**; the agent's environment carries the author and committer; the boundary stamp covers only the unpushed range, so a mid-stage-pushed commit may lack trailers; the docs say so | Turn mid-stage checkpoints off when stamping: loses the crash protection checkpoints exist for. Or force-push re-stamped history: breaks the checkpoint's fast-forward-only rule | |
+| **D641** | The settle step needs PR write (F18) | **A separate, settle-only token** (`pull_requests: write`) minted for the settle step, beside the coordinator's read-only one; reverses Q10 C for this one act | Each member run's finalize flips its siblings: every run then needs write on other repositories | |
+| **D642** | Who may join a change set | **Membership fixed at creation**: one launch creates every member run, and each member's write-once task lists the others; a run not listed by all is ignored by the settle step | A free-form `--change-set ID` any launcher passes: anyone can join or stall someone else's set | |
+| **D643** | Self-approval (F41) | **Document it**; no code. Repositories that need two people use their forge's review rules | A runner-side refusal: Fugaro cannot see who approves | |
+| **D644** | An agent-written `Signed-off-by` (R1) | **Remove it** when stamping: an agent cannot make the DCO assertion; a DCO-gated repository then fails its check until a person signs off, which is the point | Keep it: an assertion no person made, in a person's name | |
+| **D645** | The committer identity (F40) | **The run's identity as `main` has it** (`Fugaro`, or the App's `[bot]` identity on GitHub if #1264 merges); the spec's "committer = the forge bot" is then met on GitHub | Hold this plan until #1264 settles: delays A for no gain | |
 
 **Resolutions** (one defensible answer each):
 
-- **R1.** `Signed-off-by` is never added automatically, and the stamp removes one the agent writes:
-  an agent cannot make a DCO assertion for the launcher (F7).
+- **R1.** `Signed-off-by` is never added automatically (F7). Whether one the agent writes is removed
+  is D644.
 - **R2.** Seats are counted from launch records, never from commits (F8).
 - **R3.** No new long-lived secret enters a job in any slice of this plan (F12).
 - **R4.** `allow_data_to` stays the per-credential boundary; `allow_repos` the membership boundary
@@ -380,7 +429,7 @@ Each row: the question, the recommendation and its reason, the alternative and i
 
 ## 6. Open items for the owner
 
-- **O1. Every decision D600–D639** above: empty answer cells.
+- **O1. Every decision D600–D645** above: empty answer cells.
 - **O2. Anthropic's terms** for (a) the existing Tier A pooling and (b) contributed personal tokens
   used for other people's jobs: the owner's and counsel's (F36). Not a technical question.
 - **O3. Privacy:** whether launcher emails in commits need a notice or consent (F5): owner and
@@ -395,11 +444,13 @@ Each row: the question, the recommendation and its reason, the alternative and i
   hosted launch API. Not checked.
 - **U2.** Whether a GitHub App's API-created commit with a user author shows Verified.
 - **U3.** GitLab.com and self-managed signing of API and web commits.
-- **U4.** Whether a Cloud Run job execution can override the container image (Check 233).
+- **U4.** *Resolved in review round 1: no.* `docs/design/project-centric.md` §4.1: Cloud Run cannot
+  vary the image per execution. Check 233 is withdrawn and stays reserved.
 - **U5.** `claude setup-token`'s output format and whether it is stable for parsing.
 - **U6.** Whether Claude Code reads subscription usage windows from response headers, and which
   ones. Do not build on it.
 - **U7.** Whether a GitHub App installation token naming several repositories keeps per-repository
   permission narrowing as needed for read-only context (Check 232).
-- **U8.** Whether a minimal `fugaro.yaml` holding only `gcp_project:` validates today (the spec's
-  marker form).
+- **U8.** *Resolved in review round 1: no.* `schemas/fugaro.schema.json` requires `version` and
+  `project`, so a `gcp_project:`-only marker does not validate; the marker is `gcp_project:` inside a
+  full `fugaro.yaml` (D624).
