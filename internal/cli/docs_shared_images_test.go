@@ -36,15 +36,16 @@ func TestDocsSharedImagesDesign(t *testing.T) {
 
 	sharedImagesMustContain(t, section, path, []string{
 		// D618 as answered, plus O6's three image-count controls.
-		"the key is normalised: only resolved package names, versions, toolchain and base image count",
-		"a superset reuses an existing image only when it holds the whole set at the same versions",
+		"only resolved package names, versions, toolchain and base image count",
+		"only when it holds the whole set at the same versions",
 		// T6(c) as resolved: propose-then-confirm, and the unattended refusal.
-		"a divergence is proposed and confirmed, never forked silently",
-		"`fugaro image refresh` refuses to build when there is no terminal, or with `--json`",
+		"proposed and confirmed, never forked silently",
+		"refuses to build when there is no terminal",
 		"`--on-divergence`",
-		"fork `<repository>`",
+		"`adopt <repository>`",
+		"stays pinned",
 		// T6(c): the shared image is never mutated.
-		"an image already in the lock is never rebuilt or overwritten in place",
+		"never rebuilt or overwritten in place",
 		// The prune's one exception.
 		"never one a job still points at",
 		// The retention key, its default and its status.
