@@ -728,6 +728,13 @@ func TestImageRenderCloudOutputs(t *testing.T) {
 		rec.Image != "" || rec.ImageDigest != "" || rec.Adopted {
 		t.Errorf("record.json = %+v", rec)
 	}
+	// The edition of the binary rendering this record, which is the base
+	// image's own: the launch-side warnings judge the job image by it
+	// (imagecheck.Record.Edition). The test binary is core, which is what a
+	// build without the ee tag writes.
+	if rec.Edition != EditionCore {
+		t.Errorf("record.json edition = %q, want %q", rec.Edition, EditionCore)
+	}
 	// The render step runs the BASE image's own fugaro, so this field is the
 	// base's statement that its runner reads the sealed budget token: the
 	// statement the seal gate trusts for a development base (sealDevRefusal).
@@ -817,5 +824,36 @@ func TestImageRecordKeepsSealedBudgetToken(t *testing.T) {
 	rec := readImageRecord(t, bucket)
 	if rec == nil || !rec.SealedBudgetToken {
 		t.Fatalf("the recorded record lost sealed_budget_token: %+v", rec)
+	}
+}
+
+// TestImageRecordKeepsEdition: the same for the edition, which is the whole
+// carrier of the launch-side warning a core job image gets (design
+// ee-boundary-moves §7): the record step re-marshals what render and gate read
+// and wrote, so a field dropped there would silence every edition warning with
+// nothing else failing. The test binary is a build without the ee tag, which is
+// what a core image's own render step writes.
+//
+// Mutation (run, restored): clear rec.Edition in the record step — this test
+// fails.
+func TestImageRecordKeepsEdition(t *testing.T) {
+	checkoutWith(t, npmFiles())
+	testutil.Git(t, ".", "remote", "set-url", "origin", "https://bitbucket.org/acme/app.git")
+	ws, bucket := t.TempDir(), "file://"+t.TempDir()
+	if _, stderr, err := execute(t, "image", "render", "--workflow", "app", "--cloud-outputs", ws); err != nil {
+		t.Fatalf("%v\n%s", err, stderr)
+	}
+	testutil.WriteFiles(t, ws, map[string]string{"image-digest": "sha256:" + strings.Repeat("1", 64) + "\n", "base-digest": "b@sha256:" + strings.Repeat("2", 64) + "\n"})
+	slug := mustSlug("bitbucket", "acme/app")
+	if _, _, err := execute(t, "image", "gate", "--record", filepath.Join(ws, "record.json"), "--slug", slug, "--bucket", bucket); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := execute(t, "image", "record", "--in", filepath.Join(ws, "record.json"), "--digest-from", filepath.Join(ws, "image-digest"),
+		"--base-digest-from", filepath.Join(ws, "base-digest"), "--image", "img", "--base", "b:1", "--build-id", "b1", "--slug", slug, "--bucket", bucket); err != nil {
+		t.Fatal(err)
+	}
+	rec := readImageRecord(t, bucket)
+	if rec == nil || rec.Edition != EditionCore {
+		t.Fatalf("the recorded record's edition = %+v, want %q", rec, EditionCore)
 	}
 }
