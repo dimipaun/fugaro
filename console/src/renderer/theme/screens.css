@@ -95,14 +95,15 @@ h1.unavailable-headline {
  * (design section 3.7). */
 h2.spend-account-title,
 h2.spend-people-title,
-h2.projects-title, {
+h2.projects-title {
   font-size: var(--font-size-md);
   font-weight: var(--weight-semibold);
 }
 
 span.projects-repos-label,
 span.degraded-mode-word,
-span.spend-persons-word, {
+span.spend-persons-word,
+span.run-replay-window-word {
   font-size: var(--font-size-xs);
   font-weight: var(--weight-medium);
   text-transform: uppercase;
@@ -125,6 +126,18 @@ p.projects-note,
 p.projects-jobs-note,
 p.projects-accounts-note,
 p.projects-warning,
+p.run-warning,
+p.run-log-note,
+p.run-log-refused,
+p.run-log-link-note,
+p.run-pr-reason,
+p.run-replay-note,
+p.run-report-path,
+p.run-comments-path,
+p.run-draft-note,
+p.run-reported-warning,
+p.run-pin-warning,
+p.run-follow-up,
 p.degraded-notice,
 p.degraded-warning,
 p.unavailable-reason,
@@ -188,7 +201,7 @@ li.projects-cap,
 li.projects-job,
 li.projects-secret,
 li.projects-account,
-li.degraded-run, {
+li.degraded-run {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
@@ -270,6 +283,12 @@ span.live-since-at,
 span.live-kill-at,
 span.spend-kill-at,
 span.projects-kill-at,
+span.run-log-stage,
+span.run-finding-file,
+span.run-follow-up-pr,
+span.run-replay-from,
+span.run-replay-to,
+span.run-replay-at,
 p.installation-binary,
 code.unavailable-install-command {
   font-family: var(--font-mono);
@@ -847,9 +866,13 @@ p.projects-only-enrolled {
  *
  * The Run screen's header, its status strip, its stage timeline and its log
  * window are the redesign's now, and their rules live in `flight-deck.css`
- * against the same hooks (console redesign, step 3a). What is here is the
- * ledger's three-figure grid and the two document panels the step left their
- * contents in.
+ * against the same hooks (console redesign, step 3a). What is left here is the
+ * drawing the step did not redraw: the ledger's three-figure grid, the Rigor
+ * row, the spend-by-stage and tolerated panels, and the parts of the diagnosis,
+ * logs and replay panels that step 3b moves. Their prose, labels and mono
+ * values stay in the shared groups above -- the panels' contents are still these
+ * screens' own sentences and their values are still compared character by
+ * character.
  */
 
 /* The ledger is three figures read together (design section 3.8). */

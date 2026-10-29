@@ -1190,6 +1190,20 @@ ol.run-log-list {
   list-style: none;
 }
 
+/* The spend-by-stage and tolerated rows are panels this step drew but did not
+ * redraw (step 3b), so they keep the row treatment the shared group in
+ * `screens.css` gave every list in the console, on the redesign's border. */
+li.run-spend-stage,
+li.run-tolerated-finding {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-sm);
+  min-height: var(--row-height);
+  padding-block: var(--space-2xs);
+  border-bottom: var(--rule-width) solid var(--line);
+}
+
 li.run-stage {
   display: grid;
   grid-template-columns: 24px 90px minmax(0, 1fr) 70px;
