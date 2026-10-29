@@ -1,6 +1,15 @@
 package coordpath
 
 import (
+	"bytes"
+	"errors"
+	"go/ast"
+	"go/parser"
+	"go/printer"
+	"go/token"
+	"io/fs"
+	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -75,6 +84,82 @@ func TestCoordpathDocumentIDIsOneHexSHA256(t *testing.T) {
 	for _, r := range id {
 		if !strings.ContainsRune("0123456789abcdef", r) {
 			t.Fatalf("DocumentID = %q holds %q, which is not lower-case hex", id, r)
+		}
+	}
+}
+
+// coordpathDecls is the source of each named declaration in path, as
+// go/printer renders it: layout and comments do not survive, so the two
+// copies of a name compare equal exactly when they declare the same thing.
+func coordpathDecls(t *testing.T, path string, names []string) map[string]string {
+	t.Helper()
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, path, nil, 0)
+	if err != nil {
+		t.Fatalf("parsing %s: %v", path, err)
+	}
+	out := map[string]string{}
+	record := func(name string, node ast.Node) {
+		if !slices.Contains(names, name) {
+			return
+		}
+		var buf bytes.Buffer
+		if err := printer.Fprint(&buf, fset, node); err != nil {
+			t.Fatalf("rendering %s of %s: %v", name, path, err)
+		}
+		out[name] = buf.String()
+	}
+	for _, d := range f.Decls {
+		switch d := d.(type) {
+		case *ast.GenDecl:
+			for _, s := range d.Specs {
+				vs, ok := s.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for _, n := range vs.Names {
+					record(n.Name, vs)
+				}
+			}
+		case *ast.FuncDecl:
+			record(d.Name.Name, d)
+		}
+	}
+	return out
+}
+
+// TestCoordpathMatchesTheLibrarysCopy: until E2.1b moves the library, the
+// subtree has two definitions — the library's, which writes the documents, and
+// this package's, which the rules grant and the doctor reads — and nothing in
+// the core otherwise holds them together: the library's own state_test.go
+// asserts how the names relate to each other, never what they are. A change to
+// either copy of either value fails here, and the IDs too, since DocumentID's
+// whole body is compared and not merely its shape. Once the library has moved
+// out of internal/coordinator there is nothing left to compare against, which
+// is the state this test is for.
+func TestCoordpathMatchesTheLibrarysCopy(t *testing.T) {
+	const library = "../coordinator/state.go"
+	if _, err := os.Stat(library); errors.Is(err, fs.ErrNotExist) {
+		return
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	names := []string{
+		"PathRoot", "PathProject", "PathRepos",
+		"PathRepo", "PathProjectDocument", "PathRepoDocument", "DocumentID",
+	}
+	ours := coordpathDecls(t, "coordpath.go", names)
+	theirs := coordpathDecls(t, library, names)
+	for _, name := range names {
+		if ours[name] == "" {
+			t.Fatalf("this package no longer declares %s", name)
+		}
+		if theirs[name] == "" {
+			t.Errorf("the library no longer declares %s: the two copies are what keeps the subtree that is written and the subtree that is granted the same one", name)
+			continue
+		}
+		if ours[name] != theirs[name] {
+			t.Errorf("%s is declared twice and differently:\n  coordpath: %s\n  the library: %s", name, ours[name], theirs[name])
 		}
 	}
 }

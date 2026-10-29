@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -233,13 +234,22 @@ func TestAPICheckDatabaseHostRefusesWhatTheCoreRefuses(t *testing.T) {
 
 // TestAPICheckoutOfAnswersTheCoresCheckout: the sweep reads each repository's
 // fugaro.yaml through the checkout lookup, memoized the way the core memoizes
-// it, so the published one has to be that lookup.
+// it, so the published one has to be that lookup. The comparison is made
+// inside a checkout of the repository: outside one both lookups answer nil
+// whatever they do, so the first assertion is what keeps this test from
+// passing on two empty answers.
 func TestAPICheckoutOfAnswersTheCoresCheckout(t *testing.T) {
 	ctx := context.Background()
-	got := CheckoutOf(ctx, "owner/repo-a")
-	want := checkoutOf(ctx, "owner/repo-a")
+	dir := checkoutsAt(t, filepath.Join(t.TempDir(), "app"), checkoutsYAML, "https://github.com/acme/app.git")
+	t.Chdir(dir)
+
+	got := CheckoutOf(ctx, "acme/app")
+	want := checkoutOf(ctx, "acme/app")
+	if want() == nil {
+		t.Fatal("the core's own lookup found no fugaro.yaml in a checkout of acme/app: this test would compare two empty answers")
+	}
 	if !reflect.DeepEqual(got(), want()) {
-		t.Errorf("CheckoutOf answered %+v, checkoutOf %+v, for the same repository", got(), want())
+		t.Errorf("CheckoutOf answered %+v, checkoutOf %+v, in the same checkout", got(), want())
 	}
 	if !reflect.DeepEqual(got(), got()) {
 		t.Error("CheckoutOf's lookup is not memoized: two calls answered differently")

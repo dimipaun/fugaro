@@ -634,7 +634,7 @@ library read beside the cloud.
 | `(*cloudEnv).bucket` (`cloud.go`) | `Cloud.RunsBucket` | `func (c *Cloud) RunsBucket() *blobx.Bucket` |
 | `(*cloudEnv).repoProvider` (`project_job.go:224`) | `Cloud.RepoProvider` | `func (c *Cloud) RepoProvider(repo string, co *config.Config) string` |
 | `(*cloudEnv).Close` (`cloud.go:186`) | `Cloud.Close` | `func (c *Cloud) Close()` |
-| `readRun` (`runs.go:414`), `runObjects` (`runs.go:404`) | `Cloud.ReadRun`, `RunObjects` (opaque: `Input`, `Warning`) | `func (c *Cloud) ReadRun(ctx context.Context, slug, id string) (*RunObjects, error)` |
+| `readRun` (`runs.go:414`), `runObjects` (`runs.go:402`) | `Cloud.ReadRun`, `RunObjects` (opaque: `Input`, `Warning`) | `func (c *Cloud) ReadRun(ctx context.Context, slug, id string) (*RunObjects, error)` |
 | `checkoutOf` (`run.go:2261`) | `CheckoutOf` | `func CheckoutOf(ctx context.Context, repo string) func() *config.Config` |
 | `parseSince` (`runs.go:532`) | `ParseSince` | `func ParseSince(s string) (time.Duration, error)` |
 | `lsDefaultSince` (`runs.go:61`) | `LsDefaultSince` | `func LsDefaultSince() string` |
@@ -645,7 +645,7 @@ library read beside the cloud.
 | `budgetScopes` (`cloud.go:344`) | `BudgetScopes` | `func BudgetScopes() []string` |
 | `checkDatabaseHost` (`history.go:187`) | `CheckDatabaseHost` | `func CheckDatabaseHost(rawURL, firebaseProject string) error` |
 | `envProject`, `envFirebaseFP`, `envRTDBURL`, `envRunsBucket` (`history.go:34`) | `EnvProject`, `EnvFirebaseFP`, `EnvRTDBURL`, `EnvRunsBucket` | consts |
-| `reportIntentTimeout` (`run.go:2920`) | `ReportIntentTimeout` | const |
+| `reportIntentTimeout` (`run.go:2918`) | `ReportIntentTimeout` | const |
 
 Notes that make this list the right size:
 
