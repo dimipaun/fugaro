@@ -9,10 +9,11 @@ import (
 )
 
 // This file is the digest's own copy of the period vocabulary and the dollar
-// rendering internal/report carries: the digest is MIT and must keep building
-// with ee/ deleted (D444, T11), and internal/report moves to ee/report. The
-// bodies, the values and the error wording are internal/report's, kept in step
-// by period_test.go's pins; nothing else of a report is copied here.
+// rendering `ee/report` carries: the digest is MIT and must keep building
+// with ee/ deleted (D444, T11), and the report moved to `ee/report`, which an
+// untagged build does not carry. The bodies, the values and the error wording
+// are `ee/report`'s, kept in step by period_test.go's pins; nothing else of a
+// report is copied here.
 
 // Dim is what a digest period groups by.
 type Dim string

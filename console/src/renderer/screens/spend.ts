@@ -211,7 +211,7 @@ export type SpendAccount = (typeof SPEND_ACCOUNTS)[number]
 
 /**
  * SPEND_MAX_RANGE_DAYS is the longest range this console will enumerate a day
- * series over: `reportMaxDays` (`internal/cli/report.go:40`), which the CLI
+ * series over: `reportMaxDays` (`ee/report/cli/report.go:39`), which the CLI
  * bounds `--since` and the resolved range with, and which `src/main/ipc.ts`
  * restates as `REPORT_MAX_DAYS` for the same reason on the argument side. A
  * range longer than this is one `report` itself refuses, so a document claiming
@@ -254,7 +254,7 @@ export const PARTIAL_MARKER = '(partial)'
  * share -- there is no readable record -- rather than "unreadable" alone,
  * because the usual `none` row of a window that reaches into today is a run
  * still in flight, whose record is not corrupt but simply not written
- * (`modeRecords`, `internal/cli/report.go`). The figures beside this sentence
+ * (`modeRecords`, `ee/report/cli/report.go`). The figures beside this sentence
  * are therefore the `n/a` the reader already draws for an absent key -- never a
  * `$0.00` that would read as a measurement. The words are the console's own;
  * `report`'s table and CSV draw `n/a` there and name no mark.
@@ -1653,7 +1653,7 @@ function withheldSeries(account: SpendAccount): SpendSeries {
 
 /**
  * SPEND_PICKER_WINDOWS is the range picker's closed set of windows, in
- * `reportRange`'s own grammar (`internal/cli/report.go`): `Nd` is the last N
+ * `reportRange`'s own grammar (`ee/report/cli/report.go`): `Nd` is the last N
  * days up to `--until` and `Nw` the last N weeks, and every one of them is a
  * `--since` the CLI parses. It is the part of the picker that is *drawn*; a UTC
  * day is the picker's other form (a range with an end the operator chose),
@@ -1904,7 +1904,7 @@ export function personView(controls: SpendControls, on: boolean): SpendControls 
  * `parseSince`'s own grammar (`internal/cli/runs.go`: a positive day count, a Go
  * duration, or `0` for no bound) -- which has **no week form at all**. The
  * picker's `12w` therefore becomes `84d`, `reportRange`'s own arithmetic for a
- * week (`internal/cli/report.go`: the unit is 7 days, so 12w is 84 days), and
+ * week (`ee/report/cli/report.go`: the unit is 7 days, so 12w is 84 days), and
  * the three day windows go through unchanged.
  *
  * A `Map` and not a literal object, for the reason `SCOPES` is one, and the keys
