@@ -9,9 +9,10 @@ in the four licence files (#1140, merged).
 
 **Status: plan only. Nothing is implemented, and NO TASK IS APPROVED.** Each task needs the owner's
 explicit go. Answering D430–D448 and B1–B17, and ruling T10–T26, O4 and the key binding, approved
-none of them. Some tasks also wait on counsel (S8.4), on the new entity (S8.1) or on the owner's
-ruling on **T27**, the one consequence of the rulings still open (S1.1, S1.6); each task says
-which.
+none of them. Some tasks also wait on counsel (S8.4) or on the new entity (S8.1); each task says
+which. **T27, the one consequence of the rulings, was ruled (b) on 2026-10-29:** the paid commands
+warn, not refuse, until enforcement ships, and that warning is itself deferred with the key work
+(ee-reorg D523), so nothing waits on it.
 
 **Re-sliced 2026-10-27 after the owner's rulings** (reconciliation, "Rulings"). What changed, with
 the earlier version kept visible:
@@ -31,6 +32,14 @@ the earlier version kept visible:
 - **S0.4 is the one Terms revision after counsel's feedback.** S0.5 is no longer conditional (T23,
   default).
 - Check 178 measured the release date before; it now measures the coordinator's key-gated job.
+
+**Updated 2026-10-29 (the ee-reorg rulings, D520–D524).** The ee-reorg plan
+([`../ee-reorg/implementation-plan.md`](../ee-reorg/implementation-plan.md)) **supersedes** S1.1,
+S1.2, S1.3, S1.4, S1.5, S1.7 and S1.9, carrying each task by task: S1.1 → E0.3, S1.2 → E1.1,
+S1.3 → E1.5, S1.4 → E2.1, S1.5 → E2.2, S1.7 → E1.4, S1.9 → E1.4. Their text and numbers stay below
+and are not reused. S1.6 is carried there as E3.2 and stays this plan's dependency; S1.8 stands;
+**S1.10 (Check 178) is deferred until enforcement**. The base and history images now build with the
+`ee` tag (D524), which amends R1; no key is mounted until enforcement.
 
 The owner's answers and rulings that shape it (non-price; figures are private, D430):
 
@@ -99,7 +108,7 @@ The owner's answers and rulings that shape it (non-price; figures are private, D
 | No price, currency amount, discount offer, fee rate or Enterprise minimum in the repository | S0.1 |
 | A key verifier makes no network call | S2.3 (`TestLicencePackageImportsNoNetwork`), S7.3 (privacy rule 5 over `ee/`) |
 | A leaked signing key cannot mint keys old releases accept for ever | S2.1, S2.3 (`TestKeyBeyondTheTierLifetimeIsRefused`) |
-| The run images (base, credentials) build `fugaro` without the `ee` tag; only the coordinator's job image carries it (R1 as amended) | S1.7, S1.9 |
+| The base and history images build `fugaro` with the `ee` tag; the credentials image does not; no key is mounted until enforcement (R1 as amended by D524) | E1.4 (ee-reorg) |
 | The core never imports `ee/`; paid code reaches the binary only through `ee/register` | S1.2, S1.3 (existing boundary tests) |
 | An untagged build still launches; the launch declares to the coordinator only when `ee/` registered a declarer | S1.2, S1.4 (`TestUntaggedBuildStillLaunches`) |
 | `fugaro runs digest` works in an untagged build and inside a run | S1.5 (`TestDigestNeedsNoEE`) |
@@ -118,7 +127,7 @@ The owner's answers and rulings that shape it (non-price; figures are private, D
   keys, and a clock set back.
 - **The `ee/register` routes:** can an untagged build load paid code, and can a paid command shadow
   a core one?
-- **The coordinator's key-gated job image:** whether the key in the customer's cloud leaks.
+- **The tagged job image:** whether the tagged build reaches anything it should not; no key is mounted until enforcement (D524).
 - **The read-only state:** does it ever remove cancel or the kill switch (T12)?
 
 ## Slices and tasks
@@ -261,6 +270,8 @@ The owner's answers and rulings that shape it (non-price; figures are private, D
 
 #### S1.1 Design: the moves, file by file
 
+**Superseded 2026-10-29: carried as E0.3 in [`../ee-reorg/implementation-plan.md`](../ee-reorg/implementation-plan.md).**
+
 - **Files:** `docs/design/ee-boundary-moves.md` (new).
 - **Content:** the rulings T10, T11, T20 and T21, made concrete.
   - **The coordinator (T10).** What moves and how the core keeps working:
@@ -318,11 +329,14 @@ The owner's answers and rulings that shape it (non-price; figures are private, D
 - **Tests:** none beyond the Docs suite (a design).
 - **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run Docs -count=1`.
 - **Red step:** none (design).
-- **Depends on:** the owner's ruling on T27 (T10, T11, T20, T21 are ruled). **Reviewer:** opus +
+- **Depends on:** T27, ruled (b) on 2026-10-29 (T10, T11, T20, T21 were ruled 2026-10-27).
+  **Reviewer:** opus +
   mandatory independent review.
 - **Commit:** `docs(design): the core-to-ee moves for the coordinator and the reports`.
 
 #### S1.2 A command registry and the launch hook in the core
+
+**Superseded 2026-10-29: carried as E1.1 in [`../ee-reorg/implementation-plan.md`](../ee-reorg/implementation-plan.md).**
 
 - **Files:** `internal/cli/extend.go` (new), `internal/cli/extend_test.go` (new),
   `internal/cli/root.go`, `internal/cli/run.go`, and `internal/cli/api.go` (new; the exported helpers).
@@ -344,6 +358,8 @@ The owner's answers and rulings that shape it (non-price; figures are private, D
 
 #### S1.3 `ee/register` and the assembly file
 
+**Superseded 2026-10-29: carried as E1.5 in [`../ee-reorg/implementation-plan.md`](../ee-reorg/implementation-plan.md).**
+
 - **Files:** `ee/register/register.go` (new), `ee/register/register_test.go` (new),
   `cmd/fugaro/ee_on.go` (new).
 - **Tests:**
@@ -357,6 +373,8 @@ The owner's answers and rulings that shape it (non-price; figures are private, D
 - **Commit:** `ee: the register package and the one assembly file`.
 
 #### S1.4 The coordinator's command and library move (T10)
+
+**Superseded 2026-10-29: carried as E2.1 in [`../ee-reorg/implementation-plan.md`](../ee-reorg/implementation-plan.md).**
 
 *Earlier version (before 2026-10-27's T10 ruling): future versions of the command only, with the
 library left in core. Now: the command and the library, file by file as S1.1 lists.*
@@ -394,6 +412,8 @@ library left in core. Now: the command and the library, file by file as S1.1 lis
 - **Commit:** `coordinator: the command and the library move to the business licence (D434, T10)`.
 
 #### S1.5 `fugaro report` moves; the digest stays MIT (T11)
+
+**Superseded 2026-10-29: carried as E2.2 in [`../ee-reorg/implementation-plan.md`](../ee-reorg/implementation-plan.md).**
 
 *Earlier version: the reports, with the digest's fate open. Now: the report moves, and the digest
 stays MIT with its own copy of the period helpers.*
@@ -439,11 +459,14 @@ stays MIT with its own copy of the period helpers.*
   && cd website && npm run check`.
 - **Red step:** set the tag first; `TestEETagNeedsTheLabels` fails until every label says MIT core
   plus the business licence.
-- **Depends on:** S1.5, S1.9, S2.9, S7.1 (`community.astro`); the owner's ruling on T27.
+- **Depends on:** S1.5, S1.9, S2.9, S7.1 (`community.astro`); T27, ruled (b) 2026-10-29 (deferred
+  with the key work, D523).
   **Reviewer:** opus + mandatory independent review.
 - **Commit:** `release: one binary, MIT core plus business-licensed parts (D447, T21)`.
 
 #### S1.7 R1 pinned: the run images build `fugaro` untagged
+
+**Superseded 2026-10-29: carried as E1.4 in [`../ee-reorg/implementation-plan.md`](../ee-reorg/implementation-plan.md). The scan is inverted there: the base and history images carry the tag, credentials does not (D524).**
 
 - **Files:** `images/build_tags_test.go` (new).
 - **Tests:**
@@ -458,6 +481,8 @@ stays MIT with its own copy of the period helpers.*
 
 #### S1.8 Re-plan the coordinator and orchestrator plans; close #831 (T10, T20)
 
+**Stands (2026-10-29): not superseded by the ee-reorg plan.**
+
 - **Files:** `docs/coordinator/implementation-plan.md`, `docs/coordinator/README.md`,
   `docs/central-orchestrator/implementation-plan.md`, `docs/central-orchestrator/README.md`.
 - **Change:** both plans re-target their remaining parts to `ee/` behind `ee/register`: the
@@ -471,6 +496,8 @@ stays MIT with its own copy of the period helpers.*
 - **Commit:** `docs(plans): the coordinator and orchestrators re-planned behind ee/register (T10, T20)`.
 
 #### S1.9 The coordinator job's key-gated image (T10)
+
+**Superseded 2026-10-29: carried as E1.4 in [`../ee-reorg/implementation-plan.md`](../ee-reorg/implementation-plan.md) (the history image is built with the tag; no separate coordinator image and no key secret until enforcement, D524).**
 
 - **Files:**
   - the image build the job uses: a coordinator image split from the history image, or the
@@ -502,6 +529,8 @@ stays MIT with its own copy of the period helpers.*
 - **Commit:** `images: the coordinator's job runs the key-gated build (T10)`.
 
 #### S1.10 Check 178 (OWNER-RUN)
+
+**Deferred until enforcement (2026-10-29, D524): no key is mounted and nothing refuses, so the check does not apply yet.**
 
 - **What the owner does:** on the sandbox installation, with a release from S1.6, runs Check 178.
   No agent performs any step.
@@ -1104,7 +1133,7 @@ changed its use on 2026-10-27.** It measured the release date before; O4 withdre
 | 175 | With the service stopped, installed keys keep working, and the next key, issued 30 days before expiry, overlaps the current one | S3.7 |
 | 176 | In the packed console: within grace, everything works; after grace, reads and cancel remain while launch and config are refused in the main process; with no key, it behaves as S6.1 says; the MIT CLI still launches and cancels | S6.4 |
 | 177 | In the app after grace: cancel through the mailbox and the kill switch work; launch and config are refused | S6.4 |
-| 178 | **(changed)** The coordinator's sweep job runs the key-gated build with the installation's key and refuses without one; the console's project view (`coordinator status --from-store`) still reads the stored view | S1.10 |
+| 178 | **(changed; deferred until enforcement, 2026-10-29)** The coordinator's sweep job runs the tagged build; a key check and its refusal come only with enforcement (D524, nothing is mounted), and the console's project view (`coordinator status --from-store`) still reads the stored view | S1.10 |
 | 179 | A purchase in the merchant's test mode mints a staging-key Team key that production verifiers refuse; a renewal reissues it; a cancellation stops the reissue | S3.7 |
 
 ## Release actions

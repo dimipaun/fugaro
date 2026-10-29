@@ -22,7 +22,8 @@ credentials work's D360–D389 and Checks 145–154, on `main` and in the docs o
 **D430–D448** are written and answered; **D449–D459** are reserved and unused. **Checks 170–179**
 are named by the plan, owner-run and not run. Findings are
 **F1–F47**, resolutions **R1–R6**, tensions **T1–T26** (T1–T9 from the first reading, T10–T26 from
-the answers; **all ruled 2026-10-27**, see "Rulings"; **T27**, a consequence of the rulings, is open), the owner's answers to the Terms draft's
+the answers; **all ruled 2026-10-27**, see "Rulings"; **T27**, a consequence of the rulings, **ruled
+2026-10-29**), the owner's answers to the Terms draft's
 questions **B1–B17**, UNVERIFIED **U1–U12**. The rulings were recorded against `origin/main` at
 `d6f97594c` (which adds #1140 and #1148 to `252b5c46a`).
 
@@ -348,12 +349,16 @@ in S3.1; the limits stated in the key section below.
   tag, and the key check lives only at `ee/register` and in the console and app. A later task pins
   it with a test that the images' build commands carry no tag (S1.1 designs it; F32 is the strain).
   **Narrowed by ruling T10 (2026-10-27):** the run images (base, credentials) stay untagged; the
-  coordinator's sweep job runs the key-gated build (S1.7, S1.9).
+  coordinator's sweep job runs the key-gated build (S1.7, S1.9). **Amended by D524 (2026-10-29,
+  `docs/ee-reorg/reconciliation.md`):** the base and history images are built with `-tags ee` and
+  `COPY ee`, once the relabel has landed (E3.2, then E1.4); the credentials image stays untagged;
+  no key is mounted.
 - **R2** — No phone-home at runtime: validation is offline; no seat telemetry; the anonymous update
   check (`internal/updatecheck`) is unchanged. **Amended by D440:** the only Fugaro-hosted
   component is the issuing service, reached when a person asks for a key, never by the product.
 - **R3** — Every version released under MIT stays MIT: the coordinator and the reports of v0.11.0
-  through v0.12.0, and the console up to 0.112.0. D434 and D444 move **future** versions only.
+  through **v0.12.1**, and the console up to 0.112.0. D434 and D444 move **future** versions only;
+  **extended 2026-10-29:** every version released under MIT, through v0.12.1, stays MIT.
 - **R4** — The safety features stay in the MIT core (F8). The kill switch stays reachable from the
   MIT CLI at every licence state, and after ruling T12 also from the console and the app after the
   grace period.
@@ -430,13 +435,14 @@ The owner ruled every open tension on 2026-10-27. Each row gives:
 - a one-line reason;
 - where the plan follows it through (the re-sliced `implementation-plan.md`).
 
-The tensions as first raised are kept below for the record. **None of T10–T26 remains open**; T27, a consequence of the rulings, is. What remains is
+The tensions as first raised are kept below for the record. **None of T10–T27 remains open**; T27, a consequence of the rulings, was ruled on 2026-10-29. What remains is
 the open items (O1–O3, O5) and counsel's review.
 
 | # | Ruling (2026-10-27) | Recommendation? | Why (inferred: the owner gave rulings, not reasons) | Plan |
 | --- | --- | --- | --- | --- |
 | **T10** | The coordinator's **command and library** move to the business-licensed folder. **What stays:** the released MIT 0.11.x–0.12.0 stays the fork point. **What changes:** the sweep job's image carries the key-gated build; the console's project view, `coordinator status --from-store`, the P5 sweep and the plans that assume the coordinator in core are re-planned. This amends D302, D400 and D434; the core reaches the code only through `ee/register` | **No (not the recommendation**, which was "only new parts") | The owner wants the whole coordinator in the paid line from its next version. The `internal/eeboundary` route the ruling names is **already allowed** (`cmd/fugaro/ee_on.go` → `ee/register`); no boundary-test edit | S1.1, S1.2, S1.3, S1.4, S1.8, S1.9, S1.10 (Check 178) |
 | **T11** | `fugaro report` moves to the business-licensed folder for future versions; **`fugaro runs digest` stays MIT** with a small MIT copy of what it needs | **No (not the recommendation)** | The periodic reviews stay free; the organisation's spend report is paid | S1.1, S1.5 |
+| **Governance** (D520, D521, D527; 2026-10-29) | **Budgets, tiers, tripwires, checkpoints and stage timeouts move to `ee/`** with `fugaro report` and the coordinator (T10, T11), per the ee-reorg plan ([`../ee-reorg/implementation-plan.md`](../ee-reorg/implementation-plan.md)): the layout `ee/governance`, `ee/report`, `ee/coordinator` (with its CLI) and `ee/register`. The spend caps, the 80% warning, the kill switch and rigor's per-mode budgets stay MIT; core keeps the `governance:` wire, the halt plumbing the digest and `diagnose` read, and the launch-time skew gates. The key-minting service lives under `ee/keysvc/`, deferred with the key work and owner-run to deploy | Yes (each was the recommendation) | Governance must run where the job runs (F11); the caps are the free product's safety net (R4, F8) | E1.1–E1.3, E1.5, E2.3, E4.1 (ee-reorg) |
 | **T12** | After the grace period the console and the app **read and cancel runs**, and the kill switch stays; they cannot launch or change config. The amended Terms §10.4 changes in the one revision after counsel | Yes | Never paywall safety | S0.4, S6.1–S6.3, Checks 176–177 |
 | **T13** | The key service is **owner-operated in a dedicated Fugaro GCP project** (Cloud Run, a non-exportable KMS signing key, intake split from signing), **built after the entity exists**; until then keys are **minted by hand** (D440's first recommendation, as an interim) | Yes | One operator and one boundary; nothing hosted before there is a seller | S2.10, S3.1–S3.8 |
 | **T14** | Unchanged: the seat stays a contract pricing rule, and the estimate counts every launcher | Yes | Ruled by D433 | S4.1 |
@@ -455,7 +461,7 @@ the open items (O1–O3, O5) and counsel's review.
 | **O4** | The key carries **expiry only**: the covered-versions date and the build `ReleaseDate` stamping are dropped, superseding that part of D438. A version field may be added later | Yes | No fallback, so no version window | S2.1; S2.2 withdrawn; Check 178 reused |
 | **Key binding** (F35, F47) | **One key per organisation** with a seat count, not per user. The console shows seats used against it, advisory; the Terms' per-User wording (§8.1, §8.5) changes in the one revision | Yes | The product can bind only an organisation | S0.4, S2.1, S4.2 |
 
-### A consequence the rulings create (open, for the owner)
+### A consequence the rulings create (ruled 2026-10-29)
 
 **T27 — (T17 against T10, T11) Honour-based consoles and key-gated commands.** Console 0.113.0 and
 the first app release ship honour-based, without key enforcement (T17). But the console spawns
@@ -465,8 +471,11 @@ honour-based console paired with a later CLI therefore loses Spend and the proje
 is installed: enforcement in fact, before S6. Choices: (a) S1.6 waits for the enforcing console
 and app release; (b) the paid CLI commands warn instead of refusing until enforcement ships;
 (c) the console keeps working only with a key from S1.6 on, and its release notes say so. The same
-question applies to the launch's declaration to the coordinator. **Not decided here;** S1.1 and
-S1.6 wait on the owner's ruling.
+question applies to the launch's declaration to the coordinator. **Ruled (b), 2026-10-29: the paid
+commands warn, not refuse, until enforcement ships — and that warning is itself DEFERRED with the key
+work** (the ee-reorg ruling D523, `docs/ee-reorg/reconciliation.md`): no licence notice or warning
+anywhere until the verifier, the key-minting service and the launch are ready; for now everything is
+available to all. No release before then carries a notice, a warning or a key check.
 
 ### The tensions as raised (ruled 2026-10-27, kept for the record)
 
