@@ -43,12 +43,13 @@ blind judge run. No code ever changes a default.
 | Constraint | Pinned by |
 | --- | --- |
 | A challenger never pushes, never opens, updates or comments on a PR, never pushes a checkpoint, and its agent holds no git credential | A2.1 `TestShadowNeverPushes`, `TestShadowOpensNoPR`, `TestShadowAgentHasNoGitToken`; Check 210 |
-| A champion publishes exactly as an unsampled run; the only addition is its patch object in the bucket | A2.1 `TestChampionPublishesAsUnsampled`, `TestChampionUploadsPatch`; A3.0 `TestNoCompanionLaunchUnchanged` |
-| A failed, refused or skipped challenger never fails or delays the champion | A3.3 `TestChallengerFailureNeverFailsChampion`, `TestPairRefusedChampionPrechecksAlone` |
+| A champion publishes exactly as an unsampled run; the only addition is its patch object in the bucket | A2.1 `TestChampionPublishesAsUnsampled`, `TestChampionUploadsPatch`; A3.0 `TestNoPlannerLaunchUnchanged` |
+| A failed, refused or skipped challenger never fails or delays the champion | A3.3 `TestChallengerFailureNeverFailsChampion`; A3.0 `TestPairPrecheckRefusedLaunchesChampionAloneUnmarked`, `TestPlannerErrorNeverFailsLaunch` |
 | No sample without a pre-check, a dollar cap and D573's margin | A3.3 `TestNoPrecheckNoSample`, `TestUncappedNoSample`, `TestMarginRequired` |
 | No challenger reaches a provider the repository could not already use, at launch or from a replayed task | A3.2 `TestAdmitRefusesUnroutedChallenger`, `TestAdmitRefusesUnpricedChallenger`; A2.1 `TestShadowChallengerPolicyRechecked` |
 | Both arms differ only in the coder model (D555) and start at one commit (D571) | A2.1 `TestShadowChallengerCoderOnly`; A3.3 `TestBothArmsSameCommit`; A4.1 `TestPairInvalidWhenStartSHADiffers` |
-| A retried arm never duplicates a pair | A3.0 `TestRetryRefusesABTask` |
+| A retried arm never duplicates a pair, and a chosen `--run-id` is never sampled | A3.0 `TestRetryRefusesABTask`; A3.1 `TestEligibleExcludesChosenRunID` |
+| An untagged build that sees `ab:` keys writes only the D522 capability line | A3.0 `TestUntaggedABKeysCapabilityLine` |
 | No figure from fewer than 20 decisive pairs; same records give the same report | A4.2 `TestBelowMinimumNoConclusion`, `TestReportDeterministic` |
 | No person, task text or free text in an A/B output | A4.3 `TestABReportHasNoPerson`, A4.4 `TestDigestABSectionClosedVocabulary` |
 | The judge never sees a run ID, branch name, model ID or commit metadata | A5.1 `TestBundleCarriesNoIdentifier`; Check 211 |
@@ -58,7 +59,7 @@ blind judge run. No code ever changes a default.
 
 **Review focus for independent reviewers:** the shadow's side-effect boundary (every path that pushes
 or posts: `prflow.go`, `refused.go`, `checkpoint.go`, finalize, halts, cap stops, early drafts, status
-updates; and the token the agent's environment gets in `provision.go`); the launcher's money path (one
+updates; the agent's git credentials, added by `runner.go`'s `authVars`; and the tokens the shadow's runner mints at all); the launcher's money path (one
 read-only pre-check for the pair, the champion's fallback pre-check, D573's margin); the egress rule
 for challengers and the judge, at launch and in the runner; what leaks into the judge's input; prompt
 injection from a challenger's diff.
@@ -89,16 +90,17 @@ injection from a challenger's diff.
 
 ### A1.2 The project layer's `ab:` keys
 
-- **Files:** `internal/config/ab.go` (new), `internal/config/ab_test.go` (new), `internal/config/layer.go`,
+- **Files:** `internal/config/ab.go` (new), `internal/config/ab_test.go` (new), `internal/config/config.go` (`ab.rate` on the repository's file), `internal/config/layer.go`,
   `internal/config/validate.go`, `internal/policy/merge.go`, `internal/policy/merge_test.go`,
   `schemas/project-layer.schema.json`, `schemas/fugaro.schema.json`.
 - **Interfaces:** produces `config.AB{Rate float64, MaxPairsPerDay int, Challengers []string, JudgeModel string,
   ExchangeRate map[rigor.Mode]float64}`. The project layer sets every key; `fugaro.yaml` may only set
   `ab.rate: 0` (opt out, tighten-only); `challengers` and `judge_model` are refused in `fugaro.yaml`
-  (D556). Rate in [0, 0.10] (D557); default 0.
+  (D556). Rate in [0, 0.10] (D557); default 0. `ExchangeRate` defaults POC 0, Startup 0.25, Pro 0.5,
+  Critical 2.0 (D565).
 - **Schema change:** `ab` in the project-layer schema; `ab.rate` only in `fugaro.schema.json`.
 - **Tests:** `TestABDefaultsOff`, `TestABRateBounds`, `TestABRepoMayOnlyOptOut`, `TestABRepoCannotNameChallengers`,
-  `TestABStrictDecode`, `TestABMergeTightenOnly`.
+  `TestABStrictDecode`, `TestABMergeTightenOnly`, `TestABExchangeRateDefaults`.
 - **Command:** `go test ./internal/config/ ./internal/policy/ ./schemas/ -run 'TestAB|Schema' -count=1`
 - **Depends on:** nothing. **Note:** `internal/policy/merge.go` is edited by governance tasks in flight
   (task-governance T7.x, ee-reorg E1.2); rebase on whichever merges first.
@@ -113,17 +115,19 @@ injection from a challenger's diff.
 - **Files:** `internal/runner/shadow.go` (new), `internal/runner/shadow_test.go` (new),
   `internal/runner/runner.go`, `internal/runner/prflow.go` (`pushBranch`, `openDraftPR`, the
   `UpdatePR` calls), `internal/runner/refused.go` (its PR comment), `internal/runner/checkpoint.go`
-  (`checkpointPush`), `internal/runner/provision.go` (the agent's token environment).
+  (`checkpointPush`); the agent's git credentials are `authVars` in `runner.go` (its guard gains the shadow).
 - **Interfaces:** consumes `task.Spec.AB`; produces `Record.AB` filled and, **for both arms**, the
   patch object `runs/<repo-slug>/<run-id>/ab/patch.diff` (the tree diff from `StartSHA` to the final
   head, no commit metadata, capped at 2 MiB with `PatchTruncated`). A challenger's `Outcome` is `none`.
 - **Behaviour:** with `ab.publish: none` the run never pushes (finalize, early draft, halt draft,
   checkpoints), never opens, updates or comments on a PR, and the agent gets no `FUGARO_GIT_TOKEN`,
-  `GH_TOKEN` or credential helper (as a review run); the runner applies `ab.challenger` to the coder
+  `GH_TOKEN` or credential helper (as a review run), and the runner mints no write-capable token for
+  it: the clone uses a read-only installation token, as the coordinator's reader does (`docs/coordinator/`
+  P2); the runner applies `ab.challenger` to the coder
   role only and re-checks it at bootstrap against the run's own allow-list, price table and provider
   policy, halting the shadow on a refusal. Every other stage, cap and governance limit is unchanged. A
   champion publishes exactly as an unsampled run and only adds its patch object.
-- **Tests:** `TestShadowNeverPushes` (a fake remote records zero pushes across a ready run, a cap halt, a
+- **Tests:** `TestShadowMintsNoWriteToken`, `TestShadowNeverPushes` (a fake remote records zero pushes across a ready run, a cap halt, a
   governance halt with checkpoints on and an early-draft config), `TestShadowOpensNoPR` (no open, update,
   status or comment call, including the refused-push comment), `TestShadowAgentHasNoGitToken`,
   `TestShadowChallengerCoderOnly` (a config with no roles keeps the reviewer's model),
@@ -153,22 +157,28 @@ injection from a challenger's diff.
 
 **Slice A3: sampling and the pair launch.**
 
-### A3.0 A core launch-companion hook (MIT)
+### A3.0 A core launch-planner hook (MIT)
 
 - **Files:** `internal/cli/extend.go`, `internal/cli/extend_test.go`, `internal/cli/api.go` (all
   created by ee-reorg E1.1), `internal/cli/run.go`, `internal/cli/launch_budget.go`.
-- **Interfaces:** produces `RegisterLaunchCompanion(func(ctx, LaunchedRun) error)`: called once after a
-  first run's launch succeeds, with the resolved commit, the task as launched and an exported
-  `LaunchRun(ctx, task.Spec)` and `PrecheckPair(ctx, ...)` (wrapping `batchBudgetPrecheck` with
-  n = 2); its error is logged, never returned to the user. `--retry` refuses a stored task that
-  carries an `ab` block. Core default: no companion.
-- **Tests:** `TestNoCompanionLaunchUnchanged`, `TestCompanionCalledAfterLaunch`,
-  `TestCompanionErrorNeverFailsLaunch`, `TestCompanionNotCalledForFollowUpRetryAttempts`,
-  `TestRetryRefusesABTask`.
-- **Command:** `go test ./internal/cli/ -run 'TestNoCompanion|TestCompanion|TestRetryRefusesAB' -count=1 && go test ./internal/eeboundary/ -count=1`
-- **Depends on:** ee-reorg E1.1 (#1252, open).
-- **Commit:** `cli: a launch-companion hook, and --retry refuses an A/B arm`
-- **Red step:** `TestCompanionCalledAfterLaunch` fails: no hook.
+- **Interfaces:** produces `RegisterLaunchPlanner(func(ctx, PlannedRun) (*Pair, error))`, called
+  **before** a first run's task is written, with the resolved commit and the task as it would be
+  launched. A returned pair carries the champion's `ab` block and the challenger's task. The launcher
+  then runs `PrecheckPair` (`budget.Precheck` through the existing `Reader`, with an amount of both
+  arms' per-run caps plus D573's three-cap margin; no change to `internal/budget`) and, when it passes,
+  writes and launches both tasks under one batch label; when it refuses, or the planner errs, it
+  launches the champion alone, without an `ab` block, on today's single pre-check, and prints one skip
+  line. `--retry` refuses a stored task that carries an `ab` block. Core default: no planner, and a
+  config whose `ab.rate` is above 0 gets one D522 capability line ("ab: is set but this build does not
+  include it, so it is ignored").
+- **Tests:** `TestNoPlannerLaunchUnchanged`, `TestPlannerCalledBeforeTaskWritten`,
+  `TestPairPrecheckRefusedLaunchesChampionAloneUnmarked`, `TestPlannerErrorNeverFailsLaunch`,
+  `TestPlannerNotCalledForFollowUpRetryAttempts`, `TestRetryRefusesABTask`,
+  `TestUntaggedABKeysCapabilityLine`.
+- **Command:** `go test ./internal/cli/ -run 'TestNoPlanner|TestPlanner|TestPairPrecheck|TestRetryRefusesAB|TestUntaggedABKeys' -count=1 && go test ./internal/eeboundary/ -count=1`
+- **Depends on:** A1.1 (the `ab` block), A1.2 (`ab.rate`), ee-reorg E1.1 (#1252, open).
+- **Commit:** `cli: a launch-planner hook, and --retry refuses an A/B arm`
+- **Red step:** `TestPlannerCalledBeforeTaskWritten` fails: no hook.
 - **Reviewer tier:** opus + mandatory independent review (launch and money path). **OWNER-RUN:** no.
 
 ### A3.1 The sampler
@@ -177,9 +187,10 @@ injection from a challenger's diff.
 - **Interfaces:** `Sampled(runID string, rate float64) bool` (a hash of the run ID below the rate),
   `Eligible(spec task.Spec, recipe string, mode rigor.Mode) bool` (D558), `UnderDailyCount(n, max int) bool`
   where `n` is today's challenger records the caller counted in the runs bucket (a soft cap, D557).
+  A launch with a chosen `--run-id` is never eligible (the hash would be steerable).
 - **Tests:** `TestSampledIsDeterministic`, `TestSampledRateZeroNever`, `TestSampledRateMatchesOverManyIDs`,
   `TestEligibleExcludesFollowUpsRetriesAttemptsReviewArtifactDigest`, `TestEligibleExcludesHotfix`,
-  `TestUnderDailyCount`.
+  `TestEligibleExcludesChosenRunID`, `TestUnderDailyCount`.
 - **Command:** `go test ./ee/ab/ -run 'TestSampled|TestEligible|TestUnderDaily' -count=1`
 - **Depends on:** A1.2.
 - **Commit:** `ee/ab: the sampler`
@@ -204,18 +215,18 @@ injection from a challenger's diff.
 ### A3.3 The pair launch
 
 - **Files:** `ee/ab/launch.go` (new), `ee/ab/launch_test.go` (new), `ee/register/ab_launch.go` (new; one
-  `RegisterLaunchCompanion` call).
-- **Interfaces:** consumes A3.0, A3.1, A3.2, A1.1. After the champion's launch: when sampled, eligible,
-  admitted, under the daily count, the run has a dollar cap and the launch ran its pre-check, and
-  `PrecheckPair` shows D573's margin, it launches the challenger: same task, workflow, recipe, mode,
-  tier and `--path` set, at the commit the champion was launched at (U5), `ab` blocks on both, one
-  batch label `ab-<pair id>`. Otherwise one skip line with a closed reason. A job image older than the
+  `RegisterLaunchPlanner` call).
+- **Interfaces:** consumes A3.0, A3.1, A3.2, A1.1. As the planner: when sampled, eligible, admitted,
+  under the daily count, the run has a dollar cap and the launch runs its pre-check, it returns the
+  pair (A3.0 then applies `PrecheckPair` with D573's margin): the challenger is same task, workflow, recipe, mode,
+  tier and `--path` set, at the commit the champion is launched at (U5), `ab` blocks on both, one batch
+  label `ab-<pair id>`. Otherwise no pair and one skip line with a closed reason (stderr and `--json`). A job image older than the
   `ab` field is never sampled.
-- **Tests:** `TestSampledLaunchStartsTwoRuns`, `TestPairRefusedChampionPrechecksAlone`,
+- **Tests:** `TestSampledLaunchStartsTwoRuns`, `TestSkipReasonInJSON`,
   `TestNoPrecheckNoSample` (`--no-budget-check`), `TestUncappedNoSample`, `TestMarginRequired`,
   `TestChallengerFailureNeverFailsChampion`, `TestOldImageNotSampled`, `TestBothArmsSameCommit`,
   `TestDailyCountStopsSampling`.
-- **Command:** `go test ./ee/ab/ -run 'TestSampledLaunch|TestPairRefused|TestNoPrecheck|TestUncapped|TestMargin|TestChallengerFailure|TestOldImage|TestBothArms|TestDailyCount' -count=1`
+- **Command:** `go test ./ee/ab/ -run 'TestSampledLaunch|TestSkipReason|TestNoPrecheck|TestUncapped|TestMargin|TestChallengerFailure|TestOldImage|TestBothArms|TestDailyCount' -count=1`
 - **Depends on:** A1.1, A2.1 (no launcher sends a challenger before the runner honours it), A3.0,
   A3.1, A3.2, ee-reorg E1.5 (`ee/register`).
 - **Commit:** `ee/ab: a sampled launch starts a shadow challenger`
@@ -259,14 +270,12 @@ injection from a challenger's diff.
 - **Files:** `ee/report/ab.go` (new), `ee/report/ab_test.go` (new), `ee/report/cli/report.go` and its
   test (the command file E2.2 moves there from `internal/cli/report.go`; `--by` gains `ab`).
 - **Interfaces:** reads run records as `--by mode` does; rows per mode × tier × (champion,
-  challenger): pairs, wins/losses/ties, unjudged and truncated counts, interval, median cost ratio,
-  halt rate per arm, judge family when present (D553's mapping) with the same-family flag,
-  recommendation; JSON carries the recommendation object (R3). The spend groupings' notes say shadow
+  challenger): pairs, wins/losses/ties, interval, median cost ratio,
+  halt rate per arm, recommendation; JSON carries the recommendation object (R3). The spend groupings' notes say shadow
   spend is included (D568).
 - **Tests:** `TestReportByABRows`, `TestABReportHasNoPerson`, `TestABReportSuppressesSmallGroups`,
-  `TestABReportJSONRecommendation`, `TestABReportExcludesInvalidPairs`, `TestJudgeFamilyFlag`,
-  `TestSpendNoteSaysShadowIncluded`.
-- **Command:** `go test ./ee/report/... -run 'TestReportByAB|TestABReport|TestJudgeFamily|TestSpendNote' -count=1`
+  `TestABReportJSONRecommendation`, `TestABReportExcludesInvalidPairs`, `TestSpendNoteSaysShadowIncluded`.
+- **Command:** `go test ./ee/report/... -run 'TestReportByAB|TestABReport|TestSpendNote' -count=1`
 - **Depends on:** A4.1, A4.2, ee-reorg E2.2 (`ee/report` exists).
 - **Commit:** `ee/report: A/B rows per mode and tier`
 - **Red step:** `--by ab` is refused as an unknown grouping.
@@ -274,14 +283,15 @@ injection from a challenger's diff.
 
 ### A4.4 The digest's A/B section
 
-- **Files:** `ee/ab/digest.go` (new), `ee/ab/digest_test.go` (new), `ee/register/ab_digest.go` (new).
-- **Interfaces:** consumes ee-reorg E1.2's section hook (`internal/digest/section.go`; an untagged
-  digest has no section by E1.2's default, so no core test is added here); renders a
+- **Files:** `ee/ab/digest.go` (new), `ee/ab/digest_test.go` (new), `ee/register/ab_digest.go` (new),
+  `ee/register/ab_digest_test.go` (new).
+- **Interfaces:** consumes ee-reorg E1.2b's section hook (`internal/digest/section.go`, #1249, open; an
+  untagged digest has no section by E1.2b's default, so no core test is added here); renders a
   closed-vocabulary section within `digest.MaxBytes`.
 - **Tests:** `TestDigestABSectionClosedVocabulary`, `TestDigestABSectionFitsBudget`,
   `TestDigestABSectionRegistered`.
 - **Command:** `go test ./ee/ab/ ./ee/register/ -run 'TestDigestAB' -count=1`
-- **Depends on:** A4.3, ee-reorg E1.2.
+- **Depends on:** A4.3, ee-reorg E1.2b.
 - **Commit:** `ee/ab: the digest's A/B section`
 - **Red step:** the section is absent from a tagged digest.
 - **Reviewer tier:** standard. **OWNER-RUN:** no.
@@ -305,10 +315,12 @@ injection from a challenger's diff.
 - **Files:** `ee/ab/bundle.go` (new), `ee/ab/bundle_test.go` (new).
 - **Interfaces:** `Bundle(champion, challenger Patch, pairID string) (b JudgeInput, swap bool, err error)`:
   the two patch objects (A2.1) labelled A and B by a hash of the pair ID (pass 1) and the reverse
-  (pass 2); refuses (pair unjudged, counted by A4.3) when either patch is truncated or contains the run
-  ID, the branch name, a backlog or run identifier, or any model ID of the price table.
+  (pass 2); refuses (pair unjudged, counted per group by A5.4) when either patch is truncated or contains
+  the run ID, the branch name or a run identifier; a model ID of the price table appearing in a diff is
+  replaced by one placeholder in both arms alike rather than refused, so tasks that touch configuration
+  or pricing are not systematically unjudged.
 - **Tests:** `TestBundleCarriesNoIdentifier`, `TestBundleSwapDeterministic`, `TestBundleRefusesTruncated`,
-  `TestBundleRefusesModelIDInDiff`.
+  `TestBundleRedactsModelIDInBothArms`.
 - **Command:** `go test ./ee/ab/ -run TestBundle -count=1`
 - **Depends on:** A2.1 (the patch format).
 - **Commit:** `ee/ab: the judge sees two unlabelled diffs`
@@ -317,25 +329,30 @@ injection from a challenger's diff.
 
 ### A5.2 The `ab-judge` step, recipe and manifest
 
-- **Files:** `internal/recipe/stages.go`, `internal/recipe/stages_test.go` (a registered step kind,
-  generic, MIT), `internal/runner/stephook.go` (new), `internal/runner/stephook_test.go` (new),
+- **Files:** `internal/recipe/stages.go`, `internal/recipe/stages_test.go`, `internal/recipe/catalog.go`,
+  `internal/recipe/catalog_test.go` (a registered step kind and a registered catalog recipe beside the
+  `//go:embed` set, generic, MIT), `schemas/recipe.schema.json` (the `ab_judge` step kind; an untagged
+  build refuses it at load with the D522 capability line), `internal/runner/stephook.go` (new), `internal/runner/stephook_test.go` (new),
   `internal/runner/runner.go` (dispatch to a registered step), `internal/cli/extend.go` and
   `internal/cli/extend_test.go` (a registered recipe manifest builder, generic, on the
   `digestManifest` pattern), `ee/ab/judge.go` (new), `ee/ab/judge_test.go` (new),
   `ee/ab/recipe/ab-judge.yaml` (new), `ee/register/ab_judge.go` (new).
-- **Interfaces:** a recipe with no push, no PR and no git token whose launcher manifest lists the
-  complete, unjudged pairs' patch objects (one judge run per repository at a time); its `ab_judge` step
+- **Interfaces:** a `mode: artifact` recipe (no push, no PR, no git token, F8; U6) whose verdicts are
+  its output files and whose launcher manifest lists the
+  complete, unjudged pairs' patch objects (one judge run per repository at a time: the manifest builder refuses a launch while the
+  repository has an `ab-judge` run that has not finished, read from the runs bucket); its `ab_judge` step
   builds A5.1's bundle and makes **one tool-less model call per pass through the gateway** (no
   checkout, no agent, no shell) to `ab.judge_model`, twice with the order swapped; the answer is
   decoded from `A`, `B`, `tie` plus a closed list of reasons, anything else a tie, and disagreeing passes
-  a tie. Verdicts go to the judge run's own prefix with the judge model. The judge model passes A3.2's
+  a tie. Verdicts go to the judge run's own prefix (its artifacts) with the judge model. The judge model passes A3.2's
   admission (O2).
 - **Tests:** `TestStepHookRunsRegisteredStep`, `TestUnregisteredStepRefused` (core),
-  `TestManifestBuilderRegistered` (core), `TestJudgeIsToolLess`, `TestJudgePromptWrapsDiffsAsUntrusted`,
+  `TestManifestBuilderRegistered` (core), `TestCatalogRecipeRegistered` (core), `TestJudgeIsToolLess`, `TestJudgePromptWrapsDiffsAsUntrusted`,
   `TestJudgeAnswerOutsideVocabularyIsTie`, `TestJudgeSwapDisagreementIsTie`, `TestJudgeWritesOwnPrefixOnly`,
-  `TestJudgeSkipsJudgedPairs`, `TestJudgeOneAtATime`, `TestJudgeRunPublishesNothing`.
-- **Command:** `go test ./ee/ab/ -run TestJudge -count=1 && go test ./internal/recipe/ -run 'TestUnregisteredStep|Stages' -count=1 && go test ./internal/cli/ -run TestManifestBuilder -count=1 && go test ./internal/runner/ -run TestStepHook -count=1 -timeout 40m`
-- **Depends on:** A5.1, A3.0 (`extend.go` exists with its first hook), ee-reorg E1.5.
+  `TestJudgeSkipsJudgedPairs`, `TestJudgeLaunchRefusedWhileOneRuns`, `TestJudgeRunPublishesNothing`.
+- **Command:** `go test ./ee/ab/ -run TestJudge -count=1 && go test ./internal/recipe/ ./schemas/ -run 'TestUnregisteredStep|TestCatalogRecipeRegistered|Schema' -count=1 && go test ./internal/cli/ -run TestManifestBuilder -count=1 && go test ./internal/runner/ -run TestStepHook -count=1 -timeout 40m`
+- **Depends on:** A5.1, A3.0 (`extend.go` exists with its first hook), A3.2 (the judge's admission),
+  A4.1 (`Pairs`, for "unjudged"), A1.2 (`judge_model`), ee-reorg E1.5.
 - **Commit:** `ee/ab: a blind judge run`
 - **Red step:** the recipe is refused: unknown step `ab_judge`.
 - **Reviewer tier:** opus + mandatory independent review (untrusted input to a model, code egress).
@@ -354,15 +371,17 @@ injection from a challenger's diff.
 - **Reviewer tier:** standard. **OWNER-RUN:** yes: the owner types the `fugaro run --recipe ab-judge`
   launch and reads the stored judge input from the run's bucket prefix, on the sandbox only.
 
-### A5.4 Critical waits for the judge
+### A5.4 Verdicts in the score and the report
 
-- **Files:** `ee/ab/score.go`, `ee/ab/score_test.go`.
+- **Files:** `ee/ab/score.go`, `ee/ab/score_test.go`, `ee/report/ab.go`, `ee/report/ab_test.go`.
 - **Interfaces:** a Critical pair needs a verdict before it counts (D561); other modes show the verdict
-  beside the hard signals.
-- **Tests:** `TestCriticalNeedsVerdict`, `TestVerdictShownBesideSignals`.
-- **Command:** `go test ./ee/ab/ -run 'TestCriticalNeedsVerdict|TestVerdictShown' -count=1`
-- **Depends on:** A4.1, A5.2.
-- **Commit:** `ee/ab: Critical pairs count only once judged`
+  beside the hard signals; the report adds the judge's family (D553's mapping) with the same-family
+  flag, and the unjudged and truncated counts per group.
+- **Tests:** `TestCriticalNeedsVerdict`, `TestVerdictShownBesideSignals`, `TestJudgeFamilyFlag`,
+  `TestUnjudgedCountPerGroup`.
+- **Command:** `go test ./ee/ab/ ./ee/report/... -run 'TestCriticalNeedsVerdict|TestVerdictShown|TestJudgeFamily|TestUnjudgedCount' -count=1`
+- **Depends on:** A4.1, A4.3, A5.2.
+- **Commit:** `ee/ab: verdicts join the score and the report`
 - **Red step:** an unjudged Critical pair counts.
 - **Reviewer tier:** standard. **OWNER-RUN:** no.
 
@@ -371,16 +390,17 @@ injection from a challenger's diff.
 ### A6.1 How-to, skill and release notes
 
 - **Files:** `docs/how-to/model-ab-testing.md` (new), `plugin/skills/working/SKILL.md` (how to read
-  `report --by ab`; that a challenger run is not the developer's to follow up), `website/content/cli-reference.md`
+  `report --by ab`; that a challenger run is not the developer's to follow up; the `ab-judge` routine and
+  `ab.judge_model`), `website/content/cli-reference.md`
   (regenerated by the tagged generator), `docs/releases/vX.Y.Z.md` of the release that ships A3.3 (a
   `### For operators` entry: per installation, set `ab:` in the project layer and publish it; nothing
   is required, A/B is off by default).
-- **Tests:** `go test ./internal/cli/ -run Docs -count=1`, `go test ./plugin/... -count=1`, the
-  reference test of ee-reorg E1.7.
-- **Command:** the three above.
-- **Depends on:** A3.3, A4.3.
+- **Tests:** the docs pins, the plugin's skill-against-CLI checks, and ee-reorg E1.7's reference test.
+- **Command:** `go test ./internal/cli/ -run Docs -count=1 && go test ./plugin/... -count=1 && go test ./ee/clidoc/ -count=1`
+- **Depends on:** A3.3, A4.3, A5.2.
 - **Commit:** `docs: model A/B testing, how to turn it on and read it`
-- **Red step:** the plugin check fails on `--by ab` until the skill names it.
+- **Red step:** with the skill line written on a tree that lacks A4.3, the plugin check fails (the skill
+  names a value the CLI does not have); on the real base it passes.
 - **Reviewer tier:** standard. **OWNER-RUN:** no.
 
 ### A6.2 Check 212: a provider challenger end to end
@@ -397,18 +417,19 @@ injection from a challenger's diff.
 
 ## Parallel execution
 
-**Edges** (from the Depends on lines): A1.1 → A2.1, A4.1, A4.5, A3.3; A1.2 → A3.1, A3.2; A2.1 → A3.3,
-A5.1; A3.0 → A3.3, A5.2; A3.1, A3.2 → A3.3; A3.3 → A2.2, A6.1, A6.2; A4.1, A4.2 → A4.3; A4.3 → A4.4,
-A6.1; A5.1 → A5.2; A5.2 → A5.3, A5.4; A4.1 → A5.4; A2.2 → A5.3; A5.3 → A6.2. External (ee-reorg):
-E1.1 → A3.0; E1.5 → A3.3, A5.2; E2.2 → A4.3; E1.2 → A4.4.
+**Edges** (from the Depends on lines): A1.1 → A2.1, A3.0, A3.3, A4.1, A4.5; A1.2 → A3.0, A3.1, A3.2,
+A5.2; A2.1 → A3.3, A5.1; A3.0 → A3.3, A5.2; A3.1, A3.2 → A3.3; A3.2 → A5.2; A3.3 → A2.2, A6.1, A6.2;
+A4.1, A4.2 → A4.3; A4.1 → A5.2, A5.4; A4.3 → A4.4, A5.4, A6.1; A5.1 → A5.2; A5.2 → A5.3, A5.4, A6.1;
+A2.2 → A5.3; A5.3 → A6.2. External (ee-reorg): E1.1 → A3.0; E1.5 → A3.3, A5.2; E2.2 → A4.3;
+E1.2b → A4.4.
 
 | Level | Tasks (run concurrently) |
 | --- | --- |
-| L0 | A1.1, A1.2, A3.0, A4.2 |
-| L1 | A2.1, A3.1, A3.2, A4.1, A4.5 |
+| L0 | A1.1, A1.2, A4.2 |
+| L1 | A2.1, A3.0, A3.1, A3.2, A4.1, A4.5 |
 | L2 | A3.3, A4.3, A5.1 |
-| L3 | A2.2, A4.4, A5.2, A6.1 |
-| L4 | A5.3, A5.4 |
+| L3 | A2.2, A4.4, A5.2 |
+| L4 | A5.3, A5.4, A6.1 |
 | L5 | A6.2 |
 
 **Critical path:** A1.1 → A2.1 → A5.1 → A5.2 → A5.3 → A6.2 (six levels). **The first useful slice
@@ -417,7 +438,7 @@ A4.2, A4.3, with Check 210 written at L3. Slice A5 can be dropped or deferred wi
 
 **What must be sequential, and why:** A1.1 before A2.1 (the field); A2.1 before A3.3 (no launcher may
 send a challenger the runner would publish); A3.0 before A3.3 and A5.2 (the hooks; A5.2 also writes
-`extend.go`); A2.2, A5.3, A6.2 in three levels (one file, `docs/gcp-live-checklist.md`); A4.1 before
+`extend.go`); A4.3 before A5.4 (one file, `ee/report/ab.go`); A2.2, A5.3, A6.2 in three levels (one file, `docs/gcp-live-checklist.md`); A4.1 before
 A5.4 (one file, `ee/ab/score.go`).
 
 **Shared files** (every file written by more than one task; no level holds two writers):
@@ -425,11 +446,13 @@ A5.4 (one file, `ee/ab/score.go`).
 | File | Writers (level) |
 | --- | --- |
 | `ee/ab/score.go`, `ee/ab/score_test.go` | A4.1 (L1), A5.4 (L4) |
-| `internal/cli/extend.go`, `internal/cli/extend_test.go` | A3.0 (L0), A5.2 (L3) |
+| `ee/report/ab.go`, `ee/report/ab_test.go` | A4.3 (L2), A5.4 (L4) |
+| `internal/cli/extend.go`, `internal/cli/extend_test.go` | A3.0 (L1), A5.2 (L3) |
 | `internal/runner/runner.go` | A2.1 (L1), A5.2 (L3) |
 | `docs/gcp-live-checklist.md` | A2.2 (L3), A5.3 (L4), A6.2 (L5) |
 | `schemas/*.schema.json` | A1.1 (`task`, `result`; L0), A1.2 (`project-layer`, `fugaro`; L0): different files |
-| `schemas/schemas_test.go` | A1.1 only (A1.2 runs the schema tests without editing them) |
+| `schemas/schemas_test.go` | A1.1 only (A1.2 and A5.2 run the schema tests without editing them) |
+| `schemas/recipe.schema.json` | A5.2 only |
 | `ee/register/*` | A3.3 (`ab_launch.go`), A4.4 (`ab_digest.go`), A5.2 (`ab_judge.go`): one new file each, no shared file |
 
 Files outside this plan written by open or planned work: `internal/cli/extend.go`, `api.go`, `run.go`
