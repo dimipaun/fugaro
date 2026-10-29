@@ -209,6 +209,16 @@ func TestABExchangeRateDefaults(t *testing.T) {
 // against — and a value one refuses while the other accepts is a red check
 // nobody can reproduce (the reason TestSchemaGovernanceBoundsMatchGo exists
 // for the governance block).
+//
+// Two samples cannot match, and are pinned below as the asymmetry they are
+// rather than left unsampled. The layer schema states the shape of a model
+// entry and not the whole rule: CheckModelPattern also refuses a claim on
+// Claude models (ClaudePatterns, behind CheckClaudeClaim) and a prefix too
+// broad to name, and neither is a rule a schema can carry without a second
+// copy of it in Go's place. The repository schema is the stricter side
+// instead: its ab: block admits rate alone, so it refuses a key the decoder
+// happens to read as unset — writing the key at all is not something a
+// repository may do.
 func TestABSchemasMatchDecoder(t *testing.T) {
 	layerSchema := compileABSchema(t, "project-layer.schema.json")
 	repoSchema := compileABSchema(t, "fugaro.schema.json")
@@ -259,6 +269,45 @@ func TestABSchemasMatchDecoder(t *testing.T) {
 			}
 			if got := abSchemaAccepts(t, repoSchema, text); got != tc.ok {
 				t.Errorf("fugaro.schema.json accepted = %v, want %v: the schema and the decoder disagree", got, tc.ok)
+			}
+		})
+	}
+
+	// The layer schema is the looser side for a model entry of the right
+	// shape that is still no pattern CheckModelPattern accepts. Each sample
+	// asserts both halves, so the asymmetry is a pinned fact rather than an
+	// omission: the schema cannot refuse these without copying
+	// CheckClaudeClaim or the too-broad rule out of internal/config.
+	for _, tc := range []struct{ name, text, why string }{
+		{"a claim on Claude models", head + "ab:\n  challengers: ['claude-*']\n", "CheckModelPattern refuses a pattern overlapping ClaudePatterns"},
+		{"a prefix too broad to name", head + "ab: { judge_model: 'a*' }\n", "CheckModelPattern refuses a one-character prefix"},
+	} {
+		t.Run("layer/schema looser/"+tc.name, func(t *testing.T) {
+			if _, ps := ParseProjectLayer([]byte(tc.text), testAnchor); len(ps) == 0 {
+				t.Errorf("the decoder accepted it, want a refusal: %s", tc.why)
+			}
+			if !abSchemaAccepts(t, layerSchema, tc.text) {
+				t.Errorf("project-layer.schema.json refused it, and the schema is the looser side here: %s", tc.why)
+			}
+		})
+	}
+
+	// The repository schema is the stricter side: it refuses the block's
+	// other keys outright, while the decoder reads an empty one as a key that
+	// says nothing (validateRepoAB complains about a value, not a key). Both
+	// halves are asserted, since a repository author meets the schema first.
+	for _, tc := range []struct{ name, body string }{
+		{"empty challengers", "ab:\n  challengers: []\n"},
+		{"an empty judge model", "ab: { judge_model: '' }\n"},
+		{"a daily pair count of zero", "ab: { max_pairs_per_day: 0 }\n"},
+		{"an empty exchange rate", "ab:\n  exchange_rate: {}\n"},
+	} {
+		t.Run("repo/schema stricter/"+tc.name, func(t *testing.T) {
+			if _, ps := Parse([]byte(repoHead + tc.body)); len(ps) > 0 {
+				t.Errorf("the decoder refused it, and an empty key is read as unset: %v", ps)
+			}
+			if abSchemaAccepts(t, repoSchema, repoHead+tc.body) {
+				t.Error("fugaro.schema.json accepted it: a repository may write no key of ab: but rate")
 			}
 		})
 	}

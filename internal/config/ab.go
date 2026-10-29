@@ -79,9 +79,8 @@ func ABExchangeRateDefault(m rigor.Mode) float64 {
 
 // ExchangeRates is the layer's exchange-rate table with every mode it leaves
 // out filled in from ABExchangeRateDefault, so a reader never has to tell a
-// missing mode from a zero one. The map is the layer's own when it wrote
-// every mode; otherwise it is a copy, so a caller cannot write into the
-// block it read.
+// missing mode from a zero one. The map is always a fresh one, the layer's
+// own map copied into it, so a caller cannot write into the block it read.
 func (a *AB) ExchangeRates() map[rigor.Mode]float64 {
 	out := make(map[rigor.Mode]float64, len(rigor.Modes))
 	for _, m := range rigor.Modes {

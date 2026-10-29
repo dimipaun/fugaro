@@ -329,6 +329,12 @@ type Layer struct {
 	// is the whole of what a repository's own ab: block may say (D556), and
 	// the merge has to be able to tell that layer from one that says nothing
 	// (see Merge).
+	//
+	// Nothing builds a layer with it yet — the builders are the runner's and
+	// the CLI's, and the launcher that would ask (plan A3.3) is what reads the
+	// resolved layers, so until it ships Effective.ABRate is nil for every run
+	// and a sampler wired to it would read "no rate here" as "no rate
+	// anywhere".
 	ABRate *float64
 	// Governance is this layer's governance limits; the zero value sets
 	// none, which is what leaves the ceiling's own alone (see Governance).

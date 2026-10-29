@@ -93,7 +93,7 @@
         "max_pairs_per_day": { "type": ["integer", "null"], "minimum": 0, "description": "The most pairs one repository is sampled for per UTC day, counted by the launcher from today's challenger records. 0 or null takes Fugaro's 5 (D557)." },
         "challengers": {
           "type": ["array", "null"],
-          "description": "The models the owner allows as a challenger, in priority order (D556). A repository may never name one: a repository author could otherwise send that repository's code to a provider the owner opened only to others. Each entry must be a model ID (or a prefix ending in *, the spelling a route entry uses); every model named is checked again at launch against the repository's job, its allow-list and the price table.",
+          "description": "The models the owner allows as a challenger, in priority order (D556). A repository may never name one: a repository author could otherwise send that repository's code to a provider the owner opened only to others. Each entry must be a model ID (or a prefix ending in *, the spelling a route entry uses); every model named is checked again at launch against the repository's job, its allow-list and the price table. The pattern here is the shape of an entry only: the decoder's CheckModelPattern also refuses a claim on Claude models and a prefix too broad to name, and a repository's CI checking this file has no such rule.",
           "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*\\*?$", "maxLength": 100 }
         },
         "judge_model": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*\\*?$", "maxLength": 100, "description": "The model a pair's blind judge run uses (D553). The owner's alone, like challengers." },

@@ -64,7 +64,9 @@ func Merge(ceiling Layer, tighten ...Layer) Effective {
 		// repository may only lower it, to 0, which never samples that
 		// repository (D556, D557). A layer that writes no rate passes the
 		// earlier layers through, which is a nil ABRate and not a 0 one: the
-		// opt-out is the value 0, so the two cannot share the zero value.
+		// opt-out is the value 0, so the two cannot share the zero value. No
+		// layer carries a rate yet, so the rule is unexercised by a real
+		// configuration until the launcher that fills it ships (Layer.ABRate).
 		if l.ABRate != nil {
 			switch {
 			case e.ABRate == nil || *l.ABRate < *e.ABRate:
