@@ -5,7 +5,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
 )
 
 func modeRank(m string) int {
