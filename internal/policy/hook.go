@@ -30,7 +30,7 @@ type GovernanceFuncs struct {
 // governanceHooks is the installed pair. Only ee/register may call
 // SetGovernance: the core never sets it, so an untagged build reads, validates
 // and enforces exactly the governance it always did.
-var governanceHooks = GovernanceFuncs{Defaults: DefaultGovernance, Tighten: (*Effective).tightenGovernance}
+var governanceHooks = coreGovernanceFuncs()
 
 // governanceHooksSet records that a caller installed a pair, which only
 // SetGovernance does.
@@ -54,3 +54,9 @@ func SetGovernance(f GovernanceFuncs) error {
 
 // governanceHook is the installed pair.
 func governanceHook() GovernanceFuncs { return governanceHooks }
+
+// coreGovernanceFuncs is today's policy: the governance Fugaro ships, and the
+// rule that a layer may only tighten it.
+func coreGovernanceFuncs() GovernanceFuncs {
+	return GovernanceFuncs{Defaults: DefaultGovernance, Tighten: (*Effective).tightenGovernance}
+}

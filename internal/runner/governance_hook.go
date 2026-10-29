@@ -81,6 +81,64 @@ func SetStage(f StageFuncs) error {
 // stageHook is the installed pair, read at every stage.
 func stageHook() StageFuncs { return stageHooks }
 
+// governanceHaltReasons are the reasons a stage hook may leave: the five
+// tripwires D521 keeps in the core, the ones result.schema.json's halt enum
+// carries and haltReasonText has words for. A hook that named anything else
+// would put a value no reader of the record knows into result.json, and the
+// halt would have no account of itself, so the vocabulary is checked rather
+// than trusted (D521, D529).
+var governanceHaltReasons = map[runstore.HaltReason]bool{
+	runstore.HaltStageBudget:      true,
+	runstore.HaltReviewRatio:      true,
+	runstore.HaltFanout:           true,
+	runstore.HaltReviewScope:      true,
+	runstore.HaltExpectedExceeded: true,
+}
+
+// ignoredGovernanceLine is what a build says once, in the run log, about a
+// governance bound it was handed and does not apply: a statement about what
+// this build does with the block, and never a notice about a licence (D522,
+// D523).
+const ignoredGovernanceLine = "this build ignores the governance block"
+
+// noteIgnoredStageBound writes that line when the run's own blocks asked for a
+// bound on this stage and the stage hook applied none. Silence about a switch
+// somebody set is what D522 exists to prevent, and the run log is where the
+// person who wrote stage_timeout will look.
+//
+// What was asked is read off the layers the merge consumed and not off the
+// effective policy, because a build whose hooks ignore governance resolves no
+// governance at all: the effective policy cannot tell a block that was written
+// from one that was not, and a line that fired for every run would be a lie
+// about a run nobody configured. A run whose blocks asked for nothing gets
+// nothing, in every build, and a build that applies a bound for this stage
+// says nothing either — the value speaks for itself, and the same key of
+// result.json's policy.ignored carries the bound that was dropped for being
+// looser than the run's own (noteStageTimeoutClamped).
+func (r *run) noteIgnoredStageBound(stage string, applied time.Duration) {
+	if applied != 0 || r.d.Log == nil || !stageBoundAsked(r.govLayers, stage) {
+		return
+	}
+	r.mu.Lock()
+	said := r.ignoredGovernanceSaid
+	r.ignoredGovernanceSaid = true
+	r.mu.Unlock()
+	if !said {
+		r.d.Log.Warn(ignoredGovernanceLine)
+	}
+}
+
+// stageBoundAsked reports whether any of the layer blocks a run merged asked
+// for a wall-clock bound on this stage, whatever the merge made of them.
+func stageBoundAsked(layers []policy.Layer, stage string) bool {
+	for _, l := range layers {
+		if stageTimeoutOf(l.Governance, stage) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // coreStageFuncs is today's stage decision: the stage's own
 // governance.stage_timeout, and the stage_budget halt by time when it fires.
 // The two are one pair because they are one tripwire: a ceiling nobody stops

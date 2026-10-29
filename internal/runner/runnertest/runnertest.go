@@ -10,6 +10,13 @@
 // of internal/runner/runner_test.go's harness rather than sharing it, and the
 // two have to be kept in step; the runner's own harness stays there, where the
 // tests that need a sidecar, a cache or an HTTP remote can reach it.
+//
+// What it cannot express is a run with a backend and a gateway: the registry
+// case of that file — what the console shows a stage's deadline as — is driven
+// through newBK, gwConfig and waitUntil, none of which this harness reaches. A
+// package outside internal/runner that needs those either grows this one or
+// leaves that test in the core; the tripwires E1.2 moves need neither, which is
+// why the minimum is where this stops.
 package runnertest
 
 import (

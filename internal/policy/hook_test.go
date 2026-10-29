@@ -80,3 +80,41 @@ func TestUntaggedPolicyIgnoresGovernance(t *testing.T) {
 		t.Errorf("the ignored block sourced a key: %+v", e.Sources)
 	}
 }
+
+// TestLateOrDuplicatePolicyHookIsRefused: the edition of a build is decided
+// once, by ee/register, so a second SetGovernance — the hook a later caller
+// would install, and the way a tagged binary's enforcement would be halved or
+// loosened after it was set — is refused, and so is a pair that would panic the
+// first reader of it. The refusal leaves the installed pair exactly as it was
+// (design §5.5).
+func TestLateOrDuplicatePolicyHookIsRefused(t *testing.T) {
+	policy.ResetHooks(t)
+	real := policy.GovernanceFuncs{
+		Defaults: policy.DefaultGovernance,
+		Tighten:  func(*policy.Effective, policy.Governance, string) {},
+	}
+	for _, tc := range []struct {
+		name string
+		f    policy.GovernanceFuncs
+	}{
+		{"no Defaults", policy.GovernanceFuncs{Tighten: real.Tighten}},
+		{"no Tighten", policy.GovernanceFuncs{Defaults: real.Defaults}},
+		{"neither", policy.GovernanceFuncs{}},
+	} {
+		if err := policy.SetGovernanceHook(tc.f); err == nil {
+			t.Errorf("a hook with %s was accepted", tc.name)
+		}
+	}
+	if err := policy.SetGovernanceHook(real); err != nil {
+		t.Fatalf("the first SetGovernance was refused: %v", err)
+	}
+	if err := policy.SetGovernanceHook(policy.GovernanceFuncs{
+		Defaults: func() policy.Governance { return policy.Governance{} },
+		Tighten:  func(*policy.Effective, policy.Governance, string) {},
+	}); err == nil {
+		t.Error("a second SetGovernance was accepted, so a tagged build's enforcement can be replaced")
+	}
+	if got := (policy.Governance{}).WithDefaults(); got != policy.DefaultGovernance() {
+		t.Errorf("a refused call changed the installed pair: WithDefaults() = %+v", got)
+	}
+}
