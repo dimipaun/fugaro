@@ -487,6 +487,10 @@ types. The default `2m` leaves room for a slow scan without approaching either b
 | `--json` | bool | `false` | one JSON document instead of lines |
 | `--project`, `--gcp-project` | string | `""` | the existing project selectors, `addCloudFlags`'s, unchanged |
 
+*(Amended 2026-10-29, owner: `--json` streams newline-delimited events (`qr`, `waiting`, `code`,
+`done`, `refused`), `v: 1`; `done` carries this document; the typed code is read as one stdin line;
+the console's pairing screen is a later console release.)*
+
 `Args: cobra.NoArgs`. It prints `project: <name> (GCP <id>)` first, as every cloud command does,
 then the QR, then the fingerprint prompt, then what it wrote. **Visible** in the CLI reference: the
 operator has to be able to find it, and D166 makes it the only way to add or revoke a device (T3, CLI
@@ -594,6 +598,10 @@ One object per act, always with `project`:
 **typed code never does** — the fingerprint in `request` is the one the CLI computed, which is the
 same value the operator saw on the phone, and it is not a secret (it is a hash of a public key).
 `refused[]` carries a code and never a paraphrase. `warnings` is present and empty, like `ls`'s.
+
+*(Amended 2026-10-29, owner: `--json` streams newline-delimited events (`qr`, `waiting`, `code`,
+`done`, `refused`), `v: 1`; `done` carries this document; the typed code is read as one stdin line;
+the console's pairing screen is a later console release.)*
 
 ### 4.6 Exit codes
 
