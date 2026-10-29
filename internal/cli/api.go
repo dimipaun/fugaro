@@ -129,12 +129,6 @@ func ClipRunes(s string, n int) string { return clipRunes(s, n) }
 // nothing.
 func PaidCommandNames() []string { return slices.Clone(paidCommandNames) }
 
-// The rest of the surface is what the coordinator's command and library read
-// beside the cloud: the runs bucket, each repository's checkout, the runs
-// themselves, the code host, the database client and the sweep job's own
-// environment. Every one of them is the core's own implementation, reached
-// through a name here rather than copied across the boundary.
-
 // RunsBucket is the bucket the project's runs are stored in.
 func (c *Cloud) RunsBucket() *blobx.Bucket { return c.env.bucket }
 
@@ -214,9 +208,9 @@ func CheckDatabaseHost(rawURL, firebaseProject string) error {
 	return checkDatabaseHost(rawURL, firebaseProject)
 }
 
-// The sweep job's own environment, which Terraform sets on it.
 const (
-	// EnvProject is the project's name.
+	// EnvProject is the project's name, which the sweep job reads out of the
+	// environment Terraform sets on it.
 	EnvProject = envProject
 	// EnvFirebaseFP is the Firebase project the database has to belong to.
 	EnvFirebaseFP = envFirebaseFP
