@@ -66,7 +66,10 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { secretShaped } from './accounts/index.js';
-import { ID_VARIABLES, isIdentifier } from '../app.config.js';
+import { GOOGLE_SERVICES_VARIABLES, ID_VARIABLES, isIdentifier } from '../app.config.js';
+
+/** The two native-config variables the Firebase plugins read (plan 4.3, D260). */
+const NATIVE_CONFIG_VARIABLES = Object.values(GOOGLE_SERVICES_VARIABLES).sort();
 
 const RAW = readFileSync(new URL('../eas.json', import.meta.url), 'utf8');
 const EAS = JSON.parse(RAW);
@@ -343,9 +346,43 @@ test('no identity is committed here: the variables are EAS environment variables
   assert.equal('env' in EAS, false, 'and no top-level env block names one');
   // The fence is over *values*: `environment` above names where the values
   // live, which is the opposite of writing one down.
+  //
+  // **The one exception, and why it is not one (Task P7.1; D260).** Each
+  // profile's `env` names the two native-config file variables the Firebase
+  // plugins need, and the plan asks for the entries so that a reader sees which
+  // file secrets a profile consumes. What is written there is the variable's
+  // own **name**, so nothing is committed that could be a value: the file the
+  // secret holds reaches the build through the profile's `environment`, which
+  // is the mechanism EAS documents, and `app.config.js`'s guard refuses a value
+  // that is still the bare name rather than a path. The fence stays what it
+  // was - no value, and no name but these two - which is why the keys are
+  // checked against the guard's own list rather than a copy of it.
+  assert.deepEqual(
+    Object.fromEntries(
+      Object.entries(EAS.build).map(([name, profile]) => [name, Object.keys(profile.env ?? {})]),
+    ),
+    { development: [...NATIVE_CONFIG_VARIABLES], preview: [...NATIVE_CONFIG_VARIABLES], internal: [...NATIVE_CONFIG_VARIABLES] },
+    'each profile declares the two native-config variables the plugins read',
+  );
   for (const [name, profile] of Object.entries(EAS.build)) {
-    assert.equal('env' in profile, false, `build.${name} sets no environment value of its own`);
+    for (const [variable, value] of Object.entries(profile.env)) {
+      assert.equal(
+        value,
+        variable,
+        `build.${name}.env.${variable} is a value: the entry declares the variable the profile consumes, and the value is the variable's own name and nothing else`,
+      );
+    }
   }
+  // The positive control: a profile that names a third variable, or one whose
+  // value is a path, is what this rule exists to refuse - so the same walk is
+  // run over a planted profile and has to come back different.
+  const planted = { development: { env: { GOOGLE_SERVICES_JSON: './google-services.json' } } };
+  assert.notDeepEqual(
+    Object.keys(planted.development.env),
+    [...NATIVE_CONFIG_VARIABLES],
+    'a profile naming one variable, with a path as its value, is not what the walk above accepts',
+  );
+  assert.notEqual(planted.development.env.GOOGLE_SERVICES_JSON, 'GOOGLE_SERVICES_JSON');
   for (const [path, value] of stringsIn(EAS)) {
     assert.equal(isIdentifier(value, 'ios') && value.includes('.'), false, `${path} is ${value}`);
   }

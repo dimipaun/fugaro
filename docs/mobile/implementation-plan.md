@@ -682,9 +682,12 @@ premise of every task below. Its plan is
 **[../plans/2026-10-19-mobile-telemetry.md](../plans/2026-10-19-mobile-telemetry.md)**, and
 **that document is the authority for every task here**: the files, the flags, the allow-list,
 the labels, the checks and the UNVERIFIED list all live there, and this section is its
-registration. **Approval is permission to start and not a claim that anything exists**: not one
-task of P7.1–P7.5 is built, and no `@react-native-firebase` dependency, native config file or
-telemetry module is in the tree.
+registration. **Approval is permission to start and not a claim that anything exists**: **P7.1 is built
+and P7.2–P7.5 are not** (updated 2026-10-29, in P7.1's own commit): `mobile/package.json`
+names the three `@react-native-firebase` packages, `mobile/firebase.json` and the plugin
+entries in `mobile/app.config.js` are in the tree, and **neither native config file is** —
+they are never committed, and a build reads them from EAS file variables (§4.3). No
+telemetry module exists yet: `mobile/src/telemetry/` is P7.2's and P7.3's.
 
 **The numbers it takes.** **D253–D260** — the next free decision block, read from the tree
 rather than remembered: **D252** is the highest number written anywhere in `docs/` (the website

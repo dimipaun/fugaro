@@ -27,3 +27,15 @@ web-build/
 
 # The app's own logs, if a run ever leaves one.
 *.log
+
+# The two native Firebase config files (telemetry plan Task P7.1, D254, D260).
+#
+# They name the telemetry project and carry its API key, they are generated in
+# the Firebase console for one project, and they reach a build as EAS file
+# variables on the build machine -- so neither is a source file, and neither is
+# ever committed. src/app-config.test.js fails if either is tracked and fails
+# if either stops being ignored, and the ignore rules are this file's, which is
+# the app's own: both paths are under mobile/, so the repository root's
+# .gitignore has no business naming them.
+google-services.json
+GoogleService-Info.plist

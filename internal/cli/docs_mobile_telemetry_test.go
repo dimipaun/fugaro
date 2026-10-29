@@ -30,10 +30,11 @@ import (
 // document other than the plan and its two registrations wrote - which is the
 // reading the plan itself performed, and the reason its block moved.
 //
-// What this pin deliberately does not assert: anything about an app. No task of
-// Phase 7 is built, so there is no behaviour to hold. The claims here are about
-// documents, about two files that must not be in the tree, and about the app's
-// dependency list still not naming the SDKs.
+// What this pin deliberately does not assert: anything about an app's
+// behaviour. **P7.1 is built and P7.2-P7.5 are not** (2026-10-29), so the
+// claims here are about documents, about two files that must not be in the
+// tree, about the app's dependency list naming the three SDKs, and about the
+// telemetry module the plan is for still not existing.
 const (
 	telemetryPlan         = "docs/plans/2026-10-19-mobile-telemetry.md"
 	telemetryMobileReadme = "docs/mobile/README.md"
@@ -368,10 +369,10 @@ func TestTelemetryPlanLinksResolve(t *testing.T) {
 }
 
 // TestTelemetryPlanNamesTheFlagsItDependsOn: the plan states the exact native
-// switch names, and the app's dependency list still does not name the SDKs.
-// Both halves are the plan's "nothing here is built" claim, from the two sides
-// a reader can check: the names an implementer has to write down, and the
-// dependency that would have to exist for any of them to matter.
+// switch names, and the app's dependency list now names the SDKs - P7.1 landed
+// on 2026-10-29. Both halves are the plan's own claim, from the two sides a
+// reader can check: the names an implementer has to write down, and the
+// dependencies that exist because a task wrote them down.
 func TestTelemetryPlanNamesTheFlagsItDependsOn(t *testing.T) {
 	plan := readDoc(t, telemetryPlan)
 	for _, want := range []string{
@@ -392,9 +393,21 @@ func TestTelemetryPlanNamesTheFlagsItDependsOn(t *testing.T) {
 		}
 	}
 
+	// P7.1 landed on 2026-10-29, so this half reads the post-P7.1 fact: the
+	// three packages the plan names are in the manifest, and the telemetry
+	// module the plan is for still is not - it is P7.2's and P7.3's. The
+	// reversal is the point: while P7.1 was unbuilt this line refused
+	// @react-native-firebase outright, and a manifest that loses one of the
+	// three, or a src/telemetry that arrives before its tasks, fails here.
 	pkg := readDoc(t, "mobile/package.json")
-	if strings.Contains(pkg, "@react-native-firebase") {
-		t.Errorf("mobile/package.json names @react-native-firebase: the plan is a plan and P7.1 is unbuilt, so the dependency is not the app's yet")
+	for _, want := range []string{
+		"@react-native-firebase/app",
+		"@react-native-firebase/analytics",
+		"@react-native-firebase/crashlytics",
+	} {
+		if !strings.Contains(pkg, want) {
+			t.Errorf("mobile/package.json does not name %s: P7.1 is built, and the three packages the plugin entries need are the app's dependencies", want)
+		}
 	}
 	if _, err := os.Stat("../../mobile/src/telemetry"); err == nil {
 		t.Errorf("mobile/src/telemetry exists: the plan's telemetry module is P7.2's and P7.3's, and neither is built")

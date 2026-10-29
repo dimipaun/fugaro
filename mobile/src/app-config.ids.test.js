@@ -73,12 +73,23 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import appConfig, {
+  BLOCKED_PERMISSIONS,
+  FIREBASE_PLUGINS,
+  GOOGLE_SERVICES_VARIABLES,
   ID_PATTERNS,
   ID_VARIABLES,
   isIdentifier,
   requiresIdentifiers,
   resolveConfig,
 } from '../app.config.js';
+
+/** The two native config paths a build resolves (Task P7.1; D260): samples -
+ * the files are never in the tree (plan 4.3), and a build machine's own paths
+ * are what `app.config.js` reads off the environment. */
+const NATIVE_ENV = {
+  [GOOGLE_SERVICES_VARIABLES.android]: '/build/secrets/google-services.json',
+  [GOOGLE_SERVICES_VARIABLES.ios]: '/build/secrets/GoogleService-Info.plist',
+};
 
 const APP_JSON = JSON.parse(readFileSync(new URL('../app.json', import.meta.url), 'utf8'));
 const EXPO = APP_JSON.expo;
@@ -108,7 +119,9 @@ const ANDROID = 'com.example.sample';
  */
 const DECLARED = {
   ...EXPO,
+  plugins: [...EXPO.plugins, ...FIREBASE_PLUGINS],
   ios: { ...EXPO.ios, infoPlist: { ITSAppUsesNonExemptEncryption: false } },
+  android: { ...EXPO.android, blockedPermissions: [...BLOCKED_PERMISSIONS] },
 };
 
 /** An environment as EAS's build servers present it to `app.config.js`. */
@@ -116,6 +129,7 @@ const build = (extra = {}) => ({
   EAS_BUILD: 'true',
   [ID_VARIABLES.ios]: IOS,
   [ID_VARIABLES.android]: ANDROID,
+  ...NATIVE_ENV,
   ...extra,
 });
 
@@ -128,6 +142,11 @@ function withoutIdentities(resolved) {
   const android = { ...resolved.android };
   delete ios.bundleIdentifier;
   delete android.package;
+  // The two native config paths are the environment's too, and the same
+  // function strips them: `DECLARED` is the static config as a resolution
+  // carries it, and a path from the build machine is not part of it.
+  delete ios.googleServicesFile;
+  delete android.googleServicesFile;
   return { ...resolved, ios, android };
 }
 
@@ -376,7 +395,17 @@ test('app.config.js names exactly the two identity variables, as literals', () =
   // ... and the file itself names the two, and nothing else. A third variable
   // read here would be a third thing a build depends on, which is the reading
   // this test exists to make deliberate.
-  assert.deepEqual(namedIn(SOURCE), ['FUGARO_ANDROID_PACKAGE', 'FUGARO_IOS_BUNDLE_ID']);
+  // **The native config variables joined them in Task P7.1** (D260): the guard
+  // reads `GOOGLE_SERVICES_JSON` and `GOOGLE_SERVICE_INFO_PLIST` by name too, so
+  // they are literals in the source as well. The property is unchanged - the
+  // only names written as literals are the variables a build is made of - and
+  // the list is derived from `app.config.js`'s own map rather than copied, so a
+  // third one arriving is this line's failure.
+  assert.deepEqual(namedIn(SOURCE), [
+    'FUGARO_ANDROID_PACKAGE',
+    'FUGARO_IOS_BUNDLE_ID',
+    ...Object.values(GOOGLE_SERVICES_VARIABLES),
+  ].sort());
   // The two switches are read off `env` by name and are not values of their
   // own; the point above still reads them out of the source, so the property
   // is "the only names written as literals are the identities".
@@ -389,15 +418,25 @@ test('the switches add the requirement, and only the requirement', () => {
   // config without an identity -- and with them set, both states resolve the
   // same identities, which is what the local eas-cli phase depends on.
   const asked = resolveConfig(EXPO, { EAS_BUILD: 'true', ...build() });
-  const local = resolveConfig(EXPO, { [ID_VARIABLES.ios]: IOS, [ID_VARIABLES.android]: ANDROID });
+  const local = resolveConfig(EXPO, { [ID_VARIABLES.ios]: IOS, [ID_VARIABLES.android]: ANDROID, ...NATIVE_ENV });
   assert.deepEqual(asked, local);
   assert.deepEqual(resolveConfig(EXPO, {}), DECLARED, 'no switch, no variables: nothing is required');
-  assert.match(refusal(() => resolveConfig(EXPO, { EAS_BUILD: 'true' })), /FUGARO_IOS_BUNDLE_ID/);
+  assert.match(
+    refusal(() => resolveConfig(EXPO, { EAS_BUILD: 'true', ...NATIVE_ENV })),
+    /FUGARO_IOS_BUNDLE_ID/,
+    'the identities are the first thing a build is refused for',
+  );
 });
 
 test("Expo's entry reads process.env, and refuses a call with no static config", () => {
   const saved = {};
-  const keys = ['EAS_BUILD', 'FUGARO_REQUIRE_IDS', ID_VARIABLES.ios, ID_VARIABLES.android];
+  const keys = [
+    'EAS_BUILD',
+    'FUGARO_REQUIRE_IDS',
+    ID_VARIABLES.ios,
+    ID_VARIABLES.android,
+    ...Object.values(GOOGLE_SERVICES_VARIABLES),
+  ];
   for (const key of keys) saved[key] = Object.prototype.hasOwnProperty.call(process.env, key) ? process.env[key] : undefined;
   try {
     for (const key of keys) delete process.env[key];
@@ -409,6 +448,7 @@ test("Expo's entry reads process.env, and refuses a call with no static config",
     process.env.EAS_BUILD = 'true';
     process.env[ID_VARIABLES.ios] = IOS;
     process.env[ID_VARIABLES.android] = ANDROID;
+    for (const [variable, path] of Object.entries(NATIVE_ENV)) process.env[variable] = path;
     assert.equal(appConfig({ config: EXPO }).ios.bundleIdentifier, IOS);
     assert.equal(appConfig({ config: EXPO }).android.package, ANDROID);
   } finally {

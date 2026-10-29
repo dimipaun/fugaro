@@ -200,6 +200,48 @@ both platforms, see the pull request that added this paragraph — and what is
 **not** is a native build or a submission: those need the owner's accounts, and
 the list is at the end of this file ("What is not verified here").
 
+**A development build is required, and Expo Go is not supported (Task P7.1;
+D260).** The app carries the Firebase SDKs (`@react-native-firebase/app`,
+`analytics` and `crashlytics`), and they are **config plugins**: they are applied
+when the native project is generated — EAS's own prebuild, or `npx expo prebuild`
+— and they read the project's `google-services.json` and
+`GoogleService-Info.plist` at that moment. Expo Go is a fixed binary that can
+carry neither the plugins nor those files, so working on the app means a
+**development build** (`eas build --profile development`), and running it in Expo
+Go does not exercise anything this section is about.
+
+**The two native config files are never committed, and a build that cannot see
+them fails.** They are generated in the Firebase console for the telemetry
+project (D254), they name that project and carry its API key, so they are per-build
+artifacts rather than source: `mobile/.gitignore` ignores both,
+`src/app-config.test.js` fails if either is tracked or stops being ignored, and
+they reach a build as **EAS environment variables with file visibility** — the
+mechanism EAS documents, where the value is uploaded as a file and the build
+machine sees a path. `app.config.js` reads the two paths and **refuses to resolve
+a build without them**, naming whichever is missing; that refusal is D260's
+answer, so a build whose crash reporting would be silently dead stops instead.
+
+```sh
+# --- as the owner, at your own terminal, in mobile/ ---
+# One file per platform, from the Firebase console, uploaded to every
+# environment a build profile reads (eas.json names one per profile).
+for env in development preview production; do
+  eas env:set --type file --environment "$env" --name GOOGLE_SERVICES_JSON \
+      --value ./google-services.json
+  eas env:set --type file --environment "$env" --name GOOGLE_SERVICE_INFO_PLIST \
+      --value ./GoogleService-Info.plist
+done
+```
+
+`eas.json`'s three profiles also **name** the two variables in their `env`
+blocks. EAS's own documentation says `env` there is for *"values that you would
+commit to your git repository and not for passwords or secrets"*, so those
+entries are declarations of which file variable a profile consumes and not
+values: what a build resolves has to be the **path** the environment handed it,
+and `app.config.js`'s guard refuses a value that is still the bare variable name
+rather than a path, which is what stops a shadowed declaration from becoming a
+build that reads a file called `GOOGLE_SERVICES_JSON`.
+
 **The two identities, and where they are not.** The iOS bundle identifier and
 the Android package name are one public reverse-DNS name each — the same name
 for both stores, per the ruling. They are **not in `app.json`** (the identity

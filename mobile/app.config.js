@@ -155,6 +155,92 @@ export const EXPORT_COMPLIANCE = Object.freeze({
 });
 
 /**
+ * The app's Firebase config plugin entries (mobile telemetry plan, Task P7.1;
+ * D254, D255, D259, D260; plan §4.1-§4.2).
+ *
+ * The three packages are the ones the plan names and the only new dependencies
+ * P7.1 takes. `@react-native-firebase/app` is the module that applies the
+ * project's own `google-services.json` / `GoogleService-Info.plist` at
+ * prebuild, which is what makes the app's **default** Firebase app the
+ * telemetry project (D259) without an `apiKey` ever being written in
+ * JavaScript.
+ *
+ * `ios.withoutAdIdSupport: true` is the ad-ID half, and it is the option this
+ * task verified against the pinned source: the package's config plugin writes
+ * `$RNFirebaseAnalyticsWithoutAdIdSupport = true` into the Podfile
+ * (`@react-native-firebase/analytics/plugin/src/ios/podfile.ts`, tag
+ * `@react-native-firebase/analytics-withoutAdIdSupport`), and its podspec
+ * selects the ad-ID-free Analytics product when it is set
+ * (`RNFBAnalytics.podspec`: `FirebaseAnalyticsCore` over SPM,
+ * `FirebaseAnalytics/Core` without the `IdentitySupport` subspec over
+ * CocoaPods). That is the option §4.2 marks **VERIFY**, now resolved.
+ *
+ * The plugin's own options take no `googleServicesFile`: the pinned source
+ * reads it off the resolved config (`withCopyAndroidGoogleServices` and
+ * `withIosGoogleServicesFile` both read `config.android.googleServicesFile` /
+ * `config.ios.googleServicesFile` and throw when it is absent), so the paths
+ * are written onto those sections below rather than passed as plugin props.
+ */
+export const FIREBASE_PLUGINS = Object.freeze([
+  '@react-native-firebase/app',
+  ['@react-native-firebase/analytics', { ios: { withoutAdIdSupport: true } }],
+  '@react-native-firebase/crashlytics',
+]);
+
+/**
+ * The permissions the merged Android manifest must **not** declare
+ * (plan §4.2 point 2, §7.4).
+ *
+ * `com.google.android.gms.permission.AD_ID` arrives from the Play services
+ * libraries Firebase Analytics pulls in, and the Play Console reads its
+ * presence as "this app has an advertising id" whatever the SDK does with it.
+ * §4.2 marks this **VERIFY** - is removing it the plugin's own option, or an
+ * entry P7.1 writes? It is not the plugin's: neither
+ * `@react-native-firebase/app` nor `@react-native-firebase/analytics` names the
+ * permission anywhere in its config-plugin source or its manifest, and the
+ * audit in §7.4 is that it is absent. Expo's own config has the option, so it
+ * is used rather than a hand-written mod:
+ * `@expo/config-plugins`'s Android `Permissions.js` turns
+ * `android.blockedPermissions` into exactly the entry §4.2 asks for -
+ * `<uses-permission android:name="..." tools:node="remove"/>` - which is what
+ * strips it from the merged manifest at prebuild.
+ */
+export const BLOCKED_PERMISSIONS = Object.freeze(['com.google.android.gms.permission.AD_ID']);
+
+/**
+ * The two native config files, by platform, and the EAS environment variable
+ * each one's **path** comes from (plan §4.3, §4.4; D254, D260).
+ *
+ * The names are the plan's. Neither file is ever committed: `mobile/.gitignore`
+ * ignores both, `src/app-config.test.js` refuses a tracked one and a value
+ * shaped like a credential, and the EAS environment holds the file so that it
+ * exists only on the build machine. EAS's own documentation for the mechanism
+ * is "environment variables with file visibility" - *"Values uploaded as files
+ * (for example, google-services.json or a certificate) that are made available
+ * to jobs as file paths on the build runner"* - scoped to an environment, which
+ * each build profile already names (`eas.json`'s `environment`). §4.3's other
+ * candidate, the older `eas secret:create`, is the one EAS no longer documents;
+ * the README carries the commands and says which is used.
+ */
+export const GOOGLE_SERVICES_VARIABLES = Object.freeze({
+  android: 'GOOGLE_SERVICES_JSON',
+  ios: 'GOOGLE_SERVICE_INFO_PLIST',
+});
+
+/**
+ * The path each variable holds, so the guard's message can say what is missing
+ * without reading anything: the two names are the file names the Firebase
+ * console's own output has and the ones the plugin looks for by default (§4.3).
+ */
+const PATHS = Object.freeze({
+  [GOOGLE_SERVICES_VARIABLES.android]: 'mobile/google-services.json',
+  [GOOGLE_SERVICES_VARIABLES.ios]: 'mobile/GoogleService-Info.plist',
+});
+
+/** The README section the build-time guard's message sends the reader to. */
+export const NATIVE_CONFIG_README_SECTION = 'Building for internal testing';
+
+/**
  * Whether this run must carry the identities: an EAS build (`EAS_BUILD` is set
  * by EAS's build servers), or an explicit local ask (`FUGARO_REQUIRE_IDS=1`,
  * the owner's own switch, so a developer can check the same thing without an
@@ -180,6 +266,58 @@ export function requiresIdentifiers(env = process.env) {
 export function isIdentifier(value, platform) {
   if (typeof value !== 'string' || !Object.hasOwn(ID_PATTERNS, platform)) return false;
   return ID_PATTERNS[platform].test(value);
+}
+
+/**
+ * Which of the two native config paths this environment does not carry, in a
+ * fixed order: the missing variable **names**, and an empty list when both are
+ * there (plan §4.3 point 3, §10's P7.1; D260).
+ *
+ * Three things count as missing, and the third is why this is a function of the
+ * environment rather than a truthiness test:
+ *
+ *   * **unset** - the variable was never created;
+ *   * **empty** - it was created with nothing in it;
+ *   * **the variable's own name as its value** - `eas.json`'s profiles declare
+ *     the two variables in their `env` blocks (the plan asks for the entries, so
+ *     a reader sees which file secrets a profile consumes), and EAS documents
+ *     `env` as *"values that you would commit to your git repository and not for
+ *     passwords or secrets"*. The file variable the profile's `environment`
+ *     resolves must therefore arrive as a **path**; a value that is still the
+ *     bare name is a declaration that nothing replaced, and a build that reads
+ *     it as a path would fail on a file called `GOOGLE_SERVICES_JSON` - or, with
+ *     the plugin's own copy step, on a file that does not exist. Either way the
+ *     build stops, which is D260's answer; the message names the variable.
+ *
+ * **No value is returned, and none is in the message it feeds**: the caller
+ * gets names.
+ */
+export function nativeConfigMissing(env = process.env) {
+  return [GOOGLE_SERVICES_VARIABLES.android, GOOGLE_SERVICES_VARIABLES.ios].filter((variable) => {
+    const value = env[variable];
+    return value === undefined || value === '' || value === variable;
+  });
+}
+
+/**
+ * The error a build without the native config raises: **each missing variable
+ * by name**, what it is the path to, and the README section that says how the
+ * owner sets them (plan §4.3 point 3; D260). It repeats **no value** - the path
+ * of a secret-shaped file is the one thing a build log must not carry - and it
+ * is a stop rather than a warning: a build whose Crashlytics is silently dead
+ * is the failure D260 refuses.
+ */
+function nativeConfigAbsent(missingNames) {
+  return new Error(
+    `a build cannot be made without ${missingNames.join(' and ')}. ` +
+      `${missingNames.map((variable) => `${variable} is the path to ${PATHS[variable]}`).join(', and ')}. ` +
+      `Those files are per-build artifacts from the Firebase console and are committed nowhere, so ` +
+      `EAS must hand them to the build: upload both as EAS environment variables with file ` +
+      `visibility, in every environment a build profile reads ` +
+      `(eas env:set --name <variable> --type file --value <the file> --environment development ` +
+      `--environment preview --environment production), following mobile/README.md's ` +
+      `"${NATIVE_CONFIG_README_SECTION}" section. No value is repeated here.`,
+  );
 }
 
 /** The error a missing variable raises: the variable's name, and where to set it. */
@@ -269,6 +407,54 @@ function declaring(section) {
 }
 
 /**
+ * `plugins` with the three Firebase entries appended (Task P7.1).
+ *
+ * **Appended, not assigned**: `app.json` already lists `expo-secure-store` and
+ * `expo-splash-screen`, and a config that replaced the list would drop both -
+ * a build with no Keychain module and no splash screen, which no test here
+ * could see. A run that resolves this file twice (Expo does, for config and for
+ * prebuild) would otherwise append them twice as well, so an entry already
+ * there is not added again: `createRunOncePlugin` would tolerate it, but the
+ * resolved config is what `src/app-config.test.js` judges, and one entry per
+ * plugin is what a reader expects to find there.
+ */
+function pluginName(entry) {
+  return Array.isArray(entry) ? entry[0] : entry;
+}
+
+function withFirebasePlugins(plugins) {
+  const existing = Array.isArray(plugins) ? plugins : [];
+  const named = new Set(existing.map(pluginName));
+  return [...existing, ...FIREBASE_PLUGINS.filter((entry) => !named.has(pluginName(entry)))];
+}
+
+/**
+ * The `android` section a build gets: the section as it stands, plus
+ * `googleServicesFile` when the environment carries it and the permission the
+ * merged manifest must not declare.
+ *
+ * `googleServicesFile` is added **only when the variable is there**: in the
+ * dev/lint state neither is set, and a section naming `undefined` would make
+ * `expo prebuild` fail with the plugin's own message about a missing file
+ * rather than with this file's message about a missing variable.
+ */
+function androidSection(section, env) {
+  const rest = { ...section, blockedPermissions: [...BLOCKED_PERMISSIONS] };
+  const path = env[GOOGLE_SERVICES_VARIABLES.android];
+  return path === undefined || path === '' || path === GOOGLE_SERVICES_VARIABLES.android
+    ? rest
+    : { ...rest, googleServicesFile: path };
+}
+
+/** The `ios` section a build gets: the section as it stands, plus the plist path when the environment carries it. */
+function iosSection(section, env) {
+  const path = env[GOOGLE_SERVICES_VARIABLES.ios];
+  return path === undefined || path === '' || path === GOOGLE_SERVICES_VARIABLES.ios
+    ? section
+    : { ...section, googleServicesFile: path };
+}
+
+/**
  * The resolved config: Expo's dynamic-config function, as a function of its
  * `env` so that the tests can call it with a fake one and a named mutation can
  * make each refusal red.
@@ -286,6 +472,9 @@ export function resolveConfig(config, env = process.env) {
     );
   }
 
+  const missing = nativeConfigMissing(env);
+  if (requiresIdentifiers(env) && missing.length > 0) throw nativeConfigAbsent(missing);
+
   if (!requiresIdentifiers(env)) {
     // Dev/lint mode -- which is also the mode `eas-cli` resolves this file in,
     // locally, before it uploads a build: EAS sets `EAS_BUILD` on the build
@@ -297,15 +486,23 @@ export function resolveConfig(config, env = process.env) {
     // from.
     return {
       ...config,
-      ios: declaring(optionalSection('ios', config.ios, env)),
-      android: optionalSection('android', config.android, env),
+      plugins: withFirebasePlugins(config.plugins),
+      ios: iosSection(declaring(optionalSection('ios', config.ios, env)), env),
+      android: androidSection(optionalSection('android', config.android, env), env),
     };
   }
 
   return {
     ...config,
-    ios: declaring({ ...(config.ios ?? {}), [FIELDS.ios.field]: read('ios', env) }),
-    android: { ...(config.android ?? {}), [FIELDS.android.field]: read('android', env) },
+    plugins: withFirebasePlugins(config.plugins),
+    ios: iosSection(
+      declaring({ ...(config.ios ?? {}), [FIELDS.ios.field]: read('ios', env) }),
+      env,
+    ),
+    android: androidSection(
+      { ...(config.android ?? {}), [FIELDS.android.field]: read('android', env) },
+      env,
+    ),
   };
 }
 

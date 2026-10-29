@@ -53,12 +53,18 @@ date and the same condition.
   **approved and unbuilt**. Each is still **gated on the decision rows its "Depends on" line
   names** — every one of them is answered — exactly as Phase 6's tasks were gated on D160–D173
   before the owner answered them.
-- **It is not built, and no test here holds a behaviour.** Nothing this plan *adds* exists:
-  there is no `@react-native-firebase` dependency in `mobile/package.json`, no
-  `mobile/firebase.json`, no `mobile/src/telemetry/`, no `shared/telemetry-consent/`, no
-  `google-services.json` and no `GoogleService-Info.plist` anywhere in the tree. **Two files
-  this plan edits do exist**: `mobile/app.config.js` and `mobile/eas.json` are P4.4's, merged
-  to `main` by **PR #675**, and P7.1 **modifies** them (§1's third table row, P7.1's "Files").
+- **P7.1 is built; P7.2 to P7.5 are not (updated 2026-10-29, in P7.1's own commit).** What
+  exists is P7.1's half and only that: `mobile/package.json` names the three
+  `@react-native-firebase` packages, `mobile/firebase.json` carries the `react-native` block,
+  `mobile/app.config.js` carries the plugin entries, the two paths and the build-time guard,
+  `mobile/eas.json`'s three profiles name the two file variables, and `mobile/.gitignore`
+  ignores both native config files. **Nothing else this plan adds exists**: no
+  `mobile/src/telemetry/`, no `shared/telemetry-consent/`, no `google-services.json` and no
+  `GoogleService-Info.plist` anywhere in the tree — the two native files are never committed
+  (§4.3) — and **no test here holds an app behaviour**, because P7.2 to P7.5 are what build
+  one. **Two files this plan edits do exist**: `mobile/app.config.js` and `mobile/eas.json`
+  are P4.4's, merged to `main` by **PR #675**, and P7.1 **modifies** them (§1's third table
+  row, P7.1's "Files").
   The one Go test this change adds
   (`internal/cli/docs_mobile_telemetry_test.go`) pins **this document's own claims** and
   nothing else.
@@ -349,6 +355,54 @@ ad-ID half is unaffected, and §7.4's build-time test holds both halves.
 | Analytics collection, runtime | JS, `@react-native-firebase/analytics` | **`setAnalyticsCollectionEnabled(…)`** | **never called** — and **refused by §7.4's scan**. A call that can set collection state *is* the switch D255 says the app does not have, whether it is called with `true` or with `false` |
 | Crashlytics collection, runtime | JS, `@react-native-firebase/crashlytics` | **`setCrashlyticsCollectionEnabled(…)`** | **never called**, refused the same way, for the same reason |
 
+**VERIFY resolved at P7.1's commit (2026-10-29), read from the pinned
+`@react-native-firebase` 27.1.0 source rather than from memory.** The *shape* above is what the
+tree builds; five spellings and one mechanism are corrected or pinned here, and each is a line
+of that source:
+
+- **The `firebase.json` key for the ad-personalisation switch is
+  `analytics_default_allow_ad_personalization_signals` — the `google_` prefix is the
+  *manifest's*** (`@react-native-firebase/analytics/android/src/main/AndroidManifest.xml`
+  declares `google_analytics_default_allow_ad_personalization_signals` with the value
+  `${firebaseJsonPersonalizationEnabled}`, and `analytics/android/build.gradle` fills that
+  placeholder from the JSON key without the prefix). **Every Android meta-data value in this
+  table arrives that way** — Gradle manifest placeholders resolved from `firebase.json` at
+  assemble time — so the manifest's `false` is *downstream* of the JSON block, which is why
+  P7.1's test reads both.
+- **`firebase_crashlytics_collection_enabled` is not `true` in the merged manifest.**
+  `@react-native-firebase/crashlytics`'s own manifest declares it `false` (*"Disable
+  crashlytics by default so we can custom init with CrashlyticsNdk support"*), and the pinned
+  SDK reads its own sources in the order **preferences → `firebase.json` → manifest**
+  (`ReactNativeFirebaseCrashlyticsInitProvider.isCrashlyticsCollectionEnabled`): the row's
+  requirement is therefore held by `crashlytics_auto_collection_enabled: true` in
+  `mobile/firebase.json`, which is this table's own React Native layer row, and not by the
+  manifest.
+- **iOS: Firebase Apple SDK 13+ is SPM-only, so there is no Analytics *pod*.** `disableSPM` is
+  gone and setting it fails the prebuild (`@react-native-firebase/app/plugin/src/pluginConfig.ts`:
+  *"CocoaPods no longer distributes Firebase"*). The ad-ID-free variant is selected by
+  **`ios.withoutAdIdSupport: true` on the `@react-native-firebase/analytics` plugin**
+  (`analytics/plugin/src/ios/podfile.ts`, tag
+  `@react-native-firebase/analytics-withoutAdIdSupport`), which writes
+  `$RNFirebaseAnalyticsWithoutAdIdSupport = true` into the Podfile; `RNFBAnalytics.podspec`
+  then resolves the SPM product **`FirebaseAnalyticsCore`** instead of `FirebaseAnalytics`, and
+  links `AdSupport` only under a second flag the app never sets. **§7.4's "read the generated
+  `Podfile.lock`" is the CocoaPods arm of that sentence**, and on this version the lockfile
+  carries no Firebase pod: the flag in the generated `Podfile` and the absence of `AdSupport`
+  are what an iOS build can be read for.
+- **Removing `com.google.android.gms.permission.AD_ID` is not the plugin's option** — neither
+  package names the permission in its plugin source or its manifest — **and it is not a
+  hand-written mod either**: Expo's own config turns `android.blockedPermissions` into exactly
+  the `tools:node="remove"` entry this section asks for
+  (`@expo/config-plugins/build/android/Permissions.js`, `ensureBlockedPermission`).
+- **The EAS mechanism is the one EAS documents: environment variables with file visibility**
+  (*"Values uploaded as files ... made available to jobs as file paths on the build runner"*),
+  scoped by the environment a profile names in its `environment` field. The older
+  `eas secret:create` of §4.3's fourth part is the one EAS no longer documents, and the
+  `env` entries §4.3 asks each profile to carry are **declarations** of which file variable a
+  profile consumes: EAS documents `env` there as *"values that you would commit to your git
+  repository and not for passwords or secrets"*, so `app.config.js`'s guard refuses a value
+  that is still the bare variable name rather than a path.
+
 **These names are read from memory of the SDKs' own documentation and not from a page read
 today; P7.1's first commit confirms each against the SDK's documentation and the generated
 native project, and corrects this table in the same commit if any is wrong** (§14). What the
@@ -483,7 +537,9 @@ what is open is this plan's **stronger** sentence, that the app stores no such v
 value is written into this repository by that**: this section names the two values' *kinds*
 and never a value, and nothing here is a secret-shaped literal. **And no task is approved by
 it**: D259's acceptance is a ruling, not a green light — the gate was passed separately, on
-2026-10-22 — and the app still wires **no** Firebase SDK, because P7.1 is unbuilt.
+2026-10-22 — and the app wired **no** Firebase SDK until P7.1's commit of 2026-10-29 listed
+the three packages and the console's two files, which is the whole of what P7.1 wires: the
+plugins apply at prebuild, and no P7.2-P7.5 call is made.
 
 **The second fence, and the owner's ruling leaves it shut.** `SECRET_SHAPES` is not
 the only list D111's item count is written into. **`SECRET_ITEMS`** — `mobile/src/accounts/secret.js`,
