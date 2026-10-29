@@ -24,7 +24,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/recipe"
-	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -163,21 +162,21 @@ func digestDuePaths(t *testing.T, now time.Time) []string {
 	t.Helper()
 	today := now.UTC()
 	type due struct {
-		dim  report.Dim
+		dim  digest.Dim
 		date string
 	}
 	dues := make([]due, 0, 8)
 	for i := 1; i <= 7; i++ {
-		dues = append(dues, due{report.ByDay, today.AddDate(0, 0, -i).Format("2006-01-02")})
+		dues = append(dues, due{digest.ByDay, today.AddDate(0, 0, -i).Format("2006-01-02")})
 	}
 	yesterday := today.AddDate(0, 0, -1).Format("2006-01-02")
 	if today.Weekday() == time.Monday {
-		dues = append(dues, due{report.ByWeek, yesterday})
+		dues = append(dues, due{digest.ByWeek, yesterday})
 	}
 	if today.Day() == 1 {
-		dues = append(dues, due{report.ByMonth, yesterday})
+		dues = append(dues, due{digest.ByMonth, yesterday})
 		if today.Month() == time.January {
-			dues = append(dues, due{report.ByYear, yesterday})
+			dues = append(dues, due{digest.ByYear, yesterday})
 		}
 	}
 	paths := make([]string, 0, len(dues)+1)
@@ -531,7 +530,7 @@ func TestDigestStepCatchesUpSevenDays(t *testing.T) {
 			t.Errorf("%s is not on the run's branch", rel)
 		}
 	}
-	week, err := digest.NewPeriod(report.ByWeek, sunday.Format("2006-01-02"))
+	week, err := digest.NewPeriod(digest.ByWeek, sunday.Format("2006-01-02"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -570,7 +569,7 @@ func TestDigestStepYearReportCarriesPatterns(t *testing.T) {
 	}
 	now := clk.Now()
 	lastYear := now.AddDate(0, 0, -1)
-	month, err := digest.NewPeriod(report.ByMonth, lastYear.Format("2006-01-02"))
+	month, err := digest.NewPeriod(digest.ByMonth, lastYear.Format("2006-01-02"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -587,7 +586,7 @@ func TestDigestStepYearReportCarriesPatterns(t *testing.T) {
 	if rec.Status != runstore.StatusSucceeded {
 		t.Fatalf("record = status %s, reason %q", rec.Status, rec.Reason)
 	}
-	year, err := digest.NewPeriod(report.ByYear, lastYear.Format("2006-01-02"))
+	year, err := digest.NewPeriod(digest.ByYear, lastYear.Format("2006-01-02"))
 	if err != nil {
 		t.Fatal(err)
 	}

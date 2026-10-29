@@ -16,7 +16,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/digest"
-	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -89,7 +88,7 @@ type digestDoc struct {
 // digestRow is one report file under --dir: the period its own path names,
 // and the summary block it carries when that can be read at all.
 type digestRow struct {
-	dim     report.Dim
+	dim     digest.Dim
 	key     string
 	rel     string // the file's path under --dir, D321's <YYYY>/<key>.md when it is a row and no shape of this command's when it is skipped
 	summary digest.Summary
@@ -154,7 +153,7 @@ func newRunsDigestCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error { return runRunsDigest(cmd, &o) },
 	}
 	f := cmd.Flags()
-	f.StringVar(&o.period, "period", string(report.ByDay), "the period to report: day, week, month or year")
+	f.StringVar(&o.period, "period", string(digest.ByDay), "the period to report: day, week, month or year")
 	f.StringVar(&o.date, "date", "", "any day inside the period (YYYY-MM-DD); default: the most recent closed period")
 	f.StringVar(&o.repo, "repo", "", "the repository to report (owner/name); default: this checkout's origin")
 	f.StringVar(&o.dir, "dir", digest.Dir, "the folder the reports live in, relative to the working directory")
@@ -217,7 +216,7 @@ func runRunsDigest(cmd *cobra.Command, o *digestOptions) error {
 		// renumbers: a yearly report rolls its months up instead and has none.
 		selected []digest.Run
 	)
-	if p.Dim == report.ByYear {
+	if p.Dim == digest.ByYear {
 		months = digest.MonthsOf(rows, p.Key)
 		if len(months) == 0 {
 			return userErr("no monthly report of %s is committed under %s, so there is no year to roll up: a yearly report is its twelve monthly ones added up, because the records are kept 90 days",
@@ -277,8 +276,8 @@ func runRunsDigest(cmd *cobra.Command, o *digestOptions) error {
 }
 
 // digestDim is --period as the time grouping it names.
-func digestDim(period string) (report.Dim, error) {
-	dim, err := report.ParseDim(period)
+func digestDim(period string) (digest.Dim, error) {
+	dim, err := digest.ParseDim(period)
 	if err != nil || !dim.IsPeriod() {
 		return "", userErr("--period %q: use day, week, month or year", safetext.Strip(period))
 	}
@@ -289,7 +288,7 @@ func digestDim(period string) (report.Dim, error) {
 // recent closed one without it. A period holding today is still open -- its
 // runs are still arriving, and a run counts in the period it finished (G4) --
 // so it is refused, and nothing is written for it.
-func digestPeriod(dim report.Dim, date string, now time.Time) (digest.Period, error) {
+func digestPeriod(dim digest.Dim, date string, now time.Time) (digest.Period, error) {
 	today := now.UTC()
 	if date == "" {
 		// The day before the current period's first day is in the period

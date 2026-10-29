@@ -15,7 +15,6 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/digest"
 	"github.com/dimipaun/fugaro/internal/gitprov"
-	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/stats"
@@ -426,21 +425,21 @@ func (r *run) digestRecords(ctx context.Context, ids []string) ([]runstore.Recor
 func digestDuePeriods(now time.Time) []digest.Period {
 	today := now.UTC()
 	type due struct {
-		dim  report.Dim
+		dim  digest.Dim
 		date string
 	}
 	var dues []due
 	for i := 1; i <= digestCatchUpDays; i++ {
-		dues = append(dues, due{report.ByDay, today.AddDate(0, 0, -i).Format("2006-01-02")})
+		dues = append(dues, due{digest.ByDay, today.AddDate(0, 0, -i).Format("2006-01-02")})
 	}
 	yesterday := today.AddDate(0, 0, -1).Format("2006-01-02")
 	if today.Weekday() == time.Monday {
-		dues = append(dues, due{report.ByWeek, yesterday})
+		dues = append(dues, due{digest.ByWeek, yesterday})
 	}
 	if today.Day() == 1 {
-		dues = append(dues, due{report.ByMonth, yesterday})
+		dues = append(dues, due{digest.ByMonth, yesterday})
 		if today.Month() == time.January {
-			dues = append(dues, due{report.ByYear, yesterday})
+			dues = append(dues, due{digest.ByYear, yesterday})
 		}
 	}
 	var out []digest.Period
@@ -601,7 +600,7 @@ func (r *run) digestHeld(ctx context.Context, base, rel string, open []string) (
 // not committed yet is left to the next report run rather than written as a
 // year of nothing.
 func (r *run) digestReport(p digest.Period, recs []runstore.Record, rows []digest.Row) ([]byte, digest.Summary, bool, error) {
-	if p.Dim == report.ByYear {
+	if p.Dim == digest.ByYear {
 		months := digest.MonthsOf(rows, p.Key)
 		if len(months) == 0 {
 			return nil, digest.Summary{}, false, nil

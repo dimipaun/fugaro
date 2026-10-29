@@ -7,8 +7,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-
-	"github.com/dimipaun/fugaro/internal/report"
 )
 
 // The report folder's layout (D321): one file per period under <YYYY>/, named
@@ -36,7 +34,7 @@ const (
 // the summary block it carries when that can be read at all. Read is false for
 // a file that is there but whose block is not one this package wrote.
 type Row struct {
-	Dim     report.Dim
+	Dim     Dim
 	Key     string
 	Rel     string // the file's path under Dir, <YYYY>/<key>.md
 	Summary Summary
@@ -46,13 +44,13 @@ type Row struct {
 // reportShapes are the report file names D321 pins, one per period: the path
 // relative to Dir, and the dimension its own name says it is.
 var reportShapes = []struct {
-	dim report.Dim
+	dim Dim
 	re  *regexp.Regexp
 }{
-	{report.ByDay, regexp.MustCompile(`^(\d{4})/(\d{4}-\d{2}-\d{2})\.md$`)},
-	{report.ByWeek, regexp.MustCompile(`^(\d{4})/(\d{4}-W\d{2})\.md$`)},
-	{report.ByMonth, regexp.MustCompile(`^(\d{4})/(\d{4}-\d{2})\.md$`)},
-	{report.ByYear, regexp.MustCompile(`^(\d{4})/(\d{4})\.md$`)},
+	{ByDay, regexp.MustCompile(`^(\d{4})/(\d{4}-\d{2}-\d{2})\.md$`)},
+	{ByWeek, regexp.MustCompile(`^(\d{4})/(\d{4}-W\d{2})\.md$`)},
+	{ByMonth, regexp.MustCompile(`^(\d{4})/(\d{4}-\d{2})\.md$`)},
+	{ByYear, regexp.MustCompile(`^(\d{4})/(\d{4})\.md$`)},
 }
 
 // yearDirRE is the one shape of directory the reports live in: D321's <YYYY>.
@@ -72,7 +70,7 @@ func PeriodPath(key string) string {
 // names one a writer of this layout wrote. The year directory must be the
 // period's own year: a file whose name and directory disagree is a file
 // neither writer produced, and nothing may read it as the period it claims.
-func ReportName(rel string) (report.Dim, string, bool) {
+func ReportName(rel string) (Dim, string, bool) {
 	for _, shape := range reportShapes {
 		m := shape.re.FindStringSubmatch(rel)
 		if m == nil {
@@ -127,7 +125,7 @@ func Prev(rows []Row, p Period) []Summary {
 func MonthsOf(rows []Row, year string) []Summary {
 	var months []Summary
 	for _, r := range rows {
-		if r.Read && r.Dim == report.ByMonth && r.Summary.Period[:4] == year {
+		if r.Read && r.Dim == ByMonth && r.Summary.Period[:4] == year {
 			months = append(months, r.Summary)
 		}
 	}

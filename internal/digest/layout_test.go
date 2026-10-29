@@ -3,8 +3,6 @@ package digest
 import (
 	"strings"
 	"testing"
-
-	"github.com/dimipaun/fugaro/internal/report"
 )
 
 // TestFileBodyCarriesPatternsForEveryHead pins the two writers' one shared rule
@@ -15,15 +13,15 @@ import (
 // two writers' yearly files different for the same rows -- which no test of one
 // writer alone can see.
 func TestFileBodyCarriesPatternsForEveryHead(t *testing.T) {
-	year, err := NewPeriod(report.ByYear, "2026-02-01")
+	year, err := NewPeriod(ByYear, "2026-02-01")
 	if err != nil {
 		t.Fatal(err)
 	}
 	rows := []Row{{
-		Dim: report.ByMonth, Key: "2026-01", Rel: "2026/2026-01.md", Read: true,
+		Dim: ByMonth, Key: "2026-01", Rel: "2026/2026-01.md", Read: true,
 		Summary: Summary{Period: "2026-01", Start: "2026-01-01", End: "2026-01-31", Runs: 3, Billed: "1.000000", Notional: "0.000000", Review: "0.000000"},
 	}}
-	day, err := NewPeriod(report.ByDay, "2026-02-01")
+	day, err := NewPeriod(ByDay, "2026-02-01")
 	if err != nil {
 		t.Fatal(err)
 	}

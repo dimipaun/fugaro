@@ -14,7 +14,6 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/recipe"
-	"github.com/dimipaun/fugaro/internal/report"
 )
 
 // The fixed rules (D326) and their names: the report's own vocabulary, never
@@ -95,10 +94,10 @@ func Patterns(prev []Summary, cur Summary) []Pattern {
 	series := byPeriod(all)
 
 	var out []Pattern
-	out = append(out, flagRecurs(series[report.ByWeek])...)
-	out = append(out, reviewShareRising(series[report.ByMonth])...)
-	out = append(out, recipeMedianUp(series[report.ByMonth])...)
-	out = append(out, haltsHigh(series[report.ByWeek])...)
+	out = append(out, flagRecurs(series[ByWeek])...)
+	out = append(out, reviewShareRising(series[ByMonth])...)
+	out = append(out, recipeMedianUp(series[ByMonth])...)
+	out = append(out, haltsHigh(series[ByWeek])...)
 	return out
 }
 
@@ -106,7 +105,7 @@ func Patterns(prev []Summary, cur Summary) []Pattern {
 // per key: a period reported twice counts once, the later summary of it being
 // the one this report's own figures belong to. A key of no shape this package
 // writes is in no group (G1).
-func byPeriod(all []Summary) map[report.Dim][]Summary {
+func byPeriod(all []Summary) map[Dim][]Summary {
 	kept := make([]Summary, 0, len(all))
 	for _, s := range all {
 		if _, ok := periodDim(s.Period); ok {
@@ -115,7 +114,7 @@ func byPeriod(all []Summary) map[report.Dim][]Summary {
 	}
 	sort.SliceStable(kept, func(i, j int) bool { return kept[i].Period < kept[j].Period })
 
-	out := map[report.Dim][]Summary{}
+	out := map[Dim][]Summary{}
 	for _, s := range kept {
 		dim, _ := periodDim(s.Period)
 		if n := len(out[dim]); n > 0 && out[dim][n-1].Period == s.Period {
@@ -138,16 +137,16 @@ var (
 
 // periodDim is the period a report's key names, and whether it names one this
 // package writes at all.
-func periodDim(key string) (report.Dim, bool) {
+func periodDim(key string) (Dim, bool) {
 	switch {
 	case dayKeyRE.MatchString(key):
-		return report.ByDay, true
+		return ByDay, true
 	case weekKeyRE.MatchString(key):
-		return report.ByWeek, true
+		return ByWeek, true
 	case monthKeyRE.MatchString(key):
-		return report.ByMonth, true
+		return ByMonth, true
 	case yearKeyRE.MatchString(key):
-		return report.ByYear, true
+		return ByYear, true
 	}
 	return "", false
 }
@@ -293,7 +292,7 @@ func recipeMedianUp(months []Summary) []Pattern {
 		out = append(out, Pattern{
 			Rule: RuleRecipeMedian, Subject: name,
 			Periods: []string{prev.Period, cur.Period},
-			Figures: []string{report.USD6(before), report.USD6(after)},
+			Figures: []string{USD6(before), USD6(after)},
 		})
 	}
 	return out
@@ -445,7 +444,7 @@ func RollUp(year string, months []Summary) Summary {
 		return Summary{}
 	}
 	kept := make([]Summary, 0, len(months))
-	for _, m := range byPeriod(months)[report.ByMonth] {
+	for _, m := range byPeriod(months)[ByMonth] {
 		if m.Period[:4] == year && m.figuresOK() {
 			kept = append(kept, m)
 		}
@@ -484,12 +483,12 @@ func RollUp(year string, months []Summary) Summary {
 			}
 		}
 	}
-	s.Billed, s.Notional, s.Review = report.USD6(billed), report.USD6(notional), report.USD6(review)
+	s.Billed, s.Notional, s.Review = USD6(billed), USD6(notional), USD6(review)
 	for name, vals := range medians {
 		if s.Recipes == nil {
 			s.Recipes = map[string]string{}
 		}
-		s.Recipes[name] = report.USD6(median(vals))
+		s.Recipes[name] = USD6(median(vals))
 	}
 	return s
 }
@@ -512,7 +511,7 @@ func (s Summary) check() error {
 	// them it added up: a year that does not, or another period that does, is
 	// not a block this report wrote, and a reader is never left to take a
 	// partial year for a whole one (G5).
-	if dim == report.ByYear {
+	if dim == ByYear {
 		if s.Months < 1 || s.Months > 12 {
 			return errors.New("a year does not say how many months it added up")
 		}

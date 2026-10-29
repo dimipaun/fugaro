@@ -2,17 +2,20 @@ package cli
 
 import (
 	"context"
+	"io"
 	"slices"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/firestore"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
 )
 
@@ -236,3 +239,74 @@ const (
 // or unreachable must cost the launch a few seconds rather than the hold it is
 // working inside.
 const ReportIntentTimeout = reportIntentTimeout
+
+// LsSlugs is the repositories a run reading over this cloud covers: repo's
+// slug alone, or every slug in the runs bucket when repo is empty and all is
+// set, else the local config's. The moved report command reads the window's
+// runs through it exactly as runs ls does.
+func (c *Cloud) LsSlugs(ctx context.Context, repo string, all bool, warn io.Writer) ([]string, error) {
+	return lsSlugs(ctx, c.env, &lsOptions{repo: repo, all: all}, warn)
+}
+
+// LoadRows reads every run of slugs since the given instant, joins each with
+// its execution and answers the rows newest first, as runs ls's own loader
+// does; since's zero means no bound, and warn takes the loader's non-fatal
+// problems. The moved report command's degraded path lists the run records
+// through it.
+func (c *Cloud) LoadRows(ctx context.Context, slugs []string, since time.Time, warn io.Writer, now time.Time) ([]runview.Row, error) {
+	return loadRows(ctx, c.env, lsFilter{slugs: slugs, since: since, warn: warn}, now)
+}
+
+// RunRecord is one run's record as a bounded read of the window found it,
+// opaque so that a moved command reads the three facts its by-mode rows read
+// and nothing else.
+type RunRecord struct{ o runObject }
+
+// ID is the run's ID, which says when it was minted.
+func (r RunRecord) ID() string { return r.o.id }
+
+// Record is the run's result record, nil when the bucket holds none.
+func (r RunRecord) Record() *runstore.Record { return r.o.record }
+
+// RecordCorrupt is "the bucket holds a result.json this read could not use",
+// as opposed to a run that has not written one.
+func (r RunRecord) RecordCorrupt() bool { return r.o.recordCorrupt }
+
+// ReadRunRecords reads the window's runs over slugs, newest first and bounded
+// to max runs across every repository, the way the report's by-mode rows read
+// them. until is the window's end as an instant, and the zero time means no
+// end; unlaunched counts the runs that never started, and truncated says the
+// window held more runs than max.
+func (c *Cloud) ReadRunRecords(ctx context.Context, slugs []string, since, until time.Time, max int) ([]RunRecord, int, bool, error) {
+	objs, unlaunched, truncated, err := readRunObjects(ctx, c.env, slugs, since, until, max)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	out := make([]RunRecord, len(objs))
+	for i, o := range objs {
+		out[i] = RunRecord{o: o}
+	}
+	return out, unlaunched, truncated, nil
+}
+
+// UserStatsMaxRuns is how many runs one bounded read opens; it is what the
+// moved report command bounds its by-mode read to.
+const UserStatsMaxRuns = userStatsMaxRuns
+
+// BudgetNow is the clock the budget commands and their surfaces measure a
+// window back from, which the moved report command's own --since/--until
+// window is read against.
+func BudgetNow() time.Time { return budgetNow() }
+
+// RecordOfRun is one run as a one-run day record, so the moved report
+// command's run-record totals group like the history's.
+func RecordOfRun(r runview.Row) budget.DayRecord { return recordOfRun(r) }
+
+// ComputeSources is the distinct price-table source lines the rows' compute
+// estimates were priced from, sorted, for the moved report command's own
+// source line.
+func ComputeSources(rows []runview.Row) []string { return computeSources(rows) }
+
+// ApplyCost writes a run's cost into a one-run day record, the way both
+// readers of a run record divide it.
+func ApplyCost(rec *budget.DayRecord, c runstore.Cost) { applyCost(rec, c) }
