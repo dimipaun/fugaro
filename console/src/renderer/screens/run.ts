@@ -1107,13 +1107,18 @@ function numberCell(
  * nothing at all. Nothing is invented here: every value is the document's own
  * string on the one path and the console's mark on the other.
  */
-function putMaybe(element: ScreenElement, raw: string | null, field: string): void {
+function putMaybe(
+  element: ScreenElement,
+  raw: string | null,
+  textClass: Parameters<typeof putText>[2],
+  field: string,
+): void {
   if (raw === null || raw === '') {
     literal(element, UNAVAILABLE_MARK)
     element.setAttribute('title', `the document carries no ${field}`)
     return
   }
-  putText(element, raw, 'label', field)
+  putText(element, raw, textClass, field)
 }
 
 /** maybeCell is `cell` with one of the run's own columns written into it
@@ -1124,11 +1129,12 @@ function maybeCell(
   factory: ScreenFactory,
   tag: string,
   raw: string | null,
+  textClass: Parameters<typeof putText>[2],
   field: string,
   ...classes: string[]
 ): ScreenElement {
   const element = cell(parent, factory, tag, ...classes, raw === null || raw === '' ? 'run-meta-absent' : 'run-meta-value')
-  putMaybe(element, raw, field)
+  putMaybe(element, raw, textClass, field)
   return element
 }
 
@@ -1169,7 +1175,7 @@ function breadcrumb(factory: RunFactory, model: RunModel): ScreenElement {
   // The repository's crumb: the mono value, or the console's mark with its
   // reason when the record carries no repository.
   const repo = cell(element, factory, 'span', 'run-crumb-repo', model.row.repo === null || model.row.repo === '' ? 'run-meta-absent' : 'run-meta-value')
-  putMaybe(repo, model.row.repo, 'row.repo')
+  putMaybe(repo, model.row.repo, 'repository', 'row.repo')
   crumbSeparator(factory, element)
   const run = cell(element, factory, 'span', 'run-crumb-run')
   putText(run, model.row.run, 'runId', 'row.run')
@@ -1201,19 +1207,19 @@ function metaLine(factory: RunFactory, model: RunModel): ScreenElement {
   const element = make(factory, 'div', 'run-meta')
   const repo = cell(element, factory, 'span', 'run-meta-field')
   literal(cell(repo, factory, 'span', 'run-meta-label'), 'repo')
-  maybeCell(repo, factory, 'span', model.row.repo, 'row.repo', 'run-repo')
+  maybeCell(repo, factory, 'span', model.row.repo, 'repository', 'row.repo', 'run-repo')
   const workflow = cell(element, factory, 'span', 'run-meta-field')
   literal(cell(workflow, factory, 'span', 'run-meta-label'), 'workflow')
-  maybeCell(workflow, factory, 'span', model.row.workflow, 'row.workflow', 'run-workflow')
+  maybeCell(workflow, factory, 'span', model.row.workflow, 'label', 'row.workflow', 'run-workflow')
   const recipe = cell(element, factory, 'span', 'run-meta-field')
   literal(cell(recipe, factory, 'span', 'run-meta-label'), 'recipe')
-  maybeCell(recipe, factory, 'span', model.row.recipe, 'row.recipe', 'run-recipe')
+  maybeCell(recipe, factory, 'span', model.row.recipe, 'label', 'row.recipe', 'run-recipe')
   const branch = cell(element, factory, 'span', 'run-meta-field')
   literal(cell(branch, factory, 'span', 'run-meta-label'), 'branch')
-  maybeCell(branch, factory, 'span', model.row.branch, 'row.branch', 'run-branch')
+  maybeCell(branch, factory, 'span', model.row.branch, 'branch', 'row.branch', 'run-branch')
   const account = cell(element, factory, 'span', 'run-meta-field')
   literal(cell(account, factory, 'span', 'run-meta-label'), 'account')
-  maybeCell(account, factory, 'span', model.row.oauthAccount, 'row.oauth_account', 'run-account')
+  maybeCell(account, factory, 'span', model.row.oauthAccount, 'person', 'row.oauth_account', 'run-account')
   // The two actors keep the `person` class the wire key carries: an address is
   // drawn as the console's marker and a login as itself, on this line as in
   // every other cell of the console that draws one. Unlike the five columns
@@ -1281,7 +1287,7 @@ function statusStrip(factory: RunFactory, model: RunModel): ScreenElement {
   const outcome = cell(element, factory, 'div', 'run-strip-cell')
   literal(cell(outcome, factory, 'span', 'run-strip-label'), 'OUTCOME')
   const outcomeValue = cell(outcome, factory, 'span', 'run-strip-value', 'run-outcome')
-  putMaybe(outcomeValue, model.row.outcome, 'row.outcome')
+  putMaybe(outcomeValue, model.row.outcome, 'label', 'row.outcome')
   // The tone is one of two closed words, written as a literal for the same
   // reason the words beside it are: a rule colours the cell by the attribute and
   // the console never spells a tone the theme has no colour for.
@@ -1290,7 +1296,7 @@ function statusStrip(factory: RunFactory, model: RunModel): ScreenElement {
   if (tone === 'failure') outcomeValue.setAttribute('data-tone', 'failure')
   const stage = cell(element, factory, 'div', 'run-strip-cell')
   literal(cell(stage, factory, 'span', 'run-strip-label'), 'STAGE')
-  putMaybe(cell(stage, factory, 'span', 'run-strip-value', 'run-stage'), model.row.stage, 'row.stage')
+  putMaybe(cell(stage, factory, 'span', 'run-strip-value', 'run-stage'), model.row.stage, 'label', 'row.stage')
   const ledger = cell(element, factory, 'div', 'run-strip-cell')
   literal(cell(ledger, factory, 'span', 'run-strip-label'), 'LEDGER')
   const flags = cell(ledger, factory, 'span', 'run-strip-value', 'run-flags')
@@ -1388,6 +1394,7 @@ function haltLine(factory: RunFactory, halt: RunHalt): ScreenElement {
 /** ledgerPanel is the three accounts, apart. */
 function ledgerPanel(factory: ScreenFactory, model: RunLedger): ScreenElement {
   const element = make(factory, 'section', 'run-ledger')
+  element.setAttribute('aria-label', LEDGER_PANEL_NAME)
   literal(cell(element, factory, 'h2', 'run-panel-title'), 'ledger')
   const model_ = cell(element, factory, 'p', 'run-ledger-model')
   literal(model_, 'model, as the run was charged:')
@@ -1411,6 +1418,7 @@ function ledgerPanel(factory: ScreenFactory, model: RunLedger): ScreenElement {
  * document carries no stages instead. */
 function spendStagesPanel(factory: ScreenFactory, model: RunModel): ScreenElement {
   const element = make(factory, 'section', 'run-spend-stages')
+  element.setAttribute('aria-label', SPEND_STAGES_PANEL_NAME)
   literal(cell(element, factory, 'h2', 'run-panel-title'), 'spend by stage')
   const list = cell(element, factory, 'ol', 'run-spend-stage-list')
   for (const stage of model.spendStages) {
@@ -1442,6 +1450,7 @@ function spendStagesPanel(factory: ScreenFactory, model: RunModel): ScreenElemen
  * line naming the absent key instead -- see `TOLERATED_ABSENT`. */
 function toleratedPanel(factory: ScreenFactory, tolerated: RunTolerated): ScreenElement {
   const element = make(factory, 'section', 'run-tolerated')
+  element.setAttribute('aria-label', TOLERATED_PANEL_NAME)
   literal(cell(element, factory, 'h2', 'run-panel-title'), 'tolerated by the mode')
   const total = cell(element, factory, 'p', 'run-tolerated-total')
   literal(total, 'findings the mode tolerated:')
@@ -1608,7 +1617,7 @@ function stageShare(value: number, longest: number): string {
  */
 function stagePanel(factory: RunFactory, model: RunModel): ScreenElement {
   const element = make(factory, 'section', 'run-stages')
-  element.setAttribute('aria-label', 'Stages')
+  element.setAttribute('aria-label', STAGES_PANEL_NAME)
   literal(cell(element, factory, 'h2', 'run-panel-title'), 'stages')
   const list = cell(element, factory, 'ol', 'run-stage-list')
   const longest = longestDuration(model.stages)
@@ -1653,6 +1662,7 @@ function stagePanel(factory: RunFactory, model: RunModel): ScreenElement {
  */
 function pullRequestPanel(factory: ScreenFactory, model: RunPullRequest): ScreenElement {
   const element = make(factory, 'section', 'run-pr')
+  element.setAttribute('aria-label', PR_PANEL_NAME)
   literal(cell(element, factory, 'h2', 'run-panel-title'), 'pull request')
   const facts: (() => void)[] = []
   if (model.repository !== null) {
@@ -1676,6 +1686,7 @@ function pullRequestPanel(factory: ScreenFactory, model: RunPullRequest): Screen
 /** logsPanel is the capped window and the link to the transcript. */
 function logsPanel(factory: ScreenFactory, model: RunLogs): ScreenElement {
   const element = make(factory, 'section', 'run-logs')
+  element.setAttribute('aria-label', LOGS_PANEL_NAME)
   literal(cell(element, factory, 'h2', 'run-panel-title'), 'Logs · capped window')
   const list = cell(element, factory, 'ol', 'run-log-list')
   for (const line of model.lines) {
@@ -1721,6 +1732,7 @@ function logsPanel(factory: ScreenFactory, model: RunLogs): ScreenElement {
  * about why the run is where it is. */
 function diagnosePanel(factory: RunFactory, model: RunModel): ScreenElement {
   const element = make(factory, 'section', 'run-diagnosis')
+  element.setAttribute('aria-label', DIAGNOSIS_PANEL_NAME)
   literal(cell(element, factory, 'h2', 'run-panel-title'), 'diagnosis')
   const diagnosis = model.diagnosis
   // The two test lists are chips: the word carries the tone *and* the reading,
@@ -1804,9 +1816,32 @@ function diagnosePanel(factory: RunFactory, model: RunModel): ScreenElement {
   return element
 }
 
+/**
+ * The panel names are what each region is called to a reader who jumps between
+ * them: every panel is a `section`, and a `section` with no name is a landmark
+ * that announces nothing (`live.ts`'s `PANEL_NAME` is the same sentence). The
+ * heading inside each one carries the same words as its caption.
+ */
+const STAGES_PANEL_NAME = 'Stages'
+
+const SPEND_STAGES_PANEL_NAME = 'Spend by stage'
+
+const TOLERATED_PANEL_NAME = 'Tolerated by the mode'
+
+const DIAGNOSIS_PANEL_NAME = 'Diagnosis'
+
+const LOGS_PANEL_NAME = 'Logs'
+
+const REPLAY_PANEL_NAME = 'Replay'
+
+const LEDGER_PANEL_NAME = 'Ledger'
+
+const PR_PANEL_NAME = 'Pull request'
+
 /** replayPanel is the ring: its bound, its span, and the moment scrubbed to. */
 function replayPanel(factory: ScreenFactory, model: RunReplay): ScreenElement {
   const element = make(factory, 'section', 'run-replay')
+  element.setAttribute('aria-label', REPLAY_PANEL_NAME)
   literal(cell(element, factory, 'h2', 'run-panel-title'), 'replay buffer')
   const records = cell(element, factory, 'p', 'run-replay-records')
   literal(records, 'records held:')
