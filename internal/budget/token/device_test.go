@@ -189,7 +189,7 @@ func TestDecodeDeviceKeyRefusesOtherSpellings(t *testing.T) {
 // deviceSigner is a Signer that does not sign: it renders the claim set as a
 // compact JWT with a placeholder signature, which is enough for the minter's
 // own read-back (parseJWT verifies nothing — Google does that at sign-in).
-// deviceMangle lets a test hand back a token the signer rewrote.
+// Its mangle hook lets a test hand back a token the signer rewrote.
 type deviceSigner struct {
 	email  string
 	mangle func(map[string]any)
