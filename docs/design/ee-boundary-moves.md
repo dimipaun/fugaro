@@ -646,8 +646,8 @@ across every commit:
   §2) and fails with the citation that no longer exists. The line numbers in §2–§4 are the ones to
   re-check against the tree that lands the move.
 
-**Release note for the 0.13.0 operators' section — O7.** The notes carry ONE line — refresh images to
-get governance — and it is **not** a required operator step. An installation that never refreshes its
+**Release note for 0.13.0 — O7 (a sentence in `### Known limits`, not a `### For operators` entry).** O7 is answered (2026-10-29, choice (b)). The notes carry ONE line — refresh images to
+get governance — as a plain sentence in `### Known limits` (or Highlights); it is **not** a required operator step and not a `### For operators` entry (the owner ruled no operator steps). An installation that never refreshes its
 images keeps refusing `governance:`, which is today's behaviour anyway; the line exists because D524
 ships governance in a tagged base image and a reader should know that is where it arrives. The
 release notes themselves are E3.3's, not this document's. O7 was still named an open tension in

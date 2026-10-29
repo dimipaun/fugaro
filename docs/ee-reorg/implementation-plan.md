@@ -415,7 +415,7 @@ reused.*
 - **Content (D533, 2026-10-29): the notes only say that licensing updates, with NO operator steps
   ("nothing to do for now") and NO licence warning (D523); no `### For operators` entry for this.
   O7 (answered 2026-10-29, choice (b)): the notes carry ONE line, "refresh images to get governance",
-  which is not a required operator step.**
+  which is not a required operator step. Placement (owner, 2026-10-29): a plain sentence in `### Known limits`: installations on older images keep refusing governance: until images are refreshed (`fugaro update` / `fugaro image refresh`); not a required operator step.**
   The older content below is superseded where it conflicts: the Licensing highlight; what 0.12.x users keep (R1, with F3's corrected
   facts: `fugaro report` since v0.1.0, `calls`/`agents` since v0.11.6); the superseded `### For operators` text: **per
   installation** `fugaro update` (the base pin and the history image the sweep runs; U5 confirms the
