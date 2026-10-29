@@ -43,9 +43,12 @@ is what keeps the guard below honest: every wire name in a field table outside
 that list is still refused as a field invented from the design.
 `TestDocsDesktopConsoleContractNamesNoInventedField` also fails if a listed key
 later becomes a real JSON key of a shape here, so the list cannot outlive its
-reason. The two keys today are `leased_usd` (§2) and `compute_usd` (§3) — the
-latter is already a real key of `report --json` (§4), which is why it needs no
-guard entry and `leased_usd` does.
+reason. **The list is empty today**: `leased_usd` (§2) left it when the CLI
+started writing the key, so it now stands on the structs like every other field
+— a console still reads it as optional, because an older CLI writes no such key.
+`compute_usd` (§3) is the one key still named ahead of the CLI that will write
+it, and it needs no guard entry: it is already a real key of `report --json`
+(§4).
 
 ## 1. The five availability states
 
@@ -133,7 +136,7 @@ permission refusal, which `watchStream` emits once and then returns `dbErr`
 | `counted_usd` | float64 | USD | no | measured |
 | `spent_usd` | float64 | USD | no | measured |
 | `notional_usd` | float64 | USD | no | **notional** — never billed, never capped, never summed into a real total |
-| `leased_usd` | `*float64` | USD | — (not emitted yet) | **optional** (§intro's bounded exception): absent or `null` = unavailable (`n/a`, never `0`); present is measured. The **outstanding** leased dollars — the amount a lease currently holds, where `max_reserve_usd` (§3) is the **ceiling** on one lease. No CLI release writes it yet |
+| `leased_usd` | float64 | USD | no | measured — **`BuildJSON` writes it**, so it is always present and `0` when nothing is leased (the console still reads it as optional, for a CLI older than the release that added it). The **outstanding** leased dollars: `counted_usd − spent_usd`, floored at zero (`watch.LeasedUSD`, `internal/watch/json.go`), where `max_reserve_usd` (§3) is the **ceiling** on one lease. The label is *leased, not yet spent*, never "live leases": the sweeper never releases a lease (`internal/budget/sweep.go`), so a crashed run's stays in the figure for the rest of the day |
 | `daily_cap_usd` | `*float64` | USD | no | **null = unavailable** (no cap set) |
 | `percent` | `*float64` | 0–100 | no | **null = unavailable**, together with `daily_cap_usd` (`usdPtr`) |
 | `burn` | `JSONBurn` | — | no | see below |
@@ -169,7 +172,7 @@ drift from it.
 | `repo` | string | `owner/name` | no | measured |
 | `counted_usd` / `spent_usd` | float64 | USD | no | measured |
 | `notional_usd` | float64 | USD | no | **notional** |
-| `leased_usd` | `*float64` | USD | — (not emitted yet) | **optional** (§intro's bounded exception): absent or `null` = unavailable (`n/a`, never `0`); present is measured. As on `JSONTotal`: the **outstanding** leased dollars, never the ceiling. No CLI release writes it yet |
+| `leased_usd` | float64 | USD | no | measured — as on `JSONTotal`, written by `BuildJSON` and read as optional for an older CLI. The **outstanding** leased dollars of this repository, never the ceiling; the same *leased, not yet spent* caveat, and the same floor at zero |
 | `daily_cap_usd` / `percent` | `*float64` | USD / 0–100 | no | **null = unavailable** |
 | `burn` | `JSONBurn` | — | no | as above |
 | `kill` | `*JSONKill` | — | no | **null = not killed** |
@@ -184,16 +187,16 @@ and §3's `global`/`showRepo` carry the rest.
 
 **How the console reads it — one rule, stated once.** Absent and `null` are
 **unavailable** (`n/a`, never `0` — a document with nothing to say about a lease
-has not leased nothing); a finite, non-negative number is **measured**. Any
-other value — a string, a boolean, a negative — is handled **the way the decoder
-that owns the document handles a shape it cannot read**, which is the whole of
-the rule:
+has not leased nothing), which is the shape a CLI older than the key's release
+writes; a finite, non-negative number is **measured**. Any other value — a
+string, a boolean, a negative — is handled **the way the decoder that owns the
+document handles a shape it cannot read**, which is the whole of the rule:
 
   * the **closed** decoders (the console's `src/shared/schema.ts`, and the shared
     package's `shared/digest`, consumed by the mobile app today) refuse the
     document by the field's wire path (`total.leased_usd`, `repos[0].leased_usd`).
-    That is deliberate for a key named ahead of its release: no document has ever
-    carried it, so a value of a shape the decoder does not expect is a document
+    That is deliberate: a value of a shape the decoder does not expect — or a
+    negative one, which no money field of this contract can hold — is a document
     that decoder does not understand, not one it merely has not learned to read —
     the same judgement `closed` makes about an unknown key *name*;
   * `budget show`'s caps reader is the console's **tolerant** reader: it refuses
@@ -210,7 +213,8 @@ package's digest a non-finite number is refused** (`RANGE`,
 `shared/digest/index.js`) — which is a fact about their code, not a case a screen
 reading a document will meet.
 
-**No screen draws it yet**; the Spend redesign is the reader.
+**No console release draws it yet**: the Live screen's redesign (console
+0.114.0) is the reader.
 
 ### `JSONRun` (`internal/watch/json.go`) — a live or queued run
 
@@ -339,7 +343,10 @@ spaces (`enc.SetIndent("", "  ")`, `internal/cli/budget.go`).
 
 `showGlobal`: `daily_cap_usd` `*float64`, `per_run_cap_usd`
 `*float64`, `counted_usd`/`spent_usd` float64, `notional_usd` float64
-(**notional**), `headroom_usd` `*float64` (**null = unavailable**),
+(**notional**), `leased_usd` float64 (no `omitempty` — the same figure §2's
+`leased_usd` carries, computed the same way, `runBudgetShow` through
+`watch.LeasedUSD`; it is *leased, not yet spent*, and `0` when nothing is
+leased), `headroom_usd` `*float64` (**null = unavailable**),
 `kill` `*showKill` (null = not killed). All caps are **null = unavailable** and
 never `0`.
 
@@ -351,7 +358,9 @@ both `*float64`.
 **`repo`, `default` or `none`**), `per_run_cap_usd` `*float64`,
 **`per_run_cap_source`** (string, no `omitempty` — `repo`, `default`, `global`
 or `none`; `perRunCapSource`), `counted_usd`, `spent_usd`,
-`notional_usd`, `headroom_usd` `*float64`, `kill` `*showKill`,
+`notional_usd`, `leased_usd` float64 (no `omitempty`, as on `showGlobal` and
+floored the same way: the repository's own outstanding lease),
+`headroom_usd` `*float64`, `kill` `*showKill`,
 `running` `[]showRun`. **`per_run_cap_source` is the "binding scope named"
 the design's §6.2 Spend screen draws** — it is already in the document and
 needs no CLI change (§4.3's "not a gap" note).
@@ -359,8 +368,8 @@ needs no CLI change (§4.3's "not a gap" note).
 **`compute_usd` is approved on each `showRepo` and no CLI release writes it
 yet** (the owner approved it on 2026-10-28, with §2's `leased_usd`): a
 `*float64` of the repository's compute dollars, an **estimate** by design
-(`runstore.Cost.ComputeUSD`, the same account §4 reports — and unlike
-`leased_usd` it is already a real wire name, on `report --json`'s rows and on
+(`runstore.Cost.ComputeUSD`, the same account §4 reports — and, like
+`leased_usd` now, already a real wire name, on `report --json`'s rows and on
 `runstore.Cost`). The console reads it as **optional** — an absent key or `null`
 is **unavailable** (`n/a`, never `0`), a number is **estimated** — and **no
 screen draws it yet**; the Spend redesign is the reader. It is the one key of
@@ -1753,6 +1762,70 @@ is stored), `--all` (every repository the local config lists, one view each),
 the console does not pass), `--json`, and the cloud flags `--project`,
 `--config`, `--gcp-project` and `--region`.
 
+### 6.14 `fugaro run --json` — the launch (design §5.1 rule 11)
+
+**Command:** `internal/cli/run.go` (`newRunCmd`), printed by `printLaunch` with
+`json.Encoder` and `SetIndent("", "  ")`: **one indented object**, the shape
+every command in the console's set prints (§9.2). **This is the one write in the
+whole console** — the operation `run.launch`, whose twenty-fourth row on the IPC
+allow-list V2.5.1a added (2026-10-28/29) — and the only document below that a
+launch produces rather than a read. The argv the console builds from the form's
+five fields, and the confirmation window the main process owns, are design §5.1
+rule 11's and are not repeated here; what this section settles is the shape of
+the answer those fields come back as.
+
+**Document:** `launchResult` —
+
+`project`, `run`, `repo`, `run_id`, `branch`, `ref`°, `execution`, `log_url`°,
+`status`, `pr`° (**int**), `previous_run`°, `recipe`°, `project_layer`°.
+`°` = `omitempty` (as in §3). `recipe` is `launchRecipe`: `name`, `source`.
+`project_layer` is `launchProjectLayer`: `sha256`, `generation`° (**int64** —
+which one layer the stored task actually carries, and never its text).
+
+**Four of the fields are the launch's own identity, and the fifth is a version
+of it the console built.** `project` is the Fugaro project the launch was cut
+for. `run` and `run_id` are the same run id under the CLI's two keys, and it is
+the id the console generated for that one confirmation window, not one the form
+could propose. `branch` is the branch the run's work goes on — a new run's, or,
+for a follow-up, the pull request's — and `ref`° is the ref a new run's branch
+is cut from, which its review measures the work against; `ref` is absent for a
+follow-up and a review run, whose review reads each pull request's own base. And
+**`repo` is the CLI's canonical `owner/name`**, not the `<provider>/<owner>/<name>`
+identity the installation's records carry: the conversion between the two is the
+console's own (`launchrules.launchRepoArgument`), and the main process checks
+this field against the value it asked for before the reply is believed.
+
+**`status` is `launched` or `already-launched` and nothing else.** The second is
+the CLI's own claim already holding this run id, and the design draws it as a
+**fact rather than as an error** (D23). `pr`° and `previous_run`° are a
+follow-up's pull request and the run it continues; `execution` is the execution
+the run is in; and `log_url`° is where the CLI prints the run's logs — **carried
+as text and never drawn as a link** (design §5.1 rule 2).
+
+**A launch that fails prints no document at all.** The CLI's refusals — an
+empty or oversized task, a title or a plan task past its cap, a budget
+pre-check, a claim already held, a credential it could not use — are returned as
+errors: `run` exits non-zero with the CLI's own sentence on stderr, which the
+console draws as text (`sanitizeRefusal`). So the reply this section documents is
+the *successful* launch's, and a screen that waited for a `status` field on the
+failure path would wait for a document no command prints. The one exception is
+inside the CLI, not on this surface: a batch launch prints a batch document once
+per attempt (`printBatch`), and the console never asks for one — the batch flag
+is on rule 11's excluded-flag list — so that shape is not this operation's.
+
+**The decoder is closed, and it is the contract's enforcer.** The main process
+reads this document with `decodeLaunchResult`
+(`console/src/main/launchrules.ts`): the keys must be exactly the ones above, the
+types are the ones the CLI writes, `status` must be one of the two words, and
+**an unknown key or a wrong type refuses the whole reply** rather than being
+ignored (rule 11). Every string is kept as text and bounded — nothing here is
+read as a sentence, a path or a link — and the renderer mirrors that decoder
+(`console/src/renderer/screens/launch.ts`'s `launchOutcomeOf`), so a reply with
+a key of its own draws the console's one "unreadable reply" sentence and never a
+partial set of facts. A replayed answer — a second click on the window's own
+button, or a re-sent call — is the app's own in-memory record of the first
+`launchResult` and reaches no child at all (design §5.1 rule 11).
+
 ## 7. The CLI gaps, settled against the code
 
 The console ships **without any of these** and must work, visibly degraded
@@ -1814,6 +1887,7 @@ and **not** off this document or the design:
 | **`plan graph`** | **no — it reads the graph artifact in the checkout, not a cloud** (`internal/cli/plan.go`, §6.9) |
 | `plan status` | yes (`newPlanStatusCmd`, §6.12) — a task's state is a *run's* state, so it reads the runs bucket too |
 | `coordinator status` | yes (`newCoordinatorStatusCmd`, §6.13) — with `--from-store` it is the one read here that asks nothing of the host (the stored view, through the caller's own credentials), and it is a cloud read all the same: the view lives in the project's database, so it carries `--project` and `--config` like the rest |
+| **`run`** | yes (`newRunCmd`, §6.14) — **the one row here that writes**: the launch (design §5.1 rule 11) is cut for a project like every cloud command, so it carries `--project` and `--config` too, and the task itself arrives on stdin rather than as a flag |
 
 So the console passes `--project <name>` (and `--config <path>` when the
 installation is not the ambient one) on **every spawn except the handshake**,
@@ -1826,13 +1900,17 @@ table against the live constructors.
 
 ## 9. What the console may do with all this
 
-1. **Every document in the console's set is read-only**, and the allow-list is
-   by exact argv (design §5.1 rule 6). Two commands this file describes are
-   writes, and neither is in the console's set: `fugaro cancel RUN --json`
-   (§6.3), which is on the design's "never" table and which no v1 console
-   spawns, and `fugaro accounts clear NAME` (§6.5a, credentials-service C1.21),
-   the operator's own write to the cascade's state. Nothing else here names a
-   write.
+1. **Every document in the console's set is read-only** — with **one exception,
+   the launch** (§6.14, design §5.1 rule 11), which is the console's single
+   write and whose confirmation window is the main process's own. The allow-list
+   is by exact argv (design §5.1 rule 6), and the write is on it: the
+   twenty-fourth operation is `run.launch` (V2.5.1a, 2026-10-28/29), and no other
+   argv that writes is reachable from a renderer. Two further commands this file
+   describes are writes, and **neither is in the console's set**: `fugaro cancel
+   RUN --json` (§6.3), which is on the design's "never" table and which no v1
+   console spawns, and `fugaro accounts clear NAME` (§6.5a, credentials-service
+   C1.21), the operator's own write to the cascade's state. Nothing else here
+   names a write.
 2. **Exactly two of the commands in the console's set are line-delimited:
    `watch --json` and `logs RUN
    --json`** (§2, §6.2 — the feed through

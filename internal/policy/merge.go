@@ -79,8 +79,10 @@ func Merge(ceiling Layer, tighten ...Layer) Effective {
 		// is a positive bound whose smaller value is the stricter one, so a
 		// layer that writes none of them (the job environment, the published
 		// policy node, a repository that has no governance: block) tightens
-		// nothing and the ceiling it was handed stands.
-		e.tightenGovernance(l.Governance, src)
+		// nothing and the ceiling it was handed stands. The rule is asked of
+		// the policy hook (hook.go), whose default is tightenGovernance: it is
+		// the whole of what moves to ee/governance for these keys (§5.2).
+		governanceHook().Tighten(&e, l.Governance, src)
 
 		if r := modeRank(l.Mode); r > 0 {
 			cur := modeRank(e.Mode)

@@ -890,7 +890,10 @@ notional dollars, the headroom under the caps, the kill switches and the runs
 in flight. By default the global figures and the project config's
 repositories; --repo one repository; --all every repository the database
 knows. Notional is a subscription's list-price figure, never billed and never
-capped. Counted is spent plus what runs have reserved and not released.
+capped. Counted is spent plus what runs have reserved and not released; --json
+carries that difference as leased_usd, the money leased and not yet spent: a
+crashed run's lease is never released, so it stays in the figure for the rest
+of the day.
 
 Usage: `fugaro budget show`
 

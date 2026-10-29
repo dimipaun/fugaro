@@ -227,12 +227,12 @@ test('null is unavailable, exactly as absence is', () => {
   assert.notEqual(got.total.daily_cap_usd, 0);
 });
 
-test('the approved `leased_usd` is accepted on total and repo, and produces nothing', () => {
-  // The owner approved `leased_usd` on `watch --json`'s `total` object and on
-  // every `repos[]` entry (2026-10-28); no CLI release writes it yet. The
-  // digest accepts it -- a document carrying it is not an unknown field -- but
-  // it reads nothing from it: no item and no field on the summary, the same
-  // restraint the console's schema keeps until a screen draws it.
+test('`leased_usd` is accepted on total and repo, and produces nothing', () => {
+  // `leased_usd` is on `watch --json`'s `total` object and on every `repos[]`
+  // entry now, written by the CLI. The digest accepts it -- a document
+  // carrying it is not an unknown field -- but it reads nothing from it: no
+  // item and no field on the summary, the same restraint the console's schema
+  // keeps until a screen draws it.
   const withLease = digest(doc({
     total: total({ leased_usd: 2.5 }),
     repos: [repo({ leased_usd: 1.25 })],

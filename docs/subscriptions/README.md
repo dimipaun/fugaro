@@ -5,7 +5,11 @@ owner questions B1–B17 were answered by the owner on 2026-10-27 (D432, D443 an
 D433, D434, D436, D437, D438, D440, D444, B6, B7 and B13 not the recommendation). The owner
 ruled every open tension, T10–T26, O4 and the key binding, the same day (T10, T11, T21 and T25
 not the recommendation), and the plan was re-sliced to follow. One consequence of the rulings,
-T27 (honour-based consoles against key-gated CLI commands), is open for the owner. Several tasks wait on counsel and on
+T27 (honour-based consoles against key-gated CLI commands), was **ruled (b) on 2026-10-29**: the
+paid commands warn, not refuse, until enforcement ships, and that warning is itself **deferred with
+the key work** (`docs/ee-reorg/reconciliation.md`, D523), so for now everything is available to
+all. That plan **supersedes** S1.1–S1.5, S1.7 and S1.9; S1.6 is carried there as E3.2, S1.8
+stands and S1.10 (Check 178) is deferred until enforcement. Several tasks wait on counsel and on
 the new entity. Each task in the plan still needs the owner's own go.
 
 Spec owner: the repository owner (the byline in [spec.md](spec.md)). Spec received 2026-10-27;
@@ -21,7 +25,7 @@ carries a figure.
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The owner's "Fugaro Subscriptions Spec", an excerpt: the commercial lines are left out (its opening note lists them) |
-| [reconciliation.md](reconciliation.md) | Findings F1–F47 against the code, the licence files and the earlier rulings; decisions D430–D448 with the owner's answers; B1–B17; resolutions R1–R6; tensions T1–T26, all ruled 2026-10-27, and T27, a consequence the rulings create (open) (a "Rulings" section; the tensions as raised are kept); open items O1–O5; UNVERIFIED U1–U12. **Where it disagrees with `spec.md`, it wins** |
+| [reconciliation.md](reconciliation.md) | Findings F1–F47 against the code, the licence files and the earlier rulings; decisions D430–D448 with the owner's answers; B1–B17; resolutions R1–R6; tensions T1–T26, all ruled 2026-10-27, and T27, a consequence the rulings create (ruled 2026-10-29) (a "Rulings" section; the tensions as raised are kept); open items O1–O5; UNVERIFIED U1–U12. **Where it disagrees with `spec.md`, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Slices S0 (Terms and licence docs), S1 (the moves into `ee/`), S2 (the per-organisation key and its verifiers), S3 (the owner-operated key service), S4 (seat estimate), S5 (roles design), S6 (lapse state), S7 (website), S8 (owner, counsel, accountant); levels, critical path, shared files, Checks 170–179. Nothing in it is approved |
 
 ## Deviations from the owner's text

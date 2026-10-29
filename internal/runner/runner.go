@@ -218,6 +218,12 @@ type run struct {
 	// fugaro.yaml during the run changes neither.
 	spend  Spend
 	policy policy.Effective
+	// govLayers are the three layers the policy merge consumed, kept as they
+	// were handed to it: the effective policy cannot say which of them asked
+	// for a governance key, and a build whose hook ignores governance resolves
+	// none of them, so the layers themselves are what "somebody wrote this"
+	// has to be read from (governance_hook.go, noteIgnoredStageBound).
+	govLayers []policy.Layer
 	// ceiling is the layer the merge started from: the job environment's
 	// budget, or — when the project has published a policy — the policy node
 	// (resolvePolicy). Error messages name the right one.
@@ -263,7 +269,11 @@ type run struct {
 	// rules (the first fails the stage) and its token count.
 	wroteManaged bool // this run wrote the managed settings file (guarded by mu)
 	warnedKnob   bool // the routing-settings knob's Cloud Run warning was logged
-	stageExtra   func(stage string) (violations []string, tokens int64)
+	// ignoredGovernanceSaid is whether the untagged build's one line about the
+	// governance block it ignores has been written: the line is about the
+	// build, so a run says it once however many stages it has (guarded by mu).
+	ignoredGovernanceSaid bool
+	stageExtra            func(stage string) (violations []string, tokens int64)
 	// sess is the run's session with the budget backend; nil when the run
 	// has none. frozen is set when the agent loop is over, after which a
 	// halt from the backend changes nothing. Both guarded by mu.
@@ -2463,28 +2473,12 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 // that is exhausted at that instant. A fourth answer ends the run named.
 const maxCredentialResumes = 3
 
-// stageTimeout is a stage's own wall-clock ceiling, read off the run's
-// resolved policy (T7.6): the effective stage_timeout of the one merge every
-// governance key goes through, so the project layer's block is the ceiling,
-// the default branch's file and the repository's own may only tighten it, and
-// a value that would loosen an upper layer is recorded in result.json and
-// warned about like any other (policy.Merge, PolicyKeyPath). Zero means the
-// run resolved none, and the stage is bounded by the run's own
-// timeouts.stage alone.
-//
-// Only the three stages governance bounds have one: an artifact run's plan
-// and render steps are not among them (T7.1).
+// stageTimeout is a stage's own wall-clock ceiling (T7.6), asked of the stage
+// hook: the tripwires move to ee/governance with the block they read, and the
+// stage's own bound is the first of them (R2, §5.3). The core default, and
+// what the value means, is stageTimeoutOf in governance_hook.go.
 func (r *run) stageTimeout(stage string) time.Duration {
-	t := r.policy.Governance.StageTimeout
-	switch stageTimeoutKey(stage) {
-	case policy.KeyStageTimeoutImplement:
-		return t.Implement
-	case policy.KeyStageTimeoutReview:
-		return t.Review
-	case policy.KeyStageTimeoutFix:
-		return t.Fix
-	}
-	return 0
+	return stageHook().Timeout(r.stageView(stage))
 }
 
 // stageTimeoutKey is the policy key a stage's own governance.stage_timeout is
@@ -2657,6 +2651,7 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	// a registry naming the run's own later one would say the stage has time
 	// it does not have.
 	own := r.stageTimeout(name)
+	r.noteIgnoredStageBound(name, own)
 	ownCtx, cancelOwn := deadlineCtx, context.CancelFunc(func() {})
 	if own > 0 && own < r.budget.Stage {
 		ownCtx, cancelOwn = context.WithTimeout(deadlineCtx, own)
@@ -2808,10 +2803,28 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	// requires of its caller. A cancel that landed first keeps the run
 	// cancelled: governanceHalt then records nothing, and the stage fails the
 	// way it would have without the timeout.
+	//
+	// What the ceiling leaves is the stage hook's to decide (governance_hook.go,
+	// §5.3): its default is the halt above, and a build whose hook raises
+	// nothing ignores the block the ceiling came from — the stage then falls
+	// through and fails on the bound the run's own timeouts.stage set, which is
+	// the stage hook's answer and not a refusal of the run (D522, G2).
 	if ownTimedOut {
-		if r.governanceHalt(ctx, runstore.HaltStageBudget, "time") {
-			if h := r.haltValue(); h != nil {
-				return res, false, &HaltError{*h}
+		if d := stageHook().TimedOut(r.stageView(name)); d.Halt {
+			// The reason is the core's to write, so a hook that left one
+			// outside the vocabulary governanceHalt records — and
+			// haltReasonText has words for, in result.schema.json's enum —
+			// fails the stage named instead of writing a halt nobody can read
+			// back (D521, D529, governance_hook.go).
+			if !governanceHaltReasons[d.Reason] {
+				r.fail(fmt.Sprintf("stage %s: the stage hook left the halt reason %q, which is not a governance stop this runner can record", name, d.Reason))
+				r.keepTail(fmt.Sprintf("%s-%d", name, n), stderrTail, transcriptTail)
+				return res, false, fmt.Errorf("stage %s: unknown halt reason %q", name, d.Reason)
+			}
+			if r.governanceHalt(ctx, d.Reason, d.Detail) {
+				if h := r.haltValue(); h != nil {
+					return res, false, &HaltError{*h}
+				}
 			}
 		}
 	}
