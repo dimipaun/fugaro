@@ -7,10 +7,10 @@
 # prepare-commit-msg and not commit-msg, because `git commit --no-verify`
 # skips commit-msg and does not skip this hook (githooks(5)).
 #
-# Only the three Fugaro-* trailers are written and nothing else in the message
-# is touched: Fugaro never writes a Signed-off-by (R1), and one already in the
-# message is left alone, because a cherry-pick can carry a real person's
-# (D644).
+# Only lines that are one of the three Fugaro-* trailers are written or taken
+# out, and nothing else in the message is touched: Fugaro never writes a
+# Signed-off-by (R1), and one already in the message is left alone, because a
+# cherry-pick can carry a real person's (D644).
 set -eu
 
 fugaro_chain='@FUGARO_CHAIN@'
