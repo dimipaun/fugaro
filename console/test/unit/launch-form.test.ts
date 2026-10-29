@@ -76,6 +76,7 @@ import {
   LAUNCH_TASK_MAX_BYTES,
   LAUNCH_TITLE_CLASS,
   LAUNCH_TITLE_MAX_RUNES,
+  LAUNCH_TRIM_SPACE,
   LAUNCH_UNREADABLE,
   launchBytes,
   launchCheck,
@@ -910,6 +911,7 @@ describe('the mirrors of the main process', () => {
       if (!main.ok) throw new Error(`main refused U+${code.toString(16).toUpperCase()}: not a candidate`)
       const bytes = main.value.bytes.length
       trimmed.push(bytes === 1)
+      expect(LAUNCH_TRIM_SPACE.has(code), `U+${code.toString(16).toUpperCase()}`).toBe(bytes === 1)
       expect(launchBytes(wrapped), `U+${code.toString(16).toUpperCase()}`).toBe(bytes)
     }
     // The list is only worth what it finds: a set that trimmed everything or
