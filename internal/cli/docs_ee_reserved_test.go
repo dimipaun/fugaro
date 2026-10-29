@@ -7,9 +7,10 @@ package cli
 // D532 (2026-10-29) ends the rule that only net-new features are born here: the
 // folder holds the business-licensed features, new ones and those the owner
 // moved out of the core (D434, D444), while the versions already released under
-// MIT stay MIT (R1). Nothing has moved yet, so the folder still holds no code,
-// and the listing half below has become R3's notice -- a file lands here with
-// the two-line notice rather than only as documentation.
+// MIT stay MIT (R1). Nothing has moved yet, and the first file that landed is
+// not a moved feature but E1.5's assembly point, `ee/register`. The listing half
+// below has become R3's notice -- a file lands here with the two-line notice
+// rather than only as documentation.
 //
 // The read goes through readRealEE (docs_ee_repo_test.go), so this test's name
 // is in eeReadingTests and the "core without ee/" workflow skips it there.
@@ -99,7 +100,6 @@ func TestDocsEELicensed(t *testing.T) {
 		"their own licence",
 		"](license)",
 		"not published yet",
-		"no code",
 		"nothing outside `ee/` imports anything under `ee/`",
 		"spdx-license-identifier: licenseref-fugaro-enterprise",
 	} {
@@ -157,11 +157,12 @@ func TestDocsEELicensed(t *testing.T) {
 		}
 	}
 
-	// D532 keeps the README's "no code yet" because nothing has moved, and that
-	// sentence is a fact about this tree: while every file under ee/ is the
-	// README or the licence it is true, and the first feature that lands makes
-	// it false until the README stops saying it. Without this the sentence
-	// could stand while the folder filled up.
+	// The README's sentence about code is a fact about this tree, so the two
+	// move together: while every file under ee/ is the README or the licence,
+	// the folder holds no code and the README has to say so; E1.5 landed the
+	// assembly point, ee/register, so the README stopped saying it. Without
+	// this the sentence could stand while the folder filled up, or the folder
+	// could empty out while the README claimed code that is not there.
 	features := 0
 	for _, f := range files {
 		if !eeNoticeExemptPath(f.rel) {
