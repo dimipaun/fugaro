@@ -93,10 +93,10 @@ type Diagnosis struct {
 	// row.cost.model_usd.
 	Stages []runstore.StageTiming `json:"stages,omitempty"`
 	// Reported is what providers said the run's calls cost, beside Charge,
-	// what the table said for the provider routes' calls (the charge
-	// always settles; Claude's spend is not in it). Zero when no provider
-	// reported one. ReportedWarning is set when the two differ by more than
-	// reportedGapPct percent.
+	// what the run charged the provider routes' calls -- the table's price
+	// with the fee, or the report where it floors an unpriced tier's charge.
+	// Claude's spend is not in it. Zero when no provider reported one.
+	// ReportedWarning is set when the two differ by more than reportedGapPct.
 	Reported        float64 `json:"reported_usd,omitempty"`
 	Charge          float64 `json:"charge_usd,omitempty"`
 	ReportedWarning string  `json:"reported_warning,omitempty"`
@@ -694,7 +694,7 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 		fmt.Fprintf(&b, "Route:    %s\n", oneLine(spendList(d.Route)))
 	}
 	if d.Reported > 0 {
-		fmt.Fprintf(&b, "Reported: providers said $%.4f; charged $%.4f (the table price settles)\n", d.Reported, d.Charge)
+		fmt.Fprintf(&b, "Reported: providers said $%.4f; charged $%.4f (the table price settles; an unpriced tier's charge is floored by the report, clamped to the call's reservation)\n", d.Reported, d.Charge)
 	}
 	for _, w := range d.PinWarnings {
 		fmt.Fprintf(&b, "Warning:  %s\n", oneLine(w))

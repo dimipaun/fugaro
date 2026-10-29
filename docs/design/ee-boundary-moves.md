@@ -4,8 +4,8 @@ Status: **design, no code. Nothing described here is built.** It is task E0.3 of
 `docs/ee-reorg/implementation-plan.md` (slice E0, level L0), and it supersedes subscriptions
 S1.1's file lists where the two differ — the differences are marked *corrected by E0.3* below and
 listed in one place in §11. Every decision it rests on (D520–D536) is answered in
-`docs/ee-reorg/reconciliation.md` §4; the one answer it records that the plan's files do not carry
-yet — O7 — is flagged as still open there, in §12.
+`docs/ee-reorg/reconciliation.md` §4; the one answer it records that the plan's files did not carry,
+O7, is written into them by this commit (§12).
 
 Every path and symbol below was verified against the tree at `ac06578a` by name — a file, a
 function, a constant or a struct field, not a paraphrase — because this document is what E1.1–E1.7
@@ -394,6 +394,8 @@ first wins, and the checkpoint report is the core plumbing that reads `runstore.
 - **Every seam is a package-level value whose default is the core implementation, and `ee/register`
   sets it once.** Each setter refuses a second call from anyone else, so nothing can quietly halve
   the enforcement a tagged binary registered. The edition is set the same way (§7).
+- **`ee/register` panics on any setter error, and only `ee/register` may call a `Set*`** (an
+  eeboundary or source-scan test pins it).
 - **A seam that switches behaviour *off* is test-only**: the `SetCore()`-style seams live in an
   `export_test.go` beside the hook, never in production code, so no core caller can turn governance
   off in a tagged binary. `export_test.go` is compiled only into that package's own tests.
@@ -512,8 +514,9 @@ consequences worth stating here rather than discovering in E1.3:
   variable: `internal/cli/edition.go` (E1.3) makes the setter flip a `bool`, and the value it reports
   is derived from *whether `ee/register`'s `init` ran it*, which is a fact about which files the build
   compiled — `cmd/fugaro/ee_on.go` under `//go:build ee` and nothing else. There is no string for
-  `-X` to write, so `-X github.com/…/internal/cli.Edition=ee` is not merely ineffective, it is a link
-  error; and a tagged build has no `core` string to write into either.
+  `-X` to write, so `-X github.com/dimipaun/fugaro/internal/cli.Edition=ee` is silently ignored: the
+  build succeeds and the edition stays what the compiled files make it; and a tagged build has no
+  `core` string to write into either.
 - The contrast is the point. `Version` *is* a package-level string
   (`internal/cli/root.go:15`, `var Version = "dev"`), and `images/base/Dockerfile:34` sets it with
   `-X` on purpose. The edition deliberately does not live there: if it did, a build flag could raise
