@@ -557,6 +557,60 @@ describe('the spawn table and the argv it builds', () => {
     expect(argvFor('budget.show', {}, safeContext())).not.toContain('--config')
   })
 
+  it('adds --compute to `budget show` alone, and only when the caller asks', () => {
+    // `budget show --compute` is the one flag-conditioned read on this surface
+    // (`console/docs/json-contract.md` §3): it costs a listing of the runs
+    // bucket, so it is an argument a caller opts into rather than a word of the
+    // row, and the argv without it is byte for byte the one this console has
+    // always spawned.
+    expect([...argvFor('budget.show', { compute: true }, safeContext())]).toEqual([
+      'budget',
+      'show',
+      '--json',
+      '--compute',
+      '--project',
+      PROJECT,
+    ])
+    expect([...argvFor('budget.show', {}, safeContext())]).toEqual([
+      'budget',
+      'show',
+      '--json',
+      '--project',
+      PROJECT,
+    ])
+    // `false` is a flag argv does not carry, exactly as `--all` reads.
+    expect([...argvFor('budget.show', { compute: false }, safeContext())]).not.toContain('--compute')
+    // The flag combines with the two words the CLI admits beside it
+    // (`internal/cli/budget.go`), so the surface admits both pairings too.
+    expect([...argvFor('budget.show', { repo: 'acme/widgets', compute: true }, safeContext())]).toEqual([
+      'budget',
+      'show',
+      '--json',
+      '--repo',
+      'acme/widgets',
+      '--compute',
+      '--project',
+      PROJECT,
+    ])
+    expect([...argvFor('budget.show', { all: true, compute: true }, safeContext())]).toContain('--compute')
+    // And no other row declares the key: a caller that reaches for it on a read
+    // whose figures nobody draws is refused by the row table, before an argv
+    // exists.
+    for (const operation of ['spend.report', 'runs.list', 'runs.stats', 'live.watch'] as const) {
+      expect(() => argvFor(operation, { compute: true }, contextFor(operation, {})), operation).toThrow(
+        `${operation} received compute, which it does not declare`,
+      )
+    }
+    // `--compute` is on `SPAWN_FLAGS` for the row that declares it, and it is
+    // not on the never-reachable table: the CLI genuinely admits the flag on
+    // this command, so what keeps it off every other row is the row table above
+    // -- which is where `--all` and `--mine` are kept too, not here.
+    expect(() =>
+      assertArgvFlags('budget.show', [FUGARO_BINARY_NAME, 'budget', 'show', '--json', '--compute']),
+    ).not.toThrow()
+    expect(SPAWN_FLAGS).toContain('--compute')
+  })
+
   it('spawns `plan status` with exactly these words, and no directory anywhere in them', () => {
     // The plan read's argv, word for word (plan GV2.1; the design allow-list's
     // `plan status --json` and its `--all`). It is written out rather than read
@@ -2312,9 +2366,10 @@ describe('the WSL resolution path', () => {
   it('gives the CLI inside the distribution Linux’s PATH, CHILD_ENV_KEYS and an empty WSLENV', () => {
     // The credential boundary's near side, on the WSL route: the environment the
     // CLI receives is built by `childEnvironment` and nothing else, and its PATH
-    // is a Linux one even though the host is Windows (F5, T-C2). `WSLENV` is the
-    // one key beside the eleven, and it is the *statement* that the Windows
-    // environment is not shared with the distribution (T-E2, D5(a)).
+    // is a Linux one even though the host is Windows (F5, T-C2). `WSLENV` is
+    // one of the two words this route writes itself, and it is the *statement*
+    // that the Windows environment is not shared with the distribution (T-E2,
+    // D5(a)).
     const wsl = installWslStub(freshDirectory(), { distros: TWO_DISTROS })
     const plan = planFor('budget.show', {}, safeContext({
       binaryPath: FUGARO_BINARY_NAME,

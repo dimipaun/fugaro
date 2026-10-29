@@ -145,16 +145,11 @@ export const LAUNCH_CLI_FLOOR = '0.11.2'
 
 /**
  * launchSupported answers whether one version line may be launched with, by
- * comparing it against `LAUNCH_CLI_FLOOR` at the patch level.
+ * comparing it against `LAUNCH_CLI_FLOOR` at the patch level (`meetsCliFloor`,
+ * below, which states why the comparison refuses what it refuses).
  *
- * The order of the tests is the rule, and each refusal is on the safe side of a
- * spend. An unreadable line, a `dev` build and a prerelease are all `false`: the
- * first two cannot be placed at all, and `parseCliVersion` deliberately does not
- * compare a prerelease tail (`0.11.2-rc.1` is read as `0.11.2`), so accepting
- * one here would launch with a release that has not happened. A line at or above
- * the floor -- including a build-metadata tail, which is the same release --
- * answers `true`, and a line below it answers `false` however close: `0.11.1`
- * carries no `--plan-task`.
+ * A line below the floor answers `false` however close: `0.11.1` is inside the
+ * supported minor `0.11` and carries no `--plan-task`.
  *
  * It is deliberately not a membership test, and the two questions disagree on
  * the same line in both directions: `0.11` is a member of
@@ -164,8 +159,60 @@ export const LAUNCH_CLI_FLOOR = '0.11.2'
  * banner, which is a banner and not a refusal.
  */
 export function launchSupported(version: string): boolean {
+  return meetsCliFloor(version, LAUNCH_CLI_FLOOR)
+}
+
+/**
+ * BUDGET_COMPUTE_CLI_FLOOR is the oldest CLI the Spend screen's caps read may
+ * ask for a repository's compute dollars, by passing `budget show --compute`.
+ *
+ * The flag is newer than the operation: it landed on the CLI's main on
+ * 2026-10-29 (`internal/cli/budget.go`'s `newBudgetShowCmd`; the PR that added
+ * `compute_usd` to each `showRepo`), and **no released CLI carries it yet** --
+ * `v0.12.1` is the newest tag and answers the flag with an unknown-flag error.
+ * `0.13.0` is the release that ships it, which is what makes this a floor
+ * rather than a range membership: `0.12` is a supported minor the console draws
+ * its whole dashboard for, and it is below the flag.
+ *
+ * It is asked only where the flag would be passed, and this console passes it
+ * from exactly one place: the Spend screen's caps read. Nothing else asks,
+ * because every other caller of `budget show` -- the rail and the Projects
+ * screen -- would pay for the runs-bucket listing the flag costs and draw none
+ * of it.
+ */
+export const BUDGET_COMPUTE_CLI_FLOOR = '0.13.0'
+
+/**
+ * budgetComputeSupported answers whether one version line may be asked for
+ * `budget show --compute`, by comparing it against `BUDGET_COMPUTE_CLI_FLOOR`
+ * at the patch level.
+ *
+ * **No caller asks it yet, and that is deliberate**: the console's caps read is
+ * `showBudget({})` in `src/renderer/entry.ts`, so no spawn passes `--compute`
+ * until that caller is flipped -- behind this predicate -- in its own reviewed
+ * run. The predicate ships first so that the caller's change is a change of a
+ * caller and not of a rule, and `version.test.ts` covers it at, below and above
+ * the floor in the meantime.
+ */
+export function budgetComputeSupported(version: string): boolean {
+  return meetsCliFloor(version, BUDGET_COMPUTE_CLI_FLOOR)
+}
+
+/**
+ * meetsCliFloor is the one patch-level comparison both floors above are asked
+ * by, so a rule learned on one of them cannot be missing from the other.
+ *
+ * The order of the tests is the rule, and each refusal is on the safe side of a
+ * spend. An unreadable line, a `dev` build and a prerelease are all `false`: the
+ * first two cannot be placed at all, and `parseCliVersion` deliberately does not
+ * compare a prerelease tail (`0.11.2-rc.1` is read as `0.11.2`), so accepting
+ * one here would act on a release that has not happened. A line at or above the
+ * floor -- including a build-metadata tail, which is the same release -- answers
+ * `true`, and a line below it answers `false` however close.
+ */
+function meetsCliFloor(version: string, floorLine: string): boolean {
   const parsed = parseCliVersion(version)
-  const floor = parseCliVersion(LAUNCH_CLI_FLOOR)
+  const floor = parseCliVersion(floorLine)
   if (!parsed.ok || parsed.version.kind !== 'release') return false
   if (!floor.ok || floor.version.kind !== 'release') return false
   const [core = ''] = parsed.version.raw.replace(/^v/, '').split('+')

@@ -449,6 +449,12 @@ export const CONSOLE_OPERATIONS = [
         required: false,
         why: 'the design allow-list admits `--all` on this command.',
       },
+      {
+        key: 'compute',
+        kind: 'flag',
+        required: false,
+        why: 'the CLI admits `--compute` on this command and it combines with `--repo` and `--all` alike (`internal/cli/budget.go`). It is opt-in because it costs a listing of the runs bucket, so only the Spend screen’s caps read passes it -- and only to a CLI that carries the flag (`budgetComputeSupported`, `src/shared/version.ts`).',
+      },
     ],
   },
   // spend.report is the one read the Spend screen's controls make, and the

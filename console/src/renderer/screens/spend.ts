@@ -460,10 +460,15 @@ export interface SpendCapRow {
   /** compute is the repository's compute dollars, an **estimated** figure by
    * design (`runstore.Cost.ComputeUSD`). The owner approved `compute_usd` on
    * each `showRepo` on 2026-10-28, and `budget show --compute` writes it since
-   * 2026-10-29 -- but this console's `budget.show` row passes no such flag
-   * (adding one is its own reviewed run), so the key still only arrives in a
-   * document a person hands this reader. It reads absent and `null` as `n/a`
-   * and draws nothing with it: the Spend redesign is the screen that will.
+   * 2026-10-29. The caps panel draws it as its own cell in its own state --
+   * `est. $0.12`, or `n/a` and never `$0.00` where the document carries none --
+   * and never adds it to the counted or the notional dollars beside it, which
+   * are two other accounts. It reads absent and `null` as `n/a` because that key
+   * is **flag-conditioned**: no released CLI writes it, and this console's
+   * `budget.show` row passes no `--compute` until its caller is flipped behind
+   * `budgetComputeSupported` (`src/shared/version.ts`), so today the cell draws
+   * `n/a` for every document the console itself produced and a figure for the
+   * one a person hands this reader.
    *
    * A value that is not a number is `n/a` too, and not a refusal, because this
    * reader refuses no document at all -- the caps panel is the console's
@@ -2376,6 +2381,9 @@ function capsPanel(factory: ScreenFactory, model: SpendModel): ScreenElement {
     item.setAttribute('data-key', drawnKey(name))
     numberCell(item, factory, 'span', row.counted, 'usd', 'spend-cap-counted')
     numberCell(item, factory, 'span', row.notional, 'usd', 'spend-cap-notional')
+    // Compute is a third account, so it is a third cell in its own state --
+    // never added to the counted or the notional dollars beside it.
+    numberCell(item, factory, 'span', row.compute, 'usd', 'spend-cap-compute')
     numberCell(item, factory, 'span', row.headroom, 'usd', 'spend-cap-headroom')
     scopeCell(item, factory, row.dailyCap, 'usd', row.dailyScope, 'data-daily-scope', 'spend-cap-daily')
     scopeCell(item, factory, row.perRunCap, 'usd', row.perRunScope, 'data-per-run-scope', 'spend-cap-per-run')
