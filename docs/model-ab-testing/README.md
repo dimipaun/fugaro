@@ -9,7 +9,7 @@ at `c192e8766` and the docs of the 22 PRs open on 2026-10-29.
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The owner's "Fugaro Model A/B Testing Spec", **verbatim** |
-| [reconciliation.md](reconciliation.md) | The headline table, findings F1–F22 against the code, resolutions R1–R5, decisions D550–D573 (all open), open items O1–O2, UNVERIFIED U1–U5. **Where it disagrees with `spec.md`, it wins** |
+| [reconciliation.md](reconciliation.md) | The headline table, findings F1–F22 against the code, resolutions R1–R5, decisions D550–D573 (all open), open items O1–O3, UNVERIFIED U1–U6. **Where it disagrees with `spec.md`, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Slices A1–A6, tasks A1.1–A6.2 (with A3.0), levels L0–L5, the critical path, the shared-files table, Checks 210–212. **Nothing in it is approved** |
 
 ## Headline
