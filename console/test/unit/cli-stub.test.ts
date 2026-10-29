@@ -33,6 +33,15 @@
 //     spec prints the command it should have been asked for -- and
 //     `coordinator status` holds its three fixed words, which are the spawn
 //     row's and not a screen's.
+//   - **the launch's answer** (V2.5.1c). The stub's `run --task-file - --json`
+//     is the console's one write, and it is answered through the launcher's own
+//     `decodeLaunchResult` here rather than in a suite that needs a display: the
+//     reply must echo the run id and the repository the console handed it, carry
+//     the six required strings and the `omitempty` ones as `null`, and be refused
+//     for every argv rule 11's row does not carry. Its one side effect --
+//     `runs.log`, one line per invocation with the task from stdin -- is read
+//     here too: it is the only place a launch spec can count the children a
+//     confirmation spawned.
 
 import { copyFileSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -42,6 +51,7 @@ import { spawnSync } from 'node:child_process'
 import { describe, expect, it } from 'vitest'
 
 import { parseInstallationsDocument } from '../../src/main/installlist'
+import { decodeLaunchResult } from '../../src/main/launchrules'
 import { decodeCoordinatorStatus, decodePlanStatus } from '../../src/shared/schema'
 
 /** STUB is the fixture this file runs, at the path the e2e helper copies from. */
@@ -66,12 +76,13 @@ function install(): string {
   return scratch
 }
 
-/** run executes the stub with these arguments, in its own directory. `sh` and not
- * the file itself: the shebang is the fixture's, and a checkout that lost the
- * executable bit (a zip download) must not turn this test red for a reason that
- * is not the stub's answers. */
-function run(directory: string, args: readonly string[]): Ran {
-  const result = spawnSync('sh', [join(directory, 'fugaro'), ...args], { encoding: 'utf8' })
+/** run executes the stub with these arguments, in its own directory, and hands
+ * it `input` on stdin -- which is how the launch's task reaches the child
+ * (`run --task-file -`). `sh` and not the file itself: the shebang is the
+ * fixture's, and a checkout that lost the executable bit (a zip download) must
+ * not turn this test red for a reason that is not the stub's answers. */
+function run(directory: string, args: readonly string[], input = ''): Ran {
+  const result = spawnSync('sh', [join(directory, 'fugaro'), ...args], { encoding: 'utf8', input })
   return { status: result.status, stdout: result.stdout, stderr: result.stderr }
 }
 
@@ -201,6 +212,125 @@ describe('the e2e stub’s own answers', () => {
     expect(answered.stderr).toContain('takes no further arguments')
   })
 
+  it('answers a launch with the run id and repository it was handed, and the console reads it', () => {
+    // The console's one write (design section 5.1 rule 11, V2.5.1a): a spec that
+    // launches in a real window reads this answer back through the launcher's own
+    // decoder, so a stub that printed a shape `decodeLaunchResult` refuses would
+    // put the whole launch path in front of a refusal the CLI never made.
+    const directory = install()
+    writeFileSync(join(directory, 'project.txt'), 'e2e\n')
+    const asked = [
+      'run',
+      '--task-file',
+      '-',
+      '--json',
+      '--run-id',
+      '20261029-044952-1a2b',
+      '--repo',
+      'owner/repo-a',
+      '--title=a launch of the recorded repository',
+      '--project',
+      'e2e',
+    ]
+    const answered = run(directory, asked)
+    expect(answered.status).toBe(0)
+    const decoded = decodeLaunchResult(answered.stdout)
+    expect(decoded.ok).toBe(true)
+    // The two identity checks the launcher makes of every reply, held here where
+    // there is no Electron: the id the console generated and the repository it
+    // converted the record to are what the answer must carry back.
+    expect(decoded.ok && decoded.value.runId).toBe('20261029-044952-1a2b')
+    expect(decoded.ok && decoded.value.repo).toBe('owner/repo-a')
+    expect(decoded.ok && decoded.value.project).toBe('e2e')
+    expect(decoded.ok && decoded.value.status).toBe('launched')
+    // `run` is the id as a screen draws it, and the branch the window's own
+    // `ref` row would show is the document's own business (`branch`/`ref` are
+    // the two fields the launcher does not check).
+    expect(decoded.ok && decoded.value.run).toBe('20261029-044952-1a2b')
+    expect(decoded.ok && decoded.value.recipe).toBe(null)
+    expect(decoded.ok && decoded.value.projectLayer).toBe(null)
+    expect(decoded.ok && decoded.value.pr).toBe(null)
+  })
+
+  it('records every launch it answers in `runs.log`, with the task it read on stdin', () => {
+    // The stub's one side effect, and the only place a spec can count the
+    // children a confirmation spawned: one line per invocation, the argv and --
+    // after the tab -- the task the console wrote to the child's stdin. The
+    // task's newlines are folded so the count of invocations is the count of
+    // lines.
+    const directory = install()
+    writeFileSync(join(directory, 'project.txt'), 'e2e\n')
+    const asked = (id: string): readonly string[] => [
+      'run',
+      '--task-file',
+      '-',
+      '--json',
+      '--run-id',
+      id,
+      '--repo',
+      'owner/repo-a',
+      '--project',
+      'e2e',
+    ]
+    expect(run(directory, asked('20261029-044952-1a2b'), 'first line\nsecond line\n').status).toBe(0)
+    expect(run(directory, asked('20261029-045000-bcde'), 'another\n').status).toBe(0)
+    // A read is not a launch and writes no line: the file is the count of
+    // children a confirmation spawned, and nothing else.
+    writeFileSync(join(directory, 'version.txt'), '0.12.0\n')
+    expect(run(directory, ['version']).status).toBe(0)
+    const lines = readFileSync(join(directory, 'runs.log'), 'utf8').split('\n').filter((line) => line !== '')
+    expect(lines).toHaveLength(2)
+    expect(lines[0]).toBe(
+      'run --task-file - --json --run-id 20261029-044952-1a2b --repo owner/repo-a --project e2e\tfirst line second line',
+    )
+    expect(lines[1]).toContain('20261029-045000-bcde')
+  })
+
+  it('refuses a launch argv the row does not carry, and a launch with no seeded project', () => {
+    const directory = install()
+    writeFileSync(join(directory, 'project.txt'), 'e2e\n')
+    // A word rule 11's row has no place for. The row is `run --task-file -
+    // --json --run-id <id> --repo <owner/name> [--title=<T>] [--plan-task=<P>]
+    // --project <name> [--config <path>]`, and a console that asked for anything
+    // else is one whose launch this stub must not answer.
+    const extra = run(directory, [
+      'run',
+      '--task-file',
+      '-',
+      '--json',
+      '--run-id',
+      '20261029-044952-1a2b',
+      '--repo',
+      'owner/repo-a',
+      '--project',
+      'e2e',
+      '--pr',
+      '7',
+    ])
+    expect(extra.status).toBe(2)
+    expect(extra.stderr).toContain("was asked for '--pr'")
+    // The task arrives on stdin and never as a word.
+    const positional = run(directory, ['run', '--json', '--run-id', '20261029-044952-1a2b', '--project', 'e2e'])
+    expect(positional.status).toBe(2)
+    expect(positional.stderr).toContain("answers 'run --task-file - --json'")
+    // And the `--project` every read and this write carry is held to the seeded
+    // one, like every other command's.
+    const other = run(directory, [
+      'run',
+      '--task-file',
+      '-',
+      '--json',
+      '--run-id',
+      '20261029-044952-1a2b',
+      '--repo',
+      'owner/repo-a',
+      '--project',
+      'other',
+    ])
+    expect(other.status).toBe(2)
+    expect(other.stderr).toContain("was asked without --project e2e")
+  })
+
   it('refuses a command outside the allow-list, and the sentence names every one it answers', () => {
     const directory = install()
     // The seeded project, so the refusal is the allow-list's and not the
@@ -215,6 +345,9 @@ describe('the e2e stub’s own answers', () => {
     expect(answered.stderr).toContain('plan status --json')
     expect(answered.stderr).toContain('coordinator status --from-store --all --json')
     expect(answered.stderr).toContain('watch --json')
+    // ...and the one **write** (V2.5.1a): a launch a spec did not expect is
+    // named in that same sentence rather than answered by a fallback.
+    expect(answered.stderr).toContain('run --task-file - --json')
     expect(answered.stderr).toContain("was asked for 'runs'")
   })
 })

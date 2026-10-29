@@ -57,6 +57,28 @@
 #     row's own words, because the screen has no control that turns either off,
 #     so the stub holds all three flags exactly rather than answering a question
 #     this console should never have been able to ask.
+#   * `run --task-file - --json --run-id <id> --repo <owner/name> [--title=<T>]
+#     [--plan-task=<P>] --project <name> [--config <path>]` -- the console's one
+#     **write** (design section 5.1 rule 11, V2.5.1a; `src/main/spawn.ts`'s
+#     `run.launch` row). The task arrives on the child's **stdin**, which is what
+#     `--task-file -` means, and the answer is `internal/cli/run.go`'s
+#     `launchResult` as this console's `decodeLaunchResult` reads it: the six
+#     required strings, `status: "launched"` and the six `omitempty` fields as
+#     JSON `null`. `run_id` and `repo` **echo what the console sent** (the
+#     launcher checks the reply's own against the launch it cut) and `run` is the
+#     id as a screen draws it; `branch`/`ref` say `main`, which the console does
+#     not check. Every word of the row is held exactly and in order -- an argv
+#     carrying anything else is refused -- because a stub that answered a launch
+#     this console should never have been able to make would hide the thing the
+#     spec is about.
+#
+#     This is also the one answer with a **side effect**: one line per invocation
+#     is appended to `runs.log` beside this script -- the argv, a tab, and the
+#     task the child read on stdin with its newlines folded to spaces. That file
+#     is the only way a spec can count the children a confirmation actually
+#     spawned (a launch writes no spawn log of its own on the machine), and it is
+#     the only place the task text ever lands, since the console puts it in
+#     neither the process table nor the spawn log.
 #
 # **Everything else is refused, loudly, with exit 2.** A stub that answered
 # whatever it was asked would hide the thing these specs are about: if the
@@ -212,7 +234,59 @@ case "$command" in
     fi
     cat "${here}/coordinator-status.json"
     ;;
+  run)
+    # The launch (design section 5.1 rule 11): the row's argv word for word, and
+    # the task on stdin. `arguments` is the whole invocation as one string, for
+    # the refusals and for `runs.log`.
+    arguments="run $*"
+    if [ "${1:-}" != '--task-file' ] || [ "${2:-}" != '-' ] || [ "${3:-}" != '--json' ]; then
+      refuse "the stub fugaro answers 'run --task-file - --json' and was asked for '$arguments'"
+    fi
+    shift 3
+    if [ "${1:-}" != '--run-id' ] || [ $# -lt 2 ]; then
+      refuse "the stub fugaro answers 'run --task-file - --json --run-id' and was asked for '$arguments'"
+    fi
+    run_id=$2
+    shift 2
+    if [ "${1:-}" != '--repo' ] || [ $# -lt 2 ]; then
+      refuse "the stub fugaro answers 'run --task-file - --json --run-id <id> --repo' and was asked for '$arguments'"
+    fi
+    repository=$2
+    shift 2
+    # What is left of rule 11's row: the two single-word fields when the window
+    # carried them, and then the `--project` every read and this write carry,
+    # which the scan above has already held to the seeded project.
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --title=* | --plan-task=*)
+          if [ "${1#*=}" = '' ]; then
+            refuse "'run' was asked for '$1' with no value"
+          fi
+          shift
+          ;;
+        --project | --config)
+          if [ $# -lt 2 ]; then
+            refuse "'run' was given '$1' with no value"
+          fi
+          shift 2
+          ;;
+        *)
+          refuse "'run --task-file - --json' was asked for '$1'"
+          ;;
+      esac
+    done
+    # The whole task, from the console's own stdin: `launch.ts` writes the
+    # trimmed text and no newline after it, and a stub that never read it would
+    # leave the writing end of the pipe to fail on a closed reader.
+    task=$(cat)
+    # The scratch record: one line per invocation. The task's newlines are
+    # folded so the count of invocations is the count of lines.
+    task_folded=$(printf '%s' "$task" | tr '\n' ' ')
+    printf '%s\t%s\n' "$arguments" "$task_folded" >> "${here}/runs.log"
+    printf '{"project":"%s","run":"%s","repo":"%s","run_id":"%s","branch":"main","ref":"main","execution":"fugaro-run-a1b2c3","log_url":"","status":"launched","pr":null,"previous_run":"","recipe":null,"project_layer":null}\n' \
+      "$project" "$run_id" "$repository" "$run_id"
+    ;;
   *)
-    refuse "the stub fugaro answers 'version', 'config list --json', 'plan status --json', 'coordinator status --from-store --all --json', 'doctor --json' and 'watch --json', and was asked for '$command'"
+    refuse "the stub fugaro answers 'version', 'config list --json', 'plan status --json', 'coordinator status --from-store --all --json', 'doctor --json', 'watch --json' and 'run --task-file - --json', and was asked for '$command'"
     ;;
 esac
