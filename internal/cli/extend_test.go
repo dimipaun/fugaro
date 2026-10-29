@@ -236,8 +236,16 @@ func TestLateOrDuplicateRegistrationIsRefused(t *testing.T) {
 // order commands were added, so a registration that reuses a name an earlier
 // registration brought would be found after that command rather than instead
 // of it — an addition under a name the tree already answers to (design §5.1).
-// A name and an alias are the same collision, and a refused registration
-// reaches neither the registry nor the tree.
+// The collision is the same one whichever side of the second registration the
+// reused name sits on, and it is the accepted registration's aliases that make
+// the name half reachable at all: a repeated KEY is the pre-existing duplicate
+// check (TestLateOrDuplicateRegistrationIsRefused), and it is a key that
+// matches an earlier registration's alias, rather than its own name, that this
+// rule alone refuses.
+//
+// A refused registration reaches neither the registry nor the tree: the tree
+// holds the one accepted command under its own name, and nothing answers to
+// the names the refusals tried to reuse.
 func TestRegistrationTakesNoEarlierRegistrationsName(t *testing.T) {
 	extendState(t)
 	if err := RegisterCommand("fugaro-test-paid", func() *cobra.Command {
@@ -246,17 +254,19 @@ func TestRegistrationTakesNoEarlierRegistrationsName(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, tc := range []struct{ what, key, use, want string }{
-		{"a name an earlier registration holds", "fugaro-test-paid", "fugaro-test-paid", "already registered"},
-		{"a name an earlier registration holds as an alias", "fugaro-test-alias", "fugaro-test-alias", "an earlier registration already answers to that name"},
-		{"an alias an earlier registration holds", "fugaro-test-other", "fugaro-test-other", "an earlier registration already holds"},
+	for _, tc := range []struct {
+		what, key, use, want string
+		alias                []string
+	}{
+		{what: "a name an earlier registration holds as an alias", key: "fugaro-test-alias",
+			use: "fugaro-test-alias", want: "an earlier registration already answers to that name"},
+		{what: "an alias an earlier registration holds as a name", key: "fugaro-test-other",
+			use: "fugaro-test-other", alias: []string{"fugaro-test-paid"}, want: "an earlier registration already holds"},
+		{what: "an alias an earlier registration holds as an alias", key: "fugaro-test-third",
+			use: "fugaro-test-third", alias: []string{"fugaro-test-alias"}, want: "an earlier registration already holds"},
 	} {
-		var alias []string
-		if tc.want == "an earlier registration already holds" {
-			alias = []string{"fugaro-test-alias"}
-		}
 		err := RegisterCommand(tc.key, func() *cobra.Command {
-			return &cobra.Command{Use: tc.use, Aliases: alias}
+			return &cobra.Command{Use: tc.use, Aliases: tc.alias}
 		})
 		if err == nil {
 			t.Fatalf("%s (%s) was accepted: cobra would find the earlier command first", tc.what, tc.key)
@@ -270,6 +280,18 @@ func TestRegistrationTakesNoEarlierRegistrationsName(t *testing.T) {
 	}
 	if !registeredNames["fugaro-test-alias"] {
 		t.Error("the first registration's alias was not recorded as a name the tree answers to")
+	}
+
+	root := NewRootCmd()
+	want := append(coreRootPaths(), "fugaro fugaro-test-paid")
+	sort.Strings(want)
+	if got := commandPaths(root); !slices.Equal(got, want) {
+		t.Errorf("a refused registration reached the tree:\n%v\nwant\n%v", got, want)
+	}
+	for _, name := range []string{"fugaro-test-alias", "fugaro-test-other", "fugaro-test-third"} {
+		if c, _, _ := root.Find([]string{name}); c != nil && c.Name() == name {
+			t.Errorf("the refused name %s answers in the tree", name)
+		}
 	}
 }
 

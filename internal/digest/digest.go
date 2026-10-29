@@ -38,8 +38,15 @@ import (
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
-// MaxBytes caps the rendered report: a daily file is read in a pull request,
-// and D321's figure is "under ~8 KiB".
+// MaxBytes caps the report the digest builds: a daily file is read in a pull
+// request, and D321's figure is "under ~8 KiB".
+//
+// It is measured over the core report alone (capTo), never over the tail a
+// registered extra-section hook adds (section 5.4): the sections are appended
+// to a report already trimmed to fit, so a build that registered a hook may
+// commit a file larger than this bound by however much its sections cost. The
+// bound is the core's because the core is what owns the rows it drops;
+// TestCapMeasuresTheCoreReportNotTheSectionHook pins that.
 const MaxBytes = 8 << 10
 
 // The selection D325 pins: every flagged run whatever its cost, plus the

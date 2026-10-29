@@ -43,7 +43,7 @@ func markdownCore(d Digest) []byte {
 		b.WriteString(RunsTable(d.Runs))
 	}
 	if d.Dropped > 0 {
-		fmt.Fprintf(&b, "Rows not shown: %d. The report is capped at %d bytes and the cheapest unflagged rows go first.\n\n",
+		fmt.Fprintf(&b, "Rows not shown: %d. The report is capped at %d bytes before extra sections, and the cheapest unflagged rows go first.\n\n",
 			d.Dropped, MaxBytes)
 	}
 

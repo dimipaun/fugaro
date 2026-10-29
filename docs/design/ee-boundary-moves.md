@@ -390,6 +390,17 @@ first wins, and the checkpoint report is the core plumbing that reads `runstore.
   []Section) error`, **core default: none**, so `Markdown` prints the digest it prints today
   (`TestDigestHasNoExtraSectionByDefault`). T8.3's per-tier calibration joins through it and an
   untagged digest omits it (D528).
+- **The size cap measures the core report, not the hook's sections.** D321's ~8 KiB
+  (`digest.MaxBytes`) bounds the report `Build` produces — the figure, the rows, the summary block —
+  because that is what the core owns and what its row selection trims to fit. `Markdown` is
+  `markdownCore` plus the hook's tail, so a registered section's bytes are appended **after** the
+  trim and never count toward the bound: a tagged digest may commit a file larger than 8 KiB by
+  however much its sections cost, and the core never drops a row to pay for them. The alternative —
+  measuring the rendered report — ran the hook once per dropped row and let one build's sections
+  change which runs another build's readers see, so it is the core report the cap is measured over
+  (`TestCapMeasuresTheCoreReportNotTheSectionHook`), and the report's own dropped-rows sentence says
+  so: *"The report is capped at N bytes before extra sections, and the cheapest unflagged rows go
+  first"* (`TestDigestSizeCap` pins the wording).
 
 ### 5.5 The rule the seams share
 
