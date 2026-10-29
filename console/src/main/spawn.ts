@@ -107,6 +107,7 @@
 // read.
 
 import { spawn } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import { chmodSync, existsSync, lstatSync, mkdirSync, realpathSync, statSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { StringDecoder } from 'node:string_decoder'
@@ -124,7 +125,7 @@ import type { SpawnLogWriter } from './spawnlog'
 // partially initialized module at load time, and the alternative -- a second
 // copy of `wslExecutable` here, or a resolver in `wsl.ts` -- would be two
 // answers to one question.
-import { wslDistributions, wslExecutable } from './wsl'
+import { WSL_UTF8_VAR, WSL_UTF8_VALUE, wslDistributions, wslExecutable } from './wsl'
 
 /** JSONObject is a JSON object as it arrived: the CLI's document, undecoded.
  * Decoding it into the console's own shape is Task 2.0's `shared/schema.ts`;
@@ -1528,6 +1529,14 @@ export function parseVersionLine(text: string):
  * closed, rather than relying on a default whose exact behaviour is unverified
  * (U4). See `WSLENV_KEY`.
  *
+ * **`wslUtf8` adds the other** (T-F2): `WSL_UTF8=1`, which asks `wsl.exe` for
+ * UTF-8. It is set on every call that starts `wsl.exe` -- the queries
+ * (`src/main/wsl.ts`) and the CLI's own plan alike (review of `#981`, which
+ * found the CLI plan the one call whose stderr carries both `wsl.exe`'s own
+ * warnings and the wrapper's line) -- and it is this console's constant rather
+ * than anything read from the app's environment, so the allow-list above still
+ * decides everything that came from outside.
+ *
  * **It is an explicit option and not `platform === 'win32'`**, because the two
  * questions are different ones: the row a platform selects is the `PATH` a child
  * on that platform can use (`WIN32_LOCATIONS`' child prefixes are Linux's, F5),
@@ -1548,6 +1557,14 @@ export function childEnvironment(options: {
    * route's own plans and false everywhere else, including the `wsl.exe`
    * queries. */
   readonly wsl?: boolean | undefined
+  /** `wslUtf8` states `WSL_UTF8=1`, asking `wsl.exe` to answer in UTF-8 rather
+   * than in the machine's console encoding (T-F2; `WSL_UTF8_VAR`). It is true
+   * for **every** call that starts `wsl.exe` -- the machine's queries and the
+   * CLI's own plan alike (review of `#981`) -- and false for a child that has
+   * no `wsl.exe` in front of it. It is not a boundary key: it is this console's
+   * own constant, and `wsl`'s empty share list is what keeps it out of the
+   * distribution. */
+  readonly wslUtf8?: boolean | undefined
 }): Readonly<Record<string, string>> {
   const env: Record<string, string> = Object.create(null) as Record<string, string>
   for (const key of CHILD_ENV_KEYS) {
@@ -1561,6 +1578,7 @@ export function childEnvironment(options: {
   // `WSLENV` is the operator's business and not this console's, and a value
   // carried over from it would be a share list the console did not choose.
   if (options.wsl === true) env[WSLENV_KEY] = ''
+  if (options.wslUtf8 === true) env[WSL_UTF8_VAR] = WSL_UTF8_VALUE
   return Object.freeze(env)
 }
 
@@ -1915,7 +1933,7 @@ export interface SpawnPlan {
  * operator's checkout is litter in their repository. The shell's own stderr is
  * the channel the console already reads, it needs no path translated in either
  * direction, and the pid arrives on the same line as the marker T-F1 needs
- * (`WSL_WRAPPER_MARKER`). The stop itself is unchanged: one `kill` inside the
+ * (`WslWrapper.marker`). The stop itself is unchanged: one `kill` inside the
  * distribution, naming the pid the wrapper reported (D6(a), `wslStopArgs`).
  */
 export interface WslWrapper {
@@ -1925,6 +1943,13 @@ export interface WslWrapper {
    * invocation: the stop is a second `wsl.exe -d <distro> -e …`, and the
    * distribution it names must be the one the CLI is running in. */
   readonly distro: string
+  /** `marker` is the sentence **this** spawn accepts as the wrapper's own line:
+   * the fixed prefix and this spawn's random nonce (`wslWrapperMarker`). It is
+   * the string the script printed and the string every reader matches against,
+   * which is why it is a value of the plan rather than a module constant: a
+   * reader that matched the prefix alone would accept a line the CLI wrote
+   * (see `WSL_WRAPPER_MARKER_PREFIX`). */
+  readonly marker: string
 }
 
 /**
@@ -2081,9 +2106,11 @@ function assertDistroWordsAreSafe(wsl: WslRoute, configPath: string | undefined,
 export const WSL_SHELL_PROGRAM = 'sh'
 export const WSL_SHELL_FLAG = '-c'
 
-/** WSL_WRAPPER_MARKER is the sentence the wrapper's shell prints on stderr
- * before it `exec`s the CLI (T-F1), with the pid it is about to become after it
- * (T-F4).
+/** WSL_WRAPPER_MARKER_PREFIX is the fixed head of the sentence the wrapper's
+ * shell prints on stderr before it `exec`s the CLI (T-F1), with a **per-spawn
+ * nonce** after it and the pid it is about to become after that (T-F4): the
+ * marker is `${WSL_WRAPPER_MARKER_PREFIX} <nonce>` (see `wslWrapperMarker`), and
+ * the line is `<marker> <pid>`.
  *
  * **Why a marker rather than a guess.** The console has to tell "the CLI exited
  * non-zero" from "`wsl.exe` never got as far as starting the CLI": the first is
@@ -2096,14 +2123,46 @@ export const WSL_SHELL_FLAG = '-c'
  * `cliSentence` -- and the console removes it there, so nothing an operator
  * reads carries it.
  *
- * **The pid travels on the same line** (`<marker> <pid>`, see `wslWrapperFor`),
- * which is the whole of D6(a)'s capture: the line is printed before `exec`, so
- * after `exec` the number *is* the CLI's pid, and the console kills it inside
- * the distribution. It is not the first thing on stderr: `wsl.exe` prints its
- * own relay warnings before the distribution's command runs, so both the reader
- * (`wrapperLine`) and the remover (`withoutWrapperMarker`) look for the line
- * **anywhere** in the bounded head rather than at offset zero. */
-export const WSL_WRAPPER_MARKER = 'fugaro-console: the WSL wrapper started'
+ * **Why a nonce, and what it is not.** The line is read off the *same pipe* as
+ * everything the CLI and `wsl.exe` print, and the pid on it becomes a
+ * `kill -TERM <pid>` run inside the distribution **as the operator's user**
+ * (`wslStopArgs`). A marker that is a fixed string is therefore forgeable by the
+ * CLI's own stderr: a child that echoes the sentence and a pid makes the console
+ * kill a process of its choosing -- the reviewer's probe on `#981` was
+ * `<utf16 warning><marker> 4242\n<marker> 1\n`, which named pid 1. So the marker
+ * carries `WSL_WRAPPER_NONCE_BYTES` fresh random bytes, drawn once per plan and
+ * written into the `sh -c` script as a quoted constant: only the console's own
+ * script can print it, and only the **first** matching line is read (a second
+ * line that repeats the marker is not consulted, see `wrapperLine`).
+ *
+ * The nonce is **not a secret**: it is in the wrapper's script, which is in the
+ * child's own command line and in the spawn log's `argv` line (D1). It is
+ * required to be unguessable **by the CLI's output**, which is what closes the
+ * forgery: nothing the CLI prints can carry bytes it never saw. It is held to
+ * that and no more.
+ *
+ * **The pid travels on the same line**, which is the whole of D6(a)'s capture:
+ * the line is printed before `exec`, so after `exec` the number *is* the CLI's
+ * pid, and the console kills it inside the distribution. It is not the first
+ * thing on stderr: `wsl.exe` prints its own relay warnings before the
+ * distribution's command runs, and those warnings are UTF-16LE on the builds
+ * that ignore `WSL_UTF8` -- see `wrapperLine`, which is where the NUL bytes and
+ * the missing line ending they leave are handled. */
+export const WSL_WRAPPER_MARKER_PREFIX = 'fugaro-console: the WSL wrapper started'
+
+/** WSL_WRAPPER_NONCE_BYTES is how many random bytes a spawn's marker carries:
+ * 32, which is 256 bits of entropy and twice the 128 the fix's brief asks for.
+ * It is drawn from `randomBytes` in `wslWrapperFor`, and the cost of a larger
+ * nonce is 64 hex characters in one quoted word of a script. */
+export const WSL_WRAPPER_NONCE_BYTES = 32
+
+/** wslWrapperMarker is the marker one spawn accepts: the fixed prefix (T-F1)
+ * and the spawn's own nonce, space-separated so the line reads
+ * `<prefix> <nonce> <pid>`. The nonce is hex, so it carries no character the
+ * shell, the marker's own parsing or a `startsWith` could confuse. */
+export function wslWrapperMarker(nonce: string): string {
+  return `${WSL_WRAPPER_MARKER_PREFIX} ${nonce}`
+}
 
 /**
  * wslWrapperFor builds the `sh -c` script for one WSL plan: it marks that a
@@ -2114,7 +2173,7 @@ export const WSL_WRAPPER_MARKER = 'fugaro-console: the WSL wrapper started'
  *
  *   1. `printf '%s %s\n' <marker> "$$" >&2` -- the classification T-F1 needs
  *      and the pid T-F4 needs, on the one channel the console already reads
- *      (`WSL_WRAPPER_MARKER`). `$$` and not `$!`, and `exec` rather than a
+ *      (`WSL_WRAPPER_MARKER_PREFIX`). `$$` and not `$!`, and `exec` rather than a
  *      second process, because the pid that must be killed is the CLI's: after
  *      `exec` the shell *is* the CLI. `printf` rather than `echo` so the
  *      separator and the newline are the script's own and not the shell's
@@ -2127,21 +2186,39 @@ export const WSL_WRAPPER_MARKER = 'fugaro-console: the WSL wrapper started'
  * arithmetic of reading it back is a second `wsl.exe` per cancellation. See
  * `WslWrapper`.
  *
+ * **The marker carries a fresh nonce, drawn here** (see
+ * `WSL_WRAPPER_MARKER_PREFIX`): `randomBytes` per plan, so the sentence the
+ * console accepts is one only this script could have printed, and a CLI echoing
+ * the fixed text -- or any text of its own -- cannot make the console kill a pid
+ * of its choosing. The nonce is written into the script as a quoted constant,
+ * which is why it is a value of the plan: the script the plan spawns and the
+ * marker the readers accept are the same spawn's.
+ *
+ * A plan is built per spawn the console decides to make, so this is one nonce
+ * per spawn. A supervisor that **restarts** a child on its backoff schedule
+ * (`startSidecar`) re-runs the same plan and therefore prints the same marker:
+ * the nonce is unguessable either way, and a restarted child's head starts
+ * empty (`stderrHead` is cleared with it), so a line from the child before it is
+ * not read into the one after.
+ *
  * The script carries **no absolute path and no secret**: the words are the
  * CLI's own argv, each one through `shellQuoteWord` -- the one quoting function
  * in this module -- and every one of them has already passed Part D's
  * `distroShellUnsafe` refusal in `planFor`, so the quoting is the second layer
- * and not the only one.
+ * and not the only one. The nonce is one more word that goes through the same
+ * quoting, and it is hex: nothing about it needs the shell's help.
  */
 function wslWrapperFor(options: {
   readonly distro: string
   readonly cliWords: readonly string[]
 }): WslWrapper {
-  const statements = [`printf '%s %s\\n' ${shellQuoteWord(WSL_WRAPPER_MARKER)} "$$" >&2`]
+  const marker = wslWrapperMarker(randomBytes(WSL_WRAPPER_NONCE_BYTES).toString('hex'))
+  const statements = [`printf '%s %s\\n' ${shellQuoteWord(marker)} "$$" >&2`]
   statements.push(`exec ${options.cliWords.map(shellQuoteWord).join(' ')}`)
   return Object.freeze({
     words: Object.freeze([WSL_SHELL_PROGRAM, WSL_SHELL_FLAG, statements.join('; ')]),
     distro: options.distro,
+    marker,
   })
 }
 
@@ -2240,43 +2317,116 @@ function stopInsideDistribution(options: {
   }
 }
 
-/** wrapperLine finds the wrapper's own line in a bounded head of a child's
- * stderr, or `null` when the head holds none.
+/** WSL_TEXT_NUL and WSL_TEXT_BOM are the two code points a UTF-16LE `wsl.exe`
+ * leaves in stderr that is read as UTF-8, and the only two this module removes
+ * (review of `#981`).
+ *
+ * **Why they are there at all.** `WSL_UTF8=1` is set on every `wsl.exe` call
+ * (`WSL_UTF8_VAR`), but U9 records that the switch is not honoured on every
+ * build, and this machine cannot settle it. On a build that prints its own
+ * warnings in UTF-16LE, every ASCII character of a warning arrives as
+ * `<char> NUL`, and its line ending arrives as `\n NUL`: decoded as UTF-8 the
+ * head looks like `…\0\r\0\n\0<the wrapper's UTF-8 line>`. A reader that split
+ * on `\n` and asked `startsWith(marker)` then looked at a line *starting with a
+ * NUL* -- and missed the wrapper's line entirely, which is worse than cosmetic:
+ * a started CLI is reported as `wrapperStarted=false`, its exit status is
+ * nulled, the installation is shown as `no-distro`, and a cancellation misses
+ * the pid and can leave the CLI running inside the distribution.
+ *
+ * `NUL` is the boundary the missing newline becomes, and a leading `BOM` is the
+ * other shape a `wsl.exe` answer starts with; both are removed from text this
+ * module returns, and `NUL` counts as a line boundary while matching (see
+ * `wrapperMarkerOffset`). */
+const WSL_TEXT_NUL = '\u0000'
+const WSL_TEXT_BOM = '\uFEFF'
+
+/** withoutWslTextNoise removes those two code points from text the console will
+ * read or show. What it leaves is the warning `wsl.exe` meant to print: removing
+ * the NULs from UTF-16LE ASCII is exactly the ASCII. */
+function withoutWslTextNoise(text: string): string {
+  const stripped = text.split(WSL_TEXT_NUL).join('')
+  return stripped.startsWith(WSL_TEXT_BOM) ? stripped.slice(1) : stripped
+}
+
+/** wrapperMarkerOffset finds **the wrapper's own line** in a bounded head of a
+ * child's stderr and answers where it starts, or `-1` when the head holds none.
+ * It is the one matcher: `wrapperLine`, `wrapperPidIn` and
+ * `withoutWrapperMarker` all read the same offset, so the line that classifies a
+ * spawn (T-F1), the line whose pid is killed (T-F4) and the line removed from
+ * the operator's screen can never be three different lines.
  *
  * **Anywhere in the head, not at offset zero.** `wsl.exe` prints its own
  * warnings -- a relay notice, a proxy warning -- on stderr before the
  * distribution's command runs, so the wrapper's line is regularly not the first
  * thing on the pipe. A reader that insisted on the first bytes would call a
  * shell that did start a shell that did not (T-F1), and would leave the
- * console's own sentence on an operator's screen. The line is matched by its
- * start, so a CLI that printed the marker's text in the middle of a line of its
- * own is the CLI's own text and not the wrapper's. */
-function wrapperLine(head: string): string | null {
-  for (const line of head.split('\n')) {
-    if (line.startsWith(WSL_WRAPPER_MARKER)) return line
+ * console's own sentence on an operator's screen.
+ *
+ * **A line start, and the two spellings of one.** The marker is accepted where
+ * it is at the start of the head, or immediately after `\n` -- the ordinary
+ * case -- or immediately after a `NUL`, which is what a UTF-16LE warning with
+ * **no trailing newline** leaves in front of it (the warning's own characters
+ * are NUL-separated, and its last one is followed by the NUL that would have
+ * been the BOM of a character): `W\0a\0r\0n\0<marker> 4321` is one glued line
+ * under a `split('\n')`, and the console's line inside it is still the
+ * console's. A `BOM` is accepted as a boundary for the same reason. So a CLI
+ * that printed the marker's text in the middle of a line of its own is the CLI's
+ * own text and not the wrapper's -- and it is not the wrapper's for the stronger
+ * reason too: it does not carry this spawn's nonce.
+ *
+ * **The first matching line only, exactly once** (review of `#981`). A second
+ * line that carries the marker is **not** consulted: it is not the shell's --
+ * the script prints one line, before `exec` -- so it is the CLI's own text, and
+ * reading a pid off it would be reading a pid the CLI chose. That is the
+ * "ignored" half of the rule; the "noted" half is that it stays on the
+ * operator's screen, because `withoutWrapperMarker` removes only the line this
+ * function found. */
+function wrapperMarkerOffset(head: string, marker: string): number {
+  let from = 0
+  for (;;) {
+    const at = head.indexOf(marker, from)
+    if (at < 0) return -1
+    if (at === 0) return 0
+    const before = head[at - 1]
+    if (before === '\n' || before === WSL_TEXT_NUL || before === WSL_TEXT_BOM) return at
+    from = at + 1
   }
-  return null
+}
+
+/** wrapperLine is the wrapper's own line, without the NUL bytes a UTF-16LE
+ * preamble may have put in or in front of it, or `null` when the head holds
+ * none. */
+function wrapperLine(head: string, marker: string): string | null {
+  const at = wrapperMarkerOffset(head, marker)
+  if (at < 0) return null
+  const end = head.indexOf('\n', at)
+  return withoutWslTextNoise(head.slice(at, end < 0 ? head.length : end))
 }
 
 /** wrapperMarkerSeen answers whether a child's stderr head holds the wrapper's
  * own line: `true` means a child inside the distribution started, and `false`
- * that `wsl.exe` failed before starting one (T-F1). */
-function wrapperMarkerSeen(head: string): boolean {
-  return wrapperLine(head) !== null
+ * that `wsl.exe` failed before starting one (T-F1). `marker` is the plan's own
+ * (`WslWrapper`), so the question is about **this** spawn's wrapper. */
+function wrapperMarkerSeen(head: string, marker: string): boolean {
+  return wrapperLine(head, marker) !== null
 }
 
 /** wrapperPidIn reads the pid the wrapper reported, out of the same bounded head
- * (`<marker> <pid>`), or `null` when the head holds no such line or the number
- * on it is not a plain positive integer.
+ * (`<marker> <pid>`, with `marker` the plan's own -- T-F4), or `null` when the
+ * head holds no such line or the number on it is not a plain positive integer.
+ * A head that holds no line for **this** marker has no pid to report: a line the
+ * CLI wrote with the prefix alone is the CLI's text (see
+ * `WSL_WRAPPER_MARKER_PREFIX`), and the answer to it is `null`, which is a
+ * residual stated to the operator rather than a stop.
  *
  * The digits-only test is also what makes the value safe to hand to a shell:
  * `wslStopArgs` puts it in a `sh -c` command line, and a line that said
  * anything else would be shell syntax. Refusing here is the one guard, in the
  * one place, rather than a quoting rule every caller must remember. */
-export function wrapperPidIn(head: string): number | null {
-  const line = wrapperLine(head)
+export function wrapperPidIn(head: string, marker: string): number | null {
+  const line = wrapperLine(head, marker)
   if (line === null) return null
-  const digits = line.slice(WSL_WRAPPER_MARKER.length).trim()
+  const digits = line.slice(marker.length).trim()
   if (!/^[0-9]{1,10}$/.test(digits)) return null
   const pid = Number(digits)
   return pid > 0 ? pid : null
@@ -2288,15 +2438,41 @@ export function wrapperPidIn(head: string): number | null {
  * wrapper.
  *
  * The line is removed **wherever it is**, because `wsl.exe`'s own preamble comes
- * before it (see `wrapperLine`), and a line that ends in `\r` (a CRLF from a
- * relay that translated them) is the same line. Only a line that *starts* with
- * the marker is removed: a CLI that happened to print the same sentence's text
- * inside a line of its own keeps its own text. stderr with no such line is
- * returned untouched. */
-export function withoutWrapperMarker(stderr: string): string {
-  const lines = stderr.split('\n')
-  const kept = lines.filter((line) => !line.startsWith(WSL_WRAPPER_MARKER))
-  return kept.length === lines.length ? stderr : kept.join('\n')
+ * before it (see `wrapperMarkerOffset`), and a line that ends in `\r` (a CRLF
+ * from a relay that translated them) is the same line. Only a line that *starts*
+ * with the marker is removed: a CLI that happened to print the same sentence's
+ * text inside a line of its own keeps its own text. stderr with no such line has
+ * no line removed -- and **that is the case the cleaning below is for**: a
+ * `wsl.exe` that failed before the shell ever ran (`wrapperStarted === false`,
+ * the no-distro failure above all) prints nothing but its own warnings, and on a
+ * build that ignores `WSL_UTF8` every byte of them is UTF-16LE. There is no line
+ * to remove there and there is still text an operator must be able to read, so
+ * the cleaning is applied whenever the plan carries a wrapper and not only when
+ * a line matched. Only a plan with **no wrapper at all** (`marker === null`, the
+ * host route) is handed back untouched, because there the question does not
+ * arise: this console wrote nothing into that stream to begin with.
+ *
+ * **One line goes, not every line that matches**: the line removed is the one
+ * `wrapperLine` read (`wrapperMarkerOffset` answers it), which is the only line
+ * the console may call its own. A second line carrying the marker is the CLI's
+ * own text and stays on the screen, which is the visible half of "a second line
+ * is ignored" (see `wrapperMarkerOffset`).
+ *
+ * What is left is **cleaned of the two code points a UTF-16LE `wsl.exe` leaves
+ * in a UTF-8 read** (`WSL_TEXT_NUL`, a leading `WSL_TEXT_BOM`): removing the
+ * NULs from UTF-16LE ASCII is the warning `wsl.exe` meant to print, so the
+ * operator reads `wsl: a relay warning` rather than the same text with a NUL
+ * between every pair of characters. That matters most where this text is the
+ * whole answer: `probeVersion` turns a no-distro failure into its reason
+ * (`wrapperStarted === false`) and the picker shows the same sentence, both
+ * through `cliSentence`, which strips no control characters of its own. */
+export function withoutWrapperMarker(stderr: string, marker: string | null): string {
+  if (marker === null) return stderr
+  const at = wrapperMarkerOffset(stderr, marker)
+  if (at < 0) return withoutWslTextNoise(stderr)
+  const end = stderr.indexOf('\n', at)
+  const kept = stderr.slice(0, at) + stderr.slice(end < 0 ? stderr.length : end + 1)
+  return withoutWslTextNoise(kept)
 }
 
 /** wrapperArgs is the words handed to `command` beyond the program itself: the
@@ -2400,6 +2576,13 @@ export function planFor(
         // The WSL route is the one plan that starts a distribution process, so
         // it is the one environment that states `WSLENV` empty (T-E2, D5(a)).
         wsl: true,
+        // **`WSL_UTF8=1` on the CLI's own plan too** (T-F2, U9; review of
+        // `#981`). It was on the queries only, and that was the gap the marker
+        // defect arrived through: a CLI plan's `wsl.exe` prints its own relay
+        // warnings on the same stderr the wrapper's line travels on, and on a
+        // build that ignores this switch those warnings are UTF-16LE -- which
+        // is what left a NUL in front of the wrapper's line.
+        wslUtf8: true,
       }),
       project: context.target.project,
       backoff: context.backoff ?? DEFAULT_BACKOFF,
@@ -2435,11 +2618,17 @@ export function planFor(
  * line stays the operator's record of what ran (D1) on both routes: unchanged
  * on the host route, where there is no wrapper at all, and
  * `['C:\\…\\wsl.exe', '-d', 'Ubuntu', '--cd', '/home/dimi', '-e', 'sh', '-c',`
- * `printf '%s %s\n' 'fugaro-console: the WSL wrapper started' "$$" >&2; exec`
+ * `printf '%s %s\n' 'fugaro-console: the WSL wrapper started <hex nonce>' "$$" >&2; exec`
  * `'fugaro' 'version']` on the WSL one -- the CLI's own words are inside the last
  * element, quoted, which is where they are when it runs. It is the first element
  * of this array that is the program, and that is why the log's line is still
  * "the binary's absolute path first".
+ *
+ * **The WSL route's last element carries that spawn's nonce** (see
+ * `WSL_WRAPPER_MARKER_PREFIX`), so the line is the operator's record of what ran
+ * *and* of the sentence the console accepted from it. The nonce is not a secret
+ * -- it is in this line, which is the point of the log -- it is only unguessable
+ * by the CLI's own output.
  */
 export function spawnedArgv(plan: SpawnPlan): readonly string[] {
   return [plan.command, ...wrapperArgs(plan)]
@@ -2454,7 +2643,7 @@ export function spawnedArgv(plan: SpawnPlan): readonly string[] {
  * `wrapperStarted` is the one fact a `wsl.exe` failure cannot be read without
  * (T-F1, F26). On the WSL route the console does not start the CLI at all: it
  * starts `wsl.exe`, which starts a shell **inside a distribution**, and that
- * shell says so on stderr before it `exec`s the CLI (`WSL_WRAPPER_MARKER`). So
+ * shell says so on stderr before it `exec`s the CLI (`WslWrapper.marker`). So
  *   - `true` -- the shell ran, and whatever failed next was the CLI's or the
  *     distribution's after it started a child: the CLI's own exit status;
  *   - `false` -- no shell ever ran: `wsl.exe` failed *before* starting the
@@ -2533,6 +2722,9 @@ export function runToCompletion(
   if (binary === '') refused('a spawn plan with no binary is not a plan')
   const what = plan.argv.slice(1).filter((word) => !word.startsWith('-')).slice(0, 2).join(' ')
   const wrapper = plan.wrapper
+  // The marker **this** spawn's wrapper printed, or `null` on the host route,
+  // where there is no wrapper and so no line to look for (`WslWrapper.marker`).
+  const marker = wrapper === null ? null : wrapper.marker
 
   return new Promise<RunResult>((resolve, reject) => {
     let child: SpawnedChildLike
@@ -2627,7 +2819,7 @@ export function runToCompletion(
       // timeout by (T-F1, F26).
       const noteWrapper = (): void => {
         if (error instanceof SpawnTimeout) {
-          error.wrapperStarted = wrapper === null ? null : wrapperMarkerSeen(stderrHead)
+          error.wrapperStarted = marker === null ? null : wrapperMarkerSeen(stderrHead, marker)
         }
       }
       if (endedOnItsOwn) {
@@ -2639,14 +2831,14 @@ export function runToCompletion(
       // case -- the wrapper has already reported it -- needs no second read:
       // the shell prints it before it `exec`s the CLI, which is as soon as the
       // child is running.
-      const pid = wrapper !== null ? wrapperPidIn(stderrHead) : null
+      const pid = marker === null ? null : wrapperPidIn(stderrHead, marker)
       // Whether a residual is owed is decided by the read **inside** the timer,
       // not here: a cold distribution can print the wrapper's line a moment
       // after this deadline, and a pid that arrives during the grace is a pid
       // the console can name. Reading it here only would leave the stop naming
       // `null` while the process it could have stopped keeps running, and would
       // state a residual that is already untrue.
-      const needsPid = wrapper !== null && pid === null
+      const needsPid = marker !== null && pid === null
       child.kill('SIGTERM')
       if (!needsPid) {
         // Nothing is owed to the operator, so the refusal is not held back:
@@ -2664,7 +2856,7 @@ export function runToCompletion(
         // `fugaro` holding a lease inside the distribution with nothing on
         // screen to say so.
         if (!exited) child.kill('SIGKILL')
-        const late = needsPid ? wrapperPidIn(stderrHead) : pid
+        const late = needsPid ? wrapperPidIn(stderrHead, marker) : pid
         if (late !== null) stopInsideDistribution({ plan, spawner, log: deps.log, pid: late })
         if (needsPid) {
           // The residual is stated where the operator reads it, and here is the
@@ -2739,8 +2931,8 @@ export function runToCompletion(
         code,
         signal,
         stdout,
-        stderr: withoutWrapperMarker(stderr),
-        wrapperStarted: wrapper === null ? null : wrapperMarkerSeen(stderrHead),
+        stderr: withoutWrapperMarker(stderr, marker),
+        wrapperStarted: marker === null ? null : wrapperMarkerSeen(stderrHead, marker),
       })
     })
   })
@@ -3784,7 +3976,13 @@ export function startSidecar(
         // The wrapper's own line is removed here as it is in `runToCompletion`
         // (T-F1): it is the console's word about its own wrapper, and the
         // sentence a screen shows is the CLI's.
-        finish({ reason: decision.reason, code, signal, sentence: cliSentence(withoutWrapperMarker(stderr)), spawns })
+        finish({
+          reason: decision.reason,
+          code,
+          signal,
+          sentence: cliSentence(withoutWrapperMarker(stderr, plan.wrapper?.marker ?? null)),
+          spawns,
+        })
         return
       }
       attempt = decision.attempt
@@ -3842,11 +4040,15 @@ export function startSidecar(
       // for what it could not do -- rather than a stop that silently did not
       // happen.
       const wrapper = plan.wrapper
+      // The marker this plan's script printed -- one plan, so one marker across
+      // restarts, and the head it is read off is cleared on every one of them
+      // (`WslWrapper.marker`).
+      const marker = wrapper === null ? null : wrapper.marker
       // `child` is not null here: `stop()` returned above for a child that was
       // already gone -- nulled by `decide`, which `close` and the drain timer
       // after `exit` both call -- so this stop is armed for a child that was
       // still running when it was asked for.
-      const pid = wrapper !== null ? wrapperPidIn(stderrHead) : null
+      const pid = marker === null ? null : wrapperPidIn(stderrHead, marker)
       timers.setTimeout(() => {
         // The Windows-side child gets the stronger signal only if it is still
         // there to receive it; the stop **inside** the distribution is sent
@@ -3865,7 +4067,7 @@ export function startSidecar(
         // process, and -- the other half of the same mistake -- would tell the
         // operator the process "may still be running" after the console had
         // just killed it.
-        const late = pid ?? wrapperPidIn(stderrHead)
+        const late = pid ?? (marker === null ? null : wrapperPidIn(stderrHead, marker))
         if (late === null) {
           events.onNotice({
             text:
