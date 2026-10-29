@@ -11,7 +11,8 @@
 // one of its keys is a positive bound whose smaller value is the stricter
 // one: a stage budget that is a smaller fraction of the per-run cap, a token
 // ceiling, a timeout, a review ratio, a fan-out cap. What differs is where
-// the defaults enter. Fugaro ships them (DefaultGovernance) and they are the
+// the defaults enter. Fugaro ships them (ee/governance's Defaults, through the
+// hook; a build that links no ee/ features ships none) and they are the
 // ceiling a run starts from, so the layer that may loosen them is the
 // project's — Governance.WithDefaults turns that layer's block into the
 // ceiling — and every layer above it, the repository's own file included,
@@ -129,7 +130,7 @@ type TierExpectation struct {
 // map entry nothing checks. A tier added to the vocabulary is not a compile
 // error here, though: TestTierExpectationsAreTheVocabulary walks this struct by
 // reflection and fails until the new tier has a field, which is also what makes
-// WithDefaults and tightenGovernance name it.
+// WithDefaults and the moved tighten rule (ee/governance's Tighten) name it.
 type TierExpectations struct {
 	Trivial TierExpectation
 	Small   TierExpectation
@@ -230,8 +231,10 @@ type StageTimeout struct{ Implement, Review, Fix time.Duration }
 // (H1).
 //
 // The shipped figures arrive through the policy hook (hook.go), whose default
-// is DefaultGovernance: the values move to ee/governance and this is the one
-// place the core asks for them (§5.2).
+// is a zero Governance: the figures themselves are ee/governance's
+// (governance.Defaults, §5.2), and this is the one place the core asks for
+// them. An untagged build, whose hook is that default, therefore fills in
+// nothing here (D522).
 func (g Governance) WithDefaults() Governance {
 	d := governanceHook().Defaults()
 	if g.ReviewRatio == 0 {
@@ -266,8 +269,9 @@ func (g Governance) WithDefaults() Governance {
 }
 
 // DefaultGovernanceKeys are the keys of g whose value is the one Fugaro ships
-// for them (DefaultGovernance, through the hook as WithDefaults reads it),
-// keyed as Effective.Sources and Ignored.Key
+// for them (ee/governance's Defaults, through the hook as WithDefaults reads
+// it; an untagged build ships none, so none is named there, D522), keyed as
+// Effective.Sources and Ignored.Key
 // spell them. It is how a consumer tells a guardrail Fugaro itself set from
 // one a layer chose: the ceiling every run starts under is built with the
 // defaults (WithDefaults), so a key whose effective value is still the shipped

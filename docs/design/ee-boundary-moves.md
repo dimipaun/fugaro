@@ -263,18 +263,21 @@ credentials service's tiers are other tiers.
 | tests: `internal/policy/governance_test.go`, `tier_test.go`, `internal/runner/stage_timeout_test.go` and the internal one #1216 adds | `policy_test.go`, `runner_test.go` |
 
 **Correction (E2.3b).** An earlier draft of this section sent `stageTimeoutKey` and
-`noteStageTimeoutClamped` with `stageTimeout`. They stay in `internal/runner/runner.go`, and so do
-`stageTimeoutOf`'s unexported body, `noteIgnoredStageBound`, `governanceHalt`, `checkpointPR` and
-`checkpointReportPart`. The line D521 draws is *the wire and the mechanism stay, the policy goes*,
-and these are mechanism: `stageTimeoutKey` is the one stage-to-key mapping the bound a stage is given
-and the key a dropped one is recorded under are both read through, `stageTimeoutOf` is the same
-mapping for the bound itself, and the halt, its checkpoint and its report are what the core records.
-Moving them would put the vocabulary of the record and of `result.json` behind the seam. What moved
-is the answer, not the machinery: `(*run).stageTimeout` and the stage loop's halt decision stay in
-`runner.go` and ask the hook, and the hook's default pair is the untagged build's — no bound, no
-halt. The ignored-block line the untagged build writes (`noteIgnoredStageBound`, `D522`) is core for
-the same reason: it is read off the layers the merge consumed, so it says the same thing whether or
-not the policy half resolved anything.
+`noteStageTimeoutClamped` with `stageTimeout`. They stay in the core, and so do `stageTimeoutOf` and
+its export `StageTimeoutOf`, `noteIgnoredStageBound`, `governanceHalt`, `checkpointPR` and
+`checkpointReportPart`. Where each sits is the row above: `stageTimeoutOf` and `StageTimeoutOf` are
+in `internal/runner/governance_hook.go` with the rest of the seam, and
+`internal/runner/runner.go` keeps the stage loop, `(*run).stageTimeout` and `stageTimeoutKey`. The
+line D521 draws is *the wire and the mechanism stay, the policy goes*, and these are mechanism:
+`stageTimeoutKey` is the one stage-to-key mapping the bound a stage is given and the key a dropped
+one is recorded under are both read through, `stageTimeoutOf` is the same mapping for the bound
+itself, and the halt, its checkpoint and its report are what the core records. Moving them would put
+the vocabulary of the record and of `result.json` behind the seam. What moved is the answer, not the
+machinery: `(*run).stageTimeout` and the stage loop's halt decision stay in `runner.go` and ask the
+hook, and the hook's default pair is the untagged build's — no bound, no halt. The ignored-block line
+the untagged build writes (`noteIgnoredStageBound`, `D522`) is core for the same reason: it is read
+off the layers the merge consumed, so it says the same thing whether or not the policy half resolved
+anything.
 
 `ee/governance` also takes what has not been written yet: the checkpoint model call (T7.2–T7.3), the
 tier expected-cost checkpoint (T8.2) and the tier calibration (T8.3), all born there (D527), plus
@@ -291,9 +294,15 @@ tier expected-cost checkpoint (T8.2) and the tier calibration (T8.3), all born t
   `internal/cli/project_policy_test.go` keep only the core-default path (R8).
 - `ee/register/governance.go`, `ee/register/governance_test.go` (the identity check).
 
-`TestStageTimeout*` moves with the code and runs through `internal/runner/runnertest`;
-`TestCapsUnchangedByTheTag` (G7) lives in `ee/governance` and runs the spend caps with the hook set
-and unset, because the core cannot import `ee/` to do it the other way round.
+`TestStageTimeout*` moves with the code and runs through `internal/runner/runnertest`.
+
+The G7 caps claim is pinned in two places, because no single package can see both arms: the
+edition comparison — one merge with a governance-shaped hook installed and the identical merge with
+the hook back at the core default — is `internal/policy`'s `TestCapsAreUnmovedByTheGovernanceSeam`,
+which is where the hook's off-switch is reachable (the core cannot import `ee/` to install the real
+one); and `ee/governance`'s `TestCapsUnchangedByTheTag` pins, with the real rule installed, that the
+shipped tighten rule cannot move a cap and that the warning threshold and the kill switch live in
+`internal/budget`, which takes no governance and asks no hook at all.
 
 ## 5. The seams (E1.1, E1.2)
 
@@ -446,11 +455,12 @@ first wins, and the checkpoint report is the core plumbing that reads `runstore.
 | --- | --- | --- | --- |
 | `governance:` in `fugaro.yaml` or the project layer | decoded, validated, **one warning in the run log**, ignored — it tightens nothing | decoded and effective | E1.2 `TestUntaggedRunnerIgnoresGovernanceWithAWarning` |
 | `tier`, `expected_scope` on a task | decoded, the same one warning, ignored | read | E1.2, E2.3 |
+| the tier a run was dispatched at, in its record (`runstore.TierRecord`) | written with the zero expectation beside it: the figures are ee/governance's and this build ships none (E2.3b) | written with the expectation the run's governance resolved | E2.3b `TestRunRecordCarriesTheZeroExpectationInAnUntaggedBuild`, `ee/governance`'s `TestRunRecordCarriesTheShippedTierDefault` |
 | launch / `fugaro validate` / `--tier` warnings | judged by **the job image's edition**, never the launcher's — validate reads the record online only, and `--offline` leaves the edition unknown (§7) | same | E1.3 `TestGovernanceOnACoreImageWarns`, `TestTaggedImageFromAnUntaggedLauncherDoesNotWarn`, `TestValidateWarnsGovernanceOnACoreImage` |
 | `fugaro report`, `fugaro coordinator …` | core stub, non-zero exit with the Subscription Edition message (nothing can run, so warn-and-continue does not apply) | runs | E1.1 stub, E2.1/E2.2, G3 |
 | the launch's declaration | nothing declared (D535) | declared | E2.1 |
 | `diagnose`, the digest, the console's run detail | unchanged: they read the record | unchanged | G6, D529 |
-| spend caps, the 80% warning, the kill switch, rigor's per-mode budgets | unchanged (D520) | unchanged | E2.3 `TestCapsUnchangedByTheTag`, G7 |
+| spend caps, the 80% warning, the kill switch, rigor's per-mode budgets | unchanged (D520) | unchanged | E2.3 `TestCapsUnchangedByTheTag` (the shipped rule moves no cap; the warning and the refusal are `internal/budget`'s) and `internal/policy`'s `TestCapsAreUnmovedByTheGovernanceSeam` (the two editions compared), G7 |
 | a licence notice anywhere | **none — deferred with the key work (D523)** | none, for now | G4 |
 
 The warning the untagged runner writes is a **capability statement** — *this build ignores the

@@ -6,7 +6,7 @@
 // governance configuration and the CLI share one closed list rather than three
 // that can drift apart. It holds the vocabulary alone: the expectations each
 // tier starts with are governance defaults and live with them
-// (policy.DefaultGovernance), because a tier's value is a guardrail the project
+// (ee/governance's Defaults), because a tier's value is a guardrail the project
 // layer may set and never a property of the name.
 //
 // A tier is an expectation and never a cap: the deployed per-run cap stays the

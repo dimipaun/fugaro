@@ -17,10 +17,12 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/pricing/catalog"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/testutil"
+	"github.com/dimipaun/fugaro/internal/tier"
 )
 
 const cliMinimalYAML = `version: 1
@@ -345,10 +347,13 @@ func TestValidateRefusesVertexEnforce(t *testing.T) {
 // the merge records no dropped value, and a warning naming one would be about
 // a clamp this build does not perform (D522).
 //
-// The tagged arm — the file's looser 5m against the layer's 200ms, warned
-// about as "5m0s is looser than 200ms; the runner will use 200ms" — is the
-// merge ee/governance's TestTheGovernanceWarningsSourceIsTheMergesRecord
-// pins (E2.3).
+// What this test has to have for the assertion to mean anything is a block
+// that a tagged build *would* have clamped, which is how the file below is
+// written (5m in the file against the layer's 200ms): the tagged arm is the
+// merge ee/governance's TestTheGovernanceWarningsSourceIsTheMergesRecord pins —
+// it asserts the Ignored entry the warning is rendered from — and the
+// rendering itself is TestClampWarningRendersEachKeysWords below, which does
+// not need a merge at all.
 func TestValidateDoesNotClampTheProjectLayersGovernance(t *testing.T) {
 	layer := func(d time.Duration) *config.Governance {
 		return &config.Governance{StageTimeout: config.StageTimeout{Implement: config.Duration{Duration: d}}}
@@ -372,7 +377,9 @@ func TestValidateDoesNotClampTheProjectLayersGovernance(t *testing.T) {
 //
 // The tagged arm — the shipped figures as the ceiling, so a repository's 20 is
 // warned about as looser than 5 — is the merge
-// ee/governance's TestTheGovernanceWarningsSourceIsTheMergesRecord pins (E2.3).
+// ee/governance's TestTheGovernanceWarningsSourceIsTheMergesRecord pins (E2.3),
+// and the words that warning is rendered in are
+// TestClampWarningRendersEachKeysWords below.
 func TestValidateAcceptsALooserGovernanceValueWithNoLayer(t *testing.T) {
 	path := fileWithBudget(t, "budget: { mode: off }\n",
 		"governance: { review_ratio: 20, tiers: { small: { expected_usd: 2 } } }\n", "  auth: oauth")
@@ -382,6 +389,59 @@ func TestValidateAcceptsALooserGovernanceValueWithNoLayer(t *testing.T) {
 	}
 	if strings.Contains(errOut, "is looser than") {
 		t.Errorf("an untagged build clamped a governance value it does not enforce:\n%s", errOut)
+	}
+}
+
+// TestClampWarningRendersEachKeysWords: the sentence a dropped value is
+// reported in, key by key, and the path it is reported under (D16, T6.1).
+//
+// Every governance key takes clampWarning's default branch, which is why this
+// test is in the core and not in ee/governance: the rule that *finds* a looser
+// governance value moved with the policy, but the words it is reported in are
+// this package's, they are rendered from a policy.Ignored and nothing else, and
+// untagged there is no merge to produce one — so the entries are built by hand
+// here rather than driven through a command. The governance case is the one the
+// CLI's ceilling notes used to render end to end
+// (TestValidateDoesNotClampTheProjectLayersGovernance says why they no longer
+// do).
+func TestClampWarningRendersEachKeysWords(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		ig   policy.Ignored
+		path string
+		want string
+	}{
+		{"a looser governance value", policy.Ignored{Key: policy.KeyStageTimeoutImplement,
+			Value: "5m0s", Effective: "200ms", Source: policy.SourceCeiling},
+			"governance.stage_timeout.implement",
+			"5m0s is looser than 200ms; the runner will use 200ms"},
+		{"a looser tier expectation", policy.Ignored{Key: policy.TierKey(tier.Small, policy.KeyExpectedUSD),
+			Value: "2", Effective: "1", Source: policy.SourceCeiling},
+			"governance.tiers.small.expected_usd",
+			"2 is looser than 1; the runner will use 1"},
+		{"a value above the per-run ceiling", policy.Ignored{Key: policy.KeyPerRunUSD,
+			Value: "9", Effective: "5", Source: policy.SourceCeiling},
+			"budget.per_run_usd",
+			"9 is above the project's ceiling of 5; the runner will use 5, or less: a run's rigor mode only lowers the ceiling"},
+		{"a value above the token ceiling", policy.Ignored{Key: policy.KeyMaxRunTokens,
+			Value: "900000", Effective: "500000", Source: policy.SourceCeiling},
+			"agent.max_run_tokens",
+			"900000 is above the project's ceiling of 500000; the runner will use 500000"},
+		{"a looser mode", policy.Ignored{Key: policy.KeyMode,
+			Value: "observe", Effective: "enforce", Source: policy.SourceCeiling},
+			"budget.mode",
+			"observe is looser than the project's enforce; the runner will use enforce"},
+		{"models outside the allow-list", policy.Ignored{Key: policy.KeyAllowedModels,
+			Value: "sonnet,opus", Effective: "sonnet", Source: policy.SourceCeiling},
+			"budget.allowed_models",
+			"[sonnet, opus] names models outside the project's allow-list; the runner will use [sonnet]"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := clampWarning(tc.ig)
+			if got.Path != tc.path || got.Message != tc.want {
+				t.Errorf("clampWarning(%+v) = %q %q, want %q %q", tc.ig, got.Path, got.Message, tc.path, tc.want)
+			}
+		})
 	}
 }
 

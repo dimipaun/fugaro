@@ -15,7 +15,7 @@ import (
 // a stage that has no governance budget (an artifact run's plan and render,
 // T7.1), and a tier name outside the vocabulary (governance.tiers, T8.1) are
 // all refused rather than read as "no limit". A key left out, or written as
-// null or 0, is unset and takes Fugaro's default (policy.DefaultGovernance).
+// null or 0, is unset and takes Fugaro's default (ee/governance's Defaults).
 //
 // A count written as a fraction is not one of the cases: yaml.v3 reads 2.5
 // into every int64 key of fugaro.yaml as 2, max_run_tokens included, and the

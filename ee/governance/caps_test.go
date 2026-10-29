@@ -5,10 +5,20 @@ package governance_test
 
 // The caps are not governance (D520). What a run stops at is the deployed cap
 // and the kill switch, both the core's, and neither is a key of the block that
-// moved here: this file pins that the two editions answer them identically, so
-// the split cannot quietly have taken a money bound with it.
+// moved here.
+//
+// This file cannot compare the two editions: it blank-imports ee/register (see
+// policy_test.go), so the shipped rule is installed for every merge below, and
+// the off-switch that would take it out is internal/policy's test-only export,
+// which nothing outside that package can call. The edition comparison is
+// internal/policy's TestCapsAreUnmovedByTheGovernanceSeam. What is pinned here
+// is the other half, with the real rule in place: that the rule this package
+// ships writes governance keys and nothing else, so no cap can move because of
+// it, and that the warning and the refusal are internal/budget's, which takes
+// no governance and asks no hook at all.
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -18,29 +28,58 @@ import (
 	"github.com/dimipaun/fugaro/internal/policy"
 )
 
-// TestCapsUnchangedByTheTag: the per-run cap, the 80% daily warning and the
-// kill switch answer the same in a tagged build as in an untagged one (D520).
+// TestCapsUnchangedByTheTag: with this package's tighten rule installed, a
+// layer that asks for looser governance over a tighter cap leaves the cap where
+// it was, and nothing under the cap keys changes (D520, G6, G7).
 //
-// The three are core values the split never touches: per_run_usd is a policy
-// key of its own and not a governance one, and the warning and the refusal are
-// internal/budget's, which asks neither hook. The test holds the two apart the
-// way the code does — a governance merge cannot move a cap, and the decision
-// does not depend on what the merge made of the block.
+// The merge below is resolved the way a tagged run resolves one, shipped
+// defaults and all (policy.Governance.WithDefaults reads Defaults here), and
+// its core half is asserted against what the non-governance rules say on their
+// own — the shipped rule writes only the block's keys, so the two merges agree
+// on every one of them.
 func TestCapsUnchangedByTheTag(t *testing.T) {
-	// The shipped governance resolved (this binary's hooks) and the zero
-	// governance an untagged build resolves are the same cap: the key is not
-	// in the block, and no governance value can raise or replace it (G6).
-	tagged := policy.Merge(policy.Layer{PerRunUSD: 2, Governance: policy.Governance{}.WithDefaults()})
-	untagged := policy.Merge(policy.Layer{PerRunUSD: 2})
-	if tagged.PerRunUSD != 2 || untagged.PerRunUSD != 2 {
-		t.Fatalf("per_run_usd = %v tagged, %v untagged, want the deployed cap in both", tagged.PerRunUSD, untagged.PerRunUSD)
+	ceiling := policy.Layer{PerRunUSD: 2, PerDayUSD: 20, MaxRunTokens: 100000,
+		Mode: policy.ModeEnforce, AllowedModels: []string{"sonnet", "opus"},
+		MaxOutputCoder: 4000, MaxOutputReviewer: 8000,
+		Governance: policy.Governance{}.WithDefaults()}
+	looser := policy.Layer{PerRunUSD: 5, PerDayUSD: 30, MaxRunTokens: 200000,
+		Mode: policy.ModeObserve, AllowedModels: []string{"sonnet", "opus", "haiku"},
+		MaxOutputCoder: 8000, MaxOutputReviewer: 4000,
+		Governance: policy.Governance{ReviewRatio: 99, MaxSubagents: 99,
+			StageBudget:  policy.StageBudget{Implement: 0.99, Review: 0.99, Fix: 0.99},
+			StageTimeout: policy.StageTimeout{Implement: 30 * time.Minute, Review: 30 * time.Minute}}}
+
+	tagged := policy.Merge(ceiling, looser)
+	for key, want := range map[string]float64{
+		policy.KeyPerRunUSD: 2, policy.KeyPerDayUSD: 20, policy.KeyMaxRunTokens: 100000,
+	} {
+		got, ok := numericKey(tagged, key)
+		if !ok || got != want {
+			t.Errorf("%s = %v (%v), want the ceiling's %v: a governance value is not a cap", key, got, ok, want)
+		}
 	}
-	looser := policy.Merge(
-		policy.Layer{PerRunUSD: 2},
-		policy.Layer{Governance: policy.Governance{MaxSubagents: 1}},
-		policy.Layer{Governance: policy.Governance{MaxSubagents: 9, StageBudget: policy.StageBudget{Implement: 0.99}}})
-	if looser.PerRunUSD != 2 {
-		t.Errorf("a governance block moved per_run_usd to %v: a governance value is not a cap", looser.PerRunUSD)
+	if tagged.Mode != policy.ModeEnforce || len(tagged.AllowedModels) != 2 {
+		t.Errorf("the governance block moved mode/allowed_models to %q/%v", tagged.Mode, tagged.AllowedModels)
+	}
+	// The comparison that makes the claim: the same two layers with the block
+	// taken out of them resolve the core half identically, key for key, source
+	// for source and ignored entry for ignored entry. The shipped rule is
+	// installed for both merges, so what differs between them is the block
+	// alone — and the block is the only thing that turns out to matter.
+	bare := policy.Layer{PerRunUSD: 2, PerDayUSD: 20, MaxRunTokens: 100000,
+		Mode: policy.ModeEnforce, AllowedModels: []string{"sonnet", "opus"},
+		MaxOutputCoder: 4000, MaxOutputReviewer: 8000}
+	bareLooser := policy.Layer{PerRunUSD: 5, PerDayUSD: 30, MaxRunTokens: 200000,
+		Mode: policy.ModeObserve, AllowedModels: []string{"sonnet", "opus", "haiku"},
+		MaxOutputCoder: 8000, MaxOutputReviewer: 4000}
+	withoutBlock := policy.Merge(bare, bareLooser)
+	if got, want := stripGovernance(tagged), stripGovernance(withoutBlock); !reflect.DeepEqual(got, want) {
+		t.Errorf("the block moved a core key: with it %+v, without it %+v", got, want)
+	}
+	// The two arms have to differ, or the comparison is between a merge and
+	// itself: the block is what the shipped rule resolved.
+	if tagged.Governance == withoutBlock.Governance {
+		t.Errorf("the block left the governance %+v, the same as no block at all", tagged.Governance)
 	}
 
 	// The 80% warning is one threshold for both editions (WarnShare, D520):
@@ -60,8 +99,7 @@ func TestCapsUnchangedByTheTag(t *testing.T) {
 	// governance and asks no hook, which is the whole of the claim.
 	now := time.Now()
 	write := budget.Write{Amount: 1, Op: budget.OpLease, Day: budget.Day(now)}
-	kills := budget.Kills{Global: &budget.Kill{On: true}}
-	d := budget.Evaluate(budget.State{}, write, budget.Caps{}, kills, now)
+	d := budget.Evaluate(budget.State{}, write, budget.Caps{}, budget.Kills{Global: &budget.Kill{On: true}}, now)
 	if d.Allow || d.Reason != budget.ReasonKillSwitch || d.Scope != budget.ScopeGlobal {
 		t.Errorf("the kill switch answered %+v, want the global refusal (D520)", d)
 	}
@@ -78,4 +116,56 @@ func TestCapsUnchangedByTheTag(t *testing.T) {
 			t.Errorf("stage budget %v is not a fraction of the per-run cap (G6)", v)
 		}
 	}
+}
+
+// numericKey reads the cap keys the merge tightens on its own. They are three
+// different Go types behind one key string, so the test spells the three out
+// rather than reflecting over Effective.
+func numericKey(e policy.Effective, key string) (float64, bool) {
+	switch key {
+	case policy.KeyPerRunUSD:
+		return e.PerRunUSD, true
+	case policy.KeyPerDayUSD:
+		return e.PerDayUSD, true
+	case policy.KeyMaxRunTokens:
+		return float64(e.MaxRunTokens), true
+	}
+	return 0, false
+}
+
+// coreKey reports whether key is one Merge tightens with no governance and no
+// hook in the way: the money caps, the mode, the token ceiling, the allow-list
+// and the two output limits.
+func coreKey(key string) bool {
+	switch key {
+	case policy.KeyPerRunUSD, policy.KeyPerDayUSD, policy.KeyMode, policy.KeyMaxRunTokens,
+		policy.KeyAllowedModels, policy.KeyMaxOutputCoder, policy.KeyMaxOutputReviewer:
+		return true
+	}
+	return false
+}
+
+// stripGovernance is e with the block taken out of it: the resolved governance,
+// and every source and ignored entry that is not a core key. What is left is
+// the half the tag cannot touch (D520).
+func stripGovernance(e policy.Effective) policy.Effective {
+	e.Governance = policy.Governance{}
+	kept := []policy.Ignored{}
+	for _, ig := range e.Ignored {
+		if coreKey(ig.Key) {
+			kept = append(kept, ig)
+		}
+	}
+	e.Ignored = kept
+	src := map[string]string{}
+	for k, v := range e.Sources {
+		if coreKey(k) {
+			src[k] = v
+		}
+	}
+	if len(src) == 0 {
+		src = nil
+	}
+	e.Sources = src
+	return e
 }
