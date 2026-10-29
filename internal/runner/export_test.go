@@ -3,6 +3,8 @@ package runner
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,6 +13,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/lock"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
@@ -344,3 +347,40 @@ func DigestRecords(ctx context.Context, store *runstore.Store, ids []string) ([]
 	r := &run{d: Deps{Store: store}}
 	return r.digestRecords(ctx, ids)
 }
+
+// StageHook exposes the installed stage hook to the runner_test package.
+var StageHook = stageHook
+
+// SetCore makes the stage hook the pair an untagged build has after the move
+// to ee/governance (E2.3): the governance block the run resolved is decoded
+// and then ignored — a stage gets no bound of its own and the ceiling that
+// fires leaves no halt — and the run log carries one line saying this build
+// ignores the block, which is a statement about the build and not a licence
+// notice (D522, D523).
+//
+// It lives here rather than in production code because it is the pair that
+// switches enforcement off, and only a test may do that: a production seam
+// would be a way for a core caller to turn governance off in a tagged binary
+// (design §5.5). The line is written once per installation, when the run
+// resolved a governance block that is not the one Fugaro ships — a run whose
+// file writes none has nothing to ignore and says nothing.
+func SetCore(t *testing.T, log *slog.Logger) {
+	prev, wasSet := stageHooks, stageHooksSet
+	warned := sync.OnceFunc(func() { log.Warn(ignoredGovernanceLine) })
+	stageHooks = StageFuncs{
+		Timeout: func(v StageView) time.Duration {
+			if v.Governance != policy.DefaultGovernance() {
+				warned()
+			}
+			return 0
+		},
+		TimedOut: func(StageView) StageDecision { return StageDecision{} },
+	}
+	stageHooksSet = false
+	t.Cleanup(func() { stageHooks, stageHooksSet = prev, wasSet })
+}
+
+// ignoredGovernanceLine is the one run-log line an untagged build writes when
+// a run resolved a governance block: what this build does with the block, in
+// the words D522 asks for and with no licence wording anywhere (D523).
+const ignoredGovernanceLine = "this build ignores the governance block"

@@ -2474,17 +2474,13 @@ const maxCredentialResumes = 3
 //
 // Only the three stages governance bounds have one: an artifact run's plan
 // and render steps are not among them (T7.1).
+//
+// The value comes from the stage hook (governance_hook.go), whose default is
+// this reading of the resolved policy: the tripwires move to ee/governance
+// with the block they read, and the stage's own bound is the first of them
+// (R2, §5.3).
 func (r *run) stageTimeout(stage string) time.Duration {
-	t := r.policy.Governance.StageTimeout
-	switch stageTimeoutKey(stage) {
-	case policy.KeyStageTimeoutImplement:
-		return t.Implement
-	case policy.KeyStageTimeoutReview:
-		return t.Review
-	case policy.KeyStageTimeoutFix:
-		return t.Fix
-	}
-	return 0
+	return stageHook().Timeout(r.stageView(stage))
 }
 
 // stageTimeoutKey is the policy key a stage's own governance.stage_timeout is
@@ -2808,10 +2804,18 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	// requires of its caller. A cancel that landed first keeps the run
 	// cancelled: governanceHalt then records nothing, and the stage fails the
 	// way it would have without the timeout.
+	//
+	// What the ceiling leaves is the stage hook's to decide (governance_hook.go,
+	// §5.3): its default is the halt above, and a build whose hook raises
+	// nothing ignores the block the ceiling came from — the stage then falls
+	// through and fails on the bound the run's own timeouts.stage set, which is
+	// the stage hook's answer and not a refusal of the run (D522, G2).
 	if ownTimedOut {
-		if r.governanceHalt(ctx, runstore.HaltStageBudget, "time") {
-			if h := r.haltValue(); h != nil {
-				return res, false, &HaltError{*h}
+		if d := stageHook().TimedOut(r.stageView(name)); d.Halt {
+			if r.governanceHalt(ctx, d.Reason, d.Detail) {
+				if h := r.haltValue(); h != nil {
+					return res, false, &HaltError{*h}
+				}
 			}
 		}
 	}
