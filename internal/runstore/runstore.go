@@ -781,6 +781,27 @@ type Record struct {
 	// every record written before this field existed: the field is
 	// additive, so an old reader sees the record it always saw.
 	Checkpoint *Checkpoint `json:"checkpoint,omitempty"`
+	// AB is the pair block the run's task carried (docs/model-ab-testing,
+	// A1.1): the pair both arms belong to, which arm this run is, and, for a
+	// challenger, the coder model it ran. It is the task's own block, echoed
+	// onto the record so a pair can be scored from records alone, without a
+	// bucket listing (D559). Absent — never an empty block — for a run that
+	// was not sampled, which is every record written before this field
+	// existed, so an old reader sees the record it always saw.
+	AB *task.AB `json:"ab,omitempty"`
+	// PatchObject is the key of the run's own tree diff under the runs
+	// bucket, runs/<repo-slug>/<run-id>/ab/patch.diff: the diff from the
+	// run's StartSHA to its final head, with no commit metadata in it, which
+	// both arms upload (A2.1) because the paired comparison reads the two
+	// diffs. Absent for a run that uploaded none — every run before this
+	// field existed, and one that died before finalize — so an absent key
+	// means "no patch", never "an empty patch".
+	PatchObject string `json:"patch_object,omitempty"`
+	// PatchTruncated is set when the stored patch is shorter than the run's
+	// real diff, because the object is capped. The cap is recorded as a fact
+	// rather than hidden, as ChangedFiles.Truncated is: a judge or a reader
+	// must be able to tell a short patch from a cut-off one.
+	PatchTruncated bool `json:"patch_truncated,omitempty"`
 }
 
 // MaxBacklogClosed bounds Record.BacklogClosed. A run closes only what the

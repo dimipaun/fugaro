@@ -627,3 +627,53 @@ func TestRecordHaltRoundTrip(t *testing.T) {
 		t.Fatalf("an unset halt is written: %s", data)
 	}
 }
+
+// TestRecordABRoundTrip: the pair block survives the record's round trip
+// unchanged, and the patch object's own two facts with it (A2.1 uploads one
+// for both arms, capped, with the truncation recorded rather than hidden).
+func TestRecordABRoundTrip(t *testing.T) {
+	s := newStore(t)
+	ab := &task.AB{PairID: runID, Arm: task.ABArmChallenger, Publish: task.ABPublishNone,
+		Challenger: "invented-challenger-1", ChallengerSource: task.ABChallengerOwner}
+	rec := &Record{Version: 1, RunID: runID, Status: StatusSucceeded, Outcome: OutcomeNone,
+		StartedAt: time.Now().UTC(), AB: ab, PatchObject: "runs/acme-app/" + runID + "/ab/patch.diff", PatchTruncated: true}
+	if err := s.WriteRecord(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ReadRecord(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.AB == nil || *got.AB != *ab {
+		t.Fatalf("ReadRecord ab = %+v, want %+v", got.AB, ab)
+	}
+	if got.PatchObject != rec.PatchObject || !got.PatchTruncated {
+		t.Fatalf("ReadRecord patch = %q, truncated %v, want %q, true", got.PatchObject, got.PatchTruncated, rec.PatchObject)
+	}
+}
+
+// TestRecordABOmittedWhenEmpty: a run that was not sampled carries no pair
+// block and no patch object, so its result.json is byte-for-byte what the
+// release before these fields wrote — and a record written before them still
+// decodes, which is the compatibility claim the unchanged version rests on.
+func TestRecordABOmittedWhenEmpty(t *testing.T) {
+	data, err := json.Marshal(&Record{Version: 1, RunID: runID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"ab", "patch_object", "patch_truncated"} {
+		if strings.Contains(string(data), `"`+key+`"`) {
+			t.Fatalf("an unset %s is written: %s", key, data)
+		}
+	}
+
+	s := newStore(t)
+	old := `{"version":1,"run_id":"` + runID + `","status":"succeeded","stage":"writeback","outcome":"ready","cost_usd":1,"started_at":"2026-09-26T22:15:30Z"}`
+	if err := s.PutFile(ctx, "result.json", []byte(old), "application/json"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ReadRecord(ctx)
+	if err != nil || got.AB != nil || got.PatchObject != "" || got.PatchTruncated {
+		t.Fatalf("old record = %+v, %v", got, err)
+	}
+}
