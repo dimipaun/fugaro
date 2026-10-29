@@ -56,6 +56,9 @@ test.describe('the installation rail, in the real window', () => {
       await expect(rows.nth(1).locator('span.console-rail-state')).toHaveAttribute('data-state', 'idle')
 
       // The mark: a glyph with an accessible name, on the unreadable row alone.
+      // The rail is the switcher's menu since the header replaced it (2026-10-28),
+      // and a folded menu's rows are out of the accessibility tree.
+      await page.locator('button.console-switcher-button').click()
       await expect(rows.nth(0).locator('span.console-rail-warning')).toHaveCount(0)
       const mark = rows.nth(1).locator('span.console-rail-warning')
       await expect(mark).toHaveText('⚠')
@@ -89,6 +92,7 @@ test.describe('the installation rail, in the real window', () => {
 
       // The + row opens the picker window, which is the one way to add one.
       const opened = app.waitForEvent('window')
+      await page.locator('button.console-switcher-button').click()
       await rail.locator('button.console-rail-add').click()
       const picker = await opened
       await picker.waitForLoadState('domcontentloaded')
@@ -135,6 +139,7 @@ test.describe('the installation rail, in the real window', () => {
       await expect(page.locator('div.console-panel section.console-unavailable')).toHaveCount(0)
       const rail = page.locator('aside.console-rail')
       await expect(rail.locator('button.console-rail-row')).toHaveCount(0)
+      await page.locator('button.console-switcher-button').click()
       await expect(rail.locator('p.console-rail-empty')).toBeVisible()
       const opened = app.waitForEvent('window')
       await rail.locator('button.console-rail-add').click()
@@ -169,6 +174,7 @@ test.describe('the installation rail, in the real window', () => {
       // The CLI's rows first, then the console's own records it did not list.
       await expect(page.locator('aside.console-rail span.console-rail-name')).toHaveText(['orbit', 'aurora'])
       await expect(rows.nth(1)).toHaveAttribute('aria-selected', 'true')
+      await page.locator('button.console-switcher-button').click()
       await rows.nth(1).click()
       const issue = page.locator('div.console-panel section.installation-issue')
       await expect(issue.locator('p.installation-issue-sentence')).toContainText('fugaro doctor --project aurora')

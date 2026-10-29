@@ -197,3 +197,41 @@ func TestMergeFactsDropsAPlanTaskThatIsNotOne(t *testing.T) {
 		t.Fatalf("a misshapen plan task reached watch --json:\n%s", data)
 	}
 }
+
+// watch --json carries leased_usd on the total and on every repository row:
+// counted minus spent, floored at zero, always present so a reader never has
+// to tell "nothing is leased" from "this document does not say" (the console
+// reads the key, and a zero there is a measured zero).
+//
+// Mutation (dropping the floor): a state no normal write makes -- counted
+// below spent -- would put a negative figure on the wire, and the second case
+// fails. Mutation (setting only the total's): the repository case fails.
+func TestWatchJSONCarriesLeasedUSD(t *testing.T) {
+	v := View{Now: t0, Day: "2026-10-29", Mode: "enforce", Conn: Connection{Kind: ConnLive},
+		Project: ProjectLine{Counted: 47_310_000, Spent: 47_110_000},
+		Repos: []RepoBlock{
+			{Slug: "acme__app", Name: "acme/app", Counted: 47_310_000, Spent: 47_110_000},
+			// counted below spent: never a negative figure.
+			{Slug: "acme__under", Name: "acme/under", Counted: 1_000_000, Spent: 2_000_000},
+		}}
+	doc := BuildJSON("aurora", v)
+	if doc.Total.LeasedUSD != 0.2 {
+		t.Errorf("total.leased_usd = %v, want 0.20 (counted 47.31 - spent 47.11)", doc.Total.LeasedUSD)
+	}
+	if got := doc.Repos[0].LeasedUSD; got != 0.2 {
+		t.Errorf("repos[0].leased_usd = %v, want 0.20", got)
+	}
+	if got := doc.Repos[1].LeasedUSD; got != 0 {
+		t.Errorf("repos[1].leased_usd = %v, want 0 (counted below spent is floored, never negative)", got)
+	}
+
+	// No leases at all -- nothing reserved, nothing spent -- is a measured 0,
+	// and the key is on the wire either way: it has no omitempty.
+	data, err := json.Marshal(BuildJSON("aurora", View{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"leased_usd":0`) {
+		t.Fatalf("a document with nothing leased does not carry leased_usd:0:\n%s", data)
+	}
+}

@@ -19,7 +19,9 @@ and E2.1–E2.3 build against, and a citation that has moved is a design nobody 
   notice until the verifier, the key-minting service and the launch are ready, so no stderr line
   on `report` or `coordinator`, no run-log licence line, and the 0.13.0 notes carry no licence
   warning. Where this document would otherwise have specified one, it says **deferred with the key
-  work (D523)**.
+  work (D523)**. The messages an untagged build *does* write — the runner's one run-log line and the
+  paid-command stubs — are **capability statements, not licence notices**: the owner confirmed that
+  reading on 2026-10-29 (§6, O8 of the reconciliation).
 - It carries no price, no currency figure and no commercial term, and names no person or
   organisation.
 - It decides no rights question: what `ee/LICENSE` says about the moved code, and what the
@@ -302,7 +304,7 @@ func SetLaunchDeclarer(d LaunchDeclarer) error
   `TestLaunchStillDeclaresBeforeTheMove`). E2.1 flips the default to **declare nothing** and
   `ee/register/coordinator.go` registers today's declarer (D535).
 - **Paid-command stubs**: a core stub for each name whose code is absent (`report`, `coordinator`),
-  which exits non-zero with D522's message — that the command is part of Fugaro Enterprise and this
+  which exits non-zero with D522's message — that the command is part of Fugaro Subscription Edition and this
   build does not include it — rather than cobra's "unknown command", which would mislead a source
   builder and the console. Seen through a seam in E1.1 (`TestStubSaysWhyThroughASeam`, a test-only
   stub name) and for real in E2.1/E2.2 (`TestUntaggedPaidCommandSaysWhy`, G3).
@@ -425,7 +427,10 @@ The warning the untagged runner writes is a **capability statement** — *this b
 block* — and not a licensing warning. It exists because the alternative is silence about a switch a
 user set, and because the same sentence is what the launcher-side edition warning says about the
 image. Launch-side warnings follow the job image because governance is enforced by the job's
-`fugaro`, not the launcher's (R3, F11).
+`fugaro`, not the launcher's (R3, F11). **The owner confirmed this reading on 2026-10-29 (O8):** the
+runner's run-log line and the paid-command stubs' Enterprise message appear only in untagged/core
+builds and carry no licence, key or payment wording, so neither is a licence notice under D523; this
+document lists no open confirmation for the gating model.
 
 The one thing an untagged build must not do is **refuse**: `governance:`, `tier` and
 `expected_scope` are decoded and ignored, never rejected (G2). A core runner given a `governance:`
@@ -624,7 +629,7 @@ Notes that make this list the right size:
 | `reportHistory` | stays in core (`reportcore.go`) | **moves with the command** | it returns `[]report.Rec`; its only caller is `report.go:174` |
 | The digest's MIT copy | `Dim`, `ParseDim`, `PeriodKey`, the period keys, `USD` | **plus `USD6`** | `patterns.go` and `render.go` read it six times; the digest does not compile without it |
 | The gating model | "a paid command is present and refuses without a key" | **warn-and-continue for fields; a stub for absent commands** (D522) | T27 (b), answered 2026-10-29; the two disagree (F4) |
-| The notice | one line on stderr per paid command, one run-log line | **none** | D523, answered NOT the recommendation; deferred with the key work |
+| The notice | one line on stderr per paid command, one run-log line | **none** | D523, answered NOT the recommendation; deferred with the key work. The untagged run-log line and the stubs are capability statements, not licence notices (reading confirmed 2026-10-29, O8) |
 | The edition marker's carrier | an OCI label **or** a field in the build record | **the build record's `Edition`** | §7 |
 | Hook signatures | named only | fixed in §5 | this document is what E1.1/E1.2 build against |
 
@@ -655,3 +660,11 @@ release notes themselves are E3.3's, not this document's. O7 was still named an 
 `docs/ee-reorg/implementation-plan.md` when this was written, so this commit records the answer in the
 reconciliation's own bullet for it and in the one-line status mention each of the other two carries;
 E3.3 inherits the line.
+
+**The owner's confirmations of 2026-10-29 (O3 and O8).** O3 (D534): the owner owns the agent-written
+code that moves under `ee/` — no separate third-party author, no outside contributor — so no CLA or
+counsel step is needed before the move, so the plan's move commits may proceed on that footing
+without a separate grant. O8 (D522, D523): the untagged runner's run-log line and the paid-command
+stubs are capability statements, not licence notices (§6), so the gating model of §6 and the §11
+"notice" row carry no open confirmation. Both are written into
+`docs/ee-reorg/reconciliation.md` §4 (D522, D534) and §5 (O3, O8).

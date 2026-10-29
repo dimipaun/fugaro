@@ -670,18 +670,12 @@ test.describe('the renderer entry, in the real window', () => {
       expect(shape.scripts).toHaveLength(1)
       expect(shape.scriptUrls).toEqual([`${APP_ORIGIN}/console.js`])
       // And the window holds the entry's drawing and nothing the document
-      // shipped: the installation rail (Task 6.3 -- the canvas's structural
-      // addition, the grid's first column and the body's first content child
-      // when there is no banner), the installation line, the navigation and the
-      // panel, in that order. Task 1.1's placeholder -- "The console's window is
-      // up. It has no data yet." -- would be a fifth child here, a second `<h1>`
-      // and a sentence this task made false, printed above the figures.
-      expect(shape.bodyChildren).toEqual([
-        'console-rail',
-        'console-installation',
-        'console-views',
-        'console-panel',
-      ])
+      // shipped: the redesign's header (its switcher holds the installation
+      // line and the rail, owner's ruling of 2026-10-28) and the page holding
+      // the panel, in that order. Task 1.1's placeholder -- "The console's
+      // window is up. It has no data yet." -- would be a third child here, a
+      // second `<h1>` and a sentence this task made false.
+      expect(shape.bodyChildren).toEqual(['console-header', 'console-page'])
       expect(shape.bodyText).not.toContain('It has no data yet')
 
       const panel = launched.page.locator('div.console-panel')
@@ -702,7 +696,7 @@ test.describe('the renderer entry, in the real window', () => {
         'Coordinator',
       ])
       await expect(
-        launched.page.locator('nav.console-views button.console-view[aria-current="true"]'),
+        launched.page.locator('nav.console-views button.console-view[aria-current="page"]'),
       ).toHaveText('Live')
       // And the read behind that drawing is the installation's own binary and
       // project, in the log -- not merely inferred from the screen.
@@ -761,10 +755,10 @@ test.describe('the renderer entry, in the real window', () => {
           }
         }
         const marked = document.querySelector(
-          'nav.console-views button.console-view[aria-current="true"]',
+          'nav.console-views button.console-view[aria-current="page"]',
         )
         const plain = document.querySelector(
-          'nav.console-views button.console-view:not([aria-current="true"])',
+          'nav.console-views button.console-view:not([aria-current="page"])',
         )
         const row = document.querySelector('aside.console-rail button.console-rail-row')
         return {
@@ -832,10 +826,6 @@ test.describe('the renderer entry, in the real window', () => {
       await expect(rail.locator('span.console-rail-spend')).toHaveText('n/a')
       // The head, the foot row and the hint are the rail's whatever it has to put
       // in its list, and the foot row is the design's own control.
-      await expect(rail.locator('button.console-rail-collapse')).toHaveAttribute(
-        'aria-expanded',
-        'true',
-      )
       await expect(rail.locator('button.console-rail-add')).toHaveText('+ Add installation')
       await expect(rail.locator('p.console-rail-hint')).toHaveText('Switch with the shortcut keys 1 2 3')
       // And the rail asked for nothing: the log holds the handshake's probe, the
