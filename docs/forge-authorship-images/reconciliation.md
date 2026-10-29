@@ -35,7 +35,7 @@ The spec reads greenfield. It is not. Of its five parts:
   needs a hosted launch path first. **Token pooling already exists** as the credentials service's
   Tier A cascade, so the terms question the spec raises applies to code on `main` today (F28–F38).
 
-The spec says "Open questions: none". This reconciliation finds **forty-nine** that need the owner
+The spec says "Open questions: none". This reconciliation finds **fifty** that need the owner
 (§4), plus the ones only counsel or the owner can answer (§6).
 
 ## 2. Spec concept → what the repository already has
@@ -78,24 +78,23 @@ into the agent's environment (`internal/runner/runner.go`, the loop over `gitops
 commits only leftovers and its own steps (`Repo.CommitAll` in `gate.go`, `digest.go`, finalize).
 Fugaro has **no agent sandbox** (docs/secrets-brokering §1), so the agent can set any author, any
 trailer or none, and while it holds a git credential in a stage it can push itself. *Consequence:*
-author and trailers set by the environment are a **default, not a guarantee**. A runner-side stamp
-must rewrite the stage's unpushed **own** commits (`gitops.Repo.OwnCommits`: commits no branch on
-origin holds, so an integration branch's foreign commits are never re-authored) after each agent
-stage, and finalize must re-stamp any commit whose ID is not one the runner itself stamped (the
-runner keeps the list; a trailer's presence proves nothing, since the agent knows the run ID) (D603).
-The rewrite runs with the agent-writable `.git/config` neutralised (`trailer.*`, `commit.gpgsign`,
-`gpg.program`, hooks), as `ScanWork` already defends against `diff.external`. Trailers are a record,
-not proof: the agent can also push other branches with its token.
+author and trailers set by the environment are a **default, not a guarantee**. Nothing the runner does afterwards can make them one: rewriting breaks verification and
+checkpoints (F2), and the agent can push the run branch itself with its token (the runner's `Push`
+expects it), so a rewrite of unpushed commits is bypassed by pushing first. *Amended in review round
+3:* commits are **born stamped** (the agent's environment carries the author; a runner-owned
+`prepare-commit-msg` hook, set through environment configuration and chained to the repository's own
+hooks, adds the trailers), nothing is rewritten, and the trailers are stated as a record, not proof
+(D603). Earlier rounds planned a rewrite (with `OwnCommits`, a stamped-ID list and a checkpoint
+gate); the round-3 review showed each piece defeated by in-stage verification or an agent push.
 
 **F2, Gap.** Readiness is tied to commit IDs. `Decide(records, finalSHA, …)`
-(`internal/runner/outcome.go`) compares the verified test records with the final SHA. Re-stamping a
-commit changes its ID even when the tree is the same. *Consequence:* the stamp must run **before**
-verification and before the boundary checkpoint or early-draft push (when the agent's stage returns,
-before `afterStage`), never at push time, or a passed run reads as unverified. **Mid-stage checkpoints
-are a second constraint** (review round 1): `internal/runner/checkpoint.go` pushes fast-forward only
-while the agent still works and "never commits and never touches the working tree or the index", so
-the runner cannot rewrite commits under a running agent. Commits a mid-stage checkpoint has pushed
-stay as the agent made them; only the unpushed range is stamped at the boundary (D640).
+(`internal/runner/outcome.go`, `latestVerifiedTest`) matches the verified test record's SHA exactly,
+and **the agent verifies inside its own stage** ("Commit first, then verify",
+`internal/runner/prompts.go`). Mid-stage checkpoints (on unless `git.pr.checkpoints` is false) push
+while the agent works and never commit or touch the working tree or the index
+(`internal/runner/checkpoint.go`). *Consequence (amended in review round 3):* any rewrite after a
+commit is made leaves the run unverified or diverges from what was pushed, so the stamp must happen
+**when the commit is made** (D603, D640).
 
 **F3, Rule.** The launcher identity is self-declared. `localcfg.Config.Me` answers the local
 config's `user:`, else `git config user.email`; `docs/coordinator/reconciliation.md` #11 calls it "a
@@ -169,11 +168,11 @@ adds no new long-lived job secret (Global Constraint 3).
 but D474 (2026-10-27) admits an **owner-allow-listed** Bitbucket API root for self-managed use. The
 two are reconciled by "supported = cloud; an allow-listed root is accepted, unsupported" (D612).
 
-**F40, Gap (review round 1).** Open PR #1264 ("run commits carry a GitHub-linkable identity") changes,
-for GitHub only, author **and** committer to the App's `[bot]` noreply identity, as "a single
-overridable value in one place", and says it stays compatible with this spec. *Consequence:* this
-plan never hard-codes `Fugaro <fugaro@users.noreply.invalid>` as the committer; it uses the run's
-identity as `main` has it when A1 starts (D645).
+**F40, Gap (review round 1).** Open PR #1264 ("runner: a github run's commits carry the App's bot
+identity") changes, for GitHub only, author **and** committer to the App's `[bot]` noreply identity,
+resolved per run when the provider opens, and its brief asks to stay compatible with this spec.
+*Consequence:* this plan never hard-codes `Fugaro <fugaro@users.noreply.invalid>`; it uses the run's
+identity as `main` resolves it per run when A1 starts (D645).
 
 **F14, Gap (signing).** Today nothing is signed. The spec's three per-forge paths:
 (a) GitHub **API commits** would replace `gitops`' commit-and-push and the checkpoint pushes: a
@@ -377,18 +376,18 @@ licence notices (D523). The go-to-market spec lists "SSO and roles" as `ee/`. Th
 proxy is MIT (its R4). Nothing rules on authorship, forge adapters, user management, token pooling
 or change sets (D637).
 
-## 4. Decisions (D600–D648), for the owner
+## 4. Decisions (D600–D649), for the owner
 
 Each row: the question, the recommendation and its reason, the alternative and its cost, and an
-**empty** answer cell. D640–D645 were added in review round 1 and D646–D648 in round 2. D649–D679 are reserved and unused.
+**empty** answer cell. D640–D645 were added in review round 1, D646–D648 in round 2 and D649 in round 3; D603, D604, D616, D640, D642, D644 and D646 were re-recommended in round 3. D650–D679 are reserved and unused.
 
 | # | Question | Recommendation | Alternative and cost | Owner's answer |
 | --- | --- | --- | --- | --- |
 | **D600** | The first slice | **Slice A alone first** (authorship and trailers): small, MIT, no new trust boundary, useful on its own; everything else after its own go | Start with the forge layer or images: larger, and no part of them needs A | |
 | **D601** | Trailer names (F6) | **`Fugaro-Run:`** (the run ID), `Fugaro-Rigor:`, `Fugaro-Model:` | The spec's `Fugaro-Job:`: names the Cloud Run job, which is per repository, not per run, and confuses every doc that uses "job" | |
 | **D602** | What `Fugaro-Model:` holds (F6) | **The configured model of the stage that made the commit**, documented as the pin, not the served model; omitted for runner-only commits and when the stage pins no model (`StageTiming.Model` is empty) | Omit the trailer until the served model is recorded: loses the link the spec wants | |
-| **D603** | Who stamps author and trailers (F1, F2) | **The runner, after every agent stage and before verification**: it rewrites the stage's unpushed commits (author, committer, trailers; drops any agent-written `Fugaro-*` trailer), and its own commits are made stamped; finalize refuses to push an unstamped commit | Environment only (today's mechanism with new values): an agent can override it silently. A `commit-msg` hook: `--no-verify` bypasses it | |
-| **D604** | Whose identity is the author (F3) | **The recorded launcher (`requested_by`) as a stated claim**, under D475 (launchers trusted); an authenticated identity replaces it when Slice E exists | Wait for a verified identity before shipping A: delays the smallest useful slice by the whole of E | |
+| **D603** | Who stamps author and trailers (F1, F2) | **Amended in review round 3: the commit is born stamped.** The agent's environment carries the author, and a runner-owned `prepare-commit-msg` hook (set through environment configuration, chained to the repository's own hooks, not suppressed by `--no-verify`) adds the trailers; the runner's own commits use the same environment; nothing is rewritten; finalize logs how many run commits lack `Fugaro-Run`. (Rounds 1–2 recommended a rewrite after each stage; it breaks in-stage verification and checkpoints, and an agent push bypasses it) | A rewrite after each stage: leaves runs unverified (F2). A `commit-msg` hook: `--no-verify` skips it | |
+| **D604** | Whose identity is the author (F3) | **The recorded launcher (`requested_by`) as a stated claim**, with the commit address limited to the launcher's own (D649); an authenticated identity replaces it when Slice E exists. D475 (launchers trusted) covers a launcher reaching a run's credential, not writing a colleague's name into history, so the claim's limits are this row's own | Wait for a verified identity before shipping A: delays the smallest useful slice by the whole of E | |
 | **D605** | Author with no person (F4): CI, coordinator, follow-ups, bots | **The Fugaro identity, as today**, when `requested_by` is empty or not an email | Use a service-account address as author: noise in blame, and no person is accountable | |
 | **D606** | Author email and privacy (F5) | **Opt-in per repository** (a `git.author: launcher` key in `fugaro.yaml`, default `fugaro` = today's author; no policy version bump, so it does not collide with the Bitbucket S2 policy bump of D477/D493), and each person may set a commit address (for example a forge noreply address) in their local config; owner and counsel confirm the default | On by default, as the spec says: personal emails written irreversibly into histories others read; reverses the project-export precedent. Or a project-policy setting: a policy version bump, a lockstep upgrade | |
 | **D607** | API commits for GitHub's Verified badge (F14) | **Keep local `git` commits and `git push`** on every forge; no API commits now | GitHub API commits: rewrites the push and checkpoint path for one forge; whether a user-authored App commit shows Verified is unverified (U2) | |
@@ -400,7 +399,7 @@ Each row: the question, the recommendation and its reason, the alternative and i
 | **D613** | Multi-repo model (F16, F17) | **Staged:** (1) read-only **context repositories** in a run; (2) **change sets as linked runs**, one run per writable repository, sharing a change-set ID; one run writing several repositories is **declined for now** | The spec's one run with several writable worktrees: redesigns task, run store, jobs, tokens, gateway claims, review, PR flow, digest and checkpoints | |
 | **D614** | "All PRs ready together" (F15) | **Runs of a change set keep their PR draft**; a change-set step flips all ready when every run's senior verdict is `ship` and its tests passed. A coordination aid for honest runs, not a security control (T5): each member's agent can write its record and flip its PR | Each PR flips on its own, linked only: simpler, loses the spec's guarantee | |
 | **D615** | Merge order enforcement (F10, F18) | **Advisory**: the order is written in each PR and shown by the coordinator; no blocking | A blocking status check: new App permission (Commit statuses or Checks write) every installation must accept, and reverses "never blocks or reorders merges" | |
-| **D616** | Where change sets live (licence) | **All of it under `ee/`** (amended in review round 2): the hold is useless without the settle step, and an untagged build stubs the coordinator (ee-reorg D522), so its change sets would stay draft for ever; an untagged CLI refuses `--change-set` like the other paid-command stubs | Linking and hold in core, settle in `ee/`: a core build's change sets never leave draft. All in core: puts coordinator behaviour outside `ee/`. The cost of the recommendation: an untagged build has no change sets at all, not even linked PRs | |
+| **D616** | Where change sets live (licence) | **`ee/` behaviour on core mechanism** (amended in review rounds 2 and 3): the task fields, the hold and the status line are core mechanism (ee-reorg D521: core keeps wire and mechanism); the settle step and ordering are under `ee/`; `--change-set` is refused by an untagged build (the paid-command stub pattern of D522, applied to a flag) and by every build until the settle step ships, so no change set is stuck in draft | Linking and hold usable in core, settle in `ee/`: a core build's change sets never leave draft. All in core: puts coordinator behaviour outside `ee/`. The cost of the recommendation: an untagged build has no change sets at all | |
 | **D617** | Where the project's intent lives (F19, F20) | **The published policy** (`allow_repos`, `fugaro project repos`, `fugaro project sync`) as the intent; a generated lock stored in the runs bucket beside the build records | The spec's project Git repository with `fugaro.yaml` as intent and `fugaro.lock`: changes `fugaro.yaml`'s meaning, duplicates the policy, adds a repository every project must have | |
 | **D618** | Per-project images (spec) vs per-repository (today) | **Keep per-(repository, workflow) images**; a project image is designed later as an opt-in, after context repositories (D613 step 1) show a need | Replace per-repository images: migrates every installation, the registry layout, job definitions and `fugaro image refresh` | |
 | **D619** | Content-hash tags and digest pins (F22) | **Record and check the digest at launch (warn on mismatch)**; no pinning, since Cloud Run cannot vary the image per execution | Pin by updating the job definition per build: an infra apply per build | |
@@ -424,20 +423,21 @@ Each row: the question, the recommendation and its reason, the alternative and i
 | **D637** | Licence placement (F39) | **MIT:** authorship, forge adapters (GitLab included), context repositories, `fugaro user` over the IAM lists, token storage. **`ee/`:** change sets (D616), SSO and domain or workspace invites, roles enforcement beyond the lists | Roles and user management in core: conflicts with go-to-market's `ee/` list | |
 | **D638** | Workspace-level invites | **Wait for the workspaces spec**, not in the repository | Build project-by-project invites now and fold later: rework | |
 | **D639** | Spec's "Open questions: none" | **Replace with §6 of this file** | — | |
-| **D640** | Mid-stage checkpoint pushes (F2) | **Keep them, with a read-only gate** (amended in review round 2): a mid-stage checkpoint pushes only up to the last commit whose author and committer are the run's expected ones, so an agent-set author never reaches the PR branch through the runner's own push; the boundary stamp covers the unpushed range; a mid-stage-pushed commit may lack trailers; the docs say so | Turn mid-stage checkpoints off when stamping: loses the crash protection checkpoints exist for. Or force-push re-stamped history: breaks the checkpoint's fast-forward-only rule | |
+| **D640** | Mid-stage checkpoint pushes (F2) | **Unchanged** (amended in review round 3): with commits born stamped, checkpoints push stamped commits and need no gate. (Round 2 recommended a read-only author gate; it is withdrawn with the rewrite) | Turn checkpoints off when stamping: loses the crash protection checkpoints exist for | |
 | **D641** | The settle step needs PR write (F18) | **A separate, settle-only token** (`pull_requests: write`) minted for the settle step, beside the coordinator's read-only one; reverses Q10 C for this one act | Each member run's finalize flips its siblings: every run then needs write on other repositories | |
-| **D642** | Who may join a change set | **Membership fixed at creation**: one launch creates every member run, and each member's write-once task lists the others; a run not listed by all is ignored by the settle step | A free-form `--change-set ID` any launcher passes: anyone can join or stall someone else's set | |
+| **D642** | Who may join a change set | **Membership fixed at launch**: one launch creates every member run and writes the full member list into each member's task; the settle step acts only when every member lists the same set. A task file is writable by launchers and by runs of the same repository (SECURITY.md), so a hostile member can stall a set but not widen it unseen | A free-form `--change-set ID` any launcher passes: anyone can join or stall someone else's set | |
 | **D643** | Self-approval (F41) | **Document it**; no code. Repositories that need two people use their forge's review rules | A runner-side refusal: Fugaro cannot see who approves | |
-| **D644** | An agent-written `Signed-off-by` (R1) | **Remove it** when stamping: an agent cannot make the DCO assertion; a DCO-gated repository then fails its check until a person signs off, which is the point | Keep it: an assertion no person made, in a person's name | |
+| **D644** | An agent-written `Signed-off-by` (R1) | **Leave it** (amended in review round 3): with nothing rewritten, the hook sees only the message being made; removing a line there would also strip a real person's sign-off carried by a cherry-pick. The docs say Fugaro never adds one | Remove it in the hook: strips cherry-picked human sign-offs too | |
 | **D645** | The committer identity (F40) | **The run's identity as `main` has it** (`Fugaro`, or the App's `[bot]` identity on GitHub if #1264 merges); the spec's "committer = the forge bot" is then met on GitHub | Hold this plan until #1264 settles: delays A for no gain | |
-| **D646** | A run commit whose author the agent set to someone else (a cherry-pick keeps its original author; `OwnCommits` over-counts when the checkout lacks an origin head) | **Re-author it to the launcher and keep the original as a `Fugaro-Original-Author:` trailer**: the launcher is accountable for what the run pushes, and the original is not lost | Keep the agent's author: an agent can attribute commits to any person. Drop the original: a cherry-pick loses its credit |  |
+| **D646** | A commit whose author is someone else (a cherry-pick; an agent's `--author`) | **Keep the author git gives it** (amended in review round 3): nothing is rewritten; `Fugaro-Run` links the commit to its run and launcher. (Round 2 recommended re-authoring with a `Fugaro-Original-Author:` trailer; it needs a rewrite and writes personal data by default) | Re-author at commit time in the hook: impossible for a cherry-pick's author, which git sets before the hook runs (U10) | |
 | **D647** | Trailers by default (F6) | **On for every run commit** (no personal data: run ID, rigor, model pin); stated in the release notes' Highlights | Opt-in with the author: no link from commits to runs by default | |
 | **D648** | Squash merges (F46) | **Measure first** (Check 230 adds a squash merge) before any further work; if the launcher and trailers do not survive, the PR body carries them for the squash message | Assume they survive: the spec's "shows up in blame" may silently fail on squash-merging repositories | |
+| **D649** | Which commit address a launcher may set | **Only their own**: `commit_email` must equal the launcher's recorded identity or be a forge noreply address; anything else is refused at launch | Free-form: one launcher can attribute commits to a colleague, and the forge links them to that person's account | |
 
 **Resolutions** (one defensible answer each):
 
-- **R1.** `Signed-off-by` is never added automatically (F7). Whether one the agent writes is removed
-  is D644.
+- **R1.** `Signed-off-by` is never added automatically (F7). D644 recommends leaving any that is
+  already in a message.
 - **R2.** The commit author is not a seat record (F8). This plan counts nothing; seat counting is
   D433's and the subscriptions plan's.
 - **R3.** No new long-lived secret enters a job in any slice of this plan (F12).
@@ -462,7 +462,7 @@ Each row: the question, the recommendation and its reason, the alternative and i
 
 ## 6. Open items for the owner
 
-- **O1. Every decision D600–D648** above: empty answer cells.
+- **O1. Every decision D600–D649** above: empty answer cells.
 - **O2. Anthropic's terms** for (a) the existing Tier A pooling and (b) contributed personal tokens
   used for other people's jobs: the owner's and counsel's (F36). Not a technical question.
 - **O3. Privacy:** whether launcher emails in commits need a notice or consent (F5): owner and
@@ -490,3 +490,7 @@ Each row: the question, the recommendation and its reason, the alternative and i
   `git.provider` added and a project layer; without a layer it has no workflow (D624).
 - **U9.** Whether GitHub's and Bitbucket's squash merge keep the branch commits' authors (for example
   as `Co-authored-by:`) and their trailers in the squash message (Check 230's squash step, D648).
+- **U10.** Whether `GIT_AUTHOR_*` in the environment overrides a cherry-pick's original author
+  (believed not: cherry-pick keeps the original unless `--reset-author`; not checked here), and that
+  `prepare-commit-msg` runs for every commit the agent makes, `--no-verify` included (githooks(5)
+  says it is not suppressed; A1's `TestStampHookRunsUnderNoVerify` pins it).

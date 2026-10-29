@@ -6,7 +6,7 @@
 go, and answering a decision is not approving a task.** It builds [spec.md](spec.md) **as amended by
 [reconciliation.md](reconciliation.md)**, which wins where they differ.
 
-**No owner answer shapes this plan yet.** Decisions D600–D648 are written with recommendations and
+**No owner answer shapes this plan yet.** Decisions D600–D649 are written with recommendations and
 **empty answer cells** (the owner could not be asked while this was written). The plan follows the
 **recommendations**; every task names the decisions it rests on, and a task whose decision is
 answered otherwise is re-planned before it starts. Tasks marked **GATED** are not planned in detail
@@ -16,7 +16,7 @@ Slices, each independent and orderable (D600 recommends A first, alone):
 
 | Slice | What it ships | Licence (D637, proposed) | Gated on |
 | --- | --- | --- | --- |
-| **A** Authorship and trailers | Commits authored by the launcher when a repository opts in; `Fugaro-Run`, `Fugaro-Rigor`, `Fugaro-Model` trailers on the commits the runner pushes, on by default (D647) | MIT | D600–D606, D640, D644–D648 |
+| **A** Authorship and trailers | Commits authored by the launcher when a repository opts in; `Fugaro-Run`, `Fugaro-Rigor`, `Fugaro-Model` trailers on the commits the runner pushes, on by default (D647) | MIT | D600–D606, D644, D645, D647–D649 |
 | **B** Forge cleanup, CI status, GitLab | One list of forge kinds; a CI-status read; GitLab only after its own reconciliation | MIT | D610, D611; D614/D615 for B2 |
 | **C** Repositories and images | Bitbucket listing in `fugaro project sync`; lockfile-first image layers; a digest check at launch; read-only context repositories; a SECURITY.md registry note | MIT | D613, D617–D625 |
 | **D** Change sets | Linked runs created together, a draft hold, a settle step, advisory merge order | `ee/` (D616, amended in round 2); the task's wire fields in core (ee-reorg D521) | D613–D616, D641, D642; ee-reorg's coordinator move |
@@ -62,37 +62,36 @@ and `fugaro update-skills` installs the skills; E0 decides whether a `join` name
 
 ## Global constraints and review focus
 
-1. **Stamping precedes verification** (F2). A rewritten commit changes its ID; `Decide` compares
-   test records with the final SHA. Pinned by A3's `TestRunnerStampsBeforeVerify`.
-2. **No rewrite under a running agent, and no foreign author through the runner's push** (F2,
-   D640): the stamp runs only when the agent's stage has returned and never rewrites a pushed commit;
-   a mid-stage checkpoint pushes only up to the last commit whose author and committer are the
-   expected ones (a read-only check, so the checkpoint still never commits). Pinned by A3's
-   `TestRunnerNeverRestampsCheckpointedCommits` and `TestRunnerCheckpointStopsAtAForeignAuthor`.
+1. **Commits are born stamped; nothing is rewritten** (F2, D603 as amended in review round 3). The
+   agent verifies inside its own stage ("Commit first, then verify", `internal/runner/prompts.go`)
+   and `Decide` matches the verified SHA exactly (`latestVerifiedTest`), and checkpoints push while
+   the stage runs, so any rewrite after a commit is made would leave the run unverified or diverge
+   from what was pushed. The author and the trailers are set **when the commit is made**: the
+   agent's git environment carries the author, and a runner-owned `prepare-commit-msg` hook (which
+   `--no-verify` does not suppress, githooks(5)) adds the trailers. Pinned by A3's
+   `TestRunnerVerifiedCommitIsTheStampedCommit`.
+2. **The repository's own hooks still run** (F2): pointing `core.hooksPath` at the runner's hook
+   directory would silence them, so the runner's hook chains to the hook directory the repository
+   configured. Pinned by A1's `TestStampHookChainsToRepositoryHooks`.
 3. **The default does not change** (D606, D645). With no `git.author` key, author and committer are
-   the run's identity as on `main`; only the trailers are new. Pinned by A3's
+   the run's identity as `main` resolves it per run; only the trailers are new (D647). Pinned by A3's
    `TestRunnerDefaultAuthorUnchanged`.
-4. **No new long-lived secret in a job** (R3). Pinned by C5b's and C5c's reviews.
-5. **Fugaro never writes `Signed-off-by`**; one the agent writes is removed (R1, D644). Pinned by
-   A1's `TestStampRemovesSignedOffBy`.
-6. **What the runner pushes carries the runner's author and trailers** (F1), except trailers on
-   commits a mid-stage checkpoint sent (D640): agent-written `Fugaro-*` trailers are replaced (case
-   and spacing folded as git folds them), and finalize stamps any commit whose ID is not on the
-   runner's own stamped list. Such a commit was made after the last verification, so stamping it
-   cannot turn a verified head into an unverified one. The runner's own commits (autofix, digest,
-   leftovers, backlog) are made with the trailers, never rewritten. This binds the runner's pushes
-   only; the agent can push other branches with its token, so the trailers are a record, not proof.
-   Pinned by A1's `TestStampReplacesAgentFugaroTrailers` and A3's
-   `TestRunnerFinalizeRestampsCommitsItDidNotStamp`, `TestRunnerOwnCommitsCarryTrailers`.
-7. **Re-author only what the run made, as well as it can be told** (F1, D646): the stamp touches
-   `Repo.OwnCommits`, which over-counts when the checkout lacks an origin head (a cherry-pick, a
-   stale fetch); a re-authored commit whose author was someone else keeps the original as a
-   `Fugaro-Original-Author:` trailer. Pinned by A1's `TestStampLeavesForeignCommitsAlone` and
-   `TestStampKeepsOriginalAuthorAsTrailer`.
-8. **The agent's `.git/config` cannot steer the stamp** (F1): trailer, signing and hook settings are
-   overridden. Pinned by A1's `TestStampIgnoresAgentGitConfig`.
+4. **No new long-lived secret in a job** (R3). Review-only: C5b's and C5c's independent reviews.
+5. **Fugaro never writes `Signed-off-by`** (R1); D644 decides whether one is removed. Pinned by A1's
+   `TestStampHookNeverAddsSignedOffBy`.
+6. **The trailers are a record, not proof** (F1). The agent can unset its environment, bypass the
+   hook with `-c core.hooksPath=…` on its own command line, or push the run branch itself with its
+   token. The runner's own commits (autofix, digest, leftovers, backlog) are made with the same
+   environment. Finalize counts the run's commits that lack a `Fugaro-Run` trailer and logs the
+   count; it does not rewrite them. Pinned by A3's `TestRunnerOwnCommitsCarryTrailers` and
+   `TestRunnerLogsUnstampedCommitCount`.
+7. **A commit keeps the author git gives it**: cherry-picks keep their original author (U10), and an
+   agent can set any author on its own commit; nothing re-authors them (D646 as amended).
+8. **The agent's `.git/config` cannot steer the hook's trailer rules**: the hook calls
+   `git interpret-trailers` with the trailer configuration given on its command line. Pinned by A1's
+   `TestStampHookIgnoresRepositoryTrailerConfig`.
 9. **Context repositories are read-only for the runner** (D613): no write token is minted for them,
-      no push targets them, and each is admitted by the policy and named in a **launcher-minted claim**
+   no push targets them, and each is admitted by the policy and named in a **launcher-minted claim**
    of the run identity (the service cannot read the task, and the task file is writable by the job).
    While a GitHub job still mounts the App key (`config.ServiceHeldSecretNames` empty, #907), the
    **agent** can mint its own token for any repository the App is installed on (SECURITY.md); C5
@@ -107,33 +106,36 @@ and `fugaro update-skills` installs the skills; E0 decides whether a `join` name
 
 ### Slice A: authorship and trailers
 
-#### A1. A commit stamp in `gitops`
+**Re-planned in review round 3** (D603, D640, D646 amended): the first design rewrote commits after
+each stage; it was withdrawn because the agent verifies inside its stage and checkpoints push while
+the stage runs (Constraint 1). Commits are now born stamped.
 
-- **Decisions:** D601, D602, D603, D644, D645, D646; Constraints 5–8.
-- **Files:** `internal/gitops/stamp.go` (new), `internal/gitops/stamp_test.go` (new).
-- **Interfaces produced:** `type Stamp struct { Author *Person; Trailers []Trailer }` (nil author
-  keeps the run's identity); `func (r *Repo) StampOwn(ctx, runBranch string, s Stamp) (head string,
-  stamped []string, err error)`: rewrites the commits `Repo.OwnCommits(runBranch)` returns that are
-  not yet on the remote run branch, mapping parents (merge commits included) and keeping each tree;
-  sets the author when given and the committer to the run's identity; composes the message in Go
-    (removes `Signed-off-by` and every `Fugaro-*` trailer, matching keys case-insensitively and with
-  git's spacing rules; when the author changes from someone other than the run's identity, appends
-  `Fugaro-Original-Author:`; appends `s.Trailers` once); runs git with `commit.gpgsign=false`, no
-  hooks and no `trailer.*` from the repository's config; returns the new IDs. Idempotent. Also
-  `func (r *Repo) CommitAllStamped(ctx, msg string, trailers []Trailer) (bool, error)` for the
-  runner's own commits (the run's identity as author, trailers in the message).
+#### A1. A stamp environment and a trailer hook in `gitops`
+
+- **Decisions:** D601, D602, D603, D644, D645; Constraints 1, 2, 5, 8.
+- **Files:** `internal/gitops/stamp.go` (new), `internal/gitops/stamp_hook.sh` (new, embedded),
+  `internal/gitops/stamp_test.go` (new).
+- **Interfaces produced:** `type Stamp struct { Author *Person; Trailers []Trailer }`;
+  `func StampEnv(s Stamp, hookDir string) []string`: `GIT_AUTHOR_NAME`/`GIT_AUTHOR_EMAIL` when an
+  author is given (the committer stays the run's identity), the trailer values as `FUGARO_STAMP_*`
+  variables, and `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n` setting `core.hooksPath`
+  to `hookDir` (environment configuration outranks the repository's own file);
+  `func WriteStampHooks(dir, chainTo string) error`: writes the `prepare-commit-msg` hook, which runs
+  `git interpret-trailers --in-place` with `--trailer` options and `-c trailer.*` overrides of its
+  own (`Fugaro-*` keys replaced, never duplicated, case-insensitively as git matches them), adds no
+  `Signed-off-by` (and removes one only if D644 is answered so), omits `Fugaro-Model` when the
+  variable is empty, and then runs the same-named hook from `chainTo` (the repository's configured
+  hook directory) and every other hook name by a pass-through script.
 - **Schema/rules/config:** none.
-- **Tests:** `TestStampRewritesAuthorAndTrailers`, `TestStampKeepsTrees`,
-  `TestStampReplacesAgentFugaroTrailers`, `TestStampRemovesSignedOffBy`,
-  `TestStampLeavesForeignCommitsAlone`, `TestStampLeavesPushedCommitsAlone`,
-    `TestStampMapsMergeParents`, `TestStampIsIdempotent`, `TestStampIgnoresAgentGitConfig`,
-  `TestStampNilAuthorKeepsRunIdentity`, `TestStampReplacesCaseFoldedFugaroTrailers`,
-  `TestStampTrailersMatchGitInterpretTrailers`, `TestStampKeepsOriginalAuthorAsTrailer`,
-  `TestStampCommitAllStampedUsesRunIdentity`.
+- **Tests:** `TestStampEnvSetsAuthorOnlyWhenGiven`, `TestStampHookAddsTrailers`,
+  `TestStampHookReplacesCaseFoldedFugaroTrailers`, `TestStampHookNeverAddsSignedOffBy`,
+  `TestStampHookOmitsEmptyModel`, `TestStampHookRunsUnderNoVerify`,
+  `TestStampHookChainsToRepositoryHooks`, `TestStampHookIgnoresRepositoryTrailerConfig`,
+  `TestStampEnvOutranksRepositoryHooksPath`.
 - **Command:** `go test ./internal/gitops/ -run 'TestStamp' -count=1`
 - **Depends on:** none.
-- **Red step:** the tests reference `StampOwn`, which does not exist: compile failure.
-- **Commit:** `gitops: a commit stamp that sets the author and Fugaro trailers on a run's own commits`
+- **Red step:** the tests reference `StampEnv`, which does not exist: compile failure.
+- **Commit:** `gitops: an environment and a hook that stamp commits as they are made`
 - **Reviewer:** standard, plus an independent review (agent-controlled input reaches git).
 
 #### A2a. The author in the task, and the repository's opt-in
@@ -144,7 +146,7 @@ and `fugaro update-skills` installs the skills; E0 decides whether a `join` name
   `schemas/fugaro.schema.json`, `internal/task/task_test.go`, `internal/config/validate_test.go`,
   `schemas/schemas_test.go`.
 - **Interfaces produced:** `task.Spec.Author *task.Person` (`name`, `email`; omitted when empty;
-    when present, `Validate` refuses control characters, newlines, `<` and `>` in either and an email
+  when present, `Validate` refuses control characters, newlines, `<` and `>` in either and an email
   without one `@`); `config.Git.Author string`.
 - **Schema change:** both schemas gain the field.
 - **Tests:** `TestSpecAuthorRoundTrips`, `TestSpecWithoutAuthorIsByteIdentical`,
@@ -158,69 +160,72 @@ and `fugaro update-skills` installs the skills; E0 decides whether a `join` name
 
 #### A2b. The launcher fills the author
 
-- **Decisions:** D604, D605, D606.
+- **Decisions:** D604, D605, D606, D649.
 - **Files:** `internal/localcfg/localcfg.go` (optional `commit_name`, `commit_email`),
   `internal/localcfg/shared.go` (both blanked), `internal/localcfg/shared_test.go`,
   `internal/cli/run.go`, `internal/cli/recipes_skew.go` (an `authorSince` gate for the task field
-  and a `gitAuthorSince` gate for the `fugaro.yaml` key), `docs/release.md` ("Before you tag" names
-  both gates), `internal/cli/run_author_test.go` (new).
+  and a `gitAuthorSince` gate for the `fugaro.yaml` key), `internal/cli/init.go` (`fugaro update
+  --repo` gates the key as `gateRigor` gates `rigor:`), `docs/release.md` ("Before you tag" names both
+  gates), `internal/cli/run_author_test.go` (new).
 - **Interfaces consumed:** `localcfg.Config.Me`, `task.Spec.Author`.
 - **Behaviour:** the author is `commit_email` (else `Me`) with `commit_name` (else `git config
-    user.name`, else the email's local part); omitted, so the run's identity stays the author, when
+  user.name`, else the email's local part). `commit_email` is accepted only when it equals `Me` or is
+  a forge noreply address (D649). The author is omitted, so the run's identity stays the author, when
   `Me` is empty or is not an email (`user: alice`, a CI or bot account), for review and artifact
-  launches (D605), and against an older runner (the skew gate). A launch whose `fugaro.yaml` sets
-  `git.author` against an older runner is refused with the upgrade remedy, as `rigor:` is. The run record keeps `launched_by`
-  beside it, so a commit address that differs from the launcher stays traceable through
-  `Fugaro-Run`.
+  launches (D605), and against an older runner (the skew gate). A launch or `fugaro update --repo`
+  whose `fugaro.yaml` sets `git.author` against an older runner is refused with the upgrade remedy, as
+  `rigor:` is.
 - **Tests:** `TestRunAuthorFromLocalConfig`, `TestRunAuthorCommitEmailOverridesMe`,
-    `TestRunAuthorOmittedWithoutIdentity`, `TestRunAuthorOmittedForNonEmailIdentity`,
-  `TestRunAuthorOmittedForOlderRunner`, `TestRunAuthorOmittedForReviewRun`,
-  `TestRunAuthorGitAuthorKeyGatedForOlderRunner`, `TestSharedBlanksCommitIdentity`.
-- **Command:** `go test ./internal/cli/ ./internal/localcfg/ -run 'TestRunAuthor|TestSharedBlanksCommitIdentity' -count=1`
+  `TestRunAuthorRefusesAColleaguesAddress`, `TestRunAuthorOmittedWithoutIdentity`,
+  `TestRunAuthorOmittedForNonEmailIdentity`, `TestRunAuthorOmittedForOlderRunner`,
+  `TestRunAuthorOmittedForReviewRun`, `TestRunAuthorGitAuthorKeyGatedForOlderRunner`,
+  `TestGitAuthorSinceIsTheReleaseTheChecklistNames`, `TestSharedBlanksCommitIdentity`.
+- **Command:** `go test ./internal/cli/ ./internal/localcfg/ -run 'TestRunAuthor|TestGitAuthorSince|TestSharedBlanksCommitIdentity|Docs' -count=1`
 - **Depends on:** A2a.
 - **Red step:** `TestRunAuthorFromLocalConfig` fails: the written task has no author.
 - **Commit:** `cli: fugaro run records the launcher as the commit author`
 - **Reviewer:** standard.
 
-#### A3. The runner stamps the commits it pushes
+#### A3. The runner stamps commits as they are made
 
-- **Decisions:** D601–D605, D640, D646, D647; Constraints 1–3, 6.
-- **Files:** `internal/runner/runner.go` (the agent stage's return, before the gate's verification;
-  the finalize re-stamp), `internal/runner/prflow.go` (the boundary order in `afterStage`),
-    `internal/runner/checkpoint.go` (the read-only author gate; records what a mid-stage push sent, so
-  the stamp skips it), `internal/runner/gate.go` and `internal/runner/digest.go` (their commits use
-  `CommitAllStamped`), `internal/runner/stamp_test.go` (new).
-- **Interfaces consumed:** `gitops.Repo.StampOwn`, `task.Spec.Author`, `config.Git.Author`,
-  `runstore.Record.RunID`, `Record.Rigor`, the stage's configured model (`StageTiming.Model`).
-- **Behaviour:** after each agent stage returns, the runner stamps the stage's unpushed own commits
-  (author only when `git.author: launcher` and `Spec.Author` is set; trailers always) and adds the
-    new IDs to its stamped list; a mid-stage checkpoint pushes only up to the last commit with the
-  expected author and committer (D640); finalize stamps any unpushed commit not on the list before
-  its push; the runner's own commits are made stamped. `Fugaro-Model` is omitted when the stage pins
-  no model. Review and artifact runs never stamp.
-- **Tests:** `TestRunnerStampsBeforeVerify`, `TestRunnerStampedCommitsReachTheBoundaryPush`,
-  `TestRunnerNeverRestampsCheckpointedCommits`, `TestRunnerFinalizeRestampsCommitsItDidNotStamp`,
-  `TestRunnerDefaultAuthorUnchanged`, `TestRunnerAuthorOptIn`, `TestRunnerModelTrailerIsTheStagePin`,
-    `TestRunnerReviewAndArtifactNeverStamp`, `TestRunnerCheckpointStopsAtAForeignAuthor`,
-  `TestRunnerOwnCommitsCarryTrailers`, `TestRunnerModelTrailerOmittedWithoutPin`, and the existing
+- **Decisions:** D601–D605, D647; Constraints 1, 3, 6.
+- **Files:** `internal/runner/runner.go` (the agent's environment per stage, beside the
+  `gitops.Identity` loop; the finalize count), `internal/runner/gate.go` and
+  `internal/runner/digest.go` (their commits use the same environment), `internal/runner/stamp_test.go`
+  (new).
+- **Interfaces consumed:** `gitops.StampEnv`, `gitops.WriteStampHooks`, `task.Spec.Author`,
+  `config.Git.Author`, `runstore.Record.RunID`, `Record.Rigor`, the stage's configured model
+  (`StageTiming.Model`), the run's identity as `main` resolves it per run (D645).
+- **Behaviour:** at bootstrap the runner writes the hooks into a directory outside the work tree,
+  chained to the repository's configured hook directory; each agent stage's environment carries
+  `StampEnv` (author only when `git.author: launcher` and `Spec.Author` is set; `Fugaro-Model` the
+  stage's pin, or none); the runner's own commits use the same environment; checkpoints, verification
+  and pushes are unchanged; finalize logs how many of the run's commits lack `Fugaro-Run`. Review
+  and artifact runs never stamp.
+- **Tests:** `TestRunnerVerifiedCommitIsTheStampedCommit`, `TestRunnerStampsAgentCommits`,
+  `TestRunnerStampedCommitsReachTheCheckpointPush`, `TestRunnerDefaultAuthorUnchanged`,
+  `TestRunnerAuthorOptIn`, `TestRunnerModelTrailerIsTheStagePin`,
+  `TestRunnerModelTrailerOmittedWithoutPin`, `TestRunnerOwnCommitsCarryTrailers`,
+  `TestRunnerLogsUnstampedCommitCount`, `TestRunnerReviewAndArtifactNeverStamp`, and the existing
   `TestDigestStepCommitsAsRunner` unchanged.
-- **Command:** `go test ./internal/runner/ -run 'TestRunner(Stamp|NeverRestamps|FinalizeRestamps|DefaultAuthor|AuthorOptIn|ModelTrailer|ReviewAndArtifact|CheckpointStops|OwnCommits)|TestDigestStepCommitsAsRunner' -count=1 -timeout 20m`
+- **Command:** `go test ./internal/runner/ -run 'TestRunner(VerifiedCommit|Stamp|DefaultAuthor|AuthorOptIn|ModelTrailer|OwnCommits|LogsUnstamped|ReviewAndArtifact)|TestDigestStepCommitsAsRunner' -count=1 -timeout 20m`
 - **Depends on:** A1, A2a, A2b.
-- **Red step:** `TestRunnerStampsBeforeVerify` fails: the pushed commit has no `Fugaro-Run` trailer.
-- **Commit:** `runner: stamp each stage's commits with the author and Fugaro trailers before verification`
-- **Reviewer:** standard, plus an independent review (it touches the push and readiness path).
+- **Red step:** `TestRunnerStampsAgentCommits` fails: the agent's commit has no `Fugaro-Run` trailer.
+- **Commit:** `runner: the agent's commits carry the author and Fugaro trailers as they are made`
+- **Reviewer:** standard, plus an independent review (it touches every run's commits).
 
 #### A4. Docs
 
-- **Decisions:** D604, D612, D640, D643, D647.
-- **Files:** `docs/git-providers.md` (a "Commit author and trailers" section and a "Supported forges"
-  line: cloud forges supported, an owner-allow-listed Bitbucket root accepted and unsupported),
+- **Decisions:** D604, D612, D643, D647.
+- **Files:** `docs/git-providers.md` (a "Commit author and trailers" section replacing the sentence
+  that commits are authored as `Fugaro` whatever the token is called, and a "Supported forges" line:
+  cloud forges supported, an owner-allow-listed Bitbucket root accepted and unsupported),
   `SECURITY.md` ("Known limits": the author is the launcher's claim; trailers are a record, not
   proof; a launcher may approve a PR their name is on), `website/content/security.md` (regenerated),
-  the next release's notes file under `docs/releases/` (one Highlights line; no operator step),
-  `internal/cli/docs_commit_author_test.go` (new).
+  the next release's notes file under `docs/releases/` (one Highlights line: trailers on by default;
+  no operator step), `internal/cli/docs_commit_author_test.go` (new).
 - **Tests:** `TestDocsCommitAuthorIsAClaim`, `TestDocsTrailerNames`, `TestDocsSupportedForges`.
-- **Command:** `go test ./internal/cli/ -run 'Docs' -count=1`; `go run ./internal/clidoc`; in
+- **Command:** `go run ./internal/clidoc`; then `go test ./internal/cli/ -run 'Docs' -count=1`; in
   `website/`, `npm run check`.
 - **Depends on:** A3.
 - **Red step:** the new docs test fails before the sections exist.
@@ -236,7 +241,7 @@ and `fugaro update-skills` installs the skills; E0 decides whether a `join` name
   launcher; no `Signed-off-by`; and with the key absent, the author is the run's identity.
 - **The owner types,** in each sandbox checkout:
   `fugaro run --title "Check 230" "Add a line to CHECK230.md"`, then on the PR branch
-    `git log --format='%an <%ae> | %cn <%ce>%n%(trailers)' origin/main..`; then squash-merges the PR
+  `git log --format='%an <%ae> | %cn <%ce>%n%(trailers)' origin/main..`; then squash-merges the PR
   in the forge's UI and runs `git log -1 --format='%an <%ae>%n%B' origin/main` (D648, U9); and
   records both results under Check 230 in `docs/gcp-live-checklist.md`.
 - **Written by:** X1. **Run by:** the owner. **Depends on:** a release with A3.
@@ -249,7 +254,7 @@ and `fugaro update-skills` installs the skills; E0 decides whether a `join` name
 - **Files:** `internal/gitprov/kinds.go` (new), `internal/gitprov/kinds_test.go` (new),
   `internal/gitprov/gitprov.go`, `internal/gitprov/providers/providers.go`.
 - **Behaviour:** `gitprov.Kinds` lists the forge kinds; `providers.FromEnv` and its error text read
-    it. The test parses the non-test Go files (`go/parser`) for uses of the `KindGitHub` and
+  it. The test parses the non-test Go files (`go/parser`) for uses of the `KindGitHub` and
   `KindBitbucket` identifiers and fails on any file not in its inventory table; a second, hand-kept
   table lists the non-Go sites (the image build's credential step, Terraform secret names, the
   plugin skills) and the test checks each still exists. Adding a string `"github"` elsewhere does
@@ -266,12 +271,14 @@ and `fugaro update-skills` installs the skills; E0 decides whether a `join` name
 
 - **Files:** `internal/gitprov/gitprov.go` (`Checks(ctx, sha) ([]CheckState, error)`),
   `internal/gitprov/github/checks.go` (new), `internal/gitprov/bitbucket/statuses.go` (new),
-  `internal/gitprov/fake/` (the fake's method), tests beside each, recorded fixtures in each adapter's
-  `testdata/`, `docs/git-providers.md` (the App gains **Checks: read** and **Commit statuses:
+    `internal/gitprov/fake/` (the fake's method), tests beside each, recorded fixtures in each adapter's
+  `testdata/`, `internal/gitprov/github/live_test.go` (new, `live` tag: reads a sandbox commit's
+  checks), `internal/gitprov/github/installcheck.go` (`RequiredPermissions` gains the run token's
+  `checks: read` and `statuses: read`, so doctor reports an installation that has not accepted them), `docs/git-providers.md` (the App gains **Checks: read** and **Commit statuses:
   read**), the next release's notes file under `docs/releases/` (`### For operators`: accept the
   App's new permissions on every installation).
 - **Tests:** `TestGitHubChecksCombinesRunsAndStatuses`, `TestBitbucketStatusesMapToCheckState`,
-  `TestFakeChecks`.
+  `TestFakeChecks`, `TestRequiredPermissionsIncludeChecks`; live: `TestLiveGitHubChecks`.
 - **Command:** `go test ./internal/gitprov/... -run 'Checks|Statuses' -count=1`
 - **Depends on:** B1.
 - **Red step:** compile failure: `Checks` is not on `Provider`.
@@ -294,15 +301,16 @@ from it. **Not sized here** beyond: L, security-sensitive throughout.
 
 - **Decisions:** D623, D625.
 - **Files:** `internal/cli/project_enroll.go`, `internal/gitprov/bitbucket/list.go` (new),
-  `internal/gitprov/bitbucket/list_test.go` (new), `internal/cli/project_enroll_test.go`.
+  `internal/gitprov/bitbucket/list_test.go` (new), `internal/cli/project_enroll_test.go`,
+  `website/content/cli-reference.md` (regenerated by `go run ./internal/clidoc`).
 - **Behaviour:** lists the workspace's or project's repositories with a token read from stdin or a
   hidden prompt (never argv), offers the ones `allow_repos` does not admit, confirms as today;
   `--check` prints the difference and writes nothing.
 - **Tests:** `TestBitbucketListPaginates`, `TestProjectSyncBitbucketOffersUnadmitted`,
-    `TestProjectSyncCheckWritesNothing`, `TestProjectSyncBitbucketTokenNeverFromArgs`,
+  `TestProjectSyncCheckWritesNothing`, `TestProjectSyncBitbucketTokenNeverFromArgs`,
   `TestProjectSyncBitbucketRefusedInAgentSession`.
-- **Command:** `go test ./internal/cli/ ./internal/gitprov/bitbucket/ -run 'ProjectSync|BitbucketList' -count=1`
-- **Depends on:** none.
+- **Command:** `go test ./internal/cli/ ./internal/gitprov/bitbucket/ ./internal/clidoc/ -run 'ProjectSync|BitbucketList|CliReference' -count=1`
+- **Depends on:** E1 (`website/content/cli-reference.md`, earlier level).
 - **Red step:** `TestProjectSyncCheckWritesNothing` fails: `--check` is an unknown flag.
 - **Commit:** `cli: fugaro project sync lists Bitbucket repositories, and --check only reports`
 - **OWNER-RUN:** Check 234 (`fugaro project sync --check` against the sandbox Bitbucket workspace).
@@ -345,16 +353,22 @@ from it. **Not sized here** beyond: L, security-sensitive throughout.
 
 - **Files:** `internal/task/task.go`, `schemas/task.schema.json`, `internal/cli/run.go`
   (`--context owner/name`, repeatable), `internal/cli/recipes_skew.go`,
-  `internal/budget/token/token.go` (a launcher-minted claim naming the context repositories, as
-  D497a binds the branch), `internal/cli/run_context_test.go` (new).
+    `internal/budget/token/token.go`, `internal/budget/token/mint.go`,
+  `internal/budget/token/exchange.go` and `internal/cli/launch_budget.go` (a launcher-minted claim
+  naming the context repositories; secrets-brokering's planned B1.1 adds branch and PR claims the
+  same way, D497a, and is **not built**: whichever lands second rebases on the other),
+  `website/content/cli-reference.md` (regenerated), `internal/cli/run_context_test.go` (new).
 - **Behaviour:** each context repository must be admitted by `allow_repos`; at most **5** per run;
-  refused for Bitbucket until the proxy admits them (secrets-brokering D496 binds fetch to the task's
-    repository). The list goes into the task (for the runner) and into the run identity's claim (for
+    refused for Bitbucket until the proxy admits them (secrets-brokering D496 binds fetch to the task's
+  repository); refused unless the installation opted into the credentials service (the in-job mint
+  path is not extended); refused when the claim would push the custom token past its byte limit
+  (`mint.go`'s 1000-byte bound on claims). The list goes into the task (for the runner) and into the run identity's claim (for
   the service, which cannot read the task).
 - **Tests:** `TestRunContextReposMustBeAdmitted`, `TestRunContextReposCappedAtFive`,
   `TestRunContextRefusedOnBitbucket`, `TestSpecWithoutContextIsByteIdentical`,
-  `TestTokenContextClaimMatchesTask`.
-- **Command:** `go test ./internal/cli/ ./internal/task/ ./internal/budget/token/ -run 'Context' -count=1`
+    `TestTokenContextClaimMatchesTask`, `TestRunContextRefusedWithoutService`,
+  `TestTokenContextClaimWithinByteLimit`.
+- **Command:** `go run ./internal/clidoc`; then `go test ./internal/cli/ ./internal/task/ ./internal/budget/token/ ./internal/clidoc/ -run 'Context|CliReference' -count=1`
 - **Depends on:** A2a, A2b (same files, earlier levels).
 - **Red step:** compile failure: no `Spec.ContextRepos`.
 - **Commit:** `task, cli: read-only context repositories on a launch`
@@ -363,7 +377,7 @@ from it. **Not sized here** beyond: L, security-sensitive throughout.
 #### C5b. A read-only token for context repositories (GATED: D613)
 
 - **Files:** `internal/gitprov/github/apptoken.go`, `internal/credsvc/github.go`,
-  `internal/credsvc/auth.go` (reads C5a's claim), tests beside each.
+  `internal/credsvc/auth.go` (`Identity` carries C5a's claim), tests beside each.
 - **Behaviour:** a second mint with **Contents: read** and **Metadata: read** only, naming exactly
   the repositories in the run identity's launcher-minted claim (C5a), each re-admitted against the
   policy, one token per App installation (repositories under different owners); a request naming any
@@ -371,7 +385,7 @@ from it. **Not sized here** beyond: L, security-sensitive throughout.
   gains nothing beyond its launch. No Terraform and no new grant: the service keeps its one bundle
   grant (`TestCredentialsServiceGrantsAreTheOneBundle` unchanged). The write token is unchanged.
 - **Tests:** `TestContextTokenIsReadOnly`, `TestContextTokenNamesOnlyTheTasksRepos`,
-    `TestServiceRefusesContextRepoNotInClaim`, `TestServiceRefusesContextRepoOutsidePolicy`,
+  `TestServiceRefusesContextRepoNotInClaim`, `TestServiceRefusesContextRepoOutsidePolicy`,
   `TestServiceAuditsContextRefusal`, `TestContextTokenOnePerInstallation`,
   `TestWriteTokenStillOneRepository`.
 - **Command:** `go test ./internal/gitprov/github/ ./internal/credsvc/ -run 'Context|WriteTokenStillOne' -count=1`
@@ -433,17 +447,19 @@ tagged CLI refuses it until D3 has shipped, so no change set can be stuck in dra
 #### D1. Change sets created together, linked PRs
 
 - **Files:** `internal/task/task.go` (`Spec.ChangeSet`: an ID and the member list),
-  `schemas/task.schema.json`, `internal/cli/run.go` (`--change-set` launches one run per `--repo`,
-  writing every member's task with the full member list), `internal/cli/recipes_skew.go`,
+    `schemas/task.schema.json`, `internal/cli/run.go` (`--change-set` makes `--repo` repeatable and
+  launches one run per repository, writing every member's task with the full member list; refused
+  until D3 lifts it), `internal/cli/recipes_skew.go`, `website/content/cli-reference.md`
+  (regenerated),
   `internal/runner/prflow.go`, `internal/gitprov/status.go` (a "Change set" line in the status
-    section), `internal/runstore/changeset.go` (new: the member's PR URL and verdict under the run's
+  section), `internal/runstore/changeset.go` (new: the member's PR URL and verdict under the run's
   own `runs/<slug>/<run-id>/` prefix; **not** a trust boundary, since runs of one repository share
   their prefixes and the agent can act as the job, T5), tests beside each.
-- **Tests:** `TestChangeSetMembersFixedAtLaunch`, `TestChangeSetRefusedUntilSettleExists`,
-  `TestChangeSetRefusedByUntaggedBuild`, `TestChangeSetStatusSectionListsSiblingPRs`,
+- **Tests:** `TestChangeSetMembersFixedAtLaunch` (calls the launch below the refusal),
+  `TestChangeSetRefusedUntilSettleExists`, `TestChangeSetRefusedByUntaggedBuild` (`//go:build !ee`), `TestChangeSetStatusSectionListsSiblingPRs`,
   `TestSpecWithoutChangeSetIsByteIdentical`.
 - **Command:** `go test ./internal/task/ ./internal/runstore/ ./internal/gitprov/ ./internal/cli/ -run 'ChangeSet' -count=1`; `go test -tags ee ./internal/cli/ -run 'ChangeSet' -count=1`
-- **Depends on:** C5a (same files, earlier level), A3 (`prflow.go`, earlier level).
+- **Depends on:** C5a (same files, earlier level).
 - **Red step:** compile failure: no `Spec.ChangeSet`.
 - **Commit:** `change sets: runs launched together, and each PR lists its siblings`
 - **Reviewer:** standard.
@@ -451,7 +467,8 @@ tagged CLI refuses it until D3 has shipped, so no change set can be stuck in dra
 #### D2. The draft hold
 
 - **Files:** `internal/runner/runner.go` (finalize: a change-set run never flips ready; it records
-  its verdict), `internal/runstore/changeset.go`, `internal/runner/changeset_test.go` (new).
+  its verdict), `internal/runstore/changeset.go`, `internal/cli/run.go` (a `--pr` follow-up on a
+  member PR carries the change set), `internal/runner/changeset_test.go` (new).
 - **Tests:** `TestChangeSetRunStaysDraft`, `TestChangeSetRunRecordsVerdict`,
   `TestChangeSetFollowUpKeepsTheHold`, `TestRunWithoutChangeSetFlipsAsToday`.
 - **Command:** `go test ./internal/runner/ -run 'ChangeSet|TestRunWithoutChangeSetFlipsAsToday' -count=1 -timeout 20m`
@@ -464,7 +481,9 @@ tagged CLI refuses it until D3 has shipped, so no change set can be stuck in dra
 
 - **Files:** `ee/coordinator/changeset.go` (new), `ee/coordinator/changeset_test.go` (new), the
   settle subcommand under the `ee/` CLI package the ee-reorg plan creates, and the settle-only token
-  in `internal/gitprov/github/apptoken.go` (D641).
+    in `internal/gitprov/github/apptoken.go` (D641), `internal/cli/run.go` (lifts D1's refusal for a
+  tagged build; `TestChangeSetRefusedUntilSettleExists` is replaced by
+  `TestChangeSetLaunchesOnceSettleExists`), and the regenerated `ee` CLI reference.
 - **Behaviour:** reads every member's record and every PR's live state (head SHA, draft flag);
   only when every listed member recorded `ship` and passing tests on the PR's current head, and every
   member lists the same set, flips every PR ready through `UpdatePR` and `ApplyReady` with the
@@ -486,7 +505,7 @@ tagged CLI refuses it until D3 has shipped, so no change set can be stuck in dra
 - **Files:** `ee/coordinator/changeset.go`, `ee/coordinator/changeset_test.go`,
   `internal/gitprov/status.go` (the order line).
 - **Behaviour:** the change set records an order at launch; each PR body states it; the coordinator
-    view shows it. No blocking (D615). The mobile `merge` action naming the order is not planned here
+  view shows it. No blocking (D615). The mobile `merge` action naming the order is not planned here
   (a mobile write-surface change, D636's posture).
 - **Tests:** `TestChangeSetOrderInEveryPR`, `TestCoordinatorViewShowsOrder`.
 - **Command:** `go test -tags ee ./ee/coordinator/... ./internal/gitprov/ -run 'Order' -count=1`
@@ -509,7 +528,8 @@ written from it.**
 
 - **Decisions:** D627 (interim), D637; F42.
 - **Files:** `internal/cli/user.go` (new), `internal/cli/user_test.go` (new),
-  `internal/cli/root.go` (or the command registry #1252 added), `plugin/skills/working/SKILL.md`.
+  `internal/cli/root.go` (or the command registry #1252 added), `plugin/skills/working/SKILL.md`,
+  `website/content/cli-reference.md` (regenerated).
 - **Relation to what exists:** `fugaro setup --launcher/--operator` replaces a whole list and the
   new-machine path names the roles (F45); `fugaro user` adds and removes one member safely.
 - **Behaviour:** refreshes `terraform.launchers` and `terraform.operators` from the installation's
@@ -521,7 +541,7 @@ written from it.**
 - **Tests:** `TestUserAddWritesLauncher`, `TestUserAddRequiresRole`, `TestUserAddRefusesDomain`,
   `TestUserRefusesStaleLocalList`, `TestUserRmRemoves`, `TestUserLsListsBoth`,
   `TestUserRefusedInAgentSession`, `TestUserInviteHasNoSecret`.
-- **Command:** `go test ./internal/cli/ -run 'TestUser' -count=1`; `go test ./plugin/... -count=1`
+- **Command:** `go run ./internal/clidoc`; then `go test ./internal/cli/ ./internal/clidoc/ -run 'TestUser|CliReference' -count=1`; `go test ./plugin/... -count=1`
 - **Depends on:** none.
 - **Red step:** compile failure: no `newUserCmd`.
 - **Commit:** `cli: fugaro user, a front for the installation's launchers and operators`
@@ -539,7 +559,8 @@ from E0.
 - **Files:** `docs/gcp-live-checklist.md` (Checks 230, 231, 232, 234, 235, each NOT RUN, with its
   prerequisites, the exact commands and the task that makes it runnable),
   `internal/cli/docs_forge_checks_test.go` (new).
-- **Tests:** `TestDocsForgeChecksWritten`, `TestDocsForgeChecksNotRun`.
+- **Tests:** `TestDocsForgeChecksWritten`, `TestDocsForgeChecksNotRun` (the commit that records an
+  owner's result updates it, as the checklist's other checks do).
 - **Command:** `go test ./internal/cli/ -run 'Docs' -count=1`
 - **Depends on:** none. **Red step:** the new test fails before the entries exist.
 - **Commit:** `docs: live checks 230-232, 234 and 235 for forge, authorship and change sets (not run)`
@@ -569,19 +590,21 @@ from E0.
 | D626 | none here: project-centric phase 6 owns the backing folder |
 | D627–D636, D638 | E0, E1, E4 onward |
 | D639 | none (bookkeeping: the open questions are listed in reconciliation §6) |
-| D640 | A3, A4 |
+| D640 | none: withdrawn by the re-plan (commits are born stamped) |
 | D641, D642 | D1, D3 |
 | D643 | A4 |
-| D644, D646 | A1 |
+| D644 | A1 |
+| D646 | none: nothing is re-authored |
+| D649 | A2b |
 | D647 | A3, A4 |
 | D648 | A5 (Check 230's squash step) |
 
 ## Parallel execution
 
 **Edges** (from the Depends-on lines): A1→A3; A2a→A2b→A3→A4→A5; B1→B2; A2a→C5a; A2b→C5a;
-C5a→C5b→C5c; A3→C5c; C5a→D1; A3→D1; D1→D2; C5c→D2; D2→D3→D4.
+C5a→C5b→C5c; A3→C5c; C5a→D1; D1→D2; C5c→D2; D2→D3→D4; E1→C1. External: C5a and secrets-brokering B1.1 (the same token files; whichever lands second rebases).
 
-The file-sharing edges (A2a→C5a, A2b→C5a, A3→C5c, A3→D1, C5a→D1, C5c→D2) exist only to keep
+The file-sharing edges (A2a→C5a, A2b→C5a, A3→C5c, C5a→D1, C5c→D2, E1→C1) exist only to keep
 one writer per file per level when slices run together. **A slice approved alone runs its own chain
 only.**
 
@@ -589,8 +612,8 @@ only.**
 
 | Level | Tasks (concurrent) |
 | --- | --- |
-| **L0** | A1, A2a, B1, C1, C3, C4, C6, E1, X1; docs B3, C7, E0 |
-| **L1** | A2b, B2 |
+| **L0** | A1, A2a, B1, C3, C4, C6, E1, X1; docs B3, C7, E0 |
+| **L1** | A2b, B2, C1 |
 | **L2** | A3, C5a |
 | **L3** | A4, C5b, D1 |
 | **L4** | A5 (OWNER-RUN), C5c |
@@ -607,18 +630,22 @@ runs beside A2a).
 | File | Writers (level) |
 | --- | --- |
 | `internal/task/task.go`, `schemas/task.schema.json` | A2a (L0), C5a (L2), D1 (L3) |
-| `internal/cli/run.go` | C4 (L0), A2b (L1), C5a (L2), D1 (L3) |
+| `internal/cli/run.go` | C4 (L0), A2b (L1), C5a (L2), D1 (L3), D2 (L5), D3 (L6) |
 | `internal/cli/recipes_skew.go` | A2b (L1), C5a (L2), D1 (L3) |
 | `internal/runner/runner.go` | A3 (L2), C5c (L4), D2 (L5) |
-| `internal/runner/prflow.go` | A3 (L2), D1 (L3) |
-| `internal/runner/checkpoint.go` | A3 (L2) |
+| `internal/runner/prflow.go` | D1 (L3) |
+
 | `internal/gitprov/gitprov.go` | B1 (L0), B2 (L1) |
 | `internal/gitprov/status.go` | D1 (L3), D4 (L7) |
 | `internal/gitprov/github/apptoken.go` | C5b (L3), D3 (L6) |
 | `internal/credsvc/github.go` | C5b (L3) |
 | `internal/runstore/changeset.go` | D1 (L3, new), D2 (L5) |
 | `ee/coordinator/changeset.go` | D3 (L6, new), D4 (L7) |
-| `internal/cli/project_enroll.go` | C1 (L0) |
+| `internal/cli/project_enroll.go` | C1 (L1) |
+| `website/content/cli-reference.md` | E1 (L0), C1 (L1), C5a (L2), D1 (L3) |
+| `internal/cli/init.go` | A2b (L1) |
+| `internal/gitprov/github/installcheck.go`, `internal/gitprov/github/live_test.go` | B2 (L1) |
+| `internal/budget/token/mint.go`, `exchange.go`, `internal/cli/launch_budget.go` | C5a (L2) |
 | `internal/localcfg/localcfg.go`, `internal/localcfg/shared.go` | A2b (L1) |
 | `internal/cli/root.go`, `plugin/skills/working/SKILL.md` | E1 (L0) |
 | `internal/runner/gate.go`, `internal/runner/digest.go` | A3 (L2) |
@@ -633,9 +660,9 @@ runs beside A2a).
 | `internal/imagecheck/record.go` | C4 (L0) |
 | `images/derived/Dockerfile.tmpl`, `internal/image/render.go` | C3 (L0) |
 | `internal/gitprov/providers/providers.go` | B1 (L0) |
-| `internal/gitprov/bitbucket/` (new files) | C1 `list.go` (L0), B2 `statuses.go` (L1) |
+| `internal/gitprov/bitbucket/` (new files) | B2 `statuses.go` (L1), C1 `list.go` (L1): different files |
 
-**What must be sequential and why:** A3 needs A1's `StampOwn` and A2's fields (interfaces); C5b binds
+**What must be sequential and why:** A3 needs A1's `StampEnv` and hooks and A2's fields (interfaces); C5b binds
 its mint to C5a's task field and C5c needs both (interfaces); D2 needs D1's change-set record; D3
 needs the coordinator under `ee/` (an external plan); every other edge is one file.
 
