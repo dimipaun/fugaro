@@ -475,8 +475,8 @@
       "properties": {
         "pair_id": {
           "type": "string",
-          "minLength": 1,
-          "description": "The pair both arms belong to: one value, written by the launcher onto both tasks, so a reader joins the two records by it. Opaque to the runner, and a blank one names no pair."
+          "pattern": "\\S",
+          "description": "The pair both arms belong to: one value, written by the launcher onto both tasks, so a reader joins the two records by it. Opaque to the runner, and a blank one names no pair (the pattern is task.Spec.Validate's strings.TrimSpace rule)."
         },
         "arm": {
           "enum": ["champion", "challenger"],
@@ -488,8 +488,8 @@
         },
         "challenger": {
           "type": "string",
-          "minLength": 1,
-          "description": "The coder model the challenger arm ran, and the one difference between the arms (D555)."
+          "pattern": "\\S",
+          "description": "The coder model the challenger arm ran, and the one difference between the arms (D555). A blank one is no model (the pattern is task.Spec.Validate's strings.TrimSpace rule)."
         },
         "challenger_source": {
           "enum": ["owner"],

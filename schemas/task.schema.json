@@ -152,8 +152,8 @@
       "properties": {
         "pair_id": {
           "type": "string",
-          "minLength": 1,
-          "description": "The pair both arms belong to: one value, written by the launcher onto both tasks, so a reader joins the two records by it. Opaque to the runner, and a blank one names no pair."
+          "pattern": "\\S",
+          "description": "The pair both arms belong to: one value, written by the launcher onto both tasks, so a reader joins the two records by it. Opaque to the runner, and a blank one names no pair (the pattern is task.Spec.Validate's strings.TrimSpace rule, as the paths entries below carry it)."
         },
         "arm": {
           "enum": ["champion", "challenger"],
@@ -165,8 +165,8 @@
         },
         "challenger": {
           "type": "string",
-          "minLength": 1,
-          "description": "The coder model the challenger arm runs, and the one difference between the arms (D555). It is an entry of the project layer's own challenger list, which the runner re-checks at bootstrap rather than trusting this text, so this schema does not carry that list's shape."
+          "pattern": "\\S",
+          "description": "The coder model the challenger arm runs, and the one difference between the arms (D555). It is an entry of the project layer's own challenger list, which the runner re-checks at bootstrap rather than trusting this text, so this schema does not carry that list's shape. A blank one is no model (the pattern is task.Spec.Validate's strings.TrimSpace rule)."
         },
         "challenger_source": {
           "enum": ["owner"],
@@ -188,7 +188,10 @@
     "pr": ["branch", "previous_run"],
     "previous_run": ["branch", "pr"]
   },
-  "not": { "allOf": [{ "required": ["review_prs"] }, { "anyOf": [{ "required": ["branch"] }, { "required": ["pr"] }, { "required": ["previous_run"] }] }] },
+  "allOf": [
+    { "not": { "allOf": [{ "required": ["review_prs"] }, { "anyOf": [{ "required": ["branch"] }, { "required": ["pr"] }, { "required": ["previous_run"] }] }] } },
+    { "not": { "allOf": [{ "required": ["ab"] }, { "properties": { "overrides": { "required": ["model"] } }, "required": ["overrides"] }] } }
+  ],
   "if": { "not": { "anyOf": [{ "required": ["branch"] }, { "required": ["review_prs"] }] } },
   "then": { "required": ["task"], "properties": { "task": { "minLength": 1 } } }
 }

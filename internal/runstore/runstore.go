@@ -790,12 +790,12 @@ type Record struct {
 	// existed, so an old reader sees the record it always saw.
 	AB *task.AB `json:"ab,omitempty"`
 	// PatchObject is the key of the run's own tree diff under the runs
-	// bucket, runs/<repo-slug>/<run-id>/ab/patch.diff: the diff from the
-	// run's StartSHA to its final head, with no commit metadata in it, which
-	// both arms upload (A2.1) because the paired comparison reads the two
-	// diffs. Absent for a run that uploaded none — every run before this
-	// field existed, and one that died before finalize — so an absent key
-	// means "no patch", never "an empty patch".
+	// bucket, PatchKey(Store.Prefix()) — runs/<repo-slug>/<run-id>/ab/
+	// patch.diff: the diff from the run's StartSHA to its final head, with no
+	// commit metadata in it, which both arms upload (A2.1) because the paired
+	// comparison reads the two diffs. Absent for a run that uploaded none —
+	// every run before this field existed, and one that died before finalize
+	// — so an absent key means "no patch", never "an empty patch".
 	PatchObject string `json:"patch_object,omitempty"`
 	// PatchTruncated is set when the stored patch is shorter than the run's
 	// real diff, because the object is capped. The cap is recorded as a fact
@@ -803,6 +803,16 @@ type Record struct {
 	// must be able to tell a short patch from a cut-off one.
 	PatchTruncated bool `json:"patch_truncated,omitempty"`
 }
+
+// PatchName is a run's patch object under its own prefix:
+// runs/<repo-slug>/<run-id>/ab/patch.diff, the tree diff from the run's
+// StartSHA to its final head. Both arms upload one and the reader that scores
+// a pair fetches them, so writer and reader spell the leaf once, as InputKey
+// and ArtifactPrefix do.
+const PatchName = "ab/patch.diff"
+
+// PatchKey is PatchName under prefix (Store.Prefix(), which ends in "/").
+func PatchKey(prefix string) string { return prefix + PatchName }
 
 // MaxBacklogClosed bounds Record.BacklogClosed. A run closes only what the
 // runs of its own pull request filed for a round, one item a run over a walk

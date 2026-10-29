@@ -633,10 +633,16 @@ func TestRecordHaltRoundTrip(t *testing.T) {
 // for both arms, capped, with the truncation recorded rather than hidden).
 func TestRecordABRoundTrip(t *testing.T) {
 	s := newStore(t)
+	// The one spelling of the patch's leaf, which the runner that uploads it
+	// and the reader that scores the pair both use.
+	patchKey := PatchKey(s.Prefix())
+	if want := "runs/acme-app/" + runID + "/ab/patch.diff"; patchKey != want {
+		t.Fatalf("PatchKey = %q, want %q", patchKey, want)
+	}
 	ab := &task.AB{PairID: runID, Arm: task.ABArmChallenger, Publish: task.ABPublishNone,
 		Challenger: "invented-challenger-1", ChallengerSource: task.ABChallengerOwner}
 	rec := &Record{Version: 1, RunID: runID, Status: StatusSucceeded, Outcome: OutcomeNone,
-		StartedAt: time.Now().UTC(), AB: ab, PatchObject: "runs/acme-app/" + runID + "/ab/patch.diff", PatchTruncated: true}
+		StartedAt: time.Now().UTC(), AB: ab, PatchObject: patchKey, PatchTruncated: true}
 	if err := s.WriteRecord(ctx, rec); err != nil {
 		t.Fatal(err)
 	}

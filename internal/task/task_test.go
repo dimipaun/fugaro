@@ -983,14 +983,37 @@ func TestABChallengerRequiresModel(t *testing.T) {
 }
 
 // TestABChampionRefusesPublishNone: the champion is the run the developer
-// gets and publishes exactly as an unsampled run, so a publish on it is
-// refused rather than ignored.
+// gets: it publishes exactly as an unsampled run and runs no challenger, so
+// the three fields that describe a challenger are refused on it rather than
+// ignored. Ignoring them is what would break the record: the runner echoes
+// Spec.AB onto result.json (A2.1), and both published schemas refuse a
+// champion carrying any of the three.
 func TestABChampionRefusesPublishNone(t *testing.T) {
-	s := Spec{Version: 1, RunID: "20261029-120000-abcd", Repo: "owner/repo-a", Ref: "main", Task: "do it",
-		AB: &AB{PairID: "20261029-120000-abcd", Arm: ABArmChampion, Publish: ABPublishNone}}
-	err := s.Validate()
-	if err == nil || !strings.Contains(err.Error(), "champion") {
-		t.Fatalf("a champion with publish: none = %v, want a refusal naming champion", err)
+	const pairID = "20261029-120000-abcd"
+	champion := func(mutate func(*AB)) *AB {
+		ab := &AB{PairID: pairID, Arm: ABArmChampion}
+		mutate(ab)
+		return ab
+	}
+	for _, tc := range []struct {
+		name string
+		ab   *AB
+	}{
+		{"a publish", champion(func(ab *AB) { ab.Publish = ABPublishNone })},
+		{"a challenger model", champion(func(ab *AB) { ab.Challenger = "invented-challenger-1" })},
+		{"a challenger source", champion(func(ab *AB) { ab.ChallengerSource = ABChallengerOwner })},
+	} {
+		s := Spec{Version: 1, RunID: pairID, Repo: "owner/repo-a", Ref: "main", Task: "do it", AB: tc.ab}
+		err := s.Validate()
+		if err == nil || !strings.Contains(err.Error(), "champion") {
+			t.Errorf("a champion carrying %s = %v, want a refusal naming champion", tc.name, err)
+		}
+	}
+	// The bare champion — the shape A3.3 launches — is accepted.
+	s := Spec{Version: 1, RunID: pairID, Repo: "owner/repo-a", Ref: "main", Task: "do it",
+		AB: &AB{PairID: pairID, Arm: ABArmChampion}}
+	if err := s.Validate(); err != nil {
+		t.Fatalf("a champion carrying nothing but its pair and arm: %v", err)
 	}
 }
 
@@ -1016,7 +1039,7 @@ func TestABRefusesOverrideModel(t *testing.T) {
 // tier's: a near miss is a launcher's bug rather than a run's opinion about
 // which arm it is.
 func TestABUnknownArmRefused(t *testing.T) {
-	for _, arm := range []string{"", "Champion", "champion ", "shadow"} {
+	for _, arm := range []ABArm{"", "Champion", "champion ", "shadow"} {
 		s := Spec{Version: 1, RunID: "20261029-120000-abcd", Repo: "owner/repo-a", Ref: "main", Task: "do it",
 			AB: &AB{PairID: "20261029-120000-abcd", Arm: arm}}
 		err := s.Validate()

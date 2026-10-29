@@ -3094,16 +3094,21 @@ func TestTaskSchemaABBlock(t *testing.T) {
 			t.Errorf("schema rejects %s: %v", tc.name, err)
 		}
 	}
-	bad := func(ab *task.AB) *task.AB { return ab }
 	noPublish := *challenger
 	noPublish.Publish = ""
 	noModel := *challenger
 	noModel.Challenger = ""
 	championPublishing := task.AB{PairID: pairID, Arm: task.ABArmChampion, Publish: task.ABPublishNone}
+	championWithModel := task.AB{PairID: pairID, Arm: task.ABArmChampion, Challenger: "invented-challenger-1"}
+	championWithSource := task.AB{PairID: pairID, Arm: task.ABArmChampion, ChallengerSource: task.ABChallengerOwner}
 	unknownArm := *challenger
 	unknownArm.Arm = "shadow"
 	emptyPair := *challenger
 	emptyPair.PairID = ""
+	blankPair := *challenger
+	blankPair.PairID = "   "
+	blankModel := *challenger
+	blankModel.Challenger = " "
 	unknownSource := *challenger
 	unknownSource.ChallengerSource = "repo"
 	for _, tc := range []struct {
@@ -3113,24 +3118,36 @@ func TestTaskSchemaABBlock(t *testing.T) {
 		{"a challenger with no publish", &noPublish},
 		{"a challenger with no model", &noModel},
 		{"a champion that publishes", &championPublishing},
+		{"a champion naming a model", &championWithModel},
+		{"a champion naming a source", &championWithSource},
 		{"an unknown arm", &unknownArm},
 		{"an empty pair_id", &emptyPair},
+		{"a blank pair_id", &blankPair},
+		{"a blank challenger model", &blankModel},
 		{"an unknown challenger_source", &unknownSource},
 	} {
-		if err := validate(t, bad(tc.ab)); err == nil {
+		if err := validate(t, tc.ab); err == nil {
 			t.Errorf("schema accepts %s", tc.name)
 		}
 	}
-	// A key inside the block that is not one of its five: the block is
-	// additionalProperties: false like the document around it.
-	raw := `{"version":1,"run_id":"20261029-120000-abcd","repo":"owner/repo-a","ref":"main","task":"do it",` +
-		`"overrides":{},"ab":{"pair_id":"20261029-120000-abcd","arm":"champion","publish_rate":0.05}}`
-	inst, err := jsonschema.UnmarshalJSON(strings.NewReader(raw))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := sch.Validate(inst); err == nil {
-		t.Error("schema accepts an unknown key inside the ab block")
+	// A key inside the block that is not one of its five, and a block beside
+	// the override the challenger may never travel as: the block is
+	// additionalProperties: false like the document around it, and the
+	// overrides exclusion is task.Spec.Validate's own rule (D555).
+	for _, raw := range []string{
+		`{"version":1,"run_id":"20261029-120000-abcd","repo":"owner/repo-a","ref":"main","task":"do it",` +
+			`"overrides":{},"ab":{"pair_id":"20261029-120000-abcd","arm":"champion","publish_rate":0.05}}`,
+		`{"version":1,"run_id":"20261029-120000-abcd","repo":"owner/repo-a","ref":"main","task":"do it",` +
+			`"overrides":{"model":"invented-champion-1"},` +
+			`"ab":{"pair_id":"20261029-120000-abcd","arm":"champion"}}`,
+	} {
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.Validate(inst); err == nil {
+			t.Errorf("schema accepts %s", raw)
+		}
 	}
 }
 
@@ -3219,9 +3236,9 @@ func TestABSchemaEnumsMatchTheGoVocabulary(t *testing.T) {
 		return out
 	}
 	want := map[string][]string{
-		"arm":               {task.ABArmChampion, task.ABArmChallenger},
-		"publish":           {task.ABPublishNone},
-		"challenger_source": {task.ABChallengerOwner},
+		"arm":               {string(task.ABArmChampion), string(task.ABArmChallenger)},
+		"publish":           {string(task.ABPublishNone)},
+		"challenger_source": {string(task.ABChallengerOwner)},
 	}
 	for _, file := range []string{"task.schema.json", "result.schema.json"} {
 		got := read(file)
