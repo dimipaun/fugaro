@@ -63,8 +63,14 @@ func (r *Repo) CheckpointTip(ctx context.Context, branch string) (string, error)
 //     after "--", and a URL that looks like an option or holds a newline or
 //     NUL is refused before git runs with it;
 //
-//   - it pushes to that URL rather than the remote's name, so git writes no
-//     remote-tracking ref in the checkout.
+//   - it pushes to that URL rather than the remote's name, so the push cannot
+//     be redirected by a remote.origin.pushurl the agent set after the URL was
+//     read. It is no longer also a way to keep git from writing a
+//     remote-tracking ref in the checkout: since git 2.56 a URL that uniquely
+//     matches a configured remote is resolved to it, and its fetch refspec is
+//     used to update the tracking ref, with no flag or config to opt out.
+//     What that ref costs is a ref lock the agent's own git can meet, not
+//     correctness.
 //
 //   - the URL may not be a "<transport>::<address>" helper form (ext::
 //     runs a command) nor a scheme other than https, http, ssh, git or file

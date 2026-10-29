@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The Projects screen, and the Run detail screen's model
 // (desktop-console plan Task 2.3; design section 6.2 screens 3 and 4).
 //
@@ -45,7 +47,15 @@ import { CONSOLE_OPERATIONS } from '../../src/main/ipc'
 import { putText } from '../../src/renderer/app'
 import { PROJECT_PANEL_KEYS, PROJECTS_THEMES, buildProjectsModel, renderProjects } from '../../src/renderer/screens/projects'
 import type { ProjectsInputs, ScreenElement, ScreenFactory } from '../../src/renderer/screens/projects'
-import { RUN_LOG_CAP, buildRunModel, linkFor, parseLogWindow, pullRequestUrl, renderRun } from '../../src/renderer/screens/run'
+import {
+  PR_NO_LINK_REASON,
+  RUN_LOG_CAP,
+  buildRunModel,
+  linkFor,
+  parseLogWindow,
+  pullRequestUrl,
+  renderRun,
+} from '../../src/renderer/screens/run'
 import type { RunInputs } from '../../src/renderer/screens/run'
 import { ReplayBuffer } from '../../src/shared/replay'
 import { ADDRESS_PLACEHOLDER, sanitizeText, TOKEN_PLACEHOLDER } from '../../src/shared/sanitize'
@@ -115,6 +125,10 @@ function walk(node: ScreenElement): readonly FakeScreen[] {
   for (const child of fake.childNodes()) out.push(...walk(child))
   return out
 }
+
+/** PR_LINE_CLASSES is the pull-request line's cells in the order they are
+ * drawn: the three facts and the separator between them. */
+const PR_LINE_CLASSES = ['run-pr-repo', 'run-pr-number', 'run-pr-sep', 'run-pr-url'] as const
 
 /** all is every node carrying a class, in document order. */
 function all(node: ScreenElement, className: string): readonly FakeScreen[] {
@@ -697,6 +711,38 @@ describe('renderProjects', () => {
     expect(drawn(tree)).not.toContain(token)
   })
 
+  it('splits a job\'s model figure on `model_notional_usd`, never on the basis', () => {
+    // C1.16 (P12/D140): `model_usd` is the **whole** model figure and
+    // `model_notional_usd` the subscription's part of it, so the billed dollars
+    // are the difference. A mixed cascade run's `model_basis` is `api-list` for
+    // the whole run while part of its figure is the plan's, and this screen read
+    // that part as money: the basis is the fallback for a row written before the
+    // key, never the split. Three cases -- a mixed row, an all-notional one and
+    // an all-billed one -- each through the model the panel draws from.
+    const one_ = (cost: Record<string, unknown>) => {
+      const runs = { ...RUNS, runs: [{ ...RUNS.runs[0], cost }] }
+      return all(renderProjects(factory, buildProjectsModel(inputs({ runs })), 'light'), 'projects-job')
+    }
+    const figured = (cost: Record<string, unknown>) =>
+      buildProjectsModel(inputs({ runs: { ...RUNS, runs: [{ ...RUNS.runs[0], cost }] } })).jobs.rows[0]?.cost.model
+    const mixed = figured({ model_usd: 3.2, model_notional_usd: 2, compute_usd: 0.5, compute_estimated: true, total_usd: 1.7, model_basis: 'api-list' })
+    expect(mixed?.value).toBeCloseTo(1.2)
+    expect(mixed?.state).toBe('measured')
+    expect(drawnText(one_({ model_usd: 3.2, model_notional_usd: 2, compute_usd: 0.5, compute_estimated: true, total_usd: 1.7, model_basis: 'api-list' })[0] as ScreenElement)).toContain('$1.20')
+    // All notional: the figure drawn is the plan's, marked as the notional
+    // account -- with the key (C1.16) and without it (the fallback).
+    const notional = figured({ model_usd: 3.2, model_notional_usd: 3.2, compute_usd: 0.5, compute_estimated: true, total_usd: 0.5, model_basis: 'api-list' })
+    expect(notional?.value).toBeCloseTo(3.2)
+    expect(notional?.state).toBe('notional')
+    const before = figured({ model_usd: 3.2, compute_usd: 0.5, compute_estimated: true, total_usd: 0.5, model_basis: 'subscription' })
+    expect(before?.value).toBeCloseTo(3.2)
+    expect(before?.state).toBe('notional')
+    // All billed: no notional part at all, so the whole figure is the money.
+    const billed = figured({ model_usd: 1.25, compute_usd: 0.5, compute_estimated: true, total_usd: 1.75, model_basis: 'api-list' })
+    expect(billed?.value).toBeCloseTo(1.25)
+    expect(billed?.state).toBe('measured')
+  })
+
   it('draws a kill with its operator, its time and its reason', () => {
     const tree = renderProjects(factory, buildProjectsModel(inputs()), 'light')
     const kill = one(tree, 'projects-kill')
@@ -717,7 +763,97 @@ describe('renderProjects', () => {
     expect(drawn(rows[0] as FakeScreen)).toContain(ADDRESS_PLACEHOLDER)
     expect(drawn(rows[0] as FakeScreen)).not.toContain('operator@example.test')
     // The notional account is marked as notional wherever it is drawn.
-    expect(drawn(rows[1] as FakeScreen)).toContain('NOTIONAL~')
+    expect(drawn(rows[1] as FakeScreen)).toContain('~$')
+  })
+
+  it('draws who started a job, and no cell for a job the record does not name', () => {
+    // Owner request 2026-10-18: the Started-by column. `launched_by` is a
+    // different fact from the `requested_by` beside it -- who started the run,
+    // and who asked for it -- and it is drawn in the short form the CLI's own
+    // column uses (`runview.LauncherShort`), as a `label`: `shared/launcher.ts`
+    // says why that class is not `person`.
+    const runs = {
+      ...RUNS,
+      runs: [{ ...RUNS.runs[0], launched_by: 'dana.person+fugaro@example.test' }, RUNS.runs[1]],
+    }
+    const tree = renderProjects(factory, buildProjectsModel(inputs({ runs })), 'light')
+    expect(all(tree, 'projects-job-started-by').map((node) => node.textContent)).toEqual(['dana.person+fugaro'])
+    // The address the record named is in no cell of the screen: the cut is the
+    // column's, so no `@` -- and no domain -- reaches one.
+    expect(drawn(tree)).not.toContain('dana.person+fugaro@example.test')
+    // The second job's record names nobody, and a row without a launcher draws
+    // no cell at all -- not an empty span, which would add a flex gap -- and
+    // never another person's name (the request's "fail private").
+    expect(all(tree, 'projects-job-started-by')).toHaveLength(1)
+    const untouched = renderProjects(factory, buildProjectsModel(inputs()), 'light')
+    expect(all(untouched, 'projects-job-started-by')).toHaveLength(0)
+  })
+
+  it('draws no MODE column while no listed run carries a rigor block', () => {
+    // The column is conditional, and this is the case it exists for: the
+    // fixture's two runs are both older than the field, so the jobs list is the
+    // list it always drew -- **no cell at all**, rather than a row of dashes
+    // widening every row for a fact none of them has. `runs ls` writes the same
+    // rule for its own MODE column (`internal/cli/runs.go`'s `showMode`).
+    const tree = renderProjects(factory, buildProjectsModel(inputs()), 'light')
+    expect(all(tree, 'projects-job')).toHaveLength(2)
+    expect(all(tree, 'projects-job-mode')).toHaveLength(0)
+  })
+
+  it('draws the mode word on every row once one run carries a block, and the dash for a row without one', () => {
+    // Owner request 2026-10-25: the rigor mode in the run screens. Once the
+    // column is on, every row draws a cell -- the run that resolved a mode
+    // draws this build's own word for it (`POC`, `Startup`, `Pro`, `Critical`,
+    // `Hotfix`), and a run with no block draws the CLI's dash, which is "no
+    // record of this run's rigor" and never "it resolved nothing".
+    const runs = { ...RUNS, runs: [{ ...RUNS.runs[0], rigor: { mode: 'pro', from: 'repo' } }, RUNS.runs[1]] }
+    const tree = renderProjects(factory, buildProjectsModel(inputs({ runs })), 'light')
+    expect(all(tree, 'projects-job-mode').map((node) => node.textContent)).toEqual(['Pro', '-'])
+    // The word, not the record's lowercase enum: `pro` is the CLI's spelling of
+    // a setting and `Pro` is what a person reads.
+    expect(all(tree, 'projects-job-mode')[0]?.textContent).not.toBe('pro')
+    // Every mode this build knows draws its own word, and the block's other
+    // keys -- the layer, the areas, the moment, the revision -- are not this
+    // column's: the MODE cell is the mode and nothing else.
+    const each = ['poc', 'startup', 'pro', 'critical', 'hotfix'].map((mode) => {
+      const one_ = { ...RUNS, runs: [{ ...RUNS.runs[0], rigor: { mode, from: 'request', areas: [{ name: 'payments', mode: 'critical' }] } }] }
+      return all(renderProjects(factory, buildProjectsModel(inputs({ runs: one_ })), 'light'), 'projects-job-mode')[0]?.textContent
+    })
+    expect(each).toEqual(['POC', 'Startup', 'Pro', 'Critical', 'Hotfix'])
+  })
+
+  it('draws a mode this build does not know as the bounded text it is, never as a word', () => {
+    // The direction the reader fails in: a newer CLI may resolve a mode this
+    // console has never heard of, and a cell that hid it would be answering
+    // "what was this run's rigor" with nothing. It is job-written text, so it
+    // takes the text path -- escaped, bounded, and masked in place when it is
+    // shaped like a credential -- and never the console's own `literal` writer.
+    const unknown = { ...RUNS, runs: [{ ...RUNS.runs[0], rigor: { mode: 'standard', from: 'reached' } }, RUNS.runs[1]] }
+    const tree = renderProjects(factory, buildProjectsModel(inputs({ runs: unknown })), 'light')
+    expect(all(tree, 'projects-job-mode').map((node) => node.textContent)).toEqual(['standard', '-'])
+    // A value the sanitizer will not have is drawn as the console's `n/a` with
+    // the reason, and the reason is never the value.
+    const multiline = { ...RUNS, runs: [{ ...RUNS.runs[0], rigor: { mode: 'pro\ncritical', from: 'repo' } }] }
+    const refused = renderProjects(factory, buildProjectsModel(inputs({ runs: multiline })), 'light')
+    expect(all(refused, 'projects-job-mode')[0]?.textContent).toBe('n/a')
+    const token = githubToken()
+    const shaped = { ...RUNS, runs: [{ ...RUNS.runs[0], rigor: { mode: token, from: 'repo' } }] }
+    const masked = renderProjects(factory, buildProjectsModel(inputs({ runs: shaped })), 'light')
+    expect(all(masked, 'projects-job-mode')[0]?.textContent).toBe(TOKEN_PLACEHOLDER)
+    expect(drawn(masked)).not.toContain(token)
+  })
+
+  it('draws a rigor block the reader will not show as a run with no mode at all', () => {
+    // A block missing its mode or its layer is no block (`shared/rigor.ts`), so
+    // the row draws the dash -- and a project whose every run is in that state
+    // draws no column, which is the same answer as the runs being older than
+    // the field. The two are one case on purpose: neither is a mode.
+    const runs = {
+      ...RUNS,
+      runs: [{ ...RUNS.runs[0], rigor: { from: 'repo' } }, { ...RUNS.runs[1], rigor: { mode: 'pro' } }],
+    }
+    const tree = renderProjects(factory, buildProjectsModel(inputs({ runs })), 'light')
+    expect(all(tree, 'projects-job-mode')).toHaveLength(0)
   })
 })
 
@@ -839,6 +975,31 @@ describe('buildRunModel', () => {
     expect(model.stages[0]?.deadline).toBeNull()
     expect(model.stages[0]?.deadlineBecause).toBe('the document has no row.deadline')
     expect(model.halt?.reason).toBe('the daily cap was reached')
+  })
+
+  it('splits the ledger\'s model figure on `model_notional_usd`, never on the basis', () => {
+    // The same rule as the Projects screen's job rows, on this screen's own
+    // document (C1.16, P12/D140): `model_usd` is the whole model figure,
+    // `model_notional_usd` the subscription's part of it, and the billed dollars
+    // are the difference -- while a mixed cascade run's `model_basis` is
+    // `api-list` for the whole run. Read through the basis, the plan's dollars
+    // were the figure this ledger drew as money.
+    const costRow = (cost: Record<string, unknown>) => ({ ...DIAGNOSIS, row: { ...DIAGNOSIS.row, cost } })
+    const ledger = (cost: Record<string, unknown>) => buildRunModel(runInputs({ diagnosis: costRow(cost) })).ledger.model
+    // Mixed: money and the plan's list price in one figure.
+    const mixed = { model_usd: 3.2, model_notional_usd: 2, compute_usd: 0.5, compute_estimated: true, total_usd: 1.7, model_basis: 'api-list' }
+    expect(ledger(mixed).value).toBeCloseTo(1.2)
+    expect(ledger(mixed).state).toBe('measured')
+    const tree = renderRun(factory, buildRunModel(runInputs({ diagnosis: costRow(mixed) })), 'light')
+    expect(one(tree, 'run-ledger-model-value').textContent).toBe('$1.20')
+    // All notional: the plan's figure, marked notional -- with the key (C1.16)
+    // and without it (the fallback for a row written before the split).
+    expect(ledger({ model_usd: 3.2, model_notional_usd: 3.2, compute_usd: 0, compute_estimated: true, total_usd: 0, model_basis: 'api-list' }).state).toBe('notional')
+    expect(ledger({ model_usd: 3.2, compute_usd: 0, compute_estimated: true, total_usd: 0, model_basis: 'subscription' }).state).toBe('notional')
+    // All billed: no notional part, so the whole figure is the money.
+    const billed = ledger({ model_usd: 1.25, compute_usd: 0.5, compute_estimated: true, total_usd: 1.75, model_basis: 'api-list' })
+    expect(billed.value).toBeCloseTo(1.25)
+    expect(billed.state).toBe('measured')
   })
 
   it('reads a compute the document did not estimate as unavailable, not as a free zero', () => {
@@ -980,6 +1141,30 @@ describe('buildRunModel', () => {
     expect(none.replay.from).toBeNull()
     expect(none.replay.to).toBeNull()
   })
+
+  it('reads a run\'s rigor block out of the row, and answers null without one', () => {
+    // Owner request 2026-10-25. The block is `row.rigor`, the same key the
+    // Projects screen's job rows read, through the same reader
+    // (`shared/rigor.ts`): the mode, the layer that decided it and the areas
+    // that matched. The record's two stamps -- the moment the block was written
+    // and the revision the configuration was read from -- are not carried,
+    // because this row draws what the run resolved.
+    const rigor = { mode: 'critical', from: 'area', areas: [{ name: 'payments', mode: 'critical' }], at: '2026-10-15T11:00:00Z', revision: 'origin/main' }
+    const withBlock = { ...DIAGNOSIS, row: { ...DIAGNOSIS.row, rigor } }
+    expect(buildRunModel(runInputs({ diagnosis: withBlock })).row.rigor).toEqual({
+      mode: 'critical',
+      from: 'area',
+      areas: [{ name: 'payments', mode: 'critical' }],
+    })
+    // The fixture's row is a run from before the field: no block, and the model
+    // says so with `null` rather than with an empty one, which is what the
+    // header reads to decide whether to draw the row at all.
+    expect(buildRunModel(runInputs()).row.rigor).toBeNull()
+    // A block the reader will not show is the same `null`: a mode with no layer
+    // is not a decision this console can describe.
+    const half = { ...DIAGNOSIS, row: { ...DIAGNOSIS.row, rigor: { mode: 'pro' } } }
+    expect(buildRunModel(runInputs({ diagnosis: half })).row.rigor).toBeNull()
+  })
 })
 
 describe('renderRun', () => {
@@ -997,6 +1182,52 @@ describe('renderRun', () => {
     // Nothing in the pull request panel carries a destination at all: there is
     // no inert link, and none waiting for a provider.
     expect(walk(pr).map((node) => node.getAttribute('data-href'))).toEqual(walk(pr).map(() => null))
+  })
+
+  it('puts an element between the repository, the number and the URL', () => {
+    // The owner's report of 2026-10-21, from the screenshot run: the three
+    // facts stood side by side with nothing between them, and the panel read
+    // `acme/platform-core#412https://github.com/acme/platform-core/pull/412`
+    // -- three values run into one string, with the URL no longer a URL. The
+    // separator is a cell of its own rather than part of a value, so each value
+    // is still exactly the document's string (the case above draws them).
+    const tree = renderRun(factory, buildRunModel(runInputs()), 'light')
+    const line = walk(one(tree, 'run-pr'))
+      .filter((node) => PR_LINE_CLASSES.some((name) => node.classes.includes(name)))
+      .map((node) => node.textContent)
+    expect(line).toEqual([
+      'example-owner/example-repo',
+      ' · ',
+      '#42',
+      ' · ',
+      'https://bitbucket.org/example-owner/example-repo/pull-requests/42',
+    ])
+  })
+
+  it('separates what it draws, so a panel missing a field has no stray separator', () => {
+    // The separator belongs *between* the facts, not before the URL: a run whose
+    // `pr_url` the document does not carry draws two cells and one separator.
+    const withoutUrl = { ...DIAGNOSIS, row: { ...DIAGNOSIS.row, pr_url: undefined } }
+    const tree = renderRun(factory, buildRunModel(runInputs({ diagnosis: withoutUrl })), 'light')
+    const pr = one(tree, 'run-pr')
+    const line = walk(pr)
+      .filter((node) => PR_LINE_CLASSES.some((name) => node.classes.includes(name)))
+      .map((node) => node.textContent)
+    expect(line).toEqual(['example-owner/example-repo', ' · ', '#42'])
+    expect(texts(pr, 'run-pr-url')).toEqual([])
+  })
+
+  it('gives the reason no link is offered in one line, in the design’s words', () => {
+    // Design section 5.1 rule 2's own sentence, and design gap 7 is why a link
+    // is not built from a repository and a number: it would name a repository
+    // this run does not use. The panel drew a two-clause explanation of that
+    // instead -- the owner's "long explanatory sentence under it" -- and the
+    // design's own line says the same thing in one.
+    expect(PR_NO_LINK_REASON).toBe(
+      'this CLI does not say which provider this run’s repository is on, so the console will not build a link from it',
+    )
+    const tree = renderRun(factory, buildRunModel(runInputs()), 'light')
+    expect(one(one(tree, 'run-pr'), 'run-pr-reason').textContent).toBe(PR_NO_LINK_REASON)
   })
 
   it('offers the logs link as a destination attribute and never as a navigation', () => {
@@ -1088,6 +1319,25 @@ describe('renderRun', () => {
     }
   })
 
+  it('draws the whole recorded launcher in the run view, in the person class', () => {
+    // The run view is where the owner's spec puts the **full identity** ("the
+    // full identity only in the expanded or run view and in JSON"): the Live and
+    // Projects columns draw the short form. It goes through the `person` class,
+    // the class the wire key carries, so an address is the console's marker here
+    // as it is in the requester cell beside it, and a login is itself.
+    const named = { ...DIAGNOSIS, row: { ...DIAGNOSIS.row, launched_by: 'dana@example.test' } }
+    const tree = renderRun(factory, buildRunModel(runInputs({ diagnosis: named })), 'light')
+    expect(one(tree, 'run-started-by').textContent).toBe(ADDRESS_PLACEHOLDER)
+    expect(drawnText(tree)).not.toContain('dana@example.test')
+
+    const login = { ...DIAGNOSIS, row: { ...DIAGNOSIS.row, launched_by: 'ci-runner' } }
+    const other = renderRun(factory, buildRunModel(runInputs({ diagnosis: login })), 'light')
+    expect(one(other, 'run-started-by').textContent).toBe('ci-runner')
+
+    // A record whose `launch.json` recorded no launcher draws no cell at all.
+    expect(all(renderRun(factory, buildRunModel(runInputs()), 'light'), 'run-started-by')).toHaveLength(0)
+  })
+
   it('puts the run record\'s status through the sanitizer too', () => {
     const token = githubToken()
     const status = { ...DIAGNOSIS, row: { ...DIAGNOSIS.row, status: token } }
@@ -1102,6 +1352,98 @@ describe('renderRun', () => {
     const element = new FakeScreen('span')
     putText(element, githubToken(), 'label', 'name')
     expect(element.textContent).toBe(TOKEN_PLACEHOLDER)
+  })
+
+  it('draws the run\'s rigor: the mode, the layer that decided it and the areas that matched', () => {
+    // Owner request 2026-10-25: the Rigor row, and the one screen with room for
+    // the whole answer -- `runs ls`'s MODE column and the Projects cell are one
+    // word in a table, and the Live chip is one word on a row. The CLI's
+    // `fugaro diagnose` prints the same three facts on its own `Rigor:` line
+    // (`internal/cli/diagnose.go`'s `rigorLine`).
+    const rigor = {
+      mode: 'critical',
+      from: 'area',
+      areas: [
+        { name: 'payments', mode: 'critical' },
+        { name: 'billing', mode: 'pro' },
+      ],
+      // The record's two stamps. This row is about what the run resolved, so
+      // neither is drawn -- and both are distinctive here, so a screen that
+      // started drawing one fails this test rather than passing quietly.
+      at: '2026-10-15T13:59:59Z',
+      revision: 'origin/main',
+    }
+    const diagnosis = { ...DIAGNOSIS, row: { ...DIAGNOSIS.row, rigor } }
+    const tree = renderRun(factory, buildRunModel(runInputs({ diagnosis })), 'light')
+    const row = one(tree, 'run-rigor')
+    expect(one(row, 'run-rigor-word').textContent).toBe('RIGOR')
+    expect(one(row, 'run-rigor-mode').textContent).toBe('Critical')
+    expect(one(row, 'run-rigor-from-word').textContent).toBe('from')
+    // The layer in the console's words, not the record's enum: `area` is the
+    // CLI's spelling of a layer and `an area rule` is what a person reads.
+    expect(one(row, 'run-rigor-from').textContent).toBe('an area rule')
+    expect(texts(row, 'run-rigor-area-name')).toEqual(['payments', 'billing'])
+    expect(texts(row, 'run-rigor-area-mode')).toEqual(['Critical', 'Pro'])
+    // The two stamps are in the record and in no cell of this screen.
+    expect(drawnText(tree)).not.toContain('origin/main')
+    expect(drawnText(tree)).not.toContain('2026-10-15T13:59:59Z')
+  })
+
+  it('draws no Rigor row at all for a run whose record carries no block', () => {
+    // Absence is "no record of this run's rigor", and the answer is **no row**:
+    // the fixture's run is older than the field, and a row reading `-` here
+    // would be answering a question the record was never asked.
+    const tree = renderRun(factory, buildRunModel(runInputs()), 'light')
+    expect(all(tree, 'run-rigor')).toHaveLength(0)
+  })
+
+  it('draws a rigor value this build does not know as the bounded text it is', () => {
+    // The direction the reader fails in: a newer CLI may resolve a mode this
+    // console has never heard of, and a row that hid it would be hiding the
+    // run's rigor entirely. The five modes and the five layers have the
+    // console's words; everything else takes the text path.
+    const rigor = {
+      mode: 'standard',
+      from: 'reached',
+      areas: [{ name: 'payments\u0000ledger', mode: 'standard' }],
+    }
+    const diagnosis = { ...DIAGNOSIS, row: { ...DIAGNOSIS.row, rigor } }
+    const tree = renderRun(factory, buildRunModel(runInputs({ diagnosis })), 'light')
+    const row = one(tree, 'run-rigor')
+    expect(one(row, 'run-rigor-mode').textContent).toBe('standard')
+    expect(one(row, 'run-rigor-from').textContent).toBe('reached')
+    // An area's name is a repository's own word, so it is text on every path:
+    // the control character is stripped rather than drawn.
+    expect(one(row, 'run-rigor-area-name').textContent).toBe('paymentsledger')
+    expect(one(row, 'run-rigor-area-mode').textContent).toBe('standard')
+  })
+
+  it('masks a rigor string shaped like a credential, and draws none of it', () => {
+    // Every string in the block is job-written text (SECURITY.md D4), so a
+    // token-shaped one is masked in place by the free-text rules -- in the mode
+    // cell, the layer cell and an area's name alike.
+    const token = githubToken()
+    const rigor = { mode: token, from: token, areas: [{ name: token, mode: token }] }
+    const diagnosis = { ...DIAGNOSIS, row: { ...DIAGNOSIS.row, rigor } }
+    const tree = renderRun(factory, buildRunModel(runInputs({ diagnosis })), 'light')
+    const row = one(tree, 'run-rigor')
+    expect(one(row, 'run-rigor-mode').textContent).toBe(TOKEN_PLACEHOLDER)
+    expect(one(row, 'run-rigor-from').textContent).toBe(TOKEN_PLACEHOLDER)
+    expect(one(row, 'run-rigor-area-name').textContent).toBe(TOKEN_PLACEHOLDER)
+    expect(one(row, 'run-rigor-area-mode').textContent).toBe(TOKEN_PLACEHOLDER)
+    expect(drawnText(tree)).not.toContain(token)
+  })
+
+  it('draws a block with no matched area as the mode and the layer alone', () => {
+    // A run that resolved its mode from the repository's own `rigor.default`
+    // matched no rule: the row is the two facts it has, and no empty chip.
+    const rigor = { mode: 'pro', from: 'repo', areas: [] }
+    const diagnosis = { ...DIAGNOSIS, row: { ...DIAGNOSIS.row, rigor } }
+    const tree = renderRun(factory, buildRunModel(runInputs({ diagnosis })), 'light')
+    const row = one(tree, 'run-rigor')
+    expect(one(row, 'run-rigor-mode').textContent).toBe('Pro')
+    expect(one(row, 'run-rigor-from').textContent).toBe('the repository')
+    expect(all(row, 'run-rigor-area')).toHaveLength(0)
   })
 })
 

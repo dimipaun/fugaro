@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // Terminal escape sequences and control strings (review round 3 of PR 494).
 //
 // Three layers read CLI text that may carry ECMA-48 sequences: the sentence
@@ -7,8 +9,10 @@
 // holds three properties of it:
 //
 //   1. **it is linear**: a hostile 64 KiB input costs each layer milliseconds,
-//      never seconds (the regex it replaced rescanned an unterminated OSC from
-//      every U+009D: about 17 s per call);
+//      never the seconds the regex it replaced cost (that pattern rescanned an
+//      unterminated OSC from every U+009D: about 17 s per call), and the work it
+//      costs is counted rather than timed where a counter exists
+//      (sanitize-ambiguity.test.ts);
 //   2. **it leaves no residue**: nF, Fp, Fe and Fs escapes, CSI, OSC, DCS, SOS,
 //      PM and APC (ESC or C1 introduced, with zero-width or fullwidth padding)
 //      are removed whole, so nothing is glued to a token;
@@ -74,9 +78,19 @@ const HOSTILE: readonly (readonly [string, string])[] = [
   ['repeated ESC + fullwidth bracket', fill(`${ESC}［`)],
 ]
 
-/** BOUND_MS is far below the 17 s the old pattern cost and far above what a
- * linear pass costs, so the test is not flaky on a loaded machine. */
-const BOUND_MS = 250
+/** CEILING_MS is a sanity net, not the property: an order of magnitude below the
+ * 17 s the pattern this file replaced cost, and two above what a linear pass
+ * costs here. The property -- linear in the text, not quadratic in the number of
+ * sites -- is counted with the deterministic work counters `sanitize.ts` exposes,
+ * in `sanitize-ambiguity.test.ts` and `split-secrets.test.ts`. The one pass with
+ * no counter to count with is `stripTerminalSequences`, so the pathology this
+ * file exists for (an unterminated control string rescanned from every opener)
+ * stays a wall-clock claim. A bound tight enough to catch a quadratic pass is one
+ * a busy runner trips on, which is what `BOUND_MS = 250` was: it failed at 263 ms
+ * on a loaded ubuntu runner and passed on rerun. This file is the twin of
+ * `sanitize-ambiguity.test.ts` over the same layers and the same 64 KiB inputs,
+ * so it held the same flake, and the two are fixed the same way. */
+const CEILING_MS = 2_500
 
 function timed(run: () => unknown): number {
   const start = performance.now()
@@ -88,15 +102,15 @@ function timed(run: () => unknown): number {
   return performance.now() - start
 }
 
-describe('a hostile 64 KiB input costs every layer milliseconds', () => {
+describe('a hostile 64 KiB input costs every layer milliseconds, never seconds', () => {
   it.each(HOSTILE)('%s', (_name, input) => {
     expect(input.length).toBeLessThanOrEqual(MAX_TEXT_INPUT_LENGTH)
-    expect(timed(() => stripTerminalSequences(input))).toBeLessThan(BOUND_MS)
-    expect(timed(() => resolveAmbiguousSequences(input))).toBeLessThan(BOUND_MS)
-    expect(timed(() => sanitizeText(input, 'sentence'))).toBeLessThan(BOUND_MS)
-    expect(timed(() => sanitizeText(input, 'label'))).toBeLessThan(BOUND_MS)
-    expect(timed(() => sanitizeRefusal(input))).toBeLessThan(BOUND_MS)
-    expect(timed(() => createRedactor().redactText(input))).toBeLessThan(BOUND_MS)
+    expect(timed(() => stripTerminalSequences(input))).toBeLessThan(CEILING_MS)
+    expect(timed(() => resolveAmbiguousSequences(input))).toBeLessThan(CEILING_MS)
+    expect(timed(() => sanitizeText(input, 'sentence'))).toBeLessThan(CEILING_MS)
+    expect(timed(() => sanitizeText(input, 'label'))).toBeLessThan(CEILING_MS)
+    expect(timed(() => sanitizeRefusal(input))).toBeLessThan(CEILING_MS)
+    expect(timed(() => createRedactor().redactText(input))).toBeLessThan(CEILING_MS)
   })
 })
 

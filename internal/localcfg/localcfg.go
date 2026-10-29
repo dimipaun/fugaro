@@ -28,6 +28,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/mailbox/keychain"
 	"github.com/dimipaun/fugaro/internal/mirror"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
@@ -51,6 +52,12 @@ type Config struct {
 	// RegistryHost is <region>-docker.pkg.dev/<gcp_project>, the prefix of
 	// every image registry of the installation.
 	RegistryHost string `yaml:"registry_host,omitempty"`
+	// SetupPending is "billing" in the config a first run of fugaro setup
+	// writes when it created the GCP project and paused because billing is
+	// not linked yet: the rerun resumes that setup (the project stage runs
+	// again, as on a first run). The config the installation's apply writes
+	// clears it.
+	SetupPending string `yaml:"setup_pending,omitempty"`
 	// BaseImages are the base images the image builds and the daily image
 	// check start from, by base kind (config.Bases). A workflow builds from
 	// the image of its base kind, so a project needs an entry for each kind
@@ -152,19 +159,135 @@ type Config struct {
 	Profiles map[string]config.JobProfile `yaml:"profiles,omitempty"`
 	// Watch tunes fugaro watch.
 	Watch *Watch `yaml:"watch,omitempty"`
+	// Mailbox is what `fugaro mailbox` reads out of this project's config
+	// (mobile P4.1, T2). The pairing key itself is never here: the config
+	// holds the NAME of the OS keychain item the key lives at, which is not a
+	// secret and may be printed (M5, D113b — "the settings hold the item's
+	// name only").
+	Mailbox *Mailbox `yaml:"mailbox,omitempty"`
+	// CredentialsService is the installation's credentials service
+	// (docs/credentials-service, D146/D147), or nil while the installation has
+	// not opted into one — which is every installation until an owner runs
+	// `fugaro setup --provision-credentials`. It is what `fugaro run` reads to
+	// put the service's URL on the job's environment, which is the one fact the
+	// runner's cascade upstream and the keyless GitHub path are built on
+	// (internal/runner/gateway.go's credentialsServiceURLEnv,
+	// internal/gitprov/providers). An installation without the block launches
+	// byte for byte the job it launched before this field existed.
+	//
+	// It is written from the INSTALLATION's own record — the installation
+	// root's outputs, which the credentials stage fills and the module's
+	// output carries — and never hand-set: the URL is Cloud Run's own, carries
+	// the project NUMBER, and cannot be derived offline. The init run that
+	// turns the service on writes it (init_credentials.go's stage, through
+	// initRun.writeConfig), and so does every installation run after it
+	// (writeConfig reads outs.CredentialsService), so an installation that
+	// opted in on an older Fugaro gets the block the next time `fugaro update`
+	// converges it.
+	//
+	// It is PUBLISHED (Shared keeps it, MergeShared keeps the published one
+	// when a machine's own config has none), for the reason batch: is: it is
+	// the installation's fact and not one machine's, and the machine that runs
+	// a launch is often not the machine that opted in. A local-only key would
+	// be the ledger item of PR #903: a teammate's config, written by `fugaro
+	// setup` or carried by `fugaro update --repo`, never learns it, and their launches
+	// would go out without the variable while the installation has the service
+	// on.
+	CredentialsService *CredentialsService `yaml:"credentials_service,omitempty"`
 	// UpdateCheck turns off the daily check for a newer fugaro release and
 	// its one-line stderr nag (FUGARO_NO_UPDATE_CHECK=1 does the same;
 	// `fugaro doctor`'s own cli-version check ignores both); nil or true
 	// leaves it on. Operator-only, like claude_accounts: never published to
 	// the runs bucket (Shared).
-	UpdateCheck *bool           `yaml:"update_check,omitempty"`
-	User        string          `yaml:"user,omitempty"`
-	MaxParallel int             `yaml:"max_parallel"`
-	Endpoints   Endpoints       `yaml:"endpoints,omitempty"`
-	Repos       map[string]Repo `yaml:"repos"`
+	UpdateCheck *bool     `yaml:"update_check,omitempty"`
+	User        string    `yaml:"user,omitempty"`
+	MaxParallel int       `yaml:"max_parallel"`
+	Endpoints   Endpoints `yaml:"endpoints,omitempty"`
+	// BaseBranch is the project's default base branch: the one repositories
+	// of this installation run against when neither their own committed
+	// fugaro.yaml nor their repos.<r>.base_branch entry names one (the
+	// precedence is config.EffectiveBaseBranch). It is the same word a repo's
+	// entry uses, one level up — a project that uses master everywhere sets
+	// it once here, and a repository that differs overrides it in its own
+	// file. The owner's, and the only one of the three sites that is
+	// published: `fugaro project policy publish` copies it into the policy
+	// node, which is where the runner reads it, while the value itself never
+	// travels in the shared config a launcher can write (Shared drops it,
+	// like each repo's).
+	BaseBranch string          `yaml:"base_branch,omitempty"`
+	Repos      map[string]Repo `yaml:"repos"`
 	// notes are warnings added after parsing (AddWarning), such as a
 	// published shared config's dropped legacy base_images entries.
 	notes []string
+}
+
+// Mailbox is the mailbox block: what the mailbox consumer needs from the
+// operator's own machine.
+type Mailbox struct {
+	// KeychainItem is the OS keychain item the pairing key lives at (M5,
+	// D113b). It is configuration and it is not a secret — it may be printed,
+	// and the diagnostic a missing key produces names it — but its shape is
+	// fixed, because it becomes an argv element of a keychain program: at most
+	// 64 characters of A-Z, a-z, 0-9, '.', '_' and '-', carrying this project's
+	// name, so a config file cannot name an arbitrary keychain query and two
+	// projects on one machine cannot be made to read each other's key.
+	//
+	// The shape is keychain.ParseItem's, not a second copy of the rule:
+	// validate refuses a name that package refuses, with that package's
+	// sentence.
+	KeychainItem string `yaml:"keychain_item,omitempty"`
+}
+
+// CredentialsService is the credentials service block: the installation's own
+// Cloud Run service, as the launcher needs it (docs/credentials-service,
+// D146/D147). One field, and one is all a launcher reads.
+//
+// The block's PRESENCE is the opt-in — `fugaro run` puts the URL on a job only
+// when it is there — so an absent block and a block with an empty url are the
+// same thing to every reader and the loader refuses the second rather than
+// reading it as "off".
+type CredentialsService struct {
+	// URL is the service's own URL, which is also the audience its callers'
+	// Google ID tokens are minted for (C1.14): the runner uses one value for
+	// both, the endpoint and the audience, because they are the same string
+	// (internal/runner/gateway.go's serviceUpstream). It is the installation
+	// root's fact: credentials.tf's output reads the service resource's own
+	// uri, and the init stage writes it into the tfvars on the apply after the
+	// one that created the service (Cloud Run assigns the URL and nothing
+	// inside the resource may read its own uri).
+	//
+	// Held to the same shape as the service's own audience check
+	// (internal/cli's credentialsServiceAudience, whose rule this mirrors):
+	// an https URL with a host, no path, no query, no fragment and no user
+	// info. Nothing weaker is admitted, because a value that is not exactly
+	// that is a caller whose ID token is minted for an audience no revision
+	// answers to.
+	URL string `yaml:"url"`
+}
+
+// validCredentialsServiceURL holds credentials_service.url to the shape the
+// credentials service's own configuration holds its audience to
+// (internal/cli's credentialsServiceAudience): https, a host, and nothing
+// else. The rule is stated twice on purpose — the service refuses to serve
+// with an audience that is not its own URL, and the launcher refuses to put
+// anything else on a job — and the two must agree, because the value travels
+// from one to the other: a URL the launcher admits and the service does not is
+// a run whose every call is answered 401, and one the service admits and the
+// launcher does not is a service nothing can call.
+//
+// It is deliberately not the whole audience check: that one also refuses a
+// value that is not this revision's own URL, which only the deployment knows.
+// Nothing here can check the host, and nothing pretends to: the URL carries
+// Cloud Run's own project NUMBER, which no configuration in this tree holds.
+func validCredentialsServiceURL(raw string) error {
+	if raw == "" {
+		return errors.New("the credentials service block carries no url: remove the block for an installation without the service, or write the service's own https URL")
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || u.Scheme != "https" || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
+		return errors.New("it must be the https URL Cloud Run serves the service on, with no path, query or fragment (a caller's Google ID token is minted for exactly that audience, so anything else is refused by IAM)")
+	}
+	return nil
 }
 
 // Watch is the watch block: how fugaro watch flags a fast burn.
@@ -380,6 +503,14 @@ type Terraform struct {
 	RegistryCleanup string `yaml:"registry_cleanup,omitempty"`
 	NoLogIsolation  bool   `yaml:"no_log_isolation,omitempty"`
 	BudgetBackend   bool   `yaml:"budget_backend,omitempty"`
+	// Coordinator is the owner's opt-in to the coordinator's aggregation job
+	// (docs/coordinator, P5): its account, that account's grants and the
+	// scheduled job, which nothing creates by default. fugaro update
+	// --firebase-project --coordinator records it once that run has applied
+	// the account, and adopt mode copies it from the installation's outputs,
+	// so every later run keeps what the owner turned on rather than planning
+	// its removal.
+	Coordinator bool `yaml:"coordinator,omitempty"`
 }
 
 // Price is a region's compute price per second, in US dollars.
@@ -428,7 +559,8 @@ type Batch struct {
 	// here too.
 	Image string `yaml:"image,omitempty"`
 	// MachineType is the Compute Engine machine type a run's VM is. Empty
-	// means the backend's own default (e2-standard-4); it must be one the
+	// means the backend's own default (e2-standard-8, the smallest type whose
+	// task share carries the config's default 4 CPU/8Gi); it must be one the
 	// price table carries, which the backend checks.
 	MachineType string `yaml:"machine_type,omitempty"`
 	// BootImage is the preloaded boot image a run's VM boots, as the family
@@ -469,6 +601,15 @@ type Batch struct {
 	// who wants the jobs bounded more tightly writes it here. The workflow's
 	// own timeouts.total is where this value comes from once the enable task
 	// reads it per workflow (internal/cli's batchTimeouts).
+	//
+	// It is also REFUSED above that ceiling (validateBatch): the reaper's
+	// deadline is max(the longest configured timeout, backend.MaxRunTime), and
+	// the reaper that runs from its own Cloud Run job's environment has no
+	// project config to read the first of those from, so it derives the base
+	// from the ceiling alone (internal/cli/reaper.go). A configured timeout
+	// above the ceiling makes the two disagree, in the one direction that ends
+	// a live run: the sweeper's bound would be shorter than the config's, and
+	// a job that is legitimately running would read as stuck.
 	TaskTimeout config.Duration `yaml:"task_timeout,omitempty"`
 }
 
@@ -523,6 +664,17 @@ func validateBatch(bad func(string, ...any), c *Config) {
 		// omitted key means.
 		bad("batch.task_timeout %v: it must be more than 0, or left out for the default (%v)", b.TaskTimeout.Duration, backend.MaxRunTime)
 	}
+	if b.TaskTimeout.Set && b.TaskTimeout.Duration > backend.MaxRunTime {
+		// The ceiling, and this refusal is the reaper's requirement rather
+		// than a cap for its own sake: no run may be given more than
+		// backend.MaxRunTime (--total-timeout is capped there), so a job sized
+		// past it is headroom no run can use -- while the reaper that runs
+		// from its own Cloud Run job's environment has no config to read this
+		// number from and derives its base from the ceiling
+		// (internal/cli/reaper.go). The two sources would disagree about when
+		// a live run has ended, and that disagreement deletes a running job.
+		bad("batch.task_timeout %v is longer than %v, the longest a run may be given (--total-timeout is capped there): a job sized past it is headroom no run can use, and the reaper of an installation whose config it cannot read derives its own bound from that ceiling, so the two would disagree about when a live run has ended", b.TaskTimeout.Duration, backend.MaxRunTime)
+	}
 	// Each entry is named by its position in the sorted map, and never by its
 	// key: neither side of the map is printed, because **either** side can hold
 	// a secret's value. The value slot is the one a value is usually written
@@ -567,6 +719,15 @@ type Endpoints struct {
 	// Engine root is not a CLI client's endpoint, it is the reaper job's
 	// (internal/backend/batch/reap.go's Endpoints).
 	Batch string `yaml:"batch,omitempty"`
+	// Compute is the Compute Engine API root, read by `fugaro doctor`'s
+	// checks for an installation that carries a batch block (the preload
+	// image family, and the network and subnetwork a run's VMs are placed
+	// in: design compute-backend.md §4.4). Empty is the real endpoint, as
+	// for every other field here. It is not the reaper's root: the reaper
+	// runs as its own job with its own env (internal/backend/batch's
+	// Endpoints), and this one is a client the operator's own doctor run
+	// reads with.
+	Compute string `yaml:"compute,omitempty"`
 	// The APIs only fugaro update calls: bucket and IAM policy reads and
 	// writes, service accounts, registries, the project's number, and the
 	// enable of Cloud Resource Manager.
@@ -1052,6 +1213,31 @@ func (c *Config) validate() error {
 			bad("watch.burn_alert_usd_per_hour: %v (a finite dollar amount, 0 or more)", err)
 		}
 	}
+	// The mailbox block's one field is a keychain item name, and the rule is
+	// keychain.ParseItem's: this file is the one place the name is written, and
+	// the package that turns it into an argv is the one that says what shape it
+	// may have. A name refused here is refused before `fugaro mailbox` can read
+	// a key, which is the run-level refusal §8's row 1 names.
+	if m := c.Mailbox; m != nil {
+		if _, err := keychain.ParseItem(m.KeychainItem, c.Name); err != nil {
+			bad("mailbox.keychain_item: %v", err)
+		}
+	}
+	// The credentials service block is the installation's own URL, and its
+	// shape is the rule the service itself holds its audience to
+	// (internal/cli's credentialsServiceAudience): the launcher hands this
+	// value to the job, the runner mints the job's Google ID token for it and
+	// calls it, so a value that is not exactly the URL Cloud Run serves the
+	// revision on is a run whose every call is refused by IAM — or, worse,
+	// admitted by something else. An empty url with the block present is
+	// refused rather than read as "the service is off": the block's presence
+	// IS the opt-in (see CredentialsService), and an empty one would put the
+	// variable on the job empty, which the runner reads as "set" for nothing.
+	if cs := c.CredentialsService; cs != nil {
+		if err := validCredentialsServiceURL(cs.URL); err != nil {
+			bad("credentials_service.url: %v", err)
+		}
+	}
 	for _, region := range slices.Sorted(maps.Keys(c.ComputePrices)) {
 		if !regionRE.MatchString(region) {
 			bad("compute_prices: %q is not a region such as us-central1", region)
@@ -1085,6 +1271,12 @@ func (c *Config) validate() error {
 		// Every sibling is refused here for that reason, and this one is no
 		// different.
 		{"batch", c.Endpoints.Batch},
+		// The Compute Engine root `fugaro doctor` reads a Batch
+		// installation's own facts through (the preload image family, the
+		// network, the subnetwork). Same kind of value as `batch` above and
+		// refused for the same reason: doctor attaches the operator's ADC to
+		// it.
+		{"compute", c.Endpoints.Compute},
 	} {
 		if ep.url == "" {
 			continue
@@ -1092,6 +1284,9 @@ func (c *Config) validate() error {
 		if err := checkEndpoint(ep.url); err != nil {
 			bad("endpoints.%s: %v", ep.name, err)
 		}
+	}
+	if c.BaseBranch != "" && !config.ValidBranchName(c.BaseBranch) {
+		bad("base_branch %q is not a plain git branch name (the project's default base branch)", c.BaseBranch)
 	}
 	for repo, r := range c.Repos {
 		if !repoRE.MatchString(repo) {

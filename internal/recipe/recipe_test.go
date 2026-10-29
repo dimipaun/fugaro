@@ -320,6 +320,81 @@ func TestOrderWithChecksAndModes(t *testing.T) {
 	}
 }
 
+// TestDigestStepFirstOnly: digest is the report run's step, a deterministic
+// runner-side stage that writes the period's report before any model runs
+// (T3.1), so it is legal only as the first step of a mode: implement recipe,
+// and at most once.
+func TestDigestStepFirstOnly(t *testing.T) {
+	r := mustParse(t, "version: 1\nname: x\nsteps:\n  - digest: {}\n  - review: {}\n")
+	if len(r.Steps) != 2 || r.Steps[0] != (Step{Kind: StepDigest}) || r.Steps[1].Kind != StepReview {
+		t.Fatalf("steps = %+v", r.Steps)
+	}
+	for _, tc := range []struct{ name, steps, path, want string }{
+		{"after a check", "steps:\n  - check: { command: test }\n  - digest: {}\n  - review: {}\n", "steps[1]", "digest must be the first step"},
+		{"twice", "steps:\n  - digest: {}\n  - digest: {}\n  - review: {}\n", "steps[1]", "digest may appear at most once"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, ps := Parse([]byte("version: 1\nname: x\n" + tc.steps))
+			if !problemsHave(ps, tc.path, tc.want) {
+				t.Fatalf("problems = %v", ps)
+			}
+		})
+	}
+}
+
+// TestDigestStepNeedsReview: the report run hands its pull request to the one
+// senior review, so a digest step is followed by exactly one review step and
+// nothing else, and only a mode: implement recipe may hold it (T3.1).
+func TestDigestStepNeedsReview(t *testing.T) {
+	for _, tc := range []struct{ name, steps string }{
+		{"alone", "steps:\n  - digest: {}\n"},
+		{"then a first line", "steps:\n  - digest: {}\n  - first_line: {}\n  - review: {}\n"},
+		{"then two reviews", "steps:\n  - digest: {}\n  - review: {}\n  - review: {}\n"},
+		{"then a check", "steps:\n  - digest: {}\n  - check: { command: test }\n  - review: {}\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, ps := Parse([]byte("version: 1\nname: x\n" + tc.steps))
+			if !problemsHave(ps, "steps[0]", "digest must be followed by one review step") {
+				t.Fatalf("problems = %v", ps)
+			}
+		})
+	}
+	_, ps := Parse([]byte("version: 1\nname: x\nmode: review\nsteps:\n  - digest: {}\n  - review: {}\n"))
+	if !problemsHave(ps, "steps[0]", "digest is only for mode: implement") {
+		t.Fatalf("mode: review problems = %v", ps)
+	}
+	_, ps = Parse([]byte(artifactHead + artifactOutputs + "steps:\n  - digest: {}\n  - review: {}\n"))
+	if !problemsHave(ps, "steps[0].digest", "is not a step of mode: artifact") {
+		t.Fatalf("mode: artifact problems = %v", ps)
+	}
+	// The step takes no options, like plan and render: any key under it is
+	// an unknown recipe key rather than a silently ignored one.
+	_, ps = Parse([]byte("version: 1\nname: x\nsteps:\n  - digest: { max_rounds: 2 }\n  - review: {}\n"))
+	if !problemsHave(ps, "steps[0].digest.max_rounds", "is not a recipe key") {
+		t.Fatalf("options problems = %v", ps)
+	}
+}
+
+// TestRunDigestInCatalog: the report run's recipe is a catalog recipe whose
+// shape is exactly a digest step and one senior round, and its use_when keeps
+// the routing skill off it (T3.1).
+func TestRunDigestInCatalog(t *testing.T) {
+	text, ok := CatalogText("run-digest")
+	if !ok {
+		t.Fatal("run-digest is not in the catalog")
+	}
+	r, ps := Parse(text)
+	if len(ps) != 0 {
+		t.Fatalf("problems = %s", ProblemsText(ps))
+	}
+	if len(r.Steps) != 2 || r.Steps[0] != (Step{Kind: StepDigest}) || r.Steps[1] != (Step{Kind: StepReview, MaxRounds: 1}) {
+		t.Fatalf("steps = %+v", r.Steps)
+	}
+	if !strings.Contains(r.UseWhen, "scheduled") {
+		t.Errorf("use_when = %q, want it to say the recipe is for scheduled run reviews", r.UseWhen)
+	}
+}
+
 // TestUseWhenRefusesControlChars: use_when is shown verbatim by `recipes ls`
 // and the routing skill, and a project recipe comes from the runs bucket
 // (untrusted), so a control character or newline must be refused, not

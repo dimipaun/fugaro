@@ -11,6 +11,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
@@ -63,9 +64,36 @@ func (r *run) defaultBranchFile(ctx context.Context) ([]byte, string, error) {
 // project (a local run) the default branch is not read, as in checkProject.
 func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 	c := r.d.Spend
+	// The mode this run resolved at bootstrap is the per-run default under
+	// the ceiling (D16, plan T6.1): a fraction of the owner's cap, and never
+	// above it. It is read once, here, with the rest of the policy — the mode
+	// a run has reached later in the run only ever rises, and a policy a
+	// run's own stages could move would not be the ceiling it is.
+	mode := r.reachedRigor()
 	// The ceiling is the job environment's copy of the owner's config, and
 	// sets no output limits (the project config has none).
-	ceiling := envCeiling(c)
+	ceiling := envCeiling(c, mode)
+	// The project layer's governance: block joins the ceiling, the way the
+	// project's budget does: it is the one layer that may loosen Fugaro's own
+	// defaults for those keys, and every layer under it only tightens (T7.1,
+	// D331). It is placed here rather than in envCeiling because it does not
+	// travel in the job environment — the project config carries no governance
+	// — it arrives with the task, in the layer the run resolved. The policy
+	// node has no governance either, so policyCeiling leaves it standing.
+	//
+	// Fugaro's own defaults are filled in here, because this is the layer every
+	// later one is held to and none of them may loosen (Governance.WithDefaults,
+	// T7.1). Without them the first layer to write a governance key would be the
+	// one that wins with it: a repository's fugaro.yaml — on its default branch,
+	// and on the branch the run checks out, which the agent can edit mid-run —
+	// could raise a guardrail Fugaro ships and nothing would say so. A key the
+	// project layer does write is kept exactly as it stands, looser than the
+	// default included: that layer is where the guardrails are loosened.
+	var gov policy.Governance
+	if l := cfg.Layer; l != nil {
+		gov = l.Governance.Policy()
+	}
+	ceiling.Governance = gov.WithDefaults()
 	// The project's own policy, when it has published one, *is* the ceiling
 	// for the keys it sets: the node is what the owner says now, where the
 	// copy is what he said when the job was deployed (design §5, plan task
@@ -101,10 +129,12 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 			return fmt.Errorf("fugaro.yaml on the default branch (%s) has an invalid policy, so the run can't tell what the team allows: %w", branch, err)
 		}
 		def = policy.Layer{Mode: p.Mode, PerRunUSD: p.PerRunUSD, PerDayUSD: p.PerDayUSD, MaxRunTokens: p.MaxRunTokens, AllowedModels: p.AllowedModels,
-			MaxOutputCoder: p.MaxOutputTokens.Coder, MaxOutputReviewer: p.MaxOutputTokens.Reviewer}
+			MaxOutputCoder: p.MaxOutputTokens.Coder, MaxOutputReviewer: p.MaxOutputTokens.Reviewer, Governance: p.Governance}
 	}
 
-	e := policy.Merge(ceiling, def, FileLayer(cfg))
+	layers := []policy.Layer{ceiling, def, FileLayer(cfg)}
+	r.govLayers = layers
+	e := policy.Merge(layers[0], layers[1:]...)
 	if found {
 		// The merge names the first layer "ceiling": for the keys the node
 		// set, that layer is the node and not the job environment, and a
@@ -121,8 +151,14 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 		s.Mode = policy.ModeOff
 	}
 	if e.PerRunUSD > 0 {
-		if src := e.Sources[policy.KeyPerRunUSD]; src == policy.SourceCeiling || src == policy.SourcePolicy {
-			s.Cap = c.Cap // exactly the owner's, not a float round trip
+		if src := e.Sources[policy.KeyPerRunUSD]; src == policy.SourceCeiling {
+			// The ceiling's own cap, scaled by the run's mode and not by a
+			// float round trip through the layer's dollar figure (D16). A cap
+			// some other layer wrote is that layer's own number and is taken
+			// as it is: the mode's fraction is the default a run gets where
+			// nothing says otherwise, never a multiplier over a number the
+			// owner, the team or the branch set.
+			s.Cap = config.RigorBudgetCap(mode, c.Cap)
 		} else {
 			var err error
 			if s.Cap, err = pricing.FromUSD(e.PerRunUSD); err != nil || s.Cap < 1 {
@@ -171,13 +207,20 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 // unset — it is the absence of a mode, not a ceiling that says nothing may be
 // accounted — and a mode that is not one of the three is refused by
 // SpendFromEnv long before this.
-func envCeiling(c Spend) policy.Layer {
+//
+// The cap comes through the run's rigor mode (D16, plan T6.1): the ceiling is
+// the ceiling and a mode's per-run default is a fraction of it, so what the
+// layer carries is the owner's cap scaled by the mode, and every later layer
+// still only tightens it. A run whose mode contributes no default — Critical,
+// which is today's behaviour, or one no resolution recorded — carries the
+// owner's cap exactly.
+func envCeiling(c Spend, mode rigor.Mode) policy.Layer {
 	l := policy.Layer{MaxRunTokens: c.MaxRunTokens, AllowedModels: c.AllowedModels}
 	if c.Mode != "" && c.Mode != policy.ModeOff {
 		l.Mode = c.Mode
 	}
 	if c.Cap > 0 {
-		l.PerRunUSD = c.Cap.USD()
+		l.PerRunUSD = config.RigorBudgetCap(mode, c.Cap).USD()
 	}
 	return l
 }
@@ -218,11 +261,18 @@ func (r *run) policyCeiling(pp *projectpolicy.Policy, env policy.Layer, c Spend)
 		ceiling.Mode, set[policy.KeyMode] = m, true
 	}
 	if v := pp.Budget.PerRunUSD; v > 0 {
-		ceiling.PerRunUSD, set[policy.KeyPerRunUSD] = v, true
 		var err error
 		if c.Cap, err = pricing.FromUSD(v); err != nil || c.Cap < 1 {
 			return env, c, nil, fmt.Errorf("%s: budget.per_run_usd %v: not a usable cap: %v", projectpolicy.PathShared(), v, err)
 		}
+		// The node's cap is the owner's word about the ceiling, and it is
+		// taken exactly as it stands: the run's rigor mode is the default a
+		// run gets where no layer says otherwise (D16), and multiplying a
+		// number the owner published by it would put a figure in result.json
+		// the node never wrote — the very thing the source labels exist to
+		// prevent (H1). The ceiling's own cap is the one the mode scales, and
+		// it has no node to speak for it.
+		ceiling.PerRunUSD, set[policy.KeyPerRunUSD] = v, true
 	}
 	if v := pp.Budget.MaxRunTokens; v > 0 {
 		ceiling.MaxRunTokens, set[policy.KeyMaxRunTokens] = v, true
@@ -293,7 +343,8 @@ func policySources(e *policy.Effective, fromPolicy map[string]bool) {
 // and what `fugaro validate` checks, built in one place so the two agree.
 func FileLayer(cfg *config.Config) policy.Layer {
 	l := policy.Layer{MaxRunTokens: cfg.Agent.MaxRunTokens,
-		MaxOutputCoder: cfg.Agent.MaxOutputTokens.Coder, MaxOutputReviewer: cfg.Agent.MaxOutputTokens.Reviewer}
+		MaxOutputCoder: cfg.Agent.MaxOutputTokens.Coder, MaxOutputReviewer: cfg.Agent.MaxOutputTokens.Reviewer,
+		Governance: cfg.Governance.Policy()}
 	if b := cfg.Budget; b != nil {
 		l.Mode, l.PerRunUSD, l.PerDayUSD, l.AllowedModels = b.Mode, b.PerRunUSD, b.PerDayUSD, b.AllowedModels
 	}
@@ -304,14 +355,30 @@ func FileLayer(cfg *config.Config) policy.Layer {
 // no layer set anything that bears on money or models and nothing was
 // ignored, so a repository without policy writes the same record as before.
 // The per-call output limits are not by themselves a policy.
+//
+// A governance key still at the figure Fugaro ships is not a policy either,
+// even though the ceiling carries it: the ceiling is built with the defaults
+// (Governance.WithDefaults), so a key no layer wrote has the ceiling as its
+// source for the same reason it has a value at all — because Fugaro put it
+// there. Sourcing it as "ceiling" would name the owner of a guardrail he never
+// chose (H1), and it would put all eighteen governance keys in every record,
+// including the records of repositories that write no policy at all. A key a
+// layer did write is kept: the value is then a decision somebody made.
 func policyRecord(e policy.Effective, nDef int) *runstore.PolicyRecord {
-	sources := map[string]string{}
-	for k, v := range e.Sources {
-		sources[k] = v
+	sources := maps.Clone(e.Sources)
+	for k := range e.Governance.DefaultGovernanceKeys() {
+		if sources[k] == policy.SourceCeiling {
+			delete(sources, k)
+		}
 	}
-	delete(sources, policy.KeyMaxOutputCoder)
-	delete(sources, policy.KeyMaxOutputReviewer)
-	if len(sources) == 0 && len(e.Ignored) == 0 {
+	bears := false
+	for k := range sources {
+		if k != policy.KeyMaxOutputCoder && k != policy.KeyMaxOutputReviewer {
+			bears = true
+			break
+		}
+	}
+	if !bears && len(e.Ignored) == 0 {
 		return nil
 	}
 	rec := &runstore.PolicyRecord{Effective: runstore.PolicyEffective{
@@ -319,8 +386,8 @@ func policyRecord(e policy.Effective, nDef int) *runstore.PolicyRecord {
 	if e.MaxOutputCoder > 0 || e.MaxOutputReviewer > 0 {
 		rec.Effective.MaxOutputTokens = &runstore.PolicyOutput{Coder: e.MaxOutputCoder, Reviewer: e.MaxOutputReviewer}
 	}
-	if len(e.Sources) > 0 {
-		rec.Sources = maps.Clone(e.Sources)
+	if len(sources) > 0 {
+		rec.Sources = sources
 	}
 	for i, ig := range e.Ignored {
 		from := policy.SourceBranch
@@ -376,11 +443,23 @@ func sourcesText(m map[string]string) string {
 	return strings.Join(parts, " ")
 }
 
-// PolicyKeyPath is where a policy key lives in fugaro.yaml.
+// PolicyKeyPath is where a policy key lives in fugaro.yaml: the governance
+// keys under a governance: block of their own — a tier's own keys under
+// governance.tiers.<tier>, the block that carries them (policy.TierKey) — the
+// agent's output limits under agent:, and everything else — the budget's cost
+// and model policy — under budget:.
 func PolicyKeyPath(key string) string {
 	switch key {
 	case policy.KeyMaxRunTokens, policy.KeyMaxOutputCoder, policy.KeyMaxOutputReviewer:
 		return "agent." + key
+	case policy.KeyReviewRatio, policy.KeyReviewFloorCalls, policy.KeyMaxSubagents,
+		policy.KeyStageBudgetImplement, policy.KeyStageBudgetReview, policy.KeyStageBudgetFix,
+		policy.KeyStageTokensImplement, policy.KeyStageTokensReview, policy.KeyStageTokensFix,
+		policy.KeyStageTimeoutImplement, policy.KeyStageTimeoutReview, policy.KeyStageTimeoutFix:
+		return "governance." + key
+	}
+	if strings.HasPrefix(key, "tiers.") {
+		return "governance." + key
 	}
 	return "budget." + key
 }

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The fake document the entry is driven against (desktop-console plan Tasks
 // 3.4a and 3.4c).
 //
@@ -98,6 +100,10 @@ export class FakeNode {
   readonly tagName: string
   readonly children: FakeNode[] = []
   readonly attributes = new Map<string, string>()
+  /** namespace is what `createElementNS` was called with, and `null` for a node
+   * `createElement` made. It is the observable that says the graph's geometry was
+   * made in SVG's namespace rather than the HTML one. */
+  namespace: string | null = null
   private text: string | null = null
 
   constructor(tagName: string) {
@@ -216,6 +222,21 @@ export class FakeDocument {
   createElement(tag: string): FakeNode {
     const node = new FakeNode(tag)
     node.owner = this
+    return node
+  }
+
+  /**
+   * createElementNS is the SVG half of the factory (GV2.3b): the graph screen
+   * draws geometry as SVG attributes, and an element made in the HTML namespace
+   * is not drawn at all in a real window. The fake records the namespace so a
+   * case can hold the screen to making its geometry in SVG's, and answers the
+   * same node `createElement` does -- nothing else of a namespaced element is
+   * different for a screen that only writes text and attributes.
+   */
+  createElementNS(namespace: string, tag: string): FakeNode {
+    const node = new FakeNode(tag)
+    node.owner = this
+    node.namespace = namespace
     return node
   }
 

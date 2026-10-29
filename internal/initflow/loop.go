@@ -261,7 +261,7 @@ func (l *loop) preview(ctx context.Context, stages []Stage) error {
 			if waiting == "" {
 				waiting = name
 			}
-		case NeedsYou:
+		case NeedsYou, BillingPending:
 			lf := s.Left()
 			if st.Left != nil {
 				lf = *st.Left
@@ -332,10 +332,15 @@ func (l *loop) fail(stage string, err error) {
 func (l *loop) converge(ctx context.Context, stages []Stage) error {
 	l.res.Stages, l.res.Left, l.res.Failed, l.res.Cause = nil, []Left{}, nil, nil
 	stopped := "" // the stage everything after waits for
+	paused := ""  // the stage that paused for billing: what needs billing waits for it
 	for _, s := range stages {
 		name := s.Name()
 		if stopped != "" {
 			l.res.Stages = append(l.res.Stages, StageResult{Name: name, State: Blocked, Detail: "waits for " + stopped})
+			continue
+		}
+		if paused != "" && NeedsBilling(name) {
+			l.res.Stages = append(l.res.Stages, StageResult{Name: name, State: WaitingForBilling, Detail: "waiting for billing"})
 			continue
 		}
 		if l.cancelled(ctx, name) {
@@ -364,6 +369,14 @@ func (l *loop) converge(ctx context.Context, stages []Stage) error {
 			l.needsYou(name, detail, lf)
 			stopped = name
 			continue
+		case BillingPending:
+			lf := s.Left()
+			if st.Left != nil {
+				lf = *st.Left
+			}
+			l.billingPending(name, detail, lf)
+			paused = name
+			continue
 		}
 
 		// Something to apply.
@@ -390,6 +403,12 @@ func (l *loop) converge(ctx context.Context, stages []Stage) error {
 		out, err := applyStage(ctx, s, l.env(name))
 		var ny *NeedsYouError
 		var ag *AgentError
+		var bp *BillingPausedError
+		if errors.As(err, &bp) {
+			l.billingPending(name, bp.Detail, bp.Left)
+			paused = name
+			continue
+		}
 		if errors.As(err, &ag) {
 			l.needsYou(name, ag.Error(), s.Left())
 			stopped = name
@@ -447,6 +466,13 @@ func (l *loop) agentStage(ctx context.Context, s Stage) (done bool, err error) {
 	return false, nil
 }
 
+// billingPending records a stage that paused for billing: its Left is the
+// step left for you, and it is not a failure.
+func (l *loop) billingPending(stage, detail string, lf Left) {
+	l.res.Left = append(l.res.Left, l.left(stage, lf))
+	l.res.Stages = append(l.res.Stages, StageResult{Name: stage, State: BillingPending, Detail: l.redact(oneLine(detail))})
+}
+
 func (l *loop) needsYou(stage, detail string, lf Left) {
 	l.res.Left = append(l.res.Left, l.left(stage, lf))
 	l.res.Stages = append(l.res.Stages, StageResult{Name: stage, State: NeedsYou, Detail: detail})
@@ -455,6 +481,7 @@ func (l *loop) needsYou(stage, detail string, lf Left) {
 var stateLabel = map[State]string{
 	Done: "done", Changed: "changed", Todo: "will do", Blocked: "blocked",
 	NeedsYou: "needs you", Skipped: "skipped", Failed: "failed",
+	BillingPending: "billing pending", WaitingForBilling: "waiting for billing",
 }
 
 // view prints the plan view: one line per stage.
@@ -539,10 +566,10 @@ func checkStage(ctx context.Context, s Stage) (st Status, err error) {
 		return st, err
 	}
 	switch st.State {
-	case Todo, Done, Skipped, Blocked, NeedsYou:
+	case Todo, Done, Skipped, Blocked, NeedsYou, BillingPending:
 		return st, nil
 	}
-	return st, fmt.Errorf("stage %s: Check returned the state %q, which a check may not (done, will-do, blocked, needs-you or skipped)", s.Name(), st.State)
+	return st, fmt.Errorf("stage %s: Check returned the state %q, which a check may not (done, will-do, blocked, needs-you, billing-pending or skipped)", s.Name(), st.State)
 }
 
 func planStage(ctx context.Context, s Stage, env Env) (p Plan, err error) {

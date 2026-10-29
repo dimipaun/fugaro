@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The display layer: the only code in the console that touches an element
 // (desktop-console plan Task 2.0; design section 5.1 rules 1, 2 and 7).
 //
@@ -186,7 +188,7 @@ export function putLink(element: ElementLike, raw: unknown, field = 'the link'):
  * structural type rather than `src/preload/index.ts`'s `ConsoleBridge` because
  * the preload is a *value* module the renderer cannot import (the sandboxed
  * preload may not require a relative path, and a bundler is a later task's
- * dependency), and because this file needs exactly one method of the thirteen:
+ * dependency), and because this file needs exactly one method of the twenty-four:
  * naming that one is what makes "the entry point asks for the handshake and
  * nothing else" readable here.
  */

@@ -10,6 +10,7 @@ package github
 //   - general comments: https://docs.github.com/en/rest/issues/comments#list-issue-comments
 //   - REST paging (the Link header): https://docs.github.com/en/rest/using-the-rest-api/using-pagination-in-the-rest-api
 //   - the App's identity: https://docs.github.com/en/rest/apps/apps#get-the-authenticated-app
+//   - what an installation access token may read: https://docs.github.com/en/rest/authentication/endpoints-available-for-github-app-installation-access-tokens
 //   - author_association: https://docs.github.com/en/graphql/reference/enums#commentauthorassociation
 
 import (
@@ -46,37 +47,87 @@ func collaborator(association string) bool {
 	return false
 }
 
-// appSlug returns the App's slug, reading it with GET /app (as the App,
-// with its JWT). ok is false when that read failed. A definite answer (the
-// slug, or a 4xx refusal other than 408 and 429) is remembered for the
-// Provider; a passing failure (a cancelled context, a network error, a 408,
-// 429 or 5xx)
-// is not, so the next call asks again. A failure is warned about once.
+// botSuffix is how the REST API spells the App's bot account: the App's
+// slug followed by this. GraphQL names the same account by the bare slug.
+const botSuffix = "[bot]"
+
+// errNoIdentity is an answer that arrived (HTTP 200) and named no identity.
+// It is a definite answer like a 4xx: asking again gets the same, so it is
+// remembered rather than retried.
+var errNoIdentity = errors.New("the answer names no identity")
+
+// errNoAppKey is the identity read this process has no route for: the App's
+// key is the credentials service's, so there is no JWT to sign, and no
+// endpoint an installation access token may call names the App (see
+// readAppSlug). Like errNoIdentity it is definite -- p.app never changes --
+// so it is remembered rather than retried.
+var errNoAppKey = errors.New("no endpoint an installation access token may call names the App")
+
+// appSlug returns the App's slug, the name Fugaro's own identity is spelled
+// with (REST: <slug>[bot], GraphQL: the bare slug). ok is false when that
+// read failed. A definite answer (the slug, or a 4xx refusal other than 408
+// and 429) is remembered for the Provider; a passing failure (a cancelled
+// context, a network error, a 408, 429 or 5xx) is not, so the next call
+// asks again. A failure is warned about once.
+//
+// The one read that names the App is GET /app, and only the App's own JWT
+// can make it. With the key in the credentials service (C2.2) this process
+// has no JWT and no other route to the App, so there is no read to make at
+// all: the identity stays unknown and every caller that needs it fails
+// closed -- Self stays false (reviewmode.go's trusted gate then wants a
+// collaborator) and a follow-up's comments are not read as Fugaro's.
 func (p *Provider) appSlug(ctx context.Context) (slug string, ok bool) {
 	p.identityMu.Lock()
 	defer p.identityMu.Unlock()
 	if p.identityDone {
 		return p.slug, p.slug != ""
 	}
-	var app struct {
-		Slug string `json:"slug"`
-	}
-	err := p.tokens.app.Do(ctx, "GET", "/app", nil, &app)
+	identity, what, err := p.readAppSlug(ctx)
 	switch {
-	case err == nil && app.Slug != "":
-		p.identityDone, p.slug = true, app.Slug
-		return p.slug, true
 	case err == nil:
-		err = errors.New("the response has no slug")
-		p.identityDone = true
-	case definite(ctx, err):
+		p.identityDone, p.slug = true, identity
+		return p.slug, p.slug != ""
+	case errors.Is(err, errNoIdentity) || errors.Is(err, errNoAppKey) || definite(ctx, err):
 		p.identityDone = true
 	}
 	if !p.identityWarned {
 		p.identityWarned = true
-		p.warn(fmt.Sprintf("github: could not read the App's identity (GET /app): %v; Fugaro's own comments can't be told apart from others", err))
+		p.warn(fmt.Sprintf("github: could not read the App's identity (%s): %v; Fugaro's own comments can't be told apart from others", what, err))
 	}
 	return "", false
+}
+
+// readAppSlug asks the API who Fugaro is, by the one route this process can
+// take. It returns the slug, the read's name (for the warning), and an error
+// that is nil only when there is a slug to return.
+//
+// An installation token is not a second route. GitHub refuses it GET /user
+// ("Resource not accessible by integration"), which is the read the adapter
+// made here before, and GitHub's list of the endpoints an installation
+// access token may call holds nothing else that names the App:
+// GET /installation/repositories lists the installation's repositories, not
+// the App, and GET /apps/{app_slug} needs the slug it would return. So with
+// the key in the credentials service the identity is unknown rather than
+// guessed -- a slug taken from any other account would make Self true for an
+// author the run is not.
+//
+// The answer is deliberately strict for the same reason: an App with no slug
+// has no identity to compare a login against, so the empty slug is refused
+// rather than used.
+func (p *Provider) readAppSlug(ctx context.Context) (slug, what string, err error) {
+	if p.app == nil {
+		return "", "no App key in this process", errNoAppKey
+	}
+	var app struct {
+		Slug string `json:"slug"`
+	}
+	if err := p.app.Do(ctx, "GET", "/app", nil, &app); err != nil {
+		return "", "GET /app", err
+	}
+	if app.Slug == "" {
+		return "", "GET /app", errNoIdentity
+	}
+	return app.Slug, "GET /app", nil
 }
 
 // definite reports whether err is an answer worth remembering rather than
@@ -237,7 +288,7 @@ func restComment(f restFields, slug string, known bool) gitprov.Comment {
 	}
 	return gitprov.Comment{
 		ID: id, Kind: f.kind, Author: f.user.login(), AuthorID: f.user.id(), Collaborator: collaborator(f.association),
-		Self: known && f.user != nil && f.user.Login == slug+"[bot]", SelfKnown: known,
+		Self: known && f.user != nil && f.user.Login == slug+botSuffix, SelfKnown: known,
 		Body: f.body, CreatedAt: f.created, URL: f.url,
 	}
 }

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The renderer entry, in a real Electron window (desktop-console plan Task 3.4a,
 // steps 1, 2, 4 and 5; design section 5.1 rules 1, 3, 5 and D7).
 //
@@ -31,12 +33,14 @@
 //   - **a reduced console loads the dashboard, draws the banner, and refuses a
 //     withheld read** with the console's own sentence -- over real IPC, through
 //     the real preload, in a real window.
-//   - **the spawn log holds the handshake and the live watch, and no other
-//     read.** The log is the one place a spawn that should not have happened is
-//     visible, and since Task 3.4c the console makes exactly two: the
-//     handshake's own `version` probe, and the Live screen's `watch --json`,
-//     planned with the chosen installation's binary and `--project`. A refused
-//     console mounts nothing, so its log is the probe alone.
+//   - **the spawn log holds the handshake, the live watch and the Live
+//     screen's rigor join, and no other read.** The log is the one place a spawn
+//     that should not have happened is visible, and a healthy console makes three
+//     kinds: the handshake's own `version` probe, the Live screen's `watch
+//     --json`, and the Live screen's rigor join (`runs ls --json`, re-read at
+//     most once per `LIVE_RIGOR_TTL_MS`), each planned with the chosen
+//     installation's binary and `--project`. A refused console mounts nothing,
+//     so its log is the probe alone.
 //   - **the Live screen draws the synthetic recording.** The whole chain in one
 //     window: the entry mounts Live, the poll asks `live.watch`, the main
 //     process spawns the installation's own `fugaro watch --json`, and the
@@ -47,9 +51,25 @@
 // scratch `--user-data-dir` seeded with one **active installation naming the
 // stub**, so the startup handshake reads that binary and no other
 // (`resolveHandshakeBinary`) -- whatever `fugaro` the machine has in
-// `/usr/local/bin` or `/opt/homebrew/bin`. No case here skips for the machine
-// it runs on. The one first-run case uses an unseeded profile of its own, and
-// asserts nothing that depends on which `fugaro` the machine resolves.
+// `/usr/local/bin` or `/opt/homebrew/bin`. Two cases are the exception, on
+// purpose: the two that assert which binary a run with **no usable stored path**
+// drives seed a record whose path has gone, or one with no path at all, so rule
+// 4 walks the well-known prefixes and the machine decides. Those two ask the
+// console's own resolver first (`resolveConsoleBinary`) and skip when this
+// machine's answer is not one the console can drive -- a skip that says which
+// `fugaro` answered rather than failing on a fact about the machine. The one
+// first-run case uses an unseeded profile of its own and asserts nothing about
+// which `fugaro` the machine resolves.
+//
+// **Drawn, never raw.** The header's line is `src/renderer/entry.ts`'s `textOf`,
+// which is `sanitizeRefusal`: the path the console draws is the sanitized one,
+// while the same value arrives raw over IPC. A scratch stub directory's random
+// suffix reads as a token and is redacted, so `/tmp/fugaro-cli-stub-Ab3xY9/...`
+// is drawn as `[redacted-token]...`. The two cases above therefore compare the
+// header against `sanitizeRefusal(drove, ...).text` and keep the raw `drove` for
+// the spawn log and the IPC-level assertions -- comparing the drawn line to the
+// raw path passes only where the resolved binary happens to live outside a
+// scratch directory.
 //
 // Nothing here reaches the network and nothing here starts a child that the
 // console's own read would not have started: the stub answers `version`, and
@@ -67,6 +87,7 @@ import { join } from 'node:path'
 import { expect, test } from '@playwright/test'
 import type { ElectronApplication, Page } from '@playwright/test'
 
+import { INSTALLATIONS_FILE_NAME } from '../../src/main/installations'
 import { NO_ACTIVE_INSTALLATION, REDUCED_REFUSAL } from '../../src/main/ipc'
 import { APP_ENTRY_URL, APP_ORIGIN, REFUSAL_ENTRY_URL, SERVED_FILES } from '../../src/main/protocol'
 import { SPAWN_LOG_ENV } from '../../src/main/spawnlog'
@@ -75,11 +96,12 @@ import {
   CLI_VERSION_BUILT_AGAINST,
   REDUCED_VIEWS,
   SKEW_HEADLINES,
+  classifyCliVersion,
 } from '../../src/shared/version'
 import { EXPOSED_OPERATIONS } from '../../src/preload/index'
-import { installCliStub } from '../support/cliStub'
+import { installCliStub, resolveConsoleBinary } from '../support/cliStub'
 import type { CliStub } from '../support/cliStub'
-import { dismissFirstRunPicker } from '../support/firstRun'
+import { expectNoFirstRunPicker } from '../support/firstRun'
 import { launchConsole } from '../support/launch'
 import { INSTALLATIONS_MENU_LABEL, PICKER_ENTRY_URL } from '../../src/main/picker'
 import { sanitizeRefusal } from '../../src/shared/sanitize'
@@ -91,7 +113,7 @@ const consoleDir = join(__dirname, '..', '..')
 
 /**
  * SHIPPED_KEYS is what `window.fugaro` must carry, read out of the preload's own
- * table: the thirteen methods, plus `version` and `operations`. Read rather than
+ * table: the twenty-two methods, plus `version` and `operations`. Read rather than
  * spelled, because the claim here is "the bridge in the page is the surface this
  * console ships" -- a retyped list would only prove the retyping.
  */
@@ -125,8 +147,8 @@ async function launch(
   const scratch = mkdtempSync(join(tmpdir(), 'fugaro-console-entry-'))
   const spawnLog = join(scratch, 'spawn.jsonl')
   // The seeded profile (see the header), or -- for the first-run case -- an
-  // unseeded one, whose picker opens beside the window under test and is
-  // dismissed before any assertion about that window (`dismissFirstRunPicker`).
+  // unseeded one, which opens no picker beside the window under test
+  // (`expectNoFirstRunPicker`, owner's design ruling of 2026-10-25).
   const profile = options.firstRun ?? stub
   const app = await launchConsole({
     args: profile.launchArgs(consoleDir),
@@ -140,27 +162,35 @@ async function launch(
     )
   })
   await page.waitForLoadState('domcontentloaded')
-  if (options.firstRun !== undefined) await dismissFirstRunPicker(app, page)
+  if (options.firstRun !== undefined) await expectNoFirstRunPicker(app, page)
   return {
     app,
     page,
     spawnLog,
     scratch,
     records(): readonly SpawnLogEntry[] {
-      let text: string
-      try {
-        text = readFileSync(spawnLog, 'utf8')
-      } catch {
-        // Unset, unreadable, never written: an empty log is the honest answer,
-        // and the tests that need records assert a length.
-        return []
-      }
-      return text
-        .split('\n')
-        .filter((line) => line.trim() !== '')
-        .map((line) => JSON.parse(line) as SpawnLogEntry)
+      return readSpawnLog(spawnLog)
     },
   }
+}
+
+/** readSpawnLog parses the log at `path`, and answers an empty list when there
+ * is no file: unset, unreadable, never written -- the honest answer, and why the
+ * specs that need records assert a length. It is read *after* the handshake,
+ * because the read that produced the records is what opened and closed the file.
+ * The specs beside `launch` use it directly, since they hold the app rather than
+ * the wrapper. */
+function readSpawnLog(path: string): readonly SpawnLogEntry[] {
+  let text: string
+  try {
+    text = readFileSync(path, 'utf8')
+  } catch {
+    return []
+  }
+  return text
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .map((line) => JSON.parse(line) as SpawnLogEntry)
 }
 
 /** close ends the app and the scratch tree beside it. */
@@ -289,7 +319,7 @@ test.describe('the renderer entry, in the real window', () => {
       expect(shape.scriptUrls).toEqual([`${APP_ORIGIN}/console.js`])
       expect(SERVED_FILES).toContain('/console.js')
       // The bridge `src/preload/index.ts` exposes, as the renderer received it:
-      // the thirteen methods and the two fields, frozen, at the shipped version.
+      // the twenty-two methods and the two fields, frozen, at the shipped version.
       // Two files have to be right for this to hold -- the preload that exposed
       // it and the entry that ran beside it -- because the preload only reaches
       // the dashboard window (`dashboardWebPreferences`).
@@ -399,11 +429,18 @@ test.describe('the renderer entry, in the real window', () => {
       expect(shape.bridgeKeys).toEqual([])
       expect(shape.globals['require']).toBe('undefined')
       // **And the log holds no read.** A refused console drives nothing: the
-      // handshake's own `version` probe is the one spawn, and no screen's read
-      // follows it (Task 3.4c -- a console that mounted a screen here would
-      // have to read through a source it never built).
+      // handshake's own `version` probe is the one spawn for the installation,
+      // and no screen's read follows it (Task 3.4c -- a console that mounted a
+      // screen here would have to read through a source it never built). The
+      // rail's boot read comes before the handshake and names no project
+      // (`version` to find the binary, then `config list --json`).
       const records = launched.records()
-      expect(records.map((record) => record.argv.slice(1))).toEqual([['version']])
+      expect(
+        records.filter((record) => record.project === '').map((record) => record.argv.slice(1)),
+      ).toEqual([['version'], ['config', 'list', '--json']])
+      expect(
+        records.filter((record) => record.project !== '').map((record) => record.argv.slice(1)),
+      ).toEqual([['version']])
     } finally {
       await close(launched)
     }
@@ -461,15 +498,20 @@ test.describe('the renderer entry, in the real window', () => {
       )
       expect(typeof snapshot.receivedAt, 'the snapshot carries no arrival stamp').toBe('string')
 
-      // And the navigation offers Live alone: Spend is the withheld view, and
-      // Projects is the `caps` view, which this mode withholds with it. A Spend
-      // entry here would be a door to a screen whose read the gate refuses.
+      // And the navigation offers Live, Graph and Coordinator: Spend is the
+      // withheld view, and Projects is the `caps` view, which this mode
+      // withholds with it. A Spend entry here would be a door to a screen whose
+      // read the gate refuses. The Graph is offered because `plan.status` is
+      // not a view this mode withholds: it draws no spend and no caps.
+      // Coordinator is not withheld either: its read is repository state and
+      // not money (design section 5.1 rule 5, `VIEWS` in
+      // `src/renderer/entry.ts`).
       const nav = await launched.page.evaluate(() =>
         [...document.querySelectorAll('nav.console-views button.console-view')].map((button) =>
           button.getAttribute('data-view'),
         ),
       )
-      expect(nav).toEqual(['live'])
+      expect(nav).toEqual(['live', 'graph', 'coordinator'])
       // And nothing behind the withheld views was read: the spawn log holds the
       // handshake's `version` and the live `watch`, and no `report`.
       const reducedLog = launched.records()
@@ -497,14 +539,19 @@ test.describe('the renderer entry, in the real window', () => {
           lines: [...(section?.querySelectorAll('p') ?? [])].map((line) => line.textContent),
         }
       })
-      // The binary line is the path as the console's sanitizer draws it (a
-      // scratch directory's random suffix can read as a token and is redacted,
-      // exactly as the picker's row draws it).
-      const drawnBinary = sanitizeRefusal(join(stub.dir, 'fugaro'), 'the installation’s binary')
-      expect(drawnBinary.ok).toBe(true)
+      // The binary line is the path **as written**: a filesystem path is not a
+      // token, and the scratch tree's `mkdtemp` suffix -- six characters mixing
+      // case and digits -- is exactly what a header that redacted it would be
+      // redacting. That is the owner's report of 2026-10-21, and
+      // `sanitize-path-runs.test.ts` holds the sanitizer's half of it; the
+      // screen's half is here, and it is an exact line rather than a redacted
+      // one, so a return of `[redacted-token]` fails this spec.
+      const binary = join(stub.dir, 'fugaro')
+      const drawnBinary = sanitizeRefusal(binary, 'the installation’s binary')
+      expect(drawnBinary.ok ? drawnBinary.text : null).toBe(binary)
       expect(header).toEqual({
         kind: 'chosen',
-        lines: ['e2e', drawnBinary.ok ? drawnBinary.text : '', '0.9.0 · reduced'],
+        lines: ['e2e', binary, '0.9.0 · reduced'],
       })
       // And the picker's status line, opened from the menu.
       const picker = await openPickerFromMenu(launched.app)
@@ -514,14 +561,21 @@ test.describe('the renderer entry, in the real window', () => {
     }
   })
 
-  test('the spawn log holds the handshake and the live watch, and no other read, in every mode', async () => {
+  test('the spawn log holds the handshake, the live watch and the rigor join, and no other read, in every mode', async () => {
     // The log is the evidence for what this console drives, and it is read in
-    // all three modes. Since Task 3.4c there are exactly two spawns a healthy
-    // console makes: the handshake's own `version` probe, and the Live screen's
-    // `watch --json` -- which the bound source plans with the installation's
-    // `--project` and the installation's binary. A `report`, a `budget`, a
-    // `runs` or a `diagnose` here is a read some screen made that it should not
-    // have, and this is where it is seen.
+    // all three modes. Before the handshake the console makes the installation
+    // rail's one boot read (owner's design ruling of 2026-10-25): `config list
+    // --json`, after the `version` probe that finds the binary to ask, both with
+    // no project because the list is what names one -- in every mode, since the
+    // read decides which installation the handshake is for. Then a healthy
+    // console makes three kinds of spawn: the
+    // handshake's own `version` probe, the Live screen's `watch --json`, and the
+    // Live screen's rigor join, `runs ls --json` (the mode on a Live row is
+    // joined by run id, since `watch --json` carries no rigor block) -- each
+    // planned by the bound source with the installation's `--project` and the
+    // installation's binary. A `report`, a `budget`, any other `runs` read or a
+    // `diagnose` here is a read some screen made that it should not have, and
+    // this is where it is seen.
     for (const [version, mode] of [
       [CLI_VERSION_BUILT_AGAINST, 'ok'],
       ['0.9.0', 'reduced'],
@@ -549,6 +603,7 @@ test.describe('the renderer entry, in the real window', () => {
             : [
                 ['version'],
                 ['watch', '--json', '--project', 'e2e'],
+                ['runs', 'ls', '--json', '--project', 'e2e'],
               ]
         // The watch is written by the entry's *first poll*, which is a message
         // round and a spawn behind the window's `domcontentloaded` -- so a mode
@@ -562,8 +617,15 @@ test.describe('the renderer entry, in the real window', () => {
             })
             .toBe(true)
         }
-        const records = launched.records()
-        expect(records.length, `${mode}: the handshake read is not in the log`).toBeGreaterThan(0)
+        const all = launched.records()
+        expect(all.length, `${mode}: the handshake read is not in the log`).toBeGreaterThan(0)
+        const boot = all.filter((record) => record.project === '')
+        expect(
+          boot.map((record) => record.argv.slice(1)),
+          `${mode}: the rail's boot read is not one version probe and one config list`,
+        ).toEqual([['version'], ['config', 'list', '--json']])
+        for (const record of boot) expect(record.argv[0]).toBe(join(stub.dir, 'fugaro'))
+        const records = all.filter((record) => record.project !== '')
         for (const record of records) {
           expect(Object.keys(record).sort(), `${mode}: the record has extra keys`).toEqual([
             'argv',
@@ -576,7 +638,7 @@ test.describe('the renderer entry, in the real window', () => {
           // reads both resolve through the installation the operator chose.
           expect(record.argv[0], `${mode}: a spawn used another binary`).toBe(join(stub.dir, 'fugaro'))
           expect(record.project, `${mode}: the spawn log lost the installation's project`).toBe('e2e')
-          // The argv after the binary is one of the two this console plans --
+          // The argv after the binary is one of the three this console plans --
           // compared whole, so a flag added to either is a failure here rather
           // than a substring nobody looked at.
           expect(expected, `${mode}: the console ran ${record.argv.join(' ')}`).toContainEqual(
@@ -608,37 +670,33 @@ test.describe('the renderer entry, in the real window', () => {
       expect(shape.scripts).toHaveLength(1)
       expect(shape.scriptUrls).toEqual([`${APP_ORIGIN}/console.js`])
       // And the window holds the entry's drawing and nothing the document
-      // shipped: the installation rail (Task 6.3 -- the canvas's structural
-      // addition, the grid's first column and the body's first content child
-      // when there is no banner), the installation line, the navigation and the
-      // panel, in that order. Task 1.1's placeholder -- "The console's window is
-      // up. It has no data yet." -- would be a fifth child here, a second `<h1>`
-      // and a sentence this task made false, printed above the figures.
-      expect(shape.bodyChildren).toEqual([
-        'console-rail',
-        'console-installation',
-        'console-views',
-        'console-panel',
-      ])
+      // shipped: the redesign's header (its switcher holds the installation
+      // line and the rail, owner's ruling of 2026-10-28) and the page holding
+      // the panel, in that order. Task 1.1's placeholder -- "The console's
+      // window is up. It has no data yet." -- would be a third child here, a
+      // second `<h1>` and a sentence this task made false.
+      expect(shape.bodyChildren).toEqual(['console-header', 'console-page'])
       expect(shape.bodyText).not.toContain('It has no data yet')
 
       const panel = launched.page.locator('div.console-panel')
-      await expect(panel.locator('li.live-repo')).toHaveCount(1)
+      await expect(panel.locator('section.live-repo')).toHaveCount(1)
       await expect(panel.locator('span.live-repo-name')).toHaveText('r-4c25cf20/r-f1aa9214')
       // The last frame of the recording carries both runs.
-      await expect(panel.locator('li.live-run')).toHaveCount(2)
-      await expect(panel.locator('li.live-run span.live-run-id')).toHaveText([
+      await expect(panel.locator('tr.live-run')).toHaveCount(2)
+      await expect(panel.locator('tr.live-run td.live-run-id')).toHaveText([
         '20261015-120000-aa01',
         '20261015-120400-aa03',
       ])
       // The navigation, and Live as the view on screen.
       await expect(launched.page.locator('nav.console-views button.console-view')).toHaveText([
         'Live',
+        'Graph',
         'Spend',
         'Projects',
+        'Coordinator',
       ])
       await expect(
-        launched.page.locator('nav.console-views button.console-view[aria-current="true"]'),
+        launched.page.locator('nav.console-views button.console-view[aria-current="page"]'),
       ).toHaveText('Live')
       // And the read behind that drawing is the installation's own binary and
       // project, in the log -- not merely inferred from the screen.
@@ -672,7 +730,7 @@ test.describe('the renderer entry, in the real window', () => {
     try {
       // Drawn first, then the media emulated: what forced colors is asked about is
       // the chrome this console drew, not a page that never saw it.
-      await expect(launched.page.locator('div.console-panel li.live-repo')).toHaveCount(1)
+      await expect(launched.page.locator('div.console-panel section.live-repo')).toHaveCount(1)
       await expect(launched.page.locator('aside.console-rail span.console-rail-state')).toHaveText(
         '● running',
       )
@@ -697,10 +755,10 @@ test.describe('the renderer entry, in the real window', () => {
           }
         }
         const marked = document.querySelector(
-          'nav.console-views button.console-view[aria-current="true"]',
+          'nav.console-views button.console-view[aria-current="page"]',
         )
         const plain = document.querySelector(
-          'nav.console-views button.console-view:not([aria-current="true"])',
+          'nav.console-views button.console-view:not([aria-current="page"])',
         )
         const row = document.querySelector('aside.console-rail button.console-rail-row')
         return {
@@ -742,14 +800,13 @@ test.describe('the renderer entry, in the real window', () => {
   })
 
   test('the installation rail draws a row for the installation it can read, and none for one it cannot', async () => {
-    // Design section 4.1's rail, in a real window: the active installation's row
-    // -- the one `installation.current` answers with -- carrying its name, its
-    // project, its state word and its glyph; and, on a profile where nothing has
-    // been chosen, **no row at all** while the rail itself is still drawn. A row
-    // for every *stored* installation would need a bounded list read on the
-    // dashboard's bridge, which the design withholds (sections 4.1 and 11) and
-    // this task adds no operation for -- so the rail makes no read of its own,
-    // and the spawn log below is where that is visible.
+    // Design section 4.1's rail, in a real window: one row per installation the
+    // CLI listed or this console holds -- here the stored `e2e`, which the
+    // stub's empty list does not name -- carrying its name, its project, its
+    // state word and its glyph; and, on a profile with nothing at all, **no row**
+    // while the rail itself is still drawn. The rail's one read is the boot read
+    // (`config list --json`, before the handshake), and the spawn log below is
+    // where that is visible.
     stub.setVersion(CLI_VERSION_BUILT_AGAINST)
     const launched = await launch(stub.env)
     try {
@@ -769,15 +826,12 @@ test.describe('the renderer entry, in the real window', () => {
       await expect(rail.locator('span.console-rail-spend')).toHaveText('n/a')
       // The head, the foot row and the hint are the rail's whatever it has to put
       // in its list, and the foot row is the design's own control.
-      await expect(rail.locator('button.console-rail-collapse')).toHaveAttribute(
-        'aria-expanded',
-        'true',
-      )
       await expect(rail.locator('button.console-rail-add')).toHaveText('+ Add installation')
       await expect(rail.locator('p.console-rail-hint')).toHaveText('Switch with the shortcut keys 1 2 3')
-      // And the rail asked for nothing: the log holds the handshake's probe and
-      // the live watch, which is what a healthy console spawns -- a row per stored
-      // installation would have added a read here. The watch is written by the
+      // And the rail asked for nothing: the log holds the handshake's probe, the
+      // live watch and -- when it has landed -- the Live screen's rigor join
+      // (`runs ls --json`), which is what a healthy console spawns -- a row per
+      // stored installation would have added a read here. The watch is written by the
       // entry's *first poll*, which is a message round and a spawn behind the rail
       // being drawn -- the row's `running` is the word the rail opens with, not
       // evidence that a read has landed -- so this waits for the record the way
@@ -788,15 +842,36 @@ test.describe('the renderer entry, in the real window', () => {
           message: 'the live read never reached the spawn log',
         })
         .toBe(true)
-      const reads = [...new Set(launched.records().map((record) => record.argv[1]))].sort()
-      expect(reads, 'the rail made a read of its own').toEqual(['version', 'watch'])
+      // The rigor join is the Live screen's, asked for after its first frame, so
+      // whether it has reached the log yet is a race this case does not decide:
+      // it is admitted by its whole argv and by nothing shorter.
+      const all = launched.records()
+      expect(
+        all.filter((record) => record.argv[1] === 'config').map((record) => record.argv.slice(1)),
+        'the rail read the list more than once',
+      ).toEqual([['config', 'list', '--json']])
+      const records = all.filter((record) => record.project !== '')
+      const reads = [...new Set(records.map((record) => record.argv[1]))].sort()
+      expect(
+        reads.filter((read) => read !== 'runs'),
+        'the rail made a read of its own',
+      ).toEqual(['version', 'watch'])
+      for (const record of records.filter((each) => each.argv[1] === 'runs')) {
+        expect(record.argv.slice(1), 'the rail made a read of its own').toEqual([
+          'runs',
+          'ls',
+          '--json',
+          '--project',
+          'e2e',
+        ])
+      }
     } finally {
       await close(launched)
     }
 
-    // The other half: a first run with no installation chosen. The dashboard can
-    // read an answer and the answer names no installation, so there is no row to
-    // draw -- and an invented one would be a lie about what this console knows.
+    // The other half: a first run on a machine with no installation. The CLI's
+    // list is empty and the console holds no record, so there is no row to draw
+    // -- and an invented one would be a lie about what this console knows.
     const fresh = installCliStub(CLI_VERSION_BUILT_AGAINST)
     try {
       const blank = await launch(fresh.env, { firstRun: fresh })
@@ -825,44 +900,151 @@ test.describe('the renderer entry, in the real window', () => {
     }
   })
 
-  test('a stored binary that is gone is a refusal, never another fugaro, and the picker is still reachable (review B1)', async () => {
-    // A second profile whose active installation names a binary that is not
-    // there. Before the fix the handshake walked on to the machine's own
-    // `fugaro` (or the stub on `PATH`) and drew a dashboard for it.
+  test('a stored binary that has gone falls through, and the header names the binary this run drives (review B1)', async () => {
+    // This spec used to pin the opposite rule -- a stored override that is gone
+    // is a refusal, never another `fugaro` -- and the owner's ruling of
+    // 2026-10-20 reversed it: a stored `binaryPath` is only rule 4's **first
+    // candidate**, so the walk carries on to the well-known prefixes and the
+    // console drives whichever binary it resolved. What the old spec was really
+    // written against is the silence, not the fall-through: a dashboard that
+    // names the gone path while the console runs another file. That is what this
+    // asserts now.
     const gone = installCliStub(CLI_VERSION_BUILT_AGAINST)
-    gone.seedActiveInstallation('gone', join(gone.dir, 'missing', 'fugaro'))
-    const scratch = mkdtempSync(join(tmpdir(), 'fugaro-console-entry-'))
-    const spawnLog = join(scratch, 'spawn.jsonl')
-    const app = await launchConsole({ args: gone.launchArgs(consoleDir), env: { ...gone.env, [SPAWN_LOG_ENV]: spawnLog } })
     try {
-      const page = await app.firstWindow()
-      await page.waitForLoadState('domcontentloaded')
-      expect(page.url()).toBe(REFUSAL_ENTRY_URL)
-      expect(app.windows()).toHaveLength(1)
-      // Nothing was spawned: not the stub on `PATH`, not the machine's own.
-      let logged = ''
+      const missing = join(gone.dir, 'missing', 'fugaro')
+      gone.seedActiveInstallation('gone', missing)
+      // Which `fugaro` this machine gives the app, asked with the console's own
+      // resolver and the environment this launch passes to it. **Not** the
+      // scratch stub spelled out: the override having gone means rule 4 walks
+      // `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `/usr/bin`, and a
+      // machine with a real `fugaro` in one of the first two drives *that* -- so
+      // a hardcoded `~/.local/bin/fugaro` would fail here for a fact about the
+      // machine, in the one spec whose subject is the resolution itself.
+      const winner = await resolveConsoleBinary(gone.env)
+      const mode = winner.ok ? classifyCliVersion(winner.version).mode : 'refused'
+      test.skip(mode !== 'ok', `no fugaro this console drives was resolved (${winner.ok ? winner.version : 'none found'})`)
+      const drove = winner.ok ? winner.path : ''
+      // The line the header draws is the path as the console's sanitizer *draws*
+      // it, never the raw string: `src/renderer/entry.ts`'s `textOf` is
+      // `sanitizeRefusal`, and a scratch directory's random suffix reads as a
+      // token, so `/tmp/fugaro-cli-stub-Ab3xY9/home/.local/bin/fugaro` is drawn
+      // as `[redacted-token].local/bin/fugaro`. On a machine with a real
+      // `fugaro` in `/usr/local/bin` the two strings coincide, which is why this
+      // spec passed there and failed on CI, where the scratch stub is what the
+      // walk finds (the same idiom as the reduced-mode case above).
+      const drawnDrove = sanitizeRefusal(drove, 'the installation’s binary')
+      expect(drawnDrove.ok, 'this run resolved a binary the sanitizer refuses').toBe(true)
+      const scratch = mkdtempSync(join(tmpdir(), 'fugaro-console-entry-'))
+      const spawnLog = join(scratch, 'spawn.jsonl')
+      const app = await launchConsole({ args: gone.launchArgs(consoleDir), env: { ...gone.env, [SPAWN_LOG_ENV]: spawnLog } })
       try {
-        logged = readFileSync(spawnLog, 'utf8')
-      } catch {
-        logged = ''
+        const page = await app.firstWindow()
+        await page.waitForLoadState('domcontentloaded')
+        expect(page.url(), 'the fall-through did not reach the dashboard').toBe(APP_ENTRY_URL)
+        expect(app.windows()).toHaveLength(1)
+        // The header, in the words the operator reads: the record's project, and
+        // the binary **this run resolved** -- not the path the record still holds.
+        const section = page.locator('section.console-installation')
+        await expect(section.locator('p.installation-project')).toHaveText('gone')
+        await expect(section.locator('p.installation-binary')).toHaveText(drawnDrove.ok ? drawnDrove.text : '')
+        // And the same file at the IPC level, where the reply is raw: the state
+        // names the binary this run resolved, not the gone path the record still
+        // holds. This is the half the drawn line cannot say, because the
+        // sanitizer rewrites both strings.
+        const state = await installationOf(page)
+        expect((state['data'] as Record<string, unknown>)['binary']).toBe(drove)
+        expect((state['data'] as Record<string, unknown>)['binary']).not.toBe(missing)
+        // And the file the header names is the file that ran: every record in the
+        // log has it first, including the handshake's own `version`.
+        await expect
+          .poll(() => readSpawnLog(spawnLog).filter((record) => record.argv[0] !== drove).length, {
+            message: 'the console spawned something other than the binary the header named',
+          })
+          .toBe(0)
+        expect(readSpawnLog(spawnLog).length).toBeGreaterThan(0)
+        // The picker is still reachable, and the row it draws is this
+        // installation -- now the mode the binary it drove calls for, because the
+        // handshake read one the console can drive (`mode` above, from the same
+        // resolution this spec expects the header to name).
+        const picker = await openPickerFromMenu(app)
+        const listed = (await picker.evaluate(async () => {
+          const api = (window as unknown as { fugaroInstallations: { list: () => Promise<unknown> } }).fugaroInstallations
+          return await api.list()
+        })) as { ok: boolean; data: { rows: { project: string; active: boolean; mode: string }[] } }
+        expect(listed.ok).toBe(true)
+        expect(listed.data.rows.map((row) => [row.project, row.active, row.mode])).toEqual([['gone', true, mode]])
+      } finally {
+        await app.close()
+        rmSync(scratch, { recursive: true, force: true })
       }
-      expect(logged).toBe('')
-      // The door out of a refusal is still there (plan 3.4b step 5).
-      const picker = await openPickerFromMenu(app)
-      const listed = (await picker.evaluate(async () => {
-        const api = (window as unknown as { fugaroInstallations: { list: () => Promise<unknown> } }).fugaroInstallations
-        return await api.list()
-      })) as { ok: boolean; data: { rows: { project: string; active: boolean; mode: string }[] } }
-      expect(listed.ok).toBe(true)
-      expect(listed.data.rows.map((row) => [row.project, row.active, row.mode])).toEqual([['gone', true, 'refused']])
     } finally {
-      await app.close()
-      rmSync(scratch, { recursive: true, force: true })
       gone.remove()
     }
   })
 
-  test('the first run reads no ambient project, and opens the picker once', async () => {
+  test('an installation this console chose carries no binary, and the header still names the one it drives', async () => {
+    // The shape **this console writes** (owner's ruling of 2026-10-20): a record
+    // with an id and a project and no `binaryPath` field at all, because the
+    // console resolves the installed `fugaro` itself and never stores the path it
+    // found. Every other seed in this suite writes the legacy shape, an override
+    // naming the CLI, so without this spec the dashboard's own line about the
+    // binary it drives is only ever exercised with a store that answers it.
+    const bare = installCliStub(CLI_VERSION_BUILT_AGAINST)
+    try {
+      bare.seedActiveInstallation('bare', null)
+      const seeded = readFileSync(join(bare.userData, INSTALLATIONS_FILE_NAME), 'utf8')
+      // The seed itself, first: the field is absent rather than `null` or `''`.
+      expect(seeded).not.toContain('binaryPath')
+      expect(JSON.parse(seeded)).toEqual({
+        version: 1,
+        active: '0123456789abcdef',
+        installations: [{ id: '0123456789abcdef', project: 'bare' }],
+      })
+      // Which `fugaro` this machine gives the app, from the console's own
+      // resolver rather than spelled (see the B1 case above): a record with no
+      // override is exactly the case where the well-known order decides, and
+      // `/opt/homebrew/bin` and `/usr/local/bin` come before the scratch stub.
+      const winner = await resolveConsoleBinary(bare.env)
+      const mode = winner.ok ? classifyCliVersion(winner.version).mode : 'refused'
+      test.skip(mode !== 'ok', `no fugaro this console drives was resolved (${winner.ok ? winner.version : 'none found'})`)
+      const drove = winner.ok ? winner.path : ''
+      // Drawn, not raw: see the B1 case above -- `textOf` sanitizes the path, so
+      // a resolution that landed in a scratch directory is drawn with its random
+      // suffix redacted, and comparing the raw string to it would fail on a
+      // machine whose scratch stub won the walk.
+      const drawnDrove = sanitizeRefusal(drove, 'the installation’s binary')
+      expect(drawnDrove.ok, 'this run resolved a binary the sanitizer refuses').toBe(true)
+      const scratch = mkdtempSync(join(tmpdir(), 'fugaro-console-entry-'))
+      const spawnLog = join(scratch, 'spawn.jsonl')
+      const app = await launchConsole({ args: bare.launchArgs(consoleDir), env: { ...bare.env, [SPAWN_LOG_ENV]: spawnLog } })
+      try {
+        const page = await app.firstWindow()
+        await page.waitForLoadState('domcontentloaded')
+        expect(page.url()).toBe(APP_ENTRY_URL)
+        const section = page.locator('section.console-installation')
+        await expect(section.locator('p.installation-project')).toHaveText('bare')
+        // The line the defect drew nothing on: the store has no path to give, so
+        // it can only be right if the header reads this run's resolution.
+        await expect(section.locator('p.installation-binary')).toHaveText(drawnDrove.ok ? drawnDrove.text : '')
+        await expect(section.locator('p.installation-version')).toContainText(winner.ok ? winner.version : '')
+        await expect
+          .poll(() => readSpawnLog(spawnLog).filter((record) => record.argv[0] !== drove).length, {
+            message: 'the console spawned something other than the binary the header named',
+          })
+          .toBe(0)
+        // Non-vacuity: the log is not empty, so the assertion above is about a
+        // spawn that happened rather than about a file nobody wrote.
+        expect(readSpawnLog(spawnLog).length).toBeGreaterThan(0)
+      } finally {
+        await app.close()
+        rmSync(scratch, { recursive: true, force: true })
+      }
+    } finally {
+      bare.remove()
+    }
+  })
+
+  test('the first run reads no ambient project, and opens no picker', async () => {
     // An unseeded profile: D13's first run. `FUGARO_PROJECT` is planted in the
     // app's environment and must not reach the handshake (plan 3.4b, tests).
     // Which `fugaro` the machine resolves is not asserted -- only what the
@@ -871,12 +1053,13 @@ test.describe('the renderer entry, in the real window', () => {
     try {
       const launched = await launch(fresh.env, { firstRun: fresh, env: { FUGARO_PROJECT: 'planted-ambient-project' } })
       try {
-        // `launch` asserted the picker opened, once, and closed it.
+        // `launch` asserted that no picker opened beside this window.
         expect(launched.app.windows()).toHaveLength(1)
         const records = launched.records()
         expect(records.length).toBeGreaterThan(0)
         for (const record of records) {
-          expect(record.argv[1]).toBe('version')
+          // The handshake's probe, and the rail's boot read of the (empty) list.
+          expect([['version'], ['config', 'list', '--json']]).toContainEqual(record.argv.slice(1))
           expect(record.project, 'the handshake took a project nobody chose').toBe('')
         }
         if (launched.page.url() === APP_ENTRY_URL) {

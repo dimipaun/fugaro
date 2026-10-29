@@ -19,14 +19,14 @@ import (
 // implementations of the canonical serialisation are held to (mobile plan P4.1,
 // task T1; Ruling M9 — the file is merged and is never edited by this task).
 //
-// The tag itself is computed HERE, in the test, and not by the package under
-// test: the plan gives the tag function to T2 (`internal/mailbox/mac.go`) and
-// this task no `mac.go`, and one function is what keeps the verifying half and
-// the signing half from drifting. What the replay therefore proves is the half
-// T1 owns — that Go's canonical bytes ARE the module's, byte for byte — and it
-// proves it the only way that is observable: by recomputing each vector's tag
-// over those bytes with crypto/hmac, the same composition mac.js is, and
-// comparing against the tag the file pins.
+// The tag itself is computed HERE, in the test, and not by MacOf (T2's, in
+// mac.go): a replay that called the function it checks would prove only that
+// the function equals itself. What it proves instead is the half T1 owns —
+// that Go's canonical bytes ARE the module's, byte for byte — and it proves it
+// the only way that is observable: by recomputing each vector's tag over those
+// bytes with crypto/hmac, the same composition mac.js is, and comparing
+// against the tag the file pins. mac_test.go is what holds MacOf to the same
+// file.
 const vectorsPath = "../../shared/mailbox-schema/vectors.json"
 
 // caseSchemaRefusal is the three vector cases whose record the schema refuses.
@@ -1940,8 +1940,8 @@ var (
 )
 
 // tagOf is the tag HMAC-SHA-256 produces over canonical bytes: mac.js's own
-// composition, written here rather than in the package because the package's
-// tag function is T2's (see the header comment).
+// composition, written here rather than in the package because a replay that
+// called MacOf would only prove MacOf equals itself (see the header comment).
 func tagOf(key, canonical string) string {
 	mac := hmac.New(sha256.New, []byte(key))
 	mac.Write([]byte(canonical))

@@ -1,0 +1,1 @@
+{ "version": 1, "run_id": "20261028-120000-abcd", "repo": "acme/server", "ref": "main", "task": "Periodic run review", "recipe": { "name": "report", "source": "repo" }, "digest_runs": ["20261027-090000-abcd", "20261027-100000-a1b2"] }

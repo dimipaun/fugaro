@@ -1,9 +1,9 @@
 # The console on Windows — the implementation plan
 
-**Status: plan only; nothing is implemented; the twelve decisions are answered and the OWNER APPROVAL
-GATE is still not passed.** No task below is approved. **Part A is the first part that may start, and
-only after the OWNER APPROVAL GATE in §5 passes** — and Part A touches no production behaviour, which
-is why it is first and why it is safe first.
+**Status: approved to build on 2026-10-22 — target release 0.110.0 (the console's own stream, approved as 0.11.0 and renumbered by the owner's ruling of 2026-10-24), pull requests target `main`; the
+twelve decisions are answered and the OWNER APPROVAL GATE in §5 is passed.** Parts land in the order
+§3 gives, and each merges alone. **Part A is built** (T-A1 to T-A3, the fake `wsl.exe`): it touches no
+production behaviour, which is why it is first and why it is safe first.
 
 **The D7 ruling (2026-10-20): the Windows pack runs at release time only.** It is started by the
 release tag (`on: push: tags: ["v[0-9]+.[0-9]+.[0-9]+"]`) or by a `workflow_dispatch` before it, and
@@ -31,10 +31,10 @@ Each task has:
   that already owns it.
 - **Verification** — the exact command an agent runs. Five recur and are abbreviated afterwards:
   - **`[unit]`** = `cd console && npm run test:unit` — `vitest run --dir test/unit`, over the
-    **55** `.ts` files under `console/test/unit`, **53** of them `*.test.ts` (the other two are
-    `stub.ts` and `synthetic.ts`; the count is `find console/test/unit -name '*.ts' | wc -l`, and
-    the 75 `find console/test -name '*.ts'` returns is the whole `test/` tree, e2e and fixtures
-    included). A task's own run is `npm run test:unit -- <file>`.
+    **57** `.ts` files under `console/test/unit`, **54** of them `*.test.ts` (the other three are
+    `stub.ts`, `wslstub.ts` and `synthetic.ts`; the count is `find console/test/unit -name '*.ts' |
+    wc -l`, and the 75 `find console/test -name '*.ts'` returns is the whole `test/` tree, e2e and
+    fixtures included). A task's own run is `npm run test:unit -- <file>`.
   - **`[types]`** = `cd console && npm run typecheck`.
   - **`[pins]`** = `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint|Console' -count=1 -timeout 40m`
     — the Go guards over this folder, `docs/pending-workflows/` and `console/README.md`.
@@ -146,18 +146,30 @@ executable named `wsl.exe` too — the name is data, not a platform fact) that:
 2. appends one JSON line to the same out-of-band report file `installStub` already uses
    (`console/test/unit/stub.ts:68` `StubReport`), carrying **its own** argv, its own `cwd`, its own
    environment **keys and values for the eleven `CHILD_ENV_KEYS`**, and the distro it was given;
-3. translates `--cd`'s Windows spelling to a Linux one with a **recorded** table rather than by
-   guessing (the table is the test's own, and a path not in it is reported as untranslated — which is
-   how a test proves the console asked for the translation rather than happening to pass a Linux
-   path);
-4. `exec`s the stub `fugaro` with the remaining argv and the translated cwd, so the `fugaro` report
-   line is written by the *second* hop and the test can read **what the Linux side received**;
+3. requires `--cd` to be the **distribution's** own spelling and refuses the Windows one, because the
+   console translates before it builds the plan (T-C5, T-D3, T-D4) — a Windows path here is a Part C
+   or D bug, and starting a child in it would report it as an `ENOENT` that says nothing about which
+   side spelled the path wrong;
+4. `exec`s the stub `fugaro` with the remaining argv and that cwd, so the `fugaro` report line is
+   written by the *second* hop and the test can read **what the Linux side received**;
 5. answers `--list --quiet` and `--status` from a fixture, in the encoding the test chooses, so that
-   T-F2's decoder has a vector (U9).
+   T-F2's decoder has a vector (U9) — and **fails** both when the fixture says `wsl.exe` cannot
+   answer, which is T-C4's `absent` outcome and not an empty list;
+6. answers `wslpath [-a] -u|-w <path>` from a **recorded** table in both directions, because
+   translating a path is a process the console calls rather than a mapping it computes (T-D2, D4(b)):
+   the table is the test's own, and a path it does not carry is refused with the path in the sentence
+   rather than guessed at;
+7. runs the `sh -c` wrapper the CLI goes inside (`wsl.exe … -e sh -c '<script>'`, where the script
+   prints `<marker> $$` on stderr and then `exec`s `fugaro …`, T-F4) as the distribution's own shell
+   would, which is what makes T-F4's pid capturable — the wrapper's `PATH`
+   is the distribution's with the directory the stub was installed in in front of it, the double's
+   stand-in for the `/usr/local/bin` a real distribution has the CLI in.
 
-Mutation proof: remove step 3's table lookup and pass `--cd` through unchanged — the translation test
-must fail by name. Remove step 4's cwd and the child's `cwd` in the report is the fake's own — the
-cwd test must fail.
+Mutation proof: accept a Windows spelling in `--cd` and the refusal case fails by name. Remove step
+4's cwd and the child's `cwd` in the report is the fake's own — the cwd test must fail. Answer a
+`wslpath` path the table does not carry with a `/mnt/c/…` prefix instead of refusing — the
+translation test must fail. Drop the wrapper's `PATH` and `exec fugaro` inside it never resolves —
+the wrapper test must fail.
 Verification: `[unit]`. Tier A. Depends on: nothing.
 
 **T-A2 — the fake's `PATH` is the distro's, not the host's.**
@@ -172,8 +184,12 @@ Verification: `[unit]`. Tier A. Depends on: T-A1.
 **T-A3 — the fake refuses to be the thing under test.**
 Files: `console/test/unit/wslstub.ts`, `console/test/unit/wslstub.test.ts`.
 Red step: a case asserting that the fake **fails** when a test asks it to run something other than the
-stub `fugaro` — the double must not become a general-purpose shell, because a fake that runs anything
-makes every assertion about *what was run* meaningless.
+three children the plan writes — the stub `fugaro`, the `wslpath` query (T-A1 step 6) and the `sh -c`
+wrapper (step 7) — the double must not become a general-purpose shell, because a fake that runs
+anything makes every assertion about *what was run* meaningless. A `bash -c`, a `sh -x`, a `sh -c`
+with no script, `/bin/echo`, `--terminate`, a missing `-e`, a `--` (which on a real `wsl.exe` hands the
+command to the distribution's login shell) and a missing `-d` are each refused with a sentence and a
+non-zero status.
 Verification: `[unit]`. Tier A. Depends on: T-A1.
 Commit (A1–A3): `console/test: a fake wsl.exe that reports what the Linux side received`
 
@@ -304,7 +320,10 @@ Commit: `console: refuse an unknown platform instead of answering with Linux's d
 
 **T-C4 — the distro: enumerate, default, store (D2(a)).**
 Files: `console/src/main/wsl.ts` (new), `console/src/main/spawn.ts`,
-`console/test/unit/wsl.test.ts` (new), `console/test/unit/spawn.test.ts`.
+`console/test/unit/wsl.test.ts` (new), `console/test/unit/spawn.test.ts`, and
+`console/test/unit/wslstub.ts` — named because this task is the first to drive the fake's **failing
+query** (its `distros.queryFailure`, T-A1 step 5): a task that finds the double cannot model the state
+it must classify edits it here, in the file that owns the seam, rather than working around it.
 Red step: `wsl.test.ts` drives the fake `wsl.exe` (T-A1) through `wslDistributions()`: a fixture with
 two distributions and a default returns both, in the order `wsl.exe` gave them, with the default
 marked; a fixture where `--status` names no default returns both with **none** marked, and the caller
@@ -386,7 +405,11 @@ Verification: `[unit]`. Tier A. Depends on: T-C5.
 Commit: `console: a distro on a stored installation, read as host when it is absent`
 
 **T-D2 — `wslpath`, both directions, through the same spawner (D4(a)).**
-Files: `console/src/main/wsl.ts`, `console/src/main/spawn.ts`, `console/test/unit/wsl.test.ts`.
+Files: `console/src/main/wsl.ts`, `console/src/main/spawn.ts`, `console/test/unit/wsl.test.ts`, and
+`console/test/unit/wslstub.ts` — named because the fake is what answers the translation: its `paths`
+table is the fixture this task's four assertions are written against (T-A1 step 6), and the direction
+flags, the recorded arguments and the refusal for a path the table does not carry are all asserted
+through it.
 Red step: against the fake — `toLinux('C:\\Users\\dimi\\src')` returns the fixture's Linux path;
 `toWindows('/home/dimi/src')` returns the UNC form; a path the fixture's table does not carry comes
 back as a **stated refusal** rather than as a guess; and both calls are recorded in the report file so
@@ -411,6 +434,7 @@ only where Windows itself opens the path.** The Linux one is the one the operato
 terminal inside the distribution, which is what makes it the right one to show (F16).
 Verification: `[unit]`, `[types]`. Tier A. Depends on: T-D2.
 Commit: `console: the Linux spelling for what we say and pass, the UNC spelling for what Windows opens`
+**KNOWN LIMIT:** a WSL distribution whose name has a space, quote or other shell metacharacter (outside `^[A-Za-z0-9][A-Za-z0-9._-]*$`, 200 characters or fewer) is refused on the WSL route (fail closed, because the CLI runs through the distribution's shell); register it under a plain name (`wsl --export` then `wsl --import`) to drive it.
 
 **T-D4 — the private working directory on a Windows host (F12).**
 Files: `console/src/main/spawn.ts`, `console/test/unit/spawn.test.ts`.
@@ -535,17 +559,35 @@ Commit: `console: the feed is the same feed through the wrapper, asserted rather
 
 **T-F4 — cancellation reaches inside the distribution (F24, D6(a)).**
 Files: `console/src/main/spawn.ts`, `console/src/main/wsl.ts`,
-`console/test/unit/spawn.test.ts`, `console/test/unit/wsl.test.ts`.
-Red step: through the fake — `abandon` sends `SIGTERM` to the `wsl.exe` child and, when the fake
-reports that the child is still alive after `SHUTDOWN_GRACE_MS` (`spawn.ts:298`), issues **one** kill
-inside the distribution naming the pid the wrapper recorded; the fake's report shows the pid it was
-given is the child's, not the wrapper's; and a cancellation where the child exited on its own sends
-**no** second call. All three fail today.
-The pid is captured by the wrapper, not guessed: the fake writes it where the real one must
-(`wsl.exe -d <d> -- sh -c 'echo $$ > <file>; exec fugaro …'`), and a design that cannot capture it is
-D6(c) with its residual **stated on the screen** rather than in a comment. U5 and U6 are the two facts
-this task cannot establish from Linux, and the plan's answer is to make the *fallback* honest rather
-than to assume the primary works.
+`console/test/unit/spawn.test.ts`, `console/test/unit/wsl.test.ts`, and
+`console/test/unit/wslstub.ts` — named because the wrapper is the fake's (T-A1 step 7): it runs the
+`sh -c` script the console writes, so the pid inside the distribution is a live process the test can
+find and signal, and the second call this task asserts is one more invocation the report carries.
+Red step: through the fake — `abandon` sends `SIGTERM` to the `wsl.exe` child and, after
+`SHUTDOWN_GRACE_MS` (`spawn.ts:397`), issues **one** kill inside the distribution naming the pid the
+wrapper reported; the fake's report shows the pid it was given is the child's, not the wrapper's; and
+a cancellation where the child had already exited **on its own** sends **no** second call. All three
+fail today.
+The pid is captured by the wrapper, not guessed and not written to a file: the shell prints
+`printf '%s %s\n' <marker> "$$" >&2` before it `exec`s the CLI, so the number on that line is the
+CLI's by the time it matters, and it travels on stderr — the channel the console already reads —
+because no spelling of a pid file works across the two sides (the shell's directory is the checkout,
+the console's is a host path) and reading one back would be a second `wsl.exe` per cancellation. The
+kill inside the distribution is sent whenever the CLI was started and is **not known to have exited
+inside the distribution**, and that condition is deliberately independent of `wsl.exe`'s own exit: on
+Windows the console's `SIGTERM` is `TerminateProcess`, so `wsl.exe` is gone within a tick and long
+before the grace runs out, and a stop that waited for it to still be alive would never be sent on the
+one platform this route exists for. The only thing the console reads as "the CLI is gone too" is a
+`wsl.exe` that had already exited **before** the stop began, because `wsl.exe` relays the
+distribution's command and one that exited by itself exited because that command had finished.
+Every `wsl.exe` this part writes — the CLI's plan, the stop and the `wslpath` question — ends its own
+words with `-e` rather than `--`: `--` hands the rest of the line to the distribution's login shell,
+which would re-read the script under whatever shell the operator's account has, while `-e` runs the
+console's own `sh -c` directly, so the quoting in the script is the only quoting that applies. The
+stop's `-d` passes the same `isDistroName` and `assertWslPrefix` checks as the plan's.
+A design that cannot capture the pid is D6(c) with its residual **stated on the screen** rather than in
+a comment. U5 and U6 are the two facts this task cannot establish from Linux, and the plan's answer is
+to make the *fallback* honest rather than to assume the primary works.
 `wsl.exe --terminate` is refused (D6(b)): a console that can terminate a distribution can destroy work
 it does not own, including the operator's own shells.
 Verification: `[unit]`, `[types]`. Tier A for the shape; Tier B to accept (U5, U6). Depends on: T-C5,
@@ -805,14 +847,17 @@ before it, which is the risk the ruling accepts and the dry run above is there t
 
 ## 5. OWNER APPROVAL GATE
 
-**Not passed. Nothing in this plan may start until the owner passes it.**
+**Passed on 2026-10-22: approved to build — target release 0.110.0 (the console's own stream, approved as 0.11.0 and renumbered by the owner's ruling of 2026-10-24), pull requests target `main`.**
+The owner approved **this plan**: the eight parts, the order in §3, the staged workflow in
+`docs/pending-workflows/console-windows.yml`, the owner-run checklist in §4, and the risk the D7
+ruling accepts (a packaging break shows at release time and is fixed then). Parts land in §3's order,
+each merging alone into main, for the console's 0.110.0.
 
-**Answering a decision is not approving the build.** The five conditions this gate used to list were
-the twelve decisions, and **the owner answered all twelve on 2026-10-20** — each with its one-line why
-in [reconciliation.md](reconciliation.md) §4. That removes the *decisions* from the gate; it does not
-pass the gate. What the owner has not yet approved is **this plan**: eight parts, the order in §3, the
-staged workflow in `docs/pending-workflows/console-windows.yml`, the owner-run checklist in §4, and the
-risk the D7 ruling accepts (a packaging break shows at release time and is fixed then).
+**Answering a decision was not approving the build, and the two dates are separate.** The five
+conditions this gate used to list were the twelve decisions, and **the owner answered all twelve on
+2026-10-20** — each with its one-line why in [reconciliation.md](reconciliation.md) §4. That removed
+the *decisions* from the gate; it did not pass it. The approval of the plan itself is the ruling of
+**2026-10-22**, and it is what this section now records.
 
 | Decision | Answered | What it settled |
 |---|---|---|
@@ -829,12 +874,13 @@ risk the D7 ruling accepts (a packaging break shows at release time and is fixed
 | **D11** | (a) | Part A, and therefore the test strategy of every other part: a fake `wsl.exe` built on `installStub`, asserting what the Linux side received. |
 | **D12** | (a) | §4 stays *proposed*: Check 119 is named and unclaimed, and no row is written into the register. |
 
-**What may start when the gate passes.** **Part A alone**, which touches no production code and no
-document outside this folder, and whose only claim is that the tests that follow can run anywhere.
-Parts B–H no longer wait on answers — theirs are above — they wait on the gate, and then on the order
-in §3.
+**What the approval covers, and in what order.** **Part A** — built, and it touches no production
+code, no `console/src/` file and no document outside this folder, its only claim being that the tests
+that follow can run anywhere — and then the parts in §3's order: B independently of A, C after A, D,
+E and F after C in any order among themselves, G after C and F, and H after B and C. Parts B–H never
+waited on answers — theirs are above — they waited on the gate, and now on the order in §3.
 
-**What is explicitly *not* approved by any answer to this gate**: copying
+**What the approval does *not* cover, and what still needs the owner**: copying
 `docs/pending-workflows/console-windows.yml` into `.github/workflows/` (that is Tier C, and the file's
 own header says what must land first); writing Check 119's row into the register (D12); touching
 `website/data/install.yaml` (F47); and anything under `.github/workflows/` by an agent (F44).

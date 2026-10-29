@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/github"
 	"github.com/dimipaun/fugaro/internal/infra"
@@ -97,11 +98,11 @@ type appKeySource struct {
 // no project-wide copy covers this repository, where the suggested command
 // is the only one that makes sense.
 func projectCoveredNote(lc *localcfg.Config, repo string) string {
-	if _, ok := infra.ProjectSecretCandidate(lc, "github-app-key", repo); !ok {
+	if _, ok := infra.ProjectSecretCandidate(lc, config.GitHubAppKeySecret, repo); !ok {
 		return ""
 	}
-	return "; note: this repository may use the project-wide github-app-key, and a --repo copy would override it here from then on, so " +
-		selfCommand() + " secrets set github-app-key --project-wide (which every repository the project allows reads) is the alternative if the key itself is wrong"
+	return "; note: this repository may use the project-wide " + config.GitHubAppKeySecret + ", and a --repo copy would override it here from then on, so " +
+		selfCommand() + " secrets set " + config.GitHubAppKeySecret + " --project-wide (which every repository the project allows reads) is the alternative if the key itself is wrong"
 }
 
 // appVerdict is how the check ended.

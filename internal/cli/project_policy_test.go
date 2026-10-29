@@ -3299,3 +3299,38 @@ func assertEscapedRefusal(t *testing.T, msg, wantIn, hostile, escaped string) {
 		t.Errorf("the node's key name reaches the terminal raw, so the line's reading is the node's to choose: %q in %s", hostile, msg)
 	}
 }
+
+// TestProjectPolicyPublishCarriesTheProjectBaseBranch: the installation
+// config's top-level base_branch is published into the policy node, which is
+// where a launcher whose own config sets none and the runner read it, and a
+// config that sets none publishes no member at all (the node then means "no
+// project default", and the value is main).
+func TestProjectPolicyPublishCarriesTheProjectBaseBranch(t *testing.T) {
+	t.Run("set", func(t *testing.T) {
+		f := newProjectFixture(t, "base_branch: trunk\n")
+		if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+			t.Fatal(err)
+		}
+		if p := publishedPolicy(t, f); p.BaseBranch != "trunk" {
+			t.Errorf("BaseBranch = %q, want trunk", p.BaseBranch)
+		}
+	})
+	t.Run("unset", func(t *testing.T) {
+		f := newProjectFixture(t, "")
+		if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+			t.Fatal(err)
+		}
+		if p := publishedPolicy(t, f); p.BaseBranch != "" {
+			t.Errorf("BaseBranch = %q, want \"\"", p.BaseBranch)
+		}
+		if v := f.db.Value(projectpolicy.PathShared()); v != nil {
+			raw, err := json.Marshal(v)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(raw), "base_branch") {
+				t.Errorf("the node carries a base_branch member the config does not set:\n%s", raw)
+			}
+		}
+	})
+}

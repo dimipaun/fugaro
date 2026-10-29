@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // The voice screen's rules (mobile plan, Task P3.5; D122, D127, D126, D118).
 //
 // The plan's verification is four sentences, and this file is those four, in
@@ -40,6 +42,8 @@ import { createVoicePipeline } from '../audio/pipeline.js';
 import { FakeStt } from '../audio/stt.js';
 import { FakeTts } from '../audio/tts.js';
 import { createMailboxClient } from '../mailbox/client.js';
+import { MemoryConnection } from '../mailbox/connection.js';
+import { GATE_CODES } from '../mailbox/gate.js';
 import { macOf } from '../mailbox/mac.js';
 import { MemoryMailboxStore } from '../mailbox/store.js';
 import { QUEUE_CAP, createVoiceScreen } from './screen.js';
@@ -121,6 +125,7 @@ async function harness(options = {}) {
     account: ACCOUNT,
     keys,
     store: db,
+    connection: new MemoryConnection(),
     speaker: createPipelineSpeaker({ pipeline }),
     now: () => nowMs,
     newId: () => `m-${++clientIds}`,
@@ -134,6 +139,7 @@ async function harness(options = {}) {
     holder: PHONE,
     ...(options.switch === undefined ? {} : { switch: options.switch }),
     ...(options.queueCap === undefined ? {} : { queueCap: options.queueCap }),
+    ...(options.utterance === undefined ? {} : { utterance: options.utterance }),
   });
   return {
     audioIn,
@@ -214,6 +220,14 @@ test('with the switch on, an update waits for the boundary and is never spoken o
 test('with the switch on, an update waits for the user\'s turn to close, and is spoken after it', async () => {
   const h = await harness({ switch: INTERRUPT_SWITCH.ON });
   h.screen.setDigest(digestOf(SEVERITY.failed));
+  // **The phone has looked.** P6.10's gate fails closed on a consumer nothing
+  // has observed (the review's M2), so the app's first act is the poll that
+  // says whether the orchestrator is there at all -- the same pass `demo`
+  // makes, and the state a running phone is in. Without it the user's own
+  // words would be refused as unobserved rather than written, which is this
+  // test's subject.
+  await h.plantHeartbeat();
+  await h.screen.poll();
 
   // The user is being listened to. Nothing may interrupt them -- the queue is
   // what "rather than accepting messages into the void" means on this side.
@@ -412,20 +426,59 @@ test('the poll\'s presence goes through that same guard, which is the path the a
   assert.equal(screen.state().offline, false, 'and an unreadable state is not read as offline');
 });
 
-test('stale is not offline: a heartbeat three intervals old still accepts a message', async () => {
-  // The refusal is P1.4's `offline` and nothing wider. A stale orchestrator is
-  // one the phone can still talk to -- the mailbox is not the heartbeat -- and
-  // refusing there would be a rule the plan does not have.
+test('stale is not offline for the screen, and P6.10 is what refuses it', async () => {
+  // Two rules that are easy to confuse, held apart here.
+  //
+  // The SCREEN refuses P1.4's `offline` and nothing wider: a stale orchestrator
+  // is one whose heartbeat is late, not one that is down, and a status line
+  // that widened `offline` to cover it would be showing a state P1.4 does not
+  // have.
+  //
+  // The PHONE refuses it anyway, and that is P6.10's rule rather than this
+  // screen's: the plan's P6.10 sentence names **stale** beside offline ("with no
+  // connection, or a stale/offline consumer, nothing is written and the user is
+  // told"), so the client's gate refuses a stale consumer with its own code and
+  // the screen shows the client's code as it is. This test asserted the
+  // opposite until the gate was merged in; the P6.10 sentence is what changed
+  // it.
   const h = await harness();
   await h.plantHeartbeat();
   h.advance(5 * INTERVAL_MS);
   const stale = await h.screen.poll();
   assert.equal(stale.presence.state, STATE.STALE);
-  assert.equal(h.screen.state().offline, false);
+  assert.equal(h.screen.state().offline, false, 'P1.4 has no `stale` and offline means offline');
 
-  const accepted = await h.screen.accept('run the tests');
+  // The refusal SPEAKS (`gate.js`'s sentence, through the app's own speaker), so
+  // the utterance is played out the way every other one in this file is: the
+  // fake tts settles when the test says it does.
+  const refused = h.screen.accept('run the tests');
   await settle();
-  assert.equal(accepted.ok, true, 'a stale orchestrator is still an orchestrator');
+  h.tts.finish();
+  const accepted = await refused;
+  await settle();
+  assert.deepEqual(
+    { ...accepted },
+    {
+      ok: false,
+      code: GATE_CODES.CONSUMER_STALE,
+      field: 'presence',
+      message: 'The orchestrator has gone quiet. I have not sent that.',
+      told: true,
+    },
+    'stale refuses the write, with the gate\'s own code rather than a wider `offline`',
+  );
+  assert.deepEqual(h.tts.spoken(), ['The orchestrator has gone quiet. I have not sent that.']);
+  // `refused` stays null: the screen records ITS OWN refusals (`noteRefusal`),
+  // and this one is the client's, returned as the client's -- which is the
+  // screen's existing rule and not something P6.10 changes.
+  assert.equal(h.screen.state().refused, null);
+  // Nothing was written BY THE PHONE: `writes()` counts the fixture's own
+  // heartbeat too, so the claim is about the client's path (D113).
+  assert.deepEqual(
+    h.pathsWritten().filter((path) => path.includes('/inbox/')),
+    [],
+    'and nothing was written',
+  );
 });
 
 test('a transcript that arrives while offline is refused too, and nothing is written', async () => {
@@ -616,7 +669,44 @@ test('the screen is built from a pipeline, a client, a clock and a holder, and s
   assert.throws(() => createVoiceScreen({ ...deps, now: 'now' }), TypeError);
   assert.throws(() => createVoiceScreen({ ...deps, holder: '' }), TypeError);
   assert.throws(() => createVoiceScreen({ ...deps, switch: 'sometimes' }), TypeError);
+  assert.throws(() => createVoiceScreen({ ...deps, utterance: 'confirm' }), TypeError);
   assert.throws(() => createVoiceScreen(), TypeError);
+});
+
+test('a final transcript goes to the spoken dialogue when the app wires one in (P6.12)', async () => {
+  // P6.12's seam: the dialogue decides whether the words are a message, an app
+  // command or a confirmation. The screen's `accept` is what the dialogue's own
+  // `send` is wired to, so the message path -- and its offline refusal -- is
+  // unchanged; what changes is that a final is no longer *always* a message.
+  const heard = [];
+  const wired = await harness({
+    utterance: async (text) => {
+      heard.push(text);
+      return { ok: true };
+    },
+  });
+
+  await wired.screen.start();
+  wired.audioIn.speechStart();
+  wired.audioIn.speechEnd();
+  wired.stt.final('Fugaro, confirm');
+  await settle();
+
+  assert.deepEqual(heard, ['Fugaro, confirm'], 'the final went to the dialogue');
+  assert.deepEqual(wired.pathsWritten().filter((path) => path.includes('/inbox/')), [],
+    'and nothing was written: a confirmation is not a message');
+
+  // The same turn without a dialogue is what P3.5 shipped: every final is a
+  // message, written by the client.
+  const plain = await harness();
+  await plain.screen.start();
+  plain.audioIn.speechStart();
+  plain.audioIn.speechEnd();
+  plain.stt.final('Fugaro, confirm');
+  await settle();
+
+  assert.deepEqual(plain.pathsWritten().filter((path) => path.includes('/inbox/')),
+    [`mailbox/${UID}/inbox/m-1`], 'without a dialogue the words are a message');
 });
 
 test('the screen shows what it is doing, in one frozen snapshot', async () => {

@@ -1,0 +1,407 @@
+package cli
+
+import (
+	"context"
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/testutil"
+)
+
+// The remembered checkouts, from the CLI's side: the state file is written by
+// the commands that resolve a checkout's project, read by `fugaro config
+// list --json`, and written by nothing else. These are the tests for the
+// recording path and for the read-only property the console's allow-listed
+// reads turn on; config_list_test.go holds the tests for the document itself.
+
+// checkoutsYAML is a fugaro.yaml that validates cleanly, so the recording
+// tests run a command that succeeds and can only fail by what it does beside
+// it.
+const checkoutsYAML = "version: 1\nproject: aurora\ngit: { provider: github, base_branch: main }\n" +
+	"workflows:\n  web: { commands: { build: sh b.sh, test: sh t.sh } }\n"
+
+// checkoutsFixture points XDG_CONFIG_HOME at a directory of the test's own
+// and writes two installations into it: the sandbox one (aurora) and a second
+// (bramble), so a listing that returned "the one config" fails here. aurora
+// enrolls the two repositories these tests work in, because only a repository
+// the project enrolls is recorded or validated (localcfg.Config.Enrolls).
+func checkoutsFixture(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	isolateProjects(t, dir)
+	writeProject(t, "aurora", "aurora-gcp")
+	writeProject(t, "bramble", "bramble-gcp")
+	enrollRepo(t, "aurora", "acme/app")
+	enrollRepo(t, "aurora", "acme/other")
+	return dir
+}
+
+// checkoutsProjectYAML is a fugaro.yaml that names project and nothing else.
+func checkoutsProjectYAML(project string) string {
+	return "version: 1\nproject: " + project + "\n"
+}
+
+// checkoutsAt makes a git checkout at dir whose fugaro.yaml is yaml and whose
+// origin is origin, and returns the checkout's toplevel as git resolves it
+// (the path a command in it would record, which is what the fixture has to
+// compare against).
+func checkoutsAt(t *testing.T, dir, yaml, origin string) string {
+	t.Helper()
+	gitCheckout(t, dir, yaml)
+	testutil.Git(t, dir, "remote", "add", "origin", origin)
+	return testutil.Git(t, dir, "rev-parse", "--show-toplevel")
+}
+
+// checkoutsRemember records a checkout exactly as a command running in it
+// does, and returns the identity it was recorded under.
+func checkoutsRemember(t *testing.T, project, path, origin string) localcfg.CheckoutIdentity {
+	t.Helper()
+	id := localcfg.CheckoutIdentity{Provider: "github", Repo: strings.TrimSuffix(strings.TrimPrefix(origin, "https://github.com/"), ".git")}
+	if err := localcfg.RecordCheckout(os.Getenv, project, id, path, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+// checkoutsState is the remembered checkouts as they are on disk.
+func checkoutsState(t *testing.T) string {
+	t.Helper()
+	path, err := localcfg.CheckoutsPath(os.Getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+// captureStderr runs f with the process's own stderr redirected and returns
+// what f wrote there. The commands' own output goes to the command's writer
+// (execute's buffer), so what lands here is what a side effect printed behind
+// the command's back.
+func captureStderr(t *testing.T, f func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stderr
+	os.Stderr = w
+	f()
+	os.Stderr = old
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	b, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+// TestACommandInACheckoutRecordsIt: the remembered checkouts are written by
+// the commands that already resolve a checkout's project — the one common
+// code path, not one per command — so `fugaro validate` in a checkout is what
+// makes the console's first run find it.
+func TestACommandInACheckoutRecordsIt(t *testing.T) {
+	dir := checkoutsFixture(t)
+	co := checkoutsAt(t, filepath.Join(dir, "src", "app"), checkoutsYAML, "https://github.com/acme/app.git")
+	t.Chdir(co)
+	if out, _, err := execute(t, "validate", "--offline"); err != nil {
+		t.Fatalf("fugaro validate: %v\n%s", err, out)
+	}
+	known, err := localcfg.LoadCheckouts(os.Getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, ok := known.Projects["aurora"]["github/acme/app"]
+	if !ok || len(r.Paths) != 1 || r.Paths[0].Path != co {
+		t.Fatalf("aurora's checkouts = %+v, want the checkout validate ran in", known.Projects)
+	}
+}
+
+// TestACheckoutIsRememberedUnderItsOriginsProvider: the provider a repository
+// is remembered by is the one whose host its origin is on, never the one its
+// own fugaro.yaml claims. A file that says bitbucket over a github.com origin
+// is a copied config, or a checkout re-pointed at another forge: remembering
+// it as bitbucket/acme/app would put a name in the state file that no
+// provider serves, and one the console rebuilds provider-host links from
+// (design §5.1 rule 2), so the link would point at the wrong host. It is the
+// same rule repoKnown already holds a repository to.
+//
+// **And a host no provider lives on records nothing, whatever the file
+// says.** A GitHub Enterprise or self-hosted Bitbucket box is a host no
+// provider's host is, so the pair (provider, owner/name) the file's
+// git.provider would give is not one a provider serves — and the pair is
+// exactly what the console builds a provider-host link from (design §5.1 rule
+// 2). The file's word is not evidence: a hostile checkout on an arbitrary
+// host (`https://git.evil.example/acme/app.git`, `git.provider: github`,
+// `project: aurora`) would otherwise be recorded, and re-validated, as the
+// enrolled github/acme/app — the enrolment gate this branch adds, bypassed by
+// a line the checkout itself controls. It is repoKnown's rule: a provider
+// knows a repository only when that provider's host is its origin's host.
+//
+// Mutation (run, restore): put the `co.Provider` fallback back into the
+// provider lookup (as the code did before this review) and the second subtest
+// fails with github/acme/app in the state file.
+func TestACheckoutIsRememberedUnderItsOriginsProvider(t *testing.T) {
+	t.Run("the origin's host wins over the file", func(t *testing.T) {
+		dir := checkoutsFixture(t)
+		co := checkoutsAt(t, filepath.Join(dir, "src", "app"),
+			"version: 1\nproject: aurora\ngit: { provider: bitbucket, base_branch: main }\n",
+			"https://github.com/acme/app.git")
+		if _, err := checkoutProject(context.Background(), co); err != nil {
+			t.Fatal(err)
+		}
+		known, err := localcfg.LoadCheckouts(os.Getenv)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := known.Projects["aurora"]["github/acme/app"]; !ok {
+			t.Errorf("aurora's checkouts = %v, want the origin's identity github/acme/app", known.Projects)
+		}
+		if _, ok := known.Projects["aurora"]["bitbucket/acme/app"]; ok {
+			t.Errorf("aurora's checkouts = %v, want nothing under the file's provider", known.Projects)
+		}
+	})
+	t.Run("a host no provider lives on records nothing", func(t *testing.T) {
+		// The file names a provider the project does enroll, for a host that
+		// provider does not serve: the pair the fallback would record is one
+		// a provider really has (github/acme/app), which is what makes this
+		// the case a link built from it would follow.
+		dir := checkoutsFixture(t)
+		co := checkoutsAt(t, filepath.Join(dir, "src", "app"),
+			"version: 1\nproject: aurora\ngit: { provider: github, base_branch: main }\n",
+			"https://git.evil.example/acme/app.git")
+		if _, err := checkoutProject(context.Background(), co); err != nil {
+			t.Fatal(err)
+		}
+		known, err := localcfg.LoadCheckouts(os.Getenv)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(known.Projects["aurora"]) != 0 {
+			t.Errorf("aurora's checkouts = %v, want none: the file's provider is not evidence for a host no provider lives on", known.Projects)
+		}
+	})
+	t.Run("a host and a file that name no provider record nothing", func(t *testing.T) {
+		dir := checkoutsFixture(t)
+		co := checkoutsAt(t, filepath.Join(dir, "src", "app"),
+			checkoutsProjectYAML("aurora"),
+			"https://git.acme.example/acme/app.git")
+		if _, err := checkoutProject(context.Background(), co); err != nil {
+			t.Fatal(err)
+		}
+		known, err := localcfg.LoadCheckouts(os.Getenv)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(known.Projects["aurora"]) != 0 {
+			t.Errorf("aurora's checkouts = %v, want none: nothing names a provider for this origin", known.Projects)
+		}
+	})
+}
+
+// TestConsoleAllowListedReadsWriteNothing: every command the design's §5.1
+// exact-argv allow-list lets the console spawn is a READ, and a read the
+// console spawns changes nothing — so none of them remembers the checkout it
+// resolved on the way to its own work.
+//
+// The commands are spawned exactly as the design says the console spawns
+// them: from inside the installation's checkout directory (§3.4 rule 5), so
+// each one resolves a checkout that this machine has not recorded, which is
+// the only state in which a write would show.
+//
+// Mutation (run, restore): drop the consoleRead guard from recordCheckout in
+// project.go and this test fails on the first row that resolves the checkout,
+// with checkouts.json created under the fixture's config home.
+func TestConsoleAllowListedReadsWriteNothing(t *testing.T) {
+	dir := checkoutsFixture(t)
+	co := checkoutsAt(t, filepath.Join(dir, "src", "app"), checkoutsYAML, "https://github.com/acme/app.git")
+	t.Chdir(co)
+	statePath, err := localcfg.CheckoutsPath(os.Getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The cloud reads fail on this machine (no credentials, no bucket) after
+	// the selection they resolve the checkout for; their verdict is their own
+	// and what is asserted here is what they wrote. `watch` is not run: it is
+	// a stream, and a stream that never returns is not this test's subject —
+	// consoleReadPaths carries it, and the design table test pins that.
+	for _, args := range [][]string{
+		{"accounts", "ls", "--json", "--repo", "acme/app"},
+		{"doctor", "--json", "--dir", co},
+		{"runs", "ls", "--json"},
+		{"runs", "stats", "--json"},
+		{"budget", "show", "--json"},
+		{"report", "--json"},
+		{"secrets", "ls", "--json", "--repo", "acme/app"},
+		// The graph screen's read (GV1.6): a cloud read of this checkout's
+		// own repository, so it resolves the checkout like runs ls does.
+		{"plan", "status", "--json"},
+	} {
+		out, _, err := execute(t, args...)
+		if err != nil {
+			t.Logf("%v exited with %v:\n%s", args, err, out)
+		}
+		if _, err := os.Stat(statePath); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%v remembered the checkout it looked at (stat %s: %v)", args, statePath, err)
+		}
+	}
+}
+
+// TestTheUpdateCheckLookupRemembersNothing: NewRootCmd's PersistentPreRun
+// resolves the selected project config on EVERY command, before the command
+// has done anything, to answer "does this project say update_check: false"
+// (updateCheckDisabled). That lookup must not remember the checkout it looked
+// at: the command it rides on may resolve no checkout for its own work at all,
+// and the directory the operator happens to be standing in is not something
+// the command did.
+//
+// The two commands below are exactly that — bare `fugaro backends` prints its
+// own help, and `fugaro upgrade --check` is documented as writing nothing —
+// and the console spawns neither, so neither is in consoleReadPaths. The
+// read-only resolver is the only thing between them and a write, which is why
+// this is the test that pins selectedProjectConfigReadOnly:
+// TestConsoleV2ReadsWriteNothing's commands are protected twice over, by
+// consoleReadPaths' context mark as well, and it passes with the resolver
+// reverted.
+//
+// Mutation (run, restore): revert updateCheckDisabled (updatewarn.go) to
+// selectedProjectConfig and this fails on the first row, with the state file
+// holding the checkout the command merely started in.
+func TestTheUpdateCheckLookupRemembersNothing(t *testing.T) {
+	dir := checkoutsFixture(t)
+	co := checkoutsAt(t, filepath.Join(dir, "src", "app"), checkoutsYAML, "https://github.com/acme/app.git")
+	t.Chdir(co)
+	statePath, err := localcfg.CheckoutsPath(os.Getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"backends"}, {"upgrade", "--check"}} {
+		if out, _, err := execute(t, args...); err != nil {
+			t.Logf("%v exited with %v:\n%s", args, err, out)
+		}
+		if _, err := os.Stat(statePath); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%v remembered the checkout it started in (stat %s: %v)", args, statePath, err)
+		}
+	}
+}
+
+// TestAFailedRecordNeverFailsTheCommand: remembering a checkout is best
+// effort. A state file that cannot be written (here: a directory where the
+// file goes) leaves the resolver — and so the command that called it —
+// exactly as it was: the checkout is returned, the error is nil, nothing is
+// printed about it and the command exits 0.
+func TestAFailedRecordNeverFailsTheCommand(t *testing.T) {
+	dir := checkoutsFixture(t)
+	co := checkoutsAt(t, filepath.Join(dir, "src", "app"), checkoutsYAML, "https://github.com/acme/app.git")
+	statePath, err := localcfg.CheckoutsPath(os.Getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(statePath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// The resolver the commands share, called where the write it makes at
+	// the end cannot succeed: the checkout is still the answer.
+	var got *localcfg.Checkout
+	printed := captureStderr(t, func() { got, err = checkoutProject(context.Background(), co) })
+	if err != nil || got == nil || got.Project != "aurora" {
+		t.Fatalf("checkoutProject = %+v, %v, want the checkout and no error", got, err)
+	}
+	t.Chdir(co)
+	var stdout, stderr string
+	printed += captureStderr(t, func() { stdout, stderr, err = execute(t, "validate", "--offline") })
+	if err != nil {
+		t.Fatalf("fugaro validate failed because it could not remember a checkout: %v\n%s", err, stdout)
+	}
+	// Nothing was said about it anywhere: not on the command's stderr, not
+	// on the process's, and the path is not in either.
+	for _, out := range []string{stderr, printed} {
+		if strings.Contains(out, "checkout") || strings.Contains(out, dir) {
+			t.Errorf("the failure to remember the checkout was printed: %q", out)
+		}
+	}
+}
+
+// TestAnUnenrolledCheckoutIsNeverRecorded: the recorder writes a checkout
+// down only when the project's own config enrolls the repository its origin
+// names. A directory whose fugaro.yaml claims the project — a fork, a
+// third-party repository, a hostile pull request — is a claim the checkout
+// makes and not an enrolment the operator gave, and recording it would spend
+// the 20-repository bound on it and put its path in front of the console.
+//
+// Mutation (run, restore): drop the LoadProject/Enrolls gate from
+// recordCheckout (project.go) and this fails with the un-enrolled checkout in
+// the state file.
+func TestAnUnenrolledCheckoutIsNeverRecorded(t *testing.T) {
+	dir := checkoutsFixture(t)
+	// aurora enrolls acme/app; this checkout's origin is another repository
+	// of the same owner, with the project: line copied in.
+	co := checkoutsAt(t, filepath.Join(dir, "src", "evil"), checkoutsProjectYAML("aurora"), "https://github.com/acme/evil.git")
+	got, err := checkoutProject(context.Background(), co)
+	if err != nil || got == nil {
+		t.Fatalf("checkoutProject = %+v, %v", got, err)
+	}
+	known, err := localcfg.LoadCheckouts(os.Getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(known.Projects["aurora"]) != 0 {
+		t.Errorf("aurora's checkouts = %+v, want none: the project does not enroll github/acme/evil", known.Projects)
+	}
+	// The control, in the same fixture: the enrolled repository is recorded
+	// by the same call, so this is the gate and not a broken fixture.
+	app := checkoutsAt(t, filepath.Join(dir, "src", "app"), checkoutsProjectYAML("aurora"), "https://github.com/acme/app.git")
+	if _, err := checkoutProject(context.Background(), app); err != nil {
+		t.Fatal(err)
+	}
+	known, err = localcfg.LoadCheckouts(os.Getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := known.Projects["aurora"]["github/acme/app"]; !ok {
+		t.Errorf("aurora's checkouts = %+v, want the enrolled repository recorded", known.Projects)
+	}
+}
+
+// TestARewrittenOriginIsNeverRecorded: a checkout whose raw .git/config names
+// a different host or repository than git resolves for "origin"
+// (url.<base>.insteadOf) is not recorded at all. The rewrite is a local
+// config line that can point anywhere, so the pair (provider, repository) it
+// would produce is not a fact about the directory — and the state file is
+// what the console offers paths from.
+//
+// Mutation (run, restore): change `if !ok || oi.Rewritten` to `if !ok` in
+// recordCheckout (project.go) and this fails with the checkout recorded.
+func TestARewrittenOriginIsNeverRecorded(t *testing.T) {
+	dir := checkoutsFixture(t)
+	// The raw origin is the gh: shorthand and the rewrite resolves it to the
+	// enrolled github repository: with the guard gone the checkout would be
+	// recorded under a name it is enrolled for, so this isolates the guard.
+	co := checkoutsAt(t, filepath.Join(dir, "src", "app"), checkoutsProjectYAML("aurora"), "gh:acme/app.git")
+	testutil.Git(t, co, "config", "--local", "--add",
+		"url.https://github.com/acme/app.git.insteadOf", "gh:acme/app.git")
+	if oi, ok := readOrigin(context.Background(), co); !ok || !oi.Rewritten {
+		t.Fatalf("the fixture did not produce a rewritten origin: %+v ok=%v", oi, ok)
+	}
+	if _, err := checkoutProject(context.Background(), co); err != nil {
+		t.Fatal(err)
+	}
+	known, err := localcfg.LoadCheckouts(os.Getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(known.Projects["aurora"]) != 0 {
+		t.Errorf("aurora's checkouts = %+v, want none: the origin is rewritten", known.Projects)
+	}
+}

@@ -5,6 +5,10 @@ project_name: fugaro
 before:
   hooks:
     - go mod verify
+    # The archive ships the notices of every module the binary links; the
+    # script writes the file into the tree here, before the builds and the
+    # archive, and the archive's file list below carries it (D307).
+    - ./scripts/third-party-notices.sh THIRD_PARTY_NOTICES.md
 
 builds:
   - id: fugaro
@@ -27,6 +31,7 @@ archives:
     files:
       - LICENSE
       - README.md
+      - THIRD_PARTY_NOTICES.md
 
 checksum:
   name_template: checksums.txt
@@ -100,6 +105,7 @@ release:
 
     - `ghcr.io/dimipaun/fugaro-history:{{ .Version }}` and `ghcr.io/dimipaun/fugaro-history:{{ .Major }}` (the sweeper and history job's image)
     - `ghcr.io/dimipaun/fugaro-base:{{ .Version }}` and `ghcr.io/dimipaun/fugaro-base:{{ .Major }}` (one index for linux/amd64 and linux/arm64; per-architecture tags `{{ .Version }}-amd64` and `{{ .Version }}-arm64`)
+    - `ghcr.io/dimipaun/fugaro-credentials:{{ .Version }}` and `ghcr.io/dimipaun/fugaro-credentials:{{ .Major }}` (the credentials service's image, linux/amd64; signed, with the nightly-immune `{{ .Version }}-pinned` tag `fugaro update --provision-credentials` resolves and verifies)
 
     The images workflow then pulls each one with no login and fails if it is not public or lacks `linux/amd64` (and, for `fugaro-base`, `linux/arm64`); each image's digest is in that run's summary.
 

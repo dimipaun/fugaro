@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The Run detail screen in a real window (desktop-console plan Task 2.3;
 // design section 6.2 screen 4).
 //
@@ -53,11 +55,17 @@
 // the same pixels on every run.
 //
 // They are compared, never written by a run: `playwright.config.ts` sets
-// `updateSnapshots: 'none'`, so a missing baseline FAILS. They are recorded by
-// an owner, on the platform the comparison runs on (macOS and Linux pixels
-// differ), with
+// `updateSnapshots: 'none'`, so a missing baseline FAILS a comparison run. They
+// are recorded by an owner, on the platform the comparison runs on (macOS and
+// Linux pixels differ), with
 //
-//   npx playwright test run.spec.ts --update-snapshots
+//   cd console && npm run build && npx playwright test run.spec.ts --update-snapshots
+//
+// — the build is in the line because the specs read `dist/` and
+// `npx playwright test` does not build, and on Linux it takes
+// `xvfb-run --auto-servernum` (Electron needs a display);
+// `test/support/goldens.ts`'s `recordCommand` is that line, per spec and per
+// platform, and it is what a failed golden's message prints
 //
 // (owner-run, on the comparison's platform; commit `__screenshots__/run/`
 // afterwards) and until they are committed the golden tests fail on purpose. The
@@ -76,6 +84,7 @@ import { RUN_LOG_CAP, RUN_THEMES } from '../../src/renderer/screens/run'
 import { githubToken } from '../support/fakeSecrets'
 import { inRangeCliStub } from '../support/cliStub'
 import type { CliStub } from '../support/cliStub'
+import { expectGolden, expectGrounded } from '../support/goldens'
 import { launchConsole } from '../support/launch'
 
 // The console's own directory, from this file's location: `test/e2e/x.spec.ts`
@@ -99,6 +108,10 @@ const THE_MOUNT = '#run-mount'
  * the golden tests run and a missing baseline fails them. */
 const SKIP_GOLDENS = process.env['FUGARO_CONSOLE_GOLDENS'] === 'skip'
 
+/** SPEC is this file's own name: what a re-record command has to name, and what
+ * every golden failure here quotes back to the reader. */
+const SPEC = 'run.spec.ts'
+
 /** The compiled modules the screen is made of, in dependency order: the screen,
  * the writers in `renderer/app.js`, and the shared modules they use -- including
  * `shared/replay.js`, which is Task 2.3's other half and the one the replay
@@ -108,6 +121,8 @@ const SKIP_GOLDENS = process.env['FUGARO_CONSOLE_GOLDENS'] === 'skip'
 const MODULES: readonly string[] = Object.freeze([
   'shared/availability.js',
   'shared/sanitize.js',
+  'shared/launcher.js',
+  'shared/rigor.js',
   'shared/version.js',
   'shared/stringify.js',
   'shared/replay.js',
@@ -236,9 +251,18 @@ interface Screen {
   readonly stageSpendReasons: readonly (string | null)[]
   readonly stageDeadlines: readonly string[]
   readonly stageDeadlineReasons: readonly (string | null)[]
+  /** the Rigor row's cells: empty strings and no areas for a record whose row
+   * carries no block, which is the case the row is conditional on */
+  readonly rigorMode: string
+  readonly rigorFrom: string
+  readonly rigorAreaNames: readonly string[]
+  readonly rigorAreaModes: readonly string[]
   readonly prRepo: string
   readonly prNumber: string
   readonly prUrl: string
+  /** prLine is the pull-request line's cells in drawing order: the three facts
+   * and the separator between them. */
+  readonly prLine: readonly string[]
   readonly prReason: string
   readonly logLines: number
   readonly logMessages: readonly string[]
@@ -287,9 +311,14 @@ function screen(page: Page): Promise<Screen> {
       stageSpendReasons: all('.run-stages .run-stage-spend').map((one) => one.getAttribute('title')),
       stageDeadlines: texts('.run-stages .run-stage-deadline'),
       stageDeadlineReasons: all('.run-stages .run-stage-deadline').map((one) => one.getAttribute('title')),
+      rigorMode: text('.run-rigor-mode'),
+      rigorFrom: text('.run-rigor-from'),
+      rigorAreaNames: texts('.run-rigor-area-name'),
+      rigorAreaModes: texts('.run-rigor-area-mode'),
       prRepo: text('.run-pr-repo'),
       prNumber: text('.run-pr-number'),
       prUrl: text('.run-pr-url'),
+      prLine: texts('.run-pr > .run-pr-repo, .run-pr > .run-pr-number, .run-pr > .run-pr-sep, .run-pr > .run-pr-url'),
       prReason: text('.run-pr-reason'),
       logLines: all('.run-log-line').length,
       logMessages: texts('.run-log-message'),
@@ -490,6 +519,50 @@ test.describe('the Run detail screen', () => {
     expect(drawn.flags).toContain('settled')
   })
 
+  test('draws the run\'s rigor row, and no row at all for a record with no block', async () => {
+    // Owner request 2026-10-25: the run detail is the one screen with room for
+    // the whole answer -- the mode, the layer that decided it and every rule
+    // that matched -- where the Projects cell and the Live chip are one word.
+    await mount(DIAGNOSIS, logLines(3), LOG_LINK, ARRIVALS, null, 'light')
+    const plain = await screen(page)
+    expect(plain.rigorMode).toBe('')
+    expect(plain.rigorAreaNames).toEqual([])
+    expect(plain.text).not.toContain('RIGOR')
+
+    // `DIAGNOSIS`'s row is a run from before the field, so the block is added
+    // to it the way a 0.11.0 runner writes it -- the record's own two stamps
+    // included, because a real block carries them and the row draws neither.
+    const row = DIAGNOSIS['row'] as JSONDoc
+    const withRigor: JSONDoc = {
+      ...DIAGNOSIS,
+      row: {
+        ...row,
+        rigor: {
+          mode: 'critical',
+          from: 'area',
+          areas: [
+            { name: 'payments', mode: 'critical', at: '2026-10-15T11:00:05Z' },
+            { name: 'billing', mode: 'pro', at: '2026-10-15T11:00:05Z' },
+          ],
+          at: '2026-10-15T11:00:05Z',
+          revision: 'origin/main',
+        },
+      },
+    }
+    await mount(withRigor, logLines(3), LOG_LINK, ARRIVALS, null, 'light')
+    const drawn = await screen(page)
+    expect(drawn.rigorMode).toBe('Critical')
+    // The layer in the console's words, not the record's enum, and the areas as
+    // the repository named them.
+    expect(drawn.rigorFrom).toBe('an area rule')
+    expect(drawn.rigorAreaNames).toEqual(['payments', 'billing'])
+    expect(drawn.rigorAreaModes).toEqual(['Critical', 'Pro'])
+    expect(drawn.text).toContain('RIGOR')
+    // The two stamps are in the record and in no cell of the screen.
+    expect(drawn.text).not.toContain('origin/main')
+    expect(drawn.text).not.toContain('2026-10-15T11:00:05Z')
+  })
+
   test('draws the stage timeline, with the spend and deadline no document carries', async () => {
     await mount(DIAGNOSIS, logLines(3), LOG_LINK, ARRIVALS, null, 'light')
     const drawn = await screen(page)
@@ -534,10 +607,23 @@ test.describe('the Run detail screen', () => {
     // rebuilt from the repository and the number would name a repository this
     // run does not use -- `example-owner/example-repo` is Bitbucket, and a
     // `github.com` URL for it would pass this console's own host allow-list.
+    // The reason is design section 5.1 rule 2's own sentence, drawn whole.
     expect(drawn.prRepo).toBe('example-owner/example-repo')
     expect(drawn.prNumber).toBe('#42')
     expect(drawn.prUrl).toBe('https://bitbucket.org/example-owner/example-repo/pull-requests/42')
-    expect(drawn.prReason).toContain('no document names the provider')
+    expect(drawn.prReason).toBe(
+      'this CLI does not say which provider this run’s repository is on, so the console will not build a link from it',
+    )
+    // The three facts are one line and the cells between them are theirs, so
+    // they are drawn apart (`acme/platform-core#412https://...` was the defect
+    // the owner reported on 2026-10-21).
+    expect(drawn.prLine).toEqual([
+      'example-owner/example-repo',
+      ' · ',
+      '#42',
+      ' · ',
+      'https://bitbucket.org/example-owner/example-repo/pull-requests/42',
+    ])
     // Nothing in the pull request panel is a link or a destination.
     expect(drawn.text).not.toContain('github.com')
   })
@@ -608,18 +694,36 @@ test.describe('the Run detail screen', () => {
     expect(drawn.replayNote).toContain('15 minutes')
   })
 
-  test('draws the run screen', async () => {
-    test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
-    await mount(DIAGNOSIS, logLines(3), LOG_LINK, ARRIVALS, '2026-10-15T12:05:00Z', 'light')
-    await expect(page.locator(THE_MOUNT)).toHaveScreenshot(GOLDEN_NAMES.light)
+  test('is painted from the design tokens, not from the browser defaults', async () => {
+    // Design section 6.2's computed-ground assertion, and the one case in this
+    // file that is red when the stylesheet stops being linked: the theme travels
+    // as a `data-theme` attribute the renderer stamps, so every read above passes
+    // on a tree nothing paints. `test/support/goldens.ts` holds the app's ground
+    // and the screen's text colour to the shipped palette, once per theme.
+    //
+    // NOT a golden test, deliberately: `FUGARO_CONSOLE_GOLDENS=skip` does not skip
+    // it. Nothing here reads a PNG, so an unstyled tree is red on its own account
+    // rather than recorded as a fresh baseline nobody compared.
+    await expectGrounded(page, (theme) => mount(DIAGNOSIS, logLines(3), LOG_LINK, ARRIVALS, null, theme), {
+      themes: RUN_THEMES,
+      mount: THE_MOUNT,
+      text: 'h1.run-id',
+      screen: 'the Run detail screen',
+    })
   })
 
-  test('draws the run screen in the dark theme', async () => {
+  test('draws the run screen', async ({}, testInfo) => {
+    test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
+    await mount(DIAGNOSIS, logLines(3), LOG_LINK, ARRIVALS, '2026-10-15T12:05:00Z', 'light')
+    await expectGolden(page.locator(THE_MOUNT), GOLDEN_NAMES.light, { spec: SPEC, consoleDir, testInfo })
+  })
+
+  test('draws the run screen in the dark theme', async ({}, testInfo) => {
     await mount(DIAGNOSIS, logLines(3), LOG_LINK, ARRIVALS, null, 'dark')
     const drawn = await screen(page)
     expect(drawn.theme).toBe('dark')
     test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
-    await expect(page.locator(THE_MOUNT)).toHaveScreenshot(GOLDEN_NAMES.dark)
+    await expectGolden(page.locator(THE_MOUNT), GOLDEN_NAMES.dark, { spec: SPEC, consoleDir, testInfo })
   })
 
   test('resolves the golden names under the run directory', ({}, testInfo) => {

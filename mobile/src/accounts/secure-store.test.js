@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // The secret store's tests (mobile plan, Task P3.1; decision D111).
 //
 // D111's "both in platform secure storage, and nothing else" is a claim about

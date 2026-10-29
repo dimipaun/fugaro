@@ -63,8 +63,11 @@ session in each paired project, with a passwordless email link as a third provid
 **reversal** of a standing rule of this repository: `internal/cli/init_firebase.go`'s
 `refusePublicSignUp` refuses **any** public sign-up path, and the owner's own answer to the central
 orchestrator's D6 (recorded in `docs/mobile/functional-spec-reconciliation.md` §3.7) says the same —
-a device node plus an administered email field, the domain rule applied at administration, an
-unverified email refused **at pairing**, and **no change to custom-tokens-only**. The reconciliation
+a device node plus an administered email field, an unverified email refused **at pairing**, and
+**no change to custom-tokens-only**. The **domain rule** is **not** part of that answer: §3.7
+records that the answer does not restate the domain half and leaves it to D6, whose recommendation
+it is (D6's sub-question (b)) — this work takes it as its own **D223**, and §3.7's wording, not this
+sentence, is the record of what the owner ruled. The reconciliation
 settles that as **D221** (no provider session reaches the project's database) and writes the
 alternative out in full, in §3 and in P6, so that a decision against the recommendation is taken
 with the configuration delta, the attack surface and the per-provider verified-email question in

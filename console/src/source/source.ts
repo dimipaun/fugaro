@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // FugaroSource -- the whole data plane (desktop-console plan Task 1.3).
 //
 // Every screen in this console talks to one interface and to nothing else. It
@@ -51,12 +53,13 @@
 
 import type { ConsoleHandlers, ValidatedArguments } from '../main/ipc'
 import { NO_ACTIVE_INSTALLATION } from '../main/installations'
+import type { InstallationArguments, InstallationOperationName } from '../main/installations'
 import type { Notice } from '../main/spawn'
 
 /**
  * JSONDoc is the CLI's document as it arrived: a JSON object, undecoded. It is
  * the type the whole console passes around, and the reason it is not a union of
- * the eleven shapes is that a source is not allowed to decide which shape a
+ * the thirteen shapes is that a source is not allowed to decide which shape a
  * document is -- that is Task 2.0's job, in one place, against the contract.
  */
 export type JSONDoc = Readonly<Record<string, unknown>>
@@ -146,11 +149,13 @@ export interface LiveFeed {
 }
 
 /**
- * FugaroSource is the interface every screen talks to. The eleven reads are the
- * eleven documents of design section 2.1 (`docs/json-contract.md` section 2),
- * one method each, named after the thing on screen rather than after the CLI verb
- * -- so a screen that says `listRuns` does not change when the verb behind it
- * does.
+ * FugaroSource is the interface every screen talks to. The fourteen reads are the
+ * CLI documents of design section 2.1 that the dashboard draws
+ * (`docs/json-contract.md` section 2), one method each, named after the thing on
+ * screen rather than after the CLI verb -- so a screen that says `listRuns` does
+ * not change when the verb behind it does. (Section 2.1's picker row,
+ * `fugaro config list --json`, is the picker window's read and reaches no screen
+ * through this interface.)
  *
  * The arguments are the *validated* arguments of Task 1.2's schema, not a
  * renderer payload: a source is downstream of the validation, and an
@@ -178,6 +183,46 @@ export interface FugaroSource {
   showBudget(args: ValidatedArguments): Promise<Snapshot>
   runReport(args: ValidatedArguments): Promise<Snapshot>
   listRuns(args: ValidatedArguments): Promise<Snapshot>
+  /**
+   * statsRuns is the by-person aggregate (`runs stats --json`, console L5b):
+   * the Spend screen's by-person view. Its rows are the ones the *CLI* decided
+   * the caller may see -- an operator's every user, a plain launcher's own row
+   * alone -- because the operation's schema has no `--all-users` to send
+   * (`src/main/ipc.ts`), and the screen draws nothing but the totals when the
+   * document does not say who the caller is.
+   */
+  statsRuns(args: ValidatedArguments): Promise<Snapshot>
+  /**
+   * planStatus is the plan graph joined to the runs working on it
+   * (`plan status --json`, GV2.1). It is the one read whose *directory* is part
+   * of the question: the CLI resolves `docs/` from the process's working
+   * directory, so the document answers about the installation's own checkout and
+   * about nothing else. That directory is never an argument here -- a renderer
+   * has no way to name one (`src/main/ipc.ts`), and an implementation must not
+   * invent one -- which is why an installation with no checkout is refused
+   * rather than read from wherever the console happens to be running.
+   */
+  planStatus(args: ValidatedArguments): Promise<Snapshot>
+  /**
+   * coordinatorStatus is the project view: every repository the installation's
+   * local config lists, drawn from the view the coordinator's sweep last stored
+   * (`coordinator status --from-store --all --json`, Bitbucket credentials
+   * T1.2, D364).
+   *
+   * It is the one read here that asks nothing of the host: the stored view is
+   * the caller's own database read (`roles/firebasedatabase.viewer`), so there
+   * is no App key, no Bitbucket credential and no host call behind it. A
+   * repository the coordinator has never reconciled answers the runs half with
+   * `"stored": false` rather than refusing -- which is the state this console
+   * draws as "the runs alone", and the reason the read is safe on an
+   * installation whose coordinator was never turned on.
+   *
+   * Its two flags (`--from-store`, `--all`) are words of the spawn row and never
+   * arguments: an implementation must not let a caller turn either off, since
+   * the question is the *project's* whole repository set and a read without
+   * `--from-store` would be a host call this console has no credential for.
+   */
+  coordinatorStatus(args: ValidatedArguments): Promise<Snapshot>
   diagnoseRun(args: ValidatedArguments): Promise<Snapshot>
   readRunLogs(args: ValidatedArguments): Promise<Snapshot>
   runLogLink(args: ValidatedArguments): Promise<TextSnapshot>
@@ -221,6 +266,45 @@ export function refusalFrom(operation: string, sentence: string | null): SourceR
 }
 
 /**
+ * InstallationSurface is the rail's half of the surface, and it is one method:
+ * `picker.ts`'s own dispatcher (`answerFor`), reached from the dashboard's
+ * document instead of from the picker window's (owner's design ruling of
+ * 2026-10-25).
+ *
+ * It answers in the picker's own reply shape -- `{ ok: true, data }` or
+ * `{ ok: false, reason }` -- rather than the dashboard's, because it is the
+ * same dispatcher the picker's channels call: a second shape here would be a
+ * second implementation of every one of these six operations. `handlersFor`
+ * below is where the two shapes meet, in one place.
+ */
+export interface InstallationSurface {
+  answer(name: InstallationOperationName, args: InstallationArguments): Promise<unknown>
+  /** open is the rail's `+` door: the window that adds an installation by
+   * checkout path. It is the picker module's own `open`, which focuses the
+   * window when it is already there rather than opening a second one. */
+  open(): Promise<void>
+}
+
+/**
+ * NO_INSTALLATION_SURFACE is what the rail's operations answer in a console
+ * built without one (a unit test's, a `refused` console's). It is a state and
+ * not a guess, the same way `NO_ACTIVE_INSTALLATION` is: nothing is wrong with
+ * the machine, this process simply has no store behind the operation.
+ */
+export const NO_INSTALLATION_SURFACE = 'this console has no installation store'
+
+/**
+ * NO_PLAN_CHECKOUT is what `plan.status` answers for an installation that
+ * records no checkout. The read is *about* a directory -- the CLI resolves
+ * `docs/` from its working directory -- so with no checkout there is no
+ * question to ask, and the console says which fact is missing instead of
+ * running the child somewhere arbitrary. It is the console's own sentence
+ * because the CLI is never asked: this is a state of the installation store,
+ * not a refusal from a command.
+ */
+export const NO_PLAN_CHECKOUT = 'this installation records no checkout, and the plan read is about its docs/ directory'
+
+/**
  * handlersFor answers the whole IPC surface from one source. It is a function
  * rather than a class because the surface is a table: one handler per operation,
  * each a one-line call.
@@ -240,6 +324,15 @@ export function refusalFrom(operation: string, sentence: string | null): SourceR
  * something this mapping can add by caching: a mapping-level cache would have to
  * key on the arguments it was handed, which is a second copy of the source's own
  * idea of what "the same subscription" is.
+ *
+ * The rail's six operations (`installation.*`, owner's design ruling of
+ * 2026-10-25) are not reads of the CLI either, with one exception:
+ * `installation.list` spawns `fugaro config list --json` and is the only one of
+ * them that does. All six go through `deps.installations`, which is the picker
+ * module's dispatcher, so the dashboard and the picker window answer from the
+ * same code; the dep is **optional** for the reason `installation` is -- a
+ * console with no store refuses them with a sentence rather than failing to
+ * register.
  */
 export function handlersFor(
   source: FugaroSource,
@@ -251,8 +344,39 @@ export function handlersFor(
      * console built without a store (a unit test's, a `refused` console's)
      * answers D13's no-installation state rather than failing to register. */
     readonly installation?: () => unknown
+    /** `installations` is the rail's surface (owner's design ruling of
+     * 2026-10-25). Optional for the same reason `installation` is -- and a
+     * *function* for the same reason too: the entry point builds this surface
+     * before the store exists and reads it at message time. */
+    readonly installations?: () => InstallationSurface
   },
 ): CliBackedHandlers {
+  /**
+   * rail turns one picker answer into the dashboard's reply convention: the
+   * data on success, and an exception whose message is the picker's own
+   * refusal sentence on failure -- which `registerConsoleHandlers` passes
+   * through verbatim (design section 6.3), and which `dispatch` bounds and
+   * flattens before a renderer sees it.
+   */
+  const rail = async (name: InstallationOperationName, args: InstallationArguments): Promise<unknown> => {
+    const surface = deps.installations?.()
+    if (surface === undefined) throw new Error(NO_INSTALLATION_SURFACE)
+    const answer = (await surface.answer(name, args)) as
+      | { readonly ok?: unknown; readonly reason?: unknown; readonly data?: unknown }
+      | null
+      | undefined
+    if (answer === null || typeof answer !== 'object' || answer.ok !== true) {
+      const reason = answer === null || typeof answer !== 'object' ? undefined : answer.reason
+      throw new Error(typeof reason === 'string' && reason !== '' ? reason : `${name} failed`)
+    }
+    return answer.data
+  }
+
+  /** project is the one argument every rail row but `list` and `open` takes,
+   * read as the string the schema validated it as. */
+  const project = (args: ValidatedArguments): string =>
+    typeof args['project'] === 'string' ? args['project'] : ''
+
   // `satisfies` rather than a cast: the mapped type makes a missing handler a
   // compile error, which is the whole reason `ConsoleHandlers` is mapped. A cast
   // here would turn "one operation answers nothing" back into a runtime state.
@@ -266,6 +390,9 @@ export function handlersFor(
     'budget.show': (args) => source.showBudget(args),
     'spend.report': (args) => source.runReport(args),
     'runs.list': (args) => source.listRuns(args),
+    'runs.stats': (args) => source.statsRuns(args),
+    'plan.status': (args) => source.planStatus(args),
+    'coordinator.status': (args) => source.coordinatorStatus(args),
     'run.diagnose': (args) => source.diagnoseRun(args),
     'run.logs': (args) => source.readRunLogs(args),
     'run.logLink': async (args) => (await source.runLogLink(args)).text,
@@ -276,32 +403,59 @@ export function handlersFor(
       await deps.openExternal(args['url'])
       return null
     },
-    // The fourteenth operation is not a read of the CLI either: it is the
+    // The fifteenth operation is not a read of the CLI either: it is the
     // installation the operator chose, as the store holds it. With no store --
     // and with no installation chosen -- it answers D13's no-installation
     // state, which is a state and not a guess.
     'installation.current': () => deps.installation?.() ?? { chosen: false, sentence: NO_ACTIVE_INSTALLATION },
+    // The rail's own surface: the list every row is drawn from, and the five
+    // things a row or its issue view can do. `checkout`'s directory is omitted
+    // from the payload rather than sent as `undefined`, which is the schema's
+    // own way of saying "no checkout" (design section 3.4 rule 5).
+    'installation.list': () => rail('list', {}),
+    'installation.choose': (args) => rail('choose', { project: project(args) }),
+    'installation.checkout': (args) => {
+      const checkout = args['checkout']
+      return rail(
+        'checkout',
+        typeof checkout === 'string' ? { project: project(args), checkout } : { project: project(args) },
+      )
+    },
+    'installation.remove': (args) => rail('remove', { project: project(args) }),
+    'installation.reveal': (args) => rail('reveal', { project: project(args) }),
+    // The one rail operation that is not a row's action but the rail's foot:
+    // the window the `+` opens. It goes to `open` rather than through `answer`
+    // because the picker's own table has no `open` row -- opening the window is
+    // not something the window's document may ask for.
+    'installation.open': async () => {
+      const surface = deps.installations?.()
+      if (surface === undefined) throw new Error(NO_INSTALLATION_SURFACE)
+      await surface.open()
+      return null
+    },
   } satisfies CliBackedHandlers
 }
 
 /**
- * CliBackedHandlers is the whole surface **minus the one operation that is not
- * a read of the CLI**: `startup.compatibility` (desktop-console plan Task 3.3),
+ * CliBackedHandlers is the whole surface **minus the two operations that are not
+ * reads of the CLI**: `startup.compatibility` (desktop-console plan Task 3.3),
  * whose answer is the handshake `src/main/index.ts` ran before it built any
- * window. It is not a read this module can make -- the source spawns, and the
- * compatibility is the console's own state -- so `handlersFor` leaves that key
- * out on purpose, and the renderer-entry task (Task 3.4a) is what joins it in at
- * the entry point, as
- * `{ ...handlersFor(source, deps), 'startup.compatibility': startupCompatibility(read) }`
- * with `startupCompatibility` from `src/main/ipc.ts`. **Nothing registers the
- * handlers until that task lands**: today `main()` serves the bundle and starts
- * the lifecycle, and no window has a preload to reach a channel with.
+ * window, and `run.launch` (V2.5.1a, design section 5.1 rule 11), which is the
+ * console's **one write**: it is not a read of the active installation's source
+ * at all -- it takes the installation's name as an argument, resolves its own
+ * records, and goes through the confirmation seam (`src/main/launch.ts`) rather
+ * than a `CliSource`. Both are joined in at the entry point, as
+ * `{ ...handlersFor(source, deps), 'startup.compatibility': … , 'run.launch': … }`
+ * with `startupCompatibility` from `src/main/ipc.ts` and the launcher from
+ * `src/main/launch.ts`. **Nothing registers the handlers until that task lands**:
+ * today `main()` serves the bundle and starts the lifecycle, and no window has a
+ * preload to reach a channel with.
  *
  * The `Omit` is still a *closed* type: a key typed here that is not an operation
  * is an excess property, and an operation deleted from `CONSOLE_OPERATIONS`
  * takes its required key with it -- so the exhaustiveness `satisfies` gives the
- * other twelve rows is unchanged. `registerConsoleHandlers` still demands the
+ * other rows is unchanged. `registerConsoleHandlers` still demands the
  * whole surface, so a console that forgets the join fails to register rather
  * than answering one operation with nothing.
  */
-export type CliBackedHandlers = Omit<ConsoleHandlers, 'startup.compatibility'>
+export type CliBackedHandlers = Omit<ConsoleHandlers, 'startup.compatibility' | 'run.launch'>

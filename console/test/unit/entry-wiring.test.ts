@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The dashboard's wiring (desktop-console plan Task 3.4c, step 2).
 //
 // `bundle.test.ts` runs the built bundle and proves the entry reaches the
@@ -43,23 +45,53 @@ import { loadFixture } from '../../src/source/fixture'
 import {
   CONSOLE_THEME,
   LIVE_POLL_MS,
+  LIVE_RIGOR_TTL_MS,
   RAIL_ADD_CLASS,
   RAIL_CLASS,
-  RAIL_COLLAPSE_CLASS,
-  RAIL_EXPAND_LABEL,
-  RAIL_COLLAPSE_LABEL,
   RAIL_HEAD_CLASS,
   RAIL_HINT_CLASS,
   RAIL_LIST_CLASS,
-  RAIL_LIST_ID,
   RAIL_NAME_CLASS,
   RAIL_PROJECT_CLASS,
   RAIL_ROW_CLASS,
   RAIL_SPEND_CLASS,
   RAIL_STATE_CLASS,
+  RAIL_WARNING_CLASS,
+  RAIL_WARNING_GLYPH,
+  RAIL_EMPTY_CLASS,
+  RAIL_TITLE_CLASS,
+  RAIL_TITLE_ID,
+  ISSUE_HEADLINE_CLASS,
+  ONBOARDING_CLASS,
+  ONBOARDING_COMMAND_CLASS,
+  ONBOARDING_TITLE_CLASS,
+  ISSUE_CLASS,
+  ISSUE_COMMAND_CLASS,
+  ISSUE_DETAILS_LABEL,
+  ISSUE_LINES_CLASS,
+  ISSUE_REMOVE_LABEL,
+  ISSUE_CHOOSE_LABEL,
+  ISSUE_CHECKOUT_LABEL,
+  ISSUE_SENTENCE_CLASS,
+  ISSUE_SUMMARY_CLASS,
   READ_UNREADABLE,
   VIEW_BUTTON_CLASS,
   VIEW_NAV_CLASS,
+  GAUGE_CAP_CLASS,
+  GAUGE_CLASS,
+  GAUGE_FILL_CLASS,
+  GAUGE_LABEL_CLASS,
+  GAUGE_NOTIONAL_CLASS,
+  HALT_CLASS,
+  SHELL_HEADER_CLASS,
+  SHELL_PAGE_CLASS,
+  SHELL_WORDMARK_CLASS,
+  SWITCHER_BUTTON_CLASS,
+  SWITCHER_CLASS,
+  SWITCHER_DOT_CLASS,
+  SWITCHER_MENU_CLASS,
+  SWITCHER_NAME_CLASS,
+  SWITCHER_VERSION_CLASS,
   VIEW_PANEL_CLASS,
   bootDashboard,
   isMacPlatform,
@@ -69,6 +101,14 @@ import {
   tabTarget,
 } from '../../src/renderer/entry'
 import { decodeSnapshot } from '../../src/shared/schema'
+import { WRITE_UNAVAILABLE } from '../../src/renderer/writes'
+import {
+  LAUNCH_FORM_CLASS,
+  LAUNCH_OPEN_CLASS,
+  LAUNCH_REPOSITORY_CLASS,
+  LAUNCH_TASK_CLASS,
+  LAUNCH_TITLE_CLASS,
+} from '../../src/renderer/screens/launch'
 import {
   FakeDocument,
   FakeNode,
@@ -84,7 +124,7 @@ import {
  * and the built tree are read from. */
 const CONSOLE_ROOT = join(__dirname, '..', '..')
 
-/** READ_METHODS is the seven reads `entry.ts` may reach for, by the name the
+/** READ_METHODS is the nine reads `entry.ts` may reach for, by the name the
  * preload exposes. Every one of them is on the fake bridge below, and every one
  * records its call -- so "this read was never made" is a claim this suite can
  * make about any of them. */
@@ -93,16 +133,18 @@ const READ_METHODS = [
   'showBudget',
   'runReport',
   'listRuns',
+  'statsRuns',
   'diagnoseRun',
   'readRunLogs',
   'runLogLink',
+  'planStatus',
 ] as const
 
 /** A_REPLY is a bridge method's answer. */
 type AReply = (args: unknown) => unknown
 
 /** FakeBridge is the preload seam, recorded: the handshake, the installation,
- * and the seven reads, each answering what the case told it to and appending its
+ * and the nine reads, each answering what the case told it to and appending its
  * own call to `calls`. */
 interface FakeBridge {
   readonly bridge: Record<string, unknown>
@@ -229,19 +271,35 @@ describe('the dashboard the entry mounts', () => {
   it('offers only the views the gate would draw, and never asks for a withheld one', async () => {
     const { bridge, calls } = fakeBridge({ compatibility: aReducedCompatibility() })
     const document = await boot(bridge, new FakeDocument())
-    // The banner is drawn, and the navigation offers Live alone: `spend` is
-    // withheld and `projects` is the `caps` view, which a reduced mode withholds
-    // with it. A Spend entry here would be a door to a screen that cannot read.
+    // The banner is drawn, and the navigation offers Live, Graph and
+    // Coordinator: `spend` is withheld and `projects` is the `caps` view, which
+    // a reduced mode withholds with it. A Spend entry here would be a door to a
+    // screen that cannot read. The Graph is offered because `plan.status` is not
+    // a view this mode withholds (GV2.1's decision, and `VIEWS`' own `null`): it
+    // draws no spend and no caps. `coordinator` is offered because the project
+    // view is repository state rather than money, so the mode withholds no
+    // figure of it (Bitbucket credentials T1.2).
     expect(document.body.children[0]?.attributes.get('data-mode')).toBe('reduced')
-    expect(navButtons(document).map((button) => button.attributes.get('data-view'))).toEqual(['live'])
+    expect(navButtons(document).map((button) => button.attributes.get('data-view'))).toEqual([
+      'live',
+      'graph',
+      'coordinator',
+    ])
     expect(navButtons(document).map((button) => button.attributes.get('class'))).toEqual([
+      VIEW_BUTTON_CLASS,
+      VIEW_BUTTON_CLASS,
       VIEW_BUTTON_CLASS,
     ])
     // And the two reads behind the withheld views are not made -- not on the
-    // first drawing, and not on a poll.
-    expect(calls.map((call) => call.name)).toEqual(['subscribeLive'])
+    // first drawing, and not on a poll. `listRuns` IS made, and it is not one of
+    // them: it is the run list, which a reduced mode keeps (the run list, the
+    // stages, the ages and the deadlines are fields `watch` has always carried,
+    // `ReducedView`'s own doc comment), and the Live screen reads it for the
+    // rigor join its rows draw a chip from. What is withheld is `runReport` and
+    // `showBudget`, and the two assertions below are the ones that say so.
+    expect(calls.map((call) => call.name)).toEqual(['subscribeLive', 'listRuns'])
     await flush()
-    expect(calls.map((call) => call.name)).toEqual(['subscribeLive'])
+    expect(calls.map((call) => call.name)).toEqual(['subscribeLive', 'listRuns'])
     expect(calls.some((call) => call.name === 'runReport')).toBe(false)
     expect(calls.some((call) => call.name === 'showBudget')).toBe(false)
   })
@@ -458,11 +516,13 @@ describe('the dashboard the entry mounts', () => {
         },
       })
       await boot(bridge, new FakeDocument())
-      expect(calls.map((call) => call.name)).toEqual(['subscribeLive'])
+      expect(calls.map((call) => call.name)).toEqual(['subscribeLive', 'listRuns'])
 
-      // One tick: a second read is made, and it does not answer.
+      // One tick: a second watch is made, and it does not answer. The rigor join
+      // is not read again -- its TTL is `LIVE_RIGOR_TTL_MS` and this tick is one
+      // second in -- so a poll is one `watch` and the join is not on its clock.
       await vi.advanceTimersByTimeAsync(LIVE_POLL_MS)
-      expect(calls.map((call) => call.name)).toEqual(['subscribeLive', 'subscribeLive'])
+      expect(calls.map((call) => call.name)).toEqual(['subscribeLive', 'listRuns', 'subscribeLive'])
       expect(held).toHaveLength(1)
 
       // Three more ticks with that read outstanding: **no third call**. This is
@@ -470,12 +530,12 @@ describe('the dashboard the entry mounts', () => {
       // next tick, so the console never has two watches of one installation in
       // flight at once.
       await vi.advanceTimersByTimeAsync(LIVE_POLL_MS * 3)
-      expect(calls.map((call) => call.name)).toEqual(['subscribeLive', 'subscribeLive'])
+      expect(calls.map((call) => call.name)).toEqual(['subscribeLive', 'listRuns', 'subscribeLive'])
 
       // Once it answers, the next tick is a new read.
       held[0]?.()
       await vi.advanceTimersByTimeAsync(LIVE_POLL_MS)
-      expect(calls.map((call) => call.name)).toHaveLength(3)
+      expect(calls.map((call) => call.name)).toHaveLength(4)
     })
 
     it('stops polling while the window is not visible, and starts again when it is', async () => {
@@ -508,7 +568,7 @@ describe('the dashboard the entry mounts', () => {
         },
       })
       const document = await boot(bridge, new FakeDocument())
-      expect(calls.map((call) => call.name)).toEqual(['subscribeLive'])
+      expect(calls.map((call) => call.name)).toEqual(['subscribeLive', 'listRuns'])
 
       // Spend is offered in an `ok` console, and leaving Live for it stops the
       // interval; the read behind the view is made once, on entry.
@@ -553,6 +613,79 @@ describe('the dashboard the entry mounts', () => {
       buttonFor(document, 'live').click()
       await vi.advanceTimersByTimeAsync(LIVE_POLL_MS)
       expect(calls.filter((call) => call.name === 'subscribeLive')).toHaveLength(2)
+    })
+
+    it('reads the rigor join on entry and then no more often than its own TTL', async () => {
+      // The Live screen's rows draw a mode the live frame does not carry, so the
+      // entry makes a second read -- `runs ls --json` -- and joins it by run id
+      // (`shared/rigor.ts`). **That read is not on the poll's clock**: a block is
+      // written once at bootstrap and the only thing a fresh read adds is a run
+      // that started since, so it is made on entry and then at most once per
+      // `LIVE_RIGOR_TTL_MS`. On the poll's 1 s clock it would be sixty
+      // invocations a minute of a command the Live screen does not otherwise
+      // need.
+      const frame = syntheticDocuments()[0] as Readonly<Record<string, unknown>>
+      const { bridge, calls } = fakeBridge({
+        replies: {
+          subscribeLive: () => snapshotReply(frame),
+          listRuns: () => ({ ok: true, data: { document: { project: 'example-project', runs: [], warnings: [] } } }),
+        },
+      })
+      await boot(bridge, new FakeDocument())
+      expect(calls.map((call) => call.name)).toEqual(['subscribeLive', 'listRuns'])
+
+      // Five polls, five seconds: the watch is read five more times and the join
+      // is not read again.
+      await vi.advanceTimersByTimeAsync(LIVE_POLL_MS * 5)
+      expect(calls.filter((call) => call.name === 'subscribeLive')).toHaveLength(6)
+      expect(calls.filter((call) => call.name === 'listRuns')).toHaveLength(1)
+
+      // Past the TTL the next tick refreshes it -- once, however many ticks the
+      // advance covers, because the read's own start is what the TTL is measured
+      // from.
+      await vi.advanceTimersByTimeAsync(LIVE_RIGOR_TTL_MS * 3)
+      expect(calls.filter((call) => call.name === 'listRuns').length).toBeGreaterThan(1)
+      expect(calls.filter((call) => call.name === 'listRuns').length).toBeLessThanOrEqual(5)
+    })
+
+    it('keeps the last rigor join when a later read of it is refused', async () => {
+      // A refused read is not a reason to take the chips off the rows: the map
+      // stays as it was, so a console whose `runs ls` fails for one tick draws
+      // the modes it already knew rather than a screen with no mode on it.
+      const frame = syntheticDocuments()[0] as Readonly<Record<string, unknown>>
+      let refusals = 0
+      const { bridge, calls } = fakeBridge({
+        replies: {
+          subscribeLive: () => snapshotReply(frame),
+          listRuns: () => {
+            refusals += 1
+            if (refusals === 1) {
+              return {
+                ok: true,
+                data: {
+                  document: {
+                    project: 'example-project',
+                    runs: [{ run: '20261015-120000-aa01', rigor: { mode: 'pro', from: 'repo' } }],
+                    warnings: [],
+                  },
+                },
+              }
+            }
+            return { ok: false, reason: 'the CLI refused this read' }
+          },
+        },
+      })
+      const document = await boot(bridge, new FakeDocument())
+      // The join answers a turn after the first drawing, so the chip lands on
+      // the next poll -- which is the same order every other read lands in.
+      await flush()
+      await vi.advanceTimersByTimeAsync(LIVE_POLL_MS)
+      expect(classed(panelOf(document), 'live-run-mode').map((node) => node.textContent)).toEqual(['Pro'])
+
+      await vi.advanceTimersByTimeAsync(LIVE_RIGOR_TTL_MS + LIVE_POLL_MS)
+      expect(calls.filter((call) => call.name === 'listRuns').length).toBeGreaterThan(1)
+      // The refused read drew no refusal screen and took no chip away.
+      expect(classed(panelOf(document), 'live-run-mode').map((node) => node.textContent)).toEqual(['Pro'])
     })
   })
 
@@ -688,6 +821,104 @@ describe('the dashboard the entry mounts', () => {
 })
 
 // ---------------------------------------------------------------------------
+// The Spend screen's by-person read (console L5b), through the entry's own
+// `peopleReader`: the knob turns it on, the document reaches the panel, and a
+// refusal becomes the panel's own sentence rather than the screen's.
+// ---------------------------------------------------------------------------
+
+describe('the by-person read the entry wires', () => {
+  /** STATS is an operator's `runs stats --json` document, as the CLI writes it. */
+  const STATS: Readonly<Record<string, unknown>> = {
+    project: 'acme',
+    by: 'user',
+    view: 'all',
+    you: 'ada',
+    operator: true,
+    since: '2026-09-23',
+    until: '2026-10-23',
+    max_runs: 5000,
+    truncated: false,
+    rows: [
+      { user: 'ada', currency: 'USD', runs: 2, succeeded: 2, counted_usd: 1.5, notional_usd: 0, counted_runs: 2, avg_counted_usd: 0.75 },
+      { user: 'bob', currency: 'USD', runs: 1, failed: 1, counted_usd: 0.25, notional_usd: 0, counted_runs: 1, avg_counted_usd: 0.25 },
+    ],
+    totals: [
+      { user: '', currency: 'USD', runs: 3, succeeded: 2, failed: 1, counted_usd: 1.75, notional_usd: 0, counted_runs: 3, avg_counted_usd: 0.58 },
+    ],
+    unlaunched: 0,
+    notes: [],
+  }
+
+  /** spendWithPeople boots the dashboard, opens Spend and turns the person
+   * knob on, with `statsRuns` answering `stats`. */
+  async function spendWithPeople(stats: AReply) {
+    const frame = syntheticDocuments()[0] as Readonly<Record<string, unknown>>
+    const fake = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(frame),
+        showBudget: () => ({ ok: true, data: { document: {} } }),
+        runReport: () => ({ ok: true, data: { document: {} } }),
+        statsRuns: stats,
+      },
+    })
+    const document = await boot(fake.bridge, new FakeDocument())
+    const panel = panelOf(document)
+    buttonFor(document, 'spend').click()
+    await flush()
+    // The knob off is no by-person read at all (D15).
+    expect(fake.calls.filter((call) => call.name === 'statsRuns')).toEqual([])
+    const knob = classed(panel, 'spend-persons')[0]
+    expect(knob, 'the spend screen drew no person knob: the case proves nothing').toBeDefined()
+    knob?.click()
+    await flush()
+    await flush()
+    return { panel, calls: fake.calls }
+  }
+
+  it('reads `statsRuns` with the picker’s window once the knob is on, and draws its document', async () => {
+    const { panel, calls } = await spendWithPeople(() => ({ ok: true, data: { document: STATS } }))
+    expect(calls.filter((call) => call.name === 'statsRuns').map((call) => call.args)).toEqual([
+      { since: '30d' },
+    ])
+    const people = classed(panel, 'spend-people')
+    expect(people).toHaveLength(1)
+    expect(people[0]?.attributes.get('data-available')).toBe('true')
+    expect(people[0]?.attributes.get('data-view')).toBe('all')
+    const rows = classed(panel, 'spend-people-rows')[0]
+    expect(rows?.children.length).toBe(2)
+    expect(classed(panel, 'spend-people-reason')).toEqual([])
+  })
+
+  it('turns a refused by-person read into the panel’s own sentence, and still draws the report', async () => {
+    const { panel } = await spendWithPeople(() => ({
+      ok: false,
+      reason: 'runs stats: cannot tell who you are, and this view shows your own row alone',
+    }))
+    const drawn = panel.children[0] as FakeNode
+    // The screen is Spend, not the console's refusal screen: the refusal is the
+    // panel's alone.
+    expect(drawn.attributes.get('class')).not.toBe('console-unavailable')
+    const people = classed(panel, 'spend-people')
+    expect(people).toHaveLength(1)
+    expect(people[0]?.attributes.get('data-available')).toBe('false')
+    expect(classed(panel, 'spend-people-reason').map((node) => node.textContent)).toEqual([
+      'runs stats: cannot tell who you are, and this view shows your own row alone',
+    ])
+    expect(classed(panel, 'spend-person')).toEqual([])
+  })
+
+  it('draws the console’s own sentence for a by-person answer that is not a snapshot', async () => {
+    // `documentOf` refuses the shape, and the throw carries *its* sentence: the
+    // panel draws that, not an empty list.
+    const { panel } = await spendWithPeople(() => ({ ok: true, data: { document: [] } }))
+    expect(classed(panel, 'spend-people')[0]?.attributes.get('data-available')).toBe('false')
+    expect(classed(panel, 'spend-people-reason').map((node) => node.textContent)).toEqual([
+      READ_UNREADABLE,
+    ])
+  })
+})
+
+// ---------------------------------------------------------------------------
 // The fixture source is not reachable from the shipped code.
 // ---------------------------------------------------------------------------
 
@@ -743,10 +974,114 @@ describe('the fixture source', () => {
     expect(importers, 'the fixture source is reachable from the shipped code').toEqual([])
   })
 
+  it('hands the startup read the installation’s distribution and checkout (T-D1)', () => {
+    // `resolveHandshakeBinary`'s WSL branch is reachable only if the entry hands
+    // the read a `distro`, and the directory the CLI starts in travels with it
+    // as the wrapper's `--cd` (`wslDirectory`, D3(a)). The two are the fields
+    // the store carries and the handshake would otherwise drop: a stored WSL
+    // installation read as a host one is a console that reports a missing
+    // binary for the installation the operator chose, because the walk is a
+    // walk of the host and the host has no `fugaro` (T-C2). This file imports
+    // Electron's runtime, so the claim is read off its text -- the same way the
+    // fixture-source scan above is -- and the *function body* is what is read,
+    // so naming the field in prose elsewhere in the file cannot satisfy it.
+    const index = readFileSync(join(CONSOLE_ROOT, 'src', 'main', 'index.ts'), 'utf8')
+    // `\n}\n` and not `\n}`: the **return type** ends with a brace at column
+    // zero too (`} | null {`), so the shorter pattern reads the signature and
+    // nothing else -- and would then fail on a body that is exactly right.
+    const declared = /function handshakeInstallation\(\)[\s\S]*?\n}\n/.exec(index)
+    if (declared === null) throw new Error('the scan found no handshakeInstallation: it would pass by finding nothing')
+    expect(declared[0]).toContain('distro: chosen.distro')
+    expect(declared[0]).toContain('checkout: chosen.checkout')
+    // ...and the read that consumes it is handed that object: the resolution
+    // takes `installation`, and a second object built beside this one would be
+    // the same defect one line later.
+    expect(index).toMatch(/resolveHandshakeBinary\(\{[\s\S]*?installation: chosen/)
+  })
+
   it('leaves the main process the one source the shipped app can construct', () => {
     const index = readFileSync(join(CONSOLE_ROOT, 'src', 'main', 'index.ts'), 'utf8')
     expect(index).toContain('createBoundSource(')
     expect(importsOf(index).filter((specifier) => /fixture/.test(specifier))).toEqual([])
+  })
+})
+
+// The confirmation window (V2.5.1a part 2b-3b-1): the one place in this app a
+// `fugaro run` child becomes possible.
+// ---------------------------------------------------------------------------
+
+describe('the launch the entry wires', () => {
+  it('builds the confirmation window inside main, over the default session, and rebuilds the runner over it', () => {
+    // The window needs `session.defaultSession` and it registers its two IPC
+    // channels once, so it cannot be built at module scope -- and it has to
+    // exist before a renderer can reach `run.launch`. What makes building it in
+    // `main` safe is that the handler reads `launchRunner` at message time and
+    // the surface goes on `ipcMain` only from `onDecided`, which only
+    // `lifecycle.start()` and `choose` reach, both from inside `main`.
+    //
+    // This file imports Electron's runtime, so the claims are read off `index.ts`
+    // as **text**, and the *function bodies* are what is read: naming a constant
+    // in prose elsewhere in the file cannot satisfy any of them.
+    const index = readFileSync(join(CONSOLE_ROOT, 'src', 'main', 'index.ts'), 'utf8')
+    const main = /async function main\(\): Promise<void> \{[\s\S]*?\n\}\n/.exec(index)
+    if (main === null) throw new Error('the scan found no main(): it would pass by finding nothing')
+    // The **code**, with the comments blanked: a comment inside these bodies can
+    // name a call to say why another one comes first, so a scan that read prose
+    // would answer about that sentence rather than about the call.
+    const body = withoutComments(main[0])
+
+    // The window is built in `main`'s own body, before the startup opens a
+    // window -- the first moment a renderer could ask for a launch -- and on
+    // `session.defaultSession`, which is the only session the `app://` handler
+    // serves: a window on a partition would issue its document request where
+    // nothing answers it, and every launch would be declined.
+    expect(body).toContain('createConfirmWindow(')
+    expect(body).toContain('session: session.defaultSession')
+    expect(body.indexOf('createConfirmWindow(')).toBeLessThan(body.indexOf('await lifecycle.start()'))
+    expect(index).not.toContain('fromPartition')
+
+    // ...and before the **picker**, which is the other path that puts the
+    // surface on `ipcMain`: `installInstallationPicker` registers the rail's
+    // operations and closes over `onChosen`, so a picker installed first is a
+    // window whose choose can reach `run.launch` -- and `cancelFor` -- before the
+    // confirmer the launch would be answered through exists.
+    const pickerAt = body.indexOf('installInstallationPicker(')
+    if (pickerAt < 0) throw new Error('the scan found no installInstallationPicker: it would pass by finding nothing')
+    expect(body.indexOf('createConfirmWindow(')).toBeLessThan(pickerAt)
+
+    // The module-scope runner is the fail-closed default: the declining
+    // confirmer is what answers a launch before `main` has built the window.
+    const declared = /let launchRunner = createLaunchRunner\(\{[\s\S]*?\n\}\)\n/.exec(index)
+    if (declared === null) throw new Error('the entry has no module-scope launchRunner to read')
+    expect(declared[0]).toContain('confirmer: DECLINING_CONFIRMER')
+
+    // Exactly the two: the fail-closed one at module scope and the one `main`
+    // builds over the window's confirmer. A third would be a second launcher --
+    // its own in-flight caps, its own run ids, its own held windows -- beside
+    // the one the surface and the cancel paths read.
+    expect(withoutComments(index).match(/createLaunchRunner\(/g) ?? []).toHaveLength(2)
+
+    // And the runner built in `main` is over the window's own confirmer, never
+    // over the declining one.
+    expect(body).toContain('confirmer: createConfirmWindow(')
+    expect(body).not.toContain('DECLINING_CONFIRMER')
+
+    // Both places the entry learns an installation moved cancel the launch its
+    // project has in flight: the choose -- "re-chosen" is that installation
+    // being chosen again, since a launch names its own installation -- and the
+    // rail's removal. The cancel comes before `lifecycle.choose`, so the window
+    // is already gone by the time the new installation's window opens.
+    const chosen = /onChosen: \(chosen\) => \{[\s\S]*?\n    \},\n/.exec(body)
+    if (chosen === null) throw new Error('the entry has no onChosen to read')
+    expect(chosen[0]).toContain('launchRunner.cancelFor(chosen.project)')
+    expect(chosen[0].indexOf('launchRunner.cancelFor(chosen.project)')).toBeLessThan(
+      chosen[0].indexOf('lifecycle.choose'),
+    )
+    expect(chosen[0]).toContain('lifecycle.choose')
+
+    const removed = /onRecordRemoved: \(project\) => \{[\s\S]*?\n    \},\n/.exec(body)
+    if (removed === null) throw new Error('the entry has no onRecordRemoved to read')
+    expect(removed[0]).toContain('launchRunner.cancelFor(project)')
   })
 })
 
@@ -824,6 +1159,7 @@ describe('the installation rail', () => {
     expect(rail.children.map((child) => child.attributes.get('class'))).toEqual([
       RAIL_HEAD_CLASS,
       RAIL_LIST_CLASS,
+      RAIL_EMPTY_CLASS,
       RAIL_ADD_CLASS,
       RAIL_HINT_CLASS,
     ])
@@ -844,13 +1180,15 @@ describe('the installation rail', () => {
     const spend = spanOf(document, RAIL_SPEND_CLASS)
     expect(spend.textContent).toBe('n/a')
     expect(spend.attributes.get('title')).toBe('no budget show document was read')
-    expect(calls.map((call) => call.name)).toEqual(['subscribeLive'])
+    // The two reads the mount makes and no more: the Live frame, and the run
+    // list the Live screen's rigor join is read from. The rail reads neither.
+    expect(calls.map((call) => call.name)).toEqual(['subscribeLive', 'listRuns'])
   })
 
   it('draws no row for an installation it cannot read, and draws the rail either way', async () => {
-    // The dashboard's surface has no list read, and this task adds none: a rail
-    // that drew a row per *stored* installation would be drawing rows from a
-    // read no file in this commit brings (design sections 4.1 and 11).
+    // A bridge with no `installation.list` answer falls back to
+    // `installation.current`, and an installation that answer does not name is
+    // not invented (design section 4.1).
     for (const installation of [
       { ok: false, reason: 'the installations file could not be read' },
       { ok: true, data: { chosen: false, sentence: 'no installation has been chosen' } },
@@ -866,28 +1204,106 @@ describe('the installation rail', () => {
     }
   })
 
-  it('announces the collapse and toggles the rail’s own collapsed state', async () => {
-    const { bridge } = fakeBridge({})
+  it('draws the shell: a header with the switcher holding the rail, and a page holding the panel', async () => {
+    const frame = syntheticDocuments()[0] as Readonly<Record<string, unknown>>
+    const { bridge } = fakeBridge({ replies: { subscribeLive: () => snapshotReply(frame, nowStamp()) } })
     const document = await boot(bridge, new FakeDocument())
-    const rail = railOf(document)
-    const control = classed(rail, RAIL_COLLAPSE_CLASS)[0]
-    expect(control, 'the rail drew no collapse control').toBeDefined()
-    const button = control as FakeNode
-    // The control names what it is about and says which state it is in, so the
-    // collapse is announced rather than drawn only (design section 4.1).
-    expect(button.attributes.get('aria-controls')).toBe(RAIL_LIST_ID)
-    expect(classed(rail, RAIL_LIST_CLASS)[0]?.attributes.get('id')).toBe(RAIL_LIST_ID)
-    expect(button.attributes.get('aria-expanded')).toBe('true')
-    expect(button.attributes.get('aria-label')).toBe(RAIL_COLLAPSE_LABEL)
-    expect(rail.attributes.get('data-collapsed')).toBeUndefined()
-    button.click()
+    // The header switcher replaced the rail (owner's ruling of 2026-10-28): the
+    // body holds the header and the page, and the rail is inside the menu.
+    expect(document.body.children.map((child) => child.attributes.get('class'))).toEqual([
+      SHELL_HEADER_CLASS,
+      SHELL_PAGE_CLASS,
+    ])
+    const header = document.body.children[0] as FakeNode
+    expect(header.tagName).toBe('HEADER')
+    expect(header.children.map((child) => child.attributes.get('class'))).toEqual([
+      SHELL_WORDMARK_CLASS,
+      SWITCHER_CLASS,
+      VIEW_NAV_CLASS,
+      GAUGE_CLASS,
+      HALT_CLASS,
+    ])
+    const page = document.body.children[1] as FakeNode
+    expect(page.tagName).toBe('MAIN')
+    expect(page.children.map((child) => child.attributes.get('class'))).toEqual([VIEW_PANEL_CLASS])
+
+    // The switcher names the installation and its CLI, and its menu holds the
+    // installation line (the CLI's full path) and the rail, folded at first.
+    const switcher = classed(header, SWITCHER_CLASS)[0] as FakeNode
+    const button = classed(switcher, SWITCHER_BUTTON_CLASS)[0] as FakeNode
+    const menu = classed(switcher, SWITCHER_MENU_CLASS)[0] as FakeNode
+    expect(classed(button, SWITCHER_NAME_CLASS)[0]?.textContent).toBe('acme')
+    expect(classed(button, SWITCHER_VERSION_CLASS)[0]?.textContent).toBe('CLI 1.2.3 · ok')
+    expect(classed(button, SWITCHER_DOT_CLASS)[0]?.attributes.get('data-state')).toBe('running')
+    expect(menu.children.map((child) => child.attributes.get('class'))).toEqual(['console-installation', RAIL_CLASS])
+    expect(textOf(menu)).toContain('/opt/fugaro/bin/fugaro')
+    expect(menu.attributes.get('hidden')).toBe('')
     expect(button.attributes.get('aria-expanded')).toBe('false')
-    expect(button.attributes.get('aria-label')).toBe(RAIL_EXPAND_LABEL)
-    expect(rail.attributes.get('data-collapsed')).toBe('true')
+    expect(button.attributes.get('aria-controls')).toBe(menu.attributes.get('id'))
     button.click()
+    expect(menu.attributes.has('hidden')).toBe(false)
     expect(button.attributes.get('aria-expanded')).toBe('true')
-    expect(button.attributes.get('aria-label')).toBe(RAIL_COLLAPSE_LABEL)
-    expect(rail.attributes.get('data-collapsed')).toBe('false')
+    // Escape folds it and hands the focus back to the button.
+    const escape = switcher.press('Escape')
+    expect(escape.defaultPrevented).toBe(true)
+    expect(menu.attributes.get('hidden')).toBe('')
+    expect(document.activeElement).toBe(button)
+    // Activating a row folds the menu as well.
+    button.click()
+    railRow(document).click()
+    expect(menu.attributes.get('hidden')).toBe('')
+  })
+
+  it('draws Halt fleet disabled, with its reason, and binds nothing to it', async () => {
+    const { bridge, calls } = fakeBridge({})
+    const document = await boot(bridge, new FakeDocument())
+    const halt = classed(document.body, HALT_CLASS)[0] as FakeNode
+    expect(halt.tagName).toBe('BUTTON')
+    expect(halt.attributes.get('aria-disabled')).toBe('true')
+    expect(halt.attributes.get('title')).toBe(WRITE_UNAVAILABLE)
+    expect(textOf(halt).trim()).toBe('Halt fleet')
+    // No listener of any kind: the console's one approved write is not this.
+    expect(halt.listeners.size).toBe(0)
+    const before = calls.length
+    halt.click()
+    expect(calls.length).toBe(before)
+  })
+
+  it('fills the fleet gauge from the Live total, and from the budget read', async () => {
+    const frame = syntheticDocuments()[0] as Readonly<Record<string, unknown>>
+    const budget = {
+      global: { daily_cap_usd: 40, counted_usd: 10, spent_usd: 4, notional_usd: 1.5 },
+    }
+    const { bridge } = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(frame, nowStamp()),
+        showBudget: () => ({ ok: true, data: { document: budget } }),
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    const gauge = classed(document.body, GAUGE_CLASS)[0] as FakeNode
+    expect(classed(gauge, GAUGE_LABEL_CLASS)[0]?.textContent).toBe('GLOBAL')
+    const total = (frame['total'] ?? {}) as Record<string, unknown>
+    const cap = total['daily_cap_usd']
+    const capText = classed(gauge, GAUGE_CAP_CLASS)[0]?.textContent
+    if (typeof cap === 'number') expect(capText).toBe(`$${cap.toFixed(2)}`)
+    else expect(capText).toBe('n/a')
+    buttonFor(document, 'spend').click()
+    await flush()
+    expect(classed(gauge, GAUGE_CAP_CLASS)[0]?.textContent).toBe('$40.00')
+    expect(classed(gauge, GAUGE_NOTIONAL_CLASS)[0]?.textContent).toContain('1.50')
+    // The bar is counted over cap, as the fill's width in the SVG's units, and
+    // carries no notional segment.
+    expect(classed(gauge, GAUGE_FILL_CLASS)[0]?.attributes.get('width')).toBe('24')
+    expect(gauge.attributes.get('title')).toBe('counted $10.00 of the $40.00 daily cap (25.0%)')
+  })
+
+  it('withholds the gauge’s figures when the mode withholds caps', async () => {
+    const { bridge } = fakeBridge({ compatibility: aReducedCompatibility() })
+    const document = await boot(bridge, new FakeDocument())
+    const gauge = classed(document.body, GAUGE_CLASS)[0] as FakeNode
+    expect(classed(gauge, GAUGE_CAP_CLASS)[0]?.textContent).toBe('n/a')
+    expect(classed(gauge, GAUGE_FILL_CLASS)[0]?.attributes.get('width')).toBe('0')
   })
 
   it('says silent when the live read was refused, and draws the budget read the console made itself', async () => {
@@ -945,82 +1361,54 @@ function railListOf(document: FakeDocument): FakeNode {
   return list
 }
 
-describe('the view navigation’s keyboard', () => {
-  it('is a tablist with one tab stop, and the arrows move the view and the focus with it', async () => {
+describe('the view navigation', () => {
+  it('is five buttons, each a tab stop, the view on screen marked aria-current="page"', async () => {
+    // The redesign's tabs (owner's ruling of 2026-10-28) replaced Task 6.5's nav tablist:
+    // ordinary tab stops whose own Enter and Space are the click. They stay buttons because
+    // the renderer writes no `href`.
     const { bridge, calls } = fakeBridge({
       replies: { showBudget: () => ({ ok: true, data: { document: { global: { counted_usd: 12.5 } } } }) },
     })
     const document = await boot(bridge, new FakeDocument())
     const nav = navOf(document)
     const live = buttonFor(document, 'live')
+    const graph = buttonFor(document, 'graph')
     const spend = buttonFor(document, 'spend')
     const projects = buttonFor(document, 'projects')
-
-    // The nav is a tablist and its buttons are its tabs (design section 4.3). The view on
-    // screen is marked twice: `aria-current` is the navigation's own mark, which the code
-    // emitted before this task and `base.css` already selects, and `aria-selected` is the
-    // same fact in the vocabulary a tablist is read with.
-    expect(nav.attributes.get('role')).toBe('tablist')
-    for (const button of [live, spend, projects]) {
-      expect(button.attributes.get('role')).toBe('tab')
+    const coordinator = buttonFor(document, 'coordinator')
+    expect(nav.attributes.get('role')).toBeUndefined()
+    expect(nav.attributes.get('aria-label')).toBe('Console')
+    for (const button of [live, graph, spend, projects, coordinator]) {
+      expect(button.tagName).toBe('BUTTON')
       expect(button.attributes.get('type')).toBe('button')
+      expect(button.attributes.has('tabindex')).toBe(false)
+      expect(button.attributes.has('role')).toBe(false)
     }
-    expect(live.attributes.get('aria-current')).toBe('true')
-    expect(live.attributes.get('aria-selected')).toBe('true')
-    expect(live.attributes.get('tabindex')).toBe('0')
-    // The roving half: the other two are out of the tab order, so the whole navigation is
-    // one stop rather than three.
-    for (const other of [spend, projects]) {
-      expect(other.attributes.get('aria-current')).toBe('false')
-      expect(other.attributes.get('aria-selected')).toBe('false')
-      expect(other.attributes.get('tabindex')).toBe('-1')
-    }
+    expect(live.attributes.get('aria-current')).toBe('page')
+    for (const other of [graph, spend, projects, coordinator]) expect(other.attributes.has('aria-current')).toBe(false)
 
-    // Right moves to the next tab **and shows it**: a nav button's selection *is* the view
-    // it puts on screen (design section 4.3), so the read behind the view is made and no
-    // second key is needed.
-    const pressed = live.press('ArrowRight')
+    // A click shows the view and makes its read.
+    graph.click()
     await flush()
-    expect(pressed.defaultPrevented, 'the arrow key was left to the window').toBe(true)
-    expect(spend.attributes.get('aria-current')).toBe('true')
-    expect(spend.attributes.get('aria-selected')).toBe('true')
-    expect(spend.attributes.get('tabindex')).toBe('0')
-    expect(live.attributes.get('aria-current')).toBe('false')
-    expect(live.attributes.get('tabindex')).toBe('-1')
-    expect(document.activeElement, 'the ring did not follow the arrow').toBe(spend)
-    // The view was *shown* and not merely marked: Spend is the screen that reads the budget,
-    // so a handler that moved the marks without calling `show` would leave this list empty.
+    expect(graph.attributes.get('aria-current')).toBe('page')
+    expect(live.attributes.has('aria-current')).toBe(false)
+    expect(calls.filter((call) => call.name === 'planStatus')).toHaveLength(1)
+    spend.click()
+    await flush()
+    expect(spend.attributes.get('aria-current')).toBe('page')
     expect(calls.filter((call) => call.name === 'showBudget')).toHaveLength(1)
 
-    // End goes to the last tab, Home to the first, and Left wraps back from the first --
-    // the one behaviour `tabTarget` documents as the pattern's own.
-    spend.press('End')
-    await flush()
-    expect(projects.attributes.get('aria-current')).toBe('true')
-    expect(document.activeElement).toBe(projects)
-    projects.press('Home')
-    await flush()
-    expect(live.attributes.get('aria-current')).toBe('true')
-    expect(document.activeElement).toBe(live)
-    live.press('ArrowLeft')
-    await flush()
-    expect(projects.attributes.get('aria-current')).toBe('true')
-    expect(document.activeElement).toBe(projects)
+    // The arrows are not the nav's any more: they are left to the window.
+    expect(spend.press('ArrowRight').defaultPrevented).toBe(false)
+    expect(spend.attributes.get('aria-current')).toBe('page')
 
-    // A key the navigation does not own is left to the window: the nav is a horizontal
-    // tablist and its arrows are Left and Right (design section 4.3), while Up and Down are
-    // the rail's (section 4.1).
-    const down = projects.press('ArrowDown')
-    expect(down.defaultPrevented, 'the navigation took a key that is the rail’s').toBe(false)
-    expect(projects.attributes.get('aria-current')).toBe('true')
+    // The wordmark goes to Live and takes the focus there.
+    ;(classed(document.body, SHELL_WORDMARK_CLASS)[0] as FakeNode).click()
+    expect(live.attributes.get('aria-current')).toBe('page')
+    expect(document.activeElement).toBe(live)
   })
 
-  it('keeps one tab stop while Run detail is up, when no offered view is current', async () => {
-    // Run detail is a view with no button (design section 2.1), so while it is up every
-    // button is unmarked -- and a roving `tabindex` written as "the current view is 0" alone
-    // would leave the navigation with no stop at all, which is a tablist the keyboard cannot
-    // enter. The stop falls back to the first offered button, and this is the case that
-    // fails if that fallback goes.
+  it('marks no view while Run detail is up', async () => {
     const documents = syntheticDocuments()
     const frame = documents[documents.length - 1] as Readonly<Record<string, unknown>>
     const { bridge } = fakeBridge({
@@ -1036,16 +1424,36 @@ describe('the view navigation’s keyboard', () => {
     ;(row as FakeNode).click()
     await flush()
     expect((panelOf(document).children[0] as FakeNode).attributes.get('class')).toBe('run')
-    for (const button of navButtons(document)) {
-      expect(button.attributes.get('aria-current')).toBe('false')
-      expect(button.attributes.get('aria-selected')).toBe('false')
+    for (const button of navButtons(document)) expect(button.attributes.has('aria-current')).toBe(false)
+  })
+
+  it('draws Halt project and Reap disabled, and neither asks the main process for anything', async () => {
+    // The redesign (step 2b) draws the two controls a reader of a project panel
+    // and of a lost run expects. They are **drawn** and not wired: the console's
+    // one approved write is launch-from-console, so both go through `writes.ts`'s
+    // `disabledWrite` and neither is a channel, a preload member or a spawn
+    // entry. `live.ts` being a pure drawing file is what makes that true; this
+    // reads it off the booted window rather than off the source.
+    const documents = syntheticDocuments()
+    const frame = documents[documents.length - 1] as Readonly<Record<string, unknown>>
+    const { bridge, calls } = fakeBridge({
+      replies: { subscribeLive: () => snapshotReply(frame) },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    const panel = panelOf(document)
+    for (const className of ['live-halt', 'live-reap']) {
+      const drawn = classed(panel, className)[0] as FakeNode | undefined
+      expect(drawn, `.${className} was not drawn`).toBeDefined()
+      const button = drawn as FakeNode
+      expect(button.tagName).toBe('BUTTON')
+      expect(button.attributes.get('aria-disabled')).toBe('true')
+      expect(button.attributes.get('title')).toBe(WRITE_UNAVAILABLE)
+      expect(button.listeners.size).toBe(0)
+      const before = calls.length
+      button.click()
+      await flush()
+      expect(calls.length, `.${className} asked the main process for something`).toBe(before)
     }
-    expect(
-      navButtons(document)
-        .filter((button) => button.attributes.get('tabindex') === '0')
-        .map((button) => button.attributes.get('data-view')),
-      'the navigation left the tab order while a run was on screen',
-    ).toEqual(['live'])
   })
 })
 
@@ -1140,21 +1548,16 @@ describe('the installation rail’s keyboard', () => {
     expect(row.attributes.get('aria-selected')).toBe('true')
   })
 
-  it('keeps the rail’s three tab stops in the order a reader sees them', async () => {
-    // The focus order is the DOM order and the rail is first (design section 4.3): the
-    // collapse control, the list -- **one stop however many installations it holds**, which
-    // is what the roving `tabindex` buys -- and the add row. Three, and in that order.
+  it('keeps the rail’s two tab stops in the order a reader sees them', async () => {
+    // Inside the switcher's menu the rail's stops are the list -- **one stop however many
+    // installations it holds**, which is what the roving `tabindex` buys -- and the add row.
     const { bridge } = fakeBridge({})
     const document = await boot(bridge, new FakeDocument())
     const rail = railOf(document)
     const stops = everyNode(rail).filter(
       (node) => node.tagName === 'BUTTON' || node.attributes.has('tabindex'),
     )
-    expect(stops.map((node) => node.attributes.get('class'))).toEqual([
-      RAIL_COLLAPSE_CLASS,
-      RAIL_ROW_CLASS,
-      RAIL_ADD_CLASS,
-    ])
+    expect(stops.map((node) => node.attributes.get('class'))).toEqual([RAIL_ROW_CLASS, RAIL_ADD_CLASS])
     // Exactly one of them is the roving stop and it is the selected row: a list with no `0`
     // at all is a list the keyboard cannot enter, and two of them is a list that is two
     // stops.
@@ -1352,5 +1755,801 @@ describe('the console’s theme', () => {
         ),
       ),
     ).toEqual(['matchMedia', 'prefers-color-scheme'])
+  })
+})
+
+// The rail over the list read (owner's design ruling of 2026-10-25: no picker
+// screen; every installation in the rail; a warning mark and an issue view for
+// the ones the console cannot read).
+// ---------------------------------------------------------------------------
+
+/** listRow is one `installation.list` row as the main process answers it. */
+function listRow(
+  project: string,
+  options: {
+    readonly open?: boolean
+    readonly issue?: 'none' | 'config' | 'stale' | 'store' | 'binary'
+    readonly readable?: boolean
+    readonly sentence?: string
+    readonly command?: string
+    readonly details?: readonly string[]
+    readonly checkouts?: readonly string[]
+  } = {},
+): Record<string, unknown> {
+  return {
+    project,
+    open: options.open ?? false,
+    active: options.open ?? false,
+    saved: true,
+    checkouts: options.checkouts ?? [],
+    state: {
+      issue: options.issue ?? 'none',
+      readable: options.readable ?? true,
+      sentence: options.sentence ?? '',
+      command: options.command ?? '',
+      details: options.details ?? [],
+    },
+  }
+}
+
+const ORBIT_SENTENCE = 'edit ~/.config/fugaro/projects/orbit.yaml: unknown field. Then run fugaro doctor --project orbit.'
+const ORBIT_LINE = '~/.config/fugaro/projects/orbit.yaml could not be read: unknown field'
+
+function orbitRow(open = false): Record<string, unknown> {
+  return listRow('orbit', {
+    open,
+    issue: 'config',
+    readable: false,
+    sentence: ORBIT_SENTENCE,
+    command: 'fugaro doctor --project orbit',
+    details: [ORBIT_LINE],
+    checkouts: ['/home/operator/src/orbit'],
+  })
+}
+
+/** railBridge is `fakeBridge` with the rail's six operations, each recorded. */
+function railBridge(
+  rows: readonly Record<string, unknown>[],
+  answers: Readonly<Record<string, AReply>> = {},
+  onboard?: Readonly<Record<string, unknown>>,
+): FakeBridge & { readonly rail: readonly { readonly name: string; readonly args: unknown }[] } {
+  const frame = syntheticDocuments()[0] as Readonly<Record<string, unknown>>
+  const base = fakeBridge({ replies: { subscribeLive: () => snapshotReply(frame, nowStamp()) } })
+  const rail: { name: string; args: unknown }[] = []
+  for (const name of [
+    'listInstallations',
+    'chooseInstallation',
+    'setInstallationCheckout',
+    'removeInstallation',
+    'revealInstallation',
+    'openInstallations',
+  ]) {
+    base.bridge[name] = (args: unknown): unknown => {
+      rail.push({ name, args })
+      const answer = answers[name]
+      if (answer !== undefined) return answer(args)
+      return name === 'listInstallations'
+        ? { ok: true, data: { rows, ...(onboard === undefined ? {} : { onboard }) } }
+        : { ok: true, data: null }
+    }
+  }
+  return { ...base, rail }
+}
+
+function rowsOf(document: FakeDocument): readonly FakeNode[] {
+  return classed(railOf(document), RAIL_ROW_CLASS)
+}
+
+function rowNamed(document: FakeDocument, project: string): FakeNode {
+  const row = rowsOf(document).find((each) => classed(each, RAIL_NAME_CLASS)[0]?.textContent === project)
+  if (row === undefined) throw new Error(`the rail drew no row for ${project}`)
+  return row
+}
+
+function buttonLabelled(root: FakeNode, label: string): FakeNode {
+  const button = everyNode(root).find((node) => node.tagName === 'BUTTON' && node.textContent === label)
+  if (button === undefined) throw new Error(`no button reads ${label}`)
+  return button
+}
+
+describe('the rail over the installation list', () => {
+  it('draws every listed installation, readable or not, and marks the one with an issue', async () => {
+    const { bridge, rail, calls } = railBridge([listRow('aurora', { open: true }), orbitRow()])
+    const document = await boot(bridge, new FakeDocument())
+    expect(rowsOf(document).map((row) => classed(row, RAIL_NAME_CLASS)[0]?.textContent)).toEqual(['aurora', 'orbit'])
+    expect(rail.map((call) => call.name)).toEqual(['listInstallations'])
+    // The readable one is open and selected, and the dashboard read it.
+    expect(rowNamed(document, 'aurora').attributes.get('aria-selected')).toBe('true')
+    expect(calls.map((call) => call.name)).toContain('subscribeLive')
+    // The mark is text with a name, never the tone alone (design section 3.5).
+    expect(classed(rowNamed(document, 'aurora'), RAIL_WARNING_CLASS)).toHaveLength(0)
+    const mark = classed(rowNamed(document, 'orbit'), RAIL_WARNING_CLASS)[0]
+    expect(mark, 'the unreadable row drew no warning mark').toBeDefined()
+    expect(mark?.textContent).toBe(RAIL_WARNING_GLYPH)
+    expect(mark?.attributes.get('role')).toBe('img')
+    expect(mark?.attributes.get('aria-label')).toBe(`warning: ${ORBIT_SENTENCE}`)
+    // Only the open row is being read; the other says idle.
+    expect(classed(rowNamed(document, 'orbit'), RAIL_STATE_CLASS)[0]?.attributes.get('data-state')).toBe('idle')
+  })
+
+  it('opens a row’s issue in the main area: the sentence first, the CLI’s text behind details, the actions inside', async () => {
+    const { bridge, rail } = railBridge([listRow('aurora', { open: true }), orbitRow()], {
+      removeInstallation: () => ({ ok: true, data: { rows: [listRow('aurora', { open: true })] } }),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    rowNamed(document, 'orbit').click()
+    await flush()
+    const issue = classed(panelOf(document), ISSUE_CLASS)[0]
+    expect(issue, 'the click drew no issue view').toBeDefined()
+    const view = issue as FakeNode
+    expect(view.children[0]?.tagName).toBe('H1')
+    expect(view.children[0]?.textContent).toBe('orbit')
+    // One plain sentence first, then the exact command.
+    expect(view.children[1]?.attributes.get('class')).toBe(ISSUE_SENTENCE_CLASS)
+    expect(view.children[1]?.textContent).toBe(ORBIT_SENTENCE)
+    expect(classed(view, ISSUE_COMMAND_CLASS)[0]?.textContent).toBe('fugaro doctor --project orbit')
+    expect(classed(view, ISSUE_SUMMARY_CLASS)[0]?.textContent).toBe(ISSUE_DETAILS_LABEL)
+    expect(classed(view, ISSUE_LINES_CLASS)[0]?.textContent).toBe(ORBIT_LINE)
+    // A row the console cannot read offers no switch; it offers the old
+    // Installations screen's actions instead.
+    expect(everyNode(view).some((node) => node.textContent === ISSUE_CHOOSE_LABEL)).toBe(false)
+    expect(rowNamed(document, 'orbit').attributes.get('aria-selected')).toBe('true')
+    expect(rowNamed(document, 'aurora').attributes.get('aria-selected')).toBe('false')
+
+    buttonLabelled(view, `${ISSUE_CHECKOUT_LABEL}: /home/operator/src/orbit`).click()
+    await flush()
+    expect(rail.at(-1)).toEqual({
+      name: 'setInstallationCheckout',
+      args: { project: 'orbit', checkout: '/home/operator/src/orbit' },
+    })
+
+    const current = classed(panelOf(document), ISSUE_CLASS)[0] as FakeNode
+    buttonLabelled(current, ISSUE_REMOVE_LABEL).click()
+    await flush()
+    expect(rail.at(-1)).toEqual({ name: 'removeInstallation', args: { project: 'orbit' } })
+    // The row is gone, so its issue is too: the main area is the dashboard again.
+    expect(rowsOf(document)).toHaveLength(1)
+    expect(classed(panelOf(document), ISSUE_CLASS)).toHaveLength(0)
+    expect(rowNamed(document, 'aurora').attributes.get('aria-selected')).toBe('true')
+  })
+
+  it('switches on a click on a readable row, and draws the refusal when the switch is refused', async () => {
+    const { bridge, rail } = railBridge([listRow('aurora', { open: true }), listRow('comet')], {
+      chooseInstallation: () => ({ ok: false, reason: 'the CLI for comet is too old' }),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    rowNamed(document, 'comet').click()
+    await flush()
+    expect(rail.at(-1)).toEqual({ name: 'chooseInstallation', args: { project: 'comet' } })
+    expect(textOf(panelOf(document))).toContain('the CLI for comet is too old')
+  })
+
+  it('opens on the first row’s issue, and reads nothing, when no installation can be read', async () => {
+    const { bridge, calls } = railBridge([orbitRow(true)])
+    const document = await boot(bridge, new FakeDocument())
+    expect(classed(panelOf(document), ISSUE_CLASS)).toHaveLength(1)
+    expect(calls).toEqual([])
+    // The nav still leads somewhere: Live reads on the way in.
+    buttonFor(document, 'live').click()
+    await flush()
+    expect(calls.map((call) => call.name)).toContain('subscribeLive')
+    expect(classed(panelOf(document), ISSUE_CLASS)).toHaveLength(0)
+  })
+
+  it('opens the picker window from the + row, which is the one way to add an installation', async () => {
+    const { bridge, rail } = railBridge([listRow('aurora', { open: true })])
+    const document = await boot(bridge, new FakeDocument())
+    const add = classed(railOf(document), RAIL_ADD_CLASS).find((node) => node.tagName === 'BUTTON')
+    add?.click()
+    await flush()
+    expect(rail.at(-1)).toEqual({ name: 'openInstallations', args: {} })
+  })
+})
+
+// The launch control the Live poll redraws around (V2.5.1b follow-up).
+// ---------------------------------------------------------------------------
+
+/** launchField is one of the launch form's controls, by its class. */
+function launchField(document: FakeDocument, className: string): FakeNode {
+  const found = classed(document.body, className)[0]
+  if (found === undefined) throw new Error(`the launch form drew no .${className}`)
+  return found
+}
+
+/** valueOf is the value a control carries, which the fake holds only where the
+ * entry (or a case) put one. */
+function valueOf(node: FakeNode): string {
+  const value = (node as unknown as { readonly value?: unknown }).value
+  return typeof value === 'string' ? value : ''
+}
+
+/** typeInto writes one control's value the way an operator's typing would. */
+function typeInto(document: FakeDocument, className: string, value: string): void {
+  ;(launchField(document, className) as unknown as { value: string }).value = value
+}
+
+describe('the launch control the Live poll redraws around', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('keeps the form, the task, the title and the repository across a poll tick', async () => {
+    // The poll replaces the Live screen under the control once a second, and a
+    // control **rebuilt** on that tick would be a form that emptied itself while
+    // the operator was typing: the typed task and title and the repository the
+    // select holds all have to survive it. The entry keeps the control it built
+    // for the same offer of repositories and appends the same element back --
+    // this case is that claim, driven through a real tick.
+    const frame = syntheticDocuments()[0] as Readonly<Record<string, unknown>>
+    const row = {
+      ...listRow('aurora', { open: true }),
+      repositories: ['github/owner/repo-a', 'github/owner/repo-b'],
+    }
+    const { bridge, calls } = railBridge([row], { subscribeLive: () => snapshotReply(frame, nowStamp()) })
+    const document = await boot(bridge, new FakeDocument())
+
+    ;(launchField(document, LAUNCH_OPEN_CLASS) as FakeNode).click()
+    await flush()
+    const form = launchField(document, LAUNCH_FORM_CLASS)
+    const screen = panelOf(document).children[0]
+    typeInto(document, LAUNCH_TASK_CLASS, 'summarise the alerting backlog')
+    typeInto(document, LAUNCH_TITLE_CLASS, 'the nightly backlog')
+    typeInto(document, LAUNCH_REPOSITORY_CLASS, 'github/owner/repo-b')
+
+    await vi.advanceTimersByTimeAsync(LIVE_POLL_MS)
+    await flush()
+
+    // The tick really happened: a second watch, and the Live screen under the
+    // control is a new element. Without this the assertions below would hold for
+    // a poll that drew nothing at all.
+    expect(calls.filter((call) => call.name === 'subscribeLive')).toHaveLength(2)
+    expect(panelOf(document).children[0], 'the tick replaced no screen').not.toBe(screen)
+    // ...and through it the form is the one the operator was typing into.
+    expect(launchField(document, LAUNCH_FORM_CLASS), 'the poll rebuilt the launch form').toBe(form)
+    expect(valueOf(launchField(document, LAUNCH_TASK_CLASS))).toBe('summarise the alerting backlog')
+    expect(valueOf(launchField(document, LAUNCH_TITLE_CLASS))).toBe('the nightly backlog')
+    expect(valueOf(launchField(document, LAUNCH_REPOSITORY_CLASS))).toBe('github/owner/repo-b')
+  })
+})
+
+describe('the rail with nothing left to open', () => {
+  const FIRST = { kind: 'first-installation', command: 'fugaro setup' }
+
+  it('draws the onboarding in the main area and an empty rail with its + when there is no installation at all', async () => {
+    const { bridge, calls, rail } = railBridge([], {}, FIRST)
+    const document = await boot(bridge, new FakeDocument())
+    const onboarding = classed(panelOf(document), ONBOARDING_CLASS)[0]
+    expect(onboarding, 'the panel drew no onboarding').toBeDefined()
+    expect(classed(onboarding as FakeNode, ONBOARDING_TITLE_CLASS)[0]?.textContent).toBe('Set up your first installation')
+    expect(classed(onboarding as FakeNode, ONBOARDING_COMMAND_CLASS)[0]?.textContent).toBe('fugaro setup')
+    // Nothing to read, so nothing is read -- no Live refusal drawn in its place.
+    expect(calls).toEqual([])
+    const empty = classed(railOf(document), RAIL_EMPTY_CLASS)[0]
+    expect(empty?.attributes.get('hidden')).toBeUndefined()
+    expect(rowsOf(document)).toHaveLength(0)
+    classed(railOf(document), RAIL_ADD_CLASS).find((node) => node.tagName === 'BUTTON')?.click()
+    await flush()
+    expect(rail.at(-1)?.name).toBe('openInstallations')
+  })
+
+  it('hides the empty-state line while the rail has rows', async () => {
+    const { bridge } = railBridge([listRow('aurora', { open: true })])
+    const document = await boot(bridge, new FakeDocument())
+    expect(classed(railOf(document), RAIL_EMPTY_CLASS)[0]?.attributes.get('hidden')).toBe('')
+  })
+
+  it('draws the onboarding at once when the last installation is removed from its issue view', async () => {
+    const { bridge, calls } = railBridge([orbitRow(true)], {
+      removeInstallation: () => ({ ok: true, data: { rows: [], onboard: FIRST } }),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonLabelled(classed(panelOf(document), ISSUE_CLASS)[0] as FakeNode, ISSUE_REMOVE_LABEL).click()
+    await flush()
+    expect(classed(panelOf(document), ONBOARDING_CLASS)).toHaveLength(1)
+    expect(rowsOf(document)).toHaveLength(0)
+    expect(calls).toEqual([])
+  })
+
+  it('opens the next readable installation at once when the open one is removed, with a fresh read', async () => {
+    const { bridge, calls } = railBridge([orbitRow(true)], {
+      removeInstallation: () => ({ ok: true, data: { rows: [listRow('aurora', { open: true })] } }),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    expect(calls).toEqual([])
+    buttonLabelled(classed(panelOf(document), ISSUE_CLASS)[0] as FakeNode, ISSUE_REMOVE_LABEL).click()
+    await flush()
+    expect(classed(panelOf(document), ISSUE_CLASS)).toHaveLength(0)
+    expect(calls.map((call) => call.name)).toContain('subscribeLive')
+    expect(rowNamed(document, 'aurora').attributes.get('aria-selected')).toBe('true')
+  })
+
+  it('never redraws the removed installation’s Live frame: the next one is read afresh', async () => {
+    const stale = listRow('aurora', { open: true, issue: 'stale', readable: true, sentence: 'aurora is stale.' })
+    stale['saved'] = true
+    const { bridge, calls } = railBridge([stale, listRow('comet')], {
+      removeInstallation: () => ({ ok: true, data: { rows: [listRow('comet', { open: true })] } }),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    const before = calls.filter((call) => call.name === 'subscribeLive').length
+    rowNamed(document, 'aurora').click()
+    await flush()
+    buttonLabelled(classed(panelOf(document), ISSUE_CLASS)[0] as FakeNode, ISSUE_REMOVE_LABEL).click()
+    await flush()
+    expect(calls.filter((call) => call.name === 'subscribeLive').length).toBe(before + 1)
+    expect(rowNamed(document, 'comet').attributes.get('aria-selected')).toBe('true')
+  })
+})
+
+describe('the rail’s accessibility (review m5)', () => {
+  it('names its tablist by the rail’s own title', async () => {
+    const { bridge } = railBridge([listRow('aurora', { open: true })])
+    const document = await boot(bridge, new FakeDocument())
+    const title = classed(railOf(document), RAIL_TITLE_CLASS)[0]
+    const list = classed(railOf(document), RAIL_LIST_CLASS)[0]
+    expect(title?.attributes.get('id')).toBe(RAIL_TITLE_ID)
+    expect(list?.attributes.get('aria-labelledby')).toBe(RAIL_TITLE_ID)
+  })
+
+  it('moves the keyboard to the issue’s heading when the row was activated from the keyboard', async () => {
+    const { bridge } = railBridge([listRow('aurora', { open: true }), orbitRow()])
+    const document = await boot(bridge, new FakeDocument())
+    rowNamed(document, 'orbit').press('Enter')
+    await flush()
+    const heading = classed(panelOf(document), ISSUE_HEADLINE_CLASS)[0]
+    expect(heading?.attributes.get('tabindex')).toBe('-1')
+    expect(document.activeElement).toBe(heading)
+  })
+
+  it('leaves the focus where it was on a pointer click', async () => {
+    const { bridge } = railBridge([listRow('aurora', { open: true }), orbitRow()])
+    const document = await boot(bridge, new FakeDocument())
+    rowNamed(document, 'orbit').click()
+    await flush()
+    const heading = classed(panelOf(document), ISSUE_HEADLINE_CLASS)[0]
+    expect(document.activeElement).not.toBe(heading)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The graph view's own wiring (GV2.3b): the keyboard, and the two reads behind
+// it.
+//
+// The screen next door (`graph.test.ts`) is a function of the documents it is
+// handed. What is held here is the part the *entry* owns: that a redraw puts the
+// keyboard back in the tree it drew -- on the element the gesture was made on,
+// and on the element it was already on when no gesture caused the redraw -- that
+// the graph's tablist answers the same keys the navigation's does, that a Refresh
+// pressed while a read is in flight is not dropped, and that a plan the console
+// could not read is not redrawn from the plan it read before it.
+//
+// **The focus rule is the one to mutation-prove, and the Fit case is where.**
+// `redraw` takes the target every call site names; drop the one the Fit control
+// passes --
+//
+//   redraw(screen.change({ zoom: 1 }), FIT_BUTTON)  ->  redraw(screen.change({ zoom: 1 }), null)
+//
+// -- and that case fails: the tree is replaced either way, and with `null` the
+// keyboard is left on the control the panel no longer holds. Red before, green
+// after.
+// ---------------------------------------------------------------------------
+
+/** PLAN_STATUS is the graph's own document as the wire has it: the fixture the
+ * screen next door is pinned against, so a case here drives the same graph. */
+const PLAN_STATUS: unknown = JSON.parse(
+  readFileSync(join(CONSOLE_ROOT, 'test', 'fixtures', 'plan-status.json'), 'utf8'),
+)
+
+/** GRAPH_RUNS is the console's run list, ending with the suffixes the fixture's
+ * tasks were joined to: the join that gives a node a door. */
+const GRAPH_RUNS: readonly string[] = [
+  '20261025-121805-aa01',
+  '20261025-121805-aa02',
+  '20261025-121805-aa03',
+  '20261025-121805-aa04',
+]
+
+/**
+ * FakeWorker is the layout protocol without a browser. The graph screen builds a
+ * worker the moment the view is opened (`LayoutClient`'s constructor), and a
+ * suite with no `Worker` at all drives the refusal screen rather than the graph
+ * -- so every case below stubs this one in. It answers each layout as it is
+ * posted, and the `register` message the client sends from its constructor is
+ * ignored: the client matches a reply by request id and drops the registration's.
+ */
+class FakeWorker {
+  private readonly listeners = new Map<string, ((event: { readonly data?: unknown }) => void)[]>()
+
+  postMessage(message: unknown): void {
+    const request = message as Record<string, unknown>
+    if (request['cmd'] !== 'layout') return
+    const graph = request['graph'] as {
+      readonly children: readonly { readonly id: string; readonly width: number; readonly height: number }[]
+      readonly edges: readonly { readonly id: string }[]
+    }
+    const data = {
+      children: graph.children.map((child, index) => ({
+        id: child.id,
+        x: index * 300,
+        y: 0,
+        width: child.width,
+        height: child.height,
+      })),
+      edges: graph.edges.map((edge) => ({ id: edge.id, sections: [] })),
+    }
+    for (const listener of this.listeners.get('message') ?? []) {
+      listener({ data: { id: request['id'], data } })
+    }
+  }
+
+  addEventListener(type: string, listener: (event: { readonly data?: unknown }) => void): void {
+    this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener])
+  }
+
+  terminate(): void {}
+}
+
+/** planStatusReply is one `plan.status` answer: the envelope `CliBackedHandlers`
+ * builds, with the fixture's document inside it. */
+function planStatusReply(document: unknown = PLAN_STATUS): Record<string, unknown> {
+  return {
+    ok: true,
+    data: {
+      document,
+      receivedAt: '2026-10-15T12:00:00Z',
+      sequence: 1,
+      day: '2026-10-15',
+      rolled: false,
+      notices: [],
+    },
+  }
+}
+
+/** runsReply is the console's run list, in the shape `runIdsIn` reads. */
+function runsReply(): Record<string, unknown> {
+  return { ok: true, data: { document: { runs: GRAPH_RUNS.map((run) => ({ run })) } } }
+}
+
+/** graphBridge is the fake bridge with the graph's two reads answered, and the
+ * layout worker stubbed in: the two things a case that wants a drawn graph needs
+ * and nothing else. */
+function graphBridge(replies: Readonly<Record<string, AReply>> = {}): FakeBridge {
+  vi.stubGlobal('Worker', FakeWorker)
+  return fakeBridge({
+    replies: { planStatus: () => planStatusReply(), listRuns: () => runsReply(), ...replies },
+  })
+}
+
+/** openGraph boots a console and opens the Graph view, and answers the document
+ * once the plan's first read has been drawn. */
+async function openGraph(bridge: Record<string, unknown>): Promise<FakeDocument> {
+  const document = await boot(bridge, new FakeDocument())
+  buttonFor(document, 'graph').click()
+  await flush()
+  return document
+}
+
+/** nodeNamed is one drawn node card or list row by the key it carries. */
+function nodeNamed(document: FakeDocument, key: string): FakeNode | undefined {
+  return [...classed(panelOf(document), 'graph-node'), ...classed(panelOf(document), 'graph-row')].find(
+    (node) => node.attributes.get('data-key') === key,
+  )
+}
+
+/** keyed is the first drawn node card's key: the door a case clicks. */
+function firstKeyed(document: FakeDocument): string {
+  const node = classed(panelOf(document), 'graph-node')[0]
+  const key = node?.attributes.get('data-key')
+  if (key === undefined || key === null) throw new Error('the graph drew no node to select')
+  return key
+}
+
+/** nodeForTask is the drawn card or row for one task of the fixture plan: the
+ * layout key is `<plan length>:<plan>:<task>`, so the task id is its tail. */
+function nodeForTask(document: FakeDocument, task: string): FakeNode | undefined {
+  return [...classed(panelOf(document), 'graph-node'), ...classed(panelOf(document), 'graph-row')].find((node) =>
+    (node.attributes.get('data-key') ?? '').endsWith(`:${task}`),
+  )
+}
+
+/** wordsOf is the words drawn on one task's card, in document order: what a
+ * reader sees of the state, and what a live frame's stage moves. */
+function wordsOf(document: FakeDocument, task: string): readonly string[] {
+  const node = nodeForTask(document, task)
+  if (node === undefined) throw new Error(`the graph drew no node for ${task}`)
+  return everyNode(node)
+    .filter((each) => each.attributes.get('data-word') !== null)
+    .map((each) => each.textContent ?? '')
+}
+
+/** frameWithStage is one live frame whose row for one run suffix carries a stage:
+ * the console's own `live.watch` document with the run id and the stage of its
+ * first row replaced, so the frame is a frame the decoder accepts and the graph's
+ * fold has a stage to fold. The suffix is what the fold joins on, and `aa02` is
+ * the fixture plan's one running task (`graph.test.ts`'s own join). */
+function frameWithStage(suffix: string, stage: string): Readonly<Record<string, unknown>> {
+  const document = JSON.parse(JSON.stringify(syntheticDocuments()[0])) as { runs: Record<string, unknown>[] }
+  const row = document.runs[0]
+  if (row === undefined) throw new Error('the synthetic frame has no run row to change')
+  row['run'] = `20261025-121805-${suffix}`
+  row['stage'] = stage
+  return document
+}
+
+describe('the graph view’s keyboard', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('puts the keyboard back in the tree a click or an arrow key just redrew', async () => {
+    const { bridge } = graphBridge()
+    const document = await openGraph(bridge)
+    const key = firstKeyed(document)
+
+    const clicked = nodeNamed(document, key)
+    if (clicked === undefined) throw new Error('the graph drew no node to select')
+    clicked.click()
+    await flush()
+
+    // The click selected the task and the tree was replaced: the keyboard has to
+    // be on the node **the panel now holds**, not on the one that was taken down
+    // -- a reader whose focus dropped to `<body>` on every arrow key is a reader
+    // who cannot walk the picture at all (design section 4.3).
+    const selected = nodeNamed(document, key)
+    if (selected === undefined) throw new Error('the redraw lost the node')
+    expect(selected.attributes.get('data-selected')).toBe('true')
+    expect(document.activeElement, 'the focus did not land in the tree the click drew').toBe(selected)
+
+    // And the same for the arrow keys, which move the selection along.
+    const before = classed(panelOf(document), 'graph-node').map((node) => node.attributes.get('data-key'))
+    selected.press('ArrowDown')
+    await flush()
+    const moved = before[1] ?? ''
+    const next = nodeNamed(document, moved)
+    if (next === undefined) throw new Error('the arrow key selected nothing')
+    expect(next.attributes.get('data-selected')).toBe('true')
+    expect(document.activeElement, 'the focus did not follow the arrow key').toBe(next)
+    // One selection, and it is the one the arrow key moved to: the node the
+    // click had selected is in the tree that was taken down.
+    expect(
+      classed(panelOf(document), 'graph-node').filter(
+        (node) => node.attributes.get('data-selected') === 'true',
+      ),
+    ).toEqual([next])
+  })
+
+  it('drives the graph’s tablist with the arrows, and takes the focus to the tab it chose', async () => {
+    const { bridge } = graphBridge()
+    const document = await openGraph(bridge)
+    const tabs = classed(panelOf(document), 'graph-tab')
+    expect(tabs.map((tab) => tab.attributes.get('data-tab'))).toEqual(['stream:example', 'stream:', 'all'])
+    expect(tabs.map((tab) => tab.attributes.get('tabindex'))).toEqual(['-1', '-1', '0'])
+
+    // Right wraps from the last tab to the first, and a tab's selection *is* the
+    // graph it draws: the screen re-lays the narrowed graph out, so the redraw
+    // lands a turn later and the focus follows it there.
+    const right = (tabs[2] as FakeNode).press('ArrowRight')
+    await flush()
+    expect(right.defaultPrevented, 'the graph left its own arrow key to the window').toBe(true)
+    const after = classed(panelOf(document), 'graph-tab')
+    expect(after.map((tab) => tab.attributes.get('aria-selected'))).toEqual(['true', 'false', 'false'])
+    expect(after.map((tab) => tab.attributes.get('tabindex'))).toEqual(['0', '-1', '-1'])
+    expect(document.activeElement, 'the ring did not follow the tab the arrow chose').toBe(after[0])
+
+    // Home and End are the tablist's, and a key this tablist does not own -- Up
+    // and Down are the *node* doors' -- is left to the window.
+    const end = (after[0] as FakeNode).press('End')
+    await flush()
+    expect(end.defaultPrevented).toBe(true)
+    const back = classed(panelOf(document), 'graph-tab')
+    expect(back.map((tab) => tab.attributes.get('aria-selected'))).toEqual(['false', 'false', 'true'])
+    expect(document.activeElement).toBe(back[2])
+    expect((back[2] as FakeNode).press('ArrowDown').defaultPrevented).toBe(false)
+  })
+
+  it('keeps the keyboard on the control a key pressed, and leaves it alone when it is elsewhere', async () => {
+    const { bridge } = graphBridge()
+    const document = await openGraph(bridge)
+
+    // Fit and the view switch are the two controls whose redraw used to leave the
+    // reader on `<body>`: both are `button`s a Tab reaches, both replace the
+    // panel's tree, and a keyboard reader who pressed Enter on one has to be on
+    // the one the new tree holds (design section 4.3).
+    const fit = classed(panelOf(document), 'graph-fit')[0]
+    if (fit === undefined) throw new Error('the graph drew no Fit control')
+    fit.focus()
+    fit.click()
+    await flush()
+    const afterFit = classed(panelOf(document), 'graph-fit')[0]
+    expect(afterFit, 'the Fit control drew nothing: the case would prove nothing').not.toBe(fit)
+    expect(document.activeElement, 'the Fit control dropped the keyboard').toBe(afterFit)
+
+    const view = classed(panelOf(document), 'graph-view')[0]
+    if (view === undefined) throw new Error('the graph drew no view switch')
+    view.focus()
+    view.click()
+    await flush()
+    const afterView = classed(panelOf(document), 'graph-view')[0]
+    if (afterView === undefined) throw new Error('the view switch drew nothing: the case would prove nothing')
+    expect(afterView).not.toBe(view)
+    expect(document.activeElement, 'the view switch dropped the keyboard').toBe(afterView)
+    // Back to the canvas, so the read below has a picture to draw.
+    afterView.click()
+    await flush()
+    expect(classed(panelOf(document), 'graph-canvas').length).toBeGreaterThan(0)
+
+    // And a redraw that no gesture caused never takes the keyboard from outside
+    // the graph: the reader is on the navigation's own Graph button, and the
+    // read's redraw leaves them there.
+    const nav = buttonFor(document, 'graph')
+    nav.focus()
+    ;(classed(panelOf(document), 'graph-refresh')[0] as FakeNode).click()
+    await flush()
+    expect(classed(panelOf(document), 'graph-canvas').length).toBeGreaterThan(0)
+    expect(document.activeElement, 'a read pulled the keyboard into the graph').toBe(nav)
+  })
+
+  it('re-queues one plan read when Refresh is pressed while a read is in flight', async () => {
+    // The operator's Refresh is a read of its own, and a read that is dropped
+    // because one was already outstanding is a gesture with nothing behind it --
+    // which is the state a slow `plan.status` leaves the screen in. So the second
+    // press asks for **one** more read, made when the first settles.
+    const held: (() => void)[] = []
+    let made = 0
+    const { bridge, calls } = graphBridge({
+      planStatus: () => {
+        made += 1
+        if (made !== 2) return planStatusReply()
+        return new Promise((resolve) => {
+          held.push(() => {
+            resolve(planStatusReply())
+          })
+        })
+      },
+    })
+    const document = await openGraph(bridge)
+    expect(calls.filter((call) => call.name === 'planStatus')).toHaveLength(1)
+
+    const refresh = classed(panelOf(document), 'graph-refresh')[0] as FakeNode
+    refresh.click()
+    await flush()
+    expect(calls.filter((call) => call.name === 'planStatus')).toHaveLength(2)
+    // The second press lands while the first read is outstanding.
+    refresh.click()
+    await flush()
+    expect(calls.filter((call) => call.name === 'planStatus')).toHaveLength(2)
+
+    // The read settles, and the read the second press asked for is made.
+    ;(held[0] as () => void)()
+    await flush()
+    expect(calls.filter((call) => call.name === 'planStatus')).toHaveLength(3)
+    // And it drew: the panel is the graph rather than the view the console was
+    // showing while the read was on its way.
+    expect(classed(panelOf(document), 'graph-canvas').length).toBeGreaterThan(0)
+  })
+})
+
+describe('the graph’s live frame', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('draws the stage a frame carries for a task of the plan, and leaves the keyboard where it was', async () => {
+    // The join GV2.3b exists for: the plan says the task is `running` and the
+    // *feed* says which stage it is in, so a frame is what moves a word from
+    // "implementing" to "in review". Nothing else in the console writes a stage
+    // into the drawing.
+    const { bridge } = graphBridge({
+      subscribeLive: () => snapshotReply(frameWithStage('aa02', 'review')),
+    })
+    const document = await openGraph(bridge)
+    // The plan's own stage, before any frame has been folded in.
+    expect(wordsOf(document, 'task-two')).toContain('implementing')
+
+    // A node is selected -- which is the state a frame's redraw is most likely to
+    // interrupt, because selecting one is what puts the keyboard on the canvas.
+    const selected = nodeForTask(document, 'task-one')
+    if (selected === undefined) throw new Error('the graph drew no task-one')
+    selected.click()
+    await flush()
+    const key = selected.attributes.get('data-key')
+
+    await vi.advanceTimersByTimeAsync(LIVE_POLL_MS)
+    await flush()
+    // The frame reached the drawing...
+    expect(wordsOf(document, 'task-two'), 'the frame’s stage never reached the node').toContain('in review')
+    expect(wordsOf(document, 'task-two')).not.toContain('implementing')
+    // ...and the reader is still on the task they had selected, in the tree the
+    // frame drew rather than on the one it replaced.
+    const stillSelected = nodeForTask(document, 'task-one')
+    expect(stillSelected).not.toBe(selected)
+    expect(stillSelected?.attributes.get('data-key')).toBe(key)
+    expect(document.activeElement, 'the frame dropped the keyboard off the selection').toBe(stillSelected)
+  })
+
+  it('does not pull the keyboard into the graph when the reader is somewhere else', async () => {
+    // A frame is not a gesture: it lands on a poll tick, whether or not anybody
+    // is looking at the graph's own elements, and a redraw that focused the
+    // selection would take a reader out of the navigation mid-walk.
+    const { bridge } = graphBridge({
+      subscribeLive: () => snapshotReply(frameWithStage('aa02', 'review')),
+    })
+    const document = await openGraph(bridge)
+    const nav = buttonFor(document, 'graph')
+    nav.focus()
+
+    await vi.advanceTimersByTimeAsync(LIVE_POLL_MS)
+    await flush()
+    expect(wordsOf(document, 'task-two')).toContain('in review')
+    expect(document.activeElement, 'a frame pulled the keyboard into the graph').toBe(nav)
+  })
+
+  it('keeps the rail’s state word while the graph is the view on screen', async () => {
+    // The rail's word is the **read's** own and not the Live screen's: the frame
+    // the graph folds is the same `live.watch` read (`pollLive` routes it to
+    // `frameGraph`), so a feed that has gone quiet has to read `silent` here too.
+    // The word is written whether or not the frame moved anything -- the third
+    // read below brings the same frame back, which the screen answers with no
+    // drawing at all, and the word still follows the read.
+    const frame = frameWithStage('aa02', 'review')
+    let receivedAt = nowStamp()
+    const { bridge } = graphBridge({ subscribeLive: () => snapshotReply(frame, receivedAt) })
+    const document = await openGraph(bridge)
+    const state = (): string | null => spanOf(document, RAIL_STATE_CLASS).attributes.get('data-state') ?? null
+    expect(state(), 'the mount’s own read was fresh: the case would prove nothing').toBe('running')
+
+    receivedAt = '2026-10-15T12:00:00Z'
+    await vi.advanceTimersByTimeAsync(LIVE_POLL_MS)
+    await flush()
+    expect(state(), 'a feed gone quiet left the rail on running').toBe('silent')
+
+    receivedAt = nowStamp()
+    await vi.advanceTimersByTimeAsync(LIVE_POLL_MS)
+    await flush()
+    expect(state(), 'a live feed left the rail on silent').toBe('running')
+  })
+})
+
+describe('the graph’s plan read when it refuses', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('keeps the refusal on screen when the next live frame arrives', async () => {
+    // A refusal is the graph screen's answer for a plan the console cannot read.
+    // A frame is the *other* input (GV2.3b joins the plan to the feed's stages),
+    // and a frame drawn over the refusal would put the plan the console read
+    // before the refusal back on screen -- a picture that says the plan is fine
+    // when the read that just failed says it is not.
+    const frame = syntheticDocuments()[0] as Readonly<Record<string, unknown>>
+    let refused = false
+    const { bridge } = graphBridge({
+      planStatus: () => (refused ? { ok: false, reason: 'the plan could not be read' } : planStatusReply()),
+      subscribeLive: () => snapshotReply(frame),
+    })
+    const document = await openGraph(bridge)
+    expect(classed(panelOf(document), 'graph-canvas').length).toBeGreaterThan(0)
+
+    refused = true
+    ;(classed(panelOf(document), 'graph-refresh')[0] as FakeNode).click()
+    await flush()
+    const refusal = panelOf(document).children[0] as FakeNode
+    expect(refusal.attributes.get('class')).toBe('console-unavailable')
+
+    // A poll tick: the frame is read, and it is not drawn.
+    await vi.advanceTimersByTimeAsync(LIVE_POLL_MS)
+    await flush()
+    expect(panelOf(document).children[0], 'a frame drew the plan the refusal replaced').toBe(refusal)
+    expect(classed(panelOf(document), 'graph-canvas')).toEqual([])
   })
 })

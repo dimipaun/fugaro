@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The renderer bundler: the compiled entry, and everything it requires, into one
 // script the document loads (desktop-console plan Task 3.4a; design section 5.1
 // rules 1, 3 and 5), and the theme's stylesheets into the one stylesheet the
@@ -61,7 +63,7 @@
 // under `src/renderer/theme/`, named by `THEME_STYLESHEETS` below and by nothing
 // else -- and the served root is a flat allow-list (`SERVED_FILES`), so the
 // directory's files are emitted as **one** file, `dist/bundle/console.css`,
-// served at `/console.css` and linked from each of the three documents. One file
+// served at `/console.css` and linked from each of the four documents. One file
 // and not one per source file, for the reason the scripts are bundled. The step
 // is in this tool because this tool already owns the output directory.
 //
@@ -477,6 +479,9 @@ export function bundleRenderer(options: BundleOptions): void {
 export const THEME_STYLESHEETS: readonly string[] = Object.freeze([
   'tokens.css',
   'palette.css',
+  // The console redesign's tokens (step 1): after the value set, so a screen the
+  // redesign rebuilds reads its own names, and before the rules that read them.
+  'flight-deck.css',
   // Task 6.3's: the reset, the document, the chrome and the focus rules. The
   // entry that landed with the file, in one commit, because the refusal above
   // fires in both directions -- a listed file that is missing and an unlisted
@@ -839,31 +844,142 @@ export function pickerBundlePaths(consoleRoot: string): { readonly entry: string
   }
 }
 
+/** confirmBundlePaths is the third entry (V2.5.1a part 2b-2a): the launch
+ * confirmation window's document script, `dist/renderer/confirm.js`, into
+ * `dist/bundle/confirm.js` beside the other two. It is a bundle of its own for
+ * the reason its document is a document of its own: the window has its own
+ * preload and its own two methods, and neither the dashboard's screens nor the
+ * picker's list has any business in it. */
+export function confirmBundlePaths(consoleRoot: string): { readonly entry: string; readonly out: string } {
+  return {
+    entry: join(consoleRoot, 'dist', 'renderer', 'confirm.js'),
+    out: join(consoleRoot, 'dist', 'bundle', 'confirm.js'),
+  }
+}
+
+/** WORKER_FILE is the one file in the served root that this build neither
+ * compiles nor writes: elkjs's layout worker, copied byte for byte out of the
+ * pinned package (GV2.2). It is a devDependency rather than a dependency
+ * because nothing requires it at runtime -- the renderer reaches it through
+ * `new Worker`, and the 8 MB package stays out of the asar because only this
+ * one file is copied. Serving it verbatim is the point: it is minified by its
+ * own build, so anything this build did to it would be a second, unreviewed
+ * artefact under the console's CSP (`script-src 'self'`, unchanged). */
+export const WORKER_FILE = 'elk-worker.min.js'
+
+/** consoleWorker is the worker's source and destination: from the installed
+ * `elkjs` package into the served root, where `SERVED_FILES` lists it. */
+export function consoleWorker(consoleRoot: string): { readonly source: string; readonly out: string } {
+  return {
+    source: join(consoleRoot, 'node_modules', 'elkjs', 'lib', WORKER_FILE),
+    out: join(consoleRoot, 'dist', 'bundle', WORKER_FILE),
+  }
+}
+
+/** refuseMissingSource refuses the worker's source when it is not a file, in the
+ * shape the rest of this tool refuses in: a sentence rather than `readFileSync`'s
+ * bare `ENOENT`. The ordinary way this happens is a tree that has not run
+ * `npm ci` (the worker is copied out of the installed `elkjs` package), and the
+ * failure that matters is the *order*: without this refusal the build would stop
+ * with the missing input **after** `console.css` had been written, which is the
+ * half-a-bundle shape review M3 asked `buildConsole`'s pre-write pass to
+ * prevent. `bundleWorker` asks it again itself, one step before the bytes. */
+function refuseMissingSource(source: string): void {
+  let stats: Stats | undefined
+  try {
+    stats = lstatSync(source)
+  } catch {
+    stats = undefined
+  }
+  if (stats === undefined || !stats.isFile()) {
+    throw new BundleRefusal(
+      `${source} is not a file: this build copies elkjs's worker out of the installed package, so run npm ci in console/ first`,
+    )
+  }
+}
+
+/** bundleWorker copies the worker verbatim, re-checking its source and its
+ * destination as the other writers do, so a tree without the package or a link
+ * planted between `buildConsole`'s refusal pass and this write is refused here
+ * rather than followed. */
+export function bundleWorker(worker: { readonly source: string; readonly out: string }): void {
+  refuseMissingSource(worker.source)
+  refuseSymlinkedOutput(worker.out)
+  writeFileSync(worker.out, readFileSync(worker.source))
+}
+
+/** FONT_FILES are the vendored web fonts (owner's ruling of 2026-10-28), each a
+ * family directory under `src/renderer/fonts/` and a file name. They are copied
+ * byte for byte, flat, into the served root, where `SERVED_FILES` lists them and
+ * `flight-deck.css`'s `@font-face` rules name them by the same flat path, so
+ * `font-src 'self'` admits them with no directive added. Their licences and
+ * digests are `src/renderer/fonts/README.md` and `THIRD_PARTY_NOTICES.md`. */
+export const FONT_FILES: readonly { readonly family: string; readonly file: string }[] = Object.freeze([
+  { family: 'instrument-sans', file: 'InstrumentSans-Regular.woff2' },
+  { family: 'instrument-sans', file: 'InstrumentSans-Medium.woff2' },
+  { family: 'instrument-sans', file: 'InstrumentSans-SemiBold.woff2' },
+  { family: 'instrument-sans', file: 'InstrumentSans-Bold.woff2' },
+  { family: 'ibm-plex-mono', file: 'IBMPlexMono-Regular.woff2' },
+  { family: 'ibm-plex-mono', file: 'IBMPlexMono-Medium.woff2' },
+  { family: 'ibm-plex-mono', file: 'IBMPlexMono-SemiBold.woff2' },
+])
+
+/** consoleFonts is each font's source and destination. */
+export function consoleFonts(consoleRoot: string): readonly { readonly source: string; readonly out: string }[] {
+  return FONT_FILES.map(({ family, file }) => ({
+    source: join(consoleRoot, 'src', 'renderer', 'fonts', family, file),
+    out: join(consoleRoot, 'dist', 'bundle', file),
+  }))
+}
+
+/** bundleFont copies one font verbatim, refusing a missing source and a
+ * symlinked destination as the worker's copy does. */
+export function bundleFont(font: { readonly source: string; readonly out: string }): void {
+  refuseMissingFont(font.source)
+  refuseSymlinkedOutput(font.out)
+  writeFileSync(font.out, readFileSync(font.source))
+}
+
+function refuseMissingFont(source: string): void {
+  let stats: Stats | undefined
+  try {
+    stats = lstatSync(source)
+  } catch {
+    stats = undefined
+  }
+  if (stats === undefined || !stats.isFile()) {
+    throw new BundleRefusal(`${source} is not a file: the vendored fonts live under src/renderer/fonts/`)
+  }
+}
+
 /** consoleBundles is every bundle `npm run build` writes, each told the others'
  * names -- and the stylesheet's -- so the served root's foreign-file refusal
  * still holds for anything else. `console.css` is written by
  * `bundleStylesheet`, which runs before these; the `siblings` mechanism is what
  * makes it *owned* rather than foreign. */
 export function consoleBundles(consoleRoot: string): readonly BundleOptions[] {
-  const all = [consoleBundlePaths(consoleRoot), pickerBundlePaths(consoleRoot)]
+  const all = [consoleBundlePaths(consoleRoot), pickerBundlePaths(consoleRoot), confirmBundlePaths(consoleRoot)]
   const stylesheet = basename(consoleStylesheet(consoleRoot).out)
   return all.map((bundle) => ({
     ...bundle,
     siblings: [
       ...all.filter((other) => other !== bundle).map((other) => basename(other.out)),
       stylesheet,
+      WORKER_FILE,
+      ...FONT_FILES.map(({ file }) => file),
     ],
   }))
 }
 
 /**
  * buildConsole is the whole bundle step of `npm run build`, in its order, and it
- * is a function rather than three lines in the entry point below because the
+ * is a function rather than four lines in the entry point below because the
  * **order** is a claim a test has to be able to make (review M3).
  *
  * The order is: **every refusal this build can make**, then the stylesheet, then
- * the two renderer bundles. They come first because they are the ones that can
- * stop the build, and a build that stops must not have written anything: with
+ * elkjs's worker (GV2.2), then the three renderer bundles. The refusals come
+ * first because they are the ones that can stop the build, and a build that
+ * stops must not have written anything: with
  * the stylesheet first, a foreign file in `dist/bundle/` was a build failure that
  * nonetheless left a fresh `console.css` behind. That was harmless -- a failed
  * build is not packaged -- but "a refusal must not leave half a bundle behind"
@@ -872,8 +988,8 @@ export function consoleBundles(consoleRoot: string): readonly BundleOptions[] {
  * **The pre-write phase asks all of them, and not only the two the served root
  * owns** (review M4, left open by #701). The pair the directory owns
  * (`refuseSymlinkedDirectory`, `refuseForeignFilesIn`) was here; beside them
- * are now `refuseSymlinkedOutput` for **every name this build is about to
- * write** -- the stylesheet, each bundle, and each served document each bundle
+ * are now `refuseMissingSource` for the worker the build copies and
+ * `refuseSymlinkedOutput` for **every name this build is about to write** -- the stylesheet, each bundle, and each served document each bundle
  * copies -- and `moduleClosure` for each entry, whose walk is where a bare
  * specifier, a computed one and a module the build did not emit are refused. A
  * symlinked `dist/bundle/console.js`, a symlinked `dist/bundle/index.html` and a
@@ -898,12 +1014,14 @@ export function buildConsole(consoleRoot: string): void {
   const bundles = consoleBundles(consoleRoot)
   const first = bundles[0]
   if (first === undefined) {
-    throw new BundleRefusal(`${consoleRoot} has no bundle to write: the console's build writes two`)
+    throw new BundleRefusal(`${consoleRoot} has no bundle to write: the console's build writes three`)
   }
   const directory = dirname(resolve(first.out))
   const stylesheet = consoleStylesheet(consoleRoot)
-  const owned = new Set<string>()
-  const outputs: string[] = [resolve(stylesheet.out)]
+  const worker = consoleWorker(consoleRoot)
+  const fonts = consoleFonts(consoleRoot)
+  const owned = new Set<string>([WORKER_FILE, ...FONT_FILES.map(({ file }) => file)])
+  const outputs: string[] = [resolve(stylesheet.out), resolve(worker.out), ...fonts.map((font) => resolve(font.out))]
   for (const bundle of bundles) {
     const documents = documentsOf(bundle.entry)
     for (const name of ownedInRoot(bundle, documents)) owned.add(name)
@@ -913,10 +1031,14 @@ export function buildConsole(consoleRoot: string): void {
 
   refuseSymlinkedDirectory(directory)
   refuseForeignFilesIn(directory, owned)
+  refuseMissingSource(worker.source)
+  for (const font of fonts) refuseMissingFont(font.source)
   for (const output of outputs) refuseSymlinkedOutput(output)
   for (const bundle of bundles) moduleClosure(bundle.entry)
 
   bundleStylesheet(stylesheet)
+  bundleWorker(worker)
+  for (const font of fonts) bundleFont(font)
   for (const bundle of bundles) bundleRenderer(bundle)
 }
 

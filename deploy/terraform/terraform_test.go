@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 )
 
@@ -75,6 +76,41 @@ func TestProjectJobTftestTitlesAreTheOnesInternalInfraWrites(t *testing.T) {
 	}
 }
 
+// TestProjectJobTftestAppKeyNameIsTheOneInternalInfraWrites: the tftest run
+// shared_job_mounting_the_app_key_keeps_the_accessor asserts the module's
+// secretAccessor member by the App key's project-wide container name, exactly
+// like the job names and condition titles above — and a name spelled here that
+// internal/infra never writes would make that assertion consistent with itself
+// and with nothing else. The installation's secrets map is where that name
+// comes from (internal/infra/testdata/installation-accounts.tfvars.json's
+// "github-app-key" entry), and internal/infra builds it with
+// gcp.ProjectSecretID from the Fugaro project name.
+//
+// Mutation (run, restore): change one hex digit of the name in the tftest and
+// this fails; change internal/infra's naming and the tftest's run fails at
+// terraform test time, since the module would grant the name the map holds
+// while the run asserts the literal.
+func TestProjectJobTftestAppKeyNameIsTheOneInternalInfraWrites(t *testing.T) {
+	const path = "gcp/roots/installation/tests/project_job.tftest.hcl"
+	data, err := fs.ReadFile(FS, path)
+	if err != nil {
+		t.Fatalf("reading %s: %v", path, err)
+	}
+	// The run's own secrets map, so this pairs the literal with the run that
+	// asserts it rather than with any other name in the file.
+	re := regexp.MustCompile(`github-app-key\s*=\s*"([^"]+)"`)
+	matches := re.FindAllStringSubmatch(string(data), -1)
+	if len(matches) == 0 {
+		t.Fatalf("%s spells no github-app-key container: the run this test checks is gone or reworded, and the review's [low] item — the shared job account's retention, pinned by a run and not only by a plan paragraph — would be unguarded again", path)
+	}
+	want := gcp.ProjectSecretID("aurora", config.GitHubAppKeySecret)
+	for _, m := range matches {
+		if m[1] != want {
+			t.Errorf("%s: the App key's project-wide container is %q, want %q (gcp.ProjectSecretID for the tftest's fugaro_project and config.GitHubAppKeySecret): the installation's secrets map holds the latter, so a member asserted by the former is a grant the plan would never create", path, m[1], want)
+		}
+	}
+}
+
 // The embedded tree is what fugaro update writes into its workdir, so every
 // root, module and lock file it needs must be in it. Each task that adds a
 // root or module adds its paths here.
@@ -121,6 +157,7 @@ func TestEmbeddedTree(t *testing.T) {
 		"gcp/roots/installation/tests/project_job.tftest.hcl",
 		"gcp/roots/repo/tests/testdata/github-vertex.tfvars.json",
 		"gcp/modules/installation/history.tf",
+		"gcp/modules/installation/coordinator.tf",
 		"gcp/modules/firebase/versions.tf",
 		"gcp/modules/firebase/variables.tf",
 		"gcp/modules/firebase/apis.tf",
@@ -142,6 +179,9 @@ func TestEmbeddedTree(t *testing.T) {
 		"gcp/modules/compute/network.tf",
 		"gcp/modules/compute/preload.tf",
 		"gcp/modules/compute/preload.sh",
+		// The reaper's invocation (design compute-backend §8.1 task 11): the
+		// module file with it, the way history.tf is listed above.
+		"gcp/modules/compute/reaper.tf",
 		"gcp/modules/compute/outputs.tf",
 		"gcp/roots/compute/main.tf",
 		"gcp/roots/compute/variables.tf",
@@ -418,8 +458,78 @@ func TestPreventDestroy(t *testing.T) {
 	}
 }
 
-// The token signer holds no roles, and no job or build account is granted
-// anything on the Firebase project. The plan assertions check the values;
+// The service holds no data of its own, and the container beside it is the
+// one thing worth keeping, so turning the opt-in off is NOT "a removal a plan
+// may make": with the container in state, `credentials_service = null` fails
+// the whole plan ("Instance cannot be destroyed") and applies nothing, and the
+// service, its account and its grant cannot be removed in that plan either.
+// Opting out is two owner steps — forget the container with `terraform state
+// rm` (which deletes nothing in GCP), then an ordinary plan that removes the
+// service — and C1.22's runbook carries them. This test pins the file's
+// account of that, because the first version of the comment claimed the
+// opposite (independent security review of this file, M2) and nothing else in
+// the tree states the order. deletion_protection = false is what makes step
+// two possible; the container's prevent_destroy is what keeps a credential
+// from being deleted by a plan. The first step's address is pinned exactly as
+// an owner types it — module-prefixed and quoted (re-review N1), because the
+// first version of it named a resource the root's state does not hold.
+func TestCredentialsServiceOptOutIsTwoSteps(t *testing.T) {
+	const path = "gcp/modules/installation/credentials.tf"
+	data, err := fs.ReadFile(FS, path)
+	if err != nil {
+		t.Fatalf("reading %s: %v", path, err)
+	}
+	text := string(data)
+	// The address carries the module prefix, because the container is a
+	// resource of `module "installation"` (roots/installation/main.tf) and not
+	// of the root: `terraform state rm` on the bare address names nothing in
+	// the root's state and is refused. internal/infra/forget.go's
+	// LogBucketAddress and TagMoverRoleAddress are the same shape for the same
+	// root. It is single-quoted because `[0]` is a glob to zsh, which fails the
+	// command with "no matches found" rather than passing it through
+	// (independent security review of this file, re-review N1).
+	const step = "terraform state rm 'module.installation.google_secret_manager_secret.credentials_bundle[0]'"
+	if !strings.Contains(text, step) {
+		t.Errorf("%s does not document the opt-out's first step (%q): without it a reader is left with the plan failure and no path", path, step)
+	}
+	// The two forms that must not come back: the unprefixed address (the
+	// review's N1 — it names nothing in the root), and the prefixed one
+	// unquoted (zsh refuses it before terraform ever sees it).
+	for _, wrong := range []string{
+		"terraform state rm google_secret_manager_secret.credentials_bundle[0]",
+		"terraform state rm module.installation.google_secret_manager_secret.credentials_bundle[0]",
+	} {
+		if strings.Contains(text, wrong) {
+			t.Errorf("%s carries the opt-out's first step as %q: the address needs the module prefix and single quotes, %q", path, wrong, step)
+		}
+	}
+	if strings.Contains(text, "is therefore a removal a plan may make") || strings.Contains(text, "removal a plan may make, not a refusal") {
+		t.Errorf("%s still claims the opt-out is a removal a plan may make: it is not, the container's prevent_destroy refuses the whole plan", path)
+	}
+	// The two installation steps are not the whole opt-out: the invoker grants
+	// and the dropped model-secret accessors are in the REPOSITORY roots, so a
+	// reader who stops here leaves every one of them declaring a service that
+	// is gone (re-review N2). The file has to say so.
+	const repoStep = "re-applied too, and before these two steps"
+	if !strings.Contains(text, repoStep) {
+		t.Errorf("%s does not say that every repository root is re-applied as part of the opt-out (%q): the invoker grants and the dropped model-secret accessors live in the repository roots, and one left declaring a service that is gone cannot apply", path, repoStep)
+	}
+	// The two lifecycle settings the two steps depend on.
+	containers := resourceBlocks(t, path, data, "google_secret_manager_secret")
+	if len(containers) != 1 || !hasAttr(containers[0].body, "prevent_destroy", "true") {
+		t.Errorf("%s: the bundle container must be exactly one secret with prevent_destroy = true (got %d blocks), which is what makes the state rm step necessary", path, len(containers))
+	}
+	services := resourceBlocks(t, path, data, "google_cloud_run_v2_service")
+	if len(services) != 1 || !hasAttr(services[0].body, "deletion_protection", "false") {
+		t.Errorf("%s: the service must be exactly one Cloud Run service with deletion_protection = false (got %d blocks), so the second step can remove it", path, len(services))
+	}
+}
+
+// The token signer holds no roles, and no run's job or build account is
+// granted anything on the Firebase project — the one account of a job's that
+// is, the coordinator's writer, is granted the FP's database admin by name,
+// and only once coordinator_account is set (coordinator plan task P3; the
+// account is created in P5). The plan assertions check the values;
 // this text check catches a grant written to either by reference, which no
 // input could ever reveal.
 func TestFirebaseModuleGrantsNothingToSignerOrJobs(t *testing.T) {
@@ -433,7 +543,7 @@ func TestFirebaseModuleGrantsNothingToSignerOrJobs(t *testing.T) {
 		for _, typ := range []string{"google_project_iam_member", "google_service_account_iam_member", "google_project_iam_custom_role"} {
 			for _, blk := range resourceBlocks(t, path, b, typ) {
 				for _, bad := range []string{"google_service_account.signer.member", "google_service_account.signer.email", "serviceAccount:", "roles/storage", "roles/run."} {
-					if strings.Contains(blk.body, bad) && !(strings.Contains(blk.name, "history_") && bad == "serviceAccount:") {
+					if strings.Contains(blk.body, bad) && !(bad == "serviceAccount:" && (strings.Contains(blk.name, "history_") || strings.Contains(blk.name, "coordinator_"))) {
 						t.Errorf("%s: %s mentions %s", path, blk.name, bad)
 					}
 				}
@@ -1123,6 +1233,123 @@ func TestHistorySchedulerHoldsJobRunnerOnTheJob(t *testing.T) {
 	}
 }
 
+// TestTheCoordinatorJobTakesItsCredentialFromASecretAndNothingElse is P5's
+// third red step ("the plan's generated diff carries no credential material in
+// the job's environment"). The aggregation job's environment is the one place
+// its credential could reach a plan, a `terraform show` and a log line, and
+// the App key is the one credential it holds: its GitHub read is P2's
+// read-only installation token, minted from this key, and its database write
+// is its own account (D194). So the key is a secret_key_ref to the
+// project-wide container and never a value, every other entry is the plain
+// environment internal/cli/coordinator.go's sweep requires, and the job runs
+// as the account the Firebase root grants the FP's database admin to — the
+// account and no default Compute account.
+//
+// Mutation (run, restore): replace the value_source with a literal value — a
+// plan, a `terraform show` and the job's own describe would then carry the
+// App's private key, and this fails on the entry that has no value_source.
+func TestTheCoordinatorJobTakesItsCredentialFromASecretAndNothingElse(t *testing.T) {
+	const path = "gcp/modules/installation/coordinator.tf"
+	b, err := fs.ReadFile(FS, path)
+	if err != nil {
+		t.Fatalf("%s: %v (P5's aggregation job is declared there)", path, err)
+	}
+	jobs := resourceBlocks(t, path, b, "google_cloud_run_v2_job")
+	if len(jobs) != 1 || jobs[0].name != "google_cloud_run_v2_job.coordinator" {
+		t.Fatalf("%s declares %d google_cloud_run_v2_job blocks (%v), want the coordinator's one", path, len(jobs), blockNames(jobs))
+	}
+	job := jobs[0]
+	if !hasAttr(job.body, "service_account", "google_service_account.coordinator[0].email") {
+		t.Errorf("%s: the aggregation job does not run as the coordinator account. Unset it runs as the default Compute Engine account, which is not the account the Firebase root grants the database admin to, and the sweep would then write nothing at all.", job.name)
+	}
+	for _, want := range [][2]string{
+		{"command", `["/usr/local/bin/fugaro"]`},
+		{"args", `["coordinator", "sweep"]`},
+		// One tick is bounded and a failure is the next tick's job: nothing
+		// retries a sweep into a second pass of its own (the plan's security
+		// review asks for exactly this).
+		{"max_retries", "0"},
+		{"timeout", `"600s"`},
+		{"deletion_protection", "true"},
+	} {
+		if !hasAttr(job.body, want[0], want[1]) {
+			t.Errorf("%s: %s does not set %s = %s", path, job.name, want[0], want[1])
+		}
+	}
+
+	// Every env entry of the container: one is the key through a secret, and
+	// the rest are the plain environment the command reads.
+	envs := nestedBlocks(job.body, "env")
+	if len(envs) == 0 {
+		t.Fatalf("%s: %s declares no env blocks", path, job.name)
+	}
+	plain := map[string]string{}
+	mounted := 0
+	for _, env := range envs {
+		name := strings.Trim(firstAttr(env, "name"), `"`)
+		if strings.Contains(env, "value_source") {
+			mounted++
+			if name != "FUGARO_GITHUB_APP_PRIVATE_KEY" {
+				t.Errorf("%s: %s mounts %s through a secret: the App key is the one credential this job holds", path, job.name, name)
+			}
+			for _, want := range []string{
+				`(?m)^\s*secret_key_ref\s*\{`,
+				// The project-wide container of the logical name the local
+				// config records (config.GitHubAppKeySecret), never a path.
+				`(?m)^\s*secret\s*=\s*var\.project_secrets\[var\.coordinator\.app_key_secret\]\s*$`,
+				`(?m)^\s*version\s*=\s*"latest"\s*$`,
+			} {
+				if !regexp.MustCompile(want).MatchString(env) {
+					t.Errorf("%s: %s mounts the App key without %s:\n%s", path, job.name, want, env)
+				}
+			}
+			continue
+		}
+		if name == "FUGARO_GITHUB_APP_PRIVATE_KEY" {
+			t.Errorf("%s: %s carries the App's private key as a plain environment value:\n%s", path, job.name, env)
+		}
+		plain[name] = firstAttr(env, "value")
+	}
+	if mounted != 1 {
+		t.Errorf("%s: %s mounts %d entries through a secret, want the App key's one", path, job.name, mounted)
+	}
+	for _, want := range []string{
+		"FUGARO_PROJECT", "FUGARO_FIREBASE_PROJECT", "FUGARO_RTDB_URL",
+		"FUGARO_RUNS_BUCKET", "FUGARO_COORDINATOR_REPOS", "FUGARO_GITHUB_APP_ID",
+	} {
+		if _, ok := plain[want]; !ok {
+			t.Errorf("%s: %s does not set %s, which the sweep refuses to run without (internal/cli/coordinator.go's runCoordinatorSweep)", path, job.name, want)
+		}
+	}
+	if len(plain) != 6 {
+		t.Errorf("%s: %s sets %d plain environment values (%v), want the six the command reads", path, job.name, len(plain), slices.Sorted(maps.Keys(plain)))
+	}
+	// And no plain value is key material, whatever its entry is called: a PEM
+	// in a plan is the leak this test exists for.
+	for name, value := range plain {
+		if strings.Contains(value, "PRIVATE KEY") || strings.Contains(value, "BEGIN ") {
+			t.Errorf("%s: %s's value looks like key material: %s", path, name, value)
+		}
+	}
+}
+
+// nestedBlocks returns the bodies of the blocks of type typ at any depth of
+// body: resourceBlocks reads resource headers only, and a job's env blocks sit
+// inside its container.
+func nestedBlocks(body, typ string) []string {
+	re := regexp.MustCompile(`(?m)^\s*` + typ + `\s*\{`)
+	var out []string
+	for _, m := range re.FindAllStringIndex(body, -1) {
+		open := strings.LastIndex(body[m[0]:m[1]], "{") + m[0]
+		end := matchBrace(body, open)
+		if end < 0 {
+			return out
+		}
+		out = append(out, body[open+1:end])
+	}
+	return out
+}
+
 // The same-project layout (design D3, revised 2026-10-04): the installation
 // and the Firebase budget backend can live in one GCP project, so the budget
 // backend's separation from the jobs rests on the IAM in this tree (and on
@@ -1156,20 +1383,32 @@ var (
 	// TestComputePreloadBuilderRoleAreExactlyTheBuild), and the
 	// build-submitter id is the installation's own role.
 	allowedRoleExprs = regexp.MustCompile(`^(each\.value(\.role)?|var\.job_runner_role|var\.installation\.role_ids\.(tag_mover|build_submitter)|var\.build_submitter_role|google_project_iam_custom_role\.(launcher|build_submitter|token_minter|job_runner|reaper|preload_builder)\.name|google_project_iam_custom_role\.history\[0\]\.name)$`)
-	// The member expressions an IAM member may use.
-	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.history\[0\]\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|installation\.scheduler_service_account)\}")$`)
+	// The member expressions an IAM member may use. google_service_account
+	// .credentials[0] is the credentials service's own account (C1.18): the
+	// one member its bundle's secretAccessor grant names.
+	// google_service_account.coordinator[0] is the coordinator's writer (P5):
+	// the aggregation job's account, whose own grants are objectViewer on the
+	// runs bucket and secretAccessor on the App key's one container, both on
+	// the account and nothing wider. var.coordinator_account is the same
+	// account as the Firebase root reads it (P3): the installation root
+	// outputs it and that root grants it the FP's database admin, as it grants
+	// var.history_account's.
+	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator)\[0\]\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|coordinator_account|installation\.scheduler_service_account)\}")$`)
 
-	// A custom role of this project, spelled as the literal path
-	// "projects/${var.project}/roles/<id>" rather than read from the role
+	// A custom role of one of this run's projects, spelled as the literal path
+	// "projects/${var.<project>}/roles/<id>" rather than read from the role
 	// resource's own name attribute. Task 1.5 step 5: the creating apply plans
-	// the deployer's two roles, and a project grant whose role is computed
-	// cannot be told from the scoped one, whose IAM condition is the whole
-	// fence around the account — so the five project grants planned by that
-	// same apply (the deployer's two, the launchers', the build submitters'
-	// and the history account's) name their role literally instead. var.project
-	// is known at plan time, and the ID must be one the modules create
-	// (tf.FugaroRoles), checked below.
-	projectRoleLiteralRE = regexp.MustCompile(`^"projects/\$\{var\.project\}/roles/([A-Za-z0-9_.]+)"$`)
+	// the deployer's eight roles, and a project grant whose role is computed
+	// cannot be told from a conditioned one, whose IAM condition is the whole
+	// fence around the account — so the project grants planned by that same
+	// apply (the deployer's eight, the launchers', the build submitters' and
+	// the history account's) name their role literally instead. Both project
+	// variables are accepted because the credentials service's database role
+	// lives in the Firebase project (credentials.tf, and the reason is the same
+	// one: an unknown role is a grant the cover cannot read). Both are known at
+	// plan time, and the ID must be one the modules create (tf.FugaroRoles),
+	// checked below.
+	projectRoleLiteralRE = regexp.MustCompile(`^"projects/\$\{var\.(project|credentials_service\.firebase_project)\}/roles/([A-Za-z0-9_.]+)"$`)
 
 	// Roles that reach the budget backend (RTDB, Firestore, Identity
 	// Platform, API keys, the token signer, IAM or project policy), or that
@@ -1211,8 +1450,8 @@ func TestIAMResourcesUseKnownExpressions(t *testing.T) {
 				t.Errorf("%s: %s has no role attribute the scan can read", path, blk.name)
 			case strings.HasPrefix(role, `"`):
 				if m := projectRoleLiteralRE.FindStringSubmatch(role); m != nil {
-					if !slices.Contains(tf.FugaroRoles, m[1]) {
-						t.Errorf("%s: %s: role %s names the custom role %s, which the modules do not create", path, blk.name, role, m[1])
+					if !slices.Contains(tf.FugaroRoles, m[2]) {
+						t.Errorf("%s: %s: role %s names the custom role %s, which the modules do not create", path, blk.name, role, m[2])
 					}
 					break
 				}
@@ -1459,18 +1698,44 @@ func TestCustomRolesNeverReachTheBackend(t *testing.T) {
 				}
 				continue
 			}
-			// The deployer's two roles (installation/deployer.tf, D75) hold
+			// The deployer's roles (installation/deployer.tf, D75) hold
 			// permissions this ban exists to keep out of Fugaro's own custom
 			// roles: IAM, serviceusage and apikeys permissions, and a
 			// resource-level setIamPolicy. That is the owner's answer of
 			// 2026-10-16, and the bound on them is elsewhere and is exact:
-			// tf.RolePermissions pins both lists permission for permission
+			// tf.RolePermissions pins every list permission for permission
 			// (internal/infra/tf/cover_test.go) with a fixture that refuses a
-			// widening, and both are bound to one account, the scoped one only
-			// under the managed-prefix condition. The deployer is not an
-			// installation role: it holds nothing project-wide but creation
-			// and reads.
-			if blk.name == "google_project_iam_custom_role.fugaro_deployer" || blk.name == "google_project_iam_custom_role.fugaro_deployer_scoped" {
+			// widening, and each of the eight is bound to one account, the
+			// seven conditioned ones only under the managed-prefix fence of
+			// their own service (docs/design/managed-deployer-fence.md). The
+			// deployer is not an installation role: it holds nothing
+			// project-wide but creation and reads.
+			if strings.HasPrefix(blk.name, "google_project_iam_custom_role.fugaro_deployer") {
+				continue
+			}
+			// The credentials service's database role (installation/
+			// credentials.tf, 0.10.1, ledger #903): the one knowing exception
+			// that holds a firebasedatabase permission, because the service
+			// reads the kill switches, the project policy, a run's outcome node
+			// and the credential state another revision wrote, and writes the
+			// creds/ nodes it owns. Realtime Database IAM has no path-level
+			// scope, so the two instance DATA permissions are the whole of the
+			// narrowest grant that can do that — nothing else is allowed here,
+			// so no lifecycle permission (create, delete, disable, reenable,
+			// undelete) and no list may appear, and the role is bound to the
+			// service's own account alone (tf's toCredentials rows). The exact
+			// list is pinned by TestCredentialsDatabaseRoleIsTheTwoDataPermissions
+			// below; the ban this continues past is about roles whose
+			// permissions reach further than the account's work needs.
+			if blk.name == "google_project_iam_custom_role.credentials_database" {
+				if !strings.HasPrefix(path, "gcp/modules/installation/credentials") {
+					t.Errorf("%s: %s is not in the installation module's credentials.tf", path, blk.name)
+				}
+				for _, p := range quotedPerm.FindAllStringSubmatch(m[1], -1) {
+					if !slices.Contains(credentialsDatabasePermissions, p[1]) {
+						t.Errorf("%s: %s holds %s: the service's database role is its two data permissions and nothing else (no lifecycle, no list)", path, blk.name, p[1])
+					}
+				}
 				continue
 			}
 			if blk.name == "google_project_iam_custom_role.token_minter" {
@@ -1648,8 +1913,18 @@ func TestComputeReaperRoleIsExactlyFive(t *testing.T) {
 				t.Errorf("%s: the reaper holds %v, want exactly %v (design §3.7)", path, got, want)
 			}
 		}
-		for _, blk := range allResourceBlocks(t, path, b) {
-			if !anyIAMRE.MatchString(blk.typ) || !strings.Contains(blk.body, "google_service_account.reaper") {
+		// The project-level grant, and only it: what this test is about is
+		// what the reaper account is GRANTED on the project. Task 11's
+		// reaper.tf holds three grants the other way round -- the account is
+		// the member of a job-scoped roles/run.invoker and of two actAs
+		// bindings (the Scheduler agent's, so the schedule can mint the job's
+		// token, and the operators', so applying this root can create it) --
+		// and none of those is a project role. They are not counted here
+		// because they say nothing about this: a reaper that could reach more
+		// of the project would reach it through a project role, which is what
+		// the scan below still refuses, whatever type carries it.
+		for _, blk := range resourceBlocks(t, path, b, "google_project_iam_member") {
+			if !strings.Contains(blk.body, "google_service_account.reaper") {
 				continue
 			}
 			grants++
@@ -1662,6 +1937,167 @@ func TestComputeReaperRoleIsExactlyFive(t *testing.T) {
 	if roles != 1 || grants != 1 {
 		t.Errorf("found %d reaper roles and %d reaper grants, want 1 of each", roles, grants)
 	}
+}
+
+// TestTheReaperJobRunsAsTheReaperAccountOnASchedule pins Task 11's invocation
+// (design §8.1 Task 11, steps 2 and 3): the Cloud Run job that runs
+// `fugaro reaper`, the invoker grant it is started with, and the Scheduler job
+// that starts it every ReapMargin -- in the scheduler region and not the
+// installation's, which is the one attribute of it a plan cannot check and a
+// wrong value cannot be seen from (a Scheduler job in a region Cloud Scheduler
+// does not serve fails the apply).
+//
+// It is the task's red step, and it was written against a reaper.tf whose job
+// left `service_account` unset: a Cloud Run job with no service account runs as
+// the project's default Compute Engine account, which holds the editor role by
+// default -- far wider than the five permissions iam.tf narrowed for this job,
+// and the exact shape the module refuses for a run's VM
+// (internal/infra/compute.go's checkServiceAccount). The assertion below is
+// what makes that unset job impossible to merge.
+//
+// The sibling tftest run (gcp/roots/compute/tests/compute.tftest.hcl,
+// TestTheReaperRunsAsTheReaperAccountOnASchedule) asserts the same three
+// resources against a plan, where the URI's parts and the account's member are
+// values rather than text. This test is the text: a plan cannot see that the
+// name in front of it is the reaper's, and this scan is what keeps the two
+// files' literals from drifting apart.
+func TestTheReaperJobRunsAsTheReaperAccountOnASchedule(t *testing.T) {
+	const path = "gcp/modules/compute/reaper.tf"
+	b, err := fs.ReadFile(FS, path)
+	if err != nil {
+		t.Fatalf("%s: %v (Task 11's invocation lives there)", path, err)
+	}
+	jobs := resourceBlocks(t, path, b, "google_cloud_run_v2_job")
+	if len(jobs) != 1 || jobs[0].name != "google_cloud_run_v2_job.reaper" {
+		t.Fatalf("%s declares %d google_cloud_run_v2_job blocks (%v), want the reaper's one", path, len(jobs), blockNames(jobs))
+	}
+	job := jobs[0]
+	// The pin the task was written against.
+	if !hasAttr(job.body, "service_account", "google_service_account.reaper.email") {
+		t.Errorf("%s: the reaper's job does not run as the reaper account. Unset it runs as the default Compute Engine account, whose editor role is far wider than the five permissions this job is meant to hold.", job.name)
+	}
+	if strings.Contains(job.body, "developer.gserviceaccount.com") {
+		t.Errorf("%s: the reaper's job names a default Compute account: %s", path, job.name)
+	}
+	for _, want := range [][2]string{
+		{"name", "local.reaper_job"},
+		{"image", "var.base_image"},
+		{"command", `["/usr/local/bin/fugaro"]`},
+		{"args", `["reaper"]`},
+		// The one pass over every job and VM is bounded: inside the cadence,
+		// and never retried into a second pass of its own.
+		{"max_retries", "0"},
+		{"timeout", `"600s"`},
+		{"deletion_protection", "true"},
+	} {
+		if !hasAttr(job.body, want[0], want[1]) {
+			t.Errorf("%s: %s does not set %s = %s", path, job.name, want[0], want[1])
+		}
+	}
+	// The job's whole configuration is the project and the region: a Cloud Run
+	// job has no project config file and no checkout, and the timeouts the
+	// pass judges by come from a run's own ceiling (internal/cli/reaper.go's
+	// reaperEnvOptions).
+	for _, want := range [][2]string{
+		{"name", `"FUGARO_GCP_PROJECT"`},
+		{"name", `"FUGARO_REGION"`},
+		// The marker that tells the command it is the job and not a shell:
+		// without it the environment path is a dry run
+		// (internal/cli/reaper.go's reaperEnvOptions), and the two variables
+		// above are the history job's.
+		{"name", `"FUGARO_REAPER_JOB"`},
+		{"value", `"1"`},
+	} {
+		if !hasAttr(job.body, want[0], want[1]) {
+			t.Errorf("%s: %s does not set %s = %s", path, job.name, want[0], want[1])
+		}
+	}
+	// And both are filled from this root's own project and region, which is
+	// what makes the module the Batch provisioning rather than a second
+	// config: two env values, one per variable.
+	for _, want := range []string{"var.project", "var.region"} {
+		if !regexp.MustCompile(`(?m)^\s*value\s*=\s*` + regexp.QuoteMeta(want) + `\s*$`).MatchString(job.body) {
+			t.Errorf("%s: %s does not fill an environment value from %s", path, job.name, want)
+		}
+	}
+	// The name must not look like a workflow's: ls and max_parallel count the
+	// `fugaro-` jobs as runs (internal/infra/firebase.go's HistoryJob says why).
+	if m := regexp.MustCompile(`(?m)^\s*reaper_job\s*=\s*"([^"]+)"`).FindStringSubmatch(string(b)); m == nil {
+		t.Errorf("%s: no literal reaper_job name: the job's name is a local, and this test is what reads it back", path)
+	} else if strings.HasPrefix(m[1], "fugaro-") {
+		t.Errorf("%s: the reaper's job is named %q, which `fugaro ls` and max_parallel read as a workflow's job", path, m[1])
+	}
+
+	runners := resourceBlocks(t, path, b, "google_cloud_run_v2_job_iam_member")
+	if len(runners) != 1 || runners[0].name != "google_cloud_run_v2_job_iam_member.reaper_runner" {
+		t.Fatalf("%s declares %d google_cloud_run_v2_job_iam_member blocks (%v), want the invoker's one", path, len(runners), blockNames(runners))
+	}
+	if !hasAttr(runners[0].body, "role", `"roles/run.invoker"`) ||
+		!hasAttr(runners[0].body, "member", "google_service_account.reaper.member") ||
+		// On this job and no other: the name is the resource's, not a literal.
+		!hasAttr(runners[0].body, "name", "google_cloud_run_v2_job.reaper.name") {
+		t.Errorf("%s: %s must grant roles/run.invoker on the reaper's own job to the reaper account, which is the account the schedule mints the token from", path, runners[0].name)
+	}
+
+	schedules := resourceBlocks(t, path, b, "google_cloud_scheduler_job")
+	if len(schedules) != 1 || schedules[0].name != "google_cloud_scheduler_job.reaper_sweep" {
+		t.Fatalf("%s declares %d google_cloud_scheduler_job blocks (%v), want the sweep's one", path, len(schedules), blockNames(schedules))
+	}
+	sweep := schedules[0]
+	for _, want := range [][2]string{
+		// ReapMargin is 15 minutes: a run that should have ended is swept at
+		// most one margin late, and a slower schedule would leave a stuck
+		// job's VM alive for its own period PLUS the margin.
+		{"schedule", `"*/15 * * * *"`},
+		{"time_zone", `"Etc/UTC"`},
+		{"retry_count", "0"},
+		{"http_method", `"POST"`},
+		// The SCHEDULER region and never var.region. Cloud Scheduler does not
+		// serve every Cloud Run region -- us-east5, this module's own
+		// variables block and its tfvars testdata, is one it does not -- and a
+		// Scheduler job created in a region it does not serve fails the whole
+		// apply, so the sweep would not merely be unscheduled: it would not
+		// exist, and the leaked VMs it is here to delete would be swept by
+		// nothing. The URI below is the other half of the split and stays the
+		// Cloud Run job's own location.
+		{"region", "var.scheduler_region"},
+	} {
+		if !hasAttr(sweep.body, want[0], want[1]) {
+			t.Errorf("%s: %s does not set %s = %s", path, sweep.name, want[0], want[1])
+		}
+	}
+	uri := "https://run.googleapis.com/v2/projects/${var.project}/locations/${google_cloud_run_v2_job.reaper.location}/jobs/${google_cloud_run_v2_job.reaper.name}:run"
+	if !strings.Contains(sweep.body, uri) {
+		t.Errorf("%s: %s does not start the reaper's own job: want the URI %s", path, sweep.name, uri)
+	}
+	if !regexp.MustCompile(`(?s)oauth_token\s*\{[^}]*service_account_email\s*=\s*google_service_account\.reaper\.email`).MatchString(sweep.body) {
+		t.Errorf("%s: %s does not call the job as the reaper account", path, sweep.name)
+	}
+	// The token is minted by Cloud Scheduler's own agent, which needs actAs on
+	// the account: without the grant the schedule fails with PERMISSION_DENIED
+	// before the job is ever started.
+	agents := resourceBlocks(t, path, b, "google_service_account_iam_member")
+	found := false
+	for _, blk := range agents {
+		if blk.name == "google_service_account_iam_member.reaper_scheduler_agent" &&
+			hasAttr(blk.body, "member", "local.cloud_scheduler_agent") &&
+			hasAttr(blk.body, "role", `"roles/iam.serviceAccountUser"`) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("%s: no actAs grant for Cloud Scheduler's agent on the reaper account: minting the job's OAuth token needs it", path)
+	}
+}
+
+// blockNames lists the addresses of blocks, for a failure message that says
+// which one the scan found.
+func blockNames(blks []block) []string {
+	out := make([]string, 0, len(blks))
+	for _, b := range blks {
+		out = append(out, b.name)
+	}
+	return out
 }
 
 // The preload builder's role is the build's own calls and nothing more, and
@@ -3457,6 +3893,605 @@ func TestRootManagedDeployerScopedDefaultsOff(t *testing.T) {
 	}
 	body := code[m[1]:matchBrace(code, m[1]-1)]
 	if !hasAttr(body, "default", "false") {
-		t.Errorf("the root's managed_deployer_scoped must default to false; fugaro update never sets it in 0.8.6:\n%s", body)
+		t.Errorf("the root's managed_deployer_scoped must default to false: fugaro writes it only for an installation that uses managed projects (internal/cli/init.go's installRoot, from the project's own creation fact), so an installation that never asks for managed plans none of the fence's resources:\n%s", body)
+	}
+}
+
+// squash collapses runs of whitespace, so an assertion about an attribute's
+// value does not also pin the alignment of the block it is in.
+func squash(s string) string { return strings.Join(strings.Fields(s), " ") }
+
+// TestCredentialsServiceGrantsAreTheOneBundle is the owner's Q6 ruling of
+// 2026-10-19 as a property of the source — and it is the guard the tftest
+// runs cannot be: a run plans the module with one set of variables, so a
+// *second* grant, or a condition on the one grant, is invisible to it the
+// moment the run's variables do not reach it.
+//
+// Q6: the credentials service's reach in Secret Manager is ONE container and
+// ONE accessor grant on it, to the service's own account, and nothing that
+// makes the grant's reach depend on a naming convention — no
+// secretmanager.googleapis.com/secretId condition, no name-prefix fence, no
+// per-credential grant. The container is created here; its document is
+// written only by the owner-run `fugaro creds set` (C1.25), so no value and
+// no version is anywhere in this file.
+//
+// The mutation is any of the shapes Q6 replaced: a second
+// google_secret_manager_secret_iam_member (the per-credential grants of the
+// earlier attempt, PR #674), a `condition` block on the one grant, or a
+// Secret Manager container or version the service has no business reading.
+//
+// The service's OTHER reach — the realtime database — is deliberately not a
+// mutation here any more (0.10.1, ledger #903): the file grants exactly one
+// project role, the service's own database role, and
+// TestCredentialsDatabaseRoleIsTheTwoDataPermissions pins that grant's role,
+// permissions, project and member. What this test still refuses is every
+// SECOND way to reach the project: an authoritative binding or policy, an
+// audit config, a key.
+func TestCredentialsServiceGrantsAreTheOneBundle(t *testing.T) {
+	const path = "gcp/modules/installation/credentials.tf"
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripComments(string(b))
+
+	secrets := resourceBlocks(t, path, b, "google_secret_manager_secret")
+	if len(secrets) != 1 {
+		t.Fatalf("%s declares %d secret containers, want the one bundle and no other (Q6)", path, len(secrets))
+	}
+	container := squash(secrets[0].body)
+	if !strings.Contains(container, "secret_id = var.credentials_service.bundle_secret") {
+		t.Errorf("%s: the bundle's secret_id must be the variable's — the name the loader reads — and never a second spelling of it:\n%s", path, container)
+	}
+	if strings.Contains(container, "fugaro_secret") {
+		t.Errorf("%s: the bundle container must carry no fugaro_secret label: that label is what discovery reads to decide which logical secret of the project's set a container holds, and this one is one document with one writer (internal/infra/discover.go's liveProjectSecrets):\n%s", path, container)
+	}
+	if strings.Contains(container, "condition") {
+		t.Errorf("%s: the bundle container carries a condition:\n%s", path, container)
+	}
+
+	grants := resourceBlocks(t, path, b, "google_secret_manager_secret_iam_member")
+	if len(grants) != 1 {
+		t.Fatalf("%s declares %d secret accessor grants, want exactly one — on the bundle, for the service's account (Q6)", path, len(grants))
+	}
+	grant := squash(grants[0].body)
+	for _, want := range []string{
+		`role = "roles/secretmanager.secretAccessor"`,
+		"secret_id = google_secret_manager_secret.credentials_bundle[0].secret_id",
+		"member = google_service_account.credentials[0].member",
+		"count = local.credentials_service_on ? 1 : 0",
+	} {
+		if !strings.Contains(grant, want) {
+			t.Errorf("%s: the one bundle grant does not hold %q:\n%s", path, want, grant)
+		}
+	}
+	if strings.Contains(grant, "condition") {
+		t.Errorf("%s: the bundle grant carries a condition. Q6 replaced the name-prefix fence and the secretId filter with one unconditioned grant on one container; the service's own ID-token check is what decides who is served:\n%s", path, grant)
+	}
+
+	// The rest of the file, in one place. Every one of these is a way the
+	// service's reach could grow without a second resource to notice.
+	for _, bad := range []struct{ needle, why string }{
+		{"secretmanager.googleapis.com/secretId", "a secretId condition is the per-secret filter Q6 replaced"},
+		{"allUsers", "an unauthenticated invoker on the service"},
+		{"allAuthenticatedUsers", "an invoker on the service for every Google account"},
+		{"google_cloud_run_v2_service_iam_member", "an invoker grant here: the job accounts' grants live in modules/workflow/sa.tf, one per job, and the installation root grants nobody"},
+		{"google_service_account_iam_member", "an actAs grant on the service's account: anyone who could deploy a revision as it could read every model credential the installation holds"},
+		{"google_project_iam_binding", "an authoritative project binding: one binding owns the project's whole policy for its role and takes every other member off it"},
+		{"google_project_iam_policy", "an authoritative project policy"},
+		{"google_project_iam_audit_config", "an audit config for the service's account"},
+		{"google_service_account_key", "a key for the service's account"},
+		{"google_secret_manager_secret_version", "a version: values are written by the owner-run fugaro creds set, never by Terraform"},
+	} {
+		if strings.Contains(code, bad.needle) {
+			t.Errorf("%s mentions %s: %s", path, bad.needle, bad.why)
+		}
+	}
+
+	// The account's lifecycle precondition is the one `condition` this file
+	// is allowed to carry, and it is taken out before the sweep below so the
+	// sweep is an assertion about conditions rather than a search that
+	// happens to pass: any other one — on the service, on the container, on
+	// the grant — is a finding.
+	const precondition = "condition     = var.credentials_service != null"
+	if strings.Count(code, "precondition") != 1 || !strings.Contains(code, precondition) {
+		t.Fatalf("%s: the account's lifecycle precondition is the only `precondition` in this file, and it must stay that way:\n%s", path, code)
+	}
+	// A `condition` attribute or block, wherever it stands: "precondition"
+	// does not match, and neither does a comment (the code is stripped).
+	if rest := strings.Replace(code, precondition, "", 1); regexp.MustCompile(`(?m)^\s*condition\s*[={]`).MatchString(rest) {
+		t.Errorf("%s: a condition outside the account's precondition. Q6 replaced the name-prefix fence and the secretId filter with one unconditioned grant on one container:\n%s", path, rest)
+	}
+
+	// Every resource in the file is gated on the one boolean, which is what the
+	// header's "keeps the six resources of this file in step" means: a resource
+	// added without it is created in an installation that never opted in.
+	// TestCredentialsServiceResourcesAreCounted reads the same promise from the
+	// other end — the sentence's number against the file — and this sweep is
+	// kept beside it because it reads the gate itself, the exact expression and
+	// not the boolean's name, so a resource that mentions the boolean without
+	// counting on it is caught here and not there.
+	gated := 0
+	for _, m := range resourceHeader.FindAllStringSubmatchIndex(code, -1) {
+		end := matchBrace(code, m[1]-1)
+		if end < 0 {
+			t.Fatalf("%s: unbalanced braces in %s.%s", path, code[m[2]:m[3]], code[m[4]:m[5]])
+		}
+		body := squash(code[m[1]:end])
+		if !strings.Contains(body, "count = local.credentials_service_on ? 1 : 0") {
+			t.Errorf("%s: %s.%s is not gated on local.credentials_service_on, so it is created in an installation that never opted in:\n%s", path, code[m[2]:m[3]], code[m[4]:m[5]], body)
+			continue
+		}
+		gated++
+	}
+	if gated != len(resourceHeader.FindAllString(code, -1)) {
+		t.Fatalf("%s: %d of the file's resources were read as gated; the sweep above is not covering the file", path, gated)
+	}
+
+	if !strings.Contains(code, "service_account = google_service_account.credentials[0].email") {
+		t.Errorf("%s: the service must run as its own account", path)
+	}
+	// IAM is required, stated rather than implied: this is the fence every
+	// caller passes through before the container runs.
+	if !strings.Contains(squash(code), "invoker_iam_disabled = false") {
+		t.Errorf("%s: the service must set invoker_iam_disabled = false explicitly, so a change of the provider's default cannot open it silently", path)
+	}
+}
+
+// TestCredentialsServiceResourcesAreCounted reads the sentence that counts
+// this file's own resources — locals' "a single boolean keeps the six
+// resources of this file in step" — against the file. It said five while the
+// file declared four, and nothing read it: a number a reader is meant to trust
+// is a claim, and this is where it is checked rather than believed.
+//
+// Both directions are the point. A resource added to the file without the
+// sentence is a resource the sentence no longer accounts for; a resource added
+// WITHOUT the opt-in's gate is worse — the file's first promise is that with
+// var.credentials_service null it creates nothing (D147) — so every resource in
+// it must be gated on the one boolean, and the count must be the whole file's.
+//
+// Mutation (run, restore): a seventh resource block in credentials.tf fails
+// both assertions ("declares 7 ... and says six", and the ungated one), and
+// reverting the word to "seven" fails the count.
+func TestCredentialsServiceResourcesAreCounted(t *testing.T) {
+	const path = "gcp/modules/installation/credentials.tf"
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripComments(string(b))
+
+	// The sentence, from the raw source: the number lives in a comment, which
+	// stripComments blanks out.
+	m := resourceCountSentence.FindStringSubmatch(string(b))
+	if m == nil {
+		t.Fatalf("%s no longer says how many resources the opt-in keeps in step; that sentence is what this test reads, so it stays:\n%s", path, code)
+	}
+	want, ok := numberWords[m[1]]
+	if !ok {
+		if n, err := strconv.Atoi(m[1]); err == nil {
+			want, ok = n, true
+		}
+	}
+	if !ok {
+		t.Fatalf("%s: the sentence counts the file's resources as %q, which this test cannot read as a number: spell it as a word (one..ten) or a decimal, and keep it true", path, m[1])
+	}
+
+	// Every resource the file declares, whatever its type: the sentence is
+	// about the file, not about one kind of thing in it.
+	all := resourceHeader.FindAllStringSubmatchIndex(code, -1)
+	if len(all) == 0 {
+		t.Fatalf("%s declares no resource at all, and this test's subject is gone:\n%s", path, code)
+	}
+	if len(all) != want {
+		t.Errorf("%s declares %d resources and its own sentence says %d (\"%s\"): the number a reader trusts is the file's count", path, len(all), want, m[0])
+	}
+	// And every one of them is behind the one boolean: "keeps the N resources
+	// of this file in step" is a statement about all N, and the file's first
+	// promise is that a null var.credentials_service creates nothing.
+	for _, r := range all {
+		name := code[r[2]:r[3]] + "." + code[r[4]:r[5]]
+		open := r[1] - 1
+		end := matchBrace(code, open)
+		if end < 0 {
+			t.Fatalf("%s: unbalanced braces in %s", path, name)
+		}
+		if body := code[open+1 : end]; !strings.Contains(body, "local.credentials_service_on") {
+			t.Errorf("%s: %s is not gated on local.credentials_service_on, so a null var.credentials_service does not leave the file creating nothing (D147):\n%s", path, name, squash(body))
+		}
+	}
+}
+
+// credentialsDatabasePermissions are the ONLY permissions the credentials
+// service's database role may hold (installation/credentials.tf): the
+// instance's two data permissions. See
+// TestCredentialsDatabaseRoleIsTheTwoDataPermissions for what each one is for
+// and why the two predefined roles are both wrong.
+var credentialsDatabasePermissions = []string{"firebasedatabase.instances.get", "firebasedatabase.instances.update"}
+
+// The credentials service's database role: the two DATA permissions of the
+// instance, the Firebase project, the service's own account as the only
+// member, and no condition (0.10.1, ledger #903 — before this the account had
+// no realtime-database role at all, so in production the service failed closed
+// and refused every call).
+//
+// Why these two. The service reads the kill switches (config/kill/global,
+// config/kill/repos/$slug), the project policy (config/policy/shared,
+// config/policy/repos/$slug), a run's outcome node (outcomes/$day/$slug/$run)
+// and the credential state another revision wrote (creds/ — marks, current
+// nodes, leases, probe leases), and writes the creds/ nodes it owns by
+// compare-and-set. Realtime Database IAM has NO path-level scope: a binding is
+// per instance and reaches the whole database, so the only question a role can
+// answer is which OPERATIONS the account may make, and there are exactly two
+// predefined answers:
+//
+//   - roles/firebasedatabase.viewer is get+list: it cannot write creds/ at
+//     all, so the service could not serve a single run.
+//   - roles/firebasedatabase.admin is all eight firebasedatabase.instances.*
+//     permissions (deploy/terraform/testdata/custom-role-permissions.txt): the
+//     two data permissions PLUS list and the instance lifecycle — create,
+//     delete, disable, reenable, undelete. The service never creates, deletes
+//     or disables a database, and an identity that holds every model
+//     credential of the installation must not be able to delete the
+//     installation's database.
+//
+// So the role is the intersection: get (the only read — the same permission
+// the viewer grant above relies on, modules/firebase/iam.tf) and update (the
+// only write — a realtime-database node has no separate create or delete, and
+// update is what admin carries for the budget admins who write /config). A
+// third permission is a decision, and this test is where it is made.
+//
+// The project matters as much as the permissions: the role is declared in the
+// FIREBASE project, because that is where the database is (D6), while the
+// account is created in the installation's project. A grant in one project to
+// a member of another is ordinary cross-project IAM, and it is the shape the
+// Firebase module's existing database grants have.
+func TestCredentialsDatabaseRoleIsTheTwoDataPermissions(t *testing.T) {
+	const path = "gcp/modules/installation/credentials.tf"
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roles := resourceBlocks(t, path, b, "google_project_iam_custom_role")
+	if len(roles) != 1 {
+		t.Fatalf("%s declares %d custom roles, want the one database role", path, len(roles))
+	}
+	role := squash(roles[0].body)
+	for _, want := range []string{
+		"project = var.credentials_service.firebase_project", // the database's project, not the installation's
+		`role_id = "` + tf.CredentialsDatabaseRole + `"`,
+		"count = local.credentials_service_on ? 1 : 0",
+	} {
+		if !strings.Contains(role, want) {
+			t.Errorf("%s: the database role does not hold %q:\n%s", path, want, role)
+		}
+	}
+	// Only the permissions list, so the role's title and role_id cannot stand
+	// in for a permission.
+	list := regexp.MustCompile(`(?s)permissions\s*=\s*\[([^\]]*)\]`).FindStringSubmatch(roles[0].body)
+	if list == nil {
+		t.Fatalf("%s: the database role has no permissions list:\n%s", path, role)
+	}
+	var got []string
+	for _, p := range quotedPerm.FindAllStringSubmatch(list[1], -1) {
+		got = append(got, p[1])
+	}
+	want := slices.Clone(credentialsDatabasePermissions)
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("%s: the database role holds %v, want exactly %v: get is the only read and update the only write, and every other firebasedatabase permission is instance lifecycle the service never uses", path, got, want)
+	}
+	// The same two, on the Go side, so a cover that accepted a third
+	// permission and a module that granted one cannot drift apart: the pin
+	// internal/infra/tf keeps (RolePermissions) is the one the confirmation
+	// reads.
+	if pin := tf.RolePermissions[tf.CredentialsDatabaseRole]; !slices.Equal(pin, want) {
+		t.Errorf("tf.RolePermissions[%s] = %v, want exactly %v", tf.CredentialsDatabaseRole, pin, want)
+	}
+	if !slices.Contains(tf.FugaroRoles, tf.CredentialsDatabaseRole) {
+		t.Errorf("tf.FugaroRoles does not name %s, so a grant of this role is refused", tf.CredentialsDatabaseRole)
+	}
+
+	// The one binding: on that role, in that project, to the service's own
+	// account, with no condition and no second member.
+	grants := resourceBlocks(t, path, b, "google_project_iam_member")
+	if len(grants) != 1 {
+		t.Fatalf("%s declares %d project grants, want exactly one — the database role, to the service's own account", path, len(grants))
+	}
+	grant := squash(grants[0].body)
+	for _, want := range []string{
+		"project = var.credentials_service.firebase_project",
+		`role = "projects/${var.credentials_service.firebase_project}/roles/` + tf.CredentialsDatabaseRole + `"`,
+		"member = google_service_account.credentials[0].member",
+		"count = local.credentials_service_on ? 1 : 0",
+	} {
+		if !strings.Contains(grant, want) {
+			t.Errorf("%s: the database grant does not hold %q:\n%s", path, want, grant)
+		}
+	}
+	if strings.Contains(grant, "condition") {
+		t.Errorf("%s: the database grant carries a condition: Realtime Database IAM has no path-level scope, so a condition here would be a fence that looks like one and is not (the reasoning Q6 used for the bundle's accessor):\n%s", path, grant)
+	}
+	// The role is named literally rather than read from the role resource:
+	// google_project_iam_custom_role's name is computed, so the reference
+	// reaches a plan as an unknown role and the cover could no longer say which
+	// role the grant is (tf's checkGrant, the unknown-role arm).
+	if roleAttr := firstAttr(grants[0].body, "role"); strings.Contains(roleAttr, "google_project_iam_custom_role.") {
+		t.Errorf("%s: the database grant reads its role from the role resource (%s), which a plan sees as unknown:\n%s", path, roleAttr, grant)
+	}
+
+	// No predefined database role anywhere in the tree is granted to this
+	// service's account: the whole point of the custom role is that the two
+	// predefined ones are wrong for it, and a second binding of
+	// roles/firebasedatabase.admin would hand it the instance lifecycle.
+	n := 0
+	walk(t, func(p string, fb []byte) {
+		if !strings.HasSuffix(p, ".tf") {
+			return
+		}
+		for _, blk := range allResourceBlocks(t, p, fb) {
+			if !strings.HasPrefix(blk.typ, "google_project_iam_") || !strings.Contains(blk.body, "credentials") {
+				continue
+			}
+			if !regexp.MustCompile(`credentials(_database|\[0\])`).MatchString(blk.body) {
+				continue
+			}
+			n++
+			if !strings.HasPrefix(p, "gcp/modules/installation/credentials.tf") {
+				t.Errorf("%s: %s grants a project role to the credentials service (%s): its whole reach is the bundle's accessor and its own database role, both in credentials.tf", p, blk.name, squash(blk.body))
+			}
+		}
+	})
+	if n == 0 {
+		t.Errorf("no project grant naming the credentials service was found: this test is not reading the tree")
+	}
+}
+
+// resourceCountSentence is the sentence in credentials.tf's locals block that
+// counts the file's own resources: the number is what the test above reads.
+var resourceCountSentence = regexp.MustCompile(`keeps\s+the\s+(\w+)\s+resources\s+of\s+this\s+file`)
+
+// numberWords are the spellings of a count this test reads in prose.
+var numberWords = map[string]int{"one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+	"six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}
+
+// TestServiceHeldSecretsMatchTheCredentialsService pins the four literals in
+// modules/workflow/sa.tf — the two model-credential variable names, the
+// provider-key prefix and the service-held logical names (empty on this branch,
+// the App key alone once C2.2's release fills them) — to internal/config, and
+// the drop they drive to the opt-in. Terraform cannot ask Go, so the module
+// spells the names out; this test is what keeps the two spellings one rule (the
+// TestLauncherConditionPreconditionMatchesGo precedent).
+//
+// The mutation is any one of the lists: rename a reserved key in Go and the
+// module's literal keeps dropping the accessor of a variable no job has, while
+// the renamed one keeps it — the job's account then reads a credential the
+// service was supposed to be the only holder of. The App key's clause (C2.3)
+// is the one the model lists cannot cover: it is a reserved logical name, not
+// a variable, so dropping it needs its own list, and a module that spells it
+// wrong leaves the job's account with the private key of the installation's
+// GitHub App.
+//
+// The accessor and the mount are one rule and are pinned as one (C2.3, review
+// finding F1): job_secret_names drops what the account may not read, and
+// job_mounts — the container's own env — drops what it may not mount, which is
+// the App key and only the App key, because C1.20 is the task that takes the
+// model credentials' mounts away with the runner's switch to the service.
+//
+// Both of those rules are keyed on service_held_secret_names, and the list is
+// EMPTY on this branch (review finding F1): the App key joins it in the release
+// that also stops the runner reading the key (C2.2), and until then the job
+// keeps the accessor and the mount it needs to run. The pin below is what keeps
+// the module's literal and config.ServiceHeldSecretNames one value, so that
+// release fills both in one commit — with the module's list filled and Go's
+// empty, the plan drops a grant the spec still produces (and the tftest run
+// credentials_service_on_github_app_key_stays fails).
+func TestServiceHeldSecretsMatchTheCredentialsService(t *testing.T) {
+	const path = "gcp/modules/workflow/sa.tf"
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripComments(string(b))
+
+	// quotedList is the strings in the list literal the pattern captures.
+	quotedList := func(pattern, what string) []string {
+		t.Helper()
+		m := regexp.MustCompile(pattern).FindStringSubmatch(code)
+		if m == nil {
+			t.Fatalf("%s declares no %s list", path, what)
+		}
+		var got []string
+		for _, q := range regexp.MustCompile(`"([^"]*)"`).FindAllStringSubmatch(m[1], -1) {
+			got = append(got, q[1])
+		}
+		slices.Sort(got)
+		return got
+	}
+	equal := func(what string, got, want []string, goName string) {
+		t.Helper()
+		w := slices.Clone(want)
+		slices.Sort(w)
+		if !slices.Equal(got, w) {
+			t.Errorf("%s: %s = %v, config.%s = %v", path, what, got, goName, want)
+		}
+	}
+
+	equal("model_secret_env_names",
+		quotedList(`model_secret_env_names\s*=\s*\[([^\]]*)\]`, "model_secret_env_names"),
+		config.ModelSecretEnvs, "ModelSecretEnvs")
+	equal("service_held_secret_names",
+		quotedList(`service_held_secret_names\s*=\s*\[([^\]]*)\]`, "service_held_secret_names"),
+		config.ServiceHeldSecretNames, "ServiceHeldSecretNames")
+
+	p := regexp.MustCompile(`model_secret_env_prefix\s*=\s*"([^"]*)"`).FindStringSubmatch(code)
+	if p == nil || p[1] != config.ProviderKeyEnvPrefix {
+		t.Errorf("%s: model_secret_env_prefix = %v, config.ProviderKeyEnvPrefix = %q", path, p, config.ProviderKeyEnvPrefix)
+	}
+
+	// And the drop itself, clause by clause: a mount is a credential the
+	// service holds exactly when its VARIABLE is one of the model names, OR
+	// carries the provider-key prefix, OR its LOGICAL NAME is one the service
+	// holds. Pinning the whole expression is the point — the two model halves
+	// are what the review's mutation m1 removed, and with the prefix clause
+	// gone every FUGARO_PROVIDER_KEY_* secret keeps its job accessor, which is
+	// the one thing the opt-in exists to take away; the name clause (C2.3) is
+	// the App key, whose variable is a reserved name the model lists must never
+	// grow to cover (D145 keeps Bitbucket's token with the job, F7).
+	if !strings.Contains(squash(code), "env => contains(local.model_secret_env_names, env) || startswith(env, local.model_secret_env_prefix) || contains(local.service_held_secret_names, logical)") {
+		t.Errorf("%s: is_service_held must be `contains(model_secret_env_names, env) || startswith(env, model_secret_env_prefix) || contains(service_held_secret_names, logical)`; a missing clause leaves that credential's accessor with the job (review m1, C2.3):\n%s", path, code)
+	}
+
+	// The drop is gated on the opt-in, in the same expression that reads the
+	// names: with credentials_service null the set is the workflow's own
+	// secret_env and nothing changes (D147).
+	if !strings.Contains(squash(code), "logical if var.credentials_service == null || !local.is_service_held[env]") {
+		t.Errorf("%s: the job's secret set must be the workflow's own secret_env while the credentials service is off, and drop the credentials it holds only when it is on:\n%s", path, code)
+	}
+
+	// And the grant the job gains: one invoker grant, on the one service the
+	// installation names, to the job's own account, unconditioned.
+	grants := resourceBlocks(t, path, b, "google_cloud_run_v2_service_iam_member")
+	if len(grants) != 1 {
+		t.Fatalf("%s declares %d invoker grants on the credentials service, want the job's one", path, len(grants))
+	}
+	grant := squash(grants[0].body)
+	for _, want := range []string{
+		"count = var.credentials_service == null ? 0 : 1",
+		"name = var.credentials_service.name",
+		"location = var.credentials_service.region",
+		`role = "roles/run.invoker"`,
+		"member = google_service_account.job.member",
+	} {
+		if !strings.Contains(grant, want) {
+			t.Errorf("%s: the job's invoker grant on the credentials service does not hold %q:\n%s", path, want, grant)
+		}
+	}
+	if strings.Contains(grant, "condition") {
+		t.Errorf("%s: the job's invoker grant carries a condition; the service's own ID-token check is what decides which of the accounts IAM admits are served (Q6):\n%s", path, grant)
+	}
+
+	// And the other half of the same rule (C2.3, review finding F1): the
+	// MOUNT goes with the accessor. A container that still declares a secret
+	// its account may not read is not a job with one credential too many, it
+	// is a job Cloud Run refuses to create -- every GitHub run of an
+	// installation that opted in would fail. The two are one expression's
+	// halves here, and the tftest run credentials_service_on_github_app_key_
+	// stays plans the state this branch ships them in: neither moves, because
+	// the list is empty and the job still reads the key.
+	if !strings.Contains(squash(code), "env => logical if var.credentials_service == null || !contains(local.service_held_secret_names, logical)") {
+		t.Errorf("%s: job_mounts must keep every mount while the credentials service is off and drop the service-held ones (the App key) once it is on, by logical name:\n%s", path, code)
+	}
+	// The container is the consumer of that local, and it is what a missing
+	// pass-down would leave out: iterating var.workflow.secret_env instead
+	// plans the App key's mount back into a job whose account cannot read it.
+	jb, err := fs.ReadFile(FS, "gcp/modules/workflow/job.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(squash(stripComments(string(jb))), `dynamic "env" { for_each = local.job_mounts`) {
+		t.Errorf("gcp/modules/workflow/job.tf: the container's secret env must iterate local.job_mounts rather than var.workflow.secret_env, or the App key's mount outlives its accessor (C2.3, F1):\n%s", jb)
+	}
+}
+
+// TestCredentialsServiceIsOptIn pins the opt-in and the wiring: both
+// declarations default to null (D147: with the service off nothing changes,
+// and an installation that has not opted in must plan what it planned
+// before), the installation root passes its variable to the module, the
+// repository root carries it in the installation object, and the repo module
+// passes it to each workflow — which is the only place the job's invoker
+// grant and the model-secret drop can come from.
+//
+// The mutation is any one of the four: a default of `{}` or a required
+// variable creates the service for every installation; a dropped pass-down
+// leaves the workflow module with null and the job with the model-secret
+// accessor it was supposed to lose, silently.
+func TestCredentialsServiceIsOptIn(t *testing.T) {
+	for _, tc := range []struct{ path, what string }{
+		{"gcp/roots/installation/variables.tf", "the installation root's"},
+		{"gcp/modules/installation/variables.tf", "the installation module's"},
+	} {
+		b, err := fs.ReadFile(FS, tc.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		code := stripComments(string(b))
+		i := regexp.MustCompile(`(?m)^\s*variable\s+"credentials_service"\s*\{`).FindStringIndex(code)
+		if i == nil {
+			t.Errorf("%s declares no credentials_service variable", tc.path)
+			continue
+		}
+		body := code[i[1]:matchBrace(code, i[1]-1)]
+		if !hasAttr(body, "default", "null") {
+			t.Errorf("%s credentials_service must default to null (D147): with it unset nothing is created and every job keeps its model-secret accessors:\n%s", tc.what, body)
+		}
+	}
+	for _, tc := range []struct{ path, want, what string }{
+		{"gcp/roots/installation/main.tf", "credentials_service = var.credentials_service", "the installation root must pass its own variable to the module"},
+		{"gcp/modules/repo/workflows.tf", "credentials_service = var.installation.credentials_service", "the repo module must pass the installation's service down to each workflow, or the job's invoker grant and the model-secret drop never exist"},
+	} {
+		b, err := fs.ReadFile(FS, tc.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(squash(stripComments(string(b))), tc.want) {
+			t.Errorf("%s: %s (want %q)", tc.path, tc.what, tc.want)
+		}
+	}
+	rb, err := fs.ReadFile(FS, "gcp/roots/repo/variables.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(squash(stripComments(string(rb))), "credentials_service = optional(object({ name = string region = string }))") {
+		t.Error("gcp/roots/repo/variables.tf: the installation object must accept credentials_service, or the repo root cannot carry the installation's service")
+	}
+}
+
+// The service's image must be a DIGEST, and the validation that says so must
+// be exercised by a run that plans the tag form and expects the refusal. Why
+// it is a security rule and not a preference: the service's account reads
+// every credential in the bundle, and the registry grants
+// roles/artifactregistry.writer to every operator, so a mutable tag would let
+// an operator push the code that the next owner apply runs as that account
+// (independent security review of this file, M1). The terraform test is the
+// guard that bites — this test is what fails if someone deletes the refusal
+// runs while leaving the validation, or loosens the validation while leaving
+// the runs, either of which would take the digest requirement with it.
+func TestCredentialsServiceImageMustBeADigest(t *testing.T) {
+	const path = "gcp/modules/installation/variables.tf"
+	b, err := fs.ReadFile(FS, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripComments(string(b))
+	i := regexp.MustCompile(`(?m)^\s*variable\s+"credentials_service"\s*\{`).FindStringIndex(code)
+	if i == nil {
+		t.Fatalf("%s declares no credentials_service variable", path)
+	}
+	body := code[i[1]:matchBrace(code, i[1]-1)]
+	if !strings.Contains(body, "@sha256:[0-9a-f]{64}") {
+		t.Errorf("%s: the credentials_service validation must require an image pinned by digest (a regex ending in @sha256: and 64 lower-case hex digits); a tag is mutable and any operator may push to the installation's registry:\n%s", path, body)
+	}
+	if strings.Contains(body, "length(var.credentials_service.image) > 0") {
+		t.Errorf("%s: the credentials_service validation still accepts any non-empty image, which is the shape M1 found", path)
+	}
+	const tftest = "gcp/roots/installation/tests/installation.tftest.hcl"
+	tb, err := fs.ReadFile(FS, tftest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(tb)
+	if !strings.Contains(text, "@sha256:") {
+		t.Errorf("%s: no run in the installation root's terraform test carries a digest image, so nothing exercises the validation above", tftest)
+	}
+	n := 0
+	for _, m := range regexp.MustCompile(`(?m)^\s*expect_failures\s*=\s*\[([^\]]*)\]`).FindAllStringSubmatch(text, -1) {
+		if strings.Contains(m[1], "var.credentials_service") {
+			n++
+		}
+	}
+	if n < 2 {
+		t.Errorf("%s: %d runs expect var.credentials_service to fail; the tag form and the truncated-digest form must each be planned and refused (M1)", tftest, n)
 	}
 }

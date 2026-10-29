@@ -371,3 +371,42 @@ func TestDecodeRefusesAnUnknownVia(t *testing.T) {
 		}
 	}
 }
+
+// TestDecodeReadsTheProjectBaseBranch: the policy node carries the
+// project's default base branch — a top-level member beside budget: and
+// allow_repos:, written by `fugaro project policy publish` and read by the
+// launcher and the runner. A node without it decodes as "", which is "no
+// project default", and a value that is not a plain git branch name is
+// refused: it reaches git, Cloud Build and a run's ref, and the node is
+// hand-writable.
+func TestDecodeReadsTheProjectBaseBranch(t *testing.T) {
+	p, found, err := Decode([]byte(`{"version": 3, "base_branch": "master"}`))
+	if err != nil || !found || p == nil {
+		t.Fatalf("Decode = (%v, %v, %v), want a policy", p, found, err)
+	}
+	if p.BaseBranch != "master" {
+		t.Errorf("BaseBranch = %q, want master", p.BaseBranch)
+	}
+	for _, tc := range []struct{ name, raw string }{
+		{"absent", `{"version": 3}`},
+		{"null", `{"version": 3, "base_branch": null}`},
+	} {
+		p, found, err := Decode([]byte(tc.raw))
+		if err != nil || !found || p == nil {
+			t.Fatalf("%s: Decode = (%v, %v, %v), want a policy", tc.name, p, found, err)
+		}
+		if p.BaseBranch != "" {
+			t.Errorf("%s: BaseBranch = %q, want \"\"", tc.name, p.BaseBranch)
+		}
+	}
+	for _, bad := range []string{`"--upload-pack=x"`, `"a..b"`, `"$(id)"`, `"x y"`, `"/x"`, `""`} {
+		p, found, err := Decode([]byte(`{"version": 3, "base_branch": ` + bad + `}`))
+		if err == nil || p != nil || !found {
+			t.Errorf("%s: Decode = (%v, %v, %v), want a refusal", bad, p, found, err)
+			continue
+		}
+		if !strings.Contains(err.Error(), "base_branch") {
+			t.Errorf("%s: err = %v, want it to name base_branch", bad, err)
+		}
+	}
+}

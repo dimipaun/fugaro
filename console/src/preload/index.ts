@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The preload (desktop-console plan Task 1.2, SECURITY-SENSITIVE; design
 // section 5.1 rule 5).
 //
@@ -87,7 +89,7 @@ export const BRIDGE_VERSION = 1
  * nothing failing, because the runtime tests in `test/unit/ipc.test.ts` pin the
  * same sets against the table and the object is built from that table anyway.
  * `satisfies` checks each row's shape without widening anything, so a row that
- * is not a name and a method is still a compile error, and the twelve names
+ * is not a name and a method is still a compile error, and the twenty-four names
  * stay literal -- which is what makes `ExposedName`, `ExposedMethod` and
  * `ConsoleBridge` below the closed things their comments say they are.
  *
@@ -96,7 +98,7 @@ export const BRIDGE_VERSION = 1
  * directives stop being errors -- and so fail `npm run typecheck` -- if the
  * literal types are ever widened back into `string`.
  *
- * **The twelve rows are still twelve.** The Spend screen's controls (Task 2.4)
+ * **Task 2.4's twelve rows are still those twelve.** The Spend screen's controls
  * wire the range picker and the breakdown switch to `runReport` -- on the
  * screen's side of the seam: `src/renderer/screens/spend.ts` calls them, and the
  * entry point that calls *it* is the screens task's (3.4c). Task 3.4a builds the
@@ -108,7 +110,25 @@ export const BRIDGE_VERSION = 1
  * a row to the table in `src/main/ipc.ts` and a row here, and the test above is
  * what makes forgetting the second half fail rather than pass.
  *
- * **There are fourteen rows, and two of them are not spawns.** Task 3.3 added
+ * **Console L5b added the fifteenth row and no method of its own invention**:
+ * `runs.stats` / `statsRuns`, the Spend screen's by-person view, which is the
+ * twelfth CLI command this surface can reach. The row is here rather than
+ * reached through `runReport` because the by-person aggregate is
+ * `fugaro runs stats --json` and not `report` (design §5.1 rule 6), and a method
+ * that took the operation as an argument is the shape rule 5 forbids.
+ *
+ * **GV2.1 added the twenty-second row and no method of its own invention**:
+ * `plan.status` / `planStatus`, the plan graph joined to the runs working on it,
+ * which is the thirteenth CLI command this surface can reach and the second
+ * whose subject is an installation's checkout rather than a project alone. The
+ * row is here for the same reason L5b's is: the read is `fugaro plan status
+ * --json`, and a method that took the operation as an argument is the shape rule
+ * 5 forbids. That checkout is the *argument no renderer supplies* -- the row
+ * declares one optional flag, `all`, and the directory the child runs in is the
+ * installation's, which is why `src/main/ipc.ts`'s comment on the operation says
+ * so at length.
+ *
+ * **Two of the first fifteen rows are not spawns.** Task 3.3 added
  * `startup.compatibility` / `getCompatibility`: the handshake's answer, which the
  * renderer asks for once at load and draws nothing until it has. Task 3.4a makes
  * that sentence literal -- the dashboard document loads the bundled entry, its
@@ -121,12 +141,30 @@ export const BRIDGE_VERSION = 1
  * without the renderer ever naming a path. Both take no argument at all --
  * `ConsoleMethod`'s optional argument object is simply not sent, so there is
  * nothing for a renderer to name.
+ *
+ * **The installation rail added six more, for twenty-two** (owner's design
+ * ruling of 2026-10-25): `installation.list` spawns `config list --json`, and
+ * the other five act on the console's own store and window.
+ *
+ * **Bitbucket credentials T1.2 added the twenty-third** (`coordinator.status` /
+ * `coordinatorStatus`, the project view read from the coordinator's stored
+ * view -- `fugaro coordinator status --from-store --all --json`, D364) and left
+ * the other twenty-two exactly where they were. It is the one read of the CLI's
+ * this surface can reach that needs no credential of the host's, and its two
+ * flags are words of `src/main/spawn.ts`'s row rather than arguments, which is
+ * why the row declares none.
+ *
+ * **V2.5.1a added the twenty-fourth** (`run.launch` / `launchRun`, the console's
+ * one write, design section 5.1 rule 11) and left the other twenty-three exactly
+ * where they were. The twenty-third is above it in this list.
  */
 export const EXPOSED_OPERATIONS = Object.freeze([
   ['live.watch', 'subscribeLive'],
   ['budget.show', 'showBudget'],
   ['spend.report', 'runReport'],
   ['runs.list', 'listRuns'],
+  ['runs.stats', 'statsRuns'],
+  ['plan.status', 'planStatus'],
   ['run.diagnose', 'diagnoseRun'],
   ['run.logs', 'readRunLogs'],
   ['run.logLink', 'runLogLink'],
@@ -137,11 +175,42 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   ['installation.current', 'getInstallation'],
   ['environment.report', 'environmentReport'],
   ['link.openExternal', 'openExternal'],
+  // The installation rail (owner's design ruling of 2026-10-25). The console
+  // never shows a picker screen: the rail lists every installation, a click
+  // switches the console to one, and a row that cannot be read opens its issue
+  // in the main area. Six rows, and five of them spawn nothing: they read and
+  // write the console's own store, hand the file manager a directory this
+  // process computed, or open the window the `+` door is. The sixth,
+  // `installation.list`, is `fugaro config list --json` -- the read that was
+  // the picker window's own and is now the rail's.
+  ['installation.list', 'listInstallations'],
+  ['installation.choose', 'chooseInstallation'],
+  ['installation.checkout', 'setInstallationCheckout'],
+  ['installation.remove', 'removeInstallation'],
+  ['installation.reveal', 'revealInstallation'],
+  ['installation.open', 'openInstallations'],
+  // The project view (Bitbucket credentials T1.2, D364): `fugaro coordinator
+  // status --from-store --all --json`, the one read of the CLI's that needs no
+  // credential of the host's. One row here for the reason L5b's and GV2.1's are
+  // one row each: a method that took the operation as an argument is the shape
+  // rule 5 forbids. The two flags the read fixes are words of `src/main/
+  // spawn.ts`'s row, not arguments a renderer sends -- the row here declares
+  // none.
+  ['coordinator.status', 'coordinatorStatus'],
+  // The launch, and the surface's **one write** (V2.5.1a, design section 5.1
+  // rule 11, D22). One row, like every other: the five fields are the
+  // operation's own closed schema. What this method *does* is ask the main
+  // process for a confirmation window: it cannot answer for the operator, and
+  // since V2.5.1a's part 2b-3b-1 the main process spawns on a yes from that
+  // window's own top frame and on nothing else (`createConfirmWindow`,
+  // `src/main/confirm.ts`), so no renderer reaches a `fugaro run` child through
+  // this row by itself.
+  ['run.launch', 'launchRun'],
 ] as const) satisfies readonly (readonly [string, string])[]
 
 /**
  * ExposedName is the closed union of the operation names this file exposes --
- * fourteen string literals, not `string`. It is the type of the `operations` list
+ * twenty-four string literals, not `string`. It is the type of the `operations` list
  * a screen switches on, so the closure is what lets a screen be exhaustive.
  */
 export type ExposedName = (typeof EXPOSED_OPERATIONS)[number][0]
@@ -261,9 +330,9 @@ async function invokeOperation(
  *
  * The returned object is not cast into `ConsoleBridge`: it is checked against
  * it, like any other value, and that is the point of the accumulator's type. It
- * is `Record<ExposedMethod, ConsoleMethod>` -- twelve *named* properties,
+ * is `Record<ExposedMethod, ConsoleMethod>` -- twenty-four *named* properties,
  * because `ExposedMethod` is a union of literals -- so spreading it gives the
- * object literal those twelve properties as properties rather than as an index
+ * object literal those twenty-four properties as properties rather than as an index
  * signature. (Before that type was literal, this line needed `as ConsoleBridge`
  * to silence the compiler, which is what made the claim untested rather than
  * checked.) The loop is what actually writes them, and a loop is a thing the
@@ -292,7 +361,7 @@ export function createConsoleBridge(ipcRenderer: RendererLike): ConsoleBridge {
  * `exposeInMainWorld` is what keeps rule 5's promise concrete: the renderer gets
  * a copy of this object, in its own world, with `contextIsolation` in between.
  * It cannot reach the preload's scope, `ipcRenderer`, or Node -- only these
- * twelve methods.
+ * twenty-four methods.
  */
 export function exposeConsoleBridge(
   contextBridge: ContextBridgeLike,

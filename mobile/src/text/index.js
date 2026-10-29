@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // The text screen's one door (mobile plan, Task P6.9; D167).
 //
 // A screen imports `src/text/index.js`. It builds the typed pipeline with
@@ -14,8 +16,12 @@
 //
 // **What is not here yet, and is named in the pull request.** A confirmed
 // destructive command is authorised by P6.2's machine and its record is
-// returned, not delivered: the merged mailbox client writes text messages only.
-// See `input.js`'s header for the whole of the reason.
+// returned, not delivered: nothing in `src/text/` calls the client's action
+// write. That write exists -- `client.send(text, { action })`, added with P6.10,
+// writes P6.3's action record and never queues it -- so what is missing is the
+// wiring, which belongs to the screens that own a confirm path (this task's
+// remaining half, P6.9, and P6.12 for the voice one). See `input.js`'s header
+// for the whole of it, including what the screens would have to decide.
 
 export {
   INPUT_CODES,

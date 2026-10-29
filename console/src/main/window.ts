@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The hardened window (desktop-console plan Task 1.1; design section 5.1 rules
 // 1, 2 and 9).
 //
@@ -297,22 +299,31 @@ export function denyPageTitleUpdate(event: NavigationEvent): void {
 
 /**
  * ALLOWED_EXTERNAL_HOSTS is the whole of the allow-list for opening a URL in
- * the user's own browser, and it is exactly the three hosts rule 2 names: the
- * two providers' web hosts (`github.com`, `bitbucket.org` -- "both providers'
- * web hosts on the `openExternal` allow-list") and the Cloud console the
- * `logs RUN --url` link points into. Rule 2 also names "the docs", and no
- * document on this tree names a docs host, so none is on this list: a fourth
- * entry is a deliberate edit here and in the unit test that holds this list
- * exactly. Hosts are compared whole and lower-cased, so `github.com.evil.test`
- * and `evil-github.com` are not on it.
+ * the user's own browser, and it is exactly four hosts: the two providers' web
+ * hosts (`github.com`, `bitbucket.org` -- "both providers' web hosts on the
+ * `openExternal` allow-list"), the Cloud console the `logs RUN --url` link
+ * points into, and the website the console's own onboarding screens link to.
+ * Rule 2 also names "the docs", and no document on this tree names a docs host,
+ * so none is on this list: an entry is a deliberate edit here and in the unit
+ * test that holds this list exactly. Hosts are compared whole and lower-cased,
+ * so `github.com.evil.test` and `evil-github.com` are not on it.
  *
- * Task 2.3 is the first caller that will display such a link; until then the
- * path exists and is tested, and rule 2's "no link is built" stands: there is
- * no caller that builds one.
+ * `fugaro.dev` is the fourth, and it is the console's own link rather than a
+ * document's: the two onboarding screens (owner's ruling of 2026-10-20) offer a
+ * link button to the website's getting-started page, whose URL is
+ * `GETTING_STARTED_URL` in `src/main/onboarding.ts`. That constant lives in the
+ * main process and never crosses the IPC boundary -- the picker's `openExternal`
+ * operation takes **no arguments** -- so the check below is the second gate for
+ * a link this process built, and no renderer can name one.
+ *
+ * Task 2.3 is the first caller that will display a document's link; until then
+ * the path exists and is tested, and rule 2's "no link is built" stands for the
+ * dashboard's documents: there is no caller that builds one.
  */
 export const ALLOWED_EXTERNAL_HOSTS: readonly string[] = [
   'bitbucket.org',
   'console.cloud.google.com',
+  'fugaro.dev',
   'github.com',
 ]
 
@@ -365,11 +376,30 @@ export function validateExternalUrl(raw: string): ExternalUrlDecision {
  * It returns whether it opened anything, so a caller can tell the user what
  * happened rather than pretending. Note that the URL that reaches the OS is the
  * one `validateExternalUrl` returned, not the argument.
+ *
+ * **Three ways a link does not open, and all three answer `false`.** The URL is
+ * refused by the allow-list above; the handover reaches the platform and the
+ * platform declines it -- no application registered for `https:`, a prompt the
+ * operator dismissed -- which Electron reports by **rejecting**; or it opens.
+ * The middle one is caught here rather than allowed to travel, because a
+ * rejection is not an answer this function's callers can use: both of them
+ * await it inside an `ipcMain.handle` callback (`src/main/index.ts`'s
+ * `openExternalFromShell` for the dashboard's `link.openExternal`, and the
+ * picker's `openExternal`), and each of those catches an error by putting its
+ * `message` in front of the operator -- so an uncaught rejection here would
+ * draw the *operating system's* complaint ("Failed to open the link: ...")
+ * where the console has a sentence of its own (`OPEN_EXTERNAL_FAILED`). The
+ * platform's text is not a sentence this console writes and is not what its
+ * screens are written to draw, so it stops here.
  */
 export async function openExternalValidated(shell: Shell, raw: string): Promise<boolean> {
   const decision = validateExternalUrl(raw)
   if (!decision.ok) return false
-  await shell.openExternal(decision.url)
+  try {
+    await shell.openExternal(decision.url)
+  } catch {
+    return false
+  }
   return true
 }
 
@@ -566,8 +596,12 @@ export interface VersionHandshakeDeps {
  *
  * A reader that *throws* is a refusal and not a crash: a console that cannot
  * start because a subprocess misbehaved would be worse than one that says so,
- * and D7's rule is that an unplaceable CLI is one the console will not draw a
- * dashboard for.
+ * and a CLI whose line cannot be read is one the console will not draw a
+ * dashboard for (D7). **An unplaceable line is not that case**: a `dev` build is
+ * *recognised*, so it is reduced rather than refused -- the dashboard is built,
+ * and the views whose figures nothing vouched for are withheld (`classifyCliVersion`
+ * in `src/shared/version.ts`, and the plan's open item 3 as the owner answered it
+ * on 2026-10-22).
  */
 export async function runVersionHandshake(deps: VersionHandshakeDeps): Promise<CliCompatibility> {
   try {

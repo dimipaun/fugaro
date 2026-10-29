@@ -20,8 +20,8 @@
 import { defineConfig } from 'astro/config'
 
 export default defineConfig({
-  // The one markdown file is a generated reference, shown as written: `--out` must not be
-  // rewritten to an en dash. (Raw HTML in it is escaped by src/lib/escape-raw-html.mjs.)
+  // No page compiles markdown since the docs hub links the CLI reference instead of rendering
+  // it; if one does again, `--out` must not be rewritten to an en dash.
   markdown: { smartypants: false },
   // Static output: no server, no adapter, nothing rendered per request.
   output: 'static',

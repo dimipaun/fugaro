@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // The account module's one door: its test (mobile plan, Task P3.1).
 //
 // The surface is asserted as an exact set rather than "these names are

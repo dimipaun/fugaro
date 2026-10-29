@@ -47,7 +47,13 @@ const (
 // the PR if this does not. A variable so a test can shorten it.
 var earlyOpenTimeout = time.Minute
 
-// prFlow is the run's early-PR state. Only the run goroutine touches it.
+// prFlow is the run's early-PR state. While a stage runs, its checkpoint poll
+// goroutine is the only one that touches it (prflow.go's openDraftPR and
+// statusUpdate are reached from the poll, checkpoint.go); between stages, and
+// after that poll's stop has returned, the run goroutine's own boundary and
+// finalize paths do. A governance halt in the middle of a stage stops the poll
+// and waits for it before it touches any of this (governanceHalt, halt.go), so
+// the two never write it at once.
 type prFlow struct {
 	lastStatus time.Time // when the last status update was attempted
 	fails      int       // consecutive failed updates
@@ -120,7 +126,10 @@ func (r *run) verifiedHead(ctx context.Context) (string, bool) {
 // succeeded) and before the next one. A first run opens its draft here, at
 // the end of the first implement or fix stage whose HEAD has a passing test
 // on a clean tree, pushes later verified tips, and keeps the status section
-// current. Nothing here fails the run.
+// current. A report run pushes nothing here: a fix stage's commit is a
+// stage's, and the bytes a report run's pull request carries must be the
+// generator's (digest.go, T3.3), so its branch reaches the remote at finalize
+// and nowhere else. Nothing here fails the run.
 func (r *run) afterStage(ctx context.Context, stage string) {
 	defer func() {
 		// Whatever goes wrong here must not fail the run: finalize still
@@ -134,7 +143,9 @@ func (r *run) afterStage(ctx context.Context, stage string) {
 		return
 	}
 	if r.follow == nil {
-		if r.cfg.Git.PR.EarlyDraftOn() && (stage == "implement" || stage == "fix") {
+		// A report run's only push is finalize's: checkpointsOn() is false
+		// for it, so the boundary checkpoint below pushes nothing.
+		if r.cfg.Git.PR.EarlyDraftOn() && !r.digest && (stage == "implement" || stage == "fix") {
 			if sha, ok := r.verifiedHead(ctx); ok {
 				if r.rec.PR == nil {
 					r.openDraft(ctx, sha, stage)
@@ -423,8 +434,10 @@ func verifyPart(records []verify.Record) string {
 
 // reviewsPart is the section's account of the review rounds, or "". With a
 // first line, it says which tier the latest review is: the first line only
-// advises, the senior review decides.
-func reviewsPart(rs []runstore.ReviewSummary) string {
+// advises, the senior review decides. pol is the mode's findings policy for
+// the round the line reports (finalSection); a round the mode let through
+// names each finding it tolerated beside the count (T3.3).
+func reviewsPart(rs []runstore.ReviewSummary, pol FindingsPolicy) string {
 	if len(rs) == 0 {
 		return ""
 	}
@@ -442,7 +455,139 @@ func reviewsPart(rs []runstore.ReviewSummary) string {
 	case "none":
 		return fmt.Sprintf("%sreview round %d: skipped, no verdict", who, last.Round)
 	}
-	return fmt.Sprintf("%sreview round %d: %s", who, last.Round, Plural(last.Findings, "finding"))
+	return fmt.Sprintf("%sreview round %d: %s%s", who, last.Round, Plural(last.Findings, "finding"), toleratedPart(pol, last))
+}
+
+// toleratedPart is the rest of a review line whose round the run's mode let
+// through: one label per tolerated finding, in the reviewer's own order
+// (rigor.Split), and the mode that let them through — the words Decide's own
+// reason uses, so the body and the record can be diffed (D18, T3.3).
+//
+// "" for every other round, including a round the mode only partly tolerated:
+// what was let through is the whole round or nothing, and a line naming the
+// findings a mode would have tolerated in a round it blocked would be
+// claiming an answer Decide never gave (D7, F4). A first-line review never
+// decides (seniorReview), so it tolerates nothing whatever its counts say. A
+// run that never reaches Decide tolerates nothing either, which is why the
+// running section asks with the zero policy.
+func toleratedPart(pol FindingsPolicy, last runstore.ReviewSummary) string {
+	if last.Tier == runstore.TierFirst || !pol.tolerates(&last) {
+		return ""
+	}
+	labels := make([]string, 0, len(pol.Tolerated))
+	for _, s := range pol.Tolerated {
+		labels = append(labels, string(s.Label()))
+	}
+	return ", tolerated at " + inlineText(string(pol.Mode)) + " (" + inlineText(strings.Join(labels, ", ")) + ")"
+}
+
+// checkpointReportPart is the section's checkpoint report, written when a
+// governance stop halted the run (T6.1, D329, G7): the tripwire's trigger, the
+// runner's words for why the run is over, and whichever of the stopping
+// agent's three answers the checkpoint stage filled (T7.3). Only fields that
+// are set are rendered — a checkpoint written before that stage exists carries
+// the trigger and the runner's own two facts alone — and every one of them
+// goes through inlineText, so the fields the agent fills cannot forge section
+// markup.
+//
+// The trigger is in a code span so it reads as the vocabulary value it is; the
+// estimate says whose figure it is, because it is the record's model spend and
+// not a forecast of what finishing would cost. "" for every run that did not
+// take a governance halt.
+//
+// The report is read under r.mu (checkpointValue), the lock the halt writes it
+// under (governanceHalt). Today the halt has stopped the stage's checkpoint
+// poll before either happens, so no poll renders this section beside that
+// write; the copy is what keeps a reader whole if the stopping agent's answers
+// are later filled in through the same report (T7.3).
+func (r *run) checkpointReportPart() string {
+	cp := r.checkpointValue()
+	if cp == nil {
+		return ""
+	}
+	parts := []string{"checkpoint `" + inlineText(cp.Trigger) + "`"}
+	if cp.WhyOver != "" {
+		parts = append(parts, inlineText(cp.WhyOver))
+	}
+	if cp.Done != "" {
+		parts = append(parts, "done: "+inlineText(cp.Done))
+	}
+	if cp.Next != "" {
+		parts = append(parts, "next: "+inlineText(cp.Next))
+	}
+	if cp.EstimateUSD > 0 {
+		parts = append(parts, fmt.Sprintf("estimate $%.2f (the model spend so far)", cp.EstimateUSD))
+	}
+	if cp.HardInstructions != "" {
+		parts = append(parts, "hard to satisfy: "+inlineText(cp.HardInstructions))
+	}
+	return strings.Join(parts, "; ")
+}
+
+// checkpointValue is a copy of the record's checkpoint report, or nil: it is
+// read under r.mu, where the halt writes it (governanceHalt), and copied
+// rather than taken by pointer because the fields a later stage fills in are
+// written through it (T7.3).
+func (r *run) checkpointValue() *runstore.Checkpoint {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.rec.Checkpoint == nil {
+		return nil
+	}
+	cp := *r.rec.Checkpoint
+	return &cp
+}
+
+// backlogPart is the section's account of the items the run wrote: the ids it
+// filed and the ids it closed as the follow-up that fixed them, beside the
+// review line that says what was left open, so a reader of the pull request can
+// cite an item without opening the tree (D9, D26, D27, D31 — the closing rule's
+// "names the item id in its body"). "" for a run that wrote neither, which is
+// most of them.
+func (r *run) backlogPart() string {
+	var parts []string
+	if len(r.rec.Backlog) > 0 {
+		parts = append(parts, "filed "+backlogIDs(r.rec.Backlog))
+	}
+	if len(r.rec.BacklogClosed) > 0 {
+		parts = append(parts, "closed "+backlogIDs(r.rec.BacklogClosed))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// backlogIDs renders ids as the section cites them, one code span each.
+func backlogIDs(ids []string) string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, "`"+inlineText(id)+"`")
+	}
+	return strings.Join(out, ", ")
+}
+
+// rigorPart is the section's line for the mode the run resolved (D18, D24):
+// the mode, the layer that decided it, and the strictest area rule that
+// matched, with a "+N" for the rest D23 also recorded — the shape D24 gives,
+// and the same words the record carries, so the two can be diffed (D18's
+// one-value rule: the mode is not re-derived here, it is read from the block
+// the runner wrote).
+//
+// The mode is lower-case because the record's is (the vocabulary's own
+// spelling), and the layer is the record's own word for it. "" for a run whose
+// record carries no block: an absent answer is not the built-in default, and a
+// line claiming one would be a mode nobody resolved.
+func (r *run) rigorPart() string {
+	rg := r.rec.Rigor
+	if rg == nil {
+		return ""
+	}
+	out := "rigor: " + string(rg.Mode) + " (" + string(rg.From)
+	if len(rg.Areas) > 0 {
+		out += " " + inlineText(rg.Areas[0].Name)
+		if n := len(rg.Areas) - 1; n > 0 {
+			out += fmt.Sprintf(" +%d", n)
+		}
+	}
+	return out + ")"
 }
 
 // costPart is the model cost for the section: dollars for api-key and
@@ -453,13 +598,17 @@ func (r *run) costPart() string {
 	if c == nil {
 		return ""
 	}
-	if c.ModelBasis == runstore.BasisSubscription {
-		return fmt.Sprintf("notional $%.2f (not billed)", c.ModelUSD)
+	if c.AllNotional() {
+		return fmt.Sprintf("notional $%.2f (not billed)", c.ModelSubscriptionUSD())
 	}
+	// The cap is enforced on money, so the figure beside it is the money part
+	// of the model spend: a cascade run's tier-A dollars are the
+	// subscription's and are in no cap (C1.16, P12, D140).
+	money := c.ModelMoneyUSD()
 	if r.spend.Cap > 0 {
-		return fmt.Sprintf("model cost $%.2f of $%s cap", c.ModelUSD, trimUSD(r.spend.Cap.USD()))
+		return fmt.Sprintf("model cost $%.2f of $%s cap", money, trimUSD(r.spend.Cap.USD()))
 	}
-	return fmt.Sprintf("model cost $%.2f", c.ModelUSD)
+	return fmt.Sprintf("model cost $%.2f", money)
 }
 
 func trimUSD(v float64) string {
@@ -490,11 +639,15 @@ func (r *run) updated(label string) string {
 
 // runningSection is the section while the run is in progress: after stage
 // ended, or (during) at a checkpoint in the middle of it. A first run's
-// pushed commit without a passing clean test is marked not verified.
+// pushed commit without a passing clean test is marked not verified, and a
+// halt recorded while the stage it stopped is still unwinding says so rather
+// than "Running" (governanceHalt writes the section before the stage ends).
 func (r *run) runningSection(stage string, during bool) string {
 	records, _ := verify.Records(r.d.StateDir)
 	head := "**Running**"
 	switch {
+	case r.haltValue() != nil:
+		head = "**Halted**"
 	case r.follow != nil:
 		head = "**Follow-up running**"
 	case r.rec.PushedHead != "" && !pushedVerified(records, r.rec.PushedHead):
@@ -504,11 +657,14 @@ func (r *run) runningSection(stage string, during bool) string {
 	if during {
 		what = fmt.Sprintf("checkpoint during stage `%s`", inlineText(stage))
 	} else if stage == "review" || stage == "review_first" {
-		if p := reviewsPart(r.rec.Reviews); p != "" {
+		// The zero policy: mid-run nothing has been tolerated yet, and the
+		// section names what the round left rather than what a mode would do
+		// with it once the run reaches Decide (T3.3).
+		if p := reviewsPart(r.rec.Reviews, FindingsPolicy{}); p != "" {
 			what = p
 		}
 	}
-	return r.sectionLines(head, what, verifyPart(records), r.pushedPart(records), r.costPart(), r.updated("updated"))
+	return r.sectionLines(head, what, r.checkpointReportPart(), verifyPart(records), r.pushedPart(records), r.costPart(), r.updated("updated"))
 }
 
 // pushedVerified reports whether sha has a passing test on a clean tree.
@@ -531,7 +687,8 @@ func (r *run) pushedPart(records []verify.Record) string {
 }
 
 // finalSection is the section when the run ended: outcome, reason, tests,
-// reviews and cost.
+// reviews and cost. A review round the run's mode let through names each
+// finding it tolerated and the mode that tolerated it (T3.3, D7, D18).
 func (r *run) finalSection(ready bool, reason string, records []verify.Record) string {
 	head, why := "**Draft**", inlineText(reason)
 	switch {
@@ -542,7 +699,7 @@ func (r *run) finalSection(ready bool, reason string, records []verify.Record) s
 	case r.rec.Status == runstore.StatusCancelled:
 		head = "**Cancelled**"
 	}
-	return r.sectionLines(head, why, verifyPart(records), reviewsPart(r.rec.Reviews), r.costPart(), r.updated("finished"))
+	return r.sectionLines(head, why, r.checkpointReportPart(), r.rigorPart(), verifyPart(records), reviewsPart(r.rec.Reviews, r.findingsPolicy()), r.narrowText, r.backlogPart(), r.costPart(), r.updated("finished"))
 }
 
 // ---- finalize ----

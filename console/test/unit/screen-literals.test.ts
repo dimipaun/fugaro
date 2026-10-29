@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // Every screen's `literal` writes the console's own vocabulary and never a
 // document's string (design section 5.1 rule 7; desktop-console plan Task 2.3).
 //
@@ -101,9 +103,36 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
   },
   'live.ts': {
     'flag.name': 'a RunFlag is built only from live.ts\'s own flag table (`runFlags`); an unknown health or deadline is the console\'s "unknown ..." flag, never the document\'s word',
+    UNAVAILABLE_MARK:
+      'the console\'s own `n/a` (`src/shared/availability.ts`), the mark a value with no number is drawn as. An actor the document left out of a run is drawn as the mark and never as an empty cell, and the mark is written here rather than through `putReading` because an actor is a string and not a reading: the `unit` `putReading` takes is a claim about how a number is formatted, and §2.10 scopes Live\'s one `count` reading to the review inbox (`docs_console_styling_test.go` holds that sentence)',
+    caption: {
+      within: 'fleetStatCell',
+      reason:
+        'the parameter of the `fleetStatCell` helper itself; every call site passes one of this file\'s own caption constants (`FLEET_BURN_WORD`, `FLEET_ACTIVE_WORD`, `FLEET_QUEUED_WORD`)',
+    },
+    'account.word': {
+      within: 'fleetLegendRow',
+      reason:
+        'a `FleetSegment`\'s `word`, which this file assigns from its own table: `fleetSegments` gives a segment the money word of the account it draws (`FLEET_SPENT_WORD`, `FLEET_LEASED_WORD`, `FLEET_HEADROOM_WORD`) and `fleetLegend` builds its rows the same way -- the model carries dollars and states, never a word',
+    },
+    '`#${String(row.prNumber)}`':
+      'a ready run\'s pull request number, filtered by `prNumberAt` to a positive integer (`schema.ts`\'s `optionalInt` guarantees a finite number and not a whole one) -- the same rule and the same entry `run.ts` keeps for `#${String(model.number)}`, and the review inbox draws the fact the same way: as text, this screen\'s own mark in front of a number the document carried',
+    '`${LIVE_REVIEW_TITLE} (${formatReading(measured(model.reviewCount), \'count\')})`':
+      'the review inbox\'s heading, and the interpolation is the count and nothing else: `LIVE_REVIEW_TITLE` is a console constant (the CLI\'s own words, `readyForReview` in `internal/watch/render.go`) and `reviewCount` is a number this console counted off the frame (`buildLiveModel`: `review.length`), drawn through `formatReading`, the only formatter, as `measured` because a frame that carried no `ready` list at all is refused by `schema.ts` before a screen sees it -- so no document *string* reaches the sink, which is why the heading is one text run rather than four slots (spend.ts\'s `note` is the same shape: a console sentence with a count the console computed)',
+    word: {
+      within: 'modeChip',
+      reason:
+        '`rigorModeWord(rigor.mode)`, which answers one of the console\'s five mode words or `null`; `null` is the branch that hands the document\'s own value to `putText` (the `label` class, the `runs[].rigor.mode` field), so only the console\'s word reaches the sink',
+    },
   },
   'spend.ts': {
-    'entry.dimension': 'the switch is `SPEND_DIMENSIONS.map(...)`: the seven words are the console\'s table, and an unknown document dimension is drawn as "an unknown breakdown"',
+    'entry.dimension': 'the switch is `SPEND_DIMENSIONS.map(...)`: the eight words are the console\'s table, and an unknown document dimension is drawn as "an unknown breakdown"',
+    'people.viewName': '`peopleViewOf` maps the document\'s `view` through `PEOPLE_VIEW_NAMES` and draws `UNKNOWN_PEOPLE_VIEW` for a word it does not know, so the document\'s own word is never drawn',
+    'people.reason ?? NO_PEOPLE_READ': 'the console\'s own sentence for a by-person panel with no document: `peopleOf`\'s or `readSpend`\'s reason, each a console constant or the window sentence, or the CLI\'s refusal **through `sanitizeRefusal`** (`refusalSentence`), the treatment `degraded.ts` gives a refusal',
+    sentence: {
+      within: 'peoplePanel',
+      reason: '`people.sentences` holds only sentences `peopleOf` composed from this file\'s own constants plus counts it read; the document\'s own `notes` take the `putText` branch instead',
+    },
     'series.title': '`ACCOUNT_TITLES[account]`, the console\'s headings',
     'scope.name': '`scopeOf` maps the wire word through `SCOPES` and draws `UNKNOWN_SCOPE_NAME` for a word it does not know',
     note: 'model.notes holds only the console\'s own sentences (`buildSpendModel`), the one interpolation being a count the console computed',
@@ -118,6 +147,12 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
     'row.perRunCapSource': '`capSourceAt` keeps a word only when it is on `CAP_SOURCES`, else `unknown`',
     'panel.because':
       'every panel constructor draws its reason through `sanitizeRefusal` (`drawnRefusal`) before it is stored, or it is one of the two console constants (`POLICY_BECAUSE`, `ENROLLMENT_BECAUSE`); a document\'s own `note` takes the `putText` branch instead (`becauseKind`)',
+    RIGOR_ABSENT: 'the dash `runs ls`\'s MODE column draws for a run whose record carries no rigor block (`shared/rigor.ts`), a console constant',
+    word: {
+      within: 'rigorCell',
+      reason:
+        '`rigorModeWord(view.mode)`, which answers one of the console\'s five mode words or `null`; `null` is the branch that hands the document\'s own value to `textCell` (the `label` class, the `runs[].rigor.mode` field), so only the console\'s word reaches the sink',
+    },
   },
   // The one drawer outside `src/renderer/screens`: `src/shared/version.ts` draws
   // the version skew banner and the refusal screen (Task 3.2), because the main
@@ -140,11 +175,83 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
     because:
       "`unreadableReason(compatibility)`: the reader's own reason for a failed read, **through `sanitizeText`** (the `sentence` class) inside that function, and `null` when there is none or the sanitizer refuses it -- in which case `renderVersionSkew` creates no element at all, so nothing raw and nothing empty reaches the sink",
   },
+  'graph.ts': {
+    'value.text': {
+      within: 'drawInto',
+      reason:
+        'the sanitizer\'s own answer, which is the one document-shaped string this screen writes: a `Sanitized` value is built in `graph/model.ts` by `sanitizeText` with each field\'s own class and wire path, and `sanitizeText` refuses anything that is not a string -- so this is `version.ts`\'s `versionText` case ("a drawer may write a sanitizer\'s own answer, and it may write nothing else"), and `drawInto` is the only writer of one',
+    },
+    UNAVAILABLE_MARK: 'the console\'s own unavailable mark (`app.ts`), the other half of `drawInto`\'s pair of outcomes -- the same constant `version.ts` and `projects.ts` draw a refused value as',
+    word: {
+      within: 'markWord',
+      reason:
+        '`GraphNode.words`, the model\'s own `StateWord` list: `stateWords` is one exhaustive function over the closed `PlanState` union and answers a word from `STATE_WORDS` (plus `critical`), so no document string is ever a word -- the document\'s own stage and title reach the screen through `drawInto`, never through this sink',
+    },
+    reason: {
+      within: 'tooltip',
+      reason:
+        'the sentence a gesture that does nothing is owed: `doorFor`\'s `because` (this console\'s own reason for a suffix no run ends with, or two runs ending with one) or `GRAPH_PR_NO_LINK_REASON`, both written in this file',
+    },
+    'GRAPH_VIEW_LABELS[picture.state.view]':
+      '`GRAPH_VIEW_LABELS`, this file\'s own table of what each drawing is called, keyed by the closed `GraphViewName` union (`GRAPH_VIEWS`)',
+    'notShownNote(picture.model.notShown)':
+      '`notShownNote` composes the sentence from `GRAPH_NOT_SHOWN_SINGULAR`/`GRAPH_NOT_SHOWN_PLURAL` and a count the model computed (`buildGraphModel`\'s `notShown`), so a document string is in neither half of it',
+    'barText(release)':
+      '`barText` composes "n of m done" from two `formatReading` readings -- the console\'s only formatter, whose unavailable mark is what a release the document gave no counters reads -- and the words around them are this file\'s',
+    'barText(box.release)': '`barText`, the same "n of m done" run the chip and the list heading draw, so one rule reads all three',
+    'cutForCard(node.title)':
+      '`cutForCard` answers the model\'s own `Sanitized` title cut to the room a card has, or the console\'s unavailable mark: the value has been through `sanitizeText` in `graph/model.ts`, and the cut is `[...text]` so a surrogate pair is never split',
+    '`#${String(node.prNumber)}`':
+      'a pull request number the model read as a positive integer (`prNumberAt`), drawn as **text**: design section 5.1 rule 2 and its gap 7 leave the console no URL to build, so the number is the whole of it and its `title` carries `GRAPH_PR_NO_LINK_REASON` -- the treatment `live.ts` and `run.ts` give the same field',
+    '`run …${node.run.text}`':
+      'the run suffix as the model\'s `Sanitized` `run` value, which `suffixRefusal` refuses unless it is four characters, under this file\'s own "run …" label -- so the interpolation is a sanitized four-character suffix and never a run id or a path',
+  },
   'run.ts': {
     'stage.deadline': '`deadlineState` keeps a word only when it is on `DEADLINE_STATES`, else null',
     '`#${String(model.number)}`': 'a pull request number the model read as a finite integer (`prNumberOf`)',
     'model.because': 'one of two console sentences (`PR_NO_LINK_REASON` or the no-pull-request one)',
     'model.linkBecause': '`LOG_NO_LINK`, a console constant',
+    known: {
+      within: 'rigorWord',
+      reason:
+        'the answer of the vocabulary the caller passed in (`rigorModeWord` or `rigorLayerWord`, both `shared/rigor.ts`), which is one of the console\'s own words or `null`; `null` is the branch that hands the document\'s own mode or layer to `putText` as text',
+    },
+  },
+  'coordinator.ts': {
+    word: {
+      within: 'numberCell',
+      reason:
+        'the parameter of the `numberCell` helper itself; every call site passes one of this file\'s own count words (`COORDINATOR_RECORDS_WORD`, `COORDINATOR_IN_FLIGHT_COUNT_WORD`, `COORDINATOR_COLLISIONS_WORD`), so no document string reaches the sink',
+    },
+  },
+  // The launch control (V2.5.1b) is the one screen that writes a string it was
+  // also handed by a document -- the repository identities main recorded -- and
+  // the entries below say where each of its arguments came from.
+  'launch.ts': {
+    'refusalText(recorded)': {
+      within: 'options',
+      reason:
+        'the **drawn label** of one `<option>`, which is `refusalText` of an entry of `view.repositories`: a sanitizer\'s own answer (or this file\'s marker for one it refused), which is the one document-shaped string a drawer may write -- the `graph.ts` `drawInto` entry is the same case. The entry of `view.repositories` itself is **raw** (`entry.ts`\'s `railRows` keeps the identities main matches against its own records as they came), so the raw string is never drawn: it is written into the option\'s `value`, where the attribute vocabulary below accounts for it',
+    },
+    text: {
+      within: 'help',
+      reason:
+        'the parameter of the `help` helper itself; every call site passes one of this file\'s own constants, or a line this file composed from them (`launchCounter(0)`, the two optional-field lines)',
+    },
+    label: {
+      within: 'field',
+      reason: 'the parameter of the `field` helper itself; every call site passes a string literal naming the control',
+    },
+    name: {
+      within: 'fact',
+      reason:
+        'the parameter of the `fact` helper itself; every call site passes a string literal naming a `launchResult` field -- the value beside it goes through `putText` with that field\'s own class',
+    },
+    sentence: {
+      within: 'line',
+      reason:
+        'the parameter of the `line` helper itself; every call site passes one of this file\'s own constants, or `refusalText(...)`, which is `sanitizeRefusal`\'s own answer for a sentence main or the CLI wrote',
+    },
   },
 })
 
@@ -299,12 +406,34 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
     'flag.name': 'a RunFlag name from live.ts\'s own flag table (`runFlags`)',
     'flag.tone': '`RunTone`, from the same flag table',
     'flag.because': 'the flag table\'s own sentences, interpolating only console constants',
+    '`the document carries no ${field}`':
+      'the console\'s own sentence for a field the document left out of this run, interpolating the wire path the caller passes (`runs[].models`, `runs[].auth`) and nothing the document chose -- the same sentence `putReading` writes into the `title` of a reading with no number, written here because an actor is text rather than a reading',
     'sanitizedKey(repo.slug)': 'the slug as `sanitizeText` drew it (slug class)',
     "repo.kill === null ? 'false' : 'true'": 'a boolean drawn as one of two literals',
     "connection.textContent ?? ''": 'read back from a cell `putText` wrote, so it is the sanitized text',
     "formatReading(feedReading(feed), 'seconds')": '`formatReading` of a Reading: the console\'s own number formatting or its unavailable mark',
     "model.feed === null ? '' : (model.feed.since ?? '')":
       'the arrival stamp `src/source/cli.ts` wrote on the frame (or the empty string when the caller keeps no feed reading), used as a key rather than as text',
+    'segment.name': {
+      within: 'fleetBar',
+      reason:
+        'the money account of the segment `fleetSegments` built -- one of this file\'s own four words (`counted`, `spent`, `leased`, `headroom`) -- written as the `data-account` hook the stylesheet paints a shape by, never drawn as text',
+    },
+    'account.name': {
+      within: 'fleetLegendRow',
+      reason:
+        'the same money account for the legend row\'s swatch: `fleetLegend` builds its rows from this file\'s own table, so the attribute carries a word of the console\'s and not one from the document',
+    },
+    'axis(drawn)': {
+      within: 'fleetBar',
+      reason:
+        '`axis` of a share this file\'s own arithmetic clamped to the cap: the x of a segment on a 100-unit axis, which is geometry rather than text, and the same kind of value `graph.ts` writes through `coord`',
+    },
+    'axis(share)': {
+      within: 'fleetBar',
+      reason:
+        '`axis` of the same share as the segment\'s own width: the axis is this file\'s constant rather than a number from the document, so the value is the shape\'s size and nothing a document can spell',
+    },
     theme: { within: 'renderLive', reason: 'a `LiveTheme`, the closed theme tuple' },
   },
   'projects.ts': {
@@ -323,6 +452,48 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
     kind: { within: 'root', reason: 'the closed discriminant of this file\'s states (`no-firebase`, `no-binary`, `refused`), written as a key' },
     "receivedAt === null ? '' : receivedAt": 'the arrival stamp `src/source/cli.ts` wrote on the frame, or the empty string when the caller keeps no feed reading; a key rather than text',
     theme: { within: 'root', reason: 'a `LiveTheme`, the closed theme tuple' },
+  },
+  'graph.ts': {
+    "classes.join(' ')": { within: 'elementIn', reason: 'the class list of the `elementIn` helper; every call site passes string-literal class names' },
+    'value.reason': {
+      within: 'drawInto',
+      reason: 'the sanitizer\'s own reason for a refused value, written by `sanitizeText` in the model and naming the field it refused rather than the value it refused',
+    },
+    word: {
+      within: 'markWord',
+      reason: 'a `StateWord` from `GraphNode.words`, the model\'s own vocabulary, written as the `data-word` hook a rule colours -- the same word the element draws as text',
+    },
+    'coord(value)': {
+      within: 'geometry',
+      reason:
+        '`coord` of a number the layout client let through as finite (`layout-client.ts` reads every coordinate with `Number.isFinite`), which is what makes each of `x`, `y`, `width`, `height`, `rx` and `d` a number and not a string -- and why the theme is never a length',
+    },
+    '`translate(${coord(x)} ${coord(y)})`': { within: 'shift', reason: 'the same two coordinates as an SVG transform: the engine\'s answer for where a card sits' },
+    'path': {
+      within: 'drawPlan',
+      reason: '`pathOf(route.sections)`: an `M`/`L` run over the bend points the engine answered with, every coordinate of it through `coord`',
+    },
+    'picture.state.view': { within: 'header', reason: '`GraphViewName`, the closed `GRAPH_VIEWS` tuple' },
+    'GRAPH_VIEW_NAMES[picture.state.view]': { within: 'header', reason: 'this file\'s own table of what each drawing is called, keyed by the same closed union' },
+    'tabKey(option.tab)': {
+      within: 'tabs',
+      reason:
+        '`tabKey` spells a `GraphTab` as one string -- `all` for the All tab, `stream:<name>` otherwise -- so the attribute tells a stream called `all` from the All tab, which `tabOf` reads back',
+    },
+    'group.stream': {
+      within: 'chips',
+      reason: 'a stream name, which the model holds as a **key**: `graph/model.ts` never spells one, the heading beside it is the `Sanitized` label, and a plan\'s `stream` is the same kind of value',
+    },
+    'box.key': { within: 'releaseBox', reason: '`releaseKey(plan, version)`, this file\'s own join of two ids the model holds as keys -- written as `data-release` and never drawn' },
+    key: 'the layout key of a card, a row or a chip -- `nodeKey(plan.id, node.id)` or `releaseKey(plan.id, version)`, ids the model holds as **keys** and never spells (`graph/model.ts`\'s header) -- written into `data-key`/`data-chip` and never drawn; the drawn text is the `Sanitized` title beside it',
+    "node.words[0] ?? ''": 'the node\'s first `StateWord`, the model\'s own vocabulary, as the `data-state` hook a rule colours; the empty string is a node the model gave no word, which is a state no colour applies to',
+    'door.run': 'the run id this console\'s own run list resolved the node\'s suffix to (`doorFor`), which is what `data-run-id` carries and what the entry opens -- a node whose suffix no run ends with, or one two runs end with, carries no attribute at all',
+    'door.because': { within: 'listRow', reason: '`doorFor`\'s own sentence for a gesture that opens nothing, in the `title` an HTML element keeps a tooltip in' },
+    'viewBoxOf(bounds, picture.state.zoom)': {
+      within: 'canvas',
+      reason: '`viewBoxOf`: four numbers off the picture\'s own bounds and the state\'s zoom, so what the canvas looks at is geometry rather than a style',
+    },
+    theme: { within: 'renderGraph', reason: 'a `GraphTheme`, the closed `GRAPH_THEMES` tuple' },
   },
   'run.ts': {
     "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
@@ -349,7 +520,29 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
     "formatReading(none, 'percent')": '`formatReading` of a Reading: the console\'s own number formatting or its unavailable mark',
     'drawnKey(name)': 'read back from a cell `putText` wrote, so it is the sanitized text',
     "scope.known ? scope.source : 'unknown'": 'a known scope\'s word is on the console\'s `SCOPES` table; an unknown one is drawn as `unknown`',
+    'people.view': '`PeopleView`, the closed three words `peopleViewOf` resolves (`all`, `own`, and `unknown` for a word this build does not know)',
+    'drawnKey(currency)': 'read back from a cell `putText` wrote, so it is the sanitized text',
     theme: { within: 'renderSpend', reason: 'a `SpendTheme`, the closed theme tuple' },
+  },
+  'coordinator.ts': {
+    "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
+    theme: { within: 'renderCoordinator', reason: 'a `CoordinatorTheme`, the closed theme tuple' },
+  },
+  'launch.ts': {
+    "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
+    recorded: {
+      within: 'options',
+      reason:
+        'an entry of `view.repositories`, written into the `<option>`\'s `value`: the **recorded repository identity itself**, which is the string main matches against its own records (`launchRepoArgument`, `src/main/launch.ts`) and which `entry.ts` keeps raw for exactly that reason. It is the one attribute of this file that carries a document\'s string, and it is inert -- a `value` is never parsed as markup, never navigated to and never read as a style (unlike `href`, `style` and the rest of `sanitize.test.ts`\'s forbidden set). It cannot be replaced by the drawn text: the label goes through `refusalText`, so a repository named like a credential is drawn as the marker and the launch would then be refused for a repository the operator did pick',
+    },
+    id: { within: 'help', reason: 'the parameter of the `help` helper itself; every call site passes a `LAUNCH_IDS` member or this file\'s own `launch-form` id' },
+    controlId: { within: 'field', reason: 'the parameter of the `field` helper itself; every call site passes a `LAUNCH_IDS` member' },
+    "described.join(' ')": { within: 'field', reason: 'the `LAUNCH_IDS` members a control is described by; every call site passes an array of them' },
+    'LAUNCH_IDS.form': {
+      within: 'renderLaunch',
+      reason:
+        '`LAUNCH_IDS.form`, the id this file gives the form: the button\'s `aria-controls` and the form\'s own `id` are the one string, so the control and the thing it opens are related in the DOM rather than merely adjacent',
+    },
   },
 })
 
@@ -726,14 +919,25 @@ const RENDERER_FILES: readonly string[] = Object.freeze(
 const SHARED_DRAWER = '../../shared/version.ts'
 
 describe('a screen writes only its own vocabulary through literal', () => {
-  it('reads the five screens', () => {
-    expect([...SCREEN_FILES]).toEqual(['degraded.ts', 'live.ts', 'projects.ts', 'run.ts', 'spend.ts'])
+  it('reads the eight screens', () => {
+    expect([...SCREEN_FILES]).toEqual([
+      'coordinator.ts',
+      'degraded.ts',
+      'graph.ts',
+      'launch.ts',
+      'live.ts',
+      'projects.ts',
+      'run.ts',
+      'spend.ts',
+    ])
   })
 
   it('reads the shared modules as well, so a drawer outside the screens is scanned', () => {
     expect([...SHARED_FILES]).toEqual([
       '../../shared/availability.ts',
+      '../../shared/launcher.ts',
       '../../shared/replay.ts',
+      '../../shared/rigor.ts',
       '../../shared/sanitize.ts',
       '../../shared/schema.ts',
       '../../shared/stringify.ts',
@@ -917,13 +1121,21 @@ describe('no module under src/renderer writes an inline style', () => {
     // the walk has nothing to find there.
     expect([...RENDERER_FILES]).toEqual([
       'app.ts',
+      'confirm.ts',
       'entry.ts',
+      'graph/layout-client.ts',
+      'graph/layout.ts',
+      'graph/model.ts',
       'installations.ts',
+      'screens/coordinator.ts',
       'screens/degraded.ts',
+      'screens/graph.ts',
+      'screens/launch.ts',
       'screens/live.ts',
       'screens/projects.ts',
       'screens/run.ts',
       'screens/spend.ts',
+      'writes.ts',
     ])
   })
 

@@ -14,6 +14,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/testutil"
+	"github.com/dimipaun/fugaro/internal/tier"
 )
 
 // The default branch is fetched and read once per run: a later call gets
@@ -133,7 +134,7 @@ func TestPolicyPricesBuildOnTheRunsOwnTable(t *testing.T) {
 	// read through the same call the run's bootstrap makes.
 	priced := func(id string, p projectpolicy.Price) *pricing.Table {
 		t.Helper()
-		_, spend, _, err := r.policyCeiling(&projectpolicy.Policy{Prices: map[string]projectpolicy.Price{id: p}}, envCeiling(Spend{}), Spend{})
+		_, spend, _, err := r.policyCeiling(&projectpolicy.Policy{Prices: map[string]projectpolicy.Price{id: p}}, envCeiling(Spend{}, ""), Spend{})
 		if err != nil {
 			t.Fatalf("the policy's model_prices was refused: %v", err)
 		}
@@ -162,5 +163,51 @@ func TestPolicyPricesBuildOnTheRunsOwnTable(t *testing.T) {
 	}
 	if m.Rates.OutputPerM != 4 || m.Rates.InputPerM != 3 {
 		t.Errorf("%s: the owner's override did not apply: %+v", ds, m.Rates)
+	}
+}
+
+// TestPolicyKeyPathGovernance: a governance key is reported under the
+// governance: block of fugaro.yaml, which is where it is written, and not
+// under budget:, which is where the cost and model policy lives. Both readers
+// of the path — the ignored-key warning a run logs (policyRecord) and the
+// problem fugaro validate annotates (internal/cli/validate.go) — name a line
+// of the file, so a governance key sent to budget.<key> would send its
+// operator to a block that cannot carry it.
+//
+// A tier's own key is one of those governance keys: the merge spells it
+// "tiers.<tier>.<key>" (policy.TierKey, T8.1), which is a fugaro.yaml path
+// only once governance. is in front of it. The tier loop below walks the
+// vocabulary, so a tier added to internal/tier cannot silently fall through
+// to budget.tiers.<tier>.<key>.
+func TestPolicyKeyPathGovernance(t *testing.T) {
+	for _, key := range []string{
+		policy.KeyReviewRatio, policy.KeyReviewFloorCalls, policy.KeyMaxSubagents,
+		policy.KeyStageBudgetImplement, policy.KeyStageBudgetReview, policy.KeyStageBudgetFix,
+		policy.KeyStageTokensImplement, policy.KeyStageTokensReview, policy.KeyStageTokensFix,
+		policy.KeyStageTimeoutImplement, policy.KeyStageTimeoutReview, policy.KeyStageTimeoutFix,
+	} {
+		if got := PolicyKeyPath(key); got != "governance."+key {
+			t.Errorf("PolicyKeyPath(%q) = %q, want governance.%s", key, got, key)
+		}
+	}
+	for _, tt := range tier.Tiers {
+		for _, key := range []string{policy.KeyExpectedUSD, policy.KeyExpectedMinutes, policy.KeyMaxSubagents} {
+			want := "governance." + policy.TierKey(tt, key)
+			if got := PolicyKeyPath(policy.TierKey(tt, key)); got != want {
+				t.Errorf("PolicyKeyPath(%q) = %q, want %q", policy.TierKey(tt, key), got, want)
+			}
+		}
+	}
+	for _, c := range []struct{ key, want string }{
+		{policy.KeyPerRunUSD, "budget.per_run_usd"},
+		{policy.KeyMode, "budget.mode"},
+		{policy.KeyAllowedModels, "budget.allowed_models"},
+		{policy.KeyMaxRunTokens, "agent.max_run_tokens"},
+		{policy.KeyMaxOutputCoder, "agent.max_output_tokens.coder"},
+		{policy.KeyMaxOutputReviewer, "agent.max_output_tokens.reviewer"},
+	} {
+		if got := PolicyKeyPath(c.key); got != c.want {
+			t.Errorf("PolicyKeyPath(%q) = %q, want %q", c.key, got, c.want)
+		}
 	}
 }

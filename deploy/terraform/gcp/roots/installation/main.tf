@@ -46,6 +46,8 @@ module "installation" {
   log_isolation             = var.log_isolation
   enable_budget             = var.enable_budget
   history                   = var.history
+  coordinator               = var.coordinator
+  credentials_service       = var.credentials_service
   project_secrets           = var.project_secrets
   managed_deployer_scoped   = var.managed_deployer_scoped
 }

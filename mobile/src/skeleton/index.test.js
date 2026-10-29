@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // The app skeleton's own test (mobile plan, Task P3.1).
 //
 // It is written BEFORE the module it imports, on purpose, exactly as

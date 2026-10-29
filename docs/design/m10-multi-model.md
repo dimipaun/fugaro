@@ -116,7 +116,7 @@ model_prices:
 | Rate limit (429) / provider outage | Passed through with `retry-after`; charged 0 (A3). Claude Code retries; a sustained outage ends in the stage's own timeout, a draft PR as today |
 | Upstream silently serves another model (fallback) | `priced_as: max` for the route pattern, flagged; account-side `allow_fallbacks: false` is the real fix |
 | Usage missing from a completed stream | Charge the reservation (§5) and flag |
-| Provider-reported cost differs from the table | Logged and shown in `diagnose`; the table stays the charge (§5) |
+| Provider-reported cost differs from the table | Logged and shown in `diagnose`; the table's charge settles the call, except that the report floors an unpriced service tier's charge, clamped to that call's reservation (§5) |
 | Provider rejects a Claude Code feature (thinking, beta header, tool shape) | Error passed through; the stage fails with the upstream message; per-route settings fragment is where a known incompatibility is switched off |
 | Stream shape differs (no `ping`, no `message_start` fields) | The existing parser tolerates absent optional fields; unknown event types are skipped; a stream with no recognised events is a protocol error charged as "after start" (reserved output) |
 | Gateway upstream URL not https | Refused at start (existing `checkBaseURL`; http only on loopback, for the fake) |

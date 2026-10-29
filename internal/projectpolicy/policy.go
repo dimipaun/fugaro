@@ -127,8 +127,23 @@ import (
 // fugaro.yaml's own budget: block does, and a key that is not documented is an
 // error rather than a silently-dropped zero.
 type Policy struct {
-	Version    int                 `json:"version"`
-	Budget     Budget              `json:"budget"`
+	Version int    `json:"version"`
+	Budget  Budget `json:"budget"`
+	// BaseBranch is the project's default base branch (internal/config's
+	// EffectiveBaseBranch, layer 3): what a repository of this project runs
+	// against when neither its committed fugaro.yaml sets git.base_branch nor
+	// its local repos.<r>.base_branch entry names one. It is here and not in
+	// the published shared config for the reason every member of this node is:
+	// the owner writes it (`fugaro project policy publish`) and the runner
+	// fails closed on the node, while the shared file is writable by any
+	// launcher — a base branch there would let one move every repository of the
+	// project at once. "" means the project sets none, and the value is then
+	// main.
+	//
+	// It is the node's own member and not a per-repository one: the
+	// repository entries this node has (config/policy/repos/$slug) carry
+	// admissions, and a base branch is not an admission.
+	BaseBranch string              `json:"base_branch,omitempty"`
 	AllowRepos []string            `json:"allow_repos"`
 	Providers  map[string]Provider `json:"providers,omitempty"`
 	Prices     Prices              `json:"model_prices,omitempty"` // the owner's price overrides, keyed by model ID (Prices documents the node's own spelling)
@@ -217,7 +232,7 @@ var knownTopLevelKeys = map[string]bool{
 	"version": true, "budget": true, "allow_repos": true,
 	"providers": true, "model_prices": true, "routing": true,
 	"profiles": true, "clone_urls": true, "accounts": true,
-	"credentials": true,
+	"credentials": true, "base_branch": true,
 }
 
 // Budget is the ceiling a run is held to. An absent field is zero and means
@@ -680,6 +695,19 @@ func Decode(raw []byte) (*Policy, bool, error) {
 	}
 	if p.Version != Version {
 		return nil, true, &VersionError{Found: p.Version, Understood: Version}
+	}
+
+	if braw, ok := doc["base_branch"]; ok && !IsNull(braw) {
+		if err := json.Unmarshal(braw, &p.BaseBranch); err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: base_branch: %w", err)
+		}
+		// The same rule fugaro.yaml's git.base_branch and the installation
+		// config's own base_branch are held to (config.ValidBranchName): the
+		// value reaches git, Docker build arguments, Cloud Build and a run's
+		// ref, and the node is a hand-writable object.
+		if !config.ValidBranchName(p.BaseBranch) {
+			return nil, true, fmt.Errorf("projectpolicy: base_branch %q is not a plain git branch name (the project's default base branch)", p.BaseBranch)
+		}
 	}
 
 	if braw, ok := doc["budget"]; ok && !IsNull(braw) {

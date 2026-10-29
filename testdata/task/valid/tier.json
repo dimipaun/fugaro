@@ -1,0 +1,1 @@
+{ "version": 1, "run_id": "20261028-101500-a1b2", "repo": "acme/server", "ref": "main", "task": "x", "tier": "small", "expected_scope": ["internal/config/scope.go", "docs/project-layer.md"] }

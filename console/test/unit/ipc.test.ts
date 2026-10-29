@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The IPC allow-list, held to its own rules (desktop-console plan Task 1.2;
 // design section 5.1 rule 5, section 9.2's mutation-proof form, D14).
 //
@@ -79,6 +81,8 @@ import {
   IPC_CHANNEL_PREFIX,
   IPC_VERSION,
   MAX_ARGUMENT_KEYS,
+  MAX_INSTALLATION_CHECKOUT_LENGTH,
+  MAX_INSTALLATION_NAME_LENGTH,
   MAX_PAYLOAD_WIDTH,
   MAX_REPLY_REASON_LENGTH,
   MAX_REPOSITORY_LENGTH,
@@ -94,6 +98,7 @@ import {
   isConsoleSenderUrl,
   isSenderOnDocument,
   isNeverReachable,
+  operationFor,
   readStoredCompatibility,
   reducedModeHandlers,
   registerConsoleHandlers,
@@ -108,6 +113,12 @@ import type {
   ConsoleReply,
   OperationName,
 } from '../../src/main/ipc'
+import {
+  INSTALLATION_OPERATIONS,
+  MAX_INSTALLATION_PATH_LENGTH,
+  MAX_INSTALLATION_PROJECT_LENGTH,
+  validateInstallationArguments,
+} from '../../src/main/installations'
 import { APP_ENTRY_URL } from '../../src/main/protocol'
 import { SPAWN_KIND_FOR, SPAWN_COMMANDS, argvFor } from '../../src/main/spawn'
 import {
@@ -242,7 +253,7 @@ function fakeRenderer(
 }
 
 /** stubHandlers is the whole surface's handlers, each answering an empty
- * document, so a test of the *plumbing* does not have to write twelve. */
+ * document, so a test of the *plumbing* does not have to write fifteen. */
 function stubHandlers(overrides: Record<string, ConsoleHandler> = {}): ConsoleHandlers {
   const handlers: Record<string, ConsoleHandler> = {}
   for (const operation of CONSOLE_OPERATIONS) handlers[operation.name] = () => ({})
@@ -296,7 +307,7 @@ function asCallable(method: unknown): (args?: unknown) => Promise<ConsoleReply> 
  * compile-time half of rule 5's closed surface, and the thing that checks it is
  * `npm run typecheck` (or the `tsc --noEmit` the review round runs), not vitest.
  *
- * The runtime tests below pin the twelve names and the twelve methods against
+ * The runtime tests below pin the fifteen names and the fifteen methods against
  * `CONSOLE_OPERATIONS`, and that is exactly why the defect this function guards
  * was silent: the object is built from the table, so no *extra* method can
  * exist at runtime, and a *misspelled* one is not a runtime question at all --
@@ -317,7 +328,7 @@ function assertClosedSurface(bridge: ConsoleBridge, method: ExposedMethod): void
 
   // A misspelling is a compile error and not an `undefined` call inside a
   // screen's render, which is what an index signature would have made it.
-  // @ts-expect-error `showBudgte` is not one of the twelve method names
+  // @ts-expect-error `showBudgte` is not one of the fifteen method names
   void bridge.showBudgte
   // @ts-expect-error there is no generic `invoke`: no method takes a channel
   void bridge.invoke
@@ -325,9 +336,9 @@ function assertClosedSurface(bridge: ConsoleBridge, method: ExposedMethod): void
   void bridge.send
 
   // The two unions are unions, in both halves of the table.
-  // @ts-expect-error `runs.listt` is not one of the twelve operation names
+  // @ts-expect-error `runs.listt` is not one of the fifteen operation names
   const notAName: ExposedName = 'runs.listt'
-  // @ts-expect-error `showBudgte` is not one of the twelve method names
+  // @ts-expect-error `showBudgte` is not one of the fifteen method names
   const notAMethod: ExposedMethod = 'showBudgte'
   void notAName
   void notAMethod
@@ -342,7 +353,7 @@ function assertClosedSurface(bridge: ConsoleBridge, method: ExposedMethod): void
   switch (method) {
     case 'subscribeLive':
       break
-    // @ts-expect-error `subscribeLiv` is not one of the twelve method names
+    // @ts-expect-error `subscribeLiv` is not one of the fifteen method names
     case 'subscribeLiv':
       break
   }
@@ -557,22 +568,43 @@ interface CliCommand {
  * (there is no command the console could drive that is not here), and nothing on
  * it that is not `allowed` may be driven either. Keeping the list complete is
  * what makes "the console is read-only" a fact about the surface rather than a
- * claim about the eleven commands we happened to think of.
+ * claim about the argvs we happened to think of.
+ *
+ * `coordinator status` was already a leaf of this CLI on that date; it is listed
+ * as `allowed` from Bitbucket credentials T1.2, when the project view became the
+ * first screen to read it.
  */
 const CLI_COMMANDS: readonly CliCommand[] = [
-  // The eleven the design's allow-list admits, and the one document each draws.
+  // The thirteen dashboard commands the design's allow-list admits (fourteen
+  // argv: `logs` twice, and console L5b's `runs stats`), and the one document
+  // each draws. The picker's own read
+  // (`config list --json`) is deliberately not here: it is not a dashboard
+  // operation, and it arrived on 2026-10-18, after this snapshot's date.
   { command: 'watch', kind: 'allowed', where: 'internal/cli/watch.go:134' },
   { command: 'budget show', kind: 'allowed', where: 'internal/cli/budget.go:214' },
   { command: 'report', kind: 'allowed', where: 'internal/cli/report.go:53' },
   { command: 'runs ls', kind: 'allowed', where: 'internal/cli/runs.go:87' },
+  { command: 'runs stats', kind: 'allowed', where: 'internal/cli/runs_stats.go:110' },
+  // Plan GV2.1: the graph screen's read, and the one command of this list whose
+  // subject is the *checkout* rather than the project -- it walks the graph
+  // artifacts under the checkout's own `docs/`, so its cwd is part of the
+  // question (`internal/cli/plan_status.go:58`).
+  { command: 'plan status', kind: 'allowed', where: 'internal/cli/plan_status.go:58' },
   { command: 'diagnose', kind: 'allowed', where: 'internal/cli/diagnose.go:87' },
   { command: 'logs', kind: 'allowed', where: 'internal/cli/logs.go:45' },
   { command: 'secrets ls', kind: 'allowed', where: 'internal/cli/secrets.go:536' },
   { command: 'accounts ls', kind: 'allowed', where: 'internal/cli/accounts.go:70' },
   { command: 'version', kind: 'allowed', where: 'internal/cli/root.go:84' },
   { command: 'doctor', kind: 'allowed', where: 'internal/cli/doctor.go:159' },
-  // Writers.
-  { command: 'run', kind: 'mutating', where: 'internal/cli/run.go:134' },
+  // Bitbucket credentials T1.2: the project view's read, the one command here
+  // whose subject is the coordinator's *stored* view rather than a live read.
+  { command: 'coordinator status', kind: 'allowed', where: 'internal/cli/coordinator.go:560' },
+  // **The console's one write** (design §5.1 rule 11, D22). `run` was the
+  // first writer in this list and the one no argv could drive; since V2.5.1a it
+  // is a command the allow-list admits, in exactly one argv, so it is `allowed`
+  // and the test below reads that argv back rather than asserting it is
+  // unreachable.
+  { command: 'run', kind: 'allowed', where: 'internal/cli/run.go:134' },
   { command: 'cancel', kind: 'mutating', where: 'internal/cli/cancel.go:72' },
   // The converge is two doors since W1.2 (`fugaro setup` is the first run and
   // creates; `fugaro update` re-converges and creates nothing) and both apply
@@ -640,12 +672,27 @@ const NOT_ON_THIS_TREE: readonly string[] = [
  * operation fixes: `RUN` and `--repo R` are arguments the schema carries, and
  * `--dir D` on doctor is main-process state rather than a renderer argument, so
  * both are absent from these strings.
+ *
+ * **It is sixteen argvs, and this surface is the same sixteen.** The thirteenth is
+ * `config list --json`, the rail's own read (owner's design ruling of
+ * 2026-10-25): until that ruling there were twelve here and it was pinned where
+ * the picker's table was, and the ruling made the read the dashboard's own
+ * operation. The fourteenth is GV2.1's `plan status --json` (the graph
+ * screen's per-task state; `console/docs/json-contract.md` §6.12), the
+ * fifteenth is T1.2's `coordinator status --from-store --all --json`, whose two
+ * extra words are fixed flags of the row rather than arguments
+ * (`console/docs/json-contract.md` §6.13), and the sixteenth is V2.5.1a's
+ * launch -- rule 11's exact argv with the words an argument fills
+ * (`--run-id <run id>`, `--repo <owner/name>`, `--title=<T>`,
+ * `--plan-task=<P>`) and the console's own state (`--project`, `--config`)
+ * taken out, which is this file's convention for every row here.
  */
 const DESIGN_ARGV: readonly string[] = [
   'watch --json',
   'budget show --json',
   'report --json',
   'runs ls --json',
+  'runs stats --json',
   'diagnose --json',
   'logs --json',
   'logs --url',
@@ -653,6 +700,12 @@ const DESIGN_ARGV: readonly string[] = [
   'accounts ls --json',
   'version',
   'doctor --json',
+  'config list --json',
+  'plan status --json',
+  'coordinator status --from-store --all --json',
+  // Rule 11's argv, `--task-file -` and all: the literal `-` is the word that
+  // sends the task down the child's stdin rather than onto a command line.
+  'run --task-file - --json',
 ]
 
 /** argvOf is an operation's command and the flags it fixes, as one string. */
@@ -663,26 +716,41 @@ function argvOf(operation: ConsoleOperation): string | null {
     : `${operation.command} ${operation.flags.join(' ')}`
 }
 
-/** commandsDriven returns the operations whose command is this one. */
+/** commandsDriven returns the operations whose command is this one. A command
+ * path that *continues* the one asked for is that command's, which is what
+ * makes the launch findable under `run`: its `command` is `run --task-file -`,
+ * because those two words are the row's own and not flags a screen controls. */
 function operationsDriving(command: string): readonly ConsoleOperation[] {
-  return CONSOLE_OPERATIONS.filter((operation) => operation.command === command)
+  return CONSOLE_OPERATIONS.filter(
+    (operation) =>
+      operation.command === command ||
+      (operation.command !== null && operation.command.startsWith(`${command} `)),
+  )
 }
 
 describe("the allow-list's read-only invariant", () => {
   it('is exactly the design section 3.4 rule 2 allow-list, argv for argv', () => {
     const driven = CONSOLE_OPERATIONS.map(argvOf).filter((argv): argv is string => argv !== null)
     expect([...driven].sort()).toEqual([...DESIGN_ARGV].sort())
+    expect(driven).toHaveLength(DESIGN_ARGV.length)
   })
 
-  it('has exactly three operations spawn nothing at all: the link, the handshake’s answer and the active installation', () => {
-    // Task 3.3 added the second one and Task 3.4b the third (`installation.current`,
-    // plan step 6: "added to SHIPPED_SURFACE deliberately"), and the number is the
-    // claim: these rows are the console's own state, and a fourth operation with
-    // no command would be a surface that answers something no CLI read produced.
+  it('has exactly eight operations spawn nothing at all, and names each of them', () => {
+    // Task 3.3 added the handshake's answer, Task 3.4b `installation.current`
+    // (plan step 6: "added to SHIPPED_SURFACE deliberately"), and the owner's
+    // design ruling of 2026-10-25 the rail's five store-and-window operations.
+    // The number is the claim: these rows are the console's own state, and a
+    // tenth operation with no command would be a surface that answers something
+    // no CLI read produced.
     const withoutCommand = CONSOLE_OPERATIONS.filter((operation) => operation.command === null)
     expect(withoutCommand.map((operation) => operation.name)).toEqual([
       'startup.compatibility',
       'installation.current',
+      'installation.choose',
+      'installation.checkout',
+      'installation.remove',
+      'installation.reveal',
+      'installation.open',
       'link.openExternal',
     ])
     // Each of them, by name, so the test fails naming the row rather than on a
@@ -690,6 +758,11 @@ describe("the allow-list's read-only invariant", () => {
     expect(withoutCommand.map((operation) => operation.method)).toEqual([
       'getCompatibility',
       'getInstallation',
+      'chooseInstallation',
+      'setInstallationCheckout',
+      'removeInstallation',
+      'revealInstallation',
+      'openInstallations',
       'openExternal',
     ])
   })
@@ -735,6 +808,19 @@ describe("the allow-list's read-only invariant", () => {
     })
   }
 
+  it('drives `run` from the launch alone, and only by rule 11’s argv', () => {
+    // **The turned-around half of the loop above.** Until V2.5.1a every test
+    // here asserted that nothing drove `run`; the write is now drivable through
+    // exactly one operation, and this names it. `operationsDriving` reads the
+    // command path, which for the launch carries its two fixed words, so a
+    // second operation under `run` -- or a launch whose words changed -- fails
+    // here as well as at the argv pin below.
+    const drivers = operationsDriving('run')
+    expect(drivers.map((operation) => operation.name)).toEqual(['run.launch'])
+    const driver = drivers[0]
+    expect(driver === undefined ? null : argvOf(driver)).toBe('run --task-file - --json')
+  })
+
   for (const command of NOT_ON_THIS_TREE) {
     it(`names ${command}, which this tree does not have yet, and does not pretend it does`, () => {
       expect(CLI_COMMANDS.some((entry) => entry.command === command)).toBe(false)
@@ -744,8 +830,14 @@ describe("the allow-list's read-only invariant", () => {
 
   it('names only commands this tree has, or commands explicitly not on it', () => {
     for (const row of NEVER_REACHABLE) {
+      // A flag row names a flag; an argv row names one word *of* a command, so
+      // the command it belongs to is what has to exist. The positional-TEXT row
+      // names no word at all, and its command is the one it is refused on.
       if (row.shape === 'flag') continue
-      const known = CLI_COMMANDS.some((entry) => entry.command === row.value)
+      const known =
+        row.shape === 'argv'
+          ? CLI_COMMANDS.some((entry) => entry.command === row.command)
+          : CLI_COMMANDS.some((entry) => entry.command === row.value)
       expect(known || NOT_ON_THIS_TREE.includes(row.value), `${row.value} (${row.where})`).toBe(true)
     }
   })
@@ -775,7 +867,23 @@ describe("the allow-list's read-only invariant", () => {
     expect(isNeverReachable({ command: 'version', flags: [] })).toBeNull()
 
     expect(isNeverReachable({ command: 'budget kill', flags: ['--json'] })?.value).toBe('budget kill')
-    expect(isNeverReachable({ command: 'run', flags: ['--json'] })?.value).toBe('run')
+    // **`run` is argv-shaped now.** `run --json` is not a vector anybody wrote
+    // -- the launch's own argv carries `--task-file -` and `--run-id` as well --
+    // so it is not refused, and each excluded word is, on its own row.
+    expect(isNeverReachable({ command: 'run', flags: ['--json'] })).toBeNull()
+    expect(isNeverReachable({ command: 'run', flags: ['--json', '--pr'] })?.value).toBe('--pr')
+    expect(isNeverReachable({ command: 'run', flags: ['--json', '--retry'] })?.value).toBe('--retry')
+    expect(isNeverReachable({ command: 'run', flags: ['--json', '--no-budget-check'] })?.value).toBe(
+      '--no-budget-check',
+    )
+    // ...and the launch's own command path is not a `run` the table refuses,
+    // even though it begins with one: it names none of the excluded words.
+    expect(
+      isNeverReachable({ command: 'run --task-file -', flags: ['--json'] }),
+    ).toBeNull()
+    // The words are matched wherever they are spelled, which is what keeps a
+    // later edit from moving one out of `flags` and into the command path.
+    expect(isNeverReachable({ command: 'run --task-file - --pr', flags: ['--json'] })?.value).toBe('--pr')
     expect(isNeverReachable({ command: 'doctor', flags: ['--json', '--check-github-app'] })?.value).toBe(
       '--check-github-app',
     )
@@ -797,7 +905,7 @@ describe("the allow-list's read-only invariant", () => {
     }
   })
 
-  it('fixes only the two flags the surface may fix, and never --url with --json', () => {
+  it('fixes only the four flags the surface may fix, and never --url with --json', () => {
     for (const operation of CONSOLE_OPERATIONS) {
       for (const flag of operation.flags) {
         expect(ALLOWED_OPERATION_FLAGS, `${operation.name} fixes ${flag}`).toContain(flag)
@@ -805,7 +913,12 @@ describe("the allow-list's read-only invariant", () => {
       const flags = flagsOf(operation)
       expect(flags.includes('--url') && flags.includes('--json'), operation.name).toBe(false)
     }
-    expect([...ALLOWED_OPERATION_FLAGS]).toEqual(['--json', '--url'])
+    // `--from-store` and `--all` are T1.2's two, fixed together on
+    // `coordinator status` alone: the stored view and the project-wide wrapper
+    // are one question, and no screen control turns either off. Widening this
+    // list is what a new operation fixing a new flag costs, and the exact-argv
+    // pin above is what keeps that from being a free widening.
+    expect([...ALLOWED_OPERATION_FLAGS]).toEqual(['--json', '--url', '--from-store', '--all'])
   })
 })
 
@@ -818,13 +931,35 @@ describe('the never-reachable table', () => {
     it(`nothing in the allow-list drives ${row.value}`, () => {
       // This is the plan's red step: adding `budget kill` -- or any row here --
       // to CONSOLE_OPERATIONS makes this test, named for it, fail.
-      const drivers = CONSOLE_OPERATIONS.filter((operation) =>
-        row.shape === 'command'
-          ? operation.command === row.value
-          : flagsOf(operation).includes(row.value),
-      )
+      const drives = (operation: ConsoleOperation): boolean => {
+        if (row.shape === 'command') return operation.command === row.value
+        if (row.shape === 'argv') {
+          // A word of a command's argv: it matches wherever the operation
+          // spells it, in the command path or in the flags it fixes.
+          const under =
+            operation.command === row.command ||
+            (operation.command !== null && operation.command.startsWith(`${row.command ?? ''} `))
+          return under && [...(operation.command?.split(' ') ?? []), ...flagsOf(operation)].includes(row.value)
+        }
+        return flagsOf(operation).includes(row.value)
+      }
+      const drivers = CONSOLE_OPERATIONS.filter(drives)
       expect(drivers.map((operation) => operation.name), row.where).toEqual([])
-      expect(isNeverReachable({ command: row.shape === 'command' ? row.value : null, flags: row.shape === 'flag' ? [row.value] : [] })).toBe(row)
+      if (row.shape === 'argv' && row.value === '') {
+        // The positional-TEXT row is the one row with no word to match: `run`
+        // refuses a positional word *together with* `--task-file`, so the fact
+        // is that this row can never fire -- a command-level match would refuse
+        // the very argv rule 11 writes. Its subject is checked from the other
+        // side, in the launch's own argv test.
+        expect(isNeverReachable({ command: 'run', flags: [] }), row.where).toBeNull()
+        return
+      }
+      expect(
+        isNeverReachable({
+          command: row.shape === 'command' ? row.value : row.shape === 'argv' ? (row.command ?? null) : null,
+          flags: row.shape === 'flag' || row.shape === 'argv' ? [row.value] : [],
+        }),
+      ).toBe(row)
     })
   }
 
@@ -844,20 +979,26 @@ describe('the never-reachable table', () => {
     expect(() => assertReachableSurface(mutated)).toThrow(/never reach/)
   })
 
-  it('refuses a table with a command this tree does not have at all', () => {
+  it('refuses a second `run` argv, which is the mutation this fence moved', () => {
+    // This used to plant an operation named `run.launch` driving `run`, because
+    // *every* `run` argv was forbidden and a planted writer was the whole
+    // question. The launch is real now, so the same mutation is the one that
+    // still matters: a second operation under `run`, carrying a word the design
+    // excludes. It fails before any window exists, which is the point of the
+    // check being at registration.
     expect(() =>
       assertReachableSurface([
         ...CONSOLE_OPERATIONS,
         {
-          name: 'run.launch',
-          method: 'launchRun',
+          name: 'run.retry',
+          method: 'retryRun',
           command: 'run',
-          flags: ['--json'],
-          summary: 'a writer',
+          flags: ['--json', '--retry'],
+          summary: 'a writer nobody ruled on',
           args: [],
         },
       ]),
-    ).toThrow(/run/)
+    ).toThrow(/--retry/)
   })
 
   it('refuses a table with a flag the never table does not even list', () => {
@@ -943,6 +1084,20 @@ const WELL_FORMED: Record<OperationName, Record<string, unknown>> = {
   'budget.show': { repo: 'acme/app' },
   'spend.report': { by: 'model', since: '7d', until: '2026-10-16', repo: 'acme/app' },
   'runs.list': { repo: 'acme/app', since: '7d', mine: true, pr: 42, all: false },
+  // No `--all-users`: the operation has no such key, because the command
+  // resolves the view itself (see `CONSOLE_OPERATIONS`' own comment).
+  'runs.stats': { since: '7d' },
+  // No `path`, no `checkout`, no `dir`: the read's directory is the
+  // installation's own, and this payload is the whole of what a renderer may
+  // say to it (plan GV2.1, constraint C1).
+  'plan.status': { all: false },
+  // No `repo`, no `since`, no `path`: T1.2's read is the installation's whole
+  // repository set, from the view the coordinator already stored, so this
+  // payload is empty on purpose (Bitbucket credentials T1.2).
+  'coordinator.status': {},
+  // The five fields, with the two optional ones left out -- which is the argv
+  // rule 11 writes for a launch the operator gave no title and no plan task.
+  'run.launch': { installation: 'sandbox', repository: 'acme/app', task: 'do the thing' },
   'run.diagnose': { run: '20261016-121029-4a1b' },
   'run.logs': { run: '20261016-121029-4a1b' },
   'run.logLink': { run: '20261016-121029-4a1b' },
@@ -953,6 +1108,16 @@ const WELL_FORMED: Record<OperationName, Record<string, unknown>> = {
   'installation.current': {},
   'environment.report': {},
   'link.openExternal': { url: 'https://github.com/acme/app/pull/1' },
+  // The installation rail (owner's design ruling of 2026-10-25). The project
+  // names and the directory are invented, and the directory is absolute -- the
+  // grammar decides the shape and nothing else, and whether the CLI ever listed
+  // it is the main process's check against its own document.
+  'installation.list': {},
+  'installation.choose': { project: 'aurora' },
+  'installation.checkout': { project: 'aurora', checkout: '/home/operator/src/aurora' },
+  'installation.remove': { project: 'aurora' },
+  'installation.reveal': { project: 'aurora' },
+  'installation.open': {},
 }
 
 const RUN_ID = '20261016-121029-4a1b'
@@ -1101,10 +1266,24 @@ describe('the argument schemas', () => {
     }
   })
 
-  it('takes no path, wherever a value goes, for every operation', () => {
+  it('takes no path, wherever a value goes, for every operation but the rail’s own two kinds', () => {
     const paths = ['/etc/passwd', '../../etc/passwd', '/work/repo/fugaro.yaml', 'file:///etc/passwd']
     for (const operation of CONSOLE_OPERATIONS) {
       for (const spec of operation.args) {
+        // The rail's two kinds are the two whose subject is a *name the store
+        // holds* rather than a value with a grammar of its own:
+        //
+        //   - `installationCheckout` is a directory by design -- the rail's
+        //     "Choose a checkout" -- and the value is one the CLI itself
+        //     listed; this grammar checks its shape and membership of that list
+        //     is the main process's check against the document it last read
+        //     (`picker.ts`; `installations-ipc.test.ts` holds it);
+        //   - `installationName` is a bare word, and what keeps a path-shaped
+        //     string harmless is the lookup: a name this console holds no
+        //     record for is refused before anything else happens.
+        //
+        // Each has its own case below rather than a hole here.
+        if (spec.kind === 'installationCheckout' || spec.kind === 'installationName') continue
         for (const path of paths) {
           const decision = validateArguments(operation.name, { [spec.key]: path })
           expect(decision.ok, `${operation.name}.${spec.key} accepted ${path}`).toBe(false)
@@ -1113,16 +1292,186 @@ describe('the argument schemas', () => {
     }
   })
 
-  it('takes no command and no flag name, wherever a value goes', () => {
+  it('takes a directory for the rail’s checkout kind only when it is absolute, and nothing else', () => {
+    // The shape and no more, which is the store's own rule for the field
+    // (`isAbsolutePath`): an absolute path is admitted, and whether the CLI ever
+    // offered it is decided in the main process against the list it last read.
+    for (const path of ['/home/operator/src/aurora', '/tmp/scratch', '/Users/Ann Lee/src/aurora']) {
+      expect(validateArguments('installation.checkout', { project: 'aurora', checkout: path }).ok, path).toBe(true)
+    }
+    for (const path of ['../../etc/passwd', 'file:///etc/passwd', 'src/aurora', '-x', '', '/etc/passwd\u0000']) {
+      expect(validateArguments('installation.checkout', { project: 'aurora', checkout: path }).ok, JSON.stringify(path)).toBe(
+        false,
+      )
+    }
+  })
+
+  it('takes no command and no flag name, wherever a value goes, for every operation but the rail’s project name', () => {
     const words = ['budget kill', 'run', '--repo', '-x', 'ls -la', 'fugaro run']
     for (const operation of CONSOLE_OPERATIONS) {
       for (const spec of operation.args) {
+        // `installationName` is the one kind that is a **bare word**: an
+        // installation may be called `run`, and the surface's protection there
+        // is not the alphabet but the store -- the name is looked up, and a name
+        // this console does not hold is refused (`picker.ts`). Five of the six
+        // spellings below are refused by this kind too (a space, a leading `-`),
+        // and the case beneath is the one that says which.
+        if (spec.kind === 'installationName') continue
         for (const word of words) {
           const decision = validateArguments(operation.name, { [spec.key]: word })
           expect(decision.ok, `${operation.name}.${spec.key} accepted ${word}`).toBe(false)
         }
       }
     }
+  })
+
+  it('takes a project name for the rail’s name kind only as one word, and never a flag', () => {
+    for (const name of ['aurora', 'aurora-2', 'orbit']) {
+      expect(validateArguments('installation.choose', { project: name }).ok, name).toBe(true)
+    }
+    // A leading `-` is a value that changes a command, and every spelling with a
+    // space is a second word: both are refused here, which is what leaves `run`
+    // -- a legitimate installation name -- the only word of the six above this
+    // kind admits.
+    for (const name of ['budget kill', 'ls -la', 'fugaro run', '--repo', '-x', '']) {
+      expect(validateArguments('installation.choose', { project: name }).ok, JSON.stringify(name)).toBe(false)
+    }
+  })
+
+  it('answers for the rail’s two kinds exactly as the store’s own validator does', () => {
+    // The rail's rows are the picker's own two kinds moved onto this table, and
+    // the two validators are two spellings of one rule: `ipc.ts` cannot import
+    // `installations.ts` (that module imports this one), so the bounds and the
+    // two predicates are written twice, and this is the test that keeps the two
+    // spellings one answer. A drift in either direction is a hole: a dashboard
+    // more permissive than the store is a value the store then refuses late, and
+    // one stricter refuses a name the CLI itself printed.
+    expect(MAX_INSTALLATION_NAME_LENGTH).toBe(MAX_INSTALLATION_PROJECT_LENGTH)
+    expect(MAX_INSTALLATION_CHECKOUT_LENGTH).toBe(MAX_INSTALLATION_PATH_LENGTH)
+
+    const storeRow = (name: string): Parameters<typeof validateInstallationArguments>[0] => {
+      const row = INSTALLATION_OPERATIONS.find((operation) => operation.name === name)
+      if (row === undefined) throw new Error(`the store has no ${name} row`)
+      return row
+    }
+
+    const names = [
+      'aurora',
+      'orbit',
+      'aurora-2',
+      'acme/app',
+      'run',
+      'Aurora',
+      '',
+      ' ',
+      'aurora ',
+      'aurora\t2',
+      '-x',
+      '--project',
+      'budget kill',
+      'ls -la',
+      'aurora\n',
+      'aurora\u0000',
+      'aurora\u007f',
+      'a'.repeat(MAX_INSTALLATION_PROJECT_LENGTH),
+      'a'.repeat(MAX_INSTALLATION_PROJECT_LENGTH + 1),
+      'a'.repeat(4097),
+    ]
+    for (const name of names) {
+      const here = validateArguments('installation.choose', { project: name }).ok
+      const there = validateInstallationArguments(storeRow('choose'), { project: name }).ok
+      expect(here, `the two validators disagree about the project ${JSON.stringify(name)}`).toBe(there)
+    }
+
+    const checkouts = [
+      '/home/operator/src/aurora',
+      '/Users/Ann Lee/src/aurora',
+      '/tmp/scratch',
+      '/',
+      'src/aurora',
+      '../../etc/passwd',
+      'file:///etc/passwd',
+      'C:\\Users\\operator\\src\\aurora',
+      '-x',
+      '',
+      '/etc/passwd\u0000',
+      `/home/operator/${'a'.repeat(MAX_INSTALLATION_PATH_LENGTH)}`,
+      `/home/operator/${'a'.repeat(MAX_INSTALLATION_PATH_LENGTH + 1)}`,
+    ]
+    for (const checkout of checkouts) {
+      const here = validateArguments('installation.checkout', { project: 'aurora', checkout }).ok
+      const there = validateInstallationArguments(storeRow('checkout'), { project: 'aurora', checkout }).ok
+      expect(here, `the two validators disagree about the checkout ${JSON.stringify(checkout)}`).toBe(there)
+    }
+  })
+
+  it('refuses a hidden character in a rail name, where the store’s own rule does not', () => {
+    // The one asymmetry between the two validators, and it points one way. Every
+    // string on this surface refuses a hidden character -- a control character,
+    // a C1 control, an invisible format character, a line separator or an
+    // unpaired surrogate (`hiddenCharacterReason`, `ipc.ts`) -- because a value
+    // that renders as another value must not cross this boundary at all. The
+    // store's rule for a project name is about argv safety and does not carry
+    // that clause, so a name it holds can be one this surface refuses.
+    //
+    // That is reachable only from a hand-edited `installations.json`: a project
+    // name is 1 to 40 of `a-z`, `0-9` and `-`, starting and ending with a letter
+    // or a digit (`config.ProjectNameRE`), so the CLI cannot print one of these
+    // and the store cannot hold a name the CLI did not print. Refusing it is the
+    // fail-closed direction -- the rail draws the row and the click reports the
+    // refusal -- and the test above is what keeps the *other* direction, a
+    // dashboard looser than the store, impossible.
+    for (const name of ['aurora\u202e', 'aurora\u200b', '\ufeffaurora', 'aurora\u00ad', 'aurora\u2028']) {
+      expect(validateArguments('installation.choose', { project: name }).ok, JSON.stringify(name)).toBe(false)
+      expect(
+        validateArguments('installation.checkout', { project: 'aurora', checkout: `/home/operator/${name}` }).ok,
+        JSON.stringify(name),
+      ).toBe(false)
+    }
+  })
+
+  it('refuses a directory in `plan.status`’s payload, and the refusal is this schema’s own key list', () => {
+    // **The security claim of plan GV2.1 (constraint C1), as a test.** The plan
+    // read is *about* the installation's checkout: the CLI resolves `docs/` from
+    // the child's working directory, so a payload that could name a directory
+    // would be a renderer choosing what the console reads -- and a document
+    // would then describe a tree the operator never chose. The directory is not
+    // a key of this schema, and the operation's argv cannot carry one
+    // (`src/main/spawn.ts`'s row has no `--dir` and no positional word).
+    //
+    // The refusal is the key list's and not a rule about paths anywhere: a
+    // payload may carry a path on the operation that *means* to take one
+    // (`installation.checkout`, the rail's own door), and that control is below.
+    // A mutation that added a `path`, `dir`, `checkout` or `cwd` key to
+    // `CONSOLE_OPERATIONS['plan.status'].args` makes this case fail on that
+    // word, which is what "the console cannot be asked to read a directory it
+    // was handed" means as a test rather than as a review.
+    for (const key of ['path', 'dir', 'checkout', 'cwd', 'directory', 'docs']) {
+      const decision = validateArguments('plan.status', { ...WELL_FORMED['plan.status'], [key]: '/etc' })
+      expect(decision.ok, `plan.status accepted a ${key}`).toBe(false)
+      // The *reason* is half the claim: a refusal that came from the value's
+      // grammar would still pass the line above while the key was there to be
+      // filled in with a directory that happened to parse.
+      expect(decision.ok ? '' : decision.reason, key).toBe(`plan.status takes no ${key}`)
+    }
+    // And the whole of what this operation declares, so a key that *is* admitted
+    // and that could carry a directory fails here by name rather than needing a
+    // reader to notice it above.
+    expect(operationFor('plan.status').args.map((spec) => spec.key)).toEqual(['all'])
+    // The near-miss that matters more than the six above: the declared key, with
+    // a path in it. `all` is a boolean the argv builder turns into `--all`, and
+    // a string here must not become a word.
+    expect(validateArguments('plan.status', { all: '/etc' }).ok).toBe(false)
+    expect(validateArguments('plan.status', { all: '--all' }).ok).toBe(false)
+    // ...and the control, so the refusals above read as this operation's schema
+    // rather than as a surface that refuses every path: `installation.checkout`
+    // takes one, and its payload is the one place a renderer may spell it.
+    expect(
+      validateArguments('installation.checkout', {
+        project: 'aurora',
+        checkout: '/home/operator/src/aurora',
+      }).ok,
+    ).toBe(true)
   })
 
   it('takes no key it does not declare, for every operation', () => {
@@ -1407,7 +1756,7 @@ describe('the day and window arguments', () => {
 })
 
 describe('the closed sets', () => {
-  const dimensions = ['day', 'week', 'month', 'year', 'repo', 'model', 'person']
+  const dimensions = ['day', 'week', 'month', 'year', 'repo', 'model', 'person', 'mode']
   for (const value of dimensions) {
     it(`accepts the report dimension ${value}`, () => {
       expect(validateArguments('spend.report', { by: value }).ok).toBe(true)
@@ -1570,21 +1919,44 @@ describe('the spend read’s arguments', () => {
  * table's order -- and it is the frozen list the plan asks for: it is spelled
  * here rather than read back from `EXPOSED_OPERATIONS`, because a test that
  * compared the table with itself would hold for a table that had just gained a
- * channel. The claim is "these fourteen, and no others".
+ * channel. The claim is "these twenty-four, and no others".
  *
  * Task 2.4 asserted the twelve and said the spend controls widened nothing;
  * Task 3.3 added the thirteenth (`startup.compatibility` / `getCompatibility`,
  * the handshake's answer the renderer gates on); Task 3.4b added the fourteenth
  * (`installation.current` / `getInstallation`, the installation the operator
  * chose, which the header names) and left the other thirteen exactly where they
- * were. Read that as a diff against the previous version of this list: one row,
- * in one place, and no method renamed.
+ * were. **Console L5b added the fifteenth** (`runs.stats` / `statsRuns`, the
+ * Spend screen's by-person view -- `runReport` could not carry it, because the
+ * document is `runs stats --json` and not `report`) and left the other fourteen
+ * exactly where they were. **The owner's design ruling of 2026-10-25 added the
+ * last six** -- the installation rail's own operations, `installation.list` and
+ * the five that follow it -- and left the other fifteen exactly where they were:
+ * the rail's read is the picker's `config list --json` moved onto this surface,
+ * and the five writers are the picker's own operations reached from the
+ * dashboard's document instead of the picker window's. Read that as a diff
+ * against the previous version of this list: six rows, in one place, and no
+ * method renamed. **Plan GV2.1 added the twenty-second** (`plan.status` /
+ * `planStatus`, the plan graph joined to the runs working on it -- the read
+ * L5b's reasoning covers, one command further) and left the other twenty-one
+ * exactly where they were. **Bitbucket credentials T1.2 added the twenty-third**
+ * (`coordinator.status` / `coordinatorStatus`, the project view's read of the
+ * coordinator's stored view -- the first operation here whose document the CLI
+ * serves from a store rather than from a live walk) and left the other
+ * twenty-two exactly where they were. **The console v2 plan's V2.5.1a added the
+ * twenty-fourth** (`run.launch` / `launchRun`, the console's one write and the
+ * only operation here that is not a read, rule 11) and left the other twenty-
+ * three exactly where they were. V2.5.1a's part 2b-3b-1 then built the
+ * confirmation window into the entry point, so that row's spawn happens on a yes
+ * from the window's own top frame and on nothing else.
  */
 const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['live.watch', 'subscribeLive'],
   ['budget.show', 'showBudget'],
   ['spend.report', 'runReport'],
   ['runs.list', 'listRuns'],
+  ['runs.stats', 'statsRuns'],
+  ['plan.status', 'planStatus'],
   ['run.diagnose', 'diagnoseRun'],
   ['run.logs', 'readRunLogs'],
   ['run.logLink', 'runLogLink'],
@@ -1595,6 +1967,14 @@ const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['installation.current', 'getInstallation'],
   ['environment.report', 'environmentReport'],
   ['link.openExternal', 'openExternal'],
+  ['installation.list', 'listInstallations'],
+  ['installation.choose', 'chooseInstallation'],
+  ['installation.checkout', 'setInstallationCheckout'],
+  ['installation.remove', 'removeInstallation'],
+  ['installation.reveal', 'revealInstallation'],
+  ['installation.open', 'openInstallations'],
+  ['coordinator.status', 'coordinatorStatus'],
+  ['run.launch', 'launchRun'],
 ]
 
 /**
@@ -1625,7 +2005,7 @@ export function surfaceOffences(proposed: readonly (readonly [string, string])[]
 }
 
 describe('the frozen list of operations the preload exposes', () => {
-  it('is exactly these fourteen, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the chosen installation on `getInstallation`', () => {
+  it('is exactly these twenty-four, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
     expect(EXPOSED_OPERATIONS).toEqual(SHIPPED_SURFACE)
     expect(surfaceOffences(EXPOSED_OPERATIONS)).toEqual([])
     expect(Object.isFrozen(EXPOSED_OPERATIONS)).toBe(true)
@@ -1642,11 +2022,11 @@ describe('the frozen list of operations the preload exposes', () => {
     // unmutated surface is asserted clean first.
     expect(surfaceOffences(SHIPPED_SURFACE)).toEqual([])
 
-    // A fifteenth channel: what each task added must stay one row, and the next
-    // task that adds a read cannot do it quietly.
-    const fifteenth = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
-    expect(fifteenth).toContain('fleet.report: a channel this console does not ship')
-    expect(fifteenth).toContain('15 rows, and this console ships 14')
+    // A twenty-fifth channel: what each task added must stay one row, and the
+    // next task that adds a read cannot do it quietly.
+    const twentyFifth = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
+    expect(twentyFifth).toContain('fleet.report: a channel this console does not ship')
+    expect(twentyFifth).toContain('25 rows, and this console ships 24')
 
     // A write verb, which the allow-list forbids outright: it is refused here
     // for the same reason, one step earlier than `assertReachableSurface`.
@@ -1660,7 +2040,7 @@ describe('the frozen list of operations the preload exposes', () => {
       SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
     )
     expect(withoutTheNewRow).toContain('startup.compatibility: not on the surface at all')
-    expect(withoutTheNewRow).toContain('13 rows, and this console ships 14')
+    expect(withoutTheNewRow).toContain('23 rows, and this console ships 24')
     expect(
       surfaceOffences([
         ...SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
@@ -1675,9 +2055,9 @@ describe('the frozen list of operations the preload exposes', () => {
     )
   })
 
-  it('is frozen, and hands the window a bridge with the fourteen methods and nothing else', () => {
-    // The bridge the window is handed: the fourteen methods and the names, with
-    // no `invoke`, no channel and no method of its own.
+  it('is frozen, and hands the window a bridge with the twenty-four methods and nothing else', () => {
+    // The bridge the window is handed: the twenty-four methods and the names,
+    // with no `invoke`, no channel and no method of its own.
     const bridge = createConsoleBridge(fakeRenderer())
     expect(Object.keys(bridge).sort()).toEqual(
       ['operations', 'version', ...SHIPPED_SURFACE.map(([, method]) => method)].sort(),
@@ -2576,12 +2956,14 @@ describe('the source of the allow-list and the preload', () => {
  * THE_WITHHELD_OPERATIONS is the whole of what a reduced console refuses to
  * fetch, written out as a literal so that the mapping cannot be checked against
  * itself. Every entry is one operation of the surface, and the list is the
- * *answer* to "which channels does step 3 close": `spend.report` is the Spend
- * screen's one read, `budget.show` is the Caps screen's, and there is no third
- * because the kill switch has no operation of its own (design C10 -- its fields
- * travel inside `live.watch`, which a reduced console still draws).
+ * *answer* to "which channels does step 3 close": `spend.report` and
+ * `runs.stats` are the Spend screen's two reads (the report, and the by-person
+ * panel's per-person dollars, console L5b -- the same spend figures a reduced
+ * console cannot vouch for, D7), `budget.show` is the Caps screen's, and the
+ * kill switch has no operation of its own (design C10 -- its fields travel
+ * inside `live.watch`, which a reduced console still draws).
  */
-const THE_WITHHELD_OPERATIONS: readonly OperationName[] = ['budget.show', 'spend.report']
+const THE_WITHHELD_OPERATIONS: readonly OperationName[] = ['budget.show', 'runs.stats', 'spend.report']
 
 /** theRest is every operation that is *not* withheld: the non-vacuity guard for
  * the tests below, which otherwise would pass on a wrapper that refused the
@@ -2696,12 +3078,21 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
 
   it('lets every other operation through, so a reduced console is still a console', async () => {
     const { bridge, reached } = reducedConsole(REDUCED_HANDSHAKE)
-    // The non-vacuity half: eleven of the surface's fourteen operations, all of
-    // them reachable in a reduced mode (the handshake is the one the loop skips
-    // and its own test covers; `installation.current`, Task 3.4b, is among the
-    // eleven, because a reduced console's header still names its installation).
-    // A wrapper that refused the whole surface would fail here.
-    expect(THE_OPEN_OPERATIONS.length).toBe(11)
+    // The non-vacuity half: twenty of the surface's twenty-four operations,
+    // all of them reachable in a reduced mode (the handshake is the one the loop
+    // skips and its own test covers; `installation.current`, Task 3.4b, is among
+    // the nineteen, because a reduced console's header still names its
+    // installation, and the rail's own six are too -- a reduced console still
+    // has a rail, and the store it reads is not a figure the mode withholds).
+    // `plan.status` is one of them: a plan graph is not a spend, a cap or a kill
+    // control, so there is no figure for the mode to withhold. `coordinator.status`
+    // (T1.2) is another, and for the same reason: the project view is repository
+    // state, not money, so the mode has nothing to withhold from it.
+    // A wrapper that refused the whole surface would fail here. **The launch is
+    // among the twenty**: a reduced console withholds figures, and a launch is
+    // not a figure -- whether it may be offered at all is rule 11's own floor,
+    // which is a comparison against the handshake's version and not this list.
+    expect(THE_OPEN_OPERATIONS.length).toBe(20)
     expect(THE_OPEN_OPERATIONS).toContain('installation.current')
     for (const name of THE_OPEN_OPERATIONS) {
       const reply = await asCallable(
@@ -2713,7 +3104,29 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
     expect([...reached].sort()).toEqual([...THE_OPEN_OPERATIONS].sort())
     expect(reached).toContain('live.watch')
     expect(reached).not.toContain('spend.report')
+    expect(reached).not.toContain('runs.stats')
     expect(reached).not.toContain('budget.show')
+  })
+
+  it('withholds the by-person read with the spend view, because it reads the same spend figures (D7)', async () => {
+    // `runs.stats` publishes per-person `counted_usd`/`notional_usd`: the spend
+    // a reduced console cannot vouch for, under another name. Withholding
+    // `spend.report` and answering this would put the withheld figures on the
+    // screen through the by-person panel, so it is in the `spend` list by name.
+    expect(REDUCED_VIEW_OPERATIONS.spend).toContain('runs.stats')
+    expect(REDUCED_VIEW_OPERATIONS.spend).toContain('spend.report')
+    const { bridge, reached } = reducedConsole(REDUCED_HANDSHAKE)
+    const reply = await asCallable(
+      (bridge as unknown as Record<string, unknown>)[methodFor('runs.stats')],
+    )(WELL_FORMED['runs.stats'])
+    expect(reply).toEqual({ ok: false, reason: REDUCED_REFUSAL })
+    // Refused before the source: the per-person figures were never read.
+    expect(reached).toEqual([])
+    // And in a supported console it is an ordinary read.
+    const source = answeredBy()
+    const open = reducedModeHandlers(source.handlers, () => SUPPORTED_HANDSHAKE)
+    expect(await open['runs.stats'](argsFor('runs.stats'))).toEqual({})
+    expect(source.reached).toEqual(['runs.stats'])
   })
 
   it('answers the handshake in a reduced mode, because the gate is what the answer is for', async () => {

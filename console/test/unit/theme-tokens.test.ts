@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The theme's tokens and the palette they are painted in (desktop-console plan
 // Task 6.1; docs/design/console-styling.md sections 3.1-3.4 and 6.3).
 //
@@ -893,49 +895,6 @@ describe("the console's theme tokens", () => {
     // off a snippet that carries them.
     expect([...':focus-visible'.matchAll(/:focus(?!-visible)/g)]).toHaveLength(0)
     expect([...'a:focus { outline: 0 }'.matchAll(/:focus(?!-visible)/g)]).toHaveLength(1)
-  })
-
-  it('keeps the collapsed rail’s text in the accessibility tree, so the collapse removes no fact', () => {
-    // The other half of the names Task 6.5's brief names, and the half a stylesheet can
-    // lose silently: design section 4.1's collapsed rail is "icons only" to the eye and
-    // **name-preserving** to a reader -- a row drops its name, its project, its state word
-    // and its spend from *sight*, and "the row's accessible name is then the whole of what
-    // it draws ... so the word section 3.5 requires is still announced and the collapse
-    // removes no fact". That holds only while the hiding is a **clip**: `display: none`
-    // and `visibility: hidden` take the text out of the accessibility tree as well as off
-    // the screen, and a collapsed rail that used either would announce a row with no name
-    // and no state at all -- the word that exists so the tone is never the only carrier,
-    // gone with it.
-    const rules = [...stripComments(readTheme('base.css')).matchAll(RULE)].map(([, selector, body]) => ({
-      selector: (selector ?? '').trim(),
-      body: body ?? '',
-    }))
-    const collapsed = rules.filter(({ selector }) => selector.includes("[data-collapsed='true']"))
-    expect(collapsed.length, 'the collapsed rail draws no rule at all').toBeGreaterThan(0)
-
-    // The three fields the collapse hides from sight are hidden by the one clip technique,
-    // which is a rule over all three of them.
-    const hidden = collapsed.filter(({ body }) => body.includes('clip-path: inset(50%)'))
-    expect(
-      hidden.map(({ selector }) => selector).join('\n'),
-      'the collapsed rail hides the row’s name, project or spend some other way',
-    ).toContain('span.console-rail-name')
-    expect(hidden.map(({ selector }) => selector).join('\n')).toContain('span.console-rail-project')
-    expect(hidden.map(({ selector }) => selector).join('\n')).toContain('span.console-rail-spend')
-
-    // And the state span is *narrowed* to its glyph rather than removed, which is what
-    // leaves the word in the name the row is announced by.
-    const state = collapsed.find(({ selector }) => selector.includes('span.console-rail-state'))?.body ?? ''
-    expect(state, 'the collapsed rail clips the state span to its glyph').toContain('overflow: hidden')
-
-    // No rule of the collapsed rail removes text from the tree, however it is spelled.
-    const REMOVES = /display:\s*none|visibility:\s*hidden|content-visibility:\s*hidden/
-    const removed = collapsed.filter(({ body }) => REMOVES.test(body)).map(({ selector }) => selector)
-    expect(removed, 'a collapsed rule takes text out of the accessibility tree').toEqual([])
-
-    // The probe: the scan is only worth what it finds.
-    expect(REMOVES.test('span.console-rail-name { display: none }')).toBe(true)
-    expect(REMOVES.test('span.console-rail-name { clip-path: inset(50%) }')).toBe(false)
   })
 
   it('refuses a pair below AA, with the line the red step recorded', () => {

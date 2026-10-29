@@ -6,15 +6,17 @@
 // downloads a reader can reach without leaving the page. The acceptance is exactly that: "from
 // Getting Started a user can install either the CLI or the console without leaving the page" —
 // and, while `features.console_downloads` is false, that the console offers nothing to download
-// at all. This checkout ships the flag TRUE (the console's `console-v0.9.0` release turned it
-// on), so the unreleased state is one the cases below build a copy of the repository into
-// rather than the state `npm run check` builds.
+// at all. This checkout ships the flag TRUE (the console's own release stream turned it on),
+// so the unreleased state is one the cases below build a copy of the repository into rather
+// than the state `npm run check` builds.
 //
 // **Where the console's block sits is the owner's draft of 2026-10-19.** The install section
 // opens with one card per system `install.yaml` supports, and the console is offered inside the
-// card of the system its own data file names on its assets — macOS — rather than beside the
-// cards: a reader on Linux is not offered a build for a machine they are not on, and the console
-// is findable from the page a reader installs the CLI from. The cards themselves (one per
+// card of the system its released sentence describes — macOS, the platform its signed and
+// notarised artifacts are for — rather than beside the cards: the console is findable from the
+// page a reader installs the CLI from, and the platform whose own facts differ is a block
+// inside that card rather than a card of its own (D10, the same shape the console page
+// renders). The cards themselves (one per
 // supported system, each with the path the file offers it first, each with one icon) are
 // `os-cards.mjs`'s; this file is the console's own rules, read inside the card it sits in.
 //
@@ -29,7 +31,8 @@
 //
 //   1. **The console sits in the card of the system it ships for, and the CLI is still the
 //      CLI.** The install section's cards carry the console's block exactly once, in the card
-//      whose system is the one the console's own data file names on its assets, and the CLI's
+//      whose system is the one the console's own data file names on the assets no per-platform
+//      block owns, and the CLI's
 //      commands are still on the page: a command, in a copy block with a named control. P5's
 //      fold claim rests on the section opening with that command, and `fold.mjs` is the gate
 //      that holds the ordering; the check here is that moving the console into a card did not
@@ -193,8 +196,21 @@ test('Getting Started offers the console in the card of the system it ships for,
   const cards = installCards(page)
   assert.ok(cards.length >= 2, `the install section draws ${cards.length} card(s), and the console's block sits in one of the systems the page supports`)
 
-  const platform = [...new Set(downloadsData().downloads.map((download) => download.platform))]
-  assert.equal(platform.length, 1, `website/content/downloads.json names ${platform.length} platform(s) on its downloads, and the console ships for one system`)
+  // The card the console's block sits in is the one the data file's own sentence describes:
+  // the platform of the assets the block does not own. The assets a per-platform block names
+  // — Linux, unsigned, explained by that block's own sentence (D10) — are not that platform
+  // and do not move the option out of its card, exactly as they do not move the console
+  // page's macOS cards.
+  const data = downloadsData()
+  const owned = new Set(data.linux?.assets ?? [])
+  const platform = [
+    ...new Set(data.downloads.filter((download) => !owned.has(download.id)).map((download) => download.platform)),
+  ]
+  assert.equal(
+    platform.length,
+    1,
+    `website/content/downloads.json names ${platform.length} platform(s) on the downloads no per-platform block owns, and the console's block sits in the card of the one system its released sentence describes (${platform.join(', ')})`,
+  )
 
   const block = consoleBlockOrFail(page)
   const named = [...walk(block.card)].find((el) => el.name === 'h3')
@@ -347,58 +363,58 @@ test("the homepage's call to action offers the console only while the flag is on
     `${SITE_YAML} does not have features.console_downloads true, and this case reads the flag-on half off the build \`npm run check\` makes`,
   )
 
-  /** The hero's row of links, as [label, href] pairs, plus the row's own text. */
-  const actions = (dist) => {
+  // **Since the owner's rulings of 2026-10-23 (the redesign's Step 3)** the hero has one action,
+  // Get started (lever 2), and the console is surfaced in the homepage's content instead (lever 8:
+  // in the content, not in the navigation): the "what you get" section's row of links under the
+  // console's screenshots. That row is what the flag decides now; the hero's action is the same
+  // in both states.
+  const classes = (el) => (el.attrs.get('class') ?? '').split(/\s+/)
+  /** A row of links on the homepage, as [label, href] pairs, plus the row's own text. */
+  const row = (dist, sectionClass, rowClass) => {
     const page = readFileSync(path.join(dist, 'index.html'), 'utf8')
-    const hero = [...walk(parse(page))].find(
-      (el) => el.name === 'section' && (el.attrs.get('class') ?? '').split(/\s+/).includes('hero'),
-    )
-    assert.ok(hero, 'the homepage carries no hero section, and the call to action is in the hero (W1.4)')
-    const row = [...walk(hero)].find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('hero-actions'))
-    assert.ok(row, 'the hero carries no action row, and the call to action is what a reader does next (W1.4)')
-    return { links: linksOf([...walk(row)]).map((el) => [textOf(el).trim(), el.attrs.get('href')]), text: textOf(row) }
+    const section = [...walk(parse(page))].find((el) => el.name === 'section' && classes(el).includes(sectionClass))
+    assert.ok(section, `the homepage carries no section.${sectionClass}`)
+    const found = [...walk(section)].find((el) => classes(el).includes(rowClass))
+    assert.ok(found, `the homepage's section.${sectionClass} carries no .${rowClass}`)
+    return { links: linksOf([...walk(found)]).map((el) => [textOf(el).trim(), el.attrs.get('href')]), text: textOf(found) }
   }
+  const actions = (dist) => row(dist, 'hero', 'hero-actions')
+  const more = (dist) => row(dist, 'home-get', 'home-get-more')
 
-  const released = actions(DIST)
+  assert.deepEqual(actions(DIST).links, [['Get started', '/getting-started/']], "the hero's call to action is not the one action the owner's rulings of 2026-10-23 give it")
+  const released = more(DIST)
   assert.deepEqual(
     released.links,
     [
-      ['Get started', '/getting-started/'],
-      ['How it works', '/how-it-works/'],
-      // The console's own name, as Getting Started's option calls it, and the page that says
-      // what the console is — not a download URL: the URL a reader downloads from is derived
-      // from the release in `src/lib/console-downloads.mjs`, and the hero names the way there
+      // The console's own page, which says what the console is, not a download URL: the URL a
+      // reader downloads from is derived from the release in `src/lib/console-downloads.mjs`
       // (Global Constraint 9).
-      ['Desktop console', '/console/'],
+      ['The desktop console', '/console/'],
+      ['The phone app, in progress', '/mobile/'],
     ],
-    "the homepage's call to action does not offer the console with features.console_downloads true: item 6 of the owner's brief of 2026-10-19 asks that the console be findable from it, and the flag is what renders the link",
+    "the homepage does not offer the console with features.console_downloads true: item 6 of the owner's brief of 2026-10-19 asks that the console be findable from the home page, and the flag is what renders the link",
   )
 
   const built = unreleasedBuild(t)
   assert.equal(built.status, 0, `the build of the unreleased site failed:\n${built.output}`)
-  const unreleased = actions(built.dist)
+  assert.deepEqual(actions(built.dist).links, [['Get started', '/getting-started/']], "the hero's call to action changed with the console's flag, and the flag moves nothing but the console's own link")
+  const unreleased = more(built.dist)
 
-  // The flag-off row is the two links and nothing else: no console link, no console sentence,
-  // no placeholder where the link would go. The unreleased state is structural.
+  // The flag-off row has no console link, no console sentence and no placeholder where the link
+  // would go. The unreleased state is structural.
   assert.deepEqual(
     unreleased.links,
-    [
-      ['Get started', '/getting-started/'],
-      ['How it works', '/how-it-works/'],
-    ],
-    "the hero's call to action is not exactly the two links it carries while features.console_downloads is false: the console's link arrives with the flag, and until then the row says nothing about the console (the owner's brief of 2026-10-19, item 6)",
+    [['The phone app, in progress', '/mobile/']],
+    "the homepage's row of links is not exactly the phone app's while features.console_downloads is false: the console's link arrives with the flag (the owner's brief of 2026-10-19, item 6)",
   )
   assert.ok(
     !/console/i.test(unreleased.text),
-    "the hero's call to action mentions the console while features.console_downloads is false, and the unreleased state is structural: nothing about the console renders before its release (item 6)",
+    "the homepage's row of links mentions the console while features.console_downloads is false, and the unreleased state is structural: nothing about the console renders before its release (item 6)",
   )
-
-  // And the flip moves nothing else about the row: the two links a reader met before the
-  // console shipped are the two links they meet after it, in the same order.
   assert.deepEqual(
-    released.links.slice(0, 2),
+    released.links.slice(1),
     unreleased.links,
-    "the homepage's existing call to action changed when the console was released: the owner's change is the flag and a version bump, and it may not move what was already there",
+    "the homepage's other links changed when the console was released: the owner's change is the flag and a version bump, and it may not move what was already there",
   )
 })
 

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The Run detail screen: the design's screen 4, drawn from `diagnose RUN
 // --json`, a capped `logs RUN --json` window, `logs RUN --url` and the replay
 // buffer (desktop-console plan Task 2.3; design section 6.2 screen 4).
@@ -5,9 +7,10 @@
 // Seven things are on this screen, and each of them is a rule:
 //
 //   1. **The ledger.** `runstore.Cost`'s three figures, kept apart: the model
-//      dollars (`NOTIONAL~` when the basis is a subscription), compute (`est.`
-//      when the document says it is an estimate) and the total. The two accounts
-//      are never summed on screen, exactly as on the Live and Spend screens.
+//      dollars (the **billed** part of the model figure -- `NOTIONAL~` only
+//      when the whole figure is the subscription's), compute (`est.` when the
+//      document says it is an estimate) and the total. The two accounts are
+//      never summed on screen, exactly as on the Live and Spend screens.
 //   2. **The stage timeline, with deadlines.** The stages are the verify records
 //      `diagnose` carries (`build`/`test`/`lint`, `internal/verify/verify.go`),
 //      each with its outcome, its test counts and its duration; the deadline is
@@ -63,6 +66,9 @@ import type { Reading } from '../../shared/availability'
 import { ReplayBuffer, REPLAY_MAX_RECORDS, REPLAY_WINDOW_SECONDS } from '../../shared/replay'
 import type { ReplayArrival, ReplayDocument, ReplayRecord } from '../../shared/replay'
 import type { OperationName } from '../../main/ipc'
+import { launcherFull } from '../../shared/launcher'
+import { readRigor, rigorLayerWord, rigorModeWord } from '../../shared/rigor'
+import type { RigorView } from '../../shared/rigor'
 import type { TextClass } from '../../shared/sanitize'
 import { putLink, putReading, putText } from '../app'
 import type { ElementLike } from '../app'
@@ -87,10 +93,14 @@ export type RunTheme = (typeof RUN_THEMES)[number]
 
 /**
  * PR_NO_LINK_REASON is the one line the screen puts beside a pull request's
- * number: the design's gap 7, in the console's own words.
+ * number: the design's gap 7, in the design's own words -- section 5.1 rule 2's
+ * sentence, verbatim. It was written here as a two-clause explanation of the
+ * same thing (what a rebuilt link would name, and which providers there are),
+ * and the owner's report of 2026-10-21 named it "the long explanatory sentence
+ * under it"; the design already had the one line.
  */
 export const PR_NO_LINK_REASON =
-  'no document names the provider (GitHub or Bitbucket Cloud), so no link is offered: a link rebuilt from the repository and the number would name a repository this run does not use'
+  'this CLI does not say which provider this run’s repository is on, so the console will not build a link from it'
 
 /**
  * GitProvider is the set of providers Fugaro opens pull requests on
@@ -157,6 +167,11 @@ export interface RunRow {
   readonly branch: string | null
   readonly outcome: string | null
   readonly requestedBy: string | null
+  /** the run's whole recorded launcher (`launched_by`), `null` when the record
+   * carries none. The **whole** value and not the short form a column has room
+   * for: this screen is the run view, which is where the owner's spec puts the
+   * full identity (`shared/launcher.ts`) */
+  readonly launchedBy: string | null
   readonly created: string | null
   readonly startedAt: string | null
   readonly imageAge: Reading
@@ -164,6 +179,12 @@ export interface RunRow {
   readonly settled: boolean
   readonly followUp: boolean
   readonly staleDraft: boolean
+  /** the run's rigor block -- the mode it resolved, the layer that decided it
+   * and the rules that matched -- or `null` for a record that carries none this
+   * reader can show (`shared/rigor.ts`). The header draws the Rigor row exactly
+   * when it is not null: **absence is "no record of this run's rigor"**, which
+   * is not a mode, and a row saying so would be a row about the console. */
+  readonly rigor: RigorView | null
 }
 
 /** RunLedger is the run's spend: the three accounts, apart. */
@@ -378,21 +399,46 @@ function prNumberOf(row: Record<string, unknown>): number | null {
 const COMPUTE_NOT_ESTIMATED =
   'compute is not estimated for this run: the price table or the run\'s resources were unknown, and a `compute_usd` of 0 with `compute_estimated` false means "not estimated", not free'
 
-/** costOf reads `runstore.Cost`. `model_usd` is a list price when the basis is
- * a subscription (never billed, never capped), and compute is what
- * `ComputeEstimated` says it is: an estimate when the flag is on, and **not an
- * estimate** -- `unavailable`, with the CLI's own sentence -- when it is off,
- * because the flag off is a `compute_usd` of 0 that means "not estimated", not
- * free (`internal/runstore/cost.go:15`, design section 10.1). The sentence is
- * the Projects screen's own constant: the two screens draw the same field and
- * say the same thing about it. */
+/** modelReading is the ledger's model figure: the row's model dollars as
+ * **money** (C1.16, P12/D140). `model_usd` is the whole model figure -- the
+ * money and the subscription's list price together -- and `model_notional_usd`
+ * is the part of it the plan paid, so the billed dollars are the difference.
+ * The basis alone cannot make that split: a mixed cascade run's basis is
+ * `api-list` for the whole run while part of its figure is the plan's, which is
+ * what this screen used to draw as billed money.
+ *
+ * A row written before C1.16 carries no `model_notional_usd`, and then the
+ * subscription basis is the fallback: such a row's whole figure is the plan's.
+ * The state follows the figure: the money part when the row has one, and
+ * otherwise the notional figure marked notional -- the same figure and the same
+ * mark a subscription row drew before the key existed. The Projects screen
+ * declares its own copy of this rule for its own document: the four screens are
+ * siblings and neither imports the other, so the rule is held equal by the
+ * tests of both rather than by a shared module that is not this task's to add. */
+function modelReading(model: Reading, notional: Reading, basis: string | null): Reading {
+  if (model.value === null) return model
+  const plan = notional.value ?? (basis === 'subscription' ? model.value : 0)
+  const money = Math.max(0, model.value - plan)
+  if (money > 0) return { ...model, value: money }
+  if (plan > 0 || basis === 'subscription') return { ...model, value: plan, state: 'notional' }
+  return model
+}
+
+/** costOf reads `runstore.Cost`. Compute is what `ComputeEstimated` says it is:
+ * an estimate when the flag is on, and **not an estimate** -- `unavailable`,
+ * with the CLI's own sentence -- when it is off, because the flag off is a
+ * `compute_usd` of 0 that means "not estimated", not free
+ * (`internal/runstore/cost.go:15`, design section 10.1). The sentence is the
+ * Projects screen's own constant: the two screens draw the same field and say
+ * the same thing about it. */
 function ledgerOf(row: Record<string, unknown>): RunLedger {
   const cost = objectAt(row['cost']) ?? {}
   const basis = textAt(cost['model_basis'])
   const model = readNumber(cost['model_usd'], 'row.cost.model_usd')
+  const notional = readNumber(cost['model_notional_usd'], 'row.cost.model_notional_usd')
   const compute = readNumber(cost['compute_usd'], 'row.cost.compute_usd')
   return {
-    model: basis === 'subscription' && model.value !== null ? { ...model, state: 'notional' } : model,
+    model: modelReading(model, notional, basis),
     compute:
       cost['compute_estimated'] === true
         ? compute.value === null
@@ -614,6 +660,7 @@ export function buildRunModel(inputs: RunInputs): RunModel {
       branch: textAt(row['branch']),
       outcome: textAt(row['outcome']),
       requestedBy: textAt(row['requested_by']),
+      launchedBy: textAt(row['launched_by']),
       created: textAt(row['created']),
       startedAt: textAt(row['started_at']),
       imageAge: readNumber(row['image_age_s'], 'row.image_age_s'),
@@ -621,6 +668,7 @@ export function buildRunModel(inputs: RunInputs): RunModel {
       settled: boolAt(row['settled']),
       followUp: boolAt(row['follow_up']),
       staleDraft: boolAt(row['stale_draft']),
+      rigor: readRigor(row['rigor']),
     },
     ledger: ledgerOf(row),
     stages: stagesOf(row, document['verify']),
@@ -766,6 +814,16 @@ function header(factory: ScreenFactory, model: RunModel): ScreenElement {
   if (model.row.requestedBy !== null) {
     textCell(element, factory, 'span', model.row.requestedBy, 'person', 'row.requested_by', 'run-requested-by')
   }
+  // Who started the run: the **whole** recorded identity, which is what the run
+  // view is for -- the Live and Projects columns draw the short form
+  // (`shared/launcher.ts`). It goes through the `person` class, the class the
+  // wire key carries, so an address is the console's marker here as it is in
+  // the requester cell beside it and no address is ever drawn; a login is
+  // drawn as itself. A record with no launcher draws no cell.
+  const startedBy = launcherFull(model.row.launchedBy)
+  if (startedBy !== null) {
+    textCell(element, factory, 'span', startedBy, 'person', 'row.launched_by', 'run-started-by')
+  }
   // The terminal/settled pair is what says whether the numbers on this screen
   // can still move, which is a fact about reading them.
   const flags = cell(element, factory, 'span', 'run-flags')
@@ -773,8 +831,69 @@ function header(factory: ScreenFactory, model: RunModel): ScreenElement {
   if (model.row.settled) literal(cell(flags, factory, 'span', 'run-settled'), 'settled')
   if (model.row.staleDraft) literal(cell(flags, factory, 'span', 'run-stale'), 'stale draft')
   if (model.row.followUp) literal(cell(flags, factory, 'span', 'run-follow-up'), 'follow-up')
+  if (model.row.rigor !== null) element.append(rigorLine(factory, model.row.rigor))
   if (model.halt !== null) element.append(haltLine(factory, model.halt))
   return element
+}
+
+/**
+ * rigorLine is the run's rigor: the mode it resolved, the layer that decided it
+ * and the area rules that matched (docs/rigor-modes D23, D24, D25).
+ *
+ * **This is the screen that has room for the whole answer.** `runs ls`'s MODE
+ * column and the Projects screen's own cell are one word in a table, and the
+ * Live screen's chip is one word on a row; here the reader is looking at one
+ * run, so the layer that won and every rule that matched are drawn beside the
+ * mode. The CLI's `fugaro diagnose` prints the same three facts on its own
+ * `Rigor:` line (`internal/cli/diagnose.go`'s `rigorLine`).
+ *
+ * Every string is a document's: the five modes and the five layers have the
+ * console's words and go through `literal`, and anything else -- a mode or a
+ * layer from a CLI newer than this build, or a value a tampered record carries
+ * -- goes through `putText` as the bounded, escaped text it is. The area names
+ * are a repository's own words either way, so they are text on every path. A
+ * moment (`at`) and the revision the configuration was read from are in the
+ * record and are not drawn: this row is about what the run resolved, and the
+ * two stamps answer different questions.
+ *
+ * Each cell is drawn by a `cell`/`textCell` call **here** rather than inside
+ * `rigorWord`, because that is where the class literal is: the selector scan
+ * (`test/unit/theme-selectors.test.ts`) reads the tag and the class off the
+ * emitter call, and a class handed to a helper as a parameter is a hook the
+ * scan cannot see.
+ */
+function rigorLine(factory: ScreenFactory, rigor: RigorView): ScreenElement {
+  const element = make(factory, 'div', 'run-rigor')
+  literal(cell(element, factory, 'span', 'run-rigor-word'), 'RIGOR')
+  rigorWord(cell(element, factory, 'span', 'run-rigor-mode'), rigorModeWord, rigor.mode, 'row.rigor.mode')
+  literal(cell(element, factory, 'span', 'run-rigor-from-word'), 'from')
+  rigorWord(cell(element, factory, 'span', 'run-rigor-from'), rigorLayerWord, rigor.from, 'row.rigor.from')
+  for (const area of rigor.areas) {
+    const drawn = cell(element, factory, 'span', 'run-rigor-area')
+    textCell(drawn, factory, 'span', area.name, 'label', 'row.rigor.areas[].name', 'run-rigor-area-name')
+    rigorWord(cell(drawn, factory, 'span', 'run-rigor-area-mode'), rigorModeWord, area.mode, 'row.rigor.areas[].mode')
+  }
+  return element
+}
+
+/** rigorWord writes one mode or one layer into a cell the caller has already
+ * drawn: the console's word when this build knows it, and the raw value through
+ * `putText` when it does not. `word` is the vocabulary to look the value up in
+ * -- `rigorModeWord` for a mode, which is the five the dial has, and
+ * `rigorLayerWord` for a layer, which is the five that decide one
+ * (`shared/rigor.ts`). */
+function rigorWord(
+  element: ScreenElement,
+  word: (value: string) => string | null,
+  value: string,
+  field: string,
+): void {
+  const known = word(value)
+  if (known !== null) {
+    literal(element, known)
+    return
+  }
+  putText(element, value, 'label', field)
 }
 
 /** haltLine is why the run halted: the reason, the scope and the time. A halting
@@ -837,18 +956,34 @@ function stagePanel(factory: ScreenFactory, model: RunModel): ScreenElement {
 /** pullRequestPanel is the pull request as **text**: repository, number, URL,
  * and the reason no link is offered. There is no link element at all -- not an
  * inert one, and not one waiting for a provider -- because an element carrying a
- * destination the console will not offer is a control that does nothing. */
+ * destination the console will not offer is a control that does nothing.
+ *
+ * The three facts are one line and the cells between them are **between** them,
+ * not part of them: drawn side by side with nothing between, they read as one
+ * string -- `acme/platform-core#412https://github.com/acme/platform-core/pull/412`,
+ * the owner's report of 2026-10-21, where the URL is no longer a URL. A cell of
+ * its own rather than a leading or trailing space keeps every value exactly the
+ * document's string (`textCell` draws it) and keeps a panel missing a field free
+ * of a stray separator: separators go between what is drawn, whatever that is.
+ */
 function pullRequestPanel(factory: ScreenFactory, model: RunPullRequest): ScreenElement {
   const element = make(factory, 'section', 'run-pr')
   literal(cell(element, factory, 'h2', 'run-panel-title'), 'pull request')
+  const facts: (() => void)[] = []
   if (model.repository !== null) {
-    textCell(element, factory, 'span', model.repository, 'repository', 'row.repo', 'run-pr-repo')
+    facts.push(() => void textCell(element, factory, 'span', model.repository, 'repository', 'row.repo', 'run-pr-repo'))
   }
   if (model.number !== null) {
     // A number an identifier: drawn as text, with no link and no reading.
-    literal(cell(element, factory, 'span', 'run-pr-number'), `#${String(model.number)}`)
+    facts.push(() => void literal(cell(element, factory, 'span', 'run-pr-number'), `#${String(model.number)}`))
   }
-  if (model.url !== null) textCell(element, factory, 'span', model.url, 'url', 'row.pr_url', 'run-pr-url')
+  if (model.url !== null) {
+    facts.push(() => void textCell(element, factory, 'span', model.url, 'url', 'row.pr_url', 'run-pr-url'))
+  }
+  for (const [index, fact] of facts.entries()) {
+    if (index > 0) literal(cell(element, factory, 'span', 'run-pr-sep'), ' · ')
+    fact()
+  }
   literal(cell(element, factory, 'p', 'run-pr-reason'), model.because)
   return element
 }

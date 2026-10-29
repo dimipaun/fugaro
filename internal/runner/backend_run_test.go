@@ -801,15 +801,13 @@ func TestOutcomeWrittenOnce(t *testing.T) {
 	}
 }
 
-// TestHaltedRecordSchema: the record of a run halted by the backend, as it
-// is stored, satisfies the published result schema.
-func TestHaltedRecordSchema(t *testing.T) {
-	b := newBK(t, gwConfig(t, ""), "enforce", "")
-	rec, err := b.run(t, killMidStage(b.db, budget.PathKillGlobal))
-	if err != nil || rec.Status != runstore.StatusHalted {
-		t.Fatalf("rec = %+v, err = %v", rec, err)
-	}
-	stored, err := b.store.ReadFile(context.Background(), "result.json")
+// assertStoredRecordValidates reads the run's stored result.json and fails
+// the test when the published result schema refuses it. A halt reason the
+// schema's enum lacks is a record every consumer that validates refuses, so
+// a test that halts a run for a new reason checks it here.
+func assertStoredRecordValidates(t *testing.T, s *runstore.Store) []byte {
+	t.Helper()
+	stored, err := s.ReadFile(context.Background(), "result.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -837,6 +835,18 @@ func TestHaltedRecordSchema(t *testing.T) {
 	if err := sch.Validate(inst); err != nil {
 		t.Fatalf("the stored record violates the schema: %v\n%s", err, stored)
 	}
+	return stored
+}
+
+// TestHaltedRecordSchema: the record of a run halted by the backend, as it
+// is stored, satisfies the published result schema.
+func TestHaltedRecordSchema(t *testing.T) {
+	b := newBK(t, gwConfig(t, ""), "enforce", "")
+	rec, err := b.run(t, killMidStage(b.db, budget.PathKillGlobal))
+	if err != nil || rec.Status != runstore.StatusHalted {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	stored := assertStoredRecordValidates(t, b.store)
 	var m map[string]any
 	_ = json.Unmarshal(stored, &m)
 	if m["budget"] == nil || m["halt"] == nil {

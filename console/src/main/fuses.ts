@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The fuses the console's shipped binary is built with (design section 5.1 rule
 // 4; desktop-console plan Task 4.1).
 //
@@ -28,7 +30,7 @@
 // being configured by one. The two enabled fuses are the loading rule: the app is
 // loaded from `app.asar` and nowhere else, and only if the asar is the one that
 // was packed. Every other fuse is left at its upstream default, and
-// `LEFT_ALONE_FUSES` names those two so that "left alone" is a decision in this
+// `LEFT_ALONE_FUSES` names those three so that "left alone" is a decision in this
 // file rather than an omission from it.
 //
 // **The hook verifies what it wrote.** `flipFuses` writes the wire and reports
@@ -54,7 +56,7 @@
 // is ever written into a file in this repository.
 //
 // **A note on the import below, because it carries a directive.** `@electron/fuses`
-// 2.0.0 is an ES module and this file is the console's CommonJS build (`module:
+// 2.1.3 is an ES module and this file is the console's CommonJS build (`module:
 // Node16`, and package.json has no `"type"`), so `tsc` refuses the static import
 // of it with TS1479 -- the module-format rule, not a resolution failure: the
 // package's types still land on every binding, which is why the `@ts-ignore`
@@ -113,7 +115,7 @@ export interface LeftAloneFuse {
   /** name, as `FlippedFuse.name`: the pinned package's own name for the fuse. */
   readonly name: string
   readonly option: FuseV1Options
-  /** upstreamDefault is the state the pinned Electron 44.7.2 ships the fuse
+  /** upstreamDefault is the state the pinned Electron 45.0.0 ships the fuse
    * in, read off the real binary; the hook refuses a wire that disagrees. */
   readonly upstreamDefault: boolean
   readonly why: string
@@ -165,9 +167,19 @@ export const FLIPPED_FUSES: readonly FlippedFuse[] = [
 
 /**
  * LEFT_ALONE_FUSES is every fuse this build does not set. It exists so that
- * "left at its upstream default" is written down: the two below are asserted
+ * "left at its upstream default" is written down: the three below are asserted
  * absent from the configuration, and the suite also asserts that the two lists
  * together account for every fuse the pinned `@electron/fuses` knows.
+ *
+ * `WasmTrapHandlers` (index 8, enabled by default) lets V8 use guard pages and a
+ * signal handler for WebAssembly out-of-bounds checks instead of explicit
+ * bounds checks. It was a fuse beyond the pin until `@electron/fuses` 2.1 named
+ * it, and the decision is unchanged by the package learning its name: it loads
+ * no code and reads no environment variable or command-line flag (so it is not
+ * one of the "an Electron binary is not an Electron application" holes rule 4
+ * closes), the console runs no WebAssembly of its own, and turning it off
+ * trades a performance path for explicit checks without closing any avenue an
+ * attacker has.
  */
 export const LEFT_ALONE_FUSES: readonly LeftAloneFuse[] = [
   {
@@ -181,6 +193,12 @@ export const LEFT_ALONE_FUSES: readonly LeftAloneFuse[] = [
     option: FuseV1Options.LoadBrowserProcessSpecificV8Snapshot,
     upstreamDefault: false,
     why: 'a startup optimisation for a browser process that loads web content; not this app.',
+  },
+  {
+    name: 'WasmTrapHandlers',
+    option: FuseV1Options.WasmTrapHandlers,
+    upstreamDefault: true,
+    why: 'a WebAssembly bounds-check strategy: it loads no code and reads no environment, and the console runs no WebAssembly.',
   },
 ]
 
@@ -203,28 +221,14 @@ export interface BeyondPinFuse {
 }
 
 /**
- * BEYOND_PIN_FUSES is every fuse on the pinned Electron 44.7.2 wire past the
- * eight `@electron/fuses` 2.0.0 knows. There is one.
- *
- * `WasmTrapHandlers` (index 8, enabled by default) lets V8 use guard pages and a
- * signal handler for WebAssembly out-of-bounds checks instead of explicit
- * bounds checks. It is left enabled, and it is harmless here for three reasons:
- * it loads no code and reads no environment variable or command-line flag (so
- * it is not one of the "an Electron binary is not an Electron application"
- * holes rule 4 closes); the console runs no WebAssembly of its own; and turning
- * it off trades a performance path for explicit checks without closing any
- * avenue an attacker has. Setting it would also need a newer `@electron/fuses`
- * than the pin. `fuses.test.ts` reads the real binary's wire length when the
- * Electron distribution is installed, so a tenth fuse arrives as a red test.
+ * BEYOND_PIN_FUSES is every fuse on the pinned Electron 45.0.0 wire past the
+ * nine `@electron/fuses` 2.1.3 knows. There is none: the package names every
+ * fuse the binary carries. The list stays because an Electron bump can run
+ * ahead of the package again, and `fuses.test.ts` reads the real binary's wire
+ * length when the Electron distribution is installed, so a tenth fuse arrives
+ * as a red test that is answered here or in the lists above.
  */
-export const BEYOND_PIN_FUSES: readonly BeyondPinFuse[] = [
-  {
-    name: 'WasmTrapHandlers',
-    index: 8,
-    upstreamDefault: true,
-    why: 'a WebAssembly bounds-check strategy: it loads no code and reads no environment, and the console runs no WebAssembly.',
-  },
-]
+export const BEYOND_PIN_FUSES: readonly BeyondPinFuse[] = []
 
 /** ACCOUNTED_FUSE_COUNT is how many fuses this file has decided about, and so
  * how long the pinned binary's fuse wire must be: the hook refuses a binary

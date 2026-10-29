@@ -438,7 +438,7 @@ flags has to go.
 §4 below lists every file that names the command, by package and count, and
 these four documents are the whole of it — there is no separate survey
 document. The shape of it: `doctor.go`'s
-`runDoctor` (`Fix: "run fugaro init"`), `doctorGitHubApps`, `doctorManagedDeployer`,
+`runDoctor` (`Fix: "run fugaro init"`), `doctorGitHubApps`,
 `doctorCosign`, `sharedConfigChecks`, `doctorPolicyChecks`, `routingUnresolvedNoRepo`,
 `doctorSecretScopeChecks`, `doctorRulesSkew`; `doctor_bucket.go`'s
 `tokenGrantChecks`; `config_list.go`'s `printConfigList`; `exec.go`'s

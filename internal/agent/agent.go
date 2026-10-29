@@ -38,6 +38,18 @@ type Result struct {
 	IsError    bool
 	Subtype    string
 	ExitCode   int
+	// SubAgents is the stage's sub-agent tool calls, which the runner's
+	// relay counts from the stage's own stream (task-governance T1.3). The
+	// relay is the runner's, not the agent's, so the runner folds the count
+	// in after Run; a caller that kept no relay leaves it 0.
+	SubAgents int
+	// Repeats is the most times one identical shell command ran in the
+	// stage, which the runner's relay counts from the stage's own stream the
+	// same way (task-governance T1.4): the digest reads it as the loop
+	// tripwire. It is a count alone -- the command can carry a token or a
+	// path -- and it is 0 for a stage that ran no shell command. A caller
+	// that kept no relay leaves it 0.
+	Repeats int
 	// Usage is the result event's "usage" and ModelUsage its "modelUsage"
 	// by model, which also covers subagent and background models.
 	Usage      Usage

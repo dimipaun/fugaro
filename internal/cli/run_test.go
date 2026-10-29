@@ -16,6 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -65,7 +66,7 @@ func TestRunHumanOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "launched " + appSlug + "/20260927-100000-abcd\n  branch fugaro/20260927-100000-abcd\n  logs https://"
+	want := "launched " + appSlug + "/20260927-100000-abcd\n  branch fugaro/20260927-100000-abcd cut from main\n  logs https://"
 	if !strings.HasPrefix(out, want) {
 		t.Fatalf("output:\n%s\nwant prefix:\n%s", out, want)
 	}
@@ -839,5 +840,629 @@ func TestAnArtifactLaunchRefusesACapSetThatCannotFitMemory(t *testing.T) {
 	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": strings.Replace(yaml, "memory: 2Gi", "memory: 8Gi", 1)})
 	if _, _, err := execute(t, "run", "--recipe", "sizzle", "--run-id", "20261015-100000-a1b2", "Render the sizzle reel"); err != nil {
 		t.Fatalf("a workflow with room for the set: %v", err)
+	}
+}
+
+// backendNamed is a backend.Backend that answers with one codec and nothing
+// else: launchBackend reads the seam for the backend a launch runs on, and no
+// test can select cloud-batch in this build (internal/localcfg refuses the
+// name until the enable task), so the name a launch would carry is stood in
+// for here. The embedded interface is nil, so any other method called on it
+// panics rather than answering something wrong.
+type backendNamed struct {
+	backend.Backend
+	codec backend.Codec
+}
+
+func (b backendNamed) Codec() backend.Codec { return b.codec }
+
+// TestAnArtifactLaunchIsRefusedOnCloudBatch is the launch's arm of Global
+// Constraint 13: an artifact-producing run is never launched on cloud-batch.
+// `fugaro validate` judges the checkout's own recipe offline, so the arm that
+// covers a launch naming its own recipe -- the one a reviewer found missing --
+// is this gate, which asks the same artifactOnBatchRefusal with the recipe the
+// launch resolves, before anything is written. (A repository recipe resolves
+// from this launcher's working tree, not at the task's ref the runner reads:
+// TestTheArtifactLaunchGateJudgesTheWorkingTreeNotTheRef pins that residual.)
+//
+// Both ways a launch can carry an artifact recipe are here: the task's own
+// (--recipe, a repository recipe the launcher reads from the checkout) and the
+// one this checkout resolves for it (agent.recipe). The cloud-run case is the
+// mutation guard: a boundary that refused every backend would refuse the one
+// backend artifact runs live on (design artifact-runs.md D11).
+//
+// Mutation (drop the gate, or drop its backend comparison): the cloud-batch
+// case stops refusing; the message assertion fails.
+func TestAnArtifactLaunchIsRefusedOnCloudBatch(t *testing.T) {
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
+	yaml := "version: 1\nproject: aurora\ngit: { provider: github }\n" +
+		"workflows:\n  svc:\n    commands: { build: sh build.sh, test: sh test.sh, render: sh render.sh }\n" +
+		"    resources: { memory: 8Gi }\n"
+	testutil.WriteFiles(t, dir, map[string]string{
+		"fugaro.yaml":                 yaml,
+		".fugaro/recipes/sizzle.yaml": "version: 1\nname: sizzle\nmode: artifact\noutputs: { globs: [out/*.mp4] }\nsteps:\n  - render: {}\n",
+	})
+	t.Chdir(dir)
+	// agent.recipe is written after the first case, so the checkout-resolved
+	// arm is a separate launch and the task's own recipe is not resolved
+	// through it.
+	spec := func() *task.Spec {
+		return &task.Spec{Version: 1, RunID: "20261020-100000-a1b2", Repo: "acme/other",
+			Workflow: "svc", Task: "Render the sizzle reel",
+			Recipe: &task.Recipe{Name: "sizzle", Source: "repo"}}
+	}
+	env := func(name backend.Codec) *cloudEnv { return &cloudEnv{be: backendNamed{codec: name}} }
+	for _, tc := range []struct {
+		name string
+		be   backend.Codec
+		want bool
+	}{
+		{"cloud-batch", backend.BatchCodec(), true},
+		{"cloud-run", backend.CloudRunCodec(), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkArtifactLaunch(context.Background(), env(tc.be), spec())
+			if tc.want {
+				if err == nil || !strings.Contains(err.Error(), artifactOnBatchMessage) {
+					t.Fatalf("an artifact launch on %s = %v, want the artifact boundary's refusal", tc.name, err)
+				}
+				if ExitCode(err) != ExitUserError {
+					t.Errorf("the refusal is not a user error: %v", err)
+				}
+				return
+			}
+			if err != nil && strings.Contains(err.Error(), artifactOnBatchMessage) {
+				t.Fatalf("an artifact launch on %s carries the artifact boundary's refusal, and that is the backend artifact runs live on: %v", tc.name, err)
+			}
+		})
+	}
+	// The checkout-resolved arm: a first run with no recipe in its task takes
+	// agent.recipe from this checkout, which is the recipe `fugaro validate`
+	// reads too -- and the same refusal follows it.
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": yaml + "agent: { recipe: sizzle }\n"})
+	noRecipe := spec()
+	noRecipe.Recipe = nil
+	err := checkArtifactLaunch(context.Background(), env(backend.BatchCodec()), noRecipe)
+	if err == nil || !strings.Contains(err.Error(), artifactOnBatchMessage) {
+		t.Fatalf("an artifact launch through agent.recipe = %v, want the artifact boundary's refusal", err)
+	}
+}
+
+// TestAnArtifactLaunchIsRefusedOnCloudBatchFromAnotherDirectory is the same
+// boundary asked from a working directory that is not a checkout of the run's
+// repository -- the hole a review found in the first version of the gate, when
+// it resolved the checkout first and returned early when there was none. A task
+// carrying its own recipe text needs no checkout, so that launch reached the
+// backend unrefused.
+//
+// Three cases from the same scratch directory, on each backend:
+//   - a task carrying an artifact recipe's own text: judged on the mode this
+//     launcher can read (the boundary's ordinary refusal);
+//   - a repository recipe: nothing here can read it, so on cloud-batch the
+//     launch is refused fail-closed instead (artifactUnreadOnBatchRefusal),
+//     because the runner resolves that recipe at the task's ref and an
+//     artifact run must not reach a Batch VM by that path;
+//   - a task carrying a non-artifact recipe's own text: refused too, and not on
+//     the text it carries. The text is readable here and says mode: implement,
+//     but the runner reads the repository layer at the task's ref first
+//     (TestRecipeRepoLayerWins), so what the ref holds beside this name is what
+//     runs -- and this directory has no checkout of that repository to ask
+//     (artifactShadowedOnBatchRefusal, and
+//     TestAnArtifactRecipeAtTheRefShadowsTheTasksCarriedTextOnCloudBatch for
+//     the other half). The mutation guard for the fail-closed arms is a launch
+//     whose ref really has no file of that name, which passes on cloud-batch:
+//     see that test's second case. Cloud-run is the guard for the backend gate,
+//     since cloud-run is where artifact runs live (design artifact-runs.md
+//     D11).
+//
+// Mutation (restore the cfg == nil early return, or drop the fail-closed arm):
+// the inline artifact case stops refusing; the repository-recipe case on
+// cloud-batch is passed to the runner.
+func TestAnArtifactLaunchIsRefusedOnCloudBatchFromAnotherDirectory(t *testing.T) {
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+	env := func(name backend.Codec) *cloudEnv { return &cloudEnv{be: backendNamed{codec: name}} }
+	inline := func(name, yaml string) *task.Spec {
+		return &task.Spec{Version: 1, RunID: "20261020-100000-a1b2", Repo: "acme/other", Ref: "main",
+			Workflow: "svc", Task: "Render the sizzle reel",
+			Recipe: &task.Recipe{Name: name, Source: string(recipe.SourceProject),
+				SHA256: recipe.Sum([]byte(yaml)), YAML: yaml}}
+	}
+	for _, tc := range []struct {
+		name string
+		spec *task.Spec
+		be   backend.Codec
+		want string // the refusal the launch must carry, "" for none
+	}{
+		{"an artifact recipe's own text on cloud-batch", inline("sizzle", projectSizzle), backend.BatchCodec(), artifactOnBatchMessage},
+		{"a repository recipe on cloud-batch", &task.Spec{Version: 1, RunID: "20261020-100000-a1b2", Repo: "acme/other",
+			Workflow: "svc", Task: "Render the sizzle reel", Recipe: &task.Recipe{Name: "sizzle", Source: string(recipe.SourceRepo)}}, backend.BatchCodec(), artifactUnreadOnBatchRefusal("acme/other")},
+		// The carried name matches the carried text (implementRecipe says
+		// name: impl), as a real launch's always does, so the refusal comes
+		// from the ref read having no checkout to ask -- not from the name
+		// check, which the next case pins on its own.
+		{"an implement recipe's own text on cloud-batch", inline("impl", implementRecipe), backend.BatchCodec(), artifactShadowedOnBatchRefusal("impl", "acme/other", "main")},
+		{"carried text whose name disagrees with the task's on cloud-batch", inline("sizzle", implementRecipe), backend.BatchCodec(), artifactShadowedOnBatchRefusal("sizzle", "acme/other", "main")},
+		{"an artifact recipe's own text on cloud-run", inline("sizzle", projectSizzle), backend.CloudRunCodec(), ""},
+		{"a repository recipe on cloud-run", &task.Spec{Version: 1, RunID: "20261020-100000-a1b2", Repo: "acme/other",
+			Workflow: "svc", Task: "Render the sizzle reel", Recipe: &task.Recipe{Name: "sizzle", Source: string(recipe.SourceRepo)}}, backend.CloudRunCodec(), ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkArtifactLaunch(context.Background(), env(tc.be), tc.spec)
+			if tc.want == "" {
+				if err != nil && (strings.Contains(err.Error(), artifactOnBatchMessage) || strings.Contains(err.Error(), artifactUnreadOnBatchRefusal(tc.spec.Repo))) {
+					t.Fatalf("a launch with no artifact boundary to cross was refused by it: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("checkArtifactLaunch from a directory that is not the run's checkout = %v, want the refusal %q", err, tc.want)
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Errorf("the refusal is not a user error: %v", err)
+			}
+		})
+	}
+}
+
+// TestAnArtifactRecipeAtTheRefShadowsTheTasksCarriedTextOnCloudBatch: the
+// task's own recipe text is not the recipe the runner will run, whatever the
+// task says about where it came from. internal/runner/recipe.go's
+// resolveRecipe reads the repository layer at the task's ref FIRST and only
+// falls back to the task's embedded copy (TestRecipeRepoLayerWins), so a file
+// of the same name at the ref IS the run's recipe, mode included. A launch
+// that carries a project or catalog recipe therefore says nothing about the
+// recipe that runs -- `fugaro run --recipe sizzle` from a working directory
+// whose checkout is not the one that resolved that name, against a base branch
+// whose .fugaro/recipes/sizzle.yaml is mode: artifact, carries the catalog's
+// implement text and would run the ref's artifact recipe on a Batch VM.
+//
+// So the launch's arm asks the ref for a carried recipe's name, exactly as the
+// runner does, and refuses the artifact one it finds there. The second case is
+// the mutation guard: a name the ref has no file for really is judged on the
+// text the task carries, so "refuse every launch that carries text on
+// cloud-batch" fails here; the third is the backend's own guard, since cloud-run
+// is where artifact runs live (design artifact-runs.md D11).
+//
+// Mutation (judge the carried text alone, as this gate did): the first case
+// stops refusing and the artifact recipe at the ref reaches a Batch VM.
+func TestAnArtifactRecipeAtTheRefShadowsTheTasksCarriedTextOnCloudBatch(t *testing.T) {
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q", "-b", "main")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
+	yaml := "version: 1\nproject: aurora\ngit: { provider: github }\n" +
+		"workflows:\n  svc:\n    commands: { build: sh build.sh, test: sh test.sh, render: sh render.sh }\n"
+	testutil.WriteFiles(t, dir, map[string]string{
+		"fugaro.yaml":                 yaml,
+		".fugaro/recipes/sizzle.yaml": projectSizzle,
+	})
+	testutil.Git(t, dir, "add", "-A")
+	testutil.Git(t, dir, "commit", "-q", "-m", "an artifact recipe on the base branch")
+	t.Chdir(dir)
+	// The launcher resolved the name sizzle against a checkout that did not
+	// have it (the file is on the ref, not in the tree), so the task carries
+	// the catalog's text for it -- the shape `fugaro run --recipe` produces
+	// from another directory.
+	if err := os.Remove(filepath.Join(dir, ".fugaro", "recipes", "sizzle.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	carried := func(name, text string) *task.Spec {
+		return &task.Spec{Version: 1, RunID: "20261020-100000-a1b2", Repo: "acme/other", Ref: "main",
+			Workflow: "svc", Task: "Render the sizzle reel",
+			Recipe: &task.Recipe{Name: name, Source: string(recipe.SourceCatalog),
+				SHA256: recipe.Sum([]byte(text)), YAML: text}}
+	}
+	env := func(name backend.Codec) *cloudEnv { return &cloudEnv{be: backendNamed{codec: name}} }
+	for _, tc := range []struct {
+		name string
+		spec *task.Spec
+		be   backend.Codec
+		want string
+	}{
+		{"the ref's artifact recipe of that name, carried implement text", carried("sizzle", implementRecipe), backend.BatchCodec(), artifactOnBatchMessage},
+		{"a name the ref has no file for", carried("impl", implementRecipe), backend.BatchCodec(), ""},
+		{"the ref's artifact recipe of that name on cloud-run", carried("sizzle", implementRecipe), backend.CloudRunCodec(), ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkArtifactLaunch(context.Background(), env(tc.be), tc.spec)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("checkArtifactLaunch = %v, want no refusal", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("checkArtifactLaunch = %v, want the refusal %q: the runner resolves the repository layer at the ref first, so the task's carried text is not the recipe that runs", err, tc.want)
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Errorf("the refusal is not a user error: %v", err)
+			}
+		})
+	}
+}
+
+// TestACarriedRecipeTheRefCannotBeReadForIsRefusedOnCloudBatch is the
+// fail-closed half of the same boundary: a launch whose task carries its recipe
+// text says nothing about the ref, and this launcher has no checkout of that
+// repository to ask one of, so nothing on this path can tell whether a file of
+// that name at the ref is mode: artifact. `fugaro run --recipe <a project or
+// catalog name>` from a directory that is not the repository's checkout is
+// exactly that launch, and it is refused rather than passed to a runner that
+// would resolve the ref itself.
+//
+// The carried name matches the carried text's own name, as a real launch's
+// always does, so the name check cannot refuse it first: what refuses it is
+// the ref read finding no checkout here.
+//
+// Mutation (drop the ref read's error arm, or have recipeAtRef answer "not
+// found" when there is no checkout root): the launch is passed, and the ref's
+// artifact recipe runs on a Batch VM.
+func TestACarriedRecipeTheRefCannotBeReadForIsRefusedOnCloudBatch(t *testing.T) {
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+	spec := &task.Spec{Version: 1, RunID: "20261020-100000-a1b2", Repo: "acme/other", Ref: "main",
+		Workflow: "svc", Task: "Render the sizzle reel",
+		Recipe: &task.Recipe{Name: "impl", Source: string(recipe.SourceCatalog),
+			SHA256: recipe.Sum([]byte(implementRecipe)), YAML: implementRecipe}}
+
+	err := checkArtifactLaunch(context.Background(), &cloudEnv{be: backendNamed{codec: backend.BatchCodec()}}, spec)
+	if err == nil || !strings.Contains(err.Error(), artifactShadowedOnBatchRefusal("impl", "acme/other", "main")) {
+		t.Fatalf("a carried recipe whose ref cannot be read = %v, want the fail-closed refusal", err)
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("the refusal is not a user error: %v", err)
+	}
+}
+
+// TestTheArtifactLaunchGateJudgesTheWorkingTreeNotTheRef pins what the
+// launch's arm of the artifact boundary does NOT cover, so the comments that
+// describe it can say exactly what it enforces: a repository recipe is judged
+// by the file in this launcher's WORKING TREE (recipeForLaunch), while the
+// runner reads the same file at the task's ref -- the repository's base branch
+// unless the launch names another. A working tree whose recipe says
+// mode: implement therefore passes the gate for a ref whose recipe says
+// mode: artifact, and that is the residual the plan's Task 10 records in its
+// step 5 inventory and must close before backend: cloud-batch is selectable
+// (Global Constraint 13). Task 10's fix flips this test to assert the refusal;
+// until then a test that passed here would be a comment claiming more than
+// the code does.
+//
+// The control is the same launch with the working tree matching the ref: the
+// gate refuses it, so what lets the first launch through is the tree/ref
+// difference and nothing else.
+func TestTheArtifactLaunchGateJudgesTheWorkingTreeNotTheRef(t *testing.T) {
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q", "-b", "main")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
+	yaml := "version: 1\nproject: aurora\ngit: { provider: github }\n" +
+		"workflows:\n  svc:\n    commands: { build: sh build.sh, test: sh test.sh, render: sh render.sh }\n"
+	testutil.WriteFiles(t, dir, map[string]string{
+		"fugaro.yaml":                 yaml,
+		".fugaro/recipes/sizzle.yaml": projectSizzle,
+	})
+	testutil.Git(t, dir, "add", "-A")
+	testutil.Git(t, dir, "commit", "-q", "-m", "an artifact recipe on the base branch")
+	t.Chdir(dir)
+	spec := &task.Spec{Version: 1, RunID: "20261020-100000-a1b2", Repo: "acme/other", Ref: "main",
+		Workflow: "svc", Task: "Render the sizzle reel",
+		Recipe: &task.Recipe{Name: "sizzle", Source: string(recipe.SourceRepo)}}
+	env := &cloudEnv{be: backendNamed{codec: backend.BatchCodec()}}
+
+	// The control: the working tree is the ref, and the gate refuses.
+	if err := checkArtifactLaunch(context.Background(), env, spec); err == nil || !strings.Contains(err.Error(), artifactOnBatchMessage) {
+		t.Fatalf("an artifact recipe on cloud-batch whose working tree matches the ref = %v, want the artifact boundary's refusal", err)
+	}
+
+	// The residual: the working tree says implement, the ref still says
+	// artifact, and the gate judges the working tree.
+	testutil.WriteFiles(t, dir, map[string]string{".fugaro/recipes/sizzle.yaml": "version: 1\nname: sizzle\nsteps:\n  - review: {}\n"})
+	if err := checkArtifactLaunch(context.Background(), env, spec); err != nil && strings.Contains(err.Error(), artifactOnBatchMessage) {
+		t.Fatalf("the gate refused a launch whose working-tree recipe is not mode: artifact (%v): it now reads the ref the runner reads, which closes the residual the plan's Task 10 step 5 records -- flip this test to assert the refusal and drop the sentence from Task 10's inventory and the comments in validate_batch.go and run.go", err)
+	}
+}
+
+// implementRecipe is a non-artifact recipe's own text, in the shape a project
+// or catalog recipe travels in (no mode: key parses as implement).
+const implementRecipe = "version: 1\nname: impl\nsteps:\n  - review: {}\n"
+
+// launchRecordOf is run id's stored launch.json.
+func launchRecordOf(t *testing.T, f *cloudFixture, id string) *runstore.Launch {
+	t.Helper()
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	l, err := runstore.Open(b, appSlug, id).ReadLaunch(ctx)
+	if err != nil {
+		t.Fatalf("launch.json of %s: %v", id, err)
+	}
+	return l
+}
+
+// A launch records the optional plan task id it was given (--plan-task) in
+// both of its own records: the task (which --retry replays as it is, and
+// which the recovery path backfills a launch from) and launch.json (which
+// runs ls, watch and the console read). It is a display-only join hint the
+// console matches a run to a node of a plan graph by (console dependency
+// graph plan, task GV1.2, decision GD5).
+//
+// A launch with no --plan-task writes no such field anywhere, so its records
+// are byte-identical to what the previous release wrote and a console older
+// than the field loses a join, never a row (version skew: the field is
+// additive and optional).
+//
+// Mutation (drop PlanTask from buildAttemptSpec's spec literal): task.json
+// carries none, the round trip through --retry and the recovery path loses
+// it, and the assertions here fail.
+func TestLaunchCarriesPlanTask(t *testing.T) {
+	f := newCloudFixture(t)
+	writeBuildRecord(t, f, appSlug, "web", release0112)
+	id := time.Now().UTC().Format("20060102") + "-120000-abcd"
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", id, "--plan-task", "setup-wizard/W1.3", "Add a feature"); err != nil {
+		t.Fatal(err)
+	}
+	if got := readSpec(t, f, id).PlanTask; got != "setup-wizard/W1.3" {
+		t.Fatalf("task plan_task = %q, want the flag's", got)
+	}
+	if got := launchRecordOf(t, f, id).PlanTask; got != "setup-wizard/W1.3" {
+		t.Fatalf("launch plan_task = %q, want the flag's", got)
+	}
+	if wire := taskJSON(t, f, id); !strings.Contains(wire, `"plan_task": "setup-wizard/W1.3"`) {
+		t.Fatalf("task.json does not carry the join hint:\n%s", wire)
+	}
+	// runs ls --json is the document the console reads: the row carries it.
+	got, _ := lsJSON(t)
+	joined := map[string]string{}
+	for _, r := range got.Runs {
+		joined[r.RunID] = r.PlanTask
+	}
+	if joined[id] != "setup-wizard/W1.3" {
+		t.Fatalf("runs ls plan_task = %q, want the launch.json's", joined[id])
+	}
+
+	// A launch without the flag carries none of it.
+	plain := time.Now().UTC().Format("20060102") + "-130000-abcd"
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", plain, "Add a feature"); err != nil {
+		t.Fatal(err)
+	}
+	if got := readSpec(t, f, plain).PlanTask; got != "" {
+		t.Fatalf("task plan_task = %q without the flag", got)
+	}
+	if got := launchRecordOf(t, f, plain).PlanTask; got != "" {
+		t.Fatalf("launch plan_task = %q without the flag", got)
+	}
+	if wire := taskJSON(t, f, plain); strings.Contains(wire, "plan_task") {
+		t.Fatalf("a task with no join hint carries the field:\n%s", wire)
+	}
+}
+
+// --plan-task refuses a value that is not a plan task id before anything is
+// written or started: the id is shown as text in the console, so it is one
+// plan and one task, never a path, never control characters, never an
+// unbounded string. The launcher and the runner apply the same list
+// (task.PlanTaskProblem), so a launch this accepts is not one the run then
+// refuses at bootstrap.
+func TestRunPlanTaskValidation(t *testing.T) {
+	for _, tc := range []struct{ name, id, want string }{
+		{"empty", "", "is empty"},
+		{"no task", "setup-wizard", "must name a task in a plan"},
+		{"absolute", "/setup-wizard/W1.3", "is an absolute path"},
+		{"a .. element", "setup-wizard/../W1.3", `has a ".." path element`},
+		{"a control character", "setup-wizard/W1.3\x1b", "holds a control character"},
+		{"too long", "setup-wizard/" + strings.Repeat("x", task.MaxPlanTaskBytes), "longer than 128 bytes"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newCloudFixture(t)
+			wantRefused(t, f, tc.want, "run", "--repo", "acme/app", "--run-id", "20261024-120000-abcd", "--plan-task", tc.id, "Add a feature")
+		})
+	}
+}
+
+// The launch record is not the only place the join hint lives: when the CLI
+// that launched died before writing launch.json, existingLaunch backfills
+// one from result.json, and the plan task id must survive that — the console
+// reads launch.json, so a backfilled launch that dropped it would silently
+// unjoin a run that has one. The spec is the only thing the recovery path
+// has left to read it from, which is why the id is stored in task.json too
+// (finding F32).
+//
+// Mutation (build the backfilled Launch without spec.PlanTask): the run
+// keeps working and loses its node, and this test fails.
+func TestRecoveredLaunchKeepsPlanTask(t *testing.T) {
+	f := newCloudFixture(t)
+	env := memEnv(t, f)
+	ctx := context.Background()
+	spec := raceSpec(t, env)
+	spec.PlanTask = "setup-wizard/W1.3"
+	s := runstore.Open(env.bucket.Bucket, appSlug, spec.RunID)
+	// The record's own execution, as Cloud Run's environment named it.
+	job := gcp.JobName(appSlug, "web")
+	recorded, err := backend.CloudRunCodec().FromEnv(func(k string) string {
+		return map[string]string{"CLOUD_RUN_EXECUTION": job + "-x7k2p", "CLOUD_RUN_JOB": job, "FUGARO_GCP_PROJECT": "proj-1234", "FUGARO_PROJECT": "aurora", "FUGARO_REGION": "us-east5"}[k]
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = s.WriteRecord(ctx, &runstore.Record{Version: 1, RunID: spec.RunID, Execution: recorded, Status: runstore.StatusRunning, Stage: "implement", Outcome: runstore.OutcomeNone})
+	res, err := launchRun(ctx, env, appSlug, spec, time.Now())
+	if err != nil || res.Status != "already-launched" || len(f.run.Executions()) != 0 {
+		t.Fatalf("res = %+v, err = %v, executions = %v", res, err, f.run.Executions())
+	}
+	l, err := s.ReadLaunch(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.Execution != recorded {
+		t.Fatalf("backfilled execution = %q, want the record's", l.Execution)
+	}
+	if l.PlanTask != "setup-wizard/W1.3" {
+		t.Fatalf("backfilled launch plan_task = %q, want the task's", l.PlanTask)
+	}
+}
+
+// --retry replays a run's stored task as it is — that is why it takes no
+// --plan-task — so the join hint has to come from the stored task into the
+// launch.json the retry writes, or the run comes back with no node.
+//
+// Mutation (drop spec.PlanTask from launchRun's own Launch literal): a
+// retried run loses its node while its task keeps the id.
+func TestRetryKeepsPlanTask(t *testing.T) {
+	f := newCloudFixture(t)
+	writeBuildRecord(t, f, appSlug, "web", release0112)
+	t.Chdir(t.TempDir())
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	spec := &task.Spec{Version: 1, RunID: "20261024-120000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web",
+		Task: "x", PlanTask: "setup-wizard/W1.3"}
+	if err := runstore.Open(b, appSlug, spec.RunID).CreateTask(ctx, spec); err != nil {
+		t.Fatal(err)
+	}
+	wantRefused(t, f, "it takes no --plan-task", "run", "--retry", spec.RunID, "--plan-task", "setup-wizard/W9.9")
+	if _, _, err := execute(t, "run", "--retry", spec.RunID); err != nil {
+		t.Fatal(err)
+	}
+	if got := launchRecordOf(t, f, spec.RunID).PlanTask; got != "setup-wizard/W1.3" {
+		t.Fatalf("retried launch plan_task = %q, want the stored task's", got)
+	}
+}
+
+// release0112 is the first job image whose runner reads a task's plan task
+// id (planTaskSince) — the release this branch belongs to.
+const release0112 = "ghcr.io/dimipaun/fugaro-base:0.11.2"
+
+// A launch carrying a plan task is gated on the image that can read it:
+// task.Parse decodes with DisallowUnknownFields, so a runner older than
+// planTaskSince does not ignore the field, it refuses the whole task at
+// bootstrap — after the job has started and the operator has been told
+// nothing. The gate turns that into one sentence before anything is
+// started, the same way the title, the artifact mode and the named token
+// are gated.
+//
+// Mutation (drop the spec.PlanTask block from finishLaunch's built-image
+// branch): the launch goes through on the 0.8.0 image and fails at
+// bootstrap instead, and this test fails.
+func TestRunPlanTaskGatesOnTheImageThatKnowsIt(t *testing.T) {
+	f := newCloudFixture(t)
+	writeBuildRecord(t, f, appSlug, "web", release080)
+	wantRefused(t, f, "a plan task (--plan-task) needs a job image whose runner knows the plan task (fugaro "+planTaskSince+" or later)",
+		"run", "--repo", "acme/app", "--plan-task", "setup-wizard/W1.3", "Add a feature")
+	// The same image, a launch with no plan task: not gated, because the
+	// spec has no such field in it.
+	writeBuildRecord(t, f, appSlug, "web", release080)
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261024-120000-abcd", "Add a feature"); err != nil {
+		t.Fatalf("a launch with no --plan-task must not be gated: %v", err)
+	}
+	// And the release that ships the reader accepts it.
+	writeBuildRecord(t, f, appSlug, "web", release0112)
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261024-130000-abcd", "--plan-task", "setup-wizard/W1.3", "Add a feature"); err != nil {
+		t.Fatalf("a launch at "+planTaskSince+" must be accepted: %v", err)
+	}
+}
+
+// A checkout: clone workflow has no build record to judge, so the plan
+// task's floor is judged against base_images.base itself: 0.7.5 is
+// cloneSince, so the clone floor passes and the plan task's floor (0.11.2)
+// is what refuses.
+//
+// Mutation (drop the spec.PlanTask block from finishLaunch's clone branch):
+// the launch goes through on an image whose runner refuses the whole task
+// at bootstrap.
+func TestRunPlanTaskGatesOnACloneWorkflow(t *testing.T) {
+	f := newCloudFixture(t)
+	f.appendConfig(t, "base_images: {base: ghcr.io/dimipaun/fugaro-base:0.7.5}\n")
+	testutil.IsolateGit(t)
+	other := mustSlug("github", "acme/other")
+	f.run.AddJob(gcp.JobName(other, "svc"), "2", "4Gi")
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": "version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop }\nworkflows:\n" +
+		"  svc: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n"})
+	t.Chdir(dir)
+	_, _, err := execute(t, "run", "--run-id", "20261024-100000-abcd", "--plan-task", "setup-wizard/W1.3", "A task")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "a plan task (--plan-task) needs a job image whose runner knows the plan task (fugaro "+planTaskSince+" or later)") ||
+		!strings.Contains(err.Error(), "ghcr.io/dimipaun/fugaro-base:0.7.5, release 0.7.5") {
+		t.Fatalf("err = %v", err)
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none", n)
+	}
+}
+
+// A follow-up carries its own --plan-task and never the followed run's: the
+// run it continues holds the node, and a chain that re-claimed the task with
+// every follow-up would say the task is running again each time. The join to
+// the graph a follow-up has is its pull request number.
+//
+// Mutation (inherit the run's plan task, the way Title is inherited): the
+// follow-up stores a node it was not given, and this test fails.
+func TestFollowUpDoesNotInheritThePlanTask(t *testing.T) {
+	f := newCloudFixture(t)
+	root := firstRunSpec(rootID)
+	root.PlanTask = "setup-wizard/W1.3"
+	seedSpec(t, f, root, false)
+	rec := prRecord(rootID, "", 7, 1)
+	rec.StartedAt = time.Now().Add(-72 * time.Hour)
+	writeRecord(t, f, rootID, rec)
+
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "also rename x"); err != nil {
+		t.Fatal(err)
+	}
+	if got := readSpec(t, f, fuID).PlanTask; got != "" {
+		t.Fatalf("follow-up plan_task = %q, want none: the run it follows holds the node", got)
+	}
+}
+
+// An explicit --plan-task on a follow-up claims one for that run itself, and
+// the flag's id is the one stored — not the followed run's.
+func TestFollowUpCarriesItsOwnPlanTask(t *testing.T) {
+	f := newCloudFixture(t)
+	root := firstRunSpec(rootID)
+	root.PlanTask = "setup-wizard/W1.3"
+	seedSpec(t, f, root, false)
+	rec := prRecord(rootID, "", 7, 1)
+	rec.StartedAt = time.Now().Add(-72 * time.Hour)
+	writeRecord(t, f, rootID, rec)
+
+	writeBuildRecord(t, f, appSlug, "web", release0112)
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--plan-task", "setup-wizard/W2.1", "also rename x"); err != nil {
+		t.Fatal(err)
+	}
+	if got := readSpec(t, f, fuID).PlanTask; got != "setup-wizard/W2.1" {
+		t.Fatalf("follow-up plan_task = %q, want the flag's", got)
+	}
+}
+
+// A repeated --run-id names a stored task, and a plan task is part of that
+// task: asking for the same run id with a different one is a different task,
+// refused like any other difference.
+//
+// Mutation (drop the plan task from storedFollowUp's comparison): the second
+// launch reports the first as if it were the same task, silently keeping the
+// old node.
+func TestStoredFollowUpRefusesADifferentPlanTask(t *testing.T) {
+	f := newCloudFixture(t)
+	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
+	writeBuildRecord(t, f, appSlug, "web", release0112)
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--plan-task", "setup-wizard/W1.3", "also rename x"); err != nil {
+		t.Fatal(err)
+	}
+	// wantRefused is not used here: this fixture has already launched the
+	// run, so its "no execution started" half would fail for the wrong
+	// reason.
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--plan-task", "setup-wizard/W9.9", "also rename x")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "already holds a different task") {
+		t.Fatalf("err = %v, want the different task refusal", err)
+	}
+	// The same plan task is the same task: the repeated launch reports the
+	// existing one instead of starting another.
+	out, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--plan-task", "setup-wizard/W1.3", "also rename x")
+	if err != nil || !strings.Contains(out, "already launched") {
+		t.Fatalf("out = %q, err = %v", out, err)
 	}
 }

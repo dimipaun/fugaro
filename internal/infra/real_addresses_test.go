@@ -79,7 +79,7 @@ func realRepoRootAddresses(t *testing.T, name string) []string {
 	if err != nil {
 		t.Fatalf("this test needs terraform on PATH: %v", err)
 	}
-	spec := repoRootSpec(t, repoRootFixtures[name])
+	spec := repoRootFixtureSpec(t, name)
 	vars, err := RepoRootVars(spec, RepoRootOptions{})
 	if err != nil {
 		t.Fatal(err)

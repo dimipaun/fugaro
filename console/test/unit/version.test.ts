@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The version skew handshake (desktop-console plan Task 3.2; design section
 // 7.1, D7, and the skew row of section 6.3).
 //
@@ -38,6 +40,7 @@ import {
   CLI_VERSION_BUILT_AGAINST,
   CONSOLE_CLI_UPGRADE_COMMAND,
   HIDDEN_VIEW_WORDS,
+  LAUNCH_CLI_FLOOR,
   REDUCED_VIEWS,
   SKEW_HEADLINES,
   SUPPORTED_CLI_MINORS,
@@ -45,6 +48,7 @@ import {
   classifyCliVersion,
   compareMinors,
   hidesView,
+  launchSupported,
   parseCliVersion,
   renderVersionSkew,
   skewSentence,
@@ -261,11 +265,24 @@ describe('parseCliVersion', () => {
 // ---------------------------------------------------------------------------
 
 describe('the supported range', () => {
-  it('is the minor the console was built against plus the previous one', () => {
+  it('holds the minor the console was built against, the previous one, and the launch floor’s', () => {
     const built = parseCliVersion(CLI_VERSION_BUILT_AGAINST)
     if (!built.ok || built.version.kind !== 'release') throw new Error(CLI_VERSION_BUILT_AGAINST)
     const previous = `${String(built.version.major)}.${String(built.version.minor - 1)}`
-    expect(SUPPORTED_CLI_MINORS).toEqual([previous, `${String(built.version.major)}.${String(built.version.minor)}`])
+    const builtMinor = `${String(built.version.major)}.${String(built.version.minor)}`
+    const launchMinor = '0.11'
+    // The set is exactly these three: the design's promise (the built minor and
+    // the one before it) and V2.5.1a's addition, whose reason is written on the
+    // constant -- 0.11 is the newest CLI minor the launch half was written
+    // against. A fourth minor, or a member dropped, fails here.
+    expect(SUPPORTED_CLI_MINORS).toEqual(expect.arrayContaining([previous, builtMinor]))
+    expect(SUPPORTED_CLI_MINORS).toEqual([previous, builtMinor, launchMinor])
+    // The range reaches exactly the launch floor's minor, and stops there: the
+    // range says which CLI the console draws its dashboard for, the floor which
+    // CLI one operation may be started on, and a launch reads the floor alone
+    // (launchSupported, below). The floor is a *patch* inside that minor, so the
+    // comparison that matters is the one the floor's own tests make.
+    expect(launchMinor).toBe(LAUNCH_CLI_FLOOR.split('.').slice(0, 2).join('.'))
   })
 
   it('is a release version the console can read, like the floor below it', () => {
@@ -290,6 +307,72 @@ describe('the supported range', () => {
     // version nag prints. A console that told the operator to run something else
     // would be a second source of truth about how fugaro is installed.
     expect(CONSOLE_CLI_UPGRADE_COMMAND).toBe('brew upgrade dimipaun/tap/fugaro')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The launch floor.
+// ---------------------------------------------------------------------------
+
+describe('launchSupported', () => {
+  it('is the design’s floor: the release that ships --plan-task', () => {
+    // `--plan-task`, `internal/cli/recipes_skew.go`'s planTaskSince = "0.11.2",
+    // is the newest flag the argv carries, and rule 11's own sentence is that
+    // the operation is offered only to an installation whose CLI is at least
+    // that (docs/design/desktop-console.md §5.1 rule 11, "a CLI too old for a
+    // flag of the row").
+    expect(LAUNCH_CLI_FLOOR).toBe('0.11.2')
+    // And the floor is a **patch** inside that minor, which is exactly what a
+    // range check cannot answer: `0.11` as a range member puts `0.11.0` and
+    // `0.11.1` on the offering side of a floor they are below.
+    const floor = parseCliVersion(LAUNCH_CLI_FLOOR)
+    if (!floor.ok || floor.version.kind !== 'release') throw new Error(LAUNCH_CLI_FLOOR)
+    expect(floor.version.patch).toBeGreaterThan(0)
+  })
+
+  it('admits a version at or above the floor, patch level by patch level', () => {
+    for (const line of ['0.11.2', 'v0.11.2', '0.11.3', '0.11.99', '0.12.0', '0.12.1', '1.0.0']) {
+      expect(launchSupported(line), line).toBe(true)
+    }
+    // A build-metadata tail is the same release, and the same comparison.
+    expect(launchSupported('0.11.2+build.7')).toBe(true)
+    // And the two patches below it are refused, which is the whole reason this
+    // is a patch comparison: 0.11.0 and 0.11.1 are inside the supported minor
+    // "0.11" and carry no --plan-task.
+    for (const line of ['0.11.1', '0.11.0', '0.10.9', '0.8.1', '0.6.0']) {
+      expect(launchSupported(line), line).toBe(false)
+    }
+  })
+
+  it('is a comparison of its own, which range membership cannot stand in for', () => {
+    // The two ways the range would answer wrongly, and both are live: 0.11 is a
+    // supported minor and its first two patches are below the floor, while the
+    // floor's own minor is in the range for a reason the range cannot state --
+    // "in range" is neither necessary nor sufficient for a launch.
+    expect(SUPPORTED_CLI_MINORS).toContain('0.11')
+    expect(classifyCliVersion('0.11.0').mode).toBe('ok')
+    expect(launchSupported('0.11.0')).toBe(false)
+    expect(classifyCliVersion('0.10.0').mode).toBe('reduced')
+    expect(launchSupported('0.10.0')).toBe(false)
+    // The other direction: a CLI above the floor but outside the range is drawn
+    // by this console with its version banner, and a banner is not a refusal.
+    expect(SUPPORTED_CLI_MINORS).not.toContain('0.12')
+    expect(classifyCliVersion('0.12.1').mode).toBe('reduced')
+    expect(launchSupported('0.12.1')).toBe(true)
+  })
+
+  it('refuses a line it cannot place, rather than assuming the newest', () => {
+    // The reason this is not `parseCliVersion`'s answer alone: the prerelease
+    // tail is deliberately not compared by that parser (0.11.2-rc.1 is read as
+    // 0.11.2), and a `dev` build is unplaceable. Both gate a spend, so both are
+    // refusals here.
+    for (const line of ['0.11.2-rc.1', '0.11.2-rc', 'dev', 'devel', '', 'the binary did not answer']) {
+      expect(launchSupported(line), JSON.stringify(line)).toBe(false)
+    }
+    // A minor that names no patch is read as its x.y.0, and the floor is a
+    // patch: `0.12` is above it and `0.11` is below it.
+    expect(launchSupported('0.12')).toBe(true)
+    expect(launchSupported('0.11')).toBe(false)
   })
 })
 
@@ -381,6 +464,22 @@ describe('classifyCliVersion', () => {
     expect(compatibility.hidden).toEqual([...REDUCED_VIEWS])
   })
 
+  it('names dev as the one non-version line it accepts, and guesses at no other', () => {
+    // The boundary the plan's open item 3 settles (`docs/plans/2026-10-15-desktop-console.md`,
+    // answered by the owner 2026-10-22): a build without the release `-ldflags`
+    // prints `dev` -- a non-semver string the console *recognises* and reduces --
+    // while any other line that is not a version stays the refusal `refuses a
+    // line it cannot read` asserts. Widening the acceptance to "any non-semver
+    // word" is the mutation this holds back: `dev` is the CLI's own constant
+    // (`internal/cli/root.go`: `var Version = "dev"`), and a console that
+    // accepted a word it does not recognise would be placing a line it cannot
+    // read, which is what D7 forbids.
+    expect(placed('dev'), 'the CLI\'s own dev constant').toMatch(/^reduced\/unplaceable\//)
+    for (const line of ['devel', 'snapshot', 'unknown', 'dev-0.11.0']) {
+      expect(placed(line), line).toMatch(/^refused\/unreadable\//)
+    }
+  })
+
   it('refuses a line it cannot read, and carries no version', () => {
     for (const text of ['', 'usage: fugaro version', 'not a version']) {
       const compatibility = classifyCliVersion(text)
@@ -412,12 +511,23 @@ describe('classifyCliVersion', () => {
     expect(compareMinors('0.9', '0.8')).toBeGreaterThan(0)
     expect(compareMinors('1.0', '0.9')).toBeGreaterThan(0)
     expect(compareMinors('0.9', '1.0')).toBeLessThan(0)
-    // Every supported minor is >= the floor and <= the built minor: the range
-    // and the floor cannot drift into each other.
+    // Every supported minor is >= the hard floor, with one named exception: the
+    // launch floor's own minor, which is above the CLI the console was built
+    // against because the operation cannot be offered to anything the range
+    // holds otherwise. It is one named minor and not a slack bound -- a member
+    // that drifted above the built one for any other reason fails here, and the
+    // range and the floor still cannot meet.
     for (const minor of SUPPORTED_CLI_MINORS) {
       expect(compareMinors(minor, CLI_HARD_FLOOR_VERSION), minor).toBeGreaterThanOrEqual(0)
-      expect(compareMinors(minor, CLI_VERSION_BUILT_AGAINST), minor).toBeLessThanOrEqual(0)
     }
+    // Exactly one member is above the minor the console was built against, and
+    // it is V2.5.1a's addition -- the launch floor's own minor, which the range
+    // now reaches so that a CLI the floor admits is drawn by this console rather
+    // than held back for a reason the range does not state.
+    const aboveBuilt = SUPPORTED_CLI_MINORS.filter((minor) => compareMinors(minor, CLI_VERSION_BUILT_AGAINST) > 0)
+    expect(aboveBuilt).toEqual(['0.11'])
+    expect(LAUNCH_CLI_FLOOR).toMatch(/^0\.11\./)
+    expect(aboveBuilt).toEqual([LAUNCH_CLI_FLOOR.split('.').slice(0, 2).join('.')])
   })
 })
 

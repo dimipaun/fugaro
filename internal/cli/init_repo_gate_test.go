@@ -626,15 +626,15 @@ func TestSetupRepoOnboardsAnUnlistedRepositoryUnderYes(t *testing.T) {
 }
 
 // TestSetupOnboardingIsASeparateAnswerFromTheProjectQuestion: the wizard asks
-// two questions about two different things, and neither answers the other. The
-// project's is the wizard's own (setup.go's askProjectAnswer, asked with the
-// other first-run inputs); this one is the gate's, asked at the start of the
+// two things, and neither answers the other. The project's creation is the
+// wizard's own (setup.go's settleCreation, settled with the other first-run
+// inputs); this one is the gate's question, asked at the start of the
 // converge about the checkout's repository (W3.4, D5). A run whose answer here
 // is no still carries the project answers it was given.
 func TestSetupOnboardingIsASeparateAnswerFromTheProjectQuestion(t *testing.T) {
 	e, out := gateRig(t, setupDoor.name, gateOrigin(), gateCheckoutYAML(), onboardAnswerNo+"\n",
 		&initOptions{createProject: true, name: "aurora", cloud: cloudOptions{gcpProject: "proj-1234", region: defaultRegion}}, true)
-	if strings.Contains(out.String(), setupAskProject) {
+	if strings.Contains(out.String(), "GCP project ID") {
 		t.Errorf("the gate asked the project's question, which is the wizard's own:\n%s", out)
 	}
 	if !e.r.o.createProject || e.r.o.name != "aurora" || e.r.o.cloud.gcpProject != "proj-1234" {

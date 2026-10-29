@@ -1,10 +1,16 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The IPC allow-list (desktop-console plan Task 1.2, SECURITY-SENSITIVE; design
 // section 5.1 rule 5).
 //
 // The console has no IPC bridge. It has a fixed table of named operations --
-// one per read the console performs, twelve of them for the eleven documents of
-// design section 2.1 plus the one validated link -- and three prohibitions that
-// are the whole of the rule:
+// one per read the console performs, the CLI reads among them for the documents
+// the dashboard draws out of design section 2.1, plus the one validated link
+// (that section's list holds a thirteenth row, the picker's own `fugaro config
+// list --json`; it belongs to the installations picker window and is not an
+// operation of this table -- `src/preload/installations.ts` is its surface) --
+// and three
+// prohibitions that are the whole of the rule:
 //
 //   - **no `invoke(channel, ...)`**: nothing anywhere in the console takes a
 //     channel from a caller. `channelForOperation` derives a channel from a name
@@ -80,11 +86,14 @@
 //     before there is anything behind it. The wiring is one line in
 //     `src/main/window.ts` and belongs with the task that brings the handlers.
 
+import { isAbsolute } from 'node:path'
+
 import { invisibleRe, isInvisibleCodePoint, isSeparatorCodePoint } from '../shared/sanitize'
 import { REDUCED_VIEWS, hidesView, unreadableCompatibility } from '../shared/version'
 import type { CliCompatibility, ReducedView } from '../shared/version'
 import { APP_ENTRY_URL, APP_HOST, APP_SCHEME } from './protocol'
 import { validateExternalUrl } from './window'
+import { checkLaunchPlanTask, checkLaunchTask, checkLaunchTitle } from './launchrules'
 
 /**
  * IPC_VERSION is the version of the surface `src/preload/index.ts` exposes to
@@ -153,6 +162,22 @@ export const MAX_RUN_ID_LENGTH = 64
 export const MAX_URL_LENGTH = 2048
 
 /**
+ * MAX_INSTALLATION_NAME_LENGTH and MAX_INSTALLATION_CHECKOUT_LENGTH bound the
+ * rail's two kinds, and they are the same two numbers the store's own field
+ * bounds use (`MAX_INSTALLATION_PROJECT_LENGTH` and
+ * `MAX_INSTALLATION_PATH_LENGTH` in `src/main/installations.ts`).
+ *
+ * They are **spelled here rather than imported**: `installations.ts` imports
+ * this module (`NO_ACTIVE_INSTALLATION`), so importing it back would be a cycle
+ * -- and the grammar is the store's, which is why a test
+ * (`test/unit/ipc.test.ts`) holds the two spellings to the same number and the
+ * two validators to the same verdict, value for value, rather than this file
+ * promising it in prose.
+ */
+export const MAX_INSTALLATION_NAME_LENGTH = 200
+export const MAX_INSTALLATION_CHECKOUT_LENGTH = 1024
+
+/**
  * REPORT_MAX_DAYS is `report --since`'s own bound on a range -- the CLI's
  * `reportMaxDays` (`internal/cli/report.go:40`), which exists because a query
  * reads a document per repository per day. A window past it is a value `report`
@@ -198,11 +223,35 @@ export const REPORT_MAX_WEEKS = 522
  *     child exists. The two commands disagree about `--since` and one kind
  *     cannot say both: `report` refuses `3h` and a bare `0` (its `reportRange`
  *     has no duration branch), and `runs ls` refuses `12w` and every date;
- *   - `reportDimension` -- `report --by`'s closed set of seven words;
+ *   - `reportDimension` -- `report --by`'s closed set of eight words;
  *   - `secretScope` -- `secrets ls`'s two mutually exclusive scopes;
  *   - `pullRequest` -- a pull request number, a positive integer;
  *   - `flag` -- a boolean, for the flags the allow-list admits;
- *   - `link` -- the one URL, and it must pass `validateExternalUrl`.
+ *   - `link` -- the one URL, and it must pass `validateExternalUrl`;
+ *   - `installationName` -- one installation's project name, the handle the CLI
+ *     itself printed for it (`isProjectName`, `src/main/installations.ts`): not
+ *     empty, at most `MAX_INSTALLATION_NAME_LENGTH`, no whitespace, no control
+ *     character, no leading `-`. It is a bare word, and **what makes it a name
+ *     rather than a path is the store and not this grammar**: the value is
+ *     looked up among the records this console holds and one it does not hold
+ *     is refused (`picker.ts`), so a path-shaped string the grammar admits has
+ *     no record to reach anything through;
+ *   - `installationCheckout` -- a directory **the rail offered** for that
+ *     installation (`isAbsolutePath`): an absolute path, at most
+ *     `MAX_INSTALLATION_PATH_LENGTH`, no control character, no leading `-`. The
+ *     shape is all this grammar can decide; whether the rail offered the
+ *     directory -- one the CLI listed, or the console's own recorded checkout,
+ *     and in either case not a temporary or tool-owned path -- is the main
+ *     process's check (`offeredCheckouts`, `picker.ts`), because a validator
+ *     that guessed would be the place a made-up path got through.
+ *
+ * The last two are the only path-shaped kinds on this surface, and they are the
+ * installation rail's (owner's design ruling of 2026-10-25). Both are the
+ * grammar `src/main/installations.ts` already applied to the picker's own
+ * operations: they are moved onto the dashboard's table with the rail, not
+ * invented here, and `test/unit/installationstate.test.ts`'s sibling
+ * `test/unit/ipc.test.ts` holds the two implementations to the same verdicts
+ * value for value.
  */
 export type ArgumentKind =
   | 'repository'
@@ -215,6 +264,11 @@ export type ArgumentKind =
   | 'pullRequest'
   | 'flag'
   | 'link'
+  | 'installationName'
+  | 'installationCheckout'
+  | 'launchTask'
+  | 'launchTitle'
+  | 'launchPlanTask'
 
 /** ArgumentSpec is one field of an operation's closed argument schema. */
 export interface ArgumentSpec {
@@ -258,9 +312,11 @@ export interface ConsoleOperation {
   readonly method: string
   /**
    * `command` is the CLI command path this operation drives -- and it is `null`
-   * for exactly two operations, neither of which spawns anything:
-   * `link.openExternal` (it opens a link) and `startup.compatibility` (it
-   * answers the handshake this process already ran).
+   * for every operation that spawns nothing: the two reads of the console's own
+   * state (`link.openExternal`, `startup.compatibility`), the active
+   * installation (`installation.current`), and the rail's five store-and-window
+   * operations (`installation.choose`, `.checkout`, `.remove`, `.reveal`,
+   * `.open`).
    * It is a constant: no renderer, no argument and no job-written string ever
    * reaches it, and `registerConsoleHandlers` refuses a table that names
    * anything on `NEVER_REACHABLE`.
@@ -278,25 +334,79 @@ export interface ConsoleOperation {
   readonly summary: string
   /** `args` is the closed schema: the keys, and nothing but the keys. */
   readonly args: readonly ArgumentSpec[]
+  /**
+   * `payloadWidth` replaces `MAX_PAYLOAD_WIDTH` for the one operation whose
+   * legitimate payload is larger than that bound: `run.launch`, whose task text
+   * may be 16 KiB. It is a column rather than a widening of the global bound,
+   * because the bound every other read is held to is a fact about those reads.
+   */
+  readonly payloadWidth?: number
 }
 
 /**
- * CONSOLE_OPERATIONS is the whole surface. Fourteen operations, and the table is
- * the reviewable artifact: a new read is a new entry here, with its argument
+ * LAUNCH_TASK_RAW_LIMIT, LAUNCH_TITLE_RAW_LIMIT and LAUNCH_PLAN_TASK_RAW_LIMIT
+ * are the **raw** bounds on the launch's three strings, and they are four times
+ * the content caps rule 11 sets (`launchrules.ts`'s 16 KiB, 100 runes and 128
+ * bytes). They are not the caps: the caps are the rules', and they are checked
+ * after these, on the *trimmed* value. What these do is bound the work this
+ * process does on a string a renderer chose -- a raw task string of many
+ * megabytes is refused by its length before anything measures or trims it --
+ * and they are deliberately generous enough that no legitimate value can hit
+ * them: a task is at most 16 KiB *after* its surrounding whitespace is trimmed,
+ * so four times that is far above anything the schema admits.
+ *
+ * **The launch's own payload width is the other half of the same rule.**
+ * `MAX_PAYLOAD_WIDTH` is 4096 and the task alone may legitimately be 16 KiB, so
+ * `run.launch` carries its own width (`payloadWidth` on the operation) rather
+ * than widening the bound every read is held to.
+ */
+export const LAUNCH_TASK_RAW_LIMIT = 4 * 16 * 1024
+export const LAUNCH_TITLE_RAW_LIMIT = 4 * 100
+export const LAUNCH_PLAN_TASK_RAW_LIMIT = 4 * 128
+/** LAUNCH_PAYLOAD_WIDTH bounds the launch's whole payload: its four raw limits,
+ * the two names, the five keys' names and a margin. It is a bound on a payload
+ * this console wrote a schema for, so it is the sum of what that schema admits. */
+export const LAUNCH_PAYLOAD_WIDTH =
+  LAUNCH_TASK_RAW_LIMIT + LAUNCH_TITLE_RAW_LIMIT + LAUNCH_PLAN_TASK_RAW_LIMIT + 4096
+
+/**
+ * CONSOLE_OPERATIONS is the whole surface. Twenty-four operations, and the table
+ * is the reviewable artifact: a new read is a new entry here, with its argument
  * schema, and an entry is the only way anything becomes reachable.
  *
- * The eleven CLI commands are design section 2.1's list (which is
- * `docs/json-contract.md`'s list, read off the cobra commands), and the twelfth
- * is the startup handshake's answer (`startup.compatibility`, the console's own
- * state, which no CLI command can be asked for); the thirteenth is the one path
- * that is not a command: `openExternal`, whose URL argument goes
- * through `validateExternalUrl` -- `https:` only, no credentials, no port, host
- * on `ALLOWED_EXTERNAL_HOSTS` -- so the renderer's only way out of the console
- * is a link the console would have opened anyway. The fourteenth
- * (`installation.current`) is the dashboard's read of the installation the
- * operator chose in the picker window, or D13's no-installation state; its
- * handler is `handlersFor`'s **optional** `installation` dep, so a build without
- * a picker answers it with that state rather than failing to register.
+ * The thirteen CLI argvs are design section 2.1's list -- its thirteenth row,
+ * `fugaro config list --json`, arrived with the installation rail (owner's
+ * design ruling of 2026-10-25) and was §5.1 rule 6's thirteenth argv before
+ * that -- and that list is `docs/json-contract.md`'s, read off the cobra
+ * commands. The twelfth of those commands is `runs.stats` (console L5b, the
+ * Spend screen's by-person view), which the table narrowed to this task's own
+ * argument: see its comment below.
+ *
+ * **GV2.1's `plan status --json` is this surface's fourteenth argv**: section
+ * 2.1's fourteenth row and §5.1 rule 6's `plan status --json` row (the
+ * console-v2 plan's GV1.6 ships the document, GV2.1 is this operation, and
+ * `console/docs/json-contract.md` §6.12 describes it). `plan.status`'s own
+ * comment below says why the directory it reads in never reaches it.
+ *
+ * **T1.2's `coordinator status --from-store --all --json` is this surface's
+ * fifteenth argv** (Bitbucket credentials T1.2, D364): the project view, read
+ * from the coordinator's stored view, which is the one read here that needs no
+ * credential of the host's. Its own comment below says why `--from-store` and
+ * `--all` are fixed words of its argv rather than arguments, and
+ * `console/docs/json-contract.md` §6.13 describes its document.
+ *
+ * The thirteenth **operation** (the row, not an argv) is the startup
+ * handshake's answer (`startup.compatibility`, the console's own state, which
+ * no CLI command can be asked for). `openExternal` is the one operation that is
+ * not a command at all and the only way out of the console: its URL argument
+ * goes through `validateExternalUrl` -- `https:` only, no credentials, no port,
+ * host on `ALLOWED_EXTERNAL_HOSTS` -- so the renderer can open a link the
+ * console would have opened anyway. `installation.current` is the dashboard's
+ * read of the installation the operator chose, or D13's no-installation state;
+ * its handler is `handlersFor`'s **optional** `installation` dep, so a build
+ * without a store answers it with that state rather than failing to register.
+ * The rail's six (see their comment below) are one read of the CLI's list and
+ * five operations on the console's own store and window.
  *
  * Two operations share one command and differ by their flags, deliberately:
  * `run.logs` is `logs RUN --json` and `run.logLink` is `logs RUN --url`. They
@@ -359,13 +469,13 @@ export const CONSOLE_OPERATIONS = [
     method: 'runReport',
     command: 'report',
     flags: ['--json'],
-    summary: 'spend over time, by day, week, month, year, repo, model or person',
+    summary: 'spend over time, by day, week, month, year, repo, model, person or mode',
     args: [
       {
         key: 'by',
         kind: 'reportDimension',
         required: false,
-        why: '`--by` is the breakdown switch the Spend screen draws; its seven words are closed.',
+        why: '`--by` is the breakdown switch the Spend screen draws; its eight words are closed.',
       },
       {
         key: 'since',
@@ -426,6 +536,86 @@ export const CONSOLE_OPERATIONS = [
       },
     ],
   },
+  // The Spend screen's by-person view (console L5b). It is the twelfth command
+  // the console spawns and it is the one read whose *rows the CLI scopes to the
+  // caller*, so its schema is the narrowest thing that command can be asked for
+  // from here: **`since` and nothing else**.
+  //
+  // What is deliberately absent is the point. `--all-users` is a flag of
+  // `newRunsStatsCmd` that shows every user's row, and it is not a key of this
+  // schema: the command resolves the view itself -- an operator of the
+  // installation (the identity named in the local config's `user:`/git, listed
+  // in its `terraform.operators`) sees every user's rows, and everyone else sees
+  // their own row alone (`internal/cli/runs_stats.go`, `userStatsViewOwn`) --
+  // and a console that could pass the flag could widen a private view to
+  // everyone's with one click. `--by` is fixed to `user` by the command's own
+  // default, `--max-runs` is its own bound (5000, and the document says when it
+  // truncated), and `--repo`/`--all` narrow a read this screen draws for the
+  // whole project. A payload carrying one of them is refused by name here,
+  // before a child exists, and `test/unit/ipc.test.ts` fails a test per hostile
+  // payload rather than passing a review.
+  //
+  // `since` is `runs stats`'s own grammar and not `report`'s (`runSince`, the
+  // `parseSince` kind `runs.list` declares): `7d`, `36h`, `90m`, `0`, and never
+  // a UTC day or `12w`. The screen translates the range picker's window into it
+  // rather than passing the picker's word through -- `src/renderer/screens/
+  // spend.ts`'s `personSince` -- so a word this command would refuse is a word
+  // that never reaches the schema at all.
+  {
+    name: 'runs.stats',
+    method: 'statsRuns',
+    command: 'runs stats',
+    flags: ['--json'],
+    summary: 'what each person started in a window, and what those runs cost',
+    args: [
+      {
+        key: 'since',
+        kind: 'runSince',
+        required: false,
+        why: 'the design allow-list admits `--since` on this command, in `runs stats`’s own forms (parseSince): 7d, 36h, 90m or 0 — never a date, and never `report`’s `12w`.',
+      },
+    ],
+  },
+  // The Plan screen's read (plan GV2.1). It is the thirteenth CLI command the
+  // console spawns, and the one read whose subject is the **checkout** rather
+  // than the project: `plan status` walks the graph artifacts under the
+  // checkout's own `docs/` and joins them to the runs of that checkout's
+  // repository, so the child has to run *in* the checkout.
+  //
+  // Its flags are the command's own, read off `newPlanStatusCmd` the way every
+  // other row's are, and §5.1 rule 6's row permits exactly `--all` among them.
+  //
+  // **The directory is therefore not a key of this schema, and never a word of
+  // its argv.** The main process sets the child's working directory from the
+  // installation's recorded checkout (`createBoundSource`, `src/source/cli.ts`),
+  // and an installation that has none is refused before a child exists: a
+  // renderer-supplied path would be a way for a document to name a directory the
+  // operator never chose (the plan's constraint C1, "the renderer never sends a
+  // path"). `argvFor` builds every word of the argv from the spawn table, and no
+  // row can emit `--dir` for this command.
+  //
+  // **`all` and nothing else.** `--all` is the screen's own control: it lists
+  // the closed tasks (merged and cancelled) that the read otherwise counts per
+  // release. It is a boolean and never a string, so a payload cannot spell a
+  // flag with it, and the cloud flags (`--project`, `--config`) are the
+  // installation's, exactly as `runs ls` carries them -- never `--gcp-project`
+  // or `--region`, which are no part of this surface. There is no positional
+  // argument: `newPlanStatusCmd` is cobra's `NoArgs`.
+  {
+    name: 'plan.status',
+    method: 'planStatus',
+    command: 'plan status',
+    flags: ['--json'],
+    summary: "every plan's tasks under the checkout's docs/, joined to the runs working on them",
+    args: [
+      {
+        key: 'all',
+        kind: 'flag',
+        required: false,
+        why: '`newPlanStatusCmd` has this flag, and it is the screen’s own control: it lists the tasks the read otherwise counts per release, which is narrower than the count the screen already has. It is the one argument this operation declares, and the design’s §5.1 table has not carried a row for the command yet.',
+      },
+    ],
+  },
   {
     name: 'run.diagnose',
     method: 'diagnoseRun',
@@ -468,6 +658,57 @@ export const CONSOLE_OPERATIONS = [
         kind: 'runId',
         required: true,
         why: '`logs RUN --url`, which is its own argv and is never combined with `--json`.',
+      },
+    ],
+  },
+  {
+    name: 'run.launch',
+    method: 'launchRun',
+    // The command path carries the row's two fixed words as well as its name,
+    // because rule 11's argv has `--task-file -` in it -- the literal word `-`
+    // is what sends the task down the child's stdin instead of onto the command
+    // line -- and those two words are not flags a *screen* controls, which is
+    // all `flags` holds (and all `ALLOWED_OPERATION_FLAGS` admits). Rule 11's
+    // argv is therefore this pair as one string: `run --task-file - --json`.
+    command: 'run --task-file -',
+    flags: ['--json'],
+    summary: 'the console’s one write: one launch of `fugaro run` for a named installation',
+    // The five fields, and nothing else: no `--pr`, no `--retry`, no `--recipe`,
+    // no mode, no path, no ref, no workflow, no budget escape. Every one of them
+    // is on `NEVER_REACHABLE`'s argv rows below, because a closed schema is not
+    // enough on its own -- `argvFor` builds the vector from this schema, so a
+    // field that is not here cannot reach a child.
+    payloadWidth: LAUNCH_PAYLOAD_WIDTH,
+    args: [
+      {
+        key: 'installation',
+        kind: 'installationName',
+        required: true,
+        why: 'which installation launches — a name the main process’s own records carry, checked against them before any window is asked.',
+      },
+      {
+        key: 'repository',
+        kind: 'repository',
+        required: true,
+        why: 'the checkout to run in — a `checkouts[]` identity the installation’s own `config list --json` read carried, so the console never invents a repository.',
+      },
+      {
+        key: 'task',
+        kind: 'launchTask',
+        required: true,
+        why: 'the task itself, written to the child’s stdin as `--task-file -` — it is in no argv word and in no log line.',
+      },
+      {
+        key: 'title',
+        kind: 'launchTitle',
+        required: false,
+        why: '`--title=<T>`, one word, `=` form only, and only when the operator filled it in.',
+      },
+      {
+        key: 'planTask',
+        kind: 'launchPlanTask',
+        required: false,
+        why: '`--plan-task=<P>`, one word, `=` form only, and only when the operator filled it in.',
       },
     ],
   },
@@ -532,7 +773,7 @@ export const CONSOLE_OPERATIONS = [
     summary: 'the handshake’s answer: this console’s mode, and the views it withholds',
     args: [],
   },
-  // The fourteenth operation (Task 3.4b) is the second read of the console's own
+  // The fifteenth operation (Task 3.4b) is the second read of the console's own
   // state, and it is the one the header needs: **which installation is active**.
   // It is not a read of the CLI -- the store holds it -- and it takes no argument
   // at all, so a renderer cannot ask about an installation other than the one
@@ -546,6 +787,113 @@ export const CONSOLE_OPERATIONS = [
     command: null,
     flags: [],
     summary: 'the installation the operator chose, or D13’s no-installation state',
+    args: [],
+  },
+  // The rail's own surface (owner's design ruling of 2026-10-25). **The
+  // console never shows a picker screen**: the dashboard's rail lists every
+  // installation the CLI found, a click on a row switches the console to it,
+  // and a row that cannot be read opens its issue in the main area. That is a
+  // read and four writes of the console's own store plus one window, and all
+  // six of them are the operations `src/main/installations.ts` already
+  // declared for the picker window -- moved onto this table with the rail, so
+  // that the dashboard's document can reach them.
+  //
+  // `installation.list` is the one of the six that spawns: `fugaro config
+  // list --json`, the read §5.1 rule 6's allow-list already carries as its
+  // thirteenth argv (`internal/cli/config_list.go`; `console/docs/json-
+  // contract.md` §6.8). It is a read of the machine and not of a project, so
+  // its spawn row takes no `--project` and no `--dir`.
+  //
+  // The other five spawn nothing at all: they read and write
+  // `<userData>/installations.json` (`installation.choose`, `.remove`), run
+  // the console's own `doctor` against the CLI's list of checkouts
+  // (`.checkout`), hand a directory this process computed to the file manager
+  // (`.reveal`), or open the picker window the rail's `+` door is
+  // (`.open`). None of them takes a path a renderer chose: `.checkout` takes a
+  // directory **the rail offered** -- one the CLI listed in the document it last
+  // read, or the console's own recorded checkout, never a temporary or
+  // tool-owned path -- and `.reveal` takes a project name and computes the path
+  // itself.
+  {
+    name: 'installation.list',
+    method: 'listInstallations',
+    command: 'config list',
+    flags: ['--json'],
+    summary: 'every installation this machine has, with the rail’s own mark for each',
+    args: [],
+  },
+  {
+    name: 'installation.choose',
+    method: 'chooseInstallation',
+    command: null,
+    flags: [],
+    summary: 'switch the console to one installation the rail lists',
+    args: [
+      {
+        key: 'project',
+        kind: 'installationName',
+        required: true,
+        why: 'the handle the CLI printed for the row the operator clicked; the store is keyed by it, and no id crosses the boundary.',
+      },
+    ],
+  },
+  {
+    name: 'installation.checkout',
+    method: 'setInstallationCheckout',
+    command: null,
+    flags: [],
+    summary: 'pair one installation with a checkout directory, and check it',
+    args: [
+      {
+        key: 'project',
+        kind: 'installationName',
+        required: true,
+        why: 'the installation the checkout belongs to, by the name the CLI printed.',
+      },
+      {
+        key: 'checkout',
+        kind: 'installationCheckout',
+        required: false,
+        why: 'a directory out of that installation’s own `checkouts` list (what the CLI listed, plus the console’s own recorded checkout, minus temporary and tool-owned paths), which the main process checks for membership. Absent means "no checkout", which is a state an installation may be in (design section 3.4 rule 5).',
+      },
+    ],
+  },
+  {
+    name: 'installation.remove',
+    method: 'removeInstallation',
+    command: null,
+    flags: [],
+    summary: 'drop this console’s own record of one installation',
+    args: [
+      {
+        key: 'project',
+        kind: 'installationName',
+        required: true,
+        why: 'the row the operator asked to forget. It removes the console’s record and nothing on disk.',
+      },
+    ],
+  },
+  {
+    name: 'installation.reveal',
+    method: 'revealInstallation',
+    command: null,
+    flags: [],
+    summary: 'open one installation’s directory in the file manager',
+    args: [
+      {
+        key: 'project',
+        kind: 'installationName',
+        required: true,
+        why: 'a project name and **not a path**: the directory the file manager is handed is computed in this process from its own record (`explorerPathFor`), so a renderer cannot name a directory for it to open.',
+      },
+    ],
+  },
+  {
+    name: 'installation.open',
+    method: 'openInstallations',
+    command: null,
+    flags: [],
+    summary: 'the rail’s + door: the window that adds an installation by checkout path',
     args: [],
   },
   {
@@ -571,6 +919,37 @@ export const CONSOLE_OPERATIONS = [
       },
     ],
   },
+  // The project view (Bitbucket credentials T1.2, D364). `fugaro coordinator
+  // status --from-store --all --json` is the one read that answers for **every
+  // repository of the installation at once**, and it is the console's only read
+  // that needs no credential of the host's: the coordinator's stored view is the
+  // caller's own database read (`roles/firebasedatabase.viewer`), so the console
+  // asks it with no App key, no Bitbucket credential and no host read. A
+  // repository the coordinator has never reconciled answers the runs half with
+  // `"stored": false` rather than refusing, which is what makes this read safe
+  // on an installation whose coordinator was never turned on.
+  //
+  // **`--from-store` and `--all` are fixed, and they are not arguments.** `--all`
+  // is the wrapper the document's `repos` array needs: without it the read
+  // answers one repository's view, and refuses when the local config lists none
+  // or several -- neither of which is the question a project view asks. Both are
+  // words of the argv rather than an argument schema because the screen has no
+  // control that would turn either off, which is the same reason
+  // `installation.list` fixes `--json`.
+  //
+  // **`--repo` is deliberately no part of this operation.** The read is about the
+  // project's whole repository set, and a renderer that could name one repository
+  // could ask a question this screen does not draw. `--since` is absent for the
+  // reason the screen claims no age: the stored view is a document that has
+  // already been written, so a window would filter a figure nothing recomputes.
+  {
+    name: 'coordinator.status',
+    method: 'coordinatorStatus',
+    command: 'coordinator status',
+    flags: ['--from-store', '--all', '--json'],
+    summary: 'every repository of the installation, from the coordinator’s stored view',
+    args: [],
+  },
 ] as const satisfies readonly ConsoleOperation[]
 
 /** OperationName is the closed union of the surface's operation names. */
@@ -587,9 +966,16 @@ export const CONSOLE_OPERATION_NAMES: readonly OperationName[] = Object.freeze(
 
 /** ALLOWED_OPERATION_FLAGS is the whole of what an operation may fix. `--json`
  * asks for the document the console draws; `--url` is `logs RUN --url`, which is
- * its own argv. Anything else an operation might want to fix is on
- * `NEVER_REACHABLE`'s flag rows. */
-export const ALLOWED_OPERATION_FLAGS: readonly string[] = Object.freeze(['--json', '--url'])
+ * its own argv; `--from-store` and `--all` are `coordinator status`'s two, fixed
+ * together because the stored view and the project-wide wrapper are one question
+ * and no screen control turns either off. Anything else an operation might want
+ * to fix is on `NEVER_REACHABLE`'s flag rows. */
+export const ALLOWED_OPERATION_FLAGS: readonly string[] = Object.freeze([
+  '--json',
+  '--url',
+  '--from-store',
+  '--all',
+])
 
 /**
  * operationFor returns the table entry for a name, and throws on a name that is
@@ -615,19 +1001,32 @@ export function channelForOperation(name: OperationName): string {
   return IPC_CHANNEL_PREFIX + operationFor(name).name
 }
 
-/** NeverReachableShape says what kind of thing an entry forbids. */
-export type NeverReachableShape = 'command' | 'flag'
+/** NeverReachableShape says what kind of thing an entry forbids.
+ *
+ * `command` is a whole command path, `flag` is one flag on any command, and
+ * **`argv`** is one flag on one command -- the shape rule 11's fence needs, and
+ * the reason it needs it: `run` is no longer forbidden as a *command*, because
+ * exactly one of its argument vectors is the console's one write. A row that
+ * named the bare command would refuse that one too, and a row that named only
+ * the flag would refuse `--retry` on every command rather than on the one whose
+ * sibling is the launch. */
+export type NeverReachableShape = 'command' | 'flag' | 'argv'
 
 /** NeverReachable is one row of the never table. */
 export interface NeverReachable {
   /** `shape` distinguishes a whole command from a flag on an allowed one. */
   readonly shape: NeverReachableShape
-  /** `value` is the command path, or the flag. */
+  /** `value` is the command path, the flag, or -- for an `argv` row -- the flag
+   * that one command may not carry. */
   readonly value: string
   /** `why` is why the console must never reach it. */
   readonly why: string
   /** `where` is the symbol or document it was read from. */
   readonly where: string
+  /** `command` is the command an `argv` row is about, and is absent from the
+   * other two shapes: a `command` row *is* the command, and a `flag` row is
+   * about every command at once. */
+  readonly command?: string
 }
 
 /**
@@ -674,11 +1073,133 @@ export const NEVER_REACHABLE: readonly NeverReachable[] = Object.freeze([
     why: 'a write: it cancels a run',
     where: 'internal/cli/cancel.go:72',
   },
+  // `run` itself is not on this table, and that is the whole of V2.5.1a's fence
+  // move: `run` is the console's one write (D22), and it is allowed **as exactly
+  // one argument vector** -- the `run.launch` operation above, whose words are
+  // fixed by design section 3.4 rule 11 and whose schema has five fields and no
+  // flag among them. What stays refused is every *sibling* of that vector, and
+  // these rows are argv-shaped rather than command-shaped so that they refuse
+  // the siblings without refusing the one: `value` is the flag, `command` is the
+  // command it may not ride on, and `run.launch`'s own flags (`--json`) are on
+  // none of them.
   {
-    shape: 'command',
-    value: 'run',
-    why: 'a write: it launches a run, and a run spends money',
-    where: 'internal/cli/run.go:134',
+    shape: 'argv',
+    command: 'run',
+    value: '--pr',
+    why: 'a follow-up launch on an existing pull request’s branch: no decision in this tree authorizes it, and the owner ruled on 2026-10-27 that it stays off the launch row until he revisits it (rule 11’s open points)',
+    where: 'internal/cli/run.go:265',
+  },
+  {
+    shape: 'argv',
+    command: 'run',
+    value: '--retry',
+    why: 'relaunches the stored task of a run that never started, and the owner has not ruled it in: D34’s “not yet” (V2.5.2, unscheduled)',
+    where: 'internal/cli/run.go:263',
+  },
+  {
+    shape: 'argv',
+    command: 'run',
+    value: '--attempts',
+    why: 'launches two to four independent runs of one task as a best-of-N batch, so it multiplies one spend by up to four',
+    where: 'internal/cli/run.go:271',
+  },
+  {
+    shape: 'argv',
+    command: 'run',
+    value: '--batch',
+    why: 'the label those best-of-N runs are grouped under in `fugaro runs ls`; it means nothing without `--attempts`, and a group label the app invented would be the app naming rows in the operator’s run list',
+    where: 'internal/cli/run.go:259',
+  },
+  {
+    shape: 'argv',
+    command: 'run',
+    value: '--no-budget-check',
+    why: 'skips the launch pre-check of the budget -- kill switches, missing caps, no headroom -- which is the check D22’s answer rests on',
+    where: 'internal/cli/run.go:274',
+  },
+  {
+    shape: 'argv',
+    command: 'run',
+    value: '--token',
+    why: 'chooses the Claude credential a run uses; a credential is not screen state',
+    where: 'internal/cli/run.go:267',
+  },
+  {
+    shape: 'argv',
+    command: 'run',
+    value: '--recipe',
+    why: 'picks the recipe (task loop) a run is held to, a reviewed configuration fact or project-layer one rather than screen state',
+    where: 'internal/cli/run.go:266',
+  },
+  {
+    shape: 'argv',
+    command: 'run',
+    value: '--mode',
+    why: 'the rigor mode, another reviewed configuration fact a renderer must not name',
+    where: 'internal/cli/run.go:269',
+  },
+  {
+    shape: 'argv',
+    command: 'run',
+    value: '--path',
+    why: 'declares a path the run will touch, matched against the rigor.areas rules: a path is what the surface must never carry',
+    where: 'internal/cli/run.go:270',
+  },
+  {
+    shape: 'argv',
+    command: 'run',
+    value: '--ref',
+    why: 'the ref is the CLI’s own resolution through every config layer, and the console requires a *recorded* base branch instead of naming one; a ref from the renderer is a spend cut from a branch nobody wrote down',
+    where: 'internal/cli/run.go:256',
+  },
+  {
+    shape: 'argv',
+    command: 'run',
+    value: '--workflow',
+    why: 'chooses which workflow runs, another configuration fact rather than screen state',
+    where: 'internal/cli/run.go:257',
+  },
+  {
+    shape: 'argv',
+    command: 'run',
+    value: '--total-timeout',
+    why: 'overrides the workflow’s own total timeout, which is a run’s ceiling and a reviewed configuration fact',
+    where: 'internal/cli/run.go:264',
+  },
+  {
+    shape: 'argv',
+    command: 'run',
+    value: '--no-compression',
+    why: 'turns agent.compression off for one run, overriding the project’s reviewed configuration: a change that is reviewed where it lives',
+    where: 'internal/cli/run.go:272',
+  },
+  {
+    shape: 'argv',
+    command: 'run',
+    value: '--attach',
+    why: 'uploads files into the run’s own inputs/: a path from the renderer by another name',
+    where: 'internal/cli/run.go:268',
+  },
+  {
+    shape: 'argv',
+    command: 'run',
+    value: '--gcp-project',
+    why: 'would let a renderer name a cloud project, which is the boundary §3.4 rule 3 draws: the project comes from the installation’s record',
+    where: 'internal/cli/cloud.go:55',
+  },
+  {
+    shape: 'argv',
+    command: 'run',
+    value: '--region',
+    why: 'would let a renderer name a region, for the same reason as `--gcp-project`',
+    where: 'internal/cli/cloud.go:56',
+  },
+  {
+    shape: 'argv',
+    command: 'run',
+    value: '',
+    why: 'a positional TEXT task: `run` takes at most one (`cobra.MaximumNArgs(1)`) and refuses it together with `--task-file`, so a positional task is not a form the launch row can take — the task goes to the child on stdin and is in no argv word',
+    where: 'internal/cli/run.go:206 (Use: "run [TEXT]"), :251',
   },
   {
     shape: 'command',
@@ -901,6 +1422,21 @@ export function isNeverReachable(operation: {
   for (const entry of NEVER_REACHABLE) {
     if (entry.shape === 'command' && entry.value === operation.command) return entry
     if (entry.shape === 'flag' && operation.flags.includes(entry.value)) return entry
+    // An `argv` row is about one word on one command, and it matches an
+    // operation whose command path is that command *or* a longer path under it,
+    // because the launch's own command carries two fixed words of its argv
+    // (`run --task-file -`). The word itself is looked for in the whole vector
+    // the operation states -- the command's words and the flags it fixes -- so
+    // an excluded flag spelled into either half is refused, and the launch,
+    // which names none of them and fixes one `--json`, is clear of every row.
+    // The empty value is the positional-TEXT row: no operation can name a
+    // positional word at all, so nothing here can match it, and the argv the
+    // surface actually builds is what `console/test/unit/ipc.test.ts` reads it
+    // against.
+    if (entry.shape === 'argv' && entry.value !== '' && entry.command !== null && operation.command !== null) {
+      const under = entry.command === operation.command || operation.command.startsWith(`${entry.command} `)
+      if (under && [...operation.command.split(' '), ...operation.flags].includes(entry.value)) return entry
+    }
   }
   return null
 }
@@ -949,6 +1485,7 @@ const REPORT_DIMENSIONS: readonly string[] = Object.freeze([
   'repo',
   'model',
   'person',
+  'mode',
 ])
 const SECRET_SCOPES: readonly string[] = Object.freeze(['project-wide', 'repo'])
 
@@ -1235,8 +1772,22 @@ function validateValue(
   if (typeof value !== 'string') return refuse(`${spec.key} must be a string`)
   const limit = kindLimit(spec.kind)
   if (value.length > limit) return refuse(`${spec.key} is longer than ${limit} characters`)
-  const hidden = hiddenCharacterReason(value)
-  if (hidden !== null) return refuse(`${spec.key} carries ${hidden}`)
+  // **The launch's three are the one exception to the hidden-character rule,
+  // and only because their own rule already covers it.** `hiddenCharacterReason`
+  // refuses every control character, which is right for a value with a grammar
+  // and wrong for the task text: a task is prose and multi-line by design, and
+  // the newline is a character it is *made* of. The title and the plan task are
+  // held to the same clause by `launchrules.ts`'s own checker (a control
+  // character, a format character, a line break beyond the first, a spoofing
+  // sequence), which runs below -- so `--title`/`--plan-task` do not lose the
+  // check, they get a stricter one, and the task text is refused for a NUL and
+  // for anything that is not valid UTF-8 there rather than here.
+  const launchKind =
+    spec.kind === 'launchTask' || spec.kind === 'launchTitle' || spec.kind === 'launchPlanTask'
+  if (!launchKind) {
+    const hidden = hiddenCharacterReason(value)
+    if (hidden !== null) return refuse(`${spec.key} carries ${hidden}`)
+  }
   switch (spec.kind) {
     case 'repository':
       if (!REPOSITORY_RE.test(value)) return refuse(`${spec.key} must be a repository as owner/name`)
@@ -1295,9 +1846,85 @@ function validateValue(
       if (!decision.ok) return refuse(`${spec.key} ${decision.reason}`)
       return { ok: true, value: decision.url }
     }
+    case 'installationName':
+      // `isProjectName` (`src/main/installations.ts`), spelled here for the
+      // reason the two bounds above give: the store's own rule, which is what
+      // the file is keyed by, and stricter than `isSafeInstallationValue`.
+      if (!isInstallationName(value)) return refuse(`${spec.key} must be an installation’s project name`)
+      return { ok: true, value }
+    case 'installationCheckout':
+      // A shape check and nothing more, exactly as the store's own validator
+      // says: whether the CLI actually listed this directory is checked against
+      // the document the main process last read, which this grammar cannot know.
+      if (!isInstallationCheckout(value)) {
+        return refuse(`${spec.key} must be an absolute directory path`)
+      }
+      return { ok: true, value }
+    case 'launchTask': {
+      // Part 1's own rule (`launchrules.ts`, the only place the caps and the
+      // trim live): the trimmed text, the 16 KiB cap, valid UTF-8, no NUL.
+      const decision = checkLaunchTask(value)
+      return decision.ok ? { ok: true, value: decision.value.text } : refuse(`${spec.key} ${decision.reason}`)
+    }
+    case 'launchTitle': {
+      const decision = checkLaunchTitle(value)
+      // A `null` cannot happen here: the value is a string, because every
+      // string kind is refused above when it is not one. An empty title is a
+      // title the operator did not fill in, and the renderer leaves the key out
+      // for that -- so an empty string is a refusal rather than a silent
+      // "no title", which is what the checker says in its own sentence.
+      if (!decision.ok) return refuse(`${spec.key} ${decision.reason}`)
+      return decision.value === null ? refuse(`${spec.key} must be a title`) : { ok: true, value: decision.value }
+    }
+    case 'launchPlanTask': {
+      const decision = checkLaunchPlanTask(value)
+      if (!decision.ok) return refuse(`${spec.key} ${decision.reason}`)
+      return decision.value === null ? refuse(`${spec.key} must be a plan task`) : { ok: true, value: decision.value }
+    }
     default:
       return refuse(`${operation} does not take ${spec.key}`)
   }
+}
+
+/**
+ * isInstallationName and isInstallationCheckout are the rail's two grammars,
+ * and they are `src/main/installations.ts`'s `isProjectName` and
+ * `isAbsolutePath(value, MAX_INSTALLATION_PATH_LENGTH)` written out: a project
+ * name is non-empty, bounded, free of whitespace and of control characters and
+ * does not begin with `-`; a checkout is an absolute path under the same rules.
+ *
+ * They are duplicated rather than imported because `installations.ts` imports
+ * this module, and a test holds the two implementations to the same verdict on
+ * the same values so the duplication cannot drift in silence.
+ */
+function isInstallationName(value: string): boolean {
+  return (
+    value !== '' &&
+    value.length <= MAX_INSTALLATION_NAME_LENGTH &&
+    isSafeInstallationValue(value) &&
+    !/\s/.test(value)
+  )
+}
+
+function isInstallationCheckout(value: string): boolean {
+  return (
+    value !== '' &&
+    value.length <= MAX_INSTALLATION_CHECKOUT_LENGTH &&
+    isSafeInstallationValue(value) &&
+    isAbsolute(value)
+  )
+}
+
+/** isSafeInstallationValue is `spawn.ts`'s own guard, spelled here for the same
+ * reason: a string the operator's machine produced -- a project name, a
+ * directory -- may carry a space, and a space is harmless with `shell: false`
+ * and an array argv; what it may not carry is a NUL, a control character, an
+ * absurd length or a leading `-`. */
+function isSafeInstallationValue(value: string): boolean {
+  if (value === '' || value.length > 4096) return false
+  if (value.startsWith('-')) return false
+  // eslint-disable-next-line no-control-regex
+  return !/[\u0000-\u001f\u007f]/.test(value)
 }
 
 /** kindLimit is each kind's length bound, checked before any grammar runs so
@@ -1326,6 +1953,24 @@ function kindLimit(kind: ArgumentKind): number {
       return 12
     case 'link':
       return MAX_URL_LENGTH
+    case 'installationName':
+      return MAX_INSTALLATION_NAME_LENGTH
+    case 'installationCheckout':
+      return MAX_INSTALLATION_CHECKOUT_LENGTH
+    // The launch's three (design §5.1 rule 11). Each bound is a **small
+    // multiple of the content cap** the rule itself sets -- four times the
+    // task's 16 KiB, four times the title's 100 runes, four times the plan
+    // task's 128 bytes -- and it is here, in the check that runs before any
+    // grammar, so that a renderer cannot make this process work on a string
+    // four hundred times the size of the thing it is going to refuse. The
+    // constants that name the real caps are `launchrules.ts`'s, and they are
+    // what refuses a value inside the multiple.
+    case 'launchTask':
+      return LAUNCH_TASK_RAW_LIMIT
+    case 'launchTitle':
+      return LAUNCH_TITLE_RAW_LIMIT
+    case 'launchPlanTask':
+      return LAUNCH_PLAN_TASK_RAW_LIMIT
     default:
       return 0
   }
@@ -1388,8 +2033,10 @@ export function validateArguments(name: OperationName, raw: unknown): ArgumentDe
   // per-kind bounds below are read one key at a time, so this is what keeps a
   // payload of eight arguments each just inside its own bound from being eight
   // times larger than anything a screen sends.
-  if (payloadWidth(supplied, keys) > MAX_PAYLOAD_WIDTH) {
-    return refuse(`${operation.name} takes a payload of at most ${MAX_PAYLOAD_WIDTH} characters`)
+  if (payloadWidth(supplied, keys) > (operation.payloadWidth ?? MAX_PAYLOAD_WIDTH)) {
+    return refuse(
+      `${operation.name} takes a payload of at most ${String(operation.payloadWidth ?? MAX_PAYLOAD_WIDTH)} characters`,
+    )
   }
 
   const specs = operation.args.filter((spec) => keys.includes(spec.key) || spec.required)
@@ -1605,9 +2252,10 @@ export type ConsoleHandlers = { readonly [Name in OperationName]: ConsoleHandler
  *
  * `isConsoleSenderUrl` answers about the *origin*, and it has to: a fragment is
  * how a screen addresses its own views, and refusing `app://console/index.html#spend`
- * would be refusing the console's own window. But two documents are served from
- * that origin -- the dashboard and, from Task 3.4b, the installation picker --
- * and an origin-only check cannot tell them apart. A picker frame that invoked
+ * would be refusing the console's own window. But the origin is not one
+ * document: the dashboard, the installation picker (Task 3.4b) and the launch
+ * confirmation window (V2.5.1a) are all served from it, and an origin-only check
+ * cannot tell them apart. A picker frame that invoked
  * `runs.list`, or a dashboard frame that invoked `fugaro:installations/remove`,
  * would both pass an origin check, so the check is on the **path** the frame is
  * on as well.
@@ -1988,9 +2636,14 @@ export const NO_ACTIVE_INSTALLATION = 'no installation has been chosen'
  *
  * The mapping is derived from the operation table rather than from the screens:
  * a screen is written in the renderer and names no channel, so the only thing
- * that can say which operation reads spend is this table. Two consequences a
+ * that can say which operation reads spend is this table. Three consequences a
  * reviewer should check:
  *
+ *   - **`spend` names both of the Spend screen's reads.** `runs.stats` (the
+ *     by-person panel, console L5b) publishes per-person `counted_usd` and
+ *     `notional_usd` -- the same spend figures the reduced mode withholds (D7),
+ *     under another name -- so withholding `spend.report` while answering it
+ *     would put the withheld dollars on screen through the by-person panel;
  *   - **`kill` is empty, and that is the answer rather than a gap.** There is no
  *     kill-switch operation in the surface: the controls live in the live feed's
  *     own fields (design C10, and `src/shared/version.ts`'s `HIDDEN_VIEW_WORDS`
@@ -2006,7 +2659,7 @@ export const NO_ACTIVE_INSTALLATION = 'no installation has been chosen'
  */
 export const REDUCED_VIEW_OPERATIONS: Readonly<Record<ReducedView, readonly OperationName[]>> =
   Object.freeze({
-    spend: Object.freeze(['spend.report'] as const),
+    spend: Object.freeze(['spend.report', 'runs.stats'] as const),
     caps: Object.freeze(['budget.show'] as const),
     kill: Object.freeze([] as const),
   })

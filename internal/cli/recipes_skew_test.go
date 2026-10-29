@@ -66,6 +66,114 @@ func TestCheckRecipeImage(t *testing.T) {
 	}
 }
 
+// TestCheckRecipeImageDigestSince: a recipe holding the digest step needs a
+// job image whose runner executes it, which is a release of its own
+// (digestSince) and not the 0.7.0 one the recipe's use_when would otherwise
+// choose. A release image older than it is refused with the ordinary
+// "upgrade your base image" refusal; a base image that is not a release
+// cannot be dated, so it only warns, and the runner refuses the recipe
+// itself there (right after resolveRecipe, before any stage).
+func TestCheckRecipeImageDigestSince(t *testing.T) {
+	f := newCloudFixture(t)
+	env := fileEnv(t, f)
+	text, ok := recipe.CatalogText("run-digest")
+	if !ok {
+		t.Fatal("no catalog recipe run-digest")
+	}
+	spec := &task.Spec{Version: 1, RunID: "20261007-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x",
+		Recipe: &task.Recipe{Name: "run-digest", Source: string(recipe.SourceCatalog), YAML: string(text)}}
+	check := func(baseRef string) (string, error) {
+		var warn bytes.Buffer
+		writeBuildRecord(t, f, appSlug, "web", baseRef)
+		err := checkRecipeImage(context.Background(), env, appSlug, spec, "base", &warn)
+		return warn.String(), err
+	}
+	// The newest release tagged when the step was added: it knows every
+	// 0.7.0 construct the recipe uses and still has no runner that executes
+	// the digest step.
+	warn, err := check("ghcr.io/dimipaun/fugaro-base:0.12.0")
+	if err == nil || !strings.Contains(err.Error(), "recipe run-digest needs a job image whose runner knows recipes (fugaro 0.13.0 or later)") || ExitCode(err) != ExitUserError {
+		t.Fatalf("0.12.0: warn = %q, err = %v", warn, err)
+	}
+	if warn != "" {
+		t.Errorf("0.12.0: warning %q, want none", warn)
+	}
+	warn, err = check("us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c")
+	if err != nil {
+		t.Fatalf("dev base: %v", err)
+	}
+	if !strings.Contains(warn, "not a release base image") {
+		t.Errorf("dev base: warning %q, want the not-a-release note", warn)
+	}
+	// A repository-sourced recipe carries its name alone, so its text is not
+	// in the task to judge: what says the run executes the digest step is the
+	// manifest the task carries, and it is judged at the same constant. The
+	// gate is the field's, so the same recipe with no manifest is judged by
+	// recipesSince instead (a repository with no runs to read writes none),
+	// and the older runner refuses the recipe at bootstrap there: it knows the
+	// step kind and does not execute it.
+	spec.Recipe = &task.Recipe{Name: "report", Source: string(recipe.SourceRepo)}
+	spec.DigestRuns = []string{"20261026-090000-1234"}
+	warn, err = check("ghcr.io/dimipaun/fugaro-base:0.12.0")
+	if err == nil || !strings.Contains(err.Error(), "recipe report needs a job image whose runner knows recipes (fugaro 0.13.0 or later)") || ExitCode(err) != ExitUserError {
+		t.Fatalf("repo recipe with a manifest: warn = %q, err = %v", warn, err)
+	}
+	spec.DigestRuns = nil
+	if _, err := check("ghcr.io/dimipaun/fugaro-base:0.12.0"); err != nil {
+		t.Fatalf("repo recipe with no manifest: %v", err)
+	}
+}
+
+// TestCheckCloneRecipeImageDigestSince is TestCheckRecipeImageDigestSince for
+// a checkout: clone workflow, where there is no derived image and so no build
+// record: the same digest step raises checkCloneImageSince's threshold on
+// base_images.base itself, so a release image older than digestSince is
+// refused, while a base image that is not a release only warns (a runner
+// old enough to lack the step refuses the recipe there).
+func TestCheckCloneRecipeImageDigestSince(t *testing.T) {
+	f := newCloudFixture(t)
+	env := fileEnv(t, f)
+	text, ok := recipe.CatalogText("run-digest")
+	if !ok {
+		t.Fatal("no catalog recipe run-digest")
+	}
+	spec := &task.Spec{Version: 1, RunID: "20261007-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x",
+		Recipe: &task.Recipe{Name: "run-digest", Source: string(recipe.SourceCatalog), YAML: string(text)}}
+	lc := *env.lc
+	lc.BaseImages = map[string]string{"base": "ghcr.io/dimipaun/fugaro-base:0.12.0"}
+	var warn bytes.Buffer
+	err := checkCloneRecipeImage(&lc, spec, &warn)
+	if err == nil || !strings.Contains(err.Error(), "recipe run-digest needs a job image whose runner knows recipes (fugaro 0.13.0 or later)") ||
+		!strings.Contains(err.Error(), "release 0.12.0") || ExitCode(err) != ExitUserError {
+		t.Fatalf("0.12.0: warn = %q, err = %v", warn.String(), err)
+	}
+	if warn.Len() != 0 {
+		t.Errorf("0.12.0: warning %q, want none", warn.String())
+	}
+	lc.BaseImages["base"] = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c"
+	warn.Reset()
+	if err := checkCloneRecipeImage(&lc, spec, &warn); err != nil {
+		t.Fatalf("dev base: %v", err)
+	}
+	if !strings.Contains(warn.String(), "not a release base image") {
+		t.Errorf("dev base: warning %q, want the not-a-release note", warn.String())
+	}
+	// The same arm as TestCheckRecipeImageDigestSince's: a repository recipe
+	// whose task carries the manifest is judged at digestSince by the
+	// manifest, and by recipesSince when it carries none.
+	spec.Recipe = &task.Recipe{Name: "report", Source: string(recipe.SourceRepo)}
+	spec.DigestRuns = []string{"20261026-090000-1234"}
+	lc.BaseImages["base"] = "ghcr.io/dimipaun/fugaro-base:0.12.0"
+	warn.Reset()
+	if err := checkCloneRecipeImage(&lc, spec, &warn); err == nil || !strings.Contains(err.Error(), "fugaro 0.13.0 or later") {
+		t.Fatalf("repo recipe with a manifest: warn = %q, err = %v", warn.String(), err)
+	}
+	spec.DigestRuns = nil
+	if err := checkCloneRecipeImage(&lc, spec, &warn); err != nil {
+		t.Fatalf("repo recipe with no manifest: %v", err)
+	}
+}
+
 // TestCheckCloneImageSince (review finding 1, HIGH): checkCloneImageSince
 // judges base_images.base's own release directly, since a checkout: clone
 // workflow's job has no derived image and so no build record to judge. One

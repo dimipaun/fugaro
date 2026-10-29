@@ -32,6 +32,14 @@ tier against the plan's own counts, P0's citation rule) are fixed in place there
 changes a finding, a decision or a part. **No decision number moved**: D221–D236 are the same sixteen
 questions, and the corrections are about what one part of the plan costs — a deploy the owner would
 otherwise have had to run on every installation — and about what the plan's citations actually say.
+**Corrected 2026-10-22, twice, both against the pairing amendment of 2026-10-20:** D223 no longer
+says the owner's answer took D6's domain recommendation — §3.7 records that the answer does not
+restate the domain half, so the domain rule is this work's D223 and not a ruling already taken
+([README.md](README.md)'s collision paragraph reads the same way now) — and the glossary's
+**Pairing** entry names the node the phone writes at its real path, `pairing/<uid>/request`: the two
+pairing nodes are root-level, beside `config`, not under it (`rules.json.tmpl` and
+`testdata/rules.golden.json`; `docs/mobile/functional-spec-reconciliation.md` §3.7 was corrected in
+the same change). No finding, decision or part moves.
 
 **One thing this document is not.** It is not a second opinion about the mobile work. The app's
 pairing, its device node and its allowlist are **already answered by the owner** — D165, D166 and
@@ -482,8 +490,13 @@ and it is over" was written to avoid.
 
 **Recommendation: at administration — when the entry is written.** An admin pairs a phone whose
 address is in an allowed domain; the node records the address; nothing at read time tests a domain.
-This is the recommendation of `docs/central-orchestrator/reconciliation.md`'s D6, which the owner's
-answer of 2026-10-20 took, and it needs no change to any project's sign-in platform.
+This is the recommendation of `docs/central-orchestrator/reconciliation.md`'s D6 — its
+sub-question (b), *"whether an email-domain restriction is enforced at sign-in or at allowlist
+administration"* — and **the owner's answer of 2026-10-20 does not restate it**:
+`docs/mobile/functional-spec-reconciliation.md` §3.7 records that the answer adds the administered
+email field and the pairing-time refusal and that the domain half stays D6's, so the domain rule is
+**this work's recommendation and not a ruling already taken**. It needs no change to any project's
+sign-in platform.
 **Alternative:** the domain rule as a rules predicate over `auth.token.email`. **Cost:** the
 literal-pattern form admits exactly one pattern per project (a set cannot be read by a rule, F4),
 the dynamic form is UNVERIFIED (§5), and either way it admits an address **before** anyone has
@@ -687,7 +700,7 @@ check.
   checking it, per the owner's answer of 2026-10-20. It is a **field on the entry**, not an email
   list, and it is what a domain rule is applied to.
 - **Pairing** — the CLI-administered act that turns a scanned QR into a device: the phone generates
-  a key pair, publishes its public key into `config/pairing/<uid>/request`, an operator types the
+  a key pair, publishes its public key into `pairing/<uid>/request`, an operator types the
   code that is a fingerprint of that key, and the CLI delivers the device's token and MAC key
   encrypted to it (D165, Task P6.6). **Discovery, not identity.**
 - **The user claim (`mu`)** — the claim a paired phone's custom token carries, which must equal

@@ -143,6 +143,7 @@ import { DIST, REPO, SITE, cssDeclarations, cssRules, findAll, parse, verbatimTe
 // refusals are the build's and a refusal nobody has seen fire is a refusal nobody knows the
 // shape of.
 import { buildCopy } from './lib/build.mjs'
+import { contrastRatio, paletteTokensInForce, parseColour } from './lib/colour.mjs'
 // The page's own slug rule, imported rather than re-implemented: `security.astro` resolves its
 // cross-references with this module and this file resolves them again, so the two have to be
 // the same rule rather than two approximations of it (the note in `docs.astro`).
@@ -907,7 +908,12 @@ function roomAbove(css, viewport) {
 
   // The header: its own padding-block on both sides, its bottom border, and the row inside it.
   const headerPadding = px(declaredValue(css, '.site-header', 'padding-block'))
-  const border = (declaredValue(css, '.site-header', 'border-bottom') ?? '').trim().split(/\s+/)[0]
+  // The header draws no rule under it since the owner's ruling of 2026-10-23 (the redesign's
+  // Step 3, lever 5: hairlines become tone steps), so a header that declares no bottom border has
+  // a border of nothing. A declared one is still read, and one this check cannot turn into pixels
+  // is still a refusal.
+  const borderDeclared = declaredValue(css, '.site-header', 'border-bottom')
+  const border = borderDeclared === null || borderDeclared === undefined ? '0px' : borderDeclared.trim().split(/\s+/)[0]
   const header = total([headerPadding, headerPadding, border === undefined ? null : px(border), px(declaredValue(css, '.site-nav-group>details>summary', 'min-height'))])
 
   // The title band: its top padding, the headline it holds at the size the display scale sets it
@@ -2256,7 +2262,7 @@ test('the gate refuses each planted defect', (t) => {
   // same way — the one value the arithmetic is taken at is made unreadable — because a branch whose
   // refusal has never been seen to fire is a branch nobody knows the shape of, which is the same
   // reason every other rule here has a plant.
-  const noCeiling = planted(html, '--page-max:72rem;', '--page-max:fit-content;')
+  const noCeiling = planted(html, '--page-max:76rem;', '--page-max:fit-content;')
   assert.match(
     verdict(t, noCeiling).join('\n'),
     /that box is where the wide drawing's label size is taken/,
@@ -2594,4 +2600,31 @@ test('the page points at no file the build does not produce', () => {
         : "the built page points at a sitemap the build does not produce: astro.config.mjs's integration list carries none, and a hint that 404s is the download-link defect in a smaller size (Global Constraint 9)",
     )
   })
+})
+
+// The key phrases under the drawing are marked, not only bolded (the owner's feedback of
+// 2026-10-24: bold alone was hard to see): an accent underline the reader can find, at a
+// contrast a non-text mark needs on the card's surface.
+test('every line under the drawing opens with a bold lead underlined in the accent, at a visible contrast', () => {
+  const html = readFileSync(path.join(DIST, 'security', 'index.html'), 'utf8')
+  // Every line under the drawing (the four facts and the two limits) opens with its bold lead.
+  const lines = findAll(parse(html), (el) => el.attrs.has('data-security-diagram'))
+    .flatMap((section) => findAll(section, (el) => (el.name === 'li' && el.parent?.attrs?.get('class') === 'boundary-facts') || (el.name === 'p' && (el.attrs.get('class') ?? '').split(/\s+/).includes('boundary-limit'))))
+  assert.equal(lines.length, 6, `the drawing carries ${lines.length} lines under it, and the owner's list is six`)
+  for (const line of lines) {
+    const first = (line.children ?? []).find((child) => child.name !== undefined || (child.text ?? '').trim() !== '')
+    assert.equal(first?.name, 'strong', 'a line under the drawing does not open with its bold lead phrase')
+  }
+  const css = [...html.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n')
+  const rules = cssRules(css).filter((rule) => /data-security-diagram/.test(rule.selector || '') && /strong/.test(rule.selector || ''))
+  // A `:global()` left in a global stylesheet is kept as written and matches nothing, which is
+  // how the first version of this rule drew no line on any browser.
+  for (const rule of rules) assert.ok(!/:global\(/.test(rule.selector), `${rule.selector} is a selector no browser matches`)
+  assert.ok(rules.some((rule) => /boundary-facts\s*>\s*li\s*>\s*strong/.test(rule.selector)) && rules.some((rule) => /boundary-limit\s*>\s*strong/.test(rule.selector)), 'the underline does not reach the bold lead of the facts and of the limits')
+  const decl = Object.fromEntries(rules.flatMap((rule) => cssDeclarations(rule.body)))
+  assert.match(decl['text-decoration'] ?? decl['text-decoration-line'] ?? '', /underline/, 'the key phrases carry no underline')
+  assert.equal(decl['text-decoration-color'], 'var(--accent)', 'the key phrases\' underline is not the accent')
+  const palette = paletteTokensInForce()
+  const ratio = contrastRatio(parseColour(palette.get('--accent') ?? palette.get('accent'), '--accent'), parseColour(palette.get('--surface') ?? palette.get('surface'), '--surface'))
+  assert.ok(ratio >= 3, `the accent underline is ${ratio.toFixed(2)}:1 on the card's surface, under the 3:1 a non-text mark needs`)
 })

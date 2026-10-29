@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The fake CLI's own contract (desktop-console plan Task 1.3's helper).
 //
 // `stub.ts` is the only thing the spawn tests ever run, so a defect in it is a
@@ -35,6 +37,8 @@ describe('the stub’s command keys', () => {
       'budget show',
       'report',
       'runs ls',
+      'runs stats',
+      'plan status',
       'diagnose',
       'logs',
       'logs --url',
@@ -42,7 +46,17 @@ describe('the stub’s command keys', () => {
       'accounts ls',
       'version',
       'doctor',
+      'config list',
+      'coordinator status',
+      'run',
     ])
+    // The console's one spawn table, which since the owner's design ruling of
+    // 2026-10-25 includes the installation rail's own read (`config list
+    // --json`, the discovery the whole first run is built on) and, since V2.5.1a
+    // part 2a, the surface's one write (`run.launch`, whose argv is `run
+    // --task-file - --json`, so the child's key is the command word `run`). A
+    // stub that answered every row but one would make every discovery test pass
+    // for the wrong reason.
     expect(STUB_COMMAND_KEYS).toEqual(SPAWN_COMMANDS.map((row) => commandKey([...row.words])))
     // One key per operation: two rows sharing one would make one of them
     // unreachable and its scenario silently wrong.

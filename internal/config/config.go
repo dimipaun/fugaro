@@ -17,6 +17,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/rigor"
 )
 
 // Config is a parsed fugaro.yaml.
@@ -39,12 +40,97 @@ type Config struct {
 	// tighten the owner's ceiling (the project config); see Policy.
 	Budget    *Budget             `yaml:"budget,omitempty"`
 	Workflows map[string]Workflow `yaml:"workflows"`
-	Followup  Followup            `yaml:"followup"`
+	// Governance is the repository's stage budgets, review ratio and fan-out
+	// cap (docs/task-governance/spec.md §2, §5). A file that writes no
+	// governance: block sets none: Fugaro's own defaults are the ceiling a
+	// run starts under, and a repository may only tighten them (D331). Like
+	// Rigor the pointer is what keeps an absent block out of the resolved
+	// config's hash, which SHA256 takes over this struct.
+	Governance *Governance `yaml:"governance,omitempty" json:"governance,omitempty"`
+	Followup   Followup    `yaml:"followup"`
+	// Rigor is the repository's rigor mode and its named area rules
+	// (docs/rigor-modes/spec.md, reconciliation D20): how much cost a run
+	// accepts to reduce risk. A file that writes no rigor: block sets none —
+	// this is a default, not a floor, and a project layer's
+	// defaults.rigor.default is what a repository that writes none takes.
+	// The json tag is what keeps an absent block out of the resolved
+	// config's hash: SHA256 marshals this struct (resolve.go), and a
+	// pointer with no json name would write a null key into every file
+	// that writes none, moving the hash of a file that did not change.
+	Rigor *Rigor `yaml:"rigor,omitempty" json:"rigor,omitempty"`
 
 	// Layer is the project layer Resolve resolved this config over, nil
 	// for none. It is never part of the file or of SHA256: a consumer that
 	// holds a resolved config (an image build) passes it on.
 	Layer *ProjectLayer `yaml:"-" json:"-"`
+	// RepoRigor is the rigor: block the repository's own file wrote, before
+	// the project layer's defaults.rigor merged over it, nil when the file
+	// wrote none or wrote an explicit null (`rigor:`, which decodes to a nil
+	// block). Like Layer it is never part of the file or of SHA256, and
+	// it exists because the project layer's area rules stay in effect beside
+	// the repository's rather than being replaced by them (D20c: the two
+	// lists are a union), which RigorConfig reads.
+	RepoRigor *Rigor `yaml:"-" json:"-"`
+	// RepoRigorSet is whether the repository's own file wrote the rigor: key
+	// at all, at any value: RepoRigor cannot answer for an explicit null, and
+	// the two questions are different ones — what the block says (RepoRigor,
+	// which RigorConfig reads) and whether the key is there (this, which the
+	// image-skew gates read, because a runner older than rigorSince decodes
+	// the file with KnownFields and refuses it on the key alone). Like
+	// RepoRigor it is never part of the file or of SHA256.
+	RepoRigorSet bool `yaml:"-" json:"-"`
+	// RepoGovernanceSet is whether the repository's own file wrote the
+	// governance: key at all, at any value, the question RepoRigorSet answers
+	// for rigor: Governance cannot answer for an explicit null (`governance:`,
+	// which decodes to a nil block), and a runner older than governanceSince
+	// refuses the key alone. Like the fields above it is never part of the
+	// file or of SHA256.
+	RepoGovernanceSet bool `yaml:"-" json:"-"`
+}
+
+// Rigor is fugaro.yaml's rigor: block and the project layer's defaults.rigor
+// (D20): the mode a repository runs at when nothing narrower decides, and
+// the named area rules that decide it from the paths a run touches. Both
+// keys may be set in either layer (docs/project-layer.md §5).
+type Rigor struct {
+	// Default is the mode this layer sets; "" sets none, so a layer below
+	// decides (the built-in default is rigor.Default, D19). A narrower layer
+	// may set a *lower* mode than a wider one (D21): this is a default, and a
+	// project that wants a floor says so with a floor.
+	Default rigor.Mode `yaml:"default,omitempty"`
+	// Areas are this layer's area rules (D20c). A rule sets the mode for the
+	// paths it matches; the repository's list and the project layer's are
+	// both in effect, never one replacing the other (the merge rule §4
+	// otherwise gives a list), which is RepoRigor's reason to exist.
+	Areas []rigor.Area `yaml:"areas,omitempty"`
+}
+
+// RigorConfig is the rigor configuration a resolved config stands for: the
+// project layer's defaults.rigor and the repository's own rigor: block, kept
+// apart because both area lists are in effect at once (D20c). It is what
+// internal/rigor's one resolver reads, and it is built here rather than in
+// the resolver so that package never has to know about this one.
+func (c *Config) RigorConfig() rigor.Config {
+	out := c.ProjectRigor()
+	if r := c.RepoRigor; r != nil {
+		out.Repo, out.RepoAreas, out.RepoBlock = r.Default, r.Areas, true
+	}
+	return out
+}
+
+// ProjectRigor is the project layer's half alone: defaults.rigor.default and
+// its areas, with the repository's rigor: block left out. It is what a run
+// falls back to when the base branch's own fugaro.yaml cannot be read
+// (internal/runner, D25): the layer came with the task and is no branch's, so
+// it is the one part of the configuration that is still true when no branch
+// could be asked, and falling back to the checked-out ref's own value instead
+// would let the branch under review set its own mode.
+func (c *Config) ProjectRigor() rigor.Config {
+	var out rigor.Config
+	if c.Layer != nil {
+		out.Project, out.ProjectAreas = c.Layer.Defaults.Rigor.Default, c.Layer.Defaults.Rigor.Areas
+	}
+	return out
 }
 
 // Budget modes, as the project config spells them.
@@ -67,6 +153,138 @@ type Budget struct {
 	// none. The runner enforces it client-side against the repository's day
 	// counter; the owner's database cap is separate and lower values win.
 	PerDayUSD float64 `yaml:"per_day_usd"`
+}
+
+// Governance is fugaro.yaml's governance: block (docs/task-governance/spec.md
+// §2, §5): what a run may spend on one stage, how much review it accepts, and
+// how far one stage may fan out. Every key is optional, and every one of them
+// is a bound whose smaller value is the stricter one, which is what makes the
+// merge a single rule (internal/policy).
+//
+// One key is enforced today: the runner bounds a stage by stage_timeout and
+// stops the run with a checkpoint report when the stage runs out (T7.6). The
+// rest are what the gateway reads in a later task (T7.2), and until then a
+// file that writes one of them says what its runs will be held to. A key left
+// out, written as null, or written as 0 takes Fugaro's default — see
+// policy.DefaultGovernance, which is the one place the defaults are decided.
+//
+// The stages are the run's three spend stages. An artifact run's plan and
+// render steps have no governance budget, so neither sub-block has a key for
+// them: a file that writes one is refused as an unknown key rather than
+// accepted and ignored.
+type Governance struct {
+	// ReviewRatio is N, the ratio guardrail: review calls above N x the
+	// implement stage's calls stop the stage. ReviewFloorCalls is the count
+	// below which the ratio does not apply, so a short implementation is
+	// still reviewed.
+	ReviewRatio      int64 `yaml:"review_ratio"`
+	ReviewFloorCalls int64 `yaml:"review_floor_calls"`
+	// MaxSubagents is the most distinct sub-agents one stage may start.
+	MaxSubagents int64 `yaml:"max_subagents"`
+	// StageBudget, StageTokens and StageTimeout bound one stage each.
+	StageBudget  StageBudget  `yaml:"stage_budget"`
+	StageTokens  StageTokens  `yaml:"stage_tokens"`
+	StageTimeout StageTimeout `yaml:"stage_timeout"`
+	// Tiers are what a run of each tier is expected to cost and take, and how
+	// far one of its stages may fan out (G§3, D330). A tier is an expectation
+	// and never a cap: the deployed per-run cap stays the ceiling, and an
+	// expected_usd above it is an expectation the run still stops at the cap
+	// for (G6).
+	Tiers GovernanceTiers `yaml:"tiers"`
+}
+
+// GovernanceTiers is governance.tiers: the expectations of the four tiers of
+// the vocabulary (internal/tier). The tiers are named one by one rather than
+// held in a map, so a tier name outside the vocabulary is an unknown key the
+// strict decoder refuses rather than a map entry nothing checks.
+type GovernanceTiers struct {
+	Trivial TierLimits `yaml:"trivial"`
+	Small   TierLimits `yaml:"small"`
+	Medium  TierLimits `yaml:"medium"`
+	Large   TierLimits `yaml:"large"`
+}
+
+// TierLimits is one tier's block. Every key is optional; a key left out,
+// written as null or written as 0 takes Fugaro's default for that tier
+// (policy.DefaultTierExpectations). None of the three is a cap: the per-run cap
+// stays the ceiling whatever a tier says (G6).
+type TierLimits struct {
+	// ExpectedUSD is what a run of this tier is expected to cost; it is an
+	// expectation, not a ceiling, so a value above the deployed per-run cap is
+	// read and the run still stops at the cap.
+	ExpectedUSD float64 `yaml:"expected_usd"`
+	// ExpectedMinutes is what a run of this tier is expected to take.
+	ExpectedMinutes int64 `yaml:"expected_minutes"`
+	// MaxSubagents is the most distinct sub-agents one stage of a run of this
+	// tier may start, concurrently or in total.
+	MaxSubagents int64 `yaml:"max_subagents"`
+}
+
+// Policy is one tier's block as the merge reads it.
+func (t TierLimits) Policy() policy.TierExpectation {
+	return policy.TierExpectation{
+		ExpectedUSD:     t.ExpectedUSD,
+		ExpectedMinutes: t.ExpectedMinutes,
+		MaxSubagents:    t.MaxSubagents,
+	}
+}
+
+// Policy is the block as the merge reads it.
+func (t GovernanceTiers) Policy() policy.TierExpectations {
+	return policy.TierExpectations{
+		Trivial: t.Trivial.Policy(),
+		Small:   t.Small.Policy(),
+		Medium:  t.Medium.Policy(),
+		Large:   t.Large.Policy(),
+	}
+}
+
+// StageBudget is a stage's share of the run's budget, as a fraction: of the
+// per-run cap for Implement and Review (review counts the first-line and the
+// senior review together), and of the implement stage's own budget for Fix
+// (G§2, "a fraction of implementation budget"). A fraction of 1 or more is
+// refused: the per-run cap stays the ceiling whatever a stage is given (G6).
+type StageBudget struct {
+	Implement float64 `yaml:"implement"`
+	Review    float64 `yaml:"review"`
+	Fix       float64 `yaml:"fix"`
+}
+
+// StageTokens is a stage's token ceiling, in tokens.
+type StageTokens struct {
+	Implement int64 `yaml:"implement"`
+	Review    int64 `yaml:"review"`
+	Fix       int64 `yaml:"fix"`
+}
+
+// StageTimeout is a stage's own wall-clock ceiling. The run's own
+// timeouts.stage still bounds it (T7.6).
+type StageTimeout struct {
+	Implement Duration `yaml:"implement"`
+	Review    Duration `yaml:"review"`
+	Fix       Duration `yaml:"fix"`
+}
+
+// Policy is the block as the merge reads it. A nil receiver (a file that
+// writes no governance: block) is the zero policy.Governance, which sets no
+// limit and so leaves the ceiling alone.
+func (g *Governance) Policy() policy.Governance {
+	if g == nil {
+		return policy.Governance{}
+	}
+	return policy.Governance{
+		ReviewRatio:      g.ReviewRatio,
+		ReviewFloorCalls: g.ReviewFloorCalls,
+		MaxSubagents:     g.MaxSubagents,
+		StageBudget: policy.StageBudget{
+			Implement: g.StageBudget.Implement, Review: g.StageBudget.Review, Fix: g.StageBudget.Fix},
+		StageTokens: policy.StageTokens{
+			Implement: g.StageTokens.Implement, Review: g.StageTokens.Review, Fix: g.StageTokens.Fix},
+		StageTimeout: policy.StageTimeout{
+			Implement: g.StageTimeout.Implement.Duration, Review: g.StageTimeout.Review.Duration,
+			Fix: g.StageTimeout.Fix.Duration},
+		Tiers: g.Tiers.Policy(),
+	}
 }
 
 // Followup says who can steer a follow-up run on a Fugaro pull request
@@ -121,6 +339,11 @@ func (p PRSettings) CheckpointsOn() bool { return p.Checkpoints == nil || *p.Che
 
 // Agent configures the Claude Code agent.
 type Agent struct {
+	// Auth is where the run's model calls are authenticated: vertex (the
+	// default), api-key, oauth, or cascade — which asks for the project's
+	// credentials cascade and is enabled only by the project policy's switch
+	// (docs/credentials-service, D133, O2; config.AgentAuths is the list, and
+	// CheckCascadeGateway is the budget it needs).
 	Auth         string  `yaml:"auth"`
 	Model        string  `yaml:"model"`
 	ReviewRounds int     `yaml:"review_rounds"`
@@ -156,6 +379,23 @@ type Agent struct {
 	// neither the project layer nor a profile may set it (design §3 T2).
 	// Binaries before 0.6.5 refuse this key (fugaro.yaml's strict decoder).
 	OAuthToken string `yaml:"oauth_token,omitempty" json:"OAuthToken,omitempty"`
+	// Compression names the context-compression proxy this workflow's model
+	// calls route through: "" (off, the default) or "headroom"
+	// (docs/design/headroom-compression.md). Reserved and refused (the plan's
+	// P11): Validate knows the key and refuses every value with "not yet
+	// implemented" rather than leaving a repository that tries it with a
+	// strict-parse unknown-field error, so no run ever has the key set and
+	// nothing reads this field yet. The lift is a later change that admits
+	// "headroom" here and in schemas/fugaro.schema.json together. Once
+	// implemented it is also refused together with agent.auth: oauth or
+	// vertex — an ordinary Validate rule (P9), since Resolve calls Validate on
+	// the merged config, not on one raw file. The budget-gateway requirement
+	// cannot live here, because no fugaro.yaml resolution knows the
+	// installation's ceiling; the runner's bootstrap checks that instead.
+	// Repo and override scope only (Scopes), for the reason agent.oauth_token
+	// is: the project layer and a profile are the same launcher-writable
+	// bucket object. Binaries before this key's release refuse it outright.
+	Compression string `yaml:"compression,omitempty" json:"Compression,omitempty"`
 }
 
 // First-line review settings (Agent.FirstLineReview).
@@ -475,23 +715,25 @@ const AnthropicSecret = "anthropic-api-key"
 // deploy), or route the model through a provider.
 const MissingAnthropicKey = "no Anthropic API key is stored, so this call cannot go to Anthropic: store one with `fugaro secrets set anthropic-api-key` and rerun fugaro update, or route the model through a provider"
 
-// BitbucketSecret is the logical secret that holds a Bitbucket credential: a
-// repository access token, issued for one repository and unusable for any
-// other (docs/git-providers.md). It is the one reserved name D2's
-// project-scope default leaves out, so `fugaro secrets set` and init's
-// secrets stage store it in the repository's own copy unless the owner's
-// local config allow-lists a repository for it
-// (config.PerRepositorySecret, owner ruling of 2026-10-15).
+// BitbucketSecret is the logical secret that holds a Bitbucket credential:
+// normally a repository access token, issued for one repository and unusable
+// for any other, though an operator who holds one workspace or project access
+// token instead stores that one for the project (docs/git-providers.md). It is
+// the one reserved name D2's project-scope default leaves out, so
+// `fugaro secrets set` and init's secrets stage store it in the repository's
+// own copy unless the owner's local config allow-lists a repository for it
+// (config.PerRepositorySecret, owner ruling of 2026-10-15; the workspace or
+// project token is D461/D464 of 2026-10-27).
 const BitbucketSecret = "bitbucket-token"
 
 // ReservedSecrets are the logical secret names the platform itself mounts,
 // mapped to the variable each one becomes. A workflow's secrets may not
 // reuse them (design §5.1, §6.1).
 var ReservedSecrets = map[string]string{
-	BitbucketSecret:  "FUGARO_BITBUCKET_TOKEN",
-	"github-app-key": "FUGARO_GITHUB_APP_PRIVATE_KEY",
-	ClaudeOAuthToken: "CLAUDE_CODE_OAUTH_TOKEN",
-	AnthropicSecret:  "ANTHROPIC_API_KEY",
+	BitbucketSecret:    "FUGARO_BITBUCKET_TOKEN",
+	GitHubAppKeySecret: "FUGARO_GITHUB_APP_PRIVATE_KEY",
+	ClaudeOAuthToken:   "CLAUDE_CODE_OAUTH_TOKEN",
+	AnthropicSecret:    "ANTHROPIC_API_KEY",
 }
 
 // CodexOAuthToken is reserved for the Codex harness's OAuth credential but is

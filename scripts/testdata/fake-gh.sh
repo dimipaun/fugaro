@@ -40,6 +40,10 @@
 #   FAKE_GH_PULL_UNMERGED  non-empty: the listed PR has merged_at null
 #   FAKE_GH_PULL_MERGE_SHA the merge_commit_sha the listed PR reports
 #                    (default: the real merge commit)
+#   FAKE_GH_FLAKY / FAKE_GH_FLAKY_CALLS  the first N invocations whose
+#                    arguments start with FAKE_GH_FLAKY fail as a dropped
+#                    connection does ("net/http: TLS handshake timeout"), and
+#                    do nothing else
 # The api asserts that, once a PR has merged, it is only asked about the
 # merge commit and that PR's head (checks and tree).
 # A required check name with no arm above -- one added to release-gate.sh's
@@ -51,6 +55,17 @@ set -eu
 dir=$FAKE_GH_DIR
 printf '%s\n' "$*" >>"$dir/log"
 repo=${FAKE_GH_REPO:-o/r}
+
+case "$*" in
+  "${FAKE_GH_FLAKY:-//none//}"*)
+    flaky=$(($(cat "$dir/flaky_calls" 2>/dev/null || echo 0) + 1))
+    echo "$flaky" >"$dir/flaky_calls"
+    if [ "$flaky" -le "${FAKE_GH_FLAKY_CALLS:-0}" ]; then
+      echo "Get \"https://api.github.com/graphql\": net/http: TLS handshake timeout" >&2
+      exit 1
+    fi
+    ;;
+esac
 
 head_sha() { git -C "$FAKE_GH_ORIGIN" rev-parse "refs/heads/$(cat "$dir/pr_branch")"; }
 

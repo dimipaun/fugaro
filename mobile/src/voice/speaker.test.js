@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // The wiring P3.6 left open, held to its own rule (mobile plan, Task P3.5;
 // Global Constraint 10, Voice D52).
 //
@@ -25,6 +27,7 @@ import { createVoicePipeline } from '../audio/pipeline.js';
 import { FakeStt } from '../audio/stt.js';
 import { FakeTts } from '../audio/tts.js';
 import { createMailboxClient } from '../mailbox/client.js';
+import { MemoryConnection } from '../mailbox/connection.js';
 import { macOf } from '../mailbox/mac.js';
 import { MemoryMailboxStore } from '../mailbox/store.js';
 import { createPipelineSpeaker } from './speaker.js';
@@ -97,6 +100,7 @@ async function harness() {
     account: ACCOUNT,
     keys,
     store: db,
+    connection: new MemoryConnection(),
     speaker,
     now: () => nowMs,
     newId: () => `m-${++minted}`,

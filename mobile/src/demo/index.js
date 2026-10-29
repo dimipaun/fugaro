@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // The demo mode: the app, running on fixed sample data, for a reviewer who
 // cannot pair anything (owner ruling of 2026-10-19).
 //
@@ -43,7 +45,7 @@
 // rendering inside the shell's body: they need to know nothing about the demo,
 // because the shell is what draws the banner over them.
 
-import { createMailboxClient } from '../mailbox/index.js';
+import { createMailboxClient, MemoryConnection } from '../mailbox/index.js';
 import { initialState, step } from '../../../shared/confirm/index.js';
 import { enqueue, initialQueue, pending as listPrompts } from '../../../shared/prompts/index.js';
 import { demoKeySource } from './keys.js';
@@ -226,8 +228,10 @@ export function createDemoMode(options = {}) {
 
   /**
    * Enter the demo: build the app's real client over the demo's transport,
-   * send the sample utterances (real, signed writes), poll once (the real
-   * verification, the real speak, the real ack), put the consumer's question in
+   * **poll first** (P6.10's gate needs an observation before the first send),
+   * then send the sample utterances (real, signed writes), then verify, speak
+   * and ack the consumer's messages that the look read, then put the
+   * consumer's question in
    * P6.5's queue and read the destructive command back with P6.2's machine.
    *
    * Entering twice is the same demo, not a second one. There are two ways a
@@ -272,6 +276,11 @@ export function createDemoMode(options = {}) {
       account: DEMO_ACCOUNT,
       keys: demoKeySource(),
       store: transport.store,
+      // P6.10's connection. Demo mode runs on the app's own fakes and never
+      // touches a network (`./safety.test.js` holds that fence), so its phone is
+      // connected by construction: the port is the one the suite uses, and the
+      // gate is asked and answered rather than bypassed.
+      connection: new MemoryConnection(),
       speaker: transport.speaker,
       now: () => now,
       newId: demoIds(),
@@ -283,6 +292,31 @@ export function createDemoMode(options = {}) {
     });
 
     const problems = [];
+    // **The pass starts with a poll, and P6.10 is why** (the offline gate's
+    // second review, M2): the gate fails closed on a consumer the phone has not
+    // observed, so the app's own first act is the look that says whether the
+    // orchestrator is there at all -- and the demo does what the app does, in
+    // the app's order. The transport has already delivered the sample heartbeat,
+    // so this observes a live consumer, and the utterances below are sent by a
+    // phone that has looked.
+    //
+    // **What moving the look to the front did change, said plainly.** It is one
+    // state, and it is `pending()`. A verified reply is what retires a phone's
+    // own utterance from its outbox, and the replies are read in THIS look --
+    // before there is anything of the phone's for them to answer. So when the
+    // pass ends, `pending()` holds the utterances this run has just written, all
+    // three landed (`landed: true`: the store took them; the consumer has not
+    // answered). With the look at the end it was empty, because the two answers
+    // had already retired the two sentences they name. Both are real states of
+    // the app -- a phone that sent and has not looked since, and a phone that
+    // has -- and the demo runs one pass, so it shows the first. Nothing renders
+    // `pending()` today; `index.test.js` asserts it rather than leaving it to be
+    // discovered. Nothing else moved: sending speaks nothing, the id source
+    // mints no id in a poll, and the words the reviewer hears are the same words
+    // in the same order.
+    const poll = await client.poll();
+    if (!poll.ok) problems.push(Object.freeze({ at: 'poll', code: poll.code }));
+
     const sent = [];
     for (const utterance of [...DEMO_UTTERANCES, DEMO_DESTRUCTIVE.command]) {
       const verdict = await client.send(utterance);
@@ -294,8 +328,6 @@ export function createDemoMode(options = {}) {
       }));
       if (!verdict.ok) problems.push(Object.freeze({ at: 'send', code: verdict.code }));
     }
-    const poll = await client.poll();
-    if (!poll.ok) problems.push(Object.freeze({ at: 'poll', code: poll.code }));
 
     // P6.5's queue, over the consumer's own message: the question sits there
     // until it is answered, and this is the app's queue rather than a list the

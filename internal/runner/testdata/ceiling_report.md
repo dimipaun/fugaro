@@ -9,6 +9,8 @@
 
 **Reviews:** round 1: ship
 
+**Rigor:** pro, from default, at bootstrap, read from origin/main
+
 **Tests:** passed on <sha> (3 tests, 0 failures)
 
 **Cost:** model $1.50 (compute not estimated)

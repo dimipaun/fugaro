@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestProjectSecretAllowedRepos(t *testing.T) {
 	secrets := map[string]ProjectSecret{
@@ -120,5 +123,111 @@ func TestProjectScopeByDefaultIsNotTheWholeReservedSet(t *testing.T) {
 	// own allow_data_to stays its rule (finding 12).
 	if ProjectScopeByDefault(ClaudeAccountSecret("acme-personal")) {
 		t.Error("a named Claude account's derived secret was swept into project scope")
+	}
+}
+
+// TestProjectSecretAllowsDataSegmentWildcard: an allow_data_to entry may use
+// "*" inside a segment (myworkspace/*, myworkspace/api-*), which never
+// crosses "/", and matching stays case-insensitive like an exact entry's
+// (owner ruling, 2026-10-27, Bitbucket design D464). A pattern with a
+// different number of segments admits nothing, so a repository path that
+// nests is not swept in by a workspace-wide entry.
+func TestProjectSecretAllowsDataSegmentWildcard(t *testing.T) {
+	secrets := map[string]ProjectSecret{
+		"bitbucket-token": {AllowDataTo: []string{"myworkspace/*", "acme/api-*"}},
+	}
+	for _, tc := range []struct {
+		repo string
+		want bool
+	}{
+		{"myworkspace/api", true},
+		{"MyWorkspace/Api", true},
+		{"MYWORKSPACE/API", true},
+		{"myworkspace/api-core", true},
+		{"acme/api-core", true},
+		{"acme/api", false},        // "api-*" needs the dash
+		{"other/api", false},       // another owner
+		{"myworkspace/a/b", false}, // "*" never crosses "/"
+		{"myworkspace", false},     // no owner/name at all
+		{"myworkspace/", false},    // empty segment
+		{"", false},
+	} {
+		if got := AllowedForProjectSecret(secrets, "bitbucket-token", tc.repo); got != tc.want {
+			t.Errorf("AllowedForProjectSecret(myworkspace/*, %q) = %v, want %v", tc.repo, got, tc.want)
+		}
+	}
+	// An exact entry beside a wildcard one still decides by itself.
+	both := map[string]ProjectSecret{"bitbucket-token": {AllowDataTo: []string{"acme/app", "myworkspace/*"}}}
+	if !AllowedForProjectSecret(both, "bitbucket-token", "acme/app") {
+		t.Error("an exact entry beside a wildcard one stopped matching")
+	}
+	if AllowedForProjectSecret(both, "bitbucket-token", "acme/other") {
+		t.Error("the wildcard admitted another owner's repository")
+	}
+}
+
+// TestProjectSecretAllowsDataFailsClosedOnARefusedEntry: ValidateProjectSecrets
+// refuses a wildcard owner and a bare "*", and the matcher must not honour one
+// either -- a config that reached AllowsData without validation (an older
+// file, a path that skips Validate) mounts nothing rather than everything.
+func TestProjectSecretAllowsDataFailsClosedOnARefusedEntry(t *testing.T) {
+	for _, entry := range []string{"*", "*/*", "*/api", "my*space/api"} {
+		secrets := map[string]ProjectSecret{"bitbucket-token": {AllowDataTo: []string{entry}}}
+		if AllowedForProjectSecret(secrets, "bitbucket-token", "myworkspace/api") {
+			t.Errorf("entry %q admitted myworkspace/api: a wildcard owner segment must admit nothing", entry)
+		}
+	}
+}
+
+// TestValidateProjectSecretsAcceptsSegmentWildcards: the entries the ruling
+// allows. Each is one owner's repositories (or one family of them), never
+// every workspace.
+func TestValidateProjectSecretsAcceptsSegmentWildcards(t *testing.T) {
+	for _, entry := range []string{
+		"myworkspace/*",
+		"MyWorkspace/*",
+		"myworkspace/api-*",
+		"myworkspace/*-core",
+		"myworkspace/a*b",
+		"myworkspace/api", // exact entries keep working
+	} {
+		ps := ValidateProjectSecrets(map[string]ProjectSecret{"bitbucket-token": {AllowDataTo: []string{entry}}})
+		if len(ps) != 0 {
+			t.Errorf("entry %q was refused: %+v", entry, ps)
+		}
+	}
+}
+
+// TestValidateProjectSecretsRefusesWideningWildcards: the three shapes the
+// ruling keeps out, each narrower than a published policy's allow_repos: a
+// wildcard owner segment (which refuses the bare "*" and "*/*" with it), a
+// pattern with more than two "*", and anything that is not owner/name. The
+// problem names the field the owner has to edit and says why.
+func TestValidateProjectSecretsRefusesWideningWildcards(t *testing.T) {
+	for _, tc := range []struct {
+		entry string
+		want  string
+	}{
+		{"*", `"*" is not accepted`},
+		{"*/*", "owner segment must be literal"},
+		{"*/api", "owner segment must be literal"},
+		{"my*space/api", "owner segment must be literal"},
+		{"myworkspace/a*b*c*d", "at most 2"},
+		{"myworkspace/a/b", "owner/name"},
+		{"myworkspace/", "owner/name"},
+		{"/api", "owner/name"},
+		{"myworkspace/..", "owner/name"},
+	} {
+		ps := ValidateProjectSecrets(map[string]ProjectSecret{"bitbucket-token": {AllowDataTo: []string{tc.entry}}})
+		if len(ps) != 1 {
+			t.Errorf("entry %q: ValidateProjectSecrets = %+v, want one problem", tc.entry, ps)
+			continue
+		}
+		if ps[0].Path != "project_secrets.bitbucket-token.allow_data_to" {
+			t.Errorf("entry %q: problem path = %q, want the field the owner edits", tc.entry, ps[0].Path)
+		}
+		if !strings.Contains(ps[0].Message, tc.want) {
+			t.Errorf("entry %q: message %q does not say %q", tc.entry, ps[0].Message, tc.want)
+		}
 	}
 }

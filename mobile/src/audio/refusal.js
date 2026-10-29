@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // The two verdicts every port in `src/audio/` answers with (Task P3.4).
 //
 // Every module of this tree answers with a **value** rather than an exception:

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The console's Electron main process entry point (desktop-console plan Task
 // 1.1; the IPC wiring is Task 3.4a).
 //
@@ -33,13 +35,12 @@
 
 import { join } from 'node:path'
 
-import { app, BrowserWindow, Menu, dialog, ipcMain, protocol, session, shell } from 'electron'
-import type { OpenDialogOptions } from 'electron'
+import { app, BrowserWindow, Menu, ipcMain, protocol, session, shell } from 'electron'
 
-import { handleAppRequests, registerAppScheme } from './protocol'
+import { APP_ENTRY_URL, handleAppRequests, registerAppScheme } from './protocol'
 import { consoleIconPath, installDevDockIcon } from './icon'
 import { installInstallationPicker } from './picker'
-import type { DialogLike, InstallationPicker } from './picker'
+import type { InstallationPicker } from './picker'
 import {
   createConsoleLifecycle,
   installWebContentsSecurity,
@@ -47,15 +48,39 @@ import {
   versionReadFrom,
 } from './window'
 import type { ConsoleWindowDeps, VersionRead } from './window'
-import { privateWorkingDirectory, resolveHandshakeBinary } from './spawn'
+import {
+  cliSentence,
+  planFor,
+  privateWorkingDirectory,
+  resolveHandshakeBinary,
+  runToCompletion,
+} from './spawn'
 import type { SpawnTarget } from './spawn'
 import { createSpawnLog } from './spawnlog'
+import type { SpawnLogWriter } from './spawnlog'
+import { parseInstallationsDocument } from './installlist'
+import { createLaunchRunner, DECLINING_CONFIRMER } from './launch'
+import type { FrozenLaunch, LaunchRequest, TargetLookup } from './launch'
+import { CONFIRM_ENTRY_URL, createConfirmWindow } from './confirm'
+import { launchFingerprint } from './launchrules'
+import type { LaunchRecordFacts } from './launchrules'
+import type { InstallationsListReply } from './onboarding'
 import { reducedModeHandlers, registerConsoleHandlers, startupCompatibility } from './ipc'
-import type { ConsoleHandlers } from './ipc'
+import type { ConsoleHandlers, ValidatedArguments } from './ipc'
 import { handlersFor } from '../source/source'
 import { createBoundSource } from '../source/cli'
 import type { BoundInstallation } from '../source/cli'
+import {
+  createInstallationFileStore,
+  installationStorePath,
+  resolveLaunchBinary,
+  withResolvedBinary,
+} from './installations'
+import type { StoredInstallation } from './installations'
+import type { ActiveInstallation } from './installations'
 import type { CliCompatibility } from '../shared/version'
+import { NO_INSTALLATION_SURFACE } from '../source/source'
+import type { InstallationSurface } from '../source/source'
 
 // Before `whenReady` resolves, which is the only window Electron gives for it:
 // a scheme registered later is not a standard or secure one.
@@ -130,25 +155,41 @@ function serveBundle(): void {
  * handshakeInstallation is the stored **active** installation the startup
  * handshake reads (Task 3.4b, steps 3 and 4), or `null` when there is none.
  *
- * With one, its `binaryPath` is the **only** binary the handshake reads
- * (`resolveInstalledBinary`: no fallthrough to any other `fugaro`, review B1)
- * and its project (and config path, when stored) is the spawn target, so the
- * bare `version` spawn records which installation it was for. With none, the
- * console makes **no guess**: not `FUGARO_PROJECT`, not the working directory's
- * checkout, never the CLI's config -- `resolveHandshakeBinary` runs Task 3.3's
- * project-less read against rule 4's resolution, the dashboard answers
- * `NO_ACTIVE_INSTALLATION`, and the picker opens once.
+ * With one, its `binaryPath` -- when the store still carries that optional
+ * override -- is the first candidate rule 4 asks about, and its project (and
+ * config path, when stored) is the spawn target, so the bare `version` spawn
+ * records which installation it was for. The installation is the one
+ * `openInstallation` settled: the remembered choice when the CLI's list says it
+ * can be read, else the first readable row of that list. With no installation
+ * at all the console makes **no guess**: not `FUGARO_PROJECT`, not the working
+ * directory's checkout -- `resolveHandshakeBinary` runs Task 3.3's project-less
+ * read against rule 4's resolution, the dashboard answers
+ * `NO_ACTIVE_INSTALLATION`, and the rail draws no row.
+ *
+ * **Two fields are not the store's answer to "which binary", and they are handed
+ * on anyway** (T-D1, T-D3): `distro` and `checkout`. The first is the
+ * installation's **identity** on Windows rather than an override --
+ * `resolveHandshakeBinary` sends a `distro` read *inside* that distribution,
+ * because there is no host walk to fall through to (T-C2) and a distribution
+ * that has gone is a stated refusal rather than a silent switch to another one
+ * (F7) -- and the second is the directory the CLI starts in there, which travels
+ * as the wrapper's `--cd` (`wslDirectory`, D3(a)). Omitting either would leave a
+ * stored WSL installation read as a host one: the walk finds no `fugaro` on
+ * Windows (T-C2) and the console reports a missing binary for the installation
+ * the operator chose, in a distribution it never entered.
  */
 function handshakeInstallation(): {
-  readonly id: string
-  readonly binaryPath: string
+  readonly binaryPath?: string | undefined
+  readonly distro?: string | undefined
+  readonly checkout?: string | undefined
   readonly target: SpawnTarget
 } | null {
   const chosen = picker?.installation()
   if (chosen === undefined || !chosen.chosen) return null
   return {
-    id: chosen.id,
-    binaryPath: chosen.binary,
+    ...(chosen.binary === undefined ? {} : { binaryPath: chosen.binary }),
+    ...(chosen.distro === undefined ? {} : { distro: chosen.distro }),
+    ...(chosen.checkout === undefined ? {} : { checkout: chosen.checkout }),
     target: Object.freeze({
       project: chosen.project,
       ...(chosen.config === undefined ? {} : { configPath: chosen.config }),
@@ -157,14 +198,21 @@ function handshakeInstallation(): {
 }
 
 /**
- * handshakeFor is the id of the installation whose startup handshake has just
- * been read, until `onDecided` hands the answer to the picker's registry
- * (`picker.remember`), so `installation.current` and the picker's rows carry the
- * startup's mode and version rather than a default (review S1). It is consumed
- * once: a later `onDecided` comes from a choose, whose own probe the picker has
- * already remembered.
+ * handshakeProject is the **project** of the installation whose startup
+ * handshake has just been read, until `onDecided` hands the answer to the
+ * picker's registry (`picker.remember`), so `installation.current` and the
+ * picker's rows carry the startup's mode and version rather than a default
+ * (review S1). It is consumed once: a later `onDecided` comes from a choose,
+ * whose own probe the picker has already remembered.
+ *
+ * **The project and not the id**, because that is the key the compatibility is
+ * held under: `picker.remember` -> `registry.remember` -> `compatibility.set`,
+ * and every reader asks for `active.project` / `installation.project`. An id
+ * here would store the handshake's answer where nothing looks -- the header
+ * drawn as "version not read · unknown" and the active row as `unknown` on every
+ * launch, with the answer the startup had just read thrown away.
  */
-let handshakeFor: string | null = null
+let handshakeProject: string | null = null
 
 /**
  * readCliVersion is the handshake's reader: `resolveHandshakeBinary`
@@ -184,6 +232,19 @@ let handshakeFor: string | null = null
  */
 async function readCliVersion(): Promise<VersionRead> {
   const log = createSpawnLog(process.env)
+  // The owner's open-first-readable rule, before anything is resolved (ruling of
+  // 2026-10-25): the console opens the installation it can read -- the remembered
+  // choice when the CLI's own document says so, the first readable one otherwise
+  // -- and the handshake below is then the handshake of **that** installation.
+  // Doing it here rather than in the renderer is what makes the whole run agree:
+  // the header's binary, the source the screens read through and the rail's
+  // selected row are one decision.
+  //
+  // It is awaited before `handshakeInstallation`, which reads the session the
+  // call settles, and it never throws (`openInstallation`): a list read that
+  // failed leaves the console on the store's own answer, which is what it did
+  // before this rule existed.
+  await picker?.openInstallation()
   const chosen = handshakeInstallation()
   try {
     const resolution = await resolveHandshakeBinary({
@@ -192,9 +253,16 @@ async function readCliVersion(): Promise<VersionRead> {
       directory: privateWorkingDirectory(),
       log,
     })
+    // The startup's own resolution is remembered for this run, exactly as a
+    // choose's is: it is the binary this process is about to drive, and the one
+    // fact the dashboard's header needs -- which the *store* cannot answer,
+    // because this console never stores the path it resolves (owner's ruling of
+    // 2026-10-20) and a record whose override has gone resolves somewhere else
+    // entirely.
+    if (chosen !== null && resolution.ok) resolvedBinaries.set(chosen.target.project, resolution.path)
     return versionReadFrom(resolution)
   } finally {
-    handshakeFor = chosen === null ? null : chosen.id
+    handshakeProject = chosen === null ? null : chosen.target.project
     log.close()
   }
 }
@@ -247,13 +315,68 @@ function storedCompatibility(): CliCompatibility {
  * removal is answered by the next read rather than by a value captured when the
  * surface was registered.
  */
+/**
+ * installationState is D13's tuple as the **header** reads it: the store's
+ * record with the binary this run resolved for it.
+ *
+ * The precedence is the resolution's and not the store's, and that is the whole
+ * point of the function. A record's `binaryPath` is an **optional override** that
+ * rule 4 merely *asks first* (owner's ruling of 2026-10-20): when the file has
+ * gone, the walk carries on to `/opt/homebrew/bin`, `/usr/local/bin`,
+ * `~/.local/bin` and `/usr/bin` and drives one of those. A header that read the
+ * store alone would name a path this process is not running -- and, for a record
+ * this console wrote itself, would name nothing at all and be drawn as "a line
+ * the console will not draw", because those records carry no binary. The
+ * resolution is remembered in `resolvedBinaries`, which is where both the choose
+ * and the startup handshake put it, so this is a fact of the run rather than a
+ * second guess at rule 4's order.
+ *
+ * `chosen: false` (and `undefined`, before the picker exists) is passed through
+ * as the store answered it: D13's no-installation sentence, and the store's own
+ * refusal when the file could not be read.
+ */
+function installationState(): ActiveInstallation | undefined {
+  const chosen = picker?.installation()
+  if (chosen === undefined) return undefined
+  // `withResolvedBinary` is where the direction of the join is decided and
+  // unit-tested; this file only supplies the two values.
+  const resolved = chosen.chosen ? resolvedBinaries.get(chosen.project) : undefined
+  return withResolvedBinary(chosen, resolved)
+}
+
+/**
+ * activeBinding is the installation the source is bound to: the same state, as
+ * the source layer's `BoundInstallation`.
+ *
+ * It reads the store and **only** the store, exactly as `handshakeInstallation`
+ * does: `chosen.binary` is the record's optional override -- rule 4's first
+ * *candidate*, absent in the ordinary case, which is every record this console
+ * wrote -- and nothing else is handed on. The binary the walk finds is the
+ * source's own business: `sourceFor` gives this field to the resolver as the
+ * configured path, so a path supplied here from `resolvedBinaries` would be read
+ * as the operator's own choice. `configuredSource` would then report
+ * `configured` for `/usr/local/bin/fugaro`, and the bound source's
+ * `InstallationRef.source` -- the provenance word design section 3.4 adds so
+ * that "why is this the wrong fugaro?" has an answer -- would say `configured`
+ * for every installation this console wrote, which is precisely the case in
+ * which the operator configured nothing.
+ *
+ * So the two readers of this run's resolution are the header's and no one
+ * else's: `installationState` names the path this process resolved (the fact the
+ * store cannot hold), and the source resolves rule 4 itself from the same input
+ * the handshake had -- the override, when a record carries one. The path that
+ * runs is therefore named by both, and the only way for the two to differ is the
+ * machine changing between the handshake and a read (an upgrade that moves
+ * `fugaro`): then the header is stale and the child is right, which is the
+ * direction to be wrong in.
+ */
 function activeBinding(): BoundInstallation | null {
   const chosen = picker?.installation()
   if (chosen === undefined || !chosen.chosen) return null
   return {
     id: chosen.id,
     project: chosen.project,
-    binaryPath: chosen.binary,
+    ...(chosen.binary === undefined || chosen.binary === '' ? {} : { binaryPath: chosen.binary }),
     ...(chosen.config === undefined ? {} : { configPath: chosen.config }),
     ...(chosen.checkout === undefined ? {} : { checkout: chosen.checkout }),
     ...(chosen.cliVersion === null ? {} : { version: chosen.cliVersion }),
@@ -261,18 +384,46 @@ function activeBinding(): BoundInstallation | null {
 }
 
 /**
+ * resolvedBinaries is where the binary rule 4 resolved for an installation is
+ * remembered **for this run**, keyed by project name, and it is deliberately not
+ * the store: the store holds the operator's choices, and the path rule 4
+ * resolved is a fact of a run (owner's ruling of 2026-10-20). Storing it would
+ * pin the console to a binary the operator never named -- and an upgrade that
+ * moves `fugaro` would leave the store pointing at nothing.
+ *
+ * **Two things write it, and they are the two moments a resolution happens**:
+ * the startup handshake (`readCliVersion`, for the record's own project) and a
+ * choose (the picker hands its path to `onChosen`, after the handshake that made
+ * it a fact). Its one reader is `installationState` -- the dashboard header --
+ * which is the whole point of the map: the store cannot answer which `fugaro`
+ * this run is running, because the console never writes the path it resolves.
+ * The source does not read it either: `activeBinding` hands the record's
+ * override to `sourceFor` and the source walks rule 4 itself, so the map is one
+ * fact with one reader rather than a path passed around as if the operator had
+ * chosen it.
+ */
+const resolvedBinaries = new Map<string, string>()
+
+/**
  * boundSource is the `FugaroSource` the whole surface is built over: the real
  * `CliSource` for the active installation, built by `sourceFor` and cached by
- * the installation's id (`createBoundSource` in `src/source/cli.ts`, where the
- * whole of the decision is unit-tested).
+ * the installation's binding -- its id and the three fields the child is built
+ * from, the checkout among them (`createBoundSource` in `src/source/cli.ts`,
+ * where the whole of the decision is unit-tested). The checkout is in that key
+ * because it is the child's working directory: a record whose checkout changed
+ * keeps its id, so a source cached by the id alone would keep spawning in the
+ * directory the operator just left.
  *
- * **This is the only source the shipped app can construct.** `sourceFor` passes
- * the installation's own binary as the configured path, so the child is the
- * binary the operator chose or there is no child; `src/source/fixture.ts` -- the
- * replaying source the unit tests use -- is reachable only through the tests'
- * injected `create`, and a grep-style test holds `test/unit/entry-wiring.test.ts`
- * to that: this file imports nothing from `fixture.ts`, and no environment
- * variable, argv or setting selects a source.
+ * **This is the only source the shipped app can construct.** `sourceFor` gives
+ * the record's optional override to the resolver as the configured path and
+ * walks rule 4's well-known locations otherwise, so the child is the installed
+ * `fugaro` and never a binary an environment variable named.
+ *
+ * The replaying source (`src/source/fixture.ts`) is reachable only through the
+ * `create` seam the tests inject, and a grep-style test holds `this file` to
+ * that: `test/unit/entry-wiring.test.ts` asserts that nothing in it imports
+ * `fixture.ts`, and that no environment variable, argv or setting selects a
+ * source.
  *
  * The store is read through `activeBinding`, and the source it builds spawns on
  * the first read rather than here, so a console with nothing chosen -- and a
@@ -293,8 +444,280 @@ async function openExternalFromShell(raw: unknown): Promise<void> {
 }
 
 /**
+ * launchRequest narrows the operation's five validated fields to the launcher's
+ * own request. The validator has already refused everything that is not a string
+ * (`ipc.ts`'s kinds), so this is a narrowing and not a check: a value that is
+ * somehow not a string is left out, and the launcher's own rules refuse the
+ * empty field that leaves behind.
+ */
+function launchField(args: ValidatedArguments, key: string): string | undefined {
+  const value = args[key]
+  return typeof value === 'string' ? value : undefined
+}
+
+function launchRequest(args: ValidatedArguments): LaunchRequest {
+  const title = launchField(args, 'title')
+  const planTask = launchField(args, 'planTask')
+  return {
+    installation: launchField(args, 'installation') ?? '',
+    repository: launchField(args, 'repository') ?? '',
+    task: launchField(args, 'task') ?? '',
+    ...(title === undefined ? {} : { title }),
+    ...(planTask === undefined ? {} : { planTask }),
+  }
+}
+
+/** LAUNCH_NO_RECORDS is the refusal a console with no installation surface at
+ * all answers: there are no records to check a name against, and a name that
+ * cannot be checked is not one a launch may be built for. */
+const LAUNCH_NO_RECORDS = 'this console cannot read its installation records yet, and a launch needs one it can check'
+
+/** storedRecord is this console's own record for one installation, read from the
+ * file the picker's registry reads and not from a second source: the record
+ * carries the three fields a launch needs from the machine rather than from the
+ * CLI -- the `binaryPath` override, the config path and the distribution the CLI
+ * runs inside (or `installations.ts`'s `StoredInstallation` for why each is
+ * there). `undefined` covers both "no record" and "no store": a console that
+ * cannot read its own file has no override to honour, and the ambient
+ * resolution the CLI does anyway is the answer that spends nothing.
+ *
+ * **The whole record is read in one place on purpose.** Reading a field at a
+ * time is how a launch ends up resolving the CLI the *host* has while the
+ * record it was given points at another one -- inside a distribution, or at a
+ * path the operator chose -- and that is a different CLI, a different config and
+ * a different credential. */
+function storedRecord(project: string): StoredInstallation | undefined {
+  let store
+  try {
+    store = createInstallationFileStore({
+      path: installationStorePath({
+        userData: app.getPath('userData'),
+        env: process.env,
+        home: app.getPath('home'),
+      }),
+    })
+  } catch {
+    // The console has no place to keep its own records, so it has none to read.
+    return undefined
+  }
+  const read = store.load()
+  if (!read.ok) return undefined
+  return read.file.installations.find((record) => record.project === project)
+}
+
+/** pickerList is the rail's own read, asked of the picker directly: `list` is
+ * the picker's name for it and not the surface's (`installation.list`), and the
+ * answer is the picker's `ok`/`data` convention unwrapped -- which is what
+ * `source.ts`'s `rail` does for the dashboard and what this file must do for
+ * itself. `null` is every way the read can fail to produce rows: no picker, a
+ * refusal, an answer that is not the shape. */
+async function pickerList(): Promise<InstallationsListReply | null> {
+  const built = picker
+  if (built === null) return null
+  const answer = (await built.answer('list', {})) as
+    | { readonly ok?: unknown; readonly data?: InstallationsListReply }
+    | null
+    | undefined
+  if (answer === null || typeof answer !== 'object' || answer.ok !== true) return null
+  return answer.data ?? null
+}
+
+/**
+ * launchLookUp answers what this process's own records say about one
+ * installation, and it is deliberately built from the two reads that already
+ * exist rather than from a new one: the rail's own `installation.list` (which is
+ * `fugaro config list --json` through the picker) tells this file whether the
+ * console's records carry the name at all, and the document that same command
+ * prints carries the repositories and their recorded base branches the launch
+ * needs. A name the records do not carry -- or that the CLI did not list -- is
+ * refused **before** any window is asked about, which is design section 5.1
+ * rule 11's own order.
+ *
+ * **The route and the binary come from the console's own record and not from the
+ * rail's reply**, which carries a row's project, its checkouts and its state and
+ * neither of those. `storedRecord` is that read and `resolveLaunchBinary`
+ * (`installations.ts`) is the resolution: an installation whose record names a
+ * `binaryPath` is resolved at that path rather than through the host's walk, and
+ * an installation whose record names a `distro` is resolved *inside* that
+ * distribution, so the launcher's own by-name refusal of the WSL route
+ * (`launch.ts`) is reached with the truth rather than with a host CLI this
+ * installation does not run.
+ *
+ * The record's `configPath` is carried into the target and not passed: every
+ * stored `configPath` is refused before a window opens (see the note on that
+ * refusal below), and that refusal is what makes the field visible rather than
+ * ignored.
+ */
+async function launchLookUp(project: string): Promise<TargetLookup> {
+  // **One log for the whole call, and it is closed here.** The resolution and
+  // the records read are two children of one lookup, and rule 10's log is a
+  // writer with a descriptor: two writers opened per call and never closed is a
+  // descriptor leaked for every launch a renderer asks about -- including the
+  // ones that are refused, which is the cheapest way to ask for a great many. So
+  // the two children share the one writer, and the `finally` releases it on
+  // every path out, the refusals included.
+  const log = createSpawnLog(process.env)
+  try {
+    return await launchLookUpWith(project, log)
+  } finally {
+    log.close()
+  }
+}
+
+async function launchLookUpWith(project: string, log: SpawnLogWriter): Promise<TargetLookup> {
+  const listed = await pickerList()
+  if (listed === null) return { ok: false, reason: LAUNCH_NO_RECORDS }
+  const row = listed.rows.find((candidate) => candidate.project === project)
+  if (row === undefined || !row.saved) {
+    return {
+      ok: false,
+      reason: `no installation named ${JSON.stringify(project)} is one this console’s records carry`,
+    }
+  }
+  // A row the rail has and this console's own file does not is resolved as the
+  // ambient installation the CLI would use: no override, no distribution. The
+  // record's three fields are then handed to the launcher as they are read, so
+  // the refusal it makes about them is made about the real ones.
+  const record = storedRecord(project)
+  const distro = record?.distro ?? ''
+  const resolution = await resolveLaunchBinary(record ?? { id: '', project }, {
+    appEnv: process.env,
+    home: app.getPath('home'),
+    spawnLog: log,
+  })
+  if (!resolution.ok) return { ok: false, reason: resolution.reason }
+  // The records read runs on the same route as the resolution: under a
+  // distribution the CLI is a Linux program and no host path reaches it, so the
+  // read goes through `wsl.exe` with that record's distro -- the route
+  // `probeInstallation` takes, and the one the launcher refuses for a *launch*
+  // before any window opens.
+  const plan = planFor('installation.list', {}, {
+    target: { project: '' },
+    binaryPath: resolution.value.path,
+    directory: privateWorkingDirectory(),
+    appEnv: process.env,
+    ...(distro === '' ? {} : { wsl: { distro } }),
+  })
+  let run
+  try {
+    run = await runToCompletion(plan, { log })
+  } catch (error) {
+    return { ok: false, reason: error instanceof Error ? error.message : 'the CLI could not list the installations' }
+  }
+  if (run.signal !== null || run.code !== 0) {
+    return {
+      ok: false,
+      reason: cliSentence(run.stderr) ?? `the CLI exited ${String(run.code)} for its installation list`,
+    }
+  }
+  const parsed = parseInstallationsDocument(run.stdout)
+  if (!parsed.ok) return { ok: false, reason: parsed.reason }
+  const found = parsed.document.installations.find((candidate) => candidate.name === project)
+  if (found === undefined) {
+    return { ok: false, reason: `the CLI listed no installation named ${JSON.stringify(project)}` }
+  }
+  const configPath = record?.configPath ?? ''
+  return {
+    ok: true,
+    target: {
+      project,
+      binaryPath: resolution.value.path,
+      cliVersion: resolution.value.version,
+      records: found,
+      fingerprint: launchFingerprint(launchRecordFacts(record)),
+      ...(configPath === '' ? {} : { configPath }),
+      ...(distro === '' ? {} : { distro }),
+    },
+  }
+}
+
+/** launchRecordFacts is `launchrules.ts`'s `LaunchRecordFacts` read off this
+ * console's own installation file -- and off that file **only**, because the
+ * rail's row is not part of a launch's identity: its `listed` and `checkouts`
+ * are answers of a `config list` read that can fail and succeed again between
+ * the lookup and the answer, and its `saved` flag is true on every path that
+ * reaches here (both callers refuse an unsaved row first); see
+ * `LaunchRecordFacts`. */
+function launchRecordFacts(record: StoredInstallation | undefined): LaunchRecordFacts {
+  return {
+    id: record?.id ?? '',
+    project: record?.project ?? '',
+    binaryPath: record?.binaryPath ?? '',
+    distro: record?.distro ?? '',
+    configPath: record?.configPath ?? '',
+    checkout: record?.checkout ?? '',
+  }
+}
+
+/** launchStillRecorded is the check that makes "an installation removed, or
+ * changed, while its window is open closes as a cancel" true rather than
+ * promised: it re-reads the rail's own records and this console's own file, and
+ * answers whether the installation the frozen object was built for is still
+ * **the same one** -- the name still saved, and the fingerprint
+ * (`launchFingerprint`) unchanged. A row that disappeared, a name that was
+ * re-added, and a record whose fields moved all answer no. */
+async function launchStillRecorded(launch: FrozenLaunch): Promise<boolean> {
+  const listed = await pickerList()
+  if (listed === null) return false
+  const row = listed.rows.find((candidate) => candidate.project === launch.project)
+  if (row === undefined || !row.saved) return false
+  return launchFingerprint(launchRecordFacts(storedRecord(launch.project))) === launch.fingerprint
+}
+
+/**
+ * dashboardWindow is the window the confirmation window is modal over: the
+ * console's dashboard, or none when there is not one -- a refused console, whose
+ * window is the refusal document, and a startup that has not opened a window
+ * yet. `confirmOptions` handles a `null` parent, so this answering nothing is a
+ * state rather than a failure.
+ *
+ * It identifies the dashboard by its **document** rather than by taking the one
+ * window that happens to be open, because the picker's window and an open
+ * confirmation window are `BrowserWindow`s of this app as well: parenting a
+ * confirmation to either would make it modal over the wrong window (and, for
+ * another confirmation, over itself). Only the dashboard loads
+ * `APP_ENTRY_URL`; the refusal document, the picker's and the confirmation's own
+ * are other URLs. `getURL` is read inside the `try` because Electron's getters
+ * throw on a window that is already destroyed, and a window this process cannot
+ * read is not the dashboard.
+ */
+function dashboardWindow(): BrowserWindow | null {
+  for (const window of BrowserWindow.getAllWindows()) {
+    try {
+      if (window.webContents.getURL() === APP_ENTRY_URL) return window
+    } catch {
+      continue
+    }
+  }
+  return null
+}
+
+/**
+ * launchRunner is the launcher the surface's `run.launch` answers through, and
+ * the handler reads it **at message time** rather than closing over it. That is
+ * what makes this the fail-closed default rather than the shipped one: its
+ * confirmer is `DECLINING_CONFIRMER`, so a launch that somehow arrives before
+ * `main` has built the confirmation window is refused by name
+ * (`DECLINED_UNBUILT`) and nothing reaches `spawn`.
+ *
+ * `main` replaces it with the same launcher over the window's own confirmer
+ * before any renderer can reach the operation: the surface goes on `ipcMain`
+ * only from `onDecided`, which only `lifecycle.start()` and `choose` reach, both
+ * from inside `main`.
+ */
+let launchRunner = createLaunchRunner({
+  lookUp: launchLookUp,
+  stillRecorded: launchStillRecorded,
+  confirmer: DECLINING_CONFIRMER,
+  appEnv: process.env,
+  log: createSpawnLog(process.env),
+})
+
+/**
  * gated is the whole surface, and it is the join the two modules describe:
- * `handlersFor` answers the twelve operations that read the CLI (over
+ * `handlersFor` answers the twelve operations that read the CLI -- eleven
+ * before console L5b added `runs.stats` (`src/source/source.ts`'s
+ * `FugaroSource` lists them) -- over
  * `boundSource`, so each of them reaches the active installation's own binary
  * and nothing else), and `startup.compatibility` is joined in here because it is
  * the one operation whose answer is the console's own state rather than a read
@@ -307,12 +730,57 @@ async function openExternalFromShell(raw: unknown): Promise<void> {
 const gated: ConsoleHandlers = {
   ...handlersFor(boundSource, {
     openExternal: openExternalFromShell,
-    // `installation.current` (Task 3.4b): the picker's store, read at message
-    // time. Before the picker exists the answer is `handlersFor`'s own
-    // no-installation state.
-    installation: () => picker?.installation(),
+    // `installation.current` (Task 3.4b): the picker's store joined with the
+    // binary this run resolved for it, read at message time (see
+    // `installationState`). Before the picker exists the answer is
+    // `handlersFor`'s own no-installation state.
+    installation: () => installationState(),
+    // The installation rail's own surface (owner's design ruling of
+    // 2026-10-25): the picker module's dispatcher, read at message time for the
+    // same reason `installation` is -- this constant is built before
+    // `whenReady` and the picker is built after it.
+    installations: () => railSurface(),
   }),
   'startup.compatibility': startupCompatibility(storedCompatibility),
+  // **The launch, and the console's one write** (V2.5.1a, design section 5.1
+  // rule 11, D22). It is joined here for the same reason
+  // `startup.compatibility` is: it is not a read of the *active* installation's
+  // source, so `handlersFor` leaves it out (`CliBackedHandlers` in
+  // `src/source/source.ts` says so from the other side).
+  //
+  // **A `run` child is spawned only on a yes from the confirmation window's own
+  // top frame.** The two things that make that true are elsewhere: the sender
+  // gate is `createConfirmWindow`'s (`src/main/confirm.ts`), and the launch is
+  // built, frozen and spawned by `launch.ts` only from the answer that window's
+  // own main-side path resolves. What is here is the handler, and it reads
+  // `launchRunner` at message time -- so before `main` has built the window the
+  // declining launcher above answers every launch with `DECLINED_UNBUILT`, and
+  // this operation has no way to a child at all.
+  'run.launch': (args) => launchRunner.launch(launchRequest(args)),
+}
+
+/**
+ * railSurface is the rail's half of the surface as `handlersFor` reaches it:
+ * the picker module's own answers, so the dashboard's document and the picker
+ * window's are one implementation rather than two.
+ *
+ * A console whose picker was never built -- a unit test's, a build with no
+ * store -- gets a surface that refuses every one of the six with
+ * `NO_INSTALLATION_SURFACE`, which is a state and not a guess, and is what
+ * `handlersFor` answers with when the dep is absent altogether.
+ */
+function railSurface(): InstallationSurface {
+  const built = picker
+  if (built === null) {
+    const absent = async (): Promise<never> => {
+      throw new Error(NO_INSTALLATION_SURFACE)
+    }
+    return { answer: absent, open: absent }
+  }
+  return {
+    answer: (name, args) => built.answer(name, args),
+    open: () => built.open(),
+  }
 }
 
 /** registered is whether this process has put the surface on `ipcMain`. */
@@ -355,8 +823,10 @@ function registerHandlers(): void {
  */
 function onDecided(compatibility: CliCompatibility): void {
   current = compatibility
-  const read = handshakeFor
-  handshakeFor = null
+  // The project, which is what `remember` keys the compatibility by: see
+  // `handshakeProject` above for what an id here would cost.
+  const read = handshakeProject
+  handshakeProject = null
   if (read !== null) picker?.remember(read, compatibility)
   if (compatibility.mode === 'refused') return
   registerHandlers()
@@ -396,24 +866,6 @@ const lifecycle = createConsoleLifecycle({
 let picker: InstallationPicker | null = null
 
 /**
- * pickerDialog is Electron's `dialog` narrowed to the picker's `DialogLike`: a
- * parentless dialog when the picker has no window, and the options copied into
- * Electron's own (mutable) shapes rather than cast.
- */
-const pickerDialog: DialogLike = {
-  showOpenDialog: (window, options) => {
-    const electronOptions: OpenDialogOptions = {
-      title: options.title,
-      properties: [...options.properties] as OpenDialogOptions['properties'],
-      ...(options.filters === undefined
-        ? {}
-        : { filters: options.filters.map((filter) => ({ name: filter.name, extensions: [...filter.extensions] })) }),
-    }
-    return window === null ? dialog.showOpenDialog(electronOptions) : dialog.showOpenDialog(window, electronOptions)
-  },
-}
-
-/**
  * main is what `whenReady` resolves into: serve the bundle once, then run the
  * startup. Everything a second call would repeat is in `lifecycle.activate`.
  */
@@ -431,12 +883,56 @@ async function main(): Promise<void> {
     iconPath: consoleIconPath(app.getAppPath()),
   })
   serveBundle()
-  picker = installInstallationPicker({
-    electron: { BrowserWindow, session: session.defaultSession, ipcMain, dialog: pickerDialog, Menu, app },
+  // **The confirmation window goes live here, and here only** (V2.5.1a part
+  // 2b-3b-1). It is built after `serveBundle`, because this is the run of
+  // `main` that has just made the document it loads answerable, and it is built
+  // before the picker and `lifecycle.start`, because those two are the paths
+  // that put the IPC surface on `ipcMain`: `run.launch` reads `launchRunner` at
+  // message time, so a renderer that can reach the operation is a renderer that
+  // finds the window's confirmer here rather than the declining default.
+  //
+  // `session.defaultSession`, never a partition: `protocol.handle` registers the
+  // `app://` scheme on the default session and nowhere else, so a window on a
+  // partition would issue its document request where nothing answers it and
+  // every launch would be declined. `dashboardWindow` is the parent, so the
+  // window is modal over the dashboard and never over the picker or over another
+  // confirmation.
+  launchRunner = createLaunchRunner({
+    lookUp: launchLookUp,
+    stillRecorded: launchStillRecorded,
+    confirmer: createConfirmWindow({
+      BrowserWindow,
+      ipcMain,
+      parent: dashboardWindow,
+      appPath: app.getAppPath(),
+      entryUrl: CONFIRM_ENTRY_URL,
+      session: session.defaultSession,
+    }),
     appEnv: process.env,
+    log: createSpawnLog(process.env),
+  })
+  picker = installInstallationPicker({
+    // `shell` and not `dialog`: the picker has no file dialog any more (owner's
+    // ruling of 2026-10-20) and its one external link goes through
+    // `openExternalValidated(shell, ...)`, which `installInstallationPicker`
+    // closes over.
+    electron: { BrowserWindow, session: session.defaultSession, ipcMain, Menu, shell, app },
+    appEnv: process.env,
+    // The rail's `config list --json` is a dashboard read since the owner's
+    // ruling of 2026-10-25, and rule 10's log is one line per child the console
+    // spawns: the picker's spawns are written to it like the source's.
+    spawnLog: createSpawnLog(process.env),
     // The picker awaits this inside its own serial chain (review S6), so a
     // second choose cannot start until the window this one asked for is up.
-    onChosen: (chosen) => lifecycle.choose(chosen.compatibility).catch(reportAndQuit),
+    onChosen: (chosen) => {
+      // Rule 11's "re-chosen": a launch names its own installation rather than
+      // the active one, so the installation being chosen again is the window
+      // that must close. Before `lifecycle.choose`, so the cancel is decided
+      // while the old installation's window is still the only one open.
+      launchRunner.cancelFor(chosen.project)
+      resolvedBinaries.set(chosen.project, chosen.resolvedBinaryPath)
+      return lifecycle.choose(chosen.compatibility).catch(reportAndQuit)
+    },
     // A removal that took the active installation drops the bound source (Task
     // 3.4c; the seam 3.4b left for it). Without this the surface would keep
     // answering from a source built for a binary the store no longer names --
@@ -446,19 +942,29 @@ async function main(): Promise<void> {
     onRemoved: () => {
       void boundSource.forget()
     },
+    // And rule 11's "removed": the launch window's own half of the same fact.
+    // `onRemoved` above is not it -- that one fires only when the removal took
+    // the **active** installation away, and it is handed a record **id**, while
+    // a launch in flight names its own installation and the launcher closes a
+    // window by project. So every removal this console performs closes the
+    // launch that project has open, active row or not.
+    onRecordRemoved: (project) => {
+      launchRunner.cancelFor(project)
+    },
   })
   // The menu is installed in **every** mode, `refused` included: choosing an
   // installation is how an operator gets out of a refusal, and a console that
   // hid the door would be a console with no way back.
   picker.installMenu()
   await lifecycle.start()
-  // D13's first run: with no installation chosen the console makes no guess,
-  // says so, and opens the picker once. A picker that fails to open is logged
-  // and is not a reason to quit a console whose own window is already up: the
-  // menu item is still there.
-  await picker.openOnFirstRun().catch((error: unknown) => {
-    console.error('[console] the installation picker could not be opened:', error)
-  })
+  // **The console does not open the picker window here, and that is the
+  // owner's design ruling of 2026-10-25**: there is no picker screen. D13's
+  // first run -- no installation chosen -- is drawn by the dashboard's own
+  // rail, which lists every installation the CLI found and opens the issue
+  // view of the first one when none of them can be read. The picker window is
+  // left where the ruling puts it: behind the rail's `+` door
+  // (`installation.open`) and the menu item, both of which the operator asks
+  // for.
 }
 
 app.whenReady().then(main).catch(reportAndQuit)

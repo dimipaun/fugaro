@@ -22,6 +22,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/logtail"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
@@ -33,6 +34,15 @@ const (
 	agentMessageBytes = 4 << 10
 	// diagnoseLogLines is how many of the newest log lines a diagnosis keeps.
 	diagnoseLogLines = 30
+	// diagnoseStages bounds the stages a diagnosis prints. It sits above the
+	// loop's own maximum -- 1 + 2*F + R*(2 + 2*F) stages, at most 87 under
+	// config.MaxFirstLineRounds and recipe.MaxReviewRounds, plus the provision
+	// and render stages (docs/design/generic-tool.md §3.1) -- because the
+	// identity Stages documents holds only for the whole list: a bound that
+	// bit a real run would make sum(stages[].model_usd) + model_by's
+	// unattributed entry miss row.cost.model_usd by the rounds it dropped. It
+	// guards against the record a hand can edit, not against the loop.
+	diagnoseStages = 128
 )
 
 // Diagnosis is what diagnose gathers about one run. Every string in it
@@ -69,17 +79,43 @@ type Diagnosis struct {
 	// ModelBy is the spend by model. Both are the run's own record.
 	Route   map[string]float64 `json:"route_by,omitempty"`
 	ModelBy map[string]float64 `json:"model_by,omitempty"`
+	// Stages is the run's per-stage record (runstore.StageTiming): what each
+	// stage cost in model dollars and, when something counted them, how many
+	// model calls and sub-agent tool calls it made. In the record's own order
+	// and bounded at diagnoseStages, with every string redacted. Calls and
+	// Agents stay pointers, so a stage nobody counted is absent and a stage
+	// counted at zero is not: the two are different facts. Absent when the
+	// record has no stages, and when there is no record at all.
+	//
+	// The stages are the run's whole model spend but for what settled after
+	// its stage's wait ran out, which is in ModelBy["unattributed"]: exactly,
+	// sum(stages[].model_usd) + model_by["unattributed"] ==
+	// row.cost.model_usd.
+	Stages []runstore.StageTiming `json:"stages,omitempty"`
 	// Reported is what providers said the run's calls cost, beside Charge,
-	// what the table said for the provider routes' calls (the charge
-	// always settles; Claude's spend is not in it). Zero when no provider
-	// reported one. ReportedWarning is set when the two differ by more than
-	// reportedGapPct percent.
+	// what the run charged the provider routes' calls -- the table's price
+	// with the fee, or the report where it floors an unpriced tier's charge.
+	// Claude's spend is not in it. Zero when no provider reported one.
+	// ReportedWarning is set when the two differ by more than reportedGapPct.
 	Reported        float64 `json:"reported_usd,omitempty"`
 	Charge          float64 `json:"charge_usd,omitempty"`
 	ReportedWarning string  `json:"reported_warning,omitempty"`
 	// PinWarnings are the model prices the run's cap counted on a guess:
 	// an unverified placeholder, or cache rates left at 0.
 	PinWarnings []string `json:"pin_warnings,omitempty"`
+	// Tolerated is the findings the run's resolved mode let through
+	// (runstore.ToleratedFindings), in the reviewer's order, bounded again on
+	// read and with every title redacted. Absent -- never an empty block --
+	// for a run that tolerated nothing, and for every record written before
+	// the field existed.
+	Tolerated *runstore.ToleratedFindings `json:"tolerated,omitempty"`
+	// Checkpoint is the report a governance halt left (T6.1, D329, G7): why a
+	// tripwire stopped the run, and what a person deciding whether to continue
+	// it needs to know. The record's own block, with every string redacted and
+	// every text field clipped, and absent -- never an empty block -- for a run
+	// that took no governance halt: a budget or credential halt carries none,
+	// and neither does a record written before the field existed.
+	Checkpoint *runstore.Checkpoint `json:"checkpoint,omitempty"`
 }
 
 type diagnoseOptions struct {
@@ -195,6 +231,8 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 		for _, a := range rec.Artifacts {
 			d.ArtifactPaths = append(d.ArtifactPaths, s.Prefix()+runstore.ArtifactPrefix+red(a.Name))
 		}
+		d.Stages, d.Tolerated = stageTimingsOf(rec.Stages, red), toleratedOf(rec.Tolerated, red)
+		d.Checkpoint = checkpointOf(rec.Checkpoint, red)
 		d.Verify = rec.Verify
 		for i := range d.Verify {
 			v := &d.Verify[i]
@@ -206,7 +244,14 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 		if n := seniorRound(rec.Reviews); n > 0 {
 			if res, ok := transcriptResult(ctx, s, "review-"+strconv.Itoa(n)); ok {
 				for _, f := range runner.ParseVerdict(res).Findings {
-					d.Findings = append(d.Findings, runner.Finding{Severity: red(f.Severity), File: red(f.File), Summary: red(f.Summary)})
+					// The score travels with the finding when the transcript
+					// carries one (D3's four optional properties) and stays
+					// absent when it does not, so a transcript from before the
+					// score existed renders exactly as it did.
+					d.Findings = append(d.Findings, runner.Finding{
+						Severity: red(f.Severity), File: red(f.File), Summary: red(f.Summary),
+						Likelihood: f.Likelihood, Impact: f.Impact, FixCost: f.FixCost, Class: red(f.Class),
+					})
 				}
 			}
 		}
@@ -239,6 +284,78 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 		d.LogTail = append(d.LogTail, tail[i%diagnoseLogLines])
 	}
 	return d, nil
+}
+
+// stageTimingsOf is the record's stages for the document: the record's own
+// order, bounded at diagnoseStages, and redacted like every other string here.
+// nil for a record with none, so the key is absent rather than an empty list.
+func stageTimingsOf(stages []runstore.StageTiming, red func(string) string) []runstore.StageTiming {
+	if len(stages) == 0 {
+		return nil
+	}
+	out := make([]runstore.StageTiming, 0, min(len(stages), diagnoseStages))
+	for _, s := range stages {
+		if len(out) == diagnoseStages {
+			break
+		}
+		s.Name, s.Model = red(s.Name), red(s.Model)
+		out = append(out, s)
+	}
+	return out
+}
+
+// toleratedOf is the record's tolerated findings for the document: bounded
+// again on read, because the record is an object a hand can edit and the
+// write-side bound (runstore.NewTolerated) is not one a reader can count on,
+// and with every string redacted -- the enums too, which the write path
+// validates to its vocabulary and a hand-edited record need not. nil for a run
+// that tolerated nothing -- no block, or a block that lists none -- so the key
+// is absent.
+func toleratedOf(t *runstore.ToleratedFindings, red func(string) string) *runstore.ToleratedFindings {
+	if t == nil || len(t.Findings) == 0 {
+		return nil
+	}
+	out := &runstore.ToleratedFindings{Findings: make([]runstore.ToleratedFinding, 0, min(len(t.Findings), runstore.MaxTolerated))}
+	for _, f := range t.Findings {
+		if len(out.Findings) == runstore.MaxTolerated {
+			break
+		}
+		f.Title = red(f.Title)
+		f.Mode, f.Label, f.Class = rigor.Mode(red(string(f.Mode))), rigor.Label(red(string(f.Label))), rigor.Class(red(string(f.Class)))
+		out.Findings = append(out.Findings, f)
+	}
+	// The block's total is how many findings the mode really tolerated, and a
+	// record claiming fewer than it lists is not one to print as written.
+	out.Total = max(t.Total, len(out.Findings))
+	return out
+}
+
+// checkpointOf is the record's checkpoint for the document: every string
+// redacted -- the trigger and the runner's own words are values the write path
+// set and a hand-edited record need not have, and the three the stopping agent
+// answers are model output -- and every text field clipped again on read, since
+// the record is an object a hand can edit and the write-side bound
+// (runstore.NewCheckpoint) is not one a reader can count on.
+//
+// nil for a run carrying none, and for the block a hand can write that says
+// nothing at all -- `"checkpoint": {}`, which the same hand could put in a
+// record that took no governance halt -- so the key is absent and neither
+// output prints a block with no report in it. A block that says anything, the
+// estimate alone included, is the record's and is printed.
+func checkpointOf(cp *runstore.Checkpoint, red func(string) string) *runstore.Checkpoint {
+	if cp == nil {
+		return nil
+	}
+	out := *cp
+	out.Trigger = red(out.Trigger)
+	out.Done = clipRunes(red(out.Done), runstore.MaxCheckpointText)
+	out.WhyOver = clipRunes(red(out.WhyOver), runstore.MaxCheckpointText)
+	out.Next = clipRunes(red(out.Next), runstore.MaxCheckpointText)
+	out.HardInstructions = clipRunes(red(out.HardInstructions), runstore.MaxCheckpointText)
+	if out == (runstore.Checkpoint{}) {
+		return nil
+	}
+	return &out
 }
 
 // seniorRound is the round of the last senior review (not a first-line one,
@@ -408,6 +525,20 @@ func followUpLine(fu *runstore.FollowUp) string {
 	return line
 }
 
+// scoreCell is a finding's score as diagnose prints it beside the finding's
+// own row, "" for one the reviewer left unscored — which is what keeps a
+// transcript from before the score existed rendering exactly as it did. Every
+// part is named rather than printed as a tuple of numbers: the axes and the
+// class are what a reader checks a mode's threshold against (D2, D3), and a
+// bare tuple leaves the reader to remember which number was which.
+func scoreCell(likelihood, impact, fixCost int, class string) string {
+	s := rigor.Score{Likelihood: likelihood, Impact: impact, FixCost: fixCost, Class: rigor.Class(class)}
+	if !s.Scored() {
+		return ""
+	}
+	return fmt.Sprintf(" (likelihood %d, impact %d, fix cost %d, class %s)", s.Likelihood, s.Impact, s.FixCost, oneLine(class))
+}
+
 // lastTest is the last test record of recs.
 func lastTest(recs []verify.Record) (verify.Record, bool) {
 	for i := len(recs) - 1; i >= 0; i-- {
@@ -472,6 +603,14 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 	r := d.Row
 	fmt.Fprintf(&b, "Run:      %s\n", oneLine(r.Run))
 	status := r.Status
+	// A status derived at read time carries what was derived in the same
+	// parentheses runs ls's table uses, so the one-run read says what happened
+	// to the run rather than leaving the reader to notice the reason line
+	// (runview.DerivedPreempted). Display only: the row's status stays the
+	// vocabulary it was read as.
+	if r.Derived != "" {
+		status += " (" + r.Derived + ")"
+	}
 	if r.Stage != "" {
 		status += " (stage " + r.Stage + ")"
 	}
@@ -494,6 +633,14 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 	} else if r.ConfigSHA256 != "" {
 		fmt.Fprintf(&b, "Config:   no project layer; resolved sha256 %s\n", oneLine(shortSHA(r.ConfigSHA256)))
 	}
+	// The mode the run resolved and the layer that decided it (docs/rigor-modes
+	// D24), right after the config it was read from: the two lines are the
+	// same story, and the revision is where the mode's half of it came from
+	// (D25: the base branch, which for a first run is not the branch the rest
+	// of the config came from).
+	if r.Rigor != nil {
+		fmt.Fprintf(&b, "Rigor:    %s\n", oneLine(r.Rigor.Line()))
+	}
 	if h := d.Halt; h != nil {
 		line := fmt.Sprintf("Halted:   %s (%s) at %s", h.Reason, h.Scope, h.At.UTC().Format(time.RFC3339))
 		if h.Detail != "" {
@@ -501,8 +648,42 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 		}
 		fmt.Fprintf(&b, "%s\n", oneLine(line))
 	}
+	b.WriteString(checkpointBlock(d.Checkpoint))
 	for _, ln := range costLines(r.Cost) {
 		fmt.Fprintf(&b, "%s\n", ln)
+	}
+	// The run's prompt-cache token totals, printed only when a gateway
+	// recorded one: a run that read nothing from cache and wrote nothing to
+	// it -- no gateway, or one whose calls all missed and cached nothing --
+	// keeps the block it always had (P12).
+	if r.Cost.CacheReadTokens != 0 || r.Cost.CacheWriteTokens != 0 {
+		fmt.Fprintf(&b, "Cache:    %d read, %d write (tokens)\n", r.Cost.CacheReadTokens, r.Cost.CacheWriteTokens)
+	}
+	if len(r.Cost.ServiceTiers) > 0 {
+		// A provider answered at a tier the price table has no multiplier
+		// for: that call was charged conservatively rather than failing its
+		// stage (design §6.1), so the Cost line above counts a figure the
+		// reader cannot otherwise explain -- on a provider route nothing
+		// else names it, since the provider's own reported cost is recorded
+		// and is the floor under that charge rather than its price. The rates
+		// the multiple scales are the ones the call was otherwise priced at --
+		// the serving model's own, or the table's maximum for a model it
+		// doesn't know -- so the line says that and not "its own rates", which
+		// would be wrong for a call the table priced at maximum rates, or one
+		// the response also priced as a surprise. The multiple is an assumed
+		// ceiling and not a published price, so where a provider reported a
+		// cost the charge may be that figure with the route fee instead, and
+		// the line says so -- in the warning's own words, and with the fee
+		// named, because the Reported line below shows the report without it.
+		// The clause is printed only when the record carries a report at all:
+		// a Claude call has no route, so a report cannot exist for it, and a
+		// provider that sent none floors nothing.
+		line := fmt.Sprintf("%s charged at %dx the rates the call was priced at",
+			oneLine(strings.Join(r.Cost.ServiceTiers, ", ")), pricing.ConservativeTierMultiplier)
+		if d.Reported > 0 {
+			line += ", or the provider's reported cost with the route fee if dearer"
+		}
+		fmt.Fprintf(&b, "Tier:     %s (no published price for the tier)\n", line)
 	}
 	if r.Cost.CatalogStale {
 		// The run charged, and over-counted on purpose: the catalog it
@@ -513,7 +694,7 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 		fmt.Fprintf(&b, "Route:    %s\n", oneLine(spendList(d.Route)))
 	}
 	if d.Reported > 0 {
-		fmt.Fprintf(&b, "Reported: providers said $%.4f; charged $%.4f (the table price settles)\n", d.Reported, d.Charge)
+		fmt.Fprintf(&b, "Reported: providers said $%.4f; charged $%.4f (the table price settles; an unpriced tier's charge is floored by the report, clamped to the call's reservation)\n", d.Reported, d.Charge)
 	}
 	for _, w := range d.PinWarnings {
 		fmt.Fprintf(&b, "Warning:  %s\n", oneLine(w))
@@ -556,7 +737,43 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 			if f.File != "" {
 				loc = " " + oneLine(f.File) + ":"
 			}
-			fmt.Fprintf(&b, "  [%s]%s %s\n", oneLine(f.Severity), loc, oneLine(f.Summary))
+			fmt.Fprintf(&b, "  [%s]%s%s %s\n", oneLine(f.Severity),
+				scoreCell(f.Likelihood, f.Impact, f.FixCost, f.Class), loc, oneLine(f.Summary))
+		}
+	}
+	// The findings the resolved mode let through (T4.1), under the review
+	// they came from: what the run left open, and the score and the mode that
+	// left it open. One block per mode, in the order the modes appear: a run
+	// resolves one mode (D9), so this is one block, and a record carrying two
+	// reads as two rather than as whichever happened to be listed first.
+	if t := d.Tolerated; t != nil && len(t.Findings) > 0 {
+		var modes []string
+		byMode := map[string][]runstore.ToleratedFinding{}
+		for _, f := range t.Findings {
+			m := oneLine(string(f.Mode))
+			if _, ok := byMode[m]; !ok {
+				modes = append(modes, m)
+			}
+			byMode[m] = append(byMode[m], f)
+		}
+		for i, mode := range modes {
+			fmt.Fprintf(&b, "\nTolerated by %s\n", mode)
+			for _, f := range byMode[mode] {
+				fmt.Fprintf(&b, "  [%s]%s %s\n", oneLine(string(f.Label)),
+					scoreCell(f.Likelihood, f.Impact, f.FixCost, string(f.Class)), oneLine(f.Title))
+			}
+			// The block's total is how many findings the mode really
+			// tolerated, so a list shorter than that says how many it does
+			// not show rather than reading as the whole of it (F19). It says
+			// nothing about where the rest are: the list is short because it
+			// was bounded when it was written and bounded again here, and a
+			// hand-edited record — the one this guards against — need never
+			// have been bounded at all. It closes the last block, which is
+			// the only one it can belong to: the entries keep the reviewer's
+			// order and the cut is at the end of that order.
+			if i == len(modes)-1 && t.Total > len(t.Findings) {
+				fmt.Fprintf(&b, "  … and %d more tolerated findings\n", t.Total-len(t.Findings))
+			}
 		}
 	}
 	if d.AgentMessage != "" {
@@ -567,6 +784,49 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 	}
 	_, err := io.WriteString(w, b.String())
 	return err
+}
+
+// checkpointBlock is a governance halt's checkpoint report (T6.1, D329) as a
+// block of the human output, or "" for a run carrying none.
+//
+// Trigger, Why over and Estimate are the runner's own and always there; Done,
+// Next and Hard come from the stopping agent's answer to the checkpoint prompt
+// (T7.3), so a checkpoint written before that stage exists has them empty and
+// they print as nothing at all -- no label, no empty line, no zero -- rather
+// than as a field the run never filled. The trigger is not dropped as a repeat
+// of the Halted line above: a checkpoint's own report is the thing a person
+// continues from, and it reads whole on its own.
+func checkpointBlock(cp *runstore.Checkpoint) string {
+	if cp == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\nCheckpoint\n")
+	// field writes one labelled line, every later line of a multi-line value
+	// aligned under the first. The label is padded to the longest one used
+	// here, so the values of the block line up. A value's trailing newlines go
+	// the way indent gives the agent message's: a line of nothing but the
+	// alignment padding is not a line of the report.
+	field := func(label, val string) {
+		txt := strings.TrimRight(multiLine(val), "\n")
+		if txt == "" {
+			return
+		}
+		lines := strings.Split(txt, "\n")
+		fmt.Fprintf(&b, "  %-10s%s\n", label+":", lines[0])
+		for _, l := range lines[1:] {
+			fmt.Fprintf(&b, "  %-10s%s\n", "", l)
+		}
+	}
+	field("Trigger", cp.Trigger)
+	field("Why over", cp.WhyOver)
+	if cp.EstimateUSD != 0 {
+		fmt.Fprintf(&b, "  %-10s$%.4f\n", "Estimate:", cp.EstimateUSD)
+	}
+	field("Done", cp.Done)
+	field("Next", cp.Next)
+	field("Hard", cp.HardInstructions)
+	return b.String()
 }
 
 // spendList is "name $x, name $y", biggest first.

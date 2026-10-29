@@ -23,7 +23,7 @@ import (
 // launcher and no operator at all: nobody holds the launcher or token-minter
 // role, and the first fugaro run fails with "not allowed to sign as the token
 // signer" (live Check 27). Only a NEW project config gets the default: an
-// existing config, one adopted from an installation, and any run that names
+// existing config, one a new machine wrote from an installation, and any run that names
 // --launcher or --operator are never changed by it.
 
 // errServiceAccount says the credentials are a service account's, which is
@@ -93,11 +93,11 @@ func userEmail(ctx context.Context, hc *http.Client, url string) (string, error)
 // defaultMembers makes a new project config's launchers and operators the
 // authenticated user, before the first plan, and says so. It does nothing for
 // an existing config, when --launcher or --operator was given, or when the
-// installation already exists (adopt mode copies its own). Without a user
+// installation already exists (a new machine's run copies its own). Without a user
 // (a service account, no credentials) it is a needs-you naming the flags.
 func (e *initEngine) defaultMembers(ctx context.Context) error {
 	r, o := e.r, e.r.o
-	if e.old != nil || o.launchersChanged || o.operatorsChanged || len(e.lc.Terraform.Launchers)+len(e.lc.Terraform.Operators) > 0 {
+	if !e.firstRun() || o.launchersChanged || o.operatorsChanged || len(e.lc.Terraform.Launchers)+len(e.lc.Terraform.Operators) > 0 {
 		return nil
 	}
 	email, err := authenticatedUser(ctx, e.lc)

@@ -24,9 +24,12 @@ func (f *budgetFixture) writeFinishedResult(t *testing.T, slug, run, status, out
 func TestWatchJSONAndPlainShowFinishedAndReady(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	seedWatch(f, "mine")
-	run := runID(10*time.Minute, "f001")
+	// Two minutes, not ten: the default window a finished run stays listed for
+	// is three minutes (owner spec 2026-10-22, item 3), and this test is about
+	// what --plain and --json carry, not about the window.
+	run := runID(2*time.Minute, "f001")
 	f.writeTask(t, appSlug, run, "")
-	f.writeFinishedResult(t, appSlug, run, "succeeded", "ready", 42, "https://github.com/acme/app/pull/42", 10*time.Minute)
+	f.writeFinishedResult(t, appSlug, run, "succeeded", "ready", 42, "https://github.com/acme/app/pull/42", 2*time.Minute)
 
 	out, _, err := execute(t, "watch", "--once", "--json")
 	if err != nil {
@@ -71,12 +74,11 @@ func TestWatchJSONAndPlainShowFinishedAndReady(t *testing.T) {
 	}
 }
 
-// A successful run older than --keep's default (6h) is hidden from --plain,
-// and shown again with --all (design generic-tool §10.3); --json never
-// hides it. (The same rule for a failure's 24h FailedKeep is pinned at the
-// unit level, TestFailedRunsStayUntilAcked: the queued scanner's own
-// finishedLookback is also 24h, so a run old enough to need FailedKeep's
-// hiding is never discovered by `fugaro watch` at all, successful or not.)
+// A successful run older than --keep's default (three minutes since the
+// owner spec of 2026-10-22) is hidden from --plain, and shown again with
+// --all (design generic-tool §10.3); --json never hides it. A failure ages
+// out on the same window: FailedKeep is FinishedKeep now, so the rule this
+// test pins is no longer a success-only one.
 func TestWatchAllFlagShowsOldSuccess(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	seedWatch(f, "mine")
@@ -89,7 +91,7 @@ func TestWatchAllFlagShowsOldSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	if strings.Contains(plain, run) {
-		t.Fatalf("a 10h-old success must be hidden by the default --keep (6h):\n%s", plain)
+		t.Fatalf("a 10h-old success must be hidden by the default --keep (3m):\n%s", plain)
 	}
 
 	all, _, err := execute(t, "watch", "--once", "--plain", "--all")
@@ -117,8 +119,33 @@ func TestWatchAllFlagShowsOldSuccess(t *testing.T) {
 	}
 }
 
+// The default window is three minutes, not six hours (owner spec
+// 2026-10-22, item 3): a run that finished four minutes ago has left the
+// list by itself, one that finished a minute ago is still there, and --all
+// (or a wider --keep) is how history comes back.
+func TestWatchDefaultWindowIsThreeMinutes(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	seedWatch(f, "mine")
+	fresh, stale := runID(time.Minute, "f1a2"), runID(4*time.Minute, "f3b4")
+	f.writeTask(t, appSlug, fresh, "")
+	f.writeFinishedResult(t, appSlug, fresh, "succeeded", "none", 0, "", time.Minute)
+	f.writeTask(t, appSlug, stale, "")
+	f.writeFinishedResult(t, appSlug, stale, "succeeded", "none", 0, "", 4*time.Minute)
+
+	plain, _, err := execute(t, "watch", "--once", "--plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(plain, fresh) {
+		t.Fatalf("a run finished a minute ago must be listed:\n%s", plain)
+	}
+	if strings.Contains(plain, stale) {
+		t.Fatalf("a run finished four minutes ago must have left the list:\n%s", plain)
+	}
+}
+
 // A ready PR stays in --plain's "Ready for your review" section even once
-// its own row has aged out of the default --keep (6h): the recency filter
+// its own row has aged out of the default --keep (three minutes): the recency filter
 // bounds how much finished-run history the frame shows, not which PRs still
 // need a look (design generic-tool §10.1). This is the --plain counterpart
 // of TestReadyForReviewSurvivesTheFilter (the interactive screen).
@@ -140,7 +167,7 @@ func TestWatchPlainReadySurvivesKeepFilter(t *testing.T) {
 		t.Fatalf("the 10h-old row should have aged out of the regular finished table:\n%s", plain)
 	}
 	if !strings.Contains(plain, "Ready for your review (1)") || !strings.Contains(plain, "https://github.com/acme/app/pull/7") {
-		t.Fatalf("the ready PR must still be listed even though --keep (6h) hid its row:\n%s", plain)
+		t.Fatalf("the ready PR must still be listed even though --keep (3m) hid its row:\n%s", plain)
 	}
 }
 

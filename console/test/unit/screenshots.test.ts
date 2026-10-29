@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The screenshot run's own rules, held without a window (owner ruling
 // 2026-10-20, step 5).
 //
@@ -731,7 +733,7 @@ describe('a launch is checked against the store it seeds', () => {
       expect(WALK).not.toBe('')
       await expect(
         assertLaunchIsFixture({ profile, expected: fixture.binary, env, isolation }),
-      ).rejects.toThrow(`chooses no installation, and the startup handshake of a console with nothing chosen resolves a fugaro by walking ${WALK} and this app's PATH`)
+      ).rejects.toThrow(`chooses no installation, and the startup handshake of a console with nothing chosen resolves a fugaro by walking ${WALK}`)
     } finally {
       rmSync(isolation.scratch, { recursive: true, force: true })
     }
@@ -787,7 +789,7 @@ describe('a launch is checked against the store it seeds', () => {
       const empty = fixture.newProfile()
       await expect(
         assertLaunchIsFixture({ profile: empty, expected: fixture.binary, env, isolation }),
-      ).rejects.toThrow(`holds no installations.json, so the console's startup handshake would resolve a fugaro by walking ${WALK} and this app's PATH`)
+      ).rejects.toThrow(`holds no installations.json, so the console's startup handshake would resolve a fugaro by walking ${WALK}`)
 
       const broken = fixture.newProfile()
       writeFileSync(join(broken, 'installations.json'), '{"version":1}')

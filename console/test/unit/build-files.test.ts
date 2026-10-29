@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The packaged app carries the files it loads (desktop-console plan Task 3.4b,
 // and the handoff to Task 4.1; design sections 5.1 rule 3 and 8.2).
 //
@@ -17,8 +19,8 @@
 //     `installations.html`, or the picker's preload, or the compiled tree,
 //     fails here by name rather than shipping an app that draws an empty window.
 //
-// The list is **read off the tree** rather than written out, so a third document
-// or a third preload is covered the day it is added: every `.html` under
+// The list is **read off the tree** rather than written out, so the next
+// document or the next preload is covered the day it is added: every `.html` under
 // `src/renderer` is served by the `app://` handler, every `.ts` under
 // `src/preload` compiles to a preload a window loads by absolute path, and every
 // `.ts` under `src/` compiles into `dist/` because that is what
@@ -31,6 +33,8 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
+
+import { FONT_FILES } from '../../tools/bundle-renderer'
 
 const consoleDir = fileURLToPath(new URL('../..', import.meta.url))
 
@@ -64,17 +68,28 @@ const documents = filesNamed('src/renderer', '.html').map((name) => `src/rendere
 const preloads = filesNamed('src/preload', '.ts').map((name) => `dist/preload/${name.slice(0, -3)}.js`)
 
 /** compiled is the whole build output the main process and the renderer run
- * from, and the bundler's three outputs are what the documents actually load:
- * the dashboard's entry, the picker's entry, and -- since Task 6.2 -- the
- * stylesheet every document links. The stylesheet is the one this list catches
- * by name, and that is the whole point of naming it here: a `build.files` that
- * carried the two bundles and not `console.css` would package an app that opens
- * a window with no style in it, which is the failure this test exists for. */
+ * from, and the bundler's five outputs are what the documents actually load:
+ * the dashboard's entry, the picker's entry, the confirmation window's entry
+ * (V2.5.1a), the stylesheet every document
+ * links (Task 6.2), and elkjs's layout worker (GV2.2). The stylesheet and the
+ * worker are the ones this list catches by name, and that is the whole point of
+ * naming them here: a `build.files` that carried the two bundles and not
+ * `console.css` would package an app that opens a window with no style in it,
+ * which is the failure this test exists for. The notices file is not a build
+ * output, but it ships beside the worker whose licence it carries, so it is
+ * named here too, and so is the console's own licence (`LICENSE.md`, D311),
+ * which the packed app carries from 0.113.0. */
 const compiled = compiledModules()
 const bundlerOutputs = [
+  'LICENSE.md',
+  'THIRD_PARTY_NOTICES.md',
+  'dist/bundle/confirm.html',
+  'dist/bundle/confirm.js',
   'dist/bundle/console.css',
   'dist/bundle/console.js',
+  'dist/bundle/elk-worker.min.js',
   'dist/bundle/installations.js',
+  ...FONT_FILES.map(({ file }) => `dist/bundle/${file}`),
 ]
 
 /** NEVER_SHIPPED are the two compiled files Task 4.1 keeps out of the package by
@@ -150,7 +165,11 @@ describe('the packaged console carries what it loads', () => {
     // below true and mean nothing.
     expect(documents).toContain('src/renderer/installations.html')
     expect(documents).toContain('src/renderer/refusal.html')
-    expect(preloads).toEqual(['dist/preload/index.js', 'dist/preload/installations.js'])
+    expect(preloads).toEqual([
+      'dist/preload/confirm.js',
+      'dist/preload/index.js',
+      'dist/preload/installations.js',
+    ])
     expect(compiled).toContain('dist/main/picker.js')
     expect(compiled).toContain('dist/renderer/installations.js')
     expect(compiled.length).toBeGreaterThan(15)

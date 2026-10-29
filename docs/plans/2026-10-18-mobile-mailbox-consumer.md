@@ -1170,7 +1170,7 @@ one C0 names.
 
 ### Task T4: The ledger, the restart, and the dedupe — SECURITY-SENSITIVE, independent opus review
 
-**Files.** `internal/mailbox/ledger.go` (new) + `ledger_test.go` (new).
+**Files.** `internal/mailbox/ledger.go` (new) + `internal/mailbox/ledger_test.go` (new).
 **Depends on.** T1, T3; P1.1; M7.
 **Verification.** `GOFLAGS=-p=2 go test ./internal/mailbox -run 'Ledger|Restart' -count=1`: a
 duplicate delivery is not acted on twice; a process killed between the ledger commit and the action

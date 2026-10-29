@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See mobile/LICENSE.md for the terms.
 // The feed reader: the four granted families, subscribed, and the document
 // they add up to (mobile plan, Task P3.2; D112's answer, tension (b1)).
 //

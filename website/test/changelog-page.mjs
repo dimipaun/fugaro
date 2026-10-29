@@ -915,7 +915,7 @@ test('an entry is read in one hierarchy: the tag, the summary, then the notes', 
     `the release summary is not set a step up the type scale (${summary}): the summary is what a release gives a reader, and it is the line of the card that is read first`,
   )
 
-  // The notes are a control: the accent's hairline, the accent's legible tone, and a target
+  // The notes are a control: a filled tone step, the accent's legible tone, and a target
   // the owner's brief of 2026-10-19 measures every control against. The `<details>` is still
   // the mechanism (no script), so what is pinned here is that a reader can see it and reach it.
   const control = declarationsFor(css, 'the notes’ control', '.release-notes[', 'summary')
@@ -924,10 +924,12 @@ test('an entry is read in one hierarchy: the tag, the summary, then the notes', 
     /min-height:\s*44px/,
     `the notes’ control is not a 44 px target (${control}): the owner’s brief of 2026-10-19 measures every control of the site against it`,
   )
+  // Since the owner's polish round of 2026-10-23 a control is marked by a filled tone step (the
+  // panel) rather than by the accent's hairline: no 1 px outlined boxes. The accent stays its label.
   assert.match(
     control,
-    /border:\s*var\(--border-width\) solid var\(--accent\)/,
-    `the notes’ control does not carry the accent’s hairline (${control}): the accent is what marks a control the reader can operate, and a label in the muted tone is a line of prose`,
+    /background:\s*var\(--panel\)/,
+    `the notes’ control is not drawn on the panel's tone step (${control}): a control the reader can operate is a filled shape, not a line of prose`,
   )
   assert.match(
     control,
@@ -1073,4 +1075,20 @@ test('the page’s head carries the boards’ background, and the headline paint
   assert.match(headRule, /overflow:\s*hidden/, `the page’s head does not clip its background (${headRule}): the drawing is wider than the box it belongs to`)
   const titleRule = declarationsFor(css, 'the page’s headline', '.changelog-title[')
   assert.match(titleRule, /position:\s*relative/, `the page’s headline is not a positioned box (${titleRule}): the background paints over a static box, so the headline would be drawn under the glow it sits on`)
+})
+
+// The notes' reveal (the owner's request of 2026-10-24): an entrance on `[open]` in every
+// browser, gated on the reader's no-preference, and nothing hidden outside the animation.
+test('the release notes reveal on open, only where motion is welcome, and are never hidden at rest', () => {
+  const html = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist', 'changelog', 'index.html'), 'utf8')
+  assert.match(html, /<details class="release-notes"[^>]*>\s*<summary[^>]*>Highlights<\/summary>\s*<div class="release-notes-body"/, 'the notes carry no body wrapper for the reveal to run on')
+  const css = [...html.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n')
+  const reveal = cssRules(css).filter((rule) => /release-notes-body/.test(rule.selector || '') && cssDeclarations(rule.body).some(([p]) => p === 'animation' || p === 'animation-name'))
+  assert.ok(reveal.length > 0, 'the notes carry no reveal')
+  for (const rule of reveal) {
+    assert.match(rule.selector, /\[open\]/, `${rule.selector} animates the notes without the reader opening them`)
+    assert.ok(rule.conditions.some((c) => /prefers-reduced-motion\s*:\s*no-preference/.test(c)), `${rule.selector} animates for a reader who asked for less motion`)
+  }
+  const hiding = cssRules(css).filter((rule) => /release-notes-body/.test(rule.selector || '') && cssDeclarations(rule.body).some(([p, v]) => (p === 'opacity' && v.trim() === '0') || p === 'visibility'))
+  assert.deepEqual(hiding.map((rule) => rule.selector), [], 'a rule hides the notes outside the animation, so a browser that runs none never shows them')
 })

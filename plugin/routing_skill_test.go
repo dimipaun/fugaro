@@ -119,9 +119,7 @@ func TestWorkingSkillStatusNamesWhoStartedEachRun(t *testing.T) {
 	if !strings.Contains(status, "fugaro runs stats") {
 		t.Error("skills/working/reference/status.md does not name `fugaro runs stats`: a user asking who started the runs of a window has no command to be pointed at")
 	}
-	root := cli.NewRootCmd()
-	cmd, _, err := root.Find([]string{"runs", "stats"})
-	if err != nil || cmd == nil || cmd.Name() != "stats" {
-		t.Fatalf("fugaro runs stats does not resolve in the CLI tree: %v", err)
+	if c := resolveSkillCommand(cli.NewRootCmd(), "runs", "stats"); !c.known() || c.cmd.Name() != "stats" {
+		t.Fatal("fugaro runs stats does not resolve in the CLI tree")
 	}
 }

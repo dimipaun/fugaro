@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See console/LICENSE.md for the terms.
 // The fuses the console's shipped binary is built with (desktop-console plan
 // Task 4.1; design section 5.1 rule 4), and the packaging configuration they
 // belong to.
@@ -124,7 +126,7 @@ function fakeFuses(wire?: Partial<Record<FuseV1Options, FuseState>>): FuseTools 
     },
     async getCurrentFuseWire(path: string) {
       const flipped: Record<number, FuseState> = {}
-      // The untouched fuses at the states the pinned Electron 44.7.2 ships them
+      // The untouched fuses at the states the pinned Electron 45.0.0 ships them
       // in (read off the real binary: cookie encryption and the browser-process
       // snapshot off, WasmTrapHandlers on), so the fake wire is as long as the
       // real one.
@@ -199,7 +201,7 @@ describe('the six fuses the console is built with', () => {
   })
 })
 
-describe('the two fuses left at their upstream default', () => {
+describe('the three fuses left at their upstream default', () => {
   it('leaves EnableCookieEncryption alone', () => {
     expect(flips.has(FuseV1Options.EnableCookieEncryption)).toBe(false)
     expect(LEFT_ALONE_FUSES.map((entry) => entry.option)).toContain(
@@ -214,15 +216,20 @@ describe('the two fuses left at their upstream default', () => {
     )
   })
 
+  it('leaves WasmTrapHandlers alone, at its enabled default', () => {
+    expect(flips.has(FuseV1Options.WasmTrapHandlers)).toBe(false)
+    expect(LEFT_ALONE_FUSES.map((entry) => entry.option)).toContain(FuseV1Options.WasmTrapHandlers)
+  })
+
   it('accounts for every fuse this pin knows, so an Electron bump that adds one fails here', () => {
-    // The pin is what makes the count a fact: `@electron/fuses` 2.0.0 knows
-    // eight V1 fuses, six are flipped, two are named above. A newer Electron
-    // with a ninth arrives with this test red rather than with a fuse nobody
+    // The pin is what makes the count a fact: `@electron/fuses` 2.1.3 knows
+    // nine V1 fuses, six are flipped, three are named above. A newer Electron
+    // with a tenth arrives with this test red rather than with a fuse nobody
     // decided about.
     const known = Object.values(FuseV1Options).filter(
       (value): value is FuseV1Options => typeof value === 'number',
     )
-    expect(known).toHaveLength(8)
+    expect(known).toHaveLength(9)
     const decided = new Set<number>([
       ...FLIPPED_FUSES.map((entry) => entry.option),
       ...LEFT_ALONE_FUSES.map((entry) => entry.option),
@@ -230,14 +237,10 @@ describe('the two fuses left at their upstream default', () => {
     expect(known.filter((option) => !decided.has(option))).toEqual([])
   })
 
-  it('decides about the fuse the pinned Electron carries beyond the package: WasmTrapHandlers', () => {
-    // Electron 44.7.2's wire holds nine fuses and the package knows eight. The
-    // ninth is left at the binary's default, with its reason, and the hook
-    // verifies the default is still what the binary holds.
-    expect(BEYOND_PIN_FUSES.map((fuse) => [fuse.name, fuse.index, fuse.upstreamDefault])).toEqual([
-      ['WasmTrapHandlers', 8, true],
-    ])
-    for (const fuse of BEYOND_PIN_FUSES) expect(fuse.why.trim().length).toBeGreaterThan(20)
+  it('carries no fuse beyond the package: the pinned Electron’s nine are all named by it', () => {
+    // Electron 45.0.0's wire holds nine fuses and `@electron/fuses` 2.1.3 names
+    // all nine, so nothing is left to the beyond-the-pin list.
+    expect(BEYOND_PIN_FUSES).toEqual([])
     expect(ACCOUNTED_FUSE_COUNT).toBe(9)
   })
 })
@@ -359,6 +362,7 @@ describe('the afterPack hook', () => {
     expect(LEFT_ALONE_FUSES.map((fuse) => [fuse.name, fuse.upstreamDefault])).toEqual([
       ['EnableCookieEncryption', false],
       ['LoadBrowserProcessSpecificV8Snapshot', false],
+      ['WasmTrapHandlers', true],
     ])
     for (const fuse of LEFT_ALONE_FUSES) {
       const flipped = fakeFuses({ [fuse.option]: fuse.upstreamDefault ? FuseState.DISABLE : FuseState.ENABLE })
@@ -482,28 +486,47 @@ describe('the packaging configuration the fuses belong to', () => {
 
   it('ships the compiled main process, the document the window loads, and nothing else', () => {
     // The served root is `dist/bundle` (see `rendererRoot` in
-    // src/main/index.ts, Task 3.4a): `npm run build` writes the one script and
-    // copies the two documents there, and those three files -- `SERVED_FILES`
-    // in src/main/protocol.ts -- are listed by name, or a packaged console
-    // opens a window with no page in it. The preloads are named exactly: the
-    // dashboard window loads `dist/preload/index.js` and the picker's window
-    // `dist/preload/installations.js` (Task 3.4b), and nothing else under that
-    // directory ships. Only `.js`, the documents and the served stylesheet
-    // (Task 6.2, which every document links) are shipped, so no source map is;
+    // src/main/index.ts, Task 3.4a): `npm run build` writes the scripts and the
+    // stylesheet, copies the documents, elkjs's worker and the redesign's seven
+    // vendored fonts there, and those sixteen files -- `SERVED_FILES` in
+    // src/main/protocol.ts -- are listed by
+    // name, or a packaged console opens a window with no page in it. The
+    // preloads are named exactly: the dashboard window loads
+    // `dist/preload/index.js`, the picker's window
+    // `dist/preload/installations.js` (Task 3.4b) and the launch confirmation
+    // window `dist/preload/confirm.js` (V2.5.1a part 2b-1), and nothing else
+    // under that directory ships. Only `.js`, the documents, the served
+    // stylesheet (Task
+    // 6.2, which every document links), the worker's notices file
+    // (`THIRD_PARTY_NOTICES.md`, GV2.2) and the console's own licence
+    // (`LICENSE.md`, D311) are shipped, so no source map is;
     // `dist/renderer` is the bundler's input, not served, so it
     // is not shipped; and the two compiled files the app never loads -- the
     // packing hook (it needs a devDependency) and the fixture loader (tests and
     // the recorder) -- are excluded by name.
     expect(build.files).toEqual([
+      'LICENSE.md',
+      'THIRD_PARTY_NOTICES.md',
       'dist/main/**/*.js',
       '!dist/main/fuses.js',
       'dist/preload/index.js',
       'dist/preload/installations.js',
+      'dist/preload/confirm.js',
       'dist/shared/**/*.js',
       'dist/source/**/*.js',
       '!dist/source/fixture.js',
+      'dist/bundle/confirm.html',
+      'dist/bundle/confirm.js',
       'dist/bundle/console.css',
       'dist/bundle/console.js',
+      'dist/bundle/elk-worker.min.js',
+      'dist/bundle/IBMPlexMono-Medium.woff2',
+      'dist/bundle/IBMPlexMono-Regular.woff2',
+      'dist/bundle/IBMPlexMono-SemiBold.woff2',
+      'dist/bundle/InstrumentSans-Bold.woff2',
+      'dist/bundle/InstrumentSans-Medium.woff2',
+      'dist/bundle/InstrumentSans-Regular.woff2',
+      'dist/bundle/InstrumentSans-SemiBold.woff2',
       'dist/bundle/index.html',
       'dist/bundle/installations.html',
       'dist/bundle/installations.js',
@@ -521,7 +544,7 @@ describe('the packaging configuration the fuses belong to', () => {
     const patterns = build.files ?? []
     for (const pattern of patterns) {
       expect(pattern, `${pattern} is not a shape this test can read`).toMatch(
-        /^!?(?:[a-z]+\/[a-z]+\/\*\*\/\*\.js|[a-z]+(?:\/[a-z]+)*\/[a-z]+\.(?:js|html|css))$/,
+        /^!?(?:[a-z]+\/[a-z]+\/\*\*\/\*\.js|[a-z]+(?:\/[a-z]+)*\/[a-z][a-z.-]*\.(?:js|html|css)|dist\/bundle\/[A-Za-z-]+\.woff2|THIRD_PARTY_NOTICES\.md|LICENSE\.md)$/,
       )
     }
     const ships = (file: string): boolean => {
@@ -575,7 +598,7 @@ describe('the packaging configuration the fuses belong to', () => {
     // include in the list ends in `.js`, names one of the `.html` documents, or
     // is the served `.css` (Task 6.2) -- so no include names a `.map`, and a
     // pattern that started to would fail here.
-    for (const pattern of build.files ?? []) expect(pattern).toMatch(/\.(?:js|html|css)$/)
+    for (const pattern of build.files ?? []) expect(pattern).toMatch(/\.(?:js|html|css|md|woff2)$/)
   })
 
   it('publishes nowhere: publish is null, not merely absent', () => {
@@ -801,7 +824,7 @@ describe('the packaging configuration the fuses belong to', () => {
     expect(script).not.toMatch(/--publish\s+(?:always|onTag|onTagOrDraft)/)
     expect(script).not.toMatch(/electron-builder@/)
     const pin = manifest.devDependencies['electron-builder']
-    expect(pin).toBe('26.17.0')
+    expect(pin).toBe('26.18.0')
     expect(manifest.dependencies ?? {}).not.toHaveProperty('electron-builder')
     const lock = JSON.parse(readFileSync(LOCKFILE, 'utf8')) as {
       packages: Record<string, { version?: string; resolved?: string; integrity?: string; dev?: boolean }>

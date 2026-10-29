@@ -1,0 +1,10 @@
+version: 1
+project: aurora
+git: { provider: github }
+agent:
+  auth: api-key
+governance:
+  tiers:
+    enormous: { expected_usd: 10, expected_minutes: 600, max_subagents: 5 }
+workflows:
+  server: { commands: { build: make, test: make test } }

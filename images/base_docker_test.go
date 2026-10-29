@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -42,6 +43,20 @@ func TestBaseImageSmoke(t *testing.T) {
 		if !strings.Contains(string(out), want) {
 			t.Errorf("smoke output lacks %q:\n%s", want, out)
 		}
+	}
+}
+
+// TestBaseGitHonoursNoLazyFetch: the runner narrows a run's review range
+// only under a git that honours GIT_NO_LAZY_FETCH (git 2.44 and later,
+// gitops.NoLazyFetch); an older one would fetch every missing branch's
+// commit from a blobless clone's promisor remote, so the runner falls back to
+// the recorded range. The base image's git must be new enough that every run
+// on it narrows.
+func TestBaseGitHonoursNoLazyFetch(t *testing.T) {
+	image := testutil.BaseImageOf(t, "base")
+	v := testutil.Docker(t, "run", "--rm", "--network", "none", image, "git", "--version")
+	if !gitops.NoLazyFetch(v) {
+		t.Fatalf("the base image's git is %q, want 2.44 or later", v)
 	}
 }
 

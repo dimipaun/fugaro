@@ -11,8 +11,33 @@
     "run_id": { "type": "string", "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$" },
     "repo": { "type": "string", "pattern": "^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)+$" },
     "ref": { "type": "string", "minLength": 1 },
+    "base_branch": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._][A-Za-z0-9._/-]*$",
+      "allOf": [
+        { "not": { "pattern": "\\.\\." } },
+        { "not": { "pattern": "//" } },
+        { "not": { "pattern": "(^|/)\\." } },
+        { "not": { "pattern": "\\.lock(/|$)" } },
+        { "not": { "pattern": "[/.]$" } }
+      ],
+      "description": "The base the launcher resolved from the layers below the repository's own file (config.EffectiveBaseBranch: the local config's repos.<r>.base_branch, else the project's base_branch, which a machine whose own config sets none reads from the published policy node). The runner uses it only when the fugaro.yaml at the ref does not set git.base_branch itself, which is the first layer. Absent (omitempty) for a launch whose file names the base, and for one whose resolved value is main, which is the fallback the file's own resolution already has; the launcher's skew gate omits it against a job image older than 0.12.1 rather than refusing the launch. The rules here are config.ValidBranchName's, the one validator fugaro.yaml's git.base_branch, the installation config's own top-level base_branch and the policy node's are all held to: letters, digits, '.', '_', '-' and '/', not starting with '-', '.' or '/', with no '..', '//', component starting with '.', or trailing '/', '.' or '.lock'."
+    },
     "workflow": { "type": "string" },
     "task": { "type": "string" },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100,
+      "pattern": "^[^\\x00-\\x1F\\x7F-\\x9F\\x{2028}\\x{2029}]+$",
+      "description": "The run's own job title (fugaro run --title, task.Spec.Title): the one line every surface that names the run shows (task.TitleLine). Absent for every launch that gave none, which is where the title is the task prompt's own first line. It is refused unless it is one non-empty line of at most 100 runes with no control character (task.TitleProblem, applied by the launcher and by task.Parse), which is what the pattern and maxLength here carry apart from the whitespace-only case. Needs a 0.8.5 runner, which is why a launch that sets it is gated at launch (internal/cli/recipes_skew.go's titlesSince): task.Parse decodes with DisallowUnknownFields, so an older runner refuses the whole spec rather than running the task without it. This property was missing until the console dependency graph's GV1.2 added its sibling: schemas/task.schema.json is additionalProperties: false, so every launch with --title wrote a task.json this schema rejected."
+    },
+    "plan_task": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)+$",
+      "maxLength": 128,
+      "description": "The plan task this run works on (fugaro run --plan-task; console dependency graph plan GV1.2, decision GD5): <plan>/<task>, the id the plan's own dependency graph spells a node with. Absent for every launch that named none, which is the common case and every spec written before the field. The shape here is task.PlanTaskProblem's, applied by the launcher on write and by task.Parse on read: two or more '/'-separated elements, each starting with a letter or a digit and otherwise letters, digits, '.', '_' and '-', at most 128 bytes. Two rules of that one the pattern cannot carry are that a '.' or '..' element and a control character are refused. It is a display-only join hint: nothing authorises, admits or budgets anything by it. Needs a 0.11.2 runner, which is why a launch that sets it is gated at launch (internal/cli/recipes_skew.go's planTaskSince): task.Parse decodes with DisallowUnknownFields, so an older runner refuses the whole spec rather than running the task without it."
+    },
     "branch": { "type": "string", "pattern": "^fugaro/[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$" },
     "pr": { "type": "integer", "minimum": 1 },
     "previous_run": { "type": "string", "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$" },
@@ -38,6 +63,26 @@
     "mode": {
       "enum": ["implement", "review", "artifact"],
       "description": "The resolved recipe's mode, written by the launching CLI (\"artifact\" today; an implement or review recipe writes nothing, so those specs are unchanged). The runner selects the run's shape from it at bootstrap, before the recipe is resolved, and cross-checks it against the resolved recipe afterwards. Needs a 0.8.0 runner, which is why an artifact launch at a job image older than that is refused at launch."
+    },
+    "rigor": {
+      "enum": ["poc", "startup", "pro", "critical", "hotfix"],
+      "description": "The rigor mode the launching CLI asked for (fugaro run --mode, docs/rigor-modes implementation-plan T1.6): the run's own request, which may raise the mode its layers resolve and never lower it (D6). Absent asks for none, which is every launch without the flag, and the run then resolves from fugaro.yaml's rigor block and the project layer alone. It is not `mode` above: that one is the recipe's mode, a different question with a different vocabulary. Needs a 0.11.1 runner, which is why a launch that would set it at an older job image is refused at launch."
+    },
+    "paths": {
+      "type": "array",
+      "description": "The paths the launching CLI declared this run will touch (fugaro run --path, repeatable), in the order --path named them: the runner matches them against the base branch's rigor.areas rules at D22's first moment, and a path matching no rule changes nothing. Absent for every launch that declared none. A blank path is no path (the same rule as task.InputNameBlank's, expressed as the pattern), and both bounds are task.MaxDeclaredPaths and task.MaxDeclaredPathBytes. Needs a 0.11.1 runner, the same gate `rigor` above has.",
+      "items": { "type": "string", "pattern": "\\S", "maxLength": 200 },
+      "maxItems": 100
+    },
+    "tier": {
+      "enum": ["trivial", "small", "medium", "large"],
+      "description": "The expectation tier of this run (docs/task-governance/spec.md §3, plan T8.1): what the run is expected to cost and take, which selects one tier of fugaro.yaml's governance.tiers. Absent is untiered — every spec written before this release, and every launch that declares no tier. fugaro run --tier writes it, and a --pr follow-up carries the tier the run it follows recorded (plan T8.1b). The vocabulary is internal/tier's and spelled exactly as it spells it: a near miss (\"Trivial\", \"SMALL\") is refused, never read as an unknown tier. It is not `rigor` above: that one is the review's depth, a different question with a different vocabulary. Needs a 0.13.0 runner: an older runner's task.Parse decodes with DisallowUnknownFields and refuses the field outright."
+    },
+    "expected_scope": {
+      "type": "array",
+      "description": "Roughly which files or areas the run is expected to touch (docs/task-governance/spec.md §3's expectation envelope). It is paths and never prose: nothing here reaches a prompt. Absent for every spec that declares none, and unlike `tier` above no launcher writes it yet. A blank entry is no path (the same rule as task.InputNameBlank's, expressed as the pattern), and both bounds are task.MaxDeclaredPaths and task.MaxDeclaredPathBytes. Needs a 0.13.0 runner, the same as `tier` above.",
+      "items": { "type": "string", "pattern": "\\S", "maxLength": 200 },
+      "maxItems": 100
     },
     "inputs": {
       "type": "array",
@@ -87,6 +132,17 @@
       "maxLength": 31,
       "not": { "const": "default" },
       "description": "The named Claude OAuth account this run's agent.auth: oauth workflow used (docs/design/named-oauth-tokens.md). Absent, or \"default\" itself, name the repository's unnamed claude-oauth-token secret; \"default\" is therefore never a value here, which is why the pattern alone (matching \"default\") is not enough. maxLength is required alongside the pattern: each of the pattern's {0,30} repetitions may consume one character or, via the dash alternative, two (\"-\" plus the alphanumeric it must precede), so the pattern alone admits names up to 61 characters (e.g. \"a\" + 30 repetitions of \"-a\") — config.MaxClaudeAccountNameLen (internal/config/claude_accounts.go) is 31, and this must match it exactly."
+    },
+    "compression_off": {
+      "type": "boolean",
+      "description": "task.Spec.CompressionOff, written by fugaro run --no-compression: it disables agent.compression for this run only, overriding the repository's own reviewed choice (docs/design/headroom-compression.md §4). There is no field and no flag to force compression on, so this is the only direction the override goes. Needs a 0.12.0 runner, which is why the launcher gates at launch (internal/cli/recipes_skew.go's compressionSince) every launch whose task carries it: one that writes it, which --no-compression does only when the resolved configuration turns compression on, and a --pr follow-up or a --retry, which inherits it from the run it continues and so carries it even after the repository's key has been removed. task.Parse decodes with DisallowUnknownFields, so an older runner refuses the whole spec rather than running the task without it."
+    },
+    "digest_runs": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 5000,
+      "items": { "type": "string", "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$" },
+      "description": "The report run's manifest (task-governance plan T3.6, task.Spec.DigestRuns): the run IDs of the records the digest step may read, which the launching CLI listed from this repository's own runs/ prefix — the last 40 days, newest first, at most task.MaxDigestRuns of them. Absent for every launch that is not a report run, so a spec written for one is byte-identical to what the previous release wrote. The job reads each named record by name and never lists, so this list is what decides which records a run reads; the runner still refuses an ID outside its own repository's prefix (G2). It is accepted only with a recipe whose first step is digest (task.RecipeUsesDigest), the only step that reads it; a repository-sourced recipe carries its name alone, so the launcher judges the file it resolved (internal/cli/run_digest_manifest.go) and the runner resolves that name at the task's ref. Needs a 0.13.0 runner (internal/cli/recipes_skew.go's digestSince, the same gate the digest step itself needs): task.Parse decodes with DisallowUnknownFields, so an older runner refuses the whole spec rather than running the task without its manifest. The launcher's image gate refuses at an older job image every launch whose task carries this field, whatever its recipe's source (internal/cli/recipes_skew.go's recipeSinceFor reads the manifest before the recipe), and one whose task carries the catalog run-digest's own text; a repository report recipe whose listing came out empty carries neither, and there the older runner refuses the digest step at bootstrap."
     }
   },
   "dependentRequired": {

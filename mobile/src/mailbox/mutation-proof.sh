@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+# See mobile/LICENSE.md for the terms.
 # Mutation-proves the mailbox client's guards (mobile plan, Task P3.6).
 #
 # This module is SECURITY-SENSITIVE and its rules are almost all of the "does
@@ -99,6 +101,8 @@ require_clean() { # file
   fi
 }
 require_clean "$F"
+require_clean mobile/src/mailbox/gate.js
+require_clean mobile/src/mailbox/connection.js
 require_clean mobile/src/mailbox/mac.js
 require_clean mobile/src/mailbox/store.js
 require_clean mobile/src/accounts/secure-store.js
@@ -206,16 +210,16 @@ run "the tag is the keyed one, not a placeholder" \
   "    const record = Object.freeze({ ...base, mac: tag.result });" \
   "    const record = Object.freeze({ ...base, mac: 'f'.repeat(64) });"
 run "the text is redacted before it is signed and written" \
-  "    const base = Object.freeze({ id, sender: from, text: body.text, at });" \
-  "    const base = Object.freeze({ id, sender: from, text, at });"
+  "      ? { id, sender: from, text: body.text, at, kind: 'action', action: opts.action }
+      : { id, sender: from, text: body.text, at });" \
+  "      ? { id, sender: from, text, at, kind: 'action', action: opts.action }
+      : { id, sender: from, text, at });"
 run "the message goes to the inbox, and not to the outbox" \
   "    const written = await store.write(paths.inboxMessage(id), record);" \
   "    const written = await store.write(paths.outboxMessage(id), record);"
 run "a message that is already there is landed, not a failure" \
-  "    if (written.ok || written.code === STORE_CODES.EXISTS) {
-      outbound.set(id, { record, landed: true });" \
-  "    if (written.ok) {
-      outbound.set(id, { record, landed: true });"
+  "    if (written.ok || written.code === STORE_CODES.EXISTS) {" \
+  "    if (written.ok) {"
 
 # 4. The retry: the same record, until the outbox answers or the TTL passes.
 run "the re-send is the same record, never re-stamped" \
@@ -253,10 +257,12 @@ run "a text nobody can sign is refused before the key is touched" \
 run "the schema validates the record before it is written" \
   "    if (!valid.ok) return refuse(valid.code, valid.field);" \
   "    if (false) return refuse(valid.code, valid.field);"
-run "the client object carries its six names and nothing else" \
+run "the client object carries its seven names and nothing else" \
   "    pending,
+    unsent: unsentText,
   });" \
   "    pending,
+    unsent: unsentText,
     raw: (path, value) => store.write(path, value),
   });"
 run "the tag comparison is over the whole tag (mac.js)" \
@@ -329,10 +335,118 @@ run "the leak fence searches only for material a match is evidence about (the cl
   mobile/src/accounts/secure-store.js src/mailbox/client.test.js
 
 run "the store is written in one file only (the scan)" \
-  "export function createRoot({ React, store, View, Text }) {" \
+  "export function createRoot({ React, store, View, Text, Pressable, useDemo, screens, onLeaveDemo }) {" \
   "export async function aSecondWritePath(store) { return store.write('mailbox/u/inbox/x', 1); }
-export function createRoot({ React, store, View, Text }) {" \
+export function createRoot({ React, store, View, Text, Pressable, useDemo, screens, onLeaveDemo }) {" \
   mobile/src/app/root.js src/mailbox/write-path.test.js
+
+# 10. The offline gate (P6.10; D167, G21). Sixteen guards in client.js, four in
+#     gate.js, one in connection.js and one in the store's SDK model -- and the store's is proved
+#     twice, once against its own suite and once against the client's, because
+#     "the SDK queue would have noticed" is the control the client's claim rests
+#     on and a fake that stopped modelling the queue would quietly prove nothing.
+run "the connection gate in send is asked at all" \
+  "    if (!verdict.ok) {
+      return gateRefusal(verdict, { text: body.text, at, keepText: !isAction });" \
+  "    if (false) {
+      return gateRefusal(verdict, { text: body.text, at, keepText: !isAction });"
+run "send judges the LAST poll's heartbeat again, at the time the owner speaks" \
+  "evaluateGate({ online: connection.isOnline(), presence: consumerPresence(at) });" \
+  "evaluateGate({ online: connection.isOnline(), presence: null });"
+run "the poll's observation is kept for the gate" \
+  "    observation = Object.freeze({ beat, heartbeat, verified: verdicts.result.heartbeat });" \
+  "    observation = null;"
+run "the owner is TOLD: the refusal speaks" \
+  "    const message = offlineSpeech(verdict.code);
+    const said = await speaker.speak(message);" \
+  "    const message = offlineSpeech(verdict.code);
+    const said = { ok: true };"
+run "a gated utterance is kept as unsent text" \
+  "    if (keepText) unsent.push(Object.freeze({ text, at, code: verdict.code }));" \
+  "    if (false) unsent.push(Object.freeze({ text, at, code: verdict.code }));"
+run "a gated ACTION is not kept as unsent text" \
+  "      return gateRefusal(verdict, { text: body.text, at, keepText: !isAction });" \
+  "      return gateRefusal(verdict, { text: body.text, at, keepText: true });"
+run "an action record is recognised as one" \
+  "    const isAction = Object.hasOwn(opts, 'action');" \
+  "    const isAction = false;"
+run "an action that landed is not put in the outbox queue" \
+  "      if (!isAction) outbound.set(id, { record, landed: true });" \
+  "      outbound.set(id, { record, landed: true });"
+run "an action whose write failed is not kept for a retry" \
+  "    if (!isAction) outbound.set(id, { record, landed: false });" \
+  "    outbound.set(id, { record, landed: false });"
+run "flush writes nothing with no connection" \
+  "    const verdict = evaluateConnection(connection.isOnline());
+    if (!verdict.ok) return refuse(verdict.code, verdict.field);" \
+  "    const verdict = evaluateConnection(connection.isOnline());
+    if (false) return refuse(verdict.code, verdict.field);"
+run "poll does nothing at all with no connection" \
+  "    const online = evaluateConnection(connection.isOnline());
+    if (!online.ok) return refuse(online.code, online.field);" \
+  "    const online = evaluateConnection(connection.isOnline());
+    if (false) return refuse(online.code, online.field);"
+run "a send refusal the gate did not make carries no sentence either" \
+  "    if (text.length > TEXT_MAX) return refuse(CLIENT_CODES.TOO_LONG, 'text');" \
+  "    if (text.length > TEXT_MAX) return Object.freeze({ ok: false, code: CLIENT_CODES.TOO_LONG, field: 'text', message: 'that is too long.', told: false });"
+run "a refused flush carries no sentence to render or to speak" \
+  "    if (!verdict.ok) return refuse(verdict.code, verdict.field);" \
+  "    if (!verdict.ok) return Object.freeze({ ok: false, code: verdict.code, field: verdict.field, message: offlineSpeech(verdict.code), told: false });"
+run "a refused poll carries no sentence to render or to speak" \
+  "    if (!online.ok) return refuse(online.code, online.field);" \
+  "    if (!online.ok) return Object.freeze({ ok: false, code: online.code, field: online.field, message: offlineSpeech(online.code), told: false });"
+run "the double's constructor is no more generous than the gate (connection.js)" \
+  "    this.#online = options.online === undefined ? true : options.online === true;" \
+  "    this.#online = options.online !== false;" \
+  mobile/src/mailbox/connection.js src/mailbox/connection.test.js
+run "a connection that is not \`true\` is offline (gate.js)" \
+  "  if (online !== true) return refuse(GATE_CODES.NO_CONNECTION, 'connection');" \
+  "  if (online !== true && online !== false) return refuse(GATE_CODES.NO_CONNECTION, 'connection');" \
+  mobile/src/mailbox/gate.js src/mailbox/gate.test.js
+run "a live consumer must be a VERIFIED one (gate.js)" \
+  "  if (presence.state === STATE.LIVE && presence.verified === true) return Object.freeze({ ok: true });" \
+  "  if (presence.state === STATE.LIVE) return Object.freeze({ ok: true });" \
+  mobile/src/mailbox/gate.js src/mailbox/gate.test.js
+run "an unobserved consumer IS a refusal, not a licence (gate.js; the review's M2)" \
+  "  if (presence === null || presence === undefined) {
+    return refuse(GATE_CODES.CONSUMER_UNOBSERVED, 'presence');
+  }" \
+  "  if (presence === null || presence === undefined) return Object.freeze({ ok: true });" \
+  mobile/src/mailbox/gate.js src/mailbox/gate.test.js
+run "the gate is asked AGAIN at the write, so a connection that goes while the Keychain is up is caught (client.js; the review's M1)" \
+  "    if (!still.ok) {
+      return gateRefusal(still, { text: body.text, at, keepText: !isAction });" \
+  "    if (false) {
+      return gateRefusal(still, { text: body.text, at, keepText: !isAction });"
+run "a client with no connection port is built and REFUSES to send (client.js; the review's BLOCKER)" \
+  "  const { keys, store, connection = UNWIRED_CONNECTION, speaker, now, newId, secrets } = options;" \
+  "  const { keys, store, connection = { isOnline: () => true }, speaker, now, newId, secrets } = options;"
+run "a clock that disagrees is its own reason, not offline's (gate.js)" \
+  "    case STATE.CLOCK_DIFFERS:
+      return refuse(GATE_CODES.CONSUMER_CLOCK_DIFFERS, 'presence');" \
+  "    case STATE.CLOCK_DIFFERS:
+      return refuse(GATE_CODES.CONSUMER_OFFLINE, 'presence');" \
+  mobile/src/mailbox/gate.js src/mailbox/gate.test.js
+run "the store's SDK holds a write made with no connection (store.js)" \
+  "    if (this.#offline) {
+      this.#queued.set(path, copy(value));
+      return Object.freeze({ ok: true });
+    }" \
+  "    if (false) {
+      this.#queued.set(path, copy(value));
+      return Object.freeze({ ok: true });
+    }" \
+  mobile/src/mailbox/store.js src/mailbox/store.test.js
+run "the SDK's queue is real, which is what the client's claim rests on (store.js)" \
+  "    if (this.#offline) {
+      this.#queued.set(path, copy(value));
+      return Object.freeze({ ok: true });
+    }" \
+  "    if (false) {
+      this.#queued.set(path, copy(value));
+      return Object.freeze({ ok: true });
+    }" \
+  mobile/src/mailbox/store.js src/mailbox/client.test.js
 
 echo
 echo "guards proved: $killed killed, $survivors survived, $unapplied not applied"
