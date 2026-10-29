@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See console/LICENSE.md for the terms.
 // The redactor, held to its own contract (desktop-console plan Task 1.4,
 // SECURITY-SENSITIVE).
 //

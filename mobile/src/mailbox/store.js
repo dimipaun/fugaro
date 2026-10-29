@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See mobile/LICENSE.md for the terms.
 // The database, behind a port (mobile plan, Task P3.6; Global Constraint 10,
 // Voice D52's "fakes from task one").
 //
@@ -122,6 +124,8 @@ export class MemoryMailboxStore {
   #failWrites;
   #failReads;
   #existsRefuses;
+  #offline = false;
+  #queued = new Map();
 
   /**
    * @param {{ failWrites?: boolean, failReads?: boolean, existsRefuses?: boolean }} [options]
@@ -149,6 +153,24 @@ export class MemoryMailboxStore {
     if (typeof path !== 'string' || path === '') return refuse(STORE_CODES.WRITE_FAILED, 'path');
     this.#writes.push(Object.freeze({ path, value }));
     if (this.#failWrites) return refuse(STORE_CODES.WRITE_FAILED, 'path');
+    // The SDK's own offline behaviour (P6.10, D167; G21): a write made with no
+    // connection is not sent, it is HELD, and the SDK resolves it locally as
+    // though it had landed. That is what makes "accepting messages into the
+    // void" invisible to a caller -- and it is off by default, because a suite
+    // that is about something else must not silently be about this.
+    if (this.#offline) {
+      this.#queued.set(path, copy(value));
+      return Object.freeze({ ok: true });
+    }
+    const judged = this.#apply(path, value);
+    return judged ?? Object.freeze({ ok: true });
+  }
+
+  // apply is the database's judgement of one write, shared by a write that is
+  // sent and by the SDK's queue draining on a reconnect, so that the queue
+  // cannot land something a direct write would have refused. It answers `null`
+  // when the write landed.
+  #apply(path, value) {
     if (isAck(path)) {
       const parent = path.slice(0, -'/acked'.length);
       if (value !== true) return refuse(STORE_CODES.BAD_VALUE, 'value');
@@ -156,7 +178,7 @@ export class MemoryMailboxStore {
     }
     if (this.#existsRefuses && this.#nodes.has(path)) return refuse(STORE_CODES.EXISTS, 'path');
     this.#nodes.set(path, copy(value));
-    return Object.freeze({ ok: true });
+    return null;
   }
 
   /**
@@ -215,6 +237,50 @@ export class MemoryMailboxStore {
     this.#failWrites = failWrites;
     this.#failReads = failReads;
     return this;
+  }
+
+  /**
+   * The SDK's connection, and what its offline queue is holding (P6.10).
+   *
+   * `setOffline` is a different thing from `setFailures({failWrites})`, and the
+   * difference is the whole of D167: a FAILED write is refused and the caller
+   * knows; a QUEUED write is accepted, held, and sent on reconnect -- the
+   * caller is told nothing and the write arrives whenever the network does.
+   * `pendingWrites()` is what the SDK would send if the connection came back,
+   * `flushQueue()` is that reconnect, and `cancelPending()` is the drop the
+   * client deliberately does NOT rely on: its answer is to issue nothing.
+   */
+  setOffline(offline = true) {
+    this.#offline = offline === true;
+    return this;
+  }
+
+  /** What the SDK is holding, in the order it was handed over. */
+  pendingWrites() {
+    return Object.freeze([...this.#queued].map(([path, value]) => Object.freeze({ path, value })));
+  }
+
+  /** Drop what is queued and answer how many were dropped -- the SDK's cancel. */
+  cancelPending() {
+    const dropped = this.#queued.size;
+    this.#queued.clear();
+    return dropped;
+  }
+
+  /** The reconnect: send what is held, through the same judgement a write gets. */
+  flushQueue() {
+    const applied = [];
+    const refused = [];
+    for (const [path, value] of [...this.#queued]) {
+      const judged = this.#apply(path, value);
+      if (judged === null) {
+        this.#queued.delete(path);
+        applied.push(path);
+      } else {
+        refused.push(Object.freeze({ path, code: judged.code }));
+      }
+    }
+    return Object.freeze({ applied: Object.freeze(applied), refused: Object.freeze(refused) });
   }
 
   // subtree is one database read: the exact node if it holds a value, the

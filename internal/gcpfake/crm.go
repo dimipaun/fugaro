@@ -2,6 +2,7 @@ package gcpfake
 
 import (
 	"encoding/json"
+	"maps"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -42,6 +43,7 @@ type CRM struct {
 	taken    map[string]bool      // IDs held by projects the caller cannot read
 	creates  []CreatedProject     // creates accepted, in order
 	failNew  *apiError            // answers every create (an organization policy, say)
+	failOp   *crmOpError          // the create's operation completes with this error
 	failGet  map[string]*apiError // answers the plain read of a project with an error of the test's own words
 	hide     map[string]int       // reads still refused per new project
 	ops      map[string]*crmOp    // operations by name
@@ -53,11 +55,20 @@ type CRM struct {
 type CreatedProject struct {
 	ID, DisplayName, Parent string
 	Number                  int64
+	// Labels are the labels the create request carried.
+	Labels map[string]string
 }
 
 type crmOp struct {
 	polls int
 	proj  CreatedProject
+}
+
+// crmOpError is an operation's own error: a google.rpc.Code and its message,
+// as the v3 API reports one.
+type crmOpError struct {
+	code int64
+	msg  string
 }
 
 // FirstCreatedProjectNumber is the number the fake gives the first project a
@@ -226,6 +237,23 @@ func (f *CRM) FailCreates(code int, status, msg string) {
 	}
 }
 
+// FailOperation makes every create's operation complete with error code and
+// message, as the API does when the refusal comes back asynchronously (an
+// organization policy, say): the create itself is accepted and the caller only
+// learns the truth by polling — and, as with the real API, no project exists
+// when the operation ends that way (the record the create made is dropped, so
+// Has and Creates answer no project, which is what a test asserts). code is a
+// google.rpc.Code — 7 PERMISSION_DENIED, 8 RESOURCE_EXHAUSTED, 9
+// FAILED_PRECONDITION. A code of 0 lifts it.
+func (f *CRM) FailOperation(code int64, msg string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.failOp = nil
+	if code != 0 {
+		f.failOp = &crmOpError{code: code, msg: msg}
+	}
+}
+
 // Creates are the projects created so far.
 func (f *CRM) Creates() []CreatedProject {
 	f.mu.Lock()
@@ -241,6 +269,20 @@ func (f *CRM) Has(id string) bool {
 	return ok
 }
 
+// drop forgets everything the fake recorded about a project the caller
+// created and then lost: a create whose operation ends in an error leaves no
+// project behind. The caller holds mu.
+func (f *CRM) drop(id string) {
+	delete(f.projects, id)
+	delete(f.hide, id)
+	for i := len(f.creates) - 1; i >= 0; i-- {
+		if f.creates[i].ID == id {
+			f.creates = append(f.creates[:i], f.creates[i+1:]...)
+			break
+		}
+	}
+}
+
 // visible reports whether a read of id may answer now, counting down the
 // propagation of a new project. The caller holds mu.
 func (f *CRM) visible(id string) bool {
@@ -252,15 +294,20 @@ func (f *CRM) visible(id string) bool {
 }
 
 type v3Project struct {
-	Name        string `json:"name"`
-	ProjectID   string `json:"projectId"`
-	DisplayName string `json:"displayName,omitempty"`
-	State       string `json:"state"`
-	Parent      string `json:"parent,omitempty"`
+	Name        string            `json:"name"`
+	ProjectID   string            `json:"projectId"`
+	DisplayName string            `json:"displayName,omitempty"`
+	State       string            `json:"state"`
+	Parent      string            `json:"parent,omitempty"`
+	Labels      map[string]string `json:"labels,omitempty"`
 }
 
 func (f *CRM) v3Project(id string) v3Project {
-	return v3Project{Name: "projects/" + strconv.FormatInt(f.projects[id], 10), ProjectID: id, DisplayName: id, State: cmpOr(f.states[id], "ACTIVE")}
+	p := v3Project{Name: "projects/" + strconv.FormatInt(f.projects[id], 10), ProjectID: id, DisplayName: id, State: cmpOr(f.states[id], "ACTIVE")}
+	if ls := f.labels[id]; len(ls) > 0 {
+		p.Labels = maps.Clone(ls)
+	}
+	return p
 }
 
 // handleV3 serves projects.create, its operation and projects.get.
@@ -268,9 +315,10 @@ func (f *CRM) handleV3(w http.ResponseWriter, r *http.Request, body []byte) bool
 	switch {
 	case r.URL.Path == "/v3/projects" && r.Method == http.MethodPost:
 		var in struct {
-			ProjectID   string `json:"projectId"`
-			DisplayName string `json:"displayName"`
-			Parent      string `json:"parent"`
+			ProjectID   string            `json:"projectId"`
+			DisplayName string            `json:"displayName"`
+			Parent      string            `json:"parent"`
+			Labels      map[string]string `json:"labels"`
 		}
 		if err := json.Unmarshal(body, &in); err != nil || in.ProjectID == "" {
 			writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "a project ID is required")
@@ -286,8 +334,11 @@ func (f *CRM) handleV3(w http.ResponseWriter, r *http.Request, body []byte) bool
 		}
 		f.nextProj++
 		f.nextOp++
-		p := CreatedProject{ID: in.ProjectID, DisplayName: in.DisplayName, Parent: in.Parent, Number: f.nextProj}
+		p := CreatedProject{ID: in.ProjectID, DisplayName: in.DisplayName, Parent: in.Parent, Number: f.nextProj, Labels: maps.Clone(in.Labels)}
 		f.projects[p.ID] = p.Number
+		if len(in.Labels) > 0 {
+			f.labels[p.ID] = maps.Clone(in.Labels)
+		}
 		f.hide[p.ID] = f.PropagationReads
 		f.creates = append(f.creates, p)
 		name := "operations/cp." + strconv.Itoa(f.nextOp)
@@ -304,6 +355,16 @@ func (f *CRM) handleV3(w http.ResponseWriter, r *http.Request, body []byte) bool
 		if op.polls > 0 {
 			op.polls--
 			writeJSON(w, http.StatusOK, map[string]any{"name": name, "done": false})
+			return true
+		}
+		if f.failOp != nil {
+			// The real API creates no project when the operation ends in an
+			// error: the create was accepted, and the project never existed.
+			// The record the create made is dropped with it, so a test can
+			// assert that nothing was left behind (nothingDone reads Creates).
+			f.drop(op.proj.ID)
+			writeJSON(w, http.StatusOK, map[string]any{"name": name, "done": true,
+				"error": map[string]any{"code": f.failOp.code, "message": f.failOp.msg}})
 			return true
 		}
 		resp := f.v3Project(op.proj.ID)

@@ -169,6 +169,36 @@ func TestRecipeNonReviewModeMismatchFailsBeforeImplement(t *testing.T) {
 	}
 }
 
+// TestRecipeDigestStepFailsBeforeImplement: the digest step is the runner's
+// own work — it writes the run reports the repository is missing and commits
+// them, with no model call — and planOf has no arm for it. A run of such a
+// recipe stops at the step, before any implement stage: this one stops
+// because its task carries no digest_runs manifest, which is the one input
+// the step reads (T3.6). What the test pins is that no implement stage runs
+// and no ordinary pull request is opened in the recipe's name — the opposite
+// of what run-digest asks for, and the reason the step takes implement's
+// place in agentLoop rather than being dropped from the plan.
+//
+// Mutation (drop the r.digest dispatch from runner.go's agentLoop): this test
+// fails, finding implement runs and the run ends with a pull request rather
+// than an infra_error.
+func TestRecipeDigestStepFailsBeforeImplement(t *testing.T) {
+	const yaml = "version: 1\nname: rundigest\nsteps:\n  - digest: {}\n  - review: { max_rounds: 1 }\n"
+	h := newHarness(t, firstLineCfg(t, 2, ""), recipeSpec(embeddedTask("rundigest", yaml)))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The step's own refusal ends the run (the gate's failures end one the
+	// same way), so it is the record that carries it, not Run's error.
+	if rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "digest_runs") {
+		t.Fatalf("rec = %+v", rec)
+	}
+	if len(h.agent.calls) != 0 {
+		t.Fatalf("%d agent calls, want none (implement must not run)", len(h.agent.calls))
+	}
+}
+
 // TestRecipeCheckStepReachesTheGate: an embedded recipe with a check step —
 // the same resolution path recipe.NotYetRunnable used to refuse before
 // Task 11's runner gated the run on it — now runs the gate instead: a clean

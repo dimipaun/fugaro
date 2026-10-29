@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: LicenseRef-Fugaro-Subscription -->
+<!-- See console/LICENSE.md for the terms. -->
 # The screenshot fixtures — every value invented
 
 These are the documents the owner's one-command screenshot run

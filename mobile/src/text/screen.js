@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See mobile/LICENSE.md for the terms.
 // The text screen's tree (mobile plan, Task P6.9; D167, D170, D114).
 //
 // D167's second half is one screen: "a text screen listing pending prompts and
@@ -180,10 +182,16 @@ function promptLine(entry) {
  *     instruction under it. Drawing P6.2's own `readBack` here instead would
  *     put a "Say" line and a "Type" line on the same screen -- the
  *     contradiction this arrangement exists to prevent;
- *   * `unsent` -- the mailbox client's `pending()`: the text that has not
- *     reached the agent yet (D167's first half is that this is SHOWN rather
- *     than queued by the SDK, so a user who typed into a dead connection can
- *     see it is still theirs);
+ *   * `unsent` -- the mailbox client's **`unsent()`**, not its `pending()`: the
+ *     text the gate REFUSED, `[{ text, at, code }]`, oldest first. D167's first
+ *     half is that this is SHOWN rather than handed to the SDK's queue, so a
+ *     user who typed into a dead connection can see the words are still theirs
+ *     and say them again. `pending()` is the other list and must not be passed
+ *     here: it is what the client is ALREADY re-delivering itself (`landed`) or
+ *     holds for a retry, so drawing it as unsent would invite the owner to
+ *     retype a sentence the consumer is already acting on -- `client.js` says
+ *     the same thing from its side ("a screen resending from here would be a
+ *     second write of a record already in flight");
  *   * `notice` -- one line the app has to say (a refusal's own code, or that a
  *     confirmed action was not delivered). A string, or null.
  *
@@ -255,18 +263,23 @@ export function createTextScreen({ React, View, Text, TextInput }) {
     // The unsent text is the user's own and has NOT reached the agent: it is
     // shown above the keyboard, in the order the client holds it.
     //
-    // `landed: true` is **not** drawn here, and that is the point of the flag.
-    // D167(a) and P3.6's own `pending()` reserve "the unsent text the owner is
-    // shown" for a message the database has NOT received; a landed one has been
-    // received, and a screen that drew it the same way would invite the owner
-    // to retype a sentence the consumer is already acting on -- a duplicate
-    // command from a screen whose failure mode is meant to be the safe one.
+    // **What this list is, and what it is not** (see the prop doc above). It is
+    // the client's `unsent()`, which is D167's "the text the owner can say
+    // again": the gate REFUSED each of these, so the client never wrote it and
+    // never will. It is not `pending()` -- that list is the client's own retry
+    // queue, every entry of which is on its way to the consumer already. There
+    // is no `landed` flag to filter on here, because nothing in this list has
+    // landed; the filter the screen used to carry was written for the other
+    // list's shape, and a caller passing `pending()` would have had `landed:
+    // false` entries (the ones waiting on a retry) drawn as unsent text. What
+    // keeps the two apart is the caller, and the prop doc names the one to pass.
     unsent.forEach((one, index) => {
       if (one === null || typeof one !== 'object') return;
-      if (one.landed === true) return;
       if (typeof one.text !== 'string' || one.text === '') return;
       children.push(
-        el(Text, { key: `unsent:${typeof one.id === 'string' ? one.id : index}`, type: SCREEN.UNSENT }, one.text),
+        // `unsent()`'s entries carry no id (there is no record; nothing was
+        // written), so the key is the position the client holds them in.
+        el(Text, { key: `unsent:${index}`, type: SCREEN.UNSENT }, one.text),
       );
     });
 

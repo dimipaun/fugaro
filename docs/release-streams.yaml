@@ -1,0 +1,48 @@
+# The release streams catalogue: which streams exist, the naming theme each one
+# spends in order, the version each stream is at, and the prefix its tags carry.
+# It is written for the two readers that are coming — the console's dependency
+# graph, which draws a column per stream (GV1.6, GV2.3), and, for the CLI's own
+# release, scripts/release.sh, which takes the CLI stream's next name and current
+# version from it (GV1.5). It lives here rather than under docs/releases/ because
+# the website build reads every other file there as a release note (GD7;
+# docs/console-dependency-graph/reconciliation.md F29).
+#
+# A stream has one naming theme, so a name on its own says which stream it
+# belongs to: the CLI's names are animals and carry no bird, the console's are
+# fruits, the app's are birds. Names are spent in alphabetical order, one per
+# minor, and a patch release is spoken as the name and the patch ("Badger four").
+# `current` is the version the stream is at, and 0.0.0 says nothing has shipped
+# on it yet; `next` is the name the next minor takes, the first one `current` has
+# not spent (the CLI's names start at 0.10, the console's at 0.110, the app's at
+# 0.200). internal/streams refuses a file that breaks any of this, and one whose
+# console version falls below the release the console has already shipped.
+streams:
+  - name: cli
+    theme: animals
+    # Badger is 0.10, Camel 0.11, and one name per minor after that.
+    names: [Badger, Camel, Dolphin, Gecko, Hippo, Koala, Moose]
+    # The last CLI release, v0.11.3 "Camel three"; 0.12.0 "Dolphin" is next.
+    current: "0.12.1"
+    next: Gecko
+    tag_prefix: v
+
+  - name: console
+    theme: fruits
+    # The console's own version line starts at 0.110.0 "Cherry", never 0.11.0,
+    # which is the CLI's Camel, and it never goes below 0.110.0: the console's
+    # updater refuses a downgrade (docs/release.md, "Console releases"). Apple
+    # and Lemon are avoided, and internal/streams refuses them.
+    names: [Cherry, Mango, Melon, Nectarine, Orange]
+    # The last console release, console-v0.113.0 "Nectarine"; 0.114.0 "Orange" is next.
+    current: "0.113.0"
+    next: Orange
+    tag_prefix: console-v
+
+  - name: mobile
+    theme: birds
+    # Falcon is a bird, so it is this stream's and not the CLI's. The app is not
+    # out yet: 0.0.0 says so, and Falcon is the first release.
+    names: [Falcon, Pelican, Robin]
+    current: "0.0.0"
+    next: Falcon
+    tag_prefix: mobile-v

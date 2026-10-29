@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See mobile/LICENSE.md for the terms.
 // Metro's config (the file that makes `expo export`, `expo start` and an EAS
 // build able to bundle this app at all).
 //

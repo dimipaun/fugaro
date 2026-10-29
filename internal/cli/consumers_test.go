@@ -41,7 +41,7 @@ func TestEveryConsumerResolvesTheSameBytes(t *testing.T) {
 	if _, err := embedProjectLayer(ctx, env, spec, io.Discard); err != nil || spec.ProjectLayer == nil {
 		t.Fatal(err)
 	}
-	rc := runner.ResolveConfig([]byte(repoYAML), spec.ProjectLayer, env.lc.Name)
+	rc := runner.ResolveConfig([]byte(repoYAML), spec.ProjectLayer, env.lc.Name, spec.BaseBranch)
 	if rc.LayerErr != nil || len(rc.Problems) > 0 || !rc.Applied {
 		t.Fatal(rc.LayerErr, rc.Problems, rc.Applied)
 	}

@@ -19,6 +19,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/lock"
+	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -781,6 +782,47 @@ func TestFollowUpResumeFailureFallsBackFresh(t *testing.T) {
 	}
 }
 
+// TestFollowUpFreshFallbackSavesNoSession: the session a follow-up could not
+// resume must not be uploaded by the fresh retry. The stage that failed with
+// ErrNoSession had already recorded the session it was asked to resume
+// (noteSession takes the requested ID when the agent reports none, which is
+// what a process that died before its result event does), and the fresh retry
+// can end before the agent reports a session of its own — a refusal at the
+// top of stageOnce, an exhausted budget, a cancel. Left behind, that ID would
+// be uploaded at writeback with this run's head and Pushed flag, and a later
+// follow-up would resume a conversation that never saw this branch's commits.
+func TestFollowUpFreshFallbackSavesNoSession(t *testing.T) {
+	h := followUpHarness(t, "", nil, sessionFirst(firstSession)...)
+	h.followUp(t, followID, runID, "Tidy up.")
+	noSession := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		if !req.Resume || req.SessionID != firstSession {
+			t.Errorf("the first implement request = %+v; want the saved session resumed", req)
+		}
+		return agent.Result{CostUSD: 0.01}, fmt.Errorf("%w: claude exited with code 1", agent.ErrNoSession)
+	}
+	// The fresh retry fails before the agent reports any session: a zero
+	// Result, exactly what a stage killed at the start leaves behind.
+	boom := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		if req.Resume || req.SessionID == firstSession {
+			t.Errorf("the retry request = %+v; want a fresh session", req)
+		}
+		return agent.Result{}, errors.New("boom")
+	}
+	rec, err := h.run(t, noSession, boom)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || !strings.Contains(rec.Reason, "stage implement failed: boom") {
+		t.Fatalf("rec = %+v; want the fresh retry's failure", rec)
+	}
+	if m, data, err := h.store.ReadSession(context.Background()); !errors.Is(err, runstore.ErrNotFound) {
+		t.Fatalf("the follow-up saved a session (%+v, %q, err %v); the one it could not resume must not be re-uploaded", m, data, err)
+	}
+	if objs := bucketObjects(t, h.bucket); objs[h.store.Prefix()+"session/"+firstSession+".jsonl"] != nil {
+		t.Fatalf("the session the follow-up could not resume was uploaded: %v", h.store.Prefix())
+	}
+}
+
 func TestFollowUpResumeOtherErrorFailsStage(t *testing.T) {
 	h := followUpHarness(t, "", nil, sessionFirst(firstSession)...)
 	h.followUp(t, followID, runID, "Tidy up.")
@@ -1314,5 +1356,39 @@ func TestFollowUpUnknownPRAuthor(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), "did not name the pull request's author") {
 		t.Fatalf("no warning in the log:\n%s", logs.String())
+	}
+}
+
+// TestFollowUpNeverRunsAReportRecipe: a report run is launched on its own —
+// it lists the records it may read and refuses while another report run of
+// the repository is going — and a follow-up carries no manifest at all, so a
+// report recipe reaching one would write the reports of records that run
+// never read. The launcher refuses the recipe it can resolve or account for
+// (refuseFollowUpReportMode, internal/cli/recipes_resolve.go); this is the
+// backstop for the ones it cannot: the task's recipe is read here, at this
+// run's base, and a hand-written task.json went past no launcher at all.
+//
+// Mutation (drop the r.follow arm of the digest refusal in runner.go): the
+// follow-up gets past the recipe and starts the digest step, which ends the
+// run as infra_error for want of a manifest, so the reason names no rule and
+// no pull request.
+func TestFollowUpNeverRunsAReportRecipe(t *testing.T) {
+	const yaml = "version: 1\nname: rundigest\nsteps:\n  - digest: {}\n  - review: { max_rounds: 1 }\n"
+	h := followUpHarness(t, "", nil)
+	h.followUpRecipe(t, followID, runID, "Have another look.", &task.Recipe{
+		Name: "rundigest", Source: string(recipe.SourceProject), YAML: yaml, SHA256: recipe.Sum([]byte(yaml))})
+	pushes := countPushes(t, h.harness)
+	rec, err := h.run(t)
+	if err == nil || rec.Status != runstore.StatusInfraError {
+		t.Fatalf("rec = %+v, err = %v; want an infra_error", rec, err)
+	}
+	if !strings.Contains(rec.Reason, "cannot continue one") || !strings.Contains(rec.Reason, "pull request #1") {
+		t.Fatalf("the reason does not name the rule and the pull request: %q", rec.Reason)
+	}
+	if len(h.agent.calls) != 0 {
+		t.Fatalf("the agent ran %d times, want none", len(h.agent.calls))
+	}
+	if n := pushes(); n != 0 {
+		t.Fatalf("%d pushes, want none", n)
 	}
 }

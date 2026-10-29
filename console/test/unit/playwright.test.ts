@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See console/LICENSE.md for the terms.
 // playwright.config.ts's parallelism, held to the invariant the e2e spec is
 // written against (desktop-console plan Task 1.1, review round on PR #437).
 //
@@ -84,10 +86,11 @@ describe('playwright.config.ts', () => {
     // golden that was never committed compares nothing and no run can ever be
     // red for it (the Task 2.1 review's high finding). `'none'` never writes
     // and fails a missing baseline; recording is an explicit act
-    // (`playwright test --update-snapshots`), not a side effect of a run.
+    // (`cd console && npm run build && npx playwright test <spec> --update-snapshots`,
+    // `test/support/goldens.ts`'s `recordCommand`), not a side effect of a run.
     expect(
       config.updateSnapshots,
-      'a missing golden must fail the run: use "none" (recording is `npx playwright test --update-snapshots`, run on the CI platform)',
+      'a missing golden must fail the run: use "none" (recording is `cd console && npm run build && npx playwright test <spec> --update-snapshots`, run on the CI platform)',
     ).toBe('none')
   })
 

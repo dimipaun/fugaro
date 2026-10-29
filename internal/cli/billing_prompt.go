@@ -135,7 +135,7 @@ var billingProjectNumber = func(ctx context.Context, gcpProject, region string) 
 //
 // The last part is the question's own: the project stage links billing only
 // for a project this run was asked to create (its Check skips the stage
-// outright on an answer of adoption, so a billing answer there would be read
+// outright on a run that creates no project, so a billing answer there would be read
 // by nobody), and a --link-billing on the command line has already answered
 // this question — a second answer would replace what the operator typed.
 func (r *initRun) asksBilling() bool {
@@ -189,9 +189,11 @@ func (r *initRun) askBilling(ctx context.Context) error {
 		// own line ("enabled ...," or billingEnableLeft's) has said what happened
 		// to it. The line below is about the list alone.
 		fmt.Fprintf(r.w, "Billing accounts could not be listed (neither the Cloud Billing API nor %s answered).\n", billing.GcloudBin)
+		r.billingUnlisted = true
 		return nil
 	}
 	if len(accounts) == 0 {
+		r.billingUnlisted = true
 		r.billingLeft(project)
 		return nil
 	}
@@ -326,13 +328,15 @@ func (r *initRun) billingAPIOff(ctx context.Context, opts billing.Options, err e
 // the number comparison above exists to stop making. The line to run and who to
 // ask are in both.
 func (r *initRun) refuseBillingAPI(off *billing.ErrDisabled, quota, project string, known bool) {
-	if known {
-		fmt.Fprintf(r.w, "The Cloud Billing API (%s) is disabled on %s, the quota project of your credentials, which is not the project this run is setting up (%s). This run enables nothing there: ask an owner of %s to run:\n  %s\n",
-			billingAPIService, quota, project, quota, off.EnableCommand)
-		return
+	why := "it is not the project this run is setting up (" + project + ")"
+	if !known {
+		why = "this run could not read the number of the project it is setting up (" + project + "), so it cannot prove " + quota + " is that project"
 	}
-	fmt.Fprintf(r.w, "The Cloud Billing API (%s) is disabled on %s, the quota project of your credentials. This run could not read the number of the project it is setting up (%s), so it cannot tell whether %s is that project: it enables nothing there. Ask an owner of %s to run:\n  %s\n",
-		billingAPIService, quota, project, quota, quota, off.EnableCommand)
+	fmt.Fprintf(r.w, "The Cloud Billing API (%s) is disabled on %s, the quota project of your credentials, so this run cannot list your billing accounts. "+
+		"That is not a blocker: the project is still created, and setup pauses at the billing link and says what to forward. "+
+		"This run enables nothing on %s (%s). To list accounts on the next run, ask an owner of %s to run:\n  %s\n"+
+		"or you use a quota project where the API is enabled:\n  gcloud auth application-default set-quota-project <project>\n",
+		billingAPIService, quota, quota, why, quota, off.EnableCommand)
 }
 
 // billingEnableLeft is the line the offer leaves behind when it was not taken,

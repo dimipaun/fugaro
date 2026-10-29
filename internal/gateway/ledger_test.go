@@ -9,6 +9,7 @@ import (
 	"io"
 	"math/rand/v2"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -34,6 +35,28 @@ func withUsage(t *testing.T, ev anthropicfake.Event, fields map[string]any) anth
 	}
 	for k, v := range fields {
 		usage[k] = v
+	}
+	b, _ := json.Marshal(m)
+	ev.Data = string(b)
+	return ev
+}
+
+// withoutUsage returns ev with keys removed from its usage, for a test whose
+// case is a field the fixture never reports at all. The fakes set every
+// field a real response carries, so a caller cannot express "absent" by
+// leaving one out: it has to take it out.
+func withoutUsage(t *testing.T, ev anthropicfake.Event, keys ...string) anthropicfake.Event {
+	t.Helper()
+	var m map[string]any
+	if err := json.Unmarshal([]byte(ev.Data), &m); err != nil {
+		t.Fatal(err)
+	}
+	usage, _ := m["usage"].(map[string]any)
+	if msg, ok := m["message"].(map[string]any); ok {
+		usage = msg["usage"].(map[string]any)
+	}
+	for _, k := range keys {
+		delete(usage, k)
 	}
 	b, _ := json.Marshal(m)
 	ev.Data = string(b)
@@ -302,22 +325,289 @@ func TestMessageDeltaCumulativeLastWins(t *testing.T) {
 	}
 }
 
-func TestServiceTierPriorityIsSurprise(t *testing.T) {
+// TestServiceTierPriorityChargedConservatively: a real run died on a
+// provider (OpenRouter's deepseek) answering usage.service_tier "priority":
+// the response was priced at the table's maximum rates times
+// SurpriseMultiplier AND recorded as a violation, and a violation fails the
+// stage. The charge stays the conservative one -- the serving model's own
+// rates at the dearest multiple the table knows, which the ledger counts,
+// so the caps bind on it -- and the tier is recorded instead of failing the
+// run: the agent asked for nothing the budget forbids, and a provider can
+// answer with a tier at any time.
+//
+// The rates are the model's own and deliberately NOT the table's maximum:
+// the maximum here is a Claude model's $10/$50, and a DeepSeek call charged
+// those, at twice over, is the tens-of-times inflation this test exists to
+// prevent (the run would die on its cap and the day counters would carry
+// it).
+func TestServiceTierPriorityChargedConservatively(t *testing.T) {
 	u := pricing.Usage{Input: 1000, Output: 500}
 	rep := anthropicfake.StreamOK(sonnet, u)
 	rep.Events[0] = withUsage(t, rep.Events[0], map[string]any{"service_tier": "priority"})
 	h := newHarness(t, rep)
 	h.post(msg(sonnet, 1000, `"stream":true`))
 	r := h.gw.EndStage()
-	want := maxRates().Cost(u) * pricing.SurpriseMultiplier
+	want := cost(t, sonnet, u) * pricing.ConservativeTierMultiplier
 	if r.Used != want {
-		t.Errorf("used %d, want %d (the maximum rates, doubled)", r.Used, want)
+		t.Errorf("used %d, want %d (the rates the call was priced at, at the conservative multiple)", r.Used, want)
 	}
-	if len(r.Violations) != 1 || !strings.Contains(r.Violations[0], `service_tier "priority"`) {
-		t.Errorf("violations %q", r.Violations)
+	if want <= cost(t, sonnet, u) {
+		t.Errorf("the conservative charge %d is no dearer than the standard %d", want, cost(t, sonnet, u))
 	}
-	if call := h.logs.lastCall(t); call["priced_as"] != "surprise" {
+	if dearer := maxRates().Cost(u) * pricing.ConservativeTierMultiplier; want == dearer {
+		t.Errorf("the conservative charge %d is the table's maximum rates: a cheap model is being charged a dear one's money", want)
+	}
+	// A charge over its reservation is not capped at it: the overrun part is
+	// counted, and the whole figure is charged. This fixture's usage fits
+	// under the reservation, so that is TestServiceTierChargeBindsTheCap's
+	// shape, not this one's.
+	if len(r.Violations) != 0 {
+		t.Errorf("violations %q: a provider's own tier must not fail the stage", r.Violations)
+	}
+	if tiers := r.ServiceTiers.List(); len(tiers) != 1 || tiers[0] != `usage.service_tier "priority"` {
+		t.Errorf("service tiers %q, want the tier recorded under its own name", tiers)
+	}
+	call := h.logs.lastCall(t)
+	if call["priced_as"] != "tier" || call["service_tier"] != `"priority"` {
 		t.Errorf("log %v", call)
+	}
+	if l := h.gw.Ledger(); l.Used != want || l.Reserved != 0 {
+		t.Errorf("ledger %+v", l)
+	}
+	// The warning's own words for the figure, and only the multiple: a
+	// Claude call has no route, so no provider reported a cost for it and
+	// the clause naming a report has nothing to name here.
+	if got, want := h.logs.tierWarnChargedAs(t), "2x the rates the call is priced at"; got != want {
+		t.Errorf("charged_as %q, want %q:\n%s", got, want, h.logs.String())
+	}
+}
+
+// TestUnpricedServiceTiersChargedConservatively: every tier name the table
+// has no multiplier for is charged the same conservative figure and
+// recorded, whatever the response sent: a tier nobody has heard of, the
+// empty string, a value that isn't a string at all, and a name far longer
+// than a log line should hold. None of them is a violation, and none is
+// priced as standard or as free.
+func TestUnpricedServiceTiersChargedConservatively(t *testing.T) {
+	u := pricing.Usage{Input: 1000, Output: 500}
+	want := cost(t, sonnet, u) * pricing.ConservativeTierMultiplier
+	huge := strings.Repeat("x", 5000)
+	for _, c := range []struct {
+		name, recorded string
+		sent           any
+	}{
+		{"a tier nobody has heard of", `usage.service_tier "super-turbo"`, "super-turbo"},
+		{"the empty string", `usage.service_tier ""`, ""},
+		{"a value that isn't a string", "usage.service_tier 12", 12},
+		{"a name longer than a log line", `usage.service_tier "` + huge[:maxLogValue] + `"`, huge},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			rep := anthropicfake.StreamOK(sonnet, u)
+			rep.Events[0] = withUsage(t, rep.Events[0], map[string]any{"service_tier": c.sent})
+			h := newHarness(t, rep)
+			h.post(msg(sonnet, 1000, `"stream":true`))
+			r := h.gw.EndStage()
+			if r.Used != want {
+				t.Errorf("used %d, want %d", r.Used, want)
+			}
+			if len(r.Violations) != 0 {
+				t.Errorf("violations %q", r.Violations)
+			}
+			if tiers := r.ServiceTiers.List(); len(tiers) != 1 || tiers[0] != c.recorded {
+				t.Errorf("service tiers %q, want [%s]", tiers, c.recorded)
+			}
+			if got := h.logs.lastCall(t)["service_tier"]; got == nil || got == "" {
+				t.Errorf("the call log names no tier: %v", h.logs.lastCall(t))
+			}
+		})
+	}
+}
+
+// TestServiceTiersAreCapped: a provider that answers a different service
+// tier on every call cannot grow the stage's report with the call count. A
+// tier the table has no multiplier for no longer ends its stage (design
+// §6.1), so nothing else bounds the names one stage records: the report
+// carries the first MaxServiceTiers distinct names, in the order they came
+// back, and one "+N more" entry counting the distinct names beyond them.
+// The count is of distinct names and not of calls -- the last four calls
+// here repeat tiers already recorded, and it is unchanged -- every call is
+// still charged conservatively and still in the report's figure, and the
+// entry is not a tier name.
+func TestServiceTiersAreCapped(t *testing.T) {
+	u := pricing.Usage{Input: 1000, Output: 500}
+	const distinct, calls = 20, 24
+	script := make([]anthropicfake.Reply, calls)
+	for i := range script {
+		rep := anthropicfake.StreamOK(sonnet, u)
+		rep.Events[0] = withUsage(t, rep.Events[0], map[string]any{"service_tier": fmt.Sprintf("tier-%02d", i%distinct)})
+		script[i] = rep
+	}
+	h := newHarness(t, script...)
+	for i := range calls {
+		if resp, body := h.post(msg(sonnet, 1000, `"stream":true`)); resp.StatusCode != http.StatusOK {
+			t.Fatalf("call %d: status %d, body %s", i, resp.StatusCode, body)
+		}
+	}
+	r := h.gw.EndStage()
+	want := make([]string, 0, MaxServiceTiers+1)
+	for i := range MaxServiceTiers {
+		want = append(want, fmt.Sprintf(`usage.service_tier "tier-%02d"`, i))
+	}
+	want = append(want, fmt.Sprintf("+%d more", distinct-MaxServiceTiers))
+	if got := r.ServiceTiers.List(); !slices.Equal(got, want) {
+		t.Errorf("service tiers %q, want %q", got, want)
+	}
+	if want := cost(t, sonnet, u) * pricing.ConservativeTierMultiplier * calls; r.Used != want {
+		t.Errorf("used %d, want %d: every call is charged, capped names or not", r.Used, want)
+	}
+	if len(r.Violations) != 0 {
+		t.Errorf("violations %q: a provider's own tier must not fail the stage", r.Violations)
+	}
+}
+
+// TestServiceTierSetListBoundary: the set keeps every name it is given and
+// only List is bounded (MaxServiceTiers). Exactly MaxServiceTiers distinct
+// names fit with no counter entry, and one more adds a single "+1 more"
+// entry standing for the name beyond the bound. A tier two stages both
+// reported is one tier: the counter is of distinct names, not of the calls
+// or the stages that carried them, which is what Merge's dedup is for.
+func TestServiceTierSetListBoundary(t *testing.T) {
+	tier := func(i int) string { return fmt.Sprintf(`usage.service_tier "tier-%02d"`, i) }
+	first := func(n int) []string {
+		out := make([]string, n)
+		for i := range out {
+			out[i] = tier(i)
+		}
+		return out
+	}
+	var full ServiceTierSet
+	for _, name := range first(MaxServiceTiers) {
+		full.Add(name)
+	}
+	if got := full.List(); !slices.Equal(got, first(MaxServiceTiers)) {
+		t.Errorf("exactly %d distinct tiers listed as %q, want them and no counter entry", MaxServiceTiers, got)
+	}
+	over := full.clone()
+	over.Add(tier(MaxServiceTiers))
+	want := append(first(MaxServiceTiers), "+1 more")
+	if got := over.List(); !slices.Equal(got, want) {
+		t.Errorf("%d distinct tiers listed as %q, want %q", MaxServiceTiers+1, got, want)
+	}
+	// The set keeps the name the list counts rather than prints: a count of
+	// distinct names cannot be kept without them.
+	if len(over.names) != MaxServiceTiers+1 {
+		t.Errorf("the set kept %d names, want %d", len(over.names), MaxServiceTiers+1)
+	}
+	// Two stages, one tier between them.
+	var a, b ServiceTierSet
+	for _, name := range first(MaxServiceTiers) {
+		a.Add(name)
+	}
+	b.Add(tier(0)) // the same tier a stage already recorded
+	b.Add(tier(MaxServiceTiers))
+	var merged ServiceTierSet
+	merged.Merge(a)
+	merged.Merge(b)
+	if got := merged.List(); !slices.Equal(got, want) {
+		t.Errorf("a tier two stages reported listed as %q, want %q", got, want)
+	}
+	if len(merged.names) != MaxServiceTiers+1 {
+		t.Errorf("the merged set kept %d names, want %d: a repeat counted twice", len(merged.names), MaxServiceTiers+1)
+	}
+}
+
+// TestServiceTierMissingIsUnchanged: a response whose usage carries no
+// service_tier key at all -- not the standard tier, the field simply not
+// there, which is what a provider that says nothing about tiers sends -- is
+// priced exactly as it always was: the serving model's rates, nothing
+// conservative, nothing recorded. Both shapes of answer are covered, since
+// a provider route settles either. The fakes name a tier on every response,
+// so the fixtures take the key out (withoutUsage): left in, this test would
+// only re-test the standard path below.
+func TestServiceTierMissingIsUnchanged(t *testing.T) {
+	u := pricing.Usage{Input: 1000, Output: 500}
+	noTier := func(rep anthropicfake.Reply) anthropicfake.Reply {
+		for i := range rep.Events {
+			rep.Events[i] = withoutUsage(t, rep.Events[i], "service_tier")
+		}
+		return rep
+	}
+	for _, c := range []struct {
+		name, body string
+		rep        anthropicfake.Reply
+	}{
+		{"streamed", msg(sonnet, 1000, `"stream":true`), noTier(anthropicfake.StreamOK(sonnet, u))},
+		{"buffered", msg(sonnet, 1000), noTier(anthropicfake.MessageOK(sonnet, u))},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h := newHarness(t, c.rep)
+			h.post(c.body)
+			r := h.gw.EndStage()
+			if r.Used != cost(t, sonnet, u) {
+				t.Errorf("used %d, want the standard charge %d", r.Used, cost(t, sonnet, u))
+			}
+			if len(r.Violations) != 0 || len(r.ServiceTiers.List()) != 0 {
+				t.Errorf("report %+v", r)
+			}
+			if _, has := h.logs.lastCall(t)["service_tier"]; has {
+				t.Errorf("the call log names a tier that was never reported: %v", h.logs.lastCall(t))
+			}
+		})
+	}
+}
+
+// TestServiceTierStandardIsUnchanged: the standard tier is the one the
+// table prices, so a response naming it is priced at the model's own rates
+// and recorded nowhere.
+func TestServiceTierStandardIsUnchanged(t *testing.T) {
+	u := pricing.Usage{Input: 1000, Output: 500}
+	rep := anthropicfake.StreamOK(sonnet, u)
+	rep.Events[0] = withUsage(t, rep.Events[0], map[string]any{"service_tier": "standard"})
+	h := newHarness(t, rep)
+	h.post(msg(sonnet, 1000, `"stream":true`))
+	r := h.gw.EndStage()
+	if r.Used != cost(t, sonnet, u) || len(r.Violations) != 0 || len(r.ServiceTiers.List()) != 0 {
+		t.Errorf("report %+v", r)
+	}
+}
+
+// TestServiceTierChargeBindsTheCap: the conservative charge is money the
+// caps count. A call charged over its reservation is charged whole (that is
+// the fail-closed direction), and the cap refuses what comes next: the
+// guarantee is unchanged, only the stage no longer dies.
+func TestServiceTierChargeBindsTheCap(t *testing.T) {
+	// A whole context of reported input for a one-token request: the
+	// conservative charge is above the call's own reservation, so the cap
+	// cannot hold a second such call.
+	long := strings.Repeat("a", 200_000)
+	body := fmt.Sprintf(`{"model":%q,"max_tokens":1,"messages":[{"role":"user","content":%q}]}`, sonnet, long)
+	w := worst(t, sonnet, body, 1, "")
+	u := pricing.Usage{Input: 200_000}
+	rep := anthropicfake.StreamOK(sonnet, u)
+	rep.Events[0] = withUsage(t, rep.Events[0], map[string]any{"service_tier": "priority"})
+	h := newHarnessWith(t, enforceCap(w), rep, rep)
+	resp, b := h.post(body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the first call: %d %s", resp.StatusCode, b)
+	}
+	rep1 := h.gw.EndStage()
+	want := cost(t, sonnet, u) * pricing.ConservativeTierMultiplier
+	if rep1.Used != want {
+		t.Errorf("used %d, want %d", rep1.Used, want)
+	}
+	if rep1.Used <= w {
+		t.Fatalf("the fixture charges %s, not over its %s reservation: the cap is not what it should test",
+			dollars(rep1.Used), dollars(w))
+	}
+	if rep1.Overrun != rep1.Used-w {
+		t.Errorf("overrun %d, want %d: the part of the charge above its reservation", rep1.Overrun, rep1.Used-w)
+	}
+	h.gw.BeginStage(defaultStage)
+	if resp, b := h.post(body); resp.StatusCode != http.StatusForbidden || !strings.Contains(b, "run cap") {
+		t.Errorf("the call after a conservative charge over the cap: %d %s, want a 403 naming the run cap", resp.StatusCode, b)
+	}
+	if l := h.gw.Ledger(); l.Used < w {
+		t.Errorf("the ledger counts %s, want the conservative charge over the %s cap", dollars(l.Used), dollars(w))
 	}
 }
 
@@ -1143,5 +1433,71 @@ func TestStageReportCountsWaitedCalls(t *testing.T) {
 	waitFor(t, "settle", func() bool { return h.gw.Ledger().Reserved == 0 })
 	if rep := h.gw.EndStage(); rep.Waited != 2 {
 		t.Errorf("Waited = %d, want 2", rep.Waited)
+	}
+}
+
+// A stage's report counts the distinct sub-agents that called it: the
+// agent IDs its calls carried, each once. The main session's calls carry
+// no agent ID, so a stage only it called counts no sub-agent.
+func TestStageReportCountsDistinctAgents(t *testing.T) {
+	body := msg(sonnet, 1000)
+	h := newHarness(t, okReplies(9)...)
+	main := func() {
+		if resp, b := h.post(body); resp.StatusCode != 200 {
+			t.Fatalf("main session call: status %d: %s", resp.StatusCode, b)
+		}
+	}
+	sub := func(id string) {
+		if resp, b := h.post(body, "x-claude-code-agent-id", id); resp.StatusCode != 200 {
+			t.Fatalf("sub-agent %s call: status %d: %s", id, resp.StatusCode, b)
+		}
+	}
+
+	main()
+	sub("agent-a")
+	sub("agent-b")
+	sub("agent-a") // the same agent again: one sub-agent
+	main()
+	if rep := h.gw.EndStage(); rep.Agents != 2 || rep.Calls != 5 {
+		t.Errorf("Agents = %d, Calls = %d, want 2 and 5", rep.Agents, rep.Calls)
+	}
+
+	h.gw.BeginStage(defaultStage)
+	main()
+	sub("agent-a")
+	if rep := h.gw.EndStage(); rep.Agents != 1 {
+		t.Errorf("Agents = %d, want 1: the next stage counts its own agents", rep.Agents)
+	}
+
+	h.gw.BeginStage(defaultStage)
+	main()
+	main()
+	if rep := h.gw.EndStage(); rep.Agents != 0 {
+		t.Errorf("Agents = %d, want 0: the main session is no sub-agent", rep.Agents)
+	}
+}
+
+// TestLedgerSumsCacheTokens (P12): the run's prompt-cache read and write
+// token totals are the sums of the calls' reported usage, both cache TTLs
+// together, and a call that read from no cache and wrote to none adds
+// nothing rather than a zero that would read as one.
+func TestLedgerSumsCacheTokens(t *testing.T) {
+	cached := pricing.Usage{Input: 100, CacheWrite5m: 30, CacheWrite1h: 5, CacheRead: 400, Output: 20}
+	h := newHarness(t, anthropicfake.StreamOK(sonnet, cached), anthropicfake.StreamOK(sonnet, pricing.Usage{Input: 100, Output: 20}))
+	for _, body := range []string{
+		msg(sonnet, 1000, `"stream":true`, `"cache_control":{"type":"ephemeral","ttl":"1h"}`),
+		msg(sonnet, 1000, `"stream":true`),
+	} {
+		if resp, _ := h.post(body); resp.StatusCode != 200 {
+			t.Fatalf("post: %d", resp.StatusCode)
+		}
+	}
+	h.gw.EndStage()
+	l := h.gw.Ledger()
+	if want := int64(cached.CacheRead); l.CacheReadTokens != want {
+		t.Errorf("ledger cache reads = %d, want %d", l.CacheReadTokens, want)
+	}
+	if want := int64(cached.CacheWrite5m + cached.CacheWrite1h); l.CacheWriteTokens != want {
+		t.Errorf("ledger cache writes = %d, want %d", l.CacheWriteTokens, want)
 	}
 }

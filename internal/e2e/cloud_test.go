@@ -30,6 +30,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
+	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -138,6 +139,28 @@ func newCloudRig(t *testing.T, claudeScript string, cancelPoll time.Duration, op
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(bucket, filepath.FromSlash(infra.ProjectMarkerObject)), marker, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The job image's build record, as the image build writes it. The
+	// launch's per-field gates judge a derived image by the base its record
+	// was built FROM, and refuse a launch whose workflow has no record at
+	// all, so a launch carrying any field of its own needs one: the
+	// fixture's follow-up carries a mode, since a follow-up keeps the mode
+	// its pull request recorded (T5.2). The rig's jobs run this tree's own
+	// binary rather than a released image, so the record names a
+	// development base image — a ref those gates warn about instead of
+	// judging (releaseOf), which stays true as releases, and gates, come
+	// and go.
+	rec, err := json.Marshal(imagecheck.Record{Version: 1, Repo: "acme/app", Workflow: cloudWorkflow,
+		BaseRef: cloudRegion + "-docker.pkg.dev/" + cloudProject + "/fugaro-base/fugaro-base:dev-e2e", FugaroVersion: "0.0.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := filepath.Join(bucket, filepath.FromSlash(imagecheck.RecordKey(cloudSlug, cloudWorkflow)))
+	if err := os.MkdirAll(filepath.Dir(key), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(key, rec, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	r.provider = filepath.Join(dir, "provider.json")
@@ -1095,6 +1118,26 @@ func gatewayRig(upstream, mode, capUSD string) rigOption {
 	}
 }
 
+// criticalRigor pins the rig's repository to Critical with a commit on
+// main. An unconfigured repository resolves Pro, which scales the deployed
+// cap; Critical keeps the ceiling exactly the deployed cap, as the runner's
+// twin tests do with critRigor (docs/rigor-modes D16, plan T6.1).
+func criticalRigor(r *cloudRig) {
+	r.t.Helper()
+	clone := filepath.Join(r.t.TempDir(), "clone")
+	testutil.Git(r.t, filepath.Dir(clone), "clone", "--quiet", "--branch", "main", r.remote, clone)
+	path := filepath.Join(clone, "fugaro.yaml")
+	cfg, err := os.ReadFile(path)
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(cfg, []byte("rigor:\n  default: critical\n")...), 0o644); err != nil {
+		r.t.Fatal(err)
+	}
+	testutil.Git(r.t, clone, "commit", "--quiet", "-am", "Pin the rigor mode")
+	testutil.Git(r.t, clone, "push", "--quiet", "origin", "HEAD:refs/heads/main")
+}
+
 // implementCalling is implementOK's work, then n model calls of sonnet.
 func implementCalling(t *testing.T, n int) string {
 	t.Helper()
@@ -1228,7 +1271,7 @@ func TestCloudBranchRaisesCapIsClamped(t *testing.T) {
 		return anthropicfake.MessageOK("claude-sonnet-5-5", pricing.Usage{Output: 600000}) // $6
 	}
 	script := `{"calls":[` + implementCalling(t, 2) + `,` + reviewShip + `]}`
-	r := newCloudRig(t, script, 100*time.Millisecond, gatewayRig(srv.URL, "enforce", "5"), fixedWorkdir)
+	r := newCloudRig(t, script, 100*time.Millisecond, gatewayRig(srv.URL, "enforce", "5"), criticalRigor, fixedWorkdir)
 	r.pushBranch("feature", "budget:\n  per_run_usd: 500\n")
 	id := newRunID(t)
 	if out, err := r.cli("run", "--repo", "acme/app", "--ref", "feature", "--run-id", id, "--json", "Add a feature"); err != nil {

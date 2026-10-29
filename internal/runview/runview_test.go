@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -32,6 +33,76 @@ func exec(state backend.State) *backend.Execution {
 		e.Completed = now.Add(-30 * time.Minute)
 	}
 	return e
+}
+
+// preemptedExec is an execution the platform reclaimed: a terminal failure the
+// backend read as a Spot preemption (backend.Execution.Preempted).
+func preemptedExec() *backend.Execution {
+	e := exec(backend.StateFailed)
+	e.Preempted = true
+	return e
+}
+
+// TestJoinDerivesAPreemption: a run whose record never finalized, whose
+// execution the platform reclaimed, is `failed (preempted)` with the reason
+// for it -- derived when read, and never written back anywhere (the owner's
+// 2026-10-21 ruling; design compute-backend.md §1.3). The cases are each half
+// of the rule and each way it could be wrongly applied:
+//
+//   - the record that never finalized plus a reclaimed execution is the
+//     derivation itself;
+//   - a run that DID finalize keeps its record: the record is the run's own
+//     account of itself and a platform fact about the machine it ran on does
+//     not overwrite it;
+//   - a terminal failure that is not a preemption stays what it is today
+//     (infra_error, `execution ended without finalizing`), so a crashed
+//     runnable is never called reclaimed;
+//   - a cancelled execution stays cancelled;
+//   - a PENDING or RUNNING execution is not derived: a live run must never be
+//     shown as failed;
+//   - and a run with no execution at all is not derived either, whether it is
+//     merely pending or has been given up for lost.
+func TestJoinDerivesAPreemption(t *testing.T) {
+	running := func() *runstore.Record {
+		r := rec(runstore.StatusRunning, nil)
+		deadline := now.Add(time.Hour)
+		r.Deadline = &deadline
+		return r
+	}
+	cases := []struct {
+		name, status, reason, derived string
+		in                            Input
+	}{
+		{"record never finalized", "failed", ReasonPreempted, DerivedPreempted,
+			Input{Task: spec, Launch: launch, Record: rec(runstore.StatusRunning, nil), Exec: preemptedExec()}},
+		{"no record at all", "failed", ReasonPreempted, DerivedPreempted,
+			Input{Task: spec, Launch: launch, Exec: preemptedExec()}},
+		{"the record finalized", "succeeded", "", "",
+			Input{Task: spec, Launch: launch, Record: rec(runstore.StatusSucceeded, nil), Exec: preemptedExec()}},
+		{"a terminal failure that is not a preemption", "infra_error", ReasonNoFinalRecord + " (failed)", "",
+			Input{Task: spec, Launch: launch, Record: rec(runstore.StatusRunning, nil), Exec: exec(backend.StateFailed)}},
+		{"a cancelled execution", "cancelled", "execution cancelled before the run finalized", "",
+			Input{Task: spec, Launch: launch, Record: rec(runstore.StatusRunning, nil), Exec: exec(backend.StateCancelled)}},
+		{"still running", "running", "", "",
+			Input{Task: spec, Launch: launch, Record: running(), Exec: exec(backend.StateRunning)}},
+		{"pending", StatusPending, "", "",
+			Input{Task: spec, Launch: launch, Exec: exec(backend.StatePending)}},
+		{"lost", "infra_error", ReasonLost, "",
+			Input{Task: spec, Launch: &runstore.Launch{Execution: "exec-1", LaunchedAt: now.Add(-runstore.ClaimTTL - time.Hour)}}},
+	}
+	for _, tc := range cases {
+		row := Join(tc.in, prices, now)
+		if row.Status != tc.status || row.Reason != tc.reason || row.Derived != tc.derived {
+			t.Errorf("%s: status %q reason %q derived %q, want %q %q %q",
+				tc.name, row.Status, row.Reason, row.Derived, tc.status, tc.reason, tc.derived)
+		}
+	}
+	// The derived row is terminal and settled: runs ls --watch must be able to
+	// stop on it, and nothing about it moves on its own.
+	row := Join(Input{Task: spec, Launch: launch, Record: rec(runstore.StatusRunning, nil), Exec: preemptedExec()}, prices, now)
+	if !row.Terminal || !row.Settled {
+		t.Errorf("the derived row is terminal=%v settled=%v, want both true", row.Terminal, row.Settled)
+	}
 }
 
 func TestJoinStatuses(t *testing.T) {
@@ -111,6 +182,31 @@ func TestJoinCostUsesExecutionAndBasis(t *testing.T) {
 	tot := Sum([]Row{row, api})
 	if tot.Runs != 2 || tot.ModelNotionalUSD != 2 || tot.ModelUSD != 2 || math.Abs(tot.TotalUSD-(row.Cost.TotalUSD+api.Cost.TotalUSD)) > 0.005 {
 		t.Fatalf("totals = %+v", tot)
+	}
+}
+
+// TestJoinCostKeepsAMixedRunsNotionalOutOfTheBill (P12, D140): a cascade run's
+// model figure is money and the subscription's dollars together, and its basis
+// is api-list for the whole run. Rebuilding the row's cost from ModelUSD and
+// the basis would bill the notional part -- in `runs ls`, in the console's
+// totals and in everything that reads a row -- so the row keeps the record's
+// notional part, and the totals split on it rather than on the basis.
+func TestJoinCostKeepsAMixedRunsNotionalOutOfTheBill(t *testing.T) {
+	mixed := runstore.NewCost(3, 0.5, runstore.BasisAPIList).WithNotional(2)
+	record := rec(runstore.StatusSucceeded, &mixed)
+	record.CostUSD = 3 // the record's own model figure, the whole of it
+	row := Join(Input{Task: spec, Launch: launch, Record: record, Exec: exec(backend.StateSucceeded)}, prices, now)
+	if row.Cost.ModelUSD != 3 || row.Cost.ModelNotionalUSD != 2 || row.Cost.ModelMoneyUSD() != 1 {
+		t.Fatalf("the row's cost = %+v, want model_usd 3 with 2 of it notional", row.Cost)
+	}
+	// 30 minutes × 4 vCPU × $0.00001 = $0.072 compute, billed beside the money
+	// part alone.
+	if row.Cost.TotalUSD != 1.07 {
+		t.Fatalf("the row's total_usd = %v, want the money part and the compute, not the notional", row.Cost.TotalUSD)
+	}
+	tot := Sum([]Row{row})
+	if tot.ModelNotionalUSD != 2 || tot.ModelUSD != 1 || tot.TotalUSD != 1.07 {
+		t.Fatalf("totals = %+v, want $1 of billed model spend and $2 notional", tot)
 	}
 }
 
@@ -776,5 +872,153 @@ func TestJoinReboundsTheRecordedChangedFiles(t *testing.T) {
 	if row.ChangedFiles == nil || len(row.ChangedFiles.Paths) != runstore.MaxChangedFiles || !row.ChangedFiles.Truncated {
 		t.Fatalf("an oversized record reached the row as %d paths, truncated %v",
 			len(row.ChangedFiles.Paths), row.ChangedFiles.Truncated)
+	}
+}
+
+// TestJoinPlanTaskIsTheLaunchRecordsOwn: the plan task id is what the run's
+// own launch.json recorded, sanitised, and nothing at all for a run whose
+// launch record has none — never a value invented from the task (which
+// carries the same id for the recovery path and --retry, not for display).
+//
+// It is a display-only join hint: the console joins a run to a node of the
+// plan's graph by it, and nothing decides anything by it (console
+// dependency graph plan, constraint C3).
+//
+// Mutation caught: leaving PlanTask out of Join, or filling it from
+// in.Task.PlanTask.
+func TestJoinPlanTaskIsTheLaunchRecordsOwn(t *testing.T) {
+	l := *launch
+	l.PlanTask = "setup-wizard/W1.3"
+	row := Join(Input{Task: spec, Launch: &l, Record: rec(runstore.StatusSucceeded, nil), Exec: exec(backend.StateSucceeded)}, prices, now)
+	if row.PlanTask != "setup-wizard/W1.3" {
+		t.Errorf("PlanTask = %q, want the launch.json's own value", row.PlanTask)
+	}
+	// A launch.json with no plan_task (one written by hand, or by a
+	// launcher older than the field): absent, not the task's.
+	tasked := *spec
+	tasked.PlanTask = "setup-wizard/W1.3"
+	row = Join(Input{Task: &tasked, Launch: launch, Record: rec(runstore.StatusSucceeded, nil)}, prices, now)
+	if row.PlanTask != "" {
+		t.Errorf("PlanTask = %q for a launch.json with none, want \"\"", row.PlanTask)
+	}
+	// No launch.json at all: an unlaunched run carries none.
+	if row := Join(Input{Task: &tasked}, prices, now); row.PlanTask != "" {
+		t.Errorf("unlaunched row carries PlanTask %q", row.PlanTask)
+	}
+}
+
+// TestJoinPlanTaskDropsAnIDThatIsNotOne: the id is text whoever writes
+// launch.json chose, and the run's own service account can write it, so Join
+// keeps it only when it passes the launcher's own shape check
+// (task.PlanTaskProblem): an escape sequence, a bidi override, a newline, a
+// traversal, spaces or a value past the 128-byte bound yields no plan_task at
+// all, never a sanitised remnant the console could join by. A run whose
+// launch.json recorded none emits no key either, never "".
+//
+// Mutation caught: sanitising and capping only (the previous read side), or
+// dropping omitempty from the row's json tag.
+func TestJoinPlanTaskDropsAnIDThatIsNotOne(t *testing.T) {
+	for _, id := range []string{
+		"setup-wizard/\x1b[2JW1.3" + string(rune(0x202e)) + "\nsetup-wizard/W9.9",
+		"../x",
+		"setup wizard/W 1.3",
+		"plan/" + strings.Repeat("x", 495),
+	} {
+		l := *launch
+		l.PlanTask = id
+		row := Join(Input{Task: spec, Launch: &l}, prices, now)
+		if row.PlanTask != "" {
+			t.Errorf("launch.json plan_task %q reads as %q, want none", id, row.PlanTask)
+		}
+		data, err := json.Marshal(row)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(data), "plan_task") {
+			t.Errorf("a dropped plan task still emitted the key: %s", data)
+		}
+	}
+	empty, err := json.Marshal(Join(Input{Task: spec, Launch: launch}, prices, now))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(empty), "plan_task") {
+		t.Errorf("an absent plan task still emitted the key: %s", empty)
+	}
+}
+
+// TestJoinCarriesTheRunsRigor: the row carries the record's rigor block, and
+// the JSON key is `rigor`, so `runs ls --json`, `diagnose` and the console
+// read the mode, the layer that won and the areas that matched from the one
+// place the record wrote them (D24). A run with no block carries none: nil,
+// never an empty block a reader would render as a decision nobody took.
+func TestJoinCarriesTheRunsRigor(t *testing.T) {
+	r := rec(runstore.StatusSucceeded, nil)
+	r.Rigor = &runstore.RigorRecord{Mode: rigor.Critical, From: rigor.FromArea,
+		Areas: []runstore.RigorArea{{Name: "payments", Mode: rigor.Critical, At: runstore.RigorAtBootstrap}},
+		At:    runstore.RigorAtFinalize, Revision: "origin/main"}
+	row := Join(Input{Task: spec, Launch: launch, Record: r}, prices, now)
+	if row.Rigor == nil || row.Rigor.Mode != rigor.Critical || row.Rigor.From != rigor.FromArea ||
+		len(row.Rigor.Areas) != 1 || row.Rigor.Revision != "origin/main" {
+		t.Fatalf("row.Rigor = %+v", row.Rigor)
+	}
+	b, err := json.Marshal(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"rigor":{"mode":"critical","from":"area"`) {
+		t.Fatalf("the row does not carry the block under %q:\n%s", "rigor", b)
+	}
+	if plain := Join(Input{Task: spec}, prices, now); plain.Rigor != nil {
+		t.Fatalf("a run that resolved none: %+v", plain.Rigor)
+	}
+	b, err = json.Marshal(Join(Input{Task: spec}, prices, now))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "rigor") {
+		t.Fatalf("a row with no block names the field:\n%s", b)
+	}
+}
+
+// TestJoinBoundsTheRecordedRigor: the block is the job's own object, so the
+// row does not pass it through as written. A record whose block cannot name a
+// mode, a layer or a moment reaches the row as none at all — the same answer
+// as no block, which every reader already renders — and one carrying too much
+// reaches it bounded. This is the guard that keeps a hand-edited result.json
+// out of the console's field table.
+func TestJoinBoundsTheRecordedRigor(t *testing.T) {
+	r := rec(runstore.StatusSucceeded, nil)
+	r.Rigor = &runstore.RigorRecord{Mode: "paranoid", From: rigor.FromRepo, At: runstore.RigorAtFinalize}
+	if row := Join(Input{Task: spec, Launch: launch, Record: r}, prices, now); row.Rigor != nil {
+		t.Fatalf("a block outside the vocabulary reached the row: %+v", row.Rigor)
+	}
+	// The strict rule is written last, so the row's own bounding has to sort
+	// before it caps (D23): a reader shows the first area as the rule that
+	// decided the mode, and a cap that kept the weak ones would hand it a
+	// block whose answer contradicts its own mode.
+	var many []runstore.RigorArea
+	for i := range 3 * rigor.MaxAreas {
+		many = append(many, runstore.RigorArea{Name: fmt.Sprintf("a%03d", i), Mode: rigor.POC, At: runstore.RigorAtRound})
+	}
+	many[len(many)-1] = runstore.RigorArea{Name: "payments", Mode: rigor.Critical, At: runstore.RigorAtBootstrap}
+	r.Rigor = &runstore.RigorRecord{Mode: rigor.POC, From: rigor.FromRepo, Areas: many, At: runstore.RigorAtFinalize}
+	row := Join(Input{Task: spec, Launch: launch, Record: r}, prices, now)
+	if row.Rigor == nil || len(row.Rigor.Areas) != rigor.MaxAreas {
+		t.Fatalf("an oversized block reached the row as %+v", row.Rigor)
+	}
+	if first := row.Rigor.Areas[0]; first.Name != "payments" || first.Mode != rigor.Critical {
+		t.Errorf("the row's first area = %+v; want the strictest rule, whatever order the block wrote", first)
+	}
+	// An area whose own mode is unreadable is dropped whole rather than
+	// reaching a reader as a rule it cannot rank.
+	noMode := rec(runstore.StatusSucceeded, nil)
+	noMode.Rigor = &runstore.RigorRecord{Mode: rigor.Critical, From: rigor.FromArea,
+		Areas: []runstore.RigorArea{
+			{Name: "payments", Mode: rigor.Critical, At: runstore.RigorAtBootstrap},
+			{Name: "web", At: runstore.RigorAtRound},
+		}, At: runstore.RigorAtFinalize}
+	if got := Join(Input{Task: spec, Launch: launch, Record: noMode}, prices, now).Rigor; got == nil || len(got.Areas) != 1 || got.Areas[0].Name != "payments" {
+		t.Errorf("a block with an unrankable area reached the row as %+v", got)
 	}
 }

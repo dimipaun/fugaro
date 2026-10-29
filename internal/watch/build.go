@@ -152,20 +152,73 @@ type RunRow struct {
 	// like every other bucket-derived string; the renderers only shorten it
 	// (LauncherShort). Nothing decides anything by it.
 	LaunchedBy string
+	// PlanTask is the plan task the run's launch.json recorded (task.Spec's
+	// PlanTask, at fugaro run --plan-task): the display-only join hint the
+	// console matches a run to a node of a plan's graph by (console
+	// dependency graph plan, decision GD5). It comes from the same read as
+	// LaunchedBy (MergeFacts), and like it is "" for a run the reader has no
+	// launch.json for and for one whose launch.json recorded none. An
+	// absent value means "not recorded", never "joined to nothing".
+	//
+	// It is untrusted text a launcher wrote, sanitised by MergeFacts like
+	// every other bucket-derived string; nothing decides anything by it, and
+	// it is never joined into a path.
+	PlanTask string
+
+	// Credential is the name — never the value — of the credential the run's
+	// cascade is spending on, as the run itself reported it
+	// (budget.AgentEntry.Credential, written by the run under the rules of
+	// C1.3). "" when the run is not a cascade run or has not reported one:
+	// an absent name is "not recorded", never "no credential" — a run that
+	// has not written it is one this reader cannot account for, not one that
+	// is spending on nothing. A run wrote it, so it is sanitised (clean) like
+	// every other database-derived string here, and it is never an authority:
+	// nothing decides anything by it.
+	Credential string
+
+	// WaitingUntil is the instant, epoch milliseconds, a run waiting for a
+	// credential expects to resume at (budget.AgentEntry.WaitingUntil, D152's
+	// "waiting, expected resume time"); 0 when nothing is pending. Waiting is
+	// true only while now is still before it — a wait that has lapsed is not
+	// one this view claims, and a run that resumed clears the field.
+	WaitingUntil int64
+	Waiting      bool
 
 	// Finished marks a row built from the runs bucket's result.json, not
 	// RTDB: the run's registry entry is already gone (design generic-tool
 	// §10.1). Outcome is the record's outcome (ready, draft or none);
-	// Failed is set when Stage's status is not "succeeded"; PRNumber, when
-	// the run opened one.
+	// Failed is set when Stage's status is not "succeeded".
 	Finished bool
 	Outcome  string
 	Failed   bool
 	// PRURL is the run's PR link, once it has one: for a live run, from the
 	// registry's prUrl (design generic-tool G24); for a finished row, from
 	// the runs bucket's result.json. Always an https:// URL or "" (cleanURL).
-	PRURL    string
+	PRURL string
+	// PRNumber is the number that link names, once the run has one: a live
+	// run's comes from the registry's prUrl, which the run writes from its
+	// own record the moment its draft PR opens (internal/runner/prflow.go's
+	// notePR), so it is the record's PR — runview.Row.RecordPR, the value
+	// `runs ls --json` prints as record_pr — read here with this package's
+	// anchored GitHub pattern (parseGHPRURL) rather than by a second parse of
+	// the URL's text; a finished row's is result.json's own. 0 when the run
+	// has opened none, or when the URL is not one that pattern reads, which
+	// the JSON writes as an absent key rather than as a number (watch --json,
+	// task GV2.5).
 	PRNumber int
+}
+
+// prNumberOf is the pull request number a registry entry's prUrl names, or 0
+// when it names none. The URL is read with this package's own anchored GitHub
+// pattern — the same reading MergeNow and PRRepo do before they build gh's
+// argv, where the number is already an int (prRef.number) — so a host that is
+// not GitHub, or text appended to the URL, is no number rather than a guess at
+// one.
+func prNumberOf(url string) int {
+	if ref, ok := parseGHPRURL(url); ok {
+		return ref.number
+	}
+	return 0
 }
 
 // RepoBlock is one repository.
@@ -220,6 +273,11 @@ func dash(s string) string {
 	}
 	return s
 }
+
+// stampText is an instant the registry recorded in epoch milliseconds as the
+// text views spell one, in UTC: the form a stage deadline and a kill switch's
+// time already use.
+func stampText(ms int64) string { return time.UnixMilli(ms).UTC().Format("2006-01-02 15:04Z") }
 
 func nonneg(v budget.Micros) budget.Micros { return max(v, 0) }
 
@@ -409,6 +467,10 @@ func sortRuns(runs []RunRow) {
 }
 
 func runRow(slug, run string, e budget.AgentEntry, now time.Time) RunRow {
+	// The number is read off the URL the row shows, not off the entry's own
+	// text: a URL cleanURL refuses is one this view would not show either, and
+	// the two then agree on "no pull request".
+	prURL := cleanURL(e.PRURL)
 	r := RunRow{
 		Run: clean(unkey(run)), Slug: slug,
 		Title: dash(e.Title), Stage: dash(e.Stage), Verify: dash(e.Verify), Auth: dash(e.Auth),
@@ -419,8 +481,17 @@ func runRow(slug, run string, e budget.AgentEntry, now time.Time) RunRow {
 		Halted:     clean(e.Halted),
 		Recipe:     clean(e.Recipe),
 		StartedAt:  e.StartedAt,
-		PRURL:      cleanURL(e.PRURL),
+		PRURL:      prURL,
+		PRNumber:   prNumberOf(prURL),
 		DeadlineAt: e.StageDeadline,
+		Credential: clean(e.Credential),
+	}
+	// A wait the entry still carries is one only while its instant is ahead:
+	// the run clears waiting_until when it resumes, and a run that halted
+	// before it could would otherwise read as waiting for ever.
+	if e.WaitingUntil > 0 {
+		r.WaitingUntil = e.WaitingUntil
+		r.Waiting = now.Before(time.UnixMilli(e.WaitingUntil))
 	}
 	if e.Round > 0 {
 		r.Round = strconv.Itoa(e.Round)

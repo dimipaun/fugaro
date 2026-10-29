@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See mobile/LICENSE.md for the terms.
 // An account is an installation (mobile plan, Task P3.1; decision D114).
 //
 // D114 answered "the account model" with an installation tuple rather than a

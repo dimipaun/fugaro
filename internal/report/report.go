@@ -15,12 +15,19 @@
 //   - Compute is "n/a" when no run of the row had its compute estimated, never
 //     0; "-" (null in JSON) means the figure is not recorded for that
 //     breakdown (compute per model or per person).
+//   - A row every one of whose records was unreadable carries no measurement:
+//     it is marked unreadable and its money columns read "n/a" (null in JSON),
+//     never the 0 the sums would carry.
 //   - The runner records one dollar figure per model, billed or notional. By
 //     model, a day with no billed spend counts it all as notional, a day with
 //     no notional as billed, and a mixed day splits it in the day's
 //     billed:notional proportion.
 //   - Every string that came from the database goes through safetext.Strip,
 //     in every output.
+//   - ByMode is the one grouping the day records cannot answer: a run's rigor
+//     mode is written in its own run record and in no rollup, so its rows are
+//     built from run-derived Recs (Rec.Mode) and the source of the report says
+//     so.
 package report
 
 import (
@@ -31,6 +38,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
@@ -45,15 +53,21 @@ const (
 	ByRepo   Dim = "repo"
 	ByModel  Dim = "model"
 	ByPerson Dim = "person"
+	ByMode   Dim = "mode"
 )
+
+// ModeNone is ByMode's row for a run whose record carries no rigor mode, and
+// for one whose recorded mode is not a mode the vocabulary knows. A breakdown
+// reads it and never the record's raw text.
+const ModeNone = "none"
 
 // ParseDim parses --by.
 func ParseDim(s string) (Dim, error) {
 	switch d := Dim(s); d {
-	case ByDay, ByWeek, ByMonth, ByYear, ByRepo, ByModel, ByPerson:
+	case ByDay, ByWeek, ByMonth, ByYear, ByRepo, ByModel, ByPerson, ByMode:
 		return d, nil
 	}
-	return "", fmt.Errorf("--by %q: use day, week, month, year, repo, model or person", s)
+	return "", fmt.Errorf("--by %q: use day, week, month, year, repo, model, person or mode", s)
 }
 
 // IsPeriod says whether d groups by time.
@@ -63,6 +77,13 @@ func (d Dim) IsPeriod() bool { return d == ByDay || d == ByWeek || d == ByMonth 
 type Rec struct {
 	budget.DayRecord
 	Partial bool
+	// Mode is the rigor mode the run's record resolved, for ByMode rows. The
+	// day rollups carry no mode, so only the run-record reader sets it and
+	// only the by-mode grouping reads it; "" is ModeNone's row.
+	Mode string
+	// Unreadable marks a run whose record the reader could not read at all, so
+	// not one of its figures is known. It still counts as a run.
+	Unreadable bool
 }
 
 // Compute states of a Row.
@@ -78,6 +99,12 @@ type Row struct {
 	Start   string // first day of a period (YYYY-MM-DD), "" otherwise
 	End     string // last day seen in the row
 	Partial bool
+	// Unreadable: every record of the row was unreadable, so the money below
+	// is no measurement and the renderers write n/a rather than a 0. A row
+	// with even one readable record is a measured row, and the totals row --
+	// which sums rows rather than records -- is unreadable only when every row
+	// it sums is.
+	Unreadable bool
 
 	Spent, Notional, Compute budget.Micros
 	NotionalTracked          bool
@@ -130,6 +157,11 @@ type acc struct {
 	row           Row
 	estimatedRuns int64
 	runs          int64
+	// allUnreadable is the AND of the row's records' marks; seen says at least
+	// one record went through addRecord, so a grouping that never adds one is
+	// not read as a row of unreadable records.
+	allUnreadable bool
+	seen          bool
 }
 
 // PeriodKey is the key and the first day of date's period for a time grouping.
@@ -162,7 +194,7 @@ func Build(recs []Rec, d Dim) Report {
 	get := func(key, start string) *acc {
 		a, ok := groups[key]
 		if !ok {
-			a = &acc{row: Row{Key: Text(key), Start: start}}
+			a = &acc{row: Row{Key: Text(key), Start: start}, allUnreadable: true}
 			groups[key] = a
 			order = append(order, key)
 		}
@@ -207,6 +239,12 @@ func Build(recs []Rec, d Dim) Report {
 				a.row.ComputeState = ComputeNotTracked
 				markDay(a, r)
 			}
+		case d == ByMode:
+			key := modeKey(r.Mode)
+			a := get(key, "")
+			a.row.Key = Text(key)
+			a.row.NotionalTracked = true
+			addRecord(a, r)
 		case d == ByPerson:
 			var attributed int64
 			for k, p := range r.ByPerson {
@@ -257,7 +295,12 @@ func Build(recs []Rec, d Dim) Report {
 		tot.row.ComputeState = ComputeNotTracked
 	}
 	anyKnown := false
+	// The same rule one level up: a total is no measurement when every row it
+	// sums is none, so a report of nothing but unreadable rows reads n/a
+	// rather than the 0 that sums to.
+	allUnreadable := len(rep.Rows) > 0
 	for _, r := range rep.Rows {
+		allUnreadable = allUnreadable && r.Unreadable
 		tot.row.Spent = satAdd(tot.row.Spent, r.Spent)
 		tot.row.Notional = satAdd(tot.row.Notional, r.Notional)
 		tot.row.Compute = satAdd(tot.row.Compute, r.Compute)
@@ -276,8 +319,21 @@ func Build(recs []Rec, d Dim) Report {
 	if anyKnown {
 		tot.row.ComputeState = ComputeKnown
 	}
+	tot.row.Unreadable = allUnreadable
 	rep.Totals = tot.row
 	return rep
+}
+
+// modeKey is the row a recorded rigor mode belongs to: the mode itself, or
+// ModeNone for a record that carries no mode and for one carrying text the
+// vocabulary does not know. A record from a newer writer, or from anything
+// that wrote a mode fugaro never resolved, is grouped as none rather than
+// publishing text this build cannot read as a mode.
+func modeKey(m string) string {
+	if mode, ok := rigor.Parse(m); ok {
+		return string(mode)
+	}
+	return ModeNone
 }
 
 // splitModel splits one model's recorded dollars of a day into billed and
@@ -310,6 +366,8 @@ func markDay(a *acc, r Rec) {
 }
 
 func addRecord(a *acc, r Rec) {
+	a.seen = true
+	a.allUnreadable = a.allUnreadable && r.Unreadable
 	a.row.Spent = satAdd(a.row.Spent, r.SpentMicros)
 	a.row.Notional = satAdd(a.row.Notional, r.NotionalMicros)
 	a.row.Compute = satAdd(a.row.Compute, r.ComputeMicros)
@@ -321,6 +379,7 @@ func addRecord(a *acc, r Rec) {
 }
 
 func finish(a *acc) {
+	a.row.Unreadable = a.seen && a.allUnreadable
 	if a.row.ComputeState == ComputeNotTracked {
 		return
 	}

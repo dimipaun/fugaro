@@ -1,0 +1,1 @@
+{ "version": 1, "run_id": "20261024-120000-a1b2", "repo": "acme/app", "ref": "main", "task": "Wire the graph to the runs", "title": "Wire the graph to the runs", "plan_task": "setup-wizard/W1.3" }

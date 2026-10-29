@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See console/LICENSE.md for the terms.
 // The hardened window, held to its own rules (desktop-console plan Task 1.1;
 // design section 5.1 rules 1, 2 and 3, and D14).
 //
@@ -18,7 +20,9 @@
 //     fails its table; accepting `https://github.com.evil.test`, a URL with
 //     credentials or one with a port fails the three entries that name them;
 //     and `openExternalValidated` calling `openExternal` on a refused URL fails
-//     the test that counts the calls;
+//     the test that counts the calls; letting a rejection from
+//     `shell.openExternal` through -- the platform declining the handover --
+//     fails the case that asserts it answers `false` instead;
 //   - the protocol handler serving a path outside the bundle root, serving a
 //     request over another scheme or host, or dropping the CSP from a response
 //     fails the request table, which asserts the status *and* the reason for
@@ -96,6 +100,7 @@ import type { NavigationEvent, VersionRead } from '../../src/main/window'
 import type { CliCompatibility } from '../../src/shared/version'
 import {
   CLI_VERSION_BUILT_AGAINST,
+  REDUCED_VIEWS,
   SKEW_HEADLINES,
   classifyCliVersion,
   hidesView,
@@ -362,6 +367,10 @@ describe('the one path to the user’s browser is an allow-list (rule 2, D14)', 
     'https://github.com/fugaro/fugaro/pull/434',
     'https://bitbucket.org/edgeappinc/fugarosandbox/pull-requests/1',
     'https://console.cloud.google.com/run/jobs/executions/details/us-east5/web-00001-abcd?project=proj-1234',
+    // The console's own link, and the only one this process builds rather than
+    // reads out of a document: the two onboarding screens' link button
+    // (`GETTING_STARTED_URL` in `src/main/onboarding.ts`).
+    'https://fugaro.dev/getting-started/',
   ]
 
   it.each(accepted)('opens %s', (link) => {
@@ -372,8 +381,20 @@ describe('the one path to the user’s browser is an allow-list (rule 2, D14)', 
     expect(ALLOWED_EXTERNAL_HOSTS).toEqual([
       'bitbucket.org',
       'console.cloud.google.com',
+      // The website's own host, on the list because the onboarding screens link
+      // to it. A second entry here is a deliberate edit in `src/main/window.ts`
+      // and in this test together.
+      'fugaro.dev',
       'github.com',
     ])
+  })
+
+  it('does not open a host that merely ends with one of them', () => {
+    // The comparison is whole and lower-cased: a lookalike registered under a
+    // domain the console trusts is not on the list.
+    for (const lookalike of ['https://fugaro.dev.evil.test/getting-started/', 'https://evil-fugaro.dev/']) {
+      expect(validateExternalUrl(lookalike).ok, lookalike).toBe(false)
+    }
   })
 
   it('hands over the parsed URL, not the string it was spelled as', () => {
@@ -441,6 +462,34 @@ describe('the one path to the user’s browser is an allow-list (rule 2, D14)', 
       await expect(openExternalValidated(shell, link), link).resolves.toBe(false)
     }
     expect(opened).toEqual([])
+  })
+
+  it('answers false when the platform refuses the handover, rather than rejecting', async () => {
+    // The third way a link does not open, and the only one the *console* cannot
+    // decide: the URL passed its allow-list, the handover reached the operating
+    // system, and the platform has nothing registered for `https:` -- a
+    // container, a headless box, a desktop whose browser association is broken.
+    // Electron's `shell.openExternal` reports that by **rejecting**, and an
+    // uncaught rejection is not this function's `false`: it travels out of
+    // whichever `ipcMain.handle` callback awaited it, so the picker's
+    // `openExternal` answers with the operating system's own complaint (its
+    // catch surfaces `error.message`) instead of the console's one sentence,
+    // and the dashboard's `link.openExternal` rejects the same way. The
+    // contract the picker's handler is written against is that both a refused
+    // URL and a declined handover answer `false`; this is the half of it that
+    // was not true.
+    const opened: string[] = []
+    const shell = {
+      async openExternal(url: string) {
+        opened.push(url)
+        throw new Error('Failed to open the link: no application is registered for the https scheme')
+      },
+    } as unknown as Shell
+
+    await expect(openExternalValidated(shell, 'https://github.com/fugaro/fugaro')).resolves.toBe(false)
+    // The handover did happen -- the OS was asked -- so a test that only
+    // asserted `false` would also pass for a shell this function never reached.
+    expect(opened).toEqual(['https://github.com/fugaro/fugaro'])
   })
 })
 
@@ -857,6 +906,24 @@ describe('runVersionHandshake', () => {
     expect(hidesView(compatibility, 'spend')).toBe(true)
   })
 
+  it('proceeds in the reduced mode for a dev build, which no comparison can place', async () => {
+    // The other line a `fugaro` binary prints: `var Version = "dev"`
+    // (`internal/cli/root.go`) for a binary built without the release
+    // `-ldflags`, which is the binary the person building the CLI and the console
+    // together runs. It is a *recognised* line and it is not a refusal: refusing
+    // would block exactly that person, and the reduced mode is what keeps the
+    // acceptance from being a silent trust -- every view whose figures nothing
+    // vouched for is withheld, and the banner names the line as unplaceable.
+    const compatibility = await runVersionHandshake({
+      readVersion: async () => ({ ok: true, stdout: 'dev\n' }),
+    })
+    expect(compatibility.mode).toBe('reduced')
+    expect(compatibility.skew).toBe('unplaceable')
+    expect(compatibility.cliVersion).toBe('dev')
+    expect(compatibility.hidden).toEqual([...REDUCED_VIEWS])
+    expect(hidesView(compatibility, 'spend')).toBe(true)
+  })
+
   it('refuses a CLI below the floor', async () => {
     const compatibility = await runVersionHandshake({
       readVersion: async () => ({ ok: true, stdout: '0.5.0\n' }),
@@ -1025,6 +1092,28 @@ describe('startupWindow', () => {
     // bridge away either -- a reduced console draws the views it may draw, which
     // it can only do over IPC.
     expect(factory.options[0]?.webPreferences).toEqual(dashboardWebPreferences(PRELOAD_PATH))
+  })
+
+  it('builds the window for a dev build too, and says on it that the line is unplaceable', async () => {
+    // The wiring half of the plan's open item 3 (`docs/plans/2026-10-15-desktop-console.md`),
+    // answered on 2026-10-22: a dev CLI opens the dashboard in the reduced mode
+    // rather than being refused. So this is the `ok`/reduced path and not the
+    // refusal one -- the window is built, it loads the dashboard document, and
+    // its title carries the reduced banner's headline, which is the header this
+    // tree can put a mode in (the document draws the banner itself).
+    const factory = fakeWindowFactory()
+    const startup = await startupWindow({
+      BrowserWindow: factory.BrowserWindow,
+      session: fakeSession().value, preloadPath: PRELOAD_PATH,
+      readVersion: async () => ({ ok: true, stdout: 'dev\n' }),
+    })
+    expect(startup.compatibility.mode).toBe('reduced')
+    expect(startup.compatibility.skew).toBe('unplaceable')
+    expect(startup.window).not.toBeNull()
+    expect(factory.options).toHaveLength(1)
+    expect(factory.loaded).toEqual([APP_ENTRY_URL])
+    expect(factory.built[0]?.title).toContain(SKEW_HEADLINES.reduced)
+    expect(factory.built[0]?.title).not.toContain(SKEW_HEADLINES.refused)
   })
 
   it('builds no window at all below the floor -- the plan\'s red step', async () => {
@@ -1228,8 +1317,11 @@ describe('the refusal document in the bundle', () => {
   it('is a real file in the tree the handler serves, checked against the working tree', () => {
     // `bundleRoot` is this checkout's `src/renderer`, and the read above would
     // have thrown had the document not been added to the bundle at all.
-    expect(refusalHTML.trimStart().startsWith('<!doctype html>')).toBe(true)
-    expect(indexHTML.trimStart().startsWith('<!doctype html>')).toBe(true)
+    // The licence notice every tracked file starts with is an HTML comment here,
+    // so the doctype follows it.
+    const doctypeAfterNotice = /^\s*(<!--[\s\S]*?-->\s*)*<!doctype html>/i
+    expect(doctypeAfterNotice.test(refusalHTML)).toBe(true)
+    expect(doctypeAfterNotice.test(indexHTML)).toBe(true)
   })
 })
 

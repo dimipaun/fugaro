@@ -106,10 +106,10 @@ func pickerRun(t *testing.T, terminal bool, stdin string, o *initOptions) (*init
 
 // pickerAnswers is the stdin that answers the wizard's questions before the
 // billing one — the GCP project (there is none to suggest here, so Enter is
-// not an answer), the region (Enter), whether to create the project (create),
-// and the name (Enter) — with answer answering the billing question.
+// not an answer), the region (Enter) and the name (Enter) — with answer
+// answering the billing question.
 func pickerAnswers(answer string) string {
-	return "proj-1234\n" + "\n" + setupAnswerCreate + "\n" + "\n" + answer + "\n"
+	return "proj-1234\n" + "\n" + "\n" + answer + "\n"
 }
 
 // billingListCalls is how many times the account list was asked for: the
@@ -396,27 +396,27 @@ func TestPickerNeverRunsWithoutATerminal(t *testing.T) {
 	}
 }
 
-// TestPickerNeverRunsWhenTheAnswerIsAdopt: the question is asked only where
-// its answer is one this run acts on. On an answer of adoption the project
-// stage skips before it reads anything (init_project.go's Check), so a
-// --link-billing this run recorded would reach no link at all: a person who
-// answered it would have been asked something the run then ignored. Nothing is
-// listed, and the account they have is not the run's to read either.
-func TestPickerNeverRunsWhenTheAnswerIsAdopt(t *testing.T) {
+// TestPickerNeverRunsWhereNothingIsCreated: the question is asked only where
+// its answer is one this run acts on. A first run with --config-only creates
+// no project (settleCreation), so a --link-billing this run recorded would
+// reach no link at all: a person who answered it would have been asked
+// something the run then ignored. Nothing is listed, and the account they have
+// is not the run's to read either.
+func TestPickerNeverRunsWhereNothingIsCreated(t *testing.T) {
 	f := gcpfake.NewBilling(t)
 	acct := pickerAccountID(t, "one")
 	f.AddAccountNamed(acct, "the operator's own account", true)
 
-	r, out := pickerRun(t, true, "proj-1234\n"+"\n"+setupAnswerAdopt+"\n"+"\n"+"1\n", nil)
+	r, out := pickerRun(t, true, "proj-1234\n"+"\n"+"1\n", &initOptions{configOnly: true})
 	pickerSources(t, f)
 	if err := r.gatherInputs(t.Context()); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	if r.o.createProject {
-		t.Fatalf("the answer %q recorded creation:\n%s", setupAnswerAdopt, out)
+		t.Fatalf("a --config-only run recorded a creation:\n%s", out)
 	}
 	if r.o.linkBilling != "" || billingListCalls(f) != 0 || strings.Contains(out.String(), acct) {
-		t.Errorf("the picker ran on an answer of adoption: %q, %d list call(s)\n%s", r.o.linkBilling, billingListCalls(f), out)
+		t.Errorf("the picker ran on a run that creates nothing: %q, %d list call(s)\n%s", r.o.linkBilling, billingListCalls(f), out)
 	}
 }
 
@@ -484,7 +484,7 @@ func TestPickerNeverRunsUnderPrintVars(t *testing.T) {
 	// Every other input comes from the flags, so the run is past the questions
 	// that would refuse it: the only thing between this run and the account
 	// list is the condition under test.
-	r, out := pickerRun(t, true, "", &initOptions{printVars: true, createProject: true, name: "aurora",
+	r, out := pickerRun(t, true, "", &initOptions{printVars: true, name: "aurora",
 		cloud: cloudOptions{gcpProject: "proj-1234", region: defaultRegion}})
 	pickerSources(t, f)
 	if err := r.gatherInputs(t.Context()); err != nil {
@@ -1271,7 +1271,7 @@ func TestNothingIsEnabledWithoutAnAnswer(t *testing.T) {
 		f := gcpfake.NewBilling(t)
 		pickerDisabledOnThisProject(t, f)
 		// The question is the last one, so stdin ends at the offer's prompt.
-		r, out := pickerRun(t, true, "proj-1234\n\n"+setupAnswerCreate+"\n\n", nil)
+		r, out := pickerRun(t, true, "proj-1234\n\n\n", nil)
 		ran := pickerGcloudRunner(t, f)
 		if err := r.gatherInputs(t.Context()); err != nil {
 			t.Fatalf("%v\n%s", err, out)

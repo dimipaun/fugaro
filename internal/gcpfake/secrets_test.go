@@ -1,6 +1,7 @@
 package gcpfake
 
 import (
+	"encoding/base64"
 	"io"
 	"net/http"
 	"slices"
@@ -66,6 +67,52 @@ func TestSecretsFakeRecordsWhatADeleteAndADestroyTake(t *testing.T) {
 	}
 	if code, _ := secretCall(t, f, http.MethodDelete, "/v1/projects/p/secrets/claude-oauth-token"); code != http.StatusNotFound {
 		t.Fatalf("deleting a secret that is gone: %d, want 404", code)
+	}
+}
+
+// A version a disable took is recorded, reported DISABLED by the version
+// list, and its value is no longer readable — as real Secret Manager refuses
+// a DISABLED version's access, so a test can observe the retirement and not
+// only the call. The version that was not disabled is untouched.
+func TestSecretsFakeDisablesOneVersionAndRefusesItsValue(t *testing.T) {
+	f := NewSecrets(t)
+	f.Seed("creds-bundle", nil, []byte("first"))
+	f.AllowAccess()
+	if code, body := secretCall(t, f, http.MethodPost, "/v1/projects/p/secrets/creds-bundle:addVersion"); code == http.StatusOK {
+		t.Fatalf("an empty addVersion was answered: %s", body) // no body: the fake refuses it
+	}
+	// A second version, as another writer of the same secret leaves one. It is
+	// what makes "the version that was not disabled is untouched" something
+	// this test checks rather than something its comment claims: the version
+	// the disable below retires is not the newest, so the two are told apart by
+	// the state each one reports.
+	f.AddVersion("creds-bundle", []byte("second"))
+	code, body := secretCall(t, f, http.MethodPost, "/v1/projects/p/secrets/creds-bundle/versions/1:disable")
+	if code != http.StatusOK || !strings.Contains(body, `"state":"DISABLED"`) {
+		t.Fatalf("disable: %d %s", code, body)
+	}
+	if got := f.Disabled(); !slices.Equal(got, []string{"projects/p/secrets/creds-bundle/versions/1"}) {
+		t.Fatalf("Disabled = %q", got)
+	}
+	if f.Deleted() != nil || f.Destroyed() != nil {
+		t.Fatalf("a disable took something away: %q / %q", f.Deleted(), f.Destroyed())
+	}
+	if code, body := secretCall(t, f, http.MethodGet, "/v1/projects/p/secrets/creds-bundle/versions/1:access"); code != http.StatusBadRequest || !strings.Contains(body, "disabled") {
+		t.Fatalf("the value of the disabled version: %d %s, want 400 and \"disabled\"", code, body)
+	}
+	// The version that was not disabled is ENABLED and still readable, and the
+	// list reports one of each: a disable takes the one version it names and
+	// nothing else.
+	if code, body := secretCall(t, f, http.MethodGet, "/v1/projects/p/secrets/creds-bundle/versions/latest:access"); code != http.StatusOK ||
+		!strings.Contains(body, base64.StdEncoding.EncodeToString([]byte("second"))) {
+		t.Fatalf("the version that was not disabled: %d %s, want 200 and its value", code, body)
+	}
+	if code, body := secretCall(t, f, http.MethodGet, "/v1/projects/p/secrets/creds-bundle/versions"); code != http.StatusOK ||
+		strings.Count(body, `"state":"DISABLED"`) != 1 || strings.Count(body, `"state":"ENABLED"`) != 1 {
+		t.Fatalf("the versions list: %d %s, want one DISABLED and one ENABLED", code, body)
+	}
+	if code, _ := secretCall(t, f, http.MethodPost, "/v1/projects/p/secrets/creds-bundle/versions/9:disable"); code != http.StatusNotFound {
+		t.Fatalf("disabling a version that is not there: %d, want 404", code)
 	}
 }
 

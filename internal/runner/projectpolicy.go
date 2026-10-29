@@ -64,6 +64,13 @@ type budgetIdentity struct {
 	custom string
 	db     *rtdb.Client
 	err    error
+	// tok is the session this read exchanged the launcher's custom token for:
+	// the run's own Firebase identity, which the credentials service verifies
+	// a mint by (C1.10). The read needs it before the budget opens, so it is
+	// kept here for the git path, which fetches its first credential before
+	// the budget session exists (r.runIDToken); once the budget session
+	// exists that one answers instead. It is guarded by r.mu.
+	tok *token.Session
 }
 
 // projectPolicy returns the project's policy, if this run can read one. Its
@@ -499,6 +506,14 @@ func (r *run) exchangeIdentity(ctx context.Context, cfg *budget.Config, custom s
 	if c := tok.Claims(); c.Slug != cfg.Slug || c.Run != cfg.Run {
 		return nil, token.ErrTokenMismatch
 	}
+	// The session the read exchanged is kept on the run: it is the identity
+	// the credentials service verifies a mint by, and the git path asks for
+	// its token before the budget session exists (r.runIDToken). The check
+	// above is the same one budget.Open makes of the second exchange, so this
+	// is the same identity either way.
+	r.mu.Lock()
+	r.ident.tok = tok
+	r.mu.Unlock()
 	var opts []rtdb.Option
 	if cfg.HTTP != nil {
 		opts = append(opts, rtdb.WithHTTPClient(cfg.HTTP))

@@ -1,0 +1,68 @@
+<!-- SPDX-License-Identifier: LicenseRef-Fugaro-Subscription -->
+<!-- See console/LICENSE.md for the terms. -->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!--
+      The launch confirmation window's document (design section 5.1 rule 11;
+      console V2.5.1a part 2b-2a). Before the main process spawns a `run` child
+      it opens a modal window of its own on this page, and this is the page the
+      operator reads: the whole task text, the exact command line, and two
+      buttons.
+
+      The CSP below is the **same string** as `index.html`'s, `installations.html`'s
+      and `refusal.html`'s, and as the header `src/main/protocol.ts` attaches to
+      every `app://` response: this document is served by the same protocol
+      handler, so it gets the same header and there is no delta for it to have.
+      Which test holds *this* copy to the header is
+      `console/test/unit/csp-document.test.ts` ("carry the CSP as a meta copy of
+      the header, byte for byte").
+
+      It renders every value as a **text node** (rule 7), so there is no `<a>`,
+      no `<img>`, no `<iframe>` and no `<form>` anywhere below, and no inline
+      script and no `on*` handler: `script-src 'self'` has no `'unsafe-inline'`,
+      and the values this window draws -- a repository's title, a task text --
+      are exactly the ones that would matter if one could be markup.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'"
+    />
+    <!--
+      The one stylesheet this document links: `./console.css`, the same file
+      every document of the bundle links, served from this same origin by the
+      same handler and admitted by the same `style-src 'self'`. The task box's
+      own rule -- `overflow: auto` under a bound -- lives there and not here,
+      because `style-src 'self'` admits no inline style.
+    -->
+    <link rel="stylesheet" href="./console.css" />
+    <title>Fugaro console — confirm the run</title>
+  </head>
+  <body>
+    <!--
+      The whole of this document is an `h1`, an `h2`, a status `p`, a `dl`, a
+      `pre` and a `div`: every row, both buttons and the task text are built by
+      `src/renderer/confirm.ts`, which is the one script below. That is rule 11's
+      "renders every value as a text node" written as a structure rather than as
+      a promise -- there is no value in this file for a value to be markup in.
+
+      `#confirm-task` is the whole task text, never cut: it is a `<pre>` so the
+      text keeps the shape it was written with, and the stylesheet bounds it and
+      scrolls it rather than the document shortening it. The three classes below
+      are this window's hooks in the theme (design §2.13): its document carries
+      classes rather than the picker's ids, because the id scan in
+      `installations-view.test.ts` holds every id `screens.css` selects to the
+      ids `installations.html` declares.
+    -->
+    <main>
+      <h1>Confirm this run</h1>
+      <p id="confirm-status">Reading the launch…</p>
+      <dl id="confirm-fields" class="console-confirm-fields"></dl>
+      <h2>The task, as submitted</h2>
+      <pre id="confirm-task" class="console-confirm-task"></pre>
+      <div id="confirm-actions" class="console-confirm-actions"></div>
+    </main>
+    <script src="./confirm.js" defer></script>
+  </body>
+</html>

@@ -1625,6 +1625,54 @@ func TestProjectSecretCandidateGate(t *testing.T) {
 	}
 }
 
+// TestProjectSecretCandidateAdmitsASegmentWildcard: an allow_data_to entry
+// may use "*" inside a segment (owner ruling, 2026-10-27, Bitbucket design
+// D464), and the same entry decides the mount, not only the CLI's store: the
+// eligibility function that Repo()'s candidate map and Readiness's project
+// resolution both read answers for a repository the wildcard matches and not
+// for one it does not, and a matching repository's project copy is what
+// reaches tfvars (RepoSpec.ProjectSecrets).
+func TestProjectSecretCandidateAdmitsASegmentWildcard(t *testing.T) {
+	lc := parseLC(t, m4LocalConfig+m5Additions+"project_secrets:\n  bitbucket-token: { allow_data_to: [myworkspace/*] }\n")
+	for _, tc := range []struct {
+		repo string
+		want bool
+	}{
+		{"myworkspace/api", true},
+		{"MyWorkspace/Api", true}, // case-folded, like an exact entry
+		{"other/api", false},
+		{"myworkspace/a/b", false}, // "*" never crosses "/"
+	} {
+		id, ok := ProjectSecretCandidate(lc, "bitbucket-token", tc.repo)
+		if ok != tc.want {
+			t.Errorf("ProjectSecretCandidate(myworkspace/*, %q) ok = %v, want %v", tc.repo, ok, tc.want)
+			continue
+		}
+		if ok && id != gcp.ProjectSecretID(lc.Name, "bitbucket-token") {
+			t.Errorf("ProjectSecretCandidate(myworkspace/*, %q) id = %q, want %q", tc.repo, id, gcp.ProjectSecretID(lc.Name, "bitbucket-token"))
+		}
+	}
+
+	// The mount itself, for the sandbox fixture (acme/sandbox): a wildcard
+	// entry naming its workspace is a candidate, and resolves to the project
+	// copy; a wildcard naming another workspace is neither.
+	f := newCloud(t)
+	spec := projectSpec(t, "project_secrets:\n  bitbucket-token: { allow_data_to: [acme/*] }\n")
+	if _, ok := spec.ProjectSecretCandidates["bitbucket-token"]; !ok {
+		t.Fatal("a wildcard entry matching this repository got no ProjectSecretCandidates entry")
+	}
+	want := f.seedProjectSecret(spec, "bitbucket-token")
+	got, missing, _ := readinessOf(t, f, spec)
+	if id := got.ProjectSecrets["bitbucket-token"]; id != want {
+		t.Errorf("ProjectSecrets[bitbucket-token] = %q, want the project copy %q (missing %v)", id, want, missing)
+	}
+
+	other := projectSpec(t, "project_secrets:\n  bitbucket-token: { allow_data_to: [myworkspace/*] }\n")
+	if _, ok := other.ProjectSecretCandidates["bitbucket-token"]; ok {
+		t.Error("a wildcard entry for another workspace got a ProjectSecretCandidates entry")
+	}
+}
+
 // B4: the check job's own secret_env goes through the identical resolution.
 func TestReadinessCheckJobResolvesProjectSecretsToo(t *testing.T) {
 	f := newCloud(t)

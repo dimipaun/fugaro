@@ -351,11 +351,12 @@ func TestReleaseNotesV090ClaimsHoldInTheTree(t *testing.T) {
 		t.Errorf("%s does not state plainly that `fugaro project export` is not in this release", releaseNotesV090)
 	}
 
-	// The shipped gates. Both are shut in this tree (internal/cli/recipes_skew.go),
-	// and a gate that is shut has to be said to be shut: the notes may not offer
-	// a gated feature as something a reader can use, and the paragraphs that
-	// carry the refusal are asserted here so the wording cannot quietly become a
-	// description of the feature.
+	// The shipped gates. Both are open in this tree (internal/cli/recipes_skew.go:
+	// managedDeployerShipped is true as of 0.10.0, batchProvisionShipped as of
+	// 0.9.5), so neither block below runs — the guards stay because these notes
+	// are 0.9.0's released record, written while both gates were shut, and a
+	// release that had to close one again would find the paragraphs it has to
+	// restore named here rather than in a reader's memory.
 	if !managedDeployerShipped {
 		if !names("Managed projects stay disabled") {
 			t.Errorf("%s does not say managed projects stay disabled, and managedDeployerShipped is false: every command that would create a managed project or act as its deployer refuses before any cloud call", releaseNotesV090)
@@ -421,44 +422,6 @@ func TestReleaseNotesV090ClaimsHoldInTheTree(t *testing.T) {
 			if strings.Contains(line, prefix) {
 				t.Errorf("%s carries %q in a bullet: docs/releases/README.md asks for what a user can do now, not the commit titles the changelog already holds", releaseNotesV090, prefix)
 			}
-		}
-	}
-}
-
-// TestReleaseNotesV090ManagedWordingMatchesTheGates is the other half of the
-// managed paragraph: the notes name four commands as refusing, and with the
-// shipped gates closed the CLI refuses exactly those, `fugaro managed flag` included. An
-// earlier draft of these notes offered `managed flag`, a `--managed` creation
-// and a `managed apply` as things a user can do; this is the test that would
-// have caught it, and the one a gate moved back onto the flag command fails.
-//
-// Mutation (verified, each planted and reverted): drop the
-// refuseManagedNotShipped() call from managedFlag; drop `fugaro managed apply` from
-// the refusals the notes name; and drop `fugaro restore` from them.
-func TestReleaseNotesV090ManagedWordingMatchesTheGates(t *testing.T) {
-	closeShippedGates(t)
-	notes := readReleaseNotesV090(t)
-
-	// Each of these is refused by the gate, before any cloud call, and named in
-	// the notes as a command that refuses: the reader is not left to discover it
-	// at a terminal. The names are the spellings the notes use, so a step that
-	// drops one is the failure.
-	for _, c := range []struct {
-		notes string
-		args  []string
-	}{
-		{"`fugaro init --create-project --managed`", []string{"setup", "--create-project", "--gcp-project", "fugaro-newproj-1234", "--managed", "--budget", "50", "--budget-currency", "USD", "--billing-account", "000000-000000-000000"}},
-		{"`fugaro init --managed`", []string{"setup", "--managed"}},
-		{"`fugaro managed flag`", []string{"managed", "flag", "fugaro-newproj-1234", "--budget", "50", "--budget-currency", "USD"}},
-		{"`fugaro managed apply`", []string{"managed", "apply", "infra"}},
-		{"`fugaro restore`", []string{"restore", "fugaro-newproj-1234", "infra"}},
-	} {
-		out, err := runGated(t, c.args...)
-		if err == nil || !strings.Contains(err.Error(), managedDisabled) {
-			t.Errorf("fugaro %s: exit %d (%v), want the user error %q\n%s", strings.Join(c.args, " "), ExitCode(err), err, managedDisabled, out)
-		}
-		if !strings.Contains(notes, c.notes) {
-			t.Errorf("%s does not name %s among the commands that refuse while managedDeployerShipped is false", releaseNotesV090, c.notes)
 		}
 	}
 }

@@ -368,7 +368,7 @@ func TestDocsMobileChecklistHasChecks100To104(t *testing.T) {
 				"**custom tokens only**",
 				"The web API key is public, so only custom tokens signed by Fugaro's signer may work",
 				"`PAIRING`",
-				"config/pairing/<the p~ uid>/request",
+				"`pairing/<the p~ uid>/request`",
 				"`PUBKEY`",
 				"**FACT:**",
 				"**Passes when:**",

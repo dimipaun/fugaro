@@ -469,7 +469,7 @@ func TestValidPatternCapsWildcards(t *testing.T) {
 			t.Errorf("ValidPattern(%q) = nil, want an error: more than %d wildcards", bad, maxPatternStars)
 		}
 	}
-	for _, bad := range []string{"github/acme/" + strings.Repeat("a", maxPatternLen), "*" + strings.Repeat("a", maxPatternLen)} {
+	for _, bad := range []string{"github/acme/" + strings.Repeat("a", MaxPatternLen), "*" + strings.Repeat("a", MaxPatternLen)} {
 		if err := ValidPattern(bad); err == nil {
 			t.Errorf("ValidPattern(%d characters) = nil, want an error: the pattern is too long", len(bad))
 		}

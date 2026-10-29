@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+# See mobile/LICENSE.md for the terms.
 # Mutation-proves the text screen's guards (mobile plan, Task P6.9; D167, D164,
 # D169, D162, D170).
 #

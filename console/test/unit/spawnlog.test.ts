@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See console/LICENSE.md for the terms.
 // The spawn log, held to the schema Task 4.3's Check 59 reads (desktop-console
 // plan Task 1.3, design section 5.1 rule 10, D20).
 //
@@ -29,7 +31,7 @@ import { describe, expect, it } from 'vitest'
 
 import { SPAWN_LOG_ENV, SPAWN_LOG_LIMIT, SPAWN_LOG_MODE, TRUNCATION_LINE, createSpawnLog, rfc3339Seconds } from '../../src/main/spawnlog'
 import type { SpawnLogFs } from '../../src/main/spawnlog'
-import { planFor } from '../../src/main/spawn'
+import { planFor, spawnedArgv } from '../../src/main/spawn'
 import { CliSource, createInstallationStore } from '../../src/source/cli'
 import { installStub } from './stub'
 
@@ -448,5 +450,79 @@ describe('the spawn plan the log records', () => {
     const line = JSON.parse(readFileSync(logPath, 'utf8').trim()) as { argv: string[]; cwd: string }
     expect(line.argv).toEqual([...plan.argv])
     expect(line.cwd).toBe(plan.cwd)
+  })
+
+  it('is the whole command line on the WSL route, and unchanged on the host one', () => {
+    // T-C1 of docs/console-windows/implementation-plan.md, decision D1(a): the
+    // plan carries the program and the wrapper's words apart from the CLI's
+    // argv, and the log records `spawnedArgv(plan)` -- the command, the
+    // wrapper's words, then the CLI's argv. On the host route that is exactly
+    // `plan.argv`, so every line Check 59a already reads is byte-identical; on
+    // the WSL route it is the command line Task Manager shows, which is the
+    // point of recording it at all.
+    const host = planFor('budget.show', {}, {
+      target: { project: PROJECT },
+      binaryPath: '/opt/homebrew/bin/fugaro',
+      directory: '/Users/owner/src/fugaro',
+      appEnv: {},
+    })
+    expect([...spawnedArgv(host)]).toEqual([...host.argv])
+    expect([...spawnedArgv(host)][0]).toBe('/opt/homebrew/bin/fugaro')
+
+    const wsl = {
+      ...host,
+      command: 'C:\\Windows\\System32\\wsl.exe',
+      prefix: ['-d', 'Ubuntu', '--cd', '/home/dimi', '-e'],
+      argv: ['fugaro', 'budget', 'show', '--json', '--project', PROJECT],
+    }
+    expect([...spawnedArgv(wsl)]).toEqual([
+      'C:\\Windows\\System32\\wsl.exe',
+      '-d',
+      'Ubuntu',
+      '--cd',
+      '/home/dimi',
+      '-e',
+      'fugaro',
+      'budget',
+      'show',
+      '--json',
+      '--project',
+      PROJECT,
+    ])
+  })
+
+  it('records the shell that carried the CLI, because that is what ran', () => {
+    // T-F3/T-F4 of docs/console-windows/implementation-plan.md. On the WSL route
+    // the program the OS starts is `wsl.exe` and the program *inside* the
+    // distribution is a `sh -c` script (D6(a)): the log is the operator's record
+    // of what ran (D1), so it says the shell, and the CLI's own words are inside
+    // the script's `exec` line -- quoted, which is how they reach the
+    // distribution. A log that printed the CLI's argv beside the script would
+    // describe a command line that never existed.
+    const wsl = planFor('budget.show', {}, {
+      target: { project: PROJECT },
+      binaryPath: '',
+      directory: '/Users/owner/AppData/Local/Temp/fugaro-console/cwd',
+      appEnv: {},
+      wsl: {
+        distro: 'Ubuntu',
+        directory: '/home/dimi/src/fugaro',
+        executable: 'C:\\Windows\\System32\\wsl.exe',
+      },
+    })
+    const line = [...spawnedArgv(wsl)]
+    expect(line.slice(0, 6)).toEqual([
+      'C:\\Windows\\System32\\wsl.exe',
+      '-d',
+      'Ubuntu',
+      '--cd',
+      '/home/dimi/src/fugaro',
+      '-e',
+    ])
+    expect(line.slice(6, 8)).toEqual(['sh', '-c'])
+    expect(line).toHaveLength(9)
+    expect(line[8]).toContain(`exec 'fugaro' 'budget' 'show' '--json' '--project' '${PROJECT}'`)
+    // The CLI's words are not logged beside the script as well: they are in it.
+    expect(line.filter((word) => word === 'budget')).toHaveLength(0)
   })
 })

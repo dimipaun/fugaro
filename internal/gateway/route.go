@@ -105,6 +105,18 @@ func validateRoutes(u Upstream, routes []Route) error {
 	if len(routes) == 0 {
 		return nil
 	}
+	if u.Kind == KindOAuth {
+		// Tier A (D133, oauth.go): a route is a provider's endpoint, and an
+		// OAuth token is only ever sent to Anthropic's own. An OAuth
+		// upstream takes no routes at all, whatever they name.
+		return fmt.Errorf("gateway: the OAuth upstream takes no routes: %w", errOAuthOnRoute)
+	}
+	if u.Kind == KindService {
+		// C1.15 (service.go): a route is reached with the job's own key for
+		// the provider, and a cascade run has no key of its own (D143). A
+		// service upstream takes no routes at all, whatever they name.
+		return fmt.Errorf("gateway: the service upstream takes no routes: %w", errServiceOnRoute)
+	}
 	if u.Kind != "anthropic" {
 		return fmt.Errorf("gateway: routes need the anthropic upstream, not %q (a run does not mix credentials)", u.Kind)
 	}
@@ -113,6 +125,11 @@ func validateRoutes(u Upstream, routes []Route) error {
 		switch {
 		case !routeNameRE.MatchString(r.Name):
 			return fmt.Errorf("gateway: route name %q isn't a name", r.Name)
+		case strings.EqualFold(r.Auth, authOAuth):
+			// Tier A (D133): a route is a provider's endpoint, so it never
+			// carries an OAuth credential -- refused by name, here and in
+			// attachCredential, rather than by the generic auth message.
+			return fmt.Errorf("%s: %w", at, errOAuthOnRoute)
 		case r.Credential == nil:
 			return fmt.Errorf("%s has no credential source", at)
 		case r.Auth != "bearer" && r.Auth != "x-api-key":
@@ -154,10 +171,16 @@ func checkRouteBaseURL(s string) error {
 
 // routeFor is the route that claims model, or nil: any model no route claims
 // goes to Options.Upstream (the direct Anthropic route); a CLAIMED Claude ID is not one of them: it matches its provider route first.
-func (s *Server) routeFor(model string) *Route {
-	for i := range s.o.Routes {
-		if s.o.Routes[i].matches(model) {
-			return &s.o.Routes[i]
+//
+// It is a function of the routes rather than of the Server because the request
+// check reads it (checkRequest, forward.go) and the check is shared with the
+// credentials service, which has no Server and no routes of its own
+// (RequestRefusal, export.go): one reading of "which route claims this model",
+// not a second one that could disagree.
+func routeFor(model string, routes []Route) *Route {
+	for i := range routes {
+		if routes[i].matches(model) {
+			return &routes[i]
 		}
 	}
 	return nil
@@ -170,6 +193,13 @@ func hasVariantSuffix(model string) bool { return strings.Contains(model, ":") }
 // attachCredential sets the route's key on the upstream request. The agent's
 // own credentials were already dropped by forwardHeaders.
 func (r *Route) attachCredential(h http.Header) (key string, err error) {
+	if strings.EqualFold(r.Auth, authOAuth) {
+		// Tier A (D133, oauth.go): a route is a provider's endpoint, and an
+		// OAuth token is only ever sent to Anthropic's own. Refused here as
+		// well as in validateRoutes, so a Route built in code -- past
+		// validation -- cannot put the token on the wire either.
+		return "", errOAuthOnRoute
+	}
 	key, err = r.Credential()
 	if err != nil || key == "" {
 		return "", errors.New("the provider key isn't available")
@@ -185,7 +215,7 @@ func (r *Route) attachCredential(h http.Header) (key string, err error) {
 // withRoute points a call at the provider that claims model. It runs after
 // the pin check, so only a pinned model is ever sent to a provider.
 func (s *Server) withRoute(rt route, model string) route {
-	if pr := s.routeFor(model); pr != nil && rt.path != "" {
+	if pr := routeFor(model, s.o.Routes); pr != nil && rt.path != "" {
 		rt.provider = pr
 		rt.upstream = trimSlash(pr.BaseURL) + rt.path + rt.query
 	}
@@ -203,7 +233,18 @@ func (s *Server) upstreamQuery(r *http.Request) string {
 
 // carriesToken: v holds the gateway token in any case, or percent-encoded
 // (a bad escape is left as it is, so it cannot hide one).
+//
+// A Server with no token carries no token: strings.Contains(v, "") is true for
+// every v, so without this arm scrubToken deletes every header it is handed and
+// upstreamQuery drops every query -- the caller's allow-list would never be
+// exercised on a Server built without Start, which is the shape a test that
+// wants only the allow-list reaches for. Every started gateway has a token
+// (Start makes one), so this is a property of the function rather than a route
+// case.
 func (s *Server) carriesToken(v string) bool {
+	if s.token == "" {
+		return false
+	}
 	tok := strings.ToLower(s.token)
 	lv := strings.ToLower(v)
 	return strings.Contains(lv, tok) || strings.Contains(strings.ToLower(lenientUnescape(lv)), tok)
@@ -339,32 +380,49 @@ func keyFrom(h http.Header) string {
 
 const redacted = "[redacted]"
 
-// redactWriter replaces every occurrence of key in what is written through
-// it, also when a chunk boundary splits one. It holds back only a tail that
-// could still become the key, so a stream is delayed by nothing else.
+// redactWriter replaces every occurrence of every key in what is written
+// through it, also when a chunk boundary splits one. It holds back only a
+// tail that could still become one of the keys, so a stream is delayed by
+// nothing else.
+//
+// It takes more than one key because a service call carries two credentials
+// of this run -- the job's ID token in the Authorization header and the run's
+// own identity beside it (C1.15, HeaderRunIdentity) -- and a body the service
+// echoes back may carry either. An empty key is dropped rather than kept: an
+// empty needle would match everywhere.
 type redactWriter struct {
 	w    io.Writer
-	key  []byte
+	keys [][]byte
 	hold []byte
 }
 
-func newRedactWriter(w io.Writer, key string) *redactWriter {
-	return &redactWriter{w: w, key: []byte(key)}
+func newRedactWriter(w io.Writer, keys ...string) *redactWriter {
+	r := &redactWriter{w: w}
+	for _, k := range keys {
+		if k != "" {
+			r.keys = append(r.keys, []byte(k))
+		}
+	}
+	return r
 }
 
 func (r *redactWriter) Write(p []byte) (int, error) {
-	if len(r.key) == 0 {
+	if len(r.keys) == 0 {
 		return r.w.Write(p)
 	}
 	buf := append(r.hold, p...)
 	r.hold = nil
-	buf = bytes.ReplaceAll(buf, r.key, []byte(redacted))
-	// Keep the longest suffix that is a proper prefix of the key.
+	for _, k := range r.keys {
+		buf = bytes.ReplaceAll(buf, k, []byte(redacted))
+	}
+	// Keep the longest suffix that is a proper prefix of any key.
 	keep := 0
-	for n := min(len(r.key)-1, len(buf)); n > 0; n-- {
-		if bytes.HasSuffix(buf, r.key[:n]) {
-			keep = n
-			break
+	for _, k := range r.keys {
+		for n := min(len(k)-1, len(buf)); n > keep; n-- {
+			if bytes.HasSuffix(buf, k[:n]) {
+				keep = n
+				break
+			}
 		}
 	}
 	r.hold = append([]byte(nil), buf[len(buf)-keep:]...)

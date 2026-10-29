@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"encoding/json"
 	"net/http"
 	"os"
 	"strconv"
@@ -256,6 +257,308 @@ func TestReportedCostUnusableIgnored(t *testing.T) {
 }
 
 func cost0(t *testing.T, u pricing.Usage) pricing.Micros { return cost(t, dsModel, u) }
+
+// tierCostReply is a provider stream whose usage reports the service tier
+// tier ("" for no service_tier key at all) and the cost cost (a JSON literal,
+// "" for no cost key at all): the cost is spliced into the usage the fake
+// builds, which json.Marshal cannot be told to produce.
+func tierCostReply(t *testing.T, u pricing.Usage, tier, cost string) anthropicfake.Reply {
+	t.Helper()
+	rep := anthropicfake.Compat{}.StreamOK(dsModel, u)
+	if tier != "" {
+		rep.Events[0] = withUsage(t, rep.Events[0], map[string]any{"service_tier": tier})
+	}
+	if cost != "" {
+		rep.Events[0] = rawUsage(t, rep.Events[0], `"cost":`+cost)
+	}
+	return rep
+}
+
+// rawUsage inserts a raw JSON fragment at the front of ev's usage object, for
+// a literal -- a cost that isn't a number, a number past the range of a
+// float64 -- that no Go value marshalled by the fake can express.
+func rawUsage(t *testing.T, ev anthropicfake.Event, frag string) anthropicfake.Event {
+	t.Helper()
+	const key = `"usage":{`
+	i := strings.Index(ev.Data, key)
+	if i < 0 {
+		t.Fatalf("no usage object in %s", ev.Data)
+	}
+	j := i + len(key)
+	ev.Data = ev.Data[:j] + frag + "," + ev.Data[j:]
+	return ev
+}
+
+// TestUnpricedTierChargedAtLeastReportedCost: the flat multiple an unpriced
+// service tier is charged (ConservativeTierMultiplier) is an assumed
+// ceiling, not a published one -- no provider publishes a multiplier for a
+// tier other than standard -- so on a provider route that reported what the
+// call cost, the provider's own figure is a floor under the charge: the
+// dearer of the conservative figure and the report with the route's fee, the
+// same fee handling every provider charge already carries, and no more than
+// the reservation the call made (the next test). It can only raise the
+// charge, never lower it: a report below the conservative figure leaves the
+// figure alone, and so does a call that reported no cost at all. A charge
+// the floor raised is still not an overrun -- it stops at the reservation --
+// and it is priced from usage the whole way, so none of it is unreconciled.
+// The per-call warning says so in its own words: the multiple, and the report
+// the figure may be instead only where a report was recorded.
+func TestUnpricedTierChargedAtLeastReportedCost(t *testing.T) {
+	u := pricing.Usage{Input: 1000, Output: 500}
+	body := msg(dsModel, 4000, `"stream":true`)
+	cons := cost(t, dsModel, u) * pricing.ConservativeTierMultiplier
+	if cons <= cost(t, dsModel, u) {
+		t.Fatalf("the fixture's conservative charge %d is no dearer than the standard one", cons)
+	}
+	// The reservation the call makes, which is what caps the floor.
+	res := func(fee float64) pricing.Micros { return pricing.WithFee(worst(t, dsModel, body, 4000, ""), fee) }
+	if cons >= res(0) {
+		t.Fatalf("the fixture's conservative charge %d already fills the reservation %d", cons, res(0))
+	}
+	for _, c := range []struct {
+		name, cost string
+		fee        float64
+		want       pricing.Micros
+		reported   pricing.Micros
+	}{
+		{"reported above the conservative figure", "0.05", 0, res(0), 50_000},
+		{"reported above it, with the route fee", "0.05", 10, res(10), 50_000},
+		{"reported below the conservative figure", "0.001", 0, cons, 1_000},
+		{"reported below it, with the route fee", "0.001", 10, pricing.WithFee(cons, 10), 1_000},
+		{"reported exactly the conservative figure", "0.006", 0, cons, 6_000},
+		{"no reported cost", "", 0, cons, 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := feeRouted(t, c.fee, nil, routedStage, dsRoute, tierCostReply(t, u, "priority", c.cost))
+			if resp, b := r.post(body); resp.StatusCode != http.StatusOK {
+				t.Fatalf("%d %s", resp.StatusCode, b)
+			}
+			call, rep := r.logs.lastCall(t), r.gw.EndStage()
+			if got := pricing.Micros(num(call["charged_micros"])); got != c.want {
+				t.Errorf("charged %d, want %d (the conservative figure is %d)", got, c.want, cons)
+			}
+			if got := pricing.Micros(num(call["charged_micros"])); got < cons {
+				t.Errorf("charged %d, below the conservative figure %d: a report must never lower the charge", got, cons)
+			}
+			if got := pricing.Micros(num(call["reported_micros"])); got != c.reported {
+				t.Errorf("reported_micros %v, want %d", call["reported_micros"], c.reported)
+			}
+			if call["priced_as"] != pricedTier {
+				t.Errorf("priced_as %v, want the tier", call["priced_as"])
+			}
+			if rep.Used != c.want || rep.Reported != c.reported {
+				t.Errorf("stage used %d reported %d, want %d and %d", rep.Used, rep.Reported, c.want, c.reported)
+			}
+			if rep.Overrun != 0 || rep.Unreconciled != 0 {
+				t.Errorf("stage overrun %d unreconciled %d, want 0 and 0: the floor stops at the reservation and prices usage",
+					rep.Overrun, rep.Unreconciled)
+			}
+			// The warning says the figure may be the report only where the
+			// record carries one: a call that reported no cost has no figure
+			// to name, and the line stops at the multiple.
+			wantChargedAs := "2x the rates the call is priced at"
+			if c.cost != "" {
+				wantChargedAs += ", or the provider's reported cost with the route fee if dearer"
+			}
+			if got := r.logs.tierWarnChargedAs(t); got != wantChargedAs {
+				t.Errorf("charged_as %q, want %q", got, wantChargedAs)
+			}
+		})
+	}
+}
+
+// TestUnpricedTierFloorIsBoundedByTheReservation: the floor stops at the
+// reservation the call already made. maxReportedUSD bounds a figure recorded
+// for comparison, not a charge, and the provider's report is the one part of
+// this charge the gateway cannot check against anything of its own: unclamped,
+// a report at that bound would charge a single call millions of times its own
+// worst case, halt the run on the cap and write that figure into
+// result.json. What a report may do is raise the charge as far as the
+// reservation; a charge above the reservation stays what the call's own usage
+// made it -- an overrun, logged and counted as one -- exactly as before this
+// rule, and the floor adds nothing to it.
+func TestUnpricedTierFloorIsBoundedByTheReservation(t *testing.T) {
+	body := msg(dsModel, 4000, `"stream":true`)
+	w := worst(t, dsModel, body, 4000, "")
+	u := pricing.Usage{Input: 1000, Output: 500}
+	cons := cost(t, dsModel, u) * pricing.ConservativeTierMultiplier
+	if cons >= w {
+		t.Fatalf("the fixture's conservative charge %d already fills the reservation %d", cons, w)
+	}
+	// The largest report the gateway records (maxReportedUSD, a million
+	// dollars): a figure five orders of magnitude over the reservation.
+	const huge = "1000000"
+	call, rep := settleCase(t, 0, body, tierCostReply(t, u, "priority", huge))
+	if got := pricing.Micros(num(call["charged_micros"])); got != w {
+		t.Errorf("charged %d, want the reservation %d: a report may raise the charge to it, never past it", got, w)
+	}
+	if rep.Used != w || rep.Overrun != 0 {
+		t.Errorf("stage used %d overrun %d, want the reservation %d and no overrun", rep.Used, rep.Overrun, w)
+	}
+	// A usage that overruns the reservation on its own still does: the
+	// charge is the conservative multiple of what the call used, and the
+	// part above the reservation is the overrun. The report is not what
+	// makes it, and the floor does not add to it.
+	over := pricing.Usage{Input: 1000, Output: 8000}
+	big := cost(t, dsModel, over) * pricing.ConservativeTierMultiplier
+	if big <= w {
+		t.Fatalf("the fixture's overrunning usage charges %d, not over the reservation %d", big, w)
+	}
+	call, rep = settleCase(t, 0, body, tierCostReply(t, over, "priority", huge))
+	if got := pricing.Micros(num(call["charged_micros"])); got != big {
+		t.Errorf("charged %d, want the conservative %d of a usage over the reservation", got, big)
+	}
+	if rep.Overrun != big-w {
+		t.Errorf("overrun %d, want %d: the part of the charge above its reservation", rep.Overrun, big-w)
+	}
+}
+
+// TestUnpricedTierFloorOnAPartialCall: a partial call is charged its reported
+// input and cache tokens plus the reserved output, and the floor applies to it
+// too -- without it a call that was cut short could settle below what the
+// provider says it cost, which is the hole the floor closes. The floor is
+// still bounded by the reservation, and the part of the charge the usage does
+// not explain is unreconciled, exactly as it is with no floor at all. The
+// report that set the floor is recorded beside the charge the way a complete
+// call's is: it is what the provider said the call cost, and it is the only
+// figure that explains the charge the reader sees.
+func TestUnpricedTierFloorOnAPartialCall(t *testing.T) {
+	body := msg(dsModel, 1, `"stream":true`)
+	w := worst(t, dsModel, body, 1, "")
+	// A cut stream: message_start's usage (input only, no output), no
+	// message_delta and no message_stop.
+	ev := []anthropicfake.Event{streamEvent("message_start", `{"type":"message_start","message":{"id":"m","model":"`+dsModel+
+		`","content":[],"usage":{"input_tokens":10,"output_tokens":0,"service_tier":"priority","cost":0.004}}}`)}
+	ev = append(ev, anthropicfake.TextEvents("ok")...)
+	r := feeRouted(t, 0, nil, routedStage, dsRoute, anthropicfake.Reply{Status: http.StatusOK, Events: ev})
+	if resp, b := r.post(body); resp.StatusCode != http.StatusOK {
+		t.Fatalf("%d %s", resp.StatusCode, b)
+	}
+	call, rep := r.logs.lastCall(t), r.gw.EndStage()
+	// What the usage explains: the reported input, at the conservative
+	// multiple. The gateway measures the charge against the table price of
+	// the usage it read, before the reserved output is added to it, so the
+	// reserved output is unreconciled here along with the floor.
+	table := pricing.WithFee(satMul(cost(t, dsModel, pricing.Usage{Input: 10}), pricing.ConservativeTierMultiplier), 0)
+	floor := pricing.WithFee(4_000, 0) // the report, with the route's fee
+	if floor <= table || floor > w {
+		t.Fatalf("the fixture's floor %d does not sit between the table's %d and the reservation %d", floor, table, w)
+	}
+	if got := pricing.Micros(num(call["charged_micros"])); got != floor {
+		t.Errorf("charged %d, want the floor %d", got, floor)
+	}
+	if call["settled"] != settledPartial {
+		t.Errorf("settled %v, want a partial settle", call["settled"])
+	}
+	if rep.Overrun != 0 || rep.Unreconciled != floor-table {
+		t.Errorf("stage overrun %d unreconciled %d, want 0 and %d", rep.Overrun, rep.Unreconciled, floor-table)
+	}
+	// The report is the floor here, so the record carries it: without it the
+	// stage's Reported -- and the run's reported_usd -- would leave out the
+	// one figure that explains the charge, and diagnose's Tier clause, which
+	// is printed only where the record carries a report, would go silent on
+	// the run that needs it.
+	if got := pricing.Micros(num(call["reported_micros"])); got != 4_000 {
+		t.Errorf("reported_micros %v, want the report %d the floor was made of", call["reported_micros"], 4_000)
+	}
+	if rep.Reported != 4_000 {
+		t.Errorf("stage reported %d, want the report %d the floor was made of", rep.Reported, 4_000)
+	}
+}
+
+// TestUnpricedTierReportedCostUnusableStaysConservative: a reported cost the
+// gateway refuses to record is not a floor either -- it is the malformed
+// field the record already ignores -- so the tier's charge stays the
+// conservative figure. It must never fall below it: a provider cannot talk
+// the charge down with a bad number. The shape-not-number cases (null, a
+// string) are TestUsageAccNullCostNotReported's.
+func TestUnpricedTierReportedCostUnusableStaysConservative(t *testing.T) {
+	u := pricing.Usage{Input: 1000, Output: 500}
+	want := cost(t, dsModel, u) * pricing.ConservativeTierMultiplier
+	for _, cost := range []string{"-5", "1e30", "1e999", `"cheap"`, "null"} {
+		t.Run(cost, func(t *testing.T) {
+			call, rep := settleCase(t, 0, msg(dsModel, 4000, `"stream":true`), tierCostReply(t, u, "priority", cost))
+			if got := pricing.Micros(num(call["charged_micros"])); got != want {
+				t.Errorf("charged %d, want the conservative %d: an unusable report must not move the charge", got, want)
+			}
+			if _, ok := call["reported_micros"]; ok || rep.Reported != 0 {
+				t.Errorf("an unusable cost %s was recorded: %v, %d", cost, call["reported_micros"], rep.Reported)
+			}
+		})
+	}
+}
+
+// TestUsageAccReportedCostOutOfRangeNotReported: the bounds the record
+// already applies to a provider's cost are what keep the tier floor honest,
+// and a value no JSON number can hold is not a number: a NaN, an infinity
+// and a figure past maxReportedUSD are all left unrecorded, so a call that
+// reported one falls back to the conservative figure rather than to a
+// lower -- or an unbounded -- charge. A NaN and an infinity cannot be sent
+// over the wire at all (they are not JSON), which is why this is pinned at
+// the accumulator and the wire-level shapes are in the test above.
+func TestUsageAccReportedCostOutOfRangeNotReported(t *testing.T) {
+	for _, raw := range []string{"NaN", "Inf", "-Inf", "-0.5", "1e30", "1e999"} {
+		t.Run(raw, func(t *testing.T) {
+			var a usageAcc
+			a.merge(&wireUsage{Cost: json.RawMessage(raw)})
+			if a.hasReported {
+				t.Errorf("cost %s was recorded as %d: it must stay unrecorded", raw, a.reported)
+			}
+		})
+	}
+}
+
+// TestUnpricedTierOnTheClaudeRouteIgnoresAReportedCost: the floor is a
+// provider's own report -- usage.cost, OpenRouter's field -- and it applies
+// on a provider route. A Claude call has no route, so a cost field in its
+// usage, which Anthropic does not send, neither raises nor lowers its tier
+// charge.
+func TestUnpricedTierOnTheClaudeRouteIgnoresAReportedCost(t *testing.T) {
+	u := pricing.Usage{Input: 1000, Output: 500}
+	want := cost(t, sonnet, u) * pricing.ConservativeTierMultiplier
+	rep := anthropicfake.StreamOK(sonnet, u)
+	rep.Events[0] = withUsage(t, rep.Events[0], map[string]any{"service_tier": "priority", "cost": 1000})
+	h := newHarness(t, rep)
+	h.post(msg(sonnet, 1000, `"stream":true`))
+	r := h.gw.EndStage()
+	if r.Used != want {
+		t.Errorf("used %d, want the conservative %d", r.Used, want)
+	}
+	if _, ok := h.logs.lastCall(t)["reported_micros"]; ok {
+		t.Errorf("a Claude call recorded a reported cost: %v", h.logs.lastCall(t))
+	}
+}
+
+// TestKnownTierAndNoTierIgnoreAReportedCost: the floor is the tier's, not
+// the report's: a response at the tier the table prices (standard), and one
+// that reports no tier at all, are charged the table price of their usage
+// plus the route fee whether or not the provider reported a cost -- the
+// reported figure is recorded beside the charge and changes nothing, which
+// is what every provider call did before this rule.
+func TestKnownTierAndNoTierIgnoreAReportedCost(t *testing.T) {
+	u := pricing.Usage{Input: 1000, Output: 500}
+	for _, c := range []struct{ name, tier string }{
+		{"the tier the table prices", "standard"},
+		{"no tier at all", ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			call, rep := settleCase(t, 10, msg(dsModel, 4000, `"stream":true`), tierCostReply(t, u, c.tier, "0.05"))
+			want := pricing.WithFee(cost(t, dsModel, u), 10)
+			if got := pricing.Micros(num(call["charged_micros"])); got != want {
+				t.Errorf("charged %d, want the table price plus the fee %d", got, want)
+			}
+			if rep.Used != want || rep.Reported != 50_000 {
+				t.Errorf("stage used %d reported %d, want %d and 50000", rep.Used, rep.Reported, want)
+			}
+			if call["priced_as"] != pricedTable {
+				t.Errorf("priced_as %v, want the table", call["priced_as"])
+			}
+			if len(rep.ServiceTiers.List()) != 0 {
+				t.Errorf("service tiers %q, want none", rep.ServiceTiers.List())
+			}
+		})
+	}
+}
 
 func replaceUsageCost(t *testing.T, body, cost string) string {
 	t.Helper()

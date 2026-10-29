@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/rigor"
 )
 
 // WorkflowNameRE is a workflow's name, in fugaro.yaml and wherever else a
@@ -151,9 +152,31 @@ func Validate(c *Config) []Problem {
 	case !ClaudeAccountNameRE.MatchString(c.Agent.OAuthToken):
 		add("agent.oauth_token", "must be a Claude account name")
 	}
+	// agent.compression is reserved and refused until the sidecar that reads it
+	// ships: every value but "" is refused here, naming itself, so a repository
+	// that tries the key gets this message and not a strict-parse unknown-field
+	// error. Nothing reads the field, so no value may reach a run. The lift
+	// replaces this branch with the closed-set shape check and leaves the auth
+	// rule below standing (docs/design/headroom-compression.md §4).
+	if c.Agent.Compression != "" {
+		add("agent.compression", "is not yet implemented: this Fugaro accepts only the empty value (off), and the context-compression proxy the key will name is refused until it ships")
+	}
+	// The proxy sits in front of api-key model calls only. oauth and vertex
+	// route their own way and are refused outright rather than run without the
+	// compression the repository asked for (design §4).
+	if c.Agent.Compression != "" && (c.Agent.Auth == "oauth" || c.Agent.Auth == "vertex") {
+		add("agent.compression", "cannot be combined with agent.auth: %s: the proxy is refused for that auth (docs/design/headroom-compression.md §4)", c.Agent.Auth)
+	}
 	ps = append(ps, validateAgentModels(c.Agent)...)
+	ps = append(ps, validateCascadeFollowup(c.Agent, c.Followup)...)
 	ps = append(ps, validateBudget(c.Budget)...)
 	ps = append(ps, validateFollowup(c.Git.Provider, c.Followup)...)
+	if c.Rigor != nil {
+		// The repository's own block, by the same rules the project layer's
+		// is judged by: one function, two prefixes.
+		ps = append(ps, validateRigor("rigor", c.Rigor.Default, c.Rigor.Areas)...)
+	}
+	ps = append(ps, validateGovernance("governance", c.Governance)...)
 	if len(c.Workflows) == 0 {
 		add("workflows", "must define at least one workflow")
 	}
@@ -235,6 +258,17 @@ func Validate(c *Config) []Problem {
 				// value the repository chose. Refused whether or not a Codex
 				// provider ever names it.
 				add(sp+".name", "%s and names starting %s are reserved for the Codex harness's OAuth credential (codex-oauth-token), not a workflow secret", CodexOAuthToken, CodexOAuthTokenPrefix)
+			} else if s.Name == CredentialsBundleSecret {
+				// The credentials service's one bundle container (C1.11's
+				// review finding n2). Nothing mounts it: its document is every
+				// model credential the installation holds, and the service is
+				// the only reader. A workflow that declared the name would
+				// mount that document into a job — the whole credential set,
+				// into a container a run's agent can read — so the name is
+				// refused here, where every other reserved name is refused,
+				// and again at `fugaro secrets set` (internal/cli's
+				// credentialsBundleRefusal), which is the write path.
+				add(sp+".name", "%s is the credentials service's own bundle container (the platform's), not a workflow secret", CredentialsBundleSecret)
 			}
 			switch {
 			case !envNameRE.MatchString(s.Env):
@@ -346,6 +380,213 @@ func validateRebuild(p string, r Rebuild) []Problem {
 		}
 	}
 	return ps
+}
+
+// validateRigor reports a rigor block's problems, each at p.<key> or
+// p.areas[i].<key>: p is "rigor" for the repository's own block and
+// "defaults.rigor" for the project layer's, so one function states the rules
+// for both layers (docs/project-layer.md §5 gives either layer both keys).
+//
+// It reads rigor.Area.Validate and rigor.Known, which is the whole point of
+// the vocabulary living in internal/rigor: the value a configuration may
+// write is the value the resolver can use, so a mode outside the vocabulary
+// or a glob no matcher can read is refused where it is written rather than
+// silently never firing at resolution time.
+func validateRigor(p string, mode rigor.Mode, areas []rigor.Area) []Problem {
+	var ps []Problem
+	if mode != "" && !rigor.Known(mode) {
+		ps = append(ps, Problem{Path: p + ".default", Message: "must be one of " + rigor.ModeList()})
+	}
+	if len(areas) > rigor.MaxAreas {
+		ps = append(ps, Problem{Path: p + ".areas", Message: fmt.Sprintf("must hold at most %d rules", rigor.MaxAreas)})
+	}
+	for i, a := range areas {
+		if msg := a.Validate(); msg != "" {
+			ps = append(ps, Problem{Path: fmt.Sprintf("%s.areas[%d]", p, i), Message: msg})
+		}
+	}
+	return ps
+}
+
+// The governance bounds: the highest value each counting key of the block may
+// carry, and the figures schemas/fugaro.schema.json states for the same keys
+// (held equal by TestSchemaGovernanceBoundsMatchGo, the way
+// MaxOutputTokensLimit is held to the schema's own 128000). Two surfaces read
+// the same file — `fugaro validate` and the published schema a repository's CI
+// may check against — and a value one refuses while the other accepts is a red
+// check nobody can reproduce, or a number a run reads that the schema called
+// impossible. The bounds are generous: what they stop is a figure no run could
+// mean, not a figure a project would choose.
+const (
+	MaxReviewRatio      = 1000
+	MaxReviewFloorCalls = 100000
+	// MaxGovernanceSubagents is the most distinct sub-agents one stage may be
+	// allowed to start. The spec's own incident, a review fanning out to about
+	// ten, is already stopped by the default of 5; this is the ceiling on what
+	// a project may raise it to.
+	MaxGovernanceSubagents = 100
+	MaxStageTokens         = 1000000000000
+)
+
+// validateGovernance reports a governance block's problems, each at
+// p.<key>: p is "governance" for the repository's own block and the project
+// layer's alike, so one function states the rules for both (the same "one
+// function, two prefixes" validateRigor is).
+//
+// What it refuses is what no run could use, not what a layer may not say: a
+// bound is valid here whether it is tighter or looser than Fugaro's default,
+// because the layer that loosens the defaults is the project's and the merge
+// is where a repository's loosening is dropped (internal/policy). The two
+// rules that are about the shape rather than the layer are the fraction's and
+// the ratio's: a stage budget of 1 or more is no budget under a cap it could
+// spend whole (G6), and a ratio below 1 would stop review on a stage that
+// made a single call.
+//
+// 0 and null mean "unset" everywhere here — the key takes Fugaro's default —
+// so only a negative number or a non-positive duration is a problem. A
+// duration key left out is unset too; one written as 0s is refused, as every
+// other duration in fugaro.yaml is (validateTimeouts). The counting keys are
+// bounded above by the constants above, which the schema states too.
+func validateGovernance(p string, g *Governance) []Problem {
+	if g == nil {
+		return nil
+	}
+	var ps []Problem
+	add := func(path, format string, args ...any) {
+		ps = append(ps, Problem{Path: path, Message: fmt.Sprintf(format, args...)})
+	}
+	for _, c := range []struct {
+		key    string
+		v, max int64
+	}{
+		{"review_ratio", g.ReviewRatio, MaxReviewRatio},
+		{"review_floor_calls", g.ReviewFloorCalls, MaxReviewFloorCalls},
+		{"max_subagents", g.MaxSubagents, MaxGovernanceSubagents},
+		{"stage_tokens.implement", g.StageTokens.Implement, MaxStageTokens},
+		{"stage_tokens.review", g.StageTokens.Review, MaxStageTokens},
+		{"stage_tokens.fix", g.StageTokens.Fix, MaxStageTokens},
+	} {
+		switch {
+		case c.v < 0:
+			add(p+"."+c.key, "must not be negative")
+		case c.v > c.max:
+			add(p+"."+c.key, "must be at most %d", c.max)
+		}
+	}
+	for _, c := range []struct {
+		key string
+		v   float64
+	}{
+		{"stage_budget.implement", g.StageBudget.Implement},
+		{"stage_budget.review", g.StageBudget.Review},
+		{"stage_budget.fix", g.StageBudget.Fix},
+	} {
+		if math.IsNaN(c.v) || c.v < 0 || c.v >= 1 {
+			add(p+"."+c.key, "must be 0 (the default) or a fraction of the run's cap between 0 and 1: the cap stays the ceiling whatever a stage is given")
+		}
+	}
+	for _, c := range []struct {
+		key string
+		v   Duration
+	}{
+		{"stage_timeout.implement", g.StageTimeout.Implement},
+		{"stage_timeout.review", g.StageTimeout.Review},
+		{"stage_timeout.fix", g.StageTimeout.Fix},
+	} {
+		if c.v.Set && c.v.Duration <= 0 {
+			add(p+"."+c.key, "must be positive")
+		}
+	}
+	// The tiers are expectations, so what is refused here is a figure no run
+	// could mean — a negative cost or duration, a fan-out past the same bound
+	// max_subagents carries — and never an expectation larger than the per-run
+	// cap: an expected cost above the cap is exactly what G6 says a tier may
+	// say, because the run still stops at the cap. The tier NAMES are not
+	// checked here: they are keys of the block, so a name outside the
+	// vocabulary (internal/tier) is an unknown key the strict decoder refuses
+	// before validation runs.
+	for _, c := range []struct {
+		key string
+		v   TierLimits
+	}{
+		{"tiers.trivial", g.Tiers.Trivial},
+		{"tiers.small", g.Tiers.Small},
+		{"tiers.medium", g.Tiers.Medium},
+		{"tiers.large", g.Tiers.Large},
+	} {
+		if math.IsNaN(c.v.ExpectedUSD) || math.IsInf(c.v.ExpectedUSD, 0) || c.v.ExpectedUSD < 0 {
+			add(p+"."+c.key+".expected_usd", "must be 0 (the tier's default) or a finite dollar expectation")
+		}
+		if c.v.ExpectedMinutes < 0 {
+			add(p+"."+c.key+".expected_minutes", "must not be negative")
+		}
+		switch {
+		case c.v.MaxSubagents < 0:
+			add(p+"."+c.key+".max_subagents", "must not be negative")
+		case c.v.MaxSubagents > MaxGovernanceSubagents:
+			add(p+"."+c.key+".max_subagents", "must be at most %d", MaxGovernanceSubagents)
+		}
+	}
+	return ps
+}
+
+// validateCascadeFollowup reports the one thing followup.allow_public cannot
+// be beside: a cascade credential. AllowPublic lets a follow-up run on a
+// public repository (config.go's Followup.AllowPublic, read at
+// internal/runner/followup.go), where a commenter who can push branches can
+// steer the run's prompts — and what the cascade puts behind those prompts is
+// a shared subscription credential (docs/credentials-service, D130: the
+// refusal the held OAuth reviewer-stage plan carried over, its P6), so a run
+// there may be steered by someone who was never trusted with it. It is a
+// refusal rather than a warning for that reason: the whole point of an
+// opt-in for a residual risk this size is that the dangerous combinations are
+// hard refusals. The message names both ways out — the key to remove, and the
+// auths a run that needs public follow-ups may use.
+func validateCascadeFollowup(a Agent, f Followup) []Problem {
+	if a.Auth != AuthCascade || !f.AllowPublic {
+		return nil
+	}
+	return []Problem{{Path: "followup.allow_public", Message: fmt.Sprintf(
+		"cannot be true with agent.auth: %s: a follow-up on a public repository can be steered by anyone who can push a branch, and a cascade run's prompts are carried by a shared subscription credential, which only trusted work may reach (D130). Remove followup.allow_public (follow-ups stay on private repositories), or run this repository with agent.auth: api-key or vertex",
+		AuthCascade)}}
+}
+
+// CheckCascadeGateway refuses a cascade workflow whose budget leaves the
+// gateway off. A cascade run has no credential of its own — the gateway is
+// what carries its calls to the credentials service and accounts for them
+// (D143) — so the mode has to be observe or enforce, and a mode that is off
+// (or unset, which the runner reads the same way) is refused, naming the mode
+// it found.
+//
+// mode is the run's *effective* budget mode (policy.Merge over the project's
+// ceiling and the file), not the file's own, and that is why this rule is a
+// function of a mode rather than a line inside Validate: Validate holds one
+// file, and the file's mode is only a lower bound on the run's (a later layer
+// may only tighten). A file that writes no budget under an installation whose
+// ceiling enforces is a cascade workflow whose gateway is on, and refusing it
+// here would refuse a valid repository.
+//
+// Its callers hold the merge, because Validate holds one file and the run's
+// mode is a function of the layers above it: `fugaro validate`
+// (internal/cli/validate.go, cascadeProblems) is the author's side, and the
+// launch (internal/cli/run.go, cascadeLaunchRefusal) is the operator's — a
+// launch refuses a cascade run whose effective mode leaves the gateway off,
+// before the claim is taken and before anything is written, rather than
+// letting the job fail on it.
+func CheckCascadeGateway(a Agent, mode string) []Problem {
+	if a.Auth != AuthCascade || mode == policy.ModeObserve || mode == policy.ModeEnforce {
+		return nil
+	}
+	found := fmt.Sprintf("budget.mode is %s", mode)
+	switch mode {
+	case "":
+		found = "budget.mode is not set (an absent mode and off are the same to the runner)"
+	case policy.ModeOff:
+		found = "budget.mode is off"
+	}
+	return []Problem{{Path: "agent.auth", Message: fmt.Sprintf(
+		"%s needs the budget gateway: %s, and the gateway is what carries a cascade run's calls and accounts for them (a cascade run has no credential of its own). Set budget.mode to %s or %s — in the project config, or in fugaro.yaml",
+		AuthCascade, found, policy.ModeObserve, policy.ModeEnforce)}}
 }
 
 // A trusted account ID, per provider: GitHub's numeric user ID, and

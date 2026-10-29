@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See mobile/LICENSE.md for the terms.
 // The first screen's tests (owner ruling of 2026-10-19).
 //
 // Three properties, and the third is the one a later task could break:

@@ -942,14 +942,24 @@ func TestWebsiteConsoleReleaseFactsAreComplete(t *testing.T) {
 		}
 	}
 
-	// The CLI release the console is published from: its note is in the tree,
-	// and it names the console's own release. This is the offline half of "the
+	// The console release whose assets these are: its own notes file is in the
+	// tree, and it names the console's version. This is the offline half of "the
 	// tag exists" -- a git tag cannot be checked without a fetch, and a shallow
-	// CI checkout has none (D11, W3.1).
-	note := "docs/releases/v" + downloads.Release.Version + ".md"
+	// CI checkout has none (D11, W3.1). Since the console's own release stream
+	// (the stream's README under docs/releases/, the owner's addendum of
+	// 2026-10-22) the console has its own tag, version line and notes, and its
+	// workflow reads its notes file from the tagged commit and refuses to build
+	// without it -- so that file is where this repository records that the
+	// version the site offers a download for was released.
+	//
+	// The directory is composed rather than written whole because this file may
+	// carry no path into the console directory: the console boundary walk refuses
+	// one outside its allow list, and a literal notes path is the spelling that
+	// walk reads (TestConsoleIsOutsideTheGoModule, plan Task 0.3 a3).
+	note := "docs/releases/" + consoleDirName + "/v" + downloads.Release.Version + ".md"
 	body := readDoc(t, note)
-	if !strings.Contains(body, downloads.Release.TagPrefix+downloads.Release.Version) {
-		t.Errorf("%s does not name %q: the console is published from the CLI's own v%s tag (D11), so the release note for that version is where the console's release is recorded, and the site offers a download for it (W3.1)", note, downloads.Release.TagPrefix+downloads.Release.Version, downloads.Release.Version)
+	if !strings.Contains(body, "Fugaro Console "+downloads.Release.Version) {
+		t.Errorf("%s does not name %q: the console's own release is cut with its notes file, which the workflow reads from the tagged commit and passes as the release body, so the notes for that version are where the console's release is recorded -- and the site offers a download for it (docs/releases/, the console stream's README, W3.1)", note, "Fugaro Console "+downloads.Release.Version)
 	}
 }
 
@@ -1218,6 +1228,12 @@ func TestWebsiteCanonicalHostAppearsOnlyInSiteYaml(t *testing.T) {
 	}
 	for _, hit := range hits {
 		if hit.file == websiteFactsPath {
+			continue
+		}
+		// The Subscription Terms are generated from a document under docs/, and
+		// clause 29.1 names the address where they are published: that is the
+		// agreement's wording, which the page may not change.
+		if hit.file == "website/content/subscription-terms.md" && strings.Contains(hit.text, "29.1 ") {
 			continue
 		}
 		t.Errorf("%s:%d names the site's host %q: the canonical URL has one source, %s, and every absolute link, the canonical <link>, the sitemap and the OpenGraph tag are built from it -- a copy here is a second source that keeps pointing at the old domain after the one line changes (D92, plan Task W2.2 step 1)\n%s", hit.file, hit.line, host, websiteFactsPath, hit.text)

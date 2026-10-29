@@ -87,6 +87,25 @@ func (l *logBuf) lastCall(t *testing.T) map[string]any {
 	return c[len(c)-1]
 }
 
+// tierWarnChargedAs is the charged_as attribute of the last
+// "budget: service tier not priced" warning: the words a reader uses to
+// explain an unpriced tier's figure.
+func (l *logBuf) tierWarnChargedAs(t *testing.T) string {
+	t.Helper()
+	var out string
+	found := false
+	for _, m := range l.lines(t) {
+		if m["msg"] == "budget: service tier not priced" {
+			out, _ = m["charged_as"].(string)
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no unpriced service tier warning logged; log:\n%s", l.String())
+	}
+	return out
+}
+
 type harness struct {
 	t    *testing.T
 	gw   *Server

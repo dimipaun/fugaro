@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See console/LICENSE.md for the terms.
 // The hardened window in a real Electron process (desktop-console plan Task
 // 1.1; design section 5.1 rules 1, 2 and 3).
 //

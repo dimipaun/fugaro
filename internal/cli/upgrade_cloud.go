@@ -54,46 +54,45 @@ type cloudVerdict struct {
 // cache (decision L13), never the bucket itself, so an anchored checkout
 // with no cached layer leaves it unknown rather than reading one for real;
 // the project layer's own values, when cached, still apply normally.
-func resolveCloudRepo(ctx context.Context, root string, co cloudOptions) (cfg *config.Config, lc *localcfg.Config, lcPath, repo, host string, v *cloudVerdict) {
+func resolveCloudRepo(ctx context.Context, root string, co cloudOptions) (rf resolvedFile, lc *localcfg.Config, lcPath, repo, host string, v *cloudVerdict) {
 	co.stderr = func() io.Writer { return io.Discard } // the caller prints the per-checkout line
 	failed := func(repo string, err error) *cloudVerdict {
 		return &cloudVerdict{state: cloudFailed, repo: repo, reason: oneLine(err.Error())}
 	}
 	if releaseVersion() == "" {
-		return nil, nil, "", "", "", &cloudVerdict{state: cloudNotHere, reason: "a development build has no release base image to move to"}
+		return resolvedFile{}, nil, "", "", "", &cloudVerdict{state: cloudNotHere, reason: "a development build has no release base image to move to"}
 	}
 	if _, err := os.Stat(filepath.Join(root, "fugaro.yaml")); errors.Is(err, os.ErrNotExist) {
-		return nil, nil, "", "", "", &cloudVerdict{state: cloudNotHere, reason: "no fugaro.yaml yet, so no job image to refresh"}
+		return resolvedFile{}, nil, "", "", "", &cloudVerdict{state: cloudNotHere, reason: "no fugaro.yaml yet, so no job image to refresh"}
 	}
 	_, rf, err := loadCheckoutResolved(ctx, root, nil, layerOptions{Lenient: true, Offline: true})
 	if err != nil {
-		return nil, nil, "", "", "", failed("", err)
+		return resolvedFile{}, nil, "", "", "", failed("", err)
 	}
-	cfg = rf.Cfg
 	repo, err = checkoutRepo(ctx, root)
 	if err != nil {
-		return nil, nil, "", "", "", failed("", err)
+		return resolvedFile{}, nil, "", "", "", failed("", err)
 	}
 	lc, lcPath, _, err = loadRepoConfig(ctx, &initOptions{cloud: co}, root)
 	if err != nil {
 		var se *localcfg.SelectError
 		if checkoutNamesProject(ctx, root) && (errors.As(err, &se) || errors.Is(err, localcfg.ErrMissing)) {
-			return nil, nil, "", repo, "", &cloudVerdict{state: cloudNotHere, repo: repo, reason: "no local project config selects this checkout (" + oneLine(err.Error()) + "): the cloud step is for the operator who set the project up"}
+			return resolvedFile{}, nil, "", repo, "", &cloudVerdict{state: cloudNotHere, repo: repo, reason: "no local project config selects this checkout (" + oneLine(err.Error()) + "): the cloud step is for the operator who set the project up"}
 		}
-		return nil, nil, "", "", "", failed(repo, err)
+		return resolvedFile{}, nil, "", "", "", failed(repo, err)
 	}
 	oi, ok := readOrigin(ctx, root)
 	if !ok {
-		return nil, nil, "", "", "", failed(repo, errors.New("cannot read the checkout's origin"))
+		return resolvedFile{}, nil, "", "", "", failed(repo, errors.New("cannot read the checkout's origin"))
 	}
 	if !repoKnown(lc, oi) {
-		return nil, nil, "", repo, "", &cloudVerdict{state: cloudNotHere, repo: repo, reason: fmt.Sprintf("%s is not onboarded to project %s, so it has no job image yet", pluginwire.Printable(repo), lc.Name)}
+		return resolvedFile{}, nil, "", repo, "", &cloudVerdict{state: cloudNotHere, repo: repo, reason: fmt.Sprintf("%s is not onboarded to project %s, so it has no job image yet", pluginwire.Printable(repo), lc.Name)}
 	}
 	host, err = infra.RegistryHost(lc)
 	if err != nil {
-		return nil, nil, "", "", "", failed(repo, err)
+		return resolvedFile{}, nil, "", "", "", failed(repo, err)
 	}
-	return cfg, lc, lcPath, repo, host, nil
+	return rf, lc, lcPath, repo, host, nil
 }
 
 // cloudCheck is the cloud step's state from fugaro.yaml and the local
@@ -106,10 +105,11 @@ func cloudCheck(ctx context.Context, root string, co cloudOptions, rerun string)
 	if rerun == "" {
 		rerun = selfCommand() + " upgrade"
 	}
-	cfg, lc, lcPath, repo, host, v := resolveCloudRepo(ctx, root, co)
+	rf, lc, lcPath, repo, host, v := resolveCloudRepo(ctx, root, co)
 	if v != nil {
 		return *v
 	}
+	cfg := rf.Cfg
 	ver := releaseVersion()
 	set := map[string]bool{}
 	for _, w := range cfg.Workflows {
@@ -219,13 +219,14 @@ var jobConfigCopyTimeout = 30 * time.Second
 // cloud connection or a job read itself — any of which could carry a URL
 // or, from an underlying client, a token).
 func jobConfigCopyNote(ctx context.Context, root string, co cloudOptions) string {
-	cfg, lc, _, repo, _, v := resolveCloudRepo(ctx, root, co)
+	rf, lc, _, repo, _, v := resolveCloudRepo(ctx, root, co)
 	if v != nil {
 		if v.state == cloudFailed {
 			return couldNotCheckJobConfigCopy(v.reason)
 		}
 		return "" // a U9 skip (cloudNotHere): nothing to check here
 	}
+	cfg := rf.Cfg
 	names := slices.Sorted(maps.Keys(cfg.Workflows))
 	if len(names) == 0 {
 		return ""
@@ -258,7 +259,7 @@ func jobConfigCopyNote(ctx context.Context, root string, co cloudOptions) string
 	projectScopes := map[string]bool{}
 	anyJob := false
 	for _, name := range names {
-		spec, err := infra.Workflow(infra.Inputs{LC: lc, Repo: repo, Cfg: cfg, RepoURL: repoURL}, name)
+		spec, err := infra.Workflow(infra.Inputs{LC: lc, Repo: repo, Cfg: cfg, FileSetsBaseBranch: fileSetsBaseBranch(rf), RepoURL: repoURL}, name)
 		if err != nil {
 			return couldNotCheckJobConfigCopy("cannot compute the repository's spec from the local config")
 		}
@@ -293,6 +294,14 @@ func jobConfigCopyNote(ctx context.Context, root string, co cloudOptions) string
 		return "" // no workflow has a deployed job here yet
 	}
 	mount := jobConfigCopyMountNote(slices.Sorted(maps.Keys(projectScopes)))
+	// The credentials clause (C1.20) is orthogonal to both of the halves
+	// below: it is about the workflow's own auth mode and the two owner-run
+	// steps it needs, not about anything the deployed copy carries. It is
+	// therefore the LAST clause of every shape this note takes, and it is a
+	// reason to speak on its own — a cascade repository whose env copy
+	// matches still has something to be told, which is why the silent branch
+	// below is reached only when all three clauses are "".
+	creds := jobConfigCopyCredentialsNote(cfg)
 	if len(diffs) == 0 {
 		// The mount-only case: nothing the diff can see has drifted, but
 		// the mounts are the half it never sees, so the note is still
@@ -300,10 +309,13 @@ func jobConfigCopyNote(ctx context.Context, root string, co cloudOptions) string
 		// the last update --repo. Nobody holds such a name, though: then
 		// there is nothing this note could tell them and it stays
 		// silent, exactly as it did before the mounts had a clause.
-		if mount == "" {
+		if mount == "" && creds == "" {
 			return ""
 		}
-		return "the deployed job's environment matches the local project config, but the mounts are not in that copy: " + mount
+		if mount == "" {
+			return "the deployed job's environment matches the local project config, but " + creds
+		}
+		return "the deployed job's environment matches the local project config, but the mounts are not in that copy: " + mount + joinClause(creds)
 	}
 	stale := fmt.Sprintf("the deployed job's copy of the local project config is STALE (%s): a version upgrade never refreshes it",
 		strings.Join(diffs, "; "))
@@ -313,17 +325,20 @@ func jobConfigCopyNote(ctx context.Context, root string, co cloudOptions) string
 	// are is the difference between a note the operator acts on and one they
 	// learn to ignore.
 	if p := jobConfigCopyPolicyNote(cctx, lc); p != "" {
-		if mount == "" {
-			return stale + p
-		}
-		return stale + p + "; " + mount
+		return stale + p + joinClause(mount) + joinClause(creds)
 	}
 	tail := fmt.Sprintf("; runs on %s use the old copy until you run fugaro update --repo . in your own terminal (never run automatically)",
 		pluginwire.Printable(repo))
-	if mount != "" {
-		tail += "; " + mount
+	return stale + tail + joinClause(mount) + joinClause(creds)
+}
+
+// joinClause is one "; "-separated clause, or nothing when the clause is ""
+// (so a caller never emits a trailing "; ").
+func joinClause(s string) string {
+	if s == "" {
+		return ""
 	}
-	return stale + tail
+	return "; " + s
 }
 
 // jobConfigCopyMountNote is the drift note's mount clause (plan Task 2.3
@@ -354,6 +369,39 @@ func jobConfigCopyMountNote(names []string) string {
 	}
 	return fmt.Sprintf("what a job mounts is still decided here: a project secret created or deleted after the last `fugaro update --repo .` changes what this repository's job mounts (`fugaro secrets set NAME`, D2's default), and for this repository those names are %s — that is what a re-run is for, while a new version of one of them or a rotated value needs no re-run, because the job mounts the container and not a copy of the value; a run picks a mount change up on the next `fugaro update --repo .` in your own terminal, until phase 3 gives the mounts to a shared profile",
 		strings.Join(names, ", "))
+}
+
+// jobConfigCopyCredentialsNote is the drift note's credentials clause (plan
+// task C1.20): the one thing `fugaro upgrade` has to say about the
+// credentials service, and the reason it has to say it here.
+//
+// `agent.auth: cascade` is a value the setup skill offers and the config
+// reader accepts (C1.1) from the release that carries the service, and a
+// repository whose file names it is a repository whose jobs must NOT mount a
+// model credential: the run asks the installation's service for one instead.
+// That is not something a version upgrade does. Two owner-run steps do it —
+// the installation's credentials stage, which turns the service on, and each
+// repository's own `fugaro update --repo .`, which drops the job's
+// model-secret accessors and grants its account an invoker on the service —
+// and until they have run, the checkout says `cascade` while its jobs are
+// unchanged, exactly the half-state the skill's offer is pinned against
+// (C1.19). An upgrade is where the operator learns it: the step names both,
+// in the order they have to run.
+//
+// "" for every other auth: nothing of this is about a workflow that mounts
+// its own credential, which is every repository until its file says
+// otherwise. The check is the resolved auth (the same defaulting the config
+// reader does), so a file that names none is judged by the default rather
+// than by the empty string.
+func jobConfigCopyCredentialsNote(cfg *config.Config) string {
+	auth := cfg.Agent.Auth
+	if auth == "" {
+		auth = config.DefaultAgentAuth
+	}
+	if auth != config.AuthCascade {
+		return ""
+	}
+	return fmt.Sprintf("this repository's workflows run with agent.auth: %s, and that mode's credential comes from the installation's credentials service at call time: a job that is `cascade` must mount no model credential at all, and the two steps that make it so are owner-run. Turn the service on in the installation with `fugaro update --provision-credentials` (a typed confirmation, and it needs the installation's Firebase rules redeployed with `fugaro update --firebase-project` first), then run `fugaro update --repo .` in this checkout and in every other repository of the project, which is what drops each job's model-secret accessors and grants its account an invoker on the service. Until both have run, a %s run is refused at launch and the deployed job still mounts the credential it should not", config.AuthCascade, config.AuthCascade)
 }
 
 // jobConfigCopyPolicyNote is the drift note's policy clause: what a

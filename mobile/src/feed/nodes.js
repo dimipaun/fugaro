@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See mobile/LICENSE.md for the terms.
 // The wire node shapes of the four granted families, read leniently
 // (mobile plan, Task P3.2; D112's answer, tension (b1)).
 //

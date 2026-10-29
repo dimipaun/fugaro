@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: LicenseRef-Fugaro-Subscription -->
+<!-- See console/LICENSE.md for the terms. -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
 	The entitlements the Fugaro console is signed with (desktop-console plan

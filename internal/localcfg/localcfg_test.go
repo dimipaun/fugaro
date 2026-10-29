@@ -252,16 +252,18 @@ func TestParseEndpoints(t *testing.T) {
 			t.Errorf("%s: err = %v", bad, err)
 		}
 	}
-	// The endpoints only fugaro update uses, and endpoints.batch -- the Batch
-	// API root the opener hands to internal/backend/batch, whose
-	// clientOptions attaches that same token to it (internal/cli/cloud.go's
-	// cloudOpeners) -- are checked the same way. One field is set per
-	// iteration, so the sum is that field's own value.
-	for _, field := range []string{"batch", "storage", "iam", "artifact_registry", "resource_manager", "cloud_scheduler", "service_usage"} {
+	// The endpoints only fugaro update uses, and endpoints.batch and
+	// endpoints.compute -- the Batch API root the opener hands to
+	// internal/backend/batch, whose clientOptions attaches that same token to
+	// it (internal/cli/cloud.go's cloudOpeners), and the Compute Engine root
+	// `fugaro doctor` reads a Batch installation's facts through, which
+	// doctorAPIOpts attaches it to as well -- are checked the same way. One
+	// field is set per iteration, so the sum is that field's own value.
+	for _, field := range []string{"batch", "compute", "storage", "iam", "artifact_registry", "resource_manager", "cloud_scheduler", "service_usage"} {
 		c, err := Parse([]byte(sample + "endpoints: { " + field + ": \"http://127.0.0.1:9/\" }\n"))
 		if err != nil {
 			t.Errorf("%s: %v", field, err)
-		} else if e := c.Endpoints; e.Batch+e.Storage+e.IAM+e.ArtifactRegistry+e.ResourceManager+e.CloudScheduler+e.ServiceUsage != "http://127.0.0.1:9/" {
+		} else if e := c.Endpoints; e.Batch+e.Compute+e.Storage+e.IAM+e.ArtifactRegistry+e.ResourceManager+e.CloudScheduler+e.ServiceUsage != "http://127.0.0.1:9/" {
 			t.Errorf("%s: endpoints = %+v", field, e)
 		}
 		if _, err := Parse([]byte(sample + "endpoints: { " + field + ": \"http://example.com/\" }\n")); err == nil || !strings.Contains(err.Error(), "endpoints."+field) {
@@ -532,6 +534,15 @@ func TestBatchSectionReadsEveryField(t *testing.T) {
 	} else if d := c.BatchTaskTimeout(); d != backend.MaxRunTime {
 		t.Errorf("BatchTaskTimeout() with no task_timeout = %v, want the default", d)
 	}
+	// The ceiling is the largest timeout a config may write, and not a
+	// refusal in disguise: at exactly backend.MaxRunTime the reaper's two
+	// sources agree, so the boundary itself is accepted (the case above the
+	// boundary is TestBatchSectionValidation's).
+	if c, err := Parse([]byte(sample + strings.Replace(batchSample, "task_timeout: 1h30m", "task_timeout: "+backend.MaxRunTime.String(), 1))); err != nil {
+		t.Errorf("a task_timeout of exactly backend.MaxRunTime (%v) was refused: %v", backend.MaxRunTime, err)
+	} else if d := c.BatchTaskTimeout(); d != backend.MaxRunTime {
+		t.Errorf("BatchTaskTimeout() = %v, want the written %v", d, backend.MaxRunTime)
+	}
 }
 
 // TestBatchSectionValidation: every field is refused in the spelling the
@@ -587,6 +598,15 @@ func TestBatchSectionValidation(t *testing.T) {
 		},
 		"zero timeout":     {replace("task_timeout: 1h30m", "task_timeout: 0s"), "batch.task_timeout"},
 		"negative timeout": {replace("task_timeout: 1h30m", "task_timeout: -5m"), "batch.task_timeout"},
+		// A timeout past a run's own ceiling is refused, and this is the
+		// reaper's requirement rather than a cap for its own sake: a run can
+		// never be given more than backend.MaxRunTime (--total-timeout is
+		// capped there), so a job sized longer is headroom no run can use --
+		// while the reaper that runs from its own Cloud Run job's environment
+		// has no config to read the number from and derives its bound from the
+		// ceiling (internal/cli/reaper.go). The two would disagree about when
+		// a live run has ended, and the disagreement deletes a running job.
+		"timeout past a run's ceiling": {replace("task_timeout: 1h30m", "task_timeout: 30h"), "batch.task_timeout"},
 		// An unparsable duration is refused by the decoder, which the two
 		// spellings of a duration in this file share (config.Duration): the
 		// message names the value and the syntax, not the key.
@@ -1361,5 +1381,35 @@ func TestRoutingInTheLocalConfig(t *testing.T) {
 	bare := strings.Replace(claim, "    allow_data_to: [\"*\"]\n", "", 1)
 	if _, err := Parse([]byte(sample + bare + "routing:\n  claude:\n    via: openrouter\n    models: [claude-sonnet-5-5]\n")); err == nil || !strings.Contains(err.Error(), "allow_data_to") {
 		t.Errorf("a claim with no allow_data_to: err = %v, want a refusal naming allow_data_to", err)
+	}
+}
+
+// TestProjectBaseBranchValidated: the installation config's top-level
+// base_branch is the project's default base branch, a sibling of repos:, so
+// it reaches git, Cloud Build and a run's ref exactly as a repo's does and
+// is held to the same rule. The refusal names the layer the value came
+// from, because the same word is a per-repo key one level down.
+func TestProjectBaseBranchValidated(t *testing.T) {
+	c, err := Parse([]byte(sample + "base_branch: trunk\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.BaseBranch != "trunk" {
+		t.Errorf("BaseBranch = %q, want trunk", c.BaseBranch)
+	}
+	for _, ok := range []string{"main", "release/1.2", "dev_x"} {
+		if _, err := Parse([]byte(sample + "base_branch: " + ok + "\n")); err != nil {
+			t.Errorf("%q refused: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{`"--upload-pack=x"`, `"main\n"`, `"a..b"`, `"$(id)"`, `"x y"`, `"/x"`} {
+		_, err := Parse([]byte(sample + "base_branch: " + bad + "\n"))
+		if err == nil || !strings.Contains(err.Error(), "the project's default base branch") {
+			t.Errorf("%s: err = %v", bad, err)
+		}
+	}
+	// No project base_branch at all is fine: the checkout's or main is used.
+	if c, err := Parse([]byte(sample)); err != nil || c.BaseBranch != "" {
+		t.Errorf("no base_branch: %v, %q", err, c.BaseBranch)
 	}
 }

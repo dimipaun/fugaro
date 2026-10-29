@@ -252,8 +252,13 @@ func looseEntry(raw json.RawMessage) AgentEntry {
 	return e
 }
 
-// runIDTime is the time a run id (20060102-150405-xxxx) was made, the zero
-// time when it is not that shape: a zero time reads as stale.
+// runIDTime is the UTC time named by the head of a run id
+// (20060102-150405-xxxx), and the zero time when the id is shorter than that
+// head or the head is not such a timestamp. It reads the head only — the rest
+// of the id is not checked here, and callers compare the result against a day
+// they have, treating the zero time as "no launch day", which is the stale end
+// of that comparison. Review nit: the doc claimed to be "the time a run id was
+// made", which is more than this parses.
 func runIDTime(run string) time.Time {
 	if len(run) < 15 {
 		return time.Time{}
@@ -274,10 +279,36 @@ func (s *Sweeper) remove(ctx context.Context, slug, run string, e AgentEntry, no
 		return err
 	}
 	// The outcome's day is the entry's last heartbeat when that is plausible
-	// (so it does not move between sweeps), else today.
-	day := Day(now)
+	// (so it does not move between sweeps), else today — and never before the
+	// run id's own launch day. The heartbeat is run-written (the rules' AMOUNT
+	// && RBOK allows any non-negative number), so a run can date it before it
+	// launched and land its outcome on a day no liveness scan reads, which
+	// would keep it admitted until its fx: W2, reached through the sweeper.
+	// The launch day is the run id's, which no run token writes.
+	//
+	// A run id dated ahead of this clock is the one branch where the launch
+	// day cannot be the day: the rules' DAYOK refuses a future day, and the
+	// liveness scan reads the database's window around today (today+1 down to
+	// the day below the launch day; checkLive) — so the outcome goes on today,
+	// which is inside it, rather than falling back to the older, run-written
+	// heartbeat day — otherwise a run id dated ahead of the clock and a
+	// heartbeat days old would put the outcome outside the window again, from
+	// the far side. Such a run id's launch day is lowered to today-1 before
+	// that scan runs (checkLive clamps a launch day of today or later), and the
+	// scan reaches the day below the launch day, so the window such an id is
+	// read over is today+1 down to today-2 — and today is inside it.
+	today := Day(now)
+	day := today
 	if hb := time.UnixMilli(e.UpdatedAt); e.UpdatedAt > 0 && hb.Before(now) && now.Sub(hb) < 8*24*time.Hour {
 		day = Day(hb)
+	}
+	if launch := runIDTime(run); !launch.IsZero() {
+		switch ld := Day(launch); {
+		case ld > today:
+			day = today
+		case ld > day:
+			day = ld
+		}
 	}
 	oc := PathOutcome(day, slug, run)
 	var existing json.RawMessage

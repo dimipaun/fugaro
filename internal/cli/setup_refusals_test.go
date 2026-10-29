@@ -40,6 +40,12 @@ import (
 // After the flip the rule reads "these three rows may never be relaxed, in
 // either front door": creating the project, linking the billing account, and
 // the Firestore database's location in `setup`.
+//
+// One row has been added since, and it is not a row that moved: the credentials
+// stage (docs/credentials-service, D146; C1.20) is registered behind
+// `--provision-credentials` the way the Batch stage is behind
+// `--provision-batch`, and it is `noYes` — its confirmation is the project's
+// name typed at a real terminal, and `--yes` never covers it.
 
 // cliStage is one stage initStages() registers: the constructor it is built
 // with, the flag it is behind, and the three facts the loop decides about it —
@@ -90,6 +96,8 @@ var cliStages = []cliStage{
 		build: func(e *initEngine) initflow.Stage { return newSecretsStage(e) }},
 	{stage: initflow.Plugin, ctor: "newPluginStage(",
 		build: func(e *initEngine) initflow.Stage { return newPluginStage(e) }},
+	{stage: initflow.Credentials, ctor: "newCredentialsStage(", behind: "--provision-credentials", noYes: true,
+		build: func(e *initEngine) initflow.Stage { return newCredentialsStage(e) }},
 	{stage: initflow.Repository, ctor: "newRepositoryStage(", covered: true, self: true,
 		build: func(e *initEngine) initflow.Stage { return newRepositoryStage(e) }},
 	{stage: initflow.Project, ctor: "newProjectStage(", behind: "--create-project", firstRun: true, noYes: true,
@@ -105,7 +113,7 @@ func prodEngine(o initOptions) *initEngine {
 	return &initEngine{r: &initRun{o: &o}}
 }
 
-// flagOptions is the run the flag in a row's behind turns on: the two flags
+// flagOptions is the run the flag in a row's behind turns on: the three flags
 // the CLI registers a stage behind, named as the flag the row records. ok is
 // false for a name that turns nothing on, which is a row whose behind is not a
 // flag at all.
@@ -115,6 +123,8 @@ func flagOptions(behind string) (o initOptions, ok bool) {
 		return initOptions{createProject: true}, true
 	case "--provision-batch":
 		return initOptions{provisionBatch: true}, true
+	case "--provision-credentials":
+		return initOptions{provisionCredentials: true}, true
 	}
 	return initOptions{}, false
 }
@@ -191,7 +201,7 @@ func TestRefusalMatrixListsEveryStageTheCLIRegisters(t *testing.T) {
 	}
 
 	plain := initStages(prodEngine(initOptions{}))
-	all := initStages(prodEngine(initOptions{createProject: true, provisionBatch: true}))
+	all := initStages(prodEngine(initOptions{createProject: true, provisionBatch: true, provisionCredentials: true}))
 
 	// The set of stages, both directions, and the flag each is behind: a
 	// stage behind a flag is not in the unflagged list, and every other row is.

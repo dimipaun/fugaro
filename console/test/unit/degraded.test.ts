@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See console/LICENSE.md for the terms.
 // The console's degraded, stale and absent states (desktop-console plan Task
 // 3.1; design section 6.3).
 //
@@ -45,9 +47,9 @@ import { githubToken } from '../support/fakeSecrets'
 import { ESTIMATED_MARK, UNAVAILABLE_MARK, estimated, formatReading, measured, unavailable } from '../../src/shared/availability'
 import { sanitizeRefusal, sanitizeText, TOKEN_PLACEHOLDER } from '../../src/shared/sanitize'
 import { decodeDocument } from '../../src/shared/schema'
-import type { DegradedDocument, LiveDocument } from '../../src/shared/schema'
+import type { CostView, DegradedDocument, LiveDocument } from '../../src/shared/schema'
 import { LIVE_BURN_MAX_SAMPLES, LIVE_STALE_AFTER_SECONDS, BurnHistory, buildLiveModel, renderLive } from '../../src/renderer/screens/live'
-import type { FeedHealth, LiveTheme, ScreenElement, ScreenFactory } from '../../src/renderer/screens/live'
+import type { FeedHealth, LiveFactory, LiveTheme, ScreenElement } from '../../src/renderer/screens/live'
 import {
   DEGRADED_THEMES,
   NO_CAPS_BECAUSE,
@@ -56,7 +58,7 @@ import {
   renderNoFirebase,
   renderUnavailable,
 } from '../../src/renderer/screens/degraded'
-import type { NoBinaryState, RefusedState } from '../../src/renderer/screens/degraded'
+import type { DegradedRunRow, NoBinaryState, RefusedState } from '../../src/renderer/screens/degraded'
 
 const consoleDir = join(__dirname, '..', '..')
 const fixturePath = join(consoleDir, 'test', 'fixtures', 'degraded.ndjson')
@@ -114,7 +116,10 @@ class FakeScreen implements ScreenElement {
   }
 }
 
-const factory: ScreenFactory = { create: (tag) => new FakeScreen(tag) }
+const factory: LiveFactory = {
+  create: (tag) => new FakeScreen(tag),
+  createNS: (tag) => new FakeScreen(tag),
+}
 
 /** walk visits every node of a tree, the root first. */
 function walk(node: ScreenElement): readonly FakeScreen[] {
@@ -239,7 +244,6 @@ function aRefusedState(): RefusedState {
 function anAbsentState(): NoBinaryState {
   return noInstallationState({
     reason: 'no fugaro binary was found: looked at /usr/local/bin/fugaro, /usr/bin/fugaro',
-    appEnv: {},
     home: '/nonexistent-home',
   })
 }
@@ -319,6 +323,56 @@ describe('the no-Firebase screen', () => {
     const notionalRows = walk(tree).filter((node) => node.getAttribute('data-notional-model') === 'true')
     expect(notionalRows).toHaveLength(1)
     expect(notionalRows[0]?.getAttribute('data-notional-model')).toBe('true')
+  })
+
+  it('splits a run\'s model figure on `model_notional_usd`, never on the basis', () => {
+    // C1.16 (P12/D140): `model_usd` is the **whole** model figure and
+    // `model_notional_usd` the part of it the subscription paid, so the billed
+    // dollars are the difference. A mixed cascade run's `model_basis` is
+    // `api-list` for the whole run, and this screen read the whole figure as
+    // money -- while the notional split only existed on a sum, which is what the
+    // comment here used to say. The key is what says it now, and the basis is
+    // the fallback for a row written before it.
+    const document = theDegradedDocument()
+    const template = document.runs[0]
+    if (template === undefined) throw new Error('the fixture has no runs')
+    const missing = unavailable('cost.model_notional_usd')
+    const withCost = (cost: Partial<CostView>): DegradedDocument => ({
+      ...document,
+      runs: [
+        {
+          ...template,
+          cost: {
+            modelUsd: measured(3.2),
+            modelNotionalUsd: missing,
+            computeUsd: measured(0.5),
+            computeEstimated: true,
+            totalUsd: measured(1.7),
+            modelBasis: 'api-list',
+            ...cost,
+          },
+        },
+      ],
+    })
+    const row = (cost: Partial<CostView>): DegradedRunRow | undefined => buildNoFirebaseModel(withCost(cost)).runs[0]
+    // Mixed: the ledger draws the billed part, and the row is still marked as
+    // one that carries the plan's list price.
+    const mixed = row({ modelNotionalUsd: measured(2) })
+    expect(mixed?.modelUsd.value).toBeCloseTo(1.2)
+    expect(mixed?.modelUsd.state).toBe('measured')
+    expect(mixed?.notionalModel).toBe(true)
+    // All notional: the plan's figure, marked notional -- with the key (C1.16)
+    // and without it (a row written before the split, which the basis decides).
+    expect(row({ modelNotionalUsd: measured(3.2) })?.modelUsd.state).toBe('notional')
+    const before = row({ modelBasis: 'subscription' })
+    expect(before?.modelUsd.value).toBeCloseTo(3.2)
+    expect(before?.modelUsd.state).toBe('notional')
+    expect(before?.notionalModel).toBe(true)
+    // All billed: no notional part at all.
+    const billed = row({})
+    expect(billed?.modelUsd.value).toBeCloseTo(3.2)
+    expect(billed?.modelUsd.state).toBe('measured')
+    expect(billed?.notionalModel).toBe(false)
   })
 
   it('does not price a run whose compute was not estimated at zero', () => {
@@ -649,7 +703,7 @@ describe('the console with no binary to read', () => {
     expect(one(tree, 'unavailable-searched-count').classes).toContain('degraded-num')
   })
 
-  it('names what is needed, the install command and the picker, and draws no dashboard', () => {
+  it('names what is needed, the install command, and no picker to choose a binary with', () => {
     const state = anAbsentState()
     expect(state.installCommand).toBe(FUGARO_INSTALL_COMMAND)
     expect(state.searched.length).toBeGreaterThan(0)
@@ -657,7 +711,18 @@ describe('the console with no binary to read', () => {
     expect((tree as FakeScreen).getAttribute('data-kind')).toBe('no-binary')
     expect(one(tree, 'unavailable-headline').textContent).toBe('no fugaro binary')
     expect(one(tree, 'unavailable-install-command').textContent).toBe(FUGARO_INSTALL_COMMAND)
-    expect(one(tree, 'unavailable-picker').getAttribute('data-picker')).toBe('binary')
+    // **No choose-the-binary affordance**, which is the design's §6.3 row as this
+    // PR amended it (owner's ruling of 2026-10-20: the console asks the operator
+    // for no path). The screen used to draw one -- `div.unavailable-picker` with
+    // `data-picker="binary"` and a lead reading `PICKER_LEAD` -- and it wired
+    // nothing, so it told the operator to choose a binary the console no longer
+    // lets anyone choose. What replaces it is the install command above and the
+    // count below, and the installations list, which is the picker window's own
+    // screen. The sentence is asserted by its text, not by its constant, so a
+    // reintroduction under a new name is caught too.
+    expect(all(tree, 'unavailable-picker')).toEqual([])
+    expect(all(tree, 'unavailable-configured')).toEqual([])
+    expect(one(tree, 'unavailable-install-lead').textContent).toBe('install it with')
     // How many places were searched, and never which: no path is drawn on this
     // console -- the `path` class turns every one of them into `<path>`, and a
     // column of `<path>` under a sentence saying the console looked somewhere
@@ -666,6 +731,9 @@ describe('the console with no binary to read', () => {
     const drawn = walk(tree).map((node) => node.textContent).join('\n')
     expect(drawn).not.toContain('/opt/homebrew')
     expect(drawn).not.toContain('/usr/local/bin')
+    expect(drawn, 'the screen still invites the operator to choose a binary').not.toContain(
+      'choose a different fugaro binary',
+    )
     // The resolution's own sentence is read as prose, so the paths inside it
     // are drawn as the console's `<path>` marker -- the design's own mark for a
     // path, and the reason the sentence is still worth drawing: it says the

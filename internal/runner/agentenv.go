@@ -94,6 +94,12 @@ func (r *run) writeManagedSettings(stage string, pins map[string]string) error {
 	if err != nil {
 		return fmt.Errorf("writing Claude Code's managed settings: %w", err)
 	}
+	if r.compression != nil {
+		// After GatewayVars, not before: the managed settings outrank the
+		// agent's environment, so leaving the gateway's URL here would route
+		// Claude Code around the sidecar whatever BuildEnv did (P5).
+		vars["ANTHROPIC_BASE_URL"] = r.compression.BaseURL
+	}
 	for k, v := range pins {
 		vars[k] = v
 	}

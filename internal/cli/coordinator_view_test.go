@@ -1,0 +1,311 @@
+package cli
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/dimipaun/fugaro/internal/coordinator"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/gitprov/providers"
+	"github.com/dimipaun/fugaro/internal/rtdb"
+)
+
+// `fugaro coordinator status --from-store` (D364): the read of the view the
+// sweep already stored, which holds no App ID, no key and no Bitbucket
+// credential, and reaches no host. It is the console's read and a person's
+// read on a machine that has neither, so what these tests hold is that the
+// command is the database's and nothing else's:
+//
+//   - TestCoordinatorStatusFromStoreNeedsNoKey: no App credential is in the
+//     environment and no provider is ever opened, and the view printed is the
+//     stored one — pull requests and all.
+//   - TestCoordinatorStatusFromStoreWithService: the same read with the
+//     installation's credentials service in the environment, where the
+//     project-wide read refuses (coordinatorAppCredential). The fixture's runs
+//     name pull requests, which is what makes a read that went through
+//     coordinatorReader reach that refusal rather than skip it.
+//   - TestCoordinatorStatusFromStoreFallsBackToRuns: nothing stored — the
+//     coordinator is off, or this project never turned it on — is the runs
+//     half with "stored": false, so a console needs one argv either way.
+//   - TestCoordinatorStatusFromStoreWithSharedConfigOnly: the read does not
+//     consult the local config for whether the coordinator is on. The config a
+//     teammate's machine holds is Config.Shared's subset, which drops
+//     Terraform, and Terraform is where that switch lives.
+//   - TestCoordinatorStatusFromStoreAll: --all reads one view per repository,
+//     the way the command's other selection does.
+//   - TestCoordinatorStatusFromStorePrintsAStaleMarker: the marker is printed
+//     as stored, with no age computed from it.
+
+// coordinatorStoreFixture is the fixture this read is driven with: the status
+// fixture's runs bucket and fake host, plus the database the coordinator's
+// state is written to and read from.
+type coordinatorStoreFixture struct {
+	*coordinatorFixture
+	db *gcpfake.RTDB
+}
+
+func newCoordinatorStoreFixture(t *testing.T, seeds []coordinatorRunSeed) *coordinatorStoreFixture {
+	t.Helper()
+	f := &coordinatorStoreFixture{
+		coordinatorFixture: newCoordinatorFixture(t, seeds, coordinatorPRs()...),
+		db:                 gcpfake.NewRTDB(t),
+	}
+	f.appendConfig(t, "budget: { mode: observe, per_run_usd: 5, rtdb_url: "+f.db.URL+" }\n")
+	return f
+}
+
+// store is the coordinator's store over the fixture's database, opened the way
+// the command's own read opens one: the same client and the same address, with
+// no credentials in a test.
+func (f *coordinatorStoreFixture) store(t *testing.T) *coordinator.Store {
+	t.Helper()
+	db, err := rtdb.New(f.db.URL, rtdb.Auth{IDToken: func() string { return "" }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return coordinator.NewStore(db)
+}
+
+// writeStoredView leaves v as the repository's stored view, and mark as its
+// stale marker when it is not nil: what a sweep that could (or could not)
+// reconcile the repository left behind.
+func (f *coordinatorStoreFixture) writeStoredView(t *testing.T, v coordinator.View, mark *coordinator.Stale) {
+	t.Helper()
+	ctx := context.Background()
+	store := f.store(t)
+	if err := store.Write(ctx, coordinator.PathView(appSlug), v); err != nil {
+		t.Fatal(err)
+	}
+	if mark != nil {
+		if err := store.Write(ctx, coordinator.PathStale(appSlug), *mark); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// storedView is what a sweep left for the fixture's repository: one record in
+// flight, on a pull request the runs name, carrying the host's own state. It
+// is deliberately not what a live read of the fixture computes — one record
+// against the runs' four — so a test can tell the stored view from a
+// recomputed one.
+func storedView() coordinator.View {
+	return coordinator.View{
+		Repo: "acme/app",
+		Records: []coordinator.Record{{
+			PR: &coordinator.PullRequest{
+				Number: 12, URL: "https://github.com/acme/app/pull/12",
+				Title: "the stored title", Branch: "fugaro/20261013-100000-aaaa", State: coordinator.StateOpen,
+			},
+			Runs: []coordinator.Run{{
+				ID: "20261013-100000-aaaa", PR: 12, Status: "succeeded",
+				Branch: "fugaro/20261013-100000-aaaa", DeclaredBy: "someone@example.com", Files: []string{},
+			}},
+			Branch: "fugaro/20261013-100000-aaaa", InFlight: true,
+			Files: []string{"internal/cli/exec.go"}, Services: []string{"internal/cli"},
+		}},
+		Collisions: []coordinator.Collision{},
+	}
+}
+
+// noStoreOpens fails the test if the command opens a provider at all: the
+// stored-view read holds no App credential, so there is nothing to open a host
+// with, and an opener that was reached is the read going somewhere it must not.
+func noStoreOpens(t *testing.T) {
+	t.Helper()
+	setCoordinatorHost(t, func([]string, func(string)) (coordinator.ProviderOpener, error) {
+		t.Error("--from-store opened a provider: this read holds no App credential and reads no host")
+		return nil, errors.New("no provider")
+	})
+}
+
+// storedJSON is the command's document for the fixture's repository, read.
+func storedJSON(t *testing.T, args ...string) coordinator.RepoView {
+	t.Helper()
+	out, errOut, err := execute(t, args...)
+	if err != nil {
+		t.Fatalf("%v (stderr: %s)", err, errOut)
+	}
+	var got coordinator.RepoView
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	return got
+}
+
+func TestCoordinatorStatusFromStoreNeedsNoKey(t *testing.T) {
+	f := newCoordinatorStoreFixture(t, coordinatorSeeds())
+	f.writeStoredView(t, storedView(), nil)
+	noStoreOpens(t)
+	// A machine with no App credential anywhere in it: this is the read a
+	// person and a console child both make, and neither has one.
+	t.Setenv(providers.EnvGitHubAppID, "")
+	t.Setenv(providers.EnvGitHubAppKey, "")
+	t.Setenv(providers.EnvCredentialsServiceURL, "")
+
+	got := storedJSON(t, "coordinator", "status", "--from-store", "--repo", "acme/app", "--since", "0", "--json")
+	if got.Repo != "acme/app" {
+		t.Errorf("repo = %q, want acme/app", got.Repo)
+	}
+	if !got.Stored {
+		t.Error(`"stored" is false: the database held a view and this read is the one that shows it`)
+	}
+	if want := storedView(); !reflect.DeepEqual(got.View, want) {
+		t.Errorf("the view printed is not the stored one:\n%+v\nwant\n%+v", got.View, want)
+	}
+	if got.Stale != nil {
+		t.Errorf("a repository with no marker printed %+v", got.Stale)
+	}
+}
+
+func TestCoordinatorStatusFromStoreWithService(t *testing.T) {
+	// The opener a machine with the credentials service in its environment
+	// has: the fixture replaces it, and this test puts it back, because the
+	// refusal it makes is the thing this read must not meet.
+	real := openCoordinatorProvider
+	f := newCoordinatorStoreFixture(t, coordinatorSeeds())
+	openCoordinatorProvider = real
+	f.writeStoredView(t, storedView(), nil)
+	// The installation's credentials service holds the App's key (C2.2,
+	// D145), so the project-wide read refuses here rather than reaching for a
+	// key the platform withheld — and the fixture's runs name pull requests,
+	// so a read that delegated to coordinatorReader would reach that refusal
+	// rather than return before it.
+	t.Setenv(providers.EnvCredentialsServiceURL, "https://credentials.example.com/")
+
+	// --since 0 so that the whole fixture is in the window: a read that
+	// delegated to coordinatorReader reaches the refusal only for a run that
+	// names a pull request, and a run outside the window is not one.
+	got := storedJSON(t, "coordinator", "status", "--from-store", "--repo", "acme/app", "--since", "0", "--json")
+	if !got.Stored {
+		t.Error(`"stored" is false: the database held a view and this read is the one that shows it`)
+	}
+	if want := storedView(); !reflect.DeepEqual(got.View, want) {
+		t.Errorf("the view printed is not the stored one:\n%+v\nwant\n%+v", got.View, want)
+	}
+	// The other half of the same rule: without --from-store the command is
+	// still the one that refuses, so this is the flag that decides and not
+	// the environment.
+	if _, _, err := execute(t, "coordinator", "status", "--repo", "acme/app", "--since", "0", "--json"); ExitCode(err) != ExitUserError ||
+		err == nil || !strings.Contains(err.Error(), providers.EnvCredentialsServiceURL) {
+		t.Errorf("status without --from-store: exit %d, err %v; want the credentials-service refusal", ExitCode(err), err)
+	}
+}
+
+func TestCoordinatorStatusFromStoreFallsBackToRuns(t *testing.T) {
+	f := newCoordinatorStoreFixture(t, coordinatorSeeds())
+	noStoreOpens(t)
+	if f.db.Value(coordinator.PathView(appSlug)) != nil {
+		t.Fatal("the fixture stored a view: this test is about a repository that has none")
+	}
+
+	got := storedJSON(t, "coordinator", "status", "--from-store", "--repo", "acme/app", "--since", "0", "--json")
+	if got.Stored {
+		t.Error(`"stored" is true: the database holds no view for this repository`)
+	}
+	if got.View.Repo != "acme/app" || got.View.InFlight() == 0 {
+		t.Errorf("the runs half is %s with %d records (%d in flight), want the fixture's own",
+			got.View.Repo, len(got.View.Records), got.View.InFlight())
+	}
+	// The runs half is the join of the bucket alone: every run the bucket
+	// holds is in it, and the pull requests they name are there with the
+	// host's state unknown rather than fetched.
+	var labels []string
+	for _, r := range got.View.Records {
+		labels = append(labels, r.Label())
+	}
+	want := []string{"20261013-120000-cccc", "#12", "#14", "#16"}
+	if !reflect.DeepEqual(labels, want) {
+		t.Errorf("records = %v, want %v", labels, want)
+	}
+	if got.Stale != nil {
+		t.Errorf("a repository with no marker printed %+v", got.Stale)
+	}
+}
+
+func TestCoordinatorStatusFromStoreWithSharedConfigOnly(t *testing.T) {
+	f := newCoordinatorStoreFixture(t, coordinatorSeeds())
+	f.writeStoredView(t, storedView(), nil)
+	noStoreOpens(t)
+
+	path := os.Getenv("FUGARO_CONFIG")
+	base, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The owner's own machine: the config carries terraform:, which is where
+	// the coordinator switch lives.
+	if err := os.WriteFile(path, append(base, []byte("terraform: { coordinator: true }\n")...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	withSwitch := storedJSON(t, "coordinator", "status", "--from-store", "--repo", "acme/app", "--since", "0", "--json")
+	// A teammate's machine: what it holds is the published shared config,
+	// which is Config.Shared's subset — and Shared drops Terraform, so
+	// nothing in it says whether the coordinator is on.
+	if err := os.WriteFile(path, base, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	withoutSwitch := storedJSON(t, "coordinator", "status", "--from-store", "--repo", "acme/app", "--since", "0", "--json")
+
+	if !withSwitch.Stored || !withoutSwitch.Stored {
+		t.Errorf("stored = %v / %v, want the stored view either way: the read does not consult the local config for whether the coordinator is on",
+			withSwitch.Stored, withoutSwitch.Stored)
+	}
+	if !reflect.DeepEqual(withSwitch, withoutSwitch) {
+		t.Errorf("the read is not the same without the switch:\n%+v\n%+v", withSwitch, withoutSwitch)
+	}
+}
+
+func TestCoordinatorStatusFromStoreAll(t *testing.T) {
+	f := newCoordinatorStoreFixture(t, coordinatorSeeds())
+	f.writeStoredView(t, storedView(), nil)
+	noStoreOpens(t)
+
+	out, errOut, err := execute(t, "coordinator", "status", "--from-store", "--all", "--since", "0", "--json")
+	if err != nil {
+		t.Fatalf("%v (stderr: %s)", err, errOut)
+	}
+	var got coordinator.StoredProjectView
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if len(got.Repos) != 1 || got.Repos[0].Repo != "acme/app" || !got.Repos[0].Stored {
+		t.Fatalf("--all read %+v, want the fixture's one stored view", got.Repos)
+	}
+	if want := storedView(); !reflect.DeepEqual(got.Repos[0].View, want) {
+		t.Errorf("the view printed is not the stored one:\n%+v\nwant\n%+v", got.Repos[0].View, want)
+	}
+}
+
+func TestCoordinatorStatusFromStorePrintsAStaleMarker(t *testing.T) {
+	f := newCoordinatorStoreFixture(t, coordinatorSeeds())
+	since, err := time.Parse(time.RFC3339, "2026-10-24T12:00:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mark := coordinator.Stale{Since: since, Reason: coordinator.StaleUnsupported}
+	f.writeStoredView(t, storedView(), &mark)
+	noStoreOpens(t)
+
+	got := storedJSON(t, "coordinator", "status", "--from-store", "--repo", "acme/app", "--since", "0", "--json")
+	if got.Stale == nil || !got.Stale.Since.Equal(mark.Since) || got.Stale.Reason != mark.Reason {
+		t.Fatalf("the marker printed is %+v, want %+v exactly as stored", got.Stale, mark)
+	}
+	out, errOut, err := execute(t, "coordinator", "status", "--from-store", "--repo", "acme/app", "--since", "0")
+	if err != nil {
+		t.Fatalf("%v (stderr: %s)", err, errOut)
+	}
+	// Printed as stored: the marker's own words and no age computed from
+	// them, which this read has no clock to place them against.
+	if !strings.Contains(out, mark.Since.Format("2006-01-02T15:04:05Z07:00")) || !strings.Contains(out, coordinator.StaleUnsupported) {
+		t.Errorf("the text output lacks the marker:\n%s", out)
+	}
+	if strings.Contains(out, "ago") {
+		t.Errorf("the text output claims an age:\n%s", out)
+	}
+}

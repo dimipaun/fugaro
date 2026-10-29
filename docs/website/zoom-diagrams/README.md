@@ -76,9 +76,10 @@ The corrections the reconciliation makes, in one line each:
   be changed (`docs/design/managed-projects.md:18,211`). And "it never runs Terraform" is
   false: Terraform **is** Fugaro's provisioning model, and D58 permits adopting an existing
   project (`docs/design/managed-projects.md:174`).
-- **Managed projects are gated off today** (`internal/cli/recipes_skew.go:152`
-  `managedDeployerShipped = false`), so "Fugaro gets its own isolated, Fugaro-managed project"
-  is a roadmap sentence, not a present-tense one.
+- **Managed projects were gated off when this note was written** (`internal/cli/recipes_skew.go`'s
+  `managedDeployerShipped`, `false` then and true as of 0.10.0), so "Fugaro gets its own isolated,
+  Fugaro-managed project" was a roadmap sentence then; it is a present-tense one now, with the
+  deployer's fence unmeasured (Check 68 is owner-run after the release).
 - **Firebase is the strongest part of the argument, and the brief overstates it.** All three
   services are used, but they are the **optional** budget/dashboard/history control plane —
   "the budget is off by default" (`README.md:99`) — and Firebase Auth is the identity of a run

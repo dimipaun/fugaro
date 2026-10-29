@@ -1,14 +1,20 @@
 #!/bin/sh
+# SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+# See console/LICENSE.md for the terms.
 # A stub `fugaro`, for the end-to-end specs that launch the real console
 # (desktop-console plan Tasks 3.3 and 3.4c).
 #
 # The console resolves its `fugaro` the way design section 3.4 rule 4 says: the
-# configured path, then the well-known prefixes, then every absolute entry of
-# the app's own `PATH`. There is no `FUGARO_BIN` and this task does not add one,
-# so the only way a spec can choose which CLI the app reads is to put a binary
-# where that resolution looks -- `test/support/cliStub.ts` copies this file into
-# a scratch directory and points the app's `PATH` (and `HOME`, so `~/.local/bin`
-# is covered too) at it.
+# configured path (a stored record's own optional override, when it has one) and
+# then the well-known prefixes (`/opt/homebrew/bin`, `/usr/local/bin`,
+# `~/.local/bin`, `/usr/bin`). It does **not** search the app's own `PATH` -- the
+# owner's ruling of 2026-10-20 -- so the only way a spec can choose which CLI the
+# app reads is to put a binary where that resolution looks.
+# `test/support/cliStub.ts` copies this file into a scratch directory and into a
+# scratch `HOME`'s `~/.local/bin`, which is the prefix that wins when the machine
+# has nothing in `/opt/homebrew/bin` or `/usr/local/bin`; the app's `PATH` it sets
+# is a **decoy** and nothing more, so a resolution that searched the `PATH` would
+# be caught here rather than accidentally satisfied.
 #
 # What it answers, and nothing else:
 #
@@ -16,16 +22,64 @@
 #     spec writes. That is the whole of `fugaro version` on this tree -- one
 #     human line, no `--json` (design section 4.3 gap 2) -- and it is what
 #     `src/main/spawn.ts`'s `probeVersion` runs at startup.
+#   * `plan status --json [--all] --project P` -- see above.
 #   * `doctor --json --dir D --project P` -- a minimal `doctorOutput`
 #     (contract section 6.4). It is what `verifyCandidate` runs to prove an
 #     installation is usable, so a spec that adds one through the picker needs
 #     it; nothing in the dashboard draws it.
+#   * `config list --json` -- the installations document (contract section 6.8),
+#     read off `installations.ndjson` beside it, which `cliStub.ts` writes. It is
+#     the picker's one read and the only command with **no** `--project`: the
+#     document is the list of installations, so there is no project to name. With
+#     no file seeded it prints the **empty document** --
+#     `{"installations":[],"warnings":[]}` -- because that is what a `config list
+#     --json` that succeeded prints on a machine with none, and it is the state
+#     the "set up your first installation" screen is drawn for. Printing nothing
+#     would be a different screen: the console refuses text it cannot parse, so a
+#     spec that wanted the refusal would seed that instead.
 #   * `watch --json --project P` -- the frames in `frames.ndjson` beside it, one
 #     compact document per line, which `cliStub.ts` writes from the committed
 #     `test/fixtures/synthetic.ndjson`. This is the read the Live screen makes
 #     (Task 3.4c), and it is the *whole* recording: the stub prints it and
 #     exits 0, which is the stream's own end and the supervisor's cue to restart
 #     it, exactly as a real `watch` that returned cleanly would be.
+#   * `plan status --json [--all] --project P` -- the document in
+#     `plan-status.json` beside it, which `cliStub.ts` writes from the committed
+#     `test/fixtures/plan-status.json` (GV2.1). This is the read the **Graph**
+#     view makes (GV2.3b), and it is the one the stub answers with `--all` and
+#     without it alike: `--all` is the screen's own control over how much of the
+#     document the CLI lists, and the document is the same document.
+#   * `coordinator status --from-store --all --json --project P` -- the document
+#     in `coordinator-status.json` beside it, which `cliStub.ts` writes from the
+#     committed `test/fixtures/coordinator-status.json` (Bitbucket credentials
+#     T1.2, D364). This is the read the **Coordinator** view makes, and it is the
+#     read whose argv fixes the most: `--from-store` and `--all` are the spawn
+#     row's own words, because the screen has no control that turns either off,
+#     so the stub holds all three flags exactly rather than answering a question
+#     this console should never have been able to ask.
+#   * `run --task-file - --json --run-id <id> --repo <owner/name> [--title=<T>]
+#     [--plan-task=<P>] --project <name> [--config <path>]` -- the console's one
+#     **write** (design section 5.1 rule 11, V2.5.1a; `src/main/spawn.ts`'s
+#     `run.launch` row). The task arrives on the child's **stdin**, which is what
+#     `--task-file -` means, and the answer is `internal/cli/run.go`'s
+#     `launchResult` as this console's `decodeLaunchResult` reads it: the six
+#     required strings, `status: "launched"` and the six `omitempty` fields as
+#     JSON `null`. `run_id` and `repo` **echo what the console sent** (the
+#     launcher checks the reply's own against the launch it cut) and `run` is the
+#     id as a screen draws it; `branch`/`ref` say `main`, which the console does
+#     not check. Every word of the row is held exactly -- the optional flags and
+#     `--project`/`--config` are accepted in any order, and `--config`'s value is
+#     never checked -- and an argv carrying anything else is refused, because a
+#     stub that answered a launch this console should never have been able to
+#     make would hide the thing the spec is about.
+#
+#     This is also the one answer with a **side effect**: one line per invocation
+#     is appended to `runs.log` beside this script -- the argv, a tab, and the
+#     task the child read on stdin with its newlines folded to spaces. That file
+#     is the only way a spec can count the children a confirmation actually
+#     spawned (a launch writes no spawn log of its own on the machine), and it is
+#     the only place the task text ever lands, since the console puts it in
+#     neither the process table nor the spawn log.
 #
 # **Everything else is refused, loudly, with exit 2.** A stub that answered
 # whatever it was asked would hide the thing these specs are about: if the
@@ -33,12 +87,14 @@
 # allow-list -- the spec would rather fail here, with the argv it was handed,
 # than pass on an answer the console should never have been able to obtain.
 #
-# **And so is a missing `--project`.** Every command but `version` carries one
-# (design section 3.4 rule 3), and it must be the project the spec seeded, which
-# is the line in `project.txt` beside this script. A console that dropped the
-# flag, or sent another installation's project, is refused here rather than
-# answered with a document for the wrong project. `set -eu` and exit 2 are the
-# shape `probeVersion` already treats as "a binary this console will not run".
+# **And so is a missing `--project`.** `doctor --json` and `watch --json` carry
+# one (design section 3.4 rule 3), and it must be the project the spec seeded,
+# which is the line in `project.txt` beside this script. A console that dropped
+# the flag, or sent another installation's project, is refused here rather than
+# answered with a document for the wrong project. `config list --json` is the
+# exception and is handled above: it is refused a `--project`, because a list for
+# one project is not a list. `set -eu` and exit 2 are the shape `probeVersion`
+# already treats as "a binary this console will not run".
 set -eu
 
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -58,6 +114,29 @@ if [ "$command" = 'version' ]; then
     refuse "'version' takes no arguments, and was asked for '$*'"
   fi
   cat "${here}/version.txt"
+  exit 0
+fi
+
+# `config list --json` is the installations read, and it is the one command that
+# takes **no** `--project`: it lists them (owner's ruling of 2026-10-20; the
+# console's picker draws exactly this document). It answers the lines in
+# `installations.ndjson` beside this script, or -- with none seeded -- the empty
+# document, which is "this machine has none" and not an error. It refuses any
+# `--project`, because a list for one project is not a list.
+if [ "$command" = 'config' ]; then
+  if [ "${1:-}" != 'list' ] || [ "${2:-}" != '--json' ]; then
+    refuse "the stub fugaro answers 'config list --json' and was asked for 'config $*'"
+  fi
+  if [ $# -gt 2 ]; then
+    refuse "'config list --json' takes no further arguments, and was asked for '${3}'"
+  fi
+  # A `--project` reaches this branch only if a console sent one, and it is not
+  # read as the seeded project: this command has no project.
+  if [ -f "${here}/installations.ndjson" ]; then
+    cat "${here}/installations.ndjson"
+  else
+    printf '{"installations":[],"warnings":[]}\n'
+  fi
   exit 0
 fi
 
@@ -94,7 +173,121 @@ case "$command" in
   doctor)
     printf '{"ok":true,"checks":[{"id":"project","ok":true}],"project":"%s"}\n' "$project"
     ;;
+  plan)
+    # `plan status --json` takes one flag of its own -- `--all`, the Graph
+    # screen's control over how much of the document the CLI lists -- and then
+    # the `--project` every read carries, which the loop above has already held
+    # to the seeded project. Anything else is refused rather than ignored: a
+    # stub that answered whatever it was asked would hide a console asking for
+    # something it should not have been able to get.
+    if [ "${1:-}" != 'status' ] || [ "${2:-}" != '--json' ]; then
+      refuse "the stub fugaro answers 'plan status --json' and was asked for 'plan $*'"
+    fi
+    shift 2
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --all)
+          shift
+          ;;
+        --project | --config)
+          if [ $# -lt 2 ]; then
+            refuse "'plan status --json' was given '$1' with no value"
+          fi
+          shift 2
+          ;;
+        *)
+          refuse "'plan status --json' was asked for '$1'"
+          ;;
+      esac
+    done
+    if [ ! -f "${here}/plan-status.json" ]; then
+      refuse 'no plan document is seeded beside this stub'
+    fi
+    cat "${here}/plan-status.json"
+    ;;
+  coordinator)
+    # `coordinator status --from-store --all --json` is the project view's one
+    # read (Bitbucket credentials T1.2, D364): every repository of the
+    # installation, from the view the coordinator's sweep last stored. The three
+    # words are the console's spawn row and not a screen's control, so the stub
+    # holds them exactly -- a console that dropped `--from-store` would be making
+    # a host call this build has no credential for, and the spec would rather see
+    # that here than pass on a document it should never have been able to obtain.
+    if [ "${1:-}" != 'status' ] || [ "${2:-}" != '--from-store' ] || [ "${3:-}" != '--all' ] || [ "${4:-}" != '--json' ]; then
+      refuse "the stub fugaro answers 'coordinator status --from-store --all --json' and was asked for 'coordinator $*'"
+    fi
+    shift 4
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --project | --config)
+          if [ $# -lt 2 ]; then
+            refuse "'coordinator status' was given '$1' with no value"
+          fi
+          shift 2
+          ;;
+        *)
+          refuse "'coordinator status' was asked for '$1'"
+          ;;
+      esac
+    done
+    if [ ! -f "${here}/coordinator-status.json" ]; then
+      refuse 'no coordinator document is seeded beside this stub'
+    fi
+    cat "${here}/coordinator-status.json"
+    ;;
+  run)
+    # The launch (design section 5.1 rule 11): the row's argv word for word, and
+    # the task on stdin. `arguments` is the whole invocation as one string, for
+    # the refusals and for `runs.log`.
+    arguments="run $*"
+    if [ "${1:-}" != '--task-file' ] || [ "${2:-}" != '-' ] || [ "${3:-}" != '--json' ]; then
+      refuse "the stub fugaro answers 'run --task-file - --json' and was asked for '$arguments'"
+    fi
+    shift 3
+    if [ "${1:-}" != '--run-id' ] || [ $# -lt 2 ]; then
+      refuse "the stub fugaro answers 'run --task-file - --json --run-id' and was asked for '$arguments'"
+    fi
+    run_id=$2
+    shift 2
+    if [ "${1:-}" != '--repo' ] || [ $# -lt 2 ]; then
+      refuse "the stub fugaro answers 'run --task-file - --json --run-id <id> --repo' and was asked for '$arguments'"
+    fi
+    repository=$2
+    shift 2
+    # What is left of rule 11's row: the two single-word fields when the window
+    # carried them, and then the `--project` every read and this write carry,
+    # which the scan above has already held to the seeded project.
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --title=* | --plan-task=*)
+          if [ "${1#*=}" = '' ]; then
+            refuse "'run' was asked for '$1' with no value"
+          fi
+          shift
+          ;;
+        --project | --config)
+          if [ $# -lt 2 ]; then
+            refuse "'run' was given '$1' with no value"
+          fi
+          shift 2
+          ;;
+        *)
+          refuse "'run --task-file - --json' was asked for '$1'"
+          ;;
+      esac
+    done
+    # The whole task, from the console's own stdin: `launch.ts` writes the
+    # trimmed text and no newline after it, and a stub that never read it would
+    # leave the writing end of the pipe to fail on a closed reader.
+    task=$(cat)
+    # The scratch record: one line per invocation. The task's newlines are
+    # folded so the count of invocations is the count of lines.
+    task_folded=$(printf '%s' "$task" | tr '\n' ' ')
+    printf '%s\t%s\n' "$arguments" "$task_folded" >> "${here}/runs.log"
+    printf '{"project":"%s","run":"%s","repo":"%s","run_id":"%s","branch":"main","ref":"main","execution":"fugaro-run-a1b2c3","log_url":"","status":"launched","pr":null,"previous_run":"","recipe":null,"project_layer":null}\n' \
+      "$project" "$run_id" "$repository" "$run_id"
+    ;;
   *)
-    refuse "the stub fugaro answers 'version', 'doctor --json' and 'watch --json', and was asked for '$command'"
+    refuse "the stub fugaro answers 'version', 'config list --json', 'plan status --json', 'coordinator status --from-store --all --json', 'doctor --json', 'watch --json' and 'run --task-file - --json', and was asked for '$command'"
     ;;
 esac

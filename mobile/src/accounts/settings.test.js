@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See mobile/LICENSE.md for the terms.
 // The settings store's fences: their tests (Task P3.1; D111, D114, D42(2)).
 //
 // D111's negative half -- the two items are "never in a settings file" -- is

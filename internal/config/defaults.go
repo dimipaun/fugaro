@@ -2,7 +2,12 @@ package config
 
 import (
 	"slices"
+	"sync"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/rigor"
 )
 
 // BaseKind is the one Fugaro base image's kind (design base-image.md): what a
@@ -39,13 +44,142 @@ const (
 	// authenticates with a Vertex key. applyDefaults applies it, and
 	// AgentOf is the other reader of the rule.
 	DefaultAgentAuth = "vertex"
+	// AuthCascade is agent.auth's cascade value (docs/credentials-service,
+	// D133): the run's calls are made with whatever credential the project's
+	// credentials cascade settled on, through the gateway, instead of with a
+	// credential of the job's own. It is a value of the one list below, so
+	// every reader that places an auth places this one the same way.
+	AuthCascade = "cascade"
 )
+
+// RigorBudgetStageFloorUSD is the least model spend one stage can be granted:
+// the budget gateway's own lease floor (internal/budget's minLease, $0.25).
+// Under it the gateway grants a stage nothing, and a run that cannot be
+// granted dies on the cap — the most expensive outcome there is, because a
+// run that dies on the cap produces nothing (docs/rigor-modes D16).
+// TestRigorBudgetStageFloorIsTheLeaseFloor reads the two apart.
+const RigorBudgetStageFloorUSD = 0.25
+
+// RigorBudgetFractions are the per-run budget defaults the modes contribute,
+// as fractions of the deployed cap (D16, plan T6.1). A fraction rather than a
+// dollar figure is what makes "a mode lowers the ceiling and never raises it"
+// structural: the effective cap is a fraction of the ceiling, and a fraction
+// of a value is never above it (F15).
+//
+// Critical is absent on purpose: the whole deployed cap is what a run of the
+// strictest mode gets, which is what every run got before this table existed,
+// and a default below it would change a Critical run's outcome — the one
+// thing this work may not do (the plan's §5 and §7.1).
+//
+// The order is the owner's (D16): POC < Startup < Pro < Critical, with Hotfix
+// tightest of all, because a hotfix is the run with the least room to spend.
+var RigorBudgetFractions = map[rigor.Mode]float64{
+	rigor.Hotfix:  0.4,
+	rigor.POC:     0.55,
+	rigor.Startup: 0.7,
+	rigor.Pro:     0.85,
+}
+
+// RigorBudgetFloorUSD is the least a mode's per-run default may be where the
+// deployed cap can carry it: one stage's floor for each model stage the
+// smallest run the built-in recipe catalog ships can start, which is the smoke
+// check a run has to be able to finish. The arithmetic is recipe.StageBound's,
+// the same bound the cost preview quotes, and RigorBudgetCap is where it is
+// applied — a floor that is only asserted is a floor a mode's fraction can go
+// under (D16, plan T6.1).
+//
+// A deployed cap below the floor is the one case it cannot answer for, and it
+// is answered by saying so rather than by enforcing it: the ceiling is the
+// ceiling, so a run there gets the whole cap — a mode raising it would be a
+// mode raising the owner's ceiling (F15) — and a deployment that low is under
+// one stage's lease whatever mode a run is at
+// (TestRigorBudgetFloorCannotLiftATinyCap).
+//
+// It is a function and not a value because computing it parses the whole
+// recipe catalog (smokeStages), and this package is imported by every CLI
+// command: a package-level initializer made `fugaro version` parse the catalog
+// too. The read is memoized, so the catalog is parsed once, on the first run
+// that asks for a cap.
+func RigorBudgetFloorUSD() float64 { return rigorBudgetFloor() }
+
+// rigorBudgetFloor memoizes the floor above.
+var rigorBudgetFloor = sync.OnceValue(func() float64 {
+	return RigorBudgetStageFloorUSD * float64(smokeStages())
+})
+
+// smokeStages is the model stages the smallest run the built-in recipe
+// catalog ships can start, at the knobs' defaults: the smallest
+// recipe.StageBound over the catalog.
+func smokeStages() int {
+	smallest := 0
+	for _, name := range recipe.CatalogNames() {
+		text, ok := recipe.CatalogText(name)
+		if !ok {
+			continue
+		}
+		r, ps := recipe.Parse(text)
+		if len(ps) > 0 {
+			continue
+		}
+		if n := recipe.StageBound(r, DefaultFirstLineRounds, DefaultReviewRounds); smallest == 0 || n < smallest {
+			smallest = n
+		}
+	}
+	return smallest
+}
+
+// RigorBudgetFraction is the per-run budget default m contributes as a
+// fraction of the deployed cap. A mode the table does not hold — Critical, a
+// caller that resolved none, a name outside the vocabulary — contributes none
+// and so gets the whole cap: nothing here may tighten a run on the strength
+// of a value it could not place.
+func RigorBudgetFraction(m rigor.Mode) float64 {
+	if f, ok := RigorBudgetFractions[m]; ok {
+		return f
+	}
+	return 1
+}
+
+// RigorBudgetCap is the per-run cap a run of mode m gets from the deployed
+// cap: the deployed cap scaled by RigorBudgetFraction and floored at
+// RigorBudgetFloorUSD. It is a clamp in both directions that matter — the
+// ceiling is the ceiling, and a mode lowers it and never raises it (F15, D16),
+// while a mode's fraction must not put a run under one stage's lease floor,
+// where the gateway grants the stage nothing and the run dies on the cap
+// having produced nothing (D16, T6.1). The floor is bounded by the deployed
+// cap, so it never lifts a cap: a deployment whose whole cap is under the
+// floor gives a run all of it, which is the best that ceiling can do.
+//
+// It never answers with a cap that rounds to nothing, which reads as no cap at
+// all (the trap SpendFromEnv guards against at the other end).
+func RigorBudgetCap(m rigor.Mode, deployed pricing.Micros) pricing.Micros {
+	if deployed <= 0 {
+		return deployed
+	}
+	f := RigorBudgetFraction(m)
+	if f >= 1 {
+		return deployed
+	}
+	scaled, err := pricing.FromUSD(deployed.USD() * f)
+	if err != nil || scaled <= 0 {
+		return deployed
+	}
+	if floor, err := pricing.FromUSD(RigorBudgetFloorUSD()); err == nil {
+		scaled = max(scaled, floor)
+	}
+	return min(scaled, deployed)
+}
 
 // AgentAuths are the values agent.auth may take: validate's check and every
 // reader that has to tell "an auth this Fugaro knows" from an arbitrary string
 // read one list, so a value the validator accepts is never one a reader
-// refuses as unknown.
-var AgentAuths = []string{"vertex", "api-key", "oauth"}
+// refuses as unknown. The values are spelled out here rather than named by
+// their constants because this literal is the list a reader reads: the desktop
+// console's scrub vocabulary is compared with it by name
+// (TestDocsDesktopConsoleScrubVocabularyMatchesTheGoSource, which parses
+// exactly this assignment), and TestValidateAcceptsCascade pins that every
+// constant above — AuthCascade today — is one of them.
+var AgentAuths = []string{"vertex", "api-key", "oauth", "cascade"}
 
 // KnownAgentAuth reports whether auth is one of AgentAuths.
 //
@@ -56,7 +190,7 @@ var AgentAuths = []string{"vertex", "api-key", "oauth"}
 // config), so an arbitrary string — a newline, an escape sequence — can arrive
 // from a committed file at a gate that both decides on the value and prints it.
 // A gate that cannot place the value says so rather than reading it as one of
-// the three.
+// them.
 func KnownAgentAuth(auth string) bool { return slices.Contains(AgentAuths, auth) }
 
 // applyDefaults fills in every field fugaro.yaml may omit. The per-base cache

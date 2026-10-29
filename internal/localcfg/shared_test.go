@@ -60,6 +60,10 @@ budget:
   token_signer: signer@my-fp1.iam.gserviceaccount.com
 watch:
   burn_alert_usd_per_hour: 2
+mailbox:
+  keychain_item: fugaro-mailbox-aurora
+credentials_service:
+  url: https://fugaro-credentials-abcde-uc.a.run.app
 user: someone@example.com
 providers:
   openrouter:
@@ -90,6 +94,7 @@ batch:
 max_parallel: 7
 endpoints: { run: "http://127.0.0.1:1/", no_auth: true }
 update_check: false
+base_branch: trunk
 repos:
   acme/web: { provider: github, base_branch: main, workflows: [web] }
 `
@@ -126,7 +131,7 @@ func TestSharedSubsetNeverLeaksOwnerOrPersonalFields(t *testing.T) {
 	// operator's own and stays in their config after it has been published to
 	// the node (nothing here reads it again, but Shared must not be the thing
 	// that clears it).
-	if lc.Terraform.StateBucket == "" || lc.User == "" || lc.Bucket == "" || len(lc.Providers) != 1 || len(lc.ClaudeAccounts) != 1 || lc.Routing == nil || lc.Routing.Claude == nil || lc.Repos["acme/web"].BaseBranch != "main" || lc.Build.ServiceAccount == "" || lc.UpdateCheck == nil {
+	if lc.Terraform.StateBucket == "" || lc.User == "" || lc.Bucket == "" || len(lc.Providers) != 1 || len(lc.ClaudeAccounts) != 1 || lc.Routing == nil || lc.Routing.Claude == nil || lc.Repos["acme/web"].BaseBranch != "main" || lc.BaseBranch != "trunk" || lc.Build.ServiceAccount == "" || lc.UpdateCheck == nil || lc.CredentialsService == nil {
 		t.Errorf("Shared modified its receiver: %+v", lc)
 	}
 }
@@ -383,6 +388,103 @@ func TestSharedDropsBaseBranchAndBuildAccount(t *testing.T) {
 	}
 }
 
+// The credentials service's URL is the installation's own fact and it is
+// PUBLISHED, for the reason batch: is: the machine that runs a launch is often
+// not the machine that opted in, and a local-only copy is the ledger item of
+// PR #903. A publisher whose own config has no block — a teammate who onboarded
+// a repository with `fugaro update --repo`, a CI box whose config came from the
+// published file — must not erase it: `fugaro run` reads the block to decide
+// whether to put FUGARO_CREDENTIALS_SERVICE_URL on a job, so an erased block is
+// a launch that goes out without the variable while the installation has the
+// service on.
+//
+// Mutation (verified, run and restored): delete `if out.CredentialsService ==
+// nil { out.CredentialsService = published.CredentialsService }` from
+// MergeShared: the second assertion fails on a nil block, and no other test
+// does.
+func TestMergeSharedKeepsThePublishedCredentialsService(t *testing.T) {
+	block := "credentials_service:\n  url: https://fugaro-credentials-abcde-uc.a.run.app\n"
+	existing := sharedBase(t, block)
+	local := sharedBase(t, "")
+	got := MergeShared(existing, local)
+	if got.CredentialsService == nil || got.CredentialsService.URL != "https://fugaro-credentials-abcde-uc.a.run.app" {
+		t.Fatalf("a publish from a machine with no credentials_service block dropped the published one: %+v", got.CredentialsService)
+	}
+	out, err := got.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "credentials_service:") {
+		t.Errorf("the merged file carries no credentials_service block:\n%s", out)
+	}
+	// Shared() carries it too: what MergeShared merges from is what readers
+	// get, and it is what the launcher's own read of a published config sees.
+	if s := existing.Shared(); s.CredentialsService == nil || s.CredentialsService.URL == "" {
+		t.Errorf("Shared() dropped the credentials service block: %+v", s.CredentialsService)
+	}
+	// The publisher's own block wins when it has one: the machine that ran the
+	// opt-in is the one whose URL is right for the installation it opted in.
+	local = sharedBase(t, strings.Replace(block, "abcde", "fghij", 1))
+	if got := MergeShared(existing, local); got.CredentialsService == nil || got.CredentialsService.URL != "https://fugaro-credentials-fghij-uc.a.run.app" {
+		t.Errorf("the local credentials service block must win: %+v", got.CredentialsService)
+	}
+	// A published object with none leaves the local one alone, and neither side
+	// having one writes no credentials_service: key at all — an installation
+	// that has not opted in publishes nothing, and a block with no url would be
+	// one the loader refuses (validCredentialsServiceURL).
+	if got := MergeShared(sharedBase(t, ""), local); got.CredentialsService == nil || got.CredentialsService.URL == "" {
+		t.Errorf("a published object with no credentials service block dropped the local one: %+v", got.CredentialsService)
+	}
+	if got := MergeShared(nil, sharedBase(t, "")); got.CredentialsService != nil {
+		t.Errorf("no credentials service block on either side became %+v", got.CredentialsService)
+	}
+	if out, _ := MergeShared(nil, sharedBase(t, "")).Marshal(); strings.Contains(string(out), "credentials_service") {
+		t.Errorf("the merged file carries a credentials_service key nobody set:\n%s", out)
+	}
+}
+
+// TestCredentialsServiceURLIsValidated: the block's presence is the opt-in, so
+// a block with no url would read as "off" to a launcher that tests the pointer
+// and as "on with nothing to call" to one that tests the string — the loader
+// refuses it rather than leaving the two readings to chance. What is admitted
+// is exactly the shape the service's own audience check admits
+// (internal/cli's credentialsServiceAudience, which this rule mirrors): a
+// caller whose ID token is minted for anything else is admitted by nobody.
+func TestCredentialsServiceURLIsValidated(t *testing.T) {
+	for _, bad := range []string{
+		"",                         // the block means on, so an empty url is not "off"
+		"fugaro-credentials-abcde", // no scheme
+		"http://fugaro-credentials-abcde-uc.a.run.app",     // not https
+		"https://fugaro-credentials-abcde-uc.a.run.app/v1", // a path is not the service's audience
+		"https://fugaro-credentials-abcde-uc.a.run.app?x=1",
+		"https://fugaro-credentials-abcde-uc.a.run.app#f",
+		"https://user@fugaro-credentials-abcde-uc.a.run.app",
+	} {
+		_, err := Parse([]byte(fullSampleHead + "credentials_service:\n  url: " + yamlString(bad) + "\n"))
+		if err == nil || !strings.Contains(err.Error(), "credentials_service.url") {
+			t.Errorf("credentials_service.url %q: err = %v, want a refusal naming it", bad, err)
+		}
+	}
+	for _, ok := range []string{
+		"https://fugaro-credentials-abcde-uc.a.run.app",
+		"https://fugaro-credentials-abcde-uc.a.run.app/", // Cloud Run's own trailing slash
+	} {
+		if _, err := Parse([]byte(fullSampleHead + "credentials_service:\n  url: " + yamlString(ok) + "\n")); err != nil {
+			t.Errorf("credentials_service.url %q was refused: %v", ok, err)
+		}
+	}
+}
+
+// fullSampleHead is the four fields every config must carry, for tests that
+// build their own document around one field of interest.
+const fullSampleHead = "version: 1\nname: aurora\ngcp_project: my-project\nregion: us-central1\nruns_bucket: my-runs\n"
+
+// yamlString quotes s for a one-line YAML scalar (the empty string needs the
+// quotes; the URLs do not, but quoting them keeps one spelling).
+func yamlString(s string) string {
+	return `"` + strings.ReplaceAll(s, `"`, `\"`) + `"`
+}
+
 // The recorded owner travels with the entry it validates: a teammate
 // adopting the published config must check the pin against the same owner
 // the publisher did (design §3.6, §10.7), so MergeShared keeps it — and the
@@ -475,5 +577,29 @@ func TestMergeSharedNeverCarriesProfiles(t *testing.T) {
 	}
 	if len(local.Profiles) != 2 {
 		t.Error("Shared/MergeShared cleared the local profiles")
+	}
+}
+
+// TestMergeSharedNeverPublishesTheProjectBaseBranch: the installation
+// config's top-level base_branch is the owner's, published to the policy
+// node (fugaro project policy publish) and never to the runs bucket's
+// shared file, which any launcher can write — a machine that could flip
+// every repository's base branch by writing there is the shape the
+// per-repo key is already kept out of. So a publish from a machine whose
+// own config sets one writes none, and one that does not never adopts the
+// published.
+func TestMergeSharedNeverPublishesTheProjectBaseBranch(t *testing.T) {
+	existing := sharedBase(t, "base_branch: trunk\n")
+	local := sharedBase(t, "")
+	got := MergeShared(existing, local)
+	if got.BaseBranch != "" {
+		t.Errorf("MergeShared adopted the published base_branch %q", got.BaseBranch)
+	}
+	local = sharedBase(t, "base_branch: master\n")
+	if got := MergeShared(existing, local); got.BaseBranch != "" {
+		t.Errorf("MergeShared published the local base_branch %q", got.BaseBranch)
+	}
+	if existing.BaseBranch != "trunk" || local.BaseBranch != "master" {
+		t.Error("MergeShared modified an input's base_branch")
 	}
 }

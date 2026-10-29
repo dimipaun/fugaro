@@ -123,9 +123,31 @@ const HostSocketPath = "/var/run/docker.sock"
 const defaultBootDiskGB = 50
 
 // defaultMachineType is the machine type a run's VM gets when
-// Options.MachineType is unset: the e2-standard-4 the design names as the
-// likely default and the one Check 57a measured on (design §1.3, §7.2).
-const defaultMachineType = "e2-standard-4"
+// Options.MachineType is unset: the smallest e2-standard type whose task share
+// (half its vCPUs and a quarter of its memory, run.go's taskResources) carries
+// what a workflow that names no `resources:` asks for -- the local config's
+// default of 4 CPUs and 8Gi (internal/config/defaults.go), which is 8 vCPUs
+// and 32 GiB of machine, `e2-standard-8`.
+//
+// The share has to hold the default ask rather than nearly hold it. The design's
+// own answer for a run that wants more than its share is a larger machine type
+// (design §9 step 9), and CheckResources refuses the ask that exceeds it -- so a
+// default machine type below the default ask is a default installation on which
+// every workflow that names no resources is refused until the operator raises
+// `batch.machine_type`: no default at all. That is the shape this constant had
+// while it was `e2-standard-4`, whose task share is 2000m/4096MiB -- Check 57a's
+// measured request, and below the default ask.
+//
+// The design's e2-standard-4 (§1.3, and the type 57a measured the cold start,
+// the shares and the price on, §7.2) is therefore not this fallback's value,
+// and §1.3 says so itself: it names the type the figures were measured on and
+// not the default a run gets. What a run gets when the installation names no
+// type is a choice, and the one that works is the type sized to the default ask.
+// An installation that wants the cheaper measured type names it: `batch.
+// machine_type: e2-standard-4` and workflows that name no resources are then
+// refused with the reason and the larger type named, which is the operator's
+// decision to make rather than a silent one.
+const defaultMachineType = "e2-standard-8"
 
 // Docker is the VM's Docker daemon as a run reaches it: the socket, mounted
 // from the host (design §2.2, C2). It is the installation's, not the run's --
@@ -188,8 +210,8 @@ type Options struct {
 	// Execution reports, and its quantities are what the run's compute cost
 	// is priced from (design §5.2) -- so it must be one the price table
 	// carries (prices.go): a type whose figures are unknown can neither be
-	// priced nor reported honestly. Empty means e2-standard-4, the design's
-	// likely default.
+	// priced nor reported honestly. Empty means defaultMachineType, the
+	// smallest type whose task share carries the config's default ask.
 	MachineType string
 	// BootImage is the boot disk's image: the preloaded image Task 6 builds
 	// per base version, with fugaro-base already in its Docker data root
@@ -259,23 +281,7 @@ type Backend struct {
 // New connects to Cloud Batch and Cloud Logging with Application Default
 // Credentials (gcloud auth application-default login) unless NoAuth.
 func New(ctx context.Context, o Options) (*Backend, error) {
-	switch {
-	case o.GCPProject == "" || o.Region == "":
-		return nil, errors.New("the Batch backend needs a GCP project and a region")
-	case o.FugaroProject == "":
-		return nil, errors.New("the Batch backend needs the Fugaro project's name (the job env's FUGARO_PROJECT)")
-	case o.Image == "":
-		return nil, errors.New("the Batch backend needs the image a run's job runs")
-	case o.Timeouts == nil:
-		return nil, errors.New("the Batch backend needs a source for the workflow timeouts")
-	}
-	if err := checkServiceAccount(o.ServiceAccount); err != nil {
-		return nil, err
-	}
-	if err := checkSecrets(o.Secrets); err != nil {
-		return nil, err
-	}
-	if err := checkVM(&o); err != nil {
+	if err := CheckOptions(&o); err != nil {
 		return nil, err
 	}
 	if o.Warn == nil {
@@ -293,6 +299,35 @@ func New(ctx context.Context, o Options) (*Backend, error) {
 		return nil, fmt.Errorf("connecting to Cloud Logging: %w", err)
 	}
 	return &Backend{o: o, batch: bs, logs: ls, codec: backend.BatchCodec(), now: time.Now, region: o.Region, listPageSize: 100}, nil
+}
+
+// CheckOptions refuses an Options this backend cannot build a run's job from,
+// and fills the VM defaults in (see checkVM). It is the whole of New's
+// validation, as one function, because there are two callers: New, which
+// builds a client behind it, and `fugaro doctor`, which reports the same
+// refusals against an installation's recorded facts before anything is read
+// from the project (design compute-backend.md §4.4's doctor half: "the job
+// JSON's network and subnetwork named"). A doctor that had to construct a
+// backend to learn this would open a Batch and a Logging client to answer a
+// question that is about the local config alone.
+func CheckOptions(o *Options) error {
+	switch {
+	case o.GCPProject == "" || o.Region == "":
+		return errors.New("the Batch backend needs a GCP project and a region")
+	case o.FugaroProject == "":
+		return errors.New("the Batch backend needs the Fugaro project's name (the job env's FUGARO_PROJECT)")
+	case o.Image == "":
+		return errors.New("the Batch backend needs the image a run's job runs")
+	case o.Timeouts == nil:
+		return errors.New("the Batch backend needs a source for the workflow timeouts")
+	}
+	if err := checkServiceAccount(o.ServiceAccount); err != nil {
+		return err
+	}
+	if err := checkSecrets(o.Secrets); err != nil {
+		return err
+	}
+	return checkVM(o)
 }
 
 // defaultComputeServiceAccountRE is the default Compute Engine service

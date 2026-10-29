@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See mobile/LICENSE.md for the terms.
 // The feed's one door (mobile plan, Task P3.2; D112's answer, tension (b1)).
 //
 // Everything a screen needs from this directory, re-exported here and nowhere

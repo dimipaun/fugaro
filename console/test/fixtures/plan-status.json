@@ -1,0 +1,139 @@
+{
+  "repo": "example-owner/example-repo",
+  "plans": [
+    {
+      "id": "plans/2026-10-01-example-graph",
+      "artifact": "docs/plans/2026-10-01-example-graph.graph.json",
+      "plan": "Example graph",
+      "stream": "example",
+      "nodes": [
+        {
+          "id": "task-one",
+          "title": "The first task of the example plan",
+          "state": "done",
+          "closed": false,
+          "level": 0,
+          "critical": true,
+          "release": "1.4.0",
+          "run": "aa01",
+          "stage": "",
+          "pr_number": 101,
+          "mark": "merge unknown"
+        },
+        {
+          "id": "task-two",
+          "title": "The second task of the example plan",
+          "state": "running",
+          "closed": false,
+          "level": 1,
+          "critical": true,
+          "needs": ["task-one"],
+          "release": "1.4.0",
+          "run": "aa02",
+          "stage": "implement"
+        },
+        {
+          "id": "task-three",
+          "title": "A task nothing depends on",
+          "state": "ready",
+          "closed": false,
+          "level": 1,
+          "critical": false
+        },
+        {
+          "id": "task-four",
+          "title": "A task whose only run was cancelled",
+          "state": "cancelled",
+          "closed": true,
+          "level": 1,
+          "critical": false,
+          "run": "aa03"
+        },
+        {
+          "id": "task-five",
+          "title": "A task waiting on a dependency",
+          "state": "blocked",
+          "closed": false,
+          "level": 2,
+          "critical": false,
+          "needs": ["task-three", "task-two"],
+          "release": "1.5.0"
+        },
+        {
+          "id": "task-six",
+          "title": "A task whose run is not live yet",
+          "state": "not-started",
+          "closed": false,
+          "level": 2,
+          "critical": false,
+          "needs": ["task-five"],
+          "release": "1.5.0",
+          "run": "aa04"
+        }
+      ],
+      "releases": [
+        {
+          "version": "1.4.0",
+          "name": "Examplefruit",
+          "stream": "example",
+          "finished": false,
+          "total": 3,
+          "done": 1,
+          "closed": 0,
+          "open": 3
+        },
+        {
+          "version": "1.5.0",
+          "finished": false,
+          "total": 2,
+          "done": 0,
+          "closed": 0,
+          "open": 2
+        }
+      ],
+      "tasks": 6,
+      "closed": 1,
+      "open": 5
+    },
+    {
+      "id": "example-second",
+      "artifact": "docs/example-second.graph.json",
+      "plan": "Example second plan",
+      "nodes": [
+        {
+          "id": "second-one",
+          "title": "The only task of the second example plan",
+          "state": "done",
+          "closed": false,
+          "level": 0,
+          "critical": true,
+          "run": "aa05",
+          "pr_number": 102
+        }
+      ],
+      "releases": [],
+      "tasks": 1,
+      "closed": 0,
+      "open": 1
+    }
+  ],
+  "totals": {
+    "plans": 2,
+    "tasks": 7,
+    "closed": 1,
+    "open": 6
+  },
+  "streams": [
+    {
+      "name": "example",
+      "theme": "an invented theme",
+      "names": ["Examplefruit", "Examplebird"],
+      "current": "1.4.0",
+      "next": "1.5.0",
+      "tag_prefix": "v"
+    }
+  ],
+  "warnings": [
+    "docs/plans/2026-09-01-unreadable.graph.json could not be read: its tasks are not listed"
+  ]
+}

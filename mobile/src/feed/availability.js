@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See mobile/LICENSE.md for the terms.
 // The five availability states of a feed number (mobile plan, Task P3.2;
 // console/docs/json-contract.md §1, §10.13 rule 5).
 //

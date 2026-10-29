@@ -29,6 +29,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/watch"
 )
 
 // fugaro budget (design §8): look at the project's caps, counters, kill
@@ -231,6 +232,9 @@ type budgetShowOptions struct {
 	cloud     cloudOptions
 	repo      string
 	all, json bool
+	// compute asks for each repository's compute dollars, which are read from
+	// the runs bucket's own records: the database holds no compute at all.
+	compute bool
 }
 
 func newBudgetShowCmd() *cobra.Command {
@@ -243,7 +247,19 @@ func newBudgetShowCmd() *cobra.Command {
 			"in flight. By default the global figures and the project config's\n" +
 			"repositories; --repo one repository; --all every repository the database\n" +
 			"knows. Notional is a subscription's list-price figure, never billed and never\n" +
-			"capped. Counted is spent plus what runs have reserved and not released.",
+			"capped. Counted is spent plus what runs have reserved and not released; --json\n" +
+			"carries that difference as leased_usd, the money leased and not yet spent: a\n" +
+			"crashed run's lease is never released, so it stays in the figure for the rest\n" +
+			"of the day. --compute adds each repository's compute dollars, read from the\n" +
+			"runs bucket: a run's compute is in its own record and nowhere in the\n" +
+			"database, so the flag costs a listing of the bucket's repositories and, for\n" +
+			"each repository shown, a listing of its runs minted since the previous day\n" +
+			"began plus a read of every one of those records (a run's start day is only\n" +
+			"known once its record is read), and everything that only needs the counters\n" +
+			"leaves it off. The figure is an estimate by design, priced from each run's\n" +
+			"own price table, and covers the runs that started today and recorded a\n" +
+			"result: a run still in flight has recorded none, so today's is partial, and\n" +
+			"a repository whose runs recorded no estimate is null, never 0.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runBudgetShow(cmd, &o) },
 	}
@@ -251,6 +267,7 @@ func newBudgetShowCmd() *cobra.Command {
 	f.StringVar(&o.repo, "repo", "", "only this repository (owner/name)")
 	f.BoolVar(&o.all, "all", false, "every repository in the database")
 	f.BoolVar(&o.json, "json", false, "print machine-readable output")
+	f.BoolVar(&o.compute, "compute", false, "also read each repository's compute dollars from the runs bucket (an estimate; null and n/a where the day's runs recorded none)")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
 }
@@ -281,18 +298,42 @@ type showRun struct {
 }
 
 type showGlobal struct {
-	DailyCapUSD  *float64  `json:"daily_cap_usd"`
-	PerRunCapUSD *float64  `json:"per_run_cap_usd"`
-	CountedUSD   float64   `json:"counted_usd"`
-	SpentUSD     float64   `json:"spent_usd"`
-	NotionalUSD  float64   `json:"notional_usd"`
-	HeadroomUSD  *float64  `json:"headroom_usd"`
-	Kill         *showKill `json:"kill"`
+	DailyCapUSD  *float64 `json:"daily_cap_usd"`
+	PerRunCapUSD *float64 `json:"per_run_cap_usd"`
+	CountedUSD   float64  `json:"counted_usd"`
+	SpentUSD     float64  `json:"spent_usd"`
+	NotionalUSD  float64  `json:"notional_usd"`
+	// LeasedUSD is counted minus spent, never negative: the money open leases
+	// hold and have not yet spent (watch --json carries the same figure). It is
+	// *leased, not yet spent* rather than "live leases": the sweeper never
+	// releases, so a crashed run's lease stays in it for the rest of the day.
+	LeasedUSD   float64   `json:"leased_usd"`
+	HeadroomUSD *float64  `json:"headroom_usd"`
+	Kill        *showKill `json:"kill"`
 }
 
 type showDefaults struct {
 	RepoDailyCapUSD  *float64 `json:"repo_daily_cap_usd"`
 	RepoPerRunCapUSD *float64 `json:"repo_per_run_cap_usd"`
+}
+
+// computeFigure is showRepo's compute_usd. The key is absent unless
+// `budget show --compute` asked for it, so a document from a command without
+// the flag is byte for byte what it always was; with the flag it is null
+// rather than 0 where the figure is unknown (the day recorded no estimate, or
+// a figure that cannot be summed), because an unknown compute is n/a, never
+// free. A *float64 cannot say both: omitempty drops a nil pointer instead of
+// writing null.
+type computeFigure struct {
+	usd   float64
+	known bool
+}
+
+func (f computeFigure) MarshalJSON() ([]byte, error) {
+	if !f.known {
+		return []byte("null"), nil
+	}
+	return json.Marshal(f.usd)
 }
 
 type showRepo struct {
@@ -303,13 +344,15 @@ type showRepo struct {
 	PerRunCapUSD *float64 `json:"per_run_cap_usd"`
 	// PerRunCapSource is where the effective per-run cap comes from: repo,
 	// default, global, or none when no per-run cap is set anywhere.
-	PerRunCapSource string    `json:"per_run_cap_source"`
-	CountedUSD      float64   `json:"counted_usd"`
-	SpentUSD        float64   `json:"spent_usd"`
-	NotionalUSD     float64   `json:"notional_usd"`
-	HeadroomUSD     *float64  `json:"headroom_usd"`
-	Kill            *showKill `json:"kill"`
-	Running         []showRun `json:"running"`
+	PerRunCapSource string         `json:"per_run_cap_source"`
+	CountedUSD      float64        `json:"counted_usd"`
+	SpentUSD        float64        `json:"spent_usd"`
+	NotionalUSD     float64        `json:"notional_usd"`
+	ComputeUSD      *computeFigure `json:"compute_usd,omitempty"`
+	LeasedUSD       float64        `json:"leased_usd"` // counted - spent, floored at 0: see showGlobal
+	HeadroomUSD     *float64       `json:"headroom_usd"`
+	Kill            *showKill      `json:"kill"`
+	Running         []showRun      `json:"running"`
 }
 
 // perRunCapSource names the scope whose per-run cap binds a repository: the
@@ -485,11 +528,15 @@ func runBudgetShow(cmd *cobra.Command, o *budgetShowOptions) error {
 	}
 	if v, ok := caps.GlobalDaily(); ok {
 		doc.Global.DailyCapUSD = usdPtr(&v)
+		if n := budget.DailyWarnNote("the project's", global.Counted, v); n != "" {
+			doc.Warnings = append(doc.Warnings, n)
+		}
 	}
 	if cfg.Caps.Global != nil {
 		doc.Global.PerRunCapUSD = usdPtr(cfg.Caps.Global.PerRunMicros)
 	}
 	doc.Global.CountedUSD, doc.Global.SpentUSD, doc.Global.NotionalUSD = global.Counted.USD(), global.Spent.USD(), global.Notional.USD()
+	doc.Global.LeasedUSD = watch.LeasedUSD(global.Counted, global.Spent)
 	doc.Global.HeadroomUSD = headroom(roomUnder(caps.GlobalDaily, global.Counted))
 	doc.Global.Kill = killView(cfg.Kill.Global)
 	if cfg.Caps.Defaults != nil {
@@ -497,6 +544,18 @@ func runBudgetShow(cmd *cobra.Command, o *budgetShowOptions) error {
 	}
 
 	listed := 0
+	var compute map[string]computeFigure
+	if o.compute {
+		// Only the rows this document will carry are read: a repository the
+		// command does not list is not in the output, so its runs need no read.
+		wanted := make([]string, 0, len(keys))
+		for k := range keys {
+			if s, err := budget.Unkey(k); err == nil {
+				wanted = append(wanted, s)
+			}
+		}
+		compute = repoCompute(ctx, lc, day, wanted, func(m string) { doc.Warnings = append(doc.Warnings, m) })
+	}
 	for _, k := range slices.Sorted(maps.Keys(keys)) {
 		slug := k
 		if s, err := budget.Unkey(k); err == nil {
@@ -527,6 +586,13 @@ func runBudgetShow(cmd *cobra.Command, o *budgetShowOptions) error {
 		}
 		sp := repoSpend[k]
 		rs.CountedUSD, rs.SpentUSD, rs.NotionalUSD = sp.Counted.USD(), sp.Spent.USD(), sp.Notional.USD()
+		if o.compute {
+			// A repository the day recorded no estimate for keeps the zero
+			// figure, which marshals as null: unknown is n/a, never free.
+			f := compute[k]
+			rs.ComputeUSD = &f
+		}
+		rs.LeasedUSD = watch.LeasedUSD(sp.Counted, sp.Spent)
 		rs.HeadroomUSD = headroom(roomUnder(rc.RepoDaily, sp.Counted), roomUnder(caps.GlobalDaily, global.Counted))
 		if kv, ok := cfg.Kill.Repos[k]; ok {
 			rs.Kill = killView(&kv)
@@ -542,6 +608,14 @@ func runBudgetShow(cmd *cobra.Command, o *budgetShowOptions) error {
 			r.Stale = e.UpdatedAt > 0 && now.Sub(time.UnixMilli(e.UpdatedAt)) > staleAfter
 			rs.Running = append(rs.Running, r)
 			doc.Running = append(doc.Running, r)
+		}
+		// After the agents loop: a repository the config does not name takes
+		// its name from the registry, and the warning must call it what
+		// printShow's heading does.
+		if cap, ok := rc.RepoDaily(); ok {
+			if n := budget.DailyWarnNote(repoScope(rs), sp.Counted, cap); n != "" {
+				doc.Warnings = append(doc.Warnings, n)
+			}
 		}
 		doc.Repos = append(doc.Repos, rs)
 		listed++
@@ -578,8 +652,60 @@ func runBudgetShow(cmd *cobra.Command, o *budgetShowOptions) error {
 	if o.json {
 		return writeJSON(cmd.OutOrStdout(), doc)
 	}
-	printShow(cmd.OutOrStdout(), doc)
+	printShow(cmd.OutOrStdout(), doc, o.compute)
 	return nil
+}
+
+// repoCompute is today's compute dollars per repository, keyed the way the
+// document's rows are. It reads the runs bucket through the same facts reader
+// the spend report uses (budget.BucketFacts), narrowed to the repositories the
+// document lists: a run's compute is in its own result.json and nowhere in the
+// database. Only the repositories the day recorded an estimate for are in the
+// map -- every other row stays unknown rather than 0. A read failure is a
+// warning and no figures at all: `budget show` is what the console's rail and
+// Projects screens call, so --compute may never fail the command.
+func repoCompute(ctx context.Context, lc *localcfg.Config, day int64, slugs []string, warn func(string)) map[string]computeFigure {
+	// No repository is not every repository: an empty Slugs is the whole
+	// bucket to budget.BucketFacts, and a document that lists no repository
+	// has no row to carry a figure for. Answer without opening the bucket.
+	if len(slugs) == 0 {
+		return map[string]computeFigure{}
+	}
+	facts := &lazyFacts{lc: lc, warn: warn, slugs: slugs}
+	defer facts.close()
+	byDay, _, err := facts.Facts(ctx, day, day)
+	if err != nil {
+		warn("compute is unavailable: the runs bucket could not be read: " + err.Error())
+		return nil
+	}
+	out := map[string]computeFigure{}
+	unusable := map[string]bool{}
+	for _, f := range byDay[day] {
+		if !f.ComputeEstimated {
+			continue
+		}
+		k := budget.Key(f.Slug)
+		if unusable[k] {
+			continue
+		}
+		g := out[k]
+		g.usd += f.ComputeUSD
+		// A figure no reader can add up to a dollar amount is not one the
+		// document may carry: json.Marshal refuses a non-finite number, and a
+		// saturated or partial one would be a figure nobody can trust, so the
+		// row goes back to unknown and a warning says why. internal/budget's
+		// rollup guards the same figure, so the archived day record carries no
+		// such number either.
+		if math.IsNaN(g.usd) || math.IsInf(g.usd, 0) {
+			unusable[k] = true
+			delete(out, k)
+			warn(fmt.Sprintf("compute for %s is unavailable: the day's figures do not add up to a number", f.Slug))
+			continue
+		}
+		g.known = true
+		out[k] = g
+	}
+	return out
 }
 
 func keySet[V any](m map[string]V) map[string]struct{} {
@@ -626,6 +752,16 @@ func usdVal(v float64) string {
 	return money(m)
 }
 
+// computeText is compute_usd in the text view: `n/a`, never $0.00, where the
+// day recorded no estimate -- the same figure, and the same rule, the JSON
+// writes as null.
+func computeText(f *computeFigure) string {
+	if f == nil || !f.known {
+		return "n/a"
+	}
+	return usdVal(f.usd)
+}
+
 func killText(k *showKill) string {
 	if k == nil {
 		return "off"
@@ -643,7 +779,16 @@ func killText(k *showKill) string {
 	return s
 }
 
-func printShow(w io.Writer, d *budgetShowDoc) {
+// repoScope names a shown repository in a warning line: its name, or its slug
+// when the config names none, the way printShow's own heading does.
+func repoScope(r showRepo) string {
+	if r.Repo != "" {
+		return r.Repo + "'s"
+	}
+	return r.Slug + "'s"
+}
+
+func printShow(w io.Writer, d *budgetShowDoc, showCompute bool) {
 	mode := d.Mode
 	if mode == "" {
 		mode = "not set (acts as observe)"
@@ -681,6 +826,9 @@ func printShow(w io.Writer, d *budgetShowDoc) {
 		}
 		fmt.Fprintf(w, "  daily cap %s%s, per-run cap %s%s\n", usdText(r.DailyCapUSD), src, usdText(r.PerRunCapUSD), psrc)
 		fmt.Fprintf(w, "  today: counted %s, spent %s, notional %s (subscription, not billed)\n", usdVal(r.CountedUSD), usdVal(r.SpentUSD), usdVal(r.NotionalUSD))
+		if showCompute {
+			fmt.Fprintf(w, "  compute: %s\n", computeText(r.ComputeUSD))
+		}
 		fmt.Fprintf(w, "  headroom: %s\n  kill switch: %s\n", usdText(r.HeadroomUSD), killText(r.Kill))
 		if len(r.Running) == 0 {
 			fmt.Fprintln(w, "  running: none")
@@ -705,6 +853,11 @@ func printShow(w io.Writer, d *budgetShowDoc) {
 	}
 	if len(d.Repos) == 0 {
 		fmt.Fprintln(w, "\nno repositories to show (--all lists every repository in the database)")
+	}
+	if showCompute {
+		fmt.Fprintln(w, "\ncompute is an estimate, priced from each run's own price table, and counts the")
+		fmt.Fprintln(w, "day's runs that started today and recorded a result: today's is partial, and")
+		fmt.Fprintln(w, "n/a means none of the day's runs recorded one")
 	}
 	for _, m := range d.Warnings {
 		fmt.Fprintf(w, "\nnote: %s\n", oneLine(m))

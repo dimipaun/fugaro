@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: LicenseRef-Fugaro-Subscription -->
+<!-- See console/LICENSE.md for the terms. -->
 <!doctype html>
 <html lang="en">
   <head>
@@ -5,7 +7,9 @@
     <!--
       The installation picker's document (desktop-console plan Task 3.4b; owner
       ruling C9, 2026-10-18: the picker is a window of its own, opened from the
-      application menu, and not a panel in the dashboard's header).
+      application menu, and not a panel in the dashboard's header; owner's ruling
+      of 2026-10-20: the console asks the operator for no binary and no config,
+      so this document is a list and two onboarding screens and not a form).
 
       The CSP below is the **same string** as `index.html`'s and as the header
       `src/main/protocol.ts` attaches to every `app://` response: this document
@@ -51,21 +55,32 @@
       asserts the tag's shape so that neither half can drift.
 
       Without the bundle the page still draws, and it draws nothing else: a
-      heading, the status line, the empty list and the add form, which do
-      nothing until the script arrives.
+      heading, the status line and the three empty containers, which stay empty
+      until the script arrives.
     -->
     <main>
       <h1>Installations</h1>
+      <!--
+        The status line, the list, the CLI's own warning lines, and the
+        onboarding screen. The four containers are all this document declares;
+        every child of them is built by `src/renderer/installations.ts`, so a
+        row's text, a warning line and an onboarding screen are values the view
+        wrote rather than markup this file carries.
+
+        **There is no form here** (owner's ruling of 2026-10-20). The console
+        asks the operator for no binary, no config and no project: the list is
+        what `fugaro config list --json` printed, and the two screens below the
+        heading are drawn when there is nothing to list. A test fails if the
+        form's controls come back --
+        `console/test/unit/installations-view.test.ts`, "the form is gone: the
+        console asks the operator for no binary and no config" -- and the surface
+        itself is pinned at five operations in
+        `console/test/unit/installations-ipc.test.ts`.
+      -->
       <p id="picker-status">Reading the installation list…</p>
+      <section id="picker-onboarding"></section>
       <ul id="picker-list"></ul>
-      <form id="picker-add">
-        <label for="picker-project">Project name</label>
-        <input id="picker-project" name="project" type="text" autocomplete="off" />
-        <button type="button" id="picker-pick-binary">Choose binary…</button>
-        <button type="button" id="picker-pick-config">Choose config…</button>
-        <button type="button" id="picker-pick-checkout">Choose checkout…</button>
-        <button type="submit" id="picker-add-submit">Add</button>
-      </form>
+      <ul id="picker-warnings"></ul>
     </main>
     <script src="./installations.js" defer></script>
   </body>

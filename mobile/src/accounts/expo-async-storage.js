@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See mobile/LICENSE.md for the terms.
 // The settings port: `@react-native-async-storage/async-storage`, behind the
 // four methods `settings.js` calls (mobile plan, Task P3.1; D111, D114).
 //

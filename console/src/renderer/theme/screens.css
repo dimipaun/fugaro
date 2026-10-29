@@ -1,12 +1,15 @@
+/* SPDX-License-Identifier: LicenseRef-Fugaro-Subscription */
+/* See console/LICENSE.md for the terms. */
 /* console/src/renderer/theme/screens.css — the console's SCREENS (desktop-console
  * plan Task 6.4; design section 2's inventory, with sections 3.5, 3.7, 3.8, 4.2
  * and 4.4 as the rules it keeps).
  *
- * This is the last layer of the one stylesheet the three documents
+ * This is the last layer of the one stylesheet the four documents
  * link: `tokens.css` is the vocabulary, `palette.css` the value set, `base.css`
  * the reset, the document and the chrome, and this file is the per-screen rules
  * — Live, Spend, Projects, Run detail, the degraded and unavailable screens, the
- * refusal document and the installation picker, in the order section 2
+ * refusal document, the installation picker and the launch confirmation window,
+ * in the order section 2
  * inventories them.
  *
  * **It is wired, and Task 6.2 is what wired the layer it joins.** The bundler
@@ -32,7 +35,7 @@
  * that paints a state paints it *beside* a word, a mark or a number the code
  * already emits: `KILLED by`, `HALTED`, `silent`, `lost`, `near deadline`,
  * `queued`, `stuck`, the em dash of a gap, `n/a` with its reason in `title`, the
- * `NOTIONAL~` / `est.` marks, `(partial)`, `degraded`, `polling`, and the cap's
+ * `~$` / `est.` marks, `(partial)`, `degraded`, `polling`, and the cap's
  * own percentage. A reader who sees no hue difference at all still reads every
  * state.
  *
@@ -91,6 +94,7 @@ h1.unavailable-headline {
 /* A panel's title is the medium step, a table's header the small one
  * (design section 3.7). */
 h2.spend-account-title,
+h2.spend-people-title,
 h2.projects-title,
 h2.run-panel-title {
   font-size: var(--font-size-md);
@@ -114,6 +118,9 @@ p.live-note,
 p.spend-note,
 p.spend-warning,
 p.spend-persons-note,
+p.spend-people-reason,
+p.spend-people-note,
+p.spend-person-note,
 p.spend-notice,
 p.projects-because,
 p.projects-note,
@@ -138,22 +145,28 @@ p.run-agent-message,
 p.run-reported-warning,
 p.run-pin-warning,
 p.run-draft-note,
-p.run-follow-up {
+p.run-follow-up,
+p.live-review-empty,
+p.live-review-note,
+p.live-review-capped {
   margin-block: var(--space-2xs);
   font-size: var(--font-size-base);
 }
 
-/* ---- The five number hooks, and the alignment rule ------------------------
+/* ---- The number hooks, and the alignment rule -----------------------------
  *
  * Section 6.1 rule 2: density as the default, tabular figures, right-aligned
  * numerics, and no whitespace padding between related figures. One rule carries
- * all of it, and it names **five** hooks because five screens exist: Live,
- * Spend, Projects and Run each prepend their own in their own `numberCell`, and
- * the degraded screen's `numberCell` prepends none -- which is why Task 6.4 adds
- * `degraded-num` to that one helper (`src/renderer/screens/degraded.ts`), the
- * only code change in the styling work (design section 2.10). Without it the
- * feed age, the counts and the money of the degraded and unavailable screens
- * would be the only figures in the console with no alignment hook at all.
+ * all of it, and it names **six** hooks because six screens draw a figure
+ * through a `numberCell`: Live, Spend, Projects and Run each prepend their own,
+ * the coordinator's is the span its `numberCell` writes the reading into beside
+ * the console's own word for it (`coordinator-count-value`; `coordinator-count`
+ * is the cell around the pair), and the degraded screen's `numberCell` prepends
+ * none -- which is why Task 6.4 adds `degraded-num` to that one helper
+ * (`src/renderer/screens/degraded.ts`), the only code change in the styling
+ * work (design section 2.10). Without it the feed age, the counts and the money
+ * of the degraded and unavailable screens would be the only figures in the
+ * console with no alignment hook at all.
  *
  * `min-width` is in `ch` and stated here rather than as a token: like the rail's
  * two widths it is a fact about the drawing, and section 3.1's vocabulary is
@@ -165,6 +178,7 @@ p.run-follow-up {
 .spend-num,
 .projects-number,
 .run-number,
+.coordinator-count-value,
 .degraded-num {
   min-width: 6ch;
   font-family: var(--font-mono);
@@ -182,10 +196,10 @@ p.run-follow-up {
  * 4.2), so a narrow window costs a line and never a reading.
  */
 
-li.live-repo,
-li.live-run,
+li.live-review-row,
 li.spend-row,
 li.spend-point,
+li.spend-person,
 li.spend-cap-repo,
 li.projects-cap,
 li.projects-job,
@@ -193,6 +207,8 @@ li.projects-secret,
 li.projects-account,
 li.degraded-run,
 li.run-stage,
+li.run-spend-stage,
+li.run-tolerated-finding,
 li.run-log-line {
   display: flex;
   flex-wrap: wrap;
@@ -203,10 +219,6 @@ li.run-log-line {
   border-bottom: var(--rule-width) solid var(--border);
 }
 
-div.live-total,
-ol.live-repos,
-ol.live-orphans,
-ol.live-runs,
 ol.spend-rows,
 ol.spend-series,
 ol.spend-switch,
@@ -220,14 +232,20 @@ ul.projects-seen-list,
 ul.projects-account-list,
 ol.degraded-runs,
 ol.run-stage-list,
+ol.run-spend-stage-list,
+ol.run-tolerated-list,
 ol.run-log-list,
 ol.run-log-tail,
 div.spend-accounts,
 div.spend-totals,
+section.live-review,
 section.spend-caps,
+section.spend-people,
 section.projects-panel,
 section.run-ledger,
 section.run-stages,
+section.run-spend-stages,
+section.run-tolerated,
 section.run-pr,
 section.run-logs,
 section.run-diagnosis,
@@ -241,19 +259,10 @@ div.degraded-totals {
   border-radius: var(--radius-md);
 }
 
-/* A repository's block is the raised surface inside the panel, and its runs sit
- * on the panel's own ground, one step apart (design section 3.2's three
- * surfaces). */
-li.live-repo {
-  margin-bottom: var(--space-sm);
-  padding: var(--space-sm);
-  background: var(--surface-alt);
-  border-radius: var(--radius-sm);
-}
-
-li.live-run {
-  background: var(--surface);
-}
+/* A repository's block and its run rows are the redesign's panel and table now:
+ * the ground, the border and the row treatment live in `flight-deck.css` against
+ * `section.live-repo` and `tr.live-run` (console redesign, step 2b), so the two
+ * rules that painted a flex row here have nothing left to select. */
 
 /* ---- Identity: an id, a repository, a slug, a path, a timestamp ------------
  *
@@ -261,7 +270,10 @@ li.live-run {
  * (design section 3.7). Prose never is.
  */
 
-span.live-run-id,
+span.live-review-run-id,
+span.live-review-repo,
+span.live-review-number,
+span.live-review-url,
 h1.run-id,
 span.run-repo,
 span.run-workflow,
@@ -290,6 +302,7 @@ span.run-replay-at,
 span.spend-point-key,
 span.spend-key,
 span.spend-model,
+span.spend-person-user,
 span.spend-cap-repo-name,
 span.degraded-run-id,
 span.degraded-run-repo,
@@ -386,15 +399,6 @@ p.live-note {
   color: var(--text-muted);
 }
 
-/* The total block: three figures read together, so they sit together (design
- * section 3.8's last bullet). */
-div.live-total {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--space-2xs) var(--space-sm);
-  align-items: baseline;
-}
-
 /* The burn window: one tick per sample, the tone saying whether the sample is
  * plottable, and the rate in each bar's `title`. */
 ol.live-burn {
@@ -424,13 +428,6 @@ span.live-burn-unit {
   font-size: var(--font-size-xs);
 }
 
-ol.live-runs {
-  margin-top: var(--space-2xs);
-  padding: var(--space-2xs);
-  background: var(--surface);
-  border-radius: var(--radius-sm);
-}
-
 /* A run row's flags: the word is the mark and the tone is the second channel.
  * `--warn` is attention, `--error` is failed or lost (design section 3.2). */
 span.live-run-flag[data-tone='amber'] {
@@ -445,43 +442,20 @@ span.live-run-flag {
   font-size: var(--font-size-xs);
 }
 
-/* Queued and stuck carry the flag's word *and* the all-caps row treatment
- * (design section 3.5's table), so the tone is never the only carrier. */
-li.live-run-queued .live-run-flag,
-li.live-run-stuck .live-run-flag {
+/* Queued and stuck carry the flag's word *and* the all-caps flag treatment
+ * (design section 3.5's table), so the tone is never the only carrier. The row's
+ * own tone -- the accent and the error rule down its first cell -- is the
+ * redesign's, in `flight-deck.css` (console redesign, step 2b). */
+tr.live-run-queued .live-run-flag,
+tr.live-run-stuck .live-run-flag {
   text-transform: uppercase;
   letter-spacing: 0.08em;
 }
 
-/* The queued row's left border is a **rule**, so it takes `--accent`: section
- * 3.2's role cell gives that token the rules ("structure: rules, the focus ring,
- * a filled control, the cap bar below its threshold"), and the rail's selected
- * row draws its own 3 px left border in it (section 4.1). It is **not**
- * `--accent-ink`, whose cell is "the accent **as text** -- links, an accent
- * heading": that is the tone for text, and a border is not text. `queued` is not
- * one of the five state colours either, so the structural tone is the one the
- * design leaves for it, and `test/unit/theme-tokens.test.ts` holds
- * `--accent-ink` to text. */
-li.live-run-queued {
-  border-left: 3px solid var(--accent);
-}
-
-li.live-run-stuck {
-  border-left: 3px solid var(--error);
-}
-
-span.live-run-title {
-  font-size: var(--font-size-base);
-}
-
 span.live-run-stage,
 span.live-run-round,
-span.live-run-verify,
 span.live-run-models,
-span.live-run-recipe,
 span.live-run-auth,
-span.live-run-requester,
-span.live-run-workflow,
 span.live-run-contradiction {
   color: var(--text-muted);
   font-size: var(--font-size-xs);
@@ -489,7 +463,8 @@ span.live-run-contradiction {
 
 /* The kill banner, on both shapes the code emits it in: the repository block
  * carries `data-killed` itself and the banner is appended inside it (design
- * section 2.9), while `div.live-total` appends the banner and carries no
+ * section 2.9), while the fleet budget panel (`section.live-fleet`, the total
+ * block) appends the banner and carries no
  * attribute. `--halted` is a DELIBERATE STOP and not a failure, which is why it
  * is not `--error`. */
 div.live-kill,
@@ -517,8 +492,80 @@ span.run-halt-word {
   letter-spacing: 0.08em;
 }
 
-li.live-repo[data-killed='true'] {
+section.live-repo[data-killed='true'] {
   border-left: 3px solid var(--halted);
+}
+
+/* The run's rigor, under the header's flags (design section 2.6): the mode, the
+ * layer that decided it and every area rule that matched -- the whole answer,
+ * which is what this screen has room for and what neither the Live chip nor the
+ * Projects MODE cell draws. It is the halt banner's box without the banner's
+ * `--halted` rule, because a rigor block is not a stop. */
+div.run-rigor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-sm);
+  margin-top: var(--space-2xs);
+  padding: var(--space-2xs) var(--space-xs);
+  background: var(--surface-alt);
+  border-radius: var(--radius-sm);
+}
+
+span.run-rigor-word {
+  color: var(--text-muted);
+  font-weight: var(--weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: var(--font-size-xs);
+}
+
+span.run-rigor-mode {
+  font-weight: var(--weight-semibold);
+}
+
+span.run-rigor-from-word,
+span.run-rigor-from,
+span.run-rigor-area-name,
+span.run-rigor-area-mode {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+/* One matched rule: its own name and the mode it set, in the same chip the two
+ * other screens draw the mode in. */
+span.run-rigor-area {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2xs);
+  padding: 0 var(--space-2xs);
+  border: var(--rule-width) solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+/* The review inbox (design F26; desktop-console v2 plan Task V2.7.1): the
+ * section the Live screen ends with -- the finished runs that are ready for a
+ * look, as rows of **text**. Its box is the panel group above, so what is here
+ * is the heading and the row's own pieces. The rows carry no link of any kind:
+ * the pull request's number and URL are drawn as text, and `data-href` -- the
+ * one attribute `link.openExternal` acts on -- is written nowhere in this
+ * section (`review.test.ts` walks it and asserts exactly that). */
+/* The heading is **one text run** (`reviewSection`): the CLI's own line,
+ * `Ready for your review (52)`, with its parentheses hugging the number. It is
+ * not laid out as a flex row of pieces -- a `display: flex` here is what spaced
+ * a word, a `(`, a count and a `)` apart into `( 52 )`, text the CLI never
+ * prints and both design docs disagree with (a 0.10.x review) -- so this rule
+ * carries the type and nothing that can space it. */
+h2.live-review-title {
+  font-size: var(--font-size-md);
+  font-weight: var(--weight-semibold);
+}
+
+/* The title is a job's own sentence, so it takes the readable size the run
+ * rows' titles take; the age beside it is the `live-num` hook's, and the
+ * repository, the number, the URL and the run id are the identity group's. */
+span.live-review-run-title {
+  font-size: var(--font-size-base);
 }
 
 /* ---- Spend ---------------------------------------------------------------- */
@@ -603,6 +650,58 @@ span.spend-persons-state {
   font-size: var(--font-size-xs);
 }
 
+/* The by-person panel (console L5b, design section 2.4): one line per launcher
+ * the read resolved, and the total of the window under them.
+ *
+ * The panel is a wrapping flex row because its own header -- the view, the
+ * identity the read was resolved for, whether the caller is an operator, the
+ * window and the bound -- is a run of loose spans, and a run of loose spans
+ * with no gap between them is one word. Every child that is not one of those
+ * spans takes the whole width (`flex-basis` below), so the panel still reads
+ * top to bottom; the lines are the shared row shape above (`li.spend-person`),
+ * and the figures are `spend-num`s, so they are mono and tabular without a rule
+ * of their own. */
+section.spend-people {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-sm);
+}
+
+h2.spend-people-title,
+p.spend-people-reason,
+p.spend-people-note,
+p.spend-person-note,
+ol.spend-people-rows,
+ol.spend-people-totals {
+  flex-basis: 100%;
+}
+
+/* A panel with nothing to draw -- the read refused, or the console making
+ * none -- is muted as a whole, the way the withheld person knob is: the rows
+ * are not the only thing missing, the block is. */
+section.spend-people[data-available='false'] {
+  color: var(--text-muted);
+}
+
+/* The window the read covered, beside the window the picker asked for: the
+ * same shape as the header's own range words. */
+span.spend-people-view,
+span.spend-people-you,
+span.spend-people-operator,
+span.spend-people-since,
+span.spend-people-until,
+span.spend-people-bound {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+/* The total is the document's own line for the whole window and it is drawn in
+ * every state, so it carries the weight the rows do not. */
+li.spend-person-total {
+  font-weight: var(--weight-medium);
+}
+
 /* Degraded: the word `degraded` beside the tone (design section 3.5). */
 span.spend-degraded {
   color: var(--text-muted);
@@ -616,7 +715,7 @@ span.spend-degraded[data-degraded='true'] {
 /* The three account charts. A point is a figure like any other: mono, tabular,
  * and the tone of the account whose column it reads -- measured, notional or
  * estimated (design section 2.9). The mark that carries the state is the
- * `NOTIONAL~` / `est.` prefix inside the number itself. */
+ * `~$` / `est.` prefix inside the number itself. */
 div.spend-account {
   margin-bottom: var(--space-sm);
 }
@@ -650,20 +749,25 @@ span.spend-point-value {
   text-align: right;
 }
 
-/* `(partial)` and `hollow` are Spend's own honesty states, and both carry the
- * marker text (design section 3.5).
+/* `(partial)`, `hollow` and `no readable record` are Spend's own honesty
+ * states, and each carries the marker text (design section 3.5; §2.4's states).
+ * An unreadable row's money was never measured, so its `n/a` cells take the
+ * same warning tone as a partial day rather than reading as a figure.
  *
  * **The attributes are on the row, not on the marker.** §2.4 puts
- * `data-partial` on the points, the rows and `div.spend-totals`, and
- * `data-hollow` on the points and the rows; `span.spend-partial` inside them
- * holds the text `(partial)` and carries no attribute at all, so a rule
- * spelling it `span.spend-partial[data-partial='true']` selects nothing -- the
+ * `data-partial` on the points, the rows and `div.spend-totals`, `data-hollow`
+ * on the points and the rows, and `data-unreadable` on the rows and
+ * `div.spend-totals`; `span.spend-partial` and `span.spend-unreadable` inside
+ * them hold the marker text and carry no attribute at all, so a rule spelling
+ * one `span.spend-unreadable[data-unreadable='true']` selects nothing -- the
  * tone has to be on the element that knows. */
 li.spend-point[data-partial='true'],
 li.spend-row[data-partial='true'],
 div.spend-totals[data-partial='true'],
 li.spend-point[data-hollow='true'],
-li.spend-row[data-hollow='true'] {
+li.spend-row[data-hollow='true'],
+li.spend-row[data-unreadable='true'],
+div.spend-totals[data-unreadable='true'] {
   color: var(--warn);
 }
 
@@ -726,6 +830,7 @@ span.projects-secret-allowed,
 span.projects-job-status,
 span.projects-job-stage,
 span.projects-job-by,
+span.projects-job-started-by,
 span.projects-cap-repo,
 span.projects-accounts-repo,
 span.projects-only-seen-repo,
@@ -733,6 +838,22 @@ span.projects-only-enrolled-repo,
 span.projects-kill-repo {
   color: var(--text-muted);
   font-size: var(--font-size-xs);
+}
+
+/* The rigor mark: one word, in a chip. **The five modes have no colour of their
+ * own in this tree** -- not in `fugaro runs ls`'s MODE column, not in
+ * `docs/rigor-modes` -- so the chip is a boundary and a size and nothing else,
+ * and the paragraphs of sections 2.3 and 2.5 are the decision. A rule that painted `POC` one way
+ * and `Hotfix` another would be inventing a meaning, and section 3.5's table has
+ * no mark to pair it with. */
+span.live-run-mode,
+span.projects-job-mode {
+  padding: 0 var(--space-2xs);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  border: var(--rule-width) solid var(--border);
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
 }
 
 /* A panel that is not `read` is not an empty region: it draws its state and the
@@ -769,7 +890,7 @@ section.projects-panel[data-state='read'] {
  * **The row is marked by the banner it holds.** `data-killed` is the
  * **banner's** attribute and not the row's (§2.5's `data-*` line, and §3.5's
  * states table: "the attribute is on the banner, and on Live's repository
- * block itself" -- Live's `li.live-repo` carries it, Projects' row does not),
+ * block itself" -- Live's `section.live-repo` carries it, Projects' row does not),
  * so a rule spelling the row's own border `div.projects-kill-row[data-killed]`
  * selects nothing. `:has()` is the one selector that can see the banner inside,
  * and a row that *has* one is exactly a killed repository: the row without a
@@ -805,6 +926,7 @@ span.run-outcome,
 span.run-stage,
 span.run-branch,
 span.run-requested-by,
+span.run-started-by,
 span.run-flags,
 span.run-settled,
 span.run-stale,
@@ -864,6 +986,47 @@ span.run-stage-passed,
 span.run-stage-deadline {
   color: var(--text-muted);
   font-size: var(--font-size-xs);
+}
+
+/* The run's spend by stage and the findings its mode tolerated: two panels of
+ * the same shape as the timeline's -- a muted name and a word, then the figures
+ * the document wrote, right-aligned and tabular so a column of dollars reads
+ * down as a column. `run-tolerated-mode` is a mode word and is drawn the way
+ * the Rigor row draws one; `run-tolerated-title` is the reviewer's own sentence
+ * and is drawn at the body size, like the diagnosis panel's finding summaries.
+ * Nothing here is coloured: every one of these figures is measured, notional or
+ * n/a, and a tone would be a judgement this screen does not make. */
+span.run-spend-stage-name,
+span.run-tolerated-label,
+span.run-tolerated-class {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+span.run-tolerated-mode {
+  font-weight: var(--weight-semibold);
+}
+
+span.run-tolerated-title {
+  font-size: var(--font-size-base);
+}
+
+p.run-spend-stages-more,
+p.run-tolerated-total,
+p.run-tolerated-more,
+p.run-tolerated-absent {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+span.run-spend-stage-usd,
+span.run-spend-stage-notional,
+span.run-tolerated-likelihood,
+span.run-tolerated-impact,
+span.run-tolerated-fix-cost {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 /* The pull request is drawn as text with **no link at all**: `run.link` is
@@ -1007,7 +1170,7 @@ div.degraded-totals {
 }
 
 /* The unavailable screens: no binary, or a read the CLI refused. The install
- * command is a `code` and both leads are `span`s -- the tags are the code's, so
+ * command is a `code` and the leads are `span`s -- the tags are the code's, so
  * a rule spelled `pre.unavailable-install-command` would style nothing. */
 div.unavailable-body {
   display: block;
@@ -1023,9 +1186,7 @@ code.unavailable-install-command {
 }
 
 span.unavailable-install-lead,
-span.unavailable-picker-lead,
 span.unavailable-searched-lead,
-span.unavailable-configured,
 span.unavailable-operation,
 span.unavailable-searched-count {
   color: var(--text-muted);
@@ -1081,39 +1242,45 @@ main p {
   border-bottom: var(--rule-width) solid var(--border);
 }
 
-#picker-add {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-xs);
-  padding: var(--space-sm);
-  background: var(--surface);
-  border: var(--rule-width) solid var(--border);
-  border-radius: var(--radius-md);
+/* The CLI's own warning lines, under the list: one line each, in the muted
+ * colour, because they are the CLI's sentence about an installation it could
+ * not read rather than something this console claims (design section 2.2). */
+#picker-warnings {
+  margin-bottom: var(--space-md);
 }
 
-#picker-add label {
+#picker-warnings li {
   color: var(--text-muted);
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-sm);
+  line-height: var(--leading-normal);
 }
 
-#picker-project {
+/* The onboarding screen (owner's ruling of 2026-10-20): a heading, one
+ * sentence, the one command and the one link button. It is a screen and not a
+ * panel -- no surface, no border -- because it replaces the list rather than
+ * sitting beside it, and it is the whole of what the window has to say. */
+#picker-onboarding h2 {
+  margin: 0 0 var(--space-md);
+  font-size: var(--font-size-lg);
+  font-weight: var(--weight-semibold);
+}
+
+#picker-onboarding code {
+  display: inline-block;
+  margin-bottom: var(--space-md);
   padding: var(--space-2xs) var(--space-xs);
-  font: inherit;
   color: var(--text);
   background: var(--surface-alt);
-  border: var(--border-width) solid var(--border-strong);
   border-radius: var(--radius-sm);
 }
 
-/* Every control of the picker is a button, and a button's boundary is
- * `--border-strong`: `--border` is a decorative hairline and may never mark a
- * control's extent (design section 3.2's role table, and the
+/* Every control of the picker is a button -- a row's Choose, Chosen, Use …
+ * and Remove, and the onboarding screen's one link -- and a button's boundary
+ * is `--border-strong`: `--border` is a decorative hairline and may never mark
+ * a control's extent (design section 3.2's role table, and the
  * `--border`-is-decorative case in `test/unit/theme-tokens.test.ts`). */
-#picker-pick-binary,
-#picker-pick-config,
-#picker-pick-checkout,
-#picker-add-submit {
+#picker-list button,
+#picker-onboarding button {
   padding: var(--space-2xs) var(--space-xs);
   color: var(--text);
   border: var(--border-width) solid var(--border-strong);
@@ -1121,28 +1288,922 @@ main p {
   transition: color var(--duration-fast) var(--ease-out);
 }
 
-#picker-add-submit {
-  color: var(--ink-on-fill);
-  background: var(--accent);
-}
-
-#picker-pick-binary:hover,
-#picker-pick-config:hover,
-#picker-pick-checkout:hover,
-#picker-add-submit:hover {
+#picker-list button:hover,
+#picker-onboarding button:hover {
   color: var(--accent-ink);
 }
 
-#picker-add-submit:hover {
-  color: var(--ink-on-fill);
-}
-
 /* A control waiting on a request is `disabled` (design section 4.3): the
- * system's own grey, and it keeps its ring and its label. */
-#picker-add button:disabled,
-#picker-add input:disabled {
+ * system's own grey, and it keeps its ring and its label. Every control this
+ * view draws is disabled together while a request is in flight, so this is one
+ * rule over both sets rather than a rule per button. */
+#picker-list button:disabled,
+#picker-onboarding button:disabled {
   color: var(--text-muted);
   border-style: dashed;
+}
+
+/* ---- The launch confirmation window (design section 5.1 rule 11) ----------
+ *
+ * The window's document is hand-written HTML like the picker's, but its hooks
+ * are **classes rather than ids** (design §2.13): the scan in
+ * `installations-view.test.ts` reads this file for id selectors and holds every
+ * one of them to the ids `installations.html` declares, so a second document's
+ * ids here would read as undeclared there. The names carry the chrome's
+ * `console-` prefix, because this window is chrome the main process owns rather
+ * than a screen the dashboard mounts -- and because that is the vocabulary the
+ * design's inventory scan licenses a hook by.
+ *
+ * The task box is the reason this section exists. Rule 11 shows the **whole**
+ * task text, never cut, so the box is bounded and scrolls rather than the
+ * document shortening it -- and a 16 KiB task that pushed the two buttons off
+ * the window would be a window an operator cannot answer.
+ */
+
+/* `white-space: pre-wrap` with `overflow-wrap: anywhere` is what keeps the task
+ * box bounded. This document's `main` is the body grid's only child, so it
+ * auto-places into the `auto` column (base.css), whose base size is the item's
+ * min-content contribution -- and a `<pre>`'s default `white-space: pre` makes
+ * that contribution the longest line, so one unbroken 16 KiB line widens the
+ * column and scrolls the page sideways. `pre-wrap` keeps the line breaks and the
+ * spacing the text was written with while allowing a wrap, and `anywhere` -- not
+ * `break-word`, which does not count toward min-content -- lets an unbroken
+ * value break, so the box scrolls inside its bound instead of moving the window. */
+.console-confirm-task {
+  max-height: 40vh;
+  margin: 0 0 var(--space-md);
+  padding: var(--space-xs);
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  background: var(--surface-alt);
+  border: var(--rule-width) solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+
+/* A field value is a repository title, a ref or a path, and the bounds are
+ * uneven: a title is at most `MAX_LAUNCH_TITLE_RUNES` characters and a plan task
+ * at most `launchrules.ts`'s own byte cap, but a ref is bounded only by git's ref
+ * rules and an argv word's path only by `PATH_MAX`, and none of them has a space
+ * to break at. A 100-character title with no break already overflows this
+ * document's 720px window. This document's `main` is the body grid's only child,
+ * so it auto-places into the `auto` column, whose base size is the item's
+ * min-content contribution: a value like that widens the column and scrolls the
+ * whole page sideways. `anywhere` lets a long value wrap inside the `dd` rather
+ * than move the window. The `dl` carries the hook. */
+.console-confirm-fields dd {
+  overflow-wrap: anywhere;
+}
+
+/* The two answers are buttons and a button's boundary is `--border-strong` (the
+ * role table the picker's controls read from). The rule is one rule for both
+ * because the view gives them the same treatment: it draws the confirming button
+ * first and Cancel second, and Cancel is the default by being the one focused on
+ * load rather than by being drawn first. */
+.console-confirm-actions button {
+  padding: var(--space-2xs) var(--space-xs);
+  color: var(--text);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+.console-confirm-actions button:hover {
+  color: var(--accent-ink);
+}
+
+/* ---- Graph (design section 2.11) ------------------------------------------
+ *
+ * The Graph draws one model twice: a picture, and the list that is the same
+ * model with every title whole. **The picture's geometry is not CSS.** Every
+ * coordinate the layout worker answered is written as an SVG attribute by the
+ * screen (`x`, `y`, `width`, `height`, `rx`, `d`, `transform`, `viewBox`),
+ * because `style-src 'self'` admits no inline style and a stylesheet cannot read
+ * a `data-*` as a length (design section 5.5, and the reason the cap bar's fill
+ * is a percentage in an attribute). What the rules below paint is colour, weight
+ * and dashes.
+ *
+ * **No state is carried by colour alone** (design section 3.5). Every state word
+ * is an element in the DOM beside the tone -- `implementing`, `in review`,
+ * `fixing`, `queued`, `waiting`, `halted`, `blocked`, `ready`, `done` -- and the
+ * two edge facts a reader scans for are shapes rather than hues: the stroke
+ * **width** of a critical edge and the **dashes** of a blocked task's box, both
+ * of which survive `forced-colors` because neither is a colour (design section
+ * 4.4).
+ *
+ * **The tones are the state tokens' roles and not a second palette.** A task
+ * being worked on is `--accent`, the token section 3.2 gives to structure; one
+ * that cannot move is `--warn`, which is attention; a halt is `--halted`, whose
+ * role cell is "a deliberate stop"; a finished task is `--text-muted`, because
+ * it is no longer a reading anyone acts on. `--ok` is **not** used: the design
+ * licenses that token to exactly two readings, and a finished task is neither
+ * (`theme-tokens.test.ts`'s `OK_SELECTORS`).
+ *
+ * **The faint cross-release edge is faint by its width.** The palette's one dim
+ * tone is `--border`, and the design licenses it to a `--rule-width` hairline
+ * and to nothing else -- a stroke is not a hairline, and a rule that reached for
+ * it here would fail the `--border`-is-decorative scan. So the three edge kinds
+ * are 1, 2 and 3 px, of `--border-strong`, `--accent` and `--text`: a scale a
+ * reader with no colour at all still reads, which is the same defence the dashes
+ * above are.
+ *
+ * **Three things here move, and they are the design's three.** The graph is the
+ * one screen the design's section 3.9 amendment lets animate: a comet on a
+ * running card, a pulse on a critical one and a flow along a critical edge, each
+ * drawn by the motion block below with its own static style under the graph's own
+ * `prefers-reduced-motion` and `forced-colors` arms. Every other state here, and
+ * every figure on every screen, stays still.
+ */
+
+section.graph {
+  display: block;
+  color: var(--text);
+}
+
+header.graph-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-sm);
+}
+
+h1.graph-title {
+  font-size: var(--font-size-lg);
+  font-weight: var(--weight-semibold);
+  margin: 0 0 var(--space-md);
+}
+
+/* The tabs are a tablist: `aria-selected` is the machine-readable half and the
+ * accent is the drawn one, the treatment the navigation's own buttons get in
+ * `base.css` (design sections 2.1 and 4.3). */
+nav.graph-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2xs);
+}
+
+button.graph-tab {
+  padding: var(--space-2xs) var(--space-xs);
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+button.graph-tab:hover {
+  color: var(--text);
+}
+
+button.graph-tab[aria-selected='true'] {
+  color: var(--accent-ink);
+  border-color: var(--accent);
+  font-weight: var(--weight-medium);
+}
+
+div.graph-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2xs);
+  margin-left: auto;
+}
+
+button.graph-view,
+button.graph-refresh,
+button.graph-fit {
+  padding: var(--space-2xs) var(--space-xs);
+  font-size: var(--font-size-sm);
+  color: var(--text);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+}
+
+/* A bound that dropped tasks says so in the console's own sentence; the tone is
+ * the second channel and the count and the words are the first. */
+p.graph-not-shown {
+  margin: var(--space-2xs) 0 0;
+  color: var(--warn);
+  font-size: var(--font-size-xs);
+}
+
+div.graph-chips {
+  margin-bottom: var(--space-md);
+}
+
+section.graph-chip-group {
+  margin-bottom: var(--space-xs);
+}
+
+h2.graph-chip-stream {
+  margin: 0 0 var(--space-2xs);
+  font-size: var(--font-size-xs);
+  font-weight: var(--weight-medium);
+  color: var(--text-muted);
+}
+
+ul.graph-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2xs);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+li.graph-chip-item {
+  display: block;
+}
+
+/* A chip is a button: the click is what opens a finished release's tasks, and
+ * `aria-expanded` is the fact both the rule and a reader get. */
+button.graph-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2xs);
+  padding: var(--space-2xs) var(--space-xs);
+  font-size: var(--font-size-sm);
+  color: var(--text);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-pill);
+}
+
+button.graph-chip[aria-expanded='true'] {
+  border-color: var(--accent);
+}
+
+span.graph-chip-name {
+  color: var(--text);
+}
+
+span.graph-chip-mark,
+span.graph-chip-version {
+  color: var(--text-muted);
+}
+
+span.graph-chip-version {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* An open chip's body is the release's own panel, hung off the chip by the
+ * hairline a panel is separated with (design section 3.8). */
+div.graph-chip-body {
+  margin-top: var(--space-2xs);
+  padding-left: var(--space-sm);
+  border-left: var(--rule-width) solid var(--border);
+}
+
+p.graph-release-bar,
+span.graph-release-bar {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+ul.graph-chip-tasks,
+ul.graph-list-nodes {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+li.graph-chip-task {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-sm);
+  font-size: var(--font-size-sm);
+}
+
+span.graph-chip-task-title {
+  color: var(--text);
+}
+
+/* The canvas: an `svg` with a `viewBox` and no width or height of its own, so it
+ * takes the panel's width and the picture's ratio decides its height. */
+svg.graph-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: var(--surface);
+  border: var(--rule-width) solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+/* A release's box is a frame drawn *around* its tasks, so it is an outline and
+ * never a fill: filling it would put a surface under the cards' own surfaces. */
+svg .graph-release-box {
+  fill: none;
+  stroke: var(--border-strong);
+  stroke-width: 1;
+}
+
+svg .graph-release-heading,
+svg .graph-release-bar,
+svg .graph-release-stream,
+svg .graph-release-version {
+  fill: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+svg .graph-release-name {
+  fill: var(--text);
+}
+
+/* The edges, in the order the widths are read: a cross-release edge is the
+ * thinnest, a plain one is 2 px, the critical path is 3 px of the accent, and a
+ * selected task's edges are 3 px of the reading tone -- the loudest line on the
+ * canvas, because the selection is a question and its answer is those edges. */
+svg .graph-edge-path {
+  fill: none;
+  stroke: var(--border-strong);
+  stroke-width: 2;
+}
+
+svg .graph-edge[data-cross='true'] .graph-edge-path {
+  stroke-width: 1;
+}
+
+svg .graph-edge[data-critical='true'] .graph-edge-path {
+  stroke: var(--accent);
+  stroke-width: 3;
+}
+
+svg .graph-edge[data-selected='true'] .graph-edge-path {
+  stroke: var(--text);
+  stroke-width: 3;
+}
+
+/* The tasks. A card is a surface with a boundary, and the boundary carries the
+ * state: `data-state` is the node's first word, so a rule keyed on it draws the
+ * same state the word beside it spells. A blocked task is dashed as well as
+ * amber, because "this one is not going to move" is the one state a reader needs
+ * at a glance, and a done one goes quiet rather than green. */
+svg .graph-node-box {
+  fill: var(--surface);
+  stroke: var(--border-strong);
+  stroke-width: 1;
+}
+
+svg .graph-node[data-state='implementing'] .graph-node-box,
+svg .graph-node[data-state='in review'] .graph-node-box,
+svg .graph-node[data-state='fixing'] .graph-node-box {
+  stroke: var(--accent);
+}
+
+svg .graph-node[data-state='blocked'] .graph-node-box {
+  stroke: var(--warn);
+  stroke-dasharray: 6 4;
+}
+
+svg .graph-node[data-state='halted'] .graph-node-box {
+  stroke: var(--halted);
+}
+
+svg .graph-node[data-state='done'] .graph-node-box {
+  stroke: var(--text-muted);
+}
+
+/* A done card goes quiet in its **text** as well as its boundary, which is the
+ * second channel the row below keeps: a reader who cannot tell the muted stroke
+ * from the strong one still reads a done task from the title, and a reader who
+ * can reads it twice. */
+svg .graph-node[data-state='done'] .graph-node-title {
+  fill: var(--text-muted);
+}
+
+/* The selected card's boundary thickens and does not change tone: the tone is
+ * the state's, and a selection that recoloured it would hide the state. */
+svg .graph-node[data-selected='true'] .graph-node-box {
+  stroke-width: 2;
+}
+
+svg .graph-node-title {
+  fill: var(--text);
+  font-size: var(--font-size-sm);
+}
+
+svg .graph-node-word,
+svg .graph-node-pr,
+svg .graph-node-run,
+svg .graph-node-mark {
+  fill: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+svg .graph-node-run {
+  font-family: var(--font-mono);
+}
+
+/* ---- The graph's motion (design section 3.9's amendment of 2026-10-24) -----
+ *
+ * Three things move on this screen and no more: a **comet** that travels a
+ * running card's own border, a **pulse** on the glow behind a critical card, and
+ * a **flow** along a critical edge -- the owner's spec's three shapes, drawn in
+ * this design's tokens. Each is drawn on a mark the state already has, and each
+ * keeps its word, so a reader who sees no motion -- or a screenshot read in
+ * greyscale -- still reads every state (design section 3.5).
+ *
+ * **Nothing a reader reads moves.** The comet is on a card's boundary, the glow
+ * is behind it and the flow is on an edge: no title, word, pull request number,
+ * run or figure is moved or faded, here or anywhere else in the theme.
+ *
+ * **`opacity` moves, and two dashes travel, and that is the whole list.** A dash
+ * along a path cannot be carried by `transform` or `opacity`: the path's `d` is an
+ * attribute the layout answered, so `stroke-dashoffset` is the one property that
+ * moves a dash along it. Two of the three states are a dash -- the flow along the
+ * critical edge, and the comet around the card -- and they are the only two
+ * keyframes that take it (`graph-motion.test.ts` bounds it by name).
+ *
+ * **The static style of each is the rule below, and the arms further down stop the
+ * animation** -- with one exception, the flow, whose dashes are the animation and
+ * so are taken away with it. `base.css`'s global freeze stops an animation where
+ * it stands -- a comet frozen halfway round a card is a picture of something that
+ * is not happening -- so the graph restates its three states under its own reduce
+ * block and its own forced-colors block, and leaves the global freeze alone.
+ */
+
+/* The comet is a light streak that travels the card's own border: the mark is the
+ * card's outline again, with a dash for the streak and a gap for the rest of the
+ * perimeter. `pathLength` is written on the element (graph.ts) so the dash is a
+ * share of the border rather than a length in user units, which is what keeps this
+ * file from having to know how big a card is. The dash at rest, `stroke-dashoffset:
+ * 0`, is the static style both arms below are left with. */
+section.graph svg .graph-node-comet {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 3;
+  stroke-dasharray: 12 88;
+  stroke-dashoffset: 0;
+}
+
+section.graph svg .graph-node[data-state='implementing'] .graph-node-comet,
+section.graph svg .graph-node[data-state='in review'] .graph-node-comet,
+section.graph svg .graph-node[data-state='fixing'] .graph-node-comet,
+section.graph svg .graph-node[data-state='queued'] .graph-node-comet {
+  animation: graph-comet 2.6s linear infinite;
+}
+
+/* The glow is a critical card's own second channel: a filled wash of `--accent`,
+ * the tone the critical path is drawn in, behind a card whose boundary keeps the
+ * state it was already carrying -- amber for blocked, muted for done. It is
+ * blurred so its edge is light rather than a line, and it is drawn before the card
+ * so only the spill shows: a glow is not a border. Its resting opacity is what the
+ * two arms below are left with. */
+section.graph svg .graph-node-pulse {
+  fill: var(--accent);
+  filter: blur(4px);
+  opacity: 0.45;
+}
+
+section.graph svg .graph-node[data-critical='true'] .graph-node-pulse {
+  animation: graph-pulse 2.2s ease-in-out infinite;
+}
+
+/* The flow is the critical path's own dashes travelling along it. The dashes
+ * exist only while they flow: the static style of this state is the 3 px line
+ * the rule above draws, and both arms below take the dasharray away again. */
+section.graph svg .graph-edge[data-critical='true'] .graph-edge-path {
+  stroke-dasharray: 10 14;
+  animation: graph-flow 1.6s linear infinite;
+}
+
+@keyframes graph-comet {
+  from {
+    stroke-dashoffset: 100;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes graph-pulse {
+  from {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 0.7;
+  }
+  to {
+    opacity: 0.25;
+  }
+}
+
+@keyframes graph-flow {
+  from {
+    stroke-dashoffset: 24;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* The graph's own reduced-motion arm, and it is not the global freeze: the
+ * freeze in `base.css` leaves a comet wherever its last frame put it (F36 in the
+ * reconciliation), so each state is drawn as the still mark it is when nothing
+ * moves -- the running card's streak at rest on its border, the critical card's
+ * glow at its resting opacity, and the 3 px critical edge with nothing flowing
+ * along it. */
+@media (prefers-reduced-motion: reduce) {
+  section.graph svg .graph-node[data-state='implementing'] .graph-node-comet,
+  section.graph svg .graph-node[data-state='in review'] .graph-node-comet,
+  section.graph svg .graph-node[data-state='fixing'] .graph-node-comet,
+  section.graph svg .graph-node[data-state='queued'] .graph-node-comet {
+    animation: none;
+  }
+
+  section.graph svg .graph-node[data-critical='true'] .graph-node-pulse {
+    animation: none;
+  }
+
+  section.graph svg .graph-edge[data-critical='true'] .graph-edge-path {
+    animation: none;
+    stroke-dasharray: none;
+  }
+}
+
+/* The list: the picture's non-visual equivalent, one row per task with the whole
+ * title, and the release's own bar above them. */
+div.graph-list {
+  display: block;
+}
+
+section.graph-list-plan {
+  margin-bottom: var(--space-md);
+}
+
+h2.graph-list-title {
+  margin: 0 0 var(--space-2xs);
+  font-size: var(--font-size-md);
+  font-weight: var(--weight-medium);
+}
+
+h3.graph-list-release {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-sm);
+  margin: 0 0 var(--space-2xs);
+  font-size: var(--font-size-sm);
+  font-weight: var(--weight-medium);
+}
+
+li.graph-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-sm);
+  min-height: var(--row-height);
+  padding: var(--space-2xs) 0;
+  border-bottom: var(--rule-width) solid var(--border);
+}
+
+span.graph-row-title {
+  color: var(--text);
+}
+
+span.graph-row-mark,
+span.graph-row-pr,
+span.graph-row-run {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+
+span.graph-words {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-2xs);
+}
+
+span.graph-word {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+/* A blocked row carries the same mark its card draws -- **dashed**, which is the
+ * second channel the card's dashed box keeps: the amber and the dash say the
+ * same thing twice, so the row reads as blocked where the tone does not. A done
+ * one goes quiet the same way, in the title. The two drawings of one model say
+ * the same thing about it. */
+li.graph-row[data-state='blocked'] {
+  border-left: 3px dashed var(--warn);
+}
+
+li.graph-row[data-state='done'] span.graph-row-title {
+  color: var(--text-muted);
+}
+
+li.graph-row[data-selected='true'] {
+  background: var(--surface-alt);
+}
+
+p.graph-empty {
+  color: var(--text-muted);
+}
+
+/* ---- Coordinator (design section 2.12) ------------------------------------
+ *
+ * The Coordinator draws the project view: one `section.coordinator-repo` per
+ * repository the installation's config lists, each holding the sweep's marker,
+ * the three counts beside the name, the records with the runs behind them, the
+ * collisions and the pull requests whose host state no sweep could read. Every
+ * string the document carried reaches the tree through `putText` and every
+ * figure through `putReading`; what the rules below paint is spacing, weight and
+ * tone.
+ *
+ * **The stored view is drawn as it is stored.** The screen cannot tell a
+ * coordinator that is running from one switched off after its last sweep, so
+ * nothing here claims an age: the marker is the document's own stamp, and the
+ * sentence about the time the view does not carry (`coordinator-age`) is the
+ * console's own prose, drawn as prose.
+ *
+ * **The tones are the state tokens' roles and not a second palette.** Three
+ * readings on this screen ask for attention -- `--warn`, whose role cell is
+ * "attention" (section 3.2): a pair of records in flight on the same files, a
+ * pull request whose state a sweep could not read, and a set the document's own
+ * bound left short. Each is a **word in the DOM** beside its tone, so the colour
+ * is redundant by construction (section 3.5) and this screen adds no arm to the
+ * forced-colors block below: no rule here depends on colour alone. `--ok` is
+ * painted nowhere: section 3.2 licenses that token to two readings, and no
+ * repository, record or run on this screen is either of them
+ * (`theme-tokens.test.ts`'s `OK_SELECTORS`).
+ *
+ * **Nothing here animates and nothing here is a control.** The view is read-only
+ * -- it draws no button, no field and no link -- so no rule needs a transition
+ * beyond the focus ring the shared blocks already carry.
+ */
+
+section.coordinator {
+  display: block;
+  color: var(--text);
+}
+
+/* The read's own command line, in the console's words: monospace and quiet,
+ * because it says where the drawing came from and is not a reading. */
+p.coordinator-source {
+  margin: 0 0 var(--space-2xs);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+
+/* The console's two sentences: the age the stored view does not carry, and an
+ * installation that lists no repository. Both are the console speaking, so both
+ * are muted prose and neither is a reading. */
+p.coordinator-age,
+p.coordinator-empty {
+  margin: 0 0 var(--space-sm);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+section.coordinator-repo {
+  margin-bottom: var(--space-lg);
+  padding-bottom: var(--space-sm);
+  border-bottom: var(--rule-width) solid var(--border);
+}
+
+h2.coordinator-repo-name {
+  margin: 0 0 var(--space-2xs);
+  color: var(--text);
+  font-size: var(--font-size-md);
+  font-weight: var(--weight-medium);
+}
+
+/* Which view the node is -- the stored word, or the runs-only fallback. It is a
+ * sentence the CLI wrote about the document and not a state this console
+ * measured, so it carries no tone. */
+p.coordinator-repo-state {
+  margin: 0 0 var(--space-2xs);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+/* The sweep's marker, exactly as stored: the introducing word, the stamp and
+ * the reason the sweep wrote. The stamp is a document string, so it is monospace
+ * beside the console's own word rather than reformatted into a date this console
+ * would be claiming. */
+p.coordinator-repo-stale {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-sm);
+  margin: 0 0 var(--space-2xs);
+  font-size: var(--font-size-sm);
+}
+
+span.coordinator-stale-word {
+  color: var(--text-muted);
+}
+
+span.coordinator-stale-since {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+span.coordinator-stale-reason {
+  color: var(--text-muted);
+}
+
+p.coordinator-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin: 0 0 var(--space-2xs);
+}
+
+/* One count's cell: the console's own word for the count, and the reading
+ * beside it. The reading is a span of its own -- the screen's number hook, the
+ * class the shared alignment rule names -- so section 2.10's tabular figures and
+ * `ch` minimum land on the figure and never on the word, and a count that grows
+ * a digit keeps its width and its place in the row. */
+span.coordinator-count {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2xs);
+}
+
+span.coordinator-count-word {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+/* The bound that left records or collisions out: the console's own sentence with
+ * the counts it kept, and the tone section 2.11's `graph-not-shown` draws for
+ * the same reading -- a bound dropped something. */
+p.coordinator-omitted {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-sm);
+  margin: 0 0 var(--space-2xs);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+span.coordinator-omitted-word {
+  color: var(--warn);
+}
+
+ul.coordinator-records,
+ul.coordinator-collisions,
+ul.coordinator-unreads {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* One record: a pull request with the runs behind it, or the in-flight runs
+ * alone. The runs hang off the row rather than beside it, so they take a line of
+ * their own and the hairline a nested panel is separated with (section 3.8). */
+li.coordinator-record {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-sm);
+  min-height: var(--row-height);
+  padding: var(--space-2xs) 0;
+  border-bottom: var(--rule-width) solid var(--border);
+}
+
+span.coordinator-record-label {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+
+span.coordinator-record-title {
+  color: var(--text);
+  font-size: var(--font-size-sm);
+}
+
+span.coordinator-record-branch {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+
+span.coordinator-record-state,
+span.coordinator-record-release,
+span.coordinator-record-draft,
+span.coordinator-record-flight,
+span.coordinator-record-noruns {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+ul.coordinator-runs {
+  flex-basis: 100%;
+  margin: var(--space-2xs) 0 0;
+  padding-left: var(--space-sm);
+  list-style: none;
+  border-left: var(--rule-width) solid var(--border);
+}
+
+li.coordinator-run {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-sm);
+  font-size: var(--font-size-sm);
+}
+
+span.coordinator-run-id {
+  color: var(--text);
+  font-family: var(--font-mono);
+}
+
+/* The declaration and not an identity: the launch record wrote it about itself
+ * and nothing verified it, so it is drawn as the person-shaped text it is. */
+span.coordinator-run-by {
+  color: var(--text-muted);
+}
+
+span.coordinator-run-status,
+span.coordinator-run-outcome,
+span.coordinator-run-declared-word,
+span.coordinator-run-open,
+span.coordinator-run-short {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+/* One collision: the two labels with the console's sentence between them, then
+ * the paths and the services both records touch, each already cut to the
+ * console's cap. */
+li.coordinator-collision {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-sm);
+  padding: var(--space-2xs) 0;
+  border-bottom: var(--rule-width) solid var(--border);
+}
+
+span.coordinator-collision-a,
+span.coordinator-collision-b {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+
+span.coordinator-collision-word {
+  color: var(--warn);
+  font-size: var(--font-size-xs);
+}
+
+.coordinator-file {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+
+.coordinator-service {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+/* How many of a cut list were not drawn: a count, so it is tabular and muted
+ * beside the members that were. */
+.coordinator-more {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+/* One pull request a sweep could not read, with the console's own answer to
+ * whether the state shown is the last one a sweep did read. */
+li.coordinator-unread {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-sm);
+  padding: var(--space-2xs) 0;
+  border-bottom: var(--rule-width) solid var(--border);
+}
+
+span.coordinator-unread-word {
+  color: var(--warn);
+  font-size: var(--font-size-xs);
+}
+
+span.coordinator-unread-number {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+
+span.coordinator-unread-reason,
+span.coordinator-unread-carried,
+span.coordinator-unread-retry {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
 }
 
 /* ---- Narrow windows (design section 4.2, the screens' share) -------------
@@ -1171,7 +2232,6 @@ main p {
     max-width: 50%;
   }
 
-  li.live-run,
   li.spend-row,
   li.projects-job,
   li.run-log-line {
@@ -1181,7 +2241,6 @@ main p {
 
 @media (max-width: 48.75em) {
   /* Any three-column figure group becomes two. */
-  div.live-total,
   div.spend-totals,
   section.run-ledger {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1190,7 +2249,6 @@ main p {
 
 @media (max-width: 35em) {
   /* The ledger, the caps panel and the panels' source lines stack. */
-  div.live-total,
   div.spend-totals,
   section.run-ledger {
     grid-template-columns: minmax(0, 1fr);
@@ -1225,20 +2283,24 @@ main p {
   section.projects,
   section.degraded,
   section.console-unavailable,
-  li.live-repo,
+  section.live-repo,
   li.projects-secret,
   li.projects-account,
-  li.live-run,
-  ol.live-runs,
+  tr.live-run,
+  div.live-runs,
+  table.live-table,
   li.spend-row,
   li.spend-point,
   li.projects-cap,
   li.projects-job,
   li.degraded-run,
   li.run-stage,
+  li.run-spend-stage,
+  li.run-tolerated-finding,
   li.run-log-line,
   div.unavailable-body,
-  #picker-add,
+  #picker-warnings li,
+  #picker-onboarding,
   #picker-list li {
     background: Canvas;
     color: CanvasText;
@@ -1249,8 +2311,8 @@ main p {
   div.projects-kill,
   div.run-halt,
   div.live-stale,
-  li.live-run-queued,
-  li.live-run-stuck,
+  tr.live-run-queued,
+  tr.live-run-stuck,
   span.run-stage-passed,
   span.run-stage-deadline,
   span.live-run-flag,
@@ -1267,6 +2329,7 @@ main p {
   span.run-follow-up,
   span.run-stale,
   span.spend-partial,
+  span.spend-unreadable,
   span.live-stale-word,
   span.live-burn-unit,
   span.live-repo-name,
@@ -1287,25 +2350,30 @@ main p {
   span.degraded-compute-word,
   span.degraded-cap,
   span.unavailable-install-lead,
-  span.unavailable-picker-lead,
   span.unavailable-searched-lead,
-  span.unavailable-configured,
   span.unavailable-operation,
   span.unavailable-searched-count,
-  span.live-run-title,
+  td.live-run-title,
   span.live-run-stage,
   span.live-run-round,
-  span.live-run-verify,
   span.live-run-models,
-  span.live-run-recipe,
   span.live-run-auth,
-  span.live-run-requester,
-  span.live-run-workflow,
   span.live-run-contradiction,
+  span.live-run-mode,
+  span.projects-job-mode,
+  div.run-rigor,
+  span.run-rigor-word,
+  span.run-rigor-mode,
+  span.run-rigor-from-word,
+  span.run-rigor-from,
+  span.run-rigor-area,
+  span.run-rigor-area-name,
+  span.run-rigor-area-mode,
   span.run-status,
   span.run-outcome,
   span.run-branch,
   span.run-requested-by,
+  span.run-started-by,
   span.run-flags,
   span.run-log-severity,
   span.run-route-name,
@@ -1317,6 +2385,14 @@ main p {
   span.run-follow-up-word,
   span.run-follow-up-comments-word,
   span.run-finding-severity,
+  span.run-spend-stage-name,
+  span.run-tolerated-label,
+  span.run-tolerated-mode,
+  span.run-tolerated-class,
+  p.run-spend-stages-more,
+  p.run-tolerated-total,
+  p.run-tolerated-more,
+  p.run-tolerated-absent,
   p.run-ledger-model,
   p.run-ledger-compute,
   p.run-ledger-total,
@@ -1333,6 +2409,7 @@ main p {
   span.projects-job-status,
   span.projects-job-stage,
   span.projects-job-by,
+  span.projects-job-started-by,
   span.projects-cap-repo,
   span.projects-accounts-repo,
   span.projects-only-seen-repo,
@@ -1346,6 +2423,9 @@ main p {
   p.spend-note,
   p.spend-warning,
   p.spend-persons-note,
+  p.spend-people-reason,
+  p.spend-people-note,
+  p.spend-person-note,
   p.spend-notice,
   p.projects-because,
   p.projects-note,
@@ -1362,6 +2442,9 @@ main p {
   p.run-replay-note,
   p.run-replay-scrubbed,
   span.run-halt-detail,
+  p.live-review-empty,
+  p.live-review-note,
+  p.live-review-capped,
   p.degraded-notice,
   p.degraded-warning,
   p.unavailable-reason,
@@ -1395,13 +2478,16 @@ main p {
    * once the author's colours are gone. */
   section.projects-panel,
   section.spend-caps,
-  div.live-total,
-  ol.live-repos,
-  ol.live-runs,
+  section.spend-people,
+  section.live-fleet,
+  section.live-repo,
+  div.live-runs,
   ol.spend-rows,
   ol.spend-series,
   section.run-ledger,
   section.run-stages,
+  section.run-spend-stages,
+  section.run-tolerated,
   section.run-pr,
   section.run-logs,
   section.run-diagnosis,
@@ -1412,25 +2498,36 @@ main p {
     border: var(--rule-width) solid CanvasText;
   }
 
-  li.live-repo,
-  li.live-run,
+  tr.live-run,
   li.spend-row,
   li.spend-point,
+  li.spend-person,
   li.projects-cap,
   li.projects-job,
   li.projects-secret,
   li.projects-account,
   li.degraded-run,
   li.run-stage,
+  li.run-spend-stage,
+  li.run-tolerated-finding,
   li.run-log-line,
   div.live-kill,
   div.spend-kill,
   div.projects-kill,
   div.run-halt,
-  li.live-run-queued,
-  li.live-run-stuck,
+  /* The redesign moved the queued and stuck rules off the row and onto its
+   * first cell (`flight-deck.css`), so this arm names the cell that carries the
+   * border: a `tr` in a collapsed table paints no edge of its own, and a rule
+   * naming it here would keep nothing. */
+  tr.live-run-queued td:first-child,
+  tr.live-run-stuck td:first-child,
   div.live-stale,
-  li.live-repo[data-killed='true'],
+  section.live-repo[data-killed='true'],
+  /* The rigor chips are boundaries and nothing else, so the boundary is what
+   * has to survive the author's colours going away. */
+  span.live-run-mode,
+  span.projects-job-mode,
+  span.run-rigor-area,
   section.projects-panel[data-state='read'],
   section.projects-panel[data-state='unavailable'],
   section.projects-panel[data-state='not-built'],
@@ -1439,15 +2536,108 @@ main p {
   div.spend-cap-limit[data-limit='max_reserve'],
   section.console-unavailable[data-kind='refused'],
   #picker-list li,
-  #picker-project,
-  #picker-pick-binary,
-  #picker-pick-config,
-  #picker-pick-checkout,
-  #picker-add-submit {
+  #picker-list button,
+  #picker-onboarding button,
+  #picker-onboarding code {
     border-color: CanvasText;
   }
 
-  #picker-add-submit {
+  /* The onboarding screen's one command is a code sample rather than a
+   * control, so it keeps the system's own grey boundary and is not painted as
+   * a fill: a fill is this file's word for the two marks that were a fill
+   * (design section 4.4), and a command is neither of them. */
+  #picker-onboarding code {
+    border: var(--border-width) solid GrayText;
+  }
+
+  /* The graph's canvas is where a reader's information is a **stroke** rather
+   * than a colour, so what forced colors has to keep is the stroke's shape: its
+   * width, its dashes and its presence. The tones go to `CanvasText` and the
+   * fills to `Canvas`, the same pair every row above gets. `stroke-width` and
+   * `stroke-dasharray` are not forced by the system, so the dashed blocked task
+   * and the 1/2/3 px edge scale survive the author's colours going away -- which
+   * is design section 4.4's rule 1: a state keeps its word, and here its shape
+   * as well. */
+  svg.graph-canvas {
+    background: Canvas;
+    border-color: CanvasText;
+  }
+
+  svg .graph-release-box,
+  svg .graph-node-box {
+    fill: Canvas;
+    stroke: CanvasText;
+  }
+
+  svg .graph-edge-path {
+    stroke: CanvasText;
+  }
+
+  svg .graph-edge[data-selected='true'] .graph-edge-path,
+  svg .graph-node[data-selected='true'] .graph-node-box {
+    stroke: Highlight;
+  }
+
+  svg .graph-release-heading,
+  svg .graph-release-bar,
+  svg .graph-release-stream,
+  svg .graph-release-version,
+  svg .graph-release-name,
+  svg .graph-node-title,
+  svg .graph-node-word,
+  svg .graph-node-pr,
+  svg .graph-node-run,
+  svg .graph-node-mark {
+    fill: CanvasText;
+  }
+
+  /* The graph's motion is drawn and never runs here: the streak is a stroke and
+   * the glow is a fill, so both take the system's text colour, the blur goes with
+   * the tones (a blurred wash is a colour effect, and this mode keeps marks and
+   * borders), the flow's dashes go, and each state is left as the same still
+   * drawing the reduced-motion arm leaves behind (design section 4.4, and the
+   * amendment's fourth rule). */
+  section.graph svg .graph-node-comet {
+    stroke: CanvasText;
+  }
+
+  section.graph svg .graph-node-pulse {
+    fill: CanvasText;
+    filter: none;
+  }
+
+  /* `animation: none` is written on the selectors the motion block animates and
+   * not on the shorter ones above: a media query adds no specificity, so
+   * `section.graph svg .graph-node-comet` loses to
+   * `section.graph svg .graph-node[data-state='implementing'] .graph-node-comet`
+   * wherever it is written, and the streak would keep running in the one mode
+   * that has no motion. */
+  section.graph svg .graph-node[data-state='implementing'] .graph-node-comet,
+  section.graph svg .graph-node[data-state='in review'] .graph-node-comet,
+  section.graph svg .graph-node[data-state='fixing'] .graph-node-comet,
+  section.graph svg .graph-node[data-state='queued'] .graph-node-comet,
+  section.graph svg .graph-node[data-critical='true'] .graph-node-pulse {
+    animation: none;
+  }
+
+  section.graph svg .graph-edge[data-critical='true'] .graph-edge-path {
+    stroke-dasharray: none;
+    animation: none;
+  }
+
+  button.graph-tab[aria-selected='true'],
+  button.graph-chip[aria-expanded='true'] {
+    border-color: Highlight;
+  }
+
+  /* Only the tone is written here: a border's *style* is not forced by the
+   * system, so the blocked row's dashed left edge survives with the amber
+   * going to `CanvasText` (design section 4.4's rule 1). */
+  li.graph-row[data-state='blocked'] {
+    border-left-color: CanvasText;
+  }
+
+  li.graph-row[data-selected='true'] {
     background: Highlight;
     color: HighlightText;
     forced-color-adjust: none;

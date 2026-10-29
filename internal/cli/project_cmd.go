@@ -19,6 +19,8 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
+	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/coordpath"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
@@ -190,11 +192,11 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 	for attempt := 1; attempt <= setAttempts; attempt++ {
 		etag, exists, raw, err := readPolicyNode(ctx, db, lc)
 		if err != nil {
-			return err
+			return publishFailure(err, narrowedSoFar)
 		}
 		if exists {
 			if err := refuseNewerPolicy(raw); err != nil {
-				return err
+				return publishFailure(err, narrowedSoFar)
 			}
 		}
 		if o.delete {
@@ -204,22 +206,22 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 		}
 		old, err := publishedPolicyOf(raw, exists)
 		if err != nil {
-			return err
+			return publishFailure(err, narrowedSoFar)
 		}
 		allow, sources, err := publishAllowRepos(ctx, lc, old, o.seedRepos)
 		if err != nil {
-			return err
+			return publishFailure(err, narrowedSoFar)
 		}
 		pol, keepRouting, err := buildProjectPolicy(lc, allow, old, o.removeRouting)
 		if err != nil {
-			return err
+			return publishFailure(err, narrowedSoFar)
 		}
 		body, err := policyNodeBytes(pol, raw, exists, keepRouting)
 		if err != nil {
-			return err
+			return publishFailure(err, narrowedSoFar)
 		}
 		if err := checkPolicyBytes(body); err != nil {
-			return err
+			return publishFailure(err, narrowedSoFar)
 		}
 		// The per-repository admissions (O4) and the shared node are two writes,
 		// not one transaction (the children are a multi-path patch, the node is
@@ -237,7 +239,7 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 		// account the node does not cover yet.)
 		desired, err := repoAdmissions(pol)
 		if err != nil {
-			return err
+			return publishFailure(err, narrowedSoFar)
 		}
 		// Every child the widening phase will write is read back before the first
 		// write of this publish, so a child this Fugaro could not read is a
@@ -245,15 +247,15 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 		// stop on (admissionBytes).
 		desiredBytes, err := admissionPatch(desired)
 		if err != nil {
-			return fmt.Errorf("%w%s", err, narrowedNote(narrowedSoFar))
+			return publishFailure(err, narrowedSoFar)
 		}
 		var existing map[string]json.RawMessage
 		if _, err := db.Get(ctx, projectpolicy.PathRepos(), &existing); err != nil {
-			return dbErr(lc, err, false)
+			return publishFailure(dbErr(lc, err, false), narrowedSoFar)
 		}
 		now, narrowed, err := tightenAdmissions(ctx, db, lc, desired, existing)
 		if err != nil {
-			return err
+			return publishFailure(err, narrowedSoFar)
 		}
 		narrowedSoFar = append(narrowedSoFar, narrowed...)
 		err = db.PutIfMatch(ctx, projectpolicy.PathShared(), etag, json.RawMessage(body))
@@ -382,6 +384,11 @@ func rulesMarkerPrePolicyText(gen int) string {
 		projectpolicy.PathRulesMarker(), gen, projectpolicy.PolicyRulesVersion, policySince, projectpolicy.RulesVersion)
 }
 
+// rulesDeviceGeneration is the rules generation that added the mailbox's
+// message fields, the device allowlist and the pairing nodes (mobile plan
+// P6.4, D166).
+const rulesDeviceGeneration = 3
+
 // rulesMarkerOlderText is the sentence for the state between the two
 // generations: at or above PolicyRulesVersion and below RulesVersion. Nothing
 // refuses here — Read reads the policy the marker's rules carry and
@@ -390,7 +397,15 @@ func rulesMarkerPrePolicyText(gen int) string {
 // what is broken: these rules do carry the policy nodes, and what they predate
 // is this release's own document, whose mailbox the mobile app has no grant for
 // until the owner deploys it (mobile plan P2.3).
+//
+// A marker at rulesDeviceGeneration already carries the mailbox and the device
+// binding, so for it the sentence names the one thing generation 4 adds: the
+// coordinator's read grant (coordinator plan P3).
 func rulesMarkerOlderText(gen int) string {
+	if gen >= rulesDeviceGeneration {
+		return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules carry the policy nodes, the mailbox and the device binding, so runs, a published policy and the mobile app are unaffected — what they predate is this release's own document, which adds the read grant on the coordinator's state (coordinator plan P3): a signed-in reader is refused every read of %s/ until it is deployed; re-run 'fugaro update --firebase-project' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
+			projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, coordpath.PathRoot, projectpolicy.RulesVersion)
+	}
 	return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules do carry the policy nodes of generation %d, so a published policy is read and enforced and publishing another is not refused — what they predate is this release's own document, which adds the mailbox subtree and the user-claim read grants the mobile app reads (mobile plan P2.1, design m9 §6.4), and binds that user claim to a device node (mobile plan P6.4, D166): a phone account with no %s/<uid> node reads and writes nothing at all, so before you deploy, every account that is meant to reach the app needs one — nothing mints a device node yet ('fugaro pair' is plan task P6.6 and is not built), so today that means adding it by hand; re-run 'fugaro update --firebase-project' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
 		projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, projectpolicy.PolicyRulesVersion, rules.PathDevices, projectpolicy.RulesVersion)
 }
@@ -718,6 +733,7 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		Version:    projectpolicy.Version,
 		Budget:     projectpolicy.Budget{Mode: lc.Budget.Mode, PerRunUSD: lc.Budget.PerRunUSD, AllowedModels: lc.Budget.AllowedModels, MaxRunTokens: lc.Budget.MaxRunTokens},
 		AllowRepos: nonNil(allow),
+		BaseBranch: lc.BaseBranch,
 		Providers:  policyProviders(lc),
 		Prices:     policyPrices(lc),
 		Profiles:   profiles,
@@ -1252,26 +1268,6 @@ func patchPolicyJSON(raw []byte, key string, val any) ([]byte, error) {
 // account"), and it is what a node with an empty list would have to mean anyway
 // — DecodeRepo refuses that spelling rather than reading it.
 
-// tightenAdmissions is the first of the admissions' two writes: it takes away
-// what the config no longer admits, and it writes *before* the shared node.
-// `now` is what each existing child holds once it has run, so the widening
-// phase knows what it still has to write; `lines` says what it narrowed, and
-// the caller repeats them in the failure message when a later write of the same
-// publish fails (a narrowing is not undone by that failure, and the operator is
-// not told about it anywhere else).
-//
-// The direction is the security decision. A child is what the service reads to
-// decide whether a repository's run may be handed somebody's subscription token
-// (C1.11), so a child left admitting an account the shared node does not cover
-// is a revocation that silently did not happen; a child *not* yet admitting an
-// account the shared node does cover costs a repository tier A until the next
-// publish, which is the fail-closed direction. The children are one atomic
-// patch, so the set of narrowings is never half-applied.
-//
-// An existing child this Fugaro cannot read is refused, not written over: the
-// set of accounts it admits is exactly what this function has to narrow, and a
-// node whose meaning is unknown is a node whose narrowing cannot be computed.
-// (Removing such a child is refused by the same rule, below.)
 // admissionBytes is the document a publish writes for one repository child, and
 // the reader's own verdict on it before it is written — checkPolicyBytes, for the
 // children.
@@ -1321,6 +1317,26 @@ func admissionPatch(desired map[string][]string) (map[string]json.RawMessage, er
 	return out, nil
 }
 
+// tightenAdmissions is the first of the admissions' two writes: it takes away
+// what the config no longer admits, and it writes *before* the shared node.
+// `now` is what each existing child holds once it has run, so the widening
+// phase knows what it still has to write; `lines` says what it narrowed, and
+// the caller repeats them in the failure message when a later write of the same
+// publish fails (a narrowing is not undone by that failure, and the operator is
+// not told about it anywhere else).
+//
+// The direction is the security decision. A child is what the service reads to
+// decide whether a repository's run may be handed somebody's subscription token
+// (C1.11), so a child left admitting an account the shared node does not cover
+// is a revocation that silently did not happen; a child *not* yet admitting an
+// account the shared node does cover costs a repository tier A until the next
+// publish, which is the fail-closed direction. The children are one atomic
+// patch, so the set of narrowings is never half-applied.
+//
+// An existing child this Fugaro cannot read is refused, not written over: the
+// set of accounts it admits is exactly what this function has to narrow, and a
+// node whose meaning is unknown is a node whose narrowing cannot be computed.
+// (Removing such a child is refused by the same rule, below.)
 func tightenAdmissions(ctx context.Context, db *rtdb.Client, lc *localcfg.Config, desired map[string][]string, existing map[string]json.RawMessage) (now map[string][]string, lines []string, err error) {
 	now = make(map[string][]string, len(existing))
 	updates := make(map[string]any, len(existing))
@@ -1436,6 +1452,22 @@ func narrowedNote(narrowed []string) string {
 	}
 	return fmt.Sprintf("; the admissions at %s were narrowed first, and a narrowing is not undone by this failure:\n%s",
 		projectpolicy.PathRepos(), strings.Join(narrowed, "\n"))
+}
+
+// publishFailure is the failure return of runProjectPolicyPublish's loop: the
+// error, and narrowedNote of what the tightening phase has already written.
+//
+// Every failure of an attempt goes through it, not only the two writes' — the
+// loop is what makes that necessary. A retry re-enters with narrowedSoFar
+// already carrying the attempt that narrowed and drops the lines that attempt
+// returned, so if the failure that ends the command does not name them, nothing
+// does: the next publish reads the child as already narrowed and says nothing,
+// and the operator is left believing a revocation they asked for did not happen
+// when it did (or, on the next publish, that it happened when it did not). The
+// note is empty on a first attempt that narrowed nothing, so those messages
+// read as they always did.
+func publishFailure(err error, narrowedSoFar []string) error {
+	return fmt.Errorf("%w%s", err, narrowedNote(narrowedSoFar))
 }
 
 // repoAdmissions is the accounts block inverted: the slug of each repository an
@@ -1598,11 +1630,13 @@ func credentialsText(c *projectpolicy.Credentials) string {
 // skewWarning is the lines that tell the operator what publishing these
 // members costs every *other* Fugaro in the installation (the plan's C1.2 skew
 // section: "the review of this task decides whether `fugaro project policy
-// publish` warns before publishing either"; the review asked for the line).
-// Both are members an older reader refuses rather than ignores, so this is not
-// a version-skew nicety — it is the difference between a project that publishes
-// and a project whose every launch, every publish and every run stops until the
-// CLI and the runner image are upgraded:
+// publish` warns before publishing either"; the review asked for the line, and
+// the placement it settled on is the one below — the warning goes out with the
+// diff, once the write has landed). Both are members an older reader refuses
+// rather than ignores, so this is not a version-skew nicety — it is the
+// difference between a project that publishes and a project whose every launch,
+// every publish and every run stops until the CLI and the runner image are
+// upgraded:
 //
 //   - a `credentials` member: an older CLI does not know the key, lists it and
 //     refuses every launch of the project, cascade or not, and refuses to
@@ -1613,15 +1647,15 @@ func credentialsText(c *projectpolicy.Credentials) string {
 //     reads, which halts the run with that routing error rather than a skew
 //     sentence.
 //
+// The lines are printed as part of the diff, after the shared node's write
+// (printPolicyDiff is called once that write has landed), so they are claims
+// about the node as it now is: "before this publish" would be advice about a
+// moment that has already passed. What is still ahead is the next launch, which
+// is what an older reader refuses, so each line ends there.
+//
 // The line names the requirement and not a version number: this binary has no
 // version to name (the release that carries the cascade decides that), and a
 // number written here would be a second place to keep in step with it.
-// skewWarning is the lines that tell the operator what publishing these
-// members costs, printed as part of the diff — so they are claims about the
-// node as it now is, and they are worded that way: the warning is read after
-// the write, and "before this publish" would be advice about a moment that has
-// already passed. What is still ahead is the next launch, which is what an
-// older reader refuses, so each line ends there.
 func skewWarning(p *projectpolicy.Policy) []string {
 	if p == nil {
 		return nil
@@ -2428,10 +2462,21 @@ func boundedNames(names []string) []string {
 // of the same letters without them print as one and the same line. An operator
 // reads that line as the entry of whichever of the two they have in mind, and
 // the two are not the same entry: one is admitted by the allow-list and the
-// other is refused. A name Field would change is therefore escaped with
-// pluginwire's rule (each of those characters as \uXXXX) instead of dropped,
-// so a name reads as what it is — the same choice the CLI makes for a policy
-// node's unknown keys (unknownPolicyKeysText), whose provenance this shares.
+// other is refused. A name Field would change is therefore escaped (each of
+// those characters as \uXXXX) instead of dropped, so a name reads as what it
+// is — the same choice the CLI makes for a policy node's unknown keys
+// (unknownPolicyKeysText), whose provenance this shares.
+//
+// The escape set is Field's *drop* set and not pluginwire's escape set, which
+// is a review finding. PrintableN escapes the controls and the format
+// characters (Cf), and Field drops those plus a handful of invisible ones that
+// are not Cf — the variation selectors (U+FE00–U+FE0F and U+E0100–U+E01EF),
+// U+034F, the Hangul fillers U+115F and U+1160, U+17B4, U+17B5, U+3164 and
+// U+FFA0 — so escaping by pluginwire's rule alone emitted those literally and
+// invisibly, and "x<U+FE00>y" printed as "xy": the collision above, for a
+// character the guard test's Cf fixture never carried. escapedNameRune asks
+// safetext's own predicate (Strip) rather than copying the list, so the two
+// cannot come apart.
 //
 // Two things Field does that PrintableN does not, and that are done here
 // rather than inherited:
@@ -2458,8 +2503,8 @@ func boundedNames(names []string) []string {
 // reading that costs is a name that differs from another only in whitespace:
 // both print alike, and neither is a repository identifier (the alphabet has
 // no space in it) nor reaches a command. What is *not* normalised is the
-// format characters above, which are escaped — two names that differ in one of
-// those still read as two.
+// characters the escape set covers, which are escaped — two names that differ
+// in one of those still read as two.
 //
 // What is escaped is inert either way: Printable escapes every control and
 // format character, so the result is still one line no terminal acts on. It
@@ -2480,7 +2525,7 @@ func printableName(s string) string {
 	var b strings.Builder
 	used := 0
 	for _, r := range normalisedSpaces(s) {
-		e := pluginwire.PrintableN(string(r), 1)
+		e := escapedNameRune(r)
 		n := utf8.RuneCountInString(e)
 		if used+n > safetext.FieldMax-1 {
 			b.WriteRune('…')
@@ -2492,16 +2537,40 @@ func printableName(s string) string {
 	return b.String()
 }
 
+// escapedNameRune is one rune of a run-written name as printableName prints it:
+// the rune as it stands, or its \uXXXX escape when printing it literally would
+// let two different names read as one. Which characters those are, and why the
+// set is Field's drop set rather than pluginwire's escape set, is
+// printableName's doc.
+//
+// safetext.Strip is the drop half of Field, so Strip(string(r)) != string(r)
+// is "Field would have dropped this rune" — asked rather than copied, so a
+// character added to that set later is escaped here without anyone remembering
+// to. It is asked per rune because Field's whitespace rule cannot be: Fields
+// and its Join keep a value's interior spaces but drop a lone one, so Field(" ")
+// is "" and asking Field would escape the ordinary names that hold a space.
+func escapedNameRune(r rune) string {
+	if e := pluginwire.PrintableN(string(r), 1); e != string(r) {
+		// pluginwire's rule already escapes it — the controls, the format
+		// characters — and its spelling of the escape is the one to keep.
+		return e
+	}
+	if safetext.Strip(string(r)) == string(r) {
+		return string(r)
+	}
+	return fmt.Sprintf("\\u%04x", r)
+}
+
 // printableNameMax is the most runes printableName returns. Its bound is on
 // what is printed, so it is safetext.FieldMax itself: the ellipsis stands in
 // for the rune it replaced.
 const printableNameMax = safetext.FieldMax
 
 // normalisedSpaces is s with Field's whitespace rule applied and nothing else.
-// Field does the same and then drops the format characters (and the invalid
-// UTF-8) as well; those are kept here, because printableName escapes them
-// rather than dropping them, so that two names that differ in one still read
-// as two.
+// Field does the same and then drops the characters the escape set covers (the
+// format characters among them) and the invalid UTF-8 as well; those are kept
+// here, because printableName escapes them rather than dropping them, so that
+// two names that differ in one still read as two.
 func normalisedSpaces(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))
@@ -2608,12 +2677,28 @@ func notAdmittedSentence(r string) string {
 // for it, when name is a repository identifier and nothing else: a
 // provider/owner/name path (a repository may nest, so any depth above two) over
 // the repository alphabet [A-Za-z0-9._-], whose first segment is a provider
-// kind (task.ValidProvider, what projectpolicy.Canonical and task.Slug take),
-// with no empty, "." or ".." segment and no segment opening with "-" (a shell
+// kind this Fugaro knows (config.Providers — the set projectpolicy.ValidPattern
+// requires, and the one `repos add` validates the argument with), with no
+// empty, "." or ".." segment and no segment opening with "-" (a shell
 // word that opens with a dash reads as an option). A "*" — the wildcard of a
 // pattern, and the one character that makes the name admit more than itself —
 // is not in the alphabet, and neither is a space, so a pattern and a name a run
-// padded are both refused. The value comes back quoted as one shell word
+// padded are both refused.
+//
+// The provider is the KIND and not its shape: task.ValidProvider reads
+// ^[a-z][a-z0-9-]*$, which admits any lower-case word, while `repos add`
+// validates the argument it is given with projectpolicy.ValidPattern, whose
+// first segment must be a member of config.Providers. A slug field of
+// `prod/acme/app` — a name one hand-written spendDaily document can carry — is
+// provider-shaped, so a shape-only gate printed
+// 'fugaro project repos add prod/acme/app', and that command exits with
+// `"prod" is not a git provider kind (github, bitbucket)`: an instruction the
+// program hands out that the program itself refuses. What is printed is meant
+// to work, so the set is the one the command applies. A provider kind spelled
+// in another case is refused by both tests anyway (config.Providers is
+// lower-case, and so is task.ValidProvider).
+//
+// The value comes back quoted as one shell word
 // (shellword.Quote: unchanged when it is already safe, single-quoted
 // otherwise), because what is printed is meant to be pasted into a shell.
 //
@@ -2622,24 +2707,52 @@ func notAdmittedSentence(r string) string {
 // and these listings reach this sentence exactly for the names the config does
 // not know. The canonical form is the one that stands on its own.
 //
-// The name is bounded too, at safetext.FieldMax bytes (the alphabet is ASCII,
-// so bytes are characters): every other name these listings print is held to
-// that bound, and without it a run that wrote a long enough identifier-shaped
-// slug made the advisory line, and the command in it, as long as it chose. A
-// longer name gets no command, the same answer as any other name that is not a
-// repository identifier.
+// The name must also be one `repos add` accepts after its own canonicalising:
+// a last segment of exactly ".git" is not, because task.CanonicalRepo strips a
+// trailing ".git" (after lower-casing) and is then left with an empty one, so
+// 'github/acme/.git' is printed by the shape rules above and refused by the
+// command. "github/acme/app.git" IS accepted (the command stores
+// "github/acme/app"), so the rule is about the last segment and not the
+// suffix.
+//
+// The name is bounded too, at projectpolicy.MaxPatternLen bytes (the alphabet
+// is ASCII, so bytes are characters) — the bound `repos add` applies to the
+// argument through ValidPattern, and not a bound of this package's own. It is
+// the tightest of the two that could be used here: safetext.FieldMax is 512,
+// so bounding at that let a hand-written 256-byte slug field be handed
+// 'fugaro project repos add github/acme/<300 bytes>', which exits with "the
+// pattern is N characters; at most 255 are allowed" — the same defect as the
+// provider-kind one above, and the property the test is named for. Every other
+// name these listings print is held to that bound as well, and without any
+// bound a run that wrote a long enough identifier-shaped slug made the advisory
+// line, and the command in it, as long as it chose. A longer name gets no
+// command, the same answer as any other name that is not a repository
+// identifier.
 func enrollableArg(name string) (string, bool) {
-	if len(name) > safetext.FieldMax {
+	if len(name) > projectpolicy.MaxPatternLen {
 		return "", false
 	}
 	segs := strings.Split(name, "/")
-	if len(segs) < 3 || !task.ValidProvider(segs[0]) {
+	if len(segs) < 3 || !slices.Contains(config.Providers, segs[0]) {
 		return "", false
 	}
 	for _, seg := range segs {
 		if !repoIdentSegment(seg) {
 			return "", false
 		}
+	}
+	// A name whose LAST segment is exactly ".git" is refused by `repos add`,
+	// and this gate has to refuse it too or it prints a command the program
+	// itself answers with `"github/acme/.git" is not a repository: the
+	// repository must look like owner/name`. task.CanonicalRepo strips a
+	// trailing ".git" — after ASCII-lowering, so ".GIT" goes the same way —
+	// and then requires every segment to be non-empty: "github/acme/.git"
+	// becomes "github/acme/" and fails. Only the last segment, and only the
+	// whole segment: "github/acme/app.git" is a name the command accepts (it
+	// stores "github/acme/app"), and a ".git" segment in the middle is left
+	// alone.
+	if strings.EqualFold(segs[len(segs)-1], ".git") {
+		return "", false
 	}
 	return shellword.Quote(name), true
 }

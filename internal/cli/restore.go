@@ -58,7 +58,7 @@ import (
 //     makes before it creates anything are the OLD project's own creation
 //     fact, which is where the owner's amount is written down (Task 4.2) and
 //     whether that project was managed at all, and whether the NEW project ID
-//     already exists (a restore never adopts one).
+//     already exists (a restore always creates a new one).
 //
 // There is no release gate of its own any more (Task 4.4 removed the
 // constant one, managedmode.Shipped, that kept this command inert). What
@@ -123,7 +123,7 @@ closed, not yours to read) the restore proceeds only on --budget and
 --budget-currency. The billing account is always yours to give: the creation
 fact is not a credential and records none.
 
-NEW_PROJECT_ID must not exist: an existing project is refused, never adopted.
+NEW_PROJECT_ID must not exist: an existing project is refused (Fugaro only starts fresh).
 If the creation fails or does not end in a project this run created and
 marked, the local project config file is put back as it was and the restore
 can be run again; what the creation did in the cloud (the project, its
@@ -188,12 +188,6 @@ type restoreRun struct {
 // checkout and the apply — and every refusal before the creation is a hard
 // return.
 func runRestore(cmd *cobra.Command, o restoreOptions, newID, rootArg string) error {
-	// A restore creates a managed project and applies as its deployer, and
-	// neither is possible in this release (managedDeployerShipped): refused
-	// before anything else, and before any cloud call.
-	if err := refuseManagedNotShipped(); err != nil {
-		return err
-	}
 	// A credential leak first, before anything opens the cloud (refuseHTTP2Debug).
 	if err := refuseHTTP2Debug(os.Getenv); err != nil {
 		return err
@@ -378,7 +372,7 @@ func restoreSteps(cmd *cobra.Command, o restoreOptions, newID, rootArg string) (
 			// refusal names the condition and not the command, because a
 			// refusal is what a coding agent's session reads (Task 3.0 §5).
 			moved = false
-			return restoreWrap(err, "%s exists: this run created it and wrote its creation fact, so the project config keeps naming it (its previous content is in the backup %s) and the checkout's gcp_project: line did not move. What is missing is the project's %s=%s label, which only the owner writes, in their own terminal: docs/gcp-setup.md has that one line. Run it, then change the checkout's line to gcp_project: %s and run fugaro managed apply %s to finish. If the project is unwanted instead, shut %s down (gcloud projects delete %s), put the backup back over the project config, and run fugaro restore again with another NEW_PROJECT_ID",
+			return restoreWrap(err, "%s exists: this run created it and wrote its creation fact, so the project config keeps naming it (its previous content is in the backup %s) and the checkout's gcp_project: line did not move. What is missing is the project's %s=%s label, which only the owner writes, in their own terminal: docs/design/managed-projects.md has that one line. Run it, then change the checkout's line to gcp_project: %s and run fugaro managed apply %s to finish. If the project is unwanted instead, shut %s down (gcloud projects delete %s), put the backup back over the project config, and run fugaro restore again with another NEW_PROJECT_ID",
 				rr.newID, rr.backup, managed.ProjectLabelKey, managed.ProjectLabelValue, rr.newID, rr.rootArg, rr.newID, rr.newID)
 		default:
 			return err
@@ -420,10 +414,10 @@ func (rr *restoreRun) refuseExisting(ctx context.Context) error {
 	}
 	info, err := infra.ReadProject(ctx, pc, rr.newID)
 	if info.Exists {
-		return userErr("nothing was restored: GCP project %s already exists (%s), and a restore never adopts a project — it creates a new one, which is what makes it managed. Choose a NEW_PROJECT_ID nobody holds", rr.newID, oneLine(info.State))
+		return userErr("nothing was restored: GCP project %s already exists (%s), and a restore always creates a new project, which is what makes it managed. Choose a NEW_PROJECT_ID nobody holds", rr.newID, oneLine(info.State))
 	}
 	if err != nil {
-		return userErr("nothing was restored: whether GCP project %s already exists could not be read (%s), and a restore creates its project rather than adopting one, so an unanswered read is a refusal", rr.newID, safetext.Field(err.Error()))
+		return userErr("nothing was restored: whether GCP project %s already exists could not be read (%s), and a restore only creates its project, so an unanswered read is a refusal", rr.newID, safetext.Field(err.Error()))
 	}
 	return nil
 }
@@ -448,7 +442,7 @@ func (rr *restoreRun) refuseExisting(ctx context.Context) error {
 func (rr *restoreRun) verifyCreated(ctx context.Context, c *infra.Clients, made initCreation) error {
 	switch {
 	case made.Existed:
-		return userErr("the creating path found %s already there, so this run did not create it (a restore never adopts a project)", rr.newID)
+		return userErr("the creating path found %s already there, so this run did not create it (a restore always creates a new project)", rr.newID)
 	case made.Created != rr.newID:
 		return userErr("the creating path did not create %s (it created %q)", rr.newID, made.Created)
 	case !made.Marked && made.Fact:
@@ -515,7 +509,7 @@ func (e *createdNotOpenError) Unwrap() error { return e.err }
 // gets its original bytes back so `fugaro restore` can be run again, and the
 // error says what state the run left — including what it does not undo.
 func (rr *restoreRun) putBack(cause error) error {
-	left := fmt.Sprintf("the checkout's fugaro.yaml was not touched, and the backup %s stays. Nothing the creating path did in the cloud is undone: if it got as far as creating %s, that project stays, with whatever it reached of its billing link, its Terraform state bucket, the installation's resources and any Secret Manager values it stored. A restore never adopts an existing project, so retry with another NEW_PROJECT_ID, and shut %s down (gcloud projects delete %s) if it is yours and unwanted", rr.backup, rr.newID, rr.newID, rr.newID)
+	left := fmt.Sprintf("the checkout's fugaro.yaml was not touched, and the backup %s stays. Nothing the creating path did in the cloud is undone: if it got as far as creating %s, that project stays, with whatever it reached of its billing link, its Terraform state bucket, the installation's resources and any Secret Manager values it stored. A restore always creates a new project, so retry with another NEW_PROJECT_ID, and shut %s down (gcloud projects delete %s) if it is yours and unwanted", rr.backup, rr.newID, rr.newID, rr.newID)
 	if werr := writeFileAtomic(rr.path, rr.old); werr != nil {
 		return restoreWrap(cause, "nothing was restored, and the project config %s could NOT be put back (%v): it names %s, so copy its backup %s over it by hand before retrying; %s", rr.path, werr, rr.newID, rr.backup, left)
 	}
@@ -1035,8 +1029,8 @@ func (rr *restoreRun) create(ctx context.Context, made *initCreation) error {
 	cmd := rr.cmd
 	args := rr.createArgs()
 	fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: creating the project through the same path fugaro setup --create-project --managed uses: fugaro setup %s\n", strings.Join(args, " "))
-	// strictCreate: the child refuses a project that is already there rather
-	// than adopting it; made: the child's own account of what it did, which
+	// strictCreate: the child refuses a project that is already there, even
+	// one an earlier run of fugaro setup created; made: the child's own account of what it did, which
 	// verifyCreated checks.
 	child := restoreInitCmd(&initOptions{strictCreate: true, created: made})
 	// The child is run as a root of its own, so cobra would print its error
@@ -1273,7 +1267,7 @@ func restoreNotRestored(old *localcfg.Config, newID string) []string {
 		fmt.Sprintf("%s: the owner's delete list is NOT carried across, and nothing this restore runs re-creates it. Write it again with fugaro allow-delete, and until you do, every delete and every replacement in %s is refused (D74)", managed.AllowDeleteObject, newID),
 		fmt.Sprintf("the project layer, gs://%s/%s: the repository does not hold it and this restore does not re-publish it — there is no path for that yet (the Gap's finding 32). Publish it again yourself, from a copy, with fugaro config publish", bucket, config.LayerKey),
 		fmt.Sprintf("the project's recipes, gs://%s/%s<name>.yaml: the repository does not hold them and this restore does not re-publish them either. Publish each one again with fugaro recipes publish", bucket, recipe.ObjectPrefix),
-		fmt.Sprintf("and the one thing that is RE-CREATED rather than lost: %s, with its two custom roles and its binding on gs://%s. The creating path builds it with the rest of the installation (D75), so a managed apply works in %s without a step of its own", managedmode.DeployerAccount(newID), managedmode.ManagedStateBucketName(newID), newID),
+		fmt.Sprintf("and the one thing that is RE-CREATED rather than lost: %s, with the deployer's custom roles and their bindings on gs://%s (the fmgd- fenced ones only where the installation opts in, which nothing does in this release). The creating path builds it with the rest of the installation (D75), so a managed apply works in %s without a step of its own", managedmode.DeployerAccount(newID), managedmode.ManagedStateBucketName(newID), newID),
 	}
 }
 

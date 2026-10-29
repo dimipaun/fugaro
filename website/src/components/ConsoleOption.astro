@@ -7,11 +7,13 @@
  * Getting Started presents two ways to install Fugaro: the CLI — the install paths
  * `website/data/install.yaml` carries, each command with its copy control — and the desktop
  * console. This component is the second one, and it is the only place on that page the
- * console is mentioned. It renders **inside the card of the system the console ships for**:
- * the page draws a card per system `install.yaml` supports, the console's own data file names
- * macOS on every asset it publishes, so the console's block sits in macOS's card and a reader
- * who wants the CLI reads past it. A reader on Linux is not offered a download built for
- * another system, and the page never says the console runs anywhere it does not.
+ * console is mentioned. It renders **inside the card of the system the console's released
+ * sentence describes**: the page draws a card per system `install.yaml` supports, and the
+ * console's block sits in macOS's card, because the release's own signed and notarised
+ * artifacts are the ones that sentence is about. The platform whose facts differ — Linux,
+ * unsigned (D10) — is a block inside that card with its own sentence and its own links,
+ * exactly as it is on the console page, so the page never says the console runs anywhere it
+ * does not.
  *
  * **It renders no link while the console is unreleased, and that is structural.** The two
  * states are one `if`: the download list is rendered from the release's own published names
@@ -74,9 +76,11 @@ interface Props {
   /** The release's published assets, in the order the data file lists them. */
   downloads: DownloadFacts[]
   /**
-   * The data file's optional per-platform block, or `null` when it carries none — which is
-   * the state this checkout ships. Nothing is drawn for it while it is absent: no heading, no
-   * sentence, no link, and no word saying which platform is missing.
+   * The data file's optional per-platform block, or `null` when it carries none. Nothing is
+   * drawn for it while it is absent: no heading, no sentence, no link, and no word saying which
+   * platform is missing. The block's verification steps are the console page's — the section
+   * where the release's own download facts live — so this card carries the sentence and the
+   * links, as it carries a link without a checksum above.
    */
   linux: PlatformFacts | null
 }
@@ -159,8 +163,8 @@ const listedAbove = downloads.filter((download) => !inBlock.has(download.id))
   .console-downloads a {
     display: inline-block;
     padding: var(--space-2xs) var(--space-sm);
-    border: var(--border-width) solid var(--border);
     border-radius: var(--radius-sm);
+    background: var(--panel);
     font-size: var(--font-size-sm);
   }
 

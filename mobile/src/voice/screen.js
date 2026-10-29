@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See mobile/LICENSE.md for the terms.
 // The voice screen: the interrupt switch, the queue it gates, the offline
 // refusal and the lease (mobile plan, Task P3.5; D122, D127, D126, D118).
 //
@@ -117,6 +119,9 @@ function freezeList(items) {
  * @param {string} options.holder this installation's name, for P1.2's lease
  * @param {string} [options.switch] D127's setting; `off` unless the owner set it
  * @param {number} [options.queueCap] how many updates may wait; `QUEUE_CAP`
+ * @param {(text: string) => Promise<object>} [options.utterance] P6.12's spoken
+ *   dialogue, which routes a final transcript instead of accepting it as a
+ *   message; absent means every final is a message
  * @returns {object} the screen
  * @throws {TypeError} for a port, a value source or a setting that cannot be used
  */
@@ -127,6 +132,7 @@ export function createVoiceScreen({
   holder,
   switch: setting = INTERRUPT_SWITCH.OFF,
   queueCap = QUEUE_CAP,
+  utterance: dialogue = null,
 } = {}) {
   if (!isVoicePipeline(pipeline)) throw new TypeError('pipeline is a VoicePipeline');
   if (client === null || typeof client !== 'object'
@@ -139,6 +145,9 @@ export function createVoiceScreen({
     throw new TypeError('the interrupt switch is INTERRUPT_SWITCH.OFF or .ON');
   }
   if (!Number.isInteger(queueCap) || queueCap < 1) throw new TypeError('queueCap is a positive whole number');
+  if (dialogue !== null && typeof dialogue !== 'function') {
+    throw new TypeError('utterance is the voice dialogue (P6.12), or absent');
+  }
 
   /** D127's setting, in memory and nowhere else: it is never written down. */
   let switchValue = setting;
@@ -220,7 +229,15 @@ export function createVoiceScreen({
   // refuses, while offline), and the turn closing is a boundary, so the queue
   // gets its chance.
   pipeline.on('message', (event) => {
-    void accept(event.message.text);
+    // P6.12's seam. A final transcript is not always a message: P6.1 routes it,
+    // and a "Fugaro, confirm" is a confirmation rather than something to send.
+    // The spoken dialogue is that routing, and the app passes it here; the
+    // words it decides are agent text go to this screen's own `accept`, so the
+    // offline refusal above stands over the voice path too. Without a dialogue
+    // the screen is what P3.5 shipped: every final is a message, and `accept`
+    // is the only door.
+    if (dialogue === null) void accept(event.message.text);
+    else void dialogue(event.message.text);
     drain();
   });
   // The user's words, as they arrive: what §5's screen shows.

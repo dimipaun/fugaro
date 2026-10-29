@@ -173,29 +173,32 @@ func isPlanPath(p string) bool {
 // The list shrinks as the tasks land, and the test says so when it does not:
 // T1 (`internal/mailbox/message.go`, `message_test.go` and the package
 // directory they make) has been built, so its three entries left this map and
-// are checked like every other cited path. The remaining entries are the tasks
-// still unbuilt — T2 and T2a's `mac.go`, T3's lease, T4's ledger, T5's command,
-// T6's runner, T7's sweeper and T8's corpus — and each of them must stay
-// absent until its own task lands.
+// are checked like every other cited path, and T2's two (`mac.go`, the verify
+// half of the tag and the inbound gate, and `internal/mailbox/keychain`, the
+// item-name reader), T3's two (`lease.go` and `shared/lease/parity.test.js`),
+// T2a's `mac_sign_test.go` and T4's (`internal/mailbox/ledger.go`; its
+// `ledger_test.go` was written bare in the plan's T4 Files line, which
+// `planPathRE` could never collect — a citation with no directory prefix is not
+// a path — so the plan now spells it `internal/mailbox/ledger_test.go` and it is
+// checked like any other cited path) left it the same way. T2a also filled in
+// the signing half of `mac.go`, which was already in the tree as T2's file: the
+// entry that leaves this map is the test file, and the file it sits beside is
+// checked like every other cited path. The remaining entries are the tasks still
+// unbuilt — T5's command, T6's runner, T7's sweeper and T8's corpus — and each of
+// them must stay absent until its own task lands.
 var planWillCreate = map[string]string{
 	"internal/cli/mailbox.go":                 "T5's command surface",
 	"internal/cli/mailbox_test.go":            "T5, T6",
 	"internal/cli/mailbox_sweep_test.go":      "T7",
-	"internal/mailbox/keychain":               "T2's keychain item-name reader",
-	"internal/mailbox/mac.go":                 "T2 (verify) and T2a (sign)",
-	"internal/mailbox/lease.go":               "T3",
-	"internal/mailbox/ledger.go":              "T4",
-	"internal/mailbox/expiry.go":              "T3, T4",
+	"internal/mailbox/expiry.go":              "T7 (the hidden sweeper; the plan names it there, not under T3 or T4)",
 	"internal/mailbox/action.go":              "T6",
 	"internal/mailbox/parity_test.go":         "T8 (replays shared/mailbox/parity.test.js's corpus)",
-	"internal/mailbox/mac_sign_test.go":       "T2a",
 	"internal/mailbox/testdata/parity.json":   "T8 generates it; the Go side only reads it",
 	"docs/mobile/mailbox-review-checklist.md": "T8",
 	// The parity corpora the shared modules' own test files will write; the
 	// merged modules' index.test.js files exist today, these do not (§13's
 	// "no merged module changes" — test files only).
 	"shared/mailbox/parity.test.js": "T8",
-	"shared/lease/parity.test.js":   "T3",
 }
 
 // planWillCreateElsewhere is the other half of that rule: paths the plan names
@@ -212,11 +215,34 @@ var planWillCreateElsewhere = map[string]string{
 	"internal/budget/sweep_device_test.go": "P6.6's `m~…` sweep rule's test",
 }
 
+// planPathMoved is the third case, and the narrowest: a path the plan names
+// that has since *moved*, so it is neither in the tree under that name nor ever
+// going to be created by a task. The plan is a dated record and is not edited
+// when the tree moves under it (ee-reorg E1.7a moved the reference's generator
+// into internal/clidoc/cliref/ and renamed the core's own check), so the
+// citation stays true through the successor, and this record is what says so:
+// the old path is gone, the successor is here, and the plan still names the old
+// one. Anything wider would be a place for a real path to hide.
+var planPathMoved = map[string]struct {
+	successor string
+	why       string
+}{
+	"internal/clidoc/cliref.go": {
+		successor: "internal/clidoc/cliref/cliref.go",
+		why:       "ee-reorg E1.7a split the renderer out of the core's `package main` command",
+	},
+	"internal/clidoc/cliref_test.go": {
+		successor: "internal/clidoc/coreref_test.go",
+		why:       "ee-reorg E1.7a left the core's subset check here and moved the whole-file one under ee/",
+	},
+}
+
 // TestMailboxPlanEveryCitedPathExists is the path half of the citations pin,
 // derived from the plan rather than kept by hand. Every backticked `internal/`,
 // `shared/`, `mobile/`, `docs/`, `website/`, `deploy/` or `scripts/` path the
 // plan names must be in the tree — or be one of the handful T1–T8 create, each
-// of which must still be absent and still be named by the plan.
+// of which must still be absent and still be named by the plan, or one of the
+// two ee-reorg E1.7a moved, whose successor must be present in its place.
 //
 // Mutation (verified, run and restored): rename a cited path in the plan
 // (`internal/cli/docs_website_cliref_test.go` -> `…_test2.go`) and this test
@@ -245,6 +271,20 @@ func TestMailboxPlanEveryCitedPathExists(t *testing.T) {
 			// list is walked with its reasons.
 			continue
 		}
+		if _, ok := planPathMoved[p]; ok {
+			// Absence of the old path and presence of its successor are asserted
+			// by the loop at the end of this test, where the record is walked
+			// with both.
+			continue
+		}
+		if p == "docs/pending-workflows/shared-tests.yml" {
+			// Copied into .github/workflows/ on 2026-10-24 (#942), which removed the staged
+			// copy; the plan is a record of when it was staged, so the live file is checked.
+			if _, err := os.Stat("../../.github/workflows/shared-tests.yml"); err != nil {
+				t.Errorf("%s cites the staged %s, which was applied: .github/workflows/shared-tests.yml must exist: %v", mailboxPlan, p, err)
+			}
+			continue
+		}
 		if pathExists(p) {
 			continue
 		}
@@ -264,6 +304,20 @@ func TestMailboxPlanEveryCitedPathExists(t *testing.T) {
 		}
 		if !named[p] {
 			t.Errorf("planWillCreateElsewhere names %s (%s), which the plan no longer cites: the list must only excuse paths the document actually names", p, why)
+		}
+	}
+	// The moved paths, walked the same way and with the successor the record
+	// exists for: the plan is unedited, so a citation of it is answered by the
+	// file the path became, and by nothing else.
+	for p, moved := range planPathMoved {
+		if _, err := os.Stat("../../" + p); err == nil {
+			t.Errorf("%s: %s is in the tree again (%s), so the move recorded here has been undone or never happened: it must leave planPathMoved and be checked like any other path", mailboxPlan, p, moved.why)
+		}
+		if _, err := os.Stat("../../" + moved.successor); err != nil {
+			t.Errorf("%s: %s's successor %s is not in the tree (%s), so the plan's citation points at nothing at all: %v", mailboxPlan, p, moved.successor, moved.why, err)
+		}
+		if !named[p] {
+			t.Errorf("planPathMoved names %s (%s), which the plan no longer cites: the record must only excuse paths the document actually names", p, moved.why)
 		}
 	}
 }
@@ -315,7 +369,10 @@ func TestMailboxPlanCitationsExist(t *testing.T) {
 		"internal/budget/rules/rules.go",
 		"internal/budget/rules/rules.json.tmpl",
 		"internal/budget/rules/emulator_mailbox_test.go",
-		// The precedents the plan borrows from.
+		// The precedents the plan borrows from. The two clidoc paths are the
+		// plan's own wording, which a dated record keeps; what they point at
+		// today is the successor each one moved to (planPathMoved, in the
+		// derivation test below, is where that is asserted).
 		"internal/watch/acks.go",
 		"internal/watch/prstate.go",
 		"internal/runstore/launch.go",
@@ -367,15 +424,24 @@ func TestMailboxPlanCitationsExist(t *testing.T) {
 		"internal/watch/acks.go":         {"func AckPath("},
 		"internal/watch/prstate.go":      {"func (p *PRState) ask("},
 		"internal/runstore/launch.go":    {"func (s *Store) Claim(", "ClaimTTL"},
-		"internal/clidoc/cliref.go":      {"defaultPath"},
-		"internal/clidoc/cliref_test.go": {"func TestCliReferenceIsCurrent("},
-		"shared/mailbox/index.js":        {"DEFAULT_WINDOW_MS", "MIN_WINDOW_MS", "MAX_WINDOW_MS", "MAX_PROMPT_TTL_MS", "DEFAULT_MAX_SEEN", "defaultMaxPerSender", "export function step(", "export function initialState("},
-		"shared/lease/index.js":          {"CLAIM_TTL", "MAX_CLOCK_SKEW", "export function takeLease(", "export function readLease(", "export function releaseLease(", "export function validateLease("},
-		"shared/presence/index.js":       {"export function evaluatePresence(", "MAX_BOOT_ID_LENGTH"},
-		"shared/digest/index.js":         {"export function digest(", "REDACTED", "redact"},
-		"shared/mailbox-sim/index.js":    {"export function createSimulator(", "export function scheduleFromSeed(", "export function faultFor(", "export function scheduleText(", "export function parseScheduleText(", "export function replyId("},
-		"shared/mailbox-schema/index.js": {"FIELDS", "REQUIRED_FIELDS", "KINDS", "ACTIONS", "DIRECTIONS", "validateMessage", "isMessage", "validateHeartbeat", "export function canonicalBytes(", "REFUSALS"},
-		"shared/mailbox-schema/mac.js":   {"export function macOf(", "export function verifyMac("},
+		// The reference's generator moved out of the core (ee-reorg E1.7a). The
+		// plan's citation of `internal/clidoc/cliref.go` is about rendering the
+		// reference from the tree, and the renderer is what is still here: the
+		// file the plan names is the citation the anchor list above keeps and
+		// planPathMoved answers, and the half of its drift check the core can
+		// run is coreref_test.go, which is what the plan's `cliref_test.go`
+		// became. The released tree's own generator and the whole-file check are
+		// under ee/, which this test never reads -- the "core without ee/"
+		// workflow deletes that directory and runs this suite.
+		"internal/clidoc/cliref/cliref.go": {"func Generate(", "func Prepare("},
+		"internal/clidoc/coreref_test.go":  {"func TestCoreCommandsAreInTheReference("},
+		"shared/mailbox/index.js":          {"DEFAULT_WINDOW_MS", "MIN_WINDOW_MS", "MAX_WINDOW_MS", "MAX_PROMPT_TTL_MS", "DEFAULT_MAX_SEEN", "defaultMaxPerSender", "export function step(", "export function initialState("},
+		"shared/lease/index.js":            {"CLAIM_TTL", "MAX_CLOCK_SKEW", "export function takeLease(", "export function readLease(", "export function releaseLease(", "export function validateLease("},
+		"shared/presence/index.js":         {"export function evaluatePresence(", "MAX_BOOT_ID_LENGTH"},
+		"shared/digest/index.js":           {"export function digest(", "REDACTED", "redact"},
+		"shared/mailbox-sim/index.js":      {"export function createSimulator(", "export function scheduleFromSeed(", "export function faultFor(", "export function scheduleText(", "export function parseScheduleText(", "export function replyId("},
+		"shared/mailbox-schema/index.js":   {"FIELDS", "REQUIRED_FIELDS", "KINDS", "ACTIONS", "DIRECTIONS", "validateMessage", "isMessage", "validateHeartbeat", "export function canonicalBytes(", "REFUSALS"},
+		"shared/mailbox-schema/mac.js":     {"export function macOf(", "export function verifyMac("},
 		// P6.5, merged: the TTL this plan binds rather than declares (M3).
 		"shared/prompts/index.js": {"export const PROMPT_TTL_MS", "export const EXPIRED_REPLY", "export const QUEUE_FULL_REPLY", "export const initialQueue", "export const enqueue", "export const expire", "export const answer", "export const pending", "export const announce", "export const evaluateInterrupt"},
 	} {

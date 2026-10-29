@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See mobile/LICENSE.md for the terms.
 // The audio module's door, and the scan that keeps it what it is
 // (mobile plan, Task P3.4; D122, D123, D126, D118, D119).
 //

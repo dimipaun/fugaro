@@ -19,7 +19,11 @@ import (
 // contradicting the file it cited — §13's 67–68 row said "67 is written as 67a
 // and 67b" while the checklist carries no `## Check 67a`, no `## Check 67b` and
 // no `## Check 68` section and no summary row for any of them (the
-// managed-projects plan reserves the numbers and its Task 5.3 writes them);
+// managed-projects plan reserves the numbers and its Task 5.3 writes them) —
+// and that row has since been half-made true: Check 68 was written into the
+// register by this repository's 0.10.0 fence work, so §13's row now says 68 is
+// written and 67a/67b are not, and this test pins each half in its own
+// direction;
 // §2 called `mac` and `kind` "not shipped" when P6.4 (#601, `371038f`) is
 // merged into this branch, and attributed the kind check to PARENTKIND when the
 // rules validate it inline; §5 rule 4 promised a redaction gate on the STT path
@@ -62,7 +66,8 @@ import (
 // rename `## Check 19:`; add a
 // `| 48 |` row or a `## Check 69c` section; restore §13's "the register says so
 // of itself"; drop "11 also carries **11b**" from §13's run; add a `| 67a |`
-// row, a `## Check 68:` section or a `## Check 57:` section; stop the `| 57 |`
+// row, a `## Check 67b:` section, a `## Check 57:` section, or delete the
+// `| 68 |` row or the `## Check 68:` section; stop the `| 57 |`
 // row pointing at compute-backend.md §7.2; restore "The convention is the
 // register's and the mobile plan's"; drop the §5.3 attribution or lowercase the
 // plan's quoted sentence; reword a quoted sentence in its source file; delete a
@@ -248,7 +253,7 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 	// The sentences that carry the reading. Scoped to §13, since the withdrawn
 	// wording is quoted verbatim in §11's round-12 and round-13 entries.
 	checks := docSection(t, designPath, design, "## 13. The checks this would need")
-	for _, want := range []string{"19–23 and 26–38", "24 and 25", "11 also carries **11b**", "counted here from the file"} {
+	for _, want := range []string{"19–23 and 26–38", "24 and 25", "11 also carries **11b**", "counted here from the file", "68 is written, 67a and 67b are not"} {
 		if !strings.Contains(checks, want) {
 			t.Errorf("%s's §13 no longer says %q, so a reader cannot repeat the count from it", designPath, want)
 		}
@@ -260,17 +265,25 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 		t.Errorf("%s's §13 attributes its own count of the row run to the register, which says no such thing of itself", designPath)
 	}
 
-	// 2. The reservation the review round corrected: 67 is reserved as 67a
-	// and 67b, 68 is the deployer account's live IAM check, and neither plan
-	// has written them into the register yet — in EITHER half, which is what
-	// §13's "reserved, and neither is in the register yet" means: a `## Check`
-	// section or a summary row for one of them makes that row stale.
-	for _, n := range []string{"67a", "67b", "68"} {
+	// 2. The managed-projects numbers, in both directions, because they no
+	// longer share a state: 68 (the deployer account's live IAM check) IS
+	// written — a `| 68 |` summary row and a `## Check 68:` section, the shape
+	// Check 68's own test pins — while 67 is still only reserved as 67a and
+	// 67b, with neither half in the register. §13's row is what says so, and a
+	// row or a section appearing for 67a/67b, or disappearing for 68, makes it
+	// stale in one direction or the other.
+	if !rows["68"] {
+		t.Errorf("%s's summary table has no `| 68 |` row, but %s §13 says 68 is written", checklistPath, designPath)
+	}
+	if !strings.Contains(checklist, "## Check 68:") {
+		t.Errorf("%s carries no `## Check 68:` section, but %s §13 says 68 is written — a row with no section is a command nobody can follow", checklistPath, designPath)
+	}
+	for _, n := range []string{"67a", "67b"} {
 		if strings.Contains(checklist, "## Check "+n+":") {
-			t.Errorf("%s carries a `## Check %s:` section, but %s §13 says the managed-projects numbers are reserved and unwritten; the design's row must be updated to the register as it stands", checklistPath, n, designPath)
+			t.Errorf("%s carries a `## Check %s:` section, but %s §13 says the 67 half is reserved and unwritten; the design's row must be updated to the register as it stands", checklistPath, n, designPath)
 		}
 		if rows[n] {
-			t.Errorf("%s carries a `| %s |` summary row, but %s §13 says the managed-projects numbers are reserved and unwritten — and a row is the half a reader sees first", checklistPath, n, designPath)
+			t.Errorf("%s carries a `| %s |` summary row, but %s §13 says the 67 half is reserved and unwritten — and a row is the half a reader sees first", checklistPath, n, designPath)
 		}
 	}
 	// 2b. §13's other "where the body lives" claim: **57 is a summary row whose
@@ -323,10 +336,13 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 	if row == "" {
 		t.Fatalf("%s's §13 table no longer has a `| **67–68** |` row; update this test's marker", designPath)
 	}
-	for _, want := range []string{"reserved, and neither is in the register yet", "`## Check 67a`"} {
+	for _, want := range []string{"68 is written, 67a and 67b are not", "`## Check 67a`"} {
 		if !strings.Contains(row, want) {
-			t.Errorf("%s's §13 67–68 row does not say %q, so it reads as a written check rather than a reservation: %s", designPath, want, row)
+			t.Errorf("%s's §13 67–68 row does not say %q, so a reader cannot tell which half of the pair is written from it: %s", designPath, want, row)
 		}
+	}
+	if strings.Contains(row, "reserved, and neither is in the register yet") {
+		t.Errorf("%s's §13 67–68 row still reads as a reservation of both numbers, and the register carries Check 68", designPath)
 	}
 	if strings.Contains(row, "67 is written as 67a and 67b") {
 		t.Errorf("%s's §13 67–68 row claims 67 is written as 67a and 67b, and the register has neither", designPath)

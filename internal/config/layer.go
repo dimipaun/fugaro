@@ -18,6 +18,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/rigor"
 )
 
 // The project layer (docs/design/layered-config.md): one object per project
@@ -62,6 +63,17 @@ type ProjectLayer struct {
 	// KnownFields).
 	ClaudeModels map[string][]string `yaml:"claude_models"`
 
+	// Governance is the project's governance: block (docs/task-governance).
+	// A top-level key on purpose, like ClaudeModels and for a sharper reason:
+	// the defaults: overlay is replace-not-tighten (resolve.go), so a
+	// governance: under defaults: would let a repository's own block replace
+	// the project's value with a looser one instead of tightening it. Read
+	// here, the two meet only in the merge (internal/policy), which only ever
+	// takes the tighter — which is the whole of "the project layer sets them,
+	// a repository may only tighten" (D331). It is the one layer that may
+	// loosen Fugaro's own defaults (policy.Governance.WithDefaults).
+	Governance *Governance `yaml:"governance"`
+
 	// Raw is the exact text, SHA256 its hex sha256.
 	Raw    []byte `yaml:"-"`
 	SHA256 string `yaml:"-"`
@@ -70,10 +82,47 @@ type ProjectLayer struct {
 }
 
 // LayerDefaults are the project-wide values of the repository keys the
-// project layer may set (scope project).
+// project layer may set (scope project). Rigor is the third since 0.11.0:
+// default is the mode a repository that writes none takes, and areas are
+// rules that stay in effect beside the repository's own (D20c).
 type LayerDefaults struct {
 	Git   LayerGit   `yaml:"git"`
 	Agent LayerAgent `yaml:"agent"`
+	Rigor LayerRigor `yaml:"rigor"`
+}
+
+// SetsRigor reports whether the layer's text writes defaults.rigor, at any
+// value: a runner before 0.11.0 decodes the layer with KnownFields, so the key
+// alone is what it refuses, and LayerRigor's zero value cannot tell an empty
+// block from none.
+func (l *ProjectLayer) SetsRigor() bool {
+	if l == nil {
+		return false
+	}
+	d, _ := l.tree["defaults"].(map[string]any)
+	_, ok := d["rigor"]
+	return ok
+}
+
+// SetsGovernance reports whether the layer's text writes governance:, at any
+// value: a runner before governanceSince decodes the layer with KnownFields,
+// so the key alone is what it refuses, and Governance's zero value cannot
+// tell an empty block from none. The key is top-level, not under defaults:
+// (TestProjectLayerGovernanceIsTopLevel), so the tree is read at the root.
+func (l *ProjectLayer) SetsGovernance() bool {
+	if l == nil {
+		return false
+	}
+	_, ok := l.tree["governance"]
+	return ok
+}
+
+// LayerRigor is defaults.rigor: the same two keys the repository's own
+// rigor: block carries, because either layer may set either of them
+// (docs/project-layer.md §5).
+type LayerRigor struct {
+	Default rigor.Mode   `yaml:"default"`
+	Areas   []rigor.Area `yaml:"areas"`
 }
 
 // LayerGit is defaults.git.
@@ -140,7 +189,7 @@ func LayerSum(data []byte) string {
 	return hex.EncodeToString(s[:])
 }
 
-var layerTopKeys = []string{"version", "project", "gcp_project", "defaults", "profiles", "default_profile", "claude_models"}
+var layerTopKeys = []string{"version", "project", "gcp_project", "defaults", "profiles", "default_profile", "claude_models", "governance"}
 
 // layerReserved are keys a later release defines; this one refuses them
 // with a message saying so.
@@ -556,6 +605,8 @@ func validateLayer(l *ProjectLayer, a LayerAnchor) []Problem {
 	if badUSD(ag.MaxBudgetUSD) {
 		add("defaults.agent.max_budget_usd", "must be a finite number, not negative")
 	}
+	ps = append(ps, validateRigor("defaults.rigor", d.Rigor.Default, d.Rigor.Areas)...)
+	ps = append(ps, validateGovernance("governance", l.Governance)...)
 	for _, p := range validateAgentModels(Agent{Model: ag.Model, Models: ag.Models}) {
 		p.Path = "defaults." + p.Path
 		ps = append(ps, p)

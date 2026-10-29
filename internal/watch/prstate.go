@@ -155,6 +155,11 @@ type PRState struct {
 	now      func() time.Time
 	lookPath func(string) (string, error)
 	getenv   func(string) string
+	// askFn is the lookup every caller goes through — Filter's background ones
+	// and MergeNow's synchronous one — and is ask itself in production. A test
+	// replaces it to hold a lookup open without a process, so a claim about the
+	// semaphore is not also a claim about how fast the machine forks a shell.
+	askFn func(context.Context, prRef) (prStateKind, error)
 
 	mu   sync.Mutex
 	seen map[string]prAnswer
@@ -196,6 +201,7 @@ func NewPRState(o PRStateOptions) *PRState {
 		now:      o.Now, lookPath: o.LookPath, getenv: o.Getenv,
 		seen: map[string]prAnswer{}, busy: map[string]bool{}, fail: map[string]error{},
 	}
+	p.askFn = p.ask
 	if p.timeout <= 0 {
 		p.timeout = PRStateTimeout
 	}
@@ -386,7 +392,7 @@ func (p *PRState) start(ref prRef) {
 func (p *PRState) look(ref prRef) {
 	ctx, cancel := context.WithTimeout(context.Background(), p.timeout)
 	defer cancel()
-	state, err := p.ask(ctx, ref)
+	state, err := p.askFn(ctx, ref)
 
 	p.mu.Lock()
 	defer p.mu.Unlock()

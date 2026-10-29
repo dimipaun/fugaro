@@ -2,12 +2,14 @@ package runner
 
 import (
 	"encoding/json"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/verify"
@@ -21,6 +23,10 @@ func TestParseVerdict(t *testing.T) {
 	fenced := agent.Result{Text: "Looks good.\n```json\n{\"verdict\":\"ship\",\"findings\":[]}\n```\n"}
 	if v := ParseVerdict(fenced); v.Verdict != "ship" {
 		t.Errorf("fenced = %+v", v)
+	}
+	scored := agent.Result{Structured: json.RawMessage(`{"verdict":"changes","findings":[{"severity":"low","summary":"x","likelihood":5,"impact":1,"fix_cost":2,"class":"cosmetic"}]}`)}
+	if f := ParseVerdict(scored).Findings[0]; f.Likelihood != 5 || f.Impact != 1 || f.FixCost != 2 || f.Class != "cosmetic" {
+		t.Errorf("scored = %+v, want the score read alongside the summary", f)
 	}
 	for _, bad := range []agent.Result{{Text: "no verdict here"}, {Structured: json.RawMessage(`{"verdict":"maybe"}`)}} {
 		v := ParseVerdict(bad)
@@ -38,24 +44,31 @@ func TestDecide(t *testing.T) {
 	build := verify.Record{Kind: verify.KindBuild, HeadSHA: "abc", CleanTree: true, Passed: true}
 	ship := &runstore.ReviewSummary{Round: 1, Verdict: "ship"}
 	changes := &runstore.ReviewSummary{Round: 2, Verdict: "changes", Findings: 3}
+	// A mode whose split blocks: one finding above Startup's floor, which is
+	// the half of the split the count's own reason is kept for (outcome.go).
+	blocked := findingsPolicyOf(rigor.Config{RepoBlock: true}, rigor.Startup, 2,
+		[]rigor.Score{{Likelihood: 3, Impact: 3, FixCost: 1, Class: rigor.Correctness}})
 	cases := []struct {
 		name    string
 		records []verify.Record
 		last    *runstore.ReviewSummary
+		pol     FindingsPolicy
 		ready   bool
 		reason  string
 	}{
-		{"ready", []verify.Record{pass}, ship, true, ""},
-		{"latest matching run wins", []verify.Record{pass, fail}, ship, false, "tests failing on the final commit"},
-		{"fixed after failing", []verify.Record{fail, pass}, ship, true, ""},
-		{"dirty tree does not count", []verify.Record{dirty}, ship, false, "no verified test run on the final commit"},
-		{"old commit does not count", []verify.Record{old}, ship, false, "no verified test run on the final commit"},
-		{"build is not test", []verify.Record{build}, ship, false, "no verified test run on the final commit"},
-		{"review findings", []verify.Record{pass}, changes, false, "review round 2 still has 3 findings"},
-		{"no review", []verify.Record{pass}, nil, false, "no review verdict"},
+		{"ready", []verify.Record{pass}, ship, FindingsPolicy{}, true, ""},
+		{"latest matching run wins", []verify.Record{pass, fail}, ship, FindingsPolicy{}, false, "tests failing on the final commit"},
+		{"fixed after failing", []verify.Record{fail, pass}, ship, FindingsPolicy{}, true, ""},
+		{"dirty tree does not count", []verify.Record{dirty}, ship, FindingsPolicy{}, false, "no verified test run on the final commit"},
+		{"old commit does not count", []verify.Record{old}, ship, FindingsPolicy{}, false, "no verified test run on the final commit"},
+		{"build is not test", []verify.Record{build}, ship, FindingsPolicy{}, false, "no verified test run on the final commit"},
+		{"review findings", []verify.Record{pass}, changes, FindingsPolicy{}, false, "review round 2 still has 3 findings"},
+		{"no review", []verify.Record{pass}, nil, FindingsPolicy{}, false, "no review verdict"},
+		{"a mode in play changes none of the four reasons", []verify.Record{pass},
+			&runstore.ReviewSummary{Round: 2, Verdict: "changes", Findings: 1}, blocked, false, "review round 2 still has 1 finding"},
 	}
 	for _, tc := range cases {
-		ready, reason := Decide(tc.records, "abc", tc.last)
+		ready, reason := Decide(tc.records, "abc", tc.last, tc.pol)
 		if ready != tc.ready || reason != tc.reason {
 			t.Errorf("%s: Decide = %v %q, want %v %q", tc.name, ready, reason, tc.ready, tc.reason)
 		}
@@ -69,13 +82,13 @@ func TestPrompts(t *testing.T) {
 			t.Errorf("system prompt lacks %q", want)
 		}
 	}
-	if got := ReviewPrompt("/review", "", "main", DiffSize{}, false); !strings.HasPrefix(got, "/review ") || !strings.Contains(got, "origin/main") {
+	if got := ReviewPrompt("/review", "", "origin/main", DiffSize{}, false); !strings.HasPrefix(got, "/review ") || !strings.Contains(got, "origin/main") {
 		t.Errorf("skill review prompt = %q", got)
 	}
-	if got := ReviewPrompt("", "Check the SQL.", "develop", DiffSize{}, false); !strings.HasPrefix(got, "Check the SQL.") || !strings.Contains(got, "origin/develop") {
+	if got := ReviewPrompt("", "Check the SQL.", "origin/develop", DiffSize{}, false); !strings.HasPrefix(got, "Check the SQL.") || !strings.Contains(got, "origin/develop") {
 		t.Errorf("file review prompt = %q", got)
 	}
-	if got := ReviewPrompt("", "", "main", DiffSize{}, false); !strings.Contains(got, "correctness bugs") {
+	if got := ReviewPrompt("", "", "origin/main", DiffSize{}, false); !strings.Contains(got, "correctness bugs") {
 		t.Errorf("default review prompt = %q", got)
 	}
 	fix := FixPrompt(Verdict{Verdict: "changes", Findings: []Finding{{Severity: "major", File: "a.go", Summary: "nil deref"}, {Summary: "add a test"}}})
@@ -116,7 +129,7 @@ func TestReportConsistentWithDecide(t *testing.T) {
 	}
 
 	// Decide should report tests failing (uses clean record)
-	ready, reason := Decide(rec.Verify, rec.HeadSHA, ship)
+	ready, reason := Decide(rec.Verify, rec.HeadSHA, ship, FindingsPolicy{})
 	if ready || reason != "tests failing on the final commit" {
 		t.Errorf("Decide = %v %q, want false %q", ready, reason, "tests failing on the final commit")
 	}
@@ -152,6 +165,21 @@ func TestCostLine(t *testing.T) {
 		"**Cost:** ≈ $4.12 (model $4.12 + compute $0.00, estimate)": runstore.NewCost(4.12, 0, runstore.BasisAPIList),
 	}
 	for want, c := range cases {
+		if got := CostLine(c); got != want {
+			t.Errorf("CostLine(%+v) = %q, want %q", c, got, want)
+		}
+	}
+	// The notional clause, and the split that decides which sentence is drawn
+	// (C1.16, P12, D140): a mixed cascade run's notional dollars are said
+	// beside the money, and a run whose whole model figure the plan paid is the
+	// notional sentence whatever its basis says -- api-list, for a cascade run
+	// the plan served in full, exactly as for a mixed one.
+	for want, c := range map[string]runstore.Cost{
+		"**Cost:** ≈ $2.50 (model $2.12 + compute $0.38, estimate); model $2.00 notional, counted against the Claude subscription": runstore.NewCost(4.12, 0.38, runstore.BasisAPIList).WithNotional(2.00),
+		"**Cost:** model $2.12 (compute not estimated); model $2.00 notional, counted against the Claude subscription":             runstore.ModelOnlyCost(4.12, runstore.BasisAPIList).WithNotional(2.00),
+		"**Cost:** ≈ $0.38 compute (estimate); model $4.12 notional, counted against the Claude subscription":                      runstore.NewCost(4.12, 0.38, runstore.BasisAPIList).WithNotional(4.12),
+		"**Cost:** model $4.12 notional, counted against the Claude subscription (compute not estimated)":                          runstore.ModelOnlyCost(4.12, runstore.BasisAPIList).WithNotional(4.12),
+	} {
 		if got := CostLine(c); got != want {
 			t.Errorf("CostLine(%+v) = %q, want %q", c, got, want)
 		}
@@ -208,6 +236,85 @@ func TestPromptNeverWaitRule(t *testing.T) {
 				t.Errorf("the prompt %+v lacks %q", d, want)
 			}
 		}
+	}
+}
+
+// The reviewer's scoring contract: D1's five anchored values on each of the
+// three axes, and D2's five labels. Every anchor word is written once, in the
+// review prompt alone — a meaning stated twice is a meaning that can drift,
+// and a coder handed the scoring instruction would be grading its own work.
+var promptScoringAxes = []struct {
+	axis    string
+	anchors []string
+}{
+	{"likelihood", []string{"rare", "uncommon", "occasional", "common", "certain"}},
+	{"impact", []string{"cosmetic", "minor", "degrading", "severe", "catastrophic"}},
+	{"fix_cost", []string{"trivial", "small", "moderate", "large", "rewrite"}},
+}
+
+var promptScoringLabels = []string{"blocker", "high", "medium", "low", "nit"}
+
+// countWord counts whole-word occurrences, so an anchor is not found inside a
+// longer word: "common" is not "uncommon", and "low" is not "follow".
+func countWord(s, word string) int {
+	return len(regexp.MustCompile(`\b`+regexp.QuoteMeta(word)+`\b`).FindAllString(s, -1))
+}
+
+func TestPromptScoringAnchors(t *testing.T) {
+	for name, p := range map[string]string{
+		"the default review prompt": ReviewPrompt("", "", "origin/main", DiffSize{}, false),
+		"a skill review prompt":     ReviewPrompt("/review", "", "origin/main", DiffSize{}, false),
+		"a prompt-file review":      ReviewPrompt("", "Check the SQL.", "origin/main", DiffSize{}, false),
+		"a pick prompt":             PickPrompt("", "", []int{9, 7}, []string{"/review/9", "/review/7"}),
+	} {
+		for _, ax := range promptScoringAxes {
+			if !strings.Contains(p, ax.axis) {
+				t.Errorf("%s does not name the %s axis: %s", name, ax.axis, p)
+			}
+			for i, anchor := range ax.anchors {
+				// "cosmetic" is both impact's first anchor and a class, so
+				// the class line is its second, deliberate, occurrence.
+				want := 1
+				if rigor.KnownClass(rigor.Class(anchor)) {
+					want = 2
+				}
+				if got := countWord(p, anchor); got != want {
+					t.Errorf("%s writes %q (%s %d) %d times, want %d: %s", name, anchor, ax.axis, i+1, got, want, p)
+				}
+			}
+		}
+		// A finding without a known class is unscored and blocks in every
+		// mode (D4), so the prompt asks for one and names every class the
+		// schema admits.
+		if !strings.Contains(p, "- class,") {
+			t.Errorf("%s does not ask the reviewer to set class: %s", name, p)
+		}
+		for _, c := range rigor.Classes {
+			if countWord(p, string(c)) == 0 {
+				t.Errorf("%s does not name the class %q: %s", name, c, p)
+			}
+		}
+		for _, label := range promptScoringLabels {
+			if got := countWord(p, label); got != 1 {
+				t.Errorf("%s writes the label %q %d times, want once: %s", name, label, got, p)
+			}
+		}
+		if !strings.Contains(p, "an integer from 1 to 5") {
+			t.Errorf("%s does not state the scale the axes are scored on: %s", name, p)
+		}
+	}
+}
+
+func TestPromptScoringIsTheReviewersAlone(t *testing.T) {
+	implement := SystemPrompt(PromptData{Branch: "fugaro/x", Base: "main", StateDir: "/s"}, "")
+	words := append(append([]string{}, promptScoringLabels...), "likelihood", "impact", "fix_cost")
+	for _, word := range words {
+		if got := countWord(implement, word); got != 0 {
+			t.Errorf("the implement prompt carries the reviewer's scoring word %q %d times: %s", word, got, implement)
+		}
+	}
+	if strings.Contains(implement, "an integer from 1 to 5") {
+		t.Errorf("the implement prompt carries the scoring instruction: %s", implement)
 	}
 }
 

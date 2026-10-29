@@ -52,6 +52,18 @@ var routedKeys = []string{
 // maxJSONDepth bounds how deeply a request body may nest.
 const maxJSONDepth = 512
 
+// probeMaxTokens is the output bound of the minimal call the credentials
+// service sends when it probes a backed-off credential (C1.12's
+// probeMaxTokens, respelled here because the package exports no constant for
+// it: the two must agree, and the gateway is the one that prices the probe).
+//
+// It is what a probe is priced at (C1.16): the smallest Messages call this
+// gateway can send, on the run's own model. The probe's body is a few dozen
+// bytes the service built, and never the run's body -- pricing the probe by
+// the run's own request would charge the run's whole context for a question
+// about a credential.
+const probeMaxTokens = 1
+
 // parseRequest reads a Messages body. An error is a malformed request
 // (400, not a violation); a shape the budget can't price is returned as
 // parsed.violation. On Vertex the model comes from the path.
@@ -449,16 +461,72 @@ func readBody(r *http.Request) ([]byte, int, string) {
 
 // check applies the stage's pins and limits and the request's shape.
 func (s *Server) check(st Stage, p parsed, m pricing.Model) string {
-	if !s.sameModel(p.model, st.Model) && !s.sameModel(p.model, st.Background) {
-		return fmt.Sprintf("model %s is not pinned for stage %s", logValue(p.model), st.Name)
+	return checkRequest(p, m, pinOf(st), s.o.Prices, s.o.Routes)
+}
+
+// pinOf is the gateway's own RequestPin: the stage's two pins, the stage's
+// own max_tokens bound, and the stage's name as the refusal names it. Where is
+// spelled here so that the refusal reads exactly as it did before the check
+// was shared with the credentials service: "model X is not pinned for stage
+// implement".
+func pinOf(st Stage) RequestPin {
+	return RequestPin{
+		Models:          []string{st.Model, st.Background},
+		Where:           "stage " + st.Name,
+		Model:           st.Model,
+		MaxOutputTokens: st.MaxOutputTokens,
 	}
-	if s.routeFor(p.model) != nil && hasVariantSuffix(p.model) {
+}
+
+// modelFor is the price row a request's model is judged and priced by, and
+// whether the table knew it: the table's own row, or -- for a model the table
+// does not have -- a row carrying the table's maximum, which is the
+// fail-closed direction and the one the run's reservation counts. A model the
+// table lacks is priced at the maximum and not refused here, because a run may
+// legitimately pin one it added under model_prices.
+func modelFor(prices *pricing.Table, model string) (pricing.Model, bool) {
+	t := pricesOr(prices)
+	if m, ok := t.Lookup(model); ok {
+		return m, true
+	}
+	return pricing.Model{ID: model, Rates: t.Max()}, false
+}
+
+// pricesOr is the table the request rules read: prices, or the embedded table
+// for a caller that has none. The credentials service passes the project's own
+// table, and the embedded one is what a table-less caller gets rather than a
+// nil dereference: every rule below reads a model's own bounds from it.
+func pricesOr(prices *pricing.Table) *pricing.Table {
+	if prices == nil {
+		return pricing.Embedded()
+	}
+	return prices
+}
+
+// checkRequest is the gateway's request check, over the pin its caller carries
+// rather than a Stage: the model pin, the variant-suffix refusal, the shape
+// refusal (a server tool among them), the foreign-field refusal and the
+// max_tokens bounds. "" accepts the request; anything else is the refusal's
+// sentence, without a status or a prefix, which each surface adds its own way
+// (the gateway answers 400 with "fugaro: " in front of it).
+//
+// It is the one place these rules are written. The gateway's own path reaches
+// it through Server.check (which builds the pin from the stage), and the
+// credentials service through RequestRefusal (export.go, which builds it from
+// the project's allow-list) -- so a rule changed for one is changed for both,
+// and there is no second copy to drift.
+func checkRequest(p parsed, m pricing.Model, pin RequestPin, prices *pricing.Table, routes []Route) string {
+	prices = pricesOr(prices)
+	if len(pin.Models) > 0 && !slices.ContainsFunc(pin.Models, func(x string) bool { return sameModel(p.model, x, prices, routes) }) {
+		return fmt.Sprintf("model %s is not pinned for %s", logValue(p.model), pin.Where)
+	}
+	if routeFor(p.model, routes) != nil && hasVariantSuffix(p.model) {
 		return fmt.Sprintf("model %s carries a variant suffix, which changes the provider's routing and price: pin the plain model ID", logValue(p.model))
 	}
 	if p.violation != "" {
 		return p.violation
 	}
-	if p.foreign != "" && s.routeFor(p.model) != nil {
+	if p.foreign != "" && routeFor(p.model, routes) != nil {
 		return fmt.Sprintf("field %s is not allowed on a provider route (it isn't priced by the budget)", strconv.Quote(logValue(p.foreign)))
 	}
 	maxOut := m.MaxOutputTokens
@@ -468,8 +536,8 @@ func (s *Server) check(st Stage, p parsed, m pricing.Model) string {
 	if p.maxTokens > maxOut {
 		return fmt.Sprintf("max_tokens %d for model %s is above the model's maximum %d", p.maxTokens, logValue(p.model), maxOut)
 	}
-	if st.MaxOutputTokens > 0 && s.sameModel(p.model, st.Model) && p.maxTokens > st.MaxOutputTokens {
-		return fmt.Sprintf("max_tokens %d for model %s is above the stage's limit %d", p.maxTokens, logValue(p.model), st.MaxOutputTokens)
+	if pin.MaxOutputTokens > 0 && sameModel(p.model, pin.Model, prices, routes) && p.maxTokens > pin.MaxOutputTokens {
+		return fmt.Sprintf("max_tokens %d for model %s is above the stage's limit %d", p.maxTokens, logValue(p.model), pin.MaxOutputTokens)
 	}
 	// The missing field is named, not the model: an override-priced model is
 	// priced — its input, output and cache rates are the owner's — and what
@@ -486,18 +554,18 @@ func (s *Server) check(st Stage, p parsed, m pricing.Model) string {
 // sameModel: the same ID, or two spellings the table resolves to one
 // model. A prefix never matches, and a provider's model matches only
 // itself: the alias rule is Claude's.
-func (s *Server) sameModel(a, pin string) bool {
+func sameModel(a, pin string, prices *pricing.Table, routes []Route) bool {
 	if a == "" || pin == "" {
 		return false
 	}
 	if a == pin {
 		return true
 	}
-	if s.routeFor(a) != nil || s.routeFor(pin) != nil {
+	if routeFor(a, routes) != nil || routeFor(pin, routes) != nil {
 		return false
 	}
-	ma, okA := s.o.Prices.Lookup(a)
-	mp, okP := s.o.Prices.Lookup(pin)
+	ma, okA := prices.Lookup(a)
+	mp, okP := prices.Lookup(pin)
 	return okA && okP && ma.ID == mp.ID
 }
 
@@ -535,9 +603,8 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request, rt route
 	defer st.calls.Done()
 	cl.stage = st.st.Name
 
-	m, known := s.o.Prices.Lookup(p.model)
+	m, known := modelFor(s.o.Prices, p.model)
 	if !known { // a pinned model the table lacks: priced at the table's maximum
-		m = pricing.Model{ID: p.model, Rates: s.o.Prices.Max()}
 		cl.pricedAs = pricedMax
 	}
 	if v := s.check(st.st, p, m); v != "" {
@@ -600,14 +667,32 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request, rt route
 	// Whatever happens below, the call settles exactly once. Until an
 	// outcome is known it is charged its full reservation.
 	out := outcome{charge: charge{amount: w0, unreconciled: w0, model: p.model, sent: true}, settled: settledReserved, pricedAs: cl.pricedAs}
+	// The tiers the service probed while answering this call (C1.12), empty
+	// until its answer says which they were.
+	var probed []string
 	defer func() {
 		out.route = cl.route
+		// A probe is a call the run pays for (C1.16), and it settles
+		// before the call that owed it: what the run had cached is the
+		// answering call's own usage (F24), this gateway never reads a
+		// probe's usage, and a probe settled after its call would be the
+		// last word on the cache instead of the call.
+		for _, t := range probed {
+			s.settleProbe(st, t, p.model, m.WorstCase(pricing.Request{MaxTokens: probeMaxTokens}))
+		}
 		s.settle(st, w0, out.charge)
 		cl.charged, cl.settled, cl.pricedAs, cl.servingModel, cl.usage, cl.errorType, cl.reported =
 			out.amount, out.settled, out.pricedAs, out.servingModel, out.usage, out.errorType, out.reported
+		cl.serviceTier = out.charge.serviceTier
 		s.logCall(cl)
 	}()
-	out = s.forward(w, r, rt, body, p, known, w0, &cl.status)
+	// The tier the service's answer carried, whatever outcome the call
+	// settles as: the ledger charges by it (C1.16), and a call the service
+	// served and this gateway could not price is still a call the run
+	// pays for at the tier it was served from.
+	var served string
+	out = s.forward(w, r, rt, body, p, known, w0, &cl.status, &served, &probed)
+	out.charge.tier, out.charge.agentID = served, cl.agentID
 }
 
 // outcome is how a forwarded call settles, and what its log line says.
@@ -623,7 +708,7 @@ func zeroOutcome(model string, sent bool) outcome {
 
 // forward sends the call upstream and copies the response back without
 // buffering, teeing it to the usage parser, and says how it settles.
-func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body []byte, p parsed, known bool, w0 pricing.Micros, status *int) outcome {
+func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body []byte, p parsed, known bool, w0 pricing.Micros, status *int, tier *string, probed *[]string) outcome {
 	reserved := outcome{charge: charge{amount: w0, unreconciled: w0, model: p.model, sent: true}, settled: settledReserved, pricedAs: pricedTable}
 	if !known {
 		reserved.pricedAs = pricedMax
@@ -638,11 +723,33 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 
 	up, sent, err := s.upstreamRequest(ctx, r, rt, body)
 	if err != nil {
+		if s.o.Upstream.Kind == KindService && errors.Is(err, errServiceUnidentified) {
+			// C1.15 (service.go), D143: a service call this job cannot
+			// present its own identity on is a run the service cannot serve
+			// at all. The metadata server is the only place the job's ID
+			// token comes from and the run's own token is the only identity
+			// the service verifies it by, so this is a halt -- like an
+			// unreachable service -- rather than one 502 per call until the
+			// stage's deadline. Nothing was sent: nothing to charge.
+			s.haltService(w, stateDetailUnidentified)
+			return zeroOutcome(p.model, false)
+		}
 		writeError(w, http.StatusBadGateway, "api_error", "fugaro: "+err.Error())
 		return zeroOutcome(p.model, false)
 	}
 	resp, err := s.client.Do(up)
 	if err != nil {
+		if s.o.Upstream.Kind == KindService && s.serviceUnreachable(w, s.base, r.Context()) {
+			// C1.15 (service.go), D143: an unreachable credentials service
+			// halts the run -- it never falls back to a credential of the
+			// job's own, which this upstream has none of. Nothing reached
+			// the upstream: nothing to charge. Anything did: the service may
+			// have been generating, so the whole reservation.
+			if !sent.Load() {
+				return zeroOutcome(p.model, false)
+			}
+			return reserved
+		}
 		// No status. Nothing reached the upstream: nothing to charge.
 		// Anything did: the upstream may be generating, so the whole
 		// reservation.
@@ -667,6 +774,33 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 		return zeroOutcome(p.model, true)
 	}
 	*status = resp.StatusCode
+	if s.o.Upstream.Kind == KindService {
+		// C1.15 (service.go): what the service said about this call is read
+		// here, where it leaves the upstream and before a byte of it reaches
+		// the agent -- the tier the call settles by, the credential's name,
+		// the switch, and the refusals that are the service's own answer and
+		// are never relayed. A model answer (2xx, or a model error the
+		// service relayed) is not touched: it goes on to the pump below.
+		st, done, served, probes := s.serviceAnswer(w, resp, true)
+		*tier = served // "" when the answer carried none, which is a halt or a relayed error
+		*probed = probes
+		if done {
+			*status = st
+			// A 2xx this gateway could not account by is a model answer the
+			// service served and the run must still pay for: it settles at
+			// its reservation, exactly as an unparsed 2xx does, rather than
+			// handing the run a whole answer for nothing. Every other answer
+			// `done` covers is a refusal -- the service's own, or a job its
+			// front door would not admit -- and no model generated anything
+			// for it.
+			if resp.StatusCode/100 == 2 {
+				reserved.unparsed = true
+				s.logUsageUnparsed(p.model, rt.provider, "no_tier", nil)
+				return reserved
+			}
+			return zeroOutcome(p.model, true)
+		}
+	}
 
 	src, closeSrc, decoded, readable := decodeBody(resp)
 	defer closeSrc()
@@ -687,12 +821,26 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 	} else {
 		copyResponseHeaders(w.Header(), resp.Header, decoded)
 	}
-	if rt.provider != nil {
-		// Whatever else comes back from a provider is scrubbed of its key
-		// (it is the one in the request, read at request time).
+	if rt.provider != nil || s.o.Upstream.Kind == KindOAuth || s.o.Upstream.Kind == KindService {
+		// Whatever else comes back is scrubbed of the credential that was
+		// sent: a provider's key, the tier-A subscription token, or the
+		// service call's job ID token (which an error body may echo). The
+		// credential is the one in the request, read at request time.
 		key := keyFrom(up.Header)
 		redactHeaders(w.Header(), key)
-		rw = newRedactWriter(w, key)
+		if s.o.Upstream.Kind == KindService {
+			// The run's own identity travels on the service call as well
+			// (HeaderRunIdentity), and it is a Firebase token for this run:
+			// it is dropped from an answer that echoes it -- headers and
+			// body both -- exactly as the bearer credential is. The model
+			// never receives the header, so the only body that can carry it
+			// is one the service itself wrote.
+			run := up.Header.Get(HeaderRunIdentity)
+			redactHeaders(w.Header(), run)
+			rw = newRedactWriter(w, key, run)
+		} else {
+			rw = newRedactWriter(w, key)
+		}
 		out = rw
 	}
 	w.WriteHeader(resp.StatusCode)
@@ -723,11 +871,11 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 		s.logUsageUnparsed(p.model, rt.provider, "not_readable", nil)
 		return reserved
 	case tee.sse && tee.complete && !tee.broken && !tee.acc.negative():
-		return s.fromUsage(tee, p, rt.provider, false)
+		return s.fromUsage(tee, p, rt.provider, w0, false)
 	case tee.sse && tee.started && !tee.broken && !tee.acc.negative():
-		return s.fromUsage(tee, p, rt.provider, true)
+		return s.fromUsage(tee, p, rt.provider, w0, true)
 	case !tee.sse && eof && tee.complete:
-		return s.fromUsage(tee, p, rt.provider, false)
+		return s.fromUsage(tee, p, rt.provider, w0, false)
 	}
 	reserved.unparsed = true
 	reserved.errorType = tee.errorType
@@ -749,15 +897,20 @@ func (s *Server) logUsageUnparsed(model string, pr *Route, reason string, events
 }
 
 // fromUsage prices a call from the usage the response reported: at the
-// serving model's rates, the table's maximum for an unknown model, or the
-// maximum times SurpriseMultiplier when the response was priced in a
-// dimension the request didn't allow. On a provider route (pr, else nil) a
+// serving model's rates, the table's maximum for an unknown model, or a
+// multiple of those rates when the response reported a pricing dimension the
+// table has no price for -- the dearest multiple it knows for a service tier
+// no provider publishes a multiplier for, and that multiple on the table's
+// maximum rates for a speed or inference geography the request didn't
+// allow. On a provider route (pr, else nil) a
 // serving model other than the pinned one is never priced lower than the
 // pin: the dearer of the two rates per dimension, or the table's maximum
-// when the table doesn't know it; and the route's fee is added to the
-// charge. A partial call is charged its reported input and cache tokens
-// plus the reserved output.
-func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, partial bool) outcome {
+// when the table doesn't know it; the route's fee is added to the
+// charge; and a service tier no one prices is charged at least the cost the
+// provider itself reported for the call, up to the reservation w the call
+// already made. A partial call is charged its reported input and cache
+// tokens plus the reserved output.
+func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, w pricing.Micros, partial bool) outcome {
 	serving := t.model
 	if serving == "" {
 		serving = p.model
@@ -782,30 +935,114 @@ func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, partial bool) outco
 		}
 	}
 	fee := pr.feePct()
-	if what := t.acc.surprise(); what != "" {
-		rates, mult = s.o.Prices.Max(), pricing.SurpriseMultiplier
-		o.pricedAs = pricedSurprise
-		o.violation = fmt.Sprintf("the response for model %s reported %s, which the budget doesn't price", logValue(serving), what)
-		s.log.Warn("budget: surprise pricing", "model", logValue(serving), "what", what)
+	// A dimension the table has no price for is charged a multiple of the
+	// rates the call is priced at -- the serving model's own, or the table's
+	// maximum for a model the table doesn't know -- never at the standard
+	// price, never free.
+	//
+	// A service tier is the tier the provider itself served the call from:
+	// the agent's request said nothing about it, and a provider can answer
+	// with one at any time. It is charged the dearest multiple the table
+	// knows -- an assumed ceiling rather than a published price, so a
+	// provider route that reported what the call cost floors it at that
+	// figure (below) -- and recorded on the stage, in the call log and in a
+	// warning, and the stage goes on: failing the stage is what turns one
+	// provider's field into a dead run. Pricing it at the table's maximum
+	// rates instead of its own would charge a cheap model a dearer model's
+	// money -- a DeepSeek call at Claude's rates -- which inflates the record
+	// and the shared day counters and, on a tight cap, halts a run that the
+	// model's own rates would not have.
+	//
+	// A speed or an inference geography the request chose stays a violation,
+	// and is the dearer case of the two: the table's maximum rates times
+	// SurpriseMultiplier.
+	if dims := t.acc.unpricedDims(); len(dims) > 0 {
+		surprise := false
+		for _, d := range dims {
+			if !d.tier {
+				rates, surprise = s.o.Prices.Max(), true
+				mult = max(mult, int64(pricing.SurpriseMultiplier))
+				s.log.Warn("budget: surprise pricing", "model", logValue(serving), "what", d.String())
+				if o.violation == "" {
+					o.violation = fmt.Sprintf("the response for model %s reported %s, which the budget doesn't price", logValue(serving), d)
+				}
+				continue
+			}
+			mult = max(mult, int64(pricing.ConservativeTierMultiplier))
+			o.charge.serviceTier = d.value
+			chargedAs := fmt.Sprintf("%dx the rates the call is priced at", mult)
+			if pr != nil && t.acc.hasReported {
+				// The provider's own report floors this charge (below), so
+				// the line the reader uses to explain the figure says the
+				// figure may be the report and not the multiple.
+				chargedAs += ", or the provider's reported cost with the route fee if dearer"
+			}
+			s.log.Warn("budget: service tier not priced", "model", logValue(serving), "service_tier", d.value,
+				"charged_as", chargedAs)
+		}
+		// The tier is what the charge turned on only when the rates were the
+		// model's own: a fallback the route served (`max`) is the more
+		// useful fact to leave in the line, and it is the dearer charge of
+		// the two anyway.
+		if surprise {
+			o.pricedAs = pricedSurprise
+		} else if o.pricedAs == pricedTable {
+			o.pricedAs = pricedTier
+		}
 	}
 	u := t.acc.usage(rates, p.cacheTTL)
 	reported := pricing.WithFee(satMul(rates.Cost(u), mult), fee)
+	// The conservative multiple is an assumed ceiling and not a published
+	// price -- no provider publishes a multiplier for a tier other than
+	// standard -- so on a provider route that reported what the call cost,
+	// the provider's own figure, with the route's fee as every charge on that
+	// route carries it, is a floor under the charge: an unpublished tier
+	// premium never charges less than the provider says the call cost. It can
+	// only raise the charge, never lower it, and a report the gateway refused
+	// to record -- below zero, above maxReportedUSD, not a number -- is not a
+	// floor either, since hasReported is set only inside those bounds.
+	//
+	// The floor stops at the reservation the call already made, w.
+	// maxReportedUSD bounds a figure recorded for comparison, not a charge,
+	// and this report is the one part of the charge the gateway cannot check
+	// against anything of its own: unclamped, a report at that bound would
+	// charge a single call millions of times its own worst case, halt the run
+	// and write that figure into result.json. So the report raises the charge
+	// as far as the reservation and no further; above it a charge is what the
+	// call's own usage made it, exactly as before this rule.
+	floor := pricing.Micros(0)
+	if o.charge.serviceTier != "" && pr != nil && t.acc.hasReported {
+		floor = min(pricing.WithFee(t.acc.reported, fee), w)
+	}
 	o.usage = u
 	o.model = serving
 	o.sent = true
 	o.tokens = u.Input + u.CacheWrite5m + u.CacheWrite1h + u.CacheRead + u.Output
+	// What this call had cached is what a switch after it re-reads (F24), and
+	// it is known because this call's usage was read.
+	o.cacheRead, o.cacheWrite, o.usageRead = u.CacheRead, u.CacheWrite5m+u.CacheWrite1h, true
 	if !partial {
-		o.amount, o.settled = reported, settledUsage
+		o.amount, o.settled = max(reported, floor), settledUsage
 		if pr != nil && t.acc.hasReported {
-			o.charge.reported = t.acc.reported // a record for comparison: it never prices the call
+			o.charge.reported = t.acc.reported // a record for comparison: it prices the call only where it floors a tier charge
 		}
 		return o
 	}
 	charged := u
 	charged.Output = max(u.Output, p.maxTokens)
-	o.amount = pricing.WithFee(satMul(rates.Cost(charged), mult), fee)
+	o.amount = max(pricing.WithFee(satMul(rates.Cost(charged), mult), fee), floor)
 	o.unreconciled = max(o.amount-reported, 0)
 	o.settled = settledPartial
+	if floor > 0 {
+		// A partial call whose charge the report floors records it exactly as
+		// a complete call's does: without it the stage's Reported, the run's
+		// reported_usd and the call log would leave out the one figure that
+		// explains the charge, and diagnose's Tier clause -- printed only
+		// where the record carries a report -- would go silent on the run
+		// that needs it. A partial call the floor does not price keeps
+		// recording nothing, as it always has.
+		o.charge.reported = t.acc.reported
+	}
 	return o
 }
 
@@ -857,6 +1094,31 @@ func (s *Server) upstreamRequest(ctx context.Context, r *http.Request, rt route,
 		if _, err := rt.provider.attachCredential(up.Header); err != nil {
 			return nil, nil, err
 		}
+		return up, sent, nil
+	}
+	if s.o.Upstream.Kind == KindOAuth {
+		// Tier A (oauth.go): Check 90's header allow-list and the
+		// subscription credential, and nothing else. The invariant -- an
+		// OAuth token is only ever sent to Anthropic's own endpoint -- is
+		// checked inside oauthUpstream, in the one place the token is
+		// attached.
+		h, err := s.oauthUpstream(rt, r.Header)
+		if err != nil {
+			return nil, nil, err
+		}
+		up.Header = h
+		return up, sent, nil
+	}
+	if s.o.Upstream.Kind == KindService {
+		// C1.15 (service.go): the job's Google ID token and the run's own,
+		// and no credential of the job's -- which the upstream has none of
+		// (validate). Both are attached inside serviceUpstream, in the one
+		// place they are written.
+		h, err := s.serviceUpstream(ctx, rt, r.Header)
+		if err != nil {
+			return nil, nil, err
+		}
+		up.Header = h
 		return up, sent, nil
 	}
 	up.Header = forwardHeaders(r.Header)
@@ -913,8 +1175,17 @@ var hopByHop = map[string]bool{
 
 // dropResponseHeaders never reach the agent: they identify the
 // organization behind the real key, or set state on the gateway's origin.
+//
+// The credentials service's answer headers are three more of them (C1.15,
+// service.go), and they are dropped for every upstream kind rather than only
+// under a service one: the tier is what C1.16 charges the call by, the name
+// is which of the project's credentials answered, and the switch is which
+// credential a call moved between. The agent is the one party that must never
+// learn the set of credentials its project holds (D143), and every later
+// upstream kind that answers with them would have to remember this list.
 var dropResponseHeaders = map[string]bool{
 	"Anthropic-Organization-Id": true, "Set-Cookie": true, "Set-Cookie2": true,
+	HeaderTier: true, HeaderCredential: true, HeaderSwitch: true, HeaderProbe: true,
 }
 
 func copyResponseHeaders(dst, src http.Header, decoded bool) {
@@ -1117,25 +1388,73 @@ func (s *Server) forwardFree(w http.ResponseWriter, r *http.Request, rt route) {
 	defer stopHalt()
 	up, _, err := s.upstreamRequest(ctx, r, rt, body)
 	if err != nil {
+		if s.o.Upstream.Kind == KindService && errors.Is(err, errServiceUnidentified) {
+			// C1.15 (service.go), D143: as a Messages call's, a count this
+			// job cannot present its identity on halts the run rather than
+			// being answered 502 per call. Nothing was sent.
+			s.haltService(w, stateDetailUnidentified)
+			return
+		}
 		writeError(w, http.StatusBadGateway, "api_error", "fugaro: "+err.Error())
 		return
 	}
 	resp, err := s.client.Do(up)
 	if err != nil {
+		if s.o.Upstream.Kind == KindService && s.serviceUnreachable(w, s.base, r.Context()) {
+			// C1.15 (service.go), D143: as a Messages call's, an unreachable
+			// service halts the run rather than being retried or fallen back
+			// from. A count holds no reservation, so there is nothing to
+			// settle either way.
+			return
+		}
 		if r.Context().Err() == nil {
 			writeError(w, http.StatusBadGateway, "api_error", "fugaro: the upstream request failed")
 		}
 		return
 	}
 	defer resp.Body.Close()
+	if s.o.Upstream.Kind == KindService {
+		// C1.15 (service.go): a count is free and settles nothing, so its
+		// answer is not asked for a tier -- but a refusal is the service's
+		// own answer here too, and is acted on rather than copied to the
+		// agent (D143). A model answer passed through.
+		if _, done, _, _ := s.serviceAnswer(w, resp, false); done {
+			return
+		}
+	}
 	src, closeSrc, decoded, _ := decodeBody(resp)
 	defer closeSrc()
 	copyResponseHeaders(w.Header(), resp.Header, decoded)
+	var out io.Writer = w
+	var rw *redactWriter
+	if s.o.Upstream.Kind == KindOAuth || s.o.Upstream.Kind == KindService {
+		// Tier A (oauth.go), and a service call (C1.15): a token count goes
+		// upstream with a credential too, and this path copies the answer
+		// through unread -- so an answer that echoes the credential is
+		// scrubbed here exactly as a messages call's is. Without this a
+		// count_tokens call would hand the token to the agent.
+		key := keyFrom(up.Header)
+		redactHeaders(w.Header(), key)
+		if s.o.Upstream.Kind == KindService {
+			// The run's identity is on this call too (HeaderRunIdentity),
+			// and is dropped from an answer that echoes it -- headers and
+			// body both, as in forward.
+			run := up.Header.Get(HeaderRunIdentity)
+			redactHeaders(w.Header(), run)
+			rw = newRedactWriter(w, key, run)
+		} else {
+			rw = newRedactWriter(w, key)
+		}
+		out = rw
+	}
 	w.WriteHeader(resp.StatusCode)
 	rc := http.NewResponseController(w)
 	_ = rc.Flush()
 	var n int64
-	pump(w, rc, src, func(b []byte) { n += int64(len(b)) })
+	pump(out, rc, src, func(b []byte) { n += int64(len(b)) })
+	if rw != nil {
+		_ = rw.Close()
+	}
 	s.log.Info("token count", "stage", s.stageName(), "status", resp.StatusCode, "request_bytes", len(body), "response_bytes", n)
 }
 
@@ -1169,7 +1488,7 @@ func (s *Server) countRoutedModel(body []byte) (string, error) {
 		return "", errors.New("the request body is not a JSON object")
 	}
 	for k, v := range top {
-		if m, ok := v.(string); ok && strings.EqualFold(k, "model") && s.routeFor(m) != nil {
+		if m, ok := v.(string); ok && strings.EqualFold(k, "model") && routeFor(m, s.o.Routes) != nil {
 			return m, nil
 		}
 	}

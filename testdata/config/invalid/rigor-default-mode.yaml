@@ -1,0 +1,7 @@
+version: 1
+project: aurora
+git: { provider: github }
+rigor:
+  default: "Poc"
+workflows:
+  server: { commands: { build: make, test: make test } }

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See console/LICENSE.md for the terms.
 // The redactor: what a recording may carry into this repository (desktop-console
 // plan Task 1.4, SECURITY-SENSITIVE; design section 9.1).
 //
@@ -452,7 +454,7 @@ const FIELD_CLASSES: Readonly<Record<string, FieldClass>> = Object.freeze({
 
 /** REPORT_DIMENSIONS are the values `report --json`'s `by` may hold
  * (`internal/report`): there, `by` is the break-down dimension, not a person. */
-const REPORT_DIMENSIONS: ReadonlySet<string> = new Set(['day', 'week', 'month', 'year', 'repo', 'model', 'person'])
+const REPORT_DIMENSIONS: ReadonlySet<string> = new Set(['day', 'week', 'month', 'year', 'repo', 'model', 'person', 'mode'])
 
 /** normaliseKey reads a key the way the table is written: camelCase and
  * PascalCase split into words (`githubToken` is `github_token`, `XApiKey` is

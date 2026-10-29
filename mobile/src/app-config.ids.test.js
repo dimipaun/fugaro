@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See mobile/LICENSE.md for the terms.
 // The dynamic config's tests (mobile plan, Task P4.4; D120, D125; Check 89).
 //
 // `mobile/app.config.js` is the one place the app's two release identities come

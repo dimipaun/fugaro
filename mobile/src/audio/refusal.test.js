@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See mobile/LICENSE.md for the terms.
 // The two verdicts, and the check on them (Task P3.4).
 //
 // `refusal.js` is four lines of shape and this file exists because of the

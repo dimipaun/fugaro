@@ -196,6 +196,40 @@ const FieldMax = 512
 // A value that is already one plain line of printable text, under the cap, is
 // returned unchanged, so an ordinary address reads exactly as it did.
 func Field(s string) string {
+	s = fieldRewrite(s)
+	if utf8.RuneCountInString(s) > FieldMax {
+		s = Clip(s, FieldMax-1) + "…"
+	}
+	return s
+}
+
+// FieldUncut is Field's rewrites without Field's length bound: the same
+// whitespace mapping, the same dropped controls, escape sequences, bidi and
+// zero-width characters and invalid bytes, and the same collapsed runs of
+// spaces — and no cut, so the result is as long as its value.
+//
+// It is for a value whose READER must get it back exactly: the identity an
+// owner's delete list records (tf.RemovalIdentity.String), which a refusal
+// prints for that owner to paste back into `fugaro allow-delete`. That
+// identity is escaped by its own encoder so that Field can change nothing in
+// it, and a cut is the one thing escaping cannot prevent — but a cut identity
+// is worse than a long one: the text a refusal prints is the text an entry
+// must hold, so a value cut to FieldMax would send its reader to record an
+// approval that matches nothing, and every later apply would refuse the same
+// removal with the same sentence. A caller that prints through this function
+// therefore bounds what it prints some other way, and names that bound at the
+// call: the value itself (an identity longer than the encoder prints is refused
+// rather than printed — tf.RemovalIdentityPrintMax), the number of values
+// (FieldList), or the length of the whole line the value is carried in
+// (internal/managed's refusalWhyMax, which is the removal rules' own parts
+// bounded, and which a why past it is cut against with Field).
+//
+// Everything Field's doc says about a value's own characters holds here too.
+func FieldUncut(s string) string { return fieldRewrite(s) }
+
+// fieldRewrite is what Field and FieldUncut share: the value one plain line of
+// printable text, with no bound of its own.
+func fieldRewrite(s string) string {
 	s = strings.Map(func(r rune) rune {
 		switch {
 		case r == 0x85 || r == 0x2028 || r == 0x2029 || unicode.IsSpace(r):
@@ -205,11 +239,7 @@ func Field(s string) string {
 		}
 		return r
 	}, strings.ToValidUTF8(s, ""))
-	s = strings.Join(strings.Fields(Strip(s)), " ")
-	if utf8.RuneCountInString(s) > FieldMax {
-		s = Clip(s, FieldMax-1) + "…"
-	}
-	return s
+	return strings.Join(strings.Fields(Strip(s)), " ")
 }
 
 // FieldListMax is how many entries of a list of untrusted values a listing

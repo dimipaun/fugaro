@@ -12,6 +12,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/rigor"
 )
 
 func TestNewRunID(t *testing.T) {
@@ -369,6 +370,70 @@ func TestOAuthTokenOmittedWhenAbsent(t *testing.T) {
 	}
 }
 
+// TestTaskSpecCompressionOffRoundTrips: task.Spec.CompressionOff (fugaro run
+// --no-compression) survives a marshal/parse round trip, and a spec that does
+// not carry it is byte-identical to what the previous release wrote.
+func TestTaskSpecCompressionOffRoundTrips(t *testing.T) {
+	s := Spec{Version: 1, RunID: "20261012-100000-abcd", Repo: "owner/repo-a", Ref: "main", CompressionOff: true}
+	data, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got Spec
+	if err := json.Unmarshal(data, &got); err != nil || !got.CompressionOff {
+		t.Fatalf("round trip: got %+v, err %v", got, err)
+	}
+	plain, err := json.Marshal(Spec{Version: 1, RunID: "20261012-100000-abcd", Repo: "owner/repo-a", Ref: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(plain), "compression_off") {
+		t.Errorf("a false CompressionOff was not omitted: %s", plain)
+	}
+}
+
+// TestOldTaskParserRefusesCompressionOffField simulates a pre-feature
+// runner's strict decode: oldSpec is Spec's shape before this task, copied
+// field for field (not re-derived), so this proves what an old binary
+// actually did, not what this task wishes it did.
+func TestOldTaskParserRefusesCompressionOffField(t *testing.T) {
+	spec := Spec{Version: 1, RunID: "20261012-100000-abcd", Repo: "owner/repo-a", Ref: "main", Task: "x", CompressionOff: true}
+	data, err := spec.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	type oldSpec struct {
+		Version      int           `json:"version"`
+		RunID        string        `json:"run_id"`
+		Repo         string        `json:"repo"`
+		Ref          string        `json:"ref"`
+		Workflow     string        `json:"workflow,omitempty"`
+		Task         string        `json:"task,omitempty"`
+		Title        string        `json:"title,omitempty"`
+		PlanTask     string        `json:"plan_task,omitempty"`
+		Branch       string        `json:"branch,omitempty"`
+		PR           int           `json:"pr,omitempty"`
+		PreviousRun  string        `json:"previous_run,omitempty"`
+		Overrides    Overrides     `json:"overrides"`
+		RequestedBy  string        `json:"requested_by,omitempty"`
+		Batch        string        `json:"batch,omitempty"`
+		Recipe       *Recipe       `json:"recipe,omitempty"`
+		ReviewPRs    []int         `json:"review_prs,omitempty"`
+		ProjectLayer *ProjectLayer `json:"project_layer,omitempty"`
+		OAuthToken   string        `json:"oauth_token,omitempty"`
+		Mode         string        `json:"mode,omitempty"`
+		Rigor        rigor.Mode    `json:"rigor,omitempty"`
+		Paths        []string      `json:"paths,omitempty"`
+		Inputs       []InputFile   `json:"inputs,omitempty"`
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	var old oldSpec
+	if err := dec.Decode(&old); err == nil {
+		t.Fatal("a pre-feature Spec decoder accepted compression_off silently")
+	}
+}
+
 // TestOAuthTokenValidate pins the same rule schemas/task.schema.json
 // enforces (config.ClaudeAccountNameRE and config.MaxClaudeAccountNameLen,
 // and "default" refused separately): the shared testdata/task/invalid
@@ -664,4 +729,194 @@ func TestInputNameProblem(t *testing.T) {
 			t.Errorf("InputNameProblem(%q) = %q, want %q", c.name, got, c.want)
 		}
 	}
+}
+
+// A plan task id (Spec.PlanTask, fugaro run --plan-task) is a display-only
+// join hint: it says which task of which plan a run is working on, so the
+// console can join the run to a node of that plan's graph. It is written by
+// a launcher — job-writable text — so it is shape-validated on write and on
+// read, never joined into a path and never an authorization input (console
+// dependency graph plan, constraint C3).
+//
+// Mutation (drop the shape check from Validate): a hand-written task.json
+// carrying "../etc/passwd" as its plan task is accepted, and the field that
+// exists to be shown as text starts carrying a path.
+func TestPlanTaskShape(t *testing.T) {
+	for _, ok := range []string{
+		"setup-wizard/W1.3",
+		"setup-wizard/GV1.2",
+		// A plan under docs/plans/ is a two-segment plan id, so its tasks
+		// are three segments (the join rule GV1.6 names).
+		"plans/2026-10-15-desktop-console-v2/GV1.2",
+		"a/b",
+		"acme_plan/task-1.2",
+	} {
+		if got := PlanTaskProblem(ok); got != "" {
+			t.Errorf("PlanTaskProblem(%q) = %q, want it accepted", ok, got)
+		}
+	}
+	for _, c := range []struct{ name, want string }{
+		{"", "is empty"},
+		{"setup-wizard", "must name a task in a plan"},
+		{"setup-wizard/", "has an empty path element"},
+		{"/setup-wizard/W1.3", "is an absolute path"},
+		{"setup-wizard/../etc/passwd", `has a ".." path element`},
+		{"setup-wizard/./W1.3", `has a "." path element`},
+		{"setup-wizard/W1.3\x1b[31m", "holds a control character"},
+		{"setup-wizard/W1.3\x00", "holds a NUL or a newline"},
+		{"setup-wizard/W1.3\nx", "holds a NUL or a newline"},
+		{"setup wizard/W1.3", "letters, digits, '.', '_' and '-'"},
+		{"setup-wizard/W1.3;rm -rf /", "letters, digits, '.', '_' and '-'"},
+		{strings.Repeat("a", MaxPlanTaskBytes+1) + "/b", "is longer than 128 bytes"},
+	} {
+		if got := PlanTaskProblem(c.name); !strings.Contains(got, c.want) {
+			t.Errorf("PlanTaskProblem(%q) = %q, want it to mention %q", c.name, got, c.want)
+		}
+	}
+	// The cap counts bytes, and a value exactly at it is accepted.
+	if id := "a/" + strings.Repeat("b", MaxPlanTaskBytes-2); len(id) != MaxPlanTaskBytes || PlanTaskProblem(id) != "" {
+		t.Errorf("PlanTaskProblem of a %d-byte id = %q, want it accepted", len(id), PlanTaskProblem(id))
+	}
+	// The same list is what Validate applies to a stored task.
+	s := Spec{Version: 1, RunID: "20261024-120000-abcd", Repo: "acme/app", Ref: "main", Task: "x"}
+	if err := s.Validate(); err != nil {
+		t.Fatalf("no plan task: %v", err)
+	}
+	s.PlanTask = "setup-wizard/W1.3"
+	if err := s.Validate(); err != nil {
+		t.Fatalf("a shaped plan task: %v", err)
+	}
+	s.PlanTask = "setup-wizard/../escape"
+	if err := s.Validate(); err == nil || !strings.Contains(err.Error(), "task spec: plan_task") {
+		t.Fatalf("Validate() = %v, want the plan_task refusal", err)
+	}
+	// And an absent one writes no field, so a spec from a launcher that
+	// never heard of the flag is byte-identical to before (the runner's
+	// decoder refuses unknown fields).
+	s.PlanTask = ""
+	data, err := s.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "plan_task") {
+		t.Fatalf("a spec with no plan task carries the field:\n%s", data)
+	}
+	s.PlanTask = "setup-wizard/W1.3"
+	data, err = s.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Parse(data)
+	if err != nil || got.PlanTask != "setup-wizard/W1.3" {
+		t.Fatalf("round trip = %+v, %v", got, err)
+	}
+}
+
+// TestBaseBranchValidated: a task's base_branch is the base the launcher
+// resolved from the local config and the project's published policy, which
+// the runner uses only when the fugaro.yaml at the ref sets no
+// git.base_branch. It reaches git, Docker build arguments and Cloud Build,
+// so it is held to the same rule fugaro.yaml's own key is
+// (config.ValidBranchName) on read and on the launcher's own write.
+func TestBaseBranchValidated(t *testing.T) {
+	const tmpl = `{"version":1,"run_id":"20260926-221530-a1b2","repo":"acme/app","ref":"main","task":"x"`
+	s, err := Parse([]byte(tmpl + `,"base_branch":"master"}`))
+	if err != nil || s.BaseBranch != "master" {
+		t.Fatalf("Parse = %+v, %v", s, err)
+	}
+	s, err = Parse([]byte(tmpl + "}"))
+	if err != nil || s.BaseBranch != "" {
+		t.Fatalf("no base_branch: %+v, %v", s, err)
+	}
+	for _, ok := range []string{"master", "release/1.2", "dev_x"} {
+		if _, err := Parse([]byte(tmpl + `,"base_branch":"` + ok + `"}`)); err != nil {
+			t.Errorf("%q refused: %v", ok, err)
+		}
+	}
+	// An empty value is indistinguishable from an absent key (omitempty), and
+	// means the same to the runner: the file's own resolution, then main.
+	for _, bad := range []string{"--upload-pack=x", "a..b", "$(id)", "x y", "/x"} {
+		if _, err := Parse([]byte(tmpl + `,"base_branch":"` + bad + `"}`)); err == nil || !strings.Contains(err.Error(), "base_branch") {
+			t.Errorf("%q: err = %v, want it to mention base_branch", bad, err)
+		}
+	}
+}
+
+// TestDigestRunsRefusedWithoutDigestRecipe covers the decoder's own arm for a
+// report run's manifest (task-governance T3.6, Spec.DigestRuns): the run IDs
+// the launching CLI listed, which the digest step reads one record at a time.
+// A manifest is accepted only under a recipe whose first step is digest — the
+// only step that reads it — and every ID is shape-checked, because each one
+// names an object the job will read.
+//
+// The repository-sourced case is the one this package cannot judge: such a
+// task carries its recipe's name and no text, so the launcher judges the file
+// it resolved (internal/cli/run_digest_manifest.go) and the runner resolves
+// the same name at the task's ref. Refusing it here would break the one
+// launcher that writes this field.
+//
+// Mutation (drop the recipe switch from Validate): a manifest under
+// recipe solo parses and this test fails.
+func TestDigestRunsRefusedWithoutDigestRecipe(t *testing.T) {
+	digestText, ok := recipe.CatalogText("run-digest")
+	if !ok {
+		t.Fatal("run-digest is not in the catalog")
+	}
+	const soloText = "version: 1\nname: solo\nsteps:\n  - review: {}\n"
+	digest := &Recipe{Name: "run-digest", Source: "catalog", SHA256: recipe.Sum(digestText), YAML: string(digestText)}
+	solo := &Recipe{Name: "solo", Source: "catalog", SHA256: recipe.Sum([]byte(soloText)), YAML: soloText}
+	base := func(r *Recipe, runs ...string) *Spec {
+		return &Spec{Version: 1, RunID: "20260926-221530-a1b2", Repo: "acme/app", Ref: "main", Task: "x",
+			Recipe: r, DigestRuns: runs}
+	}
+	if err := base(digest, "20260927-100000-abcd", "20260926-090000-1234").Validate(); err != nil {
+		t.Errorf("a report run's manifest: %v", err)
+	}
+	// A repository recipe carries no text: accepted, judged where it is read.
+	if err := base(&Recipe{Name: "reports", Source: "repo"}, "20260927-100000-abcd").Validate(); err != nil {
+		t.Errorf("a repository recipe: %v", err)
+	}
+	for _, tc := range []struct {
+		name string
+		spec *Spec
+		want string
+	}{
+		{"no recipe at all", base(nil, "20260927-100000-abcd"), "needs a recipe whose first step is digest"},
+		{"a review recipe", base(solo, "20260927-100000-abcd"), "needs a recipe whose first step is digest"},
+		{"recipe text that is not a recipe", base(&Recipe{Name: "solo", Source: "catalog", SHA256: recipe.Sum([]byte("x")), YAML: "x"}, "20260927-100000-abcd"), "needs a recipe whose first step is digest"},
+		{"not a run ID", base(digest, "yesterday"), "must look like 20260926-221530-a1b2"},
+		{"an empty ID", base(digest, ""), "must look like 20260926-221530-a1b2"},
+		{"too many", base(digest, manyIDs(MaxDigestRuns+1)...), "at most 5000 runs"}} {
+		err := tc.spec.Validate()
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want it to mention %q", tc.name, err, tc.want)
+		}
+	}
+	// The field is omitted when there is no manifest, so a spec that is not a
+	// report run is byte-identical to what the previous release wrote, and a
+	// stored one parses back.
+	data, err := json.Marshal(base(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "digest_runs") {
+		t.Fatalf("an absent manifest is written: %s", data)
+	}
+	raw, err := json.Marshal(base(digest, "20260927-100000-abcd"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := Parse(raw)
+	if err != nil || len(out.DigestRuns) != 1 || out.DigestRuns[0] != "20260927-100000-abcd" {
+		t.Fatalf("round trip: %+v, %v", out, err)
+	}
+}
+
+// manyIDs is n run IDs of the one shape, for the bound's own case.
+func manyIDs(n int) []string {
+	ids := make([]string, n)
+	for i := range ids {
+		ids[i] = "20260927-100000-abcd"
+	}
+	return ids
 }

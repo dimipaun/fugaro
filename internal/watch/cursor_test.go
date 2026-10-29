@@ -42,7 +42,8 @@ func TestCursorFallsBackToHeaderThenFirstRow(t *testing.T) {
 }
 
 // A finished run is a selectable row too (design generic-tool §10.3: "x on
-// the selected row" acknowledges a failure), listed after the block's
+// the selected row" dismisses it, any finished run and not only a failure —
+// owner spec 2026-10-22, item 4), listed after the block's
 // running and queued runs, so x can target one without a special key.
 func TestRowsIncludesFinishedAfterRuns(t *testing.T) {
 	v := View{Repos: []RepoBlock{

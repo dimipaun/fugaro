@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See console/LICENSE.md for the terms.
 // The served root, the bundle in it, and the bundler that wrote both
 // (desktop-console plan Task 3.4a, steps 4 and 5; design section 5.1 rules 1, 3
 // and 5).
@@ -6,7 +8,8 @@
 // make:
 //
 //   1. **The served root holds exactly `SERVED_FILES`** (`src/main/protocol.ts`)
-//      -- the two documents and the one script, and nothing else. The protocol
+//      -- the four documents, the three window scripts, the layout worker and
+//      the stylesheet, and nothing else. The protocol
 //      handler will serve any file under `dist/bundle/` that a URL names, so the
 //      *directory* is the allow-list, and this test is what holds the directory
 //      to the list a reader can see.
@@ -49,6 +52,7 @@ import { describe, expect, it } from 'vitest'
 import { SERVED_FILES } from '../../src/main/protocol'
 import {
   BundleRefusal,
+  FONT_FILES,
   THEME_STYLESHEETS,
   buildConsole,
   bundleRenderer,
@@ -78,6 +82,10 @@ import {
 } from '../support/fakeDom'
 
 /** ENTRY is the compiled entry the build walks, and OUT the file it writes. */
+/** WORKER is the pinned elkjs worker as it stands in `node_modules`: the build
+ * copies it verbatim, so a planted root holds bytes of the same shape. */
+const WORKER = readFileSync(join(CONSOLE_ROOT, 'node_modules', 'elkjs', 'lib', 'elk-worker.min.js'), 'utf8')
+
 const PATHS = consoleBundlePaths(CONSOLE_ROOT)
 
 /** THEME_DIR is the theme directory the stylesheet step reads: the list
@@ -127,6 +135,21 @@ function unwiredClaimsIn(directory: string, names: readonly string[]): { name: s
   return claims
 }
 
+/** registryKeysIn is the keys a bundle's registry actually holds, in the order
+ * the file writes them.
+ *
+ * It is what makes a bundle's "and nothing else" checkable, and it has to be read
+ * off the artefact rather than compared as a substring: `moduleClosure`'s keys are
+ * relative to *that closure's* deepest common directory, so a needle written for
+ * one bundle does not describe a leak into another. `bundle/confirm.js` keys its
+ * one module `/confirm.js`; a leaked entry would re-root that closure to
+ * `src/renderer` and key as `/entry.js`, so a `not.toContain('registry["/renderer/entry.js"]')`
+ * against the confirmation bundle is true whatever the file holds. Comparing key
+ * sets has no such blind spot. */
+function registryKeysIn(bundle: string): string[] {
+  return [...bundle.matchAll(/registry\["([^"]+)"\]\s*=/g)].map((match) => match[1] ?? '')
+}
+
 /** servedNames is `SERVED_FILES` as file names, which is what a directory
  * listing is: `/console.js` is `console.js` in the root. */
 function servedNames(): readonly string[] {
@@ -138,7 +161,7 @@ describe('the served root npm run build leaves', () => {
     // The non-vacuity guard first: an empty list would make the comparison
     // below pass against an empty directory, and the list is what the handler's
     // root is supposed to be.
-    expect(SERVED_FILES.length, 'SERVED_FILES names nothing: the comparison below would be vacuous').toBe(6)
+    expect(SERVED_FILES.length, 'SERVED_FILES names nothing: the comparison below would be vacuous').toBe(16)
     expect(builtListing('bundle')).toEqual(servedNames())
   })
 
@@ -227,7 +250,7 @@ describe('the served root npm run build leaves', () => {
   })
 
   it('holds the documents the sources hold, byte for byte', () => {
-    for (const name of ['index.html', 'installations.html', 'refusal.html']) {
+    for (const name of ['confirm.html', 'index.html', 'installations.html', 'refusal.html']) {
       const source = readFileSync(join(CONSOLE_ROOT, 'src', 'renderer', name), 'utf8')
       // Byte for byte, and not merely equal after parsing: the CSP `<meta>`
       // copy in each document is compared with the header
@@ -252,18 +275,33 @@ describe('the served root npm run build leaves', () => {
       )
     }
     expect(closure[closure.length - 1]?.key).toBe('/renderer/installations.js')
+    // ...and nothing *else*: the loop above only asserts containment, so a
+    // bundle that carried a module the picker never requires would pass it. The
+    // key sets are compared both ways, which is the half that fails when a
+    // window's bundle grows another window's module.
+    expect(registryKeysIn(picker).sort()).toEqual(closure.map((module) => module.key).sort())
     const specifiers = requireSpecifiers(picker)
     for (const specifier of specifiers) expect(isRelative(specifier ?? '')).toBe(true)
     expect(picker).not.toMatch(/\beval\s*\(/)
     expect(picker).not.toMatch(/new\s+Function\s*\(/)
-    // The build writes both, each told the other's name -- and the stylesheet's
-    // (Task 6.2), which `bundleStylesheet` writes into the same directory: it is
-    // this build's file, not a foreign one, and without the entry here the
-    // served root's foreign-file refusal would reject the stylesheet the
-    // documents link.
+    // The build writes all three, each told the others' names -- and the
+    // stylesheet's (Task 6.2), which `bundleStylesheet` writes into the same
+    // directory: it is this build's file, not a foreign one, and without the
+    // entry here the served root's foreign-file refusal would reject the
+    // stylesheet the documents link.
     expect(consoleBundles(CONSOLE_ROOT).map((bundle) => [bundle.out, bundle.siblings])).toEqual([
-      [join(CONSOLE_ROOT, 'dist', 'bundle', 'console.js'), ['installations.js', 'console.css']],
-      [join(CONSOLE_ROOT, 'dist', 'bundle', 'installations.js'), ['console.js', 'console.css']],
+      [
+        join(CONSOLE_ROOT, 'dist', 'bundle', 'console.js'),
+        ['installations.js', 'confirm.js', 'console.css', 'elk-worker.min.js', ...FONT_FILES.map(({ file }) => file)],
+      ],
+      [
+        join(CONSOLE_ROOT, 'dist', 'bundle', 'installations.js'),
+        ['console.js', 'confirm.js', 'console.css', 'elk-worker.min.js', ...FONT_FILES.map(({ file }) => file)],
+      ],
+      [
+        join(CONSOLE_ROOT, 'dist', 'bundle', 'confirm.js'),
+        ['console.js', 'installations.js', 'console.css', 'elk-worker.min.js', ...FONT_FILES.map(({ file }) => file)],
+      ],
     ])
     // And the stylesheet's own paths are what this build writes: the theme
     // directory in, `dist/bundle/console.css` out.
@@ -271,6 +309,42 @@ describe('the served root npm run build leaves', () => {
       directory: THEME_DIR,
       out: join(CONSOLE_ROOT, 'dist', 'bundle', 'console.css'),
     })
+  })
+
+  it('holds the confirmation window’s bundle, the third entry (V2.5.1a), with its own closure and nothing else', () => {
+    const confirmation = builtFile('bundle/confirm.js')
+    const closure = moduleClosure(builtPath('renderer/confirm.js'))
+    // The view imports its preload's *type* and nothing else, and a type is
+    // erased: the confirmation window's closure is its own entry. That is the
+    // claim worth pinning -- the window runs the view and no shared module, and
+    // a bundle that grew one would be a change to what the window runs.
+    expect(closure.length, 'the confirmation closure is more than its own entry').toBe(1)
+    for (const module of closure) {
+      expect(confirmation, `${module.key} is not in the confirmation bundle`).toContain(
+        `registry[${JSON.stringify(module.key)}] = function (exports, require, module) {`,
+      )
+    }
+    // The key is the module's path relative to the closure's deepest common
+    // directory, and this closure is one file: the root is the entry's own
+    // directory, so the key carries no `renderer/` segment. It is pinned
+    // because the loader's keys are what the bundle is *read* by, and a reader
+    // diffing this bundle against the others would otherwise have to work that
+    // out from the tool.
+    expect(closure[closure.length - 1]?.key).toBe('/confirm.js')
+    const specifiers = requireSpecifiers(confirmation)
+    for (const specifier of specifiers) expect(isRelative(specifier ?? '')).toBe(true)
+    expect(confirmation).not.toMatch(/\beval\s*\(/)
+    expect(confirmation).not.toMatch(/new\s+Function\s*\(/)
+    // The claim this case exists for, and the one a needle cannot make: the
+    // registry holds this closure's keys and no others. It is compared as a set
+    // rather than as three `not.toContain`s, because each closure keys its
+    // modules relative to its own root -- the dashboard's and the picker's span
+    // `src/renderer` and `src/shared`, so theirs read `/renderer/…` and
+    // `/shared/…` while the confirmation's one module reads `/confirm.js`, and a
+    // leaked module is re-keyed to the *receiving* closure's root. A bundle that
+    // carried another window's modules would therefore still satisfy any fixed
+    // needle; it cannot satisfy this.
+    expect(registryKeysIn(confirmation)).toEqual(closure.map((module) => module.key))
   })
 })
 
@@ -290,6 +364,11 @@ describe('the bundle', () => {
     }
     const entryKey = modules[modules.length - 1]?.key
     expect(entryKey, 'the last module of the closure is not the entry').toBe('/renderer/entry.js')
+    // The loop above is containment only: it is satisfied by a bundle that
+    // carries the dashboard's closure *and* a module the dashboard never
+    // requires. The key sets are compared both ways, so the bundle is its
+    // closure and nothing beyond it.
+    expect(registryKeysIn(bundle).sort()).toEqual(modules.map((module) => module.key).sort())
     expect(bundle.trimEnd().endsWith('})();')).toBe(true)
   })
 
@@ -335,7 +414,7 @@ describe('the bundle', () => {
     expect(PATHS.entry).toBe(join(CONSOLE_ROOT, 'dist', 'renderer', 'entry.js'))
   })
 
-  it('ships the built preload, the bundle and both documents -- once Task 4.1 lands', (context) => {
+  it('ships the built preloads, the bundles and the documents -- once Task 4.1 lands', (context) => {
     // **The one thing this task cannot finish from here.** `build.files` is
     // electron-builder's list of what goes into the packaged app, and it arrives
     // with Task 4.1 (PR #540), which has not merged. Until it does, the compiled
@@ -343,7 +422,7 @@ describe('the bundle', () => {
     // packaged console would come up with no script to run and no bridge to
     // read, which is the defect this task exists to close, reintroduced at the
     // packager. The plan's 3.4a note says so and this test is the half of it
-    // that can be written now: the four entries are named, derived rather than
+    // that can be written now: the entries are named, derived rather than
     // retyped (`SERVED_FILES` plus the preload path the window is given), and
     // asserted the moment the list exists. Whichever of #540 and this lands
     // second adds them.
@@ -353,11 +432,12 @@ describe('the bundle', () => {
     const required = [
       'dist/preload/index.js',
       'dist/preload/installations.js',
+      'dist/preload/confirm.js',
       ...SERVED_FILES.map((path) => `dist/bundle${path}`),
     ]
     // Non-vacuity: an empty `SERVED_FILES` would make the loop below assert
     // nothing at all, and the loop is the whole claim.
-    expect(required.length, 'SERVED_FILES names nothing: the check below would be vacuous').toBe(8)
+    expect(required.length, 'SERVED_FILES names nothing: the check below would be vacuous').toBe(19)
     const files = pkg.build?.files
     if (files === undefined) {
       context.skip(
@@ -436,14 +516,15 @@ describe('the bundle in a document', () => {
     // A bundle that threw on load, or one whose guard skipped it, draws nothing
     // too -- and this says which happened.
     expect(asked(), 'the entry never asked the bridge: nothing here was drawn or refused').toBe(1)
-    // The four drawings of a console whose handshake is in range: the
-    // installation rail (Task 6.3, the canvas's structural addition -- the
-    // grid's first column, and the body's first child after any banner), D13's
-    // no-installation state (Task 3.4b, step 4), the navigation, and the panel
-    // the screens are drawn into (Task 3.4c).
-    expect(document.body.children).toHaveLength(4)
-    const rail = document.body.children[0] as FakeNode
-    expect(rail.attributes.get('class')).toBe('console-rail')
+    // The two drawings of a console whose handshake is in range: the header
+    // (the redesign's shell; its switcher's menu holds the installation rail and
+    // D13's no-installation state, Task 3.4b step 4) and the page holding the
+    // panel the screens are drawn into (Task 3.4c).
+    expect(document.body.children).toHaveLength(2)
+    const header = document.body.children[0] as FakeNode
+    expect(header.attributes.get('class')).toBe('console-header')
+    const rail = everyNode(header).find((node) => node.attributes.get('class') === 'console-rail') as FakeNode
+    expect(rail, 'the switcher holds no rail').toBeDefined()
     // The rail's row is the *chosen* installation's, and this bridge answered
     // `chosen: false` -- so the region is drawn and holds no row: no
     // installation is being read, and a row invented for one would be a row
@@ -451,23 +532,25 @@ describe('the bundle in a document', () => {
     expect(
       everyNode(rail).filter((node) => node.attributes.get('class') === 'console-rail-row'),
     ).toEqual([])
-    const root = document.body.children[1] as FakeNode
-    expect(root.attributes.get('class')).toBe('console-installation')
+    const root = everyNode(header).find((node) => node.attributes.get('class') === 'console-installation') as FakeNode
     expect(root.attributes.get('data-installation')).toBe('none')
     expect(textOf(root)).toContain('no installation has been chosen')
-    const nav = document.body.children[2] as FakeNode
-    expect(nav.attributes.get('class')).toBe('console-views')
+    const nav = everyNode(header).find((node) => node.attributes.get('class') === 'console-views') as FakeNode
     expect(nav.children.map((button) => button.attributes.get('data-view'))).toEqual([
       'live',
+      'graph',
       'spend',
       'projects',
+      'coordinator',
     ])
     // And the panel holds the Live screen's own refusal rather than a dashboard
     // of zeros: this bridge carries the two handshake methods and **no read at
     // all**, so the read the screen opens with is one the console could not
     // make. `renderUnavailable` draws no figure, which is the whole point of
     // answering a read like this with a refusal.
-    const panel = document.body.children[3] as FakeNode
+    const page = document.body.children[1] as FakeNode
+    expect(page.attributes.get('class')).toBe('console-page')
+    const panel = page.children[0] as FakeNode
     expect(panel.attributes.get('class')).toBe('console-panel')
     const drawn = panel.children[0] as FakeNode
     expect(drawn.attributes.get('data-kind')).toBe('refused')
@@ -490,7 +573,7 @@ describe('the bundle in a document', () => {
         },
       },
     )
-    const text = textOf(document.body.children[1] as FakeNode)
+    const text = textOf(document.body.children[0] as FakeNode)
     expect(text).toContain('/home/owner/.config/fugaro-console/installations.json could not be read: the file is not JSON')
   })
 
@@ -502,15 +585,17 @@ describe('the bundle in a document', () => {
         data: { chosen: true, id: '0123456789abcdef', project: 'acme', binary: '/opt/fugaro/bin/fugaro', cliVersion: '9.9.9', mode: 'reduced' },
       },
     )
-    // The banner first, then the rail, then the installation.
-    const section = document.body.children[2] as FakeNode
+    // The banner first, then the header, whose switcher's menu holds the
+    // installation line and the rail.
+    const header = document.body.children[1] as FakeNode
+    const section = everyNode(header).find((node) => node.attributes.get('class') === 'console-installation') as FakeNode
     expect(section.attributes.get('data-installation')).toBe('chosen')
     expect(section.attributes.get('data-mode')).toBe('reduced')
     const lines = section.children.map((child) => child.textContent)
     expect(lines).toEqual(['acme', '/opt/fugaro/bin/fugaro', '9.9.9 · reduced'])
     // And the rail's own row for the same installation: one row, because one
     // installation is what `installation.current` answers.
-    const rail = document.body.children[1] as FakeNode
+    const rail = everyNode(header).find((node) => node.attributes.get('class') === 'console-rail') as FakeNode
     const rows = everyNode(rail).filter((node) => node.attributes.get('class') === 'console-rail-row')
     expect(rows).toHaveLength(1)
     const drawnName = everyNode(rows[0] as FakeNode).find(
@@ -1283,8 +1368,14 @@ function plantedConsoleRoot(extra: Readonly<Record<string, string>> = {}): strin
   const root = mkdtempSync(join(tmpdir(), 'console-build-'))
   const files: Record<string, string> = {
     ...themeSources(),
+    // The worker is a *source* of the build -- elkjs's own file, copied verbatim --
+    // so a planted root must hold one, exactly as it holds the theme sources.
+    [join('node_modules', 'elkjs', 'lib', 'elk-worker.min.js')]: WORKER,
+    // The vendored fonts are sources of the build too, copied verbatim.
+    ...Object.fromEntries(FONT_FILES.map(({ family, file }) => [join('src', 'renderer', 'fonts', family, file), 'wOF2'])),
     [join('dist', 'renderer', 'entry.js')]: `'use strict';\n`,
     [join('dist', 'renderer', 'installations.js')]: `'use strict';\n`,
+    [join('dist', 'renderer', 'confirm.js')]: `'use strict';\n`,
     ...extra,
   }
   for (const [name, body] of Object.entries(files)) {
@@ -1294,6 +1385,7 @@ function plantedConsoleRoot(extra: Readonly<Record<string, string>> = {}): strin
   }
   mkdirSync(join(root, 'src', 'renderer'), { recursive: true })
   writeFileSync(join(root, 'src', 'renderer', 'index.html'), '<!doctype html>\n')
+  writeFileSync(join(root, 'src', 'renderer', 'confirm.html'), '<!doctype html>\n')
   return root
 }
 
@@ -1351,7 +1443,7 @@ describe('the order the build’s steps run in', () => {
     // about. Without it a refusal below could be the planted tree's doing.
     withPlantedConsole({}, (root) => {
       buildConsole(root)
-      for (const name of ['console.css', 'console.js', 'installations.js', 'index.html']) {
+      for (const name of ['confirm.html', 'confirm.js', 'console.css', 'console.js', 'index.html', 'installations.js']) {
         expect(existsSync(join(root, 'dist', 'bundle', name)), `${name} was not written`).toBe(true)
       }
     })
@@ -1456,3 +1548,27 @@ describe('the order the build’s steps run in', () => {
     )
   })
 })
+
+describe('the copied worker (GV2.2)', () => {
+  it("is elkjs's own file, byte for byte, from the pinned version", () => {
+    // The worker is minified by *its* build and shipped as it came, so what is
+    // worth asserting is not that it looks right but that it is the pinned
+    // package's file: this digest is `elkjs@0.11.0`'s `lib/elk-worker.min.js`,
+    // and a different pin -- or a copy a later edit touched -- is a red test
+    // rather than a quiet line in node_modules. A patched worker would be
+    // unreviewed third-party code running under the console's CSP.
+    const source = readFileSync(join(CONSOLE_ROOT, 'node_modules', 'elkjs', 'lib', 'elk-worker.min.js'))
+    expect(createHash('sha256').update(source).digest('hex')).toBe(
+      'c0dc844ac1739a1e1e4f64d08a9ec4594818d5aa7e0cb26e5096b6d34b864e2b',
+    )
+    builtListing('bundle')
+    const copied = readFileSync(join(CONSOLE_ROOT, 'dist', 'bundle', 'elk-worker.min.js'))
+    expect(createHash('sha256').update(copied).digest('hex')).toBe(
+      'c0dc844ac1739a1e1e4f64d08a9ec4594818d5aa7e0cb26e5096b6d34b864e2b',
+    )
+    // and the CSP is unchanged: the worker is one served file, named once
+    expect(SERVED_FILES.filter((name) => name.includes('worker'))).toEqual(['/elk-worker.min.js'])
+  })
+})
+
+import { createHash } from 'node:crypto'

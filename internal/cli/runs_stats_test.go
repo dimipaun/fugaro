@@ -289,6 +289,72 @@ func TestRunsStatsSpendIsModelDollarsNotCompute(t *testing.T) {
 	}
 }
 
+// TestRunsStatsSplitsAMixedRunsNotional (C1.16, P12, D140): a cascade run's
+// model figure holds the subscription's dollars and the billed ones, and its
+// basis is api-list for the whole run -- so the counted column is the money
+// part alone and the notional column is the plan's. Read off the basis, one
+// run's tier-A calls would be counted as spend as well as listed as notional.
+func TestRunsStatsSplitsAMixedRunsNotional(t *testing.T) {
+	f := newCloudFixture(t)
+	userStatsPlace(t, f, "someone@example.com", nil, []string{"user:someone@example.com"})
+	day := time.Now().UTC()
+	// $3.00 of model, $2.00 of it the subscription's, and $0.50 of compute:
+	// the run's total is $1.50 and its model money is $1.00.
+	mixed := userRecCost(runstore.StatusSucceeded, 3.00, 0.50, runstore.BasisAPIList)
+	c := mixed.Cost.WithNotional(2.00)
+	mixed.Cost = &c
+	seedUserRun(t, f, userStatsID(day, 0), "dana@example.com", mixed)
+
+	doc := runsStats(t)
+	dana := userStatsRow(t, doc, "dana@example.com")
+	if dana.CountedUSD != 1.00 {
+		t.Errorf("dana's counted spend = $%v, want the $1.00 of the model figure that was billed: "+
+			"$2.00 of it was the subscription's", dana.CountedUSD)
+	}
+	if dana.NotionalUSD != 2.00 {
+		t.Errorf("dana's notional = $%v, want the subscription's $2.00", dana.NotionalUSD)
+	}
+	if tot := doc.Totals[0]; tot.CountedUSD != 1.00 || tot.NotionalUSD != 2.00 {
+		t.Errorf("total = %+v, want $1.00 counted and $2.00 notional", tot)
+	}
+}
+
+// TestRunsStatsAnAllNotionalCascadeRunBilledNothing (C1.16, P12, D140): a
+// cascade run whose every call the plan served has a whole notional model
+// figure and, like every cascade run, an api-list basis -- the billed part's.
+// Read off the basis it is a counted run of $0.00, averaged in as a run that
+// cost nothing; the split says what it is: a notional run, whose money part is
+// nothing at all and whose counted runs are the runs that billed.
+func TestRunsStatsAnAllNotionalCascadeRunBilledNothing(t *testing.T) {
+	f := newCloudFixture(t)
+	userStatsPlace(t, f, "someone@example.com", nil, []string{"user:someone@example.com"})
+	day := time.Now().UTC()
+	// $3.00 of model, all of it the plan's, and $0.50 of compute: the run
+	// billed no model dollar, and its total is the compute alone.
+	all := userRecCost(runstore.StatusSucceeded, 3.00, 0.50, runstore.BasisAPIList)
+	c := all.Cost.WithNotional(3.00)
+	all.Cost = &c
+	seedUserRun(t, f, userStatsID(day, 0), "dana@example.com", all)
+	// A run that did bill, beside it: the average is over the runs that
+	// billed, and the notional run must not be one of them.
+	seedUserRun(t, f, userStatsID(day, 1), "dana@example.com",
+		userRecCost(runstore.StatusSucceeded, 1.00, 0, runstore.BasisAPIList))
+
+	doc := runsStats(t)
+	dana := userStatsRow(t, doc, "dana@example.com")
+	if dana.CountedUSD != 1.00 || dana.NotionalUSD != 3.00 {
+		t.Errorf("dana's money = $%v counted and $%v notional, want $1.00 and $3.00: the plan paid "+
+			"the cascade run's whole model figure", dana.CountedUSD, dana.NotionalUSD)
+	}
+	if dana.CountedRuns != 1 || dana.AvgCountedUSD != 1.00 {
+		t.Errorf("dana's row = %+v, want one counted run averaged at $1.00: a run whose model figure "+
+			"was the plan's is not a run that cost nothing", dana)
+	}
+	if tot := doc.Totals[0]; tot.CountedUSD != 1.00 || tot.NotionalUSD != 3.00 || tot.CountedRuns != 1 {
+		t.Errorf("total = %+v, want $1.00 counted over one run and $3.00 notional", tot)
+	}
+}
+
 // TestRunsStatsFollowUpBelongsToItsOwnLauncher is the follow-up rule: a
 // follow-up carries the identity its own launch recorded, and the run it
 // continues keeps its own -- two people on one pull request are two rows, and

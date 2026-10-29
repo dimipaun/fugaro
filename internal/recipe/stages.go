@@ -12,9 +12,19 @@ package recipe
 // that keeps a check step out -- so one is the bound, and for a
 // render-only recipe (steps: [render]) the bound errs high rather than low,
 // which is the direction a ceiling may err in.
+//
+// A digest recipe counts no implement stage either: its first step is the
+// runner's own work, which writes the run reports with no model call
+// (run-digest), so the review loop after it is all a run of it can record.
+// The loop's fix stays counted: whether the review of a report ever asks for
+// one is for that run to decide, and a bound errs high rather than low.
 func StageBound(r *Recipe, f, n int) int {
 	if r.Mode == ModeReview || r.Mode == ModeArtifact {
 		return 1
+	}
+	implement := 1
+	if UsesDigest(r) {
+		implement = 0
 	}
 	first, bounce, rounds := 0, false, n
 	for _, s := range r.Steps {
@@ -35,7 +45,7 @@ func StageBound(r *Recipe, f, n int) int {
 	if bounce {
 		per += 2 * first
 	}
-	return 1 + 2*first + rounds*per
+	return implement + 2*first + rounds*per
 }
 
 // UsesV07 reports whether r uses a key added in 0.7.0 (the image gate). It

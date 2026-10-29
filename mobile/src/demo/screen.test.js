@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See mobile/LICENSE.md for the terms.
 // The demo screen's tests (owner ruling of 2026-10-19).
 //
 // The screen draws the demo's state and nothing else, so these tests build the

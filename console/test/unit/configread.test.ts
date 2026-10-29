@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See console/LICENSE.md for the terms.
 // Rule 7's third prohibition, enforced: **the app never reads the operator's
 // config** (desktop-console plan Task 1.3, design section 3.4 rule 7, D13).
 //
@@ -173,19 +175,22 @@ describe('the app never reads the operator’s config', () => {
     expect(codeOnly(spawn)).not.toMatch(/readFileSync|readFile\(|createReadStream/)
   })
 
-  it('lets the installation store stat a config path, and never open one', () => {
+  it('lets the installation store name a config path, and never open it', () => {
     // Task 3.4b added `src/main/installations.ts`, the first module in the
     // console that handles a config path at all -- and the plan's red step for
-    // this half is a planted `readFileSync` of it. The line the store makes is
-    // a `stat`: "is this an existing file", which is what rule 7 allows, and
-    // nothing about what is in it. The scan is per line and keyed on the
-    // variable, so a later edit that swapped the `stat` for a read fails here
-    // by name.
+    // this half is a planted `readFileSync` of it. What is left of the store's
+    // handling is a shape check (the path must be absolute, because it is an
+    // argv element) and nothing else: the console asks the operator for no
+    // config (owner's ruling of 2026-10-20), so a `configPath` here is only ever
+    // a value carried through from a store entry that already had one, and the
+    // CLI is the thing that opens it. The scan is per line and keyed on the
+    // variable, so a later edit that reached for the file fails here by name --
+    // a `stat` included, since this module no longer needs to look at all.
     const code = codeOnly(readFileSync(join(SOURCE_ROOT, 'main', 'installations.ts'), 'utf8'))
-    expect(code).toContain('fs.stat(configPath)')
+    expect(code).toContain('isAbsolutePath(configPath')
     for (const line of code.split('\n')) {
       if (!/configPath/.test(line)) continue
-      expect(line.trim(), line.trim()).not.toMatch(/readFileSync|readFile\(|createReadStream|openSync|open\(/)
+      expect(line.trim(), line.trim()).not.toMatch(/readFileSync|readFile\(|createReadStream|openSync|open\(|stat\(/)
     }
     // ...and the planted mutation, against the same scan, so the check above is
     // not vacuous.

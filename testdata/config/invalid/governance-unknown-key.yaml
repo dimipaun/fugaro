@@ -1,0 +1,8 @@
+version: 1
+project: aurora
+git: { provider: github }
+governance:
+  review_ratio: 3
+  stage_budgets: { implement: 0.6 }
+workflows:
+  server: { commands: { build: make, test: make test } }

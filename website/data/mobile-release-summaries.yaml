@@ -1,0 +1,19 @@
+# website/data/mobile-release-summaries.yaml — the mobile app's end-user summaries.
+#
+# The app's own stream's file, beside the CLI's `release-summaries.yaml` rather
+# than inside it: that file is keyed `vX.Y.Z` and its entries are held against
+# the CLI's own release files (`website/src/content.ts`, `loadReleaseSummaries`),
+# while this one is keyed by the app's tag (`mobile-vX.Y.Z`, docs/release.md's
+# "Mobile releases"). A key here is the tag of a mobile release and its value is
+# the one sentence a user reads before the highlights: what the release gives
+# them, never what changed inside the repository.
+#
+# What carries these lines is the app's release itself. Nothing in this
+# repository generates a release body for `mobile-vX.Y.Z` — the staged mobile
+# release workflow builds on EAS and submits to TestFlight and to Play, and
+# creates no GitHub release — so the sentence is written here in the commit that
+# lands `docs/releases/mobile/vX.Y.Z.md`, on `main` before the tag, and the
+# app's release page and store listing are written from it by hand. The format
+# and the version line it goes with are docs/releases/mobile/README.md's.
+version: 1
+summaries:

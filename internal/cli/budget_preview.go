@@ -34,7 +34,8 @@ import (
 //
 // and, when the repository has recorded enough runs, what one run of the
 // recipe typically costs, from the real-dollar cost each stage of those runs
-// recorded (a subscription run's figure is notional and is left out).
+// recorded (a run whose model_usd was a subscription's rather than a bill is
+// left out: agent.auth oauth, or a cascade run the plan served in full).
 //
 // Nothing here is written and no run is started: the caps and today's
 // counters are read as budget show reads them, the recipe is resolved as
@@ -96,10 +97,11 @@ func newBudgetPreviewCmd() *cobra.Command {
 			"for on that model leaves the line out and names the model, rather than\n" +
 			"pricing the pinned model with what another one cost. Runs the figure\n" +
 			"cannot use are said to be left out, never counted as runs that cost\n" +
-			"nothing: a run on a subscription (agent.auth oauth), whose model_usd is\n" +
-			"notional rather than charged, a result.json that is missing or\n" +
-			"unreadable, and a record with no per-stage cost at all (one from before\n" +
-			"the runner kept it, or stages that all cost nothing).\n\n" +
+			"nothing: a run whose model_usd was a subscription's rather than a bill\n" +
+			"(agent.auth oauth, or a cascade run the plan served in full), a\n" +
+			"result.json that is missing or unreadable, and a record with no\n" +
+			"per-stage cost at all (one from before the runner kept it, or\n" +
+			"stages that all cost nothing).\n\n" +
 			"The recipe resolves as it does for a run: the repository's\n" +
 			".fugaro/recipes, the project's published recipes, then the catalog. The\n" +
 			"knobs come from the checkout's fugaro.yaml; without a checkout of the\n" +
@@ -342,7 +344,7 @@ type previewTypical struct {
 	Runs int `json:"runs"`
 	// Skipped is the runs the figure left out, the sum of the three below.
 	Skipped    int `json:"skipped"`
-	Notional   int `json:"notional"`   // subscription (oauth) runs: model_usd is notional
+	Notional   int `json:"notional"`   // runs whose model_usd was a subscription's: oauth, or a cascade run the plan served in full
 	Unreadable int `json:"unreadable"` // runs with no readable result.json
 	Unpriced   int `json:"unpriced"`   // runs whose record held no per-stage cost
 }
@@ -505,7 +507,7 @@ func previewAddTypical(ctx context.Context, doc *previewDoc, env *cloudEnv, lc *
 	// without saying why.
 	total := h.total()
 	if h.notional > 0 {
-		doc.Notes = append(doc.Notes, fmt.Sprintf("%d of the %d runs of %s in the last 30 days ran on a subscription (agent.auth oauth): their model_usd is notional and is not averaged into a real-dollar figure",
+		doc.Notes = append(doc.Notes, fmt.Sprintf("%d of the %d runs of %s in the last 30 days ran on a subscription (agent.auth oauth, or a cascade run the plan served in full): their model_usd is notional and is not averaged into a real-dollar figure",
 			h.notional, total, repo))
 	}
 	if h.unreadable > 0 {
@@ -541,10 +543,11 @@ type previewHistory struct {
 	// unpriced counts the runs whose record was read but held no per-stage
 	// cost at all (a result.json from before the runner kept one, or a run
 	// whose stages all cost nothing); unreadable the runs with no readable
-	// result.json; and notional the runs that ran on a subscription
-	// (agent.auth oauth, design §10.1), whose model_usd counts against the
-	// plan's limits and is no one's bill. Each is counted and said, and none
-	// is ever averaged in as a run that cost nothing.
+	// result.json; and notional the runs whose model_usd was a subscription's
+	// whole (agent.auth oauth, or a cascade run the plan served in full --
+	// design §10.1, C1.16/P12), which counts against the plan's limits and is
+	// no one's bill. Each is counted and said, and none is ever averaged in as
+	// a run that cost nothing.
 	unpriced, unreadable, notional int
 	// means is the mean cost of the stages seen per (stage kind, model).
 	means map[previewKind]previewMean
@@ -579,8 +582,8 @@ func (m previewMean) mean() float64 { return m.total / float64(m.stages) }
 //
 // A run it cannot price is counted, not guessed at: unreadable (no readable
 // result.json), unpriced (a record with no cost for any stage), or notional
-// (a subscription run). Only a read that fails for some other reason fails
-// the whole thing.
+// (a run whose model figure was a subscription's whole). Only a read that
+// fails for some other reason fails the whole thing.
 func readPreviewHistory(ctx context.Context, b *blobx.Bucket, slug string, now time.Time) (previewHistory, error) {
 	h := previewHistory{means: map[previewKind]previewMean{}}
 	ids, err := runstore.ListRunIDs(ctx, b.Bucket, slug, now.Add(-previewHistoryWindow))
@@ -601,22 +604,29 @@ func readPreviewHistory(ctx context.Context, b *blobx.Bucket, slug string, now t
 			return h, fmt.Errorf("run %s: %w", id, err)
 		}
 		rec := recs[i]
-		if rec.Cost != nil && rec.Cost.ModelBasis == runstore.BasisSubscription {
+		if rec.Cost != nil && rec.Cost.AllNotional() {
 			// Notional dollars: they count against the plan's limits, not
 			// against a bill, and a figure printed beside real caps must not
-			// mix them in (design §10.1, as runs ls's own ~ marker says).
+			// mix them in (design §10.1, as runs ls's own ~ marker says). The
+			// split, not the basis: a cascade run the plan served in full has
+			// an api-list basis and a whole notional figure, and read off the
+			// basis it would be a run whose stages all cost nothing.
 			h.notional++
 			continue
 		}
 		priced := false
 		for _, st := range rec.Stages {
-			if st.ModelUSD <= 0 { // omitempty: a record from before Task 24, or a stage that called no model
+			// The stage's money, not its whole figure: a cascade stage's
+			// tier-A dollars are the subscription's (C1.16, P12) and must not
+			// be averaged into a figure printed beside real caps.
+			money := st.ModelUSD - min(st.ModelNotionalUSD, st.ModelUSD)
+			if money <= 0 { // omitempty: a record from before Task 24, a stage that called no model, or a notional-only stage
 				continue
 			}
 			priced = true
 			k := previewKind{kind: st.Name, model: st.Model}
 			m := h.means[k]
-			m.total, m.stages = m.total+st.ModelUSD, m.stages+1
+			m.total, m.stages = m.total+money, m.stages+1
 			h.means[k] = m
 		}
 		if priced {
@@ -706,7 +716,9 @@ var previewStageKinds = [...]string{"implement", "review_first", "fix", "review"
 // history mean is multiplied by. It mirrors the runner's loop: an implement,
 // then a first line of review_first and its fix, then a senior review, its
 // fix, and, with bounce, one more cheap pair. A mode: review recipe runs the
-// senior review alone.
+// senior review alone, and a digest recipe has no implement stage at all:
+// its first step is the runner's own work, which writes the run reports with
+// no model call (run-digest).
 //
 // first and rounds are the checkout's first_line_rounds and review_rounds (a
 // step's own max_rounds overriding its knob, as recipe.StageBound takes
@@ -732,12 +744,15 @@ func previewTypicalCounts(rp *recipe.Recipe, first, rounds int) map[string]int {
 	}
 	// The fix after the first line and the fix after the senior review are one
 	// kind in result.json ("fix"), so they share one mean and one count here.
-	return map[string]int{
-		"implement":    1,             // the first_line step's first stage
+	counts := map[string]int{
 		"review_first": f + cheap,     // the first line, and its bounce-back
 		"review":       n,             // one senior round
 		"fix":          f + n + cheap, // each review's demands answered
 	}
+	if !recipe.UsesDigest(rp) {
+		counts["implement"] = 1 // the first_line step's first stage
+	}
+	return counts
 }
 
 // roundCount is how many rounds one loop gets, read as a typical run's count:
