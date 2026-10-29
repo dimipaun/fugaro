@@ -823,7 +823,13 @@ test('the campaign gate\'s configuration is on the four campaign pages and on no
     for (const host of hosts) {
       assert.ok(!page.html.includes(host), `${page.rel} names ${host}, one of the campaign gate's three origins, and it is not a campaign page: the origins reach the loader through the four campaign pages' own banner (F18)`)
     }
-    assert.ok(!page.html.includes(MARKETING_CONSENT_KEY), `${page.rel} carries the campaign decision's key and is not a campaign page`)
+    // The key's *literal* is a disclosure rather than a configuration: the privacy statement
+    // names it, exactly as it names the analytics key, and it is the one page outside the four
+    // that may. Everywhere else the campaign question reaches nothing, because the banner
+    // carries the key as an attribute and the site's one script carries no key at all.
+    if (page.rel !== 'privacy/index.html') {
+      assert.ok(!page.html.includes(MARKETING_CONSENT_KEY), `${page.rel} names the campaign decision's key and is neither a campaign page nor the privacy statement that discloses it`)
+    }
     assert.ok(!page.html.includes(MARKETING_KEY_ATTR), `${page.rel} carries the campaign gate's configuration and is not a campaign page`)
   }
   for (const rel of filesUnder(DIST)) {

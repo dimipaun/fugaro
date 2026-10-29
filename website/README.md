@@ -56,11 +56,12 @@ published ranges are real) is W2.3's, in the level after it.
 No font, script, stylesheet, image or embed reaches a page from an origin outside this
 build: the pages use the system font stack `src/styles/tokens.css` names, no font file
 ships today, and a font added later is **self-hosted in this artifact**
-(`website/public/fonts/`, which the layout preloads from), and there is no Google Fonts, no CDN, no embed and no pixel — because every
+(`website/public/fonts/`, which the layout preloads from), and there is no Google Fonts, no CDN — because every
 third-party origin is a request from a reader's browser to a company this project has no
-relationship with (D106). There is exactly **one exception, and the owner chose it**: the
-analytics script (D93), loaded **only after the visitor consents**, with W1.12's banner as
-the gate that decides whether anything is fetched and its own tests for no request before
+relationship with (D106). There are two exceptions, and the owner chose both: the
+analytics script (D93) and, since G2.3, the three vendors of the four campaign pages
+(D401) — each loaded **only after the visitor consents**, with W1.12's banner as the gate
+that decides whether anything is fetched and its own tests for no request before
 consent, no cookie before consent, withdrawal and keyboard reachability. `readme.mjs`
 refuses a third-party font or script host in the shell's own sources today, and W1.11
 asserts the same over the built HTML's script, link, iframe and image origins.
@@ -106,6 +107,39 @@ planted second copy fails. The id, the audit trail and the choices behind them:
   `https://*.google.com`. No `'unsafe-inline'`, no `'unsafe-eval'`, no nonce and no hash —
   the site ships no inline script. `test/origins.mjs` holds the policy to that exact token
   list, and refuses any token it does not carry.
+
+**G2.3 is the task that added the second question** (D401), on the four campaign pages only —
+`/save`, `/control`, `/scale` and `/crew` — and the three loads it covers: Meta's pixel,
+LinkedIn's insight tag and Calendly's booking widget.
+
+- **A separate consent under its own key**, `fugaro:marketing-consent`, and not a second value
+  under the analytics key: a visitor who answered the site's question is not asked again on
+  every page they read, and one who answered the campaign's question has not answered the
+  site's. The banner asks both on a campaign page, and one press answers the questions that
+  were open on it.
+- **The configuration is the banner's markup**, in `data-marketing-*` attributes: the page the
+  loader was built for, the two vendor ids, the three origins and the booking link
+  `data/landing.yaml` writes. `site.js` names no host, so a page that is not one of the four
+  carries none of it and loads none of them, and a campaign page served from another path
+  loads none of them either.
+- **Both ids are empty in `site.yaml`, and an empty id is a loader switched off** (R3): the
+  owner has not supplied a pixel id or a partner id, and this repository publishes no
+  identifier the owner did not supply. `internal/cli`'s boundary test pins both empty and the
+  three origins exact, so the day they arrive is the day that pin is relaxed.
+- **Each vendor is handed the page's path and no query** (F22): the pixel and the insight tag
+  are given `page_location` explicitly rather than left to read the address in the window, so
+  the campaign parameters a visitor arrived through reach neither.
+- **Withdrawal removes what this site may remove.** The pixel is told to revoke, and `_fbp`
+  and `_fbc` are deleted from this host. A script already fetched keeps running until the
+  visitor reloads, and a cookie a vendor set on its own domain is the vendor's to remove,
+  which the privacy statement says in those words.
+- **The deployed policy gains each vendor's origin per directive** — `script-src` for the
+  three scripts, `img-src` and `connect-src` for the pixel's and the insight tag's beacons,
+  `style-src` for Calendly's stylesheet, and a new `frame-src` for the booking page — with no
+  wildcard anywhere and nothing else added to `script-src`. `test/origins.mjs` holds the exact
+  per-directive list, `test/brand.mjs` the coarse one, and `test/consent.mjs` the cross-check
+  that the gate loads from exactly the origins the policy admits. The Calendly booking link
+  itself stays a plain `<a href>`: a visitor who declines the campaign consent keeps it.
 
 ## The gates
 
@@ -1080,7 +1114,7 @@ added or removed without this sentence moving fails there:
     **The page's words go 492 → 868** — the boards' own labels, which are what a level says — and
     **D188's number moves with them, 600 → 900**: 900 is the smallest round ceiling above the
     page, and the next page down that D188 governs is the homepage at 563 words (Getting Started
-    is 309; the privacy statement, at 759, is the page the words-per-page ceiling itself is
+    is 309; the privacy statement, at 950, is the page the words-per-page ceiling itself is
     derived from, so D188's own number does not measure it). The
     levels' words are no longer a data file: `website/data/zoom-levels.yaml` is gone and the
     boards are the source of truth — `src/lib/zoom-boards.mjs` reads each board's visible strings
@@ -1219,7 +1253,7 @@ added or removed without this sentence moving fails there:
     The ceiling is a ceiling, not a floor — a page with no lead region is a page D188's
     definition does not describe, and this gate says nothing about how much a page's first
     section should say.
-  - **Words per page:** 949 words. Every word a reader sees inside `main` — command blocks
+  - **Words per page:** 1188 words. Every word a reader sees inside `main` — command blocks
     and code spans included, since the ceiling is a claim about the page rather than about
     its prose — counted by `budget.mjs`'s own reader, which reads a page the way
     `test/lib/html.mjs`'s `textOf` does (a script or style body is not text, an image's
@@ -1240,8 +1274,8 @@ added or removed without this sentence moving fails there:
     **The number is no longer D188's own, and it is derived rather than picked.** The
     privacy statement is the page the App Store and Play listings link as a privacy policy,
     so it carries the software as well as the site and is the one page that is not the
-    site's pitch; the number is that page's own count on the gates' own build — **759
-    words** — plus 25 %, rounded up, which is **949**. `budget.mjs`'s
+    site's pitch; the number is that page's own count on the gates' own build — **950
+    words** — plus 25 %, rounded up, which is **1188**. `budget.mjs`'s
     `wordsCeilingFailures` holds the derivation to the built page the way the same file
     holds the byte budgets to theirs, so a sentence added there re-derives this line in the
     commit that adds it. **The raise is that page's and nobody else's**: every other page of
