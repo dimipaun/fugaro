@@ -279,6 +279,7 @@ span.live-day {
 section.live-review {
   margin-bottom: var(--space-lg);
   padding: 22px var(--space-lg);
+  background: var(--surface);
   border: var(--rule-width) dashed var(--control-border);
   border-radius: var(--radius-xl);
 }

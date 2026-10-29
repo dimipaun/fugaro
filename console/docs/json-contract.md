@@ -58,7 +58,7 @@ states are:
 | State | On screen | What it means |
 |---|---|---|
 | **measured** | the number | A counter the CLI read. |
-| **notional** | `NOTIONAL~` | A subscription's list price: never billed, never capped (`JSONTotal.NotionalUSD`'s own comment, `internal/watch/json.go`). |
+| **notional** | the number, after `~$` | A subscription's list price: never billed, never capped (`JSONTotal.NotionalUSD`'s own comment, `internal/watch/json.go`). |
 | **estimated** | the number, marked | Compute, an estimate by design (`JSONLine.ComputeEstimated`, `ee/report/render.go`). |
 | **unavailable** | `n/a` | The document says the value is not known. A nil pointer, an absent key, `[]`. |
 | **gap** | a broken line / hollow bar | The stream stopped. Never interpolated across. |
