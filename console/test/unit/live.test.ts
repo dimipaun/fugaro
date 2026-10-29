@@ -764,7 +764,7 @@ describe('the fleet budget panel', () => {
     // today is this one. The split cannot be drawn, and the legend's Leased row
     // is where the console says so -- with the reading's own reason in its
     // title, which is what makes `n/a` an answer rather than a hole.
-    const tree = renderLive(factory, fleetModel({ counted_usd: 50, daily_cap_usd: 100, percent: 50 }), 'light')
+    const tree = renderLive(factory, fleetModel({ counted_usd: 50, spent_usd: undefined, leased_usd: undefined, daily_cap_usd: 100, percent: 50 }), 'light')
     expect(segmentNames(tree)).toEqual(['counted', 'headroom'])
     expect(segmentWidths(tree)).toEqual(['50', '50'])
     expect(segmentOffsets(tree)).toEqual(['0', '50'])
@@ -792,7 +792,7 @@ describe('the fleet budget panel', () => {
     // charged. Fed the sum (50 + 3.29 against a 100 cap), the counted segment
     // below would be 53.29 wide and the headroom $46.71, and `$53.29` would be
     // printed; the assertions fail on all three.
-    const model = fleetModel({ counted_usd: 50, daily_cap_usd: 100, percent: 50 })
+    const model = fleetModel({ counted_usd: 50, spent_usd: undefined, leased_usd: undefined, daily_cap_usd: 100, percent: 50 })
     const tree = renderLive(factory, model, 'light')
     const panel = one(tree, 'live-fleet')
     expect(drawn(panel)).not.toContain('$53.29')
@@ -809,7 +809,7 @@ describe('the fleet budget panel', () => {
     const full = renderLive(factory, fleetModel({ counted_usd: 50, daily_cap_usd: 50, percent: 100 }), 'light')
     expect(all(full, 'live-fleet-full')).toHaveLength(1)
     expect(drawn(one(full, 'live-fleet-full'))).toContain('the cap is fully committed')
-    const room = renderLive(factory, fleetModel({ counted_usd: 50, daily_cap_usd: 100, percent: 50 }), 'light')
+    const room = renderLive(factory, fleetModel({ counted_usd: 50, spent_usd: undefined, leased_usd: undefined, daily_cap_usd: 100, percent: 50 }), 'light')
     expect(all(room, 'live-fleet-full')).toHaveLength(0)
   })
 
