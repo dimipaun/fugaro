@@ -479,6 +479,9 @@ export function bundleRenderer(options: BundleOptions): void {
 export const THEME_STYLESHEETS: readonly string[] = Object.freeze([
   'tokens.css',
   'palette.css',
+  // The console redesign's tokens (step 1): after the value set, so a screen the
+  // redesign rebuilds reads its own names, and before the rules that read them.
+  'flight-deck.css',
   // Task 6.3's: the reset, the document, the chrome and the focus rules. The
   // entry that landed with the file, in one commit, because the refusal above
   // fires in both directions -- a listed file that is missing and an unlisted
@@ -905,6 +908,50 @@ export function bundleWorker(worker: { readonly source: string; readonly out: st
   writeFileSync(worker.out, readFileSync(worker.source))
 }
 
+/** FONT_FILES are the vendored web fonts (owner's ruling of 2026-10-28), each a
+ * family directory under `src/renderer/fonts/` and a file name. They are copied
+ * byte for byte, flat, into the served root, where `SERVED_FILES` lists them and
+ * `flight-deck.css`'s `@font-face` rules name them by the same flat path, so
+ * `font-src 'self'` admits them with no directive added. Their licences and
+ * digests are `src/renderer/fonts/README.md` and `THIRD_PARTY_NOTICES.md`. */
+export const FONT_FILES: readonly { readonly family: string; readonly file: string }[] = Object.freeze([
+  { family: 'instrument-sans', file: 'InstrumentSans-Regular.woff2' },
+  { family: 'instrument-sans', file: 'InstrumentSans-Medium.woff2' },
+  { family: 'instrument-sans', file: 'InstrumentSans-SemiBold.woff2' },
+  { family: 'instrument-sans', file: 'InstrumentSans-Bold.woff2' },
+  { family: 'ibm-plex-mono', file: 'IBMPlexMono-Regular.woff2' },
+  { family: 'ibm-plex-mono', file: 'IBMPlexMono-Medium.woff2' },
+  { family: 'ibm-plex-mono', file: 'IBMPlexMono-SemiBold.woff2' },
+])
+
+/** consoleFonts is each font's source and destination. */
+export function consoleFonts(consoleRoot: string): readonly { readonly source: string; readonly out: string }[] {
+  return FONT_FILES.map(({ family, file }) => ({
+    source: join(consoleRoot, 'src', 'renderer', 'fonts', family, file),
+    out: join(consoleRoot, 'dist', 'bundle', file),
+  }))
+}
+
+/** bundleFont copies one font verbatim, refusing a missing source and a
+ * symlinked destination as the worker's copy does. */
+export function bundleFont(font: { readonly source: string; readonly out: string }): void {
+  refuseMissingFont(font.source)
+  refuseSymlinkedOutput(font.out)
+  writeFileSync(font.out, readFileSync(font.source))
+}
+
+function refuseMissingFont(source: string): void {
+  let stats: Stats | undefined
+  try {
+    stats = lstatSync(source)
+  } catch {
+    stats = undefined
+  }
+  if (stats === undefined || !stats.isFile()) {
+    throw new BundleRefusal(`${source} is not a file: the vendored fonts live under src/renderer/fonts/`)
+  }
+}
+
 /** consoleBundles is every bundle `npm run build` writes, each told the others'
  * names -- and the stylesheet's -- so the served root's foreign-file refusal
  * still holds for anything else. `console.css` is written by
@@ -919,6 +966,7 @@ export function consoleBundles(consoleRoot: string): readonly BundleOptions[] {
       ...all.filter((other) => other !== bundle).map((other) => basename(other.out)),
       stylesheet,
       WORKER_FILE,
+      ...FONT_FILES.map(({ file }) => file),
     ],
   }))
 }
@@ -971,8 +1019,9 @@ export function buildConsole(consoleRoot: string): void {
   const directory = dirname(resolve(first.out))
   const stylesheet = consoleStylesheet(consoleRoot)
   const worker = consoleWorker(consoleRoot)
-  const owned = new Set<string>([WORKER_FILE])
-  const outputs: string[] = [resolve(stylesheet.out), resolve(worker.out)]
+  const fonts = consoleFonts(consoleRoot)
+  const owned = new Set<string>([WORKER_FILE, ...FONT_FILES.map(({ file }) => file)])
+  const outputs: string[] = [resolve(stylesheet.out), resolve(worker.out), ...fonts.map((font) => resolve(font.out))]
   for (const bundle of bundles) {
     const documents = documentsOf(bundle.entry)
     for (const name of ownedInRoot(bundle, documents)) owned.add(name)
@@ -983,11 +1032,13 @@ export function buildConsole(consoleRoot: string): void {
   refuseSymlinkedDirectory(directory)
   refuseForeignFilesIn(directory, owned)
   refuseMissingSource(worker.source)
+  for (const font of fonts) refuseMissingFont(font.source)
   for (const output of outputs) refuseSymlinkedOutput(output)
   for (const bundle of bundles) moduleClosure(bundle.entry)
 
   bundleStylesheet(stylesheet)
   bundleWorker(worker)
+  for (const font of fonts) bundleFont(font)
   for (const bundle of bundles) bundleRenderer(bundle)
 }
 

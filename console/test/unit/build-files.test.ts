@@ -34,6 +34,8 @@ import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
+import { FONT_FILES } from '../../tools/bundle-renderer'
+
 const consoleDir = fileURLToPath(new URL('../..', import.meta.url))
 
 /** filesNamed lists the entries of one directory with the given suffix. */
@@ -87,6 +89,7 @@ const bundlerOutputs = [
   'dist/bundle/console.js',
   'dist/bundle/elk-worker.min.js',
   'dist/bundle/installations.js',
+  ...FONT_FILES.map(({ file }) => `dist/bundle/${file}`),
 ]
 
 /** NEVER_SHIPPED are the two compiled files Task 4.1 keeps out of the package by

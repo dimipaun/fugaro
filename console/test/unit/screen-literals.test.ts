@@ -1054,6 +1054,7 @@ describe('no module under src/renderer writes an inline style', () => {
       'screens/projects.ts',
       'screens/run.ts',
       'screens/spend.ts',
+      'writes.ts',
     ])
   })
 

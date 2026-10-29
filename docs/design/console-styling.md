@@ -184,47 +184,43 @@ Three facts hold across every screen and are stated once:
 
 ### 2.1 The dashboard's chrome — `src/renderer/entry.ts`
 
-The entry draws the body's four children, in this order, all from `domSurface`'s mount:
-`aside.console-rail` (§4.1's installation rail), `section.console-installation`,
-`nav.console-views`, `div.console-panel` — asserted by `test/e2e/entry.spec.ts`:
-`expect(shape.bodyChildren).toEqual(['console-rail', 'console-installation', 'console-views', 'console-panel'])`
-in an `ok` run. The rail is the canvas's one structural addition and the fourth child is the
-one this document adds to an assertion the spec already carries, so the list is **four names
-and not three**: a spec left at three fails against the entry the same task writes, and a
-table below that lists three regions leaves the rail's hooks unlisted, which §2's licence
-rule does not allow. **A fifth child precedes these four whenever the mode is not `ok`**:
-`startConsole` appends the version-skew banner to the same mount first (§2.8, §4.1), and in
-**refused** mode it is the whole document.
+**The header switcher replaced the installation rail** (owner's ruling of 2026-10-28, console
+redesign step 1). The entry draws the body's two children, in this order, all from
+`domSurface`'s mount: `header.console-header` and `main.console-page` — asserted by
+`test/e2e/entry.spec.ts`:
+`expect(shape.bodyChildren).toEqual(['console-header', 'console-page'])`
+in an `ok` run. The header holds the wordmark, the installation switcher, the navigation, the
+fleet gauge and Halt fleet; the switcher's menu holds the installation line and the rail's tree
+(§4.1), and the page holds the panel. **A third child precedes these two whenever the mode is
+not `ok`**: `startConsole` appends the version-skew banner to the same mount first (§2.8, §4.1),
+and in **refused** mode it is the whole document.
 
 | Region | Element and hooks | What it holds |
 |---|---|---|
-| Installation rail | `aside.console-rail` (with its own `data-collapsed`) → `div.console-rail-head` (`p.console-rail-title`, `button.console-rail-collapse`), `div.console-rail-list` → one `button.console-rail-row` per installation it draws (`div.console-rail-nameline` → `span.console-rail-name` and, for an installation with an issue, `span.console-rail-warning` with `role="img"` and an `aria-label`; `span.console-rail-project`, `span.console-rail-state` with `data-state`, `span.console-rail-spend`), `p.console-rail-empty` (the line drawn, unhidden, when the rail has no row), `div.console-rail-add` → `button.console-rail-add`, `p.console-rail-hint`; the ARIA is `role="tablist"` on the list, `role="tab"` and `aria-selected` on its rows, `aria-controls`/`aria-expanded` on the collapse control | the canvas's structural addition (§4.1): the header row and its collapse control, one tab per row, **one row per installation the CLI listed or this console holds, readable or not** (§4.1, owner's design ruling of 2026-10-25), the add row and the hint. The first `role=` in the renderer. **Fifteen hooks on sixteen elements** — `console-rail-add` names the foot row and its button both — and a rule selects no other: the tree, the tokens and the keyboard are §4.1's. The two `data-*` hooks are Task 6.3's, added here in the PR that wrote the rules that select them (§2's licence rule): `data-collapsed` on the rail is which of the two widths it is drawn at, and `data-state` on the state span is the word it already draws, repeated as the tone's hook |
+| Header | `header.console-header` → `button.console-wordmark` (an `svg` and `span.console-wordmark-name`), `div.console-switcher`, `nav.console-views`, `div.console-gauge`, `button.console-halt` | the redesign's one header row on `--bg-header`, wrapping on a narrow window. The wordmark goes to Live |
+| Installation switcher | `div.console-switcher` → `button.console-switcher-button` (`span.console-switcher-dot` with `data-state` and `role="img"`, `span.console-switcher-name`, `span.console-switcher-version`; `aria-haspopup`, `aria-expanded`, `aria-controls`), `div.console-switcher-menu` (`hidden` while folded) → `section.console-installation`, `aside.console-rail` | the installation the console reads, its CLI version and mode, and the status dot carrying the open row's rail word. The menu holds the installation line (the CLI's full path) and the rail's tree; Escape and a click outside fold it |
+| Fleet gauge | `div.console-gauge` (`role="group"`) → `span.console-gauge-label`, `span.console-gauge-notional`, `svg.console-gauge-bar` (`rect.console-gauge-track`, `rect.console-gauge-fill`), `span.console-gauge-cap` | GLOBAL, today's notional spend, the counted dollars against the global daily cap as the fill's `width` attribute (no notional segment: notional counts toward no cap), and the cap. `n/a` until a read lands, and when the mode withholds caps |
+| Halt fleet | `button.console-halt` with `aria-disabled="true"` | drawn as designed and not performed (`src/renderer/writes.ts`): no listener, no IPC, no spawn entry. The console's one approved write is launch-from-console |
+| Installation rail | `aside.console-rail` → `div.console-rail-head` (`p.console-rail-title`), `div.console-rail-list` → one `button.console-rail-row` per installation it draws (`div.console-rail-nameline` → `span.console-rail-name` and, for an installation with an issue, `span.console-rail-warning` with `role="img"` and an `aria-label`; `span.console-rail-project`, `span.console-rail-state` with `data-state`, `span.console-rail-spend`), `p.console-rail-empty` (the line drawn, unhidden, when the rail has no row), `div.console-rail-add` → `button.console-rail-add`, `p.console-rail-hint`; the ARIA is `role="tablist"` on the list, `role="tab"` and `aria-selected` on its rows | the rail's tree, drawn inside the switcher's menu (§4.1): the header row, one tab per row, **one row per installation the CLI listed or this console holds, readable or not** (§4.1, owner's design ruling of 2026-10-25), the add row and the hint. **Fourteen hooks on fifteen elements** — `console-rail-add` names the foot row and its button both — and a rule selects no other. `data-state` on the state span is the word it already draws, repeated as the tone's hook |
 | Installation line | `section.console-installation`, `data-installation`, `data-mode` | `data-installation="chosen"` with `p.installation-project`, `p.installation-binary`, `p.installation-version` and `data-mode`; `data-installation="none"` with `p.installation-none`; `data-installation="unreadable"` with `p.installation-unreadable`; and `p.installation-store-refusal` |
-| Navigation | `nav.console-views` → one `button.console-view` per view | `type="button"`, `data-view="live\|spend\|projects"`, `aria-current="true\|false"`, label as text |
-| Panel | `div.console-panel` | the mounted screen's root, the installation issue view, or the onboarding view |
+| Navigation | `nav.console-views` → one `button.console-view` per view | `type="button"`, at least 44 px tall (the redesign draws links; the renderer writes no `href`, so they stay buttons), `data-view="live\|graph\|spend\|projects\|coordinator"`, `aria-current="page"` on the view on screen and on no other, label as text |
+| Page | `main.console-page` → `div.console-panel` | the page scrolls and the header does not; the panel is the page container (`max-width: var(--page-max)`, centred, padding 28 px 32 px 64 px) and holds the mounted screen's root, the installation issue view, or the onboarding view |
 | Onboarding | `section.installation-onboarding` → `h1.installation-onboarding-title`, `p.installation-onboarding-body`, `p.installation-onboarding-reason` (the CLI resolution's own sentence, only when no CLI was found), `code.installation-onboarding-command` | drawn by `drawOnboarding` into the panel when the machine has no installation at all: the picker's own words for the two onboarding screens (`ONBOARDING_COPY`) and the command the main process names (`src/main/onboarding.ts`). Nothing is read |
 | Installation issue | `section.installation-issue` → `h1.installation-issue-headline`, `p.installation-issue-sentence`, `code.installation-issue-command`, `details.installation-issue-details` (`summary.installation-issue-summary`, `pre.installation-issue-lines`), `div.installation-issue-actions` (`button.installation-issue-choose`, `button.installation-issue-remove`, `button.installation-issue-reveal`, `p.installation-issue-checkout-lead`, `button.installation-issue-checkout`) | drawn by `drawIssue` into the panel when a rail row with an issue is clicked, or at boot when no installation can be read (§4.1): the installation's name, **one plain sentence first** with the exact command, the CLI's own text behind the `details` disclosure, and the row's actions. No banner. The `data-issue` it carries is the main process's classification and no rule selects it |
-| Reduced/refused banner | `section.console-skew`, drawn by `renderVersionSkew` into the mount, **first of all** — before the rail and the installation line as well as the nav | see §2.8 |
+| Reduced/refused banner | `section.console-skew`, drawn by `renderVersionSkew` into the mount, **first of all** — before the header and the page | see §2.8 |
 
-- **`VIEWS`** is `live` (label `Live`, never withheld), `spend` (label `Spend`, view
-  `spend`) and `projects` (label `Projects`, view `caps`). A view the mode withholds is
-  **not offered**: no button is created for it.
-- **Run detail has no button.** `currentView` may be `'run'`, reached from a `live-run`
-  row; when it is, every nav button is `aria-current="false"`, "which is the truth about
-  the navigation: none of the offered views is the one on screen". The installation issue
-  view is the same kind of view (`currentView` is `'issue'`), reached from a rail row.
-- **There is no keyboard handling in `entry.ts` at all**: no `keydown`, no roving tabindex,
-  no focus management. Interaction is `click` plus one `visibilitychange` listener. Tab
-  order is implicit DOM order. **This is the gap [§4.3](#43-keyboard-and-focus) has to
-  close in CSS and in one small entry change** — two of them, since the rail's list is a
-  second tablist (§4.3), and both are Task 6.5's.
-- The only ARIA attribute in the whole renderer is `aria-current`; **no element carries
-  `role=`**. The rail is where that changes, and **the split is the same one the nav gets**:
-  `role="tablist"` on `div.console-rail-list`, `role="tab"` and `aria-selected` on its rows
-  are the renderer's first `role=` and its first tablist, and they are **Task 6.5's** — the
-  keyboard task, which also gives the nav's buttons their role and their `aria-selected` —
-  while the collapse control's `aria-controls`/`aria-expanded` come with the control itself,
-  in Task 6.3.
+- **`VIEWS`** is `live`, `graph` and `coordinator` (never withheld), `spend` (view `spend`)
+  and `projects` (view `caps`). A view the mode withholds is **not offered**: no link is
+  created for it.
+- **Run detail has no button.** `currentView` may be `'run'`, reached from a `live-run` row;
+  when it is, no nav button carries `aria-current`, "which is the truth about the navigation:
+  none of the offered views is the one on screen". The installation issue view is the same
+  kind of view (`currentView` is `'issue'`), reached from a rail row in the switcher's menu.
+- **The keyboard.** The nav's buttons are ordinary tab stops (the redesign's tabs, which
+  replaced Task 6.5's nav tablist on 2026-10-28). The rail's list keeps Task 6.5's tablist:
+  `role="tablist"` on `div.console-rail-list`, `role="tab"` and `aria-selected` on its rows,
+  a roving tabindex and Enter to select (§4.3). The switcher's button carries
+  `aria-expanded` and `aria-controls` for its menu.
 
 ### 2.2 The installation picker — `console/src/renderer/installations.html` + `console/src/renderer/installations.ts`
 
@@ -1399,80 +1395,57 @@ the dark literal against `--ground` in the dark set and the light literal agains
 in the light set — rather than the ambiguous "equal to `--ground`" the first revision
 wrote.
 
-**Under the canvas the owner approved on 2026-10-19 the document is a two-column grid**,
-and the entry appends up to **five** children to `document.body`, which is the mount
-`startConsole` is handed. The canvas's one structural addition is a **left vertical
-installation rail** — the block below describes it — and the entry draws it as **one**
-child, `aside.console-rail`, in the grid's first column. The three bands of the bullets
-below are the second column and are otherwise unchanged:
+**The header switcher replaced the rail (owner's ruling of 2026-10-28).** The console
+redesign's shell is one header row and a page; its installation switcher in the header
+replaces the canvas's left vertical rail of 2026-10-19, and its menu holds what the rail held.
+The entry appends up to **three** children to `document.body`, which is the mount
+`startConsole` is handed:
 
 ```
-┌───────────────────┬───────────────────────────────────────────────────────┐
-│ section.console-skew   spans both columns — reduced mode only          │  when there is one
-├───────────────────┼───────────────────────────────────────────────────────┤
-│ aside.console-rail│ section.console-installation   project · binary · …   │  1 line
-│   the installation├───────────────────────────────────────────────────────┤
-│   rail, §4.1 below│ nav.console-views   [ Live ] [ Spend ] [ Projects ]   │  1 line
-│                   ├───────────────────────────────────────────────────────┤
-│                   │ div.console-panel                                     │
-│                   │   section.live | .spend | .projects | .run | .degraded │
-│                   │   | .console-unavailable                              │
-└───────────────────┴───────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│ section.console-skew                               reduced mode only     │
+├──────────────────────────────────────────────────────────────────────────┤
+│ header.console-header   wordmark · switcher · nav · gauge · Halt fleet   │
+├──────────────────────────────────────────────────────────────────────────┤
+│ main.console-page                                                        │
+│   div.console-panel   the page container, max-width --page-max           │
+│     section.live | .graph | .spend | .projects | .coordinator | .run     │
+│     | .degraded | .console-unavailable                                   │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **The rail is the body's second child when there is a banner, and its first when there is
-  not**, and it comes **before** the installation line in both cases: the entry appends it
-  after `startConsole` has drawn the skew banner and before `drawInstallation`'s line, so
-  DOM order and visual order agree — a rail drawn on the left but appended last would put
-  the chrome after the content in the tab order, which is the one thing a rail may not do.
-  Under the canvas's grid the banner **spans both columns**; when it is present the rail and
-  the three bands below it share the rows under it.
-- **The version-skew banner is not in the panel, and it is not the panel's first child
-  either.** `startConsole` appends it to the mount it was handed (`app.ts` 333) and that
-  mount is `document.body` (`entry.ts` 180-183), so the banner is the body's **first
-  child**, appended before the installation line, the nav and the panel — which
-  `mountDashboard` builds afterwards, in that order (`entry.ts` 615, 760, 783). A rule that
-  places it inside `div.console-panel` selects it nowhere: the panel is created later and
-  holds the screen and nothing else. It is `section.console-skew` — a section, not a div —
-  and it carries `data-theme`, `data-mode` and `data-skew` (`shared/version.ts` 579-587). In
-  **refused** mode it is the whole document, because `bootDashboard` returns straight after
-  it and **the other four children — the rail included — are never appended**.
-- **The installation line and the nav are chrome and never scroll**; the panel scrolls.
-  A sticky header is the difference between a dense screen and a screen that looks broken
-  the moment it is longer than the window.
-- **`nav.console-views` is a tab list in all but name** and is styled as one: a row of
-  equal-weight buttons separated by rules, the current one marked with `aria-current`
-  (which the code emits) plus a weight and an underline in `--accent`. Because `aria-current`
-  is already the marker, the style rule is `[aria-current='true']` and not a class.
+- **The version-skew banner is not in the panel.** `startConsole` appends it to the mount it
+  was handed, so the banner is the body's **first child**, appended before the header and the
+  page. It is `section.console-skew` and it carries `data-theme`, `data-mode` and `data-skew`
+  (`shared/version.ts`). In **refused** mode it is the whole document, because `bootDashboard`
+  returns straight after it and **the other two children are never appended**.
+- **The header is chrome and never scrolls**; the page scrolls. It wraps on a narrow window.
+- **`nav.console-views` is five tabs** (`button.console-view`, at least 44 px tall; the
+  redesign draws links, and the renderer writes no `href`), the
+  current one marked with `aria-current="page"` and a 2 px inset `--live` underline. Because
+  `aria-current` is the marker, the style rule is `[aria-current='page']` and not a class.
 - **A screen's own root is the panel's only child** and carries the screen's `data-theme`,
   so a rule may be written `section.live { … }` or `.live { … }` but never
   `div.console-panel .live` — the panel is chrome and the screen is content.
 - The installation line's three states (`chosen`, `none`, `unreadable`) are styled as
-  three states: `chosen` is `--text`, `none` is `--text-muted`, and `unreadable` carries
-  the `--warn` rule and its own sentence.
+  three states, at the top of the switcher's menu, with the CLI's full path under the name.
 
-**The installation rail — the canvas's one structural addition.** The canvas the owner
-approved on 2026-10-19 draws a **left vertical rail**: the installations as vertical tabs, a
-region the bands above do not have. It is the canvas's *only* structural addition. The
-content column to its right keeps the title bar, the view nav and the panel exactly as the
-bullets above describe them, and the four screens the canvas draws — Live, Spend, Projects
-and Run detail — are reached as [§2](#2-screen-inventory) says: three from the nav, and Run
-detail from a run row. The rail adds no tab of its own, and the console gains no view.
-
-The rail itself is `aside.console-rail` — the one element the entry appends for it — and its
-tree is **sixteen classed elements**, each element's class a hook a rule may select. Those
-sixteen elements carry **fifteen classes**: the foot row and its button share
-`console-rail-add` (a row and the control inside it are one region, and the class names the
-region), so a stylesheet selects fifteen distinct hooks and
-[§2.1](#21-the-dashboards-chrome--srcrendererentryts) lists the same fifteen. **The count is
-stated here and in §2.1 because it is what a reader checks the tree against**, and the tree
-below is the list:
+**The installation rail — now the switcher's menu.** The canvas the owner approved on
+2026-10-19 drew a **left vertical rail** (216 px wide, 56 px collapsed); the owner's ruling of
+2026-10-28 replaced it with the redesign's header switcher, so the rail is no longer a column
+and has no collapse control. What it held is unchanged and is drawn inside
+`div.console-switcher-menu`, under the installation line: the rail itself is
+`aside.console-rail`, and its tree is **fifteen classed elements**. Those fifteen elements carry
+**fourteen classes**: the foot row and its button share `console-rail-add` (a row and the
+control inside it are one region, and the class names the region), so a stylesheet selects
+fourteen distinct hooks and [§2.1](#21-the-dashboards-chrome--srcrendererentryts) lists the same
+fourteen. **The count is stated here and in §2.1 because it is what a reader checks the tree
+against**, and the tree below is the list:
 
 ```
-aside.console-rail                        the rail — the grid's first column
+aside.console-rail                        the rail's tree, inside the switcher's menu
 ├─ div.console-rail-head                  the header row
-│   ├─ p.console-rail-title               the word "Installations"
-│   └─ button.console-rail-collapse       the collapse control
+│   └─ p.console-rail-title               the word "Installations"
 ├─ div.console-rail-list  role="tablist"  the installation rows, one tab each
 │   └─ button.console-rail-row  role="tab"
 │       ├─ div.console-rail-nameline      the name, and the warning mark beside it
@@ -1487,28 +1460,9 @@ aside.console-rail                        the rail — the grid's first column
 └─ p.console-rail-hint                    "Switch with the shortcut keys 1 2 3"
 ```
 
-- **The width is a fixed 216 px expanded and 56 px collapsed**, two literals in `base.css`
-  and **not tokens**: like `CONSOLE_WINDOW_SIZE`'s 1180 × 780 they are facts about this
-  window rather than values a screen reads, and no §3.1 table gains a row for them. The
-  collapsed width is the icon column — 16 px of padding, a 24 px glyph, 16 px again — so a
-  collapsed row still draws its glyph at the size the expanded rail draws it and the
-  collapse control keeps its own box in the header row above. **Both are stated here rather
-  than left to the task**: a rail whose collapsed width is the implementer's invention is a
-  rail whose icons sit at a different size in the two states, and the canvas draws the
-  icons-only state without its arithmetic. [§4.2](#42-narrow-windows)'s
-  breakpoints are the **window's**, written in `em` against the root size, and the rail is a
-  fixed 216 px of what is left: **the layers therefore fire with the content column 216 px
-  narrower than the width each one names** — §4.2 states it, and the figures are kept as the
-  window's rather than re-cut here, because they were chosen against a window whose resize
-  the operator controls. The rail itself never narrows with the window — it narrows only when
-  the operator collapses it, which is a control and not a media query.
-- **Tokens, and no new ones.** The rail's ground is `--surface`, the rules between its rows
-  are the `--border` hairline, the selected row is `--surface-alt` (the raised surface) with
-  a **3 px `--accent` left border**, the header's title and a row's name are `--text`, and
-  the small text and the add row are `--text-muted`. Every value here is a row of the set
-  that ships, [§3.2](#32-the-dark-value-set--the-consoles-first-screen); the palette gains
-  nothing, and a rule that wants a tone this list does not name is a rule that has not read
-  [§3.1](#31-one-file-one-value-set-one-vocabulary).
+- **The switcher's button** draws a status dot, the installation's name and `CLI <version> ·
+  <mode>`. The dot carries the open row's state word as `data-state` and as its accessible
+  name, so the menu's state is visible while it is folded.
 - **The three state words, each beside its glyph.** The glyph is drawn **and** the word is
   drawn — never one instead of the other ([§3.5](#35-never-colour-alone)):
 
@@ -1518,23 +1472,9 @@ aside.console-rail                        the rail — the grid's first column
 | `silent` | `▲` | `--warn` | its last read was refused, or its feed has gone quiet |
 | `idle` | `○` | `--text-muted` | it is stored, and nothing is being read from it |
 
-- **The selected row** carries `aria-selected="true"` **and** the 3 px `--accent` left
-  border on `--surface-alt`; the attribute is the machine-readable mark and the border is
-  the drawn one, so the selection is not a colour alone either. The nav's `aria-current`
-  stays the nav's own marker — the rail is a tablist and marks itself as one.
-- **The header row** is a title and a control: `p.console-rail-title` reads
-  "Installations", and `button.console-rail-collapse` toggles the rail between its full
-  width and its icons-only state. **The button has an accessible name in both states** —
-  "Collapse the installations rail" and "Expand the installations rail" — and it carries
-  `aria-controls` naming `div.console-rail-list` and `aria-expanded`, so the state it is
-  about is announced rather than drawn only.
-- **The collapsed state is icons only, and it is a name-preserving collapse.** A row keeps
-  its glyph and drops its name, its project, its state word and its spend from *sight*; the
-  row's accessible name is then the whole of what it draws — the installation's name, its
-  project, the state word and the spend — so the word §3.5 requires is still announced and
-  the collapse removes no fact. The add row keeps its label and its accessible name, the
-  hint is hidden, and the rail's width is the **56 px** the width bullet above states — a
-  second literal beside the 216 px one and not a second token.
+- **The selected row** carries `aria-selected="true"` **and** a 3 px `--live` left border;
+  the attribute is the machine-readable mark and the border is the drawn one, so the
+  selection is not a colour alone either.
 - **The console never shows a picker screen** (owner's design ruling of 2026-10-25). Every
   installation is listed in the rail, readable or not, the first readable one is open in the
   main area, and switching is a click on the rail. "+ Add installation" opens the **existing**
@@ -1583,20 +1523,21 @@ aside.console-rail                        the rail — the grid's first column
   (the ones the CLI listed, plus the console's own recorded checkout), with temporary and
   tool-owned paths (and symlinks into them) refused in the main process as well as left off the
   screen, and the folder the file manager opens is computed from the console's own record.
-  Nothing on the rail writes to the cloud or to the CLI's configuration.
+  Nothing on the rail writes to the cloud or to the CLI's configuration. **Halt fleet**, in
+  the header, is drawn as the redesign draws it and performs nothing: `aria-disabled`, the
+  title "Not available in this release", and no listener, IPC channel or spawn entry behind it
+  (`src/renderer/writes.ts`; owner's ruling of 2026-10-28).
 - **The keyboard** — the detail is [§4.3](#43-keyboard-and-focus): the rail's list is **a
   tablist in its own right**, `div.console-rail-list` with `role="tablist"` and one
   `role="tab"` row each; it uses a **roving `tabindex`** (the selected row is `0`, the rest
   `-1`), Arrow Up and Arrow Down move between the rows, **Home** and **End** go to the first
   and the last, and **Enter selects** — the arrow keys move focus and the key that chooses is
   Enter, which is the pattern's manual-activation form; **selecting a row is the click**: it
-  switches the console to that installation, or opens its issue. The
-  **shortcut keys** select by position: **Command-1** to **Command-3** on macOS and
-  **Control-1** to **Control-3** elsewhere address the first three rows **the rail draws**,
-  which is the hint's own sentence. The collapse
-  control is a tab stop **before** the list and the add row is a tab stop **after** it, so
-  the rail's tab stops are the button, the list and the add row — three, whatever the number
-  of installations.
+  switches the console to that installation, or opens its issue, and folds the menu. The
+  **shortcut keys** select by position whether the menu is open or folded: **Command-1** to
+  **Command-3** on macOS and **Control-1** to **Control-3** elsewhere address the first three
+  rows **the rail draws**, which is the hint's own sentence. Escape folds the menu and returns
+  the focus to the switcher's button.
 
 **Two things the canvas did not decide, and what this design does with each.**
 
@@ -1632,17 +1573,11 @@ and is lost the moment a query is written in `px`:
 | ≤ 48.75em (780 px) | the nav wraps to two rows, the installation line drops to project · mode, and any three-column figure group becomes two |
 | ≤ 35em (560 px) | the ledger, the caps panel and the panels' source lines stack; **no figure is ever dropped or truncated** — what is dropped is a column, and a dropped column is one whose value is repeated in a `title` |
 
-**The rail is 216 px of every width above, and the three figures are the window's.** The
-queries measure the viewport, so each one fires with the content column **216 px narrower
-than the number it names** — 1000 px of window is 784 px of column while the rail is
-expanded. The figures are kept rather than re-cut: they were chosen as window widths an
-operator resizes to, the column's own width is not what a media query can see, and [§4.1](#41-the-windows-structure)
-is where the rail's width is stated. **What the layers may not do is assume the column they
-used to get**: a layer that used to have 1000 px has 784, so a table that drops a column at
-the first breakpoint is dropping it from a column a fifth narrower than the one the choice
-was made against, and Task 6.3 — the task that draws the rail — re-reads the three figures
-against the column it leaves rather than against the window. Collapsing the rail returns the
-216 px, which is why the collapse control is a control and not a breakpoint.
+**The three figures are the window's, and since the header switcher replaced the rail
+(2026-10-28) the content column is the whole window**, less the page container's padding. The
+rail was a fixed 216 px column, so each layer used to fire with the column 216 px narrower than
+the number it names; the switcher's menu overlays the page instead of taking a column from it.
+The header wraps by itself; below 35em the page's side padding drops to 16 px.
 
 **The rule that outranks the breakpoints: a figure is never hidden to make a layout fit.**
 A dense console that hides a cap on a narrow window is the console lying about spend,
@@ -1657,30 +1592,18 @@ which §6.1 rule 1 forbids more strongly than any layout does.
   sets — which is exactly the requirement for a focus indicator.
 - **`:focus-visible` and never `:focus`** — a mouse click must not leave a ring on a nav
   button, and a keyboard user must never lose one.
-- **The console needs a roving tabindex in two places, and it has one in neither.** Today
-  `entry.ts` creates one `button.console-view` per view with no keyboard handling at all, so
-  Tab walks all three buttons and neither arrow keys nor Home/End move between them. Task
-  6.5 adds the WAI-ARIA tablist behaviour in ~15 lines: `role="tablist"` on the nav,
-  `role="tab"` on each button, `aria-current` (already there) plus `aria-selected`,
-  **roving `tabindex`** (the current view is `0`, the others `-1`), and Arrow/Home/End
-  handling that calls the existing `show(id)`. **And the rail's list is the second** — §4.1
-  gives it the same treatment over `div.console-rail-list` and its `role="tab"` rows, one
-  tab stop for the whole list rather than one per installation, with **Enter** as the key
-  that selects (the nav's `show(id)` **is** its selection, so a nav button needs no second
-  key and the rail's rows do: the arrows move focus and Enter chooses). **Both are renderer
-  changes and neither is a style change** — no attribute either writes is a style, so the
-  CSP and `ElementLike` are untouched. They are in the styling plan because a keyboard-less
-  tablist is a layout defect, and the styling work is where you notice it.
-- **The focus order is the DOM order, and the rail is first.** A tab through the chrome
-  goes: the rail's collapse control, the rail's list (one stop, however many installations),
-  the rail's add row — then the view nav, then the panel's own controls, and the panel's
-  contents in the order the screen draws them. That is the layout's promise and not a
-  preference: the rail is appended before the installation line (§4.1), so the tab order a
-  reader gets is the order they see, left to right and top to bottom. **A rail drawn on the left
-  and appended last would put the whole chrome ahead of it**, which is
-  the WCAG 2.4.3 failure this ordering exists to avoid — and it is also why the shortcut
-  keys exist: `Ctrl`/`Cmd` + digit reaches the first three rows the rail draws (§4.1)
-  without walking the tab order at all.
+- **The rail's list is the console's roving tabindex.** Task 6.5 gave the nav and the rail's
+  list the WAI-ARIA tablist behaviour; since the redesign's header (2026-10-28) the nav is
+  five buttons, ordinary tab stops whose Enter is their click, and the rail's list keeps the
+  tablist: `role="tablist"` over `div.console-rail-list` and its `role="tab"` rows, one tab
+  stop for the whole list rather than one per installation, the arrows move focus and
+  **Enter** selects. **It is a renderer change and not a style change** — no attribute it
+  writes is a style, so the CSP and `ElementLike` are untouched.
+- **The focus order is the DOM order.** A tab through the chrome goes: the wordmark, the
+  switcher's button — and, while its menu is open, the menu's rows (one stop) and its add
+  row — then the five nav buttons, the gauge's group, Halt fleet, and the page's own controls
+  in the order the screen draws them. The shortcut keys exist so that `Ctrl`/`Cmd` + digit
+  reaches the first three rows (§4.1) without opening the menu or walking the tab order.
 - **A skipped-by-default DOM stays skipped**: the console has no skip link and does not
   need one (there is no repeated block of links before the content), and it must not gain
   a link that would need the allow-list's `openExternal` to do nothing.
