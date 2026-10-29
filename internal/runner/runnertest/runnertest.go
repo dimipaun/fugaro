@@ -11,6 +11,15 @@
 // two have to be kept in step; the runner's own harness stays there, where the
 // tests that need a sidecar, a cache or an HTTP remote can reach it.
 //
+// E2.3a grew it for the tests the tripwires take with them: Task and Layer
+// build the task a test changes one field of — the tier a launcher dispatched
+// at, the project layer it resolved — and Implement, Review and Blocked are
+// the steps those tests script a run with. What they assert on comes back off
+// the record the harness returns, so the halt, the checkpoint and the policy
+// the merge recorded are readable from outside without the harness naming
+// them. Nothing here reads or sets a governance hook: a test that needs the
+// enforcing pair installs it itself, as ee/governance's does.
+//
 // What it cannot express is a run with a backend and a gateway: the registry
 // case of that file — what the console shows a stage's deadline as — is driven
 // through newBK, gwConfig and waitUntil, none of which this harness reaches. A
@@ -22,22 +31,28 @@ package runnertest
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"gocloud.dev/blob/memblob"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
+	"github.com/dimipaun/fugaro/internal/verify"
 )
 
 // runID is the run every harness drives, as the runner's own harness names it.
@@ -63,6 +78,76 @@ var errUnexpectedCall = errors.New("no step for this agent call")
 
 // Step is one stage's scripted agent call: what the agent does, in order.
 type Step func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error)
+
+// Blocked is a stage that answers only when its context ends, reporting the
+// cost it had reached: what ends such a stage is the bound the run resolved
+// and never the agent's own work, and the checkpoint of a halt carries the
+// spend the stage had reached.
+func Blocked(costUSD float64) Step {
+	return func(_ *testing.T, ctx context.Context, _ agent.Request) (agent.Result, error) {
+		<-ctx.Done()
+		return agent.Result{CostUSD: costUSD}, ctx.Err()
+	}
+}
+
+// Implement is the implement stage's work: a commit, the workflow's verify
+// command, and the pull request body the stage writes. It is what a test that
+// is about a later stage scripts first.
+func Implement(name string) Step {
+	return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		t.Helper()
+		shell(t, req, "echo "+name+" > "+name+".txt && git add -A && git commit -qm 'Add "+name+"'")
+		stateDir := envValue(req.Env, "FUGARO_STATE_DIR")
+		if _, err := verify.Run(ctx, verify.Options{StateDir: stateDir, Kind: verify.KindTest,
+			Env: req.Env, Stdout: io.Discard, Stderr: io.Discard}); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(stateDir, "pr.md"),
+			[]byte("# Add "+name+"\n\nAdds "+name+".txt."), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return agent.Result{CostUSD: 1}, nil
+	}
+}
+
+// Review is a review stage's answer: a verdict and the findings it reports,
+// in the shape the runner's own review threshold reads.
+func Review(verdict string, findings int) Step {
+	return func(t *testing.T, _ context.Context, _ agent.Request) (agent.Result, error) {
+		t.Helper()
+		fs := make([]map[string]string, findings)
+		for i := range fs {
+			fs[i] = map[string]string{"summary": "fix it"}
+		}
+		b, err := json.Marshal(map[string]any{"verdict": verdict, "findings": fs})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return agent.Result{Structured: b, CostUSD: 0.5}, nil
+	}
+}
+
+// shell runs script in the stage's own checkout, as the agent's commands run;
+// a failure is the test's rather than the stage's, since it is the test's own
+// setup that did not work.
+func shell(t *testing.T, req agent.Request, script string) {
+	t.Helper()
+	cmd := exec.Command("sh", "-c", script)
+	cmd.Dir, cmd.Env = req.Dir, req.Env
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("%s: %v\n%s", script, err, out)
+	}
+}
+
+// envValue is one variable of the environment a stage is handed.
+func envValue(env []string, key string) string {
+	for _, kv := range env {
+		if k, v, ok := strings.Cut(kv, "="); ok && k == key {
+			return v
+		}
+	}
+	return ""
+}
 
 // scriptedAgent answers the run's stages with the steps a test gave, and
 // records the requests it was handed.
@@ -95,6 +180,22 @@ type Harness struct {
 	agent *scriptedAgent
 }
 
+// Task is the task the harness stores when a test names none: the run's own
+// id and repository, and the fixture's only workflow, which is also the one a
+// task naming no workflow resolves to. A test that needs more — the tier a
+// launcher dispatched the run at, the project layer it resolved — takes this
+// and sets that field, so the two never drift apart.
+func Task() *task.Spec {
+	return &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Workflow: "app", Task: "Add a feature"}
+}
+
+// Layer is a project layer as a launcher carries it: the text the run is
+// handed, its sum and a generation, for the ProjectLayer of a task a test
+// built with Task.
+func Layer(text string) *task.ProjectLayer {
+	return &task.ProjectLayer{SHA256: config.LayerSum([]byte(text)), Generation: 3, YAML: text}
+}
+
 // New seeds a remote with the fixture repository — cfg replaces its
 // fugaro.yaml when non-empty — and stores spec, which is the harness's own
 // default when nil.
@@ -109,12 +210,11 @@ func New(t *testing.T, cfg string, spec *task.Spec) *Harness {
 	bucket := memblob.OpenBucket(nil)
 	t.Cleanup(func() { bucket.Close() })
 	if spec == nil {
-		// The fixture's only workflow is the one a task naming none resolves
-		// to, and it is named here because a run's job is named from it: a
-		// task naming no workflow cannot be placed in the job it is in, and a
-		// run that gives itself a Cloud Run execution would stop on that
-		// instead of on what the test is about.
-		spec = &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Workflow: "app", Task: "Add a feature"}
+		// The task names the fixture's only workflow because a run's job is
+		// named from it: a task naming no workflow cannot be placed in the job
+		// it is in, and a run that gives itself a Cloud Run execution would
+		// stop on that instead of on what the test is about.
+		spec = Task()
 	}
 	store := runstore.Open(bucket, repoSlug, spec.RunID)
 	if err := store.WriteTask(context.Background(), spec); err != nil {

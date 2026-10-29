@@ -159,6 +159,17 @@ func (r *run) stageView(stage string) StageView {
 	return StageView{Stage: stage, Governance: r.policy.Governance, RunStage: r.budget.Stage}
 }
 
+// StageTimeoutOf is stageTimeoutOf for the packages outside this one: the
+// stage hook's own Timeout is ee/governance's after the tripwires move, and it
+// answers the bound this way — off the governance the view carries — while the
+// function itself stays in the core, where the untagged build's ignored-block
+// line reads the same mapping out of the layers it merged (stageBoundAsked,
+// D522). One mapping, so the bound a stage is given and the bound the core
+// says was asked for cannot disagree.
+func StageTimeoutOf(g policy.Governance, stage string) time.Duration {
+	return stageTimeoutOf(g, stage)
+}
+
 // stageTimeoutOf is a stage's own wall-clock ceiling off the governance a view
 // carries: the effective stage_timeout of the one merge every governance key
 // goes through, so the project layer's block is the ceiling, the default

@@ -42,6 +42,36 @@ func TestHooksDefaultToTodaysBehaviour(t *testing.T) {
 	}
 }
 
+// TestStageTimeoutOfIsTheCoresBound: the export is the stage-to-ceiling
+// mapping the core keeps, answered off the governance a stage hook is handed
+// so that ee/governance's own Timeout can compute the bound it applies
+// (design ee-boundary-moves.md §5.3). Every stage governance bounds has one —
+// a review stage through both of its names — and a stage it does not is
+// unbounded by governance: an artifact run's plan and render steps, and a
+// stage name the runner never asks about, are under the run's own
+// timeouts.stage alone.
+func TestStageTimeoutOfIsTheCoresBound(t *testing.T) {
+	g := policy.Governance{StageTimeout: policy.StageTimeout{
+		Implement: time.Minute, Review: 2 * time.Minute, Fix: 3 * time.Minute}}
+	for _, tc := range []struct {
+		stage string
+		want  time.Duration
+	}{
+		{"implement", time.Minute}, {"review", 2 * time.Minute}, {"review_first", 2 * time.Minute},
+		{"fix", 3 * time.Minute}, {"plan", 0}, {"render", 0}, {"", 0},
+	} {
+		if got := runner.StageTimeoutOf(g, tc.stage); got != tc.want {
+			t.Errorf("StageTimeoutOf(%q) = %v, want %v", tc.stage, got, tc.want)
+		}
+	}
+	// A build whose hook applies nothing still answers no bound per stage
+	// through this: what it answers is the governance it was handed, and the
+	// zero governance bounds nothing.
+	if got := runner.StageTimeoutOf(policy.Governance{}, "implement"); got != 0 {
+		t.Errorf("StageTimeoutOf over an empty governance = %v, want no bound", got)
+	}
+}
+
 // ignoredGovernanceLine is the one run-log line an untagged build writes when
 // a run resolved a governance block: a statement about what this build does,
 // not a notice about a licence (D522, D523). It is written out here rather
