@@ -614,7 +614,12 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 	// both directions below -- an entry that becomes a real json key fails
 	// (its row now belongs to a shape), and one no field table names fails (the
 	// exception must not outlive the documentation that justifies it).
-	approvedAheadOfTheCLI := map[string]bool{"leased_usd": true}
+	//
+	// Empty since `leased_usd` became real (JSONTotal and JSONRepo carry it):
+	// a blank entry fails the "no field table names it" half, so the list has
+	// no placeholder. `compute_usd`, the other key the exception names, is
+	// already a real key of `report --json` and so was never in here.
+	approvedAheadOfTheCLI := map[string]bool{}
 	checked := 0
 	namedInTable := map[string]bool{}
 	for _, line := range strings.Split(doc, "\n") {
@@ -5624,6 +5629,14 @@ func TestDocsDesktopConsoleContractStatesTheAccountAxis(t *testing.T) {
 // order), and each tag without omitempty is present. Mutations: an unknown key
 // added to the fixture; a required key dropped; a key moved; a number made a
 // string.
+//
+// The one key the fixture may *lack* is `leased_usd`, and the reason is the
+// fixture's own subject: its header says the recording is 0.8.6's, so a
+// required key a later release added cannot be in it, and this file is
+// deliberately the old document the console must still read -- updating it to
+// the current shape would delete what it exists to prove. Lack is the only
+// allowance: a fixture that *carried* `leased_usd` would still be walked
+// against the struct like every other key.
 func TestDocsDesktopConsoleNormalFixtureMatchesTheGoTypes(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(readDoc(t, "console/test/fixtures/normal.ndjson")), "\n")
 	if len(lines) < 2 {
@@ -5647,7 +5660,7 @@ func TestDocsDesktopConsoleNormalFixtureMatchesTheGoTypes(t *testing.T) {
 		if err := dec.Decode(&doc); err != nil {
 			t.Fatalf("record %d does not decode into watch.JSONDoc: %v", i+1, err)
 		}
-		checkJSONShape(t, fmt.Sprintf("record %d", i+1), rec.Document, reflect.TypeOf(watch.JSONDoc{}))
+		checkJSONShape(t, fmt.Sprintf("record %d", i+1), rec.Document, reflect.TypeOf(watch.JSONDoc{}), mayLackOldRecording)
 	}
 	if docs == 0 {
 		t.Fatal("normal.ndjson holds no document")
@@ -5676,9 +5689,14 @@ func orderedJSONKeys(t *testing.T, raw json.RawMessage) []string {
 	return keys
 }
 
+// mayLackOldRecording are the keys a document recorded before the release that
+// added them may leave out: see TestDocsDesktopConsoleNormalFixtureMatchesTheGoTypes.
+var mayLackOldRecording = map[string]bool{"leased_usd": true}
+
 // checkJSONShape walks one JSON value against a struct type: keys in struct
-// order, required keys present, recursing into nested structs and slices.
-func checkJSONShape(t *testing.T, where string, raw json.RawMessage, rt reflect.Type) {
+// order, required keys present (bar those in mayLack), recursing into nested
+// structs and slices.
+func checkJSONShape(t *testing.T, where string, raw json.RawMessage, rt reflect.Type, mayLack map[string]bool) {
 	t.Helper()
 	for rt.Kind() == reflect.Ptr {
 		if string(raw) == "null" {
@@ -5694,7 +5712,7 @@ func checkJSONShape(t *testing.T, where string, raw json.RawMessage, rt reflect.
 			return
 		}
 		for i, item := range items {
-			checkJSONShape(t, fmt.Sprintf("%s[%d]", where, i), item, rt.Elem())
+			checkJSONShape(t, fmt.Sprintf("%s[%d]", where, i), item, rt.Elem(), mayLack)
 		}
 	case reflect.Struct:
 		var members map[string]json.RawMessage
@@ -5716,7 +5734,7 @@ func checkJSONShape(t *testing.T, where string, raw json.RawMessage, rt reflect.
 		for _, f := range fields {
 			if _, ok := members[f.name]; ok {
 				want = append(want, f.name)
-			} else if f.required {
+			} else if f.required && !mayLack[f.name] {
 				t.Errorf("%s: required key %q is missing (internal/watch/json.go has it without omitempty)", where, f.name)
 			}
 		}
@@ -5725,7 +5743,7 @@ func checkJSONShape(t *testing.T, where string, raw json.RawMessage, rt reflect.
 		}
 		for _, f := range fields {
 			if v, ok := members[f.name]; ok {
-				checkJSONShape(t, where+"."+f.name, v, f.typ)
+				checkJSONShape(t, where+"."+f.name, v, f.typ, mayLack)
 			}
 		}
 	}

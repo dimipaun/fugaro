@@ -29,6 +29,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/watch"
 )
 
 // fugaro budget (design §8): look at the project's caps, counters, kill
@@ -243,7 +244,10 @@ func newBudgetShowCmd() *cobra.Command {
 			"in flight. By default the global figures and the project config's\n" +
 			"repositories; --repo one repository; --all every repository the database\n" +
 			"knows. Notional is a subscription's list-price figure, never billed and never\n" +
-			"capped. Counted is spent plus what runs have reserved and not released.",
+			"capped. Counted is spent plus what runs have reserved and not released; --json\n" +
+			"carries that difference as leased_usd, the money leased and not yet spent: a\n" +
+			"crashed run's lease is never released, so it stays in the figure for the rest\n" +
+			"of the day.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runBudgetShow(cmd, &o) },
 	}
@@ -281,13 +285,18 @@ type showRun struct {
 }
 
 type showGlobal struct {
-	DailyCapUSD  *float64  `json:"daily_cap_usd"`
-	PerRunCapUSD *float64  `json:"per_run_cap_usd"`
-	CountedUSD   float64   `json:"counted_usd"`
-	SpentUSD     float64   `json:"spent_usd"`
-	NotionalUSD  float64   `json:"notional_usd"`
-	HeadroomUSD  *float64  `json:"headroom_usd"`
-	Kill         *showKill `json:"kill"`
+	DailyCapUSD  *float64 `json:"daily_cap_usd"`
+	PerRunCapUSD *float64 `json:"per_run_cap_usd"`
+	CountedUSD   float64  `json:"counted_usd"`
+	SpentUSD     float64  `json:"spent_usd"`
+	NotionalUSD  float64  `json:"notional_usd"`
+	// LeasedUSD is counted minus spent, never negative: the money open leases
+	// hold and have not yet spent (watch --json carries the same figure). It is
+	// *leased, not yet spent* rather than "live leases": the sweeper never
+	// releases, so a crashed run's lease stays in it for the rest of the day.
+	LeasedUSD   float64   `json:"leased_usd"`
+	HeadroomUSD *float64  `json:"headroom_usd"`
+	Kill        *showKill `json:"kill"`
 }
 
 type showDefaults struct {
@@ -307,6 +316,7 @@ type showRepo struct {
 	CountedUSD      float64   `json:"counted_usd"`
 	SpentUSD        float64   `json:"spent_usd"`
 	NotionalUSD     float64   `json:"notional_usd"`
+	LeasedUSD       float64   `json:"leased_usd"` // counted - spent, floored at 0: see showGlobal
 	HeadroomUSD     *float64  `json:"headroom_usd"`
 	Kill            *showKill `json:"kill"`
 	Running         []showRun `json:"running"`
@@ -493,6 +503,7 @@ func runBudgetShow(cmd *cobra.Command, o *budgetShowOptions) error {
 		doc.Global.PerRunCapUSD = usdPtr(cfg.Caps.Global.PerRunMicros)
 	}
 	doc.Global.CountedUSD, doc.Global.SpentUSD, doc.Global.NotionalUSD = global.Counted.USD(), global.Spent.USD(), global.Notional.USD()
+	doc.Global.LeasedUSD = watch.LeasedUSD(global.Counted, global.Spent)
 	doc.Global.HeadroomUSD = headroom(roomUnder(caps.GlobalDaily, global.Counted))
 	doc.Global.Kill = killView(cfg.Kill.Global)
 	if cfg.Caps.Defaults != nil {
@@ -530,6 +541,7 @@ func runBudgetShow(cmd *cobra.Command, o *budgetShowOptions) error {
 		}
 		sp := repoSpend[k]
 		rs.CountedUSD, rs.SpentUSD, rs.NotionalUSD = sp.Counted.USD(), sp.Spent.USD(), sp.Notional.USD()
+		rs.LeasedUSD = watch.LeasedUSD(sp.Counted, sp.Spent)
 		rs.HeadroomUSD = headroom(roomUnder(rc.RepoDaily, sp.Counted), roomUnder(caps.GlobalDaily, global.Counted))
 		if kv, ok := cfg.Kill.Repos[k]; ok {
 			rs.Kill = killView(&kv)
