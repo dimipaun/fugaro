@@ -401,6 +401,36 @@ func TestRunRefusesGovernanceOnACloneWorkflowsOlderBaseImage(t *testing.T) {
 	}
 }
 
+// TestGovernanceOnACoreImageWarns: the skew gate judges the job image's
+// release, and this is the other half — a job image new enough to decode
+// governance: whose runner is a core build reads the block and enforces
+// nothing in it, so the launch says so. A warning and never a refusal: a core
+// runner ignores the block (D522), so nothing about the launch breaks, and the
+// statement is about what the image does with the block, not about a licence
+// (D523). The judge is the job image's edition (R3), which the build record
+// carries next to the base_ref the skew gate already reads.
+func TestGovernanceOnACoreImageWarns(t *testing.T) {
+	f := newCloudFixture(t)
+	configSkewCheckout(t, f, configSkewHead+"governance: { review_ratio: 3 }\n"+configSkewWorkflow)
+	writeEditionBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", releaseTier, EditionCore)
+	_, errOut, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
+	if err != nil {
+		t.Fatalf("a core job image must be warned about, never refused: %v", err)
+	}
+	for _, want := range []string{
+		"the job image of acme/other workflow svc is a core build of fugaro",
+		"reads the governance: block and ignores it",
+		"fugaro image refresh --repo acme/other --workflow svc",
+	} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("stderr %q lacks %q", errOut, want)
+		}
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want the run launched", n)
+	}
+}
+
 // TestRunDoesNotGateAFileThatWritesNoGovernance: the gate is the key's, so a
 // repository that writes none is never held to governanceSince.
 func TestRunDoesNotGateAFileThatWritesNoGovernance(t *testing.T) {
