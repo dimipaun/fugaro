@@ -272,6 +272,12 @@ The owner's answers and rulings that shape it (non-price; figures are private, D
 
 **Superseded 2026-10-29: carried as E0.3 in [`../ee-reorg/implementation-plan.md`](../ee-reorg/implementation-plan.md).**
 
+*Earlier version: the gating model below — "a paid command is present and refuses without a key" and
+"a key-gated build, with the installation's key held as a secret". Now: T27 (b), ruled 2026-10-29 —
+the paid commands warn, not refuse, and that warning is itself deferred with the key work (ee-reorg
+D523), and the job image is built with the `ee` tag and mounts no key (D524). E0.3 states the
+corrected model; the bullets below are kept for the record.*
+
 - **Files:** `docs/design/ee-boundary-moves.md` (new).
 - **Content:** the rulings T10, T11, T20 and T21, made concrete.
   - **The coordinator (T10).** What moves and how the core keeps working:
