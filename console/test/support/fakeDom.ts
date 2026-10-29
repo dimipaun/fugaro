@@ -201,8 +201,16 @@ export class FakeNode {
 
   /** closest answers the nearest ancestor-or-self carrying a tag name, which is
    * the one selector the console's listeners ask for: they tell a click on a
-   * control nested in a row from a click on the row. */
+   * control nested in a row from a click on the row.
+   *
+   * A selector this fake cannot answer -- a class, a compound, anything but a
+   * bare tag name -- throws rather than answering `null`, because a `null` is
+   * read by a case as "not inside" and a case that meant `.row` would pass on an
+   * answer the fake never gave. */
   closest(selector: string): FakeNode | null {
+    if (!/^[a-zA-Z0-9-]+$/.test(selector)) {
+      throw new Error(`the fake's closest was asked for ${selector}, which is not a bare tag name`)
+    }
     const wanted = selector.toLowerCase()
     for (let node: FakeNode | null = this; node !== null; node = node.parent) {
       if (node.tagName.toLowerCase() === wanted) return node
