@@ -27,15 +27,18 @@
 //      dashboard's and the picker's gate and cannot express this: it asks whether
 //      a frame is on a *document*, and what this needs is whether the sender is
 //      *this window*.
-//   3. **A yes is refused until the window has been on screen, focused.** The
-//      spawn is built before the window opens, so the window can appear under the
-//      pointer a few hundred milliseconds after the click that asked for it, and
-//      the second click of a double-click in the dashboard lands on the
-//      confirming button of a window nobody has seen yet. The delay
-//      (`CONFIRM_READY_DELAY_MS`) is measured in this process from the window's
-//      own `show` and `focus` events -- never by a timer in the page -- a yes
-//      inside it is answered with `CONFIRM_NOT_YET` and decides nothing, and a
-//      re-focus starts it over. Cancel takes no delay at all.
+//   3. **A yes is refused until the window has settled.** The spawn is built
+//      before the window opens, so the window can appear under the pointer a few
+//      hundred milliseconds after the click that asked for it, and the second
+//      click of a double-click in the dashboard lands on the confirming button
+//      of a window nobody has seen yet. The delay (`CONFIRM_READY_DELAY_MS`) is
+//      measured in this process from the window's own `show` and `focus` events
+//      -- never by a timer in the page -- from whichever of the two came last,
+//      so focus can only push an answerable window further out and is not
+//      required for one to become answerable. A yes inside the delay is answered
+//      with `CONFIRM_NOT_YET` and decides nothing, a re-focus starts the delay
+//      over, and Cancel takes no delay at all. What the delay covers, and the
+//      case it does not, is on `CONFIRM_READY_DELAY_MS` below.
 //
 // What the window is shown is `ConfirmView`, a deep-frozen copy built once by
 // `confirmView` -- never the `FrozenLaunch`, which carries the plan, the child's
@@ -116,14 +119,29 @@ export const CONFIRM_ANSWER_REFUSAL = 'a confirmation is answered with a yes or 
  * nothing more. */
 export const CONFIRM_ALREADY_ANSWERED = 'this confirmation has already been answered'
 
-/** CONFIRM_READY_DELAY_MS is how long after the window is **shown and focused**
- * a yes is still refused, and it is the answer to the one hazard a double-click
- * carries: the window is built after the records are read
- * (`build`), so it can appear under the pointer a few hundred milliseconds after
- * the click that asked for it, and the second click of a double-click in the
- * dashboard lands on the confirming button of a window nobody has seen. Half a
- * second is longer than that gap and shorter than a deliberate click on a button
- * the operator is reading. */
+/** CONFIRM_READY_DELAY_MS is how long after the window is **shown or focused** a
+ * yes is still refused, and it is a guard on the one hazard a double-click
+ * carries: the window is built after the records are read (`build`), so it can
+ * appear under the pointer a few hundred milliseconds after the click that asked
+ * for it, and the second click of a double-click in the dashboard lands on the
+ * confirming button of a window nobody has seen.
+ *
+ * What the delay has to be longer than is the **double-click interval**, not the
+ * appearance gap. An accidental second click arrives at `click + I`, where `I`
+ * is the operator's own double-click setting -- a value the platform makes
+ * configurable, and one Windows' own slider puts as high as 900 ms -- while a
+ * window is answerable from `click + B + CONFIRM_READY_DELAY_MS`, where `B` is
+ * what `build` took. The guard therefore holds only while
+ * `B + CONFIRM_READY_DELAY_MS > I`: a slow `build` is *protective* and a fast one
+ * is not, so at `B` = 150 ms -- a warm `config list --json` -- the window is
+ * answerable 650 ms after the click, and an operator whose interval is set to
+ * 900 ms still spends on a second click. Half a second is chosen as comfortably
+ * longer than a deliberate click on a button the operator is reading; it is not
+ * a proof, and rule 11 names the case it does not cover rather than claiming it
+ * away. Closing that case is not a change this module can make on its own: the
+ * click is the dashboard's, and `open` is called after `build` resolves, so a
+ * delay anchored on the click rather than on the appearance would have to be
+ * carried here by the launcher. */
 export const CONFIRM_READY_DELAY_MS = 500
 
 /** CONFIRM_NOT_YET is what a yes that arrives before the window has settled is
@@ -224,7 +242,15 @@ interface ConfirmEntry {
    * after the window was last shown or focused. It starts at infinity, so a
    * window that has not appeared is a window whose yes is refused until it has --
    * the state a document can only reach by loading and being shown, and never by
-   * waiting. */
+   * waiting.
+   *
+   * Infinity is also what this entry holds if Electron emits **neither** event
+   * for this window, and then every yes to it is refused and nothing can be
+   * launched from it. That is fail-closed: the cost is a window nobody can
+   * confirm rather than a run nobody confirmed. That both events arrive is
+   * Electron's documented behaviour for a window that is put on screen and given
+   * focus, asserted in the tests rather than observed on a real window, which is
+   * why rule 11 names it among the things V2.5.1c must confirm. */
   readyAt: number
 }
 
@@ -320,10 +346,14 @@ export function createConfirmWindow(deps: ConfirmWindowDeps): LaunchConfirmer {
       // The readiness delay is measured here, from the two events that mean the
       // window is on screen and in front: `show` fires when it is put on screen
       // and `focus` when it takes the keyboard -- including when the operator
-      // comes back to it, which starts the delay over. It is deliberately not a
-      // timer in the page: the page is the document whose late arrival is the
-      // hazard, and a document shown late, or never shown, must not be able to
-      // time its own answerability.
+      // comes back to it, which starts the delay over. The delay runs from
+      // whichever of the two came last, so a window that is shown and never
+      // focused still becomes answerable: focus is not required to answer, and
+      // requiring it would make a window Electron never focuses one that no
+      // answer can ever reach (see `readyAt`). It is deliberately not a timer in
+      // the page: the page is the document whose late arrival is the hazard, and
+      // a document shown late, or never shown, must not be able to time its own
+      // answerability.
       const startDelay = (): void => {
         entry.readyAt = now() + CONFIRM_READY_DELAY_MS
       }
