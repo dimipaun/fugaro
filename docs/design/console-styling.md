@@ -513,11 +513,15 @@ document has no deadline; a verify record's spend always `n/a` (no verify record
 one: the run's spend by stage is the spend-by-stage panel's, or the cell names the missing
 `stages` key when the document carries none); a stage's calls or sub-agents `n/a` with the
 sentence "not counted for this stage" when the document left the pointer absent, and a
-measured `0` when it counted the stage at zero -- while the same stage's dollars are
-`omitempty` floats, so an absent `model_usd` or `model_notional_usd` is a measured `$0.00`
-and never an `n/a`; a notional part drawn as `NOTIONAL~$X`; a pull request with **no link at
-all** (`run.link` is typed `null`, and `PR_NO_LINK_REASON` explains why); logs bounded ("lines
-not drawn: N of M") and a count of refused lines; replay scrubbed / not scrubbed.
+measured `0` when it counted the stage at zero -- while the same stage's two dollars are
+`omitempty` floats and are drawn as the ledger's own split of that stage's figure: an absent
+`model_usd`, or an absent `model_notional_usd` in the notional cell, is a measured `$0.00`
+and never an `n/a`, and a subscription run's stage whose record carries no notional part at
+all (a record written before C1.16) draws its whole figure in the billed cell as
+`NOTIONAL~$X` rather than as plain dollars; a notional part drawn as `NOTIONAL~$X`; a pull
+request with **no link at all** (`run.link` is typed `null`, and `PR_NO_LINK_REASON`
+explains why); logs bounded ("lines not drawn: N of M") and a count of refused lines; replay
+scrubbed / not scrubbed.
 
 Readings: money (`usd`) throughout the ledger, the spend-by-stage rows, the diagnosis route
 and model splits, the reported/charged pair; counts for tests, failures, dropped lines,
@@ -527,18 +531,23 @@ replay records; **seconds** for a stage's duration and the replay window.
 **The spend-by-stage and tolerated panels are the document's own two blocks, and neither is
 drawn when the document carries nothing for it.** `section.run-spend-stages` draws the
 top-level `stages` -- `runstore.StageTiming`, the run's own per-stage record -- one
-`li.run-spend-stage` per stage, bounded at the CLI's own `diagnoseStages` (128) with the
-rest counted in `p.run-spend-stages-more`. Its two dollar cells are the stage's whole model
-figure and the notional part of it, and the second carries the console's notional mark
-(`NOTIONAL~$X`) so the plan's list price is never read as money. `section.run-tolerated`
-draws the `tolerated` block: the `total` it carries (never below the entries listed, and
-drawn beside them rather than replaced by their count), then one `li.run-tolerated-finding`
-per finding, bounded at `runstore.MaxTolerated` (100). A document with no `tolerated` block
-draws no panel, and `p.run-tolerated-absent` is one line naming the key that is missing:
-the absence is not the claim that nothing was tolerated, because a run that tolerated
-nothing, a record written before the field existed and a run whose record could not be read
-all write no block. Neither panel sums, divides or derives a figure: every number on them is
-one the document wrote.
+`li.run-spend-stage` per stage, bounded at the CLI's own `diagnoseStages` (128), with every
+entry it did not draw counted in `p.run-spend-stages-more`: the bound's overflow **and** an
+entry that was not an object, so the rows and that count are the whole array. Its two dollar
+cells are the ledger's split of the stage's one figure and are never a sum of it: the billed
+part for `run-spend-stage-usd` (`modelReading`, §2.5 -- the stage's `model_usd` less the part
+the plan paid, or that whole figure marked `NOTIONAL~$X` when there is no billed part), and
+the part the record wrote for `run-spend-stage-notional`, which carries the console's
+notional mark so the plan's list price is never read as money and is a measured `$0.00` when
+the record carries none. `section.run-tolerated` draws the `tolerated` block: the `total` it
+carries (never below the entries listed, and drawn beside them rather than replaced by their
+count), then one `li.run-tolerated-finding` per finding, bounded at `runstore.MaxTolerated`
+(100) with the entries it did not draw counted in `p.run-tolerated-more`. A document with no
+`tolerated` block draws no panel, and `p.run-tolerated-absent` is one line naming the key
+that is missing: the absence is not the claim that nothing was tolerated, because a run that
+tolerated nothing, a record written before the field existed and a run whose record could not
+be read all write no block. Neither panel sums, divides or derives a figure: every number on
+them is one the document wrote.
 
 **The Rigor row is the one place the whole block is drawn.** `div.run-rigor` is appended to
 the header only when the record carries a block, and it draws four things in tree order:

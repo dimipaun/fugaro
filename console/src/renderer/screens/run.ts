@@ -35,9 +35,11 @@
 //      own lists below. A screen that divided a total by the number of stages
 //      would be inventing a figure about money. The two counts are pointers on
 //      the wire (absent means nobody counted the stage) while the two dollars
-//      are `omitempty` floats (absent is a zero), and the notional part is
-//      drawn with the console's notional mark so the plan's list price is never
-//      read as money.
+//      are `omitempty` floats (absent is a zero), and the two dollar cells are
+//      the ledger's own split of the stage's one figure: the billed part, or the
+//      plan's figure marked notional when there is no billed part, and the part
+//      the record carries. The notional mark keeps the plan's list price from
+//      being read as money.
 //   4. **The pull request as text, and no link.** Design section 4.3's gap 7:
 //      no document names the provider (GitHub or Bitbucket Cloud), so a link
 //      rebuilt from the repository and the number **cannot** be built for every
@@ -291,8 +293,11 @@ export interface RunSpendStage {
   readonly duration: Reading
   readonly calls: Reading
   readonly agents: Reading
-  /** `usd` is what the stage's calls cost and `notional` the notional part of
-   * it (D140); the two are never summed, here or anywhere else. */
+  /** `usd` is the stage's billed dollars and `notional` the part of its model
+   * figure the run's plan paid (C1.16, D140). The two are a split of one figure
+   * and are never summed, here or anywhere else: `usd` is `modelReading`'s
+   * answer, so a stage with no billed part at all is drawn with the plan's
+   * figure and the notional mark rather than with a `$0.00` that reads as free. */
   readonly usd: Reading
   readonly notional: Reading
 }
@@ -375,7 +380,9 @@ export interface RunModel {
   /** the run's spend by stage: the document's top-level `stages`, which is the
    * run's own per-stage record and not the verify timeline below. */
   readonly spendStages: readonly RunSpendStage[]
-  /** `spendStagesDropped` is how many stages the panel's bound left out. */
+  /** `spendStagesDropped` is how many entries of `document.stages` the panel did
+   * not draw -- the bound's overflow and the entries that were not objects, so
+   * the rows and this count together are the whole array. */
   readonly spendStagesDropped: Reading
   /** the findings the run's resolved mode tolerated, or `null` when the document
    * carries no `tolerated` block -- which is what a run that tolerated nothing
@@ -594,48 +601,65 @@ function moneyAt(record: Record<string, unknown>, key: string, field: string): R
   return readNumber(record[key], field)
 }
 
-/** stageNotional is the stage's notional part, drawn as **notional** and never
- * as money: it is what the calls a subscription paid for would have cost at list
- * rates, and the cell beside it holds the stage's whole model figure, so the two
- * are the split C1.16 and P12 exist to keep apart (`formatReading` marks a
- * notional figure `NOTIONAL~$X`).
+/** stagePartOf reads the stage's `model_notional_usd`: the part of the stage's
+ * model figure the run's plan paid (`runstore.StageTiming`, C1.16). The key is
+ * `omitempty`, so a part of zero is written as no key at all, and the reading is
+ * an `unavailable` with **no value** then -- which is what tells `modelReading`
+ * to apply the one fallback it has for a record written before the key existed:
+ * a subscription run's whole figure is the plan's.
  *
- * The key is `omitempty`, so no key means a zero -- and it also means a record
- * written before C1.16, which is the case `modelReading` reads the row's own
- * figure with one panel above: a subscription run's whole stage figure is the
- * plan's. A notional part of zero is a measured `$0.00` rather than
- * `NOTIONAL~$0.00`, which would mark nothing as a plan price. */
-function stageNotional(record: Record<string, unknown>, usd: Reading, basis: string | null): Reading {
-  const raw = record['model_notional_usd']
-  if (raw === null || raw === undefined) {
-    const plan = basis === 'subscription' ? usd.value : 0
-    if (plan === null) return unavailable('the document has no stages[].model_notional_usd')
-    return plan === 0 ? measured(0) : notional(plan)
-  }
-  const carried = readNumber(raw, 'stages[].model_notional_usd')
+ * A hand-edited record can carry a part above the figure it is part of, or below
+ * zero; the record's own writer clamps it into that range
+ * (`runstore.Cost.ModelSubscriptionUSD` is `min(ModelNotionalUSD, ModelUSD)` and
+ * `WithNotional` clamps what it records), so the part is read as the part of the
+ * stage's figure it can be. */
+function stagePartOf(record: Record<string, unknown>, whole: Reading): Reading {
+  const carried = readNumber(record['model_notional_usd'], 'stages[].model_notional_usd')
   if (carried.value === null) return carried
-  return carried.value === 0 ? measured(0) : notional(carried.value)
+  const ceiling = whole.value ?? carried.value
+  return measured(Math.min(Math.max(carried.value, 0), ceiling))
+}
+
+/** stageNotional is the notional cell: the part of the figure the record wrote,
+ * drawn as **notional** and never as money (`formatReading` marks a notional
+ * figure `NOTIONAL~$X`), so the plan's list price is never read as a bill. A
+ * part of zero is a measured `$0.00` rather than `NOTIONAL~$0.00`, which would
+ * mark nothing as a plan price.
+ *
+ * The fallback for a record written before the key existed is not applied here:
+ * it is `modelReading`'s, and the cell beside this one is where it belongs --
+ * that cell would otherwise draw `$0.00` for a plan-covered figure, which reads
+ * as free. This cell answers what the record carries, and the two together are
+ * the stage's one figure rather than a sum of it. */
+function stageNotional(part: Reading): Reading {
+  if (part.value === null || part.value === 0) return measured(0)
+  return notional(part.value)
 }
 
 /** spendStagesOf reads the document's top-level `stages` (`runstore.StageTiming`)
  * into the panel's rows, bounded at `RUN_SPEND_STAGES_MAX`. An entry that is not
  * an object is skipped rather than thrown on: the record is a hand-editable
  * object and a screen that threw would draw nothing at all. `basis` is the run's
- * `cost.model_basis`, which only `stageNotional` needs. */
+ * `cost.model_basis`, which `modelReading` needs for a stage whose part the
+ * record does not carry. */
 function spendStagesOf(raw: unknown, basis: string | null): readonly RunSpendStage[] {
   const records = arrayAt(raw) ?? []
   const stages: RunSpendStage[] = []
   for (const item of records.slice(0, RUN_SPEND_STAGES_MAX)) {
     const record = objectAt(item)
     if (record === null) continue
-    const usd = moneyAt(record, 'model_usd', 'stages[].model_usd')
+    const whole = moneyAt(record, 'model_usd', 'stages[].model_usd')
+    const part = stagePartOf(record, whole)
     stages.push({
       name: textAt(record['name']) ?? '',
       duration: readNumber(record['duration_s'], 'stages[].duration_s'),
       calls: countedAt(record, 'calls', 'stages[].calls'),
       agents: countedAt(record, 'agents', 'stages[].agents'),
-      usd,
-      notional: stageNotional(record, usd, basis),
+      // Only the billed part of the figure is money: `modelReading` is the
+      // ledger's own split of the row's figure one panel above, and the notional
+      // cell beside this one holds the plan's part of the same figure.
+      usd: modelReading(whole, part, basis),
+      notional: stageNotional(part),
     })
   }
   return stages
@@ -643,7 +667,12 @@ function spendStagesOf(raw: unknown, basis: string | null): readonly RunSpendSta
 
 /** toleratedOf reads the document's `tolerated` block, bounded at
  * `RUN_TOLERATED_MAX` on read as it is on write. `null` for a document that
- * carries no block, which is what a run that tolerated nothing looks like. */
+ * carries no block, which is what a run that tolerated nothing looks like.
+ *
+ * `dropped` is the raw length less the rows drawn, so the rows and the count
+ * together are the whole array: an entry skipped because it is not an object is
+ * an entry this panel did not draw, and counting only the bound's overflow would
+ * let a shorter array read as the whole record. */
 function toleratedOf(raw: unknown): RunTolerated | null {
   const block = objectAt(raw)
   if (block === null) return null
@@ -665,7 +694,7 @@ function toleratedOf(raw: unknown): RunTolerated | null {
   return {
     total: readNumber(block['total'], 'tolerated.total'),
     findings,
-    dropped: measured(Math.max(0, entries.length - RUN_TOLERATED_MAX)),
+    dropped: measured(Math.max(0, entries.length - findings.length)),
   }
 }
 
@@ -886,7 +915,7 @@ export function buildRunModel(inputs: RunInputs): RunModel {
     },
     ledger: ledgerOf(row),
     spendStages,
-    spendStagesDropped: measured(Math.max(0, (rawStages?.length ?? 0) - RUN_SPEND_STAGES_MAX)),
+    spendStagesDropped: measured(Math.max(0, (rawStages?.length ?? 0) - spendStages.length)),
     tolerated: toleratedOf(document['tolerated']),
     stages: stagesOf(
       row,
@@ -1167,8 +1196,8 @@ function spendStagesPanel(factory: ScreenFactory, model: RunModel): ScreenElemen
     numberCell(row, factory, 'span', stage.usd, 'usd', 'run-spend-stage-usd')
     numberCell(row, factory, 'span', stage.notional, 'usd', 'run-spend-stage-notional')
   }
-  // What this screen's own bound left out is a reading, so a panel that stopped
-  // at the bound does not read as the whole of the run's record.
+  // What this screen's own bound and its skips left out is a reading, so a panel
+  // that stopped early does not read as the whole of the run's record.
   if (model.spendStagesDropped.value !== null && model.spendStagesDropped.value > 0) {
     const note = cell(element, factory, 'p', 'run-spend-stages-more')
     literal(note, 'stages not drawn:')

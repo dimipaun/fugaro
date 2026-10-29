@@ -508,7 +508,8 @@ describe('the fixtures are documents the console accepts', () => {
     }
   })
 
-  it('reads the log window with no refused line', () => {    // The fixture is the *stdout* of `logs RUN --json`: one compact `logLine`
+  it('reads the log window with no refused line', () => {
+    // The fixture is the *stdout* of `logs RUN --json`: one compact `logLine`
     // object per line. It goes through the console's own line reader and then
     // through the Run screen's window reader, which is the order the log read
     // makes (`source/cli.ts`'s `parseLogEntries` answers `{entries, total,

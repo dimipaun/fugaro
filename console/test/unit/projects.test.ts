@@ -1220,9 +1220,12 @@ describe('buildRunModel', () => {
     expect(model.spendStages[2]?.calls.state).toBe('measured')
     expect(model.spendStages[2]?.agents.value).toBe(0)
     // An entry that is not an object is skipped, never thrown on: the record is
-    // an object a hand can edit.
+    // an object a hand can edit. A skipped entry is an entry the panel did not
+    // draw, so it is counted with the bound's overflow rather than left out
+    // altogether -- otherwise the rows and the count would not be the array.
     const malformed = buildRunModel(runInputs({ diagnosis: { ...DIAGNOSIS, stages: [null, 'review', stages[0]] } }))
     expect(malformed.spendStages.map((stage) => stage.name)).toEqual(['implement'])
+    expect(malformed.spendStagesDropped.value).toBe(2)
     // A document with no `stages` at all draws no panel, and the timeline says
     // which key is missing rather than naming a panel that is not there.
     const none = buildRunModel(runInputs())
@@ -1233,18 +1236,23 @@ describe('buildRunModel', () => {
     expect(model.stages[0]?.spend.because).toContain('"spend by stage" panel')
   })
 
-  it('spend by stage reads the two omitempty floats as zeros, and marks the notional part', () => {
-    // `model_usd` and `model_notional_usd` are `omitempty` floats on the wire
-    // (`internal/runstore/runstore.go`), the opposite case to `calls`/`agents`:
-    // `encoding/json` writes no key for a zero, so an absent key is the value
-    // zero and never an unknown. Reading it as unknown would draw `n/a` for the
-    // whole spend of every stage that cost nothing, and `n/a` for the notional
-    // part of every stage on no plan.
+  it('spend by stage splits each figure into the billed part and the plan’s part', () => {
+    // `model_usd` is the stage's whole figure -- billed money plus the part a
+    // plan paid -- and `model_notional_usd` is that part. The two cells are the
+    // split and never a sum of it, and the split is the ledger's own
+    // (`modelReading`, one panel above) rather than one this panel invents.
+    //
+    // Both keys are `omitempty` floats (`internal/runstore/runstore.go`), the
+    // opposite case to `calls`/`agents`: `encoding/json` writes no key for a
+    // zero, so an absent part is the value zero and never an unknown. Reading it
+    // as unknown would draw `n/a` for the notional part of every stage on no
+    // plan.
     const stages = [
       // Both keys dropped by `omitempty`: nothing billed, nothing notional.
       { name: 'implement', duration_s: 420 },
       // A cascade stage: part of its figure is the plan's, and that part is a
-      // notional figure -- `NOTIONAL~$X`, never money (C1.16, P12).
+      // notional figure -- `NOTIONAL~$X`, never money (C1.16, P12). The billed
+      // cell holds what is left of the figure.
       { name: 'review', duration_s: 95, model_usd: 2.1, model_notional_usd: 0.6 },
     ]
     const model = buildRunModel(runInputs({ diagnosis: { ...DIAGNOSIS, stages } }))
@@ -1252,13 +1260,15 @@ describe('buildRunModel', () => {
     expect(model.spendStages[0]?.usd.value).toBe(0)
     expect(model.spendStages[0]?.notional.state).toBe('measured')
     expect(model.spendStages[0]?.notional.value).toBe(0)
-    expect(model.spendStages[1]?.usd.value).toBe(2.1)
+    expect(model.spendStages[1]?.usd.value).toBe(1.5)
     expect(model.spendStages[1]?.usd.state).toBe('measured')
     expect(model.spendStages[1]?.notional.value).toBe(0.6)
     expect(model.spendStages[1]?.notional.state).toBe('notional')
-    // A record written before the key existed carries none, and then the run's
+    // A record written before the key existed carries no part, and then the run's
     // basis is the fallback the ledger applies to the row's own figure one panel
-    // above: a subscription run's whole stage figure is the plan's.
+    // above: a subscription run's whole stage figure is the plan's, so it is the
+    // **usd** cell that carries it -- marked notional, because nothing was billed
+    // -- and the notional cell is the zero the record carries.
     const before = buildRunModel(
       runInputs({
         diagnosis: {
@@ -1271,14 +1281,30 @@ describe('buildRunModel', () => {
         },
       }),
     )
-    expect(before.spendStages[0]?.notional.value).toBe(2.1)
-    expect(before.spendStages[0]?.notional.state).toBe('notional')
-    // The same absent key on an api-list run is a zero and not the whole figure.
+    expect(before.spendStages[0]?.usd.value).toBe(2.1)
+    expect(before.spendStages[0]?.usd.state).toBe('notional')
+    expect(before.spendStages[0]?.notional.value).toBe(0)
+    expect(before.spendStages[0]?.notional.state).toBe('measured')
+    // The same absent key on an api-list run is a billed figure: nothing says the
+    // plan paid any of it.
     const listed = buildRunModel(
       runInputs({ diagnosis: { ...DIAGNOSIS, stages: [{ name: 'review', duration_s: 95, model_usd: 2.1 }] } }),
     )
+    expect(listed.spendStages[0]?.usd.value).toBe(2.1)
+    expect(listed.spendStages[0]?.usd.state).toBe('measured')
     expect(listed.spendStages[0]?.notional.value).toBe(0)
     expect(listed.spendStages[0]?.notional.state).toBe('measured')
+    // A hand-edited record can say the plan paid more than the stage cost; the
+    // part is read as the part of the figure it can be, which is what the
+    // record's own writer clamps it to.
+    const over = buildRunModel(
+      runInputs({
+        diagnosis: { ...DIAGNOSIS, stages: [{ name: 'review', duration_s: 95, model_usd: 0.8, model_notional_usd: 5 }] },
+      }),
+    )
+    expect(over.spendStages[0]?.notional.value).toBe(0.8)
+    expect(over.spendStages[0]?.usd.value).toBe(0.8)
+    expect(over.spendStages[0]?.usd.state).toBe('notional')
   })
 
   it('spend by stage bounds a hand-edited list at 128', () => {
@@ -1325,6 +1351,14 @@ describe('buildRunModel', () => {
     expect(model.tolerated?.findings[0]?.likelihood.value).toBe(2)
     expect(model.tolerated?.findings[0]?.scoreClass).toBe('maintainability')
     expect(model.tolerated?.dropped.value).toBe(0)
+    // An entry that is not an object is skipped, never thrown on, and it is an
+    // entry the panel did not draw: counted with the bound's overflow rather
+    // than left out of the count, so the rows plus `dropped` are the array.
+    const malformed = buildRunModel(
+      runInputs({ diagnosis: { ...DIAGNOSIS, tolerated: { findings: [{ ...findings[0] }, null, 'nit'], total: 3 } } }),
+    )
+    expect(malformed.tolerated?.findings).toHaveLength(1)
+    expect(malformed.tolerated?.dropped.value).toBe(2)
     // The list is bounded here too, and what it left out is a reading.
     const many = Array.from({ length: RUN_TOLERATED_MAX + 3 }, () => findings[0])
     const bounded = buildRunModel(runInputs({ diagnosis: { ...DIAGNOSIS, tolerated: { findings: many, total: many.length } } }))
@@ -1636,10 +1670,13 @@ describe('renderRun', () => {
     expect(texts(spend, 'run-spend-stage-name')).toEqual(['implement', 'review'])
     expect(texts(spend, 'run-spend-stage-calls')).toEqual(['42', 'n/a'])
     expect(texts(spend, 'run-spend-stage-agents')).toEqual(['3', 'n/a'])
-    expect(texts(spend, 'run-spend-stage-usd')).toEqual(['$1.10', '$0.15'])
-    // The notional cell carries the console's notional mark: it is the plan's
-    // list price and not money the run was billed (C1.16, P12), and a zero
-    // notional part is a measured `$0.00` rather than a marked zero.
+    expect(texts(spend, 'run-spend-stage-usd')).toEqual(['$1.10', '$0.10'])
+    // The usd cell is the **billed** part of the stage's figure -- the ledger's
+    // own split, one panel above -- and the notional cell beside it is the part
+    // the record wrote, carrying the console's notional mark: the plan's list
+    // price and not money the run was billed (C1.16, P12). Together the two are
+    // the stage's one figure, never a sum of it. A part of zero is a measured
+    // `$0.00` rather than a marked zero.
     expect(texts(spend, 'run-spend-stage-notional')).toEqual(['$0.00', 'NOTIONAL~$0.05'])
     // The absent counts say which fact they are, in the cell's title.
     expect(all(spend, 'run-spend-stage-calls')[1]?.getAttribute('title')).toBe('not counted for this stage')
@@ -1648,6 +1685,41 @@ describe('renderRun', () => {
     expect(texts(mode, 'run-tolerated-mode')).toEqual(['Pro'])
     expect(texts(mode, 'run-tolerated-label')).toEqual(['low'])
     expect(one(mode, 'run-tolerated-count').textContent).toBe('4')
+  })
+
+  it('draws the billed part of a stage’s figure, and the plan’s part beside it', () => {
+    // A stage's `model_usd` is billed money **plus** the plan's notional part
+    // (`runstore.Cost`, C1.16), so the usd cell is the ledger's own split of it
+    // and never the whole figure: drawn whole, the two cells would add billed
+    // and notional money on one row.
+    const listed = { name: 'review', duration_s: 95, model_usd: 0.8, model_notional_usd: 0.3 }
+    const drawn = renderRun(
+      factory,
+      buildRunModel(runInputs({ diagnosis: { ...DIAGNOSIS, stages: [listed] } })),
+      'light',
+    )
+    expect(texts(drawn, 'run-spend-stage-usd')).toEqual(['$0.50'])
+    expect(texts(drawn, 'run-spend-stage-notional')).toEqual(['NOTIONAL~$0.30'])
+    // A record written before the key existed carries no part, and then a
+    // subscription run's whole stage figure is the plan's: the usd cell is that
+    // figure marked notional and never plain dollars, because `$0.00` there
+    // would read as free.
+    const before = buildRunModel(
+      runInputs({
+        diagnosis: {
+          ...DIAGNOSIS,
+          row: {
+            ...DIAGNOSIS.row,
+            cost: { ...DIAGNOSIS.row.cost, model_usd: 2.1, model_basis: 'subscription' },
+          },
+          stages: [{ name: 'review', duration_s: 95, model_usd: 2.1 }],
+        },
+      }),
+    )
+    const old = renderRun(factory, before, 'light')
+    expect(texts(old, 'run-spend-stage-usd')).toEqual(['NOTIONAL~$2.10'])
+    expect(texts(old, 'run-spend-stage-usd')).not.toContain('$2.10')
+    expect(texts(old, 'run-spend-stage-notional')).toEqual(['$0.00'])
   })
 
   it('a tolerated title is drawn as text, never markup', () => {

@@ -412,7 +412,14 @@ const DIAGNOSIS: JSONDoc = {
     settled: true,
     follow_up: false,
     stale_draft: false,
-    cost: { model_usd: 1.25, compute_usd: 0.5, compute_estimated: true, total_usd: 1.75, model_basis: 'api-list' },
+    cost: {
+      model_usd: 1.25,
+      model_notional_usd: 0.42,
+      compute_usd: 0.5,
+      compute_estimated: true,
+      total_usd: 1.75,
+      model_basis: 'api-list',
+    },
   },
   halt: { reason: 'the daily cap was reached', scope: 'repo', at: '2026-10-15T11:30:00Z' },
   verify: [
@@ -452,12 +459,13 @@ const DIAGNOSIS: JSONDoc = {
   route_by: { 'anthropic-api': 0.9 },
   model_by: { 'claude-sonnet-5': 1.25 },
   // The run's own per-stage record, whose `model_usd` is the ledger's model
-  // figure split the way the CLI counted it. `verify` carries no `agents`
-  // pointer at all: the CLI's own `StageTiming` writes those as pointers, so an
-  // absent one means the stage was not counted, not that it counted zero. The
-  // two dollars are `omitempty` floats instead, and `model_notional_usd` is the
-  // part of the stage's `model_usd` the plan covered -- never more than it --
-  // so `verify` with no notional key is a measured zero.
+  // figure split the way the CLI counted it (the three stages sum to the row's
+  // 1.25, and their notional parts to the row's 0.42). `verify` carries no
+  // `agents` pointer at all: the CLI's own `StageTiming` writes those as
+  // pointers, so an absent one means the stage was not counted, not that it
+  // counted zero. The two dollars are `omitempty` floats instead, and
+  // `model_notional_usd` is the part of the stage's `model_usd` the plan covered
+  // -- never more than it -- so `verify` with no notional key is a measured zero.
   stages: [
     { name: 'implement', duration_s: 612, calls: 412, agents: 3, model_usd: 0.8, model_notional_usd: 0.3 },
     { name: 'review', duration_s: 344, calls: 268, agents: 2, model_usd: 0.3, model_notional_usd: 0.12 },
@@ -571,9 +579,10 @@ test.describe('the Run detail screen', () => {
     expect(drawn.theme).toBe('light')
     expect(drawn.runId).toBe('20261015-110030-4a5b')
     expect(drawn.status).toBe('finished')
-    // The three accounts, apart: the billed model figure, the estimate by
-    // design, and the total the table charged.
-    expect(drawn.ledgerModel).toBe('$1.25')
+    // The three accounts, apart: the billed model figure (the row's `model_usd`
+    // less the part its plan paid), the estimate by design, and the total the
+    // table charged.
+    expect(drawn.ledgerModel).toBe('$0.83')
     expect(drawn.ledgerCompute).toBe('est. $0.50')
     expect(drawn.ledgerTotal).toBe('$1.75')
     // A halting is the money decision this console exists to explain, so it is
@@ -662,7 +671,10 @@ test.describe('the Run detail screen', () => {
     // model spend came to: every figure is one the document wrote.
     expect(drawn.spendStageCalls).toEqual(['412', '268', '41'])
     expect(drawn.spendStageAgents).toEqual(['3', '2', 'n/a'])
-    expect(drawn.spendStageUsd).toEqual(['$0.80', '$0.30', '$0.15'])
+    // The usd cell is the **billed** part of the stage's figure, which is the
+    // stage's `model_usd` less the part the plan paid -- never the whole figure,
+    // which would add billed and notional money on one row.
+    expect(drawn.spendStageUsd).toEqual(['$0.50', '$0.18', '$0.15'])
     // The notional part is the plan's list price inside the stage's figure, so
     // it carries the console's notional mark -- and `verify`, with no notional
     // key at all, is a measured zero rather than a marked one.
