@@ -1591,6 +1591,10 @@ function stageBar(factory: RunFactory, duration: Reading, passed: boolean | null
   const element = makeNS(factory, 'svg', 'run-stage-bar')
   element.setAttribute('viewBox', RUN_BAR_BOX)
   element.setAttribute('preserveAspectRatio', 'none')
+  // The height is the `viewBox`'s own, written as the attribute the fill is
+  // scaled inside: the stylesheet stretches the bar to the column and carries no
+  // length of its own (`live.ts`'s cap bar is drawn the same way).
+  element.setAttribute('height', RUN_BAR_HEIGHT)
   element.setAttribute('aria-hidden', 'true')
   const track = makeNS(factory, 'rect', 'run-stage-track')
   track.setAttribute('x', RUN_BAR_ORIGIN)

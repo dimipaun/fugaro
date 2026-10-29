@@ -973,9 +973,13 @@ div.run-head {
   gap: var(--space-sm);
 }
 
+/* The screen's one heading, in the size the Live screen's own `h1` uses: the
+ * type scale has no token between `--text-h1` and `--text-stat-lg`, and the
+ * value set is the design's, so the heading token is the one that fits rather
+ * than a length the theme would have to invent. */
 h1.run-id {
   font-family: var(--font-mono);
-  font-size: var(--text-stat-lg);
+  font-size: var(--text-h1);
   font-weight: var(--weight-medium);
   user-select: text;
 }
@@ -1060,7 +1064,6 @@ span.run-strip-value {
   font-size: var(--text-h2);
   font-weight: var(--weight-semibold);
   color: var(--text);
-  font-family: var(--font-mono);
   user-select: text;
 }
 
@@ -1241,7 +1244,6 @@ span.run-stage-passed {
 svg.run-stage-bar {
   display: block;
   width: 100%;
-  height: 8px;
 }
 
 rect.run-stage-track {
@@ -1336,6 +1338,10 @@ span.run-agent-word {
   color: var(--text-3);
 }
 
+/* The agent's sentence is the largest prose on the screen, and the type scale has
+ * no token between `--text-h2` (16 px) and `--text-h1` (28 px): the size the
+ * design asks for is its own, and a heading token would make it a heading. The
+ * colour is the primary text token, so what carries the emphasis is the size. */
 p.run-agent-text {
   margin: 0;
   font-size: 17px;
