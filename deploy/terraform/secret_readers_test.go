@@ -22,7 +22,7 @@ import (
 // The rows are docs/secrets-brokering/secret-readers.md's IDs (B0.1): this
 // table is the exceptions list that doc points at, and
 // TestSecretReadersDocMatchesTheTable keeps the two in step. A row's key is a
-// hit key — a file the scan found, with the resource in it for Terraform — or,
+// hit key — a file the scan found, with the block in it for Terraform — or,
 // for a reader no scan of this tree can hold an instance of, a rule key.
 var secretReaderExceptions = []struct {
 	id   string
@@ -206,6 +206,10 @@ resource "google_secret_manager_secret_iam_policy" "policy" {
   policy_data = "{}"
 }
 
+data "google_secret_manager_secret_version" "token" {
+  secret = "bitbucket-token"
+}
+
 resource "google_project_iam_member" "owner" {
   project = "p"
   role    = "roles/owner"
@@ -223,6 +227,31 @@ resource "google_project_iam_member" "custom" {
   member  = "serviceAccount:c@example.iam.gserviceaccount.com"
 }
 
+# The role of a mapped grant is each.value, so the map's own values are what
+# the scan has to read: a reader added among them must not pass.
+resource "google_project_iam_member" "mapped" {
+  for_each = {
+    log_writer = "roles/logging.logWriter"
+    secret_reader = "roles/secretmanager.secretAccessor"
+  }
+
+  project = "p"
+  role    = each.value
+  member  = "serviceAccount:d@example.iam.gserviceaccount.com"
+}
+
+resource "google_project_iam_member" "from_variable" {
+  project = "p"
+  role    = var.reader_role
+  member  = "serviceAccount:e@example.iam.gserviceaccount.com"
+}
+
+resource "google_project_iam_member" "opaque" {
+  project = "p"
+  role    = var.unset_role
+  member  = "serviceAccount:f@example.iam.gserviceaccount.com"
+}
+
 resource "google_project_iam_custom_role" "unrelated" {
   role_id     = "fugaroUnrelated"
   permissions = ["run.jobs.get"]
@@ -231,7 +260,7 @@ resource "google_project_iam_custom_role" "unrelated" {
 resource "google_project_iam_member" "unrelated" {
   project = "p"
   role    = google_project_iam_custom_role.unrelated.name
-  member  = "serviceAccount:d@example.iam.gserviceaccount.com"
+  member  = "serviceAccount:g@example.iam.gserviceaccount.com"
 }
 
 resource "google_cloud_run_v2_job" "mounted" {
@@ -257,21 +286,52 @@ resource "google_cloud_run_v2_job" "mounted" {
   }
 }
 
-# A comment naming secret_key_ref and google_secret_manager_secret_iam_member
-# and availableSecrets is not a reader.
-resource "google_storage_bucket" "bucket" {
-  name = "b"
+# A scratch volume is not a secret volume, and a comment naming secret_key_ref
+# and google_secret_manager_secret_iam_member is not a reader either.
+resource "google_cloud_run_v2_job" "scratch" {
+  template {
+    template {
+      containers {
+        volumes {
+          name = "tmp"
+          empty_dir {
+            medium = "MEMORY"
+          }
+        }
+      }
+    }
+  }
+}
+`
+	const varsSrc = `
+variable "reader_role" {
+  type    = string
+  default = "roles/secretmanager.admin"
+}
+
+variable "unset_role" {
+  type = string
+}
+
+locals {
+  nested = var.reader_role
 }
 `
 	want := []string{
+		"deploy/terraform/gcp/modules/m/f.tf data.google_secret_manager_secret_version.token",
 		"deploy/terraform/gcp/modules/m/f.tf google_cloud_run_v2_job.mounted",
 		"deploy/terraform/gcp/modules/m/f.tf google_project_iam_member.custom",
+		"deploy/terraform/gcp/modules/m/f.tf google_project_iam_member.from_variable",
+		"deploy/terraform/gcp/modules/m/f.tf google_project_iam_member.mapped",
 		"deploy/terraform/gcp/modules/m/f.tf google_project_iam_member.owner",
 		"deploy/terraform/gcp/modules/m/f.tf google_secret_manager_secret_iam_binding.binding",
 		"deploy/terraform/gcp/modules/m/f.tf google_secret_manager_secret_iam_member.member",
 		"deploy/terraform/gcp/modules/m/f.tf google_secret_manager_secret_iam_policy.policy",
 	}
-	got := scanTerraformDir([]tfFile{{rel: "deploy/terraform/gcp/modules/m/f.tf", src: tfSrc}})
+	got := scanTerraformDir([]tfFile{
+		{rel: "deploy/terraform/gcp/modules/m/f.tf", src: tfSrc},
+		{rel: "deploy/terraform/gcp/modules/m/variables.tf", src: varsSrc},
+	}, map[string]bool{})
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("terraform scan found:\n\t%s\nwant:\n\t%s", strings.Join(got, "\n\t"), strings.Join(want, "\n\t"))
 	}
@@ -309,7 +369,9 @@ availableSecrets:
 
 // secretReaderHits walks the artifacts a reader can hide in: the Terraform
 // tree and the roles it defines, the derived image's Cloud Build config, and
-// every non-test Go file under internal/ and cmd/.
+// every non-test Go file under internal/ and cmd/ — the Go scope the plan
+// names. ee/ is the same module but no file there reaches Secret Manager
+// today; a reader added there is B0.3's runtime sweep to find.
 func secretReaderHits(t *testing.T) []string {
 	t.Helper()
 	const root = "../.."
@@ -335,8 +397,15 @@ func secretReaderHits(t *testing.T) []string {
 	if err != nil {
 		t.Fatalf("walking the Terraform tree: %v", err)
 	}
+
+	readerRoleNames := map[string]bool{}
 	for _, files := range byDir {
-		hits = append(hits, scanTerraformDir(files)...)
+		for _, name := range secretManagerRoleNames(files) {
+			readerRoleNames[name] = true
+		}
+	}
+	for _, files := range byDir {
+		hits = append(hits, scanTerraformDir(files, readerRoleNames)...)
 	}
 
 	err = filepath.WalkDir(filepath.Join(root, "images"), func(path string, d fs.DirEntry, err error) error {
@@ -396,66 +465,117 @@ type tfFile struct {
 	src string
 }
 
-type tfResource struct {
+// tfBlock is one resource or data block, with the text between its braces.
+type tfBlock struct {
+	mode string
 	typ  string
 	name string
 	body string
 	file string
 }
 
-// tfCustomRole is a google_project_iam_custom_role that lists a Secret Manager
-// permission, in the module whose grants may carry it.
-type tfCustomRole struct {
-	local  string
-	roleID string
+// tfModule is one directory of the tree: a custom role is wired to the grants
+// that carry it inside the module that defines it, and a variable's default
+// or a local's value may be the only place a role is spelled out.
+type tfModule struct {
+	blocks []tfBlock
+	vars   map[string]string
+	locals map[string]string
 }
 
 var (
-	tfResourceRE    = regexp.MustCompile(`(?m)^[ \t]*resource[ \t]+"([^"]+)"[ \t]+"([^"]+)"[ \t]*\{`)
-	tfStringRE      = regexp.MustCompile(`"([^"\n]*)"`)
-	tfSecretPermRE  = regexp.MustCompile(`"secretmanager\.[a-zA-Z.]+"`)
-	tfSecretVolRE   = regexp.MustCompile(`(?m)^[ \t]*volumes[ \t]*\{`)
-	tfCustomRoleREF = regexp.MustCompile(`google_project_iam_custom_role\.([A-Za-z0-9_]+)`)
-	cbSecretsRE     = regexp.MustCompile(`(?m)^availableSecrets:`)
+	tfBlockRE      = regexp.MustCompile(`(?m)^[ \t]*(resource|data)[ \t]+"([^"]+)"[ \t]+"([^"]+)"[ \t]*\{`)
+	tfVariableRE   = regexp.MustCompile(`(?m)^[ \t]*variable[ \t]+"([^"]+)"[ \t]*\{`)
+	tfLocalsRE     = regexp.MustCompile(`(?m)^[ \t]*locals[ \t]*\{`)
+	tfLocalNameRE  = regexp.MustCompile(`(?m)^[ \t]*([A-Za-z_][A-Za-z0-9_-]*)[ \t]*=`)
+	tfStringRE     = regexp.MustCompile(`"([^"\n]*)"`)
+	tfRefRE        = regexp.MustCompile(`\b(var|local)\.([A-Za-z0-9_]+)`)
+	tfSecretPermRE = regexp.MustCompile(`"secretmanager\.[a-zA-Z.]+"`)
+	tfSecretVolRE  = regexp.MustCompile(`(?m)^[ \t]*secret[ \t]*\{`)
+	tfVolumeRE     = regexp.MustCompile(`(?m)^[ \t]*volumes[ \t]*\{`)
+	tfCustomRoleRE = regexp.MustCompile(`google_project_iam_custom_role\.([A-Za-z0-9_]+)`)
+	cbSecretsRE    = regexp.MustCompile(`(?m)^availableSecrets:`)
+	tfDataReaderRE = regexp.MustCompile(`^google_secret_manager_`)
 )
 
-// scanTerraformDir reads one module directory at a time, because a custom
-// role and the grant that carries it are wired to each other inside the
-// module: the launcher's grant spells the role out as a string while the role
-// block takes its ID from a variable, so nothing but the module ties them.
-func scanTerraformDir(files []tfFile) []string {
-	var resources []tfResource
+func newTFModule(files []tfFile) *tfModule {
+	mod := &tfModule{vars: map[string]string{}, locals: map[string]string{}}
 	for _, f := range files {
-		resources = append(resources, terraformResources(f.rel, f.src)...)
+		clean := stripTerraformComments(f.src)
+		mod.blocks = append(mod.blocks, terraformBlocks(f.rel, clean)...)
+		for _, loc := range tfVariableRE.FindAllStringSubmatchIndex(clean, -1) {
+			body, ok := terraformBlockBody(clean, loc[1]-1)
+			if !ok {
+				continue
+			}
+			mod.vars[clean[loc[2]:loc[3]]] = terraformAttrExpr(body, "default")
+		}
+		for _, loc := range tfLocalsRE.FindAllStringSubmatchIndex(clean, -1) {
+			body, ok := terraformBlockBody(clean, loc[1]-1)
+			if !ok {
+				continue
+			}
+			for _, name := range tfLocalNameRE.FindAllStringSubmatch(body, -1) {
+				mod.locals[name[1]] = terraformAttrExpr(body, name[1])
+			}
+		}
 	}
+	return mod
+}
 
-	readerRoles := map[string][]tfCustomRole{}
-	for _, r := range resources {
-		if r.typ != "google_project_iam_custom_role" || !tfSecretPermRE.MatchString(r.body) {
+// secretManagerRoleNames is the set of custom roles in these files whose
+// permissions include a secretmanager one, by Terraform name and by role ID:
+// a grant in another module can only be tied to such a role by that name.
+func secretManagerRoleNames(files []tfFile) []string {
+	var names []string
+	mod := newTFModule(files)
+	for _, b := range mod.blocks {
+		if b.typ != "google_project_iam_custom_role" || !tfSecretPermRE.MatchString(b.body) {
 			continue
 		}
-		dir := filepath.ToSlash(filepath.Dir(r.file))
-		readerRoles[dir] = append(readerRoles[dir], tfCustomRole{local: r.name, roleID: terraformAttrExpr(r.body, "role_id")})
+		names = append(names, normalizeRoleName(b.name))
+		if id := terraformAttrExpr(b.body, "role_id"); id != "" {
+			names = append(names, normalizeRoleName(id))
+		}
+	}
+	return names
+}
+
+// scanTerraformDir reads a module directory at a time, because a custom role
+// and the grant that carries it are wired to each other inside the module: the
+// launcher's grant spells the role out as a string while the role block takes
+// its ID from a variable, so nothing but the module ties them. readerRoleNames
+// carries the tree's secretmanager-touching role names for a grant that points
+// at a role another module defines.
+func scanTerraformDir(files []tfFile, readerRoleNames map[string]bool) []string {
+	mod := newTFModule(files)
+	for _, name := range secretManagerRoleNames(files) {
+		readerRoleNames[name] = true
 	}
 
 	var hits []string
-	for _, r := range resources {
-		key := r.file + " " + r.typ + "." + r.name
-		switch r.typ {
-		case "google_secret_manager_secret_iam_member", "google_secret_manager_secret_iam_binding", "google_secret_manager_secret_iam_policy":
+	for _, b := range mod.blocks {
+		key := b.file + " " + b.typ + "." + b.name
+		if b.mode == "data" {
+			key = b.file + " data." + b.typ + "." + b.name
+		}
+		switch {
+		case b.mode == "data":
+			if tfDataReaderRE.MatchString(b.typ) || holdsSecretValue(b.body) {
+				hits = append(hits, key)
+			}
+		case b.typ == "google_secret_manager_secret_iam_member", b.typ == "google_secret_manager_secret_iam_binding", b.typ == "google_secret_manager_secret_iam_policy":
 			hits = append(hits, key)
-		case "google_project_iam_policy":
+		case b.typ == "google_project_iam_policy":
 			// Its policy_data is opaque JSON, so a role it grants cannot be
 			// read out of it; a project-wide policy is flagged whole.
 			hits = append(hits, key)
-		case "google_project_iam_member", "google_project_iam_binding":
-			expr := terraformAttrExpr(r.body, "role")
-			dir := filepath.ToSlash(filepath.Dir(r.file))
-			if projectRoleReadsSecrets(expr) || carriesReaderRole(expr, readerRoles[dir]) {
+		case b.typ == "google_project_iam_member", b.typ == "google_project_iam_binding":
+			if grantReadsSecrets(b, mod, readerRoleNames) {
 				hits = append(hits, key)
 			}
 		default:
-			if strings.Contains(r.body, "secret_key_ref") || tfSecretVolRE.MatchString(r.body) {
+			if holdsSecretValue(b.body) {
 				hits = append(hits, key)
 			}
 		}
@@ -464,30 +584,75 @@ func scanTerraformDir(files []tfFile) []string {
 	return hits
 }
 
-// carriesReaderRole matches a grant to a custom role that lists a
-// secretmanager permission. The grant usually spells the role out as a
-// string ("projects/x/roles/fugaroLauncher"), so the module's role IDs and
-// the role blocks' own names are both compared, ignoring case and the
-// separators that differ between a Terraform name and a role ID.
-func carriesReaderRole(role string, roles []tfCustomRole) bool {
-	if role == "" {
+// grantReadsSecrets resolves a grant's role as far as the tree allows: through
+// a variable's default, a local, and the map a for_each grant is built from,
+// so a reader written any of those ways still fails the build. A role handed
+// in from outside the tree (a root variable internal/infra writes a tfvars
+// value for) resolves to nothing here, and B0.3's live sweep is what covers it.
+func grantReadsSecrets(b tfBlock, mod *tfModule, readerRoleNames map[string]bool) bool {
+	expr := terraformAttrExpr(b.body, "role")
+	for _, candidate := range expandRoleExpr(expr, mod, terraformAttrExpr(b.body, "for_each"), 0) {
+		if projectRoleReadsSecrets(candidate) || namesReaderRole(candidate, readerRoleNames) {
+			return true
+		}
+	}
+	return false
+}
+
+// expandRoleExpr returns every role string the expression can take: the
+// literals in it, plus the literals of the variable defaults, locals and
+// for_each values it refers to, plus the references themselves.
+func expandRoleExpr(expr string, mod *tfModule, eachExpr string, depth int) []string {
+	if expr == "" || depth > 4 {
+		return nil
+	}
+	out := []string{expr}
+	for _, m := range tfStringRE.FindAllStringSubmatch(expr, -1) {
+		out = append(out, m[1])
+	}
+	if eachExpr != "" && strings.Contains(expr, "each.value") {
+		out = append(out, expandRoleExpr(eachExpr, mod, "", depth+1)...)
+	}
+	for _, m := range tfRefRE.FindAllStringSubmatch(expr, -1) {
+		next := ""
+		switch m[1] {
+		case "var":
+			next = mod.vars[m[2]]
+		case "local":
+			next = mod.locals[m[2]]
+		}
+		if next != "" {
+			out = append(out, expandRoleExpr(next, mod, eachExpr, depth+1)...)
+		}
+	}
+	return out
+}
+
+// namesReaderRole matches a role expression to a role that lists a
+// secretmanager permission. The grant usually spells the role out as a string
+// ("projects/x/roles/fugaroLauncher"), so the module's role IDs and the role
+// blocks' own names are both compared, ignoring case and the separators that
+// differ between a Terraform name and a role ID.
+func namesReaderRole(candidate string, readerRoleNames map[string]bool) bool {
+	if candidate == "" || len(readerRoleNames) == 0 {
 		return false
 	}
-	segment := role
-	if i := strings.LastIndex(segment, "/roles/"); i >= 0 {
-		segment = segment[i+len("/roles/"):]
+	tokens := []string{candidate}
+	if i := strings.LastIndex(candidate, "/roles/"); i >= 0 {
+		tokens = append(tokens, candidate[i+len("/roles/"):])
 	}
-	normal := normalizeRoleName(segment)
-	for _, r := range roles {
-		if m := tfCustomRoleREF.FindStringSubmatch(role); m != nil && m[1] == r.local {
-			return true
-		}
-		if r.roleID != "" && segment == r.roleID {
-			return true
-		}
-		local := normalizeRoleName(r.local)
-		if len(local) >= 3 && strings.HasSuffix(normal, local) {
-			return true
+	if m := tfCustomRoleRE.FindStringSubmatch(candidate); m != nil {
+		tokens = append(tokens, m[1])
+	}
+	if i := strings.LastIndex(candidate, "."); i >= 0 {
+		tokens = append(tokens, candidate[i+1:])
+	}
+	for _, token := range tokens {
+		normal := normalizeRoleName(token)
+		for name := range readerRoleNames {
+			if len(name) >= 3 && (normal == name || strings.HasSuffix(normal, name)) {
+				return true
+			}
 		}
 	}
 	return false
@@ -497,33 +662,33 @@ func normalizeRoleName(s string) string {
 	return strings.NewReplacer("_", "", "-", "", ".", "").Replace(strings.ToLower(s))
 }
 
-// terraformAttrExpr returns a single-line attribute's value as written: the
-// quoted string for “role = "roles/owner"“, and the reference itself for a
-// role wired to a resource, so both forms can be matched.
-func terraformAttrExpr(body, attr string) string {
-	re := regexp.MustCompile(`(?m)^[ \t]*` + attr + `[ \t]*=[ \t]*(.+)$`)
-	m := re.FindStringSubmatch(body)
-	if m == nil {
-		return ""
+// holdsSecretValue reports whether a block mounts or reads a secret value: a
+// secret_key_ref, or a volumes block with a secret child. A scratch volume is
+// not one, and neither is a comment naming either shape.
+func holdsSecretValue(body string) bool {
+	if strings.Contains(body, "secret_key_ref") {
+		return true
 	}
-	value := strings.TrimSpace(m[1])
-	if inner := tfStringRE.FindStringSubmatch(value); inner != nil {
-		return inner[1]
+	for _, loc := range tfVolumeRE.FindAllStringIndex(body, -1) {
+		inner, ok := terraformBlockBody(body, loc[1]-1)
+		if ok && tfSecretVolRE.MatchString(inner) {
+			return true
+		}
 	}
-	return value
+	return false
 }
 
-func terraformResources(file, src string) []tfResource {
-	clean := stripTerraformComments(src)
-	var out []tfResource
-	for _, loc := range tfResourceRE.FindAllStringSubmatchIndex(clean, -1) {
+func terraformBlocks(file, clean string) []tfBlock {
+	var out []tfBlock
+	for _, loc := range tfBlockRE.FindAllStringSubmatchIndex(clean, -1) {
 		body, ok := terraformBlockBody(clean, loc[1]-1)
 		if !ok {
 			continue
 		}
-		out = append(out, tfResource{
-			typ:  clean[loc[2]:loc[3]],
-			name: clean[loc[4]:loc[5]],
+		out = append(out, tfBlock{
+			mode: clean[loc[2]:loc[3]],
+			typ:  clean[loc[4]:loc[5]],
+			name: clean[loc[6]:loc[7]],
 			body: body,
 			file: file,
 		})
@@ -532,8 +697,8 @@ func terraformResources(file, src string) []tfResource {
 }
 
 // terraformBlockBody returns the text between the brace at open and the brace
-// that closes it, skipping quoted strings so a brace inside a string or a
-// heredoc-looking argument cannot end a resource early.
+// that closes it, skipping quoted strings so a brace inside a string cannot
+// end a block early.
 func terraformBlockBody(src string, open int) (string, bool) {
 	depth := 0
 	inString := false
@@ -561,6 +726,48 @@ func terraformBlockBody(src string, open int) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// terraformAttrExpr returns a single attribute's value as written: the quoted
+// string for “role = "roles/owner"“, the reference itself for a role wired
+// to a resource or a variable, and a whole map or call for a for_each.
+func terraformAttrExpr(body, attr string) string {
+	re := regexp.MustCompile(`(?m)^[ \t]*` + regexp.QuoteMeta(attr) + `[ \t]*=[ \t]*`)
+	loc := re.FindStringIndex(body)
+	if loc == nil {
+		return ""
+	}
+	rest := body[loc[1]:]
+	depth := 0
+	inString := false
+	for i := 0; i < len(rest); i++ {
+		c := rest[i]
+		if inString {
+			switch c {
+			case '\\':
+				i++
+			case '"':
+				inString = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inString = true
+		case '{', '[', '(':
+			depth++
+		case '}', ']', ')':
+			depth--
+			if depth < 0 {
+				return strings.TrimSpace(rest[:i])
+			}
+		case '\n':
+			if depth == 0 {
+				return strings.TrimSpace(rest[:i])
+			}
+		}
+	}
+	return strings.TrimSpace(rest)
 }
 
 // stripTerraformComments removes # and // comments and /* */ blocks, keeping
