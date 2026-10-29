@@ -39,6 +39,16 @@
  *     decision's key as well as the site's (`marketingKey`), so the refusal it offers takes
  *     back both answers — a campaign decision is made on a campaign page, where the bar is
  *     gone once it has been answered, and this is the page a visitor comes to to undo one.
+ *   - **One question, worded for everything the site may load.** The bar asks about
+ *     measurement as a whole — cookies, Google Analytics 4, and the pixel, the insight tag and
+ *     the booking widget the campaign pages carry — in one sentence on every page, rather than
+ *     in four questions a reader has to go looking for. Nothing in it promises that a vendor is
+ *     running: the ids come from `site.yaml`, a loader with no id fetches nothing, and the
+ *     wording says each of them sets identifiers once it loads rather than that it loads. The
+ *     site's own pages add that the campaign question is asked on the campaign pages; the
+ *     privacy page's bar, the one that carries the campaign key without the campaign
+ *     configuration, adds what that makes true of its own refusal — it takes the campaign
+ *     answer back, and never gives one.
  *
  * The markup is emitted hidden and `site.js` reveals it: a browser that runs no script shows
  * no control it cannot honour, and loads nothing.
@@ -100,7 +110,7 @@ import { CONSENT_KEY } from '../lib/consent-key.mjs'
   class="consent-banner"
   id="consent-banner"
   role="region"
-  aria-label={marketing ? 'Measurement consent' : 'Analytics consent'}
+  aria-label="Measurement consent"
   data-consent-key={CONSENT_KEY}
   data-consent-always={alwaysOffer ? 'true' : undefined}
   data-analytics-id={measurementID}
@@ -120,24 +130,24 @@ import { CONSENT_KEY } from '../lib/consent-key.mjs'
       <p class="consent-banner__text">
         {marketing ? (
           <>
-            This page counts its visits with <strong>Google Analytics</strong>, and this campaign page also measures its reach with <strong>Meta</strong>, <strong>LinkedIn</strong> and <strong>Calendly</strong>. Each of them sets identifiers in your browser, and none of them loads until you accept. <a href="/privacy/">What this site measures</a>
+            This campaign page measures visits with cookies and third-party scripts: <strong>Google Analytics</strong> everywhere, and, on the four campaign pages, <strong>Meta's pixel</strong>, <strong>LinkedIn's insight tag</strong> and <strong>Calendly's booking widget</strong>. Each one of them sets identifiers in your browser once it loads, and none of them loads until you accept. <a href="/privacy/">What this site measures</a>
           </>
         ) : (
           <>
-            This site counts page views with <strong>Google Analytics</strong>, a third-party script that sets identifiers in your browser, and it loads nothing from Google until you accept. <a href="/privacy/">What this site measures</a>
+            This site measures visits with cookies and third-party scripts: <strong>Google Analytics</strong> on every page, and, on the four campaign pages, <strong>Meta's pixel</strong>, <strong>LinkedIn's insight tag</strong> and <strong>Calendly's booking widget</strong>. Each one of them sets identifiers in your browser once it loads, and none of them loads until you accept. The four campaign pages ask their own question about those three{marketingKey ? ', and declining here takes that answer back' : ''}. <a href="/privacy/">What this site measures</a>
           </>
         )}
       </p>
       <div class="consent-banner__choices">
         <button type="button" class="consent-banner__button" data-consent="granted">
-          {marketing ? 'Accept measurement' : 'Accept analytics'}
+          Accept measurement
         </button>
         <button type="button" class="consent-banner__button" data-consent="denied">
-          {marketing ? 'Decline measurement' : 'Decline analytics'}
+          Decline measurement
         </button>
       </div>
       <p class="consent-banner__status" id="consent-banner-status" role="status" hidden>
-        Your browser is not storing this choice, so this site cannot keep it: nothing is loaded from {marketing ? 'any of them' : 'Google'}, and you will be asked again on your next visit.
+        Your browser is not storing this choice, so this site cannot keep it: nothing is loaded, and you will be asked again on your next visit.
       </p>
     </div>
   </div>

@@ -1611,6 +1611,51 @@ test('the banner is labelled, its two choices are equal, and it is reachable by 
   }
 })
 
+test('the banner asks one question about everything the site may load, and no vendor is said to be running', () => {
+  // The owner's ruling of 2026-10-29, on the finding that the privacy page's bar writes a
+  // refusal into `fugaro:marketing-consent` while its words asked about analytics alone: the bar
+  // is worded for measurement as a whole — cookies, Google Analytics, and the pixel, the insight
+  // tag and the booking widget the campaign pages carry — on every page. And the three are named
+  // as things a choice admits, never as things that are running: `site.yaml` ships both ids
+  // empty (R3) and a loader with no id fetches nothing, so "this page measures with Meta" would
+  // be a sentence the artifact does not keep.
+  for (const page of SHIPPED) {
+    const banner = findAll(parse(page.html), (el) => el.attrs.get('id') === 'consent-banner')[0]
+    assert.ok(banner, `${page.rel} carries no banner for the wording below to be read from`)
+    const text = textOf(banner)
+    for (const named of ['cookies', 'Google Analytics', 'Meta', 'LinkedIn', 'Calendly']) {
+      assert.ok(
+        text.includes(named),
+        `${page.rel}: the banner does not name ${named}, so a choice made in it does not cover everything the site may load (the owner's ruling of 2026-10-29)`,
+      )
+    }
+    assert.match(text, /until you accept/i, `${page.rel}: the banner does not say the load waits for the choice`)
+    assert.match(
+      text,
+      /once it loads/i,
+      `${page.rel}: the banner's sentence about what the vendors set is not conditional: with site.yaml's ids empty none of the three loads, and the wording has to stay true while that is so`,
+    )
+  }
+
+  // The bar the finding was about. The privacy page is the one page whose bar carries the
+  // campaign decision's key without the campaign's configuration (`Base.astro`), so a refusal
+  // there writes the campaign answer down as a refusal — taking back a grant given on a campaign
+  // page — and its accept is the analytics question alone. The bar says the first, and the
+  // statement beside it says the second, because a reader who pressed "accept measurement" on
+  // the page that names all four vendors must not be left thinking they agreed to all four.
+  const privacy = pageOf(SHIPPED, 'privacy/index.html')
+  assert.match(
+    textOf(findAll(parse(privacy), (el) => el.attrs.get('id') === 'consent-banner')[0]),
+    /declining here takes that answer back/i,
+    'the privacy page\'s banner does not say what its refusal covers: that bar carries the campaign decision\'s key and writes it down as a refusal, and the wording has to say so',
+  )
+  assert.match(
+    textOf(parse(privacy)),
+    /leaves the campaign question where it stands/i,
+    'the privacy statement no longer says its banner\'s accept is the analytics question alone, so a reader who accepted there could think the three vendors were agreed to',
+  )
+})
+
 test('the shipped scripts never take the keyboard: no preventDefault, no stopPropagation, no focus trap', () => {
   for (const page of SHIPPED) {
     for (const token of tokenize(page.html)) {
