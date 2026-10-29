@@ -551,7 +551,7 @@ const MODE_REPORT: JSONDoc = {
  * MODE_UNREADABLE_REPORT is the document `report --by mode` writes for a window
  * that holds one readable run record and one it cannot read at all: the JSON is
  * copied **verbatim** from the merged CLI's own output for exactly that window
- * (`internal/cli/report_test.go`'s `TestReportByModeUnreadableRecord`, whose
+ * (`ee/report/cli/report_test.go`'s `TestReportByModeUnreadableRecord`, whose
  * fixture seeds `pro` run `20261016-120000-aaaa` and corrupt run
  * `20261017-120000-bbbb`). Two things here are the CLI's and not this file's
  * invention: the unreadable row `none` carries `unreadable: true` with **every

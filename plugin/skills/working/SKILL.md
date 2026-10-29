@@ -50,7 +50,7 @@ On a pull request that was retargeted, check the base its runs recorded before l
 - `fugaro watch` is the live screen of spend, repositories and running agents. It is a terminal screen only the user can read; for a snapshot you can read, run `fugaro watch --once`.
 - `fugaro logs <run>` prints the run's logs, `-f` follows them.
 - `fugaro diagnose <run>` explains one run: its stage, reason, tests, review findings, the agent's last word, cost and pull request.
-- `fugaro report --by repo` (or `day`, `week`, `month`, `year`, `model`, `person`, `mode`) shows what the project spent.
+- `fugaro report --by repo` (or `day`, `week`, `month`, `year`, `model`, `person`, `mode`) shows what the project spent. It is part of Fugaro Enterprise: a build without it answers that this build does not include it.
 - `fugaro budget show` shows the caps, today's counters and any kill switch.
 
 ## Cancel and retry
@@ -73,7 +73,7 @@ Do not wait for the daily look. Whoever launched a run keeps watching the COST c
 
 ## Review your runs
 
-`fugaro runs digest --period day` (or `week`, `month`, `year`) writes one closed period's report of this repository into its own `docs/fugaro-reviews/`, for a person or an agent to commit through an ordinary pull request. Without `--date` it is the most recent closed period; a period holding today is still receiving runs, so it is refused. Fugaro schedules nothing: the cadence is the user's own cron job, CI workflow or agent routine, or a run launched to write the report.
+`fugaro runs digest --period day` (or `week`, `month`, `year`) writes one closed period's report of this repository into its own `docs/fugaro-reviews/`, for a person or an agent to commit through an ordinary pull request. It is in every build. Without `--date` it is the most recent closed period; a period holding today is still receiving runs, so it is refused. Fugaro schedules nothing: the cadence is the user's own cron job, CI workflow or agent routine, or a run launched to write the report.
 
 The **daily report is the outlier sweep**: read its flagged runs and the dearest of the rest the way `reference/periodic-reviews.md` says, and write each lesson where the next run will read it. That file has the four periods and how to schedule them, how to read a report's patterns, the relaunch note, and the submission step that is the person's, never the agent's.
 
