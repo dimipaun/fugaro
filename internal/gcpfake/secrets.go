@@ -59,6 +59,10 @@ type Secrets struct {
 	// FailListWith, when non-zero, makes secrets.list answer that HTTP
 	// status: what pins the degradation of a refused label read.
 	FailListWith int
+	// FailPolicyWith, when non-zero, makes a container's getIamPolicy answer
+	// that HTTP status: what pins a reader sweep that must report a policy it
+	// could not read rather than count it as one that grants nothing.
+	FailPolicyWith int
 	// FailDisableWith, when non-zero, makes versions/N:disable answer that
 	// HTTP status: what pins the retirement C1.25's rotation makes as
 	// best-effort — the write is already verified when it is attempted, so a
@@ -290,6 +294,10 @@ func (f *Secrets) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		writeJSON(w, http.StatusOK, s.json(m[1], m[2]))
 	case r.Method == http.MethodGet && secretPolicyRE.MatchString(p):
 		m := secretPolicyRE.FindStringSubmatch(p)
+		if f.FailPolicyWith != 0 {
+			writeError(w, f.FailPolicyWith, http.StatusText(f.FailPolicyWith), "injected failure")
+			return
+		}
 		s := f.secrets[m[2]]
 		if s == nil {
 			writeError(w, http.StatusNotFound, "NOT_FOUND", "Secret ["+m[2]+"] not found.")
