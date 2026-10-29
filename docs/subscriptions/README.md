@@ -7,7 +7,7 @@ ruled every open tension, T10–T26, O4 and the key binding, the same day (T10, 
 not the recommendation), and the plan was re-sliced to follow. One consequence of the rulings,
 T27 (honour-based consoles against key-gated CLI commands), was **ruled (b) on 2026-10-29**: the
 paid commands warn, not refuse, until enforcement ships, and that warning is itself **deferred with
-the key work** (`docs/ee-reorg/implementation-plan.md`, D523), so for now everything is available to
+the key work** (`docs/ee-reorg/reconciliation.md`, D523), so for now everything is available to
 all. That plan **supersedes** S1.1–S1.5, S1.7 and S1.9; S1.6 is carried there as E3.2, S1.8
 stands and S1.10 (Check 178) is deferred until enforcement. Several tasks wait on counsel and on
 the new entity. Each task in the plan still needs the owner's own go.

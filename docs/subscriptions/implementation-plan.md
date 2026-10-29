@@ -33,13 +33,14 @@ the earlier version kept visible:
   default).
 - Check 178 measured the release date before; it now measures the coordinator's key-gated job.
 
-**Updated 2026-10-29 (the ee-reorg rulings, D520–D524).** The ee-reorg plan
+**Updated 2026-10-29 (the ee-reorg rulings, D520–D536).** The ee-reorg plan
 ([`../ee-reorg/implementation-plan.md`](../ee-reorg/implementation-plan.md)) **supersedes** S1.1,
 S1.2, S1.3, S1.4, S1.5, S1.7 and S1.9, carrying each task by task: S1.1 → E0.3, S1.2 → E1.1,
 S1.3 → E1.5, S1.4 → E2.1, S1.5 → E2.2, S1.7 → E1.4, S1.9 → E1.4. Their text and numbers stay below
 and are not reused. S1.6 is carried there as E3.2 and stays this plan's dependency; S1.8 stands;
-**S1.10 (Check 178) is deferred until enforcement**. The base and history images now build with the
-`ee` tag (D524), which amends R1; no key is mounted until enforcement.
+**S1.10 (Check 178) is deferred until enforcement**. The base and history images will build with the
+`ee` tag once the relabel has landed (E3.2, then E1.4; D524), which amends R1; no key is mounted
+until enforcement.
 
 The owner's answers and rulings that shape it (non-price; figures are private, D430):
 
@@ -465,8 +466,9 @@ stays MIT with its own copy of the period helpers.*
   && cd website && npm run check`.
 - **Red step:** set the tag first; `TestEETagNeedsTheLabels` fails until every label says MIT core
   plus the business licence.
-- **Depends on:** S1.5, S1.9, S2.9, S7.1 (`community.astro`); T27, ruled (b) 2026-10-29 (deferred
-  with the key work, D523).
+- **Depends on:** E2.2 (ee-reorg; was S1.5), S2.9, S7.1 (`community.astro`); the images task
+  E1.4 (was S1.9) lands **after** this release (E3.2 → E1.4), not before. T27, ruled (b) 2026-10-29
+  (deferred with the key work, D523).
   **Reviewer:** opus + mandatory independent review.
 - **Commit:** `release: one binary, MIT core plus business-licensed parts (D447, T21)`.
 
@@ -1010,6 +1012,8 @@ by O4 (expiry only). A version field may be added later, as a new task. The numb
   repository. **Depends on:** none.
 
 ## Parallel execution
+
+S1.1–S1.5, S1.7 and S1.9 are superseded (2026-10-29) and stay in these tables for the record; their scheduling is the ee-reorg plan's E-tasks.
 
 **Edges**, from the Depends-on lines:
 
