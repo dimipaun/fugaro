@@ -84,7 +84,6 @@ section.console-unavailable {
  * `h1.live-project` and `header.live-header` (console redesign, step 2c). */
 h1.spend-project,
 h1.projects-project,
-h1.run-id,
 h1.degraded-project,
 h1.unavailable-headline {
   margin: 0 0 var(--space-md);
@@ -96,16 +95,14 @@ h1.unavailable-headline {
  * (design section 3.7). */
 h2.spend-account-title,
 h2.spend-people-title,
-h2.projects-title,
-h2.run-panel-title {
+h2.projects-title, {
   font-size: var(--font-size-md);
   font-weight: var(--weight-semibold);
 }
 
 span.projects-repos-label,
 span.degraded-mode-word,
-span.spend-persons-word,
-span.run-replay-window-word {
+span.spend-persons-word, {
   font-size: var(--font-size-xs);
   font-weight: var(--weight-medium);
   text-transform: uppercase;
@@ -128,25 +125,11 @@ p.projects-note,
 p.projects-jobs-note,
 p.projects-accounts-note,
 p.projects-warning,
-p.run-warning,
-p.run-log-note,
-p.run-log-refused,
-p.run-log-link-note,
-p.run-pr-reason,
-p.run-replay-note,
-p.run-report-path,
-p.run-comments-path,
-span.run-halt-detail,
 p.degraded-notice,
 p.degraded-warning,
 p.unavailable-reason,
 p.unavailable-sentence,
 div.unavailable-searched,
-p.run-agent-message,
-p.run-reported-warning,
-p.run-pin-warning,
-p.run-draft-note,
-p.run-follow-up,
 p.live-review-empty,
 p.live-review-note,
 p.live-review-capped {
@@ -178,7 +161,6 @@ p.live-review-capped {
 .live-num,
 .spend-num,
 .projects-number,
-.run-number,
 .coordinator-count-value,
 .degraded-num {
   min-width: 6ch;
@@ -206,11 +188,7 @@ li.projects-cap,
 li.projects-job,
 li.projects-secret,
 li.projects-account,
-li.degraded-run,
-li.run-stage,
-li.run-spend-stage,
-li.run-tolerated-finding,
-li.run-log-line {
+li.degraded-run, {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
@@ -232,24 +210,11 @@ ul.projects-enrolled-list,
 ul.projects-seen-list,
 ul.projects-account-list,
 ol.degraded-runs,
-ol.run-stage-list,
-ol.run-spend-stage-list,
-ol.run-tolerated-list,
-ol.run-log-list,
-ol.run-log-tail,
 div.spend-accounts,
 div.spend-totals,
 section.spend-caps,
 section.spend-people,
 section.projects-panel,
-section.run-ledger,
-section.run-stages,
-section.run-spend-stages,
-section.run-tolerated,
-section.run-pr,
-section.run-logs,
-section.run-diagnosis,
-section.run-replay,
 div.degraded-caps,
 div.degraded-totals {
   margin-bottom: var(--space-lg);
@@ -278,9 +243,6 @@ span.live-review-run-id,
 span.live-review-repo,
 span.live-review-number,
 span.live-review-url,
-h1.run-id,
-span.run-repo,
-span.run-workflow,
 span.live-repo-name,
 span.projects-job-repo,
 span.projects-job-run,
@@ -295,14 +257,6 @@ span.projects-accounts-repo,
 span.projects-cap-repo,
 span.projects-kill-repo,
 span.projects-job-model,
-span.run-log-time,
-span.run-log-stage,
-span.run-stage-name,
-span.run-finding-file,
-span.run-follow-up-pr,
-span.run-replay-from,
-span.run-replay-to,
-span.run-replay-at,
 span.spend-point-key,
 span.spend-key,
 span.spend-model,
@@ -316,7 +270,6 @@ span.live-since-at,
 span.live-kill-at,
 span.spend-kill-at,
 span.projects-kill-at,
-span.run-halt-at,
 p.installation-binary,
 code.unavailable-install-command {
   font-family: var(--font-mono);
@@ -457,8 +410,7 @@ span.live-run-contradiction {
  * is not `--error`. */
 div.live-kill,
 div.spend-kill,
-div.projects-kill,
-div.run-halt {
+div.projects-kill {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
@@ -472,8 +424,7 @@ div.run-halt {
 
 span.live-kill-word,
 span.spend-kill-word,
-span.projects-kill-word,
-span.run-halt-word {
+span.projects-kill-word {
   color: var(--halted);
   font-weight: var(--weight-semibold);
   text-transform: uppercase;
@@ -892,40 +843,14 @@ p.projects-only-enrolled {
   font-size: var(--font-size-base);
 }
 
-/* ---- Run detail ----------------------------------------------------------- */
-
-header.run-header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-sm);
-}
-
-span.run-status,
-span.run-outcome,
-span.run-stage,
-span.run-branch,
-span.run-requested-by,
-span.run-started-by,
-span.run-flags,
-span.run-settled,
-span.run-stale,
-span.run-follow-up {
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-}
-
-/* A settled or stale run says so in words; the tone is the second channel and
- * `--stale` is the last-known-values colour, which is exactly what a stale
- * draft is. */
-span.run-stale {
-  color: var(--stale);
-}
-
-span.run-settled,
-span.run-follow-up {
-  color: var(--accent-ink);
-}
+/* ---- Run detail -----------------------------------------------------------
+ *
+ * The Run screen's header, its status strip, its stage timeline and its log
+ * window are the redesign's now, and their rules live in `flight-deck.css`
+ * against the same hooks (console redesign, step 3a). What is here is the
+ * ledger's three-figure grid and the two document panels the step left their
+ * contents in.
+ */
 
 /* The ledger is three figures read together (design section 3.8). */
 section.run-ledger {
@@ -961,8 +886,6 @@ p.run-ledger-total {
  * (§3.5 rule 4), and a stage is neither. The two words are the state, and the
  * failure's alarm tone is the diagnosis panel's `run-failed-word`, the element
  * that knows which it is. */
-span.run-stage-name,
-span.run-stage-passed,
 span.run-stage-deadline {
   color: var(--text-muted);
   font-size: var(--font-size-xs);

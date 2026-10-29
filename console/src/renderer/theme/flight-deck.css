@@ -902,3 +902,494 @@ td.live-run-status {
 td.live-run-status > * + * {
   margin-left: var(--space-2xs);
 }
+
+/* ---------------------------------------------------------------------------
+ * Run detail -- the header, the status strip, the halt banner, the main column
+ * and the aside (console redesign, step 3a, `console/src/renderer/screens/run.ts`).
+ *
+ * **The screen is two columns that fold into one.** The main column is wider
+ * than the aside at every window the console opens on, and both are allowed to
+ * shrink to nothing (`min-width: 0`) so a long path or a long test name wraps
+ * instead of pushing the aside off the page. The two `flex` figures are shares
+ * of the leftover space rather than widths, so the fold happens when 560 + 340 px
+ * stop fitting and not at a breakpoint someone has to keep in step with them.
+ *
+ * **The strip is a grid of four captions over four values.** `auto-fit` with a
+ * floor of 180 px gives the design's four cells on a wide window, two rows of two
+ * on a narrow one and one row of four on a very wide one, without a media query.
+ * The 1 px gaps are the `--line` colour showing through the grid's own
+ * background, which is what makes the cells' hairlines meet rather than double.
+ * ------------------------------------------------------------------------- */
+
+header.run-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin: 0 0 var(--space-lg);
+}
+
+nav.run-crumb {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs);
+  color: var(--text-2);
+  font-size: var(--text-sm);
+}
+
+button.run-crumb-live {
+  min-height: var(--hit-min);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  cursor: pointer;
+}
+
+button.run-crumb-live:hover {
+  color: var(--text);
+}
+
+span.run-crumb-sep {
+  color: var(--text-3);
+}
+
+span.run-crumb-repo,
+span.run-crumb-run {
+  font-family: var(--font-mono);
+  user-select: text;
+}
+
+span.run-crumb-run {
+  color: var(--text);
+}
+
+div.run-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+h1.run-id {
+  font-family: var(--font-mono);
+  font-size: var(--text-stat-lg);
+  font-weight: var(--weight-medium);
+  user-select: text;
+}
+
+/* The retry is drawn disabled (`writes.ts`): it keeps the primary look so the
+ * design's one action is where the design puts it, and `aria-disabled` is what
+ * says it does nothing. The look is dimmed and the pointer refuses it, so the
+ * two channels agree. */
+button.run-retry {
+  min-height: var(--hit-min);
+  padding: 0 var(--space-md);
+  border: var(--rule-width) solid var(--live-border);
+  border-radius: var(--radius-sm);
+  background: var(--live-fill);
+  color: var(--live-text);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: not-allowed;
+}
+
+button.run-retry[aria-disabled='true'] {
+  opacity: 0.6;
+}
+
+div.run-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2xs) var(--space-lg);
+  font-size: var(--text-sm);
+}
+
+span.run-meta-field {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2xs);
+}
+
+span.run-meta-label {
+  color: var(--text-2);
+}
+
+span.run-meta-value {
+  font-family: var(--font-mono);
+  color: var(--text);
+  user-select: text;
+}
+
+span.run-meta-absent {
+  font-family: var(--font-mono);
+  color: var(--text-3);
+}
+
+div.run-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
+  gap: var(--rule-width);
+  background: var(--line);
+  border: var(--rule-width) solid var(--line);
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+}
+
+div.run-strip-cell {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3xs);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--surface);
+}
+
+span.run-strip-label {
+  font-size: var(--text-label);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+span.run-strip-value {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-xs);
+  font-size: var(--text-h2);
+  font-weight: var(--weight-semibold);
+  color: var(--text);
+  font-family: var(--font-mono);
+  user-select: text;
+}
+
+/* The outcome's tone is the second channel: the word above is the reading and
+ * is drawn whatever tone the outcome earns. An outcome this build does not know
+ * gets no tone at all -- the cell keeps the primary colour rather than being
+ * painted as a failure it may not be. */
+span.run-outcome[data-tone='success'] {
+  color: var(--live-text);
+}
+
+span.run-outcome[data-tone='failure'] {
+  color: var(--danger-text);
+}
+
+span.run-flags-state {
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+
+span.run-stale,
+span.run-follow-up {
+  color: var(--text-2);
+  font-size: var(--text-sm);
+}
+
+div.run-halt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-xs) var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--warn-tint);
+  border: var(--rule-width) solid var(--warn-border);
+  border-radius: 10px;
+}
+
+span.run-halt-word {
+  padding: 0 var(--space-2xs);
+  border-radius: var(--radius-chip);
+  background: var(--warn);
+  color: var(--warn-ink);
+  font-size: var(--text-label);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.08em;
+}
+
+span.run-halt-reason,
+span.run-halt-detail {
+  color: var(--warn-text);
+}
+
+span.run-halt-where {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2xs);
+  margin-left: auto;
+  font-family: var(--font-mono);
+  color: var(--text-2);
+  font-size: var(--text-xs);
+}
+
+span.run-halt-scope-word,
+span.run-halt-at-word,
+span.run-halt-sep {
+  color: var(--text-3);
+}
+
+/* ---- The two columns ------------------------------------------------------ */
+
+div.run-layout {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-lg);
+}
+
+div.run-main {
+  flex: 999 1 560px;
+  min-width: 0;
+}
+
+aside.run-aside {
+  flex: 1 1 340px;
+  min-width: 0;
+}
+
+section.run-stages,
+section.run-spend-stages,
+section.run-tolerated,
+section.run-diagnosis,
+section.run-logs,
+section.run-replay,
+section.run-ledger,
+section.run-pr {
+  margin-bottom: var(--space-lg);
+  padding: 20px 22px;
+  background: var(--surface);
+  border: var(--rule-width) solid var(--line);
+  border-radius: var(--radius-xl);
+}
+
+h2.run-panel-title {
+  margin-bottom: var(--space-sm);
+  font-size: var(--text-h2);
+  font-weight: var(--weight-semibold);
+}
+
+.run-number {
+  min-width: 6ch;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  user-select: text;
+}
+
+/* ---- The stage timeline --------------------------------------------------- */
+
+ol.run-stage-list,
+ol.run-spend-stage-list,
+ol.run-tolerated-list,
+ol.run-log-list {
+  list-style: none;
+}
+
+li.run-stage {
+  display: grid;
+  grid-template-columns: 24px 90px minmax(0, 1fr) 70px;
+  align-items: center;
+  gap: var(--space-2xs) var(--space-sm);
+  min-height: var(--row-height);
+  padding-block: var(--space-xs);
+  border-bottom: var(--rule-width) solid var(--line);
+}
+
+li.run-stage:last-child {
+  border-bottom: 0;
+}
+
+svg.run-stage-icon {
+  fill: none;
+  stroke: var(--decor);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+rect.run-stage-dot {
+  fill: var(--decor);
+  stroke: none;
+}
+
+path.run-stage-check {
+  stroke: var(--live-text);
+}
+
+path.run-stage-cross {
+  stroke: var(--danger-text);
+}
+
+span.run-stage-name {
+  font-size: var(--text-sm);
+  color: var(--text);
+}
+
+div.run-stage-body {
+  display: grid;
+  gap: var(--space-3xs);
+  min-width: 0;
+}
+
+span.run-stage-passed {
+  font-size: var(--text-xs);
+  color: var(--text-2);
+}
+
+svg.run-stage-bar {
+  display: block;
+  width: 100%;
+  height: 8px;
+}
+
+rect.run-stage-track {
+  fill: var(--track);
+}
+
+rect.run-stage-fill {
+  fill: var(--live-fill);
+}
+
+/* A stage that failed is the danger tone and a stage whose outcome this build
+ * does not know keeps the passed tone: the bar is the second channel beside the
+ * word, and painting an unknown outcome as a failure would be a claim about the
+ * run rather than a reading of it. */
+rect.run-stage-fill-failed {
+  fill: var(--danger-bar);
+}
+
+p.run-stage-count,
+p.run-stage-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs);
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-2);
+}
+
+span.run-stage-duration {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-sm);
+  color: var(--text);
+  text-align: right;
+  user-select: text;
+}
+
+/* ---- The diagnosis -------------------------------------------------------- */
+
+span.run-failed,
+span.run-flaky {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs);
+  margin-right: var(--space-2xs);
+  padding: var(--space-3xs) var(--space-xs);
+  border-radius: var(--radius-chip);
+  font-size: var(--text-xs);
+}
+
+span.run-failed {
+  background: var(--danger-tint);
+  color: var(--danger-text);
+}
+
+span.run-flaky {
+  background: var(--warn-tint);
+  color: var(--warn-text);
+}
+
+span.run-failed-test,
+span.run-flaky-test {
+  font-family: var(--font-mono);
+  user-select: text;
+}
+
+div.run-agent-message {
+  display: flex;
+  gap: var(--space-xs);
+  margin-block: var(--space-sm);
+}
+
+svg.run-agent-icon {
+  flex: none;
+  fill: none;
+  stroke: var(--decor);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+div.run-agent-said {
+  display: grid;
+  gap: var(--space-3xs);
+  min-width: 0;
+}
+
+span.run-agent-word {
+  font-size: var(--text-label);
+  letter-spacing: 0.1em;
+  color: var(--text-3);
+}
+
+p.run-agent-text {
+  margin: 0;
+  font-size: 17px;
+  color: var(--text);
+}
+
+ol.run-log-tail {
+  max-height: 220px;
+  padding: var(--space-sm);
+  background: var(--code-bg);
+  border: var(--rule-width) solid var(--line);
+  border-radius: 8px;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+li.run-log-tail-line {
+  white-space: pre;
+}
+
+span.run-report-value {
+  padding: 0 var(--space-2xs);
+  border: var(--rule-width) solid var(--line);
+  border-radius: var(--radius-chip);
+  font-family: var(--font-mono);
+  user-select: text;
+}
+
+/* ---- The logs window ------------------------------------------------------ */
+
+ol.run-log-list {
+  max-height: 320px;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+li.run-log-line {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: var(--space-sm);
+  white-space: nowrap;
+}
+
+span.run-log-time {
+  color: var(--text-3);
+}
+
+span.run-log-severity {
+  color: var(--live-text);
+}
+
+span.run-log-message {
+  color: var(--text-2);
+}
