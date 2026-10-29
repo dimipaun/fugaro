@@ -822,23 +822,43 @@
   // while `site.yaml`'s flag is off, which is what makes this whole section inert then.
   var ANALYTICS_ID_ATTR = 'data-analytics-id'
   var ANALYTICS_ORIGIN_ATTR = 'data-analytics-origin'
+  var SITE_KEY_ATTR = 'data-consent-key'
+
+  // The campaign's own measurement (G2.3, D401): its decision's key, the page the
+  // configuration was built for, the two vendor ids and the three origins their scripts come
+  // from, and the booking link the embed is built from. Every one of them is on the four
+  // campaign pages' banner and on no other page, so the loaders at the end of this section are
+  // inert everywhere else without a list of the campaign paths repeated here.
+  var MARKETING_KEY_ATTR = 'data-marketing-consent-key'
+  var MARKETING_PATH_ATTR = 'data-marketing-path'
+  var META_ID_ATTR = 'data-meta-pixel-id'
+  var META_ORIGIN_ATTR = 'data-meta-origin'
+  var LINKEDIN_ID_ATTR = 'data-linkedin-partner-id'
+  var LINKEDIN_ORIGIN_ATTR = 'data-linkedin-origin'
+  var CALENDLY_URL_ATTR = 'data-calendly-url'
+  var CALENDLY_ORIGIN_ATTR = 'data-calendly-origin'
+  var EMBED_ID = 'calendly-embed'
 
   // The decision, as the browser stored it, or null when there is none to read. Storage the
   // browser refuses is not a decision: an unreadable answer is no answer rather than a guess,
   // and the gate needs a readable `granted` before it fetches anything.
-  function stored(banner) {
+  function read(banner, attribute) {
     try {
-      return window.localStorage.getItem(banner.getAttribute('data-consent-key'))
+      return window.localStorage.getItem(banner.getAttribute(attribute))
     } catch (err) {
       return null
     }
   }
 
+  function stored(banner) {
+    return read(banner, SITE_KEY_ATTR)
+  }
+
   // Keep a decision, and say whether it was really kept. A browser in private mode may accept
   // the write and store nothing, and the visitor has to be told that rather than asked again
   // in silence.
-  function keep(banner, decision) {
-    var key = banner.getAttribute('data-consent-key')
+  function keep(banner, attribute, decision) {
+    var key = banner.getAttribute(attribute)
     try {
       window.localStorage.setItem(key, decision)
       return window.localStorage.getItem(key) === decision
@@ -847,8 +867,11 @@
     }
   }
 
-  function announce(decision) {
-    window.dispatchEvent(new CustomEvent(CONSENT_EVENT, { detail: { analytics: decision } }))
+  // A choice, and the questions it answered: `null` is a question this press was not asked, and
+  // the two gates below load or withdraw on nothing else — a bar that asks one of the two
+  // questions must not answer the other one on the visitor's behalf.
+  function announce(analytics, marketing) {
+    window.dispatchEvent(new CustomEvent(CONSENT_EVENT, { detail: { analytics: analytics, marketing: marketing } }))
   }
 
   // The analytics script, fetched once and only after a grant (D93, D106). The property and
@@ -871,6 +894,78 @@
   function bare(address) {
     return String(address || '').split(/[?#]/)[0]
   }
+
+  // ---- the cookies a consented third party leaves, and the withdrawal that removes them ----
+  //
+  // Stopping the sends is only half of a withdrawal (the owner's ruling of 2026-10-18): the
+  // identifiers a tag wrote while the visitor had accepted are still in their browser, and a
+  // withdrawal that left them there would keep identifying a visitor who has said no. So a
+  // withdrawal deletes the first-party cookies of the tags it loaded, from the one place D183
+  // puts the site's script in — Google's for the analytics tag, and the pixel's for the
+  // campaign one (G2.3).
+  //
+  // It runs only where something was loaded, and that is the whole of the "no work before
+  // consent" rule: a visitor who never accepted has nothing this site put there, so a refusal
+  // on a first visit reads no cookie and writes none either.
+  //
+  // An expiry in the past is what removes a cookie; an empty value alone would only overwrite
+  // one with nothing.
+  var EXPIRED = 'expires=Thu, 01 Jan 1970 00:00:00 GMT'
+
+  // The names this browser is holding, read out of `document.cookie`. Reading it is the only
+  // way to find the throttling cookies, whose exact name (`_gat_gtag_` and the id) is not
+  // derivable, and it is why the deletion can leave a browser that holds nothing untouched.
+  function heldNames() {
+    var names = []
+    try {
+      var parts = String(document.cookie || '').split(';')
+      for (var i = 0; i < parts.length; i++) {
+        var name = parts[i].split('=')[0].replace(/^\s+|\s+$/g, '')
+        if (name) names.push(name)
+      }
+    } catch (err) {
+      // A browser that refuses to read them holds none this can see, which is the same
+      // answer as an empty jar rather than a reason to stop.
+    }
+    return names
+  }
+
+  // The parent domain a tag may have written a cookie to instead of the host: the host
+  // without its leftmost label — the registrable domain of a `www.` host, which is the case
+  // the tag's own `auto` setting picks — and only where there is a label to spare. An apex
+  // host has none, and nothing below the parent is tried: no wildcard, no suffix guessed
+  // from a list this file does not carry.
+  //
+  // One label means one label, and the result is not always a domain a cookie may be set
+  // on: a preview host like `foo--bar.web.app` has `web.app` for a parent, and that is a
+  // public suffix. The write is then refused by the browser (this file consults no
+  // public-suffix list, and a list is not worth the bytes here), so the attempt costs a
+  // rejected assignment and nothing else — and the host this site ships on is an apex, with
+  // no parent at all, so the attempt is never made there.
+  function parentDomain(host) {
+    var labels = String(host || '').split('.')
+    return labels.length > 2 ? labels.slice(1).join('.') : ''
+  }
+
+  // Delete one cookie: on this host first, and then — only while it is still there — on the
+  // parent domain the tag may have written it to. Both attempts carry `Path=/`, the path the
+  // tag's cookies are written at, which is what makes the expiry match the cookie rather
+  // than leave it in place.
+  function drop(name, host) {
+    var parent = parentDomain(host)
+    var scopes = ['']
+    if (parent) scopes.push('; domain=' + parent)
+    for (var i = 0; i < scopes.length; i++) {
+      document.cookie = name + '=; path=/' + scopes[i] + '; ' + EXPIRED
+      if (heldNames().indexOf(name) === -1) return
+    }
+  }
+
+  // The cookies Meta's pixel sets on this site, and nothing else: the browser id it writes for
+  // a visitor, and the click id it writes when one of the campaign's own links was followed.
+  // Both are first-party, so both are this site's to remove. What the vendors wrote on their
+  // own domains is theirs and is not reachable from here, which the privacy page says.
+  var MARKETING_COOKIES = ['_fbp', '_fbc']
 
   function analytics(banner) {
     var id = banner.getAttribute(ANALYTICS_ID_ATTR)
@@ -919,77 +1014,12 @@
       forget()
     }
 
-    // ---- the cookies an accepted visitor leaves, and the withdrawal that removes them ----
-    //
-    // Stopping the sends is only half of a withdrawal (the owner's ruling of 2026-10-18): the
-    // identifiers the tag wrote while the visitor had accepted are still in their browser, and
-    // a withdrawal that left them there would keep identifying a visitor who has said no. So a
-    // withdrawal deletes every cookie the tag sets for this site, from the one place D183 puts
-    // the site's script in.
-    //
-    // It runs only where `loaded` is true, and that is the whole of the "no work before
-    // consent" rule: a visitor who never accepted has nothing this site put there, so a
-    // refusal on a first visit reads no cookie and writes none either.
-
-    // An expiry in the past is what removes a cookie; an empty value alone would only
-    // overwrite one with nothing.
-    var EXPIRED = 'expires=Thu, 01 Jan 1970 00:00:00 GMT'
-
     // The names the tag writes for this property: the client id and its per-container variant,
     // the session id, and the throttling cookie. The container name is DERIVED from the one
     // measurement id the banner carries — `_ga_` plus the id without its `G-` prefix — rather
     // than written here, so a property change moves the name with it and the two cannot drift.
     function cookieNames() {
       return ['_ga', '_ga_' + String(id).replace(/^G-/, ''), '_gid', '_gat']
-    }
-
-    // The names this browser is holding, read out of `document.cookie`. Reading it is the only
-    // way to find the throttling cookies, whose exact name (`_gat_gtag_` and the id) is not
-    // derivable, and it is why the deletion can leave a browser that holds nothing untouched.
-    function heldNames() {
-      var names = []
-      try {
-        var parts = String(document.cookie || '').split(';')
-        for (var i = 0; i < parts.length; i++) {
-          var name = parts[i].split('=')[0].replace(/^\s+|\s+$/g, '')
-          if (name) names.push(name)
-        }
-      } catch (err) {
-        // A browser that refuses to read them holds none this can see, which is the same
-        // answer as an empty jar rather than a reason to stop.
-      }
-      return names
-    }
-
-    // The parent domain the tag may have written a cookie to instead of the host: the host
-    // without its leftmost label — the registrable domain of a `www.` host, which is the case
-    // the tag's own `auto` setting picks — and only where there is a label to spare. An apex
-    // host has none, and nothing below the parent is tried: no wildcard, no suffix guessed
-    // from a list this file does not carry.
-    //
-    // One label means one label, and the result is not always a domain a cookie may be set
-    // on: a preview host like `foo--bar.web.app` has `web.app` for a parent, and that is a
-    // public suffix. The write is then refused by the browser (this file consults no
-    // public-suffix list, and a list is not worth the bytes here), so the attempt costs a
-    // rejected assignment and nothing else — and the host this site ships on is an apex, with
-    // no parent at all, so the attempt is never made there.
-    function parentDomain(host) {
-      var labels = String(host || '').split('.')
-      return labels.length > 2 ? labels.slice(1).join('.') : ''
-    }
-
-    // Delete one cookie: on this host first, and then — only while it is still there — on the
-    // parent domain the tag may have written it to. Both attempts carry `Path=/`, the path the
-    // tag's cookies are written at, which is what makes the expiry match the cookie rather
-    // than leave it in place.
-    function drop(name, host) {
-      var parent = parentDomain(host)
-      var scopes = ['']
-      if (parent) scopes.push('; domain=' + parent)
-      for (var i = 0; i < scopes.length; i++) {
-        document.cookie = name + '=; path=/' + scopes[i] + '; ' + EXPIRED
-        if (heldNames().indexOf(name) === -1) return
-      }
     }
 
     // Forget what the tag stored, and nothing else: the cookies this property wrote, plus the
@@ -1012,6 +1042,115 @@
     if (stored(banner) === GRANTED) load()
     window.addEventListener(CONSENT_EVENT, function (event) {
       var decision = event && event.detail && event.detail.analytics
+      if (decision !== GRANTED && decision !== DENIED) return
+      if (decision === GRANTED) load()
+      else withdraw()
+    })
+  }
+
+  // ---- the campaign's own measurement, behind its own consent (G2.3, D401) ----------------
+  //
+  // Three vendors the ads bring with them: Meta's pixel, LinkedIn's insight tag, and Calendly's
+  // widget — the last one the inline booking embed, which is why the campaign's primary call to
+  // action stays a plain link a visitor who declines still has. None of them is fetched until
+  // the visitor grants THIS decision, which is stored under its own key so that answering the
+  // site's analytics question does not answer this one, and so that a visitor who never opens a
+  // campaign page is asked nothing new (F17).
+  //
+  // The configuration is the banner's: the two ids site.yaml carries (empty until the owner
+  // supplies them, and an empty id is a loader that does not load), the three origins, the
+  // booking link, and the page the configuration was built for. That last one is the path
+  // check: the loader runs on the page it was built for and on no other, so a bar copied
+  // anywhere else loads nothing there (F18's "those pages only", O2). (This file names no host,
+  // not even in a comment: the origins reach it through the markup, and a build of a
+  // non-campaign page carries none of them.)
+  function campaign(banner) {
+    var key = banner.getAttribute(MARKETING_KEY_ATTR)
+    if (!key) return
+    var built = banner.getAttribute(MARKETING_PATH_ATTR)
+    var here = bare(window.location && window.location.pathname)
+    if (!built || here !== bare(built)) return
+
+    // The page as the site reports it: its origin and its path, with no query string and no
+    // fragment — the campaign parameters a visitor arrived through are the referrer's, not
+    // this page's, and the tags are handed this address rather than left to read the one in
+    // the window (F22).
+    var page = bare(window.location && window.location.origin) + here
+    var loaded = false
+
+    function fetchScript(origin, path) {
+      var tag = document.createElement('script')
+      tag.async = true
+      tag.src = origin + path
+      document.head.appendChild(tag)
+    }
+
+    // The pixel: its own queue first, so nothing is lost to the fetch, and then its script.
+    function pixel(origin, id) {
+      if (!origin || !id) return
+      window.fbq = window.fbq || function () {
+        window.fbq.queue.push(Array.prototype.slice.call(arguments))
+      }
+      window.fbq.queue = window.fbq.queue || []
+      window.fbq('init', id)
+      window.fbq('track', 'PageView', { page_location: page })
+      fetchScript(origin, '/en_US/fbevents.js')
+    }
+
+    // The insight tag: the partner id on the window where its own snippet reads it, then its
+    // script — and the same reported address, under the same key.
+    function insight(origin, id) {
+      if (!origin || !id) return
+      window._linkedin_data_partner_ids = window._linkedin_data_partner_ids || []
+      window._linkedin_data_partner_ids.push(id)
+      window.lintrk = window.lintrk || function () {
+        window.lintrk.q.push(Array.prototype.slice.call(arguments))
+      }
+      window.lintrk.q = window.lintrk.q || []
+      window.lintrk('track', { page_location: page })
+      fetchScript(origin, '/li.lms-analytics/insight.min.js')
+    }
+
+    // The embed: the container the calls-to-action section emits hidden, made a Calendly
+    // inline widget, and Calendly's own script to build it. Nothing about the embed is
+    // fetched before this runs, so a visitor who declines has the page's plain booking link
+    // and no iframe.
+    function embed(origin, url) {
+      if (!origin || !url) return
+      var host = document.getElementById(EMBED_ID)
+      if (host) {
+        host.setAttribute('data-url', url)
+        host.hidden = false
+      }
+      fetchScript(origin, '/assets/external/widget.js')
+    }
+
+    function load() {
+      if (loaded) return
+      loaded = true
+      pixel(banner.getAttribute(META_ORIGIN_ATTR), banner.getAttribute(META_ID_ATTR))
+      insight(banner.getAttribute(LINKEDIN_ORIGIN_ATTR), banner.getAttribute(LINKEDIN_ID_ATTR))
+      embed(banner.getAttribute(CALENDLY_ORIGIN_ATTR), banner.getAttribute(CALENDLY_URL_ATTR))
+    }
+
+    // A withdrawal stops what it can and says nothing it cannot do. The pixel takes a consent
+    // command and is told; the insight tag has none, and no script already fetched can be
+    // unfetched — so the senders stop on the next page, and the privacy page says so. What is
+    // this site's to remove is removed: the cookies Meta's pixel set on this host.
+    function withdraw() {
+      if (!loaded) return
+      if (window.fbq) window.fbq('consent', 'revoke')
+      var host = (window.location && window.location.hostname) || ''
+      var held = heldNames()
+      for (var i = 0; i < MARKETING_COOKIES.length; i++) {
+        if (held.indexOf(MARKETING_COOKIES[i]) !== -1) drop(MARKETING_COOKIES[i], host)
+      }
+    }
+
+    if (read(banner, MARKETING_KEY_ATTR) === GRANTED) load()
+    window.addEventListener(CONSENT_EVENT, function (event) {
+      var decision = event && event.detail && event.detail.marketing
+      if (decision !== GRANTED && decision !== DENIED) return
       if (decision === GRANTED) load()
       else withdraw()
     })
@@ -1066,19 +1205,34 @@
       }
     }
 
+    // The campaign question, where this bar asks it (G2.3): the attribute is on the four
+    // campaign pages' banner and on no other page's, so this is null everywhere else and the
+    // press below is the one the site has always made.
+    var marketing = banner.getAttribute(MARKETING_KEY_ATTR) ? MARKETING_KEY_ATTR : null
+
     function choose(decision) {
       // One decision per banner: a second press or an Escape while the bar collapses is not a
       // new choice, exactly as it could not be once the bar was gone.
       if (closing) return
-      if (!keep(banner, decision)) {
+      // Which questions this press answers. The campaign's, wherever the bar asks it — the
+      // visitor was asked it here and has answered it here. The site's, when they have not
+      // answered it yet, and always on a bar that asks nothing else: that second half is what
+      // makes a withdrawal on the privacy page overwrite the grant it is withdrawing. On a
+      // campaign page, a press about the campaign never rewrites an answer the visitor gave
+      // the site — a visitor who accepted analytics on another page keeps that answer, and one
+      // who declined it is not quietly granted it here.
+      var asksSite = marketing === null || stored(banner) === null
+      var keptSite = asksSite ? keep(banner, SITE_KEY_ATTR, decision) : true
+      var keptMarketing = marketing ? keep(banner, marketing, decision) : true
+      if (!keptSite || !keptMarketing) {
         // The answer cannot be kept, so it is not honoured: nothing is loaded, the banner
         // stays, and the status line says why.
         if (status) status.hidden = false
-        announce(DENIED)
+        announce(null, null)
         return
       }
       dismiss()
-      announce(decision)
+      announce(asksSite ? decision : null, marketing ? decision : null)
     }
 
     var controls = banner.querySelectorAll('[data-consent]')
@@ -1097,11 +1251,19 @@
       if (event.key === 'Escape' || event.key === 'Esc') choose(DENIED)
     })
 
-    // The choice is offered when there is no readable decision — and always on the privacy
-    // page, which is where a visitor withdraws one.
-    if (banner.getAttribute('data-consent-always') === 'true' || stored(banner) === null) banner.hidden = false
+    // The choice is offered when there is no readable decision about a question this bar asks —
+    // the site's, the campaign's on a campaign page, or both — and always on the privacy page,
+    // which is where a visitor withdraws one.
+    if (
+      banner.getAttribute('data-consent-always') === 'true' ||
+      stored(banner) === null ||
+      (marketing !== null && read(banner, marketing) === null)
+    ) {
+      banner.hidden = false
+    }
 
     analytics(banner)
+    campaign(banner)
   }
 
   // ---- the hero's live card (the owner's ruling of 2026-10-23, the redesign's lever 3) -------

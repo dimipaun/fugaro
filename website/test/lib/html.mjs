@@ -478,11 +478,12 @@ export function deployedCSP(repo = REPO) {
 }
 
 /**
- * The four facts the gates need from site.yaml: `canonical_url` (and the host it names),
- * `allowed_hosts`, `analytics.enabled` and `analytics.measurement_id`. A strict reader of
- * exactly those keys — the Go boundary test pins their shape (bare lowercase hosts, a
- * quoted-or-bare URL, a boolean, a quoted id) and anything else in their place is refused
- * here rather than read as something it is not.
+ * The facts the gates need from site.yaml: `canonical_url` (and the host it names),
+ * `allowed_hosts`, `analytics.enabled`, `analytics.measurement_id`, and the `marketing` block
+ * the campaign pages' gate reads (G2.3). A strict reader of exactly those keys — the Go
+ * boundary test pins their shape (bare lowercase hosts, a quoted-or-bare URL, a boolean, a
+ * quoted id) and anything else in their place is refused here rather than read as something
+ * it is not.
  *
  * `analyticsMeasurementID` is the property the site reports to, and it is **empty while the
  * flag is off**: the two move together (the boundary test holds them to it), and it requires
@@ -490,6 +491,14 @@ export function deployedCSP(repo = REPO) {
  * unquoted one is refused rather than turned into a number or a boolean by a YAML reader.
  * A test that reads the built page's own configuration compares it with this rather than with
  * a literal of its own, so the value lives in site.yaml alone (W3.2).
+ *
+ * The `marketing` block's three origins are read the same way and held to **the exact origin
+ * each vendor's own host is**: the value has to be a bare https origin — no path, no query, no
+ * wildcard, no trailing slash — because it becomes a Content-Security-Policy token (O3, and
+ * `origins.mjs` holds the deployed policy to this list), and a wildcard here would admit every
+ * host a vendor's customers upload to. The two ids are read as written, empty or not: an empty
+ * id is the loader switched off, which is the state the site ships in until the owner supplies
+ * them (R3).
  */
 export function siteFacts(siteYAML = readFileSync(path.join(SITE, 'data', 'site.yaml'), 'utf8')) {
   const lines = siteYAML.split('\n')
@@ -513,6 +522,23 @@ export function siteFacts(siteYAML = readFileSync(path.join(SITE, 'data', 'site.
   if (!enabled) throw new Error('site.yaml analytics.enabled is not a plain true/false')
   const id = /^  measurement_id:\s*"([^"]*)"\s*(#.*)?$/.exec(block.find((l) => /^  measurement_id:/.test(l)) ?? '')
   if (!id) throw new Error('site.yaml analytics.measurement_id is not a quoted value')
+  const m = lines.findIndex((l) => /^marketing:\s*$/.test(l))
+  if (m === -1) throw new Error('site.yaml has no marketing block, which is the campaign pages\' own configuration (G2.3)')
+  const mblock = lines.slice(m + 1, m + 6)
+  const quoted = (name) => {
+    const line = mblock.find((l) => new RegExp(`^  ${name}:`).test(l)) ?? ''
+    const value = /^  [a-z_]+:\s*"([^"]*)"\s*(#.*)?$/.exec(line)
+    if (!value) throw new Error(`site.yaml marketing.${name} is not a quoted value`)
+    return value[1]
+  }
+  const asOrigin = (name) => {
+    const written = quoted(name)
+    const url = new URL(written)
+    if (written !== url.origin || url.protocol !== 'https:') {
+      throw new Error(`site.yaml marketing.${name} is ${JSON.stringify(written)}, and the campaign gate's origins are bare https origins — no path, no query, no wildcard, no trailing slash (O3, G2.3)`)
+    }
+    return written
+  }
   const canonicalURL = new URL(canonical[1])
   return {
     canonicalURL,
@@ -520,5 +546,12 @@ export function siteFacts(siteYAML = readFileSync(path.join(SITE, 'data', 'site.
     allowedHosts: new Set(hosts),
     analyticsEnabled: enabled[1] === 'true',
     analyticsMeasurementID: id[1],
+    marketing: {
+      metaPixelID: quoted('meta_pixel_id'),
+      metaOrigin: asOrigin('meta_origin'),
+      linkedinPartnerID: quoted('linkedin_partner_id'),
+      linkedinOrigin: asOrigin('linkedin_origin'),
+      calendlyOrigin: asOrigin('calendly_origin'),
+    },
   }
 }

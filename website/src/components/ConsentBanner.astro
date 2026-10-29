@@ -47,9 +47,31 @@ interface Props {
   measurementID: string
   /** The one third-party origin the gate may load from (D93, D106). */
   analyticsOrigin: string
+  /**
+   * The campaign measurement's configuration, on the four campaign pages only (G2.3, D401):
+   * its own consent key, the page it was built for, the two vendor ids and the three origins
+   * their loaders fetch from, and the booking link the embed is built from. Absent everywhere
+   * else, which is why every other page is unchanged by that task.
+   */
+  marketing?: MarketingConfig | null
 }
 
-const { alwaysOffer = false, measurementID, analyticsOrigin } = Astro.props
+export interface MarketingConfig {
+  /** The key the campaign decision is stored under (`consent-key.mjs`). */
+  key: string
+  /** The route this configuration was built for: the loader runs on that page and no other. */
+  path: string
+  metaID: string
+  metaOrigin: string
+  linkedinID: string
+  linkedinOrigin: string
+  /** `landing.yaml`'s booking link, which the inline embed is built from. */
+  calendlyURL: string
+  /** The origin Calendly's widget script and stylesheet come from. */
+  calendlyOrigin: string
+}
+
+const { alwaysOffer = false, measurementID, analyticsOrigin, marketing = null } = Astro.props
 
 // The key the decision is stored under, written once in `src/lib/consent-key.mjs`: `site.js`
 // reads it back out of the markup below, so the banner that writes the decision and the gate
@@ -61,24 +83,44 @@ import { CONSENT_KEY } from '../lib/consent-key.mjs'
   class="consent-banner"
   id="consent-banner"
   role="region"
-  aria-label="Analytics consent"
+  aria-label={marketing ? 'Measurement consent' : 'Analytics consent'}
   data-consent-key={CONSENT_KEY}
   data-consent-always={alwaysOffer ? 'true' : undefined}
   data-analytics-id={measurementID}
   data-analytics-origin={analyticsOrigin}
+  data-marketing-consent-key={marketing?.key}
+  data-marketing-path={marketing?.path}
+  data-meta-pixel-id={marketing?.metaID}
+  data-meta-origin={marketing?.metaOrigin}
+  data-linkedin-partner-id={marketing?.linkedinID}
+  data-linkedin-origin={marketing?.linkedinOrigin}
+  data-calendly-url={marketing?.calendlyURL}
+  data-calendly-origin={marketing?.calendlyOrigin}
   hidden
 >
   <div class="consent-banner__body">
     <div class="consent-banner__inner">
       <p class="consent-banner__text">
-        This site counts page views with <strong>Google Analytics</strong>, a third-party script that sets identifiers in your browser, and it loads nothing from Google until you accept. <a href="/privacy/">What this site measures</a>
+        {marketing ? (
+          <>
+            This page counts its visits with <strong>Google Analytics</strong>, and this campaign page also measures its reach with <strong>Meta</strong>, <strong>LinkedIn</strong> and <strong>Calendly</strong>. Each of them sets identifiers in your browser, and none of them loads until you accept. <a href="/privacy/">What this site measures</a>
+          </>
+        ) : (
+          <>
+            This site counts page views with <strong>Google Analytics</strong>, a third-party script that sets identifiers in your browser, and it loads nothing from Google until you accept. <a href="/privacy/">What this site measures</a>
+          </>
+        )}
       </p>
       <div class="consent-banner__choices">
-        <button type="button" class="consent-banner__button" data-consent="granted">Accept analytics</button>
-        <button type="button" class="consent-banner__button" data-consent="denied">Decline analytics</button>
+        <button type="button" class="consent-banner__button" data-consent="granted">
+          {marketing ? 'Accept measurement' : 'Accept analytics'}
+        </button>
+        <button type="button" class="consent-banner__button" data-consent="denied">
+          {marketing ? 'Decline measurement' : 'Decline analytics'}
+        </button>
       </div>
       <p class="consent-banner__status" id="consent-banner-status" role="status" hidden>
-        Your browser is not storing this choice, so this site cannot keep it: nothing is loaded from Google, and you will be asked again on your next visit.
+        Your browser is not storing this choice, so this site cannot keep it: nothing is loaded from {marketing ? 'any of them' : 'Google'}, and you will be asked again on your next visit.
       </p>
     </div>
   </div>
