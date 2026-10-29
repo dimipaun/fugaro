@@ -4384,6 +4384,17 @@ describe('a feed whose last line has no newline', () => {
  * the stop names is not a path at all: it rides the wrapper's own stderr line
  * (T-F4, D6(a)), so nothing here has to agree about a file.
  */
+// 30 s, because most cases in this suite drive real processes rather than a
+// scripted child: `installWslStub` installs a real `wsl.exe` that execs the real
+// stub `fugaro`, and what they read back -- the pid a stop named, a status, an
+// orphan's report -- comes out of the report file those processes write. The
+// observed time is all process startup, and `waitFor` already allows itself 15 s
+// for exactly that ("a shared CI or developer machine under load can take
+// seconds to start one"); the implicit 5 s default overrode the file's own
+// budget, and 'cancels inside the distribution' timed out on a macOS runner
+// while passing on rerun. The deadline and the grace the cases assert about are
+// still the supervisor's injected clock, fired by the test itself rather than
+// waited out; nothing asserted here became weaker, only the suite's own budget.
 describe('the wrapper into a distribution', () => {
   const TWO: WslFixture = {
     list: 'Ubuntu\r\nDebian\r\n',
@@ -5227,4 +5238,4 @@ describe('the wrapper into a distribution', () => {
     expect(withoutWrapperMarker('the CLI said no\n')).toBe('the CLI said no\n')
     expect(withoutWrapperMarker('')).toBe('')
   })
-})
+}, 30_000)
