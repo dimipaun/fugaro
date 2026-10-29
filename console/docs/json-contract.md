@@ -543,7 +543,7 @@ the exported writer, not a `cli`-side struct. Indented two spaces
 `JSONTokens`: `in`, `out`, `cache_read`, `cache_write`, all
 int64, none `omitempty`.
 
-**Flags** (`newReportCmd`, `ee/report/cli/report.go`): `--repo`, `--since`, `--until`, `--by`, `--json`,
+**Flags** (`NewReportCmd`, `ee/report/cli/report.go`): `--repo`, `--since`, `--until`, `--by`, `--json`,
 `--csv` (the allow-list excludes `--csv`), plus the cloud flags.
 
 ## 5. `fugaro runs ls --json` (and the degraded feed's body)

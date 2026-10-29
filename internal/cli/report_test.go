@@ -26,8 +26,9 @@ func TestReportDimParsing(t *testing.T) {
 }
 
 // With no_auth and no Firestore endpoint the report must not fall back to the
-// real service. newReportFirestore stays in the core for `fugaro update`'s own
-// check of the spend history, which is what this pins.
+// real service. newReportFirestore stays in the core for `spendRepos`
+// (`internal/cli/project_enroll.go`), the read behind `fugaro project repos
+// ls`, which is what this pins.
 func TestReportNoAuthNeverReachesRealFirestore(t *testing.T) {
 	lc := &localcfg.Config{}
 	lc.Endpoints.NoAuth = true
