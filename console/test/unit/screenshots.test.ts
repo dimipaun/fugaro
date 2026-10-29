@@ -479,14 +479,22 @@ describe('the fixtures are documents the console accepts', () => {
     // `model_usd` the plan covered (`internal/runstore/runstore.go`, an
     // `omitempty` float, never more than the figure it is a part of), a
     // tolerated finding's `label` is the score word its own axes give it
-    // (`internal/rigor.Score.Label`: risk is likelihood × impact, and the low
-    // band starts at 4, medium at 8 and high at 12), its `class` is one of the
-    // six the record uses, and its `mode` is one this build has a word for. A
-    // fixture outside any of those is a picture of a document no run writes.
+    // (`internal/rigor.Score.Label`: an unscored finding and the severity
+    // override come first and are blockers, then risk -- likelihood × impact --
+    // at 12, 8 and 4 for high, medium and low), its `class` is one of the six the
+    // record uses, and its `mode` is one this build has a word for. A fixture
+    // outside any of those is a picture of a document no run writes.
     const doc = JSON.parse(fixture(FIXTURE_COMMANDS.diagnose)) as {
       stages?: readonly { model_usd?: number; model_notional_usd?: number }[]
       tolerated?: {
-        findings?: readonly { label: string; mode: string; class: string; likelihood: number; impact: number }[]
+        findings?: readonly {
+          label: string
+          mode: string
+          class: string
+          likelihood: number
+          impact: number
+          fix_cost: number
+        }[]
       }
     }
     expect(doc.stages?.length ?? 0).toBeGreaterThan(0)
@@ -498,14 +506,31 @@ describe('the fixtures are documents the console accepts', () => {
     const labels = ['blocker', 'high', 'medium', 'low', 'nit']
     const classes = ['correctness', 'performance', 'security', 'data_loss', 'maintainability', 'cosmetic']
     expect(doc.tolerated?.findings?.length ?? 0).toBeGreaterThan(0)
+    const modes = new Set<string>()
     for (const finding of doc.tolerated?.findings ?? []) {
       expect(labels, `${finding.label} is not a score word`).toContain(finding.label)
       expect(classes, `${finding.class} is not a class the record uses`).toContain(finding.class)
       expect(rigorModeWord(finding.mode), `${finding.mode} has no word here`).not.toBeNull()
+      modes.add(finding.mode)
+      // The label's first case is not a band, and a guard that reads only the
+      // bands holds a `class: "security"` finding scored 6 to `low` while
+      // `fugaro diagnose` prints `blocker` for it: `!Scored() || catastrophic()`
+      // is tested before the risk (internal/rigor/label.go). An axis off the 1–5
+      // scale is unscored, and a class the spec calls catastrophic or an impact
+      // of 5 is the override.
+      const scored = [finding.likelihood, finding.impact, finding.fix_cost].every((axis) => axis >= 1 && axis <= 5)
+      const catastrophic = finding.class === 'security' || finding.class === 'data_loss' || finding.impact === 5
       const risk = finding.likelihood * finding.impact
-      const word = risk >= 12 ? 'high' : risk >= 8 ? 'medium' : risk >= 4 ? 'low' : 'nit'
+      const word = !scored || catastrophic ? 'blocker' : risk >= 12 ? 'high' : risk >= 8 ? 'medium' : risk >= 4 ? 'low' : 'nit'
       expect(finding.label, `risk ${risk} is not a ${finding.label}`).toBe(word)
     }
+    // A tolerated block's `mode` is the run's **single** resolved mode, written
+    // on every entry (`internal/runner/outcome.go` records `pol.Mode` for each,
+    // and `runstore.ToleratedFinding.Mode` is one value per block); the CLI's
+    // word for one entry is a defence for a record a hand edited, never a shape
+    // a run writes. A picture naming two modes is a picture of one run in two
+    // modes.
+    expect(modes.size, `the tolerated block names ${[...modes].join(', ')}`).toBe(1)
   })
 
   it('reads the log window with no refused line', () => {

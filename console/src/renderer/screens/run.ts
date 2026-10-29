@@ -35,11 +35,14 @@
 //      own lists below. A screen that divided a total by the number of stages
 //      would be inventing a figure about money. The two counts are pointers on
 //      the wire (absent means nobody counted the stage) while the two dollars
-//      are `omitempty` floats (absent is a zero), and the two dollar cells are
-//      the ledger's own split of the stage's one figure: the billed part, or the
-//      plan's figure marked notional when there is no billed part, and the part
-//      the record carries. The notional mark keeps the plan's list price from
-//      being read as money.
+//      are `omitempty` floats (absent is a zero), and the two dollar cells split
+//      the stage's one figure rather than sum it: the billed cell is the figure
+//      less the part the record carries when it carries one, and the plan's
+//      figure marked notional when it carries none at all -- a record written
+//      before C1.16 -- so no stage draws the same money in both cells. A carried
+//      part equal to the whole figure is a subscription run's own split (the
+//      plan paid all of it), not the fallback. The notional mark keeps the
+//      plan's list price from being read as money.
 //   4. **The pull request as text, and no link.** Design section 4.3's gap 7:
 //      no document names the provider (GitHub or Bitbucket Cloud), so a link
 //      rebuilt from the repository and the number **cannot** be built for every
@@ -295,9 +298,12 @@ export interface RunSpendStage {
   readonly agents: Reading
   /** `usd` is the stage's billed dollars and `notional` the part of its model
    * figure the run's plan paid (C1.16, D140). The two are a split of one figure
-   * and are never summed, here or anywhere else: `usd` is `modelReading`'s
-   * answer, so a stage with no billed part at all is drawn with the plan's
-   * figure and the notional mark rather than with a `$0.00` that reads as free. */
+   * and are never summed, here or anywhere else: `usd` is the figure less that
+   * part whenever the record carries one, so a plan-paid stage reads as a
+   * measured `$0.00` beside the part that paid it rather than as the plan's
+   * figure in both cells. Only the record with no part at all takes
+   * `modelReading`'s subscription fallback, which is the one shape where the
+   * whole figure is known to be the plan's. */
   readonly usd: Reading
   readonly notional: Reading
 }
@@ -620,17 +626,38 @@ function stagePartOf(record: Record<string, unknown>, whole: Reading): Reading {
   return measured(Math.min(Math.max(carried.value, 0), ceiling))
 }
 
+/** stageBilled is the usd cell: the stage's model dollars as **money**, which
+ * is its whole figure less the part the record says the plan paid.
+ *
+ * The record's own split decides it whenever the record carries one. A
+ * subscription run writes `model_notional_usd` equal to the stage's whole figure
+ * for every stage it settled without a gateway (`internal/runner/cost.go`), so a
+ * carried part equal to the figure means the plan paid all of it and the billed
+ * dollars are a measured `$0.00` -- the notional cell beside it names what paid
+ * them, which is what keeps that zero from reading as free. Reading that shape
+ * through `modelReading`'s fallback instead would draw the same figure in both
+ * cells and read as twice the stage's spend, the sum this panel exists not to
+ * draw.
+ *
+ * The fallback is for the record that carries no part at all: a stage written
+ * before C1.16, whose whole figure is the plan's, and which has no part to put
+ * in the second cell. */
+function stageBilled(whole: Reading, part: Reading, basis: string | null): Reading {
+  if (part.value === null) return modelReading(whole, part, basis)
+  if (whole.value === null) return whole
+  return measured(Math.max(0, whole.value - part.value))
+}
+
 /** stageNotional is the notional cell: the part of the figure the record wrote,
  * drawn as **notional** and never as money (`formatReading` marks a notional
  * figure `NOTIONAL~$X`), so the plan's list price is never read as a bill. A
  * part of zero is a measured `$0.00` rather than `NOTIONAL~$0.00`, which would
  * mark nothing as a plan price.
  *
- * The fallback for a record written before the key existed is not applied here:
- * it is `modelReading`'s, and the cell beside this one is where it belongs --
- * that cell would otherwise draw `$0.00` for a plan-covered figure, which reads
- * as free. This cell answers what the record carries, and the two together are
- * the stage's one figure rather than a sum of it. */
+ * This cell answers only what the record carries, and the fallback for a record
+ * that carries nothing is the billed cell's (`stageBilled`): a part invented
+ * here as well would be the same figure in both cells, and the two together
+ * would read as twice the stage's one figure. */
 function stageNotional(part: Reading): Reading {
   if (part.value === null || part.value === 0) return measured(0)
   return notional(part.value)
@@ -640,7 +667,7 @@ function stageNotional(part: Reading): Reading {
  * into the panel's rows, bounded at `RUN_SPEND_STAGES_MAX`. An entry that is not
  * an object is skipped rather than thrown on: the record is a hand-editable
  * object and a screen that threw would draw nothing at all. `basis` is the run's
- * `cost.model_basis`, which `modelReading` needs for a stage whose part the
+ * `cost.model_basis`, which `stageBilled` needs for a stage whose part the
  * record does not carry. */
 function spendStagesOf(raw: unknown, basis: string | null): readonly RunSpendStage[] {
   const records = arrayAt(raw) ?? []
@@ -655,10 +682,10 @@ function spendStagesOf(raw: unknown, basis: string | null): readonly RunSpendSta
       duration: readNumber(record['duration_s'], 'stages[].duration_s'),
       calls: countedAt(record, 'calls', 'stages[].calls'),
       agents: countedAt(record, 'agents', 'stages[].agents'),
-      // Only the billed part of the figure is money: `modelReading` is the
-      // ledger's own split of the row's figure one panel above, and the notional
-      // cell beside this one holds the plan's part of the same figure.
-      usd: modelReading(whole, part, basis),
+      // Only the billed part of the figure is money, and the notional cell
+      // beside this one holds the part that was not billed: the two are the
+      // stage's one figure, split, and never the same figure twice.
+      usd: stageBilled(whole, part, basis),
       notional: stageNotional(part),
     })
   }

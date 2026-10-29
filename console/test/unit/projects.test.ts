@@ -1239,8 +1239,11 @@ describe('buildRunModel', () => {
   it('spend by stage splits each figure into the billed part and the plan’s part', () => {
     // `model_usd` is the stage's whole figure -- billed money plus the part a
     // plan paid -- and `model_notional_usd` is that part. The two cells are the
-    // split and never a sum of it, and the split is the ledger's own
-    // (`modelReading`, one panel above) rather than one this panel invents.
+    // split and never a sum of it, and the split is the record's own subtraction
+    // (`modelReading`'s rule, one panel above) rather than one this panel
+    // invents: the fallback for a figure with no part at all belongs to the
+    // billed cell alone, and applying it beside a carried part draws the same
+    // figure in both cells.
     //
     // Both keys are `omitempty` floats (`internal/runstore/runstore.go`), the
     // opposite case to `calls`/`agents`: `encoding/json` writes no key for a
@@ -1303,8 +1306,32 @@ describe('buildRunModel', () => {
       }),
     )
     expect(over.spendStages[0]?.notional.value).toBe(0.8)
-    expect(over.spendStages[0]?.usd.value).toBe(0.8)
-    expect(over.spendStages[0]?.usd.state).toBe('notional')
+    expect(over.spendStages[0]?.usd.value).toBe(0)
+    expect(over.spendStages[0]?.usd.state).toBe('measured')
+    // A subscription run's own split of a stage it settled without a gateway is
+    // the part equal to the whole figure (`internal/runner/cost.go`). That is a
+    // carried part, not the absent key, so the fallback does not apply: the
+    // billed cell is the figure less the part -- a measured zero, which the
+    // notional cell beside it explains -- and the two cells together are the
+    // stage's one figure. Applying the fallback here draws `NOTIONAL~$2.10` in
+    // both cells and reads as twice what the stage cost.
+    const self = buildRunModel(
+      runInputs({
+        diagnosis: {
+          ...DIAGNOSIS,
+          row: {
+            ...DIAGNOSIS.row,
+            cost: { ...DIAGNOSIS.row.cost, model_usd: 2.1, model_basis: 'subscription' },
+          },
+          stages: [{ name: 'review', duration_s: 95, model_usd: 2.1, model_notional_usd: 2.1 }],
+        },
+      }),
+    )
+    expect(self.spendStages[0]?.usd.value).toBe(0)
+    expect(self.spendStages[0]?.usd.state).toBe('measured')
+    expect(self.spendStages[0]?.notional.value).toBe(2.1)
+    expect(self.spendStages[0]?.notional.state).toBe('notional')
+    expect((self.spendStages[0]?.usd.value ?? 0) + (self.spendStages[0]?.notional.value ?? 0)).toBe(2.1)
   })
 
   it('spend by stage bounds a hand-edited list at 128', () => {
@@ -1720,6 +1747,27 @@ describe('renderRun', () => {
     expect(texts(old, 'run-spend-stage-usd')).toEqual(['NOTIONAL~$2.10'])
     expect(texts(old, 'run-spend-stage-usd')).not.toContain('$2.10')
     expect(texts(old, 'run-spend-stage-notional')).toEqual(['$0.00'])
+    // A subscription run that settled a stage without a gateway writes a part
+    // equal to the stage's own whole figure (`internal/runner/cost.go`), and that
+    // is the record's split rather than the fallback: the plan paid all of it, so
+    // the billed cell is a measured `$0.00` and the figure stands once, under the
+    // notional mark, in the cell beside it. Reading this shape as the fallback
+    // would draw `NOTIONAL~$2.10` twice and read as twice the stage's spend.
+    const self = buildRunModel(
+      runInputs({
+        diagnosis: {
+          ...DIAGNOSIS,
+          row: {
+            ...DIAGNOSIS.row,
+            cost: { ...DIAGNOSIS.row.cost, model_usd: 2.1, model_basis: 'subscription' },
+          },
+          stages: [{ name: 'review', duration_s: 95, model_usd: 2.1, model_notional_usd: 2.1 }],
+        },
+      }),
+    )
+    const split = renderRun(factory, self, 'light')
+    expect(texts(split, 'run-spend-stage-usd')).toEqual(['$0.00'])
+    expect(texts(split, 'run-spend-stage-notional')).toEqual(['NOTIONAL~$2.10'])
   })
 
   it('a tolerated title is drawn as text, never markup', () => {

@@ -120,7 +120,7 @@
       {
         "title": "the queue document still describes the retired table",
         "label": "nit",
-        "mode": "pro",
+        "mode": "startup",
         "likelihood": 1,
         "impact": 1,
         "fix_cost": 2,
