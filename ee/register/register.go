@@ -3,8 +3,11 @@
 
 // Package register is the one place the seams the moved enterprise features
 // fill are set. cmd/fugaro/ee_on.go blank-imports it under `//go:build ee`, so
-// an untagged build compiles none of it and has no route here at all (design
-// docs/design/ee-boundary-moves.md §5.5).
+// an untagged build links none of it into the binary and has no route here at
+// all (design docs/design/ee-boundary-moves.md §5.5). The one untagged build
+// that does compile this package is its own test binary — `go test ./ee/...`
+// carries no tag — and that is how TestTaggedBuildReportsEE checks the edition
+// a tagged build reports, not a claim that nothing here runs untagged.
 //
 // One file per writer: this one sets the edition (E1.5), and the features that
 // move in add their own — coordinator.go (cli.SetLaunchDeclarer and

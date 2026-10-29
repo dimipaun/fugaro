@@ -2,7 +2,8 @@ package cli
 
 // ee/ carries its licence from 2026-10-26 (licensing plan L4.1, brought
 // forward by the owner's ruling D311): the folder holds a README that says what
-// it is for, `ee/LICENSE` (counsel's text), and no code.
+// it is for, `ee/LICENSE` (counsel's text), and — from E1.5 — the assembly
+// point `ee/register`.
 //
 // D532 (2026-10-29) ends the rule that only net-new features are born here: the
 // folder holds the business-licensed features, new ones and those the owner

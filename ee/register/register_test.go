@@ -96,21 +96,23 @@ var seamSetters = []string{
 // asks only whether the hook is set, exactly like a fully wired one (G10).
 var governancePair = []string{"SetGovernance", "SetStage"}
 
-// TestTaggedBinaryWiresTheGovernance holds this directory to two shape rules,
+// TestRegisterWiresTheGovernancePair holds this directory to two shape rules,
 // over the real tree and over planted ones:
 //
 //  1. the governance pair is called both or neither;
-//  2. every seam setter's error reaches a panic — a bare call or `_ = …` is a
-//     registration that was refused and went on anyway.
+//  2. every seam setter's error reaches a panic — a bare call, a deferred one
+//     or `_ = …` is a registration that was refused and went on anyway.
 //
 // It is a source scan for the reason internal/eeboundary's is one: the calls
-// are legal Go wherever they sit, and a build would not notice. The identity
-// half of G10 — that the hook holds ee/governance's functions rather than
-// merely non-nil ones — is E2.3's, added beside the move, because until the
-// move the policy and runner hooks default to today's non-nil core
-// implementation and a test that asked "is it set" would pass while
-// enforcement was silently dropped.
-func TestTaggedBinaryWiresTheGovernance(t *testing.T) {
+// are legal Go wherever they sit, and a build would not notice. The name is
+// deliberately not TestTaggedBinaryWiresTheGovernance: the plan gives that name
+// to E2.3's identity test, which lands in this same package beside
+// ee/register/governance.go — the hook holding ee/governance's functions rather
+// than merely non-nil ones. That half is E2.3's because until the move the
+// policy and runner hooks default to today's non-nil core implementation, and a
+// test that asked only "is it set" would pass while enforcement was silently
+// dropped (G10).
+func TestRegisterWiresTheGovernancePair(t *testing.T) {
 	findings, parsed, err := registerFindings(".")
 	if err != nil {
 		t.Fatal(err)
@@ -150,6 +152,16 @@ func TestTaggedBinaryWiresTheGovernance(t *testing.T) {
 			name:     "a setter called as a bare statement",
 			body:     "package register\n\nimport \"github.com/dimipaun/fugaro/internal/cli\"\n\nfunc init() { cli.SetEditionEE() }\n",
 			expected: []string{"SetEditionEE", "discard"},
+		},
+		{
+			name:     "both halves of the pair registered in defer statements",
+			body:     "package register\n\nimport (\n\t\"github.com/dimipaun/fugaro/internal/policy\"\n\t\"github.com/dimipaun/fugaro/internal/runner\"\n)\n\nfunc init() {\n\tdefer policy.SetGovernance(policy.GovernanceFuncs{})\n\tdefer runner.SetStage(runner.StageFuncs{})\n}\n",
+			expected: []string{"SetGovernance", "SetStage", "defer"},
+		},
+		{
+			name:     "only the runner half, inside a defer statement",
+			body:     "package register\n\nimport \"github.com/dimipaun/fugaro/internal/runner\"\n\nfunc init() { defer runner.SetStage(runner.StageFuncs{}) }\n",
+			expected: []string{"SetStage", "defer"},
 		},
 		{
 			name: "neither half of the pair, the edition beside it",
@@ -239,10 +251,16 @@ func other(name string) string {
 	return ""
 }
 
-// setterCallsIn is one file's seam setter calls: the names it calls, and a
-// finding for every call whose error it discards. A call in an if-init — `if
-// err := …; err != nil { panic(err) }` — is the shape both rules ask for and is
-// not a finding; a bare statement or an assignment to `_` is.
+// setterCallsIn is one file's seam setter calls: the names it calls, from every
+// position, and a finding for each call whose error it discards. Every
+// *ast.CallExpr in the file is read, the way internal/eeboundary's scan reads
+// them, so a registration cannot hide from the pair rule inside a defer, a go
+// statement or a call to something else.
+//
+// A call in an if-init — `if err := …; err != nil { panic(err) }` — is the
+// shape both rules ask for and is not a finding. Discarded is a call that is a
+// statement of its own, the call of a defer or a go statement, or an
+// assignment's right-hand side whose left-hand side is the blank identifier.
 //
 // A file the parser cannot read is one whose calls cannot be checked, and
 // "cannot be checked" is not "is fine": `gofmt -l .` is a gate, so this fires
@@ -256,35 +274,59 @@ func setterCallsIn(path, rel string) ([]string, []string, error) {
 	var (
 		called   []string
 		findings []string
+		// ancestry is the nodes currently open above the one being read, its
+		// last entry being the call's own parent: ast.Inspect answers nil when
+		// it leaves a node, which is where one is dropped.
+		ancestry []ast.Node
 	)
 	ast.Inspect(f, func(n ast.Node) bool {
-		switch st := n.(type) {
-		case *ast.ExprStmt:
-			name, ok := setterName(st.X)
-			if !ok {
-				return true
+		if n == nil {
+			if len(ancestry) > 0 {
+				ancestry = ancestry[:len(ancestry)-1]
 			}
-			called = append(called, name)
-			findings = append(findings, rel+": it calls "+name+" as a bare statement, so the error it answers is discarded")
-		case *ast.AssignStmt:
-			if len(st.Rhs) != 1 {
-				return true
-			}
-			name, ok := setterName(st.Rhs[0])
-			if !ok {
-				return true
-			}
-			called = append(called, name)
-			for _, lhs := range st.Lhs {
-				if id, ok := lhs.(*ast.Ident); ok && id.Name == "_" {
-					findings = append(findings, rel+": it assigns "+name+"'s error to the blank identifier, so the error it answers is discarded and a refused registration panics nothing")
-					break
+			return false
+		}
+		if call, ok := n.(ast.Expr); ok {
+			if name, isSetter := setterName(call); isSetter {
+				called = append(called, name)
+				if why, discarded := discardedResult(ancestry, call); discarded {
+					findings = append(findings, rel+": it calls "+name+why)
 				}
 			}
 		}
+		ancestry = append(ancestry, n)
 		return true
 	})
 	return called, findings, nil
+}
+
+// discardedResult answers whether the setter call call, whose parent is the last
+// node of its ancestry, throws its error away, and says how in words a reader
+// can act on. It reads the one position that decides it: an expression
+// statement runs for its effect alone, a defer or a go statement cannot carry a
+// result anywhere, and `_ = …` names the result and drops it.
+func discardedResult(ancestry []ast.Node, call ast.Expr) (string, bool) {
+	if len(ancestry) == 0 {
+		return "", false
+	}
+	switch parent := ancestry[len(ancestry)-1].(type) {
+	case *ast.ExprStmt:
+		return " as a statement of its own, so the error it answers is discarded", true
+	case *ast.DeferStmt:
+		return " in a defer statement, so the error it answers is discarded when it finally runs", true
+	case *ast.GoStmt:
+		return " in a go statement, so the error it answers is discarded in another goroutine", true
+	case *ast.AssignStmt:
+		for i, rhs := range parent.Rhs {
+			if rhs != call || i >= len(parent.Lhs) {
+				continue
+			}
+			if id, ok := parent.Lhs[i].(*ast.Ident); ok && id.Name == "_" {
+				return " and assigns its error to the blank identifier, so the error it answers is discarded and a refused registration panics nothing", true
+			}
+		}
+	}
+	return "", false
 }
 
 // setterName answers the seam setter an expression calls, by the selector's own
