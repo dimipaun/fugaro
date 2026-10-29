@@ -52,6 +52,14 @@ func RegisterCommand(name string, newCmd func() *cobra.Command) error {
 	if core.rootCommands[name] {
 		return fmt.Errorf("registering %s: the released tree holds a command of that name, and a registration adds a command rather than replacing one", name)
 	}
+	// An earlier registration's names are the second half of the same rule:
+	// cobra answers to them in the order commands were added, so a second
+	// registration under one of them would be found after that command rather
+	// than instead of it — an addition under a name the tree already answers
+	// to. The name and every alias a registration brought count alike.
+	if registeredNames[name] {
+		return fmt.Errorf("registering %s: an earlier registration already answers to that name", name)
+	}
 	cmd := newCmd()
 	if cmd == nil {
 		return fmt.Errorf("registering %s: its constructor built no command", name)
@@ -67,12 +75,17 @@ func RegisterCommand(name string, newCmd func() *cobra.Command) error {
 		return fmt.Errorf("registering %s: the command it built is named %q, so it would be added under one name and answer to another", name, cmd.Name())
 	}
 	// cobra resolves a child by its aliases as well as its name, and it takes
-	// the first match in the root's sorted children: a registered command that
-	// answers to a released name would be found before the released command
-	// does, which is the takeover this refuses.
+	// the first match in the order the children were added: a registered
+	// command that answers to a released name would be found after the
+	// released command rather than instead of it, and one that answers to an
+	// earlier registration's name or alias would collide with that command the
+	// same way. Both are the takeover this refuses.
 	for _, alias := range cmd.Aliases {
 		if core.rootCommands[alias] {
-			return fmt.Errorf("registering %s: it answers to %s, a name the released tree holds, and cobra would find it before that command", name, alias)
+			return fmt.Errorf("registering %s: it answers to %s, a name the released tree holds, and cobra would find the released command first", name, alias)
+		}
+		if registeredNames[alias] {
+			return fmt.Errorf("registering %s: it answers to %s, which an earlier registration already holds", name, alias)
 		}
 	}
 	// A persistent flag is inherited by everything under the command it sits
@@ -89,6 +102,10 @@ func RegisterCommand(name string, newCmd func() *cobra.Command) error {
 		return fmt.Errorf("registering %s: it declares --%s as a persistent flag, and the released tree already defines that name", name, clash)
 	}
 	registrations[name] = newCmd
+	registeredNames[name] = true
+	for _, alias := range cmd.Aliases {
+		registeredNames[alias] = true
+	}
 	return nil
 }
 
@@ -222,6 +239,14 @@ func coreSurface() *coreNames {
 	root.InitDefaultCompletionCmd()
 	root.InitDefaultHelpFlag()
 	root.InitDefaultVersionFlag()
+	// Cobra adds its two hidden shell-completion commands as it executes a
+	// tree rather than when one is built, so they are not among the commands
+	// above: a registration under either name would join the tree beside them
+	// and be found in the order added, which a name the shell completion
+	// script calls directly must never mean. They are names the CLI answers to
+	// like `help` and `completion`, so they are written down here.
+	names.rootCommands["__complete"] = true
+	names.rootCommands["__completeNoDesc"] = true
 	for _, child := range root.Commands() {
 		names.rootCommands[child.Name()] = true
 		for _, alias := range child.Aliases {
@@ -239,6 +264,13 @@ var (
 	// constructors rather than commands because a tree is built fresh for
 	// every command the binary runs, and a cobra command belongs to one tree.
 	registrations = map[string]func() *cobra.Command{}
+	// registeredNames is every name and alias the registrations above brought
+	// to the root. An earlier registration's names are a name the tree answers
+	// to as surely as a core one is, so a later registration may add neither:
+	// cobra finds a child by name or alias in the order commands were added,
+	// and the later one would be reached after the earlier rather than instead
+	// of it.
+	registeredNames = map[string]bool{}
 	// registrationsSealed is set when a tree is built: a registration that
 	// arrives after one would never reach a tree, so it is refused loudly
 	// rather than accepted and ignored.

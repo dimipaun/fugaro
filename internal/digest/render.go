@@ -17,8 +17,20 @@ import (
 //
 // The one thing not of d's own fields is the tail a registered extra-section
 // hook returns (section 5.4): a build that registered none, which every core
-// build is, prints the report above and nothing more.
+// build is, prints the report above and nothing more. The tail is appended
+// after the core report, so the size cap is measured over markdownCore alone
+// (capTo): the hook's bytes never count toward the cap, and the hook is called
+// once per measurement rather than once per dropped row.
 func Markdown(d Digest) []byte {
+	return append(markdownCore(d), sectionsMarkdown(d)...)
+}
+
+// markdownCore is the report without the hook's tail: what Build put in d, as
+// the report prints it. capTo measures the cap over this and not over Markdown,
+// so a registered section hook's output is outside the cap by construction: it
+// is appended after a report already trimmed to fit, and it is not rendered
+// again and again while rows are dropped.
+func markdownCore(d Digest) []byte {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Run digest: %s\n\n", d.Period.Key)
 	fmt.Fprintf(&b, "Runs of this repository that finished in %s (%s to %s): %d in all, %d shown, %d flagged. Billed %s, notional %s.\n\n",
@@ -31,7 +43,7 @@ func Markdown(d Digest) []byte {
 		b.WriteString(RunsTable(d.Runs))
 	}
 	if d.Dropped > 0 {
-		fmt.Fprintf(&b, "Rows not shown: %d. The report is capped at %d bytes and the cheapest unflagged rows go first.\n\n",
+		fmt.Fprintf(&b, "Rows not shown: %d. The report is capped at %d bytes before extra sections, and the cheapest unflagged rows go first.\n\n",
 			d.Dropped, MaxBytes)
 	}
 
@@ -53,7 +65,6 @@ func Markdown(d Digest) []byte {
 	block, _ := json.Marshal(d.Summary())
 	b.Write(block)
 	b.WriteString("\n```\n")
-	b.WriteString(sectionsMarkdown(d))
 	return []byte(b.String())
 }
 

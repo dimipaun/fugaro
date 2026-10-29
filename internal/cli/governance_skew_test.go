@@ -581,6 +581,50 @@ func TestCloneWorkflowOnACoreRecordDoesNotWarn(t *testing.T) {
 	}
 }
 
+// TestCurrentReleaseImageWithNoEditionDoesNotWarn: the edition gate warns about
+// one record only — the one that says core. A record written without an edition
+// (one from before the field existed, or a hand-written one) is unknown, and an
+// unknown image is warned about nothing (design ee-boundary-moves §7, which is
+// what every --image-source mirror looks like too). The image is a current
+// release, so the skew half says nothing either: a run of this file onto it
+// carries no edition sentence on stderr, and validate's only stderr is the skew
+// statement about the file, which prints whether or not an image can be judged
+// — never an edition warning and never an unresolved note.
+func TestCurrentReleaseImageWithNoEditionDoesNotWarn(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	configSkewCheckout(t, f, configSkewHead+"governance: { review_ratio: 3 }\n"+configSkewWorkflow)
+	writeEditionBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", releaseTier, "")
+
+	_, errOut, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
+	if err != nil {
+		t.Fatalf("a launch onto a current-release image must not be refused: %v", err)
+	}
+	// The run prints the project and recipe it resolved; what it must not print
+	// is a word about the image's edition.
+	for _, unwanted := range []string{"core build of fugaro", "edition"} {
+		if strings.Contains(errOut, unwanted) {
+			t.Errorf("a run onto a record with no edition wrote %q to stderr, which says %q", errOut, unwanted)
+		}
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want the run launched", n)
+	}
+
+	_, valErr, err := execute(t, "validate")
+	if err != nil {
+		t.Fatalf("validate judged the same file: %v", err)
+	}
+	for _, unwanted := range []string{"core build of fugaro", "edition unresolved"} {
+		if strings.Contains(valErr, unwanted) {
+			t.Errorf("validate's stderr %q says %q about an image with no edition", valErr, unwanted)
+		}
+	}
+	if !strings.Contains(valErr, "needs fugaro "+governanceSince) {
+		t.Errorf("validate's stderr %q lacks the skew half, which is a statement about the file", valErr)
+	}
+}
+
 // TestValidateWarnsGovernanceOnACoreImage: validate holds no cloud env, so the
 // edition half reads the records online, through the road every other command
 // takes to an image from a checkout: the project config's client, the origin's
@@ -623,6 +667,170 @@ func TestValidateWarnsGovernanceOnACoreImage(t *testing.T) {
 			t.Errorf("--offline stderr %q lacks %q", offErr, want)
 		}
 	}
+	// The offline note names its own fix, the way every online note names its
+	// (TestValidateNamesTheFixInAnEditionUnresolvedNote): the flag that would
+	// let the read happen is the whole of what the operator has to do.
+	if fix := "run validate without --offline to have the records read"; !strings.Contains(offErr, fix) {
+		t.Errorf("--offline stderr %q does not name the fix %q", offErr, fix)
+	}
+}
+
+// editionFixSelectConfig, editionFixCheckout, editionFixOriginSlug and
+// editionFixBucket are the fixes the four online edition-unresolved notes name
+// (editionUnresolved in validate.go), each in the words
+// plugin/skills/setup/reference/validation.md promises them in.
+const (
+	editionFixSelectConfig = "name the installation with --config or --project, or run fugaro setup to create this project's config"
+	editionFixCheckout     = "run validate in the repository's own checkout"
+	editionFixOriginSlug   = "run validate in the checkout whose origin names the repository"
+	editionFixBucket       = "check that this machine's credentials can read the installation's runs bucket"
+)
+
+// TestValidateNamesTheFixInAnEditionUnresolvedNote pins the promise
+// plugin/skills/setup/reference/validation.md makes for the online notes: a
+// note that says the job images' edition is unresolved names the fix that
+// would let the read happen, the way the --offline note names its flag. The
+// read fails at four points — no project config selected for the file's
+// project, a directory that is no checkout, an origin whose slug cannot be
+// resolved, a runs bucket that cannot be opened — and each has its own
+// sentence for the operator to follow, so a note that stopped at "unresolved"
+// would leave a file whose governance: block needs enforcing for a reason
+// nobody could act on.
+//
+// It is the note's own wording that is pinned, not just the state: the note is
+// the only thing this command can offer in each of these cases.
+func TestValidateNamesTheFixInAnEditionUnresolvedNote(t *testing.T) {
+	for _, tc := range []struct {
+		what string
+		run  func(t *testing.T) validateOutput
+		fix  string
+	}{
+		{
+			what: "no project config is selected for the file's project",
+			run: func(t *testing.T) validateOutput {
+				// validateGovernance isolates the project configs and judges a
+				// file outside its own project's config: nothing is selected,
+				// and the read cannot start.
+				doc, _ := validateGovernance(t, "governance: { review_ratio: 3 }\n")
+				return doc
+			},
+			fix: editionFixSelectConfig,
+		},
+		{
+			what: "the directory is no checkout",
+			run: func(t *testing.T) validateOutput {
+				editionProjectConfig(t, "", "")
+				t.Chdir(t.TempDir())
+				return validateEditionDoc(t, editionRepoFile(t, "aurora"))
+			},
+			fix: editionFixCheckout,
+		},
+		{
+			what: "the origin's slug cannot be resolved",
+			run: func(t *testing.T) validateOutput {
+				// The local config and the checkout disagree about the
+				// provider, which is the resolution failing with something to
+				// say rather than no checkout at all.
+				editionProjectConfig(t, "  acme/other: { provider: bitbucket, base_branch: main }\n", "")
+				return validateEditionDoc(t, editionCheckout(t, "acme/other", "github"))
+			},
+			fix: editionFixOriginSlug,
+		},
+		{
+			what: "the runs bucket cannot be opened",
+			run: func(t *testing.T) validateOutput {
+				editionProjectConfig(t, "  acme/other: { provider: github, base_branch: main }\n", "ftp://bucket")
+				return validateEditionDoc(t, editionCheckout(t, "acme/other", "github"))
+			},
+			fix: editionFixBucket,
+		},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			doc := tc.run(t)
+			note := editionNote(doc)
+			if note == "" {
+				t.Fatalf("no edition-unresolved note, and the read cannot have happened: %+v", doc.Notes)
+			}
+			if !strings.HasSuffix(note, "; "+tc.fix) {
+				t.Errorf("the note %q does not end in the fix %q", note, tc.fix)
+			}
+		})
+	}
+}
+
+// editionNote is the note's message, or "" when the command wrote none.
+func editionNote(doc validateOutput) string {
+	for _, n := range doc.Notes {
+		if n.Path == "governance" && strings.Contains(n.Message, "the job images' edition unresolved") {
+			return n.Message
+		}
+	}
+	return ""
+}
+
+// editionProjectConfig writes a project config for aurora into a config
+// directory of this test's own and selects it, so validate has a project to
+// read the job images' records through. repos is the config's repos: block and
+// bucket its bucket_url, either of which a case may write to make the read
+// fail later than the last.
+func editionProjectConfig(t *testing.T, repos, bucket string) {
+	t.Helper()
+	path := isolateProjects(t, t.TempDir())
+	cfg := "version: 1\nname: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: unused-bucket\n" +
+		"user: someone@example.com\nmax_parallel: 2\nendpoints: { no_auth: true }\n"
+	if bucket != "" {
+		cfg += "bucket_url: " + bucket + "\n"
+	}
+	if repos != "" {
+		cfg += "repos:\n" + repos
+	}
+	if err := os.WriteFile(path, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// editionRepoFile is a repository file that writes a governance: block — the
+// key that makes the edition of the job images worth reading — naming project,
+// in a directory of its own.
+func editionRepoFile(t *testing.T, project string) string {
+	t.Helper()
+	dir := t.TempDir()
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": "version: 1\nproject: " + project + "\n" +
+		"git: { provider: github, base_branch: main }\nagent: { auth: api-key }\n" +
+		"governance: { review_ratio: 3 }\n" +
+		"workflows:\n  svc: { commands: { build: sh build.sh, test: sh test.sh } }\n"})
+	return filepath.Join(dir, "fugaro.yaml")
+}
+
+// editionCheckout makes the working directory a checkout whose origin names
+// repo and whose file names github as the provider, and returns the file's
+// path. provider is what the checkout claims, so a local config that says
+// otherwise is the slug resolution failing.
+func editionCheckout(t *testing.T, repo, provider string) string {
+	t.Helper()
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:"+repo+".git")
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": "version: 1\nproject: aurora\n" +
+		"git: { provider: " + provider + ", base_branch: main }\nagent: { auth: api-key }\n" +
+		"governance: { review_ratio: 3 }\n" +
+		"workflows:\n  svc: { commands: { build: sh build.sh, test: sh test.sh } }\n"})
+	t.Chdir(dir)
+	return filepath.Join(dir, "fugaro.yaml")
+}
+
+// validateEditionDoc runs validate --json on path and decodes what it wrote.
+// A file that carries problems still writes the document, and a note is never
+// a problem, so the error is not the thing this reads.
+func validateEditionDoc(t *testing.T, path string) validateOutput {
+	t.Helper()
+	out, _, _ := execute(t, "validate", "--json", path)
+	var doc validateOutput
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("validate wrote %q: %v", out, err)
+	}
+	return doc
 }
 
 // TestRunDoesNotGateAFileThatWritesNoGovernance: the gate is the key's, so a

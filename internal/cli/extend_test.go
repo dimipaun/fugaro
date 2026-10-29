@@ -91,7 +91,7 @@ func TestRegisteredCommandCannotShadowACoreCommand(t *testing.T) {
 	before := coreRootPaths()
 
 	core := coreSurface()
-	for _, name := range []string{"run", "account", "help", "completion"} {
+	for _, name := range []string{"run", "account", "help", "completion", "__complete", "__completeNoDesc"} {
 		if !core.rootCommands[name] {
 			t.Errorf("the released tree does not answer to %s at the root: a registration under that name would take it over", name)
 		}
@@ -102,6 +102,9 @@ func TestRegisteredCommandCannotShadowACoreCommand(t *testing.T) {
 		{"a command named after a core command", "fugaro-test-paid", "run"},
 		{"an alias the released tree holds", "account", "account"},
 		{"cobra's own help command", "help", "help"},
+		{"cobra's own completion command", "completion", "completion"},
+		{"the shell's completion entry point", "__complete", "__complete"},
+		{"the shell's completion entry point without descriptions", "__completeNoDesc", "__completeNoDesc"},
 	}
 	for _, tc := range refused {
 		err := RegisterCommand(tc.key, func() *cobra.Command {
@@ -127,7 +130,16 @@ func TestRegisteredCommandCannotShadowACoreCommand(t *testing.T) {
 	}
 }
 
-func TestRegisteredCommandCannotReplaceCoreSubcommandsOrPersistentFlags(t *testing.T) {
+// TestRegistrationTakesNoCoreNameAliasOrRootFlag is the registry's add-never-
+// replace rule over the whole surface a name can reach (design
+// ee-boundary-moves.md §5.1, docs/subscriptions/implementation-plan.md S1.2):
+// a registration may bring its own subcommands and its own local flags, but it
+// may not answer to a name or alias the released tree holds at the root, and it
+// may not re-declare a persistent flag the root carries — each would take a
+// name or a flag away from the released tree rather than add one. A subcommand
+// under the registered command's own path, and a flag the root does not carry,
+// are its business.
+func TestRegistrationTakesNoCoreNameAliasOrRootFlag(t *testing.T) {
 	extendState(t)
 	core := coreSurface()
 	want := findCmd(t, newCoreRoot(), "run").Short
@@ -219,7 +231,70 @@ func TestLateOrDuplicateRegistrationIsRefused(t *testing.T) {
 	}
 }
 
-// TestNoRegistrationLeavesTheRootUnchanged: the registry is inert. A build that
+// TestRegistrationTakesNoEarlierRegistrationsName: the second half of the
+// add-never-replace rule. cobra answers to a child by name or alias in the
+// order commands were added, so a registration that reuses a name an earlier
+// registration brought would be found after that command rather than instead
+// of it — an addition under a name the tree already answers to (design §5.1).
+// The collision is the same one whichever side of the second registration the
+// reused name sits on, and it is the accepted registration's aliases that make
+// the name half reachable at all: a repeated KEY is the pre-existing duplicate
+// check (TestLateOrDuplicateRegistrationIsRefused), and it is a key that
+// matches an earlier registration's alias, rather than its own name, that this
+// rule alone refuses.
+//
+// A refused registration reaches neither the registry nor the tree: the tree
+// holds the one accepted command under its own name, and nothing answers to
+// the names the refusals tried to reuse.
+func TestRegistrationTakesNoEarlierRegistrationsName(t *testing.T) {
+	extendState(t)
+	if err := RegisterCommand("fugaro-test-paid", func() *cobra.Command {
+		return &cobra.Command{Use: "fugaro-test-paid", Aliases: []string{"fugaro-test-alias"}}
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		what, key, use, want string
+		alias                []string
+	}{
+		{what: "a name an earlier registration holds as an alias", key: "fugaro-test-alias",
+			use: "fugaro-test-alias", want: "an earlier registration already answers to that name"},
+		{what: "an alias an earlier registration holds as a name", key: "fugaro-test-other",
+			use: "fugaro-test-other", alias: []string{"fugaro-test-paid"}, want: "an earlier registration already holds"},
+		{what: "an alias an earlier registration holds as an alias", key: "fugaro-test-third",
+			use: "fugaro-test-third", alias: []string{"fugaro-test-alias"}, want: "an earlier registration already holds"},
+	} {
+		err := RegisterCommand(tc.key, func() *cobra.Command {
+			return &cobra.Command{Use: tc.use, Aliases: tc.alias}
+		})
+		if err == nil {
+			t.Fatalf("%s (%s) was accepted: cobra would find the earlier command first", tc.what, tc.key)
+		}
+		if !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: the refusal %q does not name the collision (%q)", tc.what, err, tc.want)
+		}
+	}
+	if len(registrations) != 1 {
+		t.Errorf("a refused registration was kept: %v", registrations)
+	}
+	if !registeredNames["fugaro-test-alias"] {
+		t.Error("the first registration's alias was not recorded as a name the tree answers to")
+	}
+
+	root := NewRootCmd()
+	want := append(coreRootPaths(), "fugaro fugaro-test-paid")
+	sort.Strings(want)
+	if got := commandPaths(root); !slices.Equal(got, want) {
+		t.Errorf("a refused registration reached the tree:\n%v\nwant\n%v", got, want)
+	}
+	for _, name := range []string{"fugaro-test-alias", "fugaro-test-other", "fugaro-test-third"} {
+		if c, _, _ := root.Find([]string{name}); c != nil && c.Name() == name {
+			t.Errorf("the refused name %s answers in the tree", name)
+		}
+	}
+}
+
 // registers nothing, and whose paid names are still core commands, builds
 // exactly the released tree — no stub, no extra command. This is the test that
 // has to change in the commit that makes report and coordinator paid commands:
@@ -276,23 +351,30 @@ func TestStubSaysWhyThroughASeam(t *testing.T) {
 	assertStubSaysWhy(t, "digest", "digest")
 }
 
+// assertStubSaysWhy pins the stub's whole answer: the exact refusal, a
+// non-zero exit, nothing on stdout, and no word about a licence anywhere. The
+// message is a capability statement -- this build does not include the command
+// -- and never a licence notice (D523, design ee-boundary-moves.md §6): it may
+// not promise a licence, a key or a payment, which is what "licen" would do.
 func assertStubSaysWhy(t *testing.T, name string, args ...string) {
 	t.Helper()
-	_, _, err := execute(t, args...)
+	out, errOut, err := execute(t, args...)
 	if err == nil {
 		t.Fatalf("%v ran successfully, want a non-zero exit", args)
 	}
 	if ExitCode(err) != ExitUserError {
 		t.Errorf("%v exited %d, want %d: %v", args, ExitCode(err), ExitUserError, err)
 	}
-	for _, want := range []string{name, "part of Fugaro Subscription Edition", "does not include it"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the stub's message %q does not say %q", err, want)
-		}
+	want := name + " is part of Fugaro Subscription Edition; this build does not include it"
+	if err.Error() != want {
+		t.Errorf("the stub's message for %v = %q, want exactly %q", args, err.Error(), want)
 	}
-	for _, cobras := range []string{"unknown command", "unknown flag"} {
-		if strings.Contains(err.Error(), cobras) {
-			t.Errorf("the stub fell through to cobra's %q: %q", cobras, err)
+	if out != "" {
+		t.Errorf("the stub wrote %q to stdout, want it empty", out)
+	}
+	for _, stream := range []struct{ name, text string }{{"stdout", out}, {"stderr", errOut}} {
+		if strings.Contains(strings.ToLower(stream.text), "licen") {
+			t.Errorf("the stub's %s %q speaks of a licence, which D523 defers", stream.name, stream.text)
 		}
 	}
 }
