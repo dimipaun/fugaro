@@ -285,7 +285,7 @@ func assertStubSaysWhy(t *testing.T, name string, args ...string) {
 	if ExitCode(err) != ExitUserError {
 		t.Errorf("%v exited %d, want %d: %v", args, ExitCode(err), ExitUserError, err)
 	}
-	for _, want := range []string{name, "part of Fugaro Enterprise", "does not include it"} {
+	for _, want := range []string{name, "part of Fugaro Subscription Edition", "does not include it"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the stub's message %q does not say %q", err, want)
 		}
@@ -316,7 +316,7 @@ func TestStubIsReplacedOnlyByItsRegistration(t *testing.T) {
 		t.Errorf("a second registration's own name = %q, %v; want its command", out, err)
 	}
 	_, _, err = execute(t, "fugaro-test-other")
-	if err == nil || !strings.Contains(err.Error(), "part of Fugaro Enterprise") {
+	if err == nil || !strings.Contains(err.Error(), "part of Fugaro Subscription Edition") {
 		t.Errorf("a stub left alone by two registrations = %v, want the Enterprise message", err)
 	}
 }
