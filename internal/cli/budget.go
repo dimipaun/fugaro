@@ -232,6 +232,9 @@ type budgetShowOptions struct {
 	cloud     cloudOptions
 	repo      string
 	all, json bool
+	// compute asks for each repository's compute dollars, which are read from
+	// the runs bucket's own records: the database holds no compute at all.
+	compute bool
 }
 
 func newBudgetShowCmd() *cobra.Command {
@@ -247,7 +250,14 @@ func newBudgetShowCmd() *cobra.Command {
 			"capped. Counted is spent plus what runs have reserved and not released; --json\n" +
 			"carries that difference as leased_usd, the money leased and not yet spent: a\n" +
 			"crashed run's lease is never released, so it stays in the figure for the rest\n" +
-			"of the day.",
+			"of the day. --compute adds each repository's compute dollars, read from the\n" +
+			"runs bucket: a run's compute is in its own record and nowhere in the\n" +
+			"database, so the flag costs one listing and one read per run of the day and\n" +
+			"is left off by everything that only needs the counters. The figure is an\n" +
+			"estimate by design, priced from each run's own price table, and covers the\n" +
+			"runs that started today and recorded a result: a run still in flight has\n" +
+			"recorded none, so today's is partial, and a repository whose runs recorded\n" +
+			"no estimate is null, never 0.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runBudgetShow(cmd, &o) },
 	}
@@ -255,6 +265,7 @@ func newBudgetShowCmd() *cobra.Command {
 	f.StringVar(&o.repo, "repo", "", "only this repository (owner/name)")
 	f.BoolVar(&o.all, "all", false, "every repository in the database")
 	f.BoolVar(&o.json, "json", false, "print machine-readable output")
+	f.BoolVar(&o.compute, "compute", false, "also read each repository's compute dollars from the runs bucket (an estimate; null where the day's runs recorded none)")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
 }
@@ -304,6 +315,24 @@ type showDefaults struct {
 	RepoPerRunCapUSD *float64 `json:"repo_per_run_cap_usd"`
 }
 
+// computeFigure is showRepo's compute_usd. The key is absent unless
+// `budget show --compute` asked for it, so a document from a command without
+// the flag is byte for byte what it always was; with the flag it is null
+// rather than 0 where the figure is unknown, because a repository whose runs
+// of the day recorded no estimate is n/a, never free. A *float64 cannot say
+// both: omitempty drops a nil pointer instead of writing null.
+type computeFigure struct {
+	usd   float64
+	known bool
+}
+
+func (f computeFigure) MarshalJSON() ([]byte, error) {
+	if !f.known {
+		return []byte("null"), nil
+	}
+	return json.Marshal(f.usd)
+}
+
 type showRepo struct {
 	Slug         string   `json:"slug"`
 	Repo         string   `json:"repo,omitempty"`
@@ -312,14 +341,15 @@ type showRepo struct {
 	PerRunCapUSD *float64 `json:"per_run_cap_usd"`
 	// PerRunCapSource is where the effective per-run cap comes from: repo,
 	// default, global, or none when no per-run cap is set anywhere.
-	PerRunCapSource string    `json:"per_run_cap_source"`
-	CountedUSD      float64   `json:"counted_usd"`
-	SpentUSD        float64   `json:"spent_usd"`
-	NotionalUSD     float64   `json:"notional_usd"`
-	LeasedUSD       float64   `json:"leased_usd"` // counted - spent, floored at 0: see showGlobal
-	HeadroomUSD     *float64  `json:"headroom_usd"`
-	Kill            *showKill `json:"kill"`
-	Running         []showRun `json:"running"`
+	PerRunCapSource string         `json:"per_run_cap_source"`
+	CountedUSD      float64        `json:"counted_usd"`
+	SpentUSD        float64        `json:"spent_usd"`
+	NotionalUSD     float64        `json:"notional_usd"`
+	ComputeUSD      *computeFigure `json:"compute_usd,omitempty"`
+	LeasedUSD       float64        `json:"leased_usd"` // counted - spent, floored at 0: see showGlobal
+	HeadroomUSD     *float64       `json:"headroom_usd"`
+	Kill            *showKill      `json:"kill"`
+	Running         []showRun      `json:"running"`
 }
 
 // perRunCapSource names the scope whose per-run cap binds a repository: the
@@ -511,6 +541,10 @@ func runBudgetShow(cmd *cobra.Command, o *budgetShowOptions) error {
 	}
 
 	listed := 0
+	var compute map[string]computeFigure
+	if o.compute {
+		compute = repoCompute(ctx, lc, day, func(m string) { doc.Warnings = append(doc.Warnings, m) })
+	}
 	for _, k := range slices.Sorted(maps.Keys(keys)) {
 		slug := k
 		if s, err := budget.Unkey(k); err == nil {
@@ -541,6 +575,12 @@ func runBudgetShow(cmd *cobra.Command, o *budgetShowOptions) error {
 		}
 		sp := repoSpend[k]
 		rs.CountedUSD, rs.SpentUSD, rs.NotionalUSD = sp.Counted.USD(), sp.Spent.USD(), sp.Notional.USD()
+		if o.compute {
+			// A repository the day recorded no estimate for keeps the zero
+			// figure, which marshals as null: unknown is n/a, never free.
+			f := compute[k]
+			rs.ComputeUSD = &f
+		}
 		rs.LeasedUSD = watch.LeasedUSD(sp.Counted, sp.Spent)
 		rs.HeadroomUSD = headroom(roomUnder(rc.RepoDaily, sp.Counted), roomUnder(caps.GlobalDaily, global.Counted))
 		if kv, ok := cfg.Kill.Repos[k]; ok {
@@ -603,6 +643,34 @@ func runBudgetShow(cmd *cobra.Command, o *budgetShowOptions) error {
 	}
 	printShow(cmd.OutOrStdout(), doc)
 	return nil
+}
+
+// repoCompute is today's compute dollars per repository, keyed the way the
+// document's rows are. It reads the runs bucket through the same facts reader
+// the spend report uses (budget.BucketFacts, one listing per slug and one read
+// per run of the day): a run's compute is in its own result.json and nowhere
+// in the database. Only the repositories the day recorded an estimate for are
+// in the map -- every other row stays unknown rather than 0. A read failure is
+// a warning and no figures at all: `budget show` is what the console's rail
+// and Projects screens call, so --compute may never fail the command.
+func repoCompute(ctx context.Context, lc *localcfg.Config, day int64, warn func(string)) map[string]computeFigure {
+	facts := &lazyFacts{lc: lc, warn: warn}
+	defer facts.close()
+	byDay, _, err := facts.Facts(ctx, day, day)
+	if err != nil {
+		warn("compute is unavailable: the runs bucket could not be read: " + err.Error())
+		return nil
+	}
+	out := map[string]computeFigure{}
+	for _, f := range byDay[day] {
+		if !f.ComputeEstimated {
+			continue
+		}
+		k := budget.Key(f.Slug)
+		g := out[k]
+		out[k] = computeFigure{usd: g.usd + f.ComputeUSD, known: true}
+	}
+	return out
 }
 
 func keySet[V any](m map[string]V) map[string]struct{} {

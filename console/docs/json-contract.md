@@ -46,9 +46,8 @@ later becomes a real JSON key of a shape here, so the list cannot outlive its
 reason. **The list is empty today**: `leased_usd` (§2) left it when the CLI
 started writing the key, so it now stands on the structs like every other field
 — a console still reads it as optional, because an older CLI writes no such key.
-`compute_usd` (§3) is the one key still named ahead of the CLI that will write
-it, and it needs no guard entry: it is already a real key of `report --json`
-(§4).
+`compute_usd` (§3) never needed an entry: it was already a real key of
+`report --json` (§4), and `budget show --compute` writes it now.
 
 ## 1. The five availability states
 
@@ -358,25 +357,41 @@ both `*float64`.
 **`repo`, `default` or `none`**), `per_run_cap_usd` `*float64`,
 **`per_run_cap_source`** (string, no `omitempty` — `repo`, `default`, `global`
 or `none`; `perRunCapSource`), `counted_usd`, `spent_usd`,
-`notional_usd`, `leased_usd` float64 (no `omitempty`, as on `showGlobal` and
-floored the same way: the repository's own outstanding lease),
-`headroom_usd` `*float64`, `kill` `*showKill`,
+`notional_usd`, `compute_usd` (below), `leased_usd` float64 (no `omitempty`, as
+on `showGlobal` and floored the same way: the repository's own outstanding
+lease), `headroom_usd` `*float64`, `kill` `*showKill`,
 `running` `[]showRun`. **`per_run_cap_source` is the "binding scope named"
 the design's §6.2 Spend screen draws** — it is already in the document and
 needs no CLI change (§4.3's "not a gap" note).
 
-**`compute_usd` is approved on each `showRepo` and no CLI release writes it
-yet** (the owner approved it on 2026-10-28, with §2's `leased_usd`): a
-`*float64` of the repository's compute dollars, an **estimate** by design
+**`compute_usd` is written by `budget show --compute` and by nothing else**
+(the flag landed on 2026-10-29; the owner approved the key on 2026-10-28).
+It is the **only flag-conditioned key** in this document: without the flag the
+row carries **no such key at all**, so a command without it writes byte for
+byte what it always did — `internal/cli/computeFigure` is why the key can be
+absent and null and not one or the other, and `TestShowComputeIsOptIn` pins
+both halves. With the flag, the key is a `*float64` of the repository's
+compute dollars for the day: a **number** is the estimate
 (`runstore.Cost.ComputeUSD`, the same account §4 reports — and, like
-`leased_usd` now, already a real wire name, on `report --json`'s rows and on
-`runstore.Cost`). The console reads it as **optional** — an absent key or `null`
-is **unavailable** (`n/a`, never `0`), a number is **estimated** — and **no
-screen draws it yet**; the Spend redesign is the reader. It is the one key of
-this block not in `showRepo` today, and the row reader accepts it ahead of the
-struct. A value that is not a number is `n/a` and not a refusal, because this
-document's reader refuses nothing: §2 states why that is the same rule and not a
-second one.
+`leased_usd`, already a real wire name, on `report --json`'s rows and on
+`runstore.Cost`), and **null** is *unavailable* (`n/a`, never `0`): no run of
+the day recorded an estimate, or the runs bucket could not be read — the
+latter appends a warning saying so, and the command still succeeds. The
+console reads it as **optional** — an absent key, `null` and a non-number all
+read as unavailable, because this document's reader refuses nothing (§2 states
+why that is the same rule and not a second one).
+
+Three facts the number's reader has to know, all of them the CLI's own words
+in the command's long help. **(i) It is an estimate by design**, priced from
+each run's own price table, so a VM run's figure leaves the VM's boot disk and
+Cloud NAT out (design compute-backend.md §5.2, C17). **(ii) It is the day's
+finished runs only, attributed to the UTC day each run *started* on** — a run
+minted before midnight and started after it counts to the day it started, and a
+run still in flight has recorded no result yet — so **today's figure is always
+partial** and a screen must not draw it as a closed day. **(iii) The read is
+one listing per repository plus one record read per run of the day**, which is
+why `--compute` is opt-in: the rail and the Projects screen call this same
+command and pay for no bucket read.
 
 `showRun`: `slug`, `run`, `repo`°, `workflow`°, `title`°,
 `stage`°, `round` (**int**, `omitempty` — unlike `watch`'s string),
@@ -388,8 +403,8 @@ bool°. `°` = `omitempty`.
 `JSONKill`.
 
 **Flags, read off the cobra command** (`newBudgetShowCmd`): `--repo`, `--all`,
-`--json`, plus `addCloudFlags`' `--config`, `--project`, `--gcp-project`,
-`--region`.
+`--json`, `--compute`, plus `addCloudFlags`' `--config`, `--project`,
+`--gcp-project`, `--region`.
 
 ## 4. `fugaro report --json`
 
