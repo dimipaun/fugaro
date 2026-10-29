@@ -1413,13 +1413,15 @@ function axis(share: number): string {
   return String(Math.round(share * FLEET_BAR_WIDTH * 100) / 100)
 }
 
-/** FLEET_SPENT_WORD, FLEET_LEASED_WORD and FLEET_HEADROOM_WORD are the legend's
- * own words, and they are the design's: "Spent" is billed money, "Leased" is
- * reserved for an open lease, and "Headroom" is what is left of the cap. */
+/** FLEET_SPENT_WORD, FLEET_LEASED_WORD, FLEET_HEADROOM_WORD and
+ * FLEET_COUNTED_WORD are the legend's own words, and they are the design's:
+ * "Spent" is billed money, "Leased" is reserved for an open lease, "Headroom" is
+ * what is left of the cap, and "Counted" is the one figure the document carries
+ * when it does not split the first two. */
 const FLEET_SPENT_WORD = 'Spent'
 const FLEET_LEASED_WORD = 'Leased'
 const FLEET_HEADROOM_WORD = 'Headroom'
-const FLEET_COUNTED_WORD = 'counted'
+const FLEET_COUNTED_WORD = 'Counted'
 
 /** FLEET_HERO_NOTE is why the hero number is not on the bar: notional dollars
  * are a subscription's list price, they are billed to nobody and count toward
@@ -1457,58 +1459,65 @@ const FLEET_WAITING_WORD = 'waiting for a lease'
  * 6.1 rule 3, "never colour alone"). */
 const FLEET_WARN_ICON = '⚠'
 
-/** FleetSegment is one segment of the cap bar and its legend row: the reading
- * the value comes from, the share of the cap it occupies, and the classes both
- * the rect and the legend row are keyed by. */
-interface FleetSegment {
+/** FleetAccount is one money account of the panel: the word it is called by, the
+ * reading behind it, and whether the bar draws a shape for it. */
+interface FleetAccount {
   readonly name: 'counted' | 'spent' | 'leased' | 'headroom'
   readonly word: string
   readonly reading: Reading
+  readonly drawn: boolean
+}
+
+/** FleetSegment is one account the bar draws, carrying the share of the cap it
+ * occupies. */
+interface FleetSegment extends FleetAccount {
   readonly share: number
 }
 
-/** fleetSegments is the bar's segments, in drawing order.
+/** fleetAccounts is the panel's money accounts, in drawing order: what is under
+ * the cap, the lease beside it, and what is left of the cap.
+ *
+ * **The bar and the legend are both drawn from this one list**, so the legend
+ * cannot come to describe a segment the bar does not draw.
+ *
+ * While the CLI writes no `leased_usd` (`schema.ts`'s `optionalMoneyAt` reads it
+ * as optional, so it is `unavailable` on every document today), the split into
+ * spent and leased cannot be drawn: the bar then carries the one figure the
+ * document does hold -- `counted_usd` -- and the Leased row stays, unmeasured, as
+ * the one place the absence is visible. Drawing "spent" alone and calling the
+ * rest leased would be inventing a division the document does not carry.
+ *
+ * `counted_usd` is the sum of the split's two parts, so it is the account under
+ * the cap in exactly one of the two shapes and never a rule of its own: adding
+ * it beside spent and leased would put the same money on the axis twice.
+ */
+function fleetAccounts(model: LiveModel): readonly FleetAccount[] {
+  const leased = model.total.leasedUsd
+  const split = leased.value !== null
+  return [
+    split
+      ? { name: 'spent', word: FLEET_SPENT_WORD, reading: model.total.spentUsd, drawn: true }
+      : { name: 'counted', word: FLEET_COUNTED_WORD, reading: model.total.countedUsd, drawn: true },
+    { name: 'leased', word: FLEET_LEASED_WORD, reading: leased, drawn: split },
+    { name: 'headroom', word: FLEET_HEADROOM_WORD, reading: model.fleet.headroom, drawn: true },
+  ]
+}
+
+/** fleetSegments is the accounts the bar draws, with each one's share of the cap.
  *
  * **The three money accounts are kept apart.** `counted_usd` is what is under
  * the cap; `notional_usd` is a list price that no cap counts and it is the hero
  * number instead of a segment; and a cap nobody read draws no segments at all --
  * an empty track, never a bar at zero.
- *
- * While the CLI does not write `leased_usd` (`schema.ts`'s `optionalMoneyAt`
- * reads it as optional, so it is `unavailable` on every document today), the
- * split into spent and leased cannot be drawn: the panel then draws **two**
- * segments -- counted and headroom -- and the legend says `n/a` for Leased with
- * its reason in the tooltip. Drawing "spent" alone and calling the rest leased
- * would be inventing a division the document does not carry.
  */
 function fleetSegments(model: LiveModel): readonly FleetSegment[] {
   const cap = model.total.dailyCapUsd.value
   if (cap === null || cap <= 0) return []
   const share = (value: number | null): number =>
     value === null ? 0 : Math.min(1, Math.max(0, value / cap))
-  const headroom: FleetSegment = {
-    name: 'headroom',
-    word: FLEET_HEADROOM_WORD,
-    reading: model.fleet.headroom,
-    share: share(model.fleet.headroom.value),
-  }
-  const leased = model.total.leasedUsd
-  if (leased.value === null) {
-    return [
-      {
-        name: 'counted',
-        word: FLEET_COUNTED_WORD,
-        reading: model.total.countedUsd,
-        share: share(model.total.countedUsd.value),
-      },
-      headroom,
-    ]
-  }
-  return [
-    { name: 'spent', word: FLEET_SPENT_WORD, reading: model.total.spentUsd, share: share(model.total.spentUsd.value) },
-    { name: 'leased', word: FLEET_LEASED_WORD, reading: leased, share: share(leased.value) },
-    headroom,
-  ]
+  return fleetAccounts(model)
+    .filter((account) => account.drawn)
+    .map((account) => ({ ...account, share: share(account.reading.value) }))
 }
 
 /** fleetBar draws the cap bar: the empty track, then one rect per segment with
@@ -1554,16 +1563,25 @@ function fleetBar(factory: LiveFactory, segments: readonly FleetSegment[]): Scre
   return element
 }
 
-/** fleetLegendRow is one legend row: its swatch, its word and its mono value.
+/** fleetLegendRow is one legend row: the swatch for the shape the bar drew, the
+ * account's word and its mono value.
+ *
+ * **The swatch is drawn only for an account the bar draws.** A swatch is a key:
+ * a mark beside a word the bar never painted claims a colour that is nowhere on
+ * the bar, and the Leased row is exactly that row while the CLI writes no
+ * `leased_usd` -- its own `n/a`, with the reading's reason in the title, is what
+ * says the question was asked and could not be answered.
  *
  * The swatch is a decorative mark and carries `aria-hidden`; the word and the
  * value are the text, which is what makes the bar's segments readable at all.
  */
-function fleetLegendRow(factory: ScreenFactory, account: FleetSegment): ScreenElement {
+function fleetLegendRow(factory: ScreenFactory, account: FleetAccount): ScreenElement {
   const element = make(factory, 'li', 'live-fleet-key')
-  const swatch = cell(element, factory, 'span', 'live-fleet-swatch')
-  swatch.setAttribute('aria-hidden', 'true')
-  swatch.setAttribute('data-account', account.name)
+  if (account.drawn) {
+    const swatch = cell(element, factory, 'span', 'live-fleet-swatch')
+    swatch.setAttribute('aria-hidden', 'true')
+    swatch.setAttribute('data-account', account.name)
+  }
   literal(cell(element, factory, 'span', 'live-fleet-key-word'), account.word)
   // An unmeasured value is drawn through `putReading` like every other number,
   // so it is `n/a` with its reason in the title; the class is what lets the
@@ -1581,27 +1599,18 @@ function fleetLegendRow(factory: ScreenFactory, account: FleetSegment): ScreenEl
 }
 
 /** fleetLegend is the legend under the bar: one row per money account, in the
- * order the bar draws them.
+ * order the bar draws them, and the bar's own list of accounts is what it walks.
  *
- * The rows are the three accounts and not the bar's own segment list, and that
- * is the two-segment fallback's whole point: Leased is a segment of the design's
- * bar whether or not this CLI measures it, and its row -- the word, then `n/a`
- * with the reading's own reason in the title -- is what says the question was
- * asked and could not be answered. A legend built by walking the segments would
- * drop the row exactly when it is the only place the absence is visible.
- *
- * `counted` is not among the rows: the counted line under the legend carries it
- * with the CLI's own percentage, so a fourth row saying the same number twice
- * would be one figure with two homes.
+ * That list keeps the Leased row when the bar draws no lease, which is the
+ * two-segment fallback's whole point: Leased is a segment of the design's bar
+ * whether or not this CLI measures it, and its row -- the word, then `n/a` with
+ * the reading's own reason in the title -- is what says the question was asked
+ * and could not be answered. A legend built from the *segments* would drop the
+ * row exactly when it is the only place the absence is visible.
  */
 function fleetLegend(factory: ScreenFactory, model: LiveModel): ScreenElement {
   const element = make(factory, 'ul', 'live-fleet-legend')
-  const rows: readonly FleetSegment[] = [
-    { name: 'spent', word: FLEET_SPENT_WORD, reading: model.total.spentUsd, share: 0 },
-    { name: 'leased', word: FLEET_LEASED_WORD, reading: model.total.leasedUsd, share: 0 },
-    { name: 'headroom', word: FLEET_HEADROOM_WORD, reading: model.fleet.headroom, share: 0 },
-  ]
-  for (const row of rows) element.append(fleetLegendRow(factory, row))
+  for (const account of fleetAccounts(model)) element.append(fleetLegendRow(factory, account))
   return element
 }
 
@@ -1625,11 +1634,14 @@ function fleetStatCell(
  * fleetStats draws the panel's three stat cells: the fleet's burn rate, and how
  * many runs are active and queued.
  *
- * **The two notes are not decorations.** A count of active runs with no word
- * about a lost heartbeat is a count that hides the one thing a person watching
- * the fleet needs to know, and a queued count with no word about the lease says
- * nothing about why those runs are not moving. Both are the console's own
- * sentences, drawn as text beside the number rather than as a colour on it.
+ * **The two notes are not decorations, and neither is drawn when it is not true
+ * of the number beside it.** A count of active runs with no word about a lost
+ * heartbeat is a count that hides the one thing a person watching the fleet needs
+ * to know; a queued count with no word about the lease says nothing about why
+ * those runs are not moving; and a fleet with nothing queued is waiting for
+ * nothing, so "QUEUED 0 waiting for a lease" would claim a queue that does not
+ * exist. Both notes are the console's own sentences, drawn as text beside the
+ * number rather than as a colour on it.
  */
 function fleetStats(factory: ScreenFactory, model: LiveModel): ScreenElement {
   const element = make(factory, 'div', 'live-fleet-stats')
@@ -1653,7 +1665,9 @@ function fleetStats(factory: ScreenFactory, model: LiveModel): ScreenElement {
   element.append(
     fleetStatCell(factory, FLEET_QUEUED_WORD, (parent) => {
       const queued = numberCell(parent, factory, 'span', measured(model.fleet.queued), 'count', 'live-fleet-queued')
-      literal(cell(queued, factory, 'span', 'live-fleet-waiting'), FLEET_WAITING_WORD)
+      if (model.fleet.queued > 0) {
+        literal(cell(queued, factory, 'span', 'live-fleet-waiting'), FLEET_WAITING_WORD)
+      }
     }),
   )
 

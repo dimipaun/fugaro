@@ -655,6 +655,13 @@ function segmentWidths(tree: ScreenElement): readonly (string | null)[] {
   return all(tree, 'live-fleet-segment').map((segment) => segment.getAttribute('width'))
 }
 
+/** segmentOffsets is each segment's own left edge on that axis. A bar that drew
+ * every segment at zero -- stacking them, drawing past the end or losing the
+ * clamp -- has the right widths and the wrong picture. */
+function segmentOffsets(tree: ScreenElement): readonly (string | null)[] {
+  return all(tree, 'live-fleet-segment').map((segment) => segment.getAttribute('x'))
+}
+
 /** legendValues is the number each legend row draws, in row order. */
 function legendValues(tree: ScreenElement): readonly (string | null)[] {
   return all(tree, 'live-fleet-key').map(
@@ -662,14 +669,23 @@ function legendValues(tree: ScreenElement): readonly (string | null)[] {
   )
 }
 
-/** legendRow is the legend row whose swatch is keyed to a money account: the
- * account is the attribute the stylesheet paints the row's mark by. */
-function legendRow(tree: ScreenElement, account: string): FakeScreen {
+/** legendRow is the legend row that carries a given word. The word is what a
+ * reader has: a row the bar paints no shape for has no swatch to key it by, and
+ * that is exactly the row this suite is about. */
+function legendRow(tree: ScreenElement, word: string): FakeScreen {
   const row = all(tree, 'live-fleet-key').find(
-    (one) => all(one, 'live-fleet-swatch')[0]?.getAttribute('data-account') === account,
+    (one) => all(one, 'live-fleet-key-word')[0]?.textContent === word,
   )
-  if (row === undefined) throw new Error(`no ${account} legend row`)
+  if (row === undefined) throw new Error(`no ${word} legend row`)
   return row
+}
+
+/** legendSwatches is each legend row's swatch, or null where the row has none:
+ * a swatch keys a shape, so a row whose account the bar does not draw has none. */
+function legendSwatches(tree: ScreenElement): readonly (string | null)[] {
+  return all(tree, 'live-fleet-key').map(
+    (key) => all(key, 'live-fleet-swatch')[0]?.getAttribute('data-account') ?? null,
+  )
 }
 
 /** panel is the drawn fleet budget panel of a model. */
@@ -717,9 +733,30 @@ describe('the fleet budget panel', () => {
     )
     expect(segmentNames(tree)).toEqual(['spent', 'leased', 'headroom'])
     // Each width is its share of the cap: spent 12.5 of 100, leased 37.5 of 100,
-    // headroom the remaining 50. The three add up to the axis and no further.
+    // headroom the remaining 50. The three add up to the axis and no further,
+    // and each starts where the one before it ended.
     expect(segmentWidths(tree)).toEqual(['12.5', '37.5', '50'])
+    expect(segmentOffsets(tree)).toEqual(['0', '12.5', '50'])
     expect(legendValues(tree)).toEqual(['$12.50', '$37.50', '$50.00'])
+    // Every row here has a shape on the bar, so every row is keyed by one.
+    expect(legendSwatches(tree)).toEqual(['spent', 'leased', 'headroom'])
+  })
+
+  it('stops drawing at the end of the cap when the parts overrun it', () => {
+    // A lease the CLI recorded beside a spend that moved: 80 + 80 against a 100
+    // cap. Each share is clamped on its own, which is not enough -- the two
+    // together reach 160 and the second segment would be drawn past the end of
+    // the axis, over the headroom and out of the bar. The clamp is cumulative,
+    // so the bar stops at 100: the lease takes what is left of the axis and the
+    // headroom, which is truly zero here, is drawn as nothing at 100.
+    const tree = renderLive(
+      factory,
+      fleetModel({ counted_usd: 160, spent_usd: 80, leased_usd: 80, daily_cap_usd: 100, percent: 100 }),
+      'light',
+    )
+    expect(segmentNames(tree)).toEqual(['spent', 'leased', 'headroom'])
+    expect(segmentWidths(tree)).toEqual(['80', '20', '0'])
+    expect(segmentOffsets(tree)).toEqual(['0', '80', '100'])
   })
 
   it('draws two segments and says Leased is not measured while no CLI writes it', () => {
@@ -730,13 +767,20 @@ describe('the fleet budget panel', () => {
     const tree = renderLive(factory, fleetModel({ counted_usd: 50, daily_cap_usd: 100, percent: 50 }), 'light')
     expect(segmentNames(tree)).toEqual(['counted', 'headroom'])
     expect(segmentWidths(tree)).toEqual(['50', '50'])
-    expect(legendValues(tree)).toEqual(['$0.00', UNAVAILABLE_MARK, '$50.00'])
-    const leased = legendRow(tree, 'leased')
+    expect(segmentOffsets(tree)).toEqual(['0', '50'])
+    expect(legendValues(tree)).toEqual(['$50.00', UNAVAILABLE_MARK, '$50.00'])
+    // The rows are the accounts the bar has, not the design's three: the one
+    // segment under the cap is counted, so the row above it says counted and
+    // carries the swatch that keys the fill the bar painted for it. The Leased
+    // row keeps its place and its `n/a`, and has no swatch, because there is no
+    // leased shape on the bar for a mark to key.
+    expect(legendSwatches(tree)).toEqual(['counted', null, 'headroom'])
+    const leased = legendRow(tree, 'Leased')
     expect(all(leased, 'live-num')[0]?.getAttribute('title')).toBe('the document has no total.leased_usd')
     // The unmeasured value is marked as such for the stylesheet, and the two
     // measured rows are not.
     expect(all(leased, 'live-num')[0]?.classes).toContain('live-fleet-unread')
-    expect(all(legendRow(tree, 'headroom'), 'live-num')[0]?.classes).not.toContain('live-fleet-unread')
+    expect(all(legendRow(tree, 'Headroom'), 'live-num')[0]?.classes).not.toContain('live-fleet-unread')
   })
 
   it('never puts the notional dollars on the cap axis or in a sum', () => {
@@ -753,7 +797,7 @@ describe('the fleet budget panel', () => {
     const panel = one(tree, 'live-fleet')
     expect(drawn(panel)).not.toContain('$53.29')
     expect(segmentWidths(tree)).toEqual(['50', '50'])
-    expect(legendValues(tree)).toEqual(['$0.00', UNAVAILABLE_MARK, '$50.00'])
+    expect(legendValues(tree)).toEqual(['$50.00', UNAVAILABLE_MARK, '$50.00'])
     // And the notional figure is drawn once, in the hero: it is a reading of
     // its own, outside the cap, and the bar carries none of it.
     expect(texts(tree, 'live-total-notional')).toEqual([`${NOTIONAL_MARK}$3.29`])
@@ -815,6 +859,15 @@ describe('the fleet budget panel', () => {
     // the same list, and a row counted in both would say the fleet is busier
     // than it is.
     expect(one(tree, 'live-fleet-active').textContent).toBe('1')
+
+    // A fleet with nothing queued is waiting for nothing: the note is drawn
+    // only where it is true of the number beside it, the way the active cell's
+    // lost-heartbeat note is.
+    const empty = theLastFrame()
+    const runs = empty.runs.map((run) => ({ ...run, queued: false }))
+    const mover = renderLive(factory, buildLiveModel({ ...empty, runs }, new BurnHistory()), 'light')
+    expect(one(mover, 'live-fleet-queued').textContent).toBe('0')
+    expect(all(mover, 'live-fleet-waiting')).toHaveLength(0)
   })
 
   it('names the panel, and hides the shape the legend already spells out', () => {
