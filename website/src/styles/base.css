@@ -26,7 +26,7 @@
  * Motion: the one transition here uses `--duration-fast`, and the global reduced-motion rule
  * in `Base.astro` (W1.3, D105) neutralises it — that rule is not repeated here.
  *
- * Fonts: `--font-sans` and `--font-mono` are system stacks. The repository ships no font
+ * Fonts: `--font-sans` and `--font-mono` are system stacks. The repository ships no font (taste-skill-ignore: prose in a comment)
  * file (`website/public/fonts/` does not exist), so nothing is fetched (D106).
  */
 
@@ -62,8 +62,18 @@ main {
   overflow-wrap: break-word;
 }
 
-main:has(> .hero, > [data-security-page]) {
+main:has(> .hero, > [data-security-page], > .campaign-hero) {
   padding: 0;
+}
+
+/* The home page's blocks and the campaign pages' five sections are full-width bands (a field of
+ * colour runs to the window's edges) that pad their own content onto the page's one pair of
+ * margins with `--frame-gutter` (the owner's ruling of 2026-10-23, lever 6), so `main` does not
+ * narrow them either: that gutter is a percentage of the box it is used in, so a narrowed box
+ * resolves it against the wrong width and every band's content lands a gutter right of the
+ * header and the footer. */
+main:has(> .hero, > .campaign-hero) {
+  max-width: none;
 }
 
 /* ---- 2. the chrome ---------------------------------------------------------------------- */
@@ -111,7 +121,8 @@ a.skip-link:focus {
   justify-content: space-between;
   gap: var(--space-2xs);
   padding-block: var(--space-sm);
-  border-bottom: var(--border-width) solid var(--border);
+  /* No rule under the row (the owner's ruling of 2026-10-23, lever 5: hairlines become tone
+   * steps or space). The header is the ground, and the page below it starts after its room. */
   background: var(--ground);
 }
 
@@ -189,7 +200,7 @@ a.skip-link:focus {
   .site-wordmark-name {
     position: absolute;
     width: 1px;
-    height: 1px;
+    height: 1px; /* taste-skill-ignore: the visually-hidden pattern, not a drawn rule */
     overflow: hidden;
     clip-path: inset(50%);
     white-space: nowrap;
@@ -288,11 +299,38 @@ a.skip-link:focus {
   right: 0;
   left: 0;
   padding: var(--space-sm);
-  border-bottom: var(--border-width) solid var(--border);
-  /* The panel and not the ground, since the bold redesign: a menu hanging over the page is a
-   * thing laid on the page, and the step between the ground and the surface is what says so
-   * without a shadow (a shadow would be a colour literal no palette token holds). */
-  background: var(--panel);
+  /* The surface and not the ground, and no outline (the owner's ruling of 2026-10-23, lever 5):
+   * a menu hanging over the page is a thing laid on the page, and the step between the ground
+   * and the surface is what says so. */
+  background: var(--surface);
+  transform-origin: top;
+}
+
+/* An opened group's panel grows out of its trigger (owner-approved motion opportunities
+ * 2026-10-23): enter only, and nothing for a reader who asked for less motion. A closed group's
+ * panel is not drawn at all, so the close is instant whatever its values do. The panel's resting
+ * values while closed and `@starting-style` are the same small, transparent frame: the first is
+ * the transition's start when the browser has already styled the hidden panel, the second when
+ * it has not. The phone's drawer hangs across the header and grows from its top edge; the wide
+ * block below moves the origin to the label's corner the dropdown hangs from. */
+@media (prefers-reduced-motion: no-preference) {
+  .site-nav-group > details > ul {
+    transition:
+      opacity var(--duration-enter) var(--ease-out),
+      transform var(--duration-enter) var(--ease-out);
+  }
+
+  .site-nav-group > details:not([open]) > ul {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+
+  @starting-style {
+    .site-nav-group > details[open] > ul {
+      opacity: 0;
+      transform: scale(0.97);
+    }
+  }
 }
 
 .site-nav-group > details > summary:focus-visible {
@@ -372,8 +410,8 @@ a.skip-link:focus {
     right: 0;
     min-width: max-content;
     padding: var(--space-2xs);
-    border: var(--border-width) solid var(--border);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-md);
+    transform-origin: top right;
   }
 }
 
@@ -435,8 +473,7 @@ a.skip-link:focus {
 }
 
 .site-footer {
-  padding-block: var(--space-xl);
-  border-top: var(--border-width) solid var(--border);
+  padding-block: var(--space-2xl) var(--space-xl);
   color: var(--text-muted);
   font-size: var(--font-size-sm);
 }
@@ -525,6 +562,7 @@ a.skip-link:focus {
  * of the reversed row above, so its `justify-content` only settles where a confirmation sits
  * within the box it shares with the button. */
 .command-controls {
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -532,31 +570,109 @@ a.skip-link:focus {
   gap: var(--space-2xs);
 }
 
-/* Deliberately no `display` here. The `hidden` attribute is the whole mechanism that keeps
- * the control out of a reader's way until the script has revealed it, and an author `display`
- * would win over the user agent's `[hidden]` rule and put the button back on the page. */
+/* The `display` is set only on a button that is not `hidden`. The `hidden` attribute is the
+ * whole mechanism that keeps the control out of a reader's way until the script has revealed
+ * it, and an author `display` on the plain class would win over the user agent's `[hidden]`
+ * rule and put the button back on the page. */
 .copy-button {
-  padding: var(--space-3xs) var(--space-2xs);
-  border: var(--border-width) solid var(--border);
+  /* An icon button (the owner's feedback of 2026-10-24): an 18px glyph in a 44px target, so it
+     is small to the eye and easy to the finger. The two glyphs share one cell; the clipboard
+     shows until a copy lands, then the checkmark for `COPIED_MS` (site.js). */
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
+}
+
+.copy-button:not([hidden]) {
+  display: grid;
+}
+
+.copy-icon {
+  grid-area: 1 / 1;
+  transition:
+    opacity var(--duration-enter) var(--ease-out),
+    transform var(--duration-enter) var(--ease-out);
+}
+
+.copy-button .copy-icon-check,
+.copy-button[data-copied='true'] .copy-icon-clipboard {
+  opacity: 0;
+  transform: scale(0.8);
+}
+
+.copy-button[data-copied='true'] .copy-icon-check {
+  opacity: 1;
+  transform: none;
+}
+
+.copy-button:active {
+  transform: scale(0.96);
+}
+
+/* The ring hugs the button rather than standing off it: still the accent at the token's width,
+   and lighter on a small control than the site's offset ring. */
+.copy-button:focus-visible {
+  outline-offset: 0;
+  color: var(--text);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .copy-button:hover {
+    background: var(--surface);
+    color: var(--text);
+  }
+}
+
+/* The checkmark is the success tone whatever else is true of the button (focused, hovered). */
+.copy-button[data-copied='true'],
+.copy-button[data-copied='true']:focus-visible,
+.copy-button[data-copied='true']:hover {
+  color: var(--ok);
+}
+
+/* What the control says: the live region the markup carries. "Copied" is for a screen reader
+ * only — the checkmark is what a sighted reader sees — so in that tone it is visually hidden and
+ * still in the accessibility tree. A refused copy is said to everyone: drawn over the button, out
+ * of the flow, growing leftwards from its right edge on one line, so it never moves the block. */
+.copy-status {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 100%;
+  padding-inline: var(--space-2xs);
   border-radius: var(--radius-sm);
   background: var(--surface);
-  color: var(--accent-on-dark);
-  font-family: var(--font-sans);
-  font-size: var(--font-size-xs);
+  color: var(--text);
+  font-size: var(--font-size-sm);
   font-weight: var(--weight-semibold);
-  cursor: pointer;
-  transition: border-color var(--duration-fast) var(--ease-out);
+  white-space: nowrap;
+  pointer-events: none;
 }
 
-.copy-button:hover {
-  border-color: var(--accent);
+.copy-status:empty {
+  opacity: 0;
 }
 
-/* What the control says: the live region the markup carries, and the visible half of the
- * "copied" state. It is empty until the script writes into it, so it takes no space. */
-.copy-status {
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
+.copy-status[data-tone='ok'] {
+  width: 1px;
+  min-width: 0;
+  height: 1px; /* taste-skill-ignore: the visually-hidden pattern, not a drawn rule */
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
 }
 
 /* ---- 2c. the bold look (redesign part P1) ------------------------------------------------
@@ -573,7 +689,7 @@ a.skip-link:focus {
  *
  * Two rules hold throughout and are the reason several of these look unusual:
  *
- *  - **No colour literal and no `box-shadow`.** A shadow is a colour function, and a colour
+ *  - **No colour literal and no `box-shadow`.** A shadow is a colour function, and a colour (taste-skill-ignore: prose in a comment)
  *    function outside a palette file is a pair `website/test/a11y.mjs` cannot compute. Depth is
  *    drawn the way the boards draw it: a panel one step lighter than the ground, a hairline
  *    `--border`, and a radius. This is also why the glow below is a `radial-gradient` in
@@ -615,74 +731,57 @@ a.skip-link:focus {
   font-size: clamp(var(--font-size-xl), 2.6vw, var(--font-size-3xl));
 }
 
-/* The gradient the wordmark's hue runs through, used as the emphasis on part of a headline.
- * It is a background clipped to the glyphs, so the glyphs themselves are filled with nothing:
- * `-webkit-text-fill-color` is the property that says so, and it is not a stylistic choice —
- * `color: transparent` means the same thing and is rewritten by the build's CSS minifier into
- * the hex literal `#0000`, which is a colour literal in a built stylesheet and so a rule the
- * colour scan in `website/test/a11y.mjs` refuses (a literal is a colour no palette token
- * holds). The `color` the display rules above set is left alone, so a browser that supports
- * the fill but not the clip draws the headline in `--text` rather than in nothing at all. The
- * three stops are palette tokens: the light cyan the accent is legible as, the accent itself,
- * and the green that means "finished". */
+/* The emphasis on part of a headline, which was the wordmark's gradient clipped to the glyphs.
+ * The owner's ruling of 2026-10-23 (the redesign's Step 3, levers 2 and 5) takes the gradient
+ * text off the site: the words keep their class, so every page that marks them still marks
+ * them, and the class now draws them in the accent's legible tone, flat. It is a `color` the
+ * contrast check reads, rather than a fill it cannot. The polish round of the same day draws
+ * them in the headline's own colour, so a page's headline is one colour, as the home page's is
+ * (house rule: no styled accent word); the class stays as the markup's mark of the words. */
 .gradient-text {
-  background-image: linear-gradient(
-    92deg,
-    var(--accent-on-dark) 0%,
-    var(--accent) 55%,
-    var(--ok) 100%
-  );
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
+  color: inherit;
 }
 
-/* The eyebrow: the small uppercase label the boards put above a section's headline. It is the
- * accent's legible form, because it is text and small text at that, and it is tracked wide
- * rather than tight so that a label of three words reads as a label and not as a heading. */
-.eyebrow {
+/* The label a few pages still set above a heading. The ruling of 2026-10-23 drops the small
+ * tracked capitals (lever 5): it is sentence case, in the legible accent, at the small step. */
+.eyebrow { /* taste-skill-ignore: kept for the pages whose content Step 3 keeps (Getting Started, How it works); no home section uses it */
   margin: 0;
   color: var(--accent-on-dark);
   font-family: var(--font-sans);
   font-size: var(--font-size-sm);
-  font-weight: var(--weight-black);
-  letter-spacing: 0.16em;
+  font-weight: var(--weight-semibold);
   line-height: var(--leading-snug);
-  text-transform: uppercase;
 }
 
-/* The pill: a short status or a badge of one or two words. The radius is the pill rather than
- * a corner, the ground it sits on is the panel so it reads as laid on the page, and its label
- * is the quieter tone — a pill is a note beside a heading, never the heading. */
+/* The pill: a short status of one or two words. Since the polish round of 2026-10-23 it is a
+ * quiet line of text rather than a badge (no fill, no outline, no capsule): the status a card
+ * carries, or the version a page's title sits under, set in the small step. */
 .pill {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2xs);
-  padding: var(--space-3xs) var(--space-xs);
-  border: var(--border-width) solid var(--border);
-  border-radius: var(--radius-pill);
-  background: var(--panel);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--text-muted);
   font-size: var(--font-size-sm);
   line-height: var(--leading-snug);
 }
 
-/* The card: the panel the boards draw everything on. One step above the ground, a hairline
- * border and the larger radius, with the padding as a step of the spacing scale rather than a
- * number — a card in a grid and a card standing alone are then the same box. The tone is the
- * surface rather than the panel, because a card is laid on the page and a panel is what a pill
- * or a tab bar is drawn on; the bold redesign's run band and "what you get" grid are the two
- * blocks that use it, and each adds only the layout and the marks its own block needs. */
+/* The card: a surface one tone step above the ground, and nothing drawn around it (the owner's
+ * ruling of 2026-10-23, lever 5). The padding is a step of the spacing scale, so a card in a
+ * grid and a card standing alone are the same box. A card that wants to be marked (the one a
+ * page leads with) is marked by a fill, never by an outline. */
 .card {
   padding: var(--space-lg);
-  border: var(--border-width) solid var(--border);
-  border-radius: var(--radius-xl);
+  border: 0;
+  border-radius: var(--radius-lg);
   background: var(--surface);
 }
 
-/* The numbered step badge: the square the flow's steps are numbered in. The accent is the
- * fill and the ground is the label on it — the pair the site's buttons already use — and the
- * green variant is the last step of a run, which is the one that finished. */
+/* The numbered step badge: the accent as the fill and the ground as the label, in the text
+ * face (the ruling of 2026-10-23 keeps monospace to real code). */
 .step-badge {
   display: inline-flex;
   flex: none;
@@ -693,7 +792,7 @@ a.skip-link:focus {
   border-radius: var(--radius-md);
   background: var(--accent);
   color: var(--ground);
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: var(--font-size-lg);
   font-weight: var(--weight-black);
   line-height: 1;
@@ -703,43 +802,66 @@ a.skip-link:focus {
   background: var(--ok);
 }
 
-/* The hero's background: the two soft glows and the grid the boards draw behind the headline.
- * It is one absolutely positioned layer at the top of the page and it is **decoration**: it is
- * `aria-hidden` in the markup, it paints no text, and its whole content is gradients of palette
- * tokens at an `opacity`, which is what keeps it out of the contrast pairs (a glow is not a
- * background any text is read against — the hero's own ground still is). The grid is two
- * one-pixel gradients sized to a 48 px tile and masked to fade out before the section ends, so
- * the pattern belongs to the top of the page rather than tiling the whole of it. A parent that
- * uses this must be `position: relative` and `overflow: hidden`. */
+/* The glow and grid texture the boards drew behind a page's title are retired with the
+ * owner's ruling of 2026-10-23 (lever 5: no gradients, no grid texture). The pages that still
+ * carry the empty, `aria-hidden` layer draw nothing in it. */
 .hero-glow {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  pointer-events: none;
+  display: none;
 }
 
-.hero-glow::before,
-.hero-glow::after {
-  content: '';
-  position: absolute;
-  inset: 0;
+/* The entrances (the redesign's motion layer, the owner's rulings of 2026-10-23, lever 7). The
+ * script marks a part of a home section `data-reveal` only when it is below the first screen and
+ * the reader has not asked for less motion, and marks it `data-revealed` as it enters, so with
+ * no script nothing is ever held back. Transform and opacity only. The owner-approved motion
+ * review of 2026-10-23 made them quicker and shorter: the base duration (240 ms, not the slow
+ * 600 ms) and 12 px of travel (not 24 px). */
+[data-reveal] {
+  transition:
+    opacity var(--duration-base) var(--ease-out),
+    transform var(--duration-base) var(--ease-out);
 }
 
-.hero-glow::before {
-  background-image:
-    linear-gradient(var(--border) 1px, transparent 1px),
-    linear-gradient(90deg, var(--border) 1px, transparent 1px);
-  background-size: 48px 48px;
-  opacity: 0.6;
-  -webkit-mask-image: linear-gradient(180deg, var(--ground) 0%, transparent 78%);
-  mask-image: linear-gradient(180deg, var(--ground) 0%, transparent 78%);
+[data-reveal]:not([data-revealed]) {
+  opacity: 0;
+  transform: translateY(12px);
 }
 
-.hero-glow::after {
-  background-image:
-    radial-gradient(58% 46% at 78% 16%, var(--accent) 0%, transparent 70%),
-    radial-gradient(52% 44% at 6% 74%, var(--ok) 0%, transparent 70%);
-  opacity: 0.22;
+/* The inner pages' header (the owner's question of 2026-10-24, "same easing animation as the
+ * Home page on the rest of the pages", then "too fast to see"): the title rises 18px and fades
+ * in over 550ms on the site's `--ease-out` as the page loads, and the line under it follows
+ * 100ms later. It is a marketing entrance a reader is meant to see, so it is longer than the
+ * site's UI motion. CSS only (`@starting-style`, the first frame the header is drawn in) and
+ * never scroll-triggered, so a page with no script, or a browser without `@starting-style`,
+ * shows the header as it is. A reader who asked for less motion gets no movement: the layout's
+ * reduce rule makes any transition 1ms. The home page's own headline is not one of these. */
+@media (prefers-reduced-motion: no-preference) {
+  main h1.display-xl:not(.hero-tagline),
+  main h1.display-xl:not(.hero-tagline) + p {
+    transition:
+      opacity var(--duration-entrance) var(--ease-out),
+      transform var(--duration-entrance) var(--ease-out);
+  }
+
+  main h1.display-xl:not(.hero-tagline) + p {
+    transition-delay: 100ms;
+  }
+
+  @starting-style {
+    main h1.display-xl:not(.hero-tagline),
+    main h1.display-xl:not(.hero-tagline) + p {
+      opacity: 0;
+      transform: translateY(18px);
+    }
+  }
+}
+
+/* A printed page shows every part, whether or not it was scrolled to (the failsafe the
+ * owner-approved motion review of 2026-10-23 asked for; the script also reveals on `beforeprint`). */
+@media print {
+  [data-reveal]:not([data-revealed]) {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 /* ---- 3. the element defaults (all zero-specificity) ------------------------------------- */
@@ -777,8 +899,11 @@ a.skip-link:focus {
   font-size: var(--font-size-base);
 }
 
-/* Prose keeps to the measure; a component that wants a wider line sets its own max-width. */
-:where(p, ul, ol, dl, blockquote, figcaption) {
+/* Prose keeps to the measure; a component that wants a wider line sets its own max-width.
+ * A list a component styles (it carries a class: a grid of cards, a row of steps) is a layout
+ * rather than a column of prose, so it takes the width its component gives it (the owner's
+ * polish round of 2026-10-23: grids held to 68ch left the right of every page empty). */
+:where(p, ul:not([class]), ol:not([class]), dl:not([class]), blockquote, figcaption) {
   max-width: var(--measure);
 }
 
@@ -924,5 +1049,10 @@ a.skip-link:focus {
   .site-header,
   .site-footer {
     padding-inline: max(var(--space-md), calc((100% - var(--page-max)) / 2 + var(--space-md)));
+  }
+
+  /* The same gutter for the home page's full-width bands (tokens.css, `--frame-gutter`). */
+  :root {
+    --frame-gutter: max(var(--space-md), calc((100% - var(--page-max)) / 2 + var(--space-md)));
   }
 }

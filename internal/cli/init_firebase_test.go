@@ -20,8 +20,11 @@ import (
 )
 
 const (
-	fpID             = "aurora-fp"
-	fpSigner         = "fugaro-token-signer@aurora-fp.iam.gserviceaccount.com"
+	// fpID is the installation's own GCP project: Fugaro only starts fresh,
+	// and the budget backend lives in the project setup created (D7), never in
+	// a Firebase project of another id.
+	fpID             = initProject
+	fpSigner         = "fugaro-token-signer@" + initProject + ".iam.gserviceaccount.com"
 	fpAPIKey         = "AIzaSyA0123456789abcdefghijklmnopqrstu"
 	historyAccount   = "fugaro-history@proj-1234.iam.gserviceaccount.com"
 	historyImagePath = "us-east5-docker.pkg.dev/proj-1234/" + infra.BaseRegistry + "/" + infra.HistoryImagePackage + ":latest"
@@ -184,7 +187,7 @@ func TestInitFirebaseThreeAppliesConfirmedSeparately(t *testing.T) {
 	if n := strings.Count(out, "⚠ CONFIRM"); n != 5 {
 		t.Errorf("%d confirmations, want 5 (three applies, the database and its location):\n%s", n, out)
 	}
-	for _, want := range []string{"to the Firebase project aurora-fp", "(the history job and its sweep schedule)", "writes the database as listed"} {
+	for _, want := range []string{"to the Firebase project proj-1234", "(the history job and its sweep schedule)", "writes the database as listed"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("no %q in\n%s", want, out)
 		}
@@ -228,10 +231,12 @@ func TestInitFirebaseNeverCreatesProject(t *testing.T) {
 		}
 	}
 
-	// A project that isn't there stops before any plan.
+	// Another project, there or not, stops before any plan: Fugaro only
+	// starts fresh, and the budget backend goes in the installation's own
+	// project and nowhere else.
 	r2 := newFBRig(t)
 	_, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", "aurora-missing", "--yes")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "does not exist") || !strings.Contains(err.Error(), "--create-project") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "is not the installation's GCP project") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
 	if len(r2.ran(t, "plan")) != 0 || len(r2.ran(t, "apply")) != 0 {
@@ -328,20 +333,23 @@ func TestInitFirebaseSameProjectPlanOnly(t *testing.T) {
 	}
 }
 
-// A two-project layout (belong's) writes tfvars with no skip_apis.
-func TestInitFirebaseTwoProjectsNoSkipAPIs(t *testing.T) {
-	r := newFBRig(t)
-	r.historyImage()
-	fakeTerminal(t)
-	out, _, err := executeStdin(t, names(3)+"us-east5\n"+names(1), "setup", "--firebase-project", fpID, "--budget-mode", "observe")
-	if err != nil {
-		t.Fatalf("%v\n%s", err, out)
-	}
-	if strings.Contains(out, "installation's own project") {
-		t.Errorf("a two-project layout warned about default accounts:\n%s", out)
-	}
-	if _, ok := r.fbVars(t)["skip_apis"]; ok {
-		t.Errorf("a two-project layout wrote skip_apis: %v", r.fbVars(t))
+// TestInitFirebaseRefusesAnotherProject: the two-project layout is gone
+// (Fugaro only starts fresh): --firebase-project naming another project than
+// the installation's own is refused in both doors before anything is read,
+// planned or applied.
+func TestInitFirebaseRefusesAnotherProject(t *testing.T) {
+	for _, door := range []string{"setup", "update"} {
+		t.Run(door, func(t *testing.T) {
+			r := newFBRig(t)
+			fakeTerminal(t)
+			_, _, err := executeStdin(t, names(3), door, "--firebase-project", "aurora-fp", "--budget-mode", "observe")
+			if ExitCode(err) != ExitUserError || !strings.Contains(errString(err), "--firebase-project aurora-fp is not the installation's GCP project "+initProject) {
+				t.Fatalf("exit %d, err %v", ExitCode(err), err)
+			}
+			if len(r.ran(t, "plan")) != 0 || len(r.ran(t, "apply")) != 0 {
+				t.Errorf("calls = %q", r.calls(t))
+			}
+		})
 	}
 }
 
@@ -436,7 +444,7 @@ func TestInitFirebaseRefusesBadMembers(t *testing.T) {
 		"build account":     {"--budget-admin", "serviceAccount:fugaro-b-aurora-9f8e7d@proj-1234.iam.gserviceaccount.com"},
 		"scheduler":         {"--launcher", "serviceAccount:fugaro-scheduler@proj-1234.iam.gserviceaccount.com"},
 		"history":           {"--operator", "serviceAccount:fugaro-history@proj-1234.iam.gserviceaccount.com"},
-		"signer":            {"--budget-admin", "serviceAccount:fugaro-token-signer@aurora-fp.iam.gserviceaccount.com"},
+		"signer":            {"--budget-admin", "serviceAccount:fugaro-token-signer@proj-1234.iam.gserviceaccount.com"},
 		"domain launcher":   {"--launcher", "domain:example.com"},
 		"wildcard operator": {"--operator", "user:*@example.com"},
 		"bare address":      {"--budget-admin", "boss@example.com"},

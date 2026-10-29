@@ -57,7 +57,8 @@ type TUIOptions struct {
 	Facts func() Facts
 
 	// All, Keep and KeepCount seed the finished-run filter (design
-	// generic-tool §10.3); Keep <= 0 means 6h, KeepCount <= 0 means 15.
+	// generic-tool §10.3); Keep <= 0 means FinishedKeep (3m), KeepCount <= 0
+	// means 15.
 	All       bool
 	Keep      time.Duration
 	KeepCount int
@@ -147,7 +148,7 @@ type model struct {
 func newModel(ctx context.Context, o TUIOptions) *model {
 	keep, keepCount := o.Keep, o.KeepCount
 	if keep <= 0 {
-		keep = 6 * time.Hour
+		keep = FinishedKeep
 	}
 	if keepCount <= 0 {
 		keepCount = 15
@@ -157,7 +158,7 @@ func newModel(ctx context.Context, o TUIOptions) *model {
 		ackPath = AckPath(os.Getenv)
 	}
 	m := &model{o: o, ctx: ctx, st: NewState(), flow: NewFlow(o.Project), expanded: map[Cursor]bool{}, collapsed: map[string]bool{}, w: o.Width, h: o.Height, dirty: true,
-		filter: Filter{All: o.All, Keep: keep, KeepCount: keepCount, FailedKeep: 24 * time.Hour}, acks: LoadAcks(ackPath)}
+		filter: Filter{All: o.All, Keep: keep, KeepCount: keepCount, FailedKeep: FinishedKeep}, acks: LoadAcks(ackPath)}
 	if m.w <= 0 {
 		m.w = 80
 	}
@@ -342,23 +343,24 @@ func (m *model) rebuild() {
 	m.prSeen = prVersion
 }
 
-// ackSelected acknowledges the selected row's failure (key x), when it names
-// a failed finished run; it is a no-op on anything else (design
-// generic-tool §10.3). A write failure is shown as a notice: the ack is
-// local and best effort, so losing it only shows the failure again. Under
-// --all every finished row shows regardless of acknowledgement, so x would
-// otherwise look like it did nothing; a notice says it still recorded.
-func (m *model) ackSelected() {
+// dismissSelected dismisses the selected row (key x) when it names a finished
+// run — succeeded, failed or cancelled alike (owner spec 2026-10-22, item 4);
+// it is a no-op on anything else (a live run, a header), and writes nothing.
+// A write failure is shown as a notice: the dismissal is local and best
+// effort, so losing it only shows the run again. Under --all every finished
+// row shows regardless of a dismissal, so x would otherwise look like it did
+// nothing; a notice says it still recorded.
+func (m *model) dismissSelected() {
 	for _, b := range m.view.Repos {
 		if b.Slug != m.cur.Slug {
 			continue
 		}
 		for _, r := range b.Finished {
-			if r.Run == m.cur.Run && r.Failed {
+			if r.Run == m.cur.Run {
 				if err := m.acks.Ack(b.Slug, r.Run, m.clock()); err != nil {
-					m.notice = "could not save the acknowledgement: " + oneLine(err.Error())
+					m.notice = "could not save the dismissal: " + oneLine(err.Error())
 				} else if m.filter.All {
-					m.notice = "acknowledged (hidden in the recent view)"
+					m.notice = "dismissed (hidden in the recent view)"
 				}
 				return
 			}
@@ -458,7 +460,7 @@ func (m *model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "a":
 			m.filter.All = !m.filter.All
 		case "x":
-			m.ackSelected()
+			m.dismissSelected()
 		case "k":
 			return m, m.start(KillRepo)
 		case "K":

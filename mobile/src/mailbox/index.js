@@ -1,11 +1,14 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See mobile/LICENSE.md for the terms.
 // The mailbox's one door (mobile plan, Task P3.6; D111, D113, D113b, D118).
 //
-// A screen imports `src/mailbox/index.js`. It builds no store, no redactor and
-// no MAC: it gets a client from `createMailboxClient` and calls `send`,
-// `flush`, `poll` and `pending` on it. Everything else here is the vocabulary
-// those calls answer in -- the paths, the refusal codes, the presence reasons
-// -- plus the two fakes (`MemoryMailboxStore`, `MemorySpeaker`) that exist so
-// that a screen can be exercised without a database and without a device.
+// A screen imports `src/mailbox/index.js`. It builds no store, no connection,
+// no redactor and no MAC: it gets a client from `createMailboxClient` and calls
+// `send`, `flush`, `poll`, `pending` and `unsent` on it. Everything else here is
+// the vocabulary those calls answer in -- the paths, the refusal codes, the
+// presence reasons -- plus the **three** fakes (`MemoryMailboxStore`,
+// `MemoryConnection`, `MemorySpeaker`) that exist so that a screen can be
+// exercised without a database, without a network and without a device.
 //
 // **What is deliberately NOT exported here: the tag functions.** `mac.js` and
 // `sha256.js` are exported by their own modules and are used by the client, by
@@ -30,9 +33,19 @@ export {
   toPresenceHeartbeat,
 } from './client.js';
 
+export {
+  GATE_CODES,
+  OFFLINE_SPEECH,
+  evaluateConnection,
+  evaluateGate,
+  offlineSpeech,
+} from './gate.js';
+
 export { MAILBOX_ROOT, isDatabaseKey, mailboxPaths } from './paths.js';
 
 export { STORE_CODES, MemoryMailboxStore } from './store.js';
+
+export { MemoryConnection } from './connection.js';
 
 export { SPEAK_CODES, MemorySpeaker } from './speaker.js';
 

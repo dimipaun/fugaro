@@ -144,7 +144,12 @@ export function foldFailures(dist) {
         // — the card is captioned as an illustration and it is not prose the page promises
         // anything with. It is one `figure` the page draws once; the promise, the lead and the
         // links stay in the region and stay the whole of what it may hold.
-        const picture = els.find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('hero-shot'))
+        //
+        // Since the owner's ruling of 2026-10-23 (the redesign's Step 3, levers 2 and 3) the card
+        // and the real `fugaro watch` capture under it are one stage, `div.hero-stage`, and the
+        // stage is the picture taken out; a page with no stage falls back to the card alone.
+        const has = (el, name) => (el.attrs.get('class') ?? '').split(/\s+/).includes(name)
+        const picture = els.find((el) => has(el, 'hero-stage')) ?? els.find((el) => has(el, 'hero-shot'))
         const lead = els
           .slice(h1 + 1, firstH2)
           .filter((el) => !within(el, owner) && (picture === undefined || !within(el, picture)))
@@ -153,8 +158,10 @@ export function foldFailures(dist) {
         // paints with the gradient, which are a `span` inside the `h1` rather than a second
         // thing in the region — the prompt line the owner's feedback of 2026-10-19 puts under
         // the headline — with the `>` mark that draws it as something a reader types, which is
-        // a span inside that line — the row of links under them, and the links in that row.
-        // Nothing else. A `figure`, an `ol`, a `pre` or a section's own paragraph is what the
+        // a span inside that line — the row of links under them, and the links in that row; and
+        // the latest-release note under the call to action, with its two links (the owner's
+        // ruling of 2026-10-24 moved it there from above the headline, where it read as a kicker
+        // label: it is a fact about the project, not a section's content). Nothing else. A `figure`, an `ol`, a `pre` or a section's own paragraph is what the
         // refusal below is about, and the first of them is named in it.
         const allowed = [
           'span.gradient-text',
@@ -164,6 +171,8 @@ export function foldFailures(dist) {
           'p.hero-actions',
           'a.hero-cta',
           'a.hero-cta-quiet',
+          'p.hero-release',
+          'a.hero-release-link',
         ]
         const foreign = shape.filter((element) => !allowed.includes(element))
         if (foreign.length > 0) {

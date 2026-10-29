@@ -84,7 +84,11 @@ func SaveNameCheck(getenv func(string) string, name string, c NameCheck) error {
 
 // writeCacheFile writes data to path, mode 0600 in a 0700 directory,
 // through a temporary file renamed over it: a reader sees the old file or
-// the new one, never a part.
+// the new one, never a part. The temporary file is synced before the rename,
+// so a crash cannot leave the new name pointing at a file whose contents never
+// reached the disk (for the remembered checkouts that would be a zero-length
+// state file, which the reader refuses and the writer would otherwise leave
+// refusing until someone deleted it).
 func writeCacheFile(path string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
@@ -99,6 +103,10 @@ func writeCacheFile(path string, data []byte) error {
 		return err
 	}
 	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
 		tmp.Close()
 		return err
 	}

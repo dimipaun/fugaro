@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See mobile/LICENSE.md for the terms.
 // From a transcript to a message: the rule's own tests (Task P3.4).
 //
 // The rule is one line of the plan's verification -- *a fake transcript

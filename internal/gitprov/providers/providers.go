@@ -19,12 +19,19 @@ import (
 // None of them ever reaches the agent: it gets a derived token instead
 // (FUGARO_GIT_TOKEN, and GH_TOKEN on GitHub).
 const (
-	EnvBitbucketToken   = "FUGARO_BITBUCKET_TOKEN"             // repository access token
+	EnvBitbucketToken   = "FUGARO_BITBUCKET_TOKEN"             // repository, workspace or project access token
 	EnvBitbucketAPIURL  = "FUGARO_BITBUCKET_API_URL"           // optional API root override
 	EnvGitHubAppID      = "FUGARO_GITHUB_APP_ID"               // GitHub App ID (or client ID)
 	EnvGitHubAppKey     = "FUGARO_GITHUB_APP_PRIVATE_KEY"      // the App's private key, PEM
 	EnvGitHubAppKeyFile = "FUGARO_GITHUB_APP_PRIVATE_KEY_FILE" // or a file holding it
 	EnvGitHubAPIURL     = "FUGARO_GITHUB_API_URL"              // optional API root override
+	// EnvCredentialsServiceURL is where a job learns the URL of its
+	// installation's credentials service (C1.15, D146/D147). It is set on the
+	// job only when the installation has the service on, so its presence is
+	// the "the service is on" fact: when it is set, the App's private key is
+	// the service's and the github provider is opened keyless, its tokens
+	// coming from the service (C2.2, D145) -- see FromEnv.
+	EnvCredentialsServiceURL = "FUGARO_CREDENTIALS_SERVICE_URL"
 )
 
 // minSecretLen matches the agent package's redaction floor: a shorter
@@ -50,13 +57,13 @@ const minSecretLen = 4
 // Provider.GitAuth call that finds the cached one too close to expiry. A
 // caller must redact every GitAuth.Token (and GitAuth.Env value) it is
 // ever handed, not just the first.
+//
+// With the credentials service on (EnvCredentialsServiceURL set) the github
+// provider is opened without an App key and no static secret is returned for
+// it: the key is the service's, and the installation tokens it mints are
+// still the caller's to redact (C2.2, D145).
 func FromEnv(env []string, hc *http.Client, warn func(string)) gitprov.Opener {
-	vars := map[string]string{}
-	for _, kv := range env {
-		if k, v, ok := strings.Cut(kv, "="); ok {
-			vars[k] = v
-		}
-	}
+	vars := envVars(env)
 	return func(_ context.Context, kind, repo string) (gitprov.Provider, []string, error) {
 		owner, name, ok := gitprov.SplitRepo(repo)
 		if !ok {
@@ -64,7 +71,7 @@ func FromEnv(env []string, hc *http.Client, warn func(string)) gitprov.Opener {
 		}
 		switch kind {
 		case gitprov.KindBitbucket:
-			token, err := secret(vars, EnvBitbucketToken, "a Bitbucket repository access token")
+			token, err := secret(vars, EnvBitbucketToken, "a Bitbucket access token")
 			if err != nil {
 				return nil, nil, err
 			}
@@ -74,6 +81,21 @@ func FromEnv(env []string, hc *http.Client, warn func(string)) gitprov.Opener {
 			appID := vars[EnvGitHubAppID]
 			if appID == "" {
 				return nil, nil, fmt.Errorf("%s is not set: the github provider needs the GitHub App's ID (see docs/git-providers.md)", EnvGitHubAppID)
+			}
+			// With the installation's credentials service on, the App's key
+			// is the service's (C2.2, D145): this job holds none, and none
+			// is read -- not even when one is somehow present in the
+			// environment, because a run that reached for a key it was not
+			// given would be a credential the platform meant to withhold.
+			// The provider is opened keyless and refuses every token until
+			// the runner installs the service's (Provider.UseServiceTokens),
+			// so there is no in-job path to mint one.
+			if vars[EnvCredentialsServiceURL] != "" {
+				p, err := github.New(github.Options{
+					Owner: owner, Repo: name, AppID: appID, ServiceHeldKey: true,
+					BaseURL: vars[EnvGitHubAPIURL], HTTP: hc, Warn: warn,
+				})
+				return p, nil, err
 			}
 			pemData, err := appKey(vars)
 			if err != nil {
@@ -89,6 +111,30 @@ func FromEnv(env []string, hc *http.Client, warn func(string)) gitprov.Opener {
 			return nil, nil, fmt.Errorf("unknown git provider %q (want %s or %s)", kind, gitprov.KindGitHub, gitprov.KindBitbucket)
 		}
 	}
+}
+
+func envVars(env []string) map[string]string {
+	vars := map[string]string{}
+	for _, kv := range env {
+		if k, v, ok := strings.Cut(kv, "="); ok {
+			vars[k] = v
+		}
+	}
+	return vars
+}
+
+// AppKey returns the GitHub App's private key PEM from env (KEY=VALUE pairs,
+// usually os.Environ()), reading the file EnvGitHubAppKeyFile names when the
+// key is not in the environment itself.
+//
+// It is exported for the caller that mints an installation token of its own
+// rather than letting a provider mint one — the coordinator's read-only token
+// (internal/coordinator.Project) — so that the mint and the opener cannot
+// disagree about where the App's key is. A caller that mints tokens itself
+// must redact the PEM out of every failure it reports, as FromEnv's own
+// comment says of the value it returns.
+func AppKey(env []string) (string, error) {
+	return appKey(envVars(env))
 }
 
 func secret(vars map[string]string, name, what string) (string, error) {

@@ -257,7 +257,8 @@ func TestLocalImageCheckReadsHeadStrictly(t *testing.T) {
 	env := fileEnv(t, f)
 	tree := cloneOf(t, map[string]string{"fugaro.yaml": minimalAnchored})
 	ctx := context.Background()
-	cfg, err := readHeadConfig(ctx, tree, env.lc, layerOptions{})
+	rf, err := readHeadConfig(ctx, tree, env.lc, layerOptions{})
+	cfg := rf.Cfg
 	if err != nil || cfg.Workflows[config.ImplicitWorkflow].Commands.Test != "sh test.sh" {
 		t.Fatalf("cfg %+v, %v", cfg, err)
 	}

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/followup"
+	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
 
@@ -71,6 +72,23 @@ func SystemPrompt(d PromptData, instructions string) string {
 
 const defaultReview = "You are reviewing a pull request written by another engineer. Look for correctness bugs, missing or weak tests, security problems, and deviations from this repository's conventions (see CLAUDE.md if present). Ignore pure style preferences."
 
+// reviewScoring is the scoring contract every reviewer gets, whatever text it
+// reviews against: the five anchored values D1 answers for on each axis, and
+// the five labels D2 derives from them. The anchors are what makes a cheap
+// reviewer's "common" mean what the threshold table's "common" means, and each
+// word is written exactly once — a meaning stated twice is a meaning that can
+// drift. The class is asked for beside the axes because the threshold table
+// reads it too, and a finding without a known class is unscored (D4); its
+// list repeats "cosmetic", impact's first anchor, which is a class name rather
+// than a second meaning. The coder never sees it: a coder that scored its own
+// work would be grading the findings a reviewer is there to make.
+const reviewScoring = `Score every finding on three axes, each an integer from 1 to 5, and set severity to one of five labels: blocker, high, medium, low, nit.
+- likelihood, how often it will occur: 1 rare, 2 uncommon, 3 occasional, 4 common, 5 certain.
+- impact, how bad it is when it does: 1 cosmetic, 2 minor, 3 degrading, 4 severe, 5 catastrophic.
+- fix_cost, the effort to address it: 1 trivial, 2 small, 3 moderate, 4 large, 5 rewrite.
+- class, the kind of issue, exactly one of: correctness, performance, security, data_loss, maintainability, cosmetic; a finding without one of these counts as unscored.
+Leave nothing unscored: a finding with no score blocks the pull request in every mode.`
+
 // DiffSize is how large a diff is: the files it changes and the lines it
 // adds or removes, a binary file counting as a file and no lines
 // (diffbase.go's diffSize, built on `git diff --numstat`).
@@ -100,9 +118,20 @@ func (d DiffSize) String() string {
 
 // baseUnreadNote is the one line the review prompt carries when the pull
 // request's base branch could not be read from the provider.
-func baseUnreadNote(base string) string {
-	return fmt.Sprintf("The pull request's base branch could not be read, so origin/%s below is only a fallback and may be far larger than this pull request's own change: "+
-		"restrict yourself to the commits listed by `git log origin/%s..HEAD` and the files they touch.", base, base)
+func baseUnreadNote(rev string) string {
+	return fmt.Sprintf("The pull request's base branch could not be read, so %s below is only a fallback and may be far larger than this pull request's own change: "+
+		"restrict yourself to the commits listed by `git log %s..HEAD` and the files they touch.", rev, rev)
+}
+
+// ownRangeNote is the one line the review prompt carries when the range
+// starts at a commit rather than a branch: a first run's range narrowed to
+// its own commits (diffbase.go, narrowReviewRange). Without it a reviewer
+// told to diff against a bare commit would go looking for the branch
+// instead.
+func ownRangeNote(rev string) string {
+	return fmt.Sprintf("%s is the commit this run's own commits start after, not a branch: "+
+		"the commits before it are another branch's, already on origin, and are not under review. "+
+		"The range is this run's commits and whatever they merged in: a branch merged into this one brings its changes into the range.", rev)
 }
 
 // hugeDiffNote is what the review prompt says before anything else when the
@@ -110,35 +139,39 @@ func baseUnreadNote(base string) string {
 // the reviewer's own reads are of the same range the prompt was built over,
 // and it says what to do instead: review the files the pull request's own
 // commits touch, and do not fan out sub-agents across the base.
-func hugeDiffNote(base string, size DiffSize) string {
-	return fmt.Sprintf("The diff under review is huge: this branch changes %s against origin/%s. "+
+func hugeDiffNote(rev string, size DiffSize) string {
+	return fmt.Sprintf("The diff under review is huge: this branch changes %s against %s. "+
 		"That is far more than this pull request's own change, so review only what this pull request's own commits touch: "+
-		"`git log --name-only origin/%s..HEAD` lists those commits and their files, and `git diff origin/%s..HEAD -- <path>` reads one of them. "+
+		"`git log --name-only %s..HEAD` lists those commits and their files, and `git diff %s..HEAD -- <path>` reads one of them. "+
 		"Do NOT fan out sub-agents across the rest of the base branch, and do not review the base's own history: "+
 		"reading it is what spends a run's whole budget before the change under review is reached.",
-		size, base, base, base)
+		size, rev, rev, rev)
 }
 
 // ReviewPrompt builds the review stage prompt. review is the configured
 // agent.review: a skill (starting with "/") or empty; promptFile is the
-// content of a configured review prompt file. base is the branch the
-// changes are reviewed against — the run's own base of work, never assumed
-// to be the repository's default branch (diffbase.go, diffBase) — and size
-// is how large that diff is, which only decides whether the prompt warns
-// about it first (hugeDiffNote).
+// content of a configured review prompt file. rev is the revision the
+// changes are reviewed against (diffbase.go, reviewRev): origin/<the run's
+// own base of work>, never assumed to be the repository's default branch,
+// or the commit a first run's own commits start after — and size is how
+// large that diff is, which only decides whether the prompt warns about it
+// first (hugeDiffNote).
 //
 // baseUnread says the pull request's own base could not be read (baseUnreadable),
-// so base is a fallback and the reviewer must restrict itself to the branch's
+// so rev is a fallback and the reviewer must restrict itself to the branch's
 // own commits.
-func ReviewPrompt(review, promptFile, base string, size DiffSize, baseUnread bool) string {
-	scope := fmt.Sprintf("Review the changes on this branch against origin/%s (see `git diff origin/%s...HEAD`). Do not modify any files.", base, base)
+func ReviewPrompt(review, promptFile, rev string, size DiffSize, baseUnread bool) string {
+	scope := fmt.Sprintf("Review the changes on this branch against %s (see `git diff %s...HEAD`). Do not modify any files.", rev, rev)
+	if gitops.IsFullSHA(rev) {
+		scope = ownRangeNote(rev) + "\n\n" + scope
+	}
 	if size.Huge() {
-		scope = hugeDiffNote(base, size) + "\n\n" + scope
+		scope = hugeDiffNote(rev, size) + "\n\n" + scope
 	}
 	if baseUnread {
-		scope = baseUnreadNote(base) + "\n\n" + scope
+		scope = baseUnreadNote(rev) + "\n\n" + scope
 	}
-	tail := "\n\nWhen you are done, give your verdict: \"ship\" if nothing must change before this is merged, otherwise \"changes\" with one finding per issue that must be fixed."
+	tail := "\n\n" + reviewScoring + "\n\nWhen you are done, give your verdict: \"ship\" if nothing must change before this is merged, otherwise \"changes\" with one finding per issue that must be fixed."
 	switch {
 	case strings.HasPrefix(review, "/"):
 		return review + " " + scope + tail
@@ -168,9 +201,29 @@ func PickPrompt(review, promptFile string, nums []int, dirs []string) string {
 	for i, n := range nums {
 		fmt.Fprintf(&b, "- PR #%d: %s\n", n, dirs[i])
 	}
-	b.WriteString("\nCompare them and decide which to keep.\n\nWhen you are done, give your verdict: \"ship\" if the one you keep needs no more changes, otherwise \"changes\" with one finding per issue it still has; either way, name the pull request you keep by its number.")
+	b.WriteString("\nCompare them and decide which to keep.\n\n" + reviewScoring + "\n\nWhen you are done, give your verdict: \"ship\" if the one you keep needs no more changes, otherwise \"changes\" with one finding per issue it still has; either way, name the pull request you keep by its number.")
 	return b.String()
 }
+
+// checkpointPrompt is what the stopping agent is asked when a governance
+// tripwire halts a run (T6.1, D329, G7): the three fields of the checkpoint
+// report the runner cannot fill itself. It is the report's only model-written
+// part, so it asks for exactly those three and for nothing else, and it asks
+// for a report rather than for work — the run has already stopped, and the
+// person reading it decides whether a continuation is worth starting.
+//
+// T7.2's checkpoint stage sends it from a fresh session, given the runner's own
+// summary of the stop, and T7.3 wires the answers into the record's done, next
+// and hard_instructions. No run sends it before then, and a run the per-run cap
+// or a stage timeout stops never gets the stage at all, so those checkpoints
+// carry the runner's own fields alone.
+const checkpointPrompt = `The run of your task has been stopped by a governance limit on what it was allowed to spend, not by a problem with the work. You will not do any work now. From what you know of the task and of how far the run got, answer with exactly three labelled lines and nothing else:
+
+Done: what the work had finished when it stopped.
+Next: what the work would do next to finish the task.
+Hard instructions: anything in the task's instructions you found hard to satisfy or contradictory, or "none".
+
+This report goes to the person who decides whether to continue the run, so say what is true rather than what sounds finished. Do not run commands, do not change any file, and do not ask questions.`
 
 // GatePrompt is the implement prompt with the check gate's failures (gate.go)
 // added as untrusted output: one block per failure, each wrapped against

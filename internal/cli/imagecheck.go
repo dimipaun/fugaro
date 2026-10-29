@@ -234,30 +234,41 @@ func checkedWorkflows(cfg *config.Config) []string {
 // locally, with the operator's own access (lc). The check job does not call
 // this: it goes through jobHeadConfig -> resolveHeadData instead, so it can
 // decide whether to read its copy at all before resolving (decision L9).
-func readHeadConfig(ctx context.Context, tree *imagecheck.GitTree, lc *localcfg.Config, o layerOptions) (*config.Config, error) {
+// It answers with the resolution, not only the config: the repository's spec
+// is computed from it (infra.Repo), and the spec's base branch needs the
+// file's own answer for git.base_branch, which a resolved config does not
+// carry (infra.Inputs.FileSetsBaseBranch).
+func readHeadConfig(ctx context.Context, tree *imagecheck.GitTree, lc *localcfg.Config, o layerOptions) (resolvedFile, error) {
 	data, err := tree.ReadFile("fugaro.yaml")
 	if err != nil {
-		return nil, fmt.Errorf("the base branch's fugaro.yaml: %w", err)
+		return resolvedFile{}, fmt.Errorf("the base branch's fugaro.yaml: %w", err)
 	}
-	return resolveHeadData(ctx, data, lc, o)
+	return resolveHeadResolved(ctx, data, lc, o)
 }
 
-// resolveHeadData is readHeadConfig's resolve step, split out so
-// jobHeadConfig can read the layer copy only once it knows whether head's
-// file is even anchored, without reading fugaro.yaml from tree twice.
-func resolveHeadData(ctx context.Context, data []byte, lc *localcfg.Config, o layerOptions) (*config.Config, error) {
+// resolveHeadResolved is resolveHeadData with the resolution beside the
+// config, for the callers that need both.
+func resolveHeadResolved(ctx context.Context, data []byte, lc *localcfg.Config, o layerOptions) (resolvedFile, error) {
 	rf, err := resolveFugaroYAML(ctx, data, lc, o)
 	if err != nil {
-		return nil, err
+		return rf, err
 	}
 	if len(rf.Problems) > 0 {
 		msgs := make([]string, len(rf.Problems))
 		for i, p := range rf.Problems {
 			msgs[i] = p.String()
 		}
-		return nil, fmt.Errorf("the base branch's fugaro.yaml has %d problem(s): %s", len(rf.Problems), strings.Join(msgs, "; "))
+		return rf, fmt.Errorf("the base branch's fugaro.yaml has %d problem(s): %s", len(rf.Problems), strings.Join(msgs, "; "))
 	}
-	return rf.Cfg, nil
+	return rf, nil
+}
+
+// resolveHeadData is readHeadConfig's resolve step, split out so
+// jobHeadConfig can read the layer copy only once it knows whether head's
+// file is even anchored, without reading fugaro.yaml from tree twice.
+func resolveHeadData(ctx context.Context, data []byte, lc *localcfg.Config, o layerOptions) (*config.Config, error) {
+	rf, err := resolveHeadResolved(ctx, data, lc, o)
+	return rf.Cfg, err
 }
 
 // jobLayerOptions are the check job's: its repository's copy of the project
@@ -484,8 +495,19 @@ func (e jobEnv) repoSpec(cfg *config.Config) (infra.RepoSpec, *localcfg.Config, 
 		Build: localcfg.Build{MachineType: s.MachineType, Region: s.BuildRegion},
 		Repos: map[string]localcfg.Repo{s.Repo: {Provider: s.Provider, BaseBranch: s.BaseBranch, GitHubAppID: os.Getenv(providers.EnvGitHubAppID)}},
 	}
+	// The base branch is the job's own, and never head's file: the check read
+	// head at s.BaseBranch (imagecheck.Clone), and the rebuild submits that
+	// same branch to Cloud Build, so the file's git.base_branch says where
+	// this repository's *runs* are cut from rather than what is being built.
+	// head's resolved value is main whenever its file writes no
+	// git.base_branch at all, which is the ordinary case, so letting the file
+	// decide would have an installation on develop examined at develop and
+	// rebuilt from main. readJobEnv refuses a spec with no s.BaseBranch, so
+	// the local entry below is always the one that answers.
+	fileSets := false
 	rs, err := infra.Repo(infra.Inputs{LC: lc, Repo: s.Repo, Cfg: cfg, RepoURL: s.RepoURL,
-		Installation: infra.InstallationOutputs{RegistryHost: host + "/" + e.gcpProject}})
+		FileSetsBaseBranch: &fileSets,
+		Installation:       infra.InstallationOutputs{RegistryHost: host + "/" + e.gcpProject}})
 	return rs, lc, err
 }
 
@@ -779,7 +801,7 @@ func runImageCheckLocal(cmd *cobra.Command, o imageCheckOptions) error {
 	if err != nil {
 		return err
 	}
-	rs0, err := infra.Repo(infra.Inputs{LC: lc, Repo: repo, Cfg: checkoutCfg, RepoURL: repoURL})
+	rs0, err := infra.Repo(infra.Inputs{LC: lc, Repo: repo, Cfg: checkoutCfg, FileSetsBaseBranch: fileSetsBaseBranch(rf), RepoURL: repoURL})
 	if err != nil {
 		return userErr("%v", err)
 	}
@@ -798,11 +820,12 @@ func runImageCheckLocal(cmd *cobra.Command, o imageCheckOptions) error {
 	if err != nil {
 		return remote(fmt.Errorf("%w (the check clones origin's %s with your own git access)", err, branch))
 	}
-	cfg, err := readHeadConfig(ctx, tree, lc, layerOptions{})
+	rf, err = readHeadConfig(ctx, tree, lc, layerOptions{})
 	if err != nil {
 		return userErr("%v", err)
 	}
-	rs, err := infra.Repo(infra.Inputs{LC: lc, Repo: repo, Cfg: cfg, RepoURL: repoURL})
+	cfg := rf.Cfg
+	rs, err := infra.Repo(infra.Inputs{LC: lc, Repo: repo, Cfg: cfg, FileSetsBaseBranch: fileSetsBaseBranch(rf), RepoURL: repoURL})
 	if err != nil {
 		return userErr("%v", err)
 	}

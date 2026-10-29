@@ -1024,14 +1024,15 @@ func TestDocsRigorModesAnswersSayWhatTheyChange(t *testing.T) {
 		t.Errorf("%s states that checkpoints commit: they push commits the run already made (%s)", rigorModesRecon, rigorModesCheckpointSource)
 	}
 	//
-	// F40: HaltCredsRulesDenied is planned, not built. The vocabulary that would
-	// carry it is runstore's, so the guard reads that file: a document that
-	// names the halt has to say it is planned while the reason is not there.
+	// F40: HaltCredsRulesDenied was planned when F40 was first written and is
+	// built now (credentials-service plan task C1.17, merged from
+	// integration-0.9.6): runstore's HaltReason vocabulary carries it, and the
+	// finding has to say it is built rather than planned.
 	runstore := readDoc(t, rigorModesRunstoreSource)
-	if strings.Contains(runstore, "HaltCredsRulesDenied") {
-		t.Errorf("%s now carries HaltCredsRulesDenied: F40 marks it planned, and the sentence that says so has to move with this file", rigorModesRunstoreSource)
+	if !strings.Contains(runstore, "HaltCredsRulesDenied") {
+		t.Errorf("%s no longer carries HaltCredsRulesDenied: F40 says it is built, and the sentence that says so has to move with this file", rigorModesRunstoreSource)
 	}
-	for at := strings.Index(flat[rigorModesRecon], "HaltCredsRulesDenied"); at >= 0; {
+	if at := strings.Index(flat[rigorModesRecon], "HaltCredsRulesDenied"); at >= 0 {
 		lo, hi := at-rigorModesScopeWindow, at+len("HaltCredsRulesDenied")+rigorModesScopeWindow
 		if lo < 0 {
 			lo = 0
@@ -1039,13 +1040,8 @@ func TestDocsRigorModesAnswersSayWhatTheyChange(t *testing.T) {
 		if hi > len(flat[rigorModesRecon]) {
 			hi = len(flat[rigorModesRecon])
 		}
-		if !strings.Contains(strings.ToLower(flat[rigorModesRecon][lo:hi]), "planned") {
-			t.Errorf("%s names HaltCredsRulesDenied with no \"planned\" beside it: %s has no such halt reason, so F40 may not read it as one the tree has", rigorModesRecon, rigorModesRunstoreSource)
+		if !strings.Contains(strings.ToLower(flat[rigorModesRecon][lo:hi]), "built since") {
+			t.Errorf("%s names HaltCredsRulesDenied without saying it is built since: %s carries the halt reason now", rigorModesRecon, rigorModesRunstoreSource)
 		}
-		next := strings.Index(flat[rigorModesRecon][at+1:], "HaltCredsRulesDenied")
-		if next < 0 {
-			break
-		}
-		at += 1 + next
 	}
 }

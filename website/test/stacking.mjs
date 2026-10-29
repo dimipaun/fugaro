@@ -230,7 +230,7 @@ test('the header paints above the page on every built page', () => {
   assert.deepEqual(stackingFailures(DIST), [])
 })
 
-test('the slider and the run\'s picture name no layer of their own', () => {
+test('the homepage\'s blocks and the run\'s picture name no layer of their own', () => {
   // The block the owner's complaint was about. The retired case read the flow's steps on the
   // built homepage — they were positioned, which is what their arrows were placed against, and
   // they named no `z-index`, which is what the defect was — and it is replaced here by the same
@@ -239,6 +239,10 @@ test('the slider and the run\'s picture name no layer of their own', () => {
   // the run's picture on How It Works, which is a figure full of positioned SVG. It is asserted
   // rather than left to the case above because this is the shape a later "fix" would take: the
   // block's own rule, in the built page, taking a place in the paint order.
+  //
+  // **The slider is retired by the owner's ruling of 2026-10-23** (the redesign's Step 3): the
+  // homepage's positioned block is now the hero's stage, which holds the live card and the
+  // watch capture, and the run is a section of its own. The same two readings hold them.
   const pages = builtPages(DIST).filter((entry) => ['index.html', 'how-it-works/index.html'].includes(entry.rel))
   assert.equal(
     pages.length,
@@ -249,27 +253,27 @@ test('the slider and the run\'s picture name no layer of their own', () => {
   // here: the slider's own row and its dots (the owner's feedback of 2026-10-21, item 3, turned
   // the strip of tabs into the slider, and the two classes the tabs carried are gone with them).
   const blocks =
-    /(^|[\s,>+~])\.(home-slider|slider-title|slider-controls|slider-step|slider-arrow|slider-dots|slider-dot-item|slider-dot|panels|panel|panel-title|easy-steps|easy-step|step-number|step-icon|step-name|step-line|watch-shot|watch-block|watch-command|watch-note|run-diagram|run-svg|run-words)(\[|[:,]|$)/
+    /(^|[\s,>+~])\.(hero-stage|hero-shot|hero-shot-frame|hero-watch|hero-watch-crop|hero-watch-image|home-run|home-run-steps|home-run-step|home-run-figure|home-run-image|watch-shot|watch-block|watch-command|watch-note|run-diagram|run-svg|run-words)(\[|[:,]|$)/
   let positioned = 0
   for (const page of pages) {
     const rules = cssRules(pageCss(page.html, DIST)).filter((rule) => blocks.test(rule.selector))
     assert.ok(
       rules.length > 0,
-      `${page.rel} carries no rule for the slider or the run's picture, and this case reads the blocks that stand where the flow's steps stood`,
+      `${page.rel} carries no rule for the hero's stage, the run section or the run's picture, and this case reads the blocks that stand where the flow's steps stood`,
     )
     for (const rule of rules) {
       assert.ok(
         !cssDeclarations(rule.body).some(([property]) => property === 'z-index'),
         `${rule.selector} declares a z-index: the block is page content and paints under the header, which is what the owner's reading of 2026-10-19 was about (src/styles/base.css puts the header above them)`,
       )
-      if (page.rel === 'index.html' && /(^|[\s,>+~])\.home-slider(\[|[:,]|$)/.test(rule.selector) && cssDeclarations(rule.body).some(([p, v]) => p === 'position' && v !== 'static')) {
+      if (page.rel === 'index.html' && /(^|[\s,>+~])\.hero-stage(\[|[:,]|$)/.test(rule.selector) && cssDeclarations(rule.body).some(([p, v]) => p === 'position' && v !== 'static')) {
         positioned += 1
       }
     }
   }
   assert.ok(
     positioned > 0,
-    'no rule positions the homepage\'s slider, and the slider is the homepage\'s own block: this case reads the positioned box that took the flow\'s place, so a page without one is a page this reading has lost its subject on',
+    'no rule positions the homepage\'s hero stage, and the stage is the homepage\'s positioned block: this case reads the positioned box that took the flow\'s place, so a page without one is a page this reading has lost its subject on',
   )
 })
 

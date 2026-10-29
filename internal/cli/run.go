@@ -19,13 +19,21 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/coordinator"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/tier"
 )
 
 // Launch timing. claimWait and claimPoll are variables so tests can shrink them.
@@ -61,11 +69,15 @@ type launchRecipe struct {
 
 // launchResult is what fugaro run reports, and its --json output.
 type launchResult struct {
-	Project   string `json:"project"` // the Fugaro project
-	Run       string `json:"run"`
-	Repo      string `json:"repo"`
-	RunID     string `json:"run_id"`
-	Branch    string `json:"branch"`
+	Project string `json:"project"` // the Fugaro project
+	Run     string `json:"run"`
+	Repo    string `json:"repo"`
+	RunID   string `json:"run_id"`
+	Branch  string `json:"branch"`
+	// Ref is the ref a new run's branch is cut from, which its review
+	// measures the run's work against; empty for a follow-up and a review
+	// run, whose review reads each pull request's own base.
+	Ref       string `json:"ref,omitempty"`
 	Execution string `json:"execution"`
 	LogURL    string `json:"log_url,omitempty"`
 	Status    string `json:"status"` // launched | already-launched
@@ -144,6 +156,58 @@ type runOptions struct {
 	// it instead (owner ruling, 2026-10-12, task 9b review), through the
 	// same allow-list, agent.auth and version-gate checks a first run's does.
 	token string
+	// planTask is --plan-task, as the task stores it: the id of one task in
+	// one plan ("setup-wizard/W1.3"), recorded so the console can join this
+	// run to a node of that plan's dependency graph (console dependency
+	// graph plan, task GV1.2, decision GD5). runRun validates it once
+	// (planTaskFlag), so every spec builder below writes the same value and
+	// the repeat comparison reads it back. Empty (the default) is no claim
+	// at all: the launch writes no plan_task field anywhere, exactly as
+	// before the flag existed. A follow-up (--pr) carries one only when this
+	// is given: it never inherits its previous run's, and is otherwise
+	// joined to the graph through its pull request number (GV1.6).
+	planTask string
+	// rigor is --mode: the rigor mode this run's own launcher asks for
+	// (docs/rigor-modes implementation-plan T1.6). It is the one input that
+	// may raise the mode the run resolves from its configuration and never
+	// lower it (D6), so a launcher that says nothing cannot outvote a
+	// repository that configured one. Empty (the default) is no request at
+	// all: the launch resolves from its layers alone, exactly as it did
+	// before the flag existed, and its task carries no such field. Kept as
+	// the flag's own string and validated against the vocabulary once, in
+	// rigorFlags, because a value outside it is a launcher's mistake rather
+	// than a run's opinion.
+	rigor string
+	// tier is --tier: the expectation tier this run's own launcher dispatches
+	// it at (docs/task-governance spec §3, implementation-plan T8.1): how much
+	// the run is expected to cost and take, which the runner records with the
+	// expectation the governance resolved for it. Empty (the default) is no
+	// expectation at all: the launch writes no such field and the record
+	// carries no tier block. Kept as the flag's own string and validated
+	// against the vocabulary once, in tierFlag, because a value outside it is
+	// a launcher's mistake rather than a run's opinion about its own size.
+	tier string
+	// noCompression is --no-compression: turn the repository's
+	// agent.compression off for this run only (docs/design/
+	// headroom-compression.md §4). The override is deliberately
+	// one-directional — there is no --compression flag — because turning
+	// compression on is a reviewed fugaro.yaml change, and a flag that could
+	// force it on from the command line would undo that for every workflow a
+	// launcher can already run. It writes task.Spec.CompressionOff when the
+	// resolved configuration turns compression on: with compression already
+	// off there is nothing to override, and the field would only add version
+	// skew (an older runner refuses the whole task). A configuration the
+	// launcher could not read leaves nothing to judge, so the launch is
+	// refused rather than guessed at (finishLaunch).
+	noCompression bool
+	// paths is --path, repeated: the paths this launch declares it will
+	// touch, which the runner matches against the area rules at D22's first
+	// moment (bootstrap). Nil (the default) is no declaration, and a
+	// declared path that matches no rule changes nothing. A path that does
+	// match replaces the repository's value with the area's, which may be
+	// lower: areas are defaults, not floors (docs/project-layer.md §2), and
+	// finalize resolves again from the paths the run really changed.
+	paths []string
 }
 
 func newRunCmd() *cobra.Command {
@@ -173,17 +237,38 @@ func newRunCmd() *cobra.Command {
 			"its own. Without it the run is named by the task's first line, so briefs that\n" +
 			"start with the same preamble all read alike. A follow-up (--pr) keeps its run's\n" +
 			"title unless --title is given, and --retry takes none (the stored task keeps its\n" +
-			"own).",
+			"own).\n\n" +
+			"--plan-task PLAN/TASK records which task of which plan this run works on, so\n" +
+			"the console's graph can join the run to that node. One plan and one task id,\n" +
+			"as the plan's own graph spells them, at most 128 bytes; what the run does is\n" +
+			"unchanged by it. A follow-up (--pr) records one only when it is given, and\n" +
+			"--retry takes none (the stored task keeps its own).\n\n" +
+			"--no-compression turns the repository's agent.compression off for this run only,\n" +
+			"overriding its fugaro.yaml. There is no --compression flag: turning compression\n" +
+			"on is a reviewed fugaro.yaml change. A follow-up (--pr) keeps its run's choice,\n" +
+			"and --retry takes none (the stored task keeps its own).\n\n" +
+			"--mode MODE asks for a rigor mode for this run: " + rigor.ModeList() + ".\n" +
+			"It may raise the mode the run resolves from its own configuration\n" +
+			"(rigor.default and rigor.areas in fugaro.yaml, the project layer's defaults)\n" +
+			"and never lower it, so a launch that asks for less cannot outvote a repository\n" +
+			"that asked for more. A follow-up (--pr) keeps the mode the PR's runs recorded\n" +
+			"and may only raise it: asking for less is refused, and so is hotfix, which\n" +
+			"only an operator's own run reaches. --path PATH declares a path this run will\n" +
+			"touch, repeatable, matched against those area rules before the run starts;\n" +
+			"without either flag a first run resolves from its configuration alone, and a\n" +
+			"follow-up from that and the mode it keeps. Both are\n" +
+			"recorded in the run's record and named in the pull request's status line.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error { return runRun(cmd, &o, args) },
 	}
 	f := cmd.Flags()
 	f.StringVar(&o.repo, "repo", "", "repository as owner/name (default: this checkout's origin)")
-	f.StringVar(&o.ref, "ref", "", "base branch or ref (default: the repo's base_branch)")
+	f.StringVar(&o.ref, "ref", "", "base branch or ref the run is cut from (default: the branch this checkout is on, when origin has it and it is not the base branch; else the base branch (fugaro.yaml git.base_branch, then the local config's, then the project's base_branch, then main))")
 	f.StringVar(&o.workflow, "workflow", "", "workflow to run (default: the repo's only workflow)")
 	f.StringVar(&o.runID, "run-id", "", "run ID to use; repeating one reports its launch instead of starting another")
 	f.StringVar(&o.batch, "batch", "", "batch label, to group runs in fugaro runs ls")
 	f.StringVar(&o.title, "title", "", "the run's title, one line: what fugaro watch and runs ls list the run by, and the pull request's title unless the agent wrote its own pr.md (default: the task's first line); a follow-up (--pr) keeps its run's title unless this is given")
+	f.StringVar(&o.planTask, "plan-task", "", "record the plan task this run works on, as <plan>/<task> (for example setup-wizard/W1.3): the id the console's graph joins this run to a node by; it changes nothing about what the run does, and a follow-up (--pr) records one only when given")
 	f.StringVar(&o.tf, "task-file", "", "read the task from this file, or - for stdin")
 	f.StringVar(&o.retry, "retry", "", "launch the stored task of RUN (<repo-slug>/<run-id> or a run ID) that never started")
 	f.StringVar(&o.totalTimeout, "total-timeout", "", "override the workflow's timeouts.total for this run, such as 45m")
@@ -191,7 +276,11 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&o.recipe, "recipe", "", "the recipe (task loop) to run: .fugaro/recipes/NAME.yaml, the project's, or the catalog's ("+strings.Join(recipe.CatalogNames(), ", ")+"); default: agent.recipe in fugaro.yaml, else default; a follow-up (--pr) keeps its previous run's")
 	f.StringVar(&o.token, "token", "", "named Claude account (claude_accounts in the local config) this run uses, for a workflow whose agent.auth is oauth; default: agent.oauth_token in fugaro.yaml, else the repository's default account; a follow-up (--pr) keeps its previous run's account unless this is given explicitly, which overrides it (checked the same way as a first run's)")
 	f.StringArrayVar(&o.attach, "attach", nil, "attach a file to the run: repeatable, uploaded to the run's own inputs/ and downloaded by a mode: artifact run into the checkout's inputs/ (needs a mode: artifact recipe; refused on a run ID that already has a task)")
+	f.StringVar(&o.rigor, "mode", "", "the rigor mode to ask for: "+rigor.ModeList()+"; it may raise the mode the run resolves from its configuration (rigor.default, rigor.areas, the project layer) and never lower it; a follow-up (--pr) keeps the mode the PR's runs recorded and may only raise it, and takes no hotfix; without it a first run resolves from those layers alone, and a follow-up from those and the mode it keeps")
+	f.StringArrayVar(&o.paths, "path", nil, "declare a path this run will touch, matched against the rigor.areas rules in effect (the repository's, and the project layer's beside them): repeatable; a run that declares none matches no area rule")
+	f.StringVar(&o.tier, "tier", "", "the expectation tier to dispatch this run at: "+tier.List()+". It is what the run is expected to cost and take (governance.tiers in fugaro.yaml and the project layer), and never a cap: the run's own budget cap stays the ceiling. A --pr follow-up keeps the tier its PR's runs recorded; without this flag a run carries no expectation at all")
 	f.IntVar(&o.attempts, "attempts", 0, "launch N (2 to 4) independent runs of the same task, workflow, ref and recipe as a best-of-N batch (bestof-<first run id> unless --batch is given); refused with --pr, --run-id, --retry or a review-mode recipe")
+	f.BoolVar(&o.noCompression, "no-compression", false, "turn agent.compression off for this run only, overriding fugaro.yaml; there is no flag to turn it on, which is a reviewed fugaro.yaml change")
 	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output")
 	f.BoolVar(&o.noBudgetCheck, "no-budget-check", false, "skip the launch pre-check of the budget (kill switches, missing caps, no headroom); the run is held to the same limits when it starts")
 	addCloudFlags(cmd, &o.cloud)
@@ -199,7 +288,7 @@ func newRunCmd() *cobra.Command {
 }
 
 // taskFlags are the flags --retry excludes: the stored task.json supplies them.
-var taskFlags = []string{"repo", "ref", "workflow", "run-id", "batch", "title", "task-file", "total-timeout", "pr", "recipe", "token", "attach"}
+var taskFlags = []string{"repo", "ref", "workflow", "run-id", "batch", "title", "plan-task", "task-file", "total-timeout", "pr", "recipe", "token", "attach", "mode", "path", "tier", "no-compression"}
 
 // prFlags are the flags --pr excludes: the previous run on the PR supplies them.
 var prFlags = []string{"ref", "workflow"}
@@ -248,6 +337,23 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		// a best-of-N batch, a review, a follow-up): o.title then holds the
 		// title exactly as the task stores it, or "" for no title at all.
 		if err = titleFlag(cmd, o); err != nil {
+			return err
+		}
+		// --plan-task, resolved once for every launch shape below, like the
+		// title: o.planTask then holds the id exactly as the task stores it,
+		// or "" for no claim at all.
+		if err = planTaskFlag(cmd, o); err != nil {
+			return err
+		}
+		// --mode and --path, resolved once for every launch shape below, as
+		// --title is: a request the launcher accepts here is the one every
+		// spec builder writes, and a refused one leaves nothing behind.
+		if err = rigorFlags(o); err != nil {
+			return err
+		}
+		// --tier, resolved the same way and for the same reason: the
+		// vocabulary is closed, and a launch that names none writes no field.
+		if err = tierFlag(o); err != nil {
 			return err
 		}
 		if text, err = taskText(cmd, o.tf, args, prSet); err != nil {
@@ -358,6 +464,9 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	if err != nil {
 		return err
 	}
+	if o.retry == "" {
+		noteRigorRequest(ctx, o, spec.Repo, cmd.ErrOrStderr())
+	}
 	res, err := finishLaunch(ctx, env, o, slug, spec, reused, cmd.ErrOrStderr(), false)
 	if err != nil {
 		return err
@@ -383,6 +492,49 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			return launchResult{}, err
 		}
 	}
+	// Whether the configuration this run will read turns compression on,
+	// resolved once for every launch shape (a first run, a follow-up, a
+	// review, a retry, each attempt of a batch) and used by both --no-compression
+	// and the image gate below. Read after the layer is embedded, so it is the
+	// resolution the run itself makes. compressionKnown is false when the
+	// launcher could not read that configuration at all — a --repo launch from
+	// outside a checkout of that repository, say — which is not the same as
+	// reading one that leaves compression off.
+	compression, compressionKnown := compressionRequested(ctx, env, spec)
+	// --no-compression over a configuration the launcher could not read is
+	// refused rather than guessed at: writing the field would put
+	// compression_off on a task whose repository may never turn compression on,
+	// and an older runner refuses the whole task for a field it does not know
+	// (task.Parse decodes with DisallowUnknownFields) — so a flag that only
+	// ever turns compression off would be what fails such a launch at
+	// bootstrap. Skipping the image gate in exchange for the guess would let
+	// that same run start on such a runner. Refused before anything is written
+	// or uploaded, so nothing starts.
+	if o.noCompression && !compressionKnown {
+		return launchResult{}, userErr("--no-compression: the launcher cannot read %s's fugaro.yaml at %s to know whether compression is on; run from a checkout that has the ref, or drop the flag", spec.Repo, spec.Ref)
+	}
+	// --no-compression writes the task's own field only when there is
+	// compression to turn off, the way the title and the plan task are
+	// written: a launch that has nothing to override carries no field and
+	// stays byte-identical to what the previous release wrote. Written before
+	// createTask below, so a repeated --run-id with a flag the stored task
+	// does not carry is refused as a different task rather than silently
+	// dropped.
+	if o.noCompression && compression {
+		spec.CompressionOff = true
+	}
+	// The compression image gate's own condition, resolved here beside the
+	// write and used by both launch branches below. It is the field's as much
+	// as the configuration's, and the two halves catch different failures: a
+	// run that will read a configuration turning compression on needs a runner
+	// that can parse the key, and a task carrying compression_off needs one
+	// that can parse the field — task.Parse decodes with DisallowUnknownFields,
+	// so an older runner refuses the whole task either way. The field's half is
+	// not implied by the configuration's: a follow-up (--pr) and a --retry
+	// inherit the field from the run they continue, which carries it even after
+	// the repository's key has been removed. A launch that writes no field and
+	// reads no such key is never gated.
+	compressionGate := compression || spec.CompressionOff
 	s := runstore.Open(env.bucket.Bucket, slug, spec.RunID)
 	// The run-id freshness check, first of everything an --attach launch
 	// does and before the first byte it could upload (design §4 step 1,
@@ -432,6 +584,12 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 		}
 	}
 	if prior == nil {
+		// The cascade's own gate, first: nothing about a run this launch
+		// cannot carry is worth an --attach upload, a cap check or a claim
+		// (cascadeLaunchRefusal).
+		if err := cascadeLaunchRefusal(ctx, env, spec); err != nil {
+			return launchResult{}, err
+		}
 		// --attach, before the gates below: its recipe refusal, its caps,
 		// D9's line and its image gate (design §4, plan P7/P9). It uploads
 		// nothing here — attachUpload does that below, after the last gate
@@ -439,17 +597,31 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 		// nothing in the bucket under a run id that never gets a task. A
 		// launch with no --attach does nothing here at all.
 		agentRecipe, kind, clone := "", "", false
+		// mode is the same answer for baseBranchSkew, and nil where clone is
+		// false for the other gates because nothing was read: a launch for
+		// another repository from a checkout that is not its own reads no
+		// workflow of it, and baseBranchSkew asks both judges there rather
+		// than take the one a derived workflow would use (its comment has why).
+		var mode *bool
 		if co := checkoutConfig(ctx, spec.Repo); co != nil {
 			agentRecipe = co.Agent.Recipe
 			if w, ok := co.Workflows[spec.Workflow]; ok {
 				kind = w.BaseKind()
 				clone = w.Checkout == config.CheckoutClone
+				m := clone
+				mode = &m
 			}
 		}
 		caps, err := attachLaunch(ctx, env, slug, spec, s.Prefix(), o.attach, kind, clone, warn)
 		if err != nil {
 			return launchResult{}, err
 		}
+		// The base branch's own gate, before anything is written: a runner
+		// older than baseBranchSince cannot read the field and would refuse
+		// the whole task, so the field is dropped rather than the launch
+		// (baseBranchSkew). Here, and not with the gates below, because it
+		// decides what the task createTask writes.
+		baseBranchSkew(ctx, env, slug, spec, mode, warn)
 		// checkRecipeImage and checkImageSince judge a workflow's derived
 		// image by its build record, which a checkout: clone workflow never
 		// has (it runs the installation's base image directly, not a
@@ -486,6 +658,62 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 					return launchResult{}, err
 				}
 			}
+			if spec.PlanTask != "" {
+				if err := checkCloneImageSince(env.lc, spec, planTaskSince,
+					"a plan task (--plan-task)", "the plan task", "", warn); err != nil {
+					return launchResult{}, err
+				}
+			}
+			// The compression gate: a runner older than compressionSince knows
+			// neither the key nor the field and refuses whichever it meets at
+			// bootstrap, so the launch is judged on both (compressionGate
+			// above). It fires whether or not --no-compression is set, since
+			// the override turns the sidecar off and not the key the old
+			// runner cannot read.
+			if compressionGate {
+				if err := checkCloneImageSince(env.lc, spec, compressionSince,
+					"agent.compression", "context compression", "", warn); err != nil {
+					return launchResult{}, err
+				}
+			}
+			// The rigor: gate, judged on the file the run will read rather
+			// than on a task field: see checkRigorImage. Unconditional, since
+			// the repository's file alone can carry the key.
+			if err := checkCloneRigorImage(ctx, env, spec, warn); err != nil {
+				return launchResult{}, err
+			}
+			// The governance: gate, judged the same way and for the same
+			// reason: see checkGovernanceImage.
+			if err := checkCloneGovernanceImage(ctx, env, spec, warn); err != nil {
+				return launchResult{}, err
+			}
+			// The run's own rigor request, gated on the field the same way:
+			// a runner older than rigorRequestSince refuses a task carrying
+			// rigor or paths outright (task.Parse decodes with
+			// DisallowUnknownFields). A launch that carries neither field is
+			// never gated — but a follow-up that passed no flag still carries
+			// one when its PR recorded a mode (T5.2), which is what
+			// rigorGateSubject says in the refusal.
+			if asksForRigor(spec) {
+				if err := checkCloneImageSince(env.lc, spec, rigorRequestSince,
+					rigorGateSubject(o, spec), "the rigor request", "", warn); err != nil {
+					return launchResult{}, err
+				}
+			}
+			// The tier a task carries, judged on the field like the request
+			// above and under the release that ships both the field and the
+			// governance: block its expectation comes from (governanceSince):
+			// a runner older than that refuses a task carrying a tier outright
+			// (task.Parse decodes with DisallowUnknownFields). A launch that
+			// carries none is never gated — but a follow-up that passed no
+			// flag still carries one when its PR recorded a tier, which is
+			// what tierGateSubject says in the refusal.
+			if spec.Tier != "" {
+				if err := checkCloneImageSince(env.lc, spec, governanceSince,
+					tierGateSubject(o, spec), "the tier", "", warn); err != nil {
+					return launchResult{}, err
+				}
+			}
 		} else {
 			if needsRecipeImage(spec, agentRecipe) {
 				if err := checkRecipeImage(ctx, env, slug, spec, kind, warn); err != nil {
@@ -512,6 +740,63 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			if spec.Title != "" {
 				if err := checkImageSince(ctx, env, slug, spec, kind, titlesSince,
 					"a job title (--title, kept by --pr follow-ups and --retry)", "the job title", "", warn); err != nil {
+					return launchResult{}, err
+				}
+			}
+			// The plan task's own gate, for the same reason as the three
+			// above: task.Parse decodes with DisallowUnknownFields, so a
+			// runner older than planTaskSince refuses a task carrying one
+			// outright, and the run would die at bootstrap over a field that
+			// changes nothing about what it does. A launch with no
+			// --plan-task carries no such field (the spec is byte-identical
+			// to what the previous release wrote) and is never gated: the
+			// check is the field's, not the flag's.
+			if spec.PlanTask != "" {
+				if err := checkImageSince(ctx, env, slug, spec, kind, planTaskSince,
+					"a plan task (--plan-task)", "the plan task", "", warn); err != nil {
+					return launchResult{}, err
+				}
+			}
+			// The compression gate: the same gate as the clone branch's above,
+			// and for the same reason. It is judged from the deployed job's
+			// build record because that record names the base image the image
+			// runs the binary of.
+			if compressionGate {
+				if err := checkImageSince(ctx, env, slug, spec, kind, compressionSince,
+					"agent.compression", "context compression", "", warn); err != nil {
+					return launchResult{}, err
+				}
+			}
+			// The rigor: gate, judged on the file the run will read rather
+			// than on a task field: see checkRigorImage. Unconditional, since
+			// the repository's file alone can carry the key.
+			if err := checkRigorImage(ctx, env, slug, spec, kind, warn); err != nil {
+				return launchResult{}, err
+			}
+			// The governance: gate, the same shape as the clone branch's
+			// above and for the same reason.
+			if err := checkGovernanceImage(ctx, env, slug, spec, kind, warn); err != nil {
+				return launchResult{}, err
+			}
+			// The same gate as the clone branch's above, and for the same
+			// reason: the request is a new task field, and a runner that
+			// predates it refuses the whole spec at bootstrap — bytes in the
+			// bucket under a run that never starts. Judged from the deployed
+			// job's build record, and never reached by a launch that carries
+			// no such field at all.
+			if asksForRigor(spec) {
+				if err := checkImageSince(ctx, env, slug, spec, kind, rigorRequestSince,
+					rigorGateSubject(o, spec), "the rigor request", "", warn); err != nil {
+					return launchResult{}, err
+				}
+			}
+			// The same gate as the clone branch's above, and for the same
+			// reason: the tier is a new task field, a runner older than
+			// governanceSince refuses the whole spec at bootstrap, and a
+			// launch that carries none is never gated.
+			if spec.Tier != "" {
+				if err := checkImageSince(ctx, env, slug, spec, kind, governanceSince,
+					tierGateSubject(o, spec), "the tier", "", warn); err != nil {
 					return launchResult{}, err
 				}
 			}
@@ -547,7 +832,7 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 		// the workflow's memory, a render or probe step against the
 		// commands they need), so it runs before the budget read below and
 		// before createTask writes anything at all.
-		if err := checkArtifactLaunch(ctx, spec); err != nil {
+		if err := checkArtifactLaunch(ctx, env, spec); err != nil {
 			return launchResult{}, err
 		}
 		if !skipBudget {
@@ -674,6 +959,107 @@ func titleFlag(cmd *cobra.Command, o *runOptions) error {
 	return nil
 }
 
+// planTaskFlag resolves fugaro run --plan-task into the id the task stores,
+// in o.planTask: the flag trimmed, checked against task's ONE list of what a
+// plan task id may be (task.PlanTaskProblem, the same list the runner applies
+// when it reads a task back, so an id this accepts is never one the run
+// refuses at bootstrap).
+//
+// The flag's absence is not a claim about any plan, and leaves o.planTask
+// empty — every launch before the flag existed, and every launch that does
+// not use it. A present but empty value (--plan-task "") is refused: it is
+// indistinguishable from no flag at all once stored, and the reading it would
+// get silently — "this run was not asked to join anything" — is the one
+// reading nobody meant.
+//
+// The value is NOT sanitised the way a title is: a plan task id is a shape,
+// not prose, and the shape check already allows only ASCII letters, digits,
+// '.', '_', '-' and the '/' between them (safetext.Field, which drops bidi
+// overrides and invisible characters and re-spaces text, cannot change such a
+// value — and a value it WOULD change is one PlanTaskProblem refuses).
+func planTaskFlag(cmd *cobra.Command, o *runOptions) error {
+	if !cmd.Flags().Changed("plan-task") {
+		return nil
+	}
+	o.planTask = strings.TrimSpace(o.planTask)
+	if p := task.PlanTaskProblem(o.planTask); p != "" {
+		return userErr("--plan-task: %s", p)
+	}
+	return nil
+}
+
+// rigorFlags is the run's own rigor request, validated once for every launch
+// shape that accepts it (a first run, a best-of-N batch, a review, a
+// follow-up): the mode against the closed vocabulary (rigor.Modes, D20), and
+// the declared paths against the two bounds a task spec carries
+// (task.MaxDeclaredPaths, task.MaxDeclaredPathBytes).
+//
+// It runs before openCloud and before any write, so a near miss — "Poc", a
+// trailing space, "sizzle" — is the launcher's own mistake, refused with the
+// vocabulary in the message, rather than a value the runner reads as an
+// unknown mode and quietly ignores, which is the fail-open direction. The
+// same rules are applied again by task.Spec.Validate to whatever a task
+// carries, so a hand-written task.json cannot smuggle one past a launcher.
+func rigorFlags(o *runOptions) error {
+	if o.rigor != "" && !rigor.Known(rigor.Mode(o.rigor)) {
+		return userErr("--mode %q: use %s, or leave it off to resolve the mode from the run's own configuration", o.rigor, rigor.ModeList())
+	}
+	if len(o.paths) > task.MaxDeclaredPaths {
+		return userErr("--path: at most %d paths may be declared, got %d", task.MaxDeclaredPaths, len(o.paths))
+	}
+	for i, p := range o.paths {
+		switch {
+		case strings.TrimSpace(p) == "":
+			return userErr("--path: path %d is blank; a declared path is a repository-relative path such as internal/payments/x.go", i+1)
+		case len(p) > task.MaxDeclaredPathBytes:
+			return userErr("--path: path %d is longer than %d bytes", i+1, task.MaxDeclaredPathBytes)
+		}
+	}
+	return nil
+}
+
+// tierFlag is the expectation tier the run's own launcher asks for, validated
+// once for every launch shape that accepts it (a first run, a best-of-N batch,
+// a review, a follow-up): the tier against the closed vocabulary (tier.Tiers,
+// spec §3).
+//
+// Like rigorFlags it runs before openCloud and before any write, so a near
+// miss — "Trivial", a trailing space, "huge" — is the launcher's own mistake,
+// refused with the vocabulary in the message, rather than a value the runner
+// reads as an unknown tier. The same rule is applied again by
+// task.Spec.Validate to whatever a task carries, so a hand-written task.json
+// cannot smuggle one past a launcher.
+func tierFlag(o *runOptions) error {
+	if o.tier != "" && !tier.Known(tier.Tier(o.tier)) {
+		return userErr("--tier %q: use %s, or leave it off to dispatch the run with no expectation", o.tier, tier.List())
+	}
+	return nil
+}
+
+// noteRigorRequest says, once per launch, when --mode asks for a mode the
+// layers already meet: the request may raise and never lower (D6), so such a
+// request is recorded as asked and changes nothing, and a launcher that typed
+// it — `--mode hotfix` above all, which ranks below every on-axis mode —
+// would otherwise believe it took effect. It reads the checkout's fugaro.yaml
+// with the project layer, the closest thing to the base branch the launcher
+// has; without a checkout of repo it cannot tell, and says nothing. Never an
+// error: the runner, reading the base branch, is the one that decides.
+func noteRigorRequest(ctx context.Context, o *runOptions, repo string, warn io.Writer) {
+	if o.rigor == "" {
+		return
+	}
+	c := checkoutConfig(ctx, repo)
+	if c == nil {
+		return
+	}
+	cfg := c.RigorConfig()
+	if rigor.Resolve(cfg, rigor.Request{Mode: rigor.Mode(o.rigor), Paths: o.paths}).From == rigor.FromRequest {
+		return
+	}
+	resolved := rigor.Resolve(cfg, rigor.Request{Paths: o.paths}).Mode
+	fmt.Fprintf(warn, "--mode %s is not higher than the repository's resolved mode %s: it has no effect\n", o.rigor, resolved)
+}
+
 // attemptPlan is everything a new run's attempts share, resolved once: the
 // repository, workflow, ref, account and recipe. newSpec (a single launch)
 // and runAttempts (every attempt of a best-of-N batch) both build one, then
@@ -682,12 +1068,23 @@ func titleFlag(cmd *cobra.Command, o *runOptions) error {
 // recipe from its first (design generic-tool review, 2026-10-13).
 type attemptPlan struct {
 	repo, slug, workflow, ref, me, account, totalOverride string
-	recipe                                                *task.Recipe
+	// base is the task's base_branch field, the branch the runner resolves the
+	// configuration and the pull request's base from: the layers the launcher
+	// read when one of them (and not the checkout's own file) named it, and ""
+	// otherwise, so the spec stays byte-identical to the previous release's for
+	// a launch that changes nothing (specBaseBranch).
+	base   string
+	recipe *task.Recipe
 	// mode is the resolved recipe's mode when the runner cannot read it
 	// from the task alone (mode: artifact today): buildAttemptSpec writes it
 	// into the spec, and it is empty for implement and review, so those
 	// specs stay byte-identical to what the previous release wrote.
 	mode string
+	// digestRuns is the manifest of a report run (run_digest_manifest.go):
+	// this repository's runs its digest step may read, listed once here so
+	// every attempt of a batch carries the same list, and empty for every
+	// other launch, whose task stores no manifest at all.
+	digestRuns []string
 }
 
 // resolveAttemptPlan resolves everything a new run's spec needs except its
@@ -724,15 +1121,18 @@ func resolveAttemptPlan(ctx context.Context, env *cloudEnv, o *runOptions, total
 		}
 		totalOverride = total.String()
 	}
-	ref := o.ref
+	// The base branch is resolved before the ref. An explicit ref is the
+	// branch the run is cut from, not its base, and the file that decides a
+	// base under one is the file at that ref — which only the runner reads,
+	// and it is read first there (ResolveConfig takes the task's base only
+	// where the file writes none). So a --ref launch carries the two layers
+	// below the file, and a launch without one carries all four.
+	ref, base := o.ref, ""
 	if ref == "" {
-		if r, ok := env.localRepo(repo); ok && r.BaseBranch != "" {
-			ref = r.BaseBranch
-		} else if c := checkout(); c != nil && c.Git.BaseBranch != "" {
-			ref = c.Git.BaseBranch
-		} else {
-			return nil, userErr("cannot tell the base branch of %s; pass --ref", repo)
-		}
+		b, source := launchBaseBranch(ctx, env, repo)
+		base, ref = resolvedBaseBranch(b, source), newRunRef(ctx, repo, b, warn)
+	} else {
+		base = specBaseBranch(env.layersBaseBranch(ctx, repo))
 	}
 	me, err := env.lc.Me(ctx)
 	if err != nil {
@@ -747,11 +1147,23 @@ func resolveAttemptPlan(ctx context.Context, env *cloudEnv, o *runOptions, total
 	if err != nil {
 		return nil, err
 	}
-	rcp, mode, err := chooseRecipe(ctx, env, o.recipe, checkout, checkoutRoot(ctx, repo), warn, forAttempts)
+	root := checkoutRoot(ctx, repo)
+	rcp, mode, err := chooseRecipe(ctx, env, o.recipe, checkout, root, warn, forAttempts)
 	if err != nil {
 		return nil, err
 	}
-	return &attemptPlan{repo: repo, slug: slug, workflow: workflow, ref: ref, me: me, account: account, totalOverride: totalOverride, recipe: rcp, mode: mode}, nil
+	// The report run's manifest is listed here, once per launch, and before
+	// the launch itself: the listing and the horizon it needs are cloud
+	// calls of their own, but they come before the task is stored and the
+	// execution started, so a repository already writing its reports is
+	// refused without launching anything. A batch never reaches this with a
+	// report recipe (chooseRecipe refuses --attempts for one), so no
+	// attempt reads another's stored task as a report run still going.
+	digestRuns, err := digestManifest(ctx, env, slug, root, rcp, time.Now(), warn)
+	if err != nil {
+		return nil, err
+	}
+	return &attemptPlan{repo: repo, slug: slug, workflow: workflow, ref: ref, base: base, me: me, account: account, totalOverride: totalOverride, recipe: rcp, mode: mode, digestRuns: digestRuns}, nil
 }
 
 // buildAttemptSpec stamps a fresh run id (or o.runID, when given) onto plan,
@@ -765,8 +1177,9 @@ func buildAttemptSpec(plan *attemptPlan, o *runOptions, text string) (string, *t
 			return "", nil, err
 		}
 	}
-	spec := &task.Spec{Version: 1, RunID: runID, Repo: plan.repo, Ref: plan.ref, Workflow: plan.workflow, Task: text, Title: o.title,
-		RequestedBy: plan.me, Batch: o.batch, Recipe: plan.recipe, Mode: plan.mode}
+	spec := &task.Spec{Version: 1, RunID: runID, Repo: plan.repo, Ref: plan.ref, BaseBranch: plan.base, Workflow: plan.workflow, Task: text, Title: o.title,
+		PlanTask: o.planTask, RequestedBy: plan.me, Batch: o.batch, Recipe: plan.recipe, Mode: plan.mode,
+		Rigor: rigor.Mode(o.rigor), Paths: o.paths, Tier: tier.Tier(o.tier), DigestRuns: plan.digestRuns}
 	if plan.totalOverride != "" {
 		spec.Overrides.TotalTimeout = plan.totalOverride
 	}
@@ -791,6 +1204,7 @@ func newSpec(ctx context.Context, env *cloudEnv, o *runOptions, text string, tot
 	if err != nil {
 		return "", nil, err
 	}
+	warnTaskCutsBranch(warn, text, plan.ref)
 	return buildAttemptSpec(plan, o, text)
 }
 
@@ -840,6 +1254,8 @@ func runAttempts(cmd *cobra.Command, env *cloudEnv, o *runOptions, text string, 
 	if err != nil {
 		return err
 	}
+	noteRigorRequest(ctx, o, plan.repo, warn)
+	warnTaskCutsBranch(warn, text, plan.ref)
 	if err := checkMaxParallelFor(ctx, env, n); err != nil {
 		return err
 	}
@@ -982,15 +1398,17 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 			}
 		}
 	}
-	ref := o.ref
+	// The layers, and the field, as a first run's (resolveAttemptPlan) with
+	// one case short: a review run reads its own configuration from the branch
+	// it is cut from — the runner's readBaseConfig refuses a file whose base
+	// is not that branch — so an explicit --ref writes no field. There, the
+	// field would name a branch other than the ref, and the run would be
+	// refused rather than held to it; the file at that ref is the judge, as it
+	// is for a first run.
+	ref, base := o.ref, ""
 	if ref == "" {
-		if r, ok := env.localRepo(repo); ok && r.BaseBranch != "" {
-			ref = r.BaseBranch
-		} else if c := checkout(); c != nil && c.Git.BaseBranch != "" {
-			ref = c.Git.BaseBranch
-		} else {
-			return "", nil, userErr("cannot tell the base branch of %s; pass --ref", repo)
-		}
+		b, source := launchBaseBranch(ctx, env, repo)
+		base, ref = resolvedBaseBranch(b, source), b
 	}
 	me, err := env.lc.Me(ctx)
 	if err != nil {
@@ -1007,8 +1425,9 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 		return "", nil, err
 	}
 	printRecipeNote(warn, rr, true)
-	spec := &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: ref, Workflow: workflow, Task: text, Title: o.title,
-		RequestedBy: me, Batch: o.batch, Recipe: rr.taskRecipe(), ReviewPRs: append([]int(nil), o.pr...)}
+	spec := &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: ref, BaseBranch: base, Workflow: workflow, Task: text, Title: o.title, PlanTask: o.planTask,
+		RequestedBy: me, Batch: o.batch, Recipe: rr.taskRecipe(), ReviewPRs: append([]int(nil), o.pr...),
+		Rigor: rigor.Mode(o.rigor), Paths: o.paths, Tier: tier.Tier(o.tier)}
 	if total > 0 {
 		spec.Overrides.TotalTimeout = total.String()
 	}
@@ -1134,11 +1553,84 @@ func agentAtRef(ctx context.Context, env *cloudEnv, repo, ref string) (config.Ag
 	fl, cached := cachedProjectLayer(ctx, root, env.lc)
 	if cached && fl.Layer != nil {
 		pl := &task.ProjectLayer{SHA256: fl.Layer.SHA256, Generation: fl.Generation, YAML: string(fl.Layer.Raw)}
-		if res := runner.ResolveConfig(data, pl, env.lc.Name); res.LayerErr == nil && len(res.Problems) == 0 {
+		// No base branch: the task is not built yet at this point (this is the
+		// read the launch resolves its account from), and only agent.auth is
+		// read out of the resolution — a base changes git.base_branch and
+		// nothing else.
+		if res := runner.ResolveConfig(data, pl, env.lc.Name, ""); res.LayerErr == nil && len(res.Problems) == 0 {
 			auth = res.Cfg.Agent.Auth
 		}
 	}
 	return a, auth, true
+}
+
+// cascadeRefConfig is the document a cascade launch's own rules are read from
+// here — its agent.auth and its budget mode both: the fugaro.yaml at the ref
+// the run checks out (spec.Ref), read out of this checkout's object database,
+// resolved over the project layer the task carries (spec.ProjectLayer) through
+// runner.ResolveConfig, the runner's own function, exactly as
+// projectJobAgentAuth resolves the credential.
+//
+// It is deliberately not the launcher's working tree (checkoutConfig). The run
+// clones spec.Ref and resolves *that* file (runner.go's blobless checkout of
+// origin/spec.Ref), so a launcher judging its working tree judges a document
+// the run never reads: a checkout left on another branch, or carrying an
+// uncommitted edit, can say budget.mode: observe over a ref that says off, and
+// the launch this gate exists to refuse — one whose run cannot carry a single
+// call — would take the claim, mint a budget token and start an execution that
+// refuses in agent.BuildEnv instead. The reverse refuses a launch the run would
+// carry. agentAtRef reads the ref for this very reason; the mode has to come
+// from the same bytes as the auth, or the gate judges a run that does not
+// exist.
+//
+// nil when the ref cannot be read or does not resolve: the caller falls back to
+// the checkout's own document, as the auth read always has, and the run's own
+// bootstrap refuses what the launcher could not read.
+func cascadeRefConfig(ctx context.Context, env *cloudEnv, spec *task.Spec) *config.Config {
+	if spec.Ref == "" {
+		return nil
+	}
+	root := checkoutRoot(ctx, spec.Repo)
+	if root == "" {
+		return nil
+	}
+	data, err := readFugaroYAMLAtRef(ctx, root, spec.Ref)
+	if err != nil {
+		return nil
+	}
+	out := runner.ResolveConfig(data, spec.ProjectLayer, env.lc.Name, spec.BaseBranch)
+	if out.LayerErr != nil || len(out.Problems) > 0 {
+		return nil
+	}
+	return out.Cfg
+}
+
+// defaultBranchPolicyLayer is the default branch's policy as the run reads it:
+// the policy keys of origin/<default branch>'s fugaro.yaml (runner's
+// resolvePolicy, config.PolicyOf). The run merges three layers — the ceiling,
+// this one and the ref's file — and a layer can only tighten, so leaving this
+// one out is not neutral: a mode this layer raises (off < observe < enforce) is
+// one the run has and the gate would not see, and a launch the run would carry
+// would be refused. The security direction is safe the other way (no layer
+// below the ceiling can lower a mode), so a default branch this launcher cannot
+// read is an empty layer rather than a refusal: it has no fetch of its own — a
+// fetch is a network write into a repository this command does not own — and
+// the run's own bootstrap refuses the file it cannot read.
+func defaultBranchPolicyLayer(ctx context.Context, repo string) policy.Layer {
+	root := checkoutRoot(ctx, repo)
+	if root == "" {
+		return policy.Layer{}
+	}
+	db := defaultBranchParse(ctx, root)
+	if !db.read {
+		return policy.Layer{}
+	}
+	p, err := config.PolicyOf(db.data)
+	if err != nil {
+		return policy.Layer{}
+	}
+	return policy.Layer{Mode: p.Mode, PerRunUSD: p.PerRunUSD, PerDayUSD: p.PerDayUSD, MaxRunTokens: p.MaxRunTokens,
+		AllowedModels: p.AllowedModels, MaxOutputCoder: p.MaxOutputTokens.Coder, MaxOutputReviewer: p.MaxOutputTokens.Reviewer}
 }
 
 // checkoutAgentAuth is a checkout's own agent.auth as claudeAccountAllowed
@@ -1176,7 +1668,7 @@ func claudeAccountAllowed(env *cloudEnv, repo, name, auth string) error {
 	}
 	// The two documents auth can come from are read differently, and only one
 	// of them is validated. The checkout's own config went through
-	// config.Validate (agent.auth is one of vertex, api-key, oauth), while the
+	// config.Validate (agent.auth is one of config.AgentAuths), while the
 	// ref's bytes are read by config.AgentOf, which decodes strictly and
 	// validates nothing — so an arbitrary string arrives here from a committed
 	// fugaro.yaml. A value this Fugaro cannot place is refused, which is what
@@ -1252,6 +1744,17 @@ func chooseRecipe(ctx context.Context, env *cloudEnv, flag string, checkout func
 			return nil, "", userErr("recipe %s is mode: artifact, which renders a deliverable into the run's bucket and opens no pull request; --attempts launches a fresh batch of pull requests and cannot use it", rr.Name)
 		}
 	}
+	// A report recipe reads this repository's own run records and writes the
+	// reports the repository is missing (task-governance plan T3.6), and the
+	// repository has one report run at a time: a batch's attempts are
+	// launched together, each carrying the same manifest, so they would all
+	// write the same reports into their own pull requests. The batch is
+	// refused here, where the recipe is known, rather than by the
+	// in-flight check in resolveAttemptPlan, which a batch's own attempts
+	// cannot see (they are stored only as they launch).
+	if forAttempts && recipe.UsesDigest(rr.Recipe) {
+		return nil, "", userErr("recipe %s writes this repository's run reports, and a repository has one report run at a time; --attempts launches a batch of runs at once and cannot use it", rr.Name)
+	}
 	printRecipeNote(warn, rr, explicit)
 	// An explicit --recipe default overrides agent.recipe, which applies when
 	// the checkout sets it, or when there is no checkout and the runner reads
@@ -1278,6 +1781,162 @@ func printRecipeNote(warn io.Writer, rr *resolvedRecipe, explicit bool) {
 	io.WriteString(warn, noteLine(rr.Note))
 }
 
+// cascadeLaunchRefusal is the launcher's own side of the cascade's rules
+// (C1.19): a `agent.auth: cascade` workflow is refused here, before the claim
+// is taken, before a budget token is minted and before any byte is written —
+// so a repository that asks for a cascade no installation can carry leaves no
+// task, no execution and no token behind.
+//
+// The runner refuses the rest of the same rules in the job (the missing
+// service, serviceUpstream). What is refused here is refused here because a
+// person is watching a terminal:
+//
+//   - an installation with no database, first of all: the switch the operator
+//     publishes and the credentials rules marker both live there, so this CLI
+//     can see neither and refuses rather than launching a run whose first
+//     recorded credential the deployed rules may refuse. The model credential
+//     is no longer mounted in such a job (C1.20), so there is nothing to fall
+//     back to either (D143) — and without a database there is no policy to
+//     read a mode from, so the gateway rule below could only guess.
+//   - the O2 switch: the project's published policy must carry
+//     routing.claude: {via: cascade}, or no run of this workflow is admitted
+//     anywhere. The policy read below is the one this needs, and the refusal
+//     is fugaro validate's cascadeProblems said again on this side — a
+//     repository asks for the cascade, and only the operator can set it there
+//     — except that here it is judged before the claim is taken, before a
+//     budget token is minted and before an execution starts, rather than
+//     leaving the runner's bootstrap to refuse a run already paid for.
+//   - the gateway rule (config.CheckCascadeGateway): a cascade run has no
+//     credential of its own, so a budget whose effective mode is off leaves it
+//     with nothing to carry its calls. config.CheckCascadeGateway is the one
+//     place that rule lives, and its own comment named this task as the
+//     launch's caller of it.
+//   - the project's published model allow-list (the owner's ruling of
+//     2026-10-22): the credentials service holds every call it carries to the
+//     project's budget.allowed_models and refuses a project that publishes
+//     none (internal/credsvc's requestNoAllowList), so a cascade run of such a
+//     project would have every call refused and halt on the first (D143). What
+//     is judged is the *policy node's* list and not the run's merged one: the
+//     node is the only list the service can read, and the environment's
+//     ceiling and the repository's file never reach it. The rule has no skip
+//     for a project layer this launcher cannot read — an absent node is
+//     refused by the switch's arm above — and this read is the one all three
+//     surfaces the cascade is judged on make: `fugaro validate` reports it to
+//     the author (validate.go's cascadeProblems) and the run refuses it in
+//     bootstrap, before any model call (internal/runner/routing.go's
+//     applyRouting).
+//   - the rules marker (budget/rules, C1.3): the deployed document must carry
+//     the credentials family, or the run's first write of the credential's
+//     name is denied and it halts named (HaltCredsRulesDenied, C1.17). This is
+//     the same read `fugaro update --provision-credentials` makes before it
+//     applies anything and the same pair `fugaro doctor` reports; here it is a
+//     refusal, because a launch is the moment it can still save the run. The
+//     marker's generation is wanted to be exactly this binary's, and the two
+//     ways it can miss it are two different problems with two different fixes
+//     (doctorCredsRules' pair): below this Fugaro's it is an old deploy, above
+//     it a newer Fugaro's document — and a newer marker is not one this
+//     binary may deploy over (internal/infra's DB.Plan refuses it), so telling
+//     its owner to re-run init from this Fugaro would send them at a command
+//     that refuses them.
+//
+// Both documents this gate judges are the run's: the auth *and* the mode come
+// from the file the run checks out (spec.Ref, read out of this checkout's
+// object database by cascadeRefConfig), never from the launcher's working tree,
+// which the run does not read — projectJobAgentAuth's finding, and the reason
+// the auth was read at the ref here from the start. The mode is judged over the
+// same three layers the run merges (runner's resolvePolicy): the environment's
+// ceiling, the default branch's policy (defaultBranchPolicyLayer) and the ref's
+// own file.
+func cascadeLaunchRefusal(ctx context.Context, env *cloudEnv, spec *task.Spec) error {
+	runCfg := cascadeRefConfig(ctx, env, spec)
+	if runCfg == nil {
+		// The ref could not be read or does not resolve: the checkout's own
+		// document stands in, as the auth read has always fallen back to it,
+		// and the run's own bootstrap refuses what the launcher could not
+		// read.
+		runCfg = checkoutConfig(ctx, spec.Repo)
+	}
+	auth := checkoutAgentAuth(runCfg)
+	if auth != config.AuthCascade {
+		return nil
+	}
+	if env.lc.Budget == nil || env.lc.Budget.RTDBURL == "" {
+		return userErr("agent.auth: cascade cannot run here: this installation has no database, so neither the policy switch that turns the cascade on (%s) nor the credentials rules marker (%s) can be read — and a job of such an installation mounts no model credential at all (C1.20), so this run would have nothing to fall back to (D143). Run 'fugaro update --provision-credentials' in your own terminal to enable the credentials service, or set agent.auth to api-key or oauth in this workflow",
+			projectpolicy.PathShared(), rules.PathCredsRulesMarker())
+	}
+	ceiling := ceilingLayer(env.lc)
+	def := defaultBranchPolicyLayer(ctx, spec.Repo)
+	var layer policy.Layer
+	if runCfg != nil {
+		layer = runner.FileLayer(runCfg)
+	}
+	p, found, err := env.policy.read(ctx, env.lc)
+	if err != nil {
+		return policyReadErr(err)
+	}
+	// O2, on the launch's own side (validate.go's cascadeProblems is the
+	// author's): the policy read above is the one the switch is judged from,
+	// and it fails closed in every direction — nothing published, a policy
+	// with no routing block, or a Claude switch written with another via
+	// (`direct` names the direct path and `auto` keeps today's routing
+	// meaning, O3) are all "not turned on".
+	switch {
+	case !found || p == nil:
+		return userErr("agent.auth: cascade cannot run here: this project has published no policy at %s, so nothing turns the cascade on. Set routing.claude: {via: cascade} in the project policy and publish it (fugaro project policy publish) — a repository asks for the cascade, and only the operator can set it there (O2)",
+			projectpolicy.PathShared())
+	case p.Routing == nil || p.Routing.Claude == nil || p.Routing.Claude.ViaValue() != config.RouteCascade:
+		return userErr("agent.auth: cascade cannot run here: this project's published policy (%s) does not turn the cascade on. Set routing.claude: {via: cascade} in the project policy and publish it (fugaro project policy publish) — a repository asks for the cascade, and only the operator can set it there (O2)",
+			projectpolicy.PathShared())
+	}
+	if p.Budget.Mode != "" {
+		ceiling.Mode = p.Budget.Mode
+	}
+	if ps := config.CheckCascadeGateway(config.Agent{Auth: auth}, policy.Merge(ceiling, def, layer).Mode); len(ps) > 0 {
+		msgs := make([]string, len(ps))
+		for i, p := range ps {
+			msgs[i] = p.String()
+		}
+		return userErr("agent.auth: cascade cannot run here: %s. A cascade run holds no model credential of its own — the gateway carries every call to the credentials service and accounts for it (D143) — so a budget that leaves the gateway off cannot run one", strings.Join(msgs, "; "))
+	}
+	// The allow-list the credentials service holds this run's calls to, read
+	// from the policy node and refused fail closed: there is no fall-back to
+	// the environment's ceiling or to the repository's file, because the
+	// service never sees either and refuses every call of a project that
+	// publishes none (the owner's ruling of 2026-10-22).
+	if len(p.Budget.AllowedModels) == 0 {
+		return userErr("agent.auth: cascade cannot run here: this project's published policy (%s) carries no budget.allowed_models, and the credentials service — which carries every call of a cascade run and accounts for it (D143) — refuses a project that publishes none, so this run's first call would be refused and halt it. agent.auth: cascade needs the project's budget.allowed_models; add the allow-list to the project layer and publish it (fugaro project policy publish)",
+			projectpolicy.PathShared())
+	}
+	db, err := newBudgetClient(ctx, env.lc.Budget.RTDBURL, env.lc.Endpoints.NoAuth)
+	if err != nil {
+		return userErr("%v", err)
+	}
+	var raw json.RawMessage
+	marker := rules.PathCredsRulesMarker()
+	foundMarker, err := db.Get(ctx, marker, &raw)
+	if err != nil {
+		return dbErr(env.lc, fmt.Errorf("reading the credentials rules marker at %s: %w", marker, err), false)
+	}
+	if !foundMarker {
+		return userErr("agent.auth: cascade cannot run here: the installation's database carries no credentials rules marker at %s, so its deployed rules predate the credentials service and the first credential this run records would be refused — the run would halt instead of running (C1.17). Re-run 'fugaro update --firebase-project <gcp-project-id>' in your own terminal from a Fugaro that carries the credentials rules (%s), then launch again",
+			marker, credsServiceSince)
+	}
+	var gen int
+	if err := json.Unmarshal(raw, &gen); err != nil || projectpolicy.MarkerHandEdited(gen) {
+		return userErr("agent.auth: cascade cannot run here: the credentials rules marker at %s is %s, which is not a generation number; fix it with 'fugaro update --firebase-project <gcp-project-id>'",
+			marker, oneLineCLI(string(raw)))
+	}
+	switch {
+	case gen < rules.CredsRulesVersion:
+		return userErr("agent.auth: cascade cannot run here: the credentials rules marker at %s records generation %d, below the generation %d this Fugaro's credentials rules carry, so the deployed document predates the credentials family and the first credential this run records would be refused (C1.17); re-run 'fugaro update --firebase-project <gcp-project-id>' in your own terminal from this Fugaro (%s), then launch again",
+			marker, gen, rules.CredsRulesVersion, credsServiceSince)
+	case gen > rules.CredsRulesVersion:
+		return userErr("agent.auth: cascade cannot run here: the credentials rules marker at %s records generation %d, above the generation %d this Fugaro's credentials rules carry, so a newer Fugaro deployed them and this release refuses to deploy its own rules over a newer marker; upgrade Fugaro first ('fugaro upgrade') and re-run 'fugaro update --firebase-project <gcp-project-id>' with the newer binary, then launch again",
+			marker, gen, rules.CredsRulesVersion)
+	}
+	return nil
+}
+
 // checkArtifactLaunch refuses a mode: artifact launch whose caps cannot fit
 // the workflow's memory, or whose render or probe step names a command the
 // workflow leaves empty: the launch's arm of runner.RecipeGateProblems
@@ -1286,17 +1945,102 @@ func printRecipeNote(warn io.Writer, rr *resolvedRecipe, explicit bool) {
 // execution behind. A launch whose recipe or workflow the launcher cannot
 // resolve locally is judged by the runner's own bootstrap instead
 // (checkGateCommands), which reports the same list.
-func checkArtifactLaunch(ctx context.Context, spec *task.Spec) error {
+//
+// It is also the arm of the artifact boundary that survives the enable (Global
+// Constraint 13, plan compute-backend.md Task 8 step 4): an artifact-producing
+// run is never launched on cloud-batch, and this is where the backend and the
+// recipe the launch names are both known -- `fugaro validate` judges the
+// checkout's own recipe offline, so a launch naming an artifact recipe with
+// --recipe is refused here rather than there. The two arms ask one function
+// (artifactOnBatchRefusal), so the boundary cannot be lifted from one path
+// while the other keeps it.
+//
+// What it judges is the recipe as recipeForLaunch resolves it, and that is not
+// always the recipe the runner reads, because the runner resolves the
+// repository layer at the task's ref FIRST (internal/runner/recipe.go's
+// resolveRecipe, TestRecipeRepoLayerWins):
+//
+//   - a project or catalog recipe's text travels in the task, but a file of
+//     that name at the ref is the recipe that runs, mode included, whatever
+//     text the task carries. So the ref is asked for that name as the runner
+//     asks it (carriedRecipeAtRef, recipeAtRef), and a ref this checkout has
+//     none of is refused fail-closed (artifactShadowedOnBatchRefusal) -- the
+//     text a task carries says nothing about what the base branch holds beside
+//     it. TestAnArtifactRecipeAtTheRefShadowsTheTasksCarriedTextOnCloudBatch
+//     pins both halves.
+//   - a repository recipe (named, or the one agent.recipe names) is read from
+//     this launcher's working tree, while the runner reads it at the task's
+//     ref -- the repository's base branch unless the launch names another. A
+//     working tree whose recipe is not mode: artifact therefore passes this
+//     gate for a ref whose recipe is. That residual is recorded in the plan's
+//     Task 10 step 5 inventory, which closes it before the name is selectable,
+//     and TestTheArtifactLaunchGateJudgesTheWorkingTreeNotTheRef pins it.
+//
+// It has three shapes of its own, because a launch can arrive without a recipe
+// this launcher can read at all: the refusal for a recipe known to be mode:
+// artifact, and -- on cloud-batch only -- the refusal for a recipe that could
+// not be resolved here (artifactUnreadOnBatchRefusal) and for a carried recipe
+// whose repository layer at the ref could not be read
+// (artifactShadowedOnBatchRefusal), since nothing on this path can then say the
+// run is not an artifact one. All are asked before anything about this launch
+// is written, so none leaves a task or an execution behind.
+func checkArtifactLaunch(ctx context.Context, env *cloudEnv, spec *task.Spec) error {
 	cfg := checkoutConfig(ctx, spec.Repo)
+	// The boundary is asked here, before the checkout can bail out below and
+	// with the recipe resolved as far as this checkout allows. Both of those
+	// are the arm itself and not an ordering detail: recipeForLaunch needs no
+	// checkout for a task that carries its own recipe text (a project or
+	// catalog recipe -- `fugaro run --recipe`), so asking the boundary only
+	// after the checkout had resolved left exactly that launch unrefused on
+	// cloud-batch, from any directory whose origin is not spec.Repo. The
+	// workflow is not consulted either: SelectWorkflow reads this checkout's
+	// config, which a launch whose local configuration disagrees with its
+	// repository would fail -- and the boundary is about the backend and the
+	// recipe, not about the workflow.
+	rcp := recipeForLaunch(ctx, cfg, spec)
+	if msg, ok := artifactOnBatchRefusal(launchBackend(env.be), rcp); ok {
+		// Before the caps below and before anything is written, like every
+		// other refusal here: the run the boundary holds back leaves no task
+		// and no execution behind.
+		return userErr("%s", msg)
+	}
+	if launchBackend(env.be) == backend.CloudBatch && rcp == nil {
+		// Fail closed, and this is the other shape of the same hole: a recipe
+		// this launcher cannot read (a repository recipe with no checkout of
+		// that repository here, or a first run whose recipe is the one this
+		// checkout's agent.recipe names) reaches the boundary as nil, which
+		// artifactOnBatchRefusal reads as "not an artifact run" -- and the
+		// runner resolves that recipe at the task's ref, so on
+		// cloud-batch an unread recipe is refused rather than passed on.
+		return userErr("%s", artifactUnreadOnBatchRefusal(spec.Repo))
+	}
+	if launchBackend(env.be) == backend.CloudBatch && spec.Recipe != nil && spec.Recipe.YAML != "" {
+		// A recipe whose text the task carries is not the run's recipe either,
+		// and for the same reason: the runner reads the repository layer at the
+		// task's ref FIRST and only falls back to the task's copy
+		// (internal/runner/recipe.go's resolveRecipe, TestRecipeRepoLayerWins),
+		// so a file of that name at the ref is the recipe that runs, its mode
+		// included. So the ref is asked for that name, as the runner asks it:
+		// the file it finds (if any) is judged on its own mode, and a ref this
+		// checkout has none of is refused fail-closed -- a project or catalog
+		// recipe's text says nothing about what the repository's base branch
+		// holds beside it.
+		refRcp, err := carriedRecipeAtRef(ctx, spec)
+		if err != nil {
+			return userErr("%s", artifactShadowedOnBatchRefusal(spec.Recipe.Name, spec.Repo, spec.Ref))
+		}
+		if msg, ok := artifactOnBatchRefusal(backend.CloudBatch, refRcp); ok {
+			return userErr("%s", msg)
+		}
+	}
 	if cfg == nil {
+		return nil
+	}
+	if rcp == nil || rcp.Mode != recipe.ModeArtifact {
 		return nil
 	}
 	name, wf, err := cfg.SelectWorkflow(spec.Workflow)
 	if err != nil {
-		return nil
-	}
-	rcp := recipeForLaunch(ctx, cfg, spec)
-	if rcp == nil || rcp.Mode != recipe.ModeArtifact {
 		return nil
 	}
 	var msgs []string
@@ -1307,6 +2051,79 @@ func checkArtifactLaunch(ctx context.Context, spec *task.Spec) error {
 		return nil
 	}
 	return userErr("recipe %s: %s", rcp.Name, strings.Join(msgs, "; "))
+}
+
+// carriedRecipeAtRef is the recipe the runner will use for a launch whose task
+// carries its own recipe text: the repository layer at the task's ref when the
+// ref has a file of that name -- which resolveRecipe reads FIRST and which wins
+// over the task's copy, mode included (internal/runner/recipe.go,
+// TestRecipeRepoLayerWins) -- else the text the task carries.
+//
+// err is non-nil whenever the ref's answer cannot be had at all: no checkout of
+// the run's repository in this directory, a checkout that does not hold
+// spec.Ref, or a file at the ref this launcher cannot parse. The caller refuses
+// on it, because then nothing here can say whether the run is an artifact one.
+func carriedRecipeAtRef(ctx context.Context, spec *task.Spec) (*recipe.Recipe, error) {
+	root := checkoutRoot(ctx, spec.Repo)
+	data, found, err := recipeAtRef(ctx, root, spec.Ref, spec.Recipe.Name)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		data = []byte(spec.Recipe.YAML)
+	}
+	rcp, ps := recipe.Parse(data)
+	if len(ps) > 0 {
+		return nil, fmt.Errorf("recipe %s at %s is invalid: %s", spec.Recipe.Name, spec.Ref, recipe.ProblemsText(ps))
+	}
+	if rcp.Name != spec.Recipe.Name {
+		return nil, fmt.Errorf("recipe %s at %s names itself %q; the file name and the name must agree", spec.Recipe.Name, spec.Ref, rcp.Name)
+	}
+	return rcp, nil
+}
+
+// recipeAtRef reads .fugaro/recipes/<name>.yaml at ref out of this checkout's
+// own object database -- git cat-file, never the network and never the working
+// tree -- the file the runner resolves first (internal/runner/recipe.go's
+// readRepoRecipe). found is false when the ref has no such file; err when the
+// answer cannot be had at all (no checkout root, a ref this checkout does not
+// hold, a path that is not a blob).
+//
+// The refs are tried the way checkoutFugaroYAMLAtRef tries them, and for its
+// reason: refs/remotes/origin/<ref> first, because that is the ref the run
+// clones, and the plain ref as the fallback for a checkout that has the branch
+// but no remote-tracking ref of it. Nothing is fetched here -- a fetch is a
+// network write into a repository this command does not own.
+func recipeAtRef(ctx context.Context, root, ref, name string) (data []byte, found bool, err error) {
+	if root == "" {
+		return nil, false, errors.New("this directory is not a checkout of the run's repository")
+	}
+	if ref == "" {
+		return nil, false, errors.New("the launch names no ref")
+	}
+	at := ""
+	for _, candidate := range []string{"refs/remotes/origin/" + ref, ref} {
+		sha, err := gitRead(ctx, root, "rev-parse", "--verify", "--quiet", "--end-of-options", candidate+"^{commit}")
+		if err == nil && sha != "" {
+			at = candidate
+			break
+		}
+	}
+	if at == "" {
+		return nil, false, fmt.Errorf("this checkout holds no %s ref (fetch it, or check it out)", ref)
+	}
+	rel := recipe.RepoPath(name)
+	if _, err := gitRead(ctx, root, "rev-parse", "--verify", "--quiet", "--end-of-options", at+":"+rel); err != nil {
+		return nil, false, nil
+	}
+	data, err = gitCmd(ctx, root, "cat-file", "blob", at+":"+rel).Output()
+	if err != nil {
+		return nil, false, fmt.Errorf("%s at %s is not a readable file", rel, at)
+	}
+	if len(data) > recipe.MaxBytes {
+		return nil, false, fmt.Errorf("%s at %s is %d bytes, over the 16 KiB limit", rel, at, len(data))
+	}
+	return data, true, nil
 }
 
 // recipeForLaunch is the recipe this launch will run, parsed: the task's own
@@ -1503,6 +2320,21 @@ func retrySpec(ctx context.Context, env *cloudEnv, ref string) (string, *task.Sp
 	if err := claudeAccountAllowed(env, spec.Repo, cmp.Or(spec.OAuthToken, config.DefaultClaudeAccount), checkoutAgentAuth(checkout())); err != nil {
 		return "", nil, err
 	}
+	// A report run is refused, the way a follow-up carrying one is
+	// (refuseFollowUpReportMode): --retry launches the task of a first
+	// launch as it stands, so the manifest it carries is the one that launch
+	// listed, stale by now, and none of the checks a fresh report launch
+	// makes — digestManifest's in-flight refusal among them — run at all. A
+	// repository has one report run at a time because both would write the
+	// same reports, and a stale manifest writes a report of records that
+	// have moved on; the launcher of a fresh report run lists them again.
+	// The task says it is one two ways: the manifest itself (digest_runs is
+	// accepted under no other recipe, task.Validate), which is the only one
+	// that speaks for a repository recipe, and the recipe's text or file,
+	// for a report run whose manifest came out empty.
+	if spec.Recipe != nil && (len(spec.DigestRuns) > 0 || digestRecipe(checkoutRoot(ctx, spec.Repo), spec.Recipe)) {
+		return "", nil, userErr("run %s/%s is a report run, and --retry launches the task of its first launch as it stands: its manifest is stale by now, and a repository has one report run at a time, because both would write the same reports — launch a new report run with fugaro run --recipe %s", slug, runID, spec.Recipe.Name)
+	}
 	return slug, spec, nil
 }
 
@@ -1520,17 +2352,29 @@ func checkMaxParallel(ctx context.Context, env *cloudEnv) error {
 	return checkMaxParallelFor(ctx, env, 1)
 }
 
+// activeHorizon is the longest a run can still be going: the longest job
+// timeout, or the cap a per-run override may reach, whichever is more, plus
+// the task timeout slack and the queueing margin. It bounds every "is a run
+// still active" question, which is why the report run's launch shares it
+// with checkMaxParallelFor below (run_digest_manifest.go).
+func activeHorizon(ctx context.Context, env *cloudEnv) (time.Duration, error) {
+	longest, err := env.be.LongestTaskTimeout(ctx)
+	if err != nil {
+		return 0, remote(err)
+	}
+	return max(longest, OverrideCap) + backend.TaskTimeoutSlack + horizonMargin, nil
+}
+
 // checkMaxParallelFor is checkMaxParallel, generalized to a launch that
 // needs room for `need` runs at once: a best-of-N batch (runAttempts) checks
 // for all of N before its first launch, so it never starts part of a batch
 // it cannot finish (design generic-tool G13). need is always 1 outside that
 // one caller, which checkMaxParallel keeps as the common case.
 func checkMaxParallelFor(ctx context.Context, env *cloudEnv, need int) error {
-	longest, err := env.be.LongestTaskTimeout(ctx)
+	horizon, err := activeHorizon(ctx, env)
 	if err != nil {
-		return remote(err)
+		return err
 	}
-	horizon := max(longest, OverrideCap) + backend.TaskTimeoutSlack + horizonMargin
 	active, err := env.be.List(ctx, backend.ListFilter{ActiveOnly: true, Since: time.Now().Add(-horizon)})
 	if err != nil {
 		return remote(err)
@@ -1632,7 +2476,11 @@ func printLaunch(w io.Writer, res launchResult, asJSON bool) error {
 	if res.PR > 0 {
 		what += fmt.Sprintf(" (follow-up of PR #%d, after %s)", res.PR, oneLine(res.PreviousRun))
 	}
-	if _, err := fmt.Fprintf(w, "%s %s\n  branch %s\n", verb, what, oneLine(res.Branch)); err != nil {
+	branch := oneLine(res.Branch)
+	if res.Ref != "" {
+		branch += " cut from " + oneLine(res.Ref)
+	}
+	if _, err := fmt.Fprintf(w, "%s %s\n  branch %s\n", verb, what, branch); err != nil {
 		return err
 	}
 	if res.LogURL != "" {
@@ -1673,7 +2521,9 @@ func existingLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec 
 	}
 	if rec.Execution == "" {
 		// It ran already, with no cloud execution (a local run against this
-		// bucket): never launch it again. Nothing to backfill.
+		// bucket): never launch it again. Nothing to backfill, and nothing
+		// is stored: a run with no launch.json has no plan task for any
+		// reader to find, the same way it has no launcher (LaunchedBy).
 		return &runstore.Launch{Version: 1, RunID: runID, LaunchedAt: rec.StartedAt}, nil
 	}
 	if err := check(rec.Execution); err != nil {
@@ -1684,7 +2534,7 @@ func existingLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec 
 	// elsewhere must be recorded as that backend's, or fugaro logs, cancel
 	// and diagnose read the record against the wrong platform's names
 	// (design compute-backend.md §2.5).
-	l := &runstore.Launch{Version: 1, RunID: runID, Backend: launchBackend(env.be), Execution: rec.Execution, LaunchedAt: rec.StartedAt}
+	l := &runstore.Launch{Version: 1, RunID: runID, Backend: launchBackend(env.be), Execution: rec.Execution, PlanTask: spec.PlanTask, LaunchedAt: rec.StartedAt}
 	if id, ok := backend.ParseExecution(rec.Execution); ok {
 		l.Job = id.Job
 	}
@@ -1731,6 +2581,9 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		PR: spec.PR, PreviousRun: spec.PreviousRun}
 	if spec.Branch != "" {
 		res.Branch = spec.Branch
+	}
+	if !spec.IsFollowUp() && len(spec.ReviewPRs) == 0 {
+		res.Ref = spec.Ref
 	}
 	done := func(l *runstore.Launch, status string) (launchResult, error) {
 		res.Execution, res.LogURL, res.Status = l.Execution, l.LogURL, status
@@ -1803,6 +2656,23 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		rcancel()
 		return res, userErr("run %s was cancelled; start a new one", res.Run)
 	}
+	// The launch declares itself to the coordinator's record (P4), beside the
+	// claim it just won: the caller the task already names, the branch the run
+	// is about to work on and the release that branch targets. It is a
+	// declaration to an ADVISORY service, so nothing here can fail the launch
+	// — a project with no database to declare to is skipped, and a report that
+	// fails is a warning on stderr — and it is bounded well inside the hold,
+	// because the launch's own work must not wait on it (spec §3: the
+	// coordinator never blocks anything). A write the rules refuse is quiet:
+	// only budget admins may write the record, so a refusal is what most
+	// launchers get on every run, and a warning each time would be noise about
+	// something they cannot change (owner ruling 2026-10-24). The error text can
+	// quote what the database answered, so it goes through oneLine. The call
+	// goes through the build's declarer (extend.go), whose core default is this
+	// very declarer, so a build whose declarer moved can register its own.
+	if err := declareLaunch(hctx, env, slug, spec); err != nil && !errors.Is(err, rtdb.ErrPermission) {
+		fmt.Fprintf(launchWarn, "warning: the launch was not reported to the coordinator: %s\n", oneLine(err.Error()))
+	}
 	// The run's budget identity: minted, sealed under a key drawn for this
 	// launch and left in the bucket before the execution can start, by the
 	// one CLI that holds the claim. A failure here means nothing started, so
@@ -1854,6 +2724,14 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		// the launch rather than carry it (backend.LaunchSpec.SecretEnv).
 		lspec.SecretEnv = []string{sealMarker(sealKey)}
 	}
+	// The credentials service, when the installation has opted into one and
+	// this execution is a repository's own job (job is the shared project job
+	// otherwise, and the service refuses that caller: see the helper).
+	jobName := ""
+	if job != nil {
+		jobName = job.Name
+	}
+	lspec.Env = credentialsServiceLaunchEnv(env.lc, jobName)
 	ref, err := env.be.Launch(lctx, lspec)
 	cancel()
 	// A backend error may quote the request it was given; the key is in that
@@ -1882,7 +2760,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	}
 	// The backend the launch actually used, from the seam, as above: the
 	// launch succeeded on env.be, so env.be's codec is what names it.
-	l := &runstore.Launch{Version: 1, RunID: spec.RunID, Backend: launchBackend(env.be), Execution: ref.Name, Job: ref.Job, LogURL: ref.LogURL, LaunchedBy: spec.RequestedBy, LaunchedAt: now.UTC()}
+	l := &runstore.Launch{Version: 1, RunID: spec.RunID, Backend: launchBackend(env.be), Execution: ref.Name, Job: ref.Job, LogURL: ref.LogURL, LaunchedBy: spec.RequestedBy, PlanTask: spec.PlanTask, LaunchedAt: now.UTC()}
 	if err := s.WriteLaunch(hctx, l); errors.Is(err, runstore.ErrExists) {
 		theirs, rerr := s.ReadLaunch(hctx)
 		if rerr != nil {
@@ -1895,6 +2773,58 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		return res, remote(fmt.Errorf("launched %s but could not record launch.json (fugaro run --retry %s records it from result.json): %w", ref.Name, res.Run, err))
 	}
 	return done(l, "launched") // the claim stays in place for good
+}
+
+// credentialsServiceLaunchEnv is what this launch puts on the execution's
+// environment for the credentials service (plan task C1.24, D146/D147): the
+// service's URL, under the one name the runner and the keyless GitHub path
+// both read, or nothing at all. job is the shared project job this launch
+// resolved, or "" for a repository's own job.
+//
+// The block's presence in the selected config IS the opt-in. The config is the
+// published shared one where this machine has no local config of its own
+// (localcfg.Select), and the URL in it is the installation's own record --
+// Cloud Run's assignment for the service the installation root created, which
+// the credentials stage writes and MergeShared never lets a machine that lacks
+// it erase (internal/localcfg/shared.go, the ledger item of PR #903). So a
+// teammate's `fugaro run`, on a machine that never ran the opt-in, still hands
+// the job the installation's service.
+//
+// A SHARED PROJECT JOB IS NOT TOLD, and that is the service's own rule rather
+// than a policy chosen here: its admission refuses an account that belongs to
+// a shared project job whole, before any route (internal/credsvc/auth.go's
+// verifyJob, Global Constraint 6, C3.9). So the address would buy such a job
+// nothing it could use -- a `cascade` run would fail at the service's door
+// instead of at the runner's clear "this job has no credentials service" --
+// and it would cost it something: the same variable is what opens the git
+// provider keyless (internal/gitprov/providers/providers.go), so a shared
+// project job told about the service would stop reading the App key it still
+// mounts and be refused the mint that replaced it, breaking every GitHub run
+// on it. The shared jobs keep their own credentials until C3.9 moves them,
+// which is what SECURITY.md and the credentials stage's confirmation both say.
+//
+// It is plain Env and not SecretEnv, deliberately. The URL is not a secret:
+// it is the service's public address, it is the audience every caller's ID
+// token is minted for, and the service's own container carries it in plain
+// environment (credentials_serve.go's envCredentialsServiceURL, the same
+// name). A secret entry would also be the wrong carrier on the backend that
+// matters: Batch refuses SecretEnv outright (backend.LaunchSpec.SecretEnv),
+// so an installation on the Batch backend would either lose the variable or
+// fail to launch, and the one thing this value must not do is depend on which
+// backend a project happens to use.
+//
+// An installation with no block -- every installation until an owner runs
+// `fugaro setup --provision-credentials` -- gets nil, so its launch spec is
+// byte for byte the one it built before this variable existed: no entry, no
+// empty value, nothing for a backend to merge.
+func credentialsServiceLaunchEnv(lc *localcfg.Config, job string) []string {
+	if job != "" {
+		return nil
+	}
+	if lc == nil || lc.CredentialsService == nil || lc.CredentialsService.URL == "" {
+		return nil
+	}
+	return []string{envCredentialsServiceURL + "=" + lc.CredentialsService.URL}
 }
 
 // releaseClaim drops our own claim after a failed launch, so a retry need
@@ -1914,6 +2844,78 @@ var errClaimReleased = errors.New("launch claim released")
 
 // claimRounds bounds how often launchRun goes back for a released claim.
 const claimRounds = 3
+
+// reportLaunchIntent declares one launch to the coordinator's record
+// (docs/coordinator/implementation-plan.md, part P4). It is the same writer
+// `fugaro coordinator report` uses — internal/coordinator's Reporter, over the
+// coordinator's own subtree — so a launch declares itself without a second
+// command, and it declares what a launch can know before any code exists: the
+// caller the task already names, the branch the run is about to work on, and
+// the release that branch targets. The files and the services are not here:
+// they are what the run's own record holds once it has worked, and the join
+// (P1) is where the two meet.
+//
+// Three rules, and each is a decision rather than a detail:
+//
+//   - The declaration follows the launch's own database switch. The coordinator
+//     keeps its state in the same database the budget uses, and a launch that
+//     was told not to use it declares nothing: budget.mode: off and a project
+//     with no budget.rtdb_url are that switch in the config, and
+//     --no-budget-check is the operator saying it for this launch. So a launch
+//     that turned the budget off touches no part of that database beyond the
+//     policy read it always makes, which is what TestBudgetOffSkipsEverything
+//     and TestNoBudgetCheckSkipsOnlyPrecheck hold. Nothing is lost by it: the
+//     declaration is advisory, and the view P1 renders reads the runs bucket,
+//     where the launch's own record lands whatever happens here.
+//   - A task that names no requester declares nothing the coordinator could
+//     attribute, and the report path refuses an unnamed caller
+//     (coordinator.ErrUnnamedCaller). That refusal is right when a person asks
+//     for a report and pointless here, where nobody asked, so the launch is
+//     simply not declared.
+//   - Nothing else can fail the launch: the caller turns a failure into a
+//     warning, because the coordinator is advisory and a run must not wait on
+//     it (spec §3), and drops a refusal of the write (rtdb.ErrPermission)
+//     without one, because a launcher who is not a budget admin is refused on
+//     every launch.
+//
+// A package variable, so a test replaces exactly the one thing that would
+// reach a database and reads the declaration it was handed.
+var reportLaunchIntent = func(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec) error {
+	if env.lc.BudgetMode() == localcfg.BudgetOff || env.lc.Budget == nil || env.lc.Budget.RTDBURL == "" ||
+		env.noBudgetCheck || spec.RequestedBy == "" {
+		return nil
+	}
+	// The launch's own bound, well inside the claim's hold: a database that
+	// does not answer must not eat the time the launch itself needs.
+	ctx, cancel := context.WithTimeout(ctx, reportIntentTimeout)
+	defer cancel()
+	store, err := openCoordinatorStore(ctx, env.lc)
+	if err != nil {
+		return err
+	}
+	branch := spec.Branch
+	if branch == "" {
+		// launchRun's own rule for the branch it reports and creates: the run's
+		// own name, so the declaration and the run name the same thing.
+		branch = "fugaro/" + spec.RunID
+	}
+	_, _, err = (&coordinator.Reporter{Store: store}).Report(ctx, slug, coordinator.Intent{
+		DeclaredBy: spec.RequestedBy,
+		Branch:     branch,
+	})
+	return err
+}
+
+// launchWarn is where a launch's warnings go, os.Stderr in production. A
+// variable so that a test reads the warning a failed declaration prints
+// rather than leaking it into the test's own output, the same seam
+// reportLaunchIntent is.
+var launchWarn io.Writer = os.Stderr
+
+// reportIntentTimeout bounds one launch's declaration. It is short on purpose:
+// the declaration is advisory, and a database that is slow or unreachable must
+// cost the launch a few seconds rather than the hold it is working inside.
+const reportIntentTimeout = 15 * time.Second
 
 // takeClaim tries to take the run's launch claim. won is true when we hold
 // it; otherwise other is the claim someone else holds, to wait on.

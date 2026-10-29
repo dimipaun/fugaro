@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See mobile/LICENSE.md for the terms.
 // The audio pipeline's tests (mobile plan, Task P3.4; D122, D123, D126, D118).
 //
 // This is where P3.4's verification sentence lives, verbatim: *the interfaces

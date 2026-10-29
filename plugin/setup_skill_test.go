@@ -596,7 +596,7 @@ func TestSetupSkillGitHubApp(t *testing.T) {
 // same name guidance as the skill.
 func TestDocsGitHubAppGuidance(t *testing.T) {
 	perms := githubAppPermissions(t)
-	for _, doc := range []string{"docs/git-providers.md", "docs/gcp-setup.md", "README.md"} {
+	for _, doc := range []string{"docs/git-providers.md", "README.md"} {
 		data, err := os.ReadFile(filepath.Join("..", filepath.FromSlash(doc)))
 		if err != nil {
 			t.Fatal(err)
@@ -667,11 +667,14 @@ func TestSetupSkillHandlesSeveralProjects(t *testing.T) {
 		return
 	}
 	hasFlag := func(name string) bool {
-		c, _, err := root.Find(strings.Fields(name))
-		if err != nil || c == root {
+		c := resolveSkillCommand(root, strings.Fields(name)...)
+		if !c.known() {
 			t.Fatalf("the skill names a command %q that does not exist", name)
 		}
-		return c.Flags().Lookup("project") != nil
+		if c.paid {
+			t.Fatalf("the skill lists %q, a paid command: the core tree answers to the name with a stub that parses no flags, so --project is the tagged tree's to check (ee/plugincheck), and this list cannot hold one", name)
+		}
+		return c.cmd.Flags().Lookup("project") != nil
 	}
 	for _, c := range listed(m[1]) {
 		if !hasFlag(c) {
@@ -868,28 +871,24 @@ func TestSetupSkillSaysWhoWritesTheManagedMarks(t *testing.T) {
 	}
 }
 
-// TestSetupSkillSaysManagedIsGatedOff (round-3 review, medium): both the setup
-// skill and its managed reference describe the managed workflow — the apply,
-// the flag, the creation — and every one of those entry points refuses before
-// any cloud call in this release, because `managedDeployerShipped`
-// (internal/cli/recipes_skew.go) is false. A skill that presents the mode as
-// the working path sends the user's agent at a workflow that cannot run, and
-// the plugin's own convention for a gate is to state its state where the
-// feature is described: decisions.md's checkout topic says `cloneShipped` is
-// open, pinned by TestSetupSkillOffersClone. So both files must name the
-// constant, where it lives, that it is false, the refusal a user will see, and
-// when the gate opens: the redesign is planned for 0.9.6, by the owner's ruling
-// of 2026-10-20, which moved it off 0.9.5 (the ruling of 2026-10-19 had moved
-// it off 0.9.0).
-// The release name is the half a reader acts on: without it, "disabled in this
-// release" reads as a temporary state of the tree rather than as 0.9.0's own
-// behaviour, which docs/gcp-setup.md:622, docs/design/managed-projects.md:3 and
-// internal/cli/recipes_skew.go all name as 0.9.6.
+// TestSetupSkillSaysWhereTheManagedGateStands (round-3 review, medium): both
+// the setup skill and its managed reference describe the managed workflow — the
+// apply, the flag, the creation — and the gate those entry points sat behind
+// opened in 0.10.0: `managedDeployerShipped` (internal/cli/recipes_skew.go) is
+// true as of that release (the owner's ruling of 2026-10-22). A skill that
+// still presented the mode as refused sends the user's agent away from a
+// workflow that runs, and the plugin's own convention for a gate is to state
+// its state where the feature is described: decisions.md's checkout topic says
+// `cloneShipped` is open, pinned by TestSetupSkillOffersClone. So both files
+// must name the constant, where it lives, that it is true as of 0.10.0, the
+// refusal a user on an older release will see, and — the half the flip does not
+// settle — that the fence has not been measured live (Check 68, written,
+// owner-run after the release, NOT RUN).
 //
 // Mutations (each verified, planted and reverted): drop the gate paragraph from
-// reference/managed.md, and change SKILL.md's "is false" to "is open" — both
-// fail here. Dropping "planned for 0.9.6" from either file fails it too.
-func TestSetupSkillSaysManagedIsGatedOff(t *testing.T) {
+// reference/managed.md, and change SKILL.md's "is true as of" to "is false" —
+// both fail here. Dropping "NOT RUN" from either file fails it too.
+func TestSetupSkillSaysWhereTheManagedGateStands(t *testing.T) {
 	for name, doc := range map[string]string{
 		"SKILL.md":             setupFiles(t)["skills/setup/SKILL.md"],
 		"reference/managed.md": setupFiles(t)["skills/setup/reference/managed.md"],
@@ -897,13 +896,53 @@ func TestSetupSkillSaysManagedIsGatedOff(t *testing.T) {
 		for _, want := range []string{
 			"managedDeployerShipped",
 			"internal/cli/recipes_skew.go",
-			"is false",
+			"is true as of 0.10.0",
 			"managed projects are disabled in this release",
-			"planned for 0.9.6",
+			"Check 68",
+			"NOT RUN",
 		} {
 			if !strings.Contains(doc, want) {
-				t.Errorf("%s never says %q: the managed mode's gate is closed in this release (managedDeployerShipped is false, internal/cli/recipes_skew.go), so the skill has to say where the gate stands beside the workflow it describes", name, want)
+				t.Errorf("%s never says %q: the managed gate is open as of 0.10.0 (managedDeployerShipped is true, internal/cli/recipes_skew.go) with the fence unmeasured, so the skill has to say where the gate stands beside the workflow it describes", name, want)
 			}
+		}
+	}
+}
+
+// TestSetupSkillSaysWhatTheManagedFenceStillOwes: reference/managed.md carried
+// the pre-redesign reason — the fence the binding carries "is not an IAM
+// condition GCP accepts yet", with the redesign still ahead ("once the fence is
+// redesigned") — while the branch lands exactly that redesign and corrects the
+// reason everywhere else it touches (docs/release.md's bullet,
+// docs/design/managed-projects.md's 0.10.0 note, deployer.tf's header). A skill
+// is what the user's agent repeats, so a reason the branch removed is a reason
+// the agent will state to its user.
+//
+// SKILL.md is not read here: it states the gate's state and the release, and
+// never carried the old reason. The strings
+// TestSetupSkillSaysWhereTheManagedGateStands holds are kept by the reworded
+// sentence.
+//
+// Mutations (verified, run and restored): the old reason sentence put back into
+// reference/managed.md, and "once the fence is redesigned" put back — both fail
+// here.
+func TestSetupSkillSaysWhatTheManagedFenceStillOwes(t *testing.T) {
+	doc := setupFiles(t)["skills/setup/reference/managed.md"]
+	for _, want := range []string{
+		"measured live",
+		"Check 68",
+		"NOT RUN",
+		"owner-run **after** the release",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("reference/managed.md does not say %q: the redesigned fence has not been measured live (Check 68 is written, owner-run after the release and NOT RUN), and the skill is where the agent reads what the fence still owes", want)
+		}
+	}
+	for _, wrong := range []string{
+		"is not an IAM condition GCP accepts",
+		"once the fence is redesigned",
+	} {
+		if strings.Contains(doc, wrong) {
+			t.Errorf("reference/managed.md still states %q: this branch lands the redesign (seven roles, one per service, one binding each), so the fence's old defect is history and what is missing is the live measurement", wrong)
 		}
 	}
 }

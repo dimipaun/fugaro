@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See console/LICENSE.md for the terms.
 // The pinning rule, enforced rather than documented (desktop-console plan Task
 // 1.0; design section 5.2, and the precedent in
 // internal/budget/rules/emulator/package.json).

@@ -98,7 +98,7 @@ func newRunsCmd() *cobra.Command {
 		Use:   "runs",
 		Short: "List and inspect runs",
 	}
-	cmd.AddCommand(newLsCmd(), newRunsStatsCmd())
+	cmd.AddCommand(newLsCmd(), newRunsStatsCmd(), newRunsDigestCmd())
 	return cmd
 }
 
@@ -356,9 +356,19 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 
 // parallel calls fn(0) … fn(n-1) on up to lsWorkers goroutines.
 func parallel(n int, fn func(i int)) {
+	parallelN(n, lsWorkers, fn)
+}
+
+// parallelN is parallel with its own bound: fn(0) … fn(n-1) run on at most
+// workers goroutines, and nothing is written between them — indices go out on
+// the channel in order, and whatever each call computes is the caller's to
+// place (a slice indexed by i, so the result is deterministic whatever order
+// the goroutines finish in). A caller with a bound of its own passes it here
+// rather than growing lsWorkers, which is runs ls's own read width.
+func parallelN(n, workers int, fn func(i int)) {
 	var wg sync.WaitGroup
 	next := make(chan int)
-	for range min(lsWorkers, n) {
+	for range min(workers, n) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -571,6 +581,11 @@ func printRows(w io.Writer, project string, rows []runview.Row, warnings []strin
 	// never reached finalize, has none and does not widen every other run's
 	// columns for it.
 	showFiles := slices.ContainsFunc(rows, func(r runview.Row) bool { return r.ChangedFiles != nil })
+	// The mode column appears only when some listed run's record carries a
+	// rigor block (docs/rigor-modes D24): a run from before the field, or one
+	// that died before bootstrap, has none and does not widen every other
+	// run's columns for it.
+	showMode := slices.ContainsFunc(rows, func(r runview.Row) bool { return r.Rigor != nil })
 	header := "RUN\tSTATUS\tSTAGE\tAGE\tCOST\tPR\tBY"
 	if showRecipe {
 		header += "\tRECIPE"
@@ -587,11 +602,16 @@ func printRows(w io.Writer, project string, rows []runview.Row, warnings []strin
 	if showFiles {
 		header += "\tFILES"
 	}
+	if showMode {
+		header += "\tMODE"
+	}
 	fmt.Fprintln(tw, header)
 	for _, r := range rows {
 		cost := fmt.Sprintf("$%.2f", r.Cost.TotalUSD)
-		if r.Cost.ModelBasis == runstore.BasisSubscription && r.Cost.ModelUSD > 0 {
-			cost += "~" // the model spend was notional
+		if r.Cost.ModelSubscriptionUSD() > 0 {
+			// The model spend -- or, in a mixed run, part of it -- was
+			// notional, and the figure beside this marker leaves it out.
+			cost += "~"
 		}
 		if !r.Cost.ComputeEstimated {
 			cost += ", compute not estimated" // never "free" (design §10.1)
@@ -619,6 +639,9 @@ func printRows(w io.Writer, project string, rows []runview.Row, warnings []strin
 		}
 		if showFiles {
 			line += "\t" + changedFilesCell(r)
+		}
+		if showMode {
+			line += "\t" + modeCell(r)
 		}
 		fmt.Fprintln(tw, line)
 	}
@@ -662,10 +685,21 @@ func launcherCell(r runview.Row) string {
 	return cellOneLine(clipRunes(by, maxNameCellRunes))
 }
 
-// statusCell is a row's status; a halted run says which limit halted it.
+// statusCell is a row's status; a halted run says which limit halted it, and a
+// row whose status was derived at read time says what was derived.
+//
+// The decoration is display only, exactly as the halt reason is: the column
+// reads `failed (preempted)` while `status` stays `failed` and the fact that
+// identified the preemption sits beside it in `derived`, so a reader that
+// switches on status -- or a script that parses it -- sees the vocabulary it
+// always saw. A row is either halted or derived, never both: a record that
+// halted is a finalized record, and a finalized record is never derived.
 func statusCell(r runview.Row) string {
 	if r.Status == string(runstore.StatusHalted) && r.Halt != nil {
 		return r.Status + " (" + string(r.Halt.Reason) + ")"
+	}
+	if r.Derived != "" {
+		return r.Status + " (" + r.Derived + ")"
 	}
 	return r.Status
 }
@@ -716,6 +750,33 @@ func shortSHA(s string) string {
 // publisher only ever increments from 0, so negative means the record
 // wasn't written by one (same untrusted-record concern as validSHA256).
 func validGeneration(g int64) bool { return g >= 0 }
+
+// modeCell is a row's rigor mode and where it came from (docs/rigor-modes
+// D24): the mode, the layer that decided it, and the strictest area rule that
+// matched when one did, with a "+N" for the rest D23 also recorded. "-" for a
+// run whose record carries no block this reader can show: it resolved none,
+// which is not the same fact as resolving the built-in default.
+//
+// runs ls is a table, so the cell is one short line; `fugaro diagnose` prints
+// the whole block (runstore.RigorRecord.Line). Both are built from the
+// record's own block,
+// which is job-writable: the block reaches the row through
+// runstore.RigorRecord.Bounded, the name through the same clip every other
+// name cell uses, and the finished cell through cellOneLine.
+func modeCell(r runview.Row) string {
+	rg := r.Rigor
+	if rg == nil {
+		return "-"
+	}
+	cell := string(rg.Mode) + " (" + string(rg.From)
+	if len(rg.Areas) > 0 {
+		cell += " " + clipRunes(rg.Areas[0].Name, maxNameCellRunes)
+		if n := len(rg.Areas) - 1; n > 0 {
+			cell += fmt.Sprintf(" +%d", n)
+		}
+	}
+	return cellOneLine(cell + ")")
+}
 
 // layerCell is a run's project layer in ls: its generation, "-" for none
 // or for a record whose generation isn't trustworthy.

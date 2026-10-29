@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See console/LICENSE.md for the terms.
 // The hand-built module registries are closed under `require` (desktop-console
 // plan Task 3.3, round 2 of its review).
 //

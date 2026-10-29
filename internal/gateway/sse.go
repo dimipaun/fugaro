@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"math"
 	"slices"
+	"strconv"
 
 	"github.com/dimipaun/fugaro/internal/pricing"
 )
@@ -129,8 +129,10 @@ type usageAcc struct {
 	in, cc, cr, out, w5, w1, web field
 	speed, tier, geo             json.RawMessage
 	// reported is the cost a provider put in the usage object (OpenRouter's
-	// usage.cost, in USD), in micros. It is only recorded for comparison
-	// with the charge and never settles a call.
+	// usage.cost, in USD), in micros. It is recorded for comparison with the
+	// charge and never settles a call the table priced; on a provider route
+	// it is the floor under the charge for a service tier no one prices
+	// (forward.go's fromUsage).
 	reported    pricing.Micros
 	hasReported bool
 }
@@ -240,31 +242,53 @@ func (a *usageAcc) usage(r pricing.Rates, cacheTTL string) pricing.Usage {
 	return u
 }
 
-// surprise names the first pricing dimension the response reported that
-// the table doesn't price: a speed or service tier other than standard,
-// or an inference geography other than the defaults. A null counts as
-// not reported.
-func (a *usageAcc) surprise() string {
-	check := func(name string, raw json.RawMessage, allowed []string) string {
+// unpriced is one pricing dimension the response reported that the table
+// doesn't price: a speed other than standard, an inference geography other
+// than the defaults, or a service tier it has no multiplier for.
+type unpriced struct {
+	field string // "speed", "service_tier" or "inference_geo"
+	// value is the reported value as a message shows it: the string the
+	// response named, quoted, or the raw JSON text of a value that isn't a
+	// string at all. It is clipped, so it is never unbounded, and it is
+	// never empty either -- a response that named the empty string reads
+	// as `""` -- which is why a call charged conservatively can always be
+	// named on the record.
+	value string
+	// tier is a service tier: the tier the provider itself served the call
+	// from, which the agent's request said nothing about, unlike a speed or
+	// an inference geography the request chose.
+	tier bool
+}
+
+// String is how the dimension reads in a message and on the ledger:
+// "usage.service_tier \"priority\"", or "usage.service_tier 12" for a value
+// that isn't a string.
+func (u unpriced) String() string { return "usage." + u.field + " " + u.value }
+
+// unpricedDims names every pricing dimension the response reported that the
+// table doesn't price, in a fixed order (speed, service tier, geography). A
+// null counts as not reported; a value that isn't even a string is reported
+// rather than dropped, since the table has no price for it either way.
+func (a *usageAcc) unpricedDims() []unpriced {
+	var out []unpriced
+	check := func(field string, raw json.RawMessage, allowed []string, tier bool) {
 		if len(raw) == 0 || string(raw) == "null" {
-			return ""
+			return
 		}
 		var s string
 		if json.Unmarshal(raw, &s) != nil {
-			return "usage." + name + " " + logValue(string(raw))
+			out = append(out, unpriced{field: field, value: logValue(string(raw)), tier: tier})
+			return
 		}
 		if slices.Contains(allowed, s) {
-			return ""
+			return
 		}
-		return fmt.Sprintf("usage.%s %q", name, logValue(s))
+		out = append(out, unpriced{field: field, value: strconv.Quote(logValue(s)), tier: tier})
 	}
-	if s := check("speed", a.speed, []string{"standard"}); s != "" {
-		return s
-	}
-	if s := check("service_tier", a.tier, []string{"standard"}); s != "" {
-		return s
-	}
-	return check("inference_geo", a.geo, DefaultGeos)
+	check("speed", a.speed, []string{"standard"}, false)
+	check("service_tier", a.tier, []string{pricing.StandardTier}, true)
+	check("inference_geo", a.geo, DefaultGeos, false)
+	return out
 }
 
 // usageTee reads usage from a copy of the response the client already

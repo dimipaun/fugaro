@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See console/LICENSE.md for the terms.
 // The Projects screen in a real window (desktop-console plan Task 2.3; design
 // section 6.2 screen 3).
 //
@@ -55,11 +57,17 @@
 // its frame is the same pixels on every run.
 //
 // They are compared, never written by a run: `playwright.config.ts` sets
-// `updateSnapshots: 'none'`, so a missing baseline FAILS. They are recorded by
-// an owner, on the platform the comparison runs on (macOS and Linux pixels
-// differ), with
+// `updateSnapshots: 'none'`, so a missing baseline FAILS a comparison run. They
+// are recorded by an owner, on the platform the comparison runs on (macOS and
+// Linux pixels differ), with
 //
-//   npx playwright test projects.spec.ts --update-snapshots
+//   cd console && npm run build && npx playwright test projects.spec.ts --update-snapshots
+//
+// — the build is in the line because the specs read `dist/` and
+// `npx playwright test` does not build, and on Linux it takes
+// `xvfb-run --auto-servernum` (Electron needs a display);
+// `test/support/goldens.ts`'s `recordCommand` is that line, per spec and per
+// platform, and it is what a failed golden's message prints
 //
 // (owner-run, on the comparison's platform; commit `__screenshots__/projects/`
 // afterwards) and until they are committed the golden tests fail on purpose. The
@@ -77,6 +85,7 @@ import type { JSONDoc } from '../../src/source/source'
 import { PROJECT_PANEL_KEYS, PROJECTS_THEMES } from '../../src/renderer/screens/projects'
 import { inRangeCliStub } from '../support/cliStub'
 import type { CliStub } from '../support/cliStub'
+import { expectGolden, expectGrounded } from '../support/goldens'
 import { launchConsole } from '../support/launch'
 
 // The console's own directory, from this file's location: `test/e2e/x.spec.ts`
@@ -100,6 +109,10 @@ const THE_MOUNT = '#projects-mount'
  * the golden tests run and a missing baseline fails them. */
 const SKIP_GOLDENS = process.env['FUGARO_CONSOLE_GOLDENS'] === 'skip'
 
+/** SPEC is this file's own name: what a re-record command has to name, and what
+ * every golden failure here quotes back to the reader. */
+const SPEC = 'projects.spec.ts'
+
 /** The compiled modules the screen is made of, in dependency order: the screen
  * and the writers in `renderer/app.js`, and the shared modules those writers
  * use. `src/main/ipc.ts` is imported by the screen for a **type** only, which
@@ -110,6 +123,8 @@ const SKIP_GOLDENS = process.env['FUGARO_CONSOLE_GOLDENS'] === 'skip'
 const MODULES: readonly string[] = Object.freeze([
   'shared/availability.js',
   'shared/sanitize.js',
+  'shared/launcher.js',
+  'shared/rigor.js',
   'shared/version.js',
   'renderer/app.js',
   'renderer/screens/projects.js',
@@ -226,6 +241,9 @@ interface Screen {
   readonly onlySeen: readonly string[]
   readonly onlyEnrolled: readonly string[]
   readonly jobs: number
+  // The MODE column's cells, in row order: empty when no listed run carries a
+  // rigor block, which is the column's own rule.
+  readonly modes: readonly string[]
   readonly secretNames: readonly string[]
   readonly anchors: number
   readonly hrefs: number
@@ -261,6 +279,7 @@ function screen(page: Page): Promise<Screen> {
       onlySeen: texts('.projects-only-seen-repo'),
       onlyEnrolled: texts('.projects-only-enrolled-repo'),
       jobs: all('.projects-job').length,
+      modes: texts('.projects-job-mode'),
       secretNames: texts('.projects-secret-name'),
       // A screen may offer no navigation at all, and no destination attribute
       // either: this console draws text, and the main process owns opening.
@@ -375,6 +394,42 @@ const RUNS: JSONDoc = {
     compute_not_estimated: 1,
   },
   warnings: [],
+}
+
+/** RUNS_ROWS is `RUNS`'s two rows, so a case can add a key to one of them. */
+const RUNS_ROWS = RUNS['runs'] as readonly JSONDoc[]
+
+/**
+ * RUNS_WITH_RIGOR is `RUNS` as a 0.11.0 runner writes it: the first run's record
+ * carries the `rigor` block (`runstore.RigorRecord`, docs/rigor-modes D24, D25)
+ * -- the mode, the layer that decided it, the areas that matched with the mode
+ * each sets and the moment it was applied, the moment of the block and the
+ * revision the configuration was read from -- and the second carries none, which
+ * is what a run from before the field, or one that died before bootstrap, looks
+ * like. The two together are the MODE column's whole rule: one row with a block
+ * turns the column on for every row, and the row without one says so.
+ *
+ * The stamps (`at`, `revision`) are in the block because a real record carries
+ * them; the screen draws neither, which is why they are distinctive here.
+ */
+const RUNS_WITH_RIGOR: JSONDoc = {
+  ...RUNS,
+  runs: [
+    {
+      ...RUNS_ROWS[0],
+      rigor: {
+        mode: 'critical',
+        from: 'area',
+        areas: [
+          { name: 'payments', mode: 'critical', at: '2026-10-15T11:00:05Z' },
+          { name: 'billing', mode: 'pro', at: '2026-10-15T11:00:05Z' },
+        ],
+        at: '2026-10-15T11:00:05Z',
+        revision: 'origin/main',
+      },
+    },
+    RUNS_ROWS[1],
+  ],
 }
 
 /** ACCOUNTS is `accounts ls --json`, complete: the names are drawn, and the
@@ -568,8 +623,26 @@ test.describe('the Projects screen', () => {
     expect(drawn.jobs).toBe(2)
     // A subscription's model dollars are notional, and the job's model, compute
     // and total are never added into one figure.
-    expect(drawn.text).toContain('NOTIONAL~')
+    expect(drawn.text).toContain('~$')
     expect(drawn.text).toContain('$1.75')
+  })
+
+  test('draws a run\'s rigor mode in the jobs list, and the dash for a run with no block', async () => {
+    // Owner request 2026-10-25: the mode in the run screens. The column is the
+    // conditional one `runs ls` writes for its own MODE cell
+    // (`internal/cli/runs.go`'s `showMode`): with no block anywhere in the list
+    // there is no cell at all, and one block turns it on for every row.
+    await mount(BUDGET, RUNS, ACCOUNTS, SECRETS, 'light')
+    expect((await screen(page)).modes).toEqual([])
+
+    await mount(BUDGET, RUNS_WITH_RIGOR, ACCOUNTS, SECRETS, 'light')
+    const drawn = await screen(page)
+    expect(drawn.modes).toEqual(['Critical', '-'])
+    // The mode is this build's own word for the record's enum, and the block's
+    // other keys -- the layer, the areas, the moment, the revision -- are not
+    // this column's: it is the mode and nothing else.
+    expect(drawn.text).not.toContain('origin/main')
+    expect(drawn.text).not.toContain('2026-10-15T11:00:05Z')
   })
 
   test('draws the secrets inventory as names, labels and version counts, and no value', async () => {
@@ -611,18 +684,36 @@ test.describe('the Projects screen', () => {
     expect(drawn.hrefs).toBe(0)
   })
 
-  test('draws the projects screen', async () => {
-    test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
-    await mount(BUDGET, RUNS, ACCOUNTS, SECRETS, 'light')
-    await expect(page.locator(THE_MOUNT)).toHaveScreenshot(GOLDEN_NAMES.light)
+  test('is painted from the design tokens, not from the browser defaults', async () => {
+    // Design section 6.2's computed-ground assertion, and the one case in this
+    // file that is red when the stylesheet stops being linked: the theme travels
+    // as a `data-theme` attribute the renderer stamps, so every read above passes
+    // on a tree nothing paints. `test/support/goldens.ts` holds the app's ground
+    // and the screen's text colour to the shipped palette, once per theme.
+    //
+    // NOT a golden test, deliberately: `FUGARO_CONSOLE_GOLDENS=skip` does not skip
+    // it. Nothing here reads a PNG, so an unstyled tree is red on its own account
+    // rather than recorded as a fresh baseline nobody compared.
+    await expectGrounded(page, (theme) => mount(BUDGET, RUNS, ACCOUNTS, SECRETS, theme), {
+      themes: PROJECTS_THEMES,
+      mount: THE_MOUNT,
+      text: 'h1.projects-project',
+      screen: 'the Projects screen',
+    })
   })
 
-  test('draws the projects screen in the dark theme', async () => {
+  test('draws the projects screen', async ({}, testInfo) => {
+    test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
+    await mount(BUDGET, RUNS, ACCOUNTS, SECRETS, 'light')
+    await expectGolden(page.locator(THE_MOUNT), GOLDEN_NAMES.light, { spec: SPEC, consoleDir, testInfo })
+  })
+
+  test('draws the projects screen in the dark theme', async ({}, testInfo) => {
     await mount(BUDGET, RUNS, ACCOUNTS, SECRETS, 'dark')
     const drawn = await screen(page)
     expect(drawn.theme).toBe('dark')
     test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
-    await expect(page.locator(THE_MOUNT)).toHaveScreenshot(GOLDEN_NAMES.dark)
+    await expectGolden(page.locator(THE_MOUNT), GOLDEN_NAMES.dark, { spec: SPEC, consoleDir, testInfo })
   })
 
   test('resolves the golden names under the projects directory', ({}, testInfo) => {

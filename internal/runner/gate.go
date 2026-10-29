@@ -425,12 +425,13 @@ func (r *run) endHalted(ctx context.Context, h *runstore.Halt) {
 
 // verifyOnce runs a verify record for kind exactly as the agent's own
 // `fugaro verify` would, so the readiness rule (Decide) has an ordinary
-// verified record for the autofix commit a fixed gate just made. A failure
-// here is not special-cased: it simply leaves no passing record for the
-// commit, so the run ends a draft the same way a failed `fugaro verify`
-// during implement would.
-func (r *run) verifyOnce(ctx context.Context, kind verify.Kind) {
+// verified record for a commit no agent made: the autofix commit a fixed gate
+// just made, or the reports a digest step wrote (digest.go). A failure here is
+// not special-cased: it simply leaves no passing record for the commit, so the
+// run ends a draft the same way a failed `fugaro verify` during implement
+// would. what names the work being verified, for the log alone.
+func (r *run) verifyOnce(ctx context.Context, kind verify.Kind, what string) {
 	if _, err := verify.Run(ctx, verify.Options{StateDir: r.d.StateDir, Kind: kind, Env: r.env}); err != nil {
-		r.d.Log.Warn("verifying the check gate's autofix commit failed", "err", r.redact(err.Error()))
+		r.d.Log.Warn("verifying "+what+" failed", "err", r.redact(err.Error()))
 	}
 }

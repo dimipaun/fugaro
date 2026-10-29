@@ -8,12 +8,18 @@ import (
 	"testing"
 )
 
-// ServiceUsage is a fake of the Service Usage v1 calls fugaro update makes:
-// a service's enable, and the get of its operation. It also turns the
+// ServiceUsage is a fake of the Service Usage v1 calls Fugaro makes:
+// a service's enable, the get of its operation, and a service's own get
+// (`fugaro doctor` reads whether the Compute and Batch APIs are enabled
+// before it reads anything else about a Batch installation). It also turns the
 // other fakes' APIs off: while Disable has a service disabled, every call
 // to the fakes serving it is answered as Google answers a call to a
 // disabled API (403 with an ErrorInfo whose reason is SERVICE_DISABLED).
 // An enable turns the service back on.
+//
+// A service's get answers ENABLED for one the fake was never told about
+// (see the handler): the fake models "disabled" as something a test asserts,
+// not as the real API's default for a service nobody enabled.
 type ServiceUsage struct {
 	*Server
 
@@ -46,6 +52,7 @@ type usageService struct {
 
 var (
 	usageEnableRE = regexp.MustCompile(`^/v1/projects/([^/]+)/services/([^/:]+):enable$`)
+	usageGetRE    = regexp.MustCompile(`^/v1/projects/([^/]+)/services/([^/:]+)$`)
 	usageOpRE     = regexp.MustCompile(`^/v1/(operations/[^/]+)$`)
 )
 
@@ -111,6 +118,30 @@ func (f *ServiceUsage) refuses(service string) bool {
 func (f *ServiceUsage) handle(w http.ResponseWriter, r *http.Request, _ []byte) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if m := usageGetRE.FindStringSubmatch(r.URL.Path); m != nil && r.Method == http.MethodGet {
+		// A service's get, as `fugaro doctor` reads a Batch installation's
+		// two APIs with. The fake answers a service it was never told about
+		// as ENABLED, which is the same thing Enabled() says and the
+		// opposite of what the real API answers for a service that was never
+		// enabled: a test that wants a disabled API says so with Disable,
+		// and a client that forgot to read the state is what a fake
+		// defaulting to ENABLED catches. The get deliberately does not count
+		// down Propagation -- that counts calls to the service's own API
+		// (refuses), not to Service Usage.
+		s := f.services[m[2]]
+		state := "ENABLED"
+		if s != nil && s.disabled {
+			state = "DISABLED"
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"name":  "projects/" + m[1] + "/services/" + m[2],
+			"state": state,
+			"config": map[string]any{
+				"name": m[2], "title": m[2], "usage": map[string]any{"requirements": []any{}},
+			},
+		})
+		return
+	}
 	if m := usageEnableRE.FindStringSubmatch(r.URL.Path); m != nil && r.Method == http.MethodPost {
 		service := m[2]
 		if f.Deactivating > 0 {

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See mobile/LICENSE.md for the terms.
 // The account store (mobile plan, Task P3.1; decisions D114, D111, D125).
 //
 // D114 defines an account as an **installation** and says how several are

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See console/LICENSE.md for the terms.
 // invisible.test.ts holds the three readers of CLI text -- the recorder's
 // redactor (`src/source/redact.ts`), the display layer (`src/shared/sanitize.ts`)
 // and the IPC argument check (`src/main/ipc.ts`) -- to one set of invisible

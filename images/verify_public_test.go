@@ -109,12 +109,16 @@ func TestVerifyPublicRequiresArm64ForTheBase(t *testing.T) {
 	}
 }
 
-// TestImagesWorkflowPublishesAndVerifiesEveryImage: the history image is
-// published, and a job with no packages permission and no login fails the
-// release when any published image is not anonymously pullable. The base
-// (fugaro-base) is published and verified by its own matrix-free
-// publish-base/verify-public --arm64 path (TestImagesWorkflowPublishesAMultiArchBase),
-// so publish's own matrix, after the 0.7.0 cut, holds only history.
+// TestImagesWorkflowPublishesAndVerifiesEveryImage: the history and
+// credentials images are published, and a job with no packages permission and
+// no login fails the release when any published image is not anonymously
+// pullable. The base (fugaro-base) is published and verified by its own
+// matrix-free publish-base/verify-public --arm64 path
+// (TestImagesWorkflowPublishesAMultiArchBase), so publish's own matrix, after
+// the 0.7.0 cut, holds only history; the credentials service's image is
+// published by publish-credentials, which carries the signing chain its
+// consumer needs (fugaro update resolves its -pinned tag and verifies the
+// signature).
 func TestImagesWorkflowPublishesAndVerifiesEveryImage(t *testing.T) {
 	data := readImagesWorkflow(t)
 	var wf struct {
@@ -128,7 +132,9 @@ func TestImagesWorkflowPublishesAndVerifiesEveryImage(t *testing.T) {
 				} `yaml:"matrix"`
 			} `yaml:"strategy"`
 			Steps []struct {
-				Run string `yaml:"run"`
+				If   string `yaml:"if"`
+				Name string `yaml:"name"`
+				Run  string `yaml:"run"`
 			} `yaml:"steps"`
 		} `yaml:"jobs"`
 	}
@@ -140,13 +146,44 @@ func TestImagesWorkflowPublishesAndVerifiesEveryImage(t *testing.T) {
 		t.Fatal("no publish job")
 	}
 	if got := pub.Strategy.Matrix.Base; len(got) != 1 || got[0] != "history" {
-		t.Errorf("publish matrix = %v, want only history", got)
+		t.Errorf("publish matrix = %v, want only history (the credentials image is published and signed by publish-credentials)", got)
+	}
+	credpub, ok := wf.Jobs["publish-credentials"]
+	if !ok {
+		t.Fatal("no publish-credentials job: the credentials image would be built and never published")
+	}
+	// Every image in the tree is one the kinds list can name, and every step
+	// of its build is gated on that list: an image the list never reports is a
+	// leg that never runs and never fails. The publish jobs carry the kinds
+	// gate on the job's own if instead (asserted below for
+	// publish-credentials), the way publish-base does.
+	if !strings.Contains(string(data), "for k in history base credentials;") {
+		t.Error("the kinds step does not report every image the workflow builds")
+	}
+	for _, s := range wf.Jobs["credentials"].Steps {
+		if !strings.Contains(s.If, "needs.version.outputs.kinds") {
+			t.Errorf("the credentials job's step %q is not gated on the images the tree builds (if: %q)", s.Name, s.If)
+		}
+	}
+	for _, img := range []string{"history", "credentials"} {
+		if !strings.Contains(string(data), "fugaro-"+img+":ci") || !strings.Contains(string(data), "images/smoke-"+img+".sh") {
+			t.Errorf("the %s image is not built and smoke tested", img)
+		}
 	}
 	if !strings.Contains(fmtNeeds(pub.Needs), "history") {
 		t.Errorf("publish does not wait for the history build: %v", pub.Needs)
 	}
-	if !strings.Contains(string(data), "fugaro-history:ci") || !strings.Contains(string(data), "images/smoke-history.sh") {
-		t.Error("the history image is not built and smoke tested")
+	if !strings.Contains(fmtNeeds(credpub.Needs), "credentials") {
+		t.Errorf("publish-credentials does not wait for the credentials build: %v", credpub.Needs)
+	}
+	if !strings.Contains(credpub.If, "credentials") || !strings.Contains(credpub.If, "publish") {
+		t.Errorf("publish-credentials must publish only when publishing, only for a tree that holds the image: if=%q", credpub.If)
+	}
+	if !strings.Contains(string(data), "images/size-budget.sh fugaro-credentials:ci") {
+		t.Error("the credentials image is not held to a size budget")
+	}
+	if !strings.Contains(string(data), "images/scan.sh --secrets fugaro-credentials:ci") {
+		t.Error("the credentials image is not secret-scanned on every run")
 	}
 	if strings.Contains(string(data), "not published until") {
 		t.Error("a comment still says the history image is not published")
@@ -155,8 +192,8 @@ func TestImagesWorkflowPublishesAndVerifiesEveryImage(t *testing.T) {
 	if !ok {
 		t.Fatal("no verify-public job")
 	}
-	if !strings.Contains(fmtNeeds(ver.Needs), "publish") || !strings.Contains(ver.If, "publish") {
-		t.Errorf("verify-public must run after publish, only when publishing: needs=%v if=%q", ver.Needs, ver.If)
+	if !strings.Contains(fmtNeeds(ver.Needs), "publish") || !strings.Contains(fmtNeeds(ver.Needs), "publish-credentials") || !strings.Contains(ver.If, "publish") {
+		t.Errorf("verify-public must run after both publish jobs, only when publishing: needs=%v if=%q", ver.Needs, ver.If)
 	}
 	if len(ver.Permissions) != 1 || ver.Permissions["contents"] != "read" {
 		t.Errorf("verify-public permissions = %v, want only contents: read", ver.Permissions)
@@ -171,8 +208,10 @@ func TestImagesWorkflowPublishesAndVerifiesEveryImage(t *testing.T) {
 	if strings.Contains(script, "docker login") {
 		t.Error("verify-public logs in; it must check as an anonymous user")
 	}
-	if !strings.Contains(script, "history") {
-		t.Error("verify-public does not check history")
+	for _, img := range []string{"history", "credentials"} {
+		if !strings.Contains(script, img) {
+			t.Errorf("verify-public does not check %s: every image a publish job pushes has to be pulled back anonymously, or a package that is still private ships unnoticed", img)
+		}
 	}
 	for _, img := range []string{"web-node", "go", "java-services"} { // removed in 0.7.0
 		if strings.Contains(script, img) {

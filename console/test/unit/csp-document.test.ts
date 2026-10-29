@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See console/LICENSE.md for the terms.
 // The documents the console serves, and the CSP that governs them
 // (desktop-console plan Task 3.4a, steps 4 and 5; design section 5.1 rules 1, 2,
 // 3 and 7).
@@ -53,6 +55,7 @@ import {
   resolveBundleRequest,
   serveAppRequest,
 } from '../../src/main/protocol'
+import { CONFIRM_ENTRY_PATH } from '../../src/main/confirm'
 import { BUNDLE_DIR, builtFile, builtListing } from '../support/built'
 
 // The design's own CSP, section 5.1 rule 3, copied by hand rather than built
@@ -163,10 +166,10 @@ describe('the console’s CSP', () => {
 })
 
 describe('the served documents', () => {
-  it('are the three documents of SERVED_FILES, and each is non-empty', () => {
+  it('are the four documents of SERVED_FILES, and each is non-empty', () => {
     // The non-vacuity guard for every claim below: an empty list, or a document
     // that was not there, would make them all true by looking at nothing.
-    expect(DOCUMENTS).toEqual(['index.html', 'installations.html', 'refusal.html'])
+    expect(DOCUMENTS).toEqual(['confirm.html', 'index.html', 'installations.html', 'refusal.html'])
     for (const name of DOCUMENTS) expect(served(name).length, `${name} is empty`).toBeGreaterThan(0)
   })
 
@@ -175,13 +178,12 @@ describe('the served documents', () => {
     for (const [index, copy] of copies.entries()) {
       const name = DOCUMENTS[index] ?? ''
       expect(copy, `${name} carries no CSP meta copy`).not.toBeNull()
-      // Byte for byte, and the same string in both documents: a copy that had
+      // Byte for byte, and the same string in every document: a copy that had
       // drifted by one byte would be a document with a *different* policy from
       // the one the handler sends.
       expect(copy, `${name}'s meta copy is not the header's policy`).toBe(CONTENT_SECURITY_POLICY)
     }
-    expect(copies[0]).toBe(copies[1])
-    expect(copies[1]).toBe(copies[2])
+    for (const copy of copies) expect(copy).toBe(copies[0])
   })
 
   it('give the dashboard exactly one script, from this origin', () => {
@@ -209,6 +211,24 @@ describe('the served documents', () => {
     expect(builtListing('bundle')).toContain('installations.js')
   })
 
+  it('give the confirmation document exactly one script, its own bundle, from this origin (V2.5.1a)', () => {
+    // The confirmation window's document (design section 5.1 rule 11) loads its
+    // own bundle and nothing else: the dashboard's entry and the picker's are
+    // other windows' surfaces, and this window's preload exposes two methods.
+    const scripts = scriptElements(served('confirm.html'))
+    expect(scripts.length, 'the confirmation document loads no script at all').toBe(1)
+    expect(scripts[0] ?? '').toMatch(/^<script\s+src="\.\/confirm\.js"\s+defer\s*>$/)
+    expect(markup(served('confirm.html'))).not.toContain('console.js')
+    expect(markup(served('confirm.html'))).not.toContain('installations.js')
+    expect(builtListing('bundle')).toContain('confirm.js')
+    // And the entry path the window is opened on is the document this list
+    // serves, with the script beside it: a path the handler does not list is a
+    // 404 in a window that then cancels (see `did-navigate` in
+    // `src/main/confirm.ts`).
+    expect(SERVED_FILES).toContain(CONFIRM_ENTRY_PATH)
+    expect(SERVED_FILES).toContain('/confirm.js')
+  })
+
   it('leave the dashboard document nothing of its own to draw', () => {
     // The entry draws the whole window (Task 3.4c): the installation header, the
     // navigation and the panel are appended to the document's body by the one
@@ -232,7 +252,7 @@ describe('the served documents', () => {
   })
 
   it('give every document exactly one stylesheet, from this origin (Task 6.2)', () => {
-    // One `<link>` per document, and the same one in all three: `./console.css`,
+    // One `<link>` per document, and the same one in all four: `./console.css`,
     // a relative path on this origin, resolved by the bundler as a literal and
     // by the handler as a path under the root. The refusal document is included
     // on purpose -- the one page a console below the floor shows must not be the

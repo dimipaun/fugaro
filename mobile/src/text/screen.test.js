@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See mobile/LICENSE.md for the terms.
 // The text screen's tree (mobile plan, Task P6.9; D167, D170).
 //
 // The plan writes this task's first two verification claims as rendering ones:
@@ -310,30 +312,48 @@ test('a read-back is drawn once, and the one instruction on it is the TYPED one'
   }
 });
 
-test('the UNSENT text is shown, and a message the database already has is not', () => {
+test('the UNSENT text is shown: the words the gate refused, in the client\'s order', () => {
+  // The shape is the client's `unsent()` -- `{ text, at, code }`, `client.js`'s
+  // D167 list -- and it carries no `landed` flag: nothing in it was written at
+  // all. The gate's code comes with each entry because it is what the screen's
+  // notice says, and the screen draws the text rather than the code.
+  const unsent = [
+    { text: 'ship the notes', at: 1_700_000_000_000, code: 'no-connection' },
+    { text: 'and the changelog', at: 1_700_000_001_000, code: 'consumer-unobserved' },
+  ];
   const screen = makeScreen();
-  const shown = render(screen, {
-    unsent: [
-      { id: 'm-1', at: 1_700_000_000_000, text: 'ship the notes', landed: false },
-      { id: 'm-2', at: 1_700_000_001_000, text: 'and the changelog', landed: true },
-    ],
-  });
-  // D167(a) and P3.6's `pending()` are about the text the database has NOT
-  // received: drawing a landed message the same way would invite the owner to
-  // retype a sentence the consumer is already acting on.
-  assert.deepEqual(stringsOf(screen, SCREEN.UNSENT, {
-    unsent: [
-      { id: 'm-1', at: 1_700_000_000_000, text: 'ship the notes', landed: false },
-      { id: 'm-2', at: 1_700_000_001_000, text: 'and the changelog', landed: true },
-    ],
-  }), ['ship the notes']);
-  assert.equal(shown.includes('and the changelog'), false);
+  const shown = render(screen, { unsent });
+  assert.deepEqual(stringsOf(screen, SCREEN.UNSENT, { unsent }), ['ship the notes', 'and the changelog']);
+  for (const one of unsent) assert.equal(shown.includes(one.text), true, one.text);
+});
+
+test('the screen draws the text it is given and does not pick the list -- the caller does', () => {
+  // The one hazard the prop doc names, pinned rather than left to be found. The
+  // screen cannot tell the two lists apart: `pending()`'s entries carry `id` and
+  // `landed` and `unsent()`'s carry `code`, but both are "an object with text",
+  // and a filter on a field one list does not have was exactly the confusion
+  // this test replaced (the old `landed === true` guard would have drawn a
+  // `pending()` entry with `landed: false` as unsent text -- the record the
+  // client is ALREADY re-delivering). So the boundary is the caller's, and the
+  // prop doc says which list crosses it: `unsent()`. `client.js` says the same
+  // from its side -- "a screen resending from here would be a second write of a
+  // record already in flight".
+  const screen = makeScreen();
+  const pending = [{ id: 'm-1', at: 1_700_000_000_000, text: 'in flight', landed: false }];
+  assert.deepEqual(
+    stringsOf(screen, SCREEN.UNSENT, { unsent: pending }),
+    ['in flight'],
+    'a wrong list is drawn, not filtered: the prop doc is what keeps it out',
+  );
+  // What the screen does NOT draw is the gate's code: it shows the owner's own
+  // words, and the sentence that goes with the refusal is the notice's.
+  assert.equal(render(screen, { unsent: [{ text: 'ship', at: 1, code: 'no-connection' }] }).includes('no-connection'), false);
 });
 
 test('a malformed unsent entry is dropped rather than drawn as a blank row', () => {
   const screen = makeScreen();
   const strings = stringsOf(screen, SCREEN.UNSENT, {
-    unsent: [null, {}, { id: 'm-1', text: '' }, { id: 'm-2', text: 'real', landed: false }, 'a string'],
+    unsent: [null, {}, { text: '' }, { text: 'real', at: 1_700_000_000_000, code: 'no-connection' }, 'a string'],
   });
   assert.deepEqual(strings, ['real']);
 });

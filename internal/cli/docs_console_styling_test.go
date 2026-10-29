@@ -54,7 +54,7 @@ func TestDocsConsoleStylingDesignIsWritten(t *testing.T) {
 		"light-dark(",
 		"Never colour alone",
 		"KILLED by",
-		"NOTIONAL~",
+		"~$",
 		"(partial)",
 		"tabular-nums",
 		"forced-colors",
@@ -225,12 +225,20 @@ func TestDocsConsoleStylingDesignIsWritten(t *testing.T) {
 			t.Errorf("%s: §2.9's %s row does not say %q — %s", path, strings.TrimSpace(want.row), want.has, want.because)
 		}
 	}
+	// §2.10's count row, which is scoped as tightly as the screen is: Live drew
+	// no `count` reading at all until the review inbox landed (v2 plan Task
+	// V2.7.1), and the row now names Live **for that inbox alone** — the ready
+	// rows it holds, how many it drew and how many the document carried. The
+	// claim the test holds is the pair: the row names Live, and the prose beside
+	// it says which readings those are, so a later screen cannot join the row by
+	// being mentioned somewhere else on Live.
+	numbers := mdFlat(mdBetween(t, path, doc, "### 2.10 Numbers", "## 3. "))
 	countRow := mdRow(t, path, mdBetween(t, path, doc, "### 2.10 Numbers", "## 3. "), "| **Count** |")
-	if strings.Contains(countRow, "Live") {
-		t.Errorf("%s: §2.10's count row names Live, and Live draws no `count` reading — its units are usd, percent and seconds", path)
+	if !strings.Contains(countRow, "Live") {
+		t.Errorf("%s: §2.10's count row does not name Live, which is where the review inbox's three `count` readings are drawn (v2 plan Task V2.7.1)", path)
 	}
-	if !strings.Contains(doc, "Live draws no `count` reading at all") {
-		t.Errorf("%s: §2.10 no longer says Live draws no `count` reading, which is why the row above leaves it out", path)
+	if !strings.Contains(numbers, "the only `count` readings on the screen are the review inbox's three") {
+		t.Errorf("%s: §2.10 does not say the review inbox's three readings are the only counts on Live, which is why the row above names Live and no other part of the screen", path)
 	}
 	if !strings.Contains(mdBetween(t, path, doc, "### 1.1 ", "### 1.2 "), "61 lines") {
 		t.Errorf("%s: §1.1 does not give the served document's real length (61 lines)", path)
@@ -2233,8 +2241,10 @@ func TestDocsConsoleStylingAccentOnALightGround(t *testing.T) {
 }
 
 // TestDocsConsoleStylingRailIsSpecified:
-// the owner approved the Claude Design canvas on 2026-10-19, and the rail is the
-// one structural addition it makes to this document. A rail is a region a
+// the owner approved the Claude Design canvas on 2026-10-19, and the rail was the
+// one structural addition it made to this document; the owner's ruling of
+// 2026-10-28 moved the rail's tree into the redesign's header switcher, so the
+// block now states that, and the rail's tree, keys and words, inside the menu. A rail is a region a
 // stylesheet is written against *and* a keyboard drives, so §4.1 has to state
 // the things an implementer writes it from — that it is a left vertical rail,
 // its width, the three state words with the glyph each carries, the shortcut
@@ -2248,15 +2258,14 @@ func TestDocsConsoleStylingAccentOnALightGround(t *testing.T) {
 func TestDocsConsoleStylingRailIsSpecified(t *testing.T) {
 	const path = "docs/design/console-styling.md"
 	doc := readDoc(t, path)
-	const railMarker = "**The installation rail — the canvas's one structural addition.**"
+	const railMarker = "**The installation rail — now the switcher's menu.**"
 	rail := mdBetween(t, path, doc, railMarker, "### 4.2 Narrow windows")
 	flat := mdFlat(rail)
 
 	for _, want := range []struct{ has, because string }{
-		{"a **left vertical rail**", "the rail's side is half of what it is — the canvas draws it on the left, as vertical tabs — and a region described without its side is one an implementer places by guess"},
-		{"`aside.console-rail`", "the rail is one element the entry appends, and its class is the hook a rule selects"},
-		{"216 px", "the width is the canvas's one fixed number; a rail whose width is unstated is a rail whose rows re-wrap at whatever font the machine has"},
-		{"56 px", "the collapsed rail's width is required by the same block, and the canvas draws the icons-only state without its arithmetic: a width left to the implementer is a rail whose glyph sits at a different size in the two states"},
+		{"replaced it with the redesign's header switcher", "the block records the ruling that moved the rail, so a reader of the canvas's left rail learns where it went"},
+		{"`div.console-switcher-menu`", "the rail's tree is drawn inside the switcher's menu, and the block names the element that holds it"},
+		{"`aside.console-rail`", "the rail is one element the entry draws, and its class is the hook a rule selects"},
 		{"`div.console-rail-list`", "the list is the rail's tablist, and it is a different element from the rail: a header row and a foot row inside a tablist are children a tablist may not have"},
 		{"Switch with the shortcut keys 1 2 3", "the hint is drawn text, so it is a string an implementer copies rather than one they write"},
 		{"Command-1", "the shortcut's macOS form is a fact about the platform, and a shortcut described as \"the shortcut keys\" alone is one implemented as the wrong modifier"},
@@ -2301,7 +2310,7 @@ func TestDocsConsoleStylingRailIsSpecified(t *testing.T) {
 	// writes the assertion from by choosing a section.
 	chrome := mdFlat(mdBetween(t, path, doc, "### 2.1 ", "### 2.2 "))
 	for _, want := range []struct{ has, because string }{
-		{"'console-rail', 'console-installation', 'console-views', 'console-panel'", "§2.1 quotes the body-children assertion, and the rail is the fourth shape in it: a spec left at three names fails against the entry Task 6.3 writes"},
+		{"'console-header', 'console-page'", "§2.1 quotes the body-children assertion, and since the header switcher replaced the rail the body holds the header and the page"},
 		{"`aside.console-rail`", "§2's inventory is the licence for a selector, so the rail's own element is a row of §2.1's table and not a hook that lives only in §4.1's tree"},
 		{"`div.console-rail-list`", "and its list with it, which is the element a rule styles and the tablist the keyboard task gives its keys"},
 		{"`button.console-rail-row`", "and the row, which is where the state word, the name, the project and the spend are drawn"},
@@ -2311,8 +2320,8 @@ func TestDocsConsoleStylingRailIsSpecified(t *testing.T) {
 			t.Errorf("%s: §2.1 does not name %s; %s", path, want.has, want.because)
 		}
 	}
-	if strings.Contains(chrome, "the body's three children") {
-		t.Errorf("%s: §2.1 still says the entry draws the body's three children; the rail is the fourth, and §4.1 says the entry appends up to five", path)
+	if strings.Contains(chrome, "'console-rail', 'console-installation'") {
+		t.Errorf("%s: §2.1 still quotes the rail-era body children; the header switcher replaced the rail and the body holds the header and the page", path)
 	}
 
 	// The tree §4.1 draws is a count: thirteen classed elements, twelve distinct
@@ -2364,17 +2373,15 @@ func TestDocsConsoleStylingRailIsSpecified(t *testing.T) {
 		t.Errorf("%s: §4.1's tree no longer draws one tab per row; the rows are the tablist's tabs, and the fence is where the shape is read from", path)
 	}
 
-	// The rail's rows are the installations this console's architecture can read.
-	// The picker's list is on the picker's channels, gated to the picker's own
-	// document, and the dashboard's one installations read takes no argument and
-	// names no id — so a design that promises a row per stored installation
-	// promises a read no task in the phase owns, and one that hedges both ways
-	// leaves the implementer to pick. §4.1 states one value, and the plan's test
-	// clause states the same one.
+	// The rail's rows are every installation the CLI listed or the console holds,
+	// readable or not (owner's design ruling of 2026-10-25, which put
+	// `installation.list` on the dashboard's surface). Task 6.3's plan clause is
+	// the one-row rail it built before that ruling, and it keeps its own wording;
+	// neither document may promise a row per *stored* installation alone.
 	planDoc := readDoc(t, "docs/plans/2026-10-15-desktop-console.md")
 	planPath := "docs/plans/2026-10-15-desktop-console.md"
-	if !strings.Contains(structure, "one row per installation the dashboard can read") {
-		t.Errorf("%s: §4.1 does not say the rail draws one row per installation the dashboard can read; with no list read on the dashboard's surface those are the rows it has, and the sentence is what Task 6.3's case is written from", path)
+	if !strings.Contains(structure, "one row per installation the CLI listed or this console holds, readable or not") {
+		t.Errorf("%s: §4.1 does not say the rail draws one row per installation the CLI listed or this console holds, readable or not; that is the owner's ruling of 2026-10-25, and the sentence the rail's cases are written from", path)
 	}
 	if strings.Contains(structure, "or draws the row it *can* read") {
 		t.Errorf("%s: §4.1 still offers the rail task a choice between landing a new read and drawing the row it can read; the two branches disagree about §11 and about Task 6.3's test, so the block has to state one of them", path)
@@ -2389,8 +2396,8 @@ func TestDocsConsoleStylingRailIsSpecified(t *testing.T) {
 	}
 
 	for _, want := range []struct{ has, because string }{
-		{"up to **five** children", "§4.1 is where the count is stated, and the banner, the rail and the three bands are five"},
-		{"the other four children", "in refused mode the banner is the whole document, so the four children §4.1 counts are the ones never appended — a sentence that still says three leaves the rail in the refused document, where the canvas does not draw it"},
+		{"up to **three** children", "§4.1 is where the count is stated, and the banner, the header and the page are three"},
+		{"the other two children", "in refused mode the banner is the whole document, so the two children §4.1 counts are the ones never appended"},
 	} {
 		if !strings.Contains(structure, want.has) {
 			t.Errorf("%s: §4.1 does not say %q; %s", path, want.has, want.because)
@@ -2401,12 +2408,12 @@ func TestDocsConsoleStylingRailIsSpecified(t *testing.T) {
 	// content column's is a document whose layers are read as firing at the
 	// column width they no longer describe.
 	if strings.Contains(structure, "breakpoints are the *content column's*") {
-		t.Errorf("%s: §4.1 calls §4.2's breakpoints the content column's; they are the window's, and with a 216 px rail each query fires with the column that much narrower", path)
+		t.Errorf("%s: §4.1 calls §4.2's breakpoints the content column's; they are the window's", path)
 	}
 	narrow := mdFlat(mdBetween(t, path, doc, "### 4.2 ", "### 4.3 "))
 	for _, want := range []struct{ has, because string }{
-		{"216 px", "§4.2 is where the rail's width is subtracted from the widths its table names: a section that never mentions it leaves the three figures reading as content widths"},
-		{"narrower than the number it names", "and where the subtraction is stated, so the implementer writes the media queries knowing which column they describe"},
+		{"the content column is the whole window", "§4.2 is where the rail's old 216 px subtraction is retired, so the three figures read as the window's widths they always named"},
+		{"overlays the page instead of taking a column from it", "and why: the switcher's menu takes no column, so a layer never fires against a narrower one"},
 	} {
 		if !strings.Contains(narrow, want.has) {
 			t.Errorf("%s: §4.2 does not say %q; %s", path, want.has, want.because)

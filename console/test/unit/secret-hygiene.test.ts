@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See console/LICENSE.md for the terms.
 // No line of this repository carries a secret-shaped string (desktop-console
 // plan Task 2.0; the recorder's own rule, `src/source/redact.ts`).
 //
@@ -81,6 +83,132 @@ function findings(text: string): string[] {
   }
   return out
 }
+
+/**
+ * CREDENTIAL_ENV_KEYS are the environment variable names the console must never
+ * read: the cloud SDK's chain, the forges' tokens, the registries' and the
+ * vendors' keys.
+ *
+ * The console's environment rule is that it reads exactly the keys on
+ * `CHILD_ENV_KEYS` and nothing else (`src/main/spawn.ts`), so the names below are
+ * ones no module may reach for: reaching for one is a module that has grown a
+ * second rule. They are **names and not values**, and a name is not a secret (the
+ * plan's own rule for this file) -- but even the list is assembled from
+ * fragments, because a file that lists the names a scanner looks for is a file a
+ * scanner flags.
+ */
+const CREDENTIAL_ENV_KEYS: readonly string[] = [
+  inert('AWS_', 'ACCESS_KEY_ID'),
+  inert('AWS_', 'SECRET_ACCESS_KEY'),
+  inert('AWS_', 'SESSION_TOKEN'),
+  inert('GITHUB_', 'TOKEN'),
+  inert('GH_', 'TOKEN'),
+  inert('GOOGLE_APPLICATION_', 'CREDENTIALS'),
+  inert('GOOGLE_API_', 'KEY'),
+  inert('CLOUDSDK_AUTH_', 'ACCESS_TOKEN'),
+  inert('CI_JOB_', 'TOKEN'),
+  inert('NPM_', 'TOKEN'),
+  inert('DOCKER_', 'PASSWORD'),
+  inert('OPENAI_API_', 'KEY'),
+  inert('ANTHROPIC_API_', 'KEY'),
+  inert('SLACK_', 'TOKEN'),
+]
+
+/**
+ * NEVER_READ_KEYS is every name no module may *read*, and `WSLENV` is the one
+ * entry that is a rule rather than a credential: it is `wsl.exe`'s share list,
+ * which says which Windows variables the distribution receives, so a console
+ * that read the operator's own `WSLENV` would be forwarding a decision it did not
+ * make (Part E, T-E2; F20, D5(a)). The console **writes** the key -- always
+ * empty -- and never reads it, which is why it is scanned for reads rather than
+ * for mentions: `export const WSLENV_KEY = 'WSLENV'` is this console stating the
+ * list, and it is the only mention of a name here that is allowed.
+ */
+const NEVER_READ_KEYS: readonly string[] = [...CREDENTIAL_ENV_KEYS, inert('WSL', 'ENV')]
+
+/** codeOf strips the comments a name may honestly appear in: a doc comment that
+ * explains why the console does *not* read `AWS_SECRET_ACCESS_KEY` is a sentence
+ * worth having, and this scan is about executable lines. */
+function codeOf(text: string): string {
+  // A block comment becomes its own whitespace rather than nothing, so the line
+  // numbers a finding reports are the file's own.
+  return text.replace(/\/\*[\s\S]*?\*\//g, (comment) => comment.replace(/[^\n]/g, ' ')).replace(/^\s*\/\/.*$/gm, '')
+}
+
+/**
+ * readsOf is every place a line of *code* reads one of `keys` out of an
+ * environment object, as `line: name`. It is deliberately loose about how the
+ * read is spelled -- the property form `process.env.GITHUB_TOKEN`, the index form
+ * `appEnv['GITHUB_TOKEN']`, a quoted name after anything that looks like an
+ * environment -- because the failure this catches is a console that reaches past
+ * the allow-list, and every spelling of that is the same finding.
+ *
+ * It is a function so the planted-line check can call it with a string of its
+ * own.
+ */
+function readsOf(text: string, keys: readonly string[]): string[] {
+  const out: string[] = []
+  const re = new RegExp(
+    `(?:process\\s*\\.\\s*env|appEnv|\\benv|\\benvironment)\\s*` +
+      `(?:\\.\\s*(${keys.join('|')})\\b|\\[\\s*['"\`](${keys.join('|')})['"\`]\\s*\\])`,
+  )
+  for (const [index, line] of codeOf(text).split('\n').entries()) {
+    const found = re.exec(line)
+    if (found !== null) out.push(`${String(index + 1)}: ${found[1] ?? found[2] ?? ''}`)
+  }
+  return out
+}
+
+/** mentionsOf is every credential name a line of code names at all, whether it
+ * reads it or not: a module with a reason to *write* one of these names has grown
+ * the same second rule, and catching it by mention is catching it earlier. */
+function mentionsOf(text: string, keys: readonly string[]): string[] {
+  const out: string[] = []
+  const re = new RegExp(`\\b(?:${keys.join('|')})\\b`)
+  for (const [index, line] of codeOf(text).split('\n').entries()) {
+    const found = re.exec(line)
+    if (found !== null) out.push(`${String(index + 1)}: ${found[0]}`)
+  }
+  return out
+}
+
+describe('nothing under `console/src/` reads a credential out of the environment', () => {
+  it('finds a read in a planted line, so the scan below can fail', () => {
+    // The standing rule for a lint-style test: it is checked against the thing
+    // it is supposed to catch. The planted lines are assembled here, so this file
+    // does not name the shapes it looks for either.
+    const token = inert('GITHUB_', 'TOKEN')
+    const list = inert('WSL', 'ENV')
+    expect(readsOf(`const auth = process.env.environment`, NEVER_READ_KEYS)).toEqual([])
+    expect(readsOf(`const auth = process.env.${token}`, NEVER_READ_KEYS)).toEqual([`1: ${token}`])
+    expect(readsOf(`const env = appEnv['${list}']`, NEVER_READ_KEYS)).toEqual([`1: ${list}`])
+    expect(readsOf(`const env = appEnv.${token}`, NEVER_READ_KEYS)).toEqual([`1: ${token}`])
+    expect(readsOf(`/* why we never read ${token} */`, NEVER_READ_KEYS)).toEqual([])
+    expect(readsOf('const keys = CHILD_ENV_KEYS', NEVER_READ_KEYS)).toEqual([])
+    expect(mentionsOf(`const env = options.appEnv`, CREDENTIAL_ENV_KEYS)).toEqual([])
+    expect(mentionsOf(`const name = '${token}'`, CREDENTIAL_ENV_KEYS)).toEqual([`1: ${token}`])
+  })
+
+  it('reads none of them, and names none of the credential ones, in the sources', () => {
+    // Every `.ts` file under `console/src/`, walked rather than listed: the name
+    // claims whole-tree reach, and a module added under a new directory is
+    // exactly what a hand-kept list would miss. The share list is scanned for
+    // reads only, and for the reason written beside `NEVER_READ_KEYS`.
+    const found: string[] = []
+    const scanned: string[] = []
+    for (const file of filesUnder(join(ROOT, 'src'))) {
+      if (!file.endsWith('.ts')) continue
+      scanned.push(file)
+      const source = readFileSync(file, 'utf8')
+      for (const hit of readsOf(source, NEVER_READ_KEYS)) found.push(`${relative(ROOT, file)}:${hit}`)
+      for (const hit of mentionsOf(source, CREDENTIAL_ENV_KEYS)) found.push(`${relative(ROOT, file)}:${hit}`)
+    }
+    // A walk that read nothing would pass the assertion below and mean nothing,
+    // the same reason the shape scan asserts its own count.
+    expect(scanned.length).toBeGreaterThan(20)
+    expect(found).toEqual([])
+  })
+})
 
 describe('no line of this repository carries a secret-shaped string', () => {
   it('finds one in a planted line, so the scan below can fail', () => {

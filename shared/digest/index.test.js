@@ -227,6 +227,27 @@ test('null is unavailable, exactly as absence is', () => {
   assert.notEqual(got.total.daily_cap_usd, 0);
 });
 
+test('`leased_usd` is accepted on total and repo, and produces nothing', () => {
+  // `leased_usd` is on `watch --json`'s `total` object and on every `repos[]`
+  // entry now, written by the CLI. The digest accepts it -- a document
+  // carrying it is not an unknown field -- but it reads nothing from it: no
+  // item and no field on the summary, the same restraint the console's schema
+  // keeps until a screen draws it.
+  const withLease = digest(doc({
+    total: total({ leased_usd: 2.5 }),
+    repos: [repo({ leased_usd: 1.25 })],
+  }));
+  assert.deepEqual(withLease, digest(doc()));
+  assert.equal(Object.hasOwn(withLease.total, 'leased_usd'), false);
+  // A `null` is the contract's own "no value", so it is accepted too.
+  assert.doesNotThrow(() => digest(doc({ total: total({ leased_usd: null }) })));
+
+  // And the key is still fail-closed about what it carries: a string, or a
+  // negative, is refused like every other NUMBER in these tables.
+  assert.throws(() => digest(doc({ total: total({ leased_usd: '2.5' }) })), refusal(ERROR.TYPE));
+  assert.throws(() => digest(doc({ repos: [repo({ leased_usd: -1 })] })), refusal(ERROR.RANGE));
+});
+
 test('a kill with no reason says unavailable for it, not an empty alarm', () => {
   const got = digest(doc({ total: total({ kill: kill({ reason: undefined, by: undefined }) }) }));
   const item = got.items.find((i) => i.kind === 'kill');

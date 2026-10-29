@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See console/LICENSE.md for the terms.
 // Recorded, redacted fixtures: the file format, its loader, and the replaying
 // source (desktop-console plan Task 1.4; design section 9.1).
 //
@@ -542,6 +544,18 @@ export class FixtureSource implements FugaroSource {
 
   listRuns(args: ValidatedArguments): Promise<Snapshot> {
     return this.#document('runs.list', args)
+  }
+
+  statsRuns(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#document('runs.stats', args)
+  }
+
+  planStatus(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#document('plan.status', args)
+  }
+
+  coordinatorStatus(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#document('coordinator.status', args)
   }
 
   diagnoseRun(args: ValidatedArguments): Promise<Snapshot> {

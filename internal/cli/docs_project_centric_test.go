@@ -31,6 +31,12 @@ import (
 // Restore), and each of the hand mutations the review named fails one of them
 // — deleting a flag, reintroducing a removed command, or dropping a safety
 // stop fails here rather than passing on the section's heading alone.
+//
+// Two mutations of the row's wording were verified, run and restored: the
+// status marker back to "**NOT RUN**" — the claim the review found false, since
+// the owner ran the three probes on 2026-10-16 → FAIL, and the U3 answer
+// weakened from "**yes, the condition is honoured**" to "**yes, the condition
+// is expected**" → FAIL.
 func TestChecklistHasCheck52(t *testing.T) {
 	const path = "../../docs/gcp-live-checklist.md"
 	data, err := os.ReadFile(path)
@@ -39,10 +45,13 @@ func TestChecklistHasCheck52(t *testing.T) {
 	}
 	doc := string(data)
 	// The heading itself carries the four markers the plan's Task 3.0 fixes
-	// ("installation fugaro, sandbox only, never belong; run by you; NOT
-	// RUN"), so it is asserted as a whole rather than as four substrings that
-	// would also pass on the heading alone.
-	const heading = "## Check 52: the four probes phase 3 depends on (installation fugaro, sandbox only, never belong; run by you; NOT RUN)"
+	// ("installation fugaro, sandbox only, never belong; run by you") and the
+	// run that answered the three probes, so it is asserted as a whole rather
+	// than as substrings that would also pass on the heading alone. The
+	// status marker is the run and not "NOT RUN": the owner ran U2, U3 and U4
+	// on 2026-10-16, and a heading that read "NOT RUN" would be the same false
+	// claim this test was rewritten to catch.
+	const heading = "## Check 52: the four probes phase 3 depends on (installation fugaro, sandbox only, never belong; run by you; RUN 2026-10-16: U2 accepted, U3 honoured, U4 no quota — see the result at the end of the section)"
 	section := docSection(t, path, doc, heading)
 	// The section's body, with the heading line stripped: the constraints must
 	// live in the sentences that carry them, not only in the title.
@@ -85,7 +94,54 @@ func TestChecklistHasCheck52(t *testing.T) {
 		// Bitbucket credential, project or scratch repository.
 		"no longer a probe",
 		"nothing on the Bitbucket side",
+		// And the row must carry the run that answered it, with the three
+		// answers and not the question again. It said "the UNVERIFIED questions
+		// phase 3 depends on, written and answered before any phase 3 code" —
+		// a sentence an owner reads as a result — and this test used to pin it
+		// to "**NOT RUN**", which was true when it was written and false from
+		// 2026-10-16, when the owner ran U2, U3 and U4. The plan's own words
+		// are "they are answered before any phase 3 code is written" — a
+		// requirement — and the row now says which run answered them, with the
+		// three results, in the same breath as that requirement.
+		"written and **RUN 2026-10-16**",
+		"before any phase 3 code was written",
+		"**U2**",
+		"**accepted, the reference works**",
+		"**U3**",
+		"**yes, the condition is honoured**",
+		"**U4**",
+		"**no service-account quota**",
 	})
+	// The section's own record of the run, which is what every other document
+	// cites rather than restating the question as open: the block, its date and
+	// one line per probe, each carrying that probe's answer.
+	chk52MustContain(t, body, "body", []string{
+		"### Result of the 2026-10-16 run",
+		"**U2 — accepted.**",
+		"**U3 — yes, the condition is honoured.**",
+		"**U4 — no service-account quota.**",
+	})
+	// A statement that the check has not run is the false claim the review
+	// found in four files; in this document the row and the section are where
+	// it would come back, so neither may carry it.
+	for what, text := range map[string]string{"row": row, "section": section} {
+		if strings.Contains(text, "NOT RUN") {
+			t.Errorf("docs/gcp-live-checklist.md's Check 52 %s says NOT RUN: the owner ran the three probes on 2026-10-16 (U2 accepted, U3 honoured, U4 no quota), and the result is recorded at the end of the section", what)
+		}
+	}
+	// And the design that rests its Secret Manager half on U3 must carry the
+	// same answer: it is one of the places the review found saying the check
+	// had never run. The two phrases are asserted separately because the
+	// design wraps the line between them.
+	if design, err := os.ReadFile("../../docs/design/managed-deployer-fence.md"); err == nil {
+		for _, want := range []string{"RUN 2026-10-16 and answered yes", "the condition is honoured"} {
+			if !strings.Contains(string(design), want) {
+				t.Errorf("docs/design/managed-deployer-fence.md no longer records Check 52's U3 as %q: the design's Secret Manager half rests on that answer, and the review found this file saying the check had never run", want)
+			}
+		}
+	} else {
+		t.Fatal(err)
+	}
 	for _, dead := range []string{"scratch Bitbucket", "project access token", "fugaro-probe-1"} {
 		if strings.Contains(row, dead) {
 			t.Errorf("the Check 52 row still describes U1 as a running probe (%q)", dead)
@@ -2182,7 +2238,14 @@ var chk49Citations = []chkCitation{
 	{"internal/cli/run.go", "taskText(cmd, o.tf, args, prSet)"},
 	{"internal/cli/run.go", "launchPolicyGates(ctx, env, slug, spec)"},
 	{"internal/cli/run.go", "pass the task as TEXT or with --task-file (- for stdin)"},
-	{"internal/cli/run.go", "ref = c.Git.BaseBranch"},
+	// The ref's own fallback moved with the ruling that gave the base branch
+	// four layers: the launcher takes --ref as it is (a first run's spec is
+	// buildAttemptSpec's) and resolves the ref through launchBaseBranch in
+	// basebranch.go when the flag is empty. The number this sentence used to
+	// carry ((:630), the shape chkNoLineCites cannot see) pointed at the
+	// --plan-task gate by then, so both halves are named instead.
+	{"internal/cli/run.go", "func buildAttemptSpec"},
+	{"internal/cli/basebranch.go", "func launchBaseBranch"},
 	{"internal/gitops/gitops.go", "\"fetch\", \"--quiet\", \"origin\", ref"},
 	{"internal/runner/runner.go", "CheckoutNewBranch(ctx, spec.Ref, branch)"},
 	{"internal/cli/cloud.go", "\"project\", \"\", \"the Fugaro project"},

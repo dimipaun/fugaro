@@ -28,6 +28,10 @@ budget:
     token_signer: signer@my-fp1.iam.gserviceaccount.com
 watch:
     burn_alert_usd_per_hour: 2
+mailbox:
+    keychain_item: fugaro-mailbox-aurora
+credentials_service:
+    url: https://fugaro-credentials-abcde-uc.a.run.app
 max_parallel: 7
 repos:
     acme/web:

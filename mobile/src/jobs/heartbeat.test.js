@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See mobile/LICENSE.md for the terms.
 // The heartbeat line (mobile plan, Task P3.3; resolved 2026-10-17).
 //
 // This module decides nothing about presence -- P1.4's rule and P3.6's MAC

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See console/LICENSE.md for the terms.
 // The Run detail screen in a real window (desktop-console plan Task 2.3;
 // design section 6.2 screen 4).
 //
@@ -53,11 +55,17 @@
 // the same pixels on every run.
 //
 // They are compared, never written by a run: `playwright.config.ts` sets
-// `updateSnapshots: 'none'`, so a missing baseline FAILS. They are recorded by
-// an owner, on the platform the comparison runs on (macOS and Linux pixels
-// differ), with
+// `updateSnapshots: 'none'`, so a missing baseline FAILS a comparison run. They
+// are recorded by an owner, on the platform the comparison runs on (macOS and
+// Linux pixels differ), with
 //
-//   npx playwright test run.spec.ts --update-snapshots
+//   cd console && npm run build && npx playwright test run.spec.ts --update-snapshots
+//
+// — the build is in the line because the specs read `dist/` and
+// `npx playwright test` does not build, and on Linux it takes
+// `xvfb-run --auto-servernum` (Electron needs a display);
+// `test/support/goldens.ts`'s `recordCommand` is that line, per spec and per
+// platform, and it is what a failed golden's message prints
 //
 // (owner-run, on the comparison's platform; commit `__screenshots__/run/`
 // afterwards) and until they are committed the golden tests fail on purpose. The
@@ -76,6 +84,7 @@ import { RUN_LOG_CAP, RUN_THEMES } from '../../src/renderer/screens/run'
 import { githubToken } from '../support/fakeSecrets'
 import { inRangeCliStub } from '../support/cliStub'
 import type { CliStub } from '../support/cliStub'
+import { expectGolden, expectGrounded } from '../support/goldens'
 import { launchConsole } from '../support/launch'
 
 // The console's own directory, from this file's location: `test/e2e/x.spec.ts`
@@ -99,6 +108,10 @@ const THE_MOUNT = '#run-mount'
  * the golden tests run and a missing baseline fails them. */
 const SKIP_GOLDENS = process.env['FUGARO_CONSOLE_GOLDENS'] === 'skip'
 
+/** SPEC is this file's own name: what a re-record command has to name, and what
+ * every golden failure here quotes back to the reader. */
+const SPEC = 'run.spec.ts'
+
 /** The compiled modules the screen is made of, in dependency order: the screen,
  * the writers in `renderer/app.js`, and the shared modules they use -- including
  * `shared/replay.js`, which is Task 2.3's other half and the one the replay
@@ -108,6 +121,8 @@ const SKIP_GOLDENS = process.env['FUGARO_CONSOLE_GOLDENS'] === 'skip'
 const MODULES: readonly string[] = Object.freeze([
   'shared/availability.js',
   'shared/sanitize.js',
+  'shared/launcher.js',
+  'shared/rigor.js',
   'shared/version.js',
   'shared/stringify.js',
   'shared/replay.js',
@@ -229,6 +244,18 @@ interface Screen {
   readonly ledgerModel: string
   readonly ledgerCompute: string
   readonly ledgerTotal: string
+  /** the run's own spend by stage, from the document's top-level `stages` */
+  readonly spendStageNames: readonly string[]
+  readonly spendStageCalls: readonly string[]
+  readonly spendStageAgents: readonly string[]
+  readonly spendStageAgentReasons: readonly (string | null)[]
+  readonly spendStageUsd: readonly string[]
+  readonly spendStageNotional: readonly string[]
+  /** the findings the run's mode tolerated, from the document's `tolerated`
+   * block: the total the block carries and the entries it lists */
+  readonly toleratedTotal: string
+  readonly toleratedTitles: readonly string[]
+  readonly toleratedModes: readonly string[]
   readonly stageNames: readonly string[]
   readonly stagePassed: readonly string[]
   readonly stageTests: readonly string[]
@@ -236,9 +263,18 @@ interface Screen {
   readonly stageSpendReasons: readonly (string | null)[]
   readonly stageDeadlines: readonly string[]
   readonly stageDeadlineReasons: readonly (string | null)[]
+  /** the Rigor row's cells: empty strings and no areas for a record whose row
+   * carries no block, which is the case the row is conditional on */
+  readonly rigorMode: string
+  readonly rigorFrom: string
+  readonly rigorAreaNames: readonly string[]
+  readonly rigorAreaModes: readonly string[]
   readonly prRepo: string
   readonly prNumber: string
   readonly prUrl: string
+  /** prLine is the pull-request line's cells in drawing order: the three facts
+   * and the separator between them. */
+  readonly prLine: readonly string[]
   readonly prReason: string
   readonly logLines: number
   readonly logMessages: readonly string[]
@@ -278,6 +314,21 @@ function screen(page: Page): Promise<Screen> {
       ledgerModel: text('.run-ledger-model-value'),
       ledgerCompute: text('.run-ledger-compute-value'),
       ledgerTotal: text('.run-ledger-total-value'),
+      spendStageNames: texts('.run-spend-stages .run-spend-stage-name'),
+      spendStageCalls: texts('.run-spend-stages .run-spend-stage-calls'),
+      spendStageAgents: texts('.run-spend-stages .run-spend-stage-agents'),
+      // A stage whose `calls`/`agents` pointer the document left absent is not a
+      // stage that counted zero: the cell says `n/a` and its title says which.
+      spendStageAgentReasons: all('.run-spend-stages .run-spend-stage-agents').map((one) =>
+        one.getAttribute('title'),
+      ),
+      spendStageUsd: texts('.run-spend-stages .run-spend-stage-usd'),
+      // The part of the stage's model figure the plan covered, drawn with the
+      // console's notional mark so the list price is never read as money.
+      spendStageNotional: texts('.run-spend-stages .run-spend-stage-notional'),
+      toleratedTotal: text('.run-tolerated-total'),
+      toleratedTitles: texts('.run-tolerated-title'),
+      toleratedModes: texts('.run-tolerated-mode'),
       stageNames: texts('.run-stages .run-stage-name'),
       stagePassed: texts('.run-stages .run-stage-passed'),
       stageTests: texts('.run-stages .run-stage-tests'),
@@ -287,9 +338,14 @@ function screen(page: Page): Promise<Screen> {
       stageSpendReasons: all('.run-stages .run-stage-spend').map((one) => one.getAttribute('title')),
       stageDeadlines: texts('.run-stages .run-stage-deadline'),
       stageDeadlineReasons: all('.run-stages .run-stage-deadline').map((one) => one.getAttribute('title')),
+      rigorMode: text('.run-rigor-mode'),
+      rigorFrom: text('.run-rigor-from'),
+      rigorAreaNames: texts('.run-rigor-area-name'),
+      rigorAreaModes: texts('.run-rigor-area-mode'),
       prRepo: text('.run-pr-repo'),
       prNumber: text('.run-pr-number'),
       prUrl: text('.run-pr-url'),
+      prLine: texts('.run-pr > .run-pr-repo, .run-pr > .run-pr-number, .run-pr > .run-pr-sep, .run-pr > .run-pr-url'),
       prReason: text('.run-pr-reason'),
       logLines: all('.run-log-line').length,
       logMessages: texts('.run-log-message'),
@@ -356,7 +412,14 @@ const DIAGNOSIS: JSONDoc = {
     settled: true,
     follow_up: false,
     stale_draft: false,
-    cost: { model_usd: 1.25, compute_usd: 0.5, compute_estimated: true, total_usd: 1.75, model_basis: 'api-list' },
+    cost: {
+      model_usd: 1.25,
+      model_notional_usd: 0.42,
+      compute_usd: 0.5,
+      compute_estimated: true,
+      total_usd: 1.75,
+      model_basis: 'api-list',
+    },
   },
   halt: { reason: 'the daily cap was reached', scope: 'repo', at: '2026-10-15T11:30:00Z' },
   verify: [
@@ -395,6 +458,46 @@ const DIAGNOSIS: JSONDoc = {
   report_path: 'runs/example/20261015-110030-4a5b/report.json',
   route_by: { 'anthropic-api': 0.9 },
   model_by: { 'claude-sonnet-5': 1.25 },
+  // The run's own per-stage record, whose `model_usd` is the ledger's model
+  // figure split the way the CLI counted it (the three stages sum to the row's
+  // 1.25, and their notional parts to the row's 0.42). `verify` carries no
+  // `agents` pointer at all: the CLI's own `StageTiming` writes those as
+  // pointers, so an absent one means the stage was not counted, not that it
+  // counted zero. The two dollars are `omitempty` floats instead, and
+  // `model_notional_usd` is the part of the stage's `model_usd` the plan covered
+  // -- never more than it -- so `verify` with no notional key is a measured zero.
+  stages: [
+    { name: 'implement', duration_s: 612, calls: 412, agents: 3, model_usd: 0.8, model_notional_usd: 0.3 },
+    { name: 'review', duration_s: 344, calls: 268, agents: 2, model_usd: 0.3, model_notional_usd: 0.12 },
+    { name: 'verify', duration_s: 60, calls: 41, model_usd: 0.15 },
+  ],
+  // The mode let these through, and the block's `total` is above the two it
+  // lists: the CLI bounds the list, so a shorter list is not the whole of it.
+  // Each `label` is the score word the axes give (2x3 is Low, 2x1 is a Nit) and
+  // each `class` is one of the classes the record uses.
+  tolerated: {
+    total: 3,
+    findings: [
+      {
+        title: 'the retry ceiling differs between the two paths',
+        label: 'low',
+        mode: 'startup',
+        likelihood: 2,
+        impact: 3,
+        fix_cost: 1,
+        class: 'correctness',
+      },
+      {
+        title: 'the table test misses the drain branch',
+        label: 'nit',
+        mode: 'startup',
+        likelihood: 2,
+        impact: 1,
+        fix_cost: 1,
+        class: 'maintainability',
+      },
+    ],
+  },
   reported_usd: 1.2,
   charge_usd: 1.25,
 }
@@ -476,9 +579,10 @@ test.describe('the Run detail screen', () => {
     expect(drawn.theme).toBe('light')
     expect(drawn.runId).toBe('20261015-110030-4a5b')
     expect(drawn.status).toBe('finished')
-    // The three accounts, apart: the billed model figure, the estimate by
-    // design, and the total the table charged.
-    expect(drawn.ledgerModel).toBe('$1.25')
+    // The three accounts, apart: the billed model figure (the row's `model_usd`
+    // less the part its plan paid), the estimate by design, and the total the
+    // table charged.
+    expect(drawn.ledgerModel).toBe('$0.83')
     expect(drawn.ledgerCompute).toBe('est. $0.50')
     expect(drawn.ledgerTotal).toBe('$1.75')
     // A halting is the money decision this console exists to explain, so it is
@@ -490,19 +594,64 @@ test.describe('the Run detail screen', () => {
     expect(drawn.flags).toContain('settled')
   })
 
-  test('draws the stage timeline, with the spend and deadline no document carries', async () => {
+  test('draws the run\'s rigor row, and no row at all for a record with no block', async () => {
+    // Owner request 2026-10-25: the run detail is the one screen with room for
+    // the whole answer -- the mode, the layer that decided it and every rule
+    // that matched -- where the Projects cell and the Live chip are one word.
+    await mount(DIAGNOSIS, logLines(3), LOG_LINK, ARRIVALS, null, 'light')
+    const plain = await screen(page)
+    expect(plain.rigorMode).toBe('')
+    expect(plain.rigorAreaNames).toEqual([])
+    expect(plain.text).not.toContain('RIGOR')
+
+    // `DIAGNOSIS`'s row is a run from before the field, so the block is added
+    // to it the way a 0.11.0 runner writes it -- the record's own two stamps
+    // included, because a real block carries them and the row draws neither.
+    const row = DIAGNOSIS['row'] as JSONDoc
+    const withRigor: JSONDoc = {
+      ...DIAGNOSIS,
+      row: {
+        ...row,
+        rigor: {
+          mode: 'critical',
+          from: 'area',
+          areas: [
+            { name: 'payments', mode: 'critical', at: '2026-10-15T11:00:05Z' },
+            { name: 'billing', mode: 'pro', at: '2026-10-15T11:00:05Z' },
+          ],
+          at: '2026-10-15T11:00:05Z',
+          revision: 'origin/main',
+        },
+      },
+    }
+    await mount(withRigor, logLines(3), LOG_LINK, ARRIVALS, null, 'light')
+    const drawn = await screen(page)
+    expect(drawn.rigorMode).toBe('Critical')
+    // The layer in the console's words, not the record's enum, and the areas as
+    // the repository named them.
+    expect(drawn.rigorFrom).toBe('an area rule')
+    expect(drawn.rigorAreaNames).toEqual(['payments', 'billing'])
+    expect(drawn.rigorAreaModes).toEqual(['Critical', 'Pro'])
+    expect(drawn.text).toContain('RIGOR')
+    // The two stamps are in the record and in no cell of the screen.
+    expect(drawn.text).not.toContain('origin/main')
+    expect(drawn.text).not.toContain('2026-10-15T11:00:05Z')
+  })
+
+  test('draws the stage timeline, whose spend and deadline no verify record carries', async () => {
     await mount(DIAGNOSIS, logLines(3), LOG_LINK, ARRIVALS, null, 'light')
     const drawn = await screen(page)
 
     expect(drawn.stageNames).toEqual(['build', 'test'])
     expect(drawn.stagePassed).toEqual(['passed', 'failed'])
     expect(drawn.stageTests).toEqual(['0', '1,182'])
-    // Per-stage spend is on no document this tree produces: `diagnose` reports
-    // it by route and by model, so the cell says `n/a` and its title says what
-    // the document gives instead rather than inventing a split.
+    // Per-stage spend is on no verify record: the run's spend by stage is the
+    // document's top-level `stages`, which the panel above the timeline draws,
+    // so the cell says `n/a` and its title names that panel rather than
+    // inventing a split.
     expect(drawn.stageSpend).toEqual(['n/a', 'n/a'])
     for (const reason of drawn.stageSpendReasons) {
-      expect(reason).toContain('by route and by model')
+      expect(reason).toContain('spend by stage')
     }
     // A `runview.Row` carries no deadline, so each stage draws the reason in
     // the cell's title -- the same two outcomes `putText` has: the safe thing
@@ -511,6 +660,38 @@ test.describe('the Run detail screen', () => {
     for (const reason of drawn.stageDeadlineReasons) {
       expect(reason).toContain('row.deadline')
     }
+  })
+
+  test('draws the run’s spend by stage and the findings the mode tolerated', async () => {
+    await mount(DIAGNOSIS, logLines(3), LOG_LINK, ARRIVALS, null, 'light')
+    const drawn = await screen(page)
+
+    expect(drawn.spendStageNames).toEqual(['implement', 'review', 'verify'])
+    // The calls and the sub-agents a stage was counted at, and the dollars its
+    // model spend came to: every figure is one the document wrote.
+    expect(drawn.spendStageCalls).toEqual(['412', '268', '41'])
+    expect(drawn.spendStageAgents).toEqual(['3', '2', 'n/a'])
+    // The usd cell is the **billed** part of the stage's figure, which is the
+    // stage's `model_usd` less the part the plan paid -- never the whole figure,
+    // which would add billed and notional money on one row.
+    expect(drawn.spendStageUsd).toEqual(['$0.50', '$0.18', '$0.15'])
+    // The notional part is the plan's list price inside the stage's figure, so
+    // it carries the console's notional mark -- and `verify`, with no notional
+    // key at all, is a measured zero rather than a marked one.
+    expect(drawn.spendStageNotional).toEqual(['~$0.30', '~$0.12', '$0.00'])
+    // `verify` carries no `agents` pointer, which is not a stage that counted
+    // zero: the cell says `n/a` and its title says what the absence means.
+    expect(drawn.spendStageAgentReasons[2]).toContain('not counted for this stage')
+    expect(drawn.spendStageAgentReasons[0]).toBeNull()
+
+    // The mode's own word for each finding, and the block's total drawn beside
+    // the entries rather than replaced by their count.
+    expect(drawn.toleratedTotal).toContain('3')
+    expect(drawn.toleratedTitles).toEqual([
+      'the retry ceiling differs between the two paths',
+      'the table test misses the drain branch',
+    ])
+    expect(drawn.toleratedModes).toEqual(['Startup', 'Startup'])
   })
 
   test('draws a deadline the row does carry, and only then', async () => {
@@ -534,10 +715,23 @@ test.describe('the Run detail screen', () => {
     // rebuilt from the repository and the number would name a repository this
     // run does not use -- `example-owner/example-repo` is Bitbucket, and a
     // `github.com` URL for it would pass this console's own host allow-list.
+    // The reason is design section 5.1 rule 2's own sentence, drawn whole.
     expect(drawn.prRepo).toBe('example-owner/example-repo')
     expect(drawn.prNumber).toBe('#42')
     expect(drawn.prUrl).toBe('https://bitbucket.org/example-owner/example-repo/pull-requests/42')
-    expect(drawn.prReason).toContain('no document names the provider')
+    expect(drawn.prReason).toBe(
+      'this CLI does not say which provider this run’s repository is on, so the console will not build a link from it',
+    )
+    // The three facts are one line and the cells between them are theirs, so
+    // they are drawn apart (`acme/platform-core#412https://...` was the defect
+    // the owner reported on 2026-10-21).
+    expect(drawn.prLine).toEqual([
+      'example-owner/example-repo',
+      ' · ',
+      '#42',
+      ' · ',
+      'https://bitbucket.org/example-owner/example-repo/pull-requests/42',
+    ])
     // Nothing in the pull request panel is a link or a destination.
     expect(drawn.text).not.toContain('github.com')
   })
@@ -608,18 +802,36 @@ test.describe('the Run detail screen', () => {
     expect(drawn.replayNote).toContain('15 minutes')
   })
 
-  test('draws the run screen', async () => {
-    test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
-    await mount(DIAGNOSIS, logLines(3), LOG_LINK, ARRIVALS, '2026-10-15T12:05:00Z', 'light')
-    await expect(page.locator(THE_MOUNT)).toHaveScreenshot(GOLDEN_NAMES.light)
+  test('is painted from the design tokens, not from the browser defaults', async () => {
+    // Design section 6.2's computed-ground assertion, and the one case in this
+    // file that is red when the stylesheet stops being linked: the theme travels
+    // as a `data-theme` attribute the renderer stamps, so every read above passes
+    // on a tree nothing paints. `test/support/goldens.ts` holds the app's ground
+    // and the screen's text colour to the shipped palette, once per theme.
+    //
+    // NOT a golden test, deliberately: `FUGARO_CONSOLE_GOLDENS=skip` does not skip
+    // it. Nothing here reads a PNG, so an unstyled tree is red on its own account
+    // rather than recorded as a fresh baseline nobody compared.
+    await expectGrounded(page, (theme) => mount(DIAGNOSIS, logLines(3), LOG_LINK, ARRIVALS, null, theme), {
+      themes: RUN_THEMES,
+      mount: THE_MOUNT,
+      text: 'h1.run-id',
+      screen: 'the Run detail screen',
+    })
   })
 
-  test('draws the run screen in the dark theme', async () => {
+  test('draws the run screen', async ({}, testInfo) => {
+    test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
+    await mount(DIAGNOSIS, logLines(3), LOG_LINK, ARRIVALS, '2026-10-15T12:05:00Z', 'light')
+    await expectGolden(page.locator(THE_MOUNT), GOLDEN_NAMES.light, { spec: SPEC, consoleDir, testInfo })
+  })
+
+  test('draws the run screen in the dark theme', async ({}, testInfo) => {
     await mount(DIAGNOSIS, logLines(3), LOG_LINK, ARRIVALS, null, 'dark')
     const drawn = await screen(page)
     expect(drawn.theme).toBe('dark')
     test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
-    await expect(page.locator(THE_MOUNT)).toHaveScreenshot(GOLDEN_NAMES.dark)
+    await expectGolden(page.locator(THE_MOUNT), GOLDEN_NAMES.dark, { spec: SPEC, consoleDir, testInfo })
   })
 
   test('resolves the golden names under the run directory', ({}, testInfo) => {
@@ -648,7 +860,7 @@ test.describe('the Run detail screen', () => {
   test('keeps its state words and its row boundary under forced colors (design section 6.4)', async () => {
     // The Run detail screen's half of the forced-colors smoke (section 4.4, in the half
     // section 6.4 gives this task). This is the densest table in the console: a stage
-    // that is `n/a` because no document carries spend by stage, a deadline that is `n/a`,
+    // cell that is `n/a` because no verify record carries spend, a deadline that is `n/a`,
     // and the halt's own `HALTED` -- each a word rather than a tone, so each survives.
     // The chrome's half is `entry.spec.ts`'s; a smoke, not a golden.
     await mount(DIAGNOSIS, logLines(4), LOG_LINK, ARRIVALS, null, 'light')

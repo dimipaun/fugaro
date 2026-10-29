@@ -29,6 +29,39 @@ func TestScopeOf(t *testing.T) {
 	}
 }
 
+// TestScopesIncludesCompression pins agent.compression's scope (design
+// headroom-compression.md §4, decision P11's fourth edit): the project layer
+// and a profile are the same launcher-writable bucket object agent.oauth_token
+// already distrusts, so neither may set it — and the row must exist at all, or
+// the project layer would treat the key as unknown instead of out of scope.
+func TestScopesIncludesCompression(t *testing.T) {
+	i := slices.IndexFunc(Scopes, func(r ScopeRow) bool { return r.Key == "agent.compression" })
+	if i < 0 {
+		t.Fatal("agent.compression has no Scopes row")
+	}
+	if Scopes[i].In != InRepo|InOverride {
+		t.Errorf("agent.compression scope = %v, want InRepo|InOverride", Scopes[i].In)
+	}
+}
+
+// TestProjectLayerRefusesCompression is the consequence TestScopesIncludesCompression
+// only implies: a project layer that sets defaults.agent.compression is refused
+// for being out of scope, not for naming an unknown key.
+func TestProjectLayerRefusesCompression(t *testing.T) {
+	const doc = `
+defaults:
+  agent:
+    compression: headroom
+`
+	_, ps := ParseProjectLayer([]byte(doc), LayerAnchor{Project: "example", GCPProject: "example-1a2b3c"})
+	if len(ps) == 0 {
+		t.Fatal("the project layer accepted defaults.agent.compression")
+	}
+	if !slices.ContainsFunc(ps, func(p Problem) bool { return strings.Contains(p.Message, "may only be set in") }) {
+		t.Errorf("the project layer refused compression for the wrong reason: %+v", ps)
+	}
+}
+
 // TestReviewAllowForksScopeRemoved (owner ruling 2026-10-12): the key no
 // longer exists at all (review mode is trusted-author-only; there is no
 // opt-in for untrusted ones to remove a scope row for), so it must not be
@@ -79,11 +112,24 @@ func TestScopesMatchDesignDoc(t *testing.T) {
 		// doc's own §5 table (which this golden map otherwise mirrors) gains
 		// its row in Task 9, once the shipped shape is documented.
 		"agent.oauth_token": InRepo | InOverride,
+		// Headroom compression plan Task 1 (docs/design/headroom-compression.md
+		// §4): repo-only for the same reason agent.oauth_token is, and the
+		// override is one-directional (--no-compression only), which the scope
+		// table does not express.
+		"agent.compression": InRepo | InOverride,
 
 		"budget.mode":           InRepo,
 		"budget.per_run_usd":    InRepo,
 		"budget.allowed_models": InRepo,
 		"budget.per_day_usd":    InRepo,
+
+		"governance.review_ratio":       InProject | InRepo,
+		"governance.review_floor_calls": InProject | InRepo,
+		"governance.max_subagents":      InProject | InRepo,
+		"governance.stage_budget":       InProject | InRepo,
+		"governance.stage_tokens":       InProject | InRepo,
+		"governance.stage_timeout":      InProject | InRepo,
+		"governance.tiers":              InProject | InRepo,
 
 		"workflows.*.profile":                   InRepo,
 		"workflows.*.job_profile":               InRepo,
@@ -125,6 +171,9 @@ func TestScopesMatchDesignDoc(t *testing.T) {
 
 		"followup.trusted":      InRepo,
 		"followup.allow_public": InRepo,
+
+		"rigor.default": InProject | InRepo,
+		"rigor.areas":   InProject | InRepo,
 	}
 
 	seen := make(map[string]bool, len(Scopes))

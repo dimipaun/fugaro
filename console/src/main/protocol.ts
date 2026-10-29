@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See console/LICENSE.md for the terms.
 // The bundled document's origin: a registered, standard, secure `app://` scheme
 // (desktop-console plan Task 1.1; design section 5.1 rules 2 and 3).
 //
@@ -88,29 +90,49 @@ export const PICKER_ENTRY_URL = `${APP_ORIGIN}${PICKER_ENTRY_PATH}`
 
 /**
  * SERVED_FILES is the whole of what the served root holds (desktop-console plan
- * Task 3.4a, step 4; Task 3.4b's second entry; Task 6.2's stylesheet): the
- * dashboard's and the refusal's documents, the one script the dashboard loads
- * and the one stylesheet every document links, and the picker's document and its
- * own script.
+ * Task 3.4a, step 4; Task 3.4b's second entry; Task 6.2's stylesheet; GV2.2's
+ * layout worker; V2.5.1a's confirmation window): the dashboard's, the refusal's,
+ * the picker's and the confirmation's documents, the script the dashboard loads
+ * and the ones the picker and the confirmation load, the one stylesheet every
+ * document links, and elkjs's layout worker.
  *
  * The root itself is `dist/bundle/` (`rendererRoot` in `src/main/index.ts`),
- * and the six files are there because `npm run build` puts them there: `tsc`
- * compiles `src/renderer/entry.ts` and `src/renderer/installations.ts` and
- * everything they require, and `tools/bundle-renderer/index.ts` writes
- * `console.js`, `installations.js` and `console.css` and copies the three
- * documents verbatim. `test/unit/bundle.test.ts` holds this list and that
+ * and the nine files are there because `npm run build` puts them there: `tsc`
+ * compiles `src/renderer/entry.ts`, `src/renderer/installations.ts` and
+ * `src/renderer/confirm.ts` and everything they require, and
+ * `tools/bundle-renderer/index.ts` writes
+ * `console.js`, `installations.js`, `confirm.js` and `console.css`, copies the
+ * four documents verbatim, and copies `elk-worker.min.js` verbatim out of the
+ * installed `elkjs` package. `test/unit/bundle.test.ts` holds this list and that
  * directory equal in both directions, so a file that appears beside the bundle
  * -- or a name dropped from this list -- is a failing test rather than a
  * document the console serves and nothing vouches for.
  *
- * **`/console.css` is the one entry Task 6.2 adds, and it is a stylesheet this
- * origin serves rather than a second policy.** `style-src 'self'` is already the
+ * **`/elk-worker.min.js` is the one third-party file this origin serves, and
+ * GV2.2 adds it as a file rather than as a policy.** It is elkjs 0.11.0's own
+ * `lib/elk-worker.min.js`, copied byte for byte by the build -- the digest is
+ * asserted in `test/unit/bundle.test.ts` -- so none of it is this project's code
+ * and none of it is editable here; its EPL-2.0 licence and its source are
+ * `console/THIRD_PARTY_NOTICES.md`, packed beside the app. A worker is governed
+ * by `script-src 'self'` while no `worker-src` is given, and
+ * `app://console/elk-worker.min.js` is this origin, so this entry is the whole
+ * of the change: no directive is added and none is loosened, which is what makes
+ * the absence of `'unsafe-eval'` (rule 3) hold *inside* the worker too.
+ *
+ * **Task 6.2's `/console.css` is a stylesheet this origin serves rather than a
+ * second policy.** `style-src 'self'` is already the
  * third directive of `CONTENT_SECURITY_POLICY` below, so a `<link
  * rel="stylesheet">` to `app://console/console.css` is admitted by a directive
  * that was always there: no directive is added, none is loosened, and
  * `default-src 'none'` and `connect-src 'none'` are not consulted for it (a
  * `<link>` is not a fetch `connect-src` governs). `mediaTypeFor` already maps
  * `.css`, so this entry is the whole of the handler's change.
+ *
+ * **The seven `.woff2` files are the redesign's vendored fonts** (owner's ruling
+ * of 2026-10-28): Instrument Sans and IBM Plex Mono, OFL-1.1, copied byte for byte
+ * from `src/renderer/fonts/` by the build. `font-src 'self'` was always the fifth
+ * directive below and admits `app://console/*.woff2`, and `mediaTypeFor` already
+ * maps `.woff2`, so no directive is added and none is loosened.
  *
  * It is a list of URL paths rather than of file names because that is how the
  * handler speaks, and it is deliberately **not** a second filter inside
@@ -121,8 +143,18 @@ export const PICKER_ENTRY_URL = `${APP_ORIGIN}${PICKER_ENTRY_PATH}`
  * it does not list.
  */
 export const SERVED_FILES: readonly string[] = Object.freeze([
+  '/IBMPlexMono-Medium.woff2',
+  '/IBMPlexMono-Regular.woff2',
+  '/IBMPlexMono-SemiBold.woff2',
+  '/InstrumentSans-Bold.woff2',
+  '/InstrumentSans-Medium.woff2',
+  '/InstrumentSans-Regular.woff2',
+  '/InstrumentSans-SemiBold.woff2',
+  '/confirm.html',
+  '/confirm.js',
   '/console.css',
   '/console.js',
+  '/elk-worker.min.js',
   '/index.html',
   '/installations.html',
   '/installations.js',

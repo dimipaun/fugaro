@@ -40,7 +40,9 @@ func TestDocsBudgetTokenChannelDesignIsWritten(t *testing.T) {
 		// The verdict and its gate.
 		"capability, not a boundary",
 		"no code follows this document until the owner approves it",
-		// The probe that gates one candidate, and the check that has not run.
+		// The probe that gates one candidate: Check 52, which the owner ran on
+		// 2026-10-16, and whose U3 answer (the Secret Manager name-prefix
+		// condition is honoured) is what revives C2.
 		"Check 52",
 		// The owner's decisions and the live check the implementation needs.
 		"## The owner's open decisions",

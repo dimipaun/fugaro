@@ -23,18 +23,17 @@
  *   2. **The entries' titles.** Each title is read out of the document itself — a file's
  *      `#` heading, or, for the quick start, the `##` heading the anchor names — so the
  *      hub cannot call a guide something the guide no longer calls itself.
- *   3. **The CLI reference.** The reference is generated from the command tree by W0.4,
- *      and this page **renders** it (step 3): a command that lands in the tree appears
- *      here the day the file is regenerated, with no edit to this page. Its own title line
- *      is rendered as a section heading of this page rather than as a second `h1` — the
- *      page's `h1` is the hub's — and the anchors its headings carry survive that move, so
- *      `#fugaro-budget-set` still lands where it says.
+ *   3. **The CLI reference.** The reference is generated from the command tree by W0.4
+ *      into `website/content/cli-reference.md`, and the hub **links** it like every other
+ *      document (the owner's preview feedback on #1003, 2026-10-24, took the rendered copy
+ *      off this page): its title is read out of the file, so a regenerated reference is
+ *      linked under the title it carries.
  *
  * Nothing here fetches anything: the documents are read from this repository at build
  * time, and the GitHub URLs are checked against the working tree by the site's own tests
  * rather than by a request (Global Constraints 4 and 8). No font, script, stylesheet,
  * image or embed reaches a reader from anywhere but this build (D106): the page links
- * nothing but this repository and the anchor it renders itself.
+ * nothing but this repository.
  *
  * **The bold look** (the owner's approved home page, PR #779; the owner's brief of
  * 2026-10-21 for this page). The page is styled in the shapes the foundation PR wrote once
@@ -57,16 +56,7 @@ import { loadSite, REPO_ROOT } from '../content.ts'
 // GitHub's own anchor rule, and the one place it is written: this page resolves the
 // fragments it links and `test/docs-hub.mjs` resolves them again, so the two have to be
 // the same rule rather than two approximations of it (see the module's own note).
-import { escapeRawHtml } from '../lib/escape-raw-html.mjs'
-import { commandBlockHTML } from '../lib/copy-control.mjs'
 import { headingAnchor, headingText } from '../lib/github-slug.mjs'
-
-// The generated reference is imported as a document rather than read as bytes: Astro
-// compiles markdown at build time, which is what turns the file into the headings, tables
-// and code spans a reader reads — and into the anchors those headings carry. Nothing is
-// added to `package.json` for it (Global Constraint 5): markdown is the site's own
-// toolchain, already installed.
-import * as cliReference from '../../content/cli-reference.md'
 
 const site = loadSite()
 const facts = site.facts
@@ -155,7 +145,7 @@ const GUIDES: Guide[] = [
   {
     path: 'docs/gcp-setup.md',
     anchor: null,
-    answers: 'The cloud side, one confirmed step at a time, with the rollback and the offboarding at the end.',
+    answers: 'The cloud side: what it needs first, the one command that creates the project, and how to check it.',
   },
   {
     path: 'docs/recipes.md',
@@ -185,105 +175,20 @@ const guides = GUIDES.map((guide) => ({
   href: `${facts.repository}/blob/${REF}/${guide.path}${guide.anchor === null ? '' : `#${guide.anchor}`}`,
 }))
 
-// The generated reference, and the entry that says where it is: this page renders it, so
-// its entry is an anchor of this page rather than a link away from it (W1.7 step 3).
+// The generated reference, linked like the guides: its title is the file's own `# ` line.
 const reference = site.documents['cli-reference.md']
 const referenceHeading = HEADING.exec(reference.body.split('\n')[0] ?? '')
 if (referenceHeading === null || referenceHeading[1].length !== 1) {
-  throw new Error(
-    `${reference.path} does not open with a "# " title, and the hub renders that title as the reference's section heading (W1.7 step 3).`,
-  )
+  throw new Error(`${reference.path} does not open with a "# " title, and the hub links the reference under its own title.`)
 }
-const referenceTitle = plain(referenceHeading[2])
 
 const referenceEntry = {
   path: reference.path,
-  // No anchor: the reference is rendered on this page, so the entry shows the file it is
-  // generated into rather than a fragment of it (the anchor in `href` is this page's own).
   anchor: null,
-  answers: 'Every command and flag the binary ships, generated from the command tree and rendered below.',
-  title: referenceTitle,
-  href: '#cli-reference',
+  answers: 'Every command and flag the binary ships, generated from the command tree.',
+  title: plain(referenceHeading[2]),
+  href: `${facts.repository}/blob/${REF}/${reference.path}`,
 }
-
-/**
- * The rendered reference with its own title moved one level down.
- *
- * The document is a page-shaped thing — it opens with an `h1` — and it is rendered inside
- * a page that already has one, so the title becomes the section heading it is on this
- * page. Nothing else is touched: the heading keeps its anchor, and the sections below it
- * are the generated file's own. A document that does not open with exactly one `h1` is a
- * build error naming the file, because the build has nothing to move and would otherwise
- * render a page with two titles.
- *
- * **The move is also where the heading's shape comes from.** The title is the band's heading
- * and the command headings under it are entries, so the title takes the display scale's middle
- * step — `base.css`'s `.display-md`, the class written onto it here. It is a class rather than
- * a rule of this page's on purpose: the display scale is a set of declarations (the weight, the
- * tracking, the leading, the size's `clamp`, `text-wrap: balance`) written once in `base.css`,
- * and a copy of it in this page's stylesheet is a copy that drifts from it — this page's copy
- * already had, by the time it was reviewed, dropped the balance. The page therefore writes no
- * rule for the title at all, and the rule for the command headings below is written as the
- * headings *after* the title so the mono face cannot reach it.
- */
-function demotedTitle(html: string, file: string, title: string): string {
-  const titles = [...html.matchAll(/<h1\b[^>]*>([\s\S]*?)<\/h1>/g)]
-  if (titles.length !== 1) {
-    throw new Error(
-      `${file} renders ${titles.length} "h1" headings and the page moves its title to a section heading: the generated document and this file have to agree on what its title is (W1.7 step 3).`,
-    )
-  }
-  const rendered = titles[0][0].replace(/^<h1/, '<h2 class="display-md"').replace(/<\/h1>$/, '</h2>')
-  if (rendered.replace(/<[^>]*>/g, '').trim() !== title) {
-    throw new Error(
-      `${file}'s "# " title is ${JSON.stringify(title)} and its rendered title reads ${JSON.stringify(rendered.replace(/<[^>]*>/g, '').trim())}: the page renders the generated document, and the two disagree about its own title (W1.7 step 3).`,
-    )
-  }
-  return html.replace(titles[0][0], rendered)
-}
-
-/**
- * The rendered reference with a copy control on every code block it carries (P6, D183).
- *
- * The control is added **here** and not in the generated document, and that is the whole
- * reason this function exists: `website/content/cli-reference.md` is generated from the
- * command tree and is never edited by hand, so a control written into it would be gone the
- * next time `go run ./internal/clidoc` ran. The transform reads the rendered HTML and
- * refuses to be quiet about anything it does not understand — a `<pre>` the pattern does not
- * reach, or a count that disagrees with the blocks the document opened, stops the build
- * rather than leaving one command on the page with no way to copy it.
- */
-function withCopyControls(html: string): string {
-  const opened = (html.match(/<pre\b/g) ?? []).length
-  let wrapped = 0
-  const out = html.replace(/<pre\b[\s\S]*?<\/pre>/g, (block) => {
-    wrapped++
-    return commandBlockHTML(block, 'Copy this command')
-  })
-  if (wrapped !== opened) {
-    throw new Error(
-      `${reference.path} renders ${opened} "<pre>" blocks and this page wrapped ${wrapped} of them: the copy control goes on every command the site prints, so a block the transform did not reach is a command a reader cannot copy (P6).`,
-    )
-  }
-  return out
-}
-
-// The generated file's banner goes the way W1.3's pipeline takes it: `content.ts` reads
-// `<!-- generated by …; do not edit -->` as the `generator` and `source` facts and drops it
-// from the `body` it renders, and this page renders the same file, so the banner is dropped
-// here too. It has to be dropped before `escapeRawHtml` runs, because that helper shows a
-// reader every tag-shaped token the markdown renderer did not emit — and a comment is one of
-// them, so the banner reached the page as the line `<!-- generated by go run
-// ./internal/clidoc; do not edit -->` above the reference's own title. That is the build
-// telling a reader about the build, the one class of text the redesign removes (RF8's premise
-// is that the banner is never on a page; on this page it was, and `website/test/meta.mjs`
-// refuses it now). Nothing else is touched: the file's own title, headings, anchors, tables
-// and code spans are rendered as it writes them.
-const compiledReference = (await cliReference.compiledContent()).replace(/^\s*(?:<!--[\s\S]*?-->\s*)+/, '')
-
-// Raw HTML in the generated document is text, not markup: `<name>` is a placeholder a
-// reader reads, and a browser would drop it as an unknown element (see the module's note).
-const referenceHTML = withCopyControls(demotedTitle(escapeRawHtml(compiledReference), reference.path, referenceTitle))
 
 const entries = [...guides, referenceEntry]
 ---
@@ -328,31 +233,18 @@ const entries = [...guides, referenceEntry]
     </ul>
   </section>
 
-  {/* The one guide that lives on this page rather than behind a link. `data-generated-document`
-      names the file it was rendered from, and `website/test/docs-hub.mjs` reads it as the
-      boundary between the hub's own words and a generated document — because the two rules
-      are opposite: the hub may not repeat a document's prose, and this document is here to
-      be read as it was generated. */}
-  <section class="docs-reference" id="cli-reference" data-generated-document={reference.path}>
-    <Fragment set:html={referenceHTML} />
-  </section>
-
 </Base>
 
 <style is:global>
   /* The hub's own layout, in the bold look the owner approved on the home page (the
      foundation PR #779): the oversized headline with the accent's gradient on it, the slim
-     lead under it, the guides as a grid of the site's cards, and the rendered reference in
-     its own band below. Every shape here is a shared one — `base.css`'s `.display-xl`,
+     lead under it, and the guides as a grid of the site's cards. Every shape here is a shared one — `base.css`'s `.display-xl`,
      `.display-md`, `.gradient-text` and `.card` — so this page adds no shape of its own and
      **no shared file is touched by the redesign of this page**: the tokens, the layout and
      the other pages are where the parallel page runs are, and a class each of them already
      has is a merge that cannot conflict.
 
-     It is `is:global` rather than scoped on purpose: the reference below is rendered from a
-     generated document and its elements carry none of the compiler's scope attributes, so a
-     scoped rule could not reach them — every selector here is anchored on a class or an id
-     this file writes, which is the scoping a rendered document needs. Only the design tokens
+     It is `is:global`, and every selector here is anchored on a class this file writes. Only the design tokens
      are named (W1.2's `tokens.css`); no colour, spacing or type size is written as a literal,
      so a palette change is that file's business. */
 
@@ -367,7 +259,6 @@ const entries = [...guides, referenceEntry]
     gap: var(--space-md);
     padding-top: var(--space-2xl);
     padding-bottom: var(--space-2xl);
-    border-bottom: var(--border-width) solid var(--border);
   }
 
   /* The headline: `base.css`'s `.display-xl` — the display scale's largest step, the heaviest
@@ -441,63 +332,5 @@ const entries = [...guides, referenceEntry]
   .answers {
     margin: 0;
     color: var(--text-muted);
-  }
-
-  /* The rendered reference: a long generated document, given the typography a reader
-     needs to follow a command, a flag table and a code span — and nothing that would make
-     it look like anything other than the document it is. It is the page's second band: the
-     hairline above it and the room on either side of that hairline are the bold look's
-     rhythm, and the measure is the column a document is read in. */
-  .docs-reference {
-    margin-top: var(--space-3xl);
-    padding-top: var(--space-2xl);
-    border-top: var(--border-width) solid var(--border);
-    max-width: var(--measure);
-  }
-
-  /* The document's own title, which the page moves from `h1` to `h2` (`demotedTitle`), carries
-     `base.css`'s `.display-md` — the class the move writes onto it — and so has **no rule of
-     this page's at all**: the step's own `margin-block: 0` is the room it needs, and every
-     declaration of its shape is the display scale's, written once for the site. A copy of the
-     scale here is a copy that drifts from it: the one this replaced had already dropped the
-     scale's `text-wrap: balance`, so the band's heading wrapped unbalanced where a `display-md`
-     heading does not.
-
-     The command headings below it are the reference's *other* headings, and the rule for them
-     is written that way — `:not(:first-child)` — rather than as `.docs-reference h2`, which
-     would out-specify `.display-md` (a class and a type against a class) and set the band's
-     own heading in the mono face at a command's size. The heading the title is moved to is the
-     band's first child, which is what the page's own `demotedTitle` guarantees and what
-     `website/test/docs-hub.mjs` reads the band by. */
-
-  /* Every other heading of the reference is a command's name: the mono face, one step up
-     from the body, with the room a section needs. */
-  .docs-reference > h2:not(:first-child) {
-    font-family: var(--font-mono);
-    font-size: var(--font-size-lg);
-    margin-top: var(--space-xl);
-  }
-
-  .docs-reference h3,
-  .docs-reference h4 {
-    margin-top: var(--space-md);
-  }
-
-  .docs-reference code {
-    font-family: var(--font-mono);
-    font-size: var(--font-size-sm);
-  }
-
-  .docs-reference table {
-    border-collapse: collapse;
-    width: 100%;
-  }
-
-  .docs-reference th,
-  .docs-reference td {
-    border: var(--border-width) solid var(--border);
-    padding: var(--space-3xs) var(--space-2xs);
-    text-align: left;
-    vertical-align: top;
   }
 </style>

@@ -220,7 +220,9 @@ documents rather than remembered:
 **So the first free number is 120**, and it is 120 **before and after #667 merges**: 105–109 stay
 reserved, 110 stays claimed, 111–113 stay written and 114–119 stay claimed, so the block does not
 move. **This plan takes 120, 121 and 122** — three numbers, one per check, and **nothing above
-them** — leaving **123 onward free**. All three are **owner-run**, none is a CI job, and **none is
+them** — leaving **123 onward free** (amended 2026-10-29: the register has since written
+Checks 123 and 124, the console dependency graph and the Cloud Batch backend; 120–122 are still
+unused there). All three are **owner-run**, none is a CI job, and **none is
 run by an agent**. §12 writes their text. **Check numbers 80–89 stay the mobile plan's**: this
 work adds no row to that block, because a reserved number is never reused.
 

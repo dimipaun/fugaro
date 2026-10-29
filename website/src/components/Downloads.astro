@@ -6,9 +6,10 @@
  *
  * This is the section the spec asks for as *"per-OS download links"*, and the console has
  * **shipped**: `console/` holds the application, its packaging and the workflow that signs,
- * notarises and staples its macOS artifacts, that workflow created the `console-v0.9.0`
- * release, and `site.yaml`'s `features.console_downloads` is true — so the section renders the
- * release's own downloads (W3.1, 2026-10-19). The placeholder it used to render is still here,
+ * notarises and staples its macOS artifacts, that workflow publishes the console's own release
+ * (`console-v` plus the version `downloads.json` carries), and `site.yaml`'s
+ * `features.console_downloads` is true — so the section renders the release's own downloads
+ * (W3.1, 2026-10-19). The placeholder it used to render is still here,
  * and it is what the unreleased branch below is: while `available` is false the section renders
  * one sentence and nothing a reader can follow, which is the state a copy of the repository is
  * built into and a test holds (`website/test/console.mjs`), rather than the state this checkout
@@ -22,14 +23,16 @@
  * disagrees with `site.yaml`'s (W1.6 steps 1 and 2).
  *
  * **One card per platform, and a platform with nothing to download says so.** The board draws
- * three cards — the platform the release ships for, and the two it does not — and the two it
+ * three cards — the platform the release ships for, and the two it does not — and each one it
  * does not carry a "Not offered" pill and **no sentence of this file's own**: what a reader is
  * owed about them is already the data file's sentence at the top of the section
- * (`released.text`: "Windows and Linux builds do not exist yet."), and a card that repeated it,
- * or that wrote the board's own "A Windows build does not exist yet.", would be this page
- * saying a fact a second time in its own words (F37, Global Constraint 6). The platforms a card
- * is drawn for are held to that sentence below, so the page can never name a platform no
- * document of this repository speaks about.
+ * (`released.text`: "Windows builds do not exist yet."), and a card that repeated it, or that
+ * wrote the board's own "A Windows build does not exist yet.", would be this page saying a fact
+ * a second time in its own words (F37, Global Constraint 6). The platforms a card is drawn for
+ * are held to that sentence below, so the page can never name a platform no document of this
+ * repository speaks about — and Linux has stopped being one of them: the release publishes its
+ * unsigned pair, so it is drawn from the data file's own block with its own sentence rather
+ * than as a card with nothing behind it (D10).
  *
  * **The URLs are derived, not stored.** Each entry carries the name the release *serves* its
  * asset under — the release's own files spell `Fugaro Console-X.Y.Z-universal.dmg` and GitHub
@@ -48,19 +51,32 @@
  * for its bytes beside it. All of it comes from the data file: the checksum is the one fact
  * here that is not derived, because it is a fact about bytes and no build can compute it.
  *
- * **The section carried a verification command until 2026-10-21 and does not any more.** It
- * printed `shasum -a 256 Fugaro.Console-*` in a command block under the cards (P6's shape), and
- * the owner, reading the live page on 2026-10-21, struck it: *"nuke this part: `shasum -a 256
+ * **The macOS cards carry a checksum and no verification command.** The section printed
+ * `shasum -a 256 Fugaro.Console-*` in a command block under the cards (P6's shape), and the
+ * owner, reading the live page on 2026-10-21, struck it: *"nuke this part: `shasum -a 256
  * Fugaro.Console-*`"*. So the command block, its copy control and the `released.verify` line the
  * data file carried are all gone, and **the checksums stay** — each one is still printed beside
  * the link it belongs to, which is what a reader compares a download against. The data file
  * refuses the key coming back (`src/lib/console-downloads.mjs`), so a round that wants the
- * command again is a round that changes this file, the loader and this comment together.
+ * command back under the macOS cards is a round that changes this file, the loader and this
+ * comment together.
+ *
+ * **A platform whose build is unsigned is the one that does get its steps.** Apple signs and
+ * notarises the macOS artifacts, so a reader of those checks a signature; the Linux pair has no
+ * signature to check — an AppImage is not code-signed and this project has no Linux key — so
+ * what proves those bytes is the release's own signed sums file, and the commands that do it are
+ * the block's own (`linux.verify`, rendered below its sentence and above its rows). They are
+ * steps and not prose: a reader runs them, so they are drawn in the command shape the site's
+ * other runnable lines use, each already carrying the release's version.
  *
  * The facts come in as props rather than being read here, because the module owns the one
  * reader for them: `website/src/pages/console.astro` loads and validates
  * `website/content/downloads.json`, and this component renders what it was handed.
  */
+
+// The copy control's markup, written once: every command the site prints carries one, and the
+// Linux card below prints the steps `downloads.json` carries (P6, D183).
+import { copyControlHTML } from '../lib/copy-control.mjs'
 
 interface DownloadFacts {
   /**
@@ -95,6 +111,14 @@ interface PlatformFacts {
    * data file names — and the file refuses a block naming an id it does not carry.
    */
   downloads: DownloadFacts[]
+  /**
+   * The data file's own steps for proving these bytes — the commands a reader of an unsigned
+   * build runs, in the file's order, each already carrying the release's version. They are
+   * rendered above the block's rows, one command block each, because a command the site prints
+   * is a command a reader can copy (P6, D183). Empty for a platform whose build is signed: a
+   * signature is checked instead, and the macOS cards carry a checksum and no command.
+   */
+  verify: string[]
 }
 
 interface Props {
@@ -188,7 +212,7 @@ if (available) {
  */
 type Card =
   | { platform: string; kind: 'offered'; downloads: DownloadFacts[] }
-  | { platform: string; kind: 'block'; text: string; downloads: DownloadFacts[] }
+  | { platform: string; kind: 'block'; text: string; downloads: DownloadFacts[]; verify: string[] }
   | { platform: string; kind: 'not-offered' }
 
 // The board's own order while the release carries one platform: the platform it ships for,
@@ -200,7 +224,17 @@ const cards: Card[] = [
     kind: 'offered' as const,
     downloads: listedAbove.filter((download) => download.platform === platform),
   })),
-  ...(linux ? [{ platform: 'Linux', kind: 'block' as const, text: linux.text, downloads: linux.downloads }] : []),
+  ...(linux
+    ? [
+        {
+          platform: 'Linux',
+          kind: 'block' as const,
+          text: linux.text,
+          downloads: linux.downloads,
+          verify: linux.verify,
+        },
+      ]
+    : []),
   ...missing.map((platform) => ({ platform, kind: 'not-offered' as const })),
 ]
 ---
@@ -260,6 +294,20 @@ const cards: Card[] = [
               {card.kind === 'block' && (
                 <div class="downloads-linux">
                   <p>{card.text}</p>
+                  {/* The steps that stand behind the links, in the data file's own order and
+                      with the release's version already in them: an unsigned build is the one
+                      download here with no signature to check, so these are what a reader of it
+                      does instead. One command block each, because a command the site prints is
+                      a command a reader can copy, and each names itself so a page of three
+                      controls is not a page of three buttons called "Copy" (P6, D183). */}
+                  <ol class="downloads-verify">
+                    {card.verify.map((command, index) => (
+                      <li class="command-block" data-copy>
+                        <Fragment set:html={copyControlHTML(`Copy verification step ${index + 1}`)} />
+                        <pre><code>{command}</code></pre>
+                      </li>
+                    ))}
+                  </ol>
                   <ul class="downloads">
                     {card.downloads.map((download) => (
                       <li class="download-row">
@@ -410,13 +458,23 @@ const cards: Card[] = [
   /* The block a platform with its own sentence is drawn in: a rule down its left, so the
      sentence and the rows under it read as one thing inside the card. */
   .downloads-linux {
-    padding-left: var(--space-sm);
-    border-left: var(--border-width) solid var(--border);
+    padding-left: 0;
   }
 
   .downloads-linux > p {
     margin: 0 0 var(--space-2xs);
     color: var(--text-muted);
+  }
+
+  /* The block's steps, above its rows and in the data file's order: one command block each
+     (`.command-block` is the site's own shape, in `base.css`), so they read as commands rather
+     than as prose and each carries a copy control. The list itself is spacing: no marker (each
+     item is already a row), no padding, and the block's own step below it rather than the
+     browser's default, which is what keeps the sentence, the steps and the rows one rhythm. */
+  .downloads-verify {
+    margin: 0 0 var(--space-xs);
+    padding: 0;
+    list-style: none;
   }
 
   .downloads-unreleased > p {

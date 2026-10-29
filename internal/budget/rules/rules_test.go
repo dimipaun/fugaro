@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/coordpath"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
@@ -1167,20 +1168,24 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 
 // TestUserReadGrantsAreExactlyTheNamedFamilies: the read grants D112's answer
 // adds, and nothing else. The user claim reads the eight expressions a run
-// token already carried (each now `… || USER`) and the two nodes of its own
-// mailbox — and a grant anywhere else, on a family tension (b1) struck or on a
-// parent that would cascade to one, fails here as well as in the golden.
+// token already carried (each now `… || USER`), the two nodes of its own
+// mailbox, and — since coordinator plan task P3 — the coordinator's subtree.
+// A grant anywhere else, on a family tension (b1) struck or on a parent that
+// would cascade to one, fails here as well as in the golden.
 //
-// F11's property is the half this pins from the other side: the eight are the
-// only families a signed-in user reaches, so an account with no mu claim reads
+// F11's property is the half this pins from the other side: those families are
+// the only ones a signed-in user reaches, so an account with no mu claim reads
 // nothing (admitted nowhere), and no family of the run's own slices — agents
 // and outcomes above all — was widened by this change.
 func TestUserReadGrantsAreExactlyTheNamedFamilies(t *testing.T) {
 	paths := generatedPaths(t)
-	// The eight, and the two mailbox nodes, which are scoped to the mailbox
+	// The nine, and the two mailbox nodes, which are scoped to the mailbox
 	// the claim owns.
 	// generatedPaths spells $slug as slugForPath (it is the one wildcard the
 	// tests substitute), so the keys below do too.
+	// The ninth is the coordinator's subtree (coordinator plan task P3): the
+	// one family here that is granted on the root, so that the whole prefix is
+	// one grant rather than a list (D195).
 	want := map[string]bool{
 		"config/caps/global":                       true,
 		"config/caps/defaults":                     true,
@@ -1192,6 +1197,7 @@ func TestUserReadGrantsAreExactlyTheNamedFamilies(t *testing.T) {
 		"spend/$day/runs/" + slugForPath + "/$run": true,
 		"mailbox/$mb/outbox":                       true,
 		"mailbox/$mb/heartbeat":                    true,
+		"coordinator":                              true,
 	}
 	got := map[string]string{}
 	for p, attrs := range paths {
@@ -1679,10 +1685,24 @@ func TestRulesPreexistingPathsUnchanged(t *testing.T) {
 		if _, ok := before[p]; ok {
 			continue
 		}
-		if !isNewCredsPath(p) {
+		if !isNamedAddition(p) {
 			t.Errorf("/%s is new and is not one of this task's additions", p)
 		}
 	}
+}
+
+// isNamedAddition reports whether p is one of the paths a rules change of this
+// branch is allowed to add: the credentials family (C1.3), or the coordinator's
+// subtree (coordinator plan task P3, D195). Anything else that appears in the
+// document is a rules change nobody asked for.
+//
+// The coordinator half is an equality and not a prefix, for the reason
+// isNewCredsPath gives below: P3 adds the family's own node and nothing under
+// it, so a path *under* /coordinator is a change to what the family contains —
+// the shape a grant hidden under it takes — and belongs here as a diff a
+// reviewer reads rather than as a match this test waves through.
+func isNamedAddition(p string) bool {
+	return isNewCredsPath(p) || p == coordpath.PathRoot
 }
 
 // isNewCredsPath reports whether p is one of the three things C1.3 adds: the
@@ -1709,29 +1729,30 @@ func isNewCredsPath(p string) bool {
 	return p == entry+"credential" || p == entry+"waiting_until"
 }
 
-// TestRulesVersionUnchanged: this task does not move the rules generation. The
-// deployed document changes, but the generations an installation compares are
-// left where they are, and the credentials children get a marker of their own
-// instead (C1.3's "no RulesVersion bump", marker.go):
+// TestRulesVersionUnchanged: the generations an installation compares, asserted
+// here so that a bump has to come to this test and argue for it. The name is
+// C1.3's, which left all three where they were and had the credentials children
+// carry a marker of their own instead (marker.go); P3 is the part that moves the
+// first of them, and it says why in the same place:
 //
 //   - projectpolicy.RulesVersion is the generation of the whole document, read
 //     by the deploy's downgrade refusal, the runner's policy gate and doctor's
-//     policy-rules-skew. Moving it would tell every installation whose owner has
-//     not redeployed yet that its rules are older than the binary's, for a
-//     change that adds optional children of nodes runs already write.
-//   - projectpolicy.PolicyRulesVersion gates the policy nodes, which this change
-//     does not touch. It stays 1.
+//     policy-rules-skew. C1.3 left it at 3 because its change added optional
+//     children of nodes runs already write. P3 adds a **grant** — a whole family
+//     a signed-in person may read — and a client holding the older marker would
+//     not know the family is there, which is the drift the marker exists to
+//     report; so the generation moves to 4 and doctor's policy-rules-skew is
+//     what tells an installation whose owner has not redeployed yet.
+//   - projectpolicy.PolicyRulesVersion gates the policy nodes, which neither
+//     change touches. It stays 1.
 //   - rules.CredsRulesVersion is the credentials family's own generation, at 1,
 //     which a cascade launch, the init stage and doctor read (C1.19-C1.21).
-//
-// The numbers are asserted rather than referenced so that a bump has to come
-// here and say so.
 //
 // Hand mutation this fails on: bumping any of the three (or lowering
 // CredsRulesVersion), which is what a reviewer must see argued for.
 func TestRulesVersionUnchanged(t *testing.T) {
-	if projectpolicy.RulesVersion != 3 {
-		t.Errorf("projectpolicy.RulesVersion = %d, want 3: this change does not move the document generation", projectpolicy.RulesVersion)
+	if projectpolicy.RulesVersion != 4 {
+		t.Errorf("projectpolicy.RulesVersion = %d, want 4: the generation that carries the coordinator's read grant (coordinator plan task P3)", projectpolicy.RulesVersion)
 	}
 	if projectpolicy.PolicyRulesVersion != 1 {
 		t.Errorf("projectpolicy.PolicyRulesVersion = %d, want 1: this change does not touch the policy nodes", projectpolicy.PolicyRulesVersion)

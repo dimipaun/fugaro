@@ -507,7 +507,7 @@ func (e *cloudEnv) projectJobAgentAuth(ctx context.Context, spec *task.Spec) (st
 	if err != nil {
 		return "", checkProjectJobAuthUnknown(spec.Repo, "the fugaro.yaml at the ref the run checks out ("+oneLineCLI(spec.Ref)+") could not be read out of this checkout ("+oneLineCLI(err.Error())+")")
 	}
-	out := runner.ResolveConfig(data, spec.ProjectLayer, e.lc.Name)
+	out := runner.ResolveConfig(data, spec.ProjectLayer, e.lc.Name, spec.BaseBranch)
 	if out.LayerErr != nil {
 		return "", checkProjectJobAuthUnknown(spec.Repo, oneLineCLI(out.LayerErr.Error()))
 	}

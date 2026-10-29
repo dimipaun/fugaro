@@ -16,7 +16,9 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/safetext"
+	"github.com/dimipaun/fugaro/internal/tier"
 )
 
 var (
@@ -46,12 +48,30 @@ func BranchRunID(branch string) (string, bool) {
 
 // Spec is the task spec stored as runs/<repo-slug>/<run-id>/task.json.
 type Spec struct {
-	Version  int    `json:"version"`
-	RunID    string `json:"run_id"`
-	Repo     string `json:"repo"`
-	Ref      string `json:"ref"`
-	Workflow string `json:"workflow,omitempty"`
-	Task     string `json:"task,omitempty"`
+	Version int    `json:"version"`
+	RunID   string `json:"run_id"`
+	Repo    string `json:"repo"`
+	Ref     string `json:"ref"`
+	// BaseBranch is the base the launcher resolved from the layers below the
+	// repository's own file (config.EffectiveBaseBranch: the local config's
+	// repos.<r>.base_branch, else the project's base_branch, which a machine
+	// whose own config sets none reads from the published policy node). The
+	// runner uses it only when the fugaro.yaml at the ref does not set
+	// git.base_branch itself — the file is layer 1 and always wins — so a
+	// launch whose file names the base carries no field (omitempty) and its
+	// spec is byte-identical to what a release before this one wrote.
+	//
+	// It is written only when the resolved value is not main, which is the
+	// default the file's own resolution already falls back to: a field
+	// carrying "main" would be a member every launch has, and every older
+	// runner would refuse the spec outright (Parse decodes with
+	// DisallowUnknownFields) over a value that changes nothing. The launcher's
+	// skew gate (internal/cli's baseBranchSince) is what keeps even a
+	// non-main value out of an old job's task: it omits the field and says so
+	// on stderr rather than refusing the launch.
+	BaseBranch string `json:"base_branch,omitempty"`
+	Workflow   string `json:"workflow,omitempty"`
+	Task       string `json:"task,omitempty"`
 	// Title is the run's own job title, from fugaro run --title: the one
 	// line every surface that names a run shows — fugaro watch's live,
 	// queued and finished rows, the budget registry's entry, the title and
@@ -75,7 +95,35 @@ type Spec struct {
 	// applied by the launcher and by Validate below): it becomes a
 	// terminal line and a pull request's title, and neither may be forged
 	// by the text of a title.
-	Title       string    `json:"title,omitempty"`
+	Title string `json:"title,omitempty"`
+	// PlanTask is the plan task this run works on, from fugaro run
+	// --plan-task: the id of one task in one plan, as the plan's own graph
+	// artifact spells it ("setup-wizard/W1.3"; a plan under docs/plans/ is
+	// a two-segment plan id, so its tasks are three segments). It is the
+	// join key between a run and a node of the plan's dependency graph
+	// (console dependency graph plan, decision GD5): the console matches a
+	// run to a node by it, and by nothing else, since a title is free text
+	// and not unique.
+	//
+	// It is a DISPLAY-ONLY join hint (the plan's constraint C3). It is
+	// shape-checked (PlanTaskProblem, applied by the launcher and by
+	// Validate below), length-capped, never joined into a path and never an
+	// authorization input: no policy, admission, budget or grant rule reads
+	// it, and a run's claim about it changes no other node's readiness. A
+	// job can claim any task it likes — the abuse this field allows is
+	// state spoofing in a display, and the plan answers that by scoping the
+	// join to the plan's own repository (GV1.6), not by trusting this text.
+	//
+	// Empty (the common case, and every spec written before this release)
+	// is no claim at all, and writes no field, so a spec from a launch
+	// without --plan-task is byte-identical to what the previous release
+	// wrote, and a runner that has never heard of the field still reads it.
+	// A task that carries one needs a runner that knows it: Parse decodes
+	// with DisallowUnknownFields, so an older runner refuses the whole
+	// spec — the skew every new task field has, and the reason launch.json,
+	// which its readers decode without that refusal, is not enough on its
+	// own for a run's own record of it.
+	PlanTask    string    `json:"plan_task,omitempty"`
 	Branch      string    `json:"branch,omitempty"`
 	PR          int       `json:"pr,omitempty"`
 	PreviousRun string    `json:"previous_run,omitempty"`
@@ -112,6 +160,20 @@ type Spec struct {
 	// CLI checks the job's build record first, the same way it already
 	// does for ProjectLayer.
 	OAuthToken string `json:"oauth_token,omitempty"`
+	// CompressionOff, when true, disables agent.compression for this run
+	// only, overriding fugaro.yaml (fugaro run --no-compression;
+	// docs/design/headroom-compression.md §4's deliberately one-directional
+	// override: there is no field and no flag to force compression *on*,
+	// only off). A runner before compressionSince refuses the field, since
+	// this package's decoder disallows unknown fields, which is why the
+	// launcher gates every launch whose task carries it. --no-compression
+	// writes it only when there is compression to turn off, so a launch
+	// with nothing to override carries no field and stays byte-identical
+	// to what the previous release wrote; a follow-up (--pr) and a --retry
+	// inherit it from the run they continue, so they carry it whether or
+	// not the repository still turns compression on, and the gate is
+	// judged on the field for that reason rather than on the flag.
+	CompressionOff bool `json:"compression_off,omitempty"`
 	// Mode is the recipe's mode, written by the launcher from the recipe it
 	// resolved ("artifact" today; implement and review write nothing, so
 	// every existing spec is byte-identical to what the previous release
@@ -130,6 +192,53 @@ type Spec struct {
 	// launcher's own image gate refuses an artifact launch before this
 	// field is ever set at such a job.
 	Mode string `json:"mode,omitempty"`
+	// Rigor is the mode the run's own launcher asked for (fugaro run
+	// --mode, docs/rigor-modes implementation-plan T1.6): the one input
+	// that may raise the mode the run's layers resolve and never lower it
+	// (D6, F14). "" asks for none: every spec written before this release,
+	// every first run that passes no flag, and every follow-up whose pull
+	// request recorded no mode the reader may trust. The resolution then
+	// falls to the layers alone, exactly as it did before the flag existed.
+	//
+	// A --pr follow-up is the one launch that writes this field without a
+	// flag: it keeps the mode the runs on its pull request recorded and may
+	// only raise it (T5.2), so the launcher asks for that mode on the
+	// follow-up's behalf. A recorded hotfix is not a mode it keeps — hotfix is
+	// off the axis, an operator's own mode (D12) — so a record carrying one
+	// leaves the field empty, like any other record that imposes nothing.
+	//
+	// It is called rigor and not mode because Spec.Mode is already taken: it
+	// is the *recipe's* mode (implement, review, artifact), a different
+	// question with a different vocabulary, and a spec that wrote this one
+	// under `mode` would be read as a recipe by a runner that resolves one.
+	// The runner reads it as rigor.Request.Mode, and the record keeps the
+	// answer under the record's own `mode` field (D24).
+	//
+	// A runner before the release that reads this field refuses the whole
+	// spec (Parse decodes with DisallowUnknownFields), so the launcher gates
+	// a launch that would set it (rigorRequestSince, internal/cli/
+	// recipes_skew.go) rather than let the run fail at bootstrap after the
+	// task was written — a follow-up that keeps a mode included, though it
+	// passed no flag. A spec that carries neither field is byte-identical to
+	// what the previous release wrote, and is never gated.
+	//
+	// The vocabulary is closed (D20): a value outside it is refused by
+	// Validate below, by the launcher before it writes anything, and by the
+	// resolver's own Known — a near miss is a launcher's bug, not a run's
+	// opinion about its own rigor.
+	Rigor rigor.Mode `json:"rigor,omitempty"`
+	// Paths are the paths the run declares it will touch (fugaro run --path,
+	// repeatable): D22's first moment, where the area rules are matched
+	// before any of the work is done. Nil for every launch that declares
+	// none, which is the common case and the one D22 describes as "a run
+	// that declares no path starts at its repository's value".
+	//
+	// They are the launcher's own claim about its work, so they decide
+	// nothing on their own: the runner matches them against the areas the
+	// base branch's configuration declares (rigor.Select) and a path that
+	// matches nothing changes nothing. Each is bounded and non-blank below,
+	// since every one of them is matched against every rule.
+	Paths []string `json:"paths,omitempty"`
 	// Inputs are the files the launching CLI attached (fugaro run
 	// --attach; design artifact-runs.md §4): what it uploaded, under
 	// runs/<slug>/<run>/inputs/<name>, with the size and the hash it read
@@ -145,7 +254,66 @@ type Spec struct {
 	// launcher's image gate refuses an --attach launch at such a job before
 	// this field is ever set (plan P9).
 	Inputs []InputFile `json:"inputs,omitempty"`
+	// DigestRuns is the manifest of a report run (task-governance T3.6): the
+	// run IDs of the records the digest step may read, which the launching
+	// CLI listed from this repository's own prefix. Nil for every launch
+	// that is not a report run, so a spec this release writes for one is
+	// byte-identical to what the previous release wrote.
+	//
+	// It is the launcher's list and nobody else's: the job reads each named
+	// record by name and never lists (a list is a bucket-level call the
+	// per-repository grant cannot hold, docs/design/bucket-iam.md), so this
+	// field is what decides which records a run reads — the reason T3.6 is
+	// reviewed as a security change. The runner reads the IDs of its own
+	// repository's prefix only, whatever this list says (G2).
+	//
+	// It is accepted only with a recipe whose first step is digest (Validate,
+	// RecipeUsesDigest): the digest step is the only reader, so a manifest
+	// under any other recipe names records for a loop that never reads them.
+	// A runner before this field refuses the spec outright (Parse disallows
+	// unknown fields), which is the skew every new task field has.
+	DigestRuns []string `json:"digest_runs,omitempty"`
+	// Tier is the expectation tier of this run (docs/task-governance spec.md §3,
+	// plan T8.1): what the run is expected to cost and take, which selects one
+	// tier of fugaro.yaml's governance.tiers. "" is untiered — every spec
+	// written before this release and every launch that attaches no tier — and
+	// an untiered run has no expectation to be held to.
+	//
+	// The vocabulary is closed (internal/tier): a value outside it is refused
+	// by Validate below, because a near miss is a launcher's bug rather than a
+	// run's opinion about its own size. `fugaro run --tier` is the launcher
+	// that writes it, and a --pr follow-up carries the tier the run it follows
+	// recorded (plan T8.1b). A runner before the release that reads this field
+	// refuses the whole spec (Parse disallows unknown fields), the skew every
+	// new task field has, so a launch carrying a tier is gated on an image
+	// that has it (governanceSince) the way rigor's own fields are
+	// (rigorRequestSince).
+	Tier tier.Tier `json:"tier,omitempty"`
+	// ExpectedScope is roughly which files or areas the run is expected to
+	// touch (spec.md §3's expectation envelope). It is paths and not prose:
+	// nothing here reaches a prompt, and each entry is bounded and non-blank
+	// the way Spec.Paths is, because a hand-written task.json is what can make
+	// the list arbitrarily long. Nil for every launch that declares none, which
+	// today is every launch: unlike Tier above, no launcher writes it yet.
+	ExpectedScope []string `json:"expected_scope,omitempty"`
 }
+
+// MaxDeclaredPaths bounds the paths one launch may declare (Spec.Paths,
+// fugaro run --path): every one of them is matched against every area rule
+// the base branch's configuration declares, and the list is what a
+// hand-written task.json can make arbitrarily long. The cap is deliberately
+// generous — a caller declaring more than this is describing a change nobody
+// reviews as one area — and a list over it is a refusal rather than a
+// truncation: the paths that were cut off are exactly the ones that would
+// have raised the mode.
+const MaxDeclaredPaths = 100
+
+// MaxDeclaredPathBytes bounds one declared path, and it is the same 200 the
+// area rules' own patterns are bounded by (rigor.MaxAreaPattern): a declared
+// path and the glob it is matched against are the same kind of string, and a
+// path longer than any pattern that could name it can only ever match
+// nothing.
+const MaxDeclaredPathBytes = 200
 
 // MaxTitleRunes bounds a task's own title (Spec.Title, fugaro run
 // --title): a title is one line naming a run in a terminal and in a pull
@@ -156,6 +324,30 @@ type Spec struct {
 // title over the cap is a refusal, not a truncation: two jobs told apart by
 // their titles must not be told apart by the part that was cut off.
 const MaxTitleRunes = 100
+
+// MaxDigestRuns bounds a report run's manifest (Spec.DigestRuns): the newest
+// this many of the repository's runs, which is what the launcher lists and
+// what the job then reads, one record at a time. The cap is the launcher's
+// own listing bound (internal/cli/run_digest_manifest.go), and it is here so
+// that the decoder refuses a hand-written task.json naming more: every ID is
+// a record the run would read and a figure a report would carry, and a list
+// past the cap is not one any launcher writes.
+const MaxDigestRuns = 5000
+
+// RecipeUsesDigest reports whether the recipe text yaml holds a recipe whose
+// first step is the digest step (recipe.UsesDigest), which is the only recipe
+// a task carrying digest_runs may name. "" is not one: it is a task with no
+// recipe at all, and a repository recipe, which carries its name alone — the
+// runner reads that file at the task's ref, so the launcher, which resolves
+// it from the checkout, is where its steps are judged
+// (internal/cli/run_digest_manifest.go).
+func RecipeUsesDigest(yaml string) bool {
+	if yaml == "" {
+		return false
+	}
+	rcp, ps := recipe.Parse([]byte(yaml))
+	return len(ps) == 0 && recipe.UsesDigest(rcp)
+}
 
 // TitleProblem reports what is wrong with a run's own title t — "" when
 // nothing is — for the two places one is accepted: the launcher, at fugaro
@@ -296,6 +488,74 @@ func InputNameProblem(name string) string {
 			return `has a "." path element`
 		case "..":
 			return `has a ".." path element`
+		}
+	}
+	return ""
+}
+
+// MaxPlanTaskBytes bounds a plan task id (Spec.PlanTask, fugaro run
+// --plan-task): it names one task in one plan. The cap is deliberately well
+// under what the surfaces that show it have room for, and a value over it
+// is a refusal, not a truncation: two tasks named by the part that was cut
+// off must not read alike.
+const MaxPlanTaskBytes = 128
+
+// PlanTaskElemRE is the form of one "/"-separated element of a plan task
+// id: letters, digits, '.', '_' and '-', starting with a letter or a digit.
+// An allow-list rather than a list of refusals, because the id is shown as
+// text in the console and matched against plan ids and task ids that came
+// out of file names; anything outside this set (a space, a quote, a
+// control, a Unicode look-alike) is not one.
+//
+// Exported the way config.ClaudeAccountNameRE is: schemas/task.schema.json
+// carries the same shape as a pattern, and the test that holds the two
+// together (TestTaskSchemaPlanTaskMatchesTheGoRule, schemas/schemas_test.go)
+// derives the schema's whole-id pattern from this one.
+var PlanTaskElemRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// PlanTaskProblem reports what is wrong with a plan task id t — "" when
+// nothing is — for the two places one is accepted: the launcher, at fugaro
+// run --plan-task, and the runner, reading a stored task back
+// (Spec.Validate). One list with two callers, the rule TitleProblem and
+// InputNameProblem already follow in this package, and for the same reason:
+// an id the launcher accepts has to be one the runner accepts, or the
+// launch writes a task the run then refuses at bootstrap.
+//
+// The rules are: not empty, at most MaxPlanTaskBytes bytes, at least two
+// "/"-separated elements (a plan and a task), no NUL or newline, no
+// absolute path, no "." or ".." element, no control character, and nothing
+// outside PlanTaskElemRE in any element. It is a shape check and nothing
+// more: the id is a display-only join hint (Spec.PlanTask), so this does
+// not check that the plan or the task exists — nothing may act on the
+// answer — and the id is never joined into a path.
+func PlanTaskProblem(t string) string {
+	switch {
+	case t == "":
+		return "is empty"
+	case len(t) > MaxPlanTaskBytes:
+		return fmt.Sprintf("is longer than %d bytes", MaxPlanTaskBytes)
+	case strings.ContainsAny(t, "\x00\n\r"):
+		return "holds a NUL or a newline"
+	case strings.HasPrefix(t, "/"):
+		return "is an absolute path"
+	}
+	for _, r := range t {
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
+			return fmt.Sprintf("holds a control character (U+%04X)", r)
+		}
+	}
+	elems := strings.Split(t, "/")
+	if len(elems) < 2 {
+		return "must name a task in a plan, as <plan>/<task>"
+	}
+	for _, elem := range elems {
+		switch {
+		case elem == "":
+			return "has an empty path element"
+		case elem == "." || elem == "..":
+			return fmt.Sprintf("has a %q path element", elem)
+		case !PlanTaskElemRE.MatchString(elem):
+			return fmt.Sprintf("has %q, where letters, digits, '.', '_' and '-' are allowed", elem)
 		}
 	}
 	return ""
@@ -484,6 +744,9 @@ func (s *Spec) Validate() error {
 	if s.Branch != "" && !BranchRE.MatchString(s.Branch) {
 		bad("task spec: branch %q must be fugaro/<run-id>", s.Branch)
 	}
+	if s.BaseBranch != "" && !config.ValidBranchName(s.BaseBranch) {
+		bad("task spec: base_branch %q must be a plain git branch name", s.BaseBranch)
+	}
 	if s.PreviousRun != "" && !runIDRE.MatchString(s.PreviousRun) {
 		bad("task spec: previous_run %q is not a run ID", s.PreviousRun)
 	}
@@ -509,6 +772,17 @@ func (s *Spec) Validate() error {
 			bad("task spec: title %q is not in its sanitised form (bidi, zero-width or other invisible characters, or untrimmed or repeated spaces)", s.Title)
 		}
 	}
+	// The plan task's own shape, through the one list the launcher applies
+	// to --plan-task (PlanTaskProblem): the id is shown as text in the
+	// console and joins a run to a node of a plan's graph, so a
+	// hand-written task.json carrying a path or a control character in it
+	// is refused here rather than shown. An absent id is legal — the
+	// common case, a launch that named no task.
+	if s.PlanTask != "" {
+		if p := PlanTaskProblem(s.PlanTask); p != "" {
+			bad("task spec: plan_task %s", p)
+		}
+	}
 	// config.ClaudeAccountNameRE and config.MaxClaudeAccountNameLen are the
 	// single source of truth for a named account's shape (internal/config/
 	// claude_accounts.go, Task 1): this package imports them rather than
@@ -522,6 +796,45 @@ func (s *Spec) Validate() error {
 		bad("task spec: oauth_token %q must be at most %d characters", s.OAuthToken, config.MaxClaudeAccountNameLen)
 	case !config.ClaudeAccountNameRE.MatchString(s.OAuthToken):
 		bad("task spec: oauth_token %q is not a Claude account name", s.OAuthToken)
+	}
+	// The run's own rigor request: the mode it asks for, and the paths it
+	// declares. Both are the launcher's, both are checked here as well as at
+	// the launcher (the rule TitleProblem follows: a request the launcher
+	// accepts has to be one the runner accepts, or the launch writes a task
+	// the run then refuses at bootstrap), and an absent request is legal —
+	// it is what every launch without the flags carries.
+	if s.Rigor != "" && !rigor.Known(s.Rigor) {
+		bad("task spec: rigor %q must be one of %s or empty", s.Rigor, rigor.ModeList())
+	}
+	// The expectation envelope's own two fields (T8.1): the tier's vocabulary
+	// is closed the way rigor's is, and the expected scope is bounded the way
+	// Spec.Paths is — the same constants, because both are lists of paths a
+	// hand-written task.json can make arbitrarily long and every entry of both
+	// is matched against something.
+	if s.Tier != "" && !tier.Known(s.Tier) {
+		bad("task spec: tier %q must be one of %s or empty", s.Tier, tier.List())
+	}
+	if len(s.ExpectedScope) > MaxDeclaredPaths {
+		bad("task spec: expected_scope must name at most %d paths", MaxDeclaredPaths)
+	}
+	for i, p := range s.ExpectedScope {
+		switch {
+		case strings.TrimSpace(p) == "":
+			bad("task spec: expected_scope[%d] is empty", i)
+		case len(p) > MaxDeclaredPathBytes:
+			bad("task spec: expected_scope[%d] is longer than %d bytes", i, MaxDeclaredPathBytes)
+		}
+	}
+	if len(s.Paths) > MaxDeclaredPaths {
+		bad("task spec: paths must name at most %d paths", MaxDeclaredPaths)
+	}
+	for i, p := range s.Paths {
+		switch {
+		case strings.TrimSpace(p) == "":
+			bad("task spec: paths[%d] is empty", i)
+		case len(p) > MaxDeclaredPathBytes:
+			bad("task spec: paths[%d] is longer than %d bytes", i, MaxDeclaredPathBytes)
+		}
 	}
 	// Mode is the recipe's mode, so the only values a spec may carry are
 	// the recipe modes; "" (the launcher could not resolve a recipe, or the
@@ -594,6 +907,34 @@ func (s *Spec) Validate() error {
 		}
 		if pl.Generation < 0 {
 			bad("task spec: project_layer.generation must not be negative")
+		}
+	}
+	// The report run's manifest (T3.6): the records the digest step may read.
+	// The IDs are shape-checked, since every one of them names an object the
+	// job will read, and the list is bounded; both are also the schema's own
+	// rules (schemas/task.schema.json).
+	//
+	// A manifest is accepted only under a recipe whose first step is digest,
+	// the step that reads it. A repository recipe carries only its name here
+	// (Recipe.YAML is empty by the rule above), so the text to judge is not
+	// in this spec: the launcher judges the file it resolved and refuses a
+	// manifest it cannot vouch for, and the runner resolves that recipe at
+	// the task's ref. Every other recipe carries its text, and a manifest
+	// under one is refused here.
+	if len(s.DigestRuns) > 0 {
+		if len(s.DigestRuns) > MaxDigestRuns {
+			bad("task spec: digest_runs must name at most %d runs", MaxDigestRuns)
+		}
+		for i, id := range s.DigestRuns {
+			if !ValidRunID(id) {
+				bad("task spec: digest_runs[%d] %q must look like 20260926-221530-a1b2", i, id)
+			}
+		}
+		switch {
+		case s.Recipe == nil:
+			bad("task spec: digest_runs needs a recipe whose first step is digest")
+		case s.Recipe.Source != string(recipe.SourceRepo) && !RecipeUsesDigest(s.Recipe.YAML):
+			bad("task spec: digest_runs needs a recipe whose first step is digest, and recipe %s is not one", s.Recipe.Name)
 		}
 	}
 	return errors.Join(errs...)

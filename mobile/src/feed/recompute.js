@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See mobile/LICENSE.md for the terms.
 // The two figures the phone recomputes for itself (mobile plan, Task P3.2,
 // "Resolved 2026-10-17": *the burn rate and the cap fractions are recomputed on
 // the phone from `spend/$day/**` and `config/caps/**`, or not shown -- the

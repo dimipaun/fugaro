@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See mobile/LICENSE.md for the terms.
 // The demo's key source: the per-pairing key the demo's client signs and
 // verifies with, in memory and nowhere else (owner ruling of 2026-10-19).
 //

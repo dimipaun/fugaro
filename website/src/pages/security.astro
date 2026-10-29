@@ -406,6 +406,34 @@ const DIAGRAM_LABEL = quoted(
 )
 
 /**
+ * The lead phrase of each line under the drawing, set in bold and underlined so a reader
+ * skimming the list lands on what each line is about (the owner's feedback of 2026-10-24). One
+ * per line, from its start (the third line is all lead); a phrase a line no longer carries fails
+ * the build rather than silently losing its mark.
+ */
+const KEY_IDEAS = [
+  'The design assumes you trust the repository and the source of the task',
+  'Fugaro runs a coding agent with its permission prompts turned off',
+  "Each repository's jobs and builds run as their own service accounts",
+  'What is not on by default: the budget gateway',
+  'What limits the blast radius today',
+  'What no boundary stops',
+]
+
+const boldened = new Set<string>()
+
+function withKeyIdeas(html: string): string {
+  let out = html
+  for (const idea of KEY_IDEAS) {
+    const escaped = escapeHTML(idea)
+    if (!out.includes(escaped)) continue
+    out = out.replace(escaped, `<strong>${escaped}</strong>`)
+    boldened.add(idea)
+  }
+  return out
+}
+
+/**
  * The facts under the picture, as the document's own clauses: who sends the task, what the
  * run is, whose accounts the per-repository identity runs under, and where the model key sits.
  * Each is rendered with the page's own inline markup, so a code span in the document is a
@@ -417,6 +445,7 @@ const DIAGRAM_FACTS = [
   "Each repository's jobs and builds run as their own service accounts",
   "What is not on by default: the budget gateway, so with no `budget:` block the real model key sits in the agent's environment",
 ].map((fact) => inline(quoted(fact)))
+  .map((html) => withKeyIdeas(html))
 
 /**
  * The two lines under it: what the boundaries stop and what nothing stops, each the
@@ -427,6 +456,12 @@ const DIAGRAM_LIMITS = [
   'What limits the blast radius today: one container per run, per-repository identities, and narrow git credentials — a project-wide credential is not narrow',
   "What no boundary stops: network egress is unrestricted, the agent shares the container with the runner and can read its `/proc`, and the caps are the gateway's — set a credit limit on every key you give Fugaro",
 ].map((line) => inline(quoted(line)))
+  .map((html) => withKeyIdeas(html))
+
+const unboldened = KEY_IDEAS.filter((idea) => !boldened.has(idea))
+if (unboldened.length > 0) {
+  throw new Error(`the security page sets ${JSON.stringify(unboldened)} in bold, and no line under the drawing says it any more`)
+}
 ---
 
 <Base
@@ -932,6 +967,19 @@ const DIAGRAM_LIMITS = [
     max-width: var(--measure);
     margin: var(--space-sm) 0 0;
     line-height: var(--leading-normal);
+  }
+
+  /* The key ideas under the drawing: bold and underlined in the accent, so they read as marked
+     rather than as slightly heavier text (the owner's feedback of 2026-10-24). The accent on the
+     card's surface is 6.5:1, well over the 3:1 a non-text mark needs; the site has one, dark,
+     theme. This stylesheet is global, so the selector is plain: a `:global()` here is kept as
+     written and matches nothing, which is how the first version of this rule drew no line. */
+  [data-security-diagram] .boundary-facts > li > strong,
+  [data-security-diagram] .boundary-limit > strong {
+    text-decoration: underline;
+    text-decoration-color: var(--accent);
+    text-decoration-thickness: 2px;
+    text-underline-offset: 3px;
   }
 
   [data-security-summary] {

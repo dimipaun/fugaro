@@ -22,8 +22,11 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/backlog"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
+	"github.com/dimipaun/fugaro/internal/headroomproc"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -55,6 +58,9 @@ type scriptedAgent struct {
 	t     *testing.T
 	steps []step
 	calls []agent.Request
+	// before, when set, runs at the start of every stage's call: the
+	// harness's hook for what a test wants to happen mid-stage.
+	before func(ctx context.Context)
 }
 
 func (a *scriptedAgent) Run(ctx context.Context, req agent.Request) (agent.Result, error) {
@@ -63,6 +69,9 @@ func (a *scriptedAgent) Run(ctx context.Context, req agent.Request) (agent.Resul
 	if i >= len(a.steps) {
 		a.t.Errorf("unexpected agent call #%d", i+1)
 		return agent.Result{}, errors.New("unexpected call")
+	}
+	if a.before != nil {
+		a.before(ctx)
 	}
 	return a.steps[i](a.t, ctx, req)
 }
@@ -76,7 +85,75 @@ type harness struct {
 	agent     *scriptedAgent
 	remote    string
 	failsFile string
+	// sidecar is the fake process the run started, when compression is on;
+	// the three counters below say what Deps.StartHeadroom and Stop were
+	// called with.
+	sidecar            *fakeSidecar
+	compressionStarts  int
+	lastCompressionEnv []string
+	compressionStops   int
+	// sidecarFailsDuring is the stage during which the fake sidecar's Dead
+	// channel closes, set by killSidecarDuring and hangSidecarDuring.
+	sidecarFailsDuring string
 }
+
+// sidecarURL is what the fake sidecar says it listens on. Nothing dials it:
+// the stages of these tests make no model calls.
+const sidecarURL = "http://127.0.0.1:9100"
+
+// fakeSidecar is the harness's stand-in for a running compression sidecar.
+// Nothing is spawned: Deps.StartHeadroom returns it, Dead closes when a test
+// says the sidecar died, and Stop is counted.
+type fakeSidecar struct {
+	dead  chan struct{}
+	once  sync.Once
+	stops *int
+}
+
+func (f *fakeSidecar) URL() string { return sidecarURL }
+
+func (f *fakeSidecar) Dead() <-chan struct{} { return f.dead }
+
+func (f *fakeSidecar) Stop(context.Context) error {
+	*f.stops++
+	return nil
+}
+
+// die is the crash, or the liveness failure a hang is: one channel either
+// way, which is the point -- the runner has no second path for a hang.
+func (f *fakeSidecar) die() { f.once.Do(func() { close(f.dead) }) }
+
+// startFakeSidecar is Deps.StartHeadroom: it records what the runner built
+// the sidecar's environment from and hands back the fake.
+func (h *harness) startFakeSidecar(_ context.Context, o headroomproc.Options) (runner.SidecarProcess, error) {
+	h.compressionStarts++
+	h.lastCompressionEnv = o.Env
+	h.sidecar = &fakeSidecar{dead: make(chan struct{}), stops: &h.compressionStops}
+	return h.sidecar, nil
+}
+
+// beforeStage is the scripted agent's hook: the stage the runner recorded
+// before it called the agent is the one a test named, so this is where a
+// sidecar death or hang lands mid-stage.
+func (h *harness) beforeStage(ctx context.Context) {
+	if h.sidecarFailsDuring == "" || h.sidecar == nil {
+		return
+	}
+	rec, err := h.store.ReadRecord(ctx)
+	if err != nil || rec.Stage != h.sidecarFailsDuring {
+		return
+	}
+	h.sidecar.die()
+}
+
+// killSidecarDuring makes the fake sidecar die while the named stage runs,
+// as a crash does: Dead() closes and the runner must fail that stage.
+func (h *harness) killSidecarDuring(stage string) { h.sidecarFailsDuring = stage }
+
+// hangSidecarDuring is killSidecarDuring for a sidecar that stays up and
+// stops answering: P8's liveness probe closes Dead() the same way, and the
+// runner must treat the two identically (P10).
+func (h *harness) hangSidecarDuring(stage string) { h.sidecarFailsDuring = stage }
 
 // newHarness seeds a remote with the fixture repo (cfg replaces fugaro.yaml
 // when non-empty) and stores a task spec.
@@ -122,7 +199,7 @@ func newHarnessFiles(t *testing.T, cfg string, spec *task.Spec, extra map[string
 	}
 	a := &scriptedAgent{t: t}
 	p := &fake.Provider{Repo: spec.Repo, Remote: remote}
-	return &harness{
+	h := &harness{
 		files: files,
 		deps: runner.Deps{
 			Store: store, OpenProvider: gitprov.Static(p), Agent: a,
@@ -137,6 +214,11 @@ func newHarnessFiles(t *testing.T, cfg string, spec *task.Spec, extra map[string
 		},
 		store: store, bucket: bucket, provider: p, agent: a, remote: remote, failsFile: failsFile,
 	}
+	// Every harness starts its sidecar through the fake, so no test spawns a
+	// real process; a test that never turns compression on never calls it.
+	h.deps.StartHeadroom = h.startFakeSidecar
+	a.before = h.beforeStage
+	return h
 }
 
 // useHTTPRemote replaces the harness's remote with the same files served
@@ -223,6 +305,15 @@ func review(verdict string, findings int) step {
 			fs[i] = map[string]string{"summary": "fix it"}
 		}
 		b, _ := json.Marshal(map[string]any{"verdict": verdict, "findings": fs})
+		return agent.Result{Structured: b, CostUSD: 0.5}, nil
+	}
+}
+
+// reviewScored is review with findings the mode's threshold table can read:
+// each one's JSON, so a case says what the reviewer scored (T3.1).
+func reviewScored(verdict string, findings ...map[string]any) step {
+	return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		b, _ := json.Marshal(map[string]any{"verdict": verdict, "findings": findings})
 		return agent.Result{Structured: b, CostUSD: 0.5}, nil
 	}
 }
@@ -351,6 +442,295 @@ func TestReviewRoundsExhausted(t *testing.T) {
 	}
 	if rec.Outcome != runstore.OutcomeDraft || rec.Reason != "review round 2 still has 1 finding" {
 		t.Fatalf("record = %+v", rec)
+	}
+}
+
+// TestDecideToleratedRoundOpensAReadyPR: T3.1's whole feature at the loop. The
+// repository opted in with a rigor: block and runs at Startup, whose floor is
+// above the finding the reviewer scored, so the round the run left open is
+// tolerated: the pull request is opened ready rather than as a draft, the
+// record's reason names the mode and the count, and the round is filed as an
+// item of its own (D7, D9, D30). The unscored findings the other cases use are
+// deliberately not this: an unscored finding blocks in every mode (D4).
+func TestDecideToleratedRoundOpensAReadyPR(t *testing.T) {
+	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "agent:\n", "rigor:\n  default: startup\nagent:\n", 1)
+	h := newHarness(t, cfg, nil)
+	fix := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		shell(t, req, "echo more >> feature.txt && git commit -qam 'Address review'")
+		verifyTest(t, ctx, req)
+		return agent.Result{}, nil
+	}
+	tolerated := reviewScored("changes", map[string]any{"summary": "fix it", "likelihood": 2, "impact": 2, "fix_cost": 1, "class": "correctness"})
+	rec, err := h.run(t, implement("feature"), tolerated, fix, tolerated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Outcome != runstore.OutcomeReady || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("record = %+v; want a ready run: the round's only finding is below startup's floor", rec)
+	}
+	if rec.Reason != "review round 2 left 1 finding, tolerated at startup" {
+		t.Errorf("reason = %q; want the mode and the count the round was tolerated at (D7)", rec.Reason)
+	}
+	if len(rec.Backlog) != 1 {
+		t.Errorf("the record's items = %v; want the item the tolerated round was filed as (D9)", rec.Backlog)
+	}
+	// And the record keeps the finding itself, with the count and the
+	// reviewer's own words for it, so what the mode let through is readable
+	// after the job and the pull request are gone (T3.4, F19).
+	if rec.Tolerated == nil || rec.Tolerated.Total != 1 || len(rec.Tolerated.Findings) != 1 {
+		t.Fatalf("the record's tolerated findings = %+v; want the one startup let through (T3.4)", rec.Tolerated)
+	}
+	if got := rec.Tolerated.Findings[0]; got.Title != "fix it" || got.Label != rigor.Low || got.Mode != rigor.Startup ||
+		got.Likelihood != 2 || got.Impact != 2 || got.FixCost != 1 || got.Class != rigor.Correctness {
+		t.Errorf("tolerated finding = %+v; want the reviewer's finding, scored, labelled and with the mode that tolerated it", got)
+	}
+	if pr := onlyPR(t, h.provider); pr.Draft {
+		t.Errorf("the pull request is a draft: %+v", pr)
+	}
+}
+
+// TestDecideToleratedHotfixRoundFilesBothItems: Hotfix is the one mode whose
+// rigor.Files row is both Tolerated and Deferred (D30), so the tolerated round
+// this change newly allows is a ready run that owes two items rather than one:
+// the proper fix the expedient one deferred, and the round it left open. The
+// deferral leads the record's ids (fileOpenItems), and both are written into
+// the run's own branch — the ready pull request carries them.
+func TestDecideToleratedHotfixRoundFilesBothItems(t *testing.T) {
+	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "agent:\n", "rigor:\n  default: hotfix\nagent:\n", 1)
+	h := newHarness(t, cfg, nil)
+	fix := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		shell(t, req, "echo more >> feature.txt && git commit -qam 'Address review'")
+		verifyTest(t, ctx, req)
+		return agent.Result{}, nil
+	}
+	// The mildest finding the scale carries: Hotfix tolerates everything but
+	// what would make the fix wrong or unsafe, so this is one it tolerates and
+	// an unscored or catastrophic finding would not be.
+	tolerated := reviewScored("changes", map[string]any{"summary": "fix it", "likelihood": 1, "impact": 1, "fix_cost": 1, "class": "correctness"})
+	rec, err := h.run(t, implement("feature"), tolerated, fix, tolerated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Outcome != runstore.OutcomeReady || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("record = %+v; want a ready run: the round's only finding is one a hotfix tolerates", rec)
+	}
+	if rec.Reason != "review round 2 left 1 finding, tolerated at hotfix" {
+		t.Errorf("reason = %q; want the mode and the count the round was tolerated at (D7)", rec.Reason)
+	}
+	if len(rec.Backlog) != 2 {
+		t.Fatalf("the record's items = %v; want the deferral and the tolerated round (D30)", rec.Backlog)
+	}
+	items, err := backlog.LoadDir(h.deps.WorkDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var deferral, round bool
+	for _, it := range items {
+		if it.ID == rec.Backlog[0] && strings.Contains(it.Title, "revisit this hotfix") {
+			deferral = true
+		}
+		if it.ID == rec.Backlog[1] && strings.Contains(it.Title, "review round 2") {
+			round = true
+		}
+	}
+	if !deferral || !round {
+		t.Errorf("the branch holds %+v; want the deferral %s first and the round %s second (fileOpenItems)",
+			items, rec.Backlog[0], rec.Backlog[1])
+	}
+	if pr := onlyPR(t, h.provider); pr.Draft {
+		t.Errorf("the pull request is a draft: %+v", pr)
+	}
+}
+
+// TestRigorRoundMomentRaisesTheModeFromTheRunsOwnDiff: D22's second moment, at
+// the loop. The repository starts the run at its own default, and the fix in
+// round 1 writes the one file the Critical area rule matches — so the mode the
+// run has reached is Critical from round 1 on, and the round is the moment that
+// decided it. The block's own moment is what proves the call site exists:
+// finalize resolves the same mode from the same diff and, answering the same
+// thing, leaves the block as the round left it.
+func TestRigorRoundMomentRaisesTheModeFromTheRunsOwnDiff(t *testing.T) {
+	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "agent:\n",
+		"rigor:\n  default: startup\n  areas:\n    - { name: app, match: \"feature.txt\", mode: critical }\nagent:\n", 1)
+	h := newHarness(t, cfg, nil)
+	fix := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		shell(t, req, "echo more >> feature.txt && git commit -qam 'Address review'")
+		verifyTest(t, ctx, req)
+		return agent.Result{}, nil
+	}
+	rec, err := h.run(t, implement("feature"), review("changes", 1), fix, review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rg := rec.Rigor
+	if rg == nil {
+		t.Fatal("the record carries no rigor block")
+	}
+	if rg.Mode != rigor.Critical || rg.From != rigor.FromArea {
+		t.Fatalf("the mode = %q from %q; want critical from the area the run's own file matched", rg.Mode, rg.From)
+	}
+	if rg.At != runstore.RigorAtRound {
+		t.Errorf("the block was decided at %q; want %q — a mode a run's own diff reached must not wait for finalize (D22)", rg.At, runstore.RigorAtRound)
+	}
+	want := []runstore.RigorArea{{Name: "app", Mode: rigor.Critical, At: runstore.RigorAtRound}}
+	if !slices.Equal(rg.Areas, want) {
+		t.Errorf("the areas = %+v; want %+v", rg.Areas, want)
+	}
+}
+
+// seniorRounds counts the senior review rounds a record holds, which is what a
+// run's mode ceiling is spent on: a first-line round is not one.
+func seniorRounds(rec *runstore.Record) int {
+	n := 0
+	for _, rv := range rec.Reviews {
+		if rv.Tier != runstore.TierFirst {
+			n++
+		}
+	}
+	return n
+}
+
+// TestReviewRoundsTheModeRaisedBetweenRoundsBounds: T3.2's ceiling is read
+// under F6's precedence and read again on every round, so a mode a run raises
+// between rounds buys the rounds that remain and never reaches back to the ones
+// already spent (D22). The repository asks for four rounds and starts at
+// Startup, whose ceiling is two: without the raise the loop would stop after
+// round 2, and the diff round 1's fix writes matches the Critical area, so the
+// run spends the four rounds the precedence asked for.
+func TestReviewRoundsTheModeRaisedBetweenRoundsBounds(t *testing.T) {
+	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "review_rounds: 2", "review_rounds: 4", 1)
+	cfg = strings.Replace(cfg, "agent:\n",
+		"rigor:\n  default: startup\n  areas:\n    - { name: app, match: \"feature.txt\", mode: critical }\nagent:\n", 1)
+	h := newHarness(t, cfg, nil)
+	fix := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		shell(t, req, "echo more >> feature.txt && git commit -qam 'Address review'")
+		verifyTest(t, ctx, req)
+		return agent.Result{}, nil
+	}
+	rec, err := h.run(t, implement("feature"), review("changes", 1), fix, review("changes", 1), fix, review("changes", 1), fix, review("changes", 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := seniorRounds(rec); got != 4 {
+		t.Fatalf("the run spent %d senior rounds; want 4 — Startup's ceiling must not stop the rounds the raised mode bought (D22)", got)
+	}
+	if rec.Rigor == nil || rec.Rigor.Mode != rigor.Critical {
+		t.Fatalf("the record's mode = %+v; want critical, or the case proves nothing", rec.Rigor)
+	}
+}
+
+// TestReviewRoundsUnconfiguredRepositoryIsUnchanged: the mode's ceiling is read
+// only where the repository opted in (reviewRoundCeiling), the gate the
+// findings policy reads too. A repository that configures no rigor keeps the
+// rounds F6 gives it, whatever mode it resolved for its budget (D19's ruling):
+// it asks for five and spends five, though the Pro it resolves has a lower
+// ceiling.
+func TestReviewRoundsUnconfiguredRepositoryIsUnchanged(t *testing.T) {
+	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "review_rounds: 2", "review_rounds: 5", 1)
+	h := newHarness(t, cfg, nil)
+	fix := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		shell(t, req, "echo more >> feature.txt && git commit -qam 'Address review'")
+		verifyTest(t, ctx, req)
+		return agent.Result{}, nil
+	}
+	rec, err := h.run(t, implement("feature"), review("changes", 1), fix, review("changes", 1), fix, review("changes", 1), fix, review("changes", 1), fix, review("changes", 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := seniorRounds(rec); got != 5 {
+		t.Fatalf("the run spent %d senior rounds; want the five the repository asked for, unlowered by the mode it resolved", got)
+	}
+	if rec.Rigor == nil || rec.Rigor.Mode != rigor.Default {
+		t.Fatalf("the record's mode = %+v; want the default, or the case proves nothing", rec.Rigor)
+	}
+}
+
+// TestReviewRoundsTheModesCeilingLowers: T3.2's ceiling lowers the rounds F6
+// agrees on, and it lowers them where it acts — in the loop's own bound, not
+// only in the plan the loop no longer reads for its exit. The repository opted
+// in and runs at POC, whose ceiling is two, and asks for three: the run spends
+// two senior rounds, one fewer than the precedence gave it.
+func TestReviewRoundsTheModesCeilingLowers(t *testing.T) {
+	base := testutil.FixtureFiles(t)["fugaro.yaml"]
+	cfg := strings.Replace(base, "review_rounds: 2", "review_rounds: 3", 1)
+	if cfg == base {
+		t.Fatal("the fixture has no review_rounds: 2 to raise, so the case would not ask for three rounds")
+	}
+	withRigor := strings.Replace(cfg, "agent:\n", "rigor:\n  default: poc\nagent:\n", 1)
+	if withRigor == cfg {
+		t.Fatal("the fixture has no agent: block to put rigor: before, so the repository would not opt in")
+	}
+	cfg = withRigor
+	h := newHarness(t, cfg, nil)
+	fix := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		shell(t, req, "echo more >> feature.txt && git commit -qam 'Address review'")
+		verifyTest(t, ctx, req)
+		return agent.Result{}, nil
+	}
+	rec, err := h.run(t, implement("feature"), review("changes", 1), fix, review("changes", 1), fix, review("changes", 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := seniorRounds(rec); got != 2 {
+		t.Fatalf("the run spent %d senior rounds; want 2 — POC's ceiling lowers the three the repository asked for (D7b)", got)
+	}
+	if rec.Outcome != runstore.OutcomeDraft {
+		t.Fatalf("outcome = %q; want a draft: the run stopped on the ceiling with a finding open", rec.Outcome)
+	}
+}
+
+// TestFilingDoesNotSpendTheFinalizeReserveOnTheSuite: a run that left a
+// round open files its item at finalize, on finalize's context, which the
+// finalize reserve bounds. Filing only ever follows a round that did not ship,
+// so the run cannot be ready whatever the suite says on the filing commit:
+// running the suite again there buys nothing and, on a suite slower than the
+// reserve, spends the context the push needs. The suite here sleeps past the
+// reserve once the last review has run; the branch, the item and the review's
+// own reason must still reach the remote.
+func TestFilingDoesNotSpendTheFinalizeReserveOnTheSuite(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "slow")
+	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "test: sh test.sh", "test: sh slow.sh", 1)
+	cfg = strings.Replace(cfg, "finalize_reserve: 30s", "finalize_reserve: 3s", 1)
+	// Filing is opt-in: the repository writes a rigor: block, or its run
+	// files nothing and the case has no filing commit to measure.
+	cfg = strings.Replace(cfg, "agent:\n", "rigor:\n  default: pro\nagent:\n", 1)
+	slow := "#!/bin/sh\nif [ -f '" + marker + "' ]; then sleep 10; fi\nexec sh test.sh \"$@\"\n"
+	h := newHarnessFiles(t, cfg, nil, map[string]string{"slow.sh": slow})
+	fix := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		shell(t, req, "echo more >> feature.txt && git commit -qam 'Try again'")
+		verifyTest(t, ctx, req)
+		return agent.Result{}, nil
+	}
+	lastReview := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		if err := os.WriteFile(marker, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return review("changes", 1)(t, ctx, req)
+	}
+	rec, err := h.run(t, implement("feature"), review("changes", 1), fix, lastReview)
+	if err != nil {
+		t.Fatalf("finalize lost the run's push: %v", err)
+	}
+	if rec.Outcome != runstore.OutcomeDraft || rec.Reason != "review round 2 still has 1 finding" || len(rec.Backlog) != 1 {
+		t.Fatalf("record = %+v", rec)
+	}
+	if got := testutil.Git(t, h.remote, "rev-parse", "refs/heads/fugaro/"+runID); got != rec.HeadSHA {
+		t.Fatalf("remote branch %s != record head %s: the filing commit was not pushed", got, rec.HeadSHA)
+	}
+	// The report's tests line names the commit the suite ran on — the filing
+	// commit's parent — and says the filing commit only writes items, rather
+	// than reporting no test run because the head moved (owner ruling R3).
+	tested := strings.TrimSpace(testutil.Git(t, h.remote, "rev-parse", rec.HeadSHA+"^"))
+	report := onlyPR(t, h.provider).Comments[0]
+	want := fmt.Sprintf("**Tests:** passed on %s (", tested[:7])
+	if !strings.Contains(report, want) {
+		t.Errorf("the report's tests line does not name the tested commit %s:\n%s", tested[:7], report)
+	}
+	if !strings.Contains(report, fmt.Sprintf("the final commit %s only writes backlog items", rec.HeadSHA[:7])) {
+		t.Errorf("the report's tests line does not say the filing commit only writes items:\n%s", report)
+	}
+	if strings.Contains(report, "no recorded test run") {
+		t.Errorf("the report says no test ran, though the suite ran on the commit before the filing:\n%s", report)
 	}
 }
 

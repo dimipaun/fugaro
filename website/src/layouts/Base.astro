@@ -40,11 +40,24 @@
  *      and nothing on any page depends on it: the commands are in the markup in full and the
  *      controls are emitted `hidden` and revealed by it.
  *
+ *   6. **The campaign mode** (go-to-market plan, Task G2.2). `campaign` renders the page as one
+ *      of the four landing pages `/save`, `/control`, `/scale` and `/crew` builds (spec §6),
+ *      which are the site's one kind of page that is not a page of the site: the head is
+ *      `noindex` and canonical to the home page rather than to itself (F14), the header is the
+ *      wordmark with no menu, and the footer is the three links a reader looks for. The mode is
+ *      a prop on this layout rather than a second layout, because everything else a page needs
+ *      is the same page: the same consent banner in the same place, the same one script, the
+ *      same tokens and the same reduced-motion base. It declares the two slots the campaign
+ *      uses — `campaign-banner`, which G2.3 wires the campaign consent through and which
+ *      carries the site's banner as its fallback, and `media`, where a variant's own picture
+ *      renders when the owner has produced one (G2.2, G2.3, G2.5).
+ *
  * Nothing in this file fetches anything at build time: the site is built from the files in
  * this repository, with no network and no clock (Global Constraints 4 and 5).
  */
 import { loadSite } from '../content.ts'
 import ConsentBanner from '../components/ConsentBanner.astro'
+import { CONSENT_KEY } from '../lib/consent-key.mjs'
 
 // The design tokens (W1.2), then the page chrome and element defaults that apply them.
 //
@@ -67,9 +80,15 @@ interface Props {
    * withdrawable (W1.12, D93).
    */
   alwaysOffer?: boolean
+  /**
+   * Render the page as a campaign page (go-to-market plan, Task G2.2): one of the four landing
+   * pages `/save`, `/control`, `/scale` and `/crew` builds, which are the site's one kind of
+   * page that is not a page of the site. See the block under the chrome below.
+   */
+  campaign?: boolean
 }
 
-const { title, description, alwaysOffer = false } = Astro.props
+const { title, description, alwaysOffer = false, campaign = false } = Astro.props
 
 // The whole generated layer, read and validated. A missing file, a file whose generated
 // header is gone, a data file this reader does not understand: the build stops here, with
@@ -95,7 +114,11 @@ const REPOSITORY_LABEL = new URL(facts.repository).pathname.replace(/^\/+|\/+$/g
 // the headline — so it carries the site's name and the headline, and the changes spec's
 // item 2 puts the headline there (the home hero, the `<title>`, the cards). Every other
 // page names itself, and the site's name is the suffix: `Getting started · Fugaro`.
-const pageTitle = title === SITE_NAME ? `${SITE_NAME} — ${site.tagline}` : `${title} · ${SITE_NAME}`
+//
+// A campaign page's title is the promise too (G2.2): the page is one variant's message and
+// nothing else, and the headline the page passes as its `title` is a sentence — the same shape
+// the homepage's title is in, which is why the two are composed the same way.
+const pageTitle = campaign ? `${SITE_NAME} — ${title}` : title === SITE_NAME ? `${SITE_NAME} — ${site.tagline}` : `${title} · ${SITE_NAME}`
 
 // The description is README.md's subline — the one sentence under the tagline — unless the
 // page names its own. The subline and not the tagline: a description is a sentence about
@@ -108,8 +131,15 @@ const pageDescription = description ?? site.subline
 // because the config declares no `site` — so the page's path is taken from it and the
 // origin is not: the one absolute origin the layout knows is the fact in site.yaml, and
 // `website/test/layout.mjs` holds it to that (step 1).
+//
+// **A campaign page is canonical to the home page, and it is the one page whose canonical is
+// not its own address** (spec §6, F14): the four pages are four phrasings of the home page's
+// promise, built for paid traffic rather than for a search result, and a canonical to itself
+// would be four pages competing with each other and with the site's own page for one query.
+// So the canonical is the origin alone, and the `noindex` in the head below says the same
+// thing to a crawler that reads no canonical.
 const pagePath = Astro.url.pathname.endsWith('/') ? Astro.url.pathname : `${Astro.url.pathname}/`
-const canonicalHref = new URL(pagePath, facts.canonicalURL).href
+const canonicalHref = campaign ? new URL('/', facts.canonicalURL).href : new URL(pagePath, facts.canonicalURL).href
 const ogImageHref = new URL('/og-image.png', facts.canonicalURL).href
 
 // The sitemap hint, emitted only when the build actually produces a sitemap. No Part 1
@@ -130,13 +160,13 @@ const fonts = site.fonts
 // plan's page list fixes (how-it-works, why-gcp, getting-started, caps-and-costs, console,
 // mobile, docs, security, changelog, faq, community) and each label is the route's own words
 // rather than a copy of a page's title — a nav that restated the pages would be a second copy
-// of them to keep in step. The groups' six-and-five split is the feedback's, not a symmetry:
-// *Product* carries the pages about running the thing the visitor came for — how it works and
-// where it runs, how to start, what it costs, the console and the phone app — and *Project*
-// the five about the project itself, Docs and Changelog included. **Why GCP is the second
-// *Product* item** (D238, the zoom-diagrams plan's Part 2): the brief puts it "right after the
-// zoom diagrams", because the fourth level is the picture of everything in one project and
-// the page is the argument for it.
+// of them to keep in step. The groups' five-and-six split is the feedback's, not a symmetry:
+// *Product* carries the pages about running the thing the visitor came for (how it works,
+// how to start, what it costs, the console and the phone app), and *Project*
+// the ones about the project itself, Docs and Changelog included. **Why GCP is a *Project*
+// item, after Security** (the owner's explicit approval of 2026-10-23, which moved it out of
+// *Product*, where D238 had put it second): it is the argument for the project's one platform,
+// beside the page about what that platform's boundary protects. Its label and URL are unchanged.
 //
 // **Mobile is the sixth of them** (the zoom-diagrams plan §3, Part 3, item 6, with the owner's
 // answers of 2026-10-21 under it): the phone app's page is the console page's sister, and
@@ -157,7 +187,6 @@ const NAV_GROUPS = [
     label: 'Product',
     items: [
       { href: '/how-it-works/', label: 'How it works' },
-      { href: '/why-gcp/', label: 'Why GCP' },
       { href: '/getting-started/', label: 'Getting started' },
       { href: '/caps-and-costs/', label: 'Caps and costs' },
       { href: '/console/', label: 'Console' },
@@ -169,6 +198,7 @@ const NAV_GROUPS = [
     items: [
       { href: '/docs/', label: 'Docs' },
       { href: '/security/', label: 'Security' },
+      { href: '/why-gcp/', label: 'Why GCP' },
       { href: '/faq/', label: 'FAQ' },
       { href: '/community/', label: 'Community' },
       { href: '/changelog/', label: 'Changelog' },
@@ -191,6 +221,15 @@ function navItem(href: string) {
 // page every page owes a reader, and the page where the analytics choice can be taken back
 // (W1.12, reconciliation finding 16). Privacy stays a footer link under D182.
 const FOOTER_NAV = [...['/security/', '/changelog/'].map(navItem), { href: '/privacy/', label: 'Privacy' }]
+
+// The campaign pages' footer (G2.2, spec §6): the repository, the docs and the privacy
+// statement, and nothing else. **The spec's third item is a pricing link and there is none**,
+// which is the plan's own ruling: no pricing page exists and pricing is outside this
+// repository, so a footer link to it would be a link to nothing (Global Constraint 9). The
+// privacy statement stays where every page's does, because it is the page where the analytics
+// choice is taken back and the banner on the page links it (W1.12) — and the docs link is the
+// site's own Docs item, read from the menu above rather than written here a second time.
+const CAMPAIGN_FOOTER_NAV = [navItem('/docs/'), { href: '/privacy/', label: 'Privacy' }]
 
 // Whether a route is the page being built, for the one `aria-current="page"` a page carries:
 // the menu's own link to it on every page the menu lists, which is every page of the site
@@ -218,6 +257,13 @@ const analyticsEnabled = facts.analytics.enabled
 
     <title>{pageTitle}</title>
     <meta name="description" content={pageDescription} />
+
+    {/* A campaign page is not offered to a crawler (spec §6, F14): it is built for paid
+        traffic, it is one of four phrasings of the home page's promise, and an indexed
+        campaign page is a page competing with the site's own home page for the same query.
+        The canonical below says the same thing to a crawler that reads no `robots` tag, and
+        the two are written together because either one alone is a half-stated rule. */}
+    {campaign && <meta name="robots" content="noindex" />}
 
     {/* The canonical URL, composed from site.yaml and the page's own path (step 1). */}
     <link rel="canonical" href={canonicalHref} />
@@ -311,6 +357,77 @@ const analyticsEnabled = facts.analytics.enabled
         background: Canvas;
         color: CanvasText;
       }
+
+      /* The campaign chrome (G2.2, spec §6): the wordmark's row and the minimal footer, drawn
+         at the frame's own gutter so a campaign page shares the site's left edge at every
+         width. The campaign mode is the site's brand with its navigation taken out — the two
+         blocks are the site's own boxes with their contents reduced to what the spec keeps,
+         the wordmark above and the three footer links below — so the rules live here, where
+         the site chrome's rules are, rather than in each page's component.
+
+         **Both classes are declared at more than one width, and the phone is the base.** A
+         campaign page is the one page of the site a reader reaches from a phone in a feed, so
+         the narrow layout is written down rather than inherited: the wide block below it adds
+         the room a desktop has, and the phone block is a `max-width` query of its own rather
+         than the absence of the other. */
+      .campaign-header,
+      .campaign-footer {
+        box-sizing: border-box;
+        width: 100%;
+        padding-inline: var(--frame-gutter);
+      }
+
+      .campaign-header {
+        display: flex;
+        align-items: center;
+        padding-block: var(--space-md);
+        background: var(--ground);
+      }
+
+      .campaign-footer {
+        padding-block: var(--space-lg);
+      }
+
+      .campaign-footer ul {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--space-xs) var(--space-md);
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .campaign-footer a {
+        color: var(--text-muted);
+        font-size: var(--font-size-sm);
+        text-decoration: none;
+      }
+
+      .campaign-footer a:hover {
+        color: var(--accent-on-dark);
+      }
+
+      @media (max-width: 30rem) {
+        /* The phone's own block: the footer's three links stand one a line rather than
+           wrapping into a ragged row, which is what a 320 px viewport does to a row of a
+           repository's name and two labels. */
+        .campaign-footer ul {
+          flex-direction: column;
+          gap: var(--space-2xs);
+        }
+      }
+
+      @media (min-width: 48rem) {
+        /* The wide viewport's: the same two blocks with the room a desktop has, so a campaign
+           page at 1280 px is the page with more air rather than a phone layout stretched. */
+        .campaign-header {
+          padding-block: var(--space-lg);
+        }
+
+        .campaign-footer {
+          padding-block: var(--space-xl);
+        }
+      }
     </style>
 
     {/* The site's one script (D183, P6, W3.2). A file, not an inline block: `firebase.json`'s
@@ -319,6 +436,15 @@ const analyticsEnabled = facts.analytics.enabled
         file a reader can read. `defer` puts it after the parse, which is when the blocks it
         drives and the banner it reads its configuration from exist. */}
     <script src="/scripts/site.js" defer></script>
+
+    {/* The banner's early decision (the owner's ruling of 2026-10-23): a few lines, run before
+        the page is drawn, that mark `<html>` when the banner is to be shown, so the banner is in
+        the page's flow from the first frame and nothing below it moves when it appears. Not
+        deferred, on purpose; same origin, so `script-src 'self'` admits it. Rendered only when
+        the banner is. */}
+    {analyticsEnabled && (
+      <script src="/scripts/consent-early.js" data-consent-key={CONSENT_KEY} data-consent-always={alwaysOffer ? 'true' : undefined}></script>
+    )}
   </head>
 
   <body>
@@ -331,10 +457,35 @@ const analyticsEnabled = facts.analytics.enabled
         analytics are on, so with the flag off there is no banner, no configuration and no
         analytics origin anywhere in the artifact. It sits after the skip link and before the
         header, which is where a keyboard reaches it first. */}
-    {analyticsEnabled && (
-      <ConsentBanner alwaysOffer={alwaysOffer} measurementID={facts.analytics.measurementID} analyticsOrigin={ANALYTICS_ORIGIN} />
+    {/* The campaign mode's own slot for it (G2.2). G2.3 wires the campaign consent — the
+        third-party loads the ads bring with them — through this slot; until it does, the site's
+        own banner renders in the slot as the fallback, so the page a visitor lands on from an ad
+        asks the same question, in the same place, as every other page of the site, and a
+        visitor who declines it still has the page's plain booking link. */}
+    {campaign ? (
+      <slot name="campaign-banner">
+        {analyticsEnabled && (
+          <ConsentBanner alwaysOffer={alwaysOffer} measurementID={facts.analytics.measurementID} analyticsOrigin={ANALYTICS_ORIGIN} />
+        )}
+      </slot>
+    ) : (
+      analyticsEnabled && (
+        <ConsentBanner alwaysOffer={alwaysOffer} measurementID={facts.analytics.measurementID} analyticsOrigin={ANALYTICS_ORIGIN} />
+      )
     )}
 
+    {campaign ? (
+      <header class="campaign-header">
+        {/* The way home, and the whole of the campaign chrome: the wordmark the site's own
+            header draws, with no menu beside it. A campaign page is one message for one
+            audience (spec §6), so the nine sections of the site are not a choice a visitor who
+            arrived from an ad is offered — the page's own calls to action are what it asks
+            them to do, and the footer carries the three links a reader looks for. */}
+        <a class="site-wordmark" href="/" rel="home">
+          <img src="/logo.png" alt="" width="47" height="32" decoding="async" /><span class="site-wordmark-name">{SITE_NAME}</span>
+        </a>
+      </header>
+    ) : (
     <header class="site-header">
       {/* The logo is decoration beside the name, so its alt is empty: the link's
           accessible name is the word "Fugaro", said once. The file is 2x the size drawn.
@@ -419,11 +570,40 @@ const analyticsEnabled = facts.analytics.enabled
         </ul>
       </nav>
     </header>
+    )}
 
     <main id="main">
+      {/* The variant's own picture, when it has one (G2.2): `/crew`'s cat imagery is the owner's
+          file and lands here, and a variant that names no image renders nothing in the slot —
+          today all four, so the page is complete without the media the owner has not produced
+          (F14, G2.5). The slot is inside `main` and ahead of the page's own sections, so the
+          image is the first thing a reader meets and the hero's words follow it; nothing is
+          drawn around an empty slot. */}
+      <slot name="media" />
       <slot />
     </main>
 
+    {campaign ? (
+      <footer class="campaign-footer">
+        {/* The minimal footer the spec asks for, and the two facts it must carry that the spec
+            does not list: the repository, and the privacy statement, which is where consent is
+            withdrawn and which the banner on the page links (W1.12, spec §6). It is a `nav`
+            with a name, like every other page's footer, so the page has the landmark a screen
+            reader lists. */}
+        <nav aria-label="Footer">
+          <ul>
+            <li>
+              <a href={facts.repository} rel="noopener">{REPOSITORY_LABEL}</a>
+            </li>
+            {CAMPAIGN_FOOTER_NAV.map((item) => (
+              <li>
+                <a href={item.href}>{item.label}</a>
+              </li>
+            ))}
+          </ul>
+        </nav>
+      </footer>
+    ) : (
     <footer class="site-footer">
       {/* The repository, from site.yaml, and two of the site's own sections from NAV above:
           the security policy and the changelog, the two pages a reader looks for at the foot
@@ -443,5 +623,6 @@ const analyticsEnabled = facts.analytics.enabled
         </ul>
       </nav>
     </footer>
+    )}
   </body>
 </html>

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See mobile/LICENSE.md for the terms.
 // The job list's one door (mobile plan, Task P3.3; resolved 2026-10-17).
 //
 // A screen imports this file and gets the list, the row, the heartbeat line and

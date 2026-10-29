@@ -19,7 +19,6 @@ import (
 
 	"gocloud.dev/blob"
 	"gocloud.dev/blob/driver"
-	"gocloud.dev/gcerrors"
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
@@ -1401,17 +1400,6 @@ func TestArtifactsGetCreatesNoDirectoriesWhileChecking(t *testing.T) {
 	}
 }
 
-// TestArtifactsGetRefusesADirectoryComponentThatIsNotADirectory: a name like
-// frames/a.png needs root/frames to be a directory, and the operator's own
-// file — or a dangling link, or a link to a file — sitting there means the
-// download cannot happen at all. That is a user error naming the path, exit 1,
-// like every other destination refusal in checkArtifactDest; left to the write
-// it surfaces from os.Lstat or MkdirAll as a bare "not a directory" and
-// reaches the user through remote(err) as exit 2, which tells a script to
-// retry and blames the infrastructure for a local condition. Mutation caught:
-// parentUnderRoot accepting any existing entry as its anchor (root/frames is
-// Lstat-ed as existing, EvalSymlinks resolves it inside root, the prefix check
-// passes, and the failure only appears later, unclassified).
 // TestArtifactsGetRefusesADeepDirectoryComponentThatIsNotADirectory: the same
 // refusal as the one-component case, one level down. A name like
 // frames/sub/a.png whose root/frames is a regular file fails on the very first
@@ -1469,16 +1457,6 @@ func TestArtifactsGetRefusesADeepDirectoryComponentThatIsNotADirectory(t *testin
 	}
 }
 
-// TestArtifactsGetRefusesAnOutThatIsNotADirectory: --out names the parent the
-// run's directory is made in, and an ordinary file there — or any non-directory
-// component of the --out path — is a local condition: the Lstat that asks
-// whether the destination already exists answers ENOTDIR, which is not
-// os.IsNotExist, so the arm written for "some other error" treats it as a
-// remote failure and the command exits 2 where the very next check (an entry AT
-// the root that is not a directory, exit 1) says the operator's path is wrong.
-// The message names the path, and nothing is created.
-// Mutation caught: prepareArtifactRoot's Lstat arm calling remote(err) for
-// anything that is not ENOENT.
 // TestArtifactPathErrClassifiesLocalConditions pins the whole mapping, not
 // only the errno a Linux test can reach: the two errnos the suite cannot
 // produce reliably — a directory it may not read (as root, chmod 000 still
@@ -1515,6 +1493,16 @@ func TestArtifactPathErrClassifiesLocalConditions(t *testing.T) {
 	}
 }
 
+// TestArtifactsGetRefusesAnOutThatIsNotADirectory: --out names the parent the
+// run's directory is made in, and an ordinary file there — or any non-directory
+// component of the --out path — is a local condition: the Lstat that asks
+// whether the destination already exists answers ENOTDIR, which is not
+// os.IsNotExist, so the arm written for "some other error" treats it as a
+// remote failure and the command exits 2 where the very next check (an entry AT
+// the root that is not a directory, exit 1) says the operator's path is wrong.
+// The message names the path, and nothing is created.
+// Mutation caught: prepareArtifactRoot's Lstat arm calling remote(err) for
+// anything that is not ENOENT.
 func TestArtifactsGetRefusesAnOutThatIsNotADirectory(t *testing.T) {
 	f := newCloudFixture(t)
 	dir := t.TempDir()
@@ -1562,6 +1550,17 @@ func TestArtifactsGetRefusesAnOutThatIsNotADirectory(t *testing.T) {
 	}
 }
 
+// TestArtifactsGetRefusesADirectoryComponentThatIsNotADirectory: a name like
+// frames/a.png needs root/frames to be a directory, and the operator's own
+// file — or a dangling link, or a link to a file — sitting there means the
+// download cannot happen at all. That is a user error naming the path, exit 1,
+// like every other destination refusal in checkArtifactDest; left to the write
+// it surfaces from os.Lstat or MkdirAll as a bare "not a directory" and
+// reaches the user through remote(err) as exit 2, which tells a script to
+// retry and blames the infrastructure for a local condition. Mutation caught:
+// parentUnderRoot accepting any existing entry as its anchor (root/frames is
+// Lstat-ed as existing, EvalSymlinks resolves it inside root, the prefix check
+// passes, and the failure only appears later, unclassified).
 func TestArtifactsGetRefusesADirectoryComponentThatIsNotADirectory(t *testing.T) {
 	body := []byte("hello")
 	for _, tc := range []struct {
@@ -1908,17 +1907,12 @@ func TestArtifactsGetAsksForTheStrictClassification(t *testing.T) {
 // the read is a point a test can hang a write on — so this is what a race with
 // another process looks like from inside `artifacts get`.
 type appearDriver struct {
-	driver.Bucket
+	stubBucket
 	data   []byte
 	appear string // the path a file appears at
 	at     string // what that file holds
 	done   bool
 }
-
-func (d *appearDriver) ErrorCode(error) gcerrors.ErrorCode { return gcerrors.Unknown }
-func (d *appearDriver) As(any) bool                        { return false }
-func (d *appearDriver) ErrorAs(error, any) bool            { return false }
-func (d *appearDriver) Close() error                       { return nil }
 
 func (d *appearDriver) NewRangeReader(context.Context, string, int64, int64, *driver.ReaderOptions) (driver.Reader, error) {
 	return &appearReader{Reader: bytes.NewReader(d.data), d: d}, nil

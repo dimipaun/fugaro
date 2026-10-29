@@ -1,0 +1,80 @@
+---
+/**
+ * website/src/pages/[variant].astro — the four campaign pages, from one template (go-to-market
+ * plan, Task G2.2; spec §6).
+ *
+ * **One route, four pages.** `/save`, `/control`, `/scale` and `/crew` are the spec's four
+ * paths, and `getStaticPaths` below builds exactly the four `website/data/landing.yaml` writes,
+ * in the file's own order — the file is the whole of which pages exist, so a fifth campaign is
+ * a row in it and not a page here (G2.1). The paths carry no `/landing` prefix and are the
+ * campaigns' own names, which is what makes the variant's `name` both the route's parameter and
+ * the word the data file knows it by.
+ *
+ * **Every word a variant owns comes from the file.** The headline and the supporting line are
+ * the file's (G2.1, D102), the proof band prints the file's figure or the sentinel in its place
+ * (F6), and the tone the page's look keys off is the file's own word. What this page writes is
+ * the section order the spec fixes — hero, proof, how it works, social proof, the calls to
+ * action — and the two links of the last of them, which are `landing.yaml`'s booking link and
+ * `site.yaml`'s repository rather than URLs typed here.
+ *
+ * **The page is rendered through the layout's campaign mode** (`campaign` on `Base.astro`):
+ * `noindex` and canonical to the home page, the wordmark's row with no menu, the minimal
+ * footer, and the `media` slot a variant's own picture lands in when the owner has produced one
+ * (spec §6, F14, G2.5).
+ *
+ * **Nothing here renders the embed or the chat link.** G2.3 renders the Calendly embed behind
+ * the marketing consent and G2.4 owns the `wa.me` link and the events; this page carries the
+ * plain booking link both of them build on, and no vendor asset, no `iframe` and no WhatsApp
+ * link of its own (F17, F22, D401).
+ */
+import Base from '../layouts/Base.astro'
+import CampaignHero from '../components/CampaignHero.astro'
+import CampaignProof from '../components/CampaignProof.astro'
+import CampaignSteps from '../components/CampaignSteps.astro'
+import CampaignSocialProof from '../components/CampaignSocialProof.astro'
+import CampaignCalls from '../components/CampaignCalls.astro'
+import { loadLanding } from '../lib/landing.mjs'
+import { loadSite } from '../content.ts'
+
+const landing = loadLanding()
+const site = loadSite()
+
+export function getStaticPaths() {
+  // The variants are passed through as they were loaded rather than re-read per page: the file
+  // is validated once, and a page renders the same object the loader handed back (G2.1).
+  return loadLanding().variants.map((variant) => ({ params: { variant: variant.name }, props: { variant } }))
+}
+
+const { variant } = Astro.props
+---
+
+<Base title={variant.headline} description={variant.supportingLine} campaign>
+  {/* The variant's own picture, when it has one: `/crew`'s cat imagery is the owner's file and
+      lands in the layout's `media` slot. No variant names one yet, so nothing is passed and the
+      page renders complete without it (F14, G2.5). The `alt` is empty because the file's media
+      is the campaign's flourish rather than a thing a reader has to be told about — the words
+      beside it are the page's content. */}
+  {variant.image && (
+    <Fragment slot="media">
+      <img class="campaign-media" src={variant.image} alt="" decoding="async" />
+    </Fragment>
+  )}
+
+  <CampaignHero headline={variant.headline} supportingLine={variant.supportingLine} tone={variant.tone} />
+  <CampaignProof value={variant.proofNumber.value} source={variant.proofNumber.source} />
+  <CampaignSteps />
+  {/* Hidden while the file names no partner: the section is not rendered at all, so a campaign
+      page with no proof of a partnership does not claim one (F11, F12, D405). */}
+  {landing.partnerLogos.length > 0 && <CampaignSocialProof logos={landing.partnerLogos} />}
+  <CampaignCalls calendlyURL={landing.calendlyURL} repository={site.facts.repository} />
+</Base>
+
+<style>
+  /* The variant's own picture, full width at the top of the page: the one block the file's
+     `image` renders in, and the only rule this page writes for it. */
+  .campaign-media {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+</style>

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See console/LICENSE.md for the terms.
 // The scrub's command line (see ./scrub.ts for what it replaces and why).
 //
 //   node .record-fixture/tools/scrub-fixture/index.js --in <raw.json> --out test/fixtures/normal.ndjson \

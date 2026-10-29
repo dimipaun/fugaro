@@ -1,0 +1,168 @@
+---
+/**
+ * website/src/pages/legal/subscription-terms.astro — the Fugaro Subscription Terms.
+ *
+ * The licence of `ee/`, `console/` and `mobile/` names the Terms as published at this URL, so
+ * the page exists before counsel has approved the text, and says so in its first line. Every
+ * word under that line is the agreement text of `docs/licensing/subscription-terms.md`, Parts A
+ * to G and sections 1 to 34: `go run ./internal/clidoc` cuts the draft banner, the reading guide
+ * and the question list out of it into `website/content/subscription-terms.md`, and this page renders
+ * that file and writes no sentence of its own. Bracketed items are the document's and stay
+ * bracketed: they are what the Order Form or counsel fills in.
+ *
+ * The rendered text arrives through `set:html`, which scoped styles do not reach, so the style
+ * block is global with every selector under the page's own marker attribute.
+ */
+import Base from '../../layouts/Base.astro'
+import { loadSite } from '../../content.ts'
+import { renderAgreement } from '../../lib/agreement-markdown.mjs'
+
+const site = loadSite()
+const document = site.documents['subscription-terms.md']
+if (!document) {
+  throw new Error('website/content/subscription-terms.md is missing: regenerate it with `go run ./internal/clidoc` at the repository root')
+}
+
+// The document's links are relative to the draft's own directory; on the site they point at
+// the file in the repository.
+const sourceDir = document.source.split('/').slice(0, -1).join('/')
+function link(href: string): string {
+  if (/^[a-z]+:/.test(href)) return href
+  const [file, fragment] = href.split('#')
+  const resolved = new URL(file, `https://repo.invalid/${sourceDir}/`).pathname.slice(1)
+  return `${site.facts.repository}/blob/main/${resolved}${fragment ? `#${fragment}` : ''}`
+}
+
+const terms = renderAgreement(document.body, link)
+
+// The contents list numbers its entries itself, so each Part's list starts at the number of
+// its first section, read from the heading the entry leaves out.
+type Section = (typeof terms.sections)[number]
+const parts: { part?: Section['part']; start: number; sections: Section[] }[] = []
+for (const section of terms.sections) {
+  if (section.part || parts.length === 0) {
+    parts.push({ part: section.part, start: Number.parseInt(section.heading, 10) || 1, sections: [] })
+  }
+  parts[parts.length - 1].sections.push(section)
+}
+---
+
+<Base title="Subscription Terms" description="The Fugaro Subscription Terms: a draft under counsel review, not yet in force.">
+  <article class="terms" data-terms-page>
+    <div class="terms-hero">
+      <div class="hero-glow" aria-hidden="true"></div>
+      <h1 class="terms-title display-xl"><span class="gradient-text">{terms.title}</span></h1>
+      <p class="terms-status" set:html={terms.status} />
+    </div>
+
+    <nav class="terms-contents" aria-labelledby="contents">
+      <h2 id="contents">Contents</h2>
+      {parts.map((group) => (
+        <Fragment>
+          {group.part && <p class="terms-contents-part"><a href={`#${group.part.id}`} set:html={group.part.heading} /></p>}
+          <ol start={group.start}>
+            {group.sections.map((section) => (
+              <li>
+                <a href={`#${section.id}`} set:html={section.heading.replace(/^\d+\.\s*/, '')} />
+              </li>
+            ))}
+          </ol>
+        </Fragment>
+      ))}
+    </nav>
+
+    {terms.sections.map((section) => (
+      <Fragment>
+        {section.part && <h2 class="terms-part" id={section.part.id} set:html={section.part.heading} />}
+        <section aria-labelledby={section.id}>
+          <h2 id={section.id} set:html={section.heading} />
+          <Fragment set:html={section.html} />
+        </section>
+      </Fragment>
+    ))}
+  </article>
+</Base>
+
+<style is:global>
+  [data-terms-page] {
+    max-width: var(--measure);
+    margin-inline: auto;
+    padding: var(--space-xl) var(--space-md) var(--space-3xl);
+    color: var(--text);
+  }
+
+  [data-terms-page] .terms-hero {
+    position: relative;
+    overflow: hidden;
+    padding-block: var(--space-2xl) 0;
+  }
+
+  [data-terms-page] .terms-title,
+  [data-terms-page] .terms-status {
+    position: relative;
+  }
+
+  [data-terms-page] .terms-status {
+    margin: var(--space-md) 0 0;
+    padding: var(--space-xs) var(--space-sm);
+    border: var(--border-width) solid var(--border);
+    border-left-width: calc(var(--border-width) * 4);
+    border-left-color: var(--accent);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    font-weight: var(--weight-semibold);
+  }
+
+  [data-terms-page] .terms-contents {
+    margin-top: var(--space-xl);
+    font-size: var(--font-size-sm);
+  }
+
+  [data-terms-page] .terms-contents ol {
+    columns: 2;
+    column-gap: var(--space-lg);
+    margin: 0;
+  }
+
+  [data-terms-page] .terms-contents-part {
+    margin: var(--space-md) 0 var(--space-2xs);
+    font-weight: var(--weight-semibold);
+  }
+
+  [data-terms-page] .terms-part {
+    margin-top: var(--space-2xl);
+    padding-top: var(--space-md);
+    border-top: var(--border-width) solid var(--border);
+    font-size: var(--font-size-2xl);
+    scroll-margin-top: var(--space-3xl);
+  }
+
+  [data-terms-page] section {
+    margin-top: var(--space-xl);
+    scroll-margin-top: var(--space-3xl);
+  }
+
+  [data-terms-page] h2 {
+    font-size: var(--font-size-xl);
+    scroll-margin-top: var(--space-3xl);
+  }
+
+  [data-terms-page] p,
+  [data-terms-page] li {
+    line-height: var(--leading-normal);
+  }
+
+  [data-terms-page] li + li {
+    margin-top: var(--space-2xs);
+  }
+
+  [data-terms-page] .terms-table {
+    overflow-x: auto;
+  }
+
+  @media (max-width: 40rem) {
+    [data-terms-page] .terms-contents ol {
+      columns: 1;
+    }
+  }
+</style>

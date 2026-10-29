@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See console/LICENSE.md for the terms.
 // The fake `fugaro` the screenshot run gives the built console, and the
 // installation store it starts it with (owner ruling 2026-10-20, step 2).
 //

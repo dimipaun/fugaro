@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See mobile/LICENSE.md for the terms.
 // The job list's scope, ENFORCED rather than observed (mobile plan, Task P3.3;
 // resolved 2026-10-17, tensions (a) and (b1); D119, D124, D125).
 //

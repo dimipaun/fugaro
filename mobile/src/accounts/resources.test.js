@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See mobile/LICENSE.md for the terms.
 // The per-account resources' tests (mobile plan, Task P3.1; decision D114).
 //
 // D114's two isolation sentences are what this file pins, and both are

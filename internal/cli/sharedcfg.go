@@ -283,6 +283,14 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 	if c.Build.ServiceAccount != "" {
 		return bad("build.service_account", "%q is set; it is deprecated and never published", c.Build.ServiceAccount)
 	}
+	if c.BaseBranch != "" {
+		// The project's default base branch is published, but not here: it
+		// goes to the policy node (`fugaro project policy publish`), which
+		// only the owner writes and the runner fails closed on. The shared
+		// file is writable by any launcher, so a base branch in it would let
+		// one move every repository of the project at once.
+		return bad("base_branch", "%q is set; the shared config never carries a base branch (the project default is published to the policy node by fugaro project policy publish)", c.BaseBranch)
+	}
 	for _, name := range slices.Sorted(maps.Keys(c.Repos)) {
 		if c.Repos[name].BaseBranch != "" {
 			return bad("repos."+name+".base_branch", "%q is set; it is never published: the base branch comes from the checkout's reviewed fugaro.yaml", c.Repos[name].BaseBranch)
@@ -404,7 +412,7 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 		// checks below. An installation with a separate Firebase project
 		// can't be anchored by the checkout, so it is never used from here.
 		if b.FirebaseProject != a.GCPProject {
-			return nil, fmt.Errorf("the shared config's budget.firebase_project %q is not gcp_project %s: this installation uses a separate Firebase project, so the shared config cannot be used automatically; run fugaro update (adopt) to configure it", b.FirebaseProject, a.GCPProject)
+			return nil, fmt.Errorf("the shared config's budget.firebase_project %q is not gcp_project %s: this installation uses a separate Firebase project, so the shared config cannot be used automatically; Fugaro now keeps the budget backend in the installation's own project, so rebuild it there with fugaro update --firebase-project %s", b.FirebaseProject, a.GCPProject, a.GCPProject)
 		}
 		o := infra.FirebaseOutputs{RTDBURL: b.RTDBURL, FirebaseAPIKey: b.FirebaseAPIKey, TokenSigner: b.TokenSigner, FirebaseProject: b.FirebaseProject}
 		if err := infra.CheckFirebaseOutputsFor(o, "", false); err != nil {

@@ -1,0 +1,8 @@
+version: 1
+project: aurora
+git: { provider: github }
+rigor:
+  areas:
+    - { name: secrets, match: "../secrets/**", mode: critical }
+workflows:
+  server: { commands: { build: make, test: make test } }

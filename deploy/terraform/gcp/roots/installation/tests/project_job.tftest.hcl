@@ -339,6 +339,117 @@ run "account_job_reads_only_own_secret" {
   }
 }
 
+# A SHARED profile job's account keeps its secretAccessor on the App key, and
+# this run pins that it does. modules/project has no credentials-service
+# variable at all: its job account is granted whatever the profile mounts, the
+# App key among them (internal/infra's projectJobSecrets admits every
+# project-wide container a profile names, and the App key's copy is one), so
+# nothing here can drop the grant the way modules/workflow/sa.tf's job account
+# drops it (C2.3, review finding F1).
+#
+# The retention is deliberate and the plan records it as open, not as an
+# oversight: C2.3's own section closes with "The shared (profile) job account
+# is NOT closed here, and the plan says why" — D131 and C3.9 own the
+# shared-job case, Global Constraint 6 keeps per-repository jobs only until the
+# phase-3 shared-job rules are on main, and C2.3's file list is
+# modules/workflow/sa.tf. The 2026-10-21 code review flagged it again ([low])
+# on the grounds that the credentials-service runs sit in roots/repo's tftest
+# and none of them reaches modules/project — which is the gap this run closes:
+# the retention is now a pinned fact rather than a paragraph, so C3.9 cannot
+# take the grant away without a test saying so.
+#
+# Mutation (run, restore): adding a credentials-service variable to the module
+# and dropping the App key from the grants here — C3.9's change — fails the
+# member assertion below, and the mount assertion with it: the run asserts the
+# retention, so it cannot be satisfied by a module that has stopped granting it.
+run "shared_job_mounting_the_app_key_keeps_the_accessor" {
+  command = plan
+
+  module {
+    source = "../../modules/project"
+  }
+
+  variables {
+    secrets = {
+      github-app-key = "fugaro-project-aurora-github-app-key-440b21d6e639db12"
+    }
+    job = {
+      profile  = "standard"
+      provider = "github"
+      account  = ""
+      job      = "fugaro-p-standard-github-0ca96e64b636"
+      service_account = {
+        account_id   = "fugaro-p-standard-git-0ca96e64"
+        display_name = "Fugaro project job standard/github"
+      }
+      image          = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/base:0.9.0"
+      cpu            = "4"
+      memory         = "8Gi"
+      task_timeout_s = 2820
+      env = {
+        FUGARO_GITHUB_APP_ID = "123456789"
+        FUGARO_PROJECT       = "aurora"
+        FUGARO_GCP_PROJECT   = "proj-1234"
+        FUGARO_REGION        = "us-east5"
+      }
+      secret_env = {
+        FUGARO_GITHUB_APP_PRIVATE_KEY = "github-app-key"
+      }
+      bucket_condition = {
+        title      = "fugaro-fugaro-p-standard-git-0ca96e64"
+        expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\")"
+      }
+      token_condition = {
+        title      = "fugaro-project-tokens-fugaro-p-standard-git-0ca96e64"
+        expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/\")"
+      }
+      vertex = false
+    }
+  }
+
+  override_resource {
+    target          = google_service_account.job
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-p-standard-git-0ca96e64@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-p-standard-git-0ca96e64@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  # One member, secretAccessor, on the App key's project-wide copy, to this
+  # job's own account — the retention C3.9 will revisit.
+  assert {
+    condition = toset([for m in google_secret_manager_secret_iam_member.job :
+      "${m.role} ${m.secret_id} ${m.member}"]) == toset([
+      "roles/secretmanager.secretAccessor fugaro-project-aurora-github-app-key-440b21d6e639db12 serviceAccount:fugaro-p-standard-git-0ca96e64@proj-1234.iam.gserviceaccount.com",
+    ])
+    error_message = "a shared job's account must still hold secretAccessor on the App key: modules/project has no credentials-service awareness, and the plan records this retention as open (D131/C3.9, Global Constraint 6)"
+  }
+  # And the account is granted nothing else: the App key alone, on the copy the
+  # installation's own secrets map holds, never the project's other secrets.
+  assert {
+    condition = !anytrue([for m in google_secret_manager_secret_iam_member.job :
+    m.secret_id != var.secrets["github-app-key"]])
+    error_message = "a shared job's account must reach the secret its profile mounts and no other"
+  }
+
+  # The mount the accessor belongs to is in the same plan: the grant is on a
+  # key this container declares, at version latest, and it travels as a mount
+  # and never as a plain value.
+  assert {
+    condition = length([for e in google_cloud_run_v2_job.this.template[0].template[0].containers[0].env :
+      e if e.name == "FUGARO_GITHUB_APP_PRIVATE_KEY" &&
+      e.value_source[0].secret_key_ref[0].secret == var.secrets["github-app-key"] &&
+    e.value_source[0].secret_key_ref[0].version == "latest"]) == 1
+    error_message = "a shared job mounting the App key must mount it from the installation's project-wide copy at version latest"
+  }
+  assert {
+    condition = !anytrue([for e in google_cloud_run_v2_job.this.template[0].template[0].containers[0].env :
+    e.name == "FUGARO_GITHUB_APP_PRIVATE_KEY" && length(e.value_source) == 0])
+    error_message = "the App key must never travel in the job's plain environment"
+  }
+}
+
 # A github job with no App ID fails the plan, and the message says how to
 # record one: the runner refuses to build its github provider without it, so
 # such a job would halt every run it starts, at run time, in the credential

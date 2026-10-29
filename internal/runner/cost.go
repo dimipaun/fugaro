@@ -18,6 +18,10 @@ import (
 // event reported (an oauth run). Read this right after the stage's agent
 // returned, before anything else closes a stage in the gateway.
 //
+// subAgents and repeats are the relay's counts over the stage's own stream:
+// its sub-agent tool calls, and the most times one identical shell command
+// ran (task-governance T1.3, T1.4).
+//
 // The stages sum to cost.model_usd only up to gateway spend no stage
 // report carried: a call that settles after its stage's wait ran out is in
 // the ledger's total (gwUsed, so in cost.model_usd) and in the split only
@@ -30,22 +34,49 @@ import (
 // the stage was pinned to, never what the upstream served, and a gateway
 // stage may also have made background-model calls: both are inside this
 // stage's ModelUSD, so it is the stage's spend, not the pinned model's.
-func (r *run) stageTiming(name string, started time.Time, claudeUSD float64) runstore.StageTiming {
+func (r *run) stageTiming(name string, started time.Time, claudeUSD float64, subAgents, repeats int) runstore.StageTiming {
 	st := runstore.StageTiming{
 		Name:      name,
 		StartedAt: started.UTC(),
 		DurationS: r.d.Now().Sub(started).Seconds(),
 		Model:     r.cfg.Agent.ModelFor(config.StageRole(name)),
+		// The stage's sub-agent tool calls, counted by the relay from its
+		// own stream for every auth mode. Always set: the relay counts even
+		// a stage that spawned none, and 0 sub-agents is a figure, unlike an
+		// absent call count (G5).
+		Agents: &subAgents,
+		// The relay's count of the most times one identical shell command ran
+		// in the stage, always set like Agents and for the same reason: 0 is a
+		// stage that ran no command, not a stage nobody counted (G5).
+		Repeats: &repeats,
 	}
 	r.mu.Lock()
 	gateway, rep := r.gw != nil, r.lastStage
 	r.mu.Unlock()
 	if !gateway {
 		st.ModelUSD = claudeUSD
+		// Without a gateway the figure is Claude Code's own, and a
+		// subscription run's every dollar of it is notional (C1.16, P12):
+		// that is the same statement cost.ModelNotionalUSD makes for the
+		// run, and a stage's own split is the only place a mixed run's
+		// notional dollars can be told from its money.
+		if runstore.ModelBasis(r.cfg.Agent.Auth) == runstore.BasisSubscription {
+			st.ModelNotionalUSD = claudeUSD
+		}
 		return st
 	}
 	if rep != nil {
-		st.ModelUSD = rep.Used.USD()
+		// How many model calls the stage made, as the gateway counted the
+		// calls it forwarded. It is absent without a gateway: an oauth run
+		// has no call count, and that is not the same fact as zero (G5).
+		calls := rep.Calls
+		st.Calls = &calls
+		// The stage's whole model figure and the notional part of it, as
+		// the gateway settled them (C1.16, D140): Used is the money its
+		// calls paid and Notional the tier-A calls, and the two are
+		// disjoint.
+		st.ModelUSD = (rep.Used + rep.Notional).USD()
+		st.ModelNotionalUSD = rep.Notional.USD()
 	}
 	return st
 }
@@ -67,18 +98,48 @@ func (r *run) updateCost() {
 	r.mu.Lock()
 	gateway := r.gw != nil
 	c.UsageUnparsed = r.unparsed
+	var notional float64
 	if gateway {
+		// The splits are of the run's whole model figure, notional dollars
+		// included: the gateway reports a model's amount whatever paid for
+		// the call, so model_by adds up to model_usd -- with the late
+		// "unattributed" residual -- only when the total it is measured
+		// against is the same Used + Notional the stages carry.
+		model := r.gwUsed + r.gwNotional
 		c.Unreconciled = r.unreconciled.USD()
-		c.ModelBy = modelByUSD(r.modelBy, r.gwUsed)
+		c.ModelBy = modelByUSD(r.modelBy, model)
 		c.ReportedUSD = r.reported.USD()
-		c.RouteBy = routeByUSD(r.routeBy, r.modelBy, r.gwUsed, r.routed)
+		c.RouteBy = routeByUSD(r.routeBy, r.modelBy, model, r.routed)
+		// The run's prompt-cache token totals, which only the gateway can
+		// count: they are of its per-call usage and of nothing else (P12).
+		c.CacheReadTokens, c.CacheWriteTokens = r.gwCacheRead, r.gwCacheWrite
+		// The tiers a call came back at that the table has no multiplier
+		// for: their calls were charged conservatively (design §6.1), so
+		// the record naming them is what explains the figure a reader sees
+		// (on a provider route nothing else does: the provider's own
+		// reported cost is recorded, and floors that charge rather than
+		// pricing it). List bounds the names the record carries, however
+		// many distinct tiers the calls came back at.
+		c.ServiceTiers = r.serviceTiers.List()
+		notional = r.gwNotional.USD()
 		// The catalog only prices the routes' models, so its staleness is a
 		// fact about what this run charged: a table that holds a stale row for
 		// a model the run never called, or priced by hand, over-counted
 		// nothing (design §7, P7).
 		c.CatalogStale = catalogStale(r.spend.Prices, chargedModels(r.modelBy))
+	} else if basis == runstore.BasisSubscription {
+		// No gateway and a subscription: Claude Code's own figure is the
+		// run's model spend and all of it is notional (C1.16, P12).
+		notional = c.ModelUSD
 	}
 	r.mu.Unlock()
+	// The notional part is what tells the run's money from what its
+	// subscription paid (C1.16, D140). It is applied through WithNotional so
+	// cost.total_usd -- billed dollars -- cannot drift from it: a mixed run's
+	// model_basis is api-list for the whole run while its tier-A dollars are
+	// in no total, which is why a reader splits on model_notional_usd and
+	// never on the basis (P12).
+	c = c.WithNotional(notional)
 	c.ModelSource = "claude-code"
 	if gateway {
 		c.ModelSource = "gateway"
@@ -150,16 +211,23 @@ func CostLine(c runstore.Cost) string {
 	return line
 }
 
-// costLine is the cost sentence itself, without the estimate's source.
+// costLine is the cost sentence itself, without the estimate's source. Its
+// model figure is the money part of the model spend, so the arithmetic in it
+// adds up -- TotalUSD holds no notional dollar (C1.16, P12) -- and a mixed
+// run's notional part is said beside it rather than counted into it.
 func costLine(c runstore.Cost) string {
-	sub := c.ModelBasis == runstore.BasisSubscription
+	sub := c.AllNotional()
+	notional := ""
+	if !sub && c.ModelSubscriptionUSD() > 0 {
+		notional = fmt.Sprintf("; model $%.2f notional, counted against the Claude subscription", c.ModelSubscriptionUSD())
+	}
 	switch {
 	case !c.ComputeEstimated && sub:
-		return fmt.Sprintf("**Cost:** model $%.2f notional, counted against the Claude subscription (compute not estimated)", c.ModelUSD)
+		return fmt.Sprintf("**Cost:** model $%.2f notional, counted against the Claude subscription (compute not estimated)", c.ModelSubscriptionUSD())
 	case !c.ComputeEstimated:
-		return fmt.Sprintf("**Cost:** model $%.2f (compute not estimated)", c.ModelUSD)
+		return fmt.Sprintf("**Cost:** model $%.2f (compute not estimated)%s", c.ModelMoneyUSD(), notional)
 	case sub:
-		return fmt.Sprintf("**Cost:** ≈ $%.2f compute (estimate); model $%.2f notional, counted against the Claude subscription", c.ComputeUSD, c.ModelUSD)
+		return fmt.Sprintf("**Cost:** ≈ $%.2f compute (estimate); model $%.2f notional, counted against the Claude subscription", c.ComputeUSD, c.ModelSubscriptionUSD())
 	}
-	return fmt.Sprintf("**Cost:** ≈ $%.2f (model $%.2f + compute $%.2f, estimate)", c.TotalUSD, c.ModelUSD, c.ComputeUSD)
+	return fmt.Sprintf("**Cost:** ≈ $%.2f (model $%.2f + compute $%.2f, estimate)%s", c.TotalUSD, c.ModelMoneyUSD(), c.ComputeUSD, notional)
 }

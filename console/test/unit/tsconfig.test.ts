@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See console/LICENSE.md for the terms.
 // tsconfig.json's `include`, held to the one thing it can silently get wrong
 // (desktop-console plan Task 1.0, review round on PR #434).
 //

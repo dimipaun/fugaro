@@ -52,7 +52,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "auth": { "enum": ["vertex", "api-key", "oauth"] },
+        "auth": { "enum": ["vertex", "api-key", "oauth", "cascade"], "description": "Where the run's model calls are authenticated. cascade asks for the project's credentials cascade (docs/credentials-service): it is refused with followup.allow_public, needs budget.mode observe or enforce, and is enabled only by the project policy's routing.claude: {via: cascade}, which only the operator can set. Fugaro before 0.10.0 refuses the value." },
         "model": { "$ref": "#/$defs/modelName" },
         "models": {
           "type": "object",
@@ -77,7 +77,7 @@
         "review_rounds": { "type": "integer", "minimum": 1, "maximum": 10 },
         "first_line_review": { "enum": ["auto", "on", "off"], "description": "A review by the coder's own model, with a fix between, before the senior review. auto: on only when a provider serves the coder and not the reviewer." },
         "first_line_rounds": { "type": "integer", "minimum": 1, "maximum": 3, "description": "First-line review/fix cycles, counted apart from review_rounds." },
-        "recipe": { "type": "string", "pattern": "^(?:[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?)?$", "description": "The recipe (task loop) runs use unless fugaro run --recipe names one: .fugaro/recipes/<name>.yaml, the project's fugaro/recipes/<name>.yaml, or the catalog (default, solo, standard, premium, review-only, pick, test-and-fix, lint-fix). Fugaro before 0.5.0 refuses this key." },
+        "recipe": { "type": "string", "pattern": "^(?:[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?)?$", "description": "The recipe (task loop) runs use unless fugaro run --recipe names one: .fugaro/recipes/<name>.yaml, the project's fugaro/recipes/<name>.yaml, or the catalog (default, solo, standard, premium, review-only, pick, test-and-fix, lint-fix, run-digest). Fugaro before 0.5.0 refuses this key." },
         "oauth_token": {
           "type": "string",
           "pattern": "^[a-z](?:[a-z0-9]|-[a-z0-9]){0,30}$",
@@ -85,6 +85,7 @@
           "not": { "const": "default" },
           "description": "The named Claude account (claude_accounts in the local config) this workflow's agent.auth: oauth uses; absent means the repository's default account, the existing claude-oauth-token secret (docs/design/named-oauth-tokens.md). fugaro run --token NAME overrides it per run. The local config's claude_accounts.<name>.allow_data_to must list this repository, checked at launch, not by this schema. Fugaro before 0.6.5 refuses this key."
         },
+        "compression": { "enum": [""], "description": "The context-compression proxy this workflow's model calls route through (docs/design/headroom-compression.md). The key is reserved and refused: the only value this schema admits is \"\" (off, the default), and the real value is admitted by the same change that implements the proxy. A repository that sets it is refused with \"not yet implemented\", not as an unknown key." },
         "max_budget_usd": { "type": "number", "minimum": 0 },
         "instructions": { "type": "string" },
         "review": { "type": "string" }
@@ -117,6 +118,57 @@
         }
       }
     },
+    "governance": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "description": "What a run of this repository may spend on one stage, how much review it accepts, and how far one stage may fan out (docs/task-governance/spec.md §2, §5). Every key is a bound whose smaller value is the stricter one, so this block can only tighten what the project layer set (docs/project-layer.md §5); the keys the project layer may loosen are the ones Fugaro ships defaults for (review_ratio, review_floor_calls, max_subagents, stage_budget). A null block, or a key written as null or 0, sets nothing and takes the default. The stages are the run's three spend stages: an artifact run's plan and render steps have no governance budget, so a key naming one is refused.",
+      "properties": {
+        "review_ratio": { "type": ["integer", "null"], "minimum": 0, "maximum": 1000, "description": "N, the ratio guardrail: review calls above N times the implement stage's calls stop the stage (spec §2). Fugaro's default is 5, and the project layer is the only layer that may loosen it." },
+        "review_floor_calls": { "type": ["integer", "null"], "minimum": 0, "maximum": 100000, "description": "The review-call count below which the ratio is not applied at all, so a short implementation is still reviewed: the bound is max(floor, N x implement calls). Fugaro's default is 20." },
+        "max_subagents": { "type": ["integer", "null"], "minimum": 0, "maximum": 100, "description": "The most distinct sub-agents one stage may start, concurrently or in total (spec §5). Fugaro's default is 5." },
+        "stage_budget": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "description": "A stage's share of the run's budget (G§2). Implement and review are fractions of the per-run cap, review counting the first-line and the senior review together; fix is a fraction of the implement stage's own budget. Fugaro's defaults are 0.7, 0.5 and 0.5.",
+          "properties": {
+            "implement": { "$ref": "#/$defs/stageFraction", "description": "The implement stage's share of the per-run cap. Fugaro's default is 0.7." },
+            "review": { "$ref": "#/$defs/stageFraction", "description": "The review stage's share of the per-run cap, first-line and senior review together. Fugaro's default is 0.5." },
+            "fix": { "$ref": "#/$defs/stageFraction", "description": "The fix stage's share of the implement stage's own budget, not of the per-run cap. Fugaro's default is 0.5." }
+          }
+        },
+        "stage_tokens": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "description": "A stage's token ceiling, in tokens. Unset by default: a stage with no ceiling of its own is bounded by the run's own agent.max_run_tokens.",
+          "properties": {
+            "implement": { "$ref": "#/$defs/stageTokens", "description": "The implement stage's token ceiling; unset by default." },
+            "review": { "$ref": "#/$defs/stageTokens", "description": "The review stage's token ceiling; unset by default." },
+            "fix": { "$ref": "#/$defs/stageTokens", "description": "The fix stage's token ceiling; unset by default." }
+          }
+        },
+        "stage_timeout": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "description": "A stage's own wall-clock ceiling; unset by default. The run's workflows.*.timeouts.stage still bounds it, so a stage timeout longer than that is refused at run start, not here.",
+          "properties": {
+            "implement": { "$ref": "#/$defs/duration", "description": "The implement stage's own wall-clock ceiling; unset by default." },
+            "review": { "$ref": "#/$defs/duration", "description": "The review stage's own wall-clock ceiling; unset by default." },
+            "fix": { "$ref": "#/$defs/duration", "description": "The fix stage's own wall-clock ceiling; unset by default." }
+          }
+        },
+        "tiers": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "description": "What a run of each expectation tier is expected to cost and take, and how far one of its stages may fan out (docs/task-governance/spec.md §3, G6). A tier is an expectation and never a cap: the deployed per-run cap stays the ceiling, so an expected_usd above it is an expectation the run still stops at the cap for, and no key here moves a cap. A key written as null or 0 sets nothing and takes the tier's default. Fugaro ships trivial $0.25/10m, small $1/30m, medium $3/90m and large $8/240m, with max_subagents 3 for trivial and small and 5 for medium and large.",
+          "properties": {
+            "trivial": { "$ref": "#/$defs/tierLimits", "description": "The trivial tier's expectation: a copy or text tweak of a few lines. Fugaro's default is $0.25, 10 minutes, 3 sub-agents." },
+            "small": { "$ref": "#/$defs/tierLimits", "description": "The small tier's expectation: a single-file feature or bug fix. Fugaro's default is $1, 30 minutes, 3 sub-agents." },
+            "medium": { "$ref": "#/$defs/tierLimits", "description": "The medium tier's expectation: a multi-file change with tests. Fugaro's default is $3, 90 minutes, 5 sub-agents." },
+            "large": { "$ref": "#/$defs/tierLimits", "description": "The large tier's expectation: a cross-cutting refactor. Fugaro's default is $8, 240 minutes, 5 sub-agents." }
+          }
+        }
+      }
+    },
     "followup": {
       "type": "object",
       "additionalProperties": false,
@@ -131,6 +183,20 @@
         "allow_public": { "type": "boolean", "description": "Allow follow-ups on a public repository, where anyone can comment." }
       }
     },
+    "rigor": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "How much cost this repository's runs accept to reduce risk (docs/rigor-modes/spec.md). A default, not a floor: the project layer's defaults.rigor may set both keys too, and the narrowest layer that sets one wins. Fugaro before 0.11.0 refuses the block.",
+      "properties": {
+        "default": { "$ref": "#/$defs/rigorMode", "description": "The mode a run of this repository resolves to when nothing narrower decides. Absent: the project layer's defaults.rigor.default, else Fugaro's own default (pro). Needs fugaro 0.11.0." },
+        "areas": {
+          "type": ["array", "null"],
+          "maxItems": 100,
+          "description": "Named path rules: the mode a run resolves to when the paths it touches match one. Both layers' lists are in effect (a union, not a replacement), the strictest matched rule decides, and a rule is matched with the same doublestar globs workflows.*.rebuild.paths uses. Needs fugaro 0.11.0.",
+          "items": { "$ref": "#/$defs/rigorArea" }
+        }
+      }
+    },
     "workflows": {
       "type": "object",
       "minProperties": 1,
@@ -139,7 +205,39 @@
     }
   },
   "$defs": {
+    "rigorMode": {
+      "type": "string",
+      "enum": ["poc", "startup", "pro", "critical", "hotfix"],
+      "description": "A rigor mode, spelled exactly as fugaro's own vocabulary spells it (internal/rigor): poc, startup, pro, critical, hotfix. A near miss (\"Poc\", \"PRO\") is refused where it is written, never read as an unknown mode."
+    },
+    "rigorArea": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "match", "mode"],
+      "description": "One rigor.areas rule: a name to print, a doublestar path glob relative to the repository root, and the mode it sets.",
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 40, "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._-]*$", "description": "The rule's name, which the run record, the pull request body and fugaro watch print when they say which rule decided. 1 to 40 characters of letters, digits, space, dash, underscore and dot, starting with a letter or a digit." },
+        "match": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[^/\\s]", "not": { "pattern": "(^|/)\\.\\.(/|$)" }, "description": "A doublestar path glob relative to the repository root, matched against the paths the run changed. The same rule workflows.*.rebuild.paths follows: not empty, not absolute, no \"..\" component, and a pattern doublestar validates." },
+        "mode": { "$ref": "#/$defs/rigorMode", "description": "The mode this rule sets for the paths it matches." }
+      }
+    },
     "modelName": { "type": "string", "maxLength": 100, "pattern": "^\\S*$" },
+    "stageFraction": {
+      "type": ["number", "null"],
+      "anyOf": [{ "const": 0 }, { "exclusiveMinimum": 0, "exclusiveMaximum": 1 }, { "type": "null" }],
+      "description": "A stage's share of a budget, as a fraction. 0 or null sets nothing and takes Fugaro's default, and 1 or more is refused: the per-run cap stays the ceiling whatever a stage is given (G6), so a stage that could spend it whole would be no budget at all."
+    },
+    "stageTokens": { "type": ["integer", "null"], "minimum": 0, "maximum": 1000000000000, "description": "A stage's token ceiling, in tokens; 0 or null sets nothing." },
+    "tierLimits": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "description": "One expectation tier's figures (docs/task-governance/spec.md §3, G6). Every key is an expectation and never a cap: the deployed per-run cap stays the ceiling whatever is written here. 0 or null sets nothing and takes the tier's default.",
+      "properties": {
+        "expected_usd": { "type": ["number", "null"], "minimum": 0, "description": "What a run of this tier is expected to cost, in dollars. 0 or null sets nothing. An expectation above the deployed per-run cap is still only an expectation: the run stops at the cap (G6)." },
+        "expected_minutes": { "type": ["integer", "null"], "minimum": 0, "description": "What a run of this tier is expected to take, in minutes. 0 or null sets nothing." },
+        "max_subagents": { "type": ["integer", "null"], "minimum": 0, "maximum": 100, "description": "How far one stage of a run of this tier may fan out, at most the same 100 governance.max_subagents is bounded by. 0 or null sets nothing." }
+      }
+    },
     "githubUserID": {
       "description": "A GitHub numeric user ID, which a rename doesn't change (gh api users/<login> --jq .id).",
       "anyOf": [

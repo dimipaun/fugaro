@@ -1,20 +1,24 @@
 # Pending workflow changes
 
-**Five files are pending: `shared-tests.yml`** (the shared package's test job, mobile plan Task P4.3; see `## shared-tests.yml` below), **`console-linux.yml`** (the console's Linux build check, 2026-10-20; see `## console-linux.yml` below), **`console-release-linux.yml`** (the console's signing pipeline with the Linux legs added, 2026-10-20 — it supersedes the staged `console-release.yml`; see `## console-release-linux.yml` below), **`console-windows.yml`** (the console's Windows installer pack, 2026-10-20 — a release-time job, not a pull-request check; see `## console-windows.yml` below) **and `mobile-release.yml`** (the mobile app's build and store submissions, 2026-10-20; see `## mobile-release.yml` below). **Two other files stay staged here by design: `console-tests.yml` and `console-release.yml`.** Both were copied into `.github/workflows/` by the owner, and unlike every other file here their staged copies are kept, because their tests assert the copy under `.github/workflows/` is byte-identical to the staged one (see their sections below). Nothing else is pending: the website's two manual deploy workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the owner (their staged copies are removed); `ci.yml` was copied in on 2026-10-17 (#504, staged copy removed in #508), and `images.yml` was copied in and its staged copy removed in `6b57ba9` (`## images.yml` below is the record of that change, not a pending request). A future workflow change that a run needs is staged here as the real file plus the change, and the owner copies it in.
+**Two files are pending: `images.yml`** (the credentials service's image leg, credentials-service plan Task C1.14; see `## images.yml` below) **and `console-windows.yml`** (the console's Windows
+installer pack, 2026-10-20 — a release-time job, not a pull-request check; see
+`## console-windows.yml` below). **Two other files stay staged here by design: `console-tests.yml` and `console-release.yml`.** Both were copied into `.github/workflows/` by the owner, and unlike every other file here their staged copies are kept, because their tests assert the copy under `.github/workflows/` is byte-identical to the staged one (see their sections below). Nothing else is pending: the shared package's test job, `shared-tests.yml` (mobile plan Task P4.3), was copied into `.github/workflows/` by the owner on 2026-10-22 (its staged copy is removed; see `## shared-tests.yml` below); Dependabot's watch over `console/`'s npm dependencies, `dependabot-console.yml`, was copied over `.github/dependabot.yml` on the owner's approval of 2026-10-23 (its staged copy is removed; see `## dependabot-console.yml` below); the mobile app's release workflow, `mobile-release.yml`, was copied into `.github/workflows/` on the owner's approval of 2026-10-23 (its staged copy is removed; see `## mobile-release.yml` below); the website's two manual deploy workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the owner (their staged copies are removed); `ci.yml` was copied in on 2026-10-17 (#504, staged copy removed in #508); and `images.yml` was copied in and its staged copy removed in `6b57ba9`, then staged again by C1.14 for the change its section below describes. A future workflow change that a run needs is staged here as the real file plus the change, and the owner copies it in.
 
-- **`shared-tests.yml`** — the whole CI job for `shared/`'s tests, mobile plan Task **P4.3**: a `main`-filtered push and pull request under `shared/**`, `contents: read`, `npm ci` and `npm test` on Node 22 and Node 26, and every `shared/*/mutation-proof.sh` in the package, every action pinned by full commit SHA. `shared/` is outside the Go module, so no job in `ci.yml` runs it. Staged by a Fugaro run that cannot push a `.github/workflows/**` change; see `## shared-tests.yml` below, which also records what the job will report on `main` today.
+- **`shared-tests.yml`** — the whole CI job for `shared/`'s tests, mobile plan Task **P4.3**: a `main`-filtered push and pull request under `shared/**`, `contents: read`, `npm ci` and `npm test` on Node 22 and Node 26, and every `shared/*/mutation-proof.sh` in the package, every action pinned by full commit SHA. `shared/` is outside the Go module, so no job in `ci.yml` runs it. **Applied, not pending:** it was staged by a Fugaro run that cannot push a `.github/workflows/**` change, copied into `.github/workflows/shared-tests.yml` on 2026-10-22 and its staged copy removed; see `## shared-tests.yml` below, which also records what the job will report on `main`.
 - **`website-preview.yml`** and **`website-promote.yml`** — the website's two new workflows, both `workflow_dispatch`-only: one builds a chosen ref and deploys it to a Firebase Hosting preview channel of the site's own project and prints the preview URL, the other promotes an existing preview channel to live and is the owner's alone (`environment: website-live` plus a guard on `github.actor`). Staged by a Fugaro run that cannot push a `.github/workflows/**` change. **Read `docs/website/preview-promote.md` first**: it carries the owner-only one-time setup (the Workload Identity Federation pool and provider, the deployer service account and its Firebase Hosting roles, the `website-live` environment and the three repository variables) that both files need before they can run at all.
 - **`console-linux.yml`** — the console's **Linux build check**: one job on `ubuntu-latest` that packs the AppImage and the `.deb` on every pull request and every push to `main` and uploads them, holding no secret at all. Staged by the 2026-10-20 run that packages the console for Linux (the owner's ruling: Linux for 0.10.0, unsigned). It is its own workflow rather than a second job in `console-tests.yml` because the release gate's required-check list is derived from that file's job set; see `## console-linux.yml` below.
 - **`console-release-linux.yml`** — the console's signing, notarisation and publishing pipeline **with the Linux legs added**: a third job that builds and verifies the unsigned AppImage and `.deb`, and a `publish` that merges both legs, signs one merged `console-sha256sums.txt` keyless with cosign and attaches everything to `console-vX.Y.Z`. It runs on the release tag and **never on a pull request**, so it is the first of the three files here that are not pull-request checks. It supersedes the staged `console-release.yml`, so its copy-in is three commands; see `## console-release-linux.yml` below.
 - **`console-windows.yml`** — the console's **Windows pack**, and the second of the three files here that are **not** a pull-request check (`console-release-linux.yml` above is the first and `mobile-release.yml` below is the third): one job on `windows-latest` that typechecks, runs the unit suite and packs the unsigned NSIS installer **at release time only** — the release tag, or a `workflow_dispatch` before one, and **never on a pull request**, not even path-filtered — and uploads it, holding no secret at all. Staged by the 2026-10-20 run that plans the console's Windows build (the owner's ruling of that date: the console drives the **Linux** `fugaro` inside WSL, unsigned), and re-cut the same day for the owner's answer to that plan's decision D7, whose words were *"a waste of resources; if there are problems we will fix them then"*. **It is red until three things in `console/` land** — the `package:win` script and the `win32` fuse row, the POSIX repairs that let the unit suite run on a Windows runner, and the `win32-x64` Electron checksum pin — which is why it is staged now and copied in later; the file's own header says so first. It is its own workflow rather than a second job in `console-tests.yml` for the reason `console-linux.yml` gives below; see `## console-windows.yml` below.
-- **`mobile-release.yml`** — the **mobile app's release**, staged on 2026-10-20 on the owner's rulings of 2026-10-19/20 and reworked on 2026-10-21 after the security review of #777 (the build runs from GitHub Actions on each release tag, and by hand). On every `v[0-9]+.[0-9]+.[0-9]+` tag and on a manual dispatch, **one job per platform** builds on EAS and submits the finished build to TestFlight's internal testers and to Play's internal-testing track, behind the `mobile-release` GitHub environment and its only required reviewer (the owner) — the same click that gates `console-release` and `website-live`. The two jobs are independent, **both are enabled**, and one repository variable (`MOBILE_RELEASE_DISABLED_PLATFORMS`) can turn either off; see `## mobile-release.yml` below, which carries the Android first-release checklist.
-- **`images.yml` — applied, not pending.** The signing of the pushed base image by its OCI digest (cosign, keyless) and the nightly-immune `<version>-pinned` tag, plan Task 1 of `docs/plans/2026-10-13-retire-image-mirror.md`, was staged here by a Fugaro run that cannot push a `.github/workflows/**` change, then copied into `.github/workflows/images.yml` and `git rm`'d from here in `6b57ba9`. `## images.yml` below is the record of that change and of the timing it had to meet, not something still to copy.
+- **`mobile-release.yml`** — **applied on 2026-10-23, not pending** (copied into `.github/workflows/` and its staged copy removed; what follows is the record). The **mobile app's release**, staged on 2026-10-20 on the owner's rulings of 2026-10-19/20 and reworked on 2026-10-21 after the security review of #777 (the build runs from GitHub Actions on each release tag, and by hand). On every `mobile-v[0-9]+.[0-9]+.[0-9]+` tag (the app's own stream since the owner's ruling of 2026-10-22) and on a manual dispatch, **one job per platform** builds on EAS and submits the finished build to TestFlight's internal testers and to Play's internal-testing track, behind the `mobile-release` GitHub environment and its only required reviewer (the owner) — the same click that gates `console-release` and `website-live`. The two jobs are independent, **both are enabled**, and one repository variable (`MOBILE_RELEASE_DISABLED_PLATFORMS`) can turn either off; see `## mobile-release.yml` below, which carries the Android first-release checklist.
+- **`console-release-tag.yml`** — the console's **own release stream**: the staged `console-release.yml` with its trigger moved from the CLI's `vX.Y.Z` tag to the console's own `console-vX.Y.Z` tag, a step that refuses a tag whose X.Y.Z is not `console/package.json`'s own `version`, a step that refuses a version whose notes file `docs/releases/console/vX.Y.Z.md` is missing, and a `publish` whose release body is that notes file rather than the string it used to inline. The three release streams are independent (owner addendum 2026-10-22: CLI = animals, Console = fruits, Mobile = birds); nothing else in the file moved, and `scripts/release.sh` and `scripts/release-gate.sh` stay CLI-only. **Applied on 2026-10-23**: it was copied over the staged `console-release.yml` and into `.github/workflows/console-release.yml`, and its own staged copy is gone, so the byte-identity clause in `TestDocsConsoleReleaseWorkflowIsStagedAndPinned` holds on the new text; see `## console-release-tag.yml` below, which is now the record.
+- **`dependabot-console.yml`** — **applied on 2026-10-23, not pending** (copied over `.github/dependabot.yml` and its staged copy removed; what follows is the record). **Dependabot's watch over the console's npm dependencies**, staged on 2026-10-23 on the owner's ruling of 2026-10-22. It is **not a workflow and not a file of its own**: it is the whole of `.github/dependabot.yml` as it should read once the console is watched -- the `github-actions` entry that runs today, unchanged, plus one `npm` entry for `/console`, weekly and **grouped** so that minor and patch bumps arrive as one pull request a week (a major, Electron's included, stays outside the group and arrives on its own for a deliberate look). **A staging file is not strictly forced here** -- `.github/dependabot.yml` is not under `.github/workflows/`, so an agent run may write it -- which is exactly why this plan stages it: `docs/plans/2026-10-15-desktop-console.md`'s open item 5 reserved the decision for the owner, and the ruling of 2026-10-22 is "stage it, with the copy-in step, and let them apply it". See `## dependabot-console.yml` below for the copy-in commands and for the two sentences that copy-in has to update.
+- **`images.yml` — staged again, and pending.** The staged copy is the running `.github/workflows/images.yml` plus the credentials service's image leg (credentials-service plan, task **C1.14**): the `credentials` job that builds `images/credentials/Dockerfile`, smoke-tests it, holds it to a size budget and secret-scans it on every run, the `credentials` kind in the `version` job's list, the `publish-credentials` job that publishes it and gives it the same signed `<version>-pinned` tag the base has (which `fugaro update`'s credentials stage resolves and verifies), and the `credentials` image in `verify-public`'s pull-back loop. Staged by a Fugaro run that cannot push a `.github/workflows/**` change; see `## images.yml` below for the diff, the one command that applies it and the steps that have to go with it. **The two earlier `images.yml` changes are records, not requests:** the signing of the pushed base image by its OCI digest (cosign, keyless) and the nightly-immune `<version>-pinned` tag (plan Task 1 of `docs/plans/2026-10-13-retire-image-mirror.md`) was copied in and `git rm`'d from here in `6b57ba9`, and the 0.7.0 hard cut (`838e0b0`) before it.
 
 **`console-tests.yml`** — the desktop console's own tests in CI, staged by Task 1.4 of `docs/plans/2026-10-15-desktop-console.md` and applied by the owner as Task 1.5. **It holds no secret of any kind**, it runs unconditionally on every pull request and every push to `main`, and unlike `images.yml` **its staged copy is kept after the copy-in** (`TestConsoleTestsWorkflowIsStagedAndPinned` asserts the two files are byte-identical from then on): see `## console-tests.yml` below.
 
 **`console-release.yml`** — the desktop console's signing, notarisation and stapling pipeline, staged by Task 4.2 of the same plan and applied by the owner as Task 4.5, together with the protected GitHub environment its secrets live in. **It is a separate file from the tests workflow on purpose, and the split is a security boundary rather than tidiness**: this job reads the Apple signing certificate and the App Store Connect key, and a branch of this repository can open a pull request, so a job holding that material must never sit in a file that runs on every pull request. Its staged copy is kept after the copy-in too: see `## console-release.yml` below.
 
-The two `images.yml` copies that *were* applied — the 0.7.0 hard cut (`838e0b0`, which is why the file below has no legacy per-kind `base` job) and the signing change (`6b57ba9`) — are why that file is not pending today. Each time it was staged again, that section's older text was replaced by the newer one.
+The two `images.yml` changes that *were* applied — the 0.7.0 hard cut (`838e0b0`, which is why the file has no legacy per-kind `base` job) and the signing change (`6b57ba9`) — are the file's history, and the third staging (C1.14's credentials leg, below) is what is pending today. Each time it is staged again, the `## images.yml` section's older text is replaced by the newer one.
 
 Fugaro refuses to push a commit that touches `.github/workflows/**`
 (GitHub rejects the push). When a Fugaro run needs to change a workflow
@@ -31,7 +35,43 @@ git rm docs/pending-workflows/website-preview.yml docs/pending-workflows/website
 git commit -m "..."
 ```
 
-The two commands above are the website pair's. The `images.yml` commands that used to follow this block were run in `6b57ba9` and its staged file is gone; **four further files are pending as of 2026-10-20 — `console-linux.yml`, `console-release-linux.yml`, `console-windows.yml` and `mobile-release.yml` — and each section below carries its own copy-in block**, the release one with an extra command, because it also replaces the staged `console-release.yml`.
+**`images.yml`'s own copy-in steps, in order.** (1) Copy the file in with
+
+```sh
+cp docs/pending-workflows/images.yml .github/workflows/images.yml
+git rm docs/pending-workflows/images.yml
+git commit -m "..."
+```
+
+(2) The `git rm` is load-bearing here for the reason it is for the website
+pair and `shared-tests.yml`: while a staged copy exists, `images/base_workflow_test.go`'s
+`readWorkflow` reads *it*, so leaving it in place would freeze those checks on
+its bytes and hide a later edit or deletion of the real file's jobs.
+(3) Update the sentence at the end of `website/README.md` that says what
+`docs/pending-workflows/` holds: it says "now holds **four** pending workflows"
+and names `docs/pending-workflows/images.yml` among them; after this copy it
+holds three (fewer if another has been copied in by then), and
+`website/test/readme.mjs` checks the count, the names and the directory in both
+directions (it reads the whole flattened page, so the name has to go from
+every backticked mention on it, not only from that sentence). (4) Update **this
+document**, which would otherwise go on describing a staged copy that is gone:
+the opening line's count and this section's status line. (5) Update
+**`docs/release.md`**, whose `## What a tag does` section enumerates the images
+`images.yml` builds, smoke-tests, scans and publishes and which of them carries
+the signed `<version>-pinned` tag: once this copy is in and the credentials
+image ships, that sentence is stale in the way `.goreleaser.yaml`'s release
+notes and `website/README.md` were already updated for, so it has to name
+`fugaro-credentials` too — built and scanned on every run, published with the
+others, and **signed and pinned the way `fugaro-base` is** (the `-pinned` tag
+`fugaro update`'s credentials stage resolves), with `verify-public` pulling it
+back. Nothing holds that sentence to the workflow — unlike `website/README.md`'s
+count, which `website/test/readme.mjs` checks in both directions — so this step
+is for the reader rather than for a red test. (6) Compare the action
+pins with the other workflows' first — Dependabot does not watch
+`docs/pending-workflows/`, so nothing else will (see `## Before you copy: check
+the action pins` at the end).
+
+The website pair's two commands are above; **eight other files' sections are below, and each carries its own copy-in block**: `console-windows.yml`, `mobile-release.yml` (both 2026-10-20), `dependabot-console.yml` (2026-10-23), `core-without-ee.yml` (2026-10-24, licensing plan task L1.7), `ee-edition.yml` (2026-10-29, ee-reorg plan task E1.6) and — as the record of changes the owner has since applied — `console-linux.yml`, `console-release-linux.yml` and `console-release-tag.yml`, the two release ones with an extra command because each also replaces the staged `console-release.yml`. **`console-linux.yml`, `console-release-linux.yml`, `console-release-tag.yml`, `mobile-release.yml`, `dependabot-console.yml` and `shared-tests.yml` are applied and their staged copies are gone**; what is pending today is the opening line's four files, and the directory is the authority for that.
 
 **The website pair's own copy-in steps, in order.** (1) Do the one-time setup
 in `docs/website/preview-promote.md` first — the workflows refuse to run
@@ -51,7 +91,8 @@ because their tests assert the two files are byte-identical while both exist —
 those sections for the command and the reason.
 
 The `git rm` is not cleanup, it's load-bearing, and `images.yml` is where that
-has already been paid: its staged copy is gone (`6b57ba9`), so the static Go
+has been paid twice and is being paid a third time: its staged copy is back
+(C1.14), so the static Go
 tests that pin that workflow's shape (`images/base_workflow_test.go`'s
 `readWorkflow`,
 used by `TestImagesWorkflowPublishesAMultiArchBase`,
@@ -62,14 +103,15 @@ used by `TestImagesWorkflowPublishesAMultiArchBase`,
 `TestSigningProblemsFindEveryMutation` — the two that pin the base image's
 signing chain — plus
 `images/verify_public_test.go`'s `TestImagesWorkflowPublishesAndVerifiesEveryImage`)
-read the real `.github/workflows/images.yml` on its own today, as they read the
-pending file
-**while it existed** and only fell back to the real file once it was gone. If the pending file were
+read the pending file **while it exists** — which it does again now, so what
+they judge today is the staged copy — and fall back to the real
+`.github/workflows/images.yml` once it is gone, as they did between `6b57ba9`
+and this staging. If the pending file were
 left in place after the copy, those tests would keep reading its frozen
 content forever and would never notice a later edit — including an
-accidental deletion — to the real file's `fugaro-base`/`publish-base`
-jobs. Once the pending file is removed, the real file is read on its own
-and *must* contain the base jobs, so deleting them (by hand, by a bad
+accidental deletion — to the real file's `fugaro-base`/`publish-base`/
+`credentials` jobs. Once the pending file is removed, the real file is read on
+its own and *must* contain the base jobs, so deleting them (by hand, by a bad
 merge, anything) fails the tests immediately.
 `TestReadWorkflowFallsBackOnlyWhilePending` pins this fallback directly,
 against temp files, independent of the real repository state.
@@ -86,7 +128,7 @@ gone, and fails if both copies exist at once.
 
 ## `shared-tests.yml`
 
-**Status: `shared-tests.yml` is staged and pending.** The copy has not been made — there is no `.github/workflows/shared-tests.yml` — and this document's opening line says the same. `internal/cli/docs_shared_tests_workflow_test.go`'s **`TestSharedTestsWorkflowStagingStateIsWhatTheReadmeSays`** reads this line, the opening line and the tree together and fails if any two of them disagree, in either direction: while the staged copy exists this line must read `staged and pending`, and once the owner has copied the file in and removed the staged copy it must read `applied, not pending`. Naming that test is checked as well, so the name cannot drift out of the document that depends on it.
+**Status: `shared-tests.yml` is applied, not pending.** The copy was made on 2026-10-22 by the commit "ci: apply the shared package tests workflow (P4.3)" — `.github/workflows/shared-tests.yml` is the file that runs, the staged copy is gone — and this document's opening line no longer names it. `internal/cli/docs_shared_tests_workflow_test.go`'s **`TestSharedTestsWorkflowStagingStateIsWhatTheReadmeSays`** reads this line, the opening line and the tree together and fails if any two of them disagree, in either direction: while the staged copy exists this line must read `staged and pending`, and once the owner has copied the file in and removed the staged copy it must read `applied, not pending`. Naming that test is checked as well, so the name cannot drift out of the document that depends on it.
 
 **A new file**, so nothing is replaced: it stages `.github/workflows/shared-tests.yml` entire, the CI job for `shared/`'s tests (mobile plan Task **P4.3**). The plan describes that job as a change to `ci.yml`, and it is a file of its own here because the brief for this run asked for the job "as a whole new workflow file"; the job's content is the plan's either way.
 
@@ -149,7 +191,7 @@ There is no timing constraint, unlike `images.yml` below: the job is not part of
 
 **This section states no test count, and that is deliberate.** An earlier version of it said the suite was 289 tests and that four mutation proofs would run; both were true when the job was staged and both were wrong by the time anyone read them again (the suite is past 470, and the package carries a proof for every module that declares one). A number in a document is a claim with no test under it, so what follows is **the shape of what the two legs report**, which does not move as the package grows, and a measurement that says when it was taken and how to retake it. The one list that *is* kept here — which scripts the proof step runs — is held to the tree by `TestSharedTestsWorkflowReadmeNamesEveryProofScript` rather than by hand.
 
-**The Node 22 leg will be red, and not because of this job.** One test fails on that line: `shared/url/index.test.js`'s hostile-string sweep expects `https://xn--github-9d0c.com/a` to be refused as `punycode-host`, and Node 22's host parser refuses the string itself, so the module answers `not-a-url` before its own host rule is reached. Node 26 parses it and the case passes. The difference is the runner's line, not the package's:
+**Both legs are green since 2026-10-24.** Until then the Node 22 leg was red, and not because of this job: `shared/url/index.test.js`'s hostile-string sweep used the fixture `https://xn--github-9d0c.com/a`, which is not valid punycode. Node 22's host parser throws on it, so the module answered `not-a-url` before its own punycode rule was reached; Node 26 parses it and the case passed:
 
 ```console
 $ node -e 'try { console.log("ok", new URL("https://xn--github-9d0c.com/a").hostname) } catch (e) { console.log("throws:", e.message) }'
@@ -157,22 +199,13 @@ $ node -e 'try { console.log("ok", new URL("https://xn--github-9d0c.com/a").host
 # node 26.12.0:  ok xn--github-9d0c.com
 ```
 
-That failure is **pre-existing and already recorded** — `shared/mailbox/README.md` and `shared/mailbox-sim/README.md` both name it, and it is the stated reason their mutation proofs run their own module's suite rather than the package's. It has a second consequence, one step later in the job: the proofs of `shared/confirm/`, `shared/lease/` and `shared/mailbox-schema/` run the **whole package's** `npm test` as their positive control, so on Node 22 they refuse (exit 2, "the suite does not pass on the pristine …") rather than reporting mutations they never ran. The other four — `shared/command/`, `shared/mailbox/`, `shared/mailbox-sim/` and `shared/prompts/` — run their own module's tests instead, so they are unaffected by it.
+The fixture is now `https://xn--gthub-n2e.com/a` (`gіthub.com` with a Cyrillic і), valid punycode that both lines parse, so the case reaches the punycode rule on both. It still tests that rule: with the module's `xn--` check removed, the case answers `host-not-allowed` and fails on both lines. The fix is in the test and not in the workflow: no file is skipped, no step is softened, and both Node lines stay.
+
+**What the two legs report, step by step:** a leg stops at its first failing step and GitHub skips the rest. With the suite passing on both lines, each leg runs `npm test` and then the proofs step, including the proofs of `shared/confirm/`, `shared/lease/` and `shared/mailbox-schema/`, which run the **whole package's** `npm test` as their positive control and used to refuse on Node 22 (exit 2) because of the punycode case. The other four (`shared/command/`, `shared/mailbox/`, `shared/mailbox-sim/` and `shared/prompts/`) run their own module's tests.
 
 **What the proof step runs**, which is the package's own list and not this document's: one script per module that declares one, run by a glob over `shared/*/mutation-proof.sh`. In the tree today that is `shared/command/mutation-proof.sh`, `shared/confirm/mutation-proof.sh`, `shared/lease/mutation-proof.sh`, `shared/mailbox/mutation-proof.sh`, `shared/mailbox-schema/mutation-proof.sh`, `shared/mailbox-sim/mutation-proof.sh` and `shared/prompts/mutation-proof.sh`. Each script breaks one guard in its module and requires the module's tests to catch it, prints its own `N guards: N killed, N survived` line, and exits non-zero unless every mutation it applies is caught, so the step fails on a survivor rather than on a summary nobody reads. `TestSharedTestsWorkflowReadmeNamesEveryProofScript` globs that pattern in the tree and requires this paragraph to name exactly the modules that carry one, in both directions: a module that adds a proof script fails this document until it is named here, and a name here whose script is gone fails too. Because the step globs rather than listing, the **job** never needs an edit for either case — only this list does.
 
-**What the two legs actually report, step by step:** a leg stops at its first failing step and GitHub skips the rest, so on Node 22 the job reports **one red step — "the shared package's tests"** — and its **mutation-proofs step is skipped, not red**: the proofs are never reached on that line, because `npm test` fails before them. On Node 26 both steps run and the leg is green. Everything below is the shape of that; the counts are the measurement dated under it:
-
-| | Node 22.23.3 | Node 26.12.0 |
-|---|---|---|
-| `npm test` (the step that decides the leg) | **1 test fails**, the punycode case above | every test passes |
-| the proofs that run their own module's suite (`command`, `mailbox`, `mailbox-sim`, `prompts`) | pass; every mutation caught | pass; every mutation caught |
-| the proofs that run the package's `npm test` as their positive control (`confirm`, `lease`, `mailbox-schema`) | **refuse**, exit 2 | pass; every mutation caught |
-| what the job shows | one red step at the test step; the proofs step skipped | green throughout |
-
-Measured on **2026-10-19**, in this container, on the two lines the job pins (Node 22.23.3 and 26.12.0, installed through `mise`), running exactly what the job runs: `cd shared && npm ci --ignore-scripts --no-audit --no-fund`, then `npm test`, then `bash shared/<module>/mutation-proof.sh` for each of the seven. The suite reported **476 tests: 475 pass and 1 fail on Node 22, 476 pass and 0 fail on Node 26**; the seven proofs reported **448 guards, 448 killed, 0 survived, 0 not applied on Node 26**, and on Node 22 the four module-suite proofs reported 29 + 109 + 45 + 93 guards killed — `command`, `mailbox`, `mailbox-sim` and `prompts`, in the order of the table above — with none surviving, while the three package-suite proofs refused. Those two figures are a record of that run, not a standing claim about the tree — re-run the commands rather than trusting them, and note that nothing goes stale in the *job* when they change, only in this sentence.
-
-**Nothing in the workflow hides this**, and it must not be edited to: skipping the failing file, softening the step or dropping the Node 22 leg would delete the evidence rather than the defect. The fix belongs to P0.3's module (`shared/url/`, and the expectation in `index.test.js`), which is a different task with its own review tier; the owner's two live options are to fix `shared/url` first, or to copy the job in with its Node 22 leg red — which is the honest state, and the point of running both lines.
+Measured on **2026-10-24**, on Node 22.23.3 and Node 26.8.1, from `shared/`: `npm ci`, then `npm test` reported **480 tests, 480 pass, 0 fail on both lines**, and on Node 22 the seven proofs reported **448 guards, 448 killed, 0 survived, 0 not applied**. Those figures are a record of that run, not a standing claim about the tree — re-run the commands rather than trusting them, and note that nothing goes stale in the *job* when they change, only in this sentence.
 
 One further honest note: `shared/package.json`'s `engines` is `>=22 <23`, so the Node 26 leg makes npm print an `EBADENGINE` **warning** on `npm ci` (npm 11.20.0) and nothing else — the install and the suite both succeed. Widening `engines` would be a change to P0.1's manifest, not to this file, and is not made here.
 
@@ -525,6 +558,110 @@ against upstream by the person copying the file in (see "Before you copy" below 
 Dependabot does not watch this directory), and the first real run is Check 59a's
 and 59b's (plan Task 4.3), which are owner-run on a Mac.
 
+## `console-release-tag.yml`
+
+**Status: applied on 2026-10-23.** The three commands below were run, so
+`docs/pending-workflows/console-release.yml` and
+`.github/workflows/console-release.yml` both carry this file's text, byte for
+byte, and its own staged copy is removed; a `console-vX.Y.Z` tag now starts the
+console's release and the CLI's `vX.Y.Z` tag starts no console work. What
+follows is the record of the change.
+
+**This file supersedes `## console-release.yml` above**, in the shape
+the `console-release-linux.yml` section above established: it is that file with one change,
+so it is copied over the staged `console-release.yml` **and** into
+`.github/workflows/console-release.yml`, which is why its copy-in has one more
+command than usual. Staged on **2026-10-23** by the run that gives the console
+its own release stream (the owner's addendum of **2026-10-22**: three
+independent streams — **CLI = animals** (`vX.Y.Z`), **Console = fruits**
+(`console-vX.Y.Z`), **Mobile = birds**).
+
+The console used to release from the CLI's `vX.Y.Z` tag: one tag pushed the
+CLI's GoReleaser run *and* this signing pipeline, and the console's version was
+whatever the CLI's tag said. It does not any more. What changes, and nothing
+else in the file moved:
+
+1. **The trigger is a push of `console-v[0-9]+.[0-9]+.[0-9]+`, and nothing
+   else.** The CLI's `vX.Y.Z` tag starts `release.yml` and no console work at
+   all, which is also why the staged `mobile-release.yml` — still on the CLI's
+   `vX.Y.Z` pattern — is a separate decision and not part of this one. The
+   version is taken from the console tag: `X.Y.Z` after `${TAG#console-v}`, and
+   the tag step refuses anything that is not strict, including the CLI's own
+   tags.
+2. **A step in both build legs refuses a tag whose `X.Y.Z` is not
+   `console/package.json`'s own `version`** — the call `release.yml` already
+   makes for the plugin's version, one file over. So the console's version line
+   is bumped on `main`, in the same commit as the notes below, **before** the
+   tag is pushed; the file's own header carries the message the refusal prints.
+   A release whose version lives only in its tag is one whose own version line,
+   update feed and file names can disagree with it — and, because Task 4.4's
+   updater refuses a downgrade, a console stamped below its `version` would
+   refuse every update it was ever offered.
+3. **The release body is the console's own notes file**, `docs/releases/console/vX.Y.Z.md`,
+   read from the tagged commit. The `release` job refuses to build when that
+   file is missing or empty, and `publish` — the job with no checkout — fetches
+   it through the API and passes it as `--notes-file`, after the standing
+   sentence about what is and is not signed. The inline body string the file
+   used to carry is gone: the console's end-user summary is that file.
+   `docs/release.md`, "Console releases", is the procedure the owner follows and
+   carries the fruit-name list.
+
+**`scripts/release.sh` and `scripts/release-gate.sh` are unchanged and stay
+CLI-only.** The gate refuses anything that is not a strict `vX.Y.Z`, so both
+console legs hand it **`v` + the version** — `scripts/release-gate.sh "v$VERSION"`
+— rather than the console tag, and what it is asked for is the part that is
+about the commit: the tagged commit is an ancestor of `origin/main`, and the
+required checks (`test`, `terraform`, `rules` and both console legs) succeeded
+on it. The shape of the console's own tag was already checked, strictly and by
+prefix, one step above. `scripts/release.sh` is the CLI's release driver and
+never names this workflow.
+
+**Permissions and environment, unchanged** (they are the security-sensitive part
+of this file, so they are repeated here): the `release` job keeps
+`contents: read` + `checks: read` and the protected `console-release`
+environment with its six Apple secrets; the `linux` job keeps `contents: read` +
+`checks: read` and **no environment and no secret at all**; the `publish` job
+keeps `contents: write` + `id-token: write` and **no environment, no secret, no
+checkout**. The trigger is still a **tag push and nothing else**: no
+`pull_request`, no `pull_request_target`, no `workflow_run`, no
+`workflow_dispatch` — a job holding the App Store Connect key must never be
+reachable from a branch of this repository.
+
+**To copy it in**, from the repository root — the first command is the one that
+keeps `console-release.yml` and its staged copy byte-identical, which is what
+`TestDocsConsoleReleaseWorkflowIsStagedAndPinned` asserts:
+
+```sh
+cp docs/pending-workflows/console-release-tag.yml docs/pending-workflows/console-release.yml
+cp docs/pending-workflows/console-release.yml .github/workflows/console-release.yml
+git rm docs/pending-workflows/console-release-tag.yml
+git add -A
+git commit -m "console: the console releases from its own console-vX.Y.Z tag"
+```
+
+The same commit has to carry the two sentences that count the files still
+pending here, because this file stops being one of them: **the four-file pair the
+`console-release-linux.yml` section above prints under "If `mobile-release.yml`
+is still staged when you make this copy-in"** is the pair to write — the opening
+line below the heading of this file and the last section of `website/README.md`
+— unless `mobile-release.yml` has been applied first, in which case that section
+prints the three-file pair for the tree that copy-in leaves.
+`TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere` and
+`website/test/readme.mjs` hold both sentences to the directory.
+
+**What is checked, and what is not.** The staged file is read by
+`TestDocsConsoleReleaseWorkflowIsStagedAndPinned` in both of its homes, through
+the effective-text reader that makes the suite identical before and after the
+copy-in; the trigger, both new refusal steps, the gate call and the publish
+shape are pinned there, the tag step and the version step are **run** under bash
+by `TestDocsConsoleReleaseTagStepStampsOnlyStrictVersions` and
+`TestDocsConsoleReleaseVersionStepRefusesATagItsOwnVersionLineDisagreesWith`,
+and the publish step is run against a faked `gh` by
+`TestDocsConsoleReleasePublishRefusesToClobber`, which refuses a version whose
+notes are missing or empty. What no test here can do is push a `console-vX.Y.Z`
+tag: the first real run of the new trigger is the owner's, and the first console
+release on the new stream is `0.110.0` "Cherry" (`docs/release.md`).
+
 ## `console-linux.yml`
 
 The desktop console's **Linux build check**, staged on **2026-10-20** by the run
@@ -612,8 +749,8 @@ and `console-release.yml`" — is unchanged, because those two do stay staged.
 `shared-tests.yml`:
 
 ```
-**Three files are pending: `shared-tests.yml`** (the shared package's test job, mobile plan Task
-P4.3; see `## shared-tests.yml` below), **`console-release-linux.yml`** (the console's signing
+**Four files are pending: `shared-tests.yml`** (the shared package's test job, mobile plan Task
+P4.3; see `## shared-tests.yml` below), **`images.yml`** (the credentials service's image leg, credentials-service plan Task C1.14; see `## images.yml` below), **`console-release-linux.yml`** (the console's signing
 pipeline with the Linux legs added, 2026-10-20 — it supersedes the staged
 `console-release.yml`; see `## console-release-linux.yml` below) **and `console-windows.yml`**
 (the console's Windows installer pack, 2026-10-20 — a release-time job, not a pull-request check;
@@ -621,8 +758,8 @@ see `## console-windows.yml` below).
 ```
 
 ```
-`docs/pending-workflows/` now holds three pending workflows,
-`docs/pending-workflows/shared-tests.yml` — the shared package's test job (mobile plan Task
+`docs/pending-workflows/` now holds four pending workflows,
+`docs/pending-workflows/images.yml` — the credentials service's image leg (credentials-service plan, task C1.14) — `docs/pending-workflows/shared-tests.yml` — the shared package's test job (mobile plan Task
 P4.3) — `docs/pending-workflows/console-release-linux.yml` — the console's signing pipeline
 with the Linux legs added, which supersedes the staged `console-release.yml` and so is copied
 over it as well as into `.github/workflows/` — and `docs/pending-workflows/console-windows.yml`
@@ -635,8 +772,8 @@ None is this site's:
 `console-release-linux.yml`, `console-windows.yml` and `mobile-release.yml`:
 
 ```
-**Four files are pending: `shared-tests.yml`** (the shared package's test job, mobile plan Task
-P4.3; see `## shared-tests.yml` below), **`console-release-linux.yml`** (the console's signing
+**Five files are pending: `shared-tests.yml`** (the shared package's test job, mobile plan Task
+P4.3; see `## shared-tests.yml` below), **`images.yml`** (the credentials service's image leg, credentials-service plan Task C1.14; see `## images.yml` below), **`console-release-linux.yml`** (the console's signing
 pipeline with the Linux legs added, 2026-10-20 — it supersedes the staged
 `console-release.yml`; see `## console-release-linux.yml` below), **`console-windows.yml`**
 (the console's Windows installer pack, 2026-10-20 — a release-time job, not a pull-request check;
@@ -645,15 +782,15 @@ store submissions, 2026-10-20; see `## mobile-release.yml` below).
 ```
 
 ```
-`docs/pending-workflows/` now holds four pending workflows,
-`docs/pending-workflows/shared-tests.yml` — the shared package's test job (mobile plan Task
+`docs/pending-workflows/` now holds five pending workflows,
+`docs/pending-workflows/images.yml` — the credentials service's image leg (credentials-service plan, task C1.14) — `docs/pending-workflows/shared-tests.yml` — the shared package's test job (mobile plan Task
 P4.3) — `docs/pending-workflows/console-release-linux.yml` — the console's signing pipeline
 with the Linux legs added, which supersedes the staged `console-release.yml` and so is copied
 over it as well as into `.github/workflows/` — `docs/pending-workflows/console-windows.yml` —
 the console's Windows installer pack, which runs at release time only rather than on a pull
 request, and is copied in only after the packer and the unit suite can pass on a Windows runner
 — and `docs/pending-workflows/mobile-release.yml` — the mobile app's build and store
-submissions (2026-10-20). None of the four is this site's:
+submissions (2026-10-20). None of the five is this site's:
 ```
 
 **If the console's other two have been applied first**, this copy-in leaves one of
@@ -700,7 +837,7 @@ What it adds, and nothing else in the file moved:
    sign with, so there is nothing to protect. It runs the same three gate checks
    through the same `scripts/release-gate.sh`, installs the same pinned
    toolchain, downloads Electron against the same
-   `electron-v44.7.2-linux-x64.zip` checksum, builds with the same pinned packer
+   `electron-v45.0.0-linux-x64.zip` checksum, builds with the same pinned packer
    (`npm run package:linux`, `--publish never`), and then verifies **what
    ships**: the SHA-256 of the `.AppImage` and the `.deb`, the `.deb` opened with
    `dpkg-deb --info`/`--contents`/`--extract`, the AppImage unpacked with its own
@@ -770,21 +907,21 @@ stay staged.
 order the copy-in proof applies, and the pair that names it as still pending:
 
 ```
-**Three files are pending: `shared-tests.yml`** (the shared package's test job, mobile plan Task
-P4.3; see `## shared-tests.yml` below), **`console-windows.yml`** (the console's Windows
+**Four files are pending: `shared-tests.yml`** (the shared package's test job, mobile plan Task
+P4.3; see `## shared-tests.yml` below), **`images.yml`** (the credentials service's image leg, credentials-service plan Task C1.14; see `## images.yml` below), **`console-windows.yml`** (the console's Windows
 installer pack, 2026-10-20 — a release-time job, not a pull-request check; see
 `## console-windows.yml` below) **and `mobile-release.yml`** (the mobile app's build and store
 submissions, 2026-10-20; see `## mobile-release.yml` below).
 ```
 
 ```
-`docs/pending-workflows/` now holds three pending workflows,
-`docs/pending-workflows/shared-tests.yml` — the shared package's test job (mobile plan Task
+`docs/pending-workflows/` now holds four pending workflows,
+`docs/pending-workflows/images.yml` — the credentials service's image leg (credentials-service plan, task C1.14) — `docs/pending-workflows/shared-tests.yml` — the shared package's test job (mobile plan Task
 P4.3) — `docs/pending-workflows/console-windows.yml` — the console's Windows installer pack,
 which runs at release time only rather than on a pull request, and is copied in only after the
 packer and the unit suite can pass on a Windows runner — and
 `docs/pending-workflows/mobile-release.yml` — the mobile app's build and store submissions
-(2026-10-20). None of the three is this site's:
+(2026-10-20). None of the four is this site's:
 ```
 
 **If it has already been copied in**, it is not pending, the directory is left
@@ -793,15 +930,15 @@ two-file one — the same pair `## mobile-release.yml` points at for the case
 where that copy-in comes second, because that is the same tree:
 
 ```
-**Two files are pending: `shared-tests.yml`** (the shared package's test job, mobile plan Task
-P4.3; see `## shared-tests.yml` below) **and `console-windows.yml`** (the console's Windows
+**Three files are pending: `shared-tests.yml`** (the shared package's test job, mobile plan Task
+P4.3; see `## shared-tests.yml` below), **`images.yml`** (the credentials service's image leg, credentials-service plan Task C1.14; see `## images.yml` below) **and `console-windows.yml`** (the console's Windows
 installer pack, 2026-10-20 — a release-time job, not a pull-request check; see
 `## console-windows.yml` below).
 ```
 
 ```
-`docs/pending-workflows/` now holds two pending workflows,
-`docs/pending-workflows/shared-tests.yml` — the shared package's test job (mobile plan Task
+`docs/pending-workflows/` now holds three pending workflows,
+`docs/pending-workflows/images.yml` — the credentials service's image leg (credentials-service plan, task C1.14) — `docs/pending-workflows/shared-tests.yml` — the shared package's test job (mobile plan Task
 P4.3) — and `docs/pending-workflows/console-windows.yml` — the console's Windows installer
 pack, which runs at release time only rather than on a pull request, and is copied in only after
 the packer and the unit suite can pass on a Windows runner. Neither is this site's:
@@ -981,13 +1118,13 @@ already applied. **If the Linux pair has already been copied in and
 `mobile-release.yml` has too**, this copy-in leaves one file pending:
 
 ```
-**One file is pending: `shared-tests.yml`** (the shared package's test job, mobile plan Task
-P4.3; see `## shared-tests.yml` below).
+**Two files are pending: `shared-tests.yml`** (the shared package's test job, mobile plan Task
+P4.3; see `## shared-tests.yml` below) **and `images.yml`** (the credentials service's image leg, credentials-service plan Task C1.14; see `## images.yml` below).
 ```
 
 ```
-`docs/pending-workflows/` now holds one pending workflow,
-`docs/pending-workflows/shared-tests.yml` — the shared package's test job (mobile plan Task
+`docs/pending-workflows/` now holds two pending workflows,
+`docs/pending-workflows/images.yml` — the credentials service's image leg (credentials-service plan, task C1.14) — `docs/pending-workflows/shared-tests.yml` — the shared package's test job (mobile plan Task
 P4.3). None is this site's:
 ```
 
@@ -995,14 +1132,14 @@ P4.3). None is this site's:
 staged**, it leaves two:
 
 ```
-**Two files are pending: `shared-tests.yml`** (the shared package's test job, mobile plan Task
-P4.3; see `## shared-tests.yml` below) **and `mobile-release.yml`** (the mobile app's build
+**Three files are pending: `shared-tests.yml`** (the shared package's test job, mobile plan Task
+P4.3; see `## shared-tests.yml` below), **`images.yml`** (the credentials service's image leg, credentials-service plan Task C1.14; see `## images.yml` below) **and `mobile-release.yml`** (the mobile app's build
 and store submissions, 2026-10-20; see `## mobile-release.yml` below).
 ```
 
 ```
-`docs/pending-workflows/` now holds two pending workflows,
-`docs/pending-workflows/shared-tests.yml` — the shared package's test job (mobile plan Task
+`docs/pending-workflows/` now holds three pending workflows,
+`docs/pending-workflows/images.yml` — the credentials service's image leg (credentials-service plan, task C1.14) — `docs/pending-workflows/shared-tests.yml` — the shared package's test job (mobile plan Task
 P4.3) — and `docs/pending-workflows/mobile-release.yml` — the mobile app's build and store
 submissions (2026-10-20), neither of which is this site's:
 ```
@@ -1012,8 +1149,8 @@ staged**, it leaves four — `shared-tests.yml`, `console-linux.yml`,
 `console-release-linux.yml` and `mobile-release.yml`:
 
 ```
-**Four files are pending: `shared-tests.yml`** (the shared package's test job, mobile plan Task
-P4.3; see `## shared-tests.yml` below), **`console-linux.yml`** (the console's Linux build check,
+**Five files are pending: `shared-tests.yml`** (the shared package's test job, mobile plan Task
+P4.3; see `## shared-tests.yml` below), **`images.yml`** (the credentials service's image leg, credentials-service plan Task C1.14; see `## images.yml` below), **`console-linux.yml`** (the console's Linux build check,
 2026-10-20; see `## console-linux.yml` below), **`console-release-linux.yml`** (the console's
 signing pipeline with the Linux legs added, 2026-10-20 — it supersedes the staged
 `console-release.yml`; see `## console-release-linux.yml` below) **and `mobile-release.yml`** (the
@@ -1021,30 +1158,30 @@ mobile app's build and store submissions, 2026-10-20; see `## mobile-release.yml
 ```
 
 ```
-`docs/pending-workflows/` now holds four pending workflows,
-`docs/pending-workflows/shared-tests.yml` — the shared package's test job (mobile plan Task
+`docs/pending-workflows/` now holds five pending workflows,
+`docs/pending-workflows/images.yml` — the credentials service's image leg (credentials-service plan, task C1.14) — `docs/pending-workflows/shared-tests.yml` — the shared package's test job (mobile plan Task
 P4.3) — `docs/pending-workflows/console-linux.yml` — the console's Linux build check, which is
 packed on every pull request and holds no secret — `docs/pending-workflows/console-release-linux.yml`
 — the console's signing pipeline with the Linux legs added, which supersedes the staged
 `console-release.yml` and so is copied over it as well as into `.github/workflows/` — and
 `docs/pending-workflows/mobile-release.yml` — the mobile app's build and store submissions
-(2026-10-20). None of the four is this site's:
+(2026-10-20). None of the five is this site's:
 ```
 
 **If neither has been copied in**, it leaves three — `shared-tests.yml`,
 `console-linux.yml` and `console-release-linux.yml` — and the sentences are:
 
 ```
-**Three files are pending: `shared-tests.yml`** (the shared package's test job, mobile plan Task
-P4.3; see `## shared-tests.yml` below), **`console-linux.yml`** (the console's Linux build check,
+**Four files are pending: `shared-tests.yml`** (the shared package's test job, mobile plan Task
+P4.3; see `## shared-tests.yml` below), **`images.yml`** (the credentials service's image leg, credentials-service plan Task C1.14; see `## images.yml` below), **`console-linux.yml`** (the console's Linux build check,
 2026-10-20; see `## console-linux.yml` below) **and `console-release-linux.yml`** (the console's
 signing pipeline with the Linux legs added, 2026-10-20 — it supersedes the staged
 `console-release.yml`; see `## console-release-linux.yml` below).
 ```
 
 ```
-`docs/pending-workflows/` now holds three pending workflows,
-`docs/pending-workflows/shared-tests.yml` — the shared package's test job (mobile plan Task
+`docs/pending-workflows/` now holds four pending workflows,
+`docs/pending-workflows/images.yml` — the credentials service's image leg (credentials-service plan, task C1.14) — `docs/pending-workflows/shared-tests.yml` — the shared package's test job (mobile plan Task
 P4.3) — `docs/pending-workflows/console-linux.yml` — the console's Linux build check, which is
 packed on every pull request and holds no secret — and
 `docs/pending-workflows/console-release-linux.yml` — the console's signing pipeline with the
@@ -1093,9 +1230,11 @@ manual dispatch before a tag.
 
 ## `mobile-release.yml`
 
-**Status: `mobile-release.yml` is staged and pending.** The copy has not been
-made — there is no `.github/workflows/mobile-release.yml` — and this document's
-opening line says the same. `TestDocsMobileReleaseWorkflowIsStagedAndPinned`
+**Status: `mobile-release.yml` is applied, not pending.** The owner approved the
+copy-in on 2026-10-23: the file is `.github/workflows/mobile-release.yml`,
+byte-identical to the staged copy it replaced, and the staged copy is removed, so
+this document's opening line no longer names it. The text below is the record of
+what was staged and how it was copied in. `TestDocsMobileReleaseWorkflowIsStagedAndPinned`
 (`internal/cli/docs_mobile_release_workflow_test.go`) reads the staged file, and
 `TestDocsMobileReleaseStagingTellsTheOwnerWhatToCopyIn` reads this
 section, so the two cannot drift apart silently. (Those names are held to this
@@ -1108,14 +1247,34 @@ tree, in both directions** — the way
 kept saying "pending" after the file was copied in would be red.
 
 The mobile app's release. `mobile/` is its own artifact outside the Go module
-(D125) with its own release path, and this is that path: **on every release tag
-(`v[0-9]+.[0-9]+.[0-9]+`, the pattern the sibling release workflows use), and on
-a manual dispatch**, one job per platform builds the app on EAS and submits the
-finished build to TestFlight's internal testers and to Google Play's
-internal-testing track. **Both jobs are enabled** — the owner's ruling of
-2026-10-20 is that iOS and Android both ship from here — and one repository
-variable can turn either platform off (`MOBILE_RELEASE_DISABLED_PLATFORMS`,
-below).
+(D125) with its own release path, and this is that path: **on the app's own
+release tag (`mobile-v[0-9]+.[0-9]+.[0-9]+`), and on a manual dispatch**, one job
+per platform builds the app on EAS and submits the finished build to
+TestFlight's internal testers and to Google Play's internal-testing track. **Both
+jobs are enabled** — the owner's ruling of 2026-10-20 is that iOS and Android
+both ship from here — and one repository variable can turn either platform off
+(`MOBILE_RELEASE_DISABLED_PLATFORMS`, below).
+
+**The tag is the app's own stream's, and that is the point of it** (the owner's
+ruling of 2026-10-22; `docs/release.md`, "Mobile releases"). Until that ruling
+this file carried the CLI's filter, `v[0-9]+.[0-9]+.[0-9]+` — the pattern the
+sibling release workflows use — so **every CLI release built the app on EAS and
+submitted it to both stores whether or not the app had changed**, and an app
+release had to ride a CLI tag. The app is its own artifact with its own cadence,
+so it now releases on `mobile-vX.Y.Z` and on nothing else: a `vX.Y.Z` tag starts
+the CLI's workflows and not this one, and this workflow starts on no tag but the
+app's. The filter is strict for the same reason the siblings' are — a bare
+`mobile-*` would also start a release on `mobile-vtest` or on a
+`mobile-v1.2.3-rc1` tag, which is not a release of anything.
+
+**The version comes from the tag, and the app's own version lines have to agree
+with it.** The **first step of each job** holds the pushed tag to the app's
+strict `mobile-vX.Y.Z` shape, takes `X.Y.Z` out of it, reads `expo.version` out of
+`mobile/app.json` and `version` out of `mobile/package.json`, and **refuses to
+build when either differs** — before the release gate runs and long before
+anything is built or submitted. The rule it enforces, and the release the app's
+first tag cuts, are
+`### Every release, before the tag: the version the app reports` below.
 
 **A new file**, so nothing is replaced: it stages `.github/workflows/mobile-release.yml`
 entire. It is a separate file from `ci.yml` for the reason `console-release.yml`
@@ -1131,8 +1290,9 @@ only the client that uploads it — with `contents: read` and the `checks: read`
 the release gate below needs, and nothing else, and **neither job needs the
 other**, so a platform that fails never blocks the other's release. Each job
 checks the repository out with `persist-credentials: false` and
-`fetch-depth: 0`, runs the two gate steps (below), takes the Node line from
-`mobile/package.json`'s `engines.node` (the same way `console-linux.yml` takes
+`fetch-depth: 0`, runs the version rule and then the two gate steps (below),
+takes the Node line from `mobile/package.json`'s `engines.node` (the same way
+`console-linux.yml` takes
 the console's), installs `eas-cli` **at one exact version**, masks the store
 identity, runs `eas build
 --platform <platform> --profile internal --non-interactive --wait --json` under
@@ -1171,10 +1331,10 @@ commit is on main" is the claim a submission needs either way. A dispatch with
 `dry_run` set submits nothing and is held to neither gate — but it is **not**
 therefore runnable from any branch: a job that names an environment is held to
 that environment's **Deployment branches and tags** policy, `mobile-release`'s
-names `main` and the `v*` tags (step **1** of the owner's list below), and GitHub
-refuses a job whose ref is outside that policy **before its first step runs**, so
-the workflow's own conditions never get a say. A dry run is a dispatch from
-`main` — or from a `v*` tag — like any other, and the first dry run of *this*
+names `main` and the `mobile-v*` tags (step **1** of the owner's list below), and
+GitHub refuses a job whose ref is outside that policy **before its first step
+runs**, so the workflow's own conditions never get a say. A dry run is a dispatch
+from `main` — or from a `mobile-v*` tag — like any other, and the first dry run of *this*
 file is therefore made after its copy-in has landed on `main`, not from the
 branch that carries the edit.
 
@@ -1313,7 +1473,7 @@ approves it, however the run was started — the same click `console-release` an
 `website-live` wait for. Either in the repository's **Settings → Environments**
 (create `mobile-release`, add yourself under **Required reviewers**, and under
 **Deployment branches and tags** choose **Selected branches** with `main` and the
-tag pattern `v*`), or with the API:
+tag pattern `mobile-v*`), or with the API:
 
 ```sh
 REPO=dimipaun/fugaro   # the repository the workflow runs in
@@ -1328,16 +1488,22 @@ JSON
 # `main`, so a manual dispatch from the default branch is allowed...
 gh api --method POST "repos/$REPO/environments/mobile-release/deployment-branch-policies" \
   -f name=main
-# ... and `v*`, so a release tag is. Both are needed: a policy that named only
-# `main` would refuse every tag, and one that named only tags would refuse every
-# manual dispatch.
+# ... and `mobile-v*`, so the app's own release tag is. Both are needed: a policy
+# that named only `main` would refuse every tag, and one that named only tags
+# would refuse every manual dispatch.
 gh api --method POST "repos/$REPO/environments/mobile-release/deployment-branch-policies" \
-  -f name='v*' -f type=tag
+  -f name='mobile-v*' -f type=tag
 ```
 
-The policy's `v*` is deliberately **wider** than the workflow's own tag filter
-(`v[0-9]+.[0-9]+.[0-9]+`): the workflow is what decides which tags start a
-release, and the environment's policy is a gate that has to let them through.
+**The policy's `mobile-v*` is the app's stream, and it is not `v*`.** A `v*`
+policy admits the CLI's tags and **not one tag this workflow offers**: GitHub
+refuses a deployment to an environment from a ref its policy excludes, so the
+environment would be unreachable on every release and the run would fail at the
+job, before its first step — a gate that admits nothing rather than one that
+admits too much. The policy is deliberately **wider** than the workflow's own tag
+filter (`mobile-v[0-9]+.[0-9]+.[0-9]+`): the workflow is what decides which tags
+start a release, and the environment's policy is a gate that has to let them
+through, so `mobile-v*` covers `mobile-vtest` too and that is the point.
 Tightening this line is the one edit here that can block every release rather
 than admit a wrong one, so leave it as it is.
 
@@ -1430,99 +1596,97 @@ exists and has to become
 the tree in both directions the way
 `TestSharedTestsWorkflowStagingStateIsWhatTheReadmeSays` reads
 `shared-tests.yml`'s, so copying the file in without this edit leaves the suite
-red. Applying this file leaves the directory holding `shared-tests.yml`,
-`console-linux.yml`, `console-release-linux.yml` and `console-windows.yml`, so the two sentences that
-commit needs are (each block is the **exact** text to write in place of the
-sentence it replaces; the opening-line block is the whole claim, from its first
-bold marker to the end of its last sentence, and the sentence that follows it in
-this file — "**Two other files stay staged here by design**, `console-tests.yml`
-and `console-release.yml`" — is unchanged, because those two do stay staged):
+red.
 
-```
-**Four files are pending: `shared-tests.yml`** (the shared package's test job, mobile plan Task
-P4.3; see `## shared-tests.yml` below), **`console-linux.yml`** (the console's Linux build check,
-2026-10-20; see `## console-linux.yml` below), **`console-release-linux.yml`** (the console's
-signing pipeline with the Linux legs added, 2026-10-20 — it supersedes the staged
-`console-release.yml`; see `## console-release-linux.yml` below) **and `console-windows.yml`** (the
-console's Windows installer pack, 2026-10-20 — a release-time job, not a pull-request check; see
-`## console-windows.yml` below).
-```
-
-```
-`docs/pending-workflows/` now holds four pending workflows,
-`docs/pending-workflows/shared-tests.yml` — the shared package's test job (mobile plan Task
-P4.3) — `docs/pending-workflows/console-linux.yml` — the desktop console's Linux build check
-(2026-10-20: it packs the AppImage and the `.deb` on `ubuntu-latest` and uploads them, and
-holds no secret) — `docs/pending-workflows/console-release-linux.yml` — the console's
-signing pipeline with the Linux legs added, which supersedes the staged `console-release.yml`
-and so is copied over it as well as into `.github/workflows/` — and
-`docs/pending-workflows/console-windows.yml` — the console's Windows installer pack, which runs
-at release time only rather than on a pull request, and is copied in only after the packer and
-the unit suite can pass on a Windows runner. None of the four is this site's:
-```
-The second block is the head of `website/README.md`'s last paragraph, up to and
-including the words "the website's two manual" — the sentence continues as it
-does today, and `website/test/readme.mjs` reads the whole page rather than this
-sentence, so the rest of it needs no edit. It also reads the count as a word and
-compares it as a number, so `four` here is what the directory holds after this
-copy-in; the word `five` is the one this document's opening line carries while
-the file is pending.
-
-**The two copy-ins of 2026-10-20 can be made in either order, and the pair
-depends on which one this is.** The two blocks above are the pair for making
-**this** copy-in **first** — the order this tree is in (`mobile-release.yml`
-applied, the console's two files still staged), and the pair
-`TestDocsMobileReleaseStagingTellsTheOwnerWhatToCopyIn` reads out of this section
-and holds to the directory **while the console's two files are still staged
-beside it, which is the tree the pair describes**. If the console's two files
-have been copied in first, this copy-in leaves **two** pending files rather than
-four, and the pair to write is the two-file pair printed under the matching
-label in `## console-release-linux.yml` above — the same pair that section
-prescribes for its own copy-in when this file has already been applied, because
-it is the same tree either way: the directory is left holding `shared-tests.yml`
-and `console-windows.yml`. (Making both copy-ins in one commit leaves that tree too, so that pair is
-the one to write then as well.) Read the count and the names off the directory,
-which is what both sentences are held to.
-
-**The Status line is the one thing in this section that does not survive the
-copy-in**: it is read against the tree, so the same commit has to change it (the
-third edit above). The two sentences do survive it, when this copy-in is the one
-made first — the directory is left holding the four files the block above names
-— and `website/README.md` is never left naming a set this file is not in while it
-is still here: `readme.mjs` reads the directory, not the file's own history.
+**What the copy-in of 2026-10-23 actually wrote.** This section used to print the
+two sentences as "exact text" blocks, and by the time the file was applied those
+blocks were stale: they named `console-linux.yml` and `console-release-linux.yml`,
+which had been applied in the meantime and were no longer staged, and they left
+out `dependabot-console.yml` and `console-release-tag.yml`, which had been staged
+since. The copy-in therefore wrote both sentences from the directory listing, not
+from the blocks — the rule for any later copy-in too: **read the count and the
+names off `docs/pending-workflows/`, which is what both sentences are held to.**
+Applying this file, together with the console's `console-release-tag.yml`
+copy-in of the same day (#966), left the directory holding four pending files —
+`shared-tests.yml`, `images.yml`, `console-windows.yml` and
+`dependabot-console.yml` — beside the two kept by design (`console-tests.yml` and
+`console-release.yml`), so this document's opening line reads "**Four files are
+pending**" and names those four, and `website/README.md`'s last section reads
+"`docs/pending-workflows/` now holds four pending workflows" and names the same
+four.
 
 ### Every release, before the tag: the version the app reports
 
-**The version a store shows is `expo.version` in `mobile/app.json`, and nothing in
-this workflow sets it.** The file is checked in as `"version": "0.0.0"` — the
-placeholder a release replaces — and `mobile/app.config.js` spreads that static
-config, adding only the two store identities to it. So the tag push builds
-whatever `app.json` says, and what a build reports is fixed at its upload: an app
-that ships `0.0.0` behind a `vX.Y.Z` tag is a store record that disagrees with the
-release, and nothing in this workflow goes red to say so.
+**The tag names the version and the app's own version lines are that number, and
+the file refuses a tag that disagrees with either.** The app releases on its own
+tag (`mobile-vX.Y.Z`, `docs/release.md`'s "Mobile releases"), and the version a
+store shows is `expo.version` in `mobile/app.json` — the file is checked in as
+`"version": "0.0.0"`, the placeholder a release replaces — while the app's *own*
+record of its version is `version` in `mobile/package.json`, which
+`mobile/src/app-config.test.js` pins `expo.version` to ("the config and the
+manifest agree on the version"). `mobile/app.config.js` spreads that static
+config, adding only the two store identities to it. So **the first step of each
+job is the version rule**: it holds the tag to a strict `mobile-vX.Y.Z` shape,
+takes `X.Y.Z` out of it (the one `mobile-` prefix `scripts/release-gate.sh` strips
+as well), reads **both** lines with a read that fails rather than printing
+nothing, and **stops the job when either differs** — before the release gate runs
+and long before anything is built or submitted. A tag pushed over a `0.0.0` line
+therefore builds nothing, and what a build reports is fixed at its upload: no two
+of the tag, the config and the manifest can disagree without the run going red.
 
-Two checks read that version against the tag: **C6**
+**The manifest is compared here because nothing else compares it.** The app's
+suite asserts the config and the manifest carry the same version, and **no check
+this repository runs executes that suite**: no file under `.github/workflows/`
+mentions `mobile/`, so `scripts/release-gate.sh`'s required `test` is the Go
+module's and the app's tests are not a check run at all. A release cut from a rule
+that named only `app.json` — which is what `docs/release.md` said before this
+section — would submit a build and land on `main` with that suite red behind it,
+and the workflow's first step is the one place the mistake can still be caught.
+
+That step reads the committed `mobile/app.json` and `mobile/package.json`, never a
+resolved `mobile/app.config.js`, which requires the store identity only on EAS's
+own build machines. It carries `if: github.ref_type == 'tag'` — a fact about the
+ref rather than the event — so a manual dispatch that names a tag (`gh workflow
+run --ref mobile-v0.200.0`) is held to the same comparison a pushed tag is.
+
+**[per repo, before every release tag] Set `expo.version` in `mobile/app.json`
+and `version` in `mobile/package.json` to the version being released, in one
+commit on `main` before the tag.** It is the ordering the Highlights file and the
+plugin bump already have (`scripts/bump-plugin-version.sh` bumps the plugin and
+touches nothing under `mobile/`), and `docs/release.md`'s "Before you tag"
+checklist and its "Mobile releases" section carry the same line, so a release
+reads it whether the owner comes to it from this document or from the release
+procedure. Two files rather than one because the app has two records of its
+version and its own test holds them together; a release that sets one and not the
+other is the defect the workflow's first step now refuses.
+
+**The first mobile release is `mobile-v0.200.0`, "Falcon".** Read the lines before
+you cut it: `mobile/app.json` and `mobile/package.json` both carry `0.0.0` today,
+which is the placeholder rather than a version anybody released, so the release
+that cuts the first tag sets both to `0.200.0` in a commit on `main` first. If the
+files carry another version when you read them, **that** line is the release being
+cut and the tag is `mobile-v<that line>` — the files are the authority and the tag
+follows them, never the other way round. The app's releases are named after birds,
+spent in order: Falcon first, then Pelican, then Robin
+(`docs/releases/mobile/README.md`).
+
+**Two checks read that version, and both now follow the app's own tag.** **C6**
 (`docs/mobile/implementation-plan.md`, "the app is versioned with the CLI's tag")
-and **Check 89 step 4** (`docs/gcp-live-checklist.md`: "the version the app
-reports equals the guard's `$TAG`"). `mobile/README.md` says the same in the
-release's own words: releasing this app means setting it to the version being
-released, and nothing bumps it for you.
-
-**[per repo, before every release tag] Set `expo.version` in `mobile/app.json` to
-the version being released, in a commit on `main` before the tag.** It is the
-ordering the Highlights file and the plugin bump already have
-(`scripts/bump-plugin-version.sh` bumps the plugin and touches nothing under
-`mobile/`), and `docs/release.md`'s "Before you tag" checklist carries the same
-line, so a release reads it whether the owner comes to it from this document or
-from the release procedure.
+is **superseded** by the owner's ruling of 2026-10-22: the app is versioned with
+its own tag, which is what the step above enforces. **Check 89 step 4**
+(`docs/gcp-live-checklist.md`) is the owner-run one: it reads the version the
+installed app reports against the version the guard's `$TAG` names, and that is
+the app's own tag. `mobile/README.md` says the same in the release's own words:
+releasing this app means setting it to the version being released, and nothing
+bumps it for you.
 
 The console answers the same question the other way — `console-release.yml` stamps
 each pack with `-c.extraMetadata.version=X.Y.Z` taken from the tag, which is why
 `console/package.json` can stay `0.0.0`. **That way is not available here without
 a change to `mobile/app.config.js`**: the app's version comes from the app's own
-config, so this staged file cannot set it from the tag by itself. The step above is
-what exists, and a later change that stamps the version from the tag replaces that
-step rather than adding to it.
+config, so this file cannot stamp it from the tag by itself. The rule above is
+what holds the two together, and a later change that stamps the version from the
+tag replaces the rule rather than adding to it.
 
 ### After the first dry run: read that run's log
 
@@ -1534,7 +1698,7 @@ has ever been run from this repository, so whether `eas build` or `eas submit`
 prints an identity into a job log is the kind of thing that can only be known by
 looking. It is an item to do rather than a numbered check, because a number would
 claim a check that has not been made. The dispatch itself has to come from `main`
-or from a `v*` tag, because the `mobile-release` environment's policy names those
+or from a `mobile-v*` tag, because the `mobile-release` environment's policy names those
 and GitHub refuses any other ref before the job starts. If an identifier does
 appear, the mask step is what to look at first — and its fix is an edit to this
 workflow, which an agent cannot deliver (GitHub refuses the push), so it is worth
@@ -1617,11 +1781,19 @@ Global Constraint 9, D120). Check 89 (`docs/gcp-live-checklist.md`) is the
 owner-run check for the store path, and it is **NOT RUN**.
 
 What *is* asserted offline, by `TestDocsMobileReleaseWorkflowIsStagedAndPinned`,
-is the file's text: its two triggers and the absence of any third, on the tag
-pattern `v[0-9]+.[0-9]+.[0-9]+`; `contents: read` at the top and
+is the file's text: its two triggers and the absence of any third, on the app's
+own tag pattern `mobile-v[0-9]+.[0-9]+.[0-9]+`; **the version rule as each job's
+first step** — exactly `if: github.ref_type == 'tag'`, the strict
+`mobile-vX.Y.Z` shape, the version taken from the tag, and `expo.version` read out
+of `mobile/app.json` **and** `version` out of `mobile/package.json`, each refusal
+a block that stops the job — and the tag's version compared with **both** of the
+app's version lines, before the gate below it; the gate being the
+same `scripts/release-gate.sh` every other publishing workflow runs, which takes
+the app's tag under its one `mobile-` prefix; `contents: read` at the top and
 `{contents: read, checks: read}` on each job — the second being what the release
 gate's check-runs read needs — with no other scope and no job-level
-`env:`; the **release gate** as each job's first step, carrying exactly
+`env:`; the **release gate** as each job's step after the version rule, carrying
+exactly
 `if: github.event_name == 'push'`, and the **second gate step** a manual
 dispatch that would submit runs, carrying exactly
 `if: github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run != 'true'`,
@@ -1658,7 +1830,9 @@ is case-insensitive on purpose, because a lowercase-only one would pass a pasted
 `com.Fugaro.App`, which is the accident it exists to catch. (A handful of
 dotted names the file is allowed to carry are listed explicitly — `engines.node`,
 `submit.internal.android.track`, `android.buildType`, `artifacts.buildUrl`,
-`Info.plist` — plus the `github.` event-payload namespace the conditions read.
+`Info.plist`, and `expo.version`, the app's version line the version rule reads and
+the one dotted name it adds — plus the `github.` event-payload namespace the
+conditions read.
 Each is a field or file name, never a value.)
 
 **What none of that can tell the owner is what a log looks like.** The mask step
@@ -1682,6 +1856,125 @@ deliberate edit to this file, checked the same way (read the registry's `latest`
 write the version, and the test names both if they disagree). Every other pin in
 the file is a commit SHA with its version beside it; this one is a version, and
 it is the only pin that is not a commit.
+
+## `dependabot-console.yml`
+
+**Status: `dependabot-console.yml` is applied, not pending.** Copied over `.github/dependabot.yml` and its staged copy removed on **2026-10-23**, on the owner's approval of that date; what follows is the record. Staged on
+**2026-10-23** on the owner's ruling of **2026-10-22**, which answers open item 5 of
+`docs/plans/2026-10-15-desktop-console.md`: *stage the file, with the copy-in
+step, and let the owner apply it.*
+
+**It is not a workflow, and its name is not its target.** The file is the WHOLE
+of `.github/dependabot.yml` as it should read once the console is watched — the
+`github-actions` entry that runs today, unchanged, plus one `npm` entry — so its
+copy-in is a `cp` **over `.github/dependabot.yml`**, and nothing is ever written
+to a path called `dependabot-console.yml`. It is staged here for one reason, and
+it is the owner's rather than this repository's: `.github/dependabot.yml` is
+**not** under `.github/workflows/`, so an agent run *may* write it — which is
+exactly what the plan's open item 5 reserved ("this plan deliberately does not:
+it belongs with Task 1.0's pins, and the owner may prefer to keep Dependabot's
+scope where it is rather than have a weekly PR stream behind an approval gate").
+The ruling takes the scope extension and keeps the decision: this directory is
+where the owner reads it, and the copy-in is theirs to make.
+
+**What the added entry is.**
+
+- `package-ecosystem: npm`, `directory: /console`, weekly. The console's
+  `package.json` pins every dependency to an EXACT version and
+  `test/unit/pinning.test.ts` enforces that (design section 5.2), so a
+  Dependabot pull request is an exact-to-exact bump a reviewer can read.
+- **Grouped**: `groups.console` with `patterns: ['*']` and
+  `update-types: [minor, patch]`, so a week's minor and patch bumps arrive as
+  **one** pull request rather than one per dependency — the difference between a
+  review and a stream of approvals.
+- **A major is deliberately outside the group**, so it arrives on its own: the
+  Electron major is the one the console's own toolchain task makes on purpose,
+  and Electron's binary is not an ordinary npm dependency at all (design section
+  5.2 — `console/package.json` pins all three platforms' download checksums, so
+  an Electron bump is a kind of change that has to be looked at rather than
+  merged with a patch bump to a type definition).
+- The `github-actions` entry is left alone, byte for byte: `images/cloudbuild_test.go`
+  asserts this file has a weekly `github-actions` update, and that assertion must
+  hold in the tree the copy-in leaves — where the staged file's content *is*
+  `.github/dependabot.yml`.
+
+**Copy it in:**
+
+```sh
+cp docs/pending-workflows/dependabot-console.yml .github/dependabot.yml
+git rm docs/pending-workflows/dependabot-console.yml
+git commit -m "dependabot: watch console/ (desktop-console plan, open item 5)"
+```
+
+The `git rm` is load-bearing rather than cleanup: while the staged file exists,
+`TestDependabotConsoleStagingIsPinned` reads IT, so leaving it in place would
+freeze that test on its bytes and hide a later edit of the file that runs.
+
+**The same commit has to update three sentences, and they are not prose only.**
+Two of them count what this directory holds, because both are held to the
+directory rather than to a remembered count: this document's opening line
+(`TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere` reads it, and
+`website/test/readme.mjs` reads the site's), and the site's own paragraph, which
+`website/test/readme.mjs` checks in both directions — the count and the set of
+names, with `docs/pending-workflows/` scanned page-wide, so every backticked
+mention has to move with it.
+
+The third is **this section's own opening line**, and it is the one a reader of
+the copy-in instructions would otherwise miss: `TestDependabotConsoleStagingIsPinned`
+reads it against the tree — the way
+`TestSharedTestsWorkflowStagingStateIsWhatTheReadmeSays` reads
+`shared-tests.yml`'s — so the copy-in changes it to
+
+```md
+**Status: `dependabot-console.yml` is applied, not pending.**
+```
+
+A section that kept opening with "staged and pending" after the file was copied
+in would be describing a staged copy that is not there, and the test is red
+rather than silent about it.
+
+The opening line's exact text for the state the copy-in leaves — **four** files
+pending, this one gone — is:
+
+```md
+**Four files are pending: `shared-tests.yml`** (the shared package's test job, mobile plan Task P4.3; see `## shared-tests.yml` below), **`images.yml`** (the credentials service's image leg, credentials-service plan Task C1.14; see `## images.yml` below), **`console-windows.yml`** (the console's Windows installer pack, 2026-10-20 — a release-time job, not a pull-request check; see `## console-windows.yml` below) **and `mobile-release.yml`** (the mobile app's build and store submissions, 2026-10-20; see `## mobile-release.yml` below).
+```
+
+The site's paragraph needs the word `four` and the same four names, with the
+name `docs/pending-workflows/dependabot-console.yml` removed from it — and from
+**every** backticked mention on that page, because `website/test/readme.mjs`
+flattens the whole document before it reads the set.
+
+**What the copy-in of 2026-10-23 actually wrote.** The block above was stale by
+then: it names `mobile-release.yml`, which had been applied in the meantime. The
+copy-in wrote both sentences from the directory listing instead — `shared-tests.yml`,
+`images.yml` and `console-windows.yml` — so this document's opening line reads
+"**Three files are pending**" and `website/README.md` reads
+"`docs/pending-workflows/` now holds three pending workflows". It also dropped the
+staging-only header from the top of the file that runs, keeping the comments
+that say what the console's entry is.
+
+**What is verified about it, and what is not.** `TestDependabotConsoleStagingIsPinned`
+(`internal/cli/docs_dependabot_console_test.go`) pins the staged file's content
+(the two entries, the weekly schedule of each, the directory `/console`, the
+group and its two update types, and that the `github-actions` entry is the one
+that runs today), pins the copy-in command and the section that carries it —
+including this section's own opening line, which the copy-in rewrites — and
+pins the staging state in both directions: while the staged copy is here,
+`.github/dependabot.yml` must NOT yet carry the console entry; once the copy-in
+has removed it, the file that runs must.
+`TestDependabotConsoleStagingStateIsReadableInEveryState`, in the same file, runs
+those rules against **both** states with fixtures, because the state the copy-in
+leaves is one no agent-run tree is ever in, and against five single-rule
+breakages — so the half of the check that the copy-in is the first to exercise
+is exercised here instead. **The steps above were walked in this tree** — the
+`cp` over `.github/dependabot.yml`, the `git rm`, and the three sentences — and
+`internal/cli` and `website/test/readme.mjs` were green with the staged copy
+gone and the console entry in the file that runs. **What no test can verify is what
+Dependabot does with the file**: it is GitHub's service, it is not run from CI,
+and nothing in this repository observes the pull requests it opens or refuses to
+open. The file is pinned as the text the owner applies, and the acceptance is
+that the service reads it.
 
 ## `website-preview.yml` and `website-promote.yml`
 
@@ -1776,6 +2069,169 @@ has exactly two: `firebasehosting.admin` and `firebasehosting.viewer`); a
 permission error naming another API points at the two add-on roles
 `docs/website/preview-promote.md` lists. The copy-in is the owner's, and the
 first real run is what settles those.
+
+## `images.yml`
+
+**Status: `images.yml` is staged and pending.** `.github/workflows/images.yml`
+holds the two earlier changes (the 0.7.0 hard cut `838e0b0` and the signing
+change `6b57ba9`, whose own record follows this section) and does **not** hold
+this one: the staged file here is that file plus the credentials service's
+image leg, and the `## `images.yml` — applied in `6b57ba9`` section below is the
+record of the change before this one, not of this one. The copy-in is the
+owner's — a Fugaro run may not write `.github/workflows/**` (GitHub rejects the
+push) — and the one command is in **`images.yml`'s own copy-in steps** above.
+
+**What the change is.** The credentials service's image (credentials-service
+plan, task **C1.14**, `images/credentials/Dockerfile`) is built and checked by
+CI the way the history job's image is, published with the others on a release
+tag, and — unlike history — **signed and pinned the way the base is**, because
+something verifies it: `fugaro update`'s credentials stage resolves
+`fugaro-credentials:<version>-pinned`, verifies the cosign signature and only
+then writes the digest it names into the service's Terraform variable
+(`internal/cli/init_credentials.go`, task C1.20; `internal/infra/tf` refuses a
+tag at plan time), and its own rig publishes exactly that `-pinned` tag.
+Nothing outside the hunks below changes: the triggers, the `version` job's
+version-picking, the `fugaro-base` and `docker-tests` jobs, every *step* of
+`publish` and `publish-base`, and `publish`'s own `needs: [version, history]`
+and `matrix.base: [history]` lines are all carried over byte for byte. Two
+*comments* are not, and each is a hunk of its own below: a comment naming the
+jobs that hold `packages: write` and `id-token: write` is part of the trust
+boundary it describes, so both copies of it would otherwise be wrong. The diff
+against the committed file is six things:
+
+- **`version`'s "Which images this tree builds" list gains `credentials`:**
+  `for k in history base credentials;`, plus six added comment lines above the
+  loop (a bare `#` and five lines of prose) recording why a tag whose tree
+  predates the image skips that leg. The list is
+  the one place an image is registered, and every step of every build leg is
+  gated on it, so a tag whose tree predates `images/credentials/Dockerfile`
+  (any release before this one) skips that leg instead of failing every nightly.
+- **A `credentials` job**, on the `history` job's shape: checkout, the resolved
+  tag on a nightly or dispatch run, `images/build-base.sh credentials
+  fugaro-credentials:ci`, `images/smoke-credentials.sh`, `images/size-budget.sh`,
+  `images/scan.sh --secrets` and (off pull requests) `images/scan.sh`, then the
+  image saved and uploaded as the `fugaro-credentials-image` artifact. It is
+  the `fugaro-base` job's shape for the scans rather than `history`'s: **the
+  secret scan runs on every run**, not only off pull requests — this image is
+  the one process that holds model credentials, so a secret that leaked into a
+  layer has to fail the pull request that added it, not the release that ships
+  it — and the vulnerability scan is off pull requests, exactly as it is for
+  the base. There is no multi-arch leg:
+  the service's revision is linux/amd64, which is what `build-base.sh` builds
+  by default. Nothing in the job passes the service's three variables
+  (`FUGARO_PROJECT`, `FUGARO_GCP_PROJECT`, `FUGARO_REGION`): the Cloud Run
+  service gets them from the installation module (`credentials.tf`) and the
+  image's `credentials serve` refuses to start without them.
+  `images/smoke-credentials.sh` asserts exactly that in the built image, and
+  that the image carries no credential-shaped environment of its own.
+- **`publish-base`'s header comment names three jobs, not two:** its closing
+  two lines said "this job and publish are the only ones with packages: write;
+  id-token: write is here alone"; they now say that `publish-base`, `publish`
+  and `publish-credentials` are the only ones with `packages: write` and that
+  `id-token: write` is on `publish-base` and `publish-credentials` alone. The
+  sentence is the written form of what `TestOnlyPublishJobsHoldPackagesWrite`
+  and `signingProblems`' id-token check assert, so leaving it stale would have
+  made the file disagree with its own guard.
+- **A `publish-credentials` job**, `publish-base`'s chain for a
+  single-architecture image: load the artifact, push `<version>` (and
+  `<major>` when that tag moves), take the digest **from the push's own
+  answer** rather than from a tag, sign exactly that digest with this
+  workflow's keyless identity on a tag push, verify the signature against
+  this workflow on a `push` event and this repository, and only then write
+  `<version>-pinned` at the signed digest — by re-pushing the manifest the job
+  already signed, then reading the tag back and failing if it resolves
+  anywhere else. It is a separate job rather than a leg of `publish` because
+  signing needs `id-token: write`, and that belongs on the jobs that sign and
+  on no other: `publish` keeps only `packages: write`.
+  **Why this image is signed when history's is not:** the `-pinned` tag is
+  what the credentials stage resolves and the digest it names is what the
+  service's Terraform variable is set to, so a tag-only publish would leave
+  that stage with nothing it may pin. The service runs as the account that
+  reads every model credential in the bundle, while every operator of the
+  project holds `roles/artifactregistry.writer` on the registry the image
+  comes from, so a mutable tag would let an operator choose the code that
+  account runs. The chain itself is `publish-base`'s, from the review that
+  produced it (`docs/plans/2026-10-13-retire-image-mirror.md`, Task 1, PR
+  #377); what is new is that a second job carries it.
+- **`publish`'s header comment says why it is not the one publishing this
+  image:** it said "this job and publish-base are the only ones that need
+  packages: write, and neither ever runs on pull_request"; it now names
+  `publish-credentials` too and says the base and the credentials service
+  publish through the two jobs above *because those two are signed*. Its
+  `needs:` and `matrix.base:` lines are **not** part of the change: they
+  already read `[version, history]` and `[history]` in the committed file,
+  because the 0.7.0 cut (`838e0b0`) had already removed the base from this
+  job's matrix — the credentials image is a job that never joins it rather
+  than an image leaving it.
+- **`verify-public` pull-checks it:** `for img in history credentials; do`, so
+  the published image is pulled back with no login, and the job now waits on
+  `publish-credentials`, gating on it exactly as it gates on `publish-base` —
+  a skipped `publish-credentials` is fine only when the tree holds no
+  credentials image, so a failed or skipped one cannot leave the image
+  unverified. A brand-new ghcr.io package is private until its owner makes it
+  public once by hand (`docs/release.md`), and this job is what fails the
+  release instead of shipping an image nobody can pull. **The owner's one-time
+  step for a new package applies here:** after the first release that
+  publishes it, `fugaro-credentials` has to be made public by hand, or this
+  job fails the next release and every one after it.
+
+**Also in the staged file: the `publish-base` fix that v0.11.5 needs.** The
+v0.11.4 tag's `publish-base` failed twice (run 40234606942) and
+`fugaro-base:0.11.4` was never published, because `ubuntu-latest` became
+ubuntu-26.04 between the v0.11.3 and v0.11.4 runs. That image's docker uses the
+containerd image store: the amd64 build saved an index with a provenance
+attestation (pushed as `0.11.4-amd64`, an OCI index), and after the push
+`docker image inspect --format '{{index .RepoDigests 0}}'` returned the loaded
+local name `fugaro-base@sha256:...` before the `ghcr.io/dimipaun/fugaro-base@`
+one, so `docker buildx imagetools create` asked Docker Hub for
+`docker.io/library/fugaro-base` and was refused with `insufficient_scope`. The
+fix is four hunks: the amd64 build leg and `publish-base` run on `ubuntu-24.04`
+instead of `ubuntu-latest`, the base build sets
+`BUILDX_NO_DEFAULT_ATTESTATIONS=1` so each architecture is one plain manifest,
+and `publish-base` takes the digest listed under `ghcr.io/dimipaun/fugaro-base@`
+rather than the first one. **The fix alone, without the credentials leg, is
+`docs/pending-workflows/images-publish-base-fix.patch`**, a patch against the
+running file; it must be on `main` before the 0.11.5 version-bump merge commit,
+so that the tagged tree carries it:
+
+```sh
+git apply docs/pending-workflows/images-publish-base-fix.patch
+git rm docs/pending-workflows/images-publish-base-fix.patch
+git add .github/workflows/images.yml
+git commit -m "images: publish-base on pinned ubuntu-24.04 runners"
+```
+
+Copying the whole staged file in (above) also carries the fix, and then the
+patch is removed with it. `images/base_workflow_test.go` reads the staged file
+while it exists and asserts the pinned runners, so the running file is checked
+only after that copy-in.
+
+**What the copy-in has to leave true.** After the copy and the `git rm`, the
+real `.github/workflows/images.yml` is what `images/base_workflow_test.go`'s
+`readWorkflow` reads, and it must hold the base jobs *and* the credentials
+leg: `TestImagesWorkflowBuildsTheBaseAndHistory` (the `credentials` and
+`publish-credentials` jobs exist),
+`TestImagesWorkflowPublishesAndVerifiesEveryImage` (publish's matrix is
+`[history]`, `publish-credentials` waits for the credentials build and is
+gated on the publish/kinds conditions, both images are built and
+smoke-tested, the size budget and the secret scan are run, `verify-public`
+names both and waits on both publish jobs),
+`TestOnlyPublishJobsHoldPackagesWrite` (the `credentials` job holds no
+`packages: write`, and `publish-credentials` does),
+`TestPublishBaseSignsByOCIDigestOnPushOnly` and
+`TestCredentialsPublishSignsByDigestOnPushOnly` (`id-token: write` is on
+those two jobs and no others, and both chains sign by digest on a tag push
+and write their `-pinned` tag last), and their mutation tests are the checks
+that fail if a copy dropped the change. They are the same checks that read
+the staged file today, so a copy that is faithful changes nothing about them.
+
+**One thing this staging does not do, and the owner should know before
+releasing.** The workflow publishes the image; it does not make the service
+run it. Turning the service on is `fugaro update`'s opt-in
+(`credentials_service`, installation plan task C1.20), and the digest it pins
+is read back through the ghcr proxy from the published image — so the first
+release that carries this leg is the release a service can be pointed at. The
+Terraform side of that (C1.18) is a separate, also owner-run, change.
 
 ## `images.yml` — applied in `6b57ba9`; what follows is the record
 
@@ -1996,6 +2452,89 @@ Two honest limits of this diff, both deliberate:
 
 Copied in on 2026-10-17 (#504): `.github/workflows/ci.yml`'s `terraform` job now loops over `installation firebase repo compute`. The staged copy is removed, so `images/cloudbuild_test.go` reads the real file on its own: `TestCIWorkflowTestsEveryTerraformRoot` requires it to name every root under `deploy/terraform/gcp/roots/`, and `TestStagedCIWorkflowIsTheRealOnePlusTheComputeRoot` skips while the staged copy is absent. A future change to `ci.yml` that a run needs is staged here again, as the real file plus the change.
 
+**The change outstanding now: the `internal/runner` package's test timeout (2026-10-23, 0.10.2).** CI's `test` job has one test step, `- run: go test -race -timeout 20m ./...`, which gives every package the same 20 minutes. `internal/runner`'s own suite takes about 25 minutes under `GOFLAGS=-p=2`, and a package that overruns `-timeout` is killed and reported as a panic, not as a failing test, so that package can time out in CI as it does for a contributor running the documented `go test -race ./...` (whose `-timeout` is go's 10-minute default).
+
+**What the owner changes**, in the `test` job: that one step becomes the two below, and the job's own cap rises with them.
+
+    - run: go test -race -timeout 20m $(go list ./... | grep -v /internal/runner)
+    - run: go test -race -timeout 40m ./internal/runner/...
+    timeout-minutes: 60   # the job line, which reads 30 today
+
+**The cap has to rise, or the bound can never fire — the first writing of this section said otherwise and was wrong.** `timeout-minutes: 30` bounds the whole job, all of its steps together, so a second test step carrying `-timeout 40m` sits under a 30-minute ceiling: the job is killed first and the package's own bound never has a chance to speak. The two steps also run one after the other, where the single `go test ./...` ran the packages in parallel, so the runner step begins with 30 minutes minus everything before it — gofmt, the six `go vet` runs and the other packages' step — which is about the 20 minutes it has today, the state this change exists to leave. 60 leaves the earlier steps, the other-packages step and the runner package's own 40 minutes room. (Giving every package the longer bound instead, `- run: go test -race -timeout 40m ./...`, is one line rather than two, but it needs the same raised cap and makes a hung package take 40 minutes to be killed rather than 20.)
+
+**Why that is written here instead of staged as a copy of the file, which is what this directory is for.** Two guards pin the staged path itself to the compute-root state, and neither is a run's to move:
+
+- `internal/cli/docs_compute_backend_test.go`'s `TestDocsComputeBackendCIReachMatchesTheTree` fails while `docs/pending-workflows/ci.yml` exists at all, because `docs/plans/2026-10-19-compute-backend.md`'s Global Constraint 3 says the staged request it recorded was applied to the workflow instead and nothing was re-staged.
+- `images/cloudbuild_test.go`'s `TestStagedCIWorkflowIsTheRealOnePlusTheComputeRoot` holds a staged copy to exactly one differing line — the Terraform root loop — so a copy staged for this change would fail it too.
+
+Re-staging `ci.yml` therefore means rewriting both guards (and the plan text the first one quotes) in a change about a test timeout, which is the owner's call, not a run's. The owner can apply the change above by hand, or stage the file properly when they next copy a workflow file in and rewrite those two guards in the same change. `CONTRIBUTING.md` and `docs/dogfooding.md` name the same bound for the local case, so the package is run with it either way. **`internal/cli/docs_runner_timeout_test.go` holds this section, those two sentences and `.github/workflows/ci.yml` to one another in both directions**: it reads whether CI gives `internal/runner` a bound of its own out of the workflow, and fails whichever way the two disagree — the documents still calling the change outstanding once CI carries it, or claiming CI carries it while the workflow does not — so applying the change without these three documents is what goes red, and so is editing them without applying it. It also checks, while CI carries the bound, that the job's cap is above it, which is the way this change goes wrong silently: the step's `-timeout` under a job that dies first.
+
+## `core-without-ee.yml`
+
+**Status: `core-without-ee.yml` is applied, not pending.** It is licensing plan task **L1.7**: the check that the core builds and passes its tests with `ee/` deleted, which is the claim `LICENSING.md`, `ee/README.md` and the boundary tests under `internal/eeboundary/` all rest on. `ee/` is reserved for future organisation features under their own licence, and the one thing no test in this repository can do is delete the directory and run the suite without it — that needs a runner. One job, `core-without-ee`, on `ubuntu-latest`, `contents: read`, **no environment and no secret at all**, `timeout-minutes: 90`, every action pinned by full commit SHA: `rm -rf ee` (the deletion is never committed — it is the checkout's own working tree, which is why the job needs no write scope), then `go build ./...` and `go vet ./...` **with the default build tags**, then the tests in two steps.
+
+**Why the tests are two steps.** The suite is one command's worth of work except for `internal/runner`, whose package takes about 25 minutes under `GOFLAGS=-p=2` and needs the 40-minute bound `CONTRIBUTING.md` gives it; running the package twice would double the job and put it under the wrong bound. So step A runs everything else at `-timeout 30m` and excludes the package, and step B runs `./internal/runner/...` at `-timeout 40m` alone, with no skip.
+
+**Step A's `-skip` is the whole point of the file, and it is a list this repository owns.** The tests that read the real `ee/` — the ones that go through `readRealEE` in `internal/cli/docs_ee_repo_test.go` — would fail on the deleted folder. That helper's file holds the exact list, `eeReadingTests`, and step A skips exactly those names and nothing else, so the two cannot drift: `TestDocsCoreWithoutEEWorkflow` fails unless the workflow's `-skip` alternation is `eeReadingTests`, in order, character for character. A new test that reads the real `ee/` joins the list and this workflow in the same change, and a test that stops reading it leaves both. Nothing under `internal/eeboundary/` is ever skipped: those tests plant their own trees under `t.TempDir()` and read nothing from the repository's `ee/`.
+
+**No step passes a build tag.** `cmd/fugaro/ee_on.go` is the one core file allowed to import `ee/`, it carries `//go:build ee`, and the release sets no tag at 0.11.0 (D303 as amended) — so this job builds and tests the untagged core, which is exactly the binary the 0.11.0 release ships.
+
+**It runs on a push to `main` and on a manual dispatch, and its `name:` is `core-without-ee`**, so `gh workflow run core-without-ee` finds it. The cost is a run about as long as `ci.yml`'s `test` job, on pushes to `main` only: the file is not in `scripts/release-gate.sh`'s list and gates nothing.
+
+**To move it in**, from the repository root — **with `ee-edition.yml`, which is due with it** (see `## ee-edition.yml` below): G1 is one claim with two halves, the core builds without `ee/` and the tagged edition builds with it, so the pair moves in one commit, and one commit is what the follow-up count below assumes.
+
+```sh
+git mv docs/pending-workflows/core-without-ee.yml .github/workflows/core-without-ee.yml
+git mv docs/pending-workflows/ee-edition.yml .github/workflows/ee-edition.yml
+git commit -m "workflows: build and test both editions"
+gh workflow run core-without-ee --ref main
+gh workflow run ee-edition --ref main
+```
+
+**The `git mv` is load-bearing**, as the `git rm` is for `images.yml` and `shared-tests.yml`: while the staged copy exists `TestDocsCoreWithoutEEWorkflow` reads *it*, so leaving it in place would freeze those checks on its bytes and hide a later edit — including a deletion — to the file that runs.
+
+**Two follow-up edits belong in that commit**, because two sentences count the files still pending here and both are held to the directory: this document's opening line (`TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere`) and the last section of `website/README.md` (`website/test/readme.mjs`, which reads the whole flattened page). Both go from **four** to **two**, and drop this file's name and `ee-edition.yml`'s, because the two move in together (see `## ee-edition.yml` below); the opening line is then:
+
+```
+**Two files are pending: `images.yml`** (the credentials service's image leg, credentials-service plan Task C1.14; see `## images.yml` below) **and `console-windows.yml`** (the console's Windows installer pack, 2026-10-20 — a release-time job, not a pull-request check; see `## console-windows.yml` below).
+```
+
+Read the count and the names off `docs/pending-workflows/` before you write them: another staging may have landed beside this one, and the directory is what both checks read.
+
+**Not verified.** The file has never run. What is verified offline is its text — the trigger surface, the permissions, the pins, the timeout, the deletion before the build, the two test steps and the `-skip` list — by `TestDocsCoreWithoutEEWorkflow`. That the suite is green with `ee/` gone, and that `go build` and `go vet` need no tag, is what the first real run shows, and that run is yours to start after the copy-in.
+
+## `ee-edition.yml`
+
+**Status: `ee-edition.yml` is applied, not pending.** It is ee-reorg plan task **E1.6**: the other half of G1, the check that the **tagged** edition — the one `//go:build ee` compiles, where `cmd/fugaro/ee_on.go` is in the build and the `ee/` packages are assembled into the command tree — still vets, tests and builds. `core-without-ee.yml` above proves the untagged core survives the directory's deletion; neither of the two proves the edition an Enterprise installation ships, and only a runner can. One job, `ee-edition`, on `ubuntu-latest`, `contents: read`, **no environment and no secret at all**, `timeout-minutes: 30`, every action pinned by full commit SHA: `go vet -tags ee ./...`, then the `ee/` packages' tests, then `go build -tags ee ./cmd/fugaro`.
+
+**It is a file of its own rather than a job in `ci.yml`.** A staged `docs/pending-workflows/ci.yml` turns `TestDocsComputeBackendCIReachMatchesTheTree` red — the compute-backend plan's Global Constraint 3 says its staged request was applied to the workflow instead and nothing was re-staged — and `images/cloudbuild_test.go` reads that path. So the tagged edition is a second staged file, not a staged `ci.yml`.
+
+**What each step checks.** `go vet -tags ee ./...` and `go build -tags ee ./cmd/fugaro` both hand the go tool the `ee` tag, which is what makes them a check on the tagged edition rather than the untagged one — once a file carries the constraint (the next paragraph says what is true until one does) — and the step that fails is the one that catches `ee_on.go` or an `ee/` package that stops compiling under the tag. The `ee/` test step carries **no** tag on purpose: the packages under `ee/` build without `//go:build ee` (only `cmd/fugaro/ee_on.go` carries it), so they are tested in the default build too, which is where the core's own suite sees them once an E2.x move puts one there.
+
+**Both tagged steps are vacuous until a file carries the tag, and that has to be read as a temporary state rather than a claim.** No file in the tree carries `//go:build ee` as E1.6 lands — `cmd/fugaro/ee_on.go` is E1.5's, and the `ee/` packages are the E2.x moves' — so today `-tags ee` selects nothing and the two steps compile exactly the untagged tree: they would pass whatever the tagged edition does, and they prove nothing about it yet. They are staged anyway because they are what the file *is*, and E1.5/E1.1 are the tasks that give them something to compile: the first file with the constraint makes them the real check, with no edit to this file. Until then their value is that they cannot be forgotten — the steps are already in the staged file the owner moves in, rather than in a follow-up staging the edition change would have to remember.
+
+**The `ee/` test step is guarded, and that guard is the one line to read before editing the file.** `ee/` holds no Go package yet — E1.5's assembly file and the E2.x moves add the first ones — and `go test ./ee/...` exits non-zero on a directory with no packages ("no packages to test"). The step lists what is there with `go list ./ee/...` and, when the list is empty, says so in the log and exits zero rather than failing; it never reports a pass it did not run, because the real `go test ./ee/... -count=1` runs the moment a package exists. The guard goes away with the first package under `ee/`.
+
+**It runs on a push to `main` and on a manual dispatch, and its `name:` is `ee-edition`**, so `gh workflow run ee-edition` finds it. Like `core-without-ee.yml` it is not in `scripts/release-gate.sh`'s list and gates nothing.
+
+**`core-without-ee.yml` is due with it.** G1 is one claim with two halves — the core builds without `ee/`, and the tagged edition builds with it — so the owner moves both files in one commit, and this file's arrival is what makes the pair due. The plan's OWNER-RUN line is the two `git mv` commands below; from the repository root:
+
+```sh
+git mv docs/pending-workflows/ee-edition.yml .github/workflows/ee-edition.yml
+git mv docs/pending-workflows/core-without-ee.yml .github/workflows/core-without-ee.yml
+git commit -m "workflows: build and test both editions"
+gh workflow run ee-edition --ref main
+gh workflow run core-without-ee --ref main
+```
+
+**The `git mv` is load-bearing**, as the `git rm` is for the other staged files: while a staged copy exists `TestStagedCIBuildsBothEditions` reads *it* (and `TestDocsCoreWithoutEEWorkflow` reads `core-without-ee.yml`'s), so leaving a staged copy in place would freeze those checks on its bytes and hide a later edit — including a deletion — to the file that runs.
+
+**Two follow-up edits belong in that commit**, the same two sentences `## core-without-ee.yml` names: this document's opening line (`TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere`) and the last section of `website/README.md` (`website/test/readme.mjs`, which reads the whole flattened page). Both go from **four** to **two** and drop both this file's name and `core-without-ee.yml`'s, leaving `images.yml` and `console-windows.yml`; `## core-without-ee.yml` above carries the resulting opening line. Read the count and the names off `docs/pending-workflows/` before you write them: another staging may have landed beside these two, and the directory is what both checks read.
+
+**Not verified.** The file has never run. What is verified offline is its text — the trigger surface, the permissions, the pins, the timeout, the two tagged steps, the untagged test step and its guard — by `TestStagedCIBuildsBothEditions`. That the tagged tree vets and builds, and that `go test ./ee/...` is green once a package is there, is what the first real run shows, and that run is yours to start after the move.
+
 ## Before you copy: check the action pins
+
+**Two comments in the applied console workflows spell the Linux artifacts `linux-x64`, and the correction is yours to make at a copy-in.** A published release showed what `electron-builder` actually writes — the target's own word for the architecture, so `Fugaro.Console-X.Y.Z-linux-x86_64.AppImage` and `Fugaro.Console-X.Y.Z-linux-amd64.deb` — and that release corrected `docs/design/desktop-console.md` §7.6, `docs/release.md` and `console/README.md` on 2026-10-24. `.github/workflows/console-release.yml` and `.github/workflows/console-linux.yml` still carry a comment saying `linux-x64` — one line each, and the first of the two is duplicated in the staged copy here, since the two are byte-identical — and no agent run may edit `.github/workflows/` — GitHub refuses the push — so it waits for you: when you next copy `console-release.yml` in, write the two real names into **both** copies in the same commit, the staged one here and the applied one, because `TestDocsConsoleReleaseWorkflowIsStagedAndPinned` requires the two to be byte-identical, and correct `console-linux.yml`'s comment in that same commit.
 
 Dependabot does not watch this directory, and `next` can lag `main`'s Dependabot bumps of the workflow files, so a staged file's pins can differ from the ones `main` has moved to. `TestActionPinsAreFullSHAs` requires every `uses:` **here** to be a full commit SHA; once a staged file is copied in and gone from here, the same test also requires its pins to agree with the other workflows' — `images.yml` is that test's subject, so that comparison is live for it. `TestSharedTestsWorkflowIsStagedAndPinned` requires the same of the pending `shared-tests.yml` (full SHAs, each with its `# vX.Y.Z` beside it). Before copying, compare `grep -h 'uses:' .github/workflows/*.yml docs/pending-workflows/*.yml | sort -u` and keep the NEWER SHA for each action (verify it against the upstream tag with `gh api repos/<owner>/<repo>/git/ref/tags/<tag>`), so the copy never downgrades a pin.

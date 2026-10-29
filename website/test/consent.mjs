@@ -93,6 +93,11 @@ const PRIVACY_PATH = '/privacy/'
 // The site's one script file (D183), which is the gate itself since W3.2 moved the banner's
 // controller and the gated loader out of the markup and into it.
 const SITE_SCRIPT = '/scripts/site.js'
+// The consent banner's early decision (the owner's ruling of 2026-10-23, the redesign's Step 3:
+// JavaScript allowed, same-origin only; the banner must not cover the first screen's content).
+// A page that renders the banner loads it after the site's one script; it is a first-party file
+// the policy admits as script-src 'self', and it reads storage and nothing else.
+const EARLY_SCRIPT = '/scripts/consent-early.js'
 
 // The measurement id, read from `site.yaml` rather than written here: the id lives in exactly
 // one place (W3.2), and a literal in this file would be the second copy the brief forbids.
@@ -458,7 +463,7 @@ function stubDOM(html, location = PAGE_LOCATION) {
  * visitor who consented on an earlier page view brings with them. They are in the jar from
  * the start and are not in the page's own writes, because the page did not write them.
  */
-export function runPage(html, { dist = DIST, script = null, storage = {}, readable = true, writable = true, location = PAGE_LOCATION, referrer = PAGE_REFERRER, cookies = [] } = {}) {
+export function runPage(html, { dist = DIST, script = null, storage = {}, readable = true, writable = true, location = PAGE_LOCATION, referrer = PAGE_REFERRER, cookies = [], motion = false } = {}) {
   const { document, elements, byId, state } = stubDOM(html, location)
   document.referrer = referrer
   for (const cookie of cookies) document.cookie = cookie
@@ -497,6 +502,19 @@ export function runPage(html, { dist = DIST, script = null, storage = {}, readab
       timers.push({ handler, delay })
       return timers.length
     },
+  }
+
+  // A browser that can run the banner's collapse (owner-approved motion opportunities
+  // 2026-10-23): it answers media queries (no hover, no preference about motion) and can take
+  // an attribute off an element. Without `motion` the stub is the old browser that is answered
+  // at once, which is what every other case here reads.
+  if (motion) {
+    window.matchMedia = () => ({ matches: false, addEventListener() {}, addListener() {} })
+    for (const el of elements) {
+      el.removeAttribute = function (name) {
+        this.attrs.delete(name)
+      }
+    }
   }
 
   // What the browser asks for before a single script runs: a script element, a link that
@@ -554,6 +572,10 @@ export function runPage(html, { dist = DIST, script = null, storage = {}, readab
       const control = banner.querySelectorAll('[data-consent]').find((el) => el.attrs.get('data-consent') === decision)
       assert.ok(control, `the banner carries no ${decision} control`)
       control.fire('click', { type: 'click' })
+    },
+    /** Run every timer the page has set so far, in the order it set them. */
+    runTimers() {
+      for (const timer of timers.splice(0)) timer.handler()
     },
     /** Press Escape, which is how a banner is dismissed. */
     escape() {
@@ -687,8 +709,8 @@ test('the shipped site carries the gate: one script file, the banner with its co
     // the deployed policy carry no hash and no `'unsafe-inline'` (W3.2).
     assert.deepEqual(
       scriptSources(page.html),
-      [SITE_SCRIPT],
-      `${page.rel} ships scripts the site does not admit: the site's one script is its own ${SITE_SCRIPT}, and W3.2 moved the banner's controller and the gated loader into it`,
+      [SITE_SCRIPT, EARLY_SCRIPT],
+      `${page.rel} ships scripts the site does not admit: the site's one script is its own ${SITE_SCRIPT}, and W3.2 moved the banner's controller and the gated loader into it; the one other file is the banner's early decision, ${EARLY_SCRIPT} (the owner's ruling of 2026-10-23)`,
     )
 
     const doc = parse(page.html)
@@ -953,6 +975,34 @@ test('dismissing the banner declines, and a dismissal cannot overwrite a stored 
   assert.equal(granted.analyticsRequests().length, 1, 'a stored grant did not load the analytics script')
   granted.escape()
   assert.equal(granted.store[CONSENT_KEY], 'granted', 'Escape overwrote a stored grant with a decision the visitor never made')
+})
+
+test('the banner collapses before it is hidden, and the decision is already made while it does', () => {
+  // owner-approved motion opportunities 2026-10-23: the drawing waits for the collapse, the
+  // decision does not.
+  const html = pageOf(SHIPPED, 'index.html')
+
+  const page = runPage(html, { motion: true })
+  assert.equal(page.banner.hidden, false, 'the banner is not offered on a first visit')
+  page.click('granted')
+  assert.equal(page.store[CONSENT_KEY], 'granted', 'the choice was not stored the moment it was made')
+  assert.equal(page.analyticsRequests().length, 1, 'accepting did not load the analytics script at once')
+  assert.equal(page.activeElement()?.attrs.get('id'), 'main', 'focus did not move to the content at once')
+  assert.ok(page.banner.attrs.has('data-consent-closing'), 'the banner was not marked closing, so nothing collapses it')
+  page.click('denied')
+  page.escape()
+  assert.equal(page.store[CONSENT_KEY], 'granted', 'a second press while the banner collapsed was taken as a new decision')
+  page.banner.fire('transitionend', { type: 'transitionend', target: page.banner, propertyName: 'opacity' })
+  assert.equal(page.banner.hidden, true, 'the banner stayed on the page after its collapse ended')
+  assert.ok(!page.banner.attrs.has('data-consent-closing'), 'the closing mark outlived the banner')
+
+  // The timer is the floor for a collapse whose end is never reported.
+  const silent = runPage(html, { motion: true })
+  silent.click('denied')
+  assert.equal(silent.store[CONSENT_KEY], 'denied', 'declining did not store the decision at once')
+  assert.equal(silent.banner.hidden, false, 'the banner vanished before its collapse ran')
+  silent.runTimers()
+  assert.equal(silent.banner.hidden, true, 'a collapse with no transitionend left the banner on the page')
 })
 
 test('consent is withdrawable: the privacy page always offers the choice, and declining there stops the load', () => {
@@ -1403,12 +1453,33 @@ test("the privacy defaults the page states are the ones the site's script makes"
 test('the claims the privacy page makes about the site are held to the artifact', () => {
   for (const page of [...SHIPPED]) {
     for (const el of walk(parse(page.html))) {
+      // The one field the site carries: the homepage hero's live card, where a reader types a
+      // task and sees it drawn as jobs (the owner's ruling of 2026-10-23, the redesign's Step 3,
+      // lever 3). It is not a form and submits nothing: it has no `name`, no `<form>` around it,
+      // and the script that reads it sends and stores nothing (held below). Any other field, and
+      // any `<form>`, is still the claim broken.
+      if (el.name === 'textarea' && page.rel === 'index.html' && el.attrs.get('id') === 'hero-task') {
+        assert.ok(!el.attrs.has('name') && !el.attrs.has('form'), `${page.rel}: the hero's task field carries a name or a form, so it is shaped to be submitted`)
+        for (let up = el.parent; up; up = up.parent) assert.notEqual(up.name, 'form', `${page.rel}: the hero's task field sits in a <form>`)
+        continue
+      }
       assert.ok(
         !['form', 'input', 'textarea', 'select'].includes(el.name),
         `${page.rel} carries a <${el.name}>: the privacy page says the site asks for nothing and has no form, and this is that claim held to the built pages`,
       )
     }
   }
+  // The task field's half of the claim: the script the site ships never sends anything a reader
+  // typed. It opens no request of its own at all (the one request it makes is the gated Google
+  // loader, a `<script>` element), and the live card's section reads the field and touches no
+  // storage.
+  const source = readFileSync(path.join(DIST, SITE_SCRIPT.replace(/^\//, '')), 'utf8')
+  for (const sender of ['fetch(', 'XMLHttpRequest', 'sendBeacon', 'WebSocket', 'EventSource']) {
+    assert.ok(!source.includes(sender), `${SITE_SCRIPT} uses ${sender}: the site sends nothing a reader types`)
+  }
+  const live = source.slice(source.indexOf('function liveRun()'), source.indexOf('function entrances()'))
+  assert.ok(live.length > 0, `${SITE_SCRIPT} no longer carries the live card's section this case reads`)
+  assert.ok(!/localStorage|sessionStorage|document\.cookie|indexedDB/.test(live), "the hero's live card touches storage: it keeps nothing a reader types")
 })
 
 // ---- the policy the artifact is served with ---------------------------------------------
@@ -1433,8 +1504,8 @@ test("the deployed policy admits exactly the one origin the gate loads from, and
   for (const page of SHIPPED) {
     assert.deepEqual(
       scriptSources(page.html),
-      [SITE_SCRIPT],
-      `${page.rel} ships a script the policy above does not admit: the site's one script is its own file, and an inline script would need a hash the policy does not carry`,
+      [SITE_SCRIPT, EARLY_SCRIPT],
+      `${page.rel} ships a script the policy above does not admit: the site's scripts are its own files (the one script and the banner's early decision, the owner's ruling of 2026-10-23), and an inline script would need a hash the policy does not carry`,
     )
   }
 })

@@ -1,53 +1,33 @@
 ---
 /**
- * website/src/components/Hero.astro — the hero (website plan, Task W1.4; the owner's approved
- * board `website/design-ref/HomeV3.dc.html`, 2026-10-20).
+ * website/src/components/Hero.astro: the hero (website plan, Task W1.4; the owner's redesign
+ * Step 3, rulings of 2026-10-23, levers 2 and 3).
  *
- * The first screen of the site, and the one place where a marketing site is most tempted to
- * write its own words. So it writes almost none:
+ * The first screen says what Fugaro is and lets the reader see it happen:
  *
  *   1. **The headline is README.md's line**, read through the content pipeline (W1.3) and
- *      rendered byte for byte — not typed in here, which is what the red step of this task
- *      was (F48, D102). It is `Lambdas for coding agents` since the changes spec of
- *      2026-10-18 (item 2), and it is the README's line that says so. The board draws its
- *      last two words in the accent's gradient, so the line is **split** here rather than
- *      rewritten: the split is computed from the tagline itself (below), which is what keeps
- *      the rendered headline the README's line and not a second copy of it with a `<span>` in
- *      the middle.
- *   2. **The subline is README.md's next line**, for the same reason (D102, Global
- *      Constraint 6).
- *   3. **The prompt line is the request, and nothing else around it.** It is the one string
- *      `src/lib/agent-request.mjs` holds — a quotation of the changes spec — and it is drawn
- *      inside the board's terminal card rather than beside the headline, because the board
- *      puts it there: the card is what the reader is looking at, and the line is what the
- *      card is a picture of.
- *   4. **The status pill's words are the README's too.** `Ephemeral cloud jobs` is the
- *      subline's own first three words and `in your own Google Cloud project` is the README's
- *      phrase for where a run happens; both are held to the README below rather than typed
- *      into the markup as a claim of this file's own.
- *   5. **The card's job count is the request's own number.** The board draws three rows and
- *      a line saying three jobs are launching, and three is not this file's choice: the
- *      request says `three bug fixes`, and the guard below refuses a count the request does
- *      not name. A card that promised a different number of pull requests from the request
- *      above it would be the page contradicting itself.
- *   6. **The card is captioned as an illustration.** The board draws the caption, and it is
- *      the one line of the card that is the site's own — it says what the picture is, which
- *      no document can say for it. It is listed with the page's other new lines in the pull
- *      request for the owner to veto.
- *   7. **The video slot is empty while `site.yaml` says the video does not exist** (D107).
+ *      rendered byte for byte, in one colour (lever 2: no gradient text), at a size that keeps
+ *      it to two lines at every width.
+ *   2. **The supporting sentence is README.md's next line** (D102, Global Constraint 6).
+ *   3. **One action: Get started** (lever 2). How it works and the console are reached from the
+ *      sections below, which is where the run and the console are shown.
+ *   4. **The live card** (lever 3): the request `src/lib/agent-request.mjs` holds, the jobs it
+ *      launches and the pull requests they end in, in the words `fugaro watch` prints. With no
+ *      script it is the static picture of that one request; `public/scripts/site.js` reveals a
+ *      text field and redraws the jobs for whatever task the reader types. It is captioned as
+ *      an illustration, because it is one.
+ *   5. **The real picture**: the `fugaro watch` capture, large, beside and under the card.
+ *   6. **The video slot is empty while `site.yaml` says the video does not exist** (D107).
  *
- * **The card is not a command block and prints no `<pre>`.** `website/test/home.mjs` refuses
- * a `<pre>` in the hero: the hero is the promise and its call to action, and the command a
- * reader runs is the install block at the foot of the page. So the prompt line is a `<p>` in
- * the mono face — a picture of a line a reader types, not a thing to copy.
- *
- * **The console is the call to action's third link, and the flag is what renders it** (the
- * owner's brief of 2026-10-19, item 6; `site.yaml`'s `features.console_downloads`).
+ * **The card prints no `<pre>`.** `website/test/home.mjs` refuses a `<pre>` in the hero: the
+ * command a reader copies is the install block at the foot of the page.
  */
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
-import { loadSite, REPO_ROOT } from '../content.ts'
+import { loadHomeScreens, loadSite, REPO_ROOT } from '../content.ts'
 import { REQUEST, REQUEST_SOURCE } from '../lib/agent-request.mjs'
+import { buildChangelog } from '../lib/changelog.mjs'
+import { latestConsoleRelease } from '../lib/console-release.mjs'
 
 const site = loadSite()
 const facts = site.facts
@@ -63,29 +43,6 @@ function comparable(document: string): string {
 // and it is the page's `h1` (F48, D102; changes spec item 2).
 const tagline = site.tagline
 
-/**
- * The two halves of the headline: the words before the gradient, and the words in it. The
- * board draws `Lambdas for` in the text tone and `coding agents` in the accent's gradient,
- * and **the split is taken from the tagline** rather than written here, so the `h1` a reader
- * receives is still one string of the README's with markup around its last words. Two words
- * is the board's split, and a tagline of two words or fewer is a defect in this file rather
- * than a headline with an empty first half.
- */
-const GRADIENT_WORDS = 2
-const words = tagline.split(/\s+/).filter(Boolean)
-if (words.length <= GRADIENT_WORDS) {
-  throw new Error(
-    `website/src/components/Hero.astro: README.md's tagline ${JSON.stringify(tagline)} is ${words.length} word(s), and the hero draws its last ${GRADIENT_WORDS} in the accent's gradient: a headline with nothing before the gradient is the split this file was written for, and the tagline moved.`,
-  )
-}
-const HEADLINE_HEAD = words.slice(0, -GRADIENT_WORDS).join(' ')
-const HEADLINE_GRADIENT = words.slice(-GRADIENT_WORDS).join(' ')
-
-// The subline: the one sentence under the headline, read from the same place and rendered
-// whole — the hero's lead, the site's default description and the cards' description are
-// one string in the README rather than three copies of a sentence typed here (changes spec
-// item 2, D102). `website/test/home.mjs` holds this page to the README's line, and
-// `website/test/layout.mjs` holds the head to the same one.
 const LEAD = site.subline
 
 // The prompt line: the request `src/lib/agent-request.mjs` holds, which is where the line is
@@ -95,14 +52,6 @@ const LEAD = site.subline
 const PROMPT = REQUEST
 
 /**
- * The status pill, in the README's own words: `Ephemeral cloud jobs` is the subline's first
- * three words, and `in your own Google Cloud project` is the README's phrase for where a run
- * happens. The board writes the two together and so does this line — what makes it the
- * repository's rather than this file's is the guard below.
- */
-const PILL = 'Ephemeral cloud jobs, in your own Google Cloud project'
-
-/**
  * The number of jobs the card draws, which is the request's own number and not a figure of
  * this file's: the request says `three bug fixes`, and a card that launched a different
  * number of them would be the picture disagreeing with the line above it.
@@ -110,20 +59,11 @@ const PILL = 'Ephemeral cloud jobs, in your own Google Cloud project'
 const NUMBER_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine']
 const JOBS = 3
 
-// Hold the pill to README.md, and the card's job count to the request. Both are build-time
-// refusals rather than test-time ones, because both are this file's own composition out of
-// another document's words: a pill that stopped being the README's phrase, or a card that
-// promised a number the request does not name, is the page saying something no document of
-// this repository says (Global Constraint 6).
+// Hold the card's job count to the request. It is a build-time refusal rather than a test-time
+// one, because it is this file's own composition out of another document's words: a card that
+// promised a number the request does not name is the page saying something no document of this
+// repository says (Global Constraint 6).
 {
-  const readme = readFileSync(path.join(REPO_ROOT, 'README.md'), 'utf8')
-  for (const phrase of ['Ephemeral cloud jobs', 'in your own Google Cloud project']) {
-    if (!comparable(readme).includes(comparable(phrase))) {
-      throw new Error(
-        `website/src/components/Hero.astro: README.md does not carry ${JSON.stringify(phrase)}, and the hero's pill is written out of the README's own words (Global Constraint 6). Either the README was reworded or the pill moved off it.`,
-      )
-    }
-  }
   const count = NUMBER_WORDS[JOBS]
   if (!comparable(PROMPT).includes(comparable(count))) {
     throw new Error(
@@ -136,108 +76,155 @@ const JOBS = 3
 // exists this component changes in one place and the flag is what decides (D107).
 const videoExists = facts.features.video
 
-// The console's flag, read the same way and for the same reason (the owner's brief of
-// 2026-10-19, item 6; W3.1).
-const consoleExists = facts.features.consoleDownloads
 
-/** The pull request the card's rows are drawn with: the same shape the slider's third step
- *  uses, inline and `currentColor`, so the card fetches nothing for its drawing. */
+/** The pull request the card's rows are drawn with, inline and `currentColor`, so the card
+ *  fetches nothing for its drawing. `public/scripts/site.js` draws the same shape when it
+ *  rebuilds the rows for a task the reader types. */
 const PR_GLYPH =
   '<circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M6 8.5v7"/><path d="M18 15.5V11a3 3 0 0 0-3-3h-4"/><path d="m13 6-2 2 2 2"/>'
 
 const ROWS = Array.from({ length: JOBS }, (_, index) => index + 1)
+
+/**
+ * The largest number of jobs the live card launches for a typed task: README.md's own default
+ * for `max_parallel` ("up to `max_parallel`, 20 by default"). It is held to the README here
+ * and handed to the script as an attribute, so the script names no figure of its own.
+ */
+const MAX_PARALLEL = 20
+{
+  const readme = readFileSync(path.join(REPO_ROOT, 'README.md'), 'utf8')
+  if (!comparable(readme).includes(comparable(`up to \`max_parallel\`, ${MAX_PARALLEL} by default`))) {
+    throw new Error(
+      `website/src/components/Hero.astro: README.md no longer says max_parallel is ${MAX_PARALLEL} by default, and the hero's live card caps a typed task's jobs at that figure (Global Constraint 6).`,
+    )
+  }
+}
+
+// The latest releases, for the one line above the headline (the owner's request of 2026-10-22,
+// carried here from PR #940): the CLI's newest published release from the changelog's own data
+// (release files held to the plugin's version) and the console's from its own notes held to its
+// package version (`src/lib/console-release.mjs`). Both are read at build time, so the line names
+// no version this file holds. The paths are passed because inside a build the modules are bundled
+// where their own defaults do not resolve (`src/pages/changelog.astro` says why).
+const latestCli = buildChangelog({
+  releasesDir: path.join(REPO_ROOT, 'docs', 'releases'),
+  pluginFile: path.join(REPO_ROOT, 'plugin', '.claude-plugin', 'plugin.json'),
+}).find((entry) => entry.released)
+if (latestCli === undefined) {
+  throw new Error('website/src/components/Hero.astro: no release file under docs/releases/ is at or below the version in plugin/.claude-plugin/plugin.json, and the latest-release line names the newest published one.')
+}
+const latestConsole = latestConsoleRelease({
+  notesDir: path.join(REPO_ROOT, 'docs', 'releases', 'console'),
+  packageFile: path.join(REPO_ROOT, 'console', 'package.json'),
+})
+const consoleReleaseHref = latestConsole ? `${facts.repository.replace(/\/+$/, '')}/releases/tag/${latestConsole.tag}` : null
+
+/** The capture beside the card: the `fugaro watch` screen, the real terminal capture the
+ *  homepage's data file lists, with its alt text from there. */
+const WATCH = loadHomeScreens().screens.find((screen) => screen.src.endsWith('/fugaro-watch.png'))
 ---
 
 <section class="hero" aria-labelledby="hero-tagline">
-  {/* The board's background: two soft glows and a grid, behind everything on the first
-      screen. It is decoration and says so (`aria-hidden`), and it paints no text — the
-      pattern is `base.css`'s `.hero-glow`, written once for the site rather than here. */}
-  <div class="hero-glow" aria-hidden="true"></div>
-
   <div class="hero-copy">
-    {/* The board's status pill: the first thing on the page, and the README's own words for
-        what a run is and whose project it runs in. */}
-    <p class="pill hero-pill" data-source="README.md">
-      <span class="hero-pill-dot" aria-hidden="true"></span>
-      {PILL}
-    </p>
-
-    <h1 class="hero-tagline display-xl" id="hero-tagline">
-      {HEADLINE_HEAD}{' '}
-      <span class="gradient-text">{HEADLINE_GRADIENT}</span>
-    </h1>
+    <h1 class="hero-tagline display-xl" id="hero-tagline">{tagline}</h1>
 
     <p class="hero-lead" data-source="README.md">{LEAD}</p>
 
-    {/* What a reader does next: install it, or read what a run is first. The primary one is
-        filled with the accent, which is the one colour on the page that means "this is the
-        action"; the others are quiet links, because two filled buttons are two primaries. */}
+    {/* The one action on the first screen (lever 2): filled with the accent, the one colour on
+        the page that means "this is the action". */}
     <p class="hero-actions">
       <a class="hero-cta" href="/getting-started/">Get started</a>
-      <a class="hero-cta-quiet" href="/how-it-works/">How it works</a>
-      {
-        // The console, while the repository says it has shipped (the owner's brief of
-        // 2026-10-19, item 6). A quiet link like "How it works" and not a second filled
-        // button, and its label is the name Getting Started's option carries.
-        consoleExists && (
-          <a class="hero-cta-quiet" href="/console/">
-            Desktop console
-          </a>
-        )
-      }
+    </p>
+
+    {/* The latest releases, under the call to action (the owner's ruling of 2026-10-24: above
+        the headline it read as a kicker label). The quiet tone at the smallest step: a note about
+        the project, after the promise and its one action. */}
+    <p class="hero-release">
+      Latest release: <a class="hero-release-link" href="/changelog/">{latestCli.tag}</a>
+      {latestConsole && (
+        <>
+          {' · '}
+          <a class="hero-release-link" href={consoleReleaseHref} rel="noopener">Console {latestConsole.version}</a>
+        </>
+      )}
     </p>
   </div>
 
-  {/* The board's illustration: the request as a terminal card, with the jobs it starts and
-      the pull requests they end in. It is a `figure` because it is a picture with a caption
-      — the caption is what says a reader is looking at a drawing rather than at a session —
-      and it prints no `<pre>`, because a command block in the hero is the install block's
-      (`website/test/home.mjs`). */}
-  <figure class="hero-shot">
-    <div class="hero-shot-frame">
-      <div class="hero-shot-bar">
-        <span class="hero-shot-dot" aria-hidden="true"></span>
-        <span class="hero-shot-dot" aria-hidden="true"></span>
-        <span class="hero-shot-dot" aria-hidden="true"></span>
-        <span class="hero-shot-name">Your agent</span>
+  {/* The stage: one flat field one tone step above the ground, its top-left corner cut, holding
+      the live card and the real capture. */}
+  <div class="hero-stage">
+    {/* The live card (lever 3). `data-ui` marks a fragment of the product's own interface: inside
+        it the product's conventions apply. `data-live-run` is the hook the script reads, with the
+        request's own job count and README.md's `max_parallel` default as its configuration. With
+        no script the card is the static picture of the one request, and the field stays hidden. */}
+    <figure class="hero-shot" data-ui data-live-run data-live-max={MAX_PARALLEL}>
+      <div class="hero-shot-frame">
+        <p class="hero-shot-name">Your agent</p>
+        <div class="hero-shot-body">
+          <p class="hero-prompt" data-source={REQUEST_SOURCE} data-live-prompt>
+            <span class="hero-prompt-mark" aria-hidden="true">&gt;</span>
+            {PROMPT}
+          </p>
+          <div class="hero-ask" data-live-ask hidden>
+            <label class="hero-ask-label" for="hero-task">Type a task</label>
+            <textarea class="hero-ask-field" id="hero-task" rows="2" spellcheck="false" data-live-field>{PROMPT}</textarea>
+          </div>
+          <p class="hero-shot-status" data-live-status role="status">
+            <span class="hero-shot-status-mark" aria-hidden="true"></span>
+            <span data-live-status-text>Fugaro: launching {JOBS} jobs</span>
+          </p>
+          <ol class="hero-shot-jobs" data-live-jobs>
+            {
+              ROWS.map((row) => (
+                <li class="hero-shot-job">
+                  <svg
+                    class="hero-shot-icon"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                    focusable="false"
+                  >
+                    <Fragment set:html={PR_GLYPH} />
+                  </svg>
+                  <span class="hero-shot-job-name">Pull request {row} of {JOBS}</span>
+                  <span class="hero-shot-stage">ready for review</span>
+                </li>
+              ))
+            }
+          </ol>
+        </div>
       </div>
-      <div class="hero-shot-body">
-        <p class="hero-prompt" data-source={REQUEST_SOURCE}>
-          <span class="hero-prompt-mark" aria-hidden="true">&gt;</span>
-          {PROMPT}
-        </p>
-        <p class="hero-shot-status">
-          <span class="hero-shot-status-mark" aria-hidden="true"></span>
-          Fugaro: launching {JOBS} jobs
-        </p>
-        <ol class="hero-shot-jobs">
-          {
-            ROWS.map((row) => (
-              <li class="hero-shot-job">
-                <svg
-                  class="hero-shot-icon"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2.2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  aria-hidden="true"
-                  focusable="false"
-                >
-                  <Fragment set:html={PR_GLYPH} />
-                </svg>
-                Pull request {row} of {JOBS}
-              </li>
-            ))
-          }
-        </ol>
+      <figcaption class="hero-shot-caption">
+        An illustration, not a recording of a session.
+      </figcaption>
+    </figure>
+
+    {/* The real picture (lever 2): the `fugaro watch` capture at its own size, cropped by the
+        stage rather than shrunk until it cannot be read. It is on the first screen, so it loads
+        eagerly. */}
+    {WATCH && (
+    <figure class="hero-watch">
+      <div class="hero-watch-crop">
+        <img
+          class="hero-watch-image"
+          src={WATCH.src}
+          alt={WATCH.alt}
+          width={WATCH.width}
+          height={WATCH.height}
+          decoding="async"
+          fetchpriority="high"
+        />
       </div>
-    </div>
-    <figcaption class="hero-shot-caption">
-      An illustration, not a recording of a session.
-    </figcaption>
-  </figure>
+      <figcaption class="hero-watch-caption">
+        <code>fugaro watch</code>, the live screen of spend, repositories and running agents.
+      </figcaption>
+    </figure>
+    )}
+  </div>
 
   {
     videoExists && (
@@ -249,214 +236,195 @@ const ROWS = Array.from({ length: JOBS }, (_, index) => index + 1)
 </section>
 
 <style>
-  /* Tokens only (W1.2): this component names the palette, the spacing scale, the type scale
-     and the radii, and defines none of them. Every name below is declared in
-     `src/styles/tokens.css`, and `website/test/home.mjs` holds the built pages to that.
+  /* Tokens only (W1.2): this component names the palette, the spacing scale, the type scale and
+     the radii, and defines none of them.
 
      **The hero's own gutter and its room below are declared here**, like the page's other
      top-level blocks: `main:has(> .hero)` drops `main`'s padding on this page, so every block
      carries its own, and the gap between two blocks is the block above's own bottom padding
-     (`website/test/base-styles.mjs`'s `homeRhythmFailures`). `position: relative` and
-     `overflow: hidden` are what the glow layer needs (`base.css`, section 2c). */
+     (`website/test/base-styles.mjs`'s `homeRhythmFailures`). The gutter is the header's, so the
+     headline starts on the wordmark's left edge and the two margins are equal. */
   .hero {
-    position: relative;
-    overflow: hidden;
-    max-width: var(--page-max);
-    margin: 0 auto;
-    padding: var(--space-2xl) var(--space-md) var(--space-2xl);
     display: grid;
-    gap: var(--space-2xl);
-    align-items: center;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-xl);
+    padding: var(--space-xl) var(--frame-gutter) var(--space-4xl);
   }
 
-  /* The copy and the card paint above the glow: a positioned box paints after a static one,
-     and the glow is the hero's first child, so the two below it are positioned as well. */
-  .hero-copy {
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: var(--space-md);
-    min-width: 0;
-  }
-
-  .hero-pill {
-    gap: var(--space-2xs);
+  .hero-release {
+    margin: 0;
+    color: var(--text-muted);
     font-size: var(--font-size-sm);
   }
 
-  /* The pill's dot: the success tone, which is the one colour on the site that means "this
-     is running". A mark and not text, so it carries no pair of its own. */
-  .hero-pill-dot {
-    flex: none;
-    width: 8px;
-    height: 8px;
-    border-radius: var(--radius-pill);
-    background: var(--ok);
+  .hero-copy {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    min-width: 0;
   }
 
-  /* The headline: `base.css`'s `.display-xl` — the display scale's largest step, written once
-     for the site — with the two things that are this page's own. The split the board draws (the
-     words before the gradient in the text tone, the last two in the accent's) is
-     `.gradient-text`'s, and `max-width: 20ch` is what keeps the headline to the two or three
-     lines the board sets it in rather than running the width of the page. */
+  /* The headline: `base.css`'s `.display-xl`, in the text tone. `max-width` in `ch` is what
+     breaks README.md's four words into two lines of two, never three. */
   .hero-tagline {
-    max-width: 20ch;
+    max-width: 14ch;
+    font-size: clamp(2.5rem, 10.5vw, var(--font-size-6xl));
   }
 
+  /* The supporting sentence: directly under the headline, in the full ink. */
   .hero-lead {
-    margin: 0;
-    max-width: 34rem;
+    margin: var(--space-lg) 0 0;
+    max-width: 30ch;
     font-size: var(--font-size-xl);
     line-height: var(--leading-snug);
-    color: var(--text-muted);
+    color: var(--text);
   }
 
-  /* The action row: one filled link and the quiet ones, on one line while there is room and
-     wrapping rather than shrinking when there is not. */
   .hero-actions {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--space-sm) var(--space-lg);
-    margin: var(--space-2xs) 0 0;
+    margin: var(--space-lg) 0 0;
   }
 
-  /* The primary: the accent as a fill and the ground as its label, which is the pair
-     `a11y.mjs` computes at 4.5:1 for a label a reader reads. The radius is the larger step
-     the boards draw a control at, and `min-height: 44px` is the target size the owner's brief
-     of 2026-10-19 measures every control against — `website/test/home.mjs` reads the rule and
-     refuses a control under it. */
+  /* The primary action: the accent as the fill and the ground as the label, the pair
+     `a11y.mjs` computes at 4.5:1. `min-height: 44px` is the target size the owner's brief of
+     2026-10-19 measures every control against. Square-ish corners, decided once for the page's
+     buttons (the install button is the same shape). */
   .hero-cta {
     display: inline-flex;
     align-items: center;
     box-sizing: border-box;
-    min-height: 44px;
-    padding: var(--space-sm) var(--space-lg);
-    border-radius: var(--radius-lg);
+    min-height: 52px;
+    padding: var(--space-xs) var(--space-lg);
+    border-radius: var(--radius-sm);
     background: var(--accent);
     color: var(--ground);
-    font-family: var(--font-sans);
     font-size: var(--font-size-lg);
     font-weight: var(--weight-black);
     text-decoration: none;
+    transition: transform var(--duration-fast) var(--ease-out), background-color var(--duration-fast) var(--ease-out);
   }
 
-  /* The second action is a link, not a second button. It keeps the underline `base.css`
-     gives every link in running text, so it reads as a link at a glance rather than as a
-     disabled control beside the filled one — and it is a control all the same, so it carries
-     the same 44 px minimum the filled one does. */
-  .hero-cta-quiet {
-    display: inline-flex;
-    align-items: center;
-    box-sizing: border-box;
-    min-height: 44px;
-    font-size: var(--font-size-base);
-    font-weight: var(--weight-semibold);
+  .hero-cta:active {
+    transform: scale(0.97);
   }
 
-  /* The illustration: the board's card, drawn as a panel one step above the ground with the
-     hairline border and the radius every raised thing on this site has — there is no shadow
-     anywhere, because a shadow is a colour function and a colour function outside a palette
-     file is a contrast pair the a11y gate cannot compute. `position: relative` is the glow
-     above. */
-  .hero-shot {
+  @media (hover: hover) and (pointer: fine) {
+    .hero-cta:hover {
+      background: var(--accent-on-dark);
+    }
+  }
+
+  /* The stage: a flat field one tone step above the ground, its top-left corner cut. It holds
+     the card and the capture, and it crops the capture at its right and bottom edges. */
+  .hero-stage {
     position: relative;
-    margin: 0;
+    display: grid;
+    gap: var(--space-lg);
     min-width: 0;
+    padding: var(--space-lg) 0 0 var(--space-md);
+    overflow: hidden;
+    background: var(--panel);
+    clip-path: polygon(3rem 0, 100% 0, 100% 100%, 0 100%, 0 3rem);
+  }
+
+  /* The card. Inside `data-ui` the product's own conventions hold: the terminal's small type,
+     its tone steps. */
+  .hero-shot {
+    margin: 0;
+    max-width: 34rem;
+    padding-right: var(--space-md);
   }
 
   .hero-shot-frame {
-    overflow: hidden;
-    border: var(--border-width) solid var(--border);
-    border-radius: var(--radius-xl);
-    background: var(--panel);
-  }
-
-  /* The card's title bar: the surface, which is the step above the panel, and the three dots
-     the board draws. The dots are the border tone — they are a drawing of a window and not
-     three controls, so they are neither the accent nor anything a reader reads. */
-  .hero-shot-bar {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2xs);
-    padding: var(--space-xs) var(--space-sm);
-    border-bottom: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
     background: var(--surface);
-  }
-
-  .hero-shot-dot {
-    flex: none;
-    width: 11px;
-    height: 11px;
-    border-radius: var(--radius-pill);
-    background: var(--border);
+    overflow: hidden;
   }
 
   .hero-shot-name {
-    margin-left: var(--space-2xs);
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
+    margin: 0;
+    padding: var(--space-2xs) var(--space-sm);
+    background: var(--border);
+    color: var(--text);
+    font-size: var(--font-size-sm);
+    font-weight: var(--weight-semibold);
   }
 
   .hero-shot-body {
     display: flex;
     flex-direction: column;
-    gap: var(--space-sm);
-    padding: var(--space-md);
+    gap: var(--space-xs);
+    padding: var(--space-sm);
   }
 
-  /* The prompt line: the request, in the mono face and one step up the type scale, because
-     the board makes it the loudest thing in the card. It is a `<p>` and not a `<pre>`: the
-     card is a picture of a line a reader types, and the one command the page offers is the
-     install block at its foot (`website/test/home.mjs` refuses a `<pre>` in the hero). */
   .hero-prompt {
-    display: flex;
-    align-items: baseline;
-    gap: var(--space-2xs);
     margin: 0;
-    font-family: var(--font-mono);
+    color: var(--text);
     font-size: var(--font-size-lg);
     font-weight: var(--weight-semibold);
-    line-height: var(--leading-snug);
-    color: var(--text);
   }
 
-  /* The prompt mark, and the only accent in the card's body: `--accent-on-dark` on `--panel`
-     is a pair `a11y.mjs` computes at 4.5:1 — the accent where the work leaves the reader's
-     hands, here where it starts. */
   .hero-prompt-mark {
-    flex: none;
+    margin-right: var(--space-2xs);
     color: var(--accent-on-dark);
   }
 
-  /* The launching line: the warning tone, which is the one colour on the site that asks a
-     reader to pay attention, and the card is where the run starts. */
+  .hero-ask {
+    display: grid;
+    gap: var(--space-3xs);
+  }
+
+  .hero-ask[hidden] {
+    display: none;
+  }
+
+  .hero-ask-label {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  /* The field the reader types the task into: a real form field, so it keeps its edge (the
+     house rules leave form fields their lines). 17 px or more, so a phone does not zoom. */
+  .hero-ask-field {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 3.5rem;
+    padding: var(--space-2xs) var(--space-xs);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--ground);
+    color: var(--text);
+    font: inherit;
+    font-size: var(--font-size-lg);
+    font-weight: var(--weight-semibold);
+    line-height: var(--leading-snug);
+    resize: vertical;
+  }
+
+  .hero-ask-field:focus-visible {
+    border-color: var(--accent);
+  }
+
   .hero-shot-status {
     display: flex;
     align-items: center;
     gap: var(--space-2xs);
     margin: 0;
     color: var(--warn);
-    font-family: var(--font-mono);
     font-size: var(--font-size-sm);
+    font-weight: var(--weight-semibold);
   }
 
   .hero-shot-status-mark {
     flex: none;
-    width: 10px;
-    height: 10px;
-    border-radius: var(--radius-sm);
+    width: 8px;
+    height: 8px;
+    border-radius: var(--radius-pill);
     background: var(--warn);
   }
 
-  /* The three pull requests: a list, because three things that come back are three things,
-     and each row the surface with the success tone's glyph — the colour that means "this
-     finished". */
   .hero-shot-jobs {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2xs);
+    display: grid;
+    gap: var(--space-3xs);
     margin: 0;
     padding: 0;
     list-style: none;
@@ -465,38 +433,151 @@ const ROWS = Array.from({ length: JOBS }, (_, index) => index + 1)
   .hero-shot-job {
     display: flex;
     align-items: center;
-    gap: var(--space-xs);
+    gap: var(--space-2xs);
     padding: var(--space-2xs) var(--space-xs);
-    border: var(--border-width) solid var(--border);
-    border-radius: var(--radius-md);
-    background: var(--surface);
+    border-radius: var(--radius-sm);
+    background: var(--panel);
+    color: var(--text);
     font-size: var(--font-size-sm);
   }
 
   .hero-shot-icon {
     flex: none;
-    width: 18px;
-    height: 18px;
+    width: 16px;
+    height: 16px;
     color: var(--ok);
   }
 
-  /* The caption, which is the one line of the card that is the site's own: it says what the
-     picture is. It is the quieter tone at the smallest step, because it is a note about the
-     drawing rather than part of it. */
-  .hero-shot-caption {
-    margin: var(--space-2xs) 0 0;
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
+  .hero-shot-job {
+    flex-wrap: wrap;
   }
 
-  /* The wide viewport: the copy and the card side by side, which is how the board draws the
-     first screen — the promise on the left, the picture of a run on the right. */
-  @media (min-width: 60rem) {
+  .hero-shot-job-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    white-space: nowrap;
+  }
+
+  /* The stage the run is at, in the words `fugaro watch` prints. The finished state is the
+     green that means "finished"; the script marks a row that is still working. */
+  .hero-shot-stage {
+    flex: none;
+    color: var(--ok);
+    font-size: var(--font-size-sm);
+  }
+
+  .hero-shot-job[data-stage='working'] .hero-shot-stage {
+    color: var(--text-muted);
+  }
+
+  .hero-shot-job[data-stage='working'] .hero-shot-icon {
+    color: var(--text-muted);
+  }
+
+  .hero-shot-caption,
+  .hero-watch-caption {
+    margin: var(--space-2xs) 0 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .hero-watch {
+    margin: 0;
+    min-width: 0;
+  }
+
+  /* The capture at its logical size (2918 px taken at 2x, so 1459 px wide), cropped at the
+     stage's right edge on a narrow screen rather than shrunk until it cannot be read. */
+  .hero-watch-crop {
+    overflow: hidden;
+  }
+
+  .hero-watch-image {
+    display: block;
+    width: 1459px;
+    max-width: none;
+    height: auto;
+  }
+
+  .hero-watch-caption {
+    padding-bottom: var(--space-md);
+  }
+
+  /* The signature move (the dealt "shutter image"): the capture opens from its top edge, once,
+     as the page loads. It needs no script, and a reader who asks for less motion gets the end
+     state at once (the layout's global reduced-motion rule). The owner-approved motion review of
+     2026-10-23 keeps this one move and shortens it to 700 ms; the picture's 1.5 s settle from
+     scale(1.12) that ran under it is dropped, because two moves on one element read as one slow
+     one and the shutter alone already carries the reveal. */
+  @media (prefers-reduced-motion: no-preference) {
+    .hero-watch-crop {
+      animation: hero-shutter 700ms var(--ease-out) 200ms both;
+    }
+
+    .hero-shot-job[data-arrive] {
+      animation: hero-arrive var(--duration-base) var(--ease-out) both;
+    }
+
+    /* A row that reaches "ready for review" settles its icon into place, once: `site.js` marks
+       the row when its last stage lands, and a row is never marked twice (owner-approved motion
+       opportunities 2026-10-23). The no-script card's rows carry no mark and do not move. */
+    .hero-shot-job[data-settled] .hero-shot-icon {
+      animation: hero-settle var(--duration-enter) var(--ease-out) both;
+    }
+  }
+
+  @keyframes hero-settle {
+    from {
+      opacity: 0;
+      transform: scale(0.92);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  @keyframes hero-shutter {
+    from {
+      clip-path: inset(0 0 100% 0);
+    }
+    to {
+      clip-path: inset(0);
+    }
+  }
+
+  @keyframes hero-arrive {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  @media (min-width: 64rem) {
+    /* The wide composition: the headline's column on the left, the stage on the right half
+       holding the card, and the capture running under both across the stage's full width. */
     .hero {
-      grid-template-columns: minmax(0, 1fr) minmax(0, 30rem);
-      gap: var(--space-2xl) var(--space-2xl);
-      padding-top: var(--space-4xl);
-      padding-bottom: var(--space-3xl);
+      grid-template-columns: minmax(0, 6fr) minmax(0, 6fr);
+      align-items: start;
+      column-gap: var(--space-xl);
+      padding-top: var(--space-2xl);
+    }
+
+    .hero-tagline {
+      font-size: clamp(4rem, 5.6vw, 5.5rem);
+    }
+
+    .hero-stage {
+      padding: var(--space-xl) 0 0 var(--space-xl);
+      clip-path: polygon(5rem 0, 100% 0, 100% 100%, 0 100%, 0 5rem);
+    }
+
+    .hero-watch-image {
+      width: 1100px;
     }
   }
 </style>

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See console/LICENSE.md for the terms.
 // The version skew handshake in a real window (desktop-console plan Task 3.2;
 // design section 7.1 and D7).
 //
@@ -30,8 +32,10 @@
 //     names no frame, and `playwright.test.ts` holds `test/e2e/__screenshots__`
 //     to the Live screen's two by name, so a PNG appearing here would fail that
 //     test rather than be reviewed. The screenshots for the skew states are the
-//     maintainer's to record with `npx playwright test --update-snapshots` on a
-//     machine with a display; this file asserts the drawn tree instead, which is
+//     maintainer's to record with `cd console && npm run build && npx playwright
+//     test --update-snapshots` on a machine with a display (the build is in the
+//     line because the specs read `dist/`; see `test/support/goldens.ts`); this
+//     file asserts the drawn tree instead, which is
 //     what can be asserted on every machine.
 
 import { readFileSync } from 'node:fs'
@@ -71,9 +75,12 @@ const consoleDir = join(__dirname, '..', '..')
 const MODULES: readonly string[] = Object.freeze([
   'shared/availability.js',
   'shared/sanitize.js',
+  'shared/launcher.js',
+  'shared/rigor.js',
   'shared/schema.js',
   'shared/version.js',
   'renderer/app.js',
+  'renderer/writes.js',
   'renderer/screens/live.js',
 ])
 
@@ -154,6 +161,7 @@ function domFactory() {
   }
   return {
     create: function (tag) { return wrap(document.createElement(tag)); },
+    createNS: function (tag) { return wrap(document.createElementNS('http://www.w3.org/2000/svg', tag)); },
     wrap: wrap,
   };
 }

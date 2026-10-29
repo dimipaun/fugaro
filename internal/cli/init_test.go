@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
@@ -1655,6 +1656,45 @@ func TestInitRepoSilentWithoutCeiling(t *testing.T) {
 	}
 }
 
+// update --repo holds a checkout's governance against the run's ceiling too,
+// and with no project layer that ceiling carries Fugaro's own figures
+// (policy.Governance.WithDefaults, T7.1): a file that raises a guardrail is
+// named here as one the run clamps. The file's governance: block is also why
+// the merge runs at all — setsPolicy counts the key being written, so a
+// repository with no budget and no token limit still hears about the
+// guardrail it wrote — while the budget line above stays silent, because a
+// project with no budget has no ceiling to announce.
+func TestInitRepoClampsGovernanceAgainstFugarosDefaults(t *testing.T) {
+	isolateProjects(t, t.TempDir())
+	path := writeProject(t, "aurora", "proj-1234")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(data, "base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc}\n"...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	yaml := "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: api-key }\n" +
+		"governance: { review_ratio: 20 }\n" +
+		"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+	root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), yaml)
+	testutil.Git(t, root, "remote", "add", "origin", "https://github.com/acme/webapp.git")
+	t.Chdir(t.TempDir())
+	out, errOut, err := execute(t, "setup", "--repo", "--print-vars", "--project", "aurora", "--github-app-id", "42", root)
+	if err != nil {
+		t.Fatalf("%v\n%s\n%s", err, out, errOut)
+	}
+	if want := "fugaro.yaml governance.review_ratio: 20 is looser than 5; the runner will use 5"; !strings.Contains(errOut, want) {
+		t.Errorf("stderr lacks %q:\n%s", want, errOut)
+	}
+	if strings.Contains(errOut, "Budget ceiling") {
+		t.Errorf("a project with no budget announced one:\n%s", errOut)
+	}
+	if strings.Contains(out, "governance") {
+		t.Errorf("print-vars stdout must stay the tfvars alone:\n%s", out)
+	}
+}
+
 // --base-image sets the base kind's entry of base_images, from the image's
 // name or KIND=IMAGE, and a later run naming it again replaces it.
 //
@@ -2062,5 +2102,52 @@ func TestInitRefusesAProjectJobDeleteWhateverAllowDeleteNames(t *testing.T) {
 	}
 	if len(r.ran(t, "apply")) != 0 {
 		t.Fatal("a plan deleting a project job and its launcher grant was applied")
+	}
+}
+
+// TestPrintCeilingCarriesTheProjectLayersGovernance: `update --repo` says
+// what the run will clamp, so its ceiling carries the project layer's
+// governance block the way `fugaro validate`'s and the runner's do (T7.1).
+// Merging against a ceiling built from the project config's budget alone let
+// this command pass a file whose stage timeout the run would never apply.
+//
+// The governance-only case is the one the gate has to get right, and the
+// budget-only line has to stay the budget's: a file whose only policy is its
+// governance: block is one the layer's governance can clamp, so the warning
+// must print, and a layer carrying governance and no budget has no ceiling to
+// state — "none (no cap, ...)" would read as one (TestInitRepoSilentWithoutCeiling).
+func TestPrintCeilingCarriesTheProjectLayersGovernance(t *testing.T) {
+	gov := func(d time.Duration) *config.Governance {
+		return &config.Governance{StageTimeout: config.StageTimeout{Implement: config.Duration{Duration: d}}}
+	}
+	// lc is the project config the ceiling comes from; cfg the checkout's file.
+	for _, tc := range []struct {
+		name        string
+		project     *localcfg.Budget
+		file        *config.Budget
+		wantCeiling bool
+	}{
+		{"governance alone", nil, nil, false},
+		{"a budget in the file alone", nil, &config.Budget{Mode: config.BudgetEnforce, PerRunUSD: 5}, false},
+		{"a budget in the project too", &localcfg.Budget{Mode: localcfg.BudgetEnforce, PerRunUSD: 5}, nil, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lc := &localcfg.Config{Name: "aurora", Budget: tc.project}
+			cfg := &config.Config{
+				Project:    "aurora",
+				Budget:     tc.file,
+				Governance: gov(5 * time.Minute),
+				Layer:      &config.ProjectLayer{Governance: gov(200 * time.Millisecond)},
+			}
+			var b strings.Builder
+			printCeiling(&b, lc, cfg)
+			got := b.String()
+			if !strings.Contains(got, "governance.stage_timeout.implement") || !strings.Contains(got, "200ms") {
+				t.Fatalf("update --repo's ceiling note does not warn about the layer's tighter stage timeout:\n%s", got)
+			}
+			if has := strings.Contains(got, "Budget ceiling"); has != tc.wantCeiling {
+				t.Fatalf("a budget ceiling line printed = %v, want %v:\n%s", has, tc.wantCeiling, got)
+			}
+		})
 	}
 }

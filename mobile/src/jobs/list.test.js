@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See mobile/LICENSE.md for the terms.
 // The list, and the wiring (mobile plan, Task P3.3; resolved 2026-10-17).
 //
 // Two halves. The first is `jobList`'s judgement of what it is handed -- a

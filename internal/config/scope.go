@@ -25,15 +25,18 @@ type ScopeRow struct {
 }
 
 const (
-	whyAnchor    = "it identifies the repository and anchors the project layer"
-	whyBranch    = "a project-wide base branch would let a bucket writer point image builds at an unreviewed branch"
-	whyPeople    = "reviewers are people of one repository"
-	whyFiles     = "it names a file in the repository"
-	whyPolicy    = "it is policy: the owner's ceiling lives in the installation config, and a repository can only tighten it"
-	whySecrets   = "secrets belong to one repository's Secret Manager entries"
-	whyFollowup  = "it decides whose comments steer a run with the repository's credentials"
-	whyRepoShape = "it is the repository's own"
-	whyRemoved   = "it was removed in 0.7.0 (" + MigrationDoc + ")"
+	whyAnchor     = "it identifies the repository and anchors the project layer"
+	whyBranch     = "a project-wide base branch would let a bucket writer point image builds at an unreviewed branch"
+	whyPeople     = "reviewers are people of one repository"
+	whyFiles      = "it names a file in the repository"
+	whyPolicy     = "it is policy: the owner's ceiling lives in the installation config, and a repository can only tighten it"
+	whySecrets    = "secrets belong to one repository's Secret Manager entries"
+	whyFollowup   = "it decides whose comments steer a run with the repository's credentials"
+	whyRepoShape  = "it is the repository's own"
+	whyRemoved    = "it was removed in 0.7.0 (" + MigrationDoc + ")"
+	whyGovernance = "it is a guardrail Fugaro ships: the project layer sets it for every repository of the project" +
+		" (a top-level key of the layer file, like claude_models) and a repository can only tighten it," +
+		" because the per-run cap stays the ceiling and a stage budget is a fraction under it (G6)"
 )
 
 // Scopes is every fugaro.yaml key and the layers it may be set in. A key
@@ -66,10 +69,18 @@ var Scopes = []ScopeRow{
 	{Key: "agent.first_line_rounds", In: InProject | InRepo},
 	{Key: "agent.recipe", In: InProject | InRepo | InOverride},
 	{Key: "agent.oauth_token", In: InRepo | InOverride, Why: "it names a credential identity that only the repository's own, PR-reviewed fugaro.yaml may choose among names the local config (never the project layer) allow-lists"},
+	{Key: "agent.compression", In: InRepo | InOverride, Why: "it changes what the model sees on every call; the project layer and a profile are the same launcher-writable bucket object agent.oauth_token already distrusts for the identical reason"},
 	{Key: "budget.mode", In: InRepo, Why: whyPolicy},
 	{Key: "budget.per_run_usd", In: InRepo, Why: whyPolicy},
 	{Key: "budget.allowed_models", In: InRepo, Why: whyPolicy},
 	{Key: "budget.per_day_usd", In: InRepo, Why: whyPolicy},
+	{Key: "governance.review_ratio", In: InProject | InRepo, Why: whyGovernance},
+	{Key: "governance.review_floor_calls", In: InProject | InRepo, Why: whyGovernance},
+	{Key: "governance.max_subagents", In: InProject | InRepo, Why: whyGovernance},
+	{Key: "governance.stage_budget", In: InProject | InRepo, Why: whyGovernance},
+	{Key: "governance.stage_tokens", In: InProject | InRepo, Why: whyGovernance},
+	{Key: "governance.stage_timeout", In: InProject | InRepo, Why: whyGovernance},
+	{Key: "governance.tiers", In: InProject | InRepo, Why: whyGovernance},
 	{Key: "workflows.*.profile", In: InRepo, Why: "it chooses a profile"},
 	{Key: "workflows.*.job_profile", In: InRepo, Why: "it chooses a job profile of the project policy; the policy is the project's, so a repository picks among the profiles it defines and never writes them"},
 	{Key: "workflows.*.base", In: InProfile | InRepo, Why: whyRemoved},
@@ -108,6 +119,13 @@ var Scopes = []ScopeRow{
 	{Key: "workflows.*.inputs.max_total_bytes", In: InProfile | InRepo},
 	{Key: "followup.trusted", In: InRepo, Why: whyFollowup},
 	{Key: "followup.allow_public", In: InRepo, Why: whyFollowup},
+	// Both rigor keys are settable in both layers (D20, D20c): the project
+	// sets defaults.rigor.default as the mode every repository of the project
+	// runs at, and either layer may name area rules. A repository cannot
+	// loosen the project's area rules by writing its own: the two lists are a
+	// union, not a replacement (D20c).
+	{Key: "rigor.default", In: InProject | InRepo},
+	{Key: "rigor.areas", In: InProject | InRepo},
 }
 
 // ExecutableKeys are the profile keys whose values run as shell, or control

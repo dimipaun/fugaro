@@ -14,6 +14,11 @@ defaults:
     first_line_review: auto
     first_line_rounds: 1
     recipe: cheap-loop-senior
+  rigor:
+    default: critical
+    areas:
+      - { name: project-payments, match: "internal/payments/**", mode: critical }
+      - { name: project-docs, match: "docs/**", mode: poc }
 profiles:
   java-service:
     description: Gradle service with Postgres

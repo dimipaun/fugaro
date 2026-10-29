@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See mobile/LICENSE.md for the terms.
 // The redactor's seam (P3.6; P1.3 owns the rule, D118 requires it).
 //
 // P3.6 adds three things to P1.3's redactor and nothing else, so this file

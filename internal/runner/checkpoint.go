@@ -65,9 +65,15 @@ type checkpointState struct {
 // does, whatever its fugaro.yaml says: it pushes no branch at all (design
 // artifact-runs.md §3), and this is the gate that makes that true — the
 // stage-boundary pushes and the mid-stage poll both start from here, so a
-// run that never checkpoints never has a tip pushed for it.
+// run that never checkpoints never has a tip pushed for it. A report run
+// never does either, for the same reason and the same gate: its branch must
+// hold the commit the digest step made and nothing else (digest.go, T3.3),
+// and what a stage commits is discarded at finalize — so a tip pushed while
+// a stage runs would publish a state of the branch no run of the recipe
+// ever meant to, whatever finalize pushes after it. Finalize pushes the
+// step's own commit, once digestFinalize has put the branch back to it.
 func (r *run) checkpointsOn() bool {
-	return r.follow == nil && !r.artifact && r.baseSHA != "" && r.startSHA != "" && r.cfg != nil && r.cfg.Git.PR.CheckpointsOn()
+	return r.follow == nil && !r.artifact && !r.digest && r.baseSHA != "" && r.startSHA != "" && r.cfg != nil && r.cfg.Git.PR.CheckpointsOn()
 }
 
 // startCheckpoints starts the stage's checkpoint goroutine on stageCtx and
@@ -101,6 +107,42 @@ func (r *run) startCheckpoints(stageCtx context.Context, stage string) (stop fun
 		}
 	}()
 	return sync.OnceFunc(func() { cancel(); <-done })
+}
+
+// setStageCkptStop registers the running stage's checkpointer stop, or clears
+// it with nil once the stage is over. A stage with no poll is not registered as
+// nil: startCheckpoints returns a no-op func(){} for one, so the field always
+// holds something callable.
+func (r *run) setStageCkptStop(stop func()) {
+	r.mu.Lock()
+	r.stageCkptStop = stop
+	r.mu.Unlock()
+}
+
+// stopStageCheckpointer stops the running stage's checkpointer, if one is
+// live, and waits for it: after it returns, nothing of that poll can write the
+// run's record or the pull request, and its caller is the only writer left.
+//
+// It is a no-op between stages and for a run that never checkpoints
+// (startCheckpoints registers a no-op for one): a run with no poll goroutine
+// has nothing to stop, so any goroutine but the poll's own may call it. A
+// governance halt stops the poll with it before writing the checkpoint's
+// report to the pull request (governanceHalt), because the poll writes the same
+// pull-request state and the same record (prflow.go) and is still alive
+// mid-stage — the halt's own cancel reaches it only after the watcher's grace
+// period.
+//
+// It must not be called from the stage's checkpoint poll goroutine: that is
+// the goroutine it waits for. No tripwire runs there — the poll calls only
+// runner code (checkpointTick and the push path below, prflow.go, and the
+// status render) — so no caller of governanceHalt is on it.
+func (r *run) stopStageCheckpointer() {
+	r.mu.Lock()
+	stop := r.stageCkptStop
+	r.mu.Unlock()
+	if stop != nil {
+		stop()
+	}
 }
 
 // warnCheckpoint logs msg once per run for key.
@@ -169,7 +211,7 @@ func (r *run) checkpointTick(ctx context.Context, stage string) {
 // checkpointSince is where a checkpoint's secret scan and workflow guard
 // start: the last pushed commit, or, before the first push, the commit the
 // run was cut from — the base of every commit the push adds, exactly as
-// finalize's guards measure them (workBase). Not the base branch, which is
+// finalize's guards measure them (workBase). Not a base branch, which is
 // another branch when the run was started from one: measured against it, a
 // run cut from console looks like it changed every workflow file console
 // already carried, which stops the run's checkpoints for good. And never a
@@ -323,8 +365,8 @@ func (r *run) checkpointClean(ctx context.Context, sha string) bool {
 func (r *run) pushCheckpoint(ctx context.Context, sha string) error {
 	r.refreshForPush(ctx)
 	// finalize's guard over the range this push adds: the same two bounds
-	// (checkpointSince and the base branch), so a checkpoint is refused
-	// exactly when the push it makes would be.
+	// (checkpointSince and the bases the run works from), so a checkpoint is
+	// refused exactly when the push it makes would be.
 	if rej := r.workflowGuardAt(ctx, r.checkpointSince(), sha); rej != nil {
 		return rej // no network call for a push GitHub is sure to refuse
 	}

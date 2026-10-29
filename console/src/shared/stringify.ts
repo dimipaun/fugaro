@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See console/LICENSE.md for the terms.
 // stringifyDeep: `JSON.stringify`'s output, without its recursion.
 //
 // Shared by the fixture writer and the replay buffer's export, whose bodies are

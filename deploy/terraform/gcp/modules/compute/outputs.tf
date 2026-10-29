@@ -41,6 +41,31 @@ output "preload_scheduler_job" {
   value = google_cloud_scheduler_job.preload_rebuild.name
 }
 
+# The reaper's invocation, by name: the Cloud Run job that runs `fugaro
+# reaper`, and the Scheduler job that starts it every ReapMargin (reaper.tf).
+# The JOB's name does not start with `fugaro-`, so it is not a workflow's and
+# `fugaro ls` and max_parallel never count it (reaper.tf's locals say why); the
+# SCHEDULER job's does, as the preload rebuild's and the history rollover's do,
+# because nothing counts a schedule's name. A reader that only wanted to sweep
+# an installation by hand (`gcloud run jobs execute <this>`), or to check that
+# the schedule exists, would otherwise have to read the module to learn them.
+# They are the module's own locals and not inputs, because nothing outside the
+# module creates them -- unlike the names in `var.names`, which fugaro update
+# computes because two sides write them.
+#
+# They travel the whole way out: this file, the root's outputs.tf and
+# internal/infra.ComputeOutputs are one interface, one-for-one
+# (TestComputeOutputsCoverTheRoot reads all three), because what a stage or a
+# later `doctor` check reads back is the ROOT's `terraform output -json`. A
+# name added here alone is a name the stage never sees.
+output "reaper_job" {
+  value = google_cloud_run_v2_job.reaper.name
+}
+
+output "reaper_scheduler_job" {
+  value = google_cloud_scheduler_job.reaper_sweep.name
+}
+
 output "router" {
   value = google_compute_router.this.name
 }

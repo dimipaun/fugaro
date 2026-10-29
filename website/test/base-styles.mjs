@@ -396,7 +396,9 @@ test('every layout refusal fires on the defect it names', () => {
     ],
     [
       "a group's list left in the header's flow",
-      plant('background:var(--panel);position:absolute;top:100%;left:0;right:0}', 'background:var(--panel);top:100%;left:0;right:0}'),
+      // The panel's `transform-origin` sits in the same rule since the owner-approved motion
+      // opportunities 2026-10-23 (the panel grows from its trigger).
+      plant('background:var(--surface);transform-origin:top;position:absolute;top:100%;left:0;right:0}', 'background:var(--surface);transform-origin:top;top:100%;left:0;right:0}'),
       /in the header's flow/,
     ],
     [
@@ -406,7 +408,7 @@ test('every layout refusal fires on the defect it names', () => {
     ],
     [
       "a rule that hides a group's list",
-      plant('background:var(--panel);position:absolute', 'background:var(--panel);display:none;position:absolute'),
+      plant('background:var(--surface);transform-origin:top;position:absolute', 'background:var(--surface);transform-origin:top;display:none;position:absolute'),
       /hides a group's list/,
     ],
     [
@@ -503,12 +505,13 @@ test('every layout refusal fires on the defect it names', () => {
     ],
     [
       "a wide dropdown that is still the header's width",
-      plant('border-radius:var(--radius-lg);left:auto;right:0}', 'border-radius:var(--radius-sm);left:0;right:0}'),
+      // `transform-origin` joined the rule with the owner-approved motion opportunities 2026-10-23.
+      plant('border-radius:var(--radius-md);transform-origin:100% 0;left:auto;right:0}', 'border-radius:var(--radius-sm);transform-origin:100% 0;left:0;right:0}'),
       /hangs across the header/,
     ],
     [
       "a group's dropdown opening rightwards off the viewport",
-      plant('border-radius:var(--radius-lg);left:auto;right:0}', 'border-radius:var(--radius-sm);left:auto;right:auto}'),
+      plant('border-radius:var(--radius-md);transform-origin:100% 0;left:auto;right:0}', 'border-radius:var(--radius-sm);transform-origin:100% 0;left:auto;right:auto}'),
       /sideways scroll/,
     ],
   ]
@@ -1689,8 +1692,10 @@ export function homeRhythmFailures(css, html) {
     const inForce = rules.filter((r) => names(r, classes, scopes) && appliesAt(width)(r))
     let top
     let bottom
+    let field = false
     for (const rule of inForce) {
       for (const [property, value] of cssDeclarations(rule.decls)) {
+        if ((property === 'background' || property === 'background-color') && !/^(transparent|none)$/.test(value.trim())) field = true
         if (property === 'padding') {
           const parts = shorthandParts(value)
           top = parts[0]
@@ -1704,6 +1709,7 @@ export function homeRhythmFailures(css, html) {
     }
     if (top === undefined || bottom === undefined) return null
     return {
+      field,
       top: toPx(top, tokens),
       bottom: toPx(bottom, tokens),
       // What a failure quotes: the two values the edges were read from, so a reader of the
@@ -1754,6 +1760,12 @@ export function homeRhythmFailures(css, html) {
       const a = vertical(above, width)
       const b = vertical(below, width)
       if (a === null || b === null) continue
+      // **A field of colour pads inside itself** (the owner's ruling of 2026-10-23, the redesign's
+      // Step 3: a section may be a whole field of colour). A block that paints its own ground
+      // (the run band on the panel tone, the install section on the accent) carries its room
+      // inside that ground, so its padding is part of the field a reader sees and not blank page
+      // added to the gap: the gap between it and its neighbour is the neighbour's padding alone.
+      if (a.field || b.field) continue
       if (Number.isNaN(a.bottom) || Number.isNaN(b.top)) {
         out.push(
           `at ${width} px the homepage's ${nameOf(above)} and ${nameOf(below)} carry a padding the rhythm check cannot turn into pixels (${JSON.stringify(a.declared)} and ${JSON.stringify(b.declared)}), and the room between two blocks is read from those two numbers: teach \`website/test/base-styles.mjs\` the shape, or write the declaration in one it reads (review round 5)`,
@@ -1775,7 +1787,9 @@ test('the homepage’s blocks pad the gap between them once, and not twice', () 
   const failures = []
   let checked = 0
   for (const { rel, html } of builtPages()) {
-    if (!html.includes('class="home-slider"')) continue
+    // The homepage is the page whose `main` holds the hero (the owner's ruling of 2026-10-23
+    // retired the slider this used to look for).
+    if (!html.includes('class="hero"')) continue
     checked += 1
     failures.push(...homeRhythmFailures(pageCss(html), html).map((line) => `${rel}: ${line}`))
   }
@@ -1786,74 +1800,51 @@ test('the homepage’s blocks pad the gap between them once, and not twice', () 
 test('the rhythm refusal fires on the doubled gap, and the pairs that keep the rhythm pass', () => {
   const html = readFileSync(path.join(DIST, 'index.html'), 'utf8')
   const cases = [
-    // The defect as it shipped: the install section's own `--space-lg` on top of the room the
-    // block above it already carries — the 144 px band the review of round 5 measured between
-    // the last block and the "Install" heading, which was the flow's last card then and is the
-    // benefits panel of the 2026-10-19 draft. **The bold redesign of 2026-10-20 moved the
-    // install section to the end of the page, so the block above it is now the "what you get"
-    // grid** (`.home-get`) — the defect, the number and the rule are unchanged, and only the
-    // name of the block above changed. The plant names the rule rather than the declaration,
-    // because every block of this page writes `padding:0 var(--space-md) var(--space-3xl)`
-    // (the hero's and the slider's first in the built page, then the band's, the grid's and the
-    // install's) and a case about the install's declaration is a case about the rule the
-    // install's file declares it in.
+    // The defect as it shipped (review round 5): a block's own `--space-lg` on top of the room
+    // the block above it already carries. The blocks moved with the owner's ruling of
+    // 2026-10-23 (the redesign's Step 3): every top-level block of the page writes
+    // `padding:0 var(--frame-gutter) var(--space-4xl)` but the two fields of colour, so the
+    // plant is made on the cost section, under the "what you get" block: 144 px of the block
+    // above and the planted 32 px.
     [
-      'an install section padding the gap the grid above it already pads',
-      plantRule('.home-install[data-astro-cid-', (rule) => rule.replace('padding:0 var(--space-md) var(--space-3xl)', 'padding:var(--space-lg) var(--space-md) var(--space-3xl)')),
-      [/\.home-get ends with 112 px under it and \.home-install opens with 32 px over it, so the gap between them is 144 px/],
+      'a cost section padding the gap the block above it already pads',
+      plantRule('.home-cost[data-astro-cid-', (rule) => rule.replace('padding:0 var(--frame-gutter) var(--space-4xl)', 'padding:var(--space-lg) var(--frame-gutter) var(--space-4xl)')),
+      [/\.home-get ends with 144 px under it and \.home-cost opens with 32 px over it, so the gap between them is 176 px/],
     ],
-    // And the same edit on the block between the two: the slider's top padding over the hero's
-    // bottom one, which is the pair the hero's own bottom padding makes. Every block on this
-    // page declares its own rule in the component that renders it (there is no page-level
-    // `<style>` on `index.astro` any more), so the two plants above and here are the two gaps
-    // the page has, each padded twice by the rule of the block below it. The sum is the hero's
-    // own room — `--space-2xl`, and `--space-3xl` from 60 rem up, since the bold redesign
-    // gives the hero the bottom of the scale — plus the slider's planted `--space-lg`: 144 px
-    // on a desktop and 104 px on a tablet or a phone, which is the pair the pattern reads.
+    // And the same edit on the block under the hero, which is the pair the hero's own bottom
+    // padding makes.
     [
-      'the slider padding the gap the hero above it already pads',
-      plantRule('.home-slider[data-astro-cid-', (rule) => rule.replace('padding:0 var(--space-md) var(--space-3xl)', 'padding:var(--space-lg) var(--space-md) var(--space-3xl)')),
-      [/the gap between them is 1(?:44|04) px/],
+      'the benefits padding the gap the hero above it already pads',
+      plantRule('.home-benefits[data-astro-cid-', (rule) => rule.replace('padding:0 var(--frame-gutter) var(--space-4xl)', 'padding:var(--space-lg) var(--frame-gutter) var(--space-4xl)')),
+      [/\.hero ends with 144 px under it and \.home-benefits opens with 32 px over it, so the gap between them is 176 px/],
     ],
-    // **And what the reading does not reach**: the benefits panel. The section is rendered
-    // inside the slider's second panel since the owner's approved draft of 2026-10-19, so it is
-    // not a top-level block of the page and its box is not a gap between two blocks. The plant
-    // gives it a top padding anyway and the reading refuses nothing — a check that walked every
-    // section carrying a padding would report the panel's own box as a doubled gap. The
-    // `plantRule` call is also what holds the panel's rule to the build: `.home-benefits-panel`
-    // is `Benefits.astro`'s, declared when the section is rendered in a panel.
+    // **And what the reading does not refuse**: a field of colour padding its own top. The run
+    // band paints the panel tone, so the room over its heading is inside the band, and the gap
+    // above the band is the benefits' padding alone. A check that read every padding as blank
+    // page would refuse the field's own room as a doubled gap.
     [
-      'a benefits panel padding its own top, which is not a gap between two blocks',
-      plantRule('.home-benefits-panel[data-astro-cid-', (rule) => rule.replace('padding:0', 'padding:var(--space-lg) 0 0')),
+      'a field of colour padding its own top, which is inside its field and not a gap',
+      `${TODAY()}.home-run{padding-top:var(--space-4xl)}`,
       [],
     ],
     // **The case the three widths are for.** The same doubled gap, written inside a rule that is
     // in force on a phone and nowhere else: at 1280 and 768 the page's rhythm is right and at
-    // 375 the install section pads a gap the flow above it already pads. A check that read one
-    // width — the desktop width, which is what this one read before review round 5's follow-up —
-    // passes this stylesheet, and the phone is where the reader sees two paddings under one
-    // heading. Two details of the plant: `(width<=48rem)` would be in force at 768 as well,
-    // because 48 rem **is** 768 px, so the band here is a phone's own 30 rem; and `appliesAt`
-    // reads ranges written with `>=`/`<=` rather than `<`, so the plant is written in the
-    // vocabulary the reader has.
+    // 375 the cost section pads a gap the block above it already pads. Two details of the
+    // plant: `(width<=48rem)` would be in force at 768 as well, because 48 rem **is** 768 px, so
+    // the band here is a phone's own 30 rem; and `appliesAt` reads ranges written with `>=`/`<=`
+    // rather than `<`, so the plant is written in the vocabulary the reader has.
     [
-      'an install section that pads the gap only on a phone',
-      `${TODAY()}@media screen and (width<=30rem){.home-install{padding:var(--space-lg) var(--space-md) var(--space-3xl)}}`,
-      [/the gap between them is 144 px/],
+      'a cost section that pads the gap only on a phone',
+      `${TODAY()}@media screen and (width<=30rem){.home-cost{padding:var(--space-lg) var(--frame-gutter) var(--space-4xl)}}`,
+      [/the gap between them is 176 px/],
       [375],
     ],
     // **The same doubled gap written as a longhand**, which is the shape the check could not
-    // see: it read the `padding` shorthand out of the cascade and nothing else, so a rule that
-    // pads one edge — `padding-top`, which is how a block that keeps the shorthand for its
-    // sides writes its own top — left the block looking like one that cannot pad the gap at
-    // all, and the 144 px band went unmeasured. The plant appends the rule rather than editing
-    // the section's own, because a longhand in a rule of its own is exactly the case: the
-    // declaration that pads the gap and the shorthand that does not are in two rules, and the
-    // reading has to take the last one in force for each edge.
+    // see before review round 5's follow-up: a rule that pads one edge in a rule of its own.
     [
-      'an install section that pads the gap with a longhand',
-      `${TODAY()}.home-install{padding-top:var(--space-lg)}`,
-      [/the gap between them is 144 px/],
+      'a cost section that pads the gap with a longhand',
+      `${TODAY()}.home-cost{padding-top:var(--space-lg)}`,
+      [/the gap between them is 176 px/],
     ],
   ]
   for (const [what, css, expected, widths = RHYTHM_WIDTHS] of cases) {
@@ -1877,8 +1868,10 @@ test('the rhythm refusal fires on the doubled gap, and the pairs that keep the r
 
 test('the rhythm reading refuses a block whose rule cannot reach it', () => {
   const html = readFileSync(path.join(DIST, 'index.html'), 'utf8')
-  const sliderScope = /class="home-slider"[^>]*data-astro-cid-(\w+)/.exec(html)?.[1]
-  assert.ok(sliderScope, 'the built homepage no longer carries the slider’s scope on `.home-slider`, and this case re-scopes a rule to it')
+  // The hero's scope is the other component's (the owner's ruling of 2026-10-23 retired the
+  // slider this case used to borrow it from).
+  const sliderScope = /class="hero"[^>]*data-astro-cid-(\w+)/.exec(html)?.[1]
+  assert.ok(sliderScope, 'the built homepage no longer carries the hero’s scope on `.hero`, and this case re-scopes a rule to it')
 
   // **The defect of round 6, as it shipped**: a block declared by a component other than the one
   // that renders it, so its rules carry that component's scope (`[data-astro-cid-…]`), the
@@ -1904,7 +1897,7 @@ test('the rhythm reading refuses a block whose rule cannot reach it', () => {
   assert.notEqual(unscoped, html, 'the built homepage’s install block no longer carries a scope attribute, and this case takes one off')
 
   const cases = [
-    ['every rule naming the block scoped to the component that renders the slider rather than to the one that renders the block', rescoped, html, new RegExp(`scoped to data-astro-cid-${sliderScope}`)],
+    ['every rule naming the block scoped to the component that renders the hero rather than to the one that renders the block', rescoped, html, new RegExp(`scoped to data-astro-cid-${sliderScope}`)],
     ['a block whose scope attribute is gone', TODAY(), unscoped, /the element carries no scope attribute/],
   ]
   for (const [what, css, page, expected] of cases) {
@@ -2040,8 +2033,8 @@ export function watchSlotFailures(css, html) {
 test('the watch slot reserves no space until the image lands, and the image scales in it', () => {
   // The slot as it ships, first: the cases below are the real rules with one thing taken out,
   // and a case that never read the shipped stylesheet would pass on a page whose slot had no
-  // rules at all. The homepage is the page the slot is on — the "See it" panel of the slider
-  // (the owner's approved draft of 2026-10-19) — and `watchSlotFailures` returns early on a page
+  // rules at all. The homepage is the page the slot is on (the "what you get" section since the
+  // owner's ruling of 2026-10-23), and `watchSlotFailures` returns early on a page
   // with no slot, so this assertion is also what holds the slot to the artifact.
   const home = readFileSync(path.join(DIST, 'index.html'), 'utf8')
   const css = pageCss(home)
@@ -2088,326 +2081,12 @@ test('the watch slot reserves no space until the image lands, and the image scal
   }
 })
 
-// ---- the homepage's slider: the block the flow's own arithmetic moved to -------------------
+// ---- the homepage's slider (retired) -------------------------------------------------------
 //
-// The homepage's section is the owner's approved draft of 2026-10-19 — one slider with three
-// tabs — and the four-step flow that stood in its place is retired with it (the owner's ruling
-// of 2026-10-20: `ArchitectureDiagram.astro` is deleted, and the gates for what the pages show
-// now take the retired ones' place). The two gates below are the ones the flow's layout carried,
-// read on the block that replaced it, and they are the two claims that were never about the
-// flow: **a step name has to fit the column it is printed in**, and **a block does not change
-// shape with the viewport unless the design says so**.
-//
-// The first is the retired gate's centre of gravity (`.flow-steps`'s four cards in a quarter of
-// the row each, where a card's content box was 100 px wide and "Ephemeral cloud job" did not
-// print in it). The slider's three names are printed in the third track of a grid, beside the
-// step's number and its icon, and the box they get is arithmetic: the page's column, less the
-// gutters between `main` and the list, less the list's own cap (it is an `<ol>`, and `base.css`
-// holds lists to the measure), less the step's padding and border, less the grid's two gaps,
-// less the number's own track and the icon's. Every one of those numbers comes out of the built
-// stylesheet rather than being typed here, so a token that moves moves this with it. The gutter
-// is read the way the flow's arithmetic read it: the declared padding of `main` and of every
-// block between it and the list, *ignoring* the homepage's `main:has(> .hero)` shortcut (which
-// drops `main`'s padding and lets each block put its own back), so the box this works from is
-// narrower than the page's own — the direction a *fits* question should err in.
-//
-// The second is the retired band gate (`flowBandFailures` read the shape in force at six widths
-// and refused a layout inside a query with no viewport width in it). The slider has no bands to
-// read: the tabs are the mechanism and the fragment is the state, so which panel a reader is
-// shown is **never** the viewport's business, and a rule that shows or hides a panel from a
-// media query is a second mechanism the tabs do not know about — a tab that does nothing at
-// some widths, or a panel that appears without the reader asking for it. Both shapes of that
-// defect are refused: a query about the width, and a query the width does not decide (which
-// would show or hide a panel at every width).
-//
-// The names may wrap — that is the first thing the retired gate read, and it is why the limit
-// here is the longest single *word* rather than the longest name — so the one declaration that
-// takes the wrapping away is refused on its own.
-
-/** The widths the slider is read at: a phone, the site's chrome breakpoint, and the desktop
- *  width the other gates measure the site at. Nothing about the slider answers to the viewport,
- *  so these are three readings of one layout rather than three bands. */
-const SLIDER_WIDTHS = [360, 768, 1280]
-
-/** The classes between `main` and the slider's step list on one built page: the gutters its own
- *  width arithmetic has to take off the column. */
-function sliderWrappers(html) {
-  const list = [...walk(parse(html))].find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('easy-steps'))
-  const out = []
-  for (let node = list?.parent; node && node.name !== 'main'; node = node.parent) {
-    out.push(...(node.attrs?.get('class') ?? '').split(/\s+/).filter(Boolean))
-  }
-  return out
-}
-
-/**
- * A list on one built page, as `listMaxWidth` reads it: its name, its classes, its id and every
- * attribute it carries. The attributes matter because Astro scopes a component's stylesheet by
- * adding one (`data-astro-cid-…`), and a rule the cascade reader could not answer for is a rule
- * it has to refuse. `what` is the sentence that says where the list is supposed to be, so the
- * assertion names the page rather than the class.
- */
-export function listElement(html, klass, what) {
-  const list = [...walk(parse(html))].find(
-    (el) => (el.name === 'ol' || el.name === 'ul') && (el.attrs.get('class') ?? '').split(/\s+/).includes(klass),
-  )
-  assert.ok(list, `the page carries no <ol class="${klass}">, so the cap on it cannot be read: ${what}`)
-  return {
-    name: list.name,
-    classes: (list.attrs.get('class') ?? '').split(/\s+/).filter(Boolean),
-    id: list.attrs.get('id') ?? null,
-    attrs: list.attrs,
-  }
-}
-
-/** The text of every element of one built page that carries `klass`, in document order. */
-function textOfEach(html, klass) {
-  return [...walk(parse(html))]
-    .filter((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes(klass))
-    .map((el) => textOf(el).replace(/\s+/g, ' ').trim())
-}
-
-/**
- * Every way the homepage's slider fails to render the step names it prints, or fails to keep
- * the panel a reader chose, for one built page's stylesheet and markup. Returns nothing on a
- * page that carries no slider, so it can be run over every built page.
- */
-export function sliderLayoutFailures(css, html) {
-  const out = []
-  const rules = allRules(css)
-  const tokens = lengthTokens(css)
-  const declared = (klass, property, width) =>
-    rules
-      .filter((r) => new RegExp(`\\.${klass}(?![\\w-])`).test(r.selector) && appliesAt(width)(r))
-      .map((r) => declarations(r)[property])
-      .filter((value) => value !== undefined)
-      .pop()
-
-  // The names may wrap, at every width: one rule holding them on a line is the defect.
-  for (const rule of rules) {
-    if (!/\.step-name(?![\w-])/.test(rule.selector)) continue
-    if (!(declarations(rule)['white-space'] ?? '').startsWith('nowrap')) continue
-    out.push(
-      `the step name is held on one line (${rule.query ? `inside ${rule.query}: ` : ''}white-space: nowrap), and the name is printed in the third track of a grid beside the step's number and its icon: that track is a fraction of a phone's page, so a name that cannot wrap runs out of the panel rather than onto a second line (the retired four-across gate's first reading, changes spec 2026-10-18 item 4; the owner's ruling of 2026-10-20)`,
-    )
-  }
-
-/** A media query about the viewport's width, in either of the two shapes the site writes:
- *  the built `(width<=59.25rem)` range form and the classic `(max-width:40rem)`. A query that
- *  is about something else — `prefers-reduced-motion`, `min-resolution`, `hover` — is not about
- *  the width, and a `display` inside one is a mechanism that acts at every width. */
-const ABOUT_WIDTH = /(?:min-width|max-width|width\s*[<>]=?)\s*:?\s*[\d.]+(?:rem|px)/
-
-  // The panel a reader is shown is the fragment's, at every width — the tab is a link to the
-  // panel's own id, and the stylesheet's `:target` rules are what shows it. A `display` on a
-  // panel inside a media query is the viewport deciding instead, in one of two shapes: a query
-  // about the width (a band at which the tabs stop working, or a panel appears unasked), or a
-  // query the width does not decide (which does it at every width).
-  for (const rule of rules) {
-    if (!/\.panel(?![\w-])|#home-panel-/.test(rule.selector)) continue
-    const display = declarations(rule)['display']
-    if (display === undefined || !rule.query) continue
-    // **One at-rule is let through, and it is not a band.** `@supports selector(:has(*))` is not
-    // a question about the viewport or about the reader's settings: it asks the browser whether
-    // it can read the one selector that says "while no panel is targeted", and the rule inside it
-    // is the block's own no-script state — the first panel, which is what the tabs and the
-    // fragment already show. It is written that way because a selector list is not forgiving: a
-    // browser that cannot answer `:has()` would drop a list carrying it, and take the panels the
-    // other selectors in that list show down with it (the review of 2026-10-21). Every other
-    // at-rule — a width, `prefers-reduced-motion`, anything else — is still refused below, in
-    // both of the two shapes this read has always refused.
-    if (rule.query === '@supports selector(:has(*))') continue
-    out.push(
-      ABOUT_WIDTH.test(rule.query)
-        ? `the slider's panels are given \`display: ${display}\` inside \`${rule.query}\`, a query about the viewport's width, and the panel a reader is shown is the one the fragment names at every width: a query here is a band in which a tab does nothing, or a panel appears without the reader asking for it (the retired band gate, review round 3 item 3e; the owner's ruling of 2026-10-20)`
-        : `the slider's panels are given \`display: ${display}\` inside \`${rule.query}\`, a query with no viewport width in it, and a panel shown or hidden at no particular width is one shown or hidden at every width — a mechanism the reader's tab does not know about (the retired band gate, review round 3 item 3e; the owner's ruling of 2026-10-20)`,
-    )
-  }
-
-  const names = textOfEach(html, 'step-name')
-  if (names.length === 0) return out
-  const numbers = textOfEach(html, 'step-number')
-  const list = listElement(html, 'easy-steps', "the slider's steps are one list, and the box its names are printed in is read from the list's own cap")
-
-  /**
-   * The inline padding a block declares: `inlineToken` of its `padding` shorthand. The survey
-   * of wrappers above uses the class's own last rule rather than a rule in force at a width,
-   * which is an over-estimate when a breakpoint gives the block a smaller gutter — the
-   * direction to be wrong in, since the box this reads is a floor.
-   */
-  const wrapperPad = sliderWrappers(html).reduce((sum, klass) => {
-    const value = rules
-      .filter((r) => new RegExp(`\\.${klass}(?![\\w-])`).test(r.selector))
-      .map((r) => toPx(inlineToken(declarations(r)['padding']), tokens))
-      .filter((px) => !Number.isNaN(px))
-      .pop()
-    return sum + (value ?? 0)
-  }, 0)
-
-  /** `main`'s gutter at a width: the last of its rules that applies there, with the homepage's
-   *  `main:has(…)` shortcut left out on purpose (see the section comment). */
-  const mainPad = (width) =>
-    rules
-      .filter((r) => /(^|[,\s])main(?![\w-])/.test(r.selector) && !r.selector.includes(':has(') && appliesAt(width)(r))
-      .map((r) => toPx(inlineToken(declarations(r)['padding']), tokens))
-      .filter((px) => !Number.isNaN(px))
-      .pop() ?? 0
-
-  for (const width of SLIDER_WIDTHS) {
-    const columns = declared('easy-step', 'grid-template-columns', width)
-    const nameSize = toPx(declared('step-name', 'font-size', width), tokens)
-    const numberSize = toPx(declared('step-number', 'font-size', width), tokens)
-    const iconBox = toPx(declared('step-icon', 'width', width), tokens)
-    const columnGap = toPx(inlineToken(declared('easy-step', 'column-gap', width) ?? declared('easy-step', 'gap', width)), tokens)
-    const stepPad = toPx(inlineToken(declared('easy-step', 'padding', width)), tokens)
-    const stepBorder = toPx(firstToken(declared('easy-step', 'border', width)), tokens)
-    const pageMax = tokens.get('page-max')
-
-    // Every number the arithmetic below is made of, refused here when this reader could not
-    // turn it into pixels rather than carried into the sums: `NaN` is false against every
-    // comparison below, so a length read as `NaN` makes the refusals silent — the panel would
-    // be reported as fitting because the check stopped measuring it.
-    const unreadable = [
-      ['the grid the step is laid out in (`.easy-step`’s grid-template-columns)', columns],
-      ['the size the step names are set in (`.step-name`’s font-size)', nameSize],
-      ['the size the step number is set in (`.step-number`’s font-size)', numberSize],
-      ['the icon’s track (`.step-icon`’s width)', iconBox],
-      ['the gap between the tracks (`.easy-step`’s column-gap)', columnGap],
-      ['the step’s padding (`.easy-step`’s padding)', stepPad],
-      ['the step’s border (`.easy-step`’s border)', stepBorder],
-      ['the page’s own ceiling (`--page-max`)', pageMax],
-    ].filter(([, value]) => value === undefined || (typeof value === 'number' && Number.isNaN(value)))
-    if (unreadable.length > 0) {
-      out.push(
-        `at ${width} px the slider's arithmetic cannot be read: ${unreadable.map(([what]) => what).join(', ')} is not a length this check can turn into pixels (or, for the grid, no track list at all), and a length it cannot read is a length nothing checked (\`NaN\` passes every comparison below) — teach \`website/test/base-styles.mjs\` the shape, or write the declaration in one it reads (changes spec 2026-10-18, item 4; the owner's ruling of 2026-10-20)`,
-      )
-      continue
-    }
-    if (numbers.length === 0) {
-      out.push(
-        `the slider prints step names and no step number, and the number is the first track of the grid the name is printed in: what the number's own track takes out of the name cannot be read from a page that carries none (the owner's ruling of 2026-10-20)`,
-      )
-      continue
-    }
-
-    // The name's own track: the one the stylesheet puts the name in, and the one that has to
-    // be the grid's remaining room. An `auto` (or `max-content`) track is sized by the name
-    // itself, so a name wider than the page does not wrap — it widens the grid past the
-    // gutter, which is the same defect the retired gate measured, told the other way round.
-    const tracks = splitTop(columns, ' ')
-    const last = tracks[tracks.length - 1] ?? ''
-    if (tracks.length < 3) {
-      out.push(
-        `at ${width} px the step is a grid of \`${columns}\`, and the step's number, its icon and its name are three tracks: a grid with ${tracks.length} of them does not place the name beside the other two (the owner's ruling of 2026-10-20)`,
-      )
-    } else if (!/fr\)?\s*$/.test(last) || !/^minmax\(\s*0/.test(last)) {
-      out.push(
-        `at ${width} px the name's track of the step's grid is \`${last}\` (\`grid-template-columns: ${columns}\`), and the name's track is the grid's remaining room — \`minmax(0, 1fr)\`: a track sized by the name itself is a name wider than the page widening the grid past the column it is in rather than wrapping inside it (the retired four-across gate's card arithmetic, told the other way round; changes spec 2026-10-18 item 4; the owner's ruling of 2026-10-20)`,
-      )
-    }
-
-    // The box the name is printed in: the page's column — the viewport, capped by `--page-max`
-    // — less `main`'s gutter and the gutters of the blocks between it and the list, less the
-    // cap the list itself carries, less the step's own padding and border, less the two gaps,
-    // less the number's track (the widest number the page prints, at the size the stylesheet
-    // sets it) and the icon's.
-    const cap = listMaxWidth(css, width, list)
-    if (cap.unreadable) {
-      out.push(
-        `at ${width} px the slider's list is reached by a rule this check cannot read — ${cap.unreadable} — and a cap nobody can read is a cap nobody checked: teach \`website/test/base-styles.mjs\`'s cascade reader the construct, or write the rule in a shape it reads (the owner's ruling of 2026-10-20)`,
-      )
-      continue
-    }
-    const numberBox = Math.max(...numbers.map((number) => textWidth(number, numberSize)))
-    const box = Math.min(Math.min(width, pageMax) - 2 * mainPad(width) - 2 * wrapperPad, cap.px)
-    const room = box - 2 * stepPad - 2 * stepBorder - 2 * columnGap - numberBox - iconBox
-    const needs = textWidth(longestWord(names), nameSize)
-    if (room < needs) {
-      out.push(
-        `at ${width} px the slider prints its step names in ${Math.round(room)} px (the column is ${Math.round(box)} px, less the step's padding and border, the grid's two gaps, the number's track at ${numberBox.toFixed(1)} px and the icon's ${iconBox} px), and the longest word of the three names it prints (${JSON.stringify(longestWord(names))}, at ${nameSize} px) needs ${Math.round(needs)} px: a name is free to wrap here, so the word is what has to fit, and a word that does not fit runs out of the panel (the retired four-across gate's name arithmetic, changes spec 2026-10-18 item 4; the owner's ruling of 2026-10-20)`,
-      )
-    }
-  }
-  return out
-}
-
-test('the slider prints its step names in the room it gives them, and answers to the fragment', () => {
-  // The homepage is the page the slider is on (the owner's approved draft of 2026-10-19) and
-  // the pages that carry no slider are not this check's subject — `sliderLayoutFailures`
-  // returns early on them — so a homepage without one has to be refused rather than passed.
-  const home = readFileSync(path.join(DIST, 'index.html'), 'utf8')
-  assert.ok(/class="[^"]*easy-steps/.test(home), 'the homepage carries no `easy-steps` list, and the slider is where the homepage\'s three steps are (the owner\'s approved draft of 2026-10-19)')
-  assert.ok(textOfEach(home, 'step-name').length > 0, 'the homepage prints no `step-name`, and the slider\'s first panel is the three steps of using Fugaro')
-  assert.deepEqual(sliderLayoutFailures(pageCss(home), home), [], 'the slider as it ships breaks one of the rules the cases below are about')
-  for (const { rel, html } of builtPages()) {
-    if (rel === 'index.html') continue
-    assert.deepEqual(sliderLayoutFailures(pageCss(html), html), [], `${rel} carries no slider and the check's subject there is the panels it does carry`)
-  }
-})
-
-test('every slider refusal fires on the defect it names', () => {
-  const home = readFileSync(path.join(DIST, 'index.html'), 'utf8')
-  const css = pageCss(home)
-  /** The page's own rule for a selector, as the built stylesheet writes it (Astro scopes a
-   *  component's rules with `[data-astro-cid-…]`, so the fixture edits the rule the page
-   *  carries rather than one written here). */
-  const ruleText = (selector) => {
-    const pattern = new RegExp(`(?:^|[},])\\s*(${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})(\\[[^\\]]*\\])?\\{([^}]*)\\}`)
-    const match = pattern.exec(css)
-    assert.ok(match, `the homepage's stylesheet carries no \`${selector}\` rule, and the cases below are about the page's own rules`)
-    return match[0]
-  }
-  const change = (selector, from, to) => {
-    const text = ruleText(selector)
-    assert.ok(text.includes(from), `\`${selector}\` no longer declares ${JSON.stringify(from)}, and this fixture replaces it`)
-    return css.replace(text, text.replace(from, to))
-  }
-  const cases = [
-    // The name held on one line: the retired gate's first reading, and the one declaration that
-    // takes the wrapping away.
-    ['the step name held on one line', `${css}\n.step-name{white-space:nowrap}`, /is held on one line/],
-    // A band of width at which a panel is shown whatever the fragment says: the tabs stop
-    // working there, and the panel appears unasked.
-    [
-      'a panel shown inside a query about the width',
-      `${css}\n@media (max-width:40rem){.panel{display:block}}`,
-      /inside `@media \(max-width:40rem\)`, a query about the viewport's width/,
-    ],
-    // And the same defect in a query the width does not decide, which does it at every width.
-    [
-      'a panel hidden inside a query with no width in it',
-      `${css}\n@media (prefers-reduced-motion:reduce){.panel{display:none}}`,
-      /inside `@media \(prefers-reduced-motion:reduce\)`, a query with no viewport width in it/,
-    ],
-    // The name's track sized by the name itself, so a long name widens the grid rather than
-    // wrapping in it.
-    [
-      'the name’s track sized by the name',
-      change('.easy-step', 'grid-template-columns:auto auto minmax(0,1fr)', 'grid-template-columns:auto auto auto'),
-      /the name's track of the step's grid is `auto`/,
-    ],
-    // A grid that does not place the name beside the other two at all.
-    [
-      'a grid with two tracks',
-      change('.easy-step', 'grid-template-columns:auto auto minmax(0,1fr)', 'grid-template-columns:auto minmax(0,1fr)'),
-      /are three tracks: a grid with 2 of them/,
-    ],
-    // The box the names are printed in squeezed to a strip: the list capped far below its own
-    // measure, which is the cap a browser would give the names.
-    ['the list capped into a strip', change('.easy-steps', 'max-width:var(--measure)', 'max-width:6rem'), /the longest word of the three names it prints/],
-    // A track this reader cannot measure: the icon in `em`s, which is a length `toPx` refuses
-    // rather than a length it reads as nothing.
-    ['an icon track in a unit this check cannot read', change('.step-icon', 'width:28px', 'width:2em'), /arithmetic cannot be read/],
-  ]
-  for (const [what, stylesheet, expected] of cases) {
-    assert.notEqual(stylesheet, css, `${what} was not planted: the fixture's pattern did not match the built stylesheet`)
-    const failures = sliderLayoutFailures(stylesheet, home)
-    assert.ok(
-      failures.some((line) => expected.test(line)),
-      `${what}: the refusal did not fire, and this is what it said instead:\n  ${failures.join('\n  ') || '(nothing)'}`,
-    )
-  }
-})
+// The readings of the homepage's three-panel slider (its step names, its fragment rules) are
+// retired with the slider by the owner's ruling of 2026-10-23 (the redesign's Step 3, lever 1:
+// the run is ONE section). The run section's list is held by `test/a11y.mjs`, and the shared
+// screenshot slider by `test/console-screens.mjs`.
 
 // ---- a copy control sits at the right of the block it belongs to (base.css) --------------
 
@@ -2723,6 +2402,40 @@ export function navFailures(html, rel) {
   const all = [...walk(doc)]
 
   const navs = all.filter((el) => el.name === 'nav' && (el.attrs.get('class') ?? '').split(/\s+/).includes('site-nav'))
+
+  // The way home on a phone: the wordmark's text is in its own element, because that element is
+  // what the phone breakpoint takes out of the header's row (the owner's ruling of 2026-10-19:
+  // the mark stays, the text goes). Loose text in the link is text nothing can hide.
+  //
+  // It is a rule of the chrome rather than of the menu, so it is read on both shapes of page: the
+  // campaign mode's header is the wordmark and nothing else, and that one link is the page's whole
+  // way home.
+  const wordmarkRule = () => {
+    const wordmark = all.find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('site-wordmark'))
+    const wordmarkName = wordmark && [...walk(wordmark)].find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('site-wordmark-name'))
+    if (!wordmark) {
+      fail('the page carries no wordmark link to the home page')
+    } else if (!wordmarkName || !textOf(wordmarkName).trim()) {
+      fail("the wordmark's text is not in its own element (.site-wordmark-name), so the phone breakpoint has nothing to take out of the header's row and the row is wider than the viewport at 375 px")
+    }
+  }
+
+  // **A campaign page carries no menu at all** (go-to-market plan, Task G2.2; spec §6). The four
+  // landing pages `/save`, `/control`, `/scale` and `/crew` are one message for one audience, so
+  // the site's nine sections are not a choice a visitor who arrived from an ad is offered: the
+  // page's own calls to action are, and the footer keeps the three links a reader looks for.
+  // The mode is read off the page's own chrome rather than off a list of routes, so a campaign
+  // page that grew the menu back is refused here instead of passing because its path is listed —
+  // and what this branch leaves behind is the menu's own checks, not the wordmark's: the header
+  // is the wordmark alone, so that link is read here like any other page's.
+  if (all.some((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('campaign-header'))) {
+    if (navs.length !== 0) {
+      return [`${rel}: the page is a campaign page and carries ${navs.length} section navs; a campaign page has none — the campaign mode's header is the wordmark alone (spec §6, G2.2)`]
+    }
+    wordmarkRule()
+    return out
+  }
+
   if (navs.length !== 1) return [`${rel}: the page carries ${navs.length} section navs; it has one`]
   const nav = navs[0]
   if (!(nav.attrs.get('aria-label') ?? '').trim()) fail('the section nav has an empty label: a screen reader lists landmarks by name')
@@ -2785,9 +2498,11 @@ export function navFailures(html, rel) {
   // (Project → Company) keeps the count at two and would leave every gate green while D182's
   // amendment, the fixture below and check 70a's steps all tell the reader to look for
   // "Product" and "Project" — so the names and the routes are held here, with the count.
+  // Why GCP moved from Product to Project, after Security, by the owner's explicit approval of
+  // 2026-10-23 (its label and URL unchanged).
   const GROUPS_WANTED = [
-    ['Product', ['/how-it-works/', '/why-gcp/', '/getting-started/', '/caps-and-costs/', '/console/', '/mobile/']],
-    ['Project', ['/docs/', '/security/', '/faq/', '/community/', '/changelog/']],
+    ['Product', ['/how-it-works/', '/getting-started/', '/caps-and-costs/', '/console/', '/mobile/']],
+    ['Project', ['/docs/', '/security/', '/why-gcp/', '/faq/', '/community/', '/changelog/']],
   ]
   groups.forEach((group, at) => {
     const wanted = GROUPS_WANTED[at]
@@ -2832,16 +2547,7 @@ export function navFailures(html, rel) {
     }
   }
 
-  // The way home on a phone: the wordmark's text is in its own element, because that element is
-  // what the phone breakpoint takes out of the header's row (the owner's ruling of 2026-10-19:
-  // the mark stays, the text goes). Loose text in the link is text nothing can hide.
-  const wordmark = all.find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('site-wordmark'))
-  const wordmarkName = wordmark && [...walk(wordmark)].find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('site-wordmark-name'))
-  if (!wordmark) {
-    fail('the page carries no wordmark link to the home page')
-  } else if (!wordmarkName || !textOf(wordmarkName).trim()) {
-    fail("the wordmark's text is not in its own element (.site-wordmark-name), so the phone breakpoint has nothing to take out of the header's row and the row is wider than the viewport at 375 px")
-  }
+  wordmarkRule()
 
   // Keyboard reachability, and the current page.
   const links = [...walk(nav)].filter((el) => el.name === 'a')
@@ -2877,8 +2583,8 @@ test('the section nav is a labelled landmark of keyboard-reachable links, with t
 // Reference group: Console under *Product*, Docs and Changelog under *Project*), so a fixture
 // is the real shape and not a smaller one the rule happens to accept.
 const FIXTURE_GROUPS = [
-  ['Product', [['/how-it-works/', 'How it works'], ['/why-gcp/', 'Why GCP'], ['/getting-started/', 'Getting started'], ['/caps-and-costs/', 'Caps and costs'], ['/console/', 'Console'], ['/mobile/', 'Mobile']]],
-  ['Project', [['/docs/', 'Docs'], ['/security/', 'Security'], ['/faq/', 'FAQ'], ['/community/', 'Community'], ['/changelog/', 'Changelog']]],
+  ['Product', [['/how-it-works/', 'How it works'], ['/getting-started/', 'Getting started'], ['/caps-and-costs/', 'Caps and costs'], ['/console/', 'Console'], ['/mobile/', 'Mobile']]],
+  ['Project', [['/docs/', 'Docs'], ['/security/', 'Security'], ['/why-gcp/', 'Why GCP'], ['/faq/', 'FAQ'], ['/community/', 'Community'], ['/changelog/', 'Changelog']]],
 ]
 
 // The wordmark, as the layout writes it: the logo is decoration beside the name, and the name
@@ -2909,11 +2615,21 @@ function navRefusals(html, rel = 'docs/index.html') {
   return navFailures(html, rel)
 }
 
+// A campaign page in the shape the layout's campaign mode writes it (G2.2): the chrome class
+// and the wordmark, and no menu. The refusals below grow the menu back onto it and take the
+// wordmark out of it.
+const CAMPAIGN_HEADER = `<header class="campaign-header">${FIXTURE_WORDMARK}</header>`
+const campaignPage = (header = CAMPAIGN_HEADER) => `<!DOCTYPE html><html lang="en"><head><title>t</title></head><body>${header}</body></html>`
+
 test('the menu passes its own rule, so each refusal below is the one thing it breaks', () => {
   assert.deepEqual(navRefusals(fixturePage()), [])
   // The home page: the menu's own Home link is the one element marked current, and the wordmark
   // — the other link to `/` — carries no mark of its own (the owner's feedback of 2026-10-21).
   assert.deepEqual(navRefusals(fixturePage({ nav: fixtureNav({ current: '/' }) }), 'index.html'), [])
+  // A campaign page is the second shape that passes, and it passes by having no menu and by
+  // carrying the wordmark that header is made of: the page is one message for one audience and
+  // its chrome is the wordmark alone (spec §6, G2.2).
+  assert.deepEqual(navRefusals(campaignPage(), 'save/index.html'), [])
 })
 
 test('every menu refusal fires on the defect it names', () => {
@@ -2987,6 +2703,20 @@ test('every menu refusal fires on the defect it names', () => {
       /not in its own element/,
     ],
     ['no wordmark at all', fixturePage({ wordmark: '' }), /no wordmark link to the home page/],
+    [
+      'a campaign page that grew the menu back',
+      campaignPage(`<header class="campaign-header">${FIXTURE_WORDMARK}${fixtureNav()}</header>`),
+      /is a campaign page and carries 1 section navs/,
+    ],
+    // The wordmark is the campaign header's whole content, so the two defects a menu page is
+    // refused for are refused here too: the campaign branch leaves the menu's checks behind, not
+    // this one (G2.2).
+    ['a campaign page whose header carries no wordmark', campaignPage('<header class="campaign-header"></header>'), /no wordmark link to the home page/],
+    [
+      "a campaign page whose wordmark text is loose in the link",
+      campaignPage('<header class="campaign-header"><a class="site-wordmark" href="/" rel="home">Fugaro</a></header>'),
+      /not in its own element/,
+    ],
   ]
   for (const [what, html, expected] of cases) {
     const failures = navRefusals(html)
@@ -3029,4 +2759,252 @@ test('the skip link is the first thing in the body and points at main', () => {
     assert.match(body[1], /href="#main"/, `${rel}: the skip link does not point at #main`)
     assert.match(html, /<main id="main"/, `${rel}: there is no main#main for the skip link to reach`)
   }
+})
+
+// The copy confirmation is drawn over its button, out of the row (the owner's preview feedback
+// on #1003, 2026-10-24): in the flow it took width from the command, wrapped above the button
+// and moved the block each time a command was copied.
+export function copyStatusFailures(css) {
+  const out = []
+  const last = (selector, property) =>
+    allRules(css)
+      .filter((rule) => rule.selector.split(',').some((part) => part.trim() === selector))
+      .map(declarations)
+      .map((d) => d[property])
+      .filter(Boolean)
+      .pop() ?? ''
+  if (last('.copy-status', 'position') !== 'absolute') out.push('the copy confirmation is in the row, so showing it takes width from the command and moves the block')
+  if (!['relative', 'absolute'].includes(last('.command-controls', 'position'))) out.push('the control box is not positioned, so the confirmation is not anchored to its button')
+  if (last('.copy-status:empty', 'opacity') !== '0') out.push('an empty confirmation is drawn, and it covers the button it sits on')
+  return out
+}
+
+test('the copy confirmation sits over its button and never moves the command', () => {
+  const css = TODAY()
+  assert.deepEqual(copyStatusFailures(css), [], copyStatusFailures(css).join('\n'))
+  const inFlow = css.replace(/(\.copy-status\{[^}]*?)position:absolute;?/, '$1')
+  assert.notEqual(inFlow, css, 'this fixture removes the confirmation\'s positioning, and the built stylesheet no longer carries it')
+  assert.ok(copyStatusFailures(inFlow).some((line) => /takes width from the command/.test(line)), 'a confirmation in the row was not refused')
+})
+
+// ---- the campaign pages' content lands on the chrome's left edge (G2.2) --------------------
+//
+// The four campaign pages are five full-width bands, each padding its own content onto the page's
+// one pair of margins with `--frame-gutter`, the expression the site's own header and footer
+// carry, so the headline starts on the wordmark's left edge and the two margins are equal. That
+// holds only while `main` contributes nothing: the gutter is a percentage of the box it is used
+// in, so a `main` that pads the bands or caps their width resolves it against a box that is not
+// the page and every band's content lands one gutter step right of the chrome — 16 px on a phone
+// and 24 px at 1280, which is the second left edge the review of round 3 measured on How It
+// Works. It is read the way that one is: the pixels the chrome's edge is at and the pixels a
+// band's content is at, at a phone and at a desktop width, out of the built page's own
+// stylesheet rather than left to the eye.
+//
+// **Both halves of the pair pass, and the pair in force at once is what is refused.** `main`
+// dropped with the bands carrying the gutter is what the site writes; `main` kept with the bands
+// carrying none is the other shape that puts their content on the chrome's edge. A page where
+// both are in force is the defect.
+
+/** The five sections a campaign page is built from, and the two chrome blocks its mode draws. */
+const CAMPAIGN_BLOCKS = ['campaign-hero', 'campaign-proof', 'campaign-steps', 'campaign-social-proof', 'campaign-calls']
+const CAMPAIGN_CHROME = ['campaign-header', 'campaign-footer']
+
+/** The two widths the reading is taken at: a phone, and a desktop. The campaign mode's own
+ * breakpoint is 48 rem, so the two sit on either side of it and each shape is read. */
+const EDGE_WIDTHS = [375, 1280]
+
+/**
+ * A selector list split on its own commas. The commas inside `:has(…)` separate that
+ * pseudo-class's arguments rather than the rule's selectors, and the rule this reading is drawn
+ * to — `main:has(> .hero, > [data-security-page], > .campaign-hero)` — is three arguments and
+ * one selector.
+ */
+function selectorParts(selector) {
+  const parts = []
+  let depth = 0
+  let start = 0
+  for (let at = 0; at < selector.length; at += 1) {
+    const char = selector[at]
+    if (char === '(') depth += 1
+    else if (char === ')') depth -= 1
+    else if (char === ',' && depth === 0) {
+      parts.push(selector.slice(start, at).trim())
+      start = at + 1
+    }
+  }
+  parts.push(selector.slice(start).trim())
+  return parts.filter(Boolean)
+}
+
+/**
+ * A gutter declaration as pixels, resolved against the box that carries it. The site writes it
+ * as `max(var(--space-sm), calc((100% - var(--page-max)) / 2 + var(--space-sm)))`, redefines it
+ * at the wide breakpoint with `--space-md`, and a band writes `var(--frame-gutter)`: the token
+ * in force at a width is the one read, and the box width is the caller's, because `100%` is the
+ * width of whichever box the value is used in. A shape this reader does not know is `NaN`, which
+ * the caller refuses rather than compares.
+ */
+function gutterPx(css, value, boxWidth, width, tokens) {
+  const shape =
+    /^max\(\s*var\(--([a-z0-9-]+)\)\s*,\s*calc\(\s*\(100%\s*-\s*var\(--page-max\)\)\s*\/\s*2\s*\+\s*var\(--([a-z0-9-]+)\)\s*\)\s*\)$/
+  const resolve = (text) => {
+    const m = shape.exec((text ?? '').trim())
+    if (m === null) return NaN
+    const floor = tokens.get(m[1])
+    const margin = tokens.get(m[2])
+    const page = tokens.get('page-max')
+    if ([floor, margin, page].some((px) => px === undefined)) return NaN
+    return Math.max(floor, (boxWidth - page) / 2 + margin)
+  }
+  if ((value ?? '').trim() !== 'var(--frame-gutter)') return resolve(value)
+  const declared = allRules(css)
+    .filter((rule) => selectorParts(rule.selector).some((part) => [':root', 'html'].includes(part)) && appliesAt(width)(rule))
+    .map((rule) => declarations(rule)['--frame-gutter'])
+    .filter((text) => text !== undefined)
+    .pop()
+  return resolve(declared)
+}
+
+/**
+ * Every way a campaign page's content does not land on the chrome's left edge, for one built
+ * page's stylesheet and markup. Returns nothing on a page that carries no campaign section, so
+ * it can be run over every built page.
+ */
+export function campaignLeftEdgeFailures(css, html) {
+  const out = []
+  const classesOf = (el) => (el.attrs.get('class') ?? '').split(/\s+/).filter(Boolean)
+  const doc = parse(html)
+  const bands = [...walk(doc)].filter((el) => classesOf(el).some((name) => CAMPAIGN_BLOCKS.includes(name)))
+  if (bands.length === 0) return out
+
+  const rules = allRules(css)
+  const tokens = lengthTokens(css)
+  const declared = (klass, property, width) =>
+    rules
+      .filter((rule) => new RegExp(`\\.${klass}(?![\\w-])`).test(rule.selector) && appliesAt(width)(rule))
+      .map((rule) => declarations(rule)[property])
+      .filter((value) => value !== undefined)
+      .pop()
+
+  const main = [...walk(doc)].find((el) => el.name === 'main')
+  if (main === undefined) return ['the campaign page carries no <main>, so there is no box its bands pad inside (G2.2)']
+  const held = new Set(main.children.filter((child) => child.name !== undefined).flatMap(classesOf))
+  // A `main:has(> .x)` rule is in force only on a page whose `main` holds an `.x`: the campaign's
+  // rule matches here and the homepage's hero rule does not, which is the whole reason this
+  // reading is taken per built page rather than off the stylesheet alone.
+  const matches = (part) => {
+    if (part === 'main') return true
+    const has = /^main:has\((.+)\)$/.exec(part)
+    return has !== null && has[1].split(',').some((condition) => held.has(condition.trim().replace(/^>\s*/, '').replace(/^\./, '')))
+  }
+  const mainRules = rules
+    .map((rule) => ({ rule, parts: selectorParts(rule.selector).filter(matches) }))
+    .filter((entry) => entry.parts.length > 0)
+    .map((entry) => ({ ...entry.rule, specific: entry.parts.some((part) => part !== 'main') }))
+
+  // What `main`'s own box is at a width: a `:has()` selector is the more specific of the two
+  // ranks, so its declarations win, and within a rank the last applicable declaration is the one
+  // a browser applies.
+  const mainAt = (width, property) => {
+    let value
+    for (const rank of [false, true]) {
+      for (const rule of mainRules) {
+        if (rule.specific !== rank || !appliesAt(width)(rule)) continue
+        const text = declarations(rule)[property]
+        if (text !== undefined) value = text
+      }
+    }
+    return value
+  }
+  const sidePx = (value, boxWidth, width) => {
+    const gutter = gutterPx(css, value, boxWidth, width, tokens)
+    return Number.isFinite(gutter) ? gutter : toPx(value, tokens)
+  }
+
+  for (const width of EDGE_WIDTHS) {
+    const chrome = gutterPx(css, declared('site-header', 'padding-inline', width), width, width, tokens)
+    const mainInline = mainAt(width, 'padding-inline') ?? inlineToken(mainAt(width, 'padding') ?? '0')
+    const inset = toPx(mainInline, tokens)
+    const ceiling = mainAt(width, 'max-width')
+    const box = Math.min(width, ceiling === undefined || ceiling.trim() === 'none' ? Infinity : toPx(ceiling, tokens))
+    if (![chrome, box, inset].every(Number.isFinite)) {
+      out.push(
+        `the campaign page's left edge at ${width} px cannot be read out of its stylesheet: the chrome's gutter is \`${declared('site-header', 'padding-inline', width) ?? '(nothing declared)'}\`, \`main\`'s inline room is \`${mainInline}\` and its ceiling is \`${ceiling ?? '(nothing declared)'}\`, and an edge this check cannot turn into pixels is one nothing measured — write the gutter in the shape the site writes it (G2.2)`,
+      )
+      continue
+    }
+    const content = box - 2 * inset
+    const mainLeft = (width - box) / 2 + inset
+
+    for (const klass of CAMPAIGN_CHROME) {
+      const value = declared(klass, 'padding-inline', width)
+      if (value === undefined) continue
+      const edge = sidePx(value, width, width)
+      if (!Number.isFinite(edge) || Math.abs(edge - chrome) > 0.5) {
+        out.push(
+          `at ${width} px the campaign chrome \`.${klass}\` pads its content to ${Number.isFinite(edge) ? Math.round(edge) : value} px and the site's own header pads to ${Math.round(chrome)} px: a campaign page keeps the site's chrome, so its wordmark and its footer links start where the site's header's own content does (G2.2)`,
+        )
+      }
+    }
+
+    for (const klass of CAMPAIGN_BLOCKS) {
+      if (!bands.some((el) => classesOf(el).includes(klass))) continue
+      const inline = declared(klass, 'padding-inline', width) ?? inlineToken(declared(klass, 'padding', width) ?? '0')
+      const room = sidePx(inline, content, width)
+      if (!Number.isFinite(room)) {
+        out.push(`at ${width} px the \`.${klass}\` band's inline room cannot be read from \`${inline}\`, and a room this check cannot turn into pixels is one nothing measured (G2.2)`)
+        continue
+      }
+      if (Math.abs(mainLeft + room - chrome) > 0.5) {
+        out.push(
+          `at ${width} px \`main\` starts the campaign bands at ${Math.round(mainLeft)} px and \`.${klass}\` pads ${Math.round(room)} px more, so their content lands at ${Math.round(mainLeft + room)} px while the chrome is at ${Math.round(chrome)} px: the five bands are as wide as the page and carry the page's one gutter, so \`main\` gives them neither a gutter nor a ceiling of its own — the two in force at once is the second left edge (G2.2)`,
+        )
+      }
+    }
+  }
+  return out
+}
+
+test('the campaign pages put their content on the chrome’s left edge', () => {
+  // The page's own markup, not its stylesheet: every page carries `.campaign-hero` in the CSS
+  // now — `base.css` names it in the rule that drops `main`'s gutter (`main:has(> .campaign-hero)`)
+  // — and the four pages are the ones that render the section.
+  const pages = builtPages().filter(({ html }) =>
+    [...walk(parse(html))].some((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('campaign-hero')),
+  )
+  const seen = pages.map(({ rel }) => rel)
+  assert.equal(seen.length, 4, `the build produced ${seen.length} campaign page(s) — ${seen.join(', ') || '(none)'} — and the spec's four paths are four (G2.2)`)
+  const failures = pages.flatMap(({ rel, html }) => campaignLeftEdgeFailures(pageCss(html), html).map((line) => `${rel}: ${line}`))
+  assert.deepEqual(failures, [], `a campaign page has two left edges:\n  ${failures.join('\n  ')}`)
+})
+
+test('the campaign left-edge refusal fires on the two in force at once, and passes on either half alone', () => {
+  const page = readFileSync(path.join(DIST, 'save', 'index.html'), 'utf8')
+  const css = pageCss(page)
+  assert.deepEqual(campaignLeftEdgeFailures(css, page), [], `the built campaign page does not pass the shape its own cases are drawn from:\n  ${campaignLeftEdgeFailures(css, page).join('\n  ')}`)
+
+  // The defect as it shipped before this check existed: `main` keeps the gutter and the ceiling
+  // the bare rule gives it, so each band's `--frame-gutter` resolves against a narrower box.
+  const before = css.replace(/main:has\([^)]*campaign-hero[^)]*\)\{[^}]*\}/g, '')
+  assert.notEqual(before, css, 'this fixture removes the campaign `main` rule, and the built stylesheet no longer carries it')
+  const refused = campaignLeftEdgeFailures(before, page)
+  assert.ok(
+    refused.some((line) => /at 1280 px `main` starts the campaign bands at 56 px/.test(line)) &&
+      refused.some((line) => /at 375 px `main` starts the campaign bands at 16 px/.test(line)),
+    `the second left edge at both widths was not refused; the check said:\n  ${refused.join('\n  ') || '(nothing)'}`,
+  )
+
+  // The other half of the pair: `main` keeps its own gutter and its ceiling, and the bands carry
+  // none of their own. It is the alternative the finding names, and it passes — what is refused
+  // is the two in force at once, not either of them.
+  const unguttered = CAMPAIGN_BLOCKS.reduce(
+    (text, klass) => text.replace(new RegExp(`\\.${klass}\\[[^}]*\\}`), (rule) => rule.replace(/padding-inline:var\(--frame-gutter\);?/, '')),
+    before,
+  )
+  assert.notEqual(unguttered, before, 'this fixture strips the bands’ own gutter, and the built stylesheet no longer carries one')
+  assert.deepEqual(
+    campaignLeftEdgeFailures(unguttered, page),
+    [],
+    `a page whose bands carry no gutter inside \`main\`'s own has the one left edge too:\n  ${campaignLeftEdgeFailures(unguttered, page).join('\n  ')}`,
+  )
 })

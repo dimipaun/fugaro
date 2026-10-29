@@ -1,13 +1,18 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See console/LICENSE.md for the terms.
 // The Spend screen: the design's screen 2, drawn from `report --json` and
 // `budget show --json` (desktop-console plan Tasks 2.2 and 2.4; design sections
 // 6.1 rule 1, 6.2 screen 2 and 5.1 rule 6; console/docs/json-contract.md
-// sections 3 and 4).
+// sections 3 and 4), with the **by-person view** on top of it drawn from
+// `runs stats --json` (console L5b; the contract's section 6.10, the design's
+// section 5.1 rule 6's thirteenth argv).
 //
 // The file has two halves, separated the way Task 2.1's Live screen separates
-// them: `buildSpendModel` turns the two documents into rows, three series and a
-// caps panel and touches no element at all, and `renderSpend` walks that model
-// through Task 2.0's writers. The part with the arithmetic in it is testable in
-// plain Node, which is where a wrong dollar figure is cheapest to catch.
+// them: `buildSpendModel` turns the documents into rows, three series, a caps
+// panel and the by-person view, and touches no element at all, and `renderSpend`
+// walks that model through Task 2.0's writers. The part with the arithmetic in
+// it is testable in plain Node, which is where a wrong dollar figure is cheapest
+// to catch.
 //
 // **Why this file reads its own two documents.** `schema.ts` (Task 2.0) admits
 // the *feed*'s two shapes and refuses everything else, which is exactly right
@@ -39,7 +44,7 @@
 //
 // **The three accounts are never summed, and that is the shape of this file.**
 // `m9-budget-and-dashboard.md` section 10 and the design's section 6.2 are one
-// rule: model dollars, `NOTIONAL~` (a subscription's list price, never billed,
+// rule: model dollars, `~$` (a subscription's list price, never billed,
 // never capped) and compute (an estimate by design) are three accounts, and a
 // screen that adds them is drawing a number nobody can be billed for. So the
 // model carries them as **three readings** (`model`, `notional`, `compute`),
@@ -68,10 +73,34 @@
 // address on the wire is the console's own marker (`redacted@example.invalid`)
 // and never the address itself.
 //
-// **The controls are wired, and they are wired to one read -- on this screen's
-// side of the seam.** The range picker, the breakdown switch and the operator's
-// person knob (D15) all feed `SpendControls`, and `spendArguments` turns that
-// state into the argument object `spend.report` already declares --
+// **The by-person view is `runs stats --json`, and it is fail-private.** The
+// knob above turns on a *second read* beside the report (`peopleArguments` and
+// `readSpend`'s fourth parameter): `fugaro runs stats --json`, whose `view` is
+// the CLI's own ruling about what the caller may see -- an operator of the
+// installation gets every user's row, a plain launcher gets their own alone.
+// **What this screen adds is the drawing rule that ruling implies, and it draws
+// nothing it is not licensed to draw**: rows appear only when the document's own
+// `by` and `view` say who they are for, the private view draws the one row the
+// CLI keyed by the identity it resolved (`you`), **either view draws no row at
+// all** when the document does not say who the caller is (the whole-project view
+// keeps its totals, which name nobody), and the totals drawn are the ones
+// that read published -- the CLI aggregates *after* it filters for the private
+// view (`internal/cli/runs_stats.go`), so under `all` they are the window's and
+// under `own` they are the caller's own alone, and the two states where the CLI
+// publishes no row publish **no total either** (`userstats.Aggregate` builds
+// `totals` out of `rows`). A total is never computed here: it is the CLI's own
+// sum of the rows it published, and the panel says which read it is the sum of.
+// The console cannot ask for `--all-users`: that flag is not on the operation's
+// schema (`src/main/ipc.ts`), so "who may see whose rows" is the CLI's decision
+// and never this window's. What the panel *withheld* is a sentence and a count
+// on screen -- a reader is owed the difference between "nobody spent anything"
+// and "this console will not show you whose money this was".
+//
+// **The controls are wired, and they are wired to reads on the allow-list --
+// on this screen's side of the seam.** The range picker, the breakdown switch
+// and the operator's person knob (D15) all feed `SpendControls`, and
+// `spendArguments` turns that state into the argument object `spend.report`
+// already declares --
 // `--since` from the picker (`--until` is accepted by the schema and by
 // `spendArguments`, but no control this screen draws can set the end of the
 // range yet, so it is always absent and `report` uses its own today), `--by`
@@ -82,18 +111,17 @@
 // closed sets is refused before anything is spawned. A control change is one
 // `report --json` read and a re-render from the document that came back; the
 // budget document is not re-read, because no control this screen draws is about
-// it.
+// it, and the by-person read happens only while the knob is on, once, with the
+// picker's window translated into `parseSince`'s form (`PERSON_WINDOW_DAYS`).
 //
-// **Nothing in the application calls them yet, and this file says so rather
-// than implying otherwise.** There is no renderer entry point in this tree: no
-// shell, no router, no event handler, and `index.html` is still Task 1.1's
-// script-free document, so `spendArguments`, `readSpend` and `personView` are a
-// library with no caller outside the tests, and the `data-` hooks below are
-// what that entry point will read. That is the seam this task was given: its
-// Files hold no shell, and the plan's Files are what a task may change. What is
-// finished here is the screen's half -- the arguments a control produces, the
-// read they make, and the state they draw -- so the entry point a later task
-// writes has nothing left to decide about the Spend screen's controls.
+// **The caller is `entry.ts`'s `showSpend` (Task 3.4c), and this file decides
+// nothing it can decide for it.** `spendArguments`, `readSpend` and `personView`
+// are the screen's half -- the arguments a control produces, the reads they make
+// and the state they draw -- and the `data-` hooks below (`data-current`,
+// `data-enabled`, `data-day`, `data-until`) are what that caller wires: which
+// element a click landed on, and when a control change re-reads, are not this
+// file's business. It was written before that caller existed and kept whole, so
+// the entry point had nothing left to decide about the Spend screen's controls.
 //
 // **And the person view is off until the operator says otherwise.** `--by
 // person` is not a read this screen makes while the knob is off, and the
@@ -141,12 +169,19 @@ import type { ElementLike } from '../app'
 // ---------------------------------------------------------------------------
 
 /**
- * SPEND_DIMENSIONS is `report --by`'s closed set of seven words, in
+ * SPEND_DIMENSIONS is `report --by`'s closed set of eight words, in
  * `internal/report/report.go`'s own order (`ByDay`, `ByWeek`, `ByMonth`,
- * `ByYear`, `ByRepo`, `ByModel`, `ByPerson`, and `ParseDim`'s list). The switch
- * draws this list; a document's `by` that is not one of them is a document from
- * a CLI this build does not know, and the screen says so rather than drawing an
- * eighth word.
+ * `ByYear`, `ByRepo`, `ByModel`, `ByPerson`, `ByMode`, and `ParseDim`'s list).
+ * The switch draws this list; a document's `by` that is not one of them is a
+ * document from a CLI this build does not know, and the screen says so rather
+ * than drawing a ninth word.
+ *
+ * `mode` groups by the rigor mode each run resolved, read from the run records
+ * rather than from the spend history, so its rows are mode words (`poc`,
+ * `startup`, `pro`, `critical`, `hotfix`) or the CLI's own `none` for a run
+ * whose record carries no mode -- and `none` is drawn as its own label, not as
+ * an error. The money grammar is unchanged: model, notional and compute stay
+ * three columns and are never summed, and this breakdown carries no run-hours.
  */
 export const SPEND_DIMENSIONS = Object.freeze([
   'day',
@@ -156,14 +191,15 @@ export const SPEND_DIMENSIONS = Object.freeze([
   'repo',
   'model',
   'person',
+  'mode',
 ] as const)
 
-/** SpendDimension is one of the seven. */
+/** SpendDimension is one of them. */
 export type SpendDimension = (typeof SPEND_DIMENSIONS)[number]
 
 /**
  * SPEND_ACCOUNTS is the three accounts the design keeps apart, in the order the
- * screen draws them: the billed model dollars, the notional `NOTIONAL~` of a
+ * screen draws them: the billed model dollars, the notional `~$` of a
  * subscription, and compute (an estimate by design). It is a list rather than
  * three fields so that "there are exactly three charts" is a fact a test can
  * read off it.
@@ -208,6 +244,31 @@ const MICROS_PER_USD = 1_000_000
  * same fact rather than inventing a second one for it.
  */
 export const PARTIAL_MARKER = '(partial)'
+
+/**
+ * UNREADABLE_MARKER is the console's sentence beside a row whose every run
+ * record was unreadable (`JSONLine.Unreadable`, contract section 4). Only
+ * `report --by mode` sets the mark: a record the build cannot read, or one the
+ * run has not written yet, still means the run launched, so it counts once in
+ * `runs` and the money keys are `null`. The words name the fact the two cases
+ * share -- there is no readable record -- rather than "unreadable" alone,
+ * because the usual `none` row of a window that reaches into today is a run
+ * still in flight, whose record is not corrupt but simply not written
+ * (`modeRecords`, `internal/cli/report.go`). The figures beside this sentence
+ * are therefore the `n/a` the reader already draws for an absent key -- never a
+ * `$0.00` that would read as a measurement. The words are the console's own;
+ * `report`'s table and CSV draw `n/a` there and name no mark.
+ */
+export const UNREADABLE_MARKER = 'no readable record'
+
+/**
+ * NO_RECORD_REASON is the `title` an unreadable row's money cells carry, in
+ * place of `readNumber`'s "the document has no <field>". Such a row's `*_micros`
+ * is present and `null` on purpose -- there was no readable record to measure --
+ * so naming the missing key would be the false sentence the marker exists to
+ * prevent. Every other null keeps `readNumber`'s own reason.
+ */
+const NO_RECORD_REASON = 'no readable record for these runs'
 
 /**
  * RESERVE_LABEL is the words the caps panel puts beside `max_reserve_usd`. They
@@ -292,6 +353,10 @@ export interface SpendRow {
   readonly partial: boolean
   /** a partial row is drawn hollow */
   readonly hollow: boolean
+  /** every run record behind the row was unreadable, so its money keys are
+   * `null` and the row is drawn `n/a` (`JSONLine.Unreadable`; absent -- and so
+   * `false` -- on a measured row) */
+  readonly unreadable: boolean
   readonly model: Reading
   readonly notional: Reading
   readonly compute: Reading
@@ -351,6 +416,11 @@ export interface SpendTotals {
   readonly runHours: Reading
   readonly runs: Reading
   readonly partial: boolean
+  /** every row the total sums was unreadable, so its money keys are `null` and
+   * the total is drawn `n/a` with the mark -- the document's own rule for the
+   * totals line (`Row.Unreadable`, `report.Build`; contract section 4, "The
+   * `totals` row follows the rows the same way") */
+  readonly unreadable: boolean
 }
 
 /** SpendGlobalCaps is `budget show`'s `global` block, and nothing but it: the
@@ -387,6 +457,22 @@ export interface SpendCapRow {
   readonly counted: Reading
   readonly spent: Reading
   readonly notional: Reading
+  /** compute is the repository's compute dollars, an **estimated** figure by
+   * design (`runstore.Cost.ComputeUSD`). The owner approved `compute_usd` on
+   * each `showRepo` on 2026-10-28, and `budget show --compute` writes it since
+   * 2026-10-29 -- but this console's `budget.show` row passes no such flag
+   * (adding one is its own reviewed run), so the key still only arrives in a
+   * document a person hands this reader. It reads absent and `null` as `n/a`
+   * and draws nothing with it: the Spend redesign is the screen that will.
+   *
+   * A value that is not a number is `n/a` too, and not a refusal, because this
+   * reader refuses no document at all -- the caps panel is the console's
+   * tolerant reader, and every number it cannot read is `n/a`. The contract
+   * states that as one rule (console/docs/json-contract.md §2): a key named
+   * ahead of its release is handled the way the decoder that owns the document
+   * handles a shape it cannot read; the closed decoders (`shared/schema.ts`,
+   * the digest) refuse it by name, and this one draws `n/a`. */
+  readonly compute: Reading
   readonly headroom: Reading
   readonly dailyCap: Reading
   readonly dailyScope: SpendScope
@@ -438,6 +524,22 @@ export interface SpendOptions {
    * this decides whether the screen draws them.
    */
   readonly persons?: boolean
+  /**
+   * `people` is the `runs stats --json` document behind the by-person view
+   * (`SpendPeople`, console L5b), or `null` when the console made no such read.
+   * It is an option rather than a third document of this function for the same
+   * reason the budget document is the *caller's*: it is a different operation,
+   * and `readSpend` is what decides whether the read is made at all.
+   */
+  readonly people?: JSONDoc | null
+  /**
+   * `peopleReason` is the console's sentence for a by-person document that is
+   * not there: a read the CLI refused (the sanitized sentence), a window the
+   * command cannot express, or no read at all. The panel draws it instead of an
+   * empty list, because "we did not read it" and "nobody spent anything" are
+   * different facts.
+   */
+  readonly peopleReason?: string | null
 }
 
 /** SpendPersons says whether the person breakdown is on, and whether the
@@ -447,6 +549,127 @@ export interface SpendPersons {
   /** true when the document groups by person and the view is off, so the rows
    * exist and are deliberately not drawn */
   readonly withheld: boolean
+}
+
+/**
+ * SpendPersonRow is one row of `runs stats --json` (console L5b;
+ * `console/docs/json-contract.md` section 6.10): one launcher's group, with the
+ * counts that add up (`runs == succeeded + failed + halted + infra_error + other
+ * + no_record`) and the two money accounts kept apart exactly as the report's
+ * three are.
+ */
+export interface SpendPersonRow {
+  /** the identity the run's own `launch.json` recorded. **Untrusted display
+   * text** -- a service account or a CI identity is a row like a person's -- so
+   * it is drawn only through `putText` in the `person` class, and nothing is
+   * authorised by it. `"unknown"` is the CLI's own key for runs that recorded no
+   * launcher, and it is the *report's* spelling of that group, not a person. */
+  readonly user: string
+  /** the unit the money columns are in (`USD` today): the document's rows are
+   * per (user, currency), because dollars are never added across currencies */
+  readonly currency: string
+  readonly runs: Reading
+  readonly succeeded: Reading
+  readonly failed: Reading
+  readonly halted: Reading
+  readonly infraError: Reading
+  readonly other: Reading
+  readonly noRecord: Reading
+  /** `counted_usd`: the **model** dollars that count toward the caps */
+  readonly counted: Reading
+  /** `notional_usd`: the part of the model figure a subscription paid --
+   * `~$`, never summed with `counted` */
+  readonly notional: Reading
+  /** `counted_runs`: the sample `average` is over, published because an average
+   * without its sample is a figure a reader cannot weigh */
+  readonly countedRuns: Reading
+  readonly average: Reading
+}
+
+/** PeopleView is the view the CLI resolved, in the console's own three words.
+ * `unknown` is a `view` word this build does not know, and it draws no rows --
+ * the same fail-private rule the other two states follow. */
+export type PeopleView = 'all' | 'own' | 'unknown'
+
+/**
+ * SpendPeople is the Spend screen's by-person view: `runs stats --json`, drawn
+ * as its own panel beside the report's rows (`renderSpend`).
+ *
+ * **The view is the CLI's ruling, not this screen's request.** The console
+ * cannot pass `--all-users` (design section 5.1 rule 6, its schema in
+ * `src/main/ipc.ts`): the command decides for itself who the caller is, so an
+ * operator of the installation sees every user's rows and a plain launcher sees
+ * their own row alone. What this screen adds is the drawing rule that ruling
+ * implies, and it is **fail private**:
+ *
+ *   - only a `view` of `all` read for an identity draws every row the document
+ *     carries; read for no identity it draws the document's totals and **no
+ *     row** (design section 2.4's state list) -- `you` empty is *unavailable*
+ *     (the CLI could not tell), and the `unknown` key is a group of runs rather
+ *     than a person;
+ *   - a `view` of `own` draws only the row the document keyed by the identity it
+ *     resolved (`you`), and **nothing at all** when the document does not say
+ *     who the caller is;
+ *   - a `view` or a `by` this build does not know draws no rows;
+ *   - the document's own `totals` are drawn **as the document published them,
+ *     and never computed here** -- and what they are the sum of follows the
+ *     view, because the CLI aggregates after it filters (`runs_stats.go`): the
+ *     window's under `all`, the caller's own runs alone under a licensed `own`
+ *     (where `PEOPLE_OWN_TOTAL` says so on screen), and **absent** in the two
+ *     states where the CLI publishes no row at all, its totals coming from its
+ *     rows (`userstats.Aggregate`).
+ */
+export interface SpendPeople {
+  /** false when there is no document behind this panel: the read was refused,
+   * the picker's window has no `runs stats` form, or the console made no read */
+  readonly available: boolean
+  /** the console's sentence for an unavailable panel, and `null` when there is
+   * a document */
+  readonly reason: string | null
+  readonly view: PeopleView
+  /** the console's own name for the view, drawn as a literal */
+  readonly viewName: string
+  /** the document's own word, kept for a test and never drawn */
+  readonly viewSource: string | null
+  /** the document's `operator`: whether the installation's own lists place the
+   * caller as an operator. Drawn as its own fact and never inferred from
+   * `view` -- the CLI's contract is explicit that `--all-users` produces `all`
+   * with `operator: false`, and a screen that read `all` as "you are an
+   * operator" would say something the document did not. */
+  readonly operator: boolean
+  /** the identity the view was resolved for. `''` is *unavailable* -- the CLI
+   * could not tell who the caller is -- and never anonymous. */
+  readonly you: string
+  /** true when the document's own fields do not license drawing rows: an
+   * unknown `view` or `by`, or either view with no identity to key a row by */
+  readonly failPrivate: boolean
+  /** how many rows the rule above did not draw */
+  readonly withheld: number
+  /** the window the CLI read, as its own UTC days (`since` is `''` for
+   * `--since 0`, which this screen never asks for) */
+  readonly since: string | null
+  readonly until: string | null
+  /** the read's own bound (`--max-runs`, 5000 by default) */
+  readonly maxRuns: Reading
+  /** the window held more runs than that bound: every figure is over the newest
+   * `maxRuns` alone, and the panel says so rather than drawing it as the
+   * window's total */
+  readonly truncated: boolean
+  /** runs in the window that never started: in no row and in no total, and the
+   * window's own count rather than the caller's */
+  readonly unlaunched: Reading
+  /** the rows this screen draws, after the fail-private rule */
+  readonly rows: readonly SpendPersonRow[]
+  /** the document's own per-currency totals (its `user` is `""`), drawn
+   * exactly as published: the rows of the read that produced them, which is the
+   * window under `all` and the caller's own runs under `own`, and **empty** in
+   * the two states where the CLI published no row to sum */
+  readonly totals: readonly SpendPersonRow[]
+  /** the console's own sentences about what is drawn, in the order they are
+   * drawn; every one is a console constant or is composed from them */
+  readonly sentences: readonly string[]
+  /** the document's own notes, drawn through `putText` and never as literals */
+  readonly notes: readonly string[]
 }
 
 /** SpendModel is the whole screen as data. */
@@ -473,6 +696,13 @@ export interface SpendModel {
   readonly totals: SpendTotals
   readonly caps: SpendCaps
   readonly persons: SpendPersons
+  /**
+   * the by-person view (`runs stats --json`, console L5b), or `null` when the
+   * person view is off: the panel exists only while the operator's own knob is
+   * on (design D15), so a screen with the knob off has no question to answer
+   * about whose rows it may draw and no read to make.
+   */
+  readonly people: SpendPeople | null
   readonly warnings: readonly string[]
   /** the console's own sentences about what is not drawn, and why */
   readonly notes: readonly string[]
@@ -521,10 +751,21 @@ function boolAt(raw: unknown): boolean {
  * of them with the flag off is not a shape `report` writes; reading the number
  * would still be reading the same integer, and hiding it would be the worse
  * error of the two.
+ *
+ * On a row the document marks `unreadable` every money key is `null` because
+ * there was no record to read, not because a key is missing, so the `n/a`
+ * carries `NO_RECORD_REASON` rather than `readNumber`'s field sentence. The
+ * flag is passed in, like the account, so a caller that forgets it is a line a
+ * reviewer can see.
  */
-function microsReading(line: Record<string, unknown>, key: string, account: SpendAccount): Reading {
+function microsReading(
+  line: Record<string, unknown>,
+  key: string,
+  account: SpendAccount,
+  unreadable: boolean,
+): Reading {
   const micros = readNumber(line[key], key)
-  if (micros.value === null) return micros
+  if (micros.value === null) return unreadable ? unavailable(NO_RECORD_REASON) : micros
   const usd = micros.value / MICROS_PER_USD
   switch (account) {
     case 'model':
@@ -581,15 +822,17 @@ function rowOf(raw: unknown): SpendRow | null {
   const line = objectAt(raw)
   if (line === null) return null
   const partial = boolAt(line['partial'])
+  const unreadable = boolAt(line['unreadable'])
   return {
     key: textAt(line['key']) ?? '',
     start: textAt(line['start']),
     end: textAt(line['end']),
     partial,
     hollow: partial,
-    model: microsReading(line, 'model_micros', 'model'),
-    notional: microsReading(line, 'notional_micros', 'notional'),
-    compute: microsReading(line, 'compute_micros', 'compute'),
+    unreadable,
+    model: microsReading(line, 'model_micros', 'model', unreadable),
+    notional: microsReading(line, 'notional_micros', 'notional', unreadable),
+    compute: microsReading(line, 'compute_micros', 'compute', unreadable),
     runHours: readNumber(line['run_hours'], 'run_hours'),
     runs: countReading(line, 'runs'),
     calls: countReading(line, 'calls'),
@@ -601,13 +844,15 @@ function rowOf(raw: unknown): SpendRow | null {
  * other and is **not** recomputed from the rows. */
 function totalsOf(raw: unknown): SpendTotals {
   const line = objectAt(raw) ?? {}
+  const unreadable = boolAt(line['unreadable'])
   return {
-    model: microsReading(line, 'model_micros', 'model'),
-    notional: microsReading(line, 'notional_micros', 'notional'),
-    compute: microsReading(line, 'compute_micros', 'compute'),
+    model: microsReading(line, 'model_micros', 'model', unreadable),
+    notional: microsReading(line, 'notional_micros', 'notional', unreadable),
+    compute: microsReading(line, 'compute_micros', 'compute', unreadable),
     runHours: readNumber(line['run_hours'], 'run_hours'),
     runs: countReading(line, 'runs'),
     partial: boolAt(line['partial']),
+    unreadable,
   }
 }
 
@@ -621,6 +866,325 @@ function killOf(raw: unknown): KillView | null {
     by: textAt(kill['by']) ?? '',
     at: textAt(kill['at']) ?? '',
     reason: textAt(kill['reason']) ?? '',
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The by-person view (`runs stats --json`, console L5b).
+// ---------------------------------------------------------------------------
+
+/** PEOPLE_BY is the one breakdown `runs stats` publishes: `user`, the only
+ * value its `--by` takes. A document that groups by anything else is not the
+ * shape this panel draws, and its rows are not drawn at all. */
+const PEOPLE_BY = 'user'
+
+/**
+ * UNATTRIBUTED_KEY is `userstats.UnknownUser`: the key `runs stats` gives the
+ * runs of a window that recorded no launcher at all. It is a **row key** and not
+ * a person, so it is never drawn as one -- `report`'s own person breakdown
+ * spells the same group `unknown` (`budget.UnknownPerson`), and the two are
+ * pinned equal by a Go test.
+ */
+const UNATTRIBUTED_KEY = 'unknown'
+
+/** dayOrNull reads a UTC day the way the rest of this file does: an empty string
+ * is *absent* and never a day, so `since: ""` -- the document's own spelling of
+ * an unbounded window -- becomes `null` rather than a date nobody wrote. */
+function dayOrNull(raw: unknown): string | null {
+  const day = textAt(raw)
+  return day === null || day === '' ? null : day
+}
+
+/** NO_PEOPLE_DOCUMENT is the reading's own sentence for a figure of a panel
+ * with no document behind it. It is not a zero, and it is not the refusal's
+ * sentence either: the sentence the *panel* draws says why there is no
+ * document, and this one says only that this figure was never read. */
+const NO_PEOPLE_DOCUMENT = 'no runs stats document was read, so this figure is not a zero'
+
+/** NO_PEOPLE_READ is the console's sentence for a by-person panel it was given
+ * no reader for: a caller that draws the panel without passing the read. It is
+ * a fact about the console and not about the CLI, and it is not a refusal. */
+const NO_PEOPLE_READ = 'this console made no by-person read, so it has nothing to draw here'
+
+/** PERSON_AVERAGE_NO_SAMPLE is the reading for `avg_counted_usd` when the group
+ * has no run to average. The document writes `0` there with `counted_runs` `0`,
+ * and that zero is *unavailable* -- "no run to average" -- never "$0.00 a run",
+ * which is what drawing it would say. */
+const PERSON_AVERAGE_NO_SAMPLE =
+  'no run in this group settled a real-dollar cost, so there is no average to draw'
+
+/** PEOPLE_VIEW_NAMES is the console's own name for each view the CLI resolves.
+ * A `Map` and not a literal object, for the reason `SCOPES` is one: the key is
+ * the document's own string, and a literal answers `'constructor'`. */
+const PEOPLE_VIEW_NAMES: ReadonlyMap<string, string> = new Map([
+  ['all', 'everyone in this project'],
+  ['own', 'you alone'],
+])
+
+/** UNKNOWN_PEOPLE_VIEW is what a `view` word this build does not know is drawn
+ * as: the console's own sentence, with the document's word nowhere in it. */
+const UNKNOWN_PEOPLE_VIEW = 'a view this console does not know'
+
+/** PEOPLE_UNKNOWN_BY is the sentence for a document grouped by a breakdown this
+ * console does not know: no rows are drawn, because the panel's whole subject
+ * is who the launcher was. */
+const PEOPLE_UNKNOWN_BY =
+  'the document groups by a breakdown this console does not know, so no rows are drawn here'
+
+/** PEOPLE_UNKNOWN_VIEW is the same sentence for an unknown `view` word. */
+const PEOPLE_UNKNOWN_VIEW =
+  'the document names a view this console does not know, so no rows are drawn here'
+
+/** PEOPLE_PRIVATE is the fail-private sentence: the document did not say who
+ * the read was resolved for, so the console draws no row at all. It is the
+ * design's rule in the console's own words -- an identity the installation's own
+ * lists do not place stays private -- and it is drawn in place of the rows. It
+ * promises no totals: in this state the CLI publishes none (`you` empty means
+ * every run was deleted before the aggregation, so `totals` comes back `[]`),
+ * and the panel must not claim a figure the document does not carry. */
+const PEOPLE_PRIVATE =
+  'the CLI did not say who this read was resolved for, so no rows are drawn here: an identity the installation’s own lists do not place stays private'
+
+/** PEOPLE_UNATTRIBUTED is the fail-private sentence for the one identity the CLI
+ * resolves but will not key a private view by: the unattributed key itself
+ * (`userstats.UnknownUser`, `"unknown"`), whose row holds every run of the
+ * window that recorded no launcher -- nobody's own figures. The CLI shows such a
+ * caller nothing at all, and so does this screen: no row **and no total**, for
+ * the same reason (`runs_stats.go` filters to nothing before `Aggregate`). */
+const PEOPLE_UNATTRIBUTED =
+  'the identity this read resolved for you is the unattributed key itself, which holds every run of the window that recorded no launcher: those are nobody’s own figures, so no row is drawn here'
+
+/** PEOPLE_OWN is the sentence for the private view: what it is, and what it
+ * deliberately does not say. */
+const PEOPLE_OWN =
+  'the CLI resolved this read as your own runs alone: these are the runs you started in the window and what they cost, and it says nothing about what anyone else spent'
+
+/** PEOPLE_OWN_TOTAL is the sentence for the private view's totals line. The CLI
+ * filters the private view *before* it aggregates (`internal/cli/runs_stats.go`:
+ * every run whose launcher is not the caller is deleted, then
+ * `userstats.Aggregate` sums what is left), so the total beside these rows is
+ * the caller's own and not the window's. A reader who took it for the window's
+ * -- the totals line is one line above it and looks the same -- would read it as
+ * everyone's spend, which is the one thing this view may not say. */
+const PEOPLE_OWN_TOTAL =
+  'the total below is this read’s own sum of the rows it published, which for this view is your own runs alone: it is not the window’s total, and it says nothing about what anyone else spent'
+
+/** PEOPLE_ALL is the sentence for the view that shows everyone. It states the
+ * ruling and not the reason for it: whether the caller is an operator is the
+ * document’s own `operator`, drawn beside this line. */
+const PEOPLE_ALL =
+  'the CLI resolved this read as the whole project, so every launcher that started a run in the window is listed — including the unattributed runs, under the key the CLI gives them'
+
+/** PEOPLE_NO_ROW is the sentence for a private view that found no row: the
+ * contract is explicit that this is a state of its own and not a failure (a
+ * window the caller started nothing in, or an identity with no key of its own). */
+const PEOPLE_NO_ROW =
+  'the CLI found no row for this view in the window: a window the caller started nothing in is a state of its own, not an error'
+
+/** PEOPLE_WITHHELD_OWN and PEOPLE_WITHHELD_UNKNOWN are the two sentences for
+ * rows the fail-private rule did not draw. They are drawn as a **count** (the
+ * sentence is composed with it) because a reader who cannot see the rows is owed
+ * the fact that they exist: "no rows" and "rows this console will not draw" are
+ * different states, and the second one is the state this panel must not hide. */
+const PEOPLE_WITHHELD_OWN =
+  'row(s) of this document are not drawn here: the CLI resolved this view as your own row alone, so other people’s rows are withheld'
+const PEOPLE_WITHHELD_UNKNOWN =
+  'row(s) of this document are not drawn here: it does not say whose view they are for, and this console draws none of them'
+
+/** PEOPLE_TRUNCATED is the sentence for the read’s own bound. It is drawn the
+ * way a gap is drawn -- as a fact about the window -- because a figure over the
+ * newest N runs is not the window’s total, and a reader who takes it for one
+ * reads a partial window as a small one. */
+const PEOPLE_TRUNCATED =
+  'the window held more runs than the CLI read (its own max-runs bound, below): every figure here is over its newest run alone, and none of them is the window’s total'
+
+/** PEOPLE_UNLAUNCHED is the sentence for the runs that never started. They are
+ * the window’s count and not the caller’s: a run that never launched has no
+ * launcher to attribute. The count it names is drawn, in
+ * `span.spend-people-unlaunched` after the totals (`peoplePanel`). */
+const PEOPLE_UNLAUNCHED =
+  'runs in the window that never started are counted after the totals, on the never-started line, and in no person’s row: they have no launcher to attribute'
+
+/** PEOPLE_UNLAUNCHED_WORD is the console's label for that count's cell. */
+const PEOPLE_UNLAUNCHED_WORD = 'never started'
+
+/** PEOPLE_ALL_UNIDENTIFIED is the fail-private sentence for the whole-project
+ * view read for nobody the CLI could name (`--all-users` is admitted with no
+ * identity; only the private view refuses one). Design section 2.4 and
+ * desktop-console.md section 6.2: `data-view="all"` with no identity draws the
+ * document's totals and no row at all -- the totals name nobody, and the rows
+ * are not drawn for a reader the read does not say it was resolved for. */
+const PEOPLE_ALL_UNIDENTIFIED =
+  'the CLI resolved this read as the whole project but did not say who this read was resolved for, so no rows are drawn here: only the read’s own totals, which name nobody'
+
+/** PEOPLE_YOU_UNIDENTIFIED is what the panel draws where the identity would go
+ * when the CLI could not tell who the caller is. `''` is *unavailable* and not
+ * anonymous, and an empty cell would say neither. */
+const PEOPLE_YOU_UNIDENTIFIED = 'the CLI could not say who this read was resolved for'
+
+/** PERSON_OPERATOR_WORDS is the console's two sentences for the document's
+ * `operator`, keyed by the boolean. */
+const PERSON_OPERATOR_YES = 'the installation’s own lists place you as an operator'
+const PERSON_OPERATOR_NO = 'the installation’s own lists do not place you as an operator'
+
+/** peopleViewOf reads the document's `view` into the console's closed three. */
+function peopleViewOf(raw: string | null): { readonly view: PeopleView; readonly name: string } {
+  const name = raw === null ? undefined : PEOPLE_VIEW_NAMES.get(raw)
+  if (raw === 'all') return { view: 'all', name: name ?? UNKNOWN_PEOPLE_VIEW }
+  if (raw === 'own') return { view: 'own', name: name ?? UNKNOWN_PEOPLE_VIEW }
+  return { view: 'unknown', name: UNKNOWN_PEOPLE_VIEW }
+}
+
+/** personRowOf reads one `userstats.Row` -- the shape `rows` and `totals` share,
+ * with `Counts` flattened into it. A line that is not an object is not a row and
+ * is dropped by the caller. */
+function personRowOf(raw: unknown): SpendPersonRow | null {
+  const line = objectAt(raw)
+  if (line === null) return null
+  const countedRuns = countReading(line, 'counted_runs')
+  return {
+    user: textAt(line['user']) ?? '',
+    currency: textAt(line['currency']) ?? '',
+    runs: countReading(line, 'runs'),
+    succeeded: countReading(line, 'succeeded'),
+    failed: countReading(line, 'failed'),
+    halted: countReading(line, 'halted'),
+    infraError: countReading(line, 'infra_error'),
+    other: countReading(line, 'other'),
+    noRecord: countReading(line, 'no_record'),
+    // `counted_usd` is the model account and `notional_usd` the notional one --
+    // the same two accounts the report draws, the same marks, and never summed.
+    counted: usdReading(line, 'counted_usd', 'model'),
+    notional: usdReading(line, 'notional_usd', 'notional'),
+    countedRuns,
+    // The average is read from the document and not computed here: it is the
+    // CLI's own rounding, and `counted_runs` is what says whether it exists.
+    average:
+      countedRuns.value === 0
+        ? unavailable(PERSON_AVERAGE_NO_SAMPLE)
+        : usdReading(line, 'avg_counted_usd', 'model'),
+  }
+}
+
+/**
+ * peopleOf reads the by-person document, or says why there is none.
+ *
+ * The drawing rules are `SpendPeople`'s, and the two that matter are here: rows
+ * are drawn only when the document's own `by` and `view` license them, and in
+ * the private view only the row keyed by the identity the CLI resolved. The
+ * totals are read from the document as it published them and are never summed
+ * here; what they are the sum *of* is the view's, so the private view gets a
+ * sentence naming whose money that line is.
+ */
+function peopleOf(raw: JSONDoc | null, reason: string | null): SpendPeople {
+  const document = raw === null ? null : objectAt(raw)
+  if (document === null) {
+    return {
+      available: false,
+      reason: reason ?? NO_PEOPLE_READ,
+      view: 'unknown',
+      viewName: UNKNOWN_PEOPLE_VIEW,
+      viewSource: null,
+      operator: false,
+      you: '',
+      failPrivate: true,
+      withheld: 0,
+      since: null,
+      until: null,
+      maxRuns: unavailable(NO_PEOPLE_DOCUMENT),
+      truncated: false,
+      unlaunched: unavailable(NO_PEOPLE_DOCUMENT),
+      rows: [],
+      totals: [],
+      sentences: [],
+      notes: [],
+    }
+  }
+  const viewSource = textAt(document['view'])
+  const { view, name } = peopleViewOf(viewSource)
+  const byKnown = textAt(document['by']) === PEOPLE_BY
+  const you = textAt(document['you']) ?? ''
+  // The CLI's own contract, in `internal/cli/runs_stats.go`: `you` is in the key
+  // domain of `rows[].user`, `''` is *unavailable* rather than a person, and the
+  // unattributed key is a group of runs rather than a person -- a private view
+  // keyed by either of them would credit the caller with runs that are not
+  // theirs, which is why the CLI shows such a caller nothing and so does this.
+  const identified = you !== '' && you !== UNATTRIBUTED_KEY
+  const rows = arrayAt(document['rows'])
+    .map(personRowOf)
+    .filter((row): row is SpendPersonRow => row !== null)
+  // The document's totals, read as it published them: this screen never sums a
+  // row (a second sum is a figure the CLI did not write).
+  const totals = arrayAt(document['totals'])
+    .map(personRowOf)
+    .filter((row): row is SpendPersonRow => row !== null)
+  const truncated = boolAt(document['truncated'])
+  const unlaunched = countReading(document, 'unlaunched')
+  const maxRuns = countReading(document, 'max_runs')
+
+  // `licensed` is the whole fail-private rule in one word: whether the
+  // document's own fields say who these rows are *for*.
+  // An identity is required by **both** views: the whole-project view read for
+  // nobody the CLI could name draws its totals and no row (fail private, the
+  // design's 2.4 state list), the same as the private view without one.
+  const licensed = byKnown && identified && (view === 'all' || view === 'own')
+  let drawn: readonly SpendPersonRow[] = []
+  if (byKnown && identified && view === 'all') {
+    drawn = rows
+  } else if (byKnown && view === 'own' && identified) {
+    // The private view shows the row keyed by the identity the CLI resolved --
+    // and nothing else. A document that carried a row for anyone else draws
+    // none of it: this is the filter, not a lookup that falls back to the first
+    // row.
+    drawn = rows.filter((row) => row.user === you)
+  }
+  const sentences: string[] = []
+  if (!byKnown) sentences.push(PEOPLE_UNKNOWN_BY)
+  else if (view === 'unknown') sentences.push(PEOPLE_UNKNOWN_VIEW)
+  else if (view === 'own') {
+    if (identified) {
+      sentences.push(PEOPLE_OWN)
+      // The totals line under these rows is this read's own sum of them, which
+      // for the private view is the caller's own runs and not the window's.
+      if (totals.length > 0) sentences.push(PEOPLE_OWN_TOTAL)
+    } else sentences.push(you === UNATTRIBUTED_KEY ? PEOPLE_UNATTRIBUTED : PEOPLE_PRIVATE)
+  } else sentences.push(identified ? PEOPLE_ALL : PEOPLE_ALL_UNIDENTIFIED)
+  if (licensed && drawn.length === 0) sentences.push(PEOPLE_NO_ROW)
+  if (rows.length > drawn.length) {
+    // `licensed` decides which of the two sentences it is: a private view that
+    // drew its own row withheld the other people's, and an unlicensed document
+    // withheld everything it carried.
+    const withheld = rows.length - drawn.length
+    sentences.push(`${withheld} ${licensed ? PEOPLE_WITHHELD_OWN : PEOPLE_WITHHELD_UNKNOWN}`)
+  }
+  if (truncated) sentences.push(PEOPLE_TRUNCATED)
+  if ((unlaunched.value ?? 0) > 0) sentences.push(PEOPLE_UNLAUNCHED)
+
+  return {
+    available: true,
+    reason: null,
+    view,
+    viewName: name,
+    viewSource,
+    operator: boolAt(document['operator']),
+    you,
+    failPrivate: !licensed,
+    // The rows the rule did not draw, and only those: it is a count of rows that
+    // exist and are withheld, never a count of figures the document lacks.
+    withheld: rows.length - drawn.length,
+    // `''` is the unbounded window (`--since 0`) -- the one value `runs stats`
+    // writes for an unbounded `since`, and a form this screen's picker never
+    // produces -- so there is no day to draw and it is read as absent, exactly
+    // as the caps panel reads an unset mode.
+    since: dayOrNull(document['since']),
+    until: dayOrNull(document['until']),
+    maxRuns,
+    truncated,
+    unlaunched,
+    rows: drawn,
+    totals,
+    sentences,
+    notes: arrayAt(document['notes']).filter((note): note is string => typeof note === 'string'),
   }
 }
 
@@ -683,11 +1247,11 @@ export function dayRange(since: string | null, until: string | null): readonly s
 // ---------------------------------------------------------------------------
 
 /** ACCOUNT_TITLES are the three headings, in the console's own words. The
- * notional one carries the contract's own mark, because that is the word the
- * design uses for the account and the one a reader has to recognise on sight. */
+ * notional one carries the money mark, because the heading names the form the
+ * figures beneath it are drawn in. */
 const ACCOUNT_TITLES: Readonly<Record<SpendAccount, string>> = Object.freeze({
   model: 'billed model spend',
-  notional: 'NOTIONAL~ subscription list price',
+  notional: '~$ subscription list price',
   compute: 'compute (estimated)',
 })
 
@@ -902,6 +1466,7 @@ function capRowOf(raw: unknown): SpendCapRow | null {
     counted: readNumber(repo['counted_usd'], 'repos[].counted_usd'),
     spent: readNumber(repo['spent_usd'], 'repos[].spent_usd'),
     notional: usdReading(repo, 'notional_usd', 'notional'),
+    compute: usdReading(repo, 'compute_usd', 'compute'),
     headroom: readNumber(repo['headroom_usd'], 'repos[].headroom_usd'),
     dailyCap: readNumber(repo['daily_cap_usd'], 'repos[].daily_cap_usd'),
     dailyScope: scopeOf(textAt(repo['daily_cap_source']) ?? ''),
@@ -939,10 +1504,11 @@ function dimensionOf(raw: string | null): SpendDimension | null {
  * keyClass is the text class a row's key carries, and it is the dimension that
  * decides it: `by repo`'s key is a repository path (or, when the record has no
  * path, the bucket slug `Build` falls back to), `by person`'s is a person,
- * `by model`'s is a model name and a period's is a date. A label is the class
- * for the two that are free text, and it is not a weak class: the free-text
- * rules redact an address, a URL, a path and a token out of a label exactly as
- * they do out of a sentence.
+ * `by model`'s is a model name, `by mode`'s is a mode word or the CLI's own
+ * `none`, and a period's is a date. A label is the class for the ones that are
+ * free text, and it is not a weak class: the free-text rules redact an address,
+ * a URL, a path and a token out of a label exactly as they do out of a
+ * sentence.
  */
 export function keyClass(dimension: SpendDimension | null, key: string): TextClass {
   switch (dimension) {
@@ -958,6 +1524,7 @@ export function keyClass(dimension: SpendDimension | null, key: string): TextCla
     case 'month':
     case 'year':
     case 'model':
+    case 'mode':
     case null:
       return 'label'
   }
@@ -1007,7 +1574,7 @@ export function buildSpendModel(
     notes.push(`${stray} row(s) outside the range the document covers are listed below and not drawn in the charts: a day axis places a point by its date`)
   }
   if (dimension === null) {
-    notes.push('the document groups by a breakdown this console does not know, so the switch below cannot say which of its seven words it is')
+    notes.push('the document groups by a breakdown this console does not know, so the switch below cannot say which of its eight words it is')
   }
 
   return {
@@ -1033,6 +1600,12 @@ export function buildSpendModel(
     totals: totalsOf(report['totals']),
     caps: capsOf(budget),
     persons: { enabled: personsEnabled, withheld },
+    // The by-person panel exists only while the knob is on: with the knob off
+    // there is no read to have made and no question about whose rows may be
+    // drawn, so the model has no panel either rather than an empty one. With the
+    // knob on it is built from whatever the read produced -- a document, or the
+    // console's sentence for why there is none (`readSpend`).
+    people: personsEnabled ? peopleOf(options.people ?? null, options.peopleReason ?? null) : null,
     warnings: arrayAt(report['warnings']).filter((warning): warning is string => typeof warning === 'string'),
     notes,
   }
@@ -1168,7 +1741,7 @@ function pickerSince(since: string): string | null {
  * not the first.
  *
  * The three fields are that operation's own: `since` a day or `Nd`/`Nw`,
- * `until` a day, `by` one of the seven words. `--repo` is admitted on this
+ * `until` a day, `by` one of the eight words. `--repo` is admitted on this
  * command by the design's allow-list and is deliberately not here -- this screen
  * draws the whole project, and a field it does not draw is a field it must not
  * send. There is no `--csv`, no path, no free-form string, no command and no
@@ -1198,6 +1771,16 @@ export function spendArguments(controls: SpendControls): SpendArgumentDecision {
  * answers with the document, and refuses with a `SourceRefusal` carrying the
  * CLI's own sentence. */
 export type SpendReader = (args: SpendArguments) => Promise<JSONDoc>
+
+/**
+ * PeopleReader is the screen's second read: `runs.stats` through the preload
+ * bridge's `statsRuns`, with the argument object `peopleArguments` built. It is
+ * the same *shape* as `SpendReader` -- two reads of this console's own
+ * allow-list, neither carrying argv -- and a distinct type so that a call site
+ * that wired the report's reader into the by-person panel would be a mistake the
+ * compiler names.
+ */
+export type PeopleReader = (args: SpendArguments) => Promise<JSONDoc>
 
 /** SpendOutcome is what one read produced: the model to draw, or the console's
  * sentence for why there is nothing to draw. `args` is what was asked for --
@@ -1240,11 +1823,27 @@ function refusalSentence(cause: unknown): string {
  * caps panel from the document the screen already holds. Reading both here would
  * make one control change two spawns, and the second one about nothing the
  * operator changed.
+ *
+ * `people` is the by-person read (`runs.stats`, console L5b), and it is a
+ * parameter of its own for the same reason: it is a *different operation*, and
+ * it is made **only while the operator's knob is on** (design D15) -- so a
+ * screen with the knob off spawns once, exactly as it did before this task. It
+ * is optional and defaults to `null`, which is the state "this caller wired no
+ * by-person read": the panel then draws the console's own sentence for that
+ * (`NO_PEOPLE_READ`) rather than an empty list, and nothing is spawned.
+ *
+ * **The by-person read's refusal is the panel's and not the screen's.** The
+ * report read is the screen's subject -- its refusal is `SpendOutcome`'s
+ * `ok: false`, drawn by the caller (Task 3.2) -- while the by-person aggregate is
+ * one panel of a screen that has already been drawn: its refusal, and a window
+ * the command has no form for, become the panel's own sentence, and the rest of
+ * the screen is drawn from the report exactly as it would have been.
  */
 export async function readSpend(
   read: SpendReader,
   controls: SpendControls,
   caps: JSONDoc | null,
+  people: PeopleReader | null = null,
 ): Promise<SpendOutcome> {
   const decision = spendArguments(controls)
   if (!decision.ok) return { ok: false, args: null, reason: decision.reason }
@@ -1254,10 +1853,30 @@ export async function readSpend(
   } catch (cause) {
     return { ok: false, args: decision.args, reason: refusalSentence(cause) }
   }
+  let peopleDocument: JSONDoc | null = null
+  let peopleReason: string | null = null
+  if (controls.persons) {
+    const peopleDecision = peopleArguments(controls)
+    if (!peopleDecision.ok) {
+      peopleReason = peopleDecision.reason
+    } else if (people === null) {
+      peopleReason = NO_PEOPLE_READ
+    } else {
+      try {
+        peopleDocument = await people(peopleDecision.args)
+      } catch (cause) {
+        peopleReason = refusalSentence(cause)
+      }
+    }
+  }
   return {
     ok: true,
     args: decision.args,
-    model: buildSpendModel(document, caps, { persons: controls.persons }),
+    model: buildSpendModel(document, caps, {
+      persons: controls.persons,
+      people: peopleDocument,
+      peopleReason,
+    }),
   }
 }
 
@@ -1278,6 +1897,74 @@ export function personView(controls: SpendControls, on: boolean): SpendControls 
     by: controls.by === 'person' ? 'day' : controls.by,
     persons: false,
   })
+}
+
+/**
+ * PERSON_WINDOW_DAYS is the picker's four windows as `runs stats --since`, in
+ * `parseSince`'s own grammar (`internal/cli/runs.go`: a positive day count, a Go
+ * duration, or `0` for no bound) -- which has **no week form at all**. The
+ * picker's `12w` therefore becomes `84d`, `reportRange`'s own arithmetic for a
+ * week (`internal/cli/report.go`: the unit is 7 days, so 12w is 84 days), and
+ * the three day windows go through unchanged.
+ *
+ * A `Map` and not a literal object, for the reason `SCOPES` is one, and the keys
+ * are `SPEND_PICKER_WINDOWS`'s own words rather than the document's.
+ *
+ * **The two commands' windows are not the same range to the day, and this table
+ * does not pretend they are.** `report --since 30d` covers 30 UTC days ending
+ * with today (`from = to - 30 + 1`, `reportRange`), while `runs stats --since`
+ * reads back from *now* (`from = until.Add(-since)`, `runUserStats`) and labels
+ * the window with the date it reached -- so the by-person panel's window can be
+ * a day wider at its start than the report's, and it is drawn with the document's
+ * own `since`/`until` beside it rather than with the picker's word. What this
+ * table does is send the operator's window **in the form the command understands**
+ * and never widen or narrow it to make two commands agree.
+ */
+const PERSON_WINDOW_DAYS: ReadonlyMap<string, string> = new Map([
+  ['7d', '7d'],
+  ['30d', '30d'],
+  ['90d', '90d'],
+  ['12w', '84d'],
+])
+
+/** PERSON_DAY_WINDOW and PERSON_UNTIL are the console's two sentences for a
+ * picker state `runs stats` has no form for. Both are refusals rather than
+ * approximations: the console asks for the operator's window or for none, and a
+ * window it silently altered would be drawn as the one that was asked for. */
+const PERSON_DAY_WINDOW =
+  'the range picker holds a range that starts on a UTC day, and the by-person read has no day form: it takes a number of days back from now (7d, 30d, 84d), so this window is either one of the picker’s four or no by-person read is made'
+const PERSON_UNTIL =
+  'the by-person read has no end-of-range form (runs stats takes no --until), and this range ends on a day: no by-person read is made, and this panel says so rather than drawing a window that is not this one'
+
+/** personSince is the picker's `since` as `runs stats --since`, or `null` for a
+ * value the command has no form for: a UTC day, or anything else outside
+ * `PERSON_WINDOW_DAYS`. */
+function personSince(since: string): string | null {
+  return PERSON_WINDOW_DAYS.get(since) ?? null
+}
+
+/**
+ * peopleArguments is the by-person read's argument object, and it is the whole
+ * of what this screen may ask that command for: **`since`, and nothing else**.
+ *
+ * `runs stats`'s other flags are each a thing this console must not be able to
+ * say (design section 5.1 rule 6, and the comment on the operation in
+ * `src/main/ipc.ts`): `--all-users` would make the console the one deciding who
+ * may see whose rows, `--by` is `user` and only `user`. `--repo` and `--all`
+ * narrow the *project* and this screen draws the whole project, `--max-runs`
+ * would let a control decide how much of the window is read, and `--until` does
+ * not exist on this command at all -- which is why a picker that holds an end of
+ * range is a refusal here and not a quietly different window.
+ *
+ * `--since 0` (no bound) is in the schema's grammar and is deliberately not
+ * reachable from here: no control this screen draws means "the whole history",
+ * and the one form that does (`''`) is not one `parseSince` accepts either.
+ */
+export function peopleArguments(controls: SpendControls): SpendArgumentDecision {
+  if (controls.until !== null) return { ok: false, reason: PERSON_UNTIL }
+  const since = personSince(controls.since)
+  if (since === null) return { ok: false, reason: PERSON_DAY_WINDOW }
+  return { ok: true, args: Object.freeze({ since }) }
 }
 
 // ---------------------------------------------------------------------------
@@ -1439,7 +2126,7 @@ function windowItem(parent: ScreenElement, factory: ScreenFactory, current: bool
  * read as a range nobody chose.
  *
  * Every word is a literal, because they are the console's vocabulary and not a
- * document's strings -- the same rule the breakdown switch's seven words follow.
+ * document's strings -- the same rule the breakdown switch's eight words follow.
  */
 function picker(factory: ScreenFactory, controls: SpendControls): ScreenElement {
   const element = make(factory, 'ol', 'spend-picker')
@@ -1468,7 +2155,7 @@ function picker(factory: ScreenFactory, controls: SpendControls): ScreenElement 
  * by default.
  *
  * It is a control of its own rather than a state of the breakdown switch: the
- * switch's `person` word is one of the seven the CLI has, and the operator's
+ * switch's `person` word is one of the eight the CLI has, and the operator's
  * decision about it is a different thing from the breakdown the screen is
  * currently drawn by. The knob's own `data-enabled` is what the event wiring
  * reads, and the switch's `person` word is drawn disabled until it is on.
@@ -1487,14 +2174,14 @@ function personKnob(factory: ScreenFactory, model: SpendModel): ScreenElement {
   return element
 }
 
-/** tabs draws the breakdown switch: the seven words, which of them is the
+/** tabs draws the breakdown switch: the eight words, which of them is the
  * document's own grouping, and which this console may show. */
 function tabs(factory: ScreenFactory, model: SpendModel): ScreenElement {
   const element = make(factory, 'ol', 'spend-switch')
   element.setAttribute('data-known', model.dimensionKnown ? 'true' : 'false')
   for (const entry of model.switches) {
     const item = cell(element, factory, 'li', 'spend-dim')
-    // The seven words are the CLI's own (`ParseDim`'s help line) and this is
+    // The eight words are the CLI's own (`ParseDim`'s help line) and this is
     // the console drawing its own vocabulary for them, not a document's string.
     literal(item, entry.dimension)
     item.setAttribute('data-dimension', entry.dimension)
@@ -1503,7 +2190,7 @@ function tabs(factory: ScreenFactory, model: SpendModel): ScreenElement {
     if (entry.note !== null) item.setAttribute('title', entry.note)
   }
   if (!model.dimensionKnown) {
-    // An eighth word is a newer CLI. The switch says so in the console's own
+    // A ninth word is a newer CLI. The switch says so in the console's own
     // words rather than drawing the word it does not know -- the value is not
     // echoed, the same rule the Live screen's unknown flags follow.
     const unknown = cell(element, factory, 'li', 'spend-dim', 'spend-dim-unknown')
@@ -1572,6 +2259,7 @@ function rowLine(factory: ScreenFactory, model: SpendModel, row: SpendRow): Scre
   const element = make(factory, 'li', 'spend-row')
   element.setAttribute('data-partial', row.partial ? 'true' : 'false')
   element.setAttribute('data-hollow', row.hollow ? 'true' : 'false')
+  element.setAttribute('data-unreadable', row.unreadable ? 'true' : 'false')
   const keyed = textCell(element, factory, 'span', row.key, keyClass(model.dimension, row.key), 'rows[].key', 'spend-key')
   element.setAttribute('data-key', drawnKey(keyed))
   numberCell(element, factory, 'span', row.model, 'usd', 'spend-model')
@@ -1583,6 +2271,7 @@ function rowLine(factory: ScreenFactory, model: SpendModel, row: SpendRow): Scre
     numberCell(element, factory, 'span', row.tokens.in, 'count', 'spend-tokens-in')
     numberCell(element, factory, 'span', row.tokens.out, 'count', 'spend-tokens-out')
   }
+  if (row.unreadable) literal(cell(element, factory, 'span', 'spend-unreadable'), UNREADABLE_MARKER)
   if (row.partial) literal(cell(element, factory, 'span', 'spend-partial'), PARTIAL_MARKER)
   return element
 }
@@ -1591,12 +2280,14 @@ function rowLine(factory: ScreenFactory, model: SpendModel, row: SpendRow): Scre
 function totalsLine(factory: ScreenFactory, model: SpendModel): ScreenElement {
   const element = make(factory, 'div', 'spend-totals')
   element.setAttribute('data-partial', model.totals.partial ? 'true' : 'false')
+  element.setAttribute('data-unreadable', model.totals.unreadable ? 'true' : 'false')
   literal(cell(element, factory, 'span', 'spend-totals-word'), 'total')
   numberCell(element, factory, 'span', model.totals.model, 'usd', 'spend-total-model')
   numberCell(element, factory, 'span', model.totals.notional, 'usd', 'spend-total-notional')
   numberCell(element, factory, 'span', model.totals.compute, 'usd', 'spend-total-compute')
   numberCell(element, factory, 'span', model.totals.runs, 'count', 'spend-total-runs')
   numberCell(element, factory, 'span', model.totals.runHours, 'hours', 'spend-total-run-hours')
+  if (model.totals.unreadable) literal(cell(element, factory, 'span', 'spend-unreadable'), UNREADABLE_MARKER)
   if (model.totals.partial) literal(cell(element, factory, 'span', 'spend-partial'), PARTIAL_MARKER)
   return element
 }
@@ -1698,6 +2389,168 @@ function capsPanel(factory: ScreenFactory, model: SpendModel): ScreenElement {
   return element
 }
 
+/** personAmounts draws the columns a person's row and a currency's total line
+ * share: the currency the figures are in, the counts that add up to the runs
+ * (published, not derived, so a reader can add the column and get the row), the
+ * two money accounts in their own states and **never summed**, and the average
+ * with the sample it is over.
+ *
+ * The `usd` figures are the document's own `counted_usd`/`notional_usd` -- the
+ * CLI's rounding of the integer of record -- and not a division done here; the
+ * model read them as readings, so one the document does not carry draws as n/a
+ * with its reason rather than as `$0.00`. */
+function personAmounts(factory: ScreenFactory, element: ScreenElement, row: SpendPersonRow): void {
+  const currency = textCell(
+    element,
+    factory,
+    'span',
+    row.currency,
+    'label',
+    'rows[].currency',
+    'spend-person-currency',
+  )
+  // Read back off the cell `putText` wrote, like every other attribute of a
+  // document string on this screen: the attribute carries what was drawn.
+  element.setAttribute('data-currency', drawnKey(currency))
+  numberCell(element, factory, 'span', row.runs, 'count', 'spend-person-runs')
+  numberCell(element, factory, 'span', row.succeeded, 'count', 'spend-person-succeeded')
+  numberCell(element, factory, 'span', row.failed, 'count', 'spend-person-failed')
+  numberCell(element, factory, 'span', row.halted, 'count', 'spend-person-halted')
+  numberCell(element, factory, 'span', row.infraError, 'count', 'spend-person-infra')
+  numberCell(element, factory, 'span', row.other, 'count', 'spend-person-other')
+  numberCell(element, factory, 'span', row.noRecord, 'count', 'spend-person-no-record')
+  numberCell(element, factory, 'span', row.counted, 'usd', 'spend-person-counted')
+  numberCell(element, factory, 'span', row.notional, 'usd', 'spend-person-notional')
+  numberCell(element, factory, 'span', row.countedRuns, 'count', 'spend-person-counted-runs')
+  numberCell(element, factory, 'span', row.average, 'usd', 'spend-person-average')
+}
+
+/** personLine is one launcher's row: the identity the run's own record carried,
+ * and the amounts above. The identity is drawn through `putText` in the `person`
+ * class -- it is whatever a `launch.json` recorded, so an address in it is drawn
+ * as the console's own marker -- and `data-user` is read back off that same cell,
+ * so the attribute cannot put back on screen what the class kept off it. */
+function personLine(factory: ScreenFactory, row: SpendPersonRow): ScreenElement {
+  const element = make(factory, 'li', 'spend-person')
+  const keyed = textCell(
+    element,
+    factory,
+    'span',
+    row.user,
+    'person',
+    'rows[].user',
+    'spend-person-user',
+  )
+  element.setAttribute('data-user', drawnKey(keyed))
+  personAmounts(factory, element, row)
+  return element
+}
+
+/** NO_PEOPLE_TOTAL is the console's sentence for a document that published no
+ * totals line at all: the panel's rows are drawn from `rows`, and a total is a
+ * figure the document publishes rather than one this screen adds up (adding one
+ * currency's rows is what the CLI does, and a second sum here could differ from
+ * it). It is a real state of the CLI's own, not only a hostile document: the
+ * private view the CLI neither keyed nor filled (`you` empty, or the
+ * unattributed key) publishes `totals: []` because its `totals` are its `rows`,
+ * and a licensed private view over a window the caller started nothing in
+ * publishes `[]` too. The sentence says only that, and never that the read had
+ * a window total it withheld. */
+const NO_PEOPLE_TOTAL =
+  'the document carries no totals line, so this console draws no total here: a total is the CLI’s own sum of the rows this read published, and this screen does not compute a second one'
+
+/**
+ * peoplePanel draws the by-person view: `runs stats --json` as its own panel
+ * beside the report's rows (console L5b).
+ *
+ * The panel's whole job is to say **who the rows are for** before it draws them,
+ * and the fail-private rule is `SpendPeople`'s: no document, an unknown `by` or
+ * `view`, or a private view with no identity to key a row by, all draw **no row
+ * at all**. A panel that drew an empty list in those states would say "nobody
+ * spent anything", which is a different fact from "the console will not show you
+ * whose money this was". The totals are the ones the document published and
+ * never a sum computed here: they are drawn in every state that carries them,
+ * and the two the CLI itself publishes none in (its `you` empty or the
+ * unattributed key, where it deletes every run before aggregating) draw
+ * `NO_PEOPLE_TOTAL` -- which says exactly that, and so never contradicts the
+ * fail-private sentence above it.
+ *
+ * It is drawn only while the operator's knob is on (`renderSpend`): with the
+ * knob off there is no read and no panel, which is D15's rule and not a state of
+ * this function.
+ */
+function peoplePanel(factory: ScreenFactory, people: SpendPeople): ScreenElement {
+  const element = make(factory, 'section', 'spend-people')
+  element.setAttribute('data-available', people.available ? 'true' : 'false')
+  element.setAttribute('data-view', people.view)
+  element.setAttribute('data-operator', people.operator ? 'true' : 'false')
+  element.setAttribute('data-truncated', people.truncated ? 'true' : 'false')
+  literal(cell(element, factory, 'h2', 'spend-people-title'), 'by person')
+  if (!people.available) {
+    // The one thing this panel must not do is draw an empty one: "nobody spent
+    // anything" and "the console did not read it" are two facts, and the
+    // sentence says which -- the CLI's own refusal (through `sanitizeRefusal`,
+    // the same door `degraded.ts` draws a refusal through) or the console's own
+    // reason for having made no read.
+    const none = cell(element, factory, 'p', 'spend-people-reason')
+    literal(none, people.reason ?? NO_PEOPLE_READ)
+    return element
+  }
+  // The view is the CLI's own ruling as the console's name for it -- a table
+  // this file wrote (`PEOPLE_VIEW_NAMES`) and never the document's word.
+  literal(cell(element, factory, 'span', 'spend-people-view'), people.viewName)
+  // The identity the read was resolved for. `''` is *unavailable* -- the CLI
+  // could not tell who the caller is -- and it is drawn as that sentence rather
+  // than as an empty cell, which would read as anonymous.
+  const you = cell(element, factory, 'span', 'spend-people-you')
+  if (people.you === '') literal(you, PEOPLE_YOU_UNIDENTIFIED)
+  else putText(you, people.you, 'person', 'you')
+  const operator = cell(element, factory, 'span', 'spend-people-operator')
+  if (people.operator) literal(operator, PERSON_OPERATOR_YES)
+  else literal(operator, PERSON_OPERATOR_NO)
+  if (people.since !== null) {
+    textCell(element, factory, 'span', people.since, 'label', 'since', 'spend-people-since')
+  }
+  if (people.until !== null) {
+    textCell(element, factory, 'span', people.until, 'label', 'until', 'spend-people-until')
+  }
+  // The read's own bound is a published figure and not a note: it is what says
+  // how much of the window the numbers are over.
+  literal(cell(element, factory, 'span', 'spend-people-bound'), 'max runs read')
+  numberCell(element, factory, 'span', people.maxRuns, 'count', 'spend-people-max-runs')
+  for (const sentence of people.sentences) {
+    // Every one of these is the console's own sentence, composed in `peopleOf`
+    // from this file's constants and the counts it read -- the document's own
+    // `notes` are drawn below, through `putText`.
+    literal(cell(element, factory, 'p', 'spend-people-note'), sentence)
+  }
+  const rows = cell(element, factory, 'ol', 'spend-people-rows')
+  for (const row of people.rows) rows.append(personLine(factory, row))
+  const totals = cell(element, factory, 'ol', 'spend-people-totals')
+  for (const total of people.totals) {
+    const line = cell(totals, factory, 'li', 'spend-person', 'spend-person-total')
+    // The document's own totals key is `""` (`userstats` writes the empty user
+    // for a currency's total), so the word here is the console's.
+    literal(cell(line, factory, 'span', 'spend-person-user'), 'total')
+    personAmounts(factory, line, total)
+  }
+  if (people.totals.length === 0) {
+    const none = cell(element, factory, 'p', 'spend-person-note')
+    literal(none, NO_PEOPLE_TOTAL)
+  }
+  // The window's runs that never started: a published count in no row and no
+  // total, drawn where `PEOPLE_UNLAUNCHED` says it is.
+  literal(cell(element, factory, 'span', 'spend-people-unlaunched-word'), PEOPLE_UNLAUNCHED_WORD)
+  numberCell(element, factory, 'span', people.unlaunched, 'count', 'spend-people-unlaunched')
+  for (const note of people.notes) {
+    // The document's own lines, verbatim (contract section 6.10: the notes are
+    // the CLI's sentences about whose numbers these are and what the read left
+    // out), through `putText` and never as literals.
+    textCell(element, factory, 'p', note, 'sentence', 'notes[]', 'spend-person-note')
+  }
+  return element
+}
+
 /**
  * renderSpend draws the model and returns the tree it built, so a test can walk
  * what was drawn rather than read a window no test can see.
@@ -1707,6 +2560,10 @@ function capsPanel(factory: ScreenFactory, model: SpendModel): ScreenElement {
  * asked for. A caller that has no view state (a static render, a test of the
  * drawing alone) gets `SPEND_DEFAULT_CONTROLS`, which is the state the screen
  * opens on.
+ *
+ * The by-person panel is drawn when the model carries one, which is exactly when
+ * the operator's knob is on: with the knob off there is no panel, no by-person
+ * read and no figure at all rather than a panel of empty ones.
  *
  * Every string a document wrote reaches the document through `putText` and
  * every number through `putReading`; the only thing written directly is the
@@ -1733,6 +2590,11 @@ export function renderSpend(
   const rows = cell(root, factory, 'ol', 'spend-rows')
   for (const row of model.rows) rows.append(rowLine(factory, model, row))
   root.append(totalsLine(factory, model))
+
+  // The by-person panel sits beside the report's own totals -- it is the same
+  // window read a second way -- and it is drawn only while the operator's knob
+  // is on: `buildSpendModel` has no panel when it is off (design D15).
+  if (model.people !== null) root.append(peoplePanel(factory, model.people))
 
   for (const note of model.notes) {
     const element = cell(root, factory, 'p', 'spend-note')

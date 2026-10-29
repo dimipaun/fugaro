@@ -36,7 +36,7 @@ const minSecretBytes = 4
 
 // multilineSecret is the one logical secret whose value spans lines: the
 // GitHub App's private key, a PEM.
-const multilineSecret = "github-app-key"
+const multilineSecret = config.GitHubAppKeySecret
 
 func newSecretsCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -185,7 +185,7 @@ var secretsBoolFlags = map[string]bool{"--json": true, "--project-wide": true, "
 // both maps, so a name in either is enough.
 var budgetBoolFlags = map[string]bool{
 	"--global": true, "--defaults": true, "--clear": true, "--yes": true,
-	"--all": true, "--json": true,
+	"--all": true, "--json": true, "--compute": true,
 	// budget history's own, and the --help cobra adds at Execute time.
 	"--sweep": true, "--rollover": true, "--force": true, "--help": true,
 }
@@ -308,12 +308,27 @@ boundary, and the value reaches every enrolled repository. A workflow's own
 secret has no project-wide meaning and is stored in the repository's own
 container as before.
 
-bitbucket-token is the exception, and has no project-wide default: a
-Bitbucket credential is a repository access token, issued for one repository
-and usable for no other, so it is always stored in this repository's own
-container and every repository is asked for its own value (docs/git-providers.md).
-Storing it for the project is refused unless project_secrets.bitbucket-token
-allow-lists the repositories it is meant for.
+bitbucket-token has no project-wide default: a Bitbucket credential is
+normally a repository access token, issued for one repository and usable for
+no other, so it is stored in this repository's own container and every
+repository is asked for its own value (docs/git-providers.md). An operator
+who holds one workspace or project access token instead -- the credential
+that reaches many repositories -- stores it once for the project by
+allow-listing the repositories it serves in project_secrets.bitbucket-token,
+usually the whole workspace (myworkspace/*). Storing it for the project is
+refused unless that allow-list names the repositories it is meant for. That
+path is not yet live-checked with a workspace or project token (Check 180).
+
+Copy the project_secrets.bitbucket-token entry to every operator machine's
+local config: the shared config never carries it, and without it
+fugaro update --repo asks for a per-repository token.
+
+An allow_data_to entry may use * inside a segment, never across /: a
+workspace's whole list is written myworkspace/* (and myworkspace/api-* names
+a family), while the owner segment must be literal -- a bare * is not
+accepted, because one project secret is one owner's credential. A wildcard
+means every repository it matches, now and later: onboarding one mounts the
+project copy with nothing else to do.
 
 With --repo (owner/name, or with no value for this checkout's origin) the
 value is stored as the repository's own copy instead. That copy overrides
@@ -389,6 +404,19 @@ func codexOAuthRefusal(name string) error {
 		pluginwire.Printable(name), config.CodexOAuthToken, config.CodexOAuthTokenPrefix)
 }
 
+// credentialsBundleRefusal is the one message every refusal of the credentials
+// service's bundle container name uses (config.CredentialsBundleSecret, C1.11's
+// review finding n2). The name is the platform's — the container holds the ONE
+// document every model credential the service issues lives in — so there is no
+// scope of `secrets set` that may write it, and the writer is
+// `fugaro creds set NAME` alone (C1.25). name goes through Printable, since a
+// name reaching this path may not have passed config.SecretNameRE (a reserved
+// name skips that check, exactly as the Codex names do).
+func credentialsBundleRefusal(name string) error {
+	return userErr("%s is the credentials service's own bundle container (%s): every model credential the service issues lives in that one document, which `fugaro creds set` writes and nothing else may",
+		pluginwire.Printable(name), config.CredentialsBundleSecret)
+}
+
 // providerConventionRefusal is the one message every refusal of a configured
 // provider's conventional key name uses when the name is not that provider's
 // own secret (config.ReservedProviderSecret): storing a workflow's or another
@@ -458,6 +486,17 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 		// independent refusal (the Claude namespace's claudeOAuthAccountRefusal
 		// is the same shape, decided per account and per repository).
 		return codexOAuthRefusal(name)
+	}
+	if name == config.CredentialsBundleSecret {
+		// The credentials service's one bundle container (C1.11's review
+		// finding n2), refused here for the Codex names' reason: before the
+		// scope decision, before the checkout is read and before any cloud
+		// call, so no spelling of the command may store a value under it. The
+		// document in that container is every model credential the
+		// installation holds, and `fugaro creds set NAME` (C1.25) is its only
+		// writer: a value written here would be read by the service as the
+		// credential it is not.
+		return credentialsBundleRefusal(name)
 	}
 	if err := o.checkScope(cmd); err != nil {
 		return err
@@ -1139,8 +1178,10 @@ value comes from, never any value (this command has no access call at all).
 The default listing is the installation's project-wide containers -- the
 scope secrets set stores to by default for a name that has one -- one row
 per name, with the repositories the local config allows to use each one
-(bitbucket-token is never stored there by default: a repository access
-token serves one repository, so it has only repository copies).
+(bitbucket-token has no project-wide default: a repository access token
+serves one repository, so it is listed here only when an operator has stored
+a workspace or project access token project-wide, which the
+project_secrets.bitbucket-token allow-list opens).
 --project-wide is accepted as a synonym, so existing scripts keep working.
 
 --repo (or a bare --repo, for this checkout's origin) lists one repository
@@ -1285,6 +1326,12 @@ func listRepoScope(cmd *cobra.Command, env *cloudEnv, o secretsOptions, r *secre
 // listProjectWide lists the installation's project-wide containers by name,
 // versions and the repositories the local config allows (an operator-only
 // view, never a live call), and reads no value.
+//
+// A container with no fugaro_secret label is skipped, as listRepoScope does:
+// the label is what says which logical secret of the project's secret set a
+// container holds, and the credentials service's bundle container carries the
+// ownership marks and deliberately not this one (C1.18). Listing it would put
+// a row with no name in front of an operator and a nameless entry in --json.
 func listProjectWide(cmd *cobra.Command, env *cloudEnv, o secretsOptions) error {
 	ctx := cmd.Context()
 	sm, err := gcp.NewSecrets(ctx, env.gcp)
@@ -1298,6 +1345,9 @@ func listProjectWide(cmd *cobra.Command, env *cloudEnv, o secretsOptions) error 
 	entries := make([]secretEntry, 0, len(list))
 	for _, s := range list {
 		name := s.Labels[gcp.LabelSecret]
+		if name == "" {
+			continue
+		}
 		entries = append(entries, secretEntry{Name: name, Scope: scopeProject, Allowed: projectSecretAllowed(env.lc, name), SecretInfo: s})
 	}
 	sortSecretEntries(entries)

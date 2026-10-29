@@ -146,10 +146,10 @@ job (`deploy/terraform/gcp/modules/installation/history.tf:70`).
 ### ZF7 — **Rule** — the loop is a recipe's, so the drawing must not present it as the product's
 
 Everything in ZF1–ZF5 is selected by `recipes:` and `agent:` keys, not fixed by the runner.
-`docs/recipes.md` lists eight shipped recipes; `internal/recipe/recipe.go:44-46` gives three
+`docs/recipes.md` lists nine shipped recipes; `internal/recipe/recipe.go:44-46` gives three
 modes (`implement`, `review`, `artifact`), and `mode: review` never changes a pull request's
-draft state at all (`docs/recipes.md:44`). A diagram whose *caption* is a sequence is a
-diagram that is wrong for six of the eight recipes. The four levels may show the shape; the
+draft state at all (`docs/recipes.md:45`). A diagram whose *caption* is a sequence is a
+diagram that is wrong for seven of the nine recipes. The four levels may show the shape; the
 page must say which recipe it is drawing.
 
 ### ZF8 — **Wrong** — "central orchestrators", "coordinator (advisory)" and "security service" are not built
@@ -245,7 +245,7 @@ changed**. A page that prints "disposable" unqualified contradicts `docs/design/
 
 ### ZF16 — **Wrong** — "it never runs Terraform or cloud ops against existing infrastructure"
 
-Fugaro's provisioning model **is** Terraform: `docs/gcp-setup.md:75` describes the typed-confirmation
+Fugaro's provisioning model **is** Terraform: `e924481:docs/gcp-setup.md:75` (the page before its rewrite) describes the typed-confirmation
 applies, and `internal/infra/tf/cover.go` is the type allow-list for the resources those
 applies may create. A **managed** project is one Fugaro created
 (`docs/design/managed-projects-spec.md:27`), but even there Terraform **is** run — the
@@ -256,16 +256,17 @@ is: *a managed project is a new project that holds only Fugaro's resources*.
 
 ### ZF17 — **Wrong** — "Fugaro gets its own isolated, Fugaro-managed project", in the present tense
 
-Managed projects are **gated off**: `internal/cli/recipes_skew.go:152`
-`const managedDeployerShipped = false`, and every command that would create one or act as
-its deployer refuses before any cloud call (`internal/cli/managed_flag.go:178`,
-`internal/cli/init.go:749,944`, `internal/cli/restore.go:192`,
-`internal/cli/managed_apply.go:157`). `docs/design/managed-projects.md:3` says it outright.
-`docs/releases/v0.9.5.md` lists managed projects among the disabled features.
+Managed projects were **gated off** when this note was written: `internal/cli/recipes_skew.go`'s
+`const managedDeployerShipped = false` (true as of 0.10.0), and every command that would create
+one or act as its deployer refused before any cloud call (`internal/cli/managed_flag.go`,
+`internal/cli/init.go`'s `check`, `internal/cli/restore.go`,
+`internal/cli/managed_apply.go`). `docs/design/managed-projects.md` says it outright, and
+`docs/releases/v0.9.5.md` lists managed projects among the disabled features; 0.10.0's note
+lists them among the shipped ones, with the fence unmeasured (Check 68).
 
 ### ZF18 — **Wrong** — "so there is no extra setup"
 
-`fugaro init` provisions all of it: `docs/gcp-setup.md:9-10` (an installation gets APIs, a
+`fugaro init` provisions all of it: `e924481:docs/gcp-setup.md:9-10` (the page before its rewrite) (an installation gets APIs, a
 runs bucket, custom roles, a scheduler and log isolation; a repository gets secret
 containers, registries, job accounts, a Cloud Run job and a Scheduler job), and
 `deploy/terraform/gcp/modules/firebase/apis.tf:8-17` enables `firebase`, `firebasedatabase`,
@@ -285,7 +286,7 @@ key at `deploy/terraform/gcp/modules/firebase/firebase.tf:36-47`; mobile at
 `docs/mobile-auth/spec.md:14,32`), and Firestore for history (`internal/firestore/client.go:1-3`).
 
 But they are the **budget, dashboard and history control plane**, and it is optional:
-`README.md:99` — "The budget is off by default" — and `docs/gcp-setup.md:464` documents a
+`README.md:99` — "The budget is off by default" — and `e924481:docs/gcp-setup.md:464` (the page before its rewrite) documents a
 degraded mode with no Firebase at all. A run needs none of the three. And Firebase Auth is
 **not** the identity provider for the console (which holds no credential,
 `docs/design/desktop-console.md:13,96`) nor for the CLI, which signs in with
@@ -369,10 +370,14 @@ node yet ('fugaro pair' is plan task P6.6 and is not built)", and no QR generato
 anywhere in `go.mod` or `internal/`. The roles are defined **only** in the owner's spec
 (`docs/mobile-auth/spec.md` — Viewer / Operator / Admin as an allowlist capability table),
 and D225 puts the role as a **field on the device node**, read in v1 by the CLI and the
-console and **never by the rules** (`docs/mobile-auth/reconciliation.md:466-505`). The whole
-`docs/mobile-auth/` folder is "plan only. No code is implemented… nothing here is approved"
-(`docs/mobile-auth/README.md:3`), and its sixteen decisions D221–D236 are **recommendations
-the owner has not answered** (`docs/mobile-auth/reconciliation.md:443-448`).
+console and **never by the rules** (`docs/mobile-auth/reconciliation.md` §4, D225). The whole
+`docs/mobile-auth/` folder is "plan only. No code is implemented" (`docs/mobile-auth/README.md`,
+its status line), and its sixteen decisions D221–D236 were **answered by the owner, each as
+recommended, on 2026-10-22** — so the plan is approved for **P0 and P1**, the two parts the owner
+approved, and the parts that wait on the mobile Phase 6 tasks (P6.6, P6.8) wait still
+(`docs/mobile-auth/reconciliation.md` §4; `docs/mobile-auth/implementation-plan.md` §11). **None
+of that makes this row's own subject less of a gap**: the role is still a field on a node no code
+writes, because the parts that would write it are the ones that wait.
 
 ### ZF28 — **Rule** — what the voice ruling fixes, and what it forbids
 
@@ -819,8 +824,9 @@ None of them is written "(default)", and an answer is not a go: each part of
 The numbers are **D237 onward**: the highest written decision under `docs/` is **D236**
 (`docs/mobile-auth/`), the block `D198`–`D200` sits inside the coordinator's "a move into the
 block must start at D198" note and `D200` may be held by the owner's notes
-(`docs/coordinator/README.md:113`; `docs/mobile-auth/README.md:41`), and the convention is to
-take the first block above the highest allocation rather than to derive one by grepping
+(`docs/coordinator/README.md:113`; `docs/mobile-auth/README.md`, "The numbers this work takes"), and
+the convention is to take the first block above the highest allocation rather than to derive one by
+grepping
 (`docs/website/redesign/implementation-plan.md:556-569`). **The allocation is the owner's, and
 the owner has now taken it: the answers of 2026-10-21 were given under `D237`–`D252`, so the
 block below is this line of work's and the records that name it — the plan's §8, the README's
