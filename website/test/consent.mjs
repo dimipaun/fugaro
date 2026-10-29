@@ -401,6 +401,13 @@ function stubDOM(html, location = PAGE_LOCATION) {
 
   const root = parse(html)
   for (const child of root.children ?? []) if (child.name !== undefined) build(child)
+  // The `<html>` element, which is where the banner's early decision leaves its one mark
+  // (`data-consent-ask`, `consent-early.js`): the page is drawn from the attribute, so a case
+  // has to be able to read it off the element the script set it on. A page whose markup has no
+  // `<html>` gets the same holder, since the script sets the attribute rather than reading it.
+  document.documentElement =
+    elements.find((el) => el.name === 'html') ??
+    { attrs: new Map(), getAttribute: (name) => null, setAttribute(name, value) { this.attrs.set(name, value) }, removeAttribute(name) { this.attrs.delete(name) } }
 
   // `document.cookie`, as a browser presents it: the cookies the page may read — the host's
   // own and the parent domain's — a write replacing the cookie of the same name and domain,
@@ -483,8 +490,10 @@ function stubDOM(html, location = PAGE_LOCATION) {
  *
  * `dist` is the artifact the page came from: the site's one script file is read out of it and
  * run in the page's place, which is what makes this a test of the gate the site ships rather
- * than of a copy of it written here. `script` overrides that source, for the mutation cases
- * that need the site's own file with one line changed.
+ * than of a copy of it written here. The banner's early decision (`consent-early.js`) is read
+ * out of the same artifact and run where the page puts it, so the mark it leaves on `<html>`
+ * is a fact the cases can read rather than a file no case ever runs. `script` overrides the
+ * site's own source, for the mutation cases that need that file with one line changed.
  *
  * `cookies` are the cookies the browser is ALREADY holding when the page loads — what a
  * visitor who consented on an earlier page view brings with them. They are in the jar from
@@ -559,17 +568,24 @@ export function runPage(html, { dist = DIST, script = null, storage = {}, readab
   }
 
   // Then the page's own scripts, in the order a browser reaches them: an inline block is run
-  // as it stands, and a `src` naming the site's one script file is read out of the artifact
-  // and run in its place. Nothing else is fetched — a page that named another script would
-  // have to be a page this stub could read, and `origins.mjs` is the gate that refuses one.
+  // as it stands, and a `src` naming the site's one script file — or the banner's early
+  // decision, which is the file that decides the first frame — is read out of the artifact and
+  // run in its place. Nothing else is fetched — a page that named another script would have to
+  // be a page this stub could read, and `origins.mjs` is the gate that refuses one.
   for (const token of tokenize(html)) {
     if (token.kind !== 'start' || token.name !== 'script') continue
     if (!EXECUTABLE.has((token.attrs.get('type') ?? '').toLowerCase())) continue
     const src = token.attrs.get('src')
     if (src !== undefined) {
-      if (src !== SITE_SCRIPT) continue
-      const source = script ?? readFileSync(path.join(dist, src.replace(/^\//, '')), 'utf8')
+      if (src !== SITE_SCRIPT && src !== EARLY_SCRIPT) continue
+      const source =
+        src === SITE_SCRIPT && script ? script : readFileSync(path.join(dist, src.replace(/^\//, '')), 'utf8')
+      // `document.currentScript` is the element the browser is running, which is how the early
+      // decision reads its own tag's keys: the element the page built for this very tag, so the
+      // keys the layout wrote are the keys the case sees.
+      document.currentScript = elements.find((el) => el.name === 'script' && el.attrs.get('src') === src) ?? null
       new Function('window', 'document', 'navigator', 'CustomEvent', source)(window, document, {}, StubEvent)
+      document.currentScript = null
       continue
     }
     new Function('window', 'document', 'navigator', 'CustomEvent', token.raw ?? '')(window, document, {}, StubEvent)
@@ -1084,6 +1100,69 @@ test('a browser that refuses storage is treated as undecided: nothing loads, and
   assert.equal(unwritable.banner.hidden, false, 'the banner was dismissed although nothing was remembered, so the visitor would never be asked again')
 })
 
+test('a refusal that cannot be stored is still honoured: the tag it stops stops sending', () => {
+  // The other half of the case above, and the half it could not see: a browser may READ storage
+  // and refuse the WRITE (a full quota, an old private mode). The two are not the same answer —
+  // a decision that cannot be filed is not a decision the visitor did not make — and on a page
+  // whose storage is readable, the tag this press stops is running there, so a refusal the site
+  // cannot remember is a refusal it can still honour. A grant is the other way round: it is
+  // honoured only where it is kept, because nothing would remember it on the next page.
+  const page = runPage(pageOf(SHIPPED, 'privacy/index.html'), { storage: { [CONSENT_KEY]: 'granted' }, writable: false })
+  assert.equal(page.analyticsRequests().length, 1, 'the stored grant did not load the analytics script, so the withdrawal below would prove nothing')
+  const queued = page.window.dataLayer.length
+
+  page.click('denied')
+  assert.equal(page.store[CONSENT_KEY], 'granted', 'the storage double kept the decision although it was told to refuse every write, so this case proves nothing')
+  assert.equal(
+    page.window[`ga-disable-${MEASUREMENT_ID}`],
+    true,
+    'a refusal the browser would not store left Google measuring the page the visitor had just declined',
+  )
+  assert.deepEqual(
+    page.window.dataLayer.slice(queued).map((entry) => Array.from(entry)),
+    [['consent', 'update', { analytics_storage: 'denied' }]],
+    'a refusal that could not be stored did not tell the tag it stopped that consent was denied',
+  )
+  assert.equal(page.banner.hidden, false, 'the banner was dismissed although the refusal could not be remembered')
+  assert.equal(page.status?.hidden, false, 'the banner does not tell the visitor that the choice could not be stored')
+})
+
+test('the banner is asked for before the first frame, on the campaign pages too', () => {
+  // `consent-early.js` draws the bar in the page's flow before `site.js` runs (the owner's
+  // ruling of 2026-10-23), and it does it by setting one attribute on `<html>` — so the whole
+  // of its behaviour is a fact about the page it ran on, and G2.3 gave it a second key to read
+  // there. This is the case that runs it: the stub executes the file's own source out of the
+  // artifact, where the page put it, so a key the layout forgot to write, or wrote under
+  // another name than this file reads, is a bar missing from the first frame on the four
+  // pages that ask the campaign question — and no other case would notice.
+  const campaign = pageOf(SHIPPED, CAMPAIGN_PAGE)
+  const tag = findAll(parse(campaign), (el) => el.name === 'script' && el.attrs.get('src') === EARLY_SCRIPT)[0]
+  assert.ok(tag, `the campaign page carries no ${EARLY_SCRIPT}, so the bar is not in its place from the first frame`)
+  assert.equal(tag.attrs.get('data-consent-key'), CONSENT_KEY, 'the campaign page\'s early decision reads no key of the site\'s, so a visitor who has not answered the site\'s question is shown no bar')
+  assert.equal(
+    tag.attrs.get('data-marketing-consent-key'),
+    MARKETING_CONSENT_KEY,
+    'the campaign page\'s early decision carries no campaign key, so a visitor who answered the site\'s question and not the campaign\'s is shown no bar',
+  )
+  assert.ok(!tag.attrs.has('data-consent-always'), 'the campaign page always offers the choice, which is the privacy page\'s arrangement and not this page\'s')
+
+  const asked = (storage) => runPage(campaign, { location: CAMPAIGN_LOCATION, storage })
+  const mark = (storage) => asked(storage).document.documentElement.getAttribute('data-consent-ask')
+
+  assert.equal(mark({}), '', 'the early decision left no mark on <html> for a visitor who has answered nothing, so the bar is not drawn in its place from the first frame')
+  assert.equal(
+    mark({ [CONSENT_KEY]: 'granted' }),
+    '',
+    'a visitor who answered the site\'s question but not the campaign\'s is given no bar, so the campaign question is never asked',
+  )
+  assert.equal(mark({ [CONSENT_KEY]: 'granted', [MARKETING_CONSENT_KEY]: 'granted' }), null, 'the early decision marks a page whose every question is answered, so the bar is drawn under a visitor who has already decided')
+  assert.equal(
+    runPage(pageOf(SHIPPED, 'docs/index.html'), { storage: { [CONSENT_KEY]: 'granted' } }).document.documentElement.getAttribute('data-consent-ask'),
+    null,
+    'a page that asks nothing is marked as if it asked something, so the bar is drawn under a visitor who has decided',
+  )
+})
+
 // ---- 3. cookies: none before consent, and none left after a withdrawal -------------------
 //
 // W1.12's step was "no cookie before consent": the site stores one decision and sets nothing
@@ -1271,6 +1350,21 @@ function withVendorIds(html) {
 /** The campaign page the cases below run, with both vendor ids in place. */
 const CAMPAIGN_HTML = withVendorIds(pageOf(SHIPPED, CAMPAIGN_PAGE))
 
+/**
+ * The cookies the campaign withdrawal deletes, read out of the script the site ships rather
+ * than restated here — the same way the privacy page's claim about them is held. A name the
+ * script stops deleting is a case that must fail, and one it starts deleting is a case that
+ * owes an assertion; a copy of the list in this file would let the two drift apart in silence.
+ */
+function marketingCookies() {
+  const script = readFileSync(path.join(DIST, SITE_SCRIPT.replace(/^\//, '')), 'utf8')
+  const list = /var MARKETING_COOKIES = \[([\s\S]*?)\]/.exec(script)
+  assert.ok(list, `${SITE_SCRIPT} no longer carries the list of cookies the campaign withdrawal deletes, so the cases below have nothing to hold`)
+  const names = [...list[1].matchAll(/'([^']+)'/g)].map((m) => m[1])
+  assert.ok(names.length > 0, `${SITE_SCRIPT} deletes no campaign cookie, so a withdrawal that leaves the tags' identifiers behind would pass`)
+  return names
+}
+
 test('no page asks any of the three vendors anything before the marketing consent is granted', () => {
   // A first visit to a campaign page: the banner is offered and nothing of the three is
   // fetched, though the page carries all three addresses in its own banner.
@@ -1365,14 +1459,20 @@ test('an empty vendor id is a loader that does not load, which is the state the 
   )
 })
 
-test('withdrawing the marketing consent stops the three and deletes the cookies the pixel set', () => {
+test('withdrawing the marketing consent stops the three and deletes the cookies the two tags set', () => {
+  // Both tags run as scripts in this page's own origin, so every cookie either one writes here
+  // is first-party and is this site's to remove — the pixel's two and the six LinkedIn
+  // documents, which is the list the privacy statement prints. `_gate` is the control: a name
+  // that merely begins like a cookie of theirs.
   const page = runPage(CAMPAIGN_HTML, {
     location: CAMPAIGN_LOCATION,
     storage: { [CONSENT_KEY]: 'granted', [MARKETING_CONSENT_KEY]: 'granted' },
-    cookies: ['_fbp=fb.1.111.222; path=/', '_fbc=fb.1.333.444; path=/', '_gate=1; path=/'],
+    cookies: [...marketingCookies().map((name) => `${name}=planted; path=/`), '_gate=1; path=/'],
   })
   assert.equal(campaignRequests(page).length, 3, 'the stored campaign grant did not load the three vendors, so the withdrawal below would prove nothing')
-  assert.ok(page.held().includes('_fbp'), 'the cookie double did not hold the pixel\'s cookie')
+  for (const name of marketingCookies()) {
+    assert.ok(page.held().includes(name), `the cookie double did not hold ${name}, so its deletion below would prove nothing`)
+  }
 
   page.click('denied')
   assert.equal(page.store[MARKETING_CONSENT_KEY], 'denied', 'withdrawing did not overwrite the stored campaign grant')
@@ -1383,10 +1483,10 @@ test('withdrawing the marketing consent stops the three and deletes the cookies 
     'withdrawing did not tell the pixel to stop',
   )
   const left = page.held()
-  for (const name of ['_fbp', '_fbc']) {
-    assert.ok(!left.includes(name), `${name} survived the withdrawal, so the pixel's first-party cookie is still in the browser`)
+  for (const name of marketingCookies()) {
+    assert.ok(!left.includes(name), `${name} survived the withdrawal, so a first-party identifier a tag set is still in the browser (the plan's withdrawal removes the cookies the trackers set)`)
   }
-  assert.ok(left.includes('_gate'), 'the withdrawal deleted a cookie that is not the pixel\'s')
+  assert.ok(left.includes('_gate'), 'the withdrawal deleted a cookie that is neither tag\'s')
 
   // The next page view asks the three nothing: the decision is stored, and it is a refusal.
   const next = runPage(CAMPAIGN_HTML, { location: CAMPAIGN_LOCATION, storage: page.store })
@@ -1403,7 +1503,7 @@ test('the privacy page withdraws the campaign consent too, because the campaign 
   const granted = { [CONSENT_KEY]: 'granted', [MARKETING_CONSENT_KEY]: 'granted' }
   const page = runPage(pageOf(SHIPPED, 'privacy/index.html'), {
     storage: granted,
-    cookies: ['_fbp=fb.1.111.222; path=/', '_fbc=fb.1.333.444; path=/', '_gate=1; path=/'],
+    cookies: [...marketingCookies().map((name) => `${name}=planted; path=/`), '_gate=1; path=/'],
   })
   assert.ok(page.banner, 'the privacy page carries no consent banner')
   assert.equal(
@@ -1411,17 +1511,17 @@ test('the privacy page withdraws the campaign consent too, because the campaign 
     false,
     'the privacy page hides the bar from a visitor who answered both questions, so the campaign consent cannot be withdrawn from the one page that says how',
   )
-  assert.ok(page.held().includes('_fbp'), 'the cookie double did not hold the pixel\'s cookie, so the deletion below would prove nothing')
+  assert.ok(page.held().includes('li_sugr'), 'the cookie double did not hold the insight tag\'s cookie, so the deletion below would prove nothing')
   assert.deepEqual(campaignRequests(page), [], 'the privacy page loaded one of the campaign\'s three vendors: it carries the decision\'s key and none of the origins')
 
   page.click('denied')
   assert.equal(page.store[MARKETING_CONSENT_KEY], 'denied', 'declining on the privacy page left the campaign grant standing, so the three load again on the next campaign page')
   assert.equal(page.store[CONSENT_KEY], 'denied', 'declining on the privacy page did not overwrite the site\'s own grant')
   const left = page.held()
-  for (const name of ['_fbp', '_fbc']) {
-    assert.ok(!left.includes(name), `${name} survived a withdrawal made on the privacy page, where the pixel never ran`)
+  for (const name of marketingCookies()) {
+    assert.ok(!left.includes(name), `${name} survived a withdrawal made on the privacy page, where neither tag ever ran`)
   }
-  assert.ok(left.includes('_gate'), 'the withdrawal deleted a cookie that is not the pixel\'s')
+  assert.ok(left.includes('_gate'), 'the withdrawal deleted a cookie that is neither tag\'s')
 
   const next = runPage(CAMPAIGN_HTML, { location: CAMPAIGN_LOCATION, storage: page.store })
   assert.deepEqual(campaignRequests(next), [], 'the consent withdrawn on the privacy page still loaded a vendor on the next campaign page view')
@@ -1432,6 +1532,17 @@ test('a bar that carries the campaign key without the question grants nothing wi
   // question with a yes, so a visitor is never reported to Meta or LinkedIn by a press made on
   // a page that never named them. The privacy page's bar is the one that carries the key
   // without the configuration, and its Accept is the site's answer alone.
+  //
+  // **What this leaves open, and it is a decision and not an oversight** (raised in review of
+  // G2.3): a campaign page's bar is offered only while the campaign question is open, so once
+  // the answer is `denied` — given there, or taken back on the privacy page — no page asks the
+  // campaign question again, and the three cannot be turned back on without clearing this
+  // browser's storage. The site's own question is the other way round: the privacy page's bar
+  // always offers it, so an analytics refusal is revocable. Making the campaign answer
+  // round-trippable means either asking it again on the four campaign pages after a refusal
+  // (asking a visitor who said no) or letting this page's Accept grant it (a yes the page never
+  // asked for, and one whose three loaders that page does not even carry) — both are product
+  // decisions, neither is taken here, and the owner has them in this PR.
   const page = runPage(pageOf(SHIPPED, 'privacy/index.html'), { storage: {} })
   page.click('granted')
   assert.equal(page.store[CONSENT_KEY], 'granted', 'accepting on the privacy page did not answer the site\'s question')

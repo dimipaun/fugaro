@@ -971,11 +971,24 @@
     }
   }
 
-  // The cookies Meta's pixel sets on this site, and nothing else: the browser id it writes for
-  // a visitor, and the click id it writes when one of the campaign's own links was followed.
-  // Both are first-party, so both are this site's to remove. What the vendors wrote on their
-  // own domains is theirs and is not reachable from here, which the privacy page says.
-  var MARKETING_COOKIES = ['_fbp', '_fbc']
+  // The cookies the two tags set on this site, and nothing else: Meta's browser id and the
+  // click id it writes when one of the campaign's own links was followed, and the six LinkedIn
+  // documents for its insight tag — the browser id, the record of the sync, the matched
+  // audience, the two it keeps its own session in, and the consent record. Both tags run as
+  // scripts in this page's own origin, so every cookie either one writes is first-party here and
+  // is this site's to remove; what they wrote on their own domains is theirs and is not
+  // reachable from here, which the privacy page says. A name that is not in the jar costs
+  // nothing: nothing is written for a cookie the browser is not holding.
+  var MARKETING_COOKIES = [
+    '_fbp',
+    '_fbc',
+    'li_sugr',
+    'AnalyticsSyncHistory',
+    'UserMatchHistory',
+    'bcookie',
+    'lidc',
+    'li_gc',
+  ]
 
   function analytics(banner) {
     var id = banner.getAttribute(ANALYTICS_ID_ATTR)
@@ -1151,13 +1164,14 @@
     // A withdrawal stops what it can and says nothing it cannot do. The pixel takes a consent
     // command and is told; the insight tag has none, and no script already fetched can be
     // unfetched — so the senders stop on the next page, and the privacy page says so. What is
-    // this site's to remove is removed: the cookies Meta's pixel set on this host.
+    // this site's to remove is removed: every first-party cookie the two tags set, which is the
+    // list above, read out of the jar before anything is written so that nothing else is touched.
     //
     // It is not gated on this page having loaded anything, because the withdrawal is not always
     // made on the page that loaded: a visitor who accepted the campaign measurement on a
-    // campaign page withdraws on the privacy page, where none of the three ever runs. The two
-    // names below are the whole of what is read, so a visitor who never accepted has nothing
-    // deleted — and nothing is written but an expiry on a cookie this host already held.
+    // campaign page withdraws on the privacy page, where none of the three ever runs. That list
+    // is the whole of what is read, so a visitor who never accepted has nothing deleted — and
+    // nothing is written but an expiry on a cookie this host already held.
     function withdraw() {
       if (window.fbq) window.fbq('consent', 'revoke')
       var host = (window.location && window.location.hostname) || ''
@@ -1252,11 +1266,21 @@
       var campaignDecision = asksCampaign || (decision === DENIED && marketing !== null) ? decision : null
       var keptSite = siteDecision === null ? true : keep(banner, SITE_KEY_ATTR, siteDecision)
       var keptCampaign = campaignDecision === null ? true : keep(banner, marketing, campaignDecision)
+      // A refusal is honoured whether or not it could be remembered: the browser refused the
+      // WRITE (a full quota, an old private mode), which is not the same as refusing the answer
+      // — the tag this press stops is running on a page whose storage it can read, and a visitor
+      // who has just said no is not measured because the note could not be filed. A grant is the
+      // other way round: it is only honoured when it is kept, so nothing is loaded on a promise
+      // the next page would not remember. A question this press did not answer is null, which
+      // both gates ignore.
       if (!keptSite || !keptCampaign) {
         // The answer cannot be kept, so it is not honoured: nothing is loaded, the banner
         // stays, and the status line says why.
         if (status) status.hidden = false
-        announce(null, null)
+        announce(
+          keptSite ? siteDecision : siteDecision === DENIED ? DENIED : null,
+          keptCampaign ? campaignDecision : campaignDecision === DENIED ? DENIED : null,
+        )
         return
       }
       dismiss()

@@ -134,10 +134,13 @@ LinkedIn's insight tag and Calendly's booking widget.
   site can promise about — the guarantee is over the hand-off, which is also the half the plan
   asks a test to hold (a test over the loader's configuration). The parameters G2.4 passes on to
   Calendly are allow-listed and length-capped, and reach neither of these two.
-- **Withdrawal removes what this site may remove.** The pixel is told to revoke, and `_fbp`
-  and `_fbc` are deleted from this host. A script already fetched keeps running until the
-  visitor reloads, and a cookie a vendor set on its own domain is the vendor's to remove,
-  which the privacy statement says in those words.
+- **Withdrawal removes what this site may remove.** The pixel is told to revoke, and every
+  first-party cookie the two tags set is deleted from this host: Meta's `_fbp` and `_fbc`, and
+  the six LinkedIn documents for its insight tag — `li_sugr`, `AnalyticsSyncHistory`,
+  `UserMatchHistory`, `bcookie`, `lidc` and `li_gc` — which is the list `site.js` carries and
+  the privacy statement prints. A script already fetched keeps running until the visitor
+  reloads, and a cookie a vendor set on its own domain is the vendor's to remove, which the
+  privacy statement says in those words.
 - **The deployed policy gains each vendor's origin per directive** — `script-src` for the
   three scripts, `img-src` and `connect-src` for the pixel's and the insight tag's beacons,
   `style-src` for Calendly's stylesheet, and a new `frame-src` for the booking page — with no
@@ -1119,7 +1122,7 @@ added or removed without this sentence moving fails there:
     **The page's words go 492 → 868** — the boards' own labels, which are what a level says — and
     **D188's number moves with them, 600 → 900**: 900 is the smallest round ceiling above the
     page, and the next page down that D188 governs is the homepage at 563 words (Getting Started
-    is 309; the privacy statement, at 988, is the page the words-per-page ceiling itself is
+    is 309; the privacy statement, at 1030, is the page the words-per-page ceiling itself is
     derived from, so D188's own number does not measure it). The
     levels' words are no longer a data file: `website/data/zoom-levels.yaml` is gone and the
     boards are the source of truth — `src/lib/zoom-boards.mjs` reads each board's visible strings
@@ -1150,15 +1153,21 @@ added or removed without this sentence moving fails there:
     measured against the gates' own build rather than argued, and stated here so the figure a
     reader sees is the build the site has. The per-page and per-script figures are left where they
     are, by the owner's ruling of 2026-10-20, and they carry the same drift: the script's figure
-    is stated as 70,016 where the build is 70,008 and the page weight as 563,219 where the
-    homepage's is 563,140. The drawings are the owner's to read, and that is **Check 112** in
+    was stated as 70,016 where the build was 70,008 and the page weight as 563,219 where the
+    homepage's is 563,140 — the script's own figure is re-derived in the bullet below, with the
+    bytes G2.3 added to it. The drawings are the owner's to read, and that is **Check 112** in
     `docs/gcp-live-checklist.md`.
 
-  - **JavaScript per page:** 262,560 bytes. Three times 87,520: the one script the site ships,
-    `public/scripts/site.js` (70,016 bytes), plus 25 %. What the file carries is the copy
-    control, the menu, the consent gate and **both of the site's sliders** — the console page's,
+  - **JavaScript per page:** 333,549 bytes. Three times 111,183: the one script the site ships,
+    `public/scripts/site.js` (88,946 bytes), plus 25 %. What the file carries is the copy
+    control, the menu, the consent gate — the site's, and since G2.3 the campaign's own gate and
+    the three loaders behind it — and **both of the site's sliders** — the console page's,
     which the feedback-B round above added, and the homepage's, which the feedback-A round above
-    it added.
+    it added. **G2.3's campaign gate is the last 12,012 bytes, and the script's figure is
+    re-derived with them**: the build the derivation names has moved 70,016 → 88,946, and the
+    ceiling with it, 262,560 → 333,549. The drift the rounds before it left in this figure — the
+    bullet above records the build as 70,008 against the 70,016 it stated — ends here, in the
+    commit that moved the bytes; the page weight keeps its own until a round re-derives it.
     The console's half is the feedback-B round's, and it was the first JavaScript the site had
     gained since the menu (the owner's feedback of 2026-10-21): the bar the markup emits
     `hidden` — a Previous arrow, the count and a Next arrow — is revealed and driven here, the
@@ -1258,7 +1267,7 @@ added or removed without this sentence moving fails there:
     The ceiling is a ceiling, not a floor — a page with no lead region is a page D188's
     definition does not describe, and this gate says nothing about how much a page's first
     section should say.
-  - **Words per page:** 1235 words. Every word a reader sees inside `main` — command blocks
+  - **Words per page:** 1288 words. Every word a reader sees inside `main` — command blocks
     and code spans included, since the ceiling is a claim about the page rather than about
     its prose — counted by `budget.mjs`'s own reader, which reads a page the way
     `test/lib/html.mjs`'s `textOf` does (a script or style body is not text, an image's
@@ -1279,8 +1288,8 @@ added or removed without this sentence moving fails there:
     **The number is no longer D188's own, and it is derived rather than picked.** The
     privacy statement is the page the App Store and Play listings link as a privacy policy,
     so it carries the software as well as the site and is the one page that is not the
-    site's pitch; the number is that page's own count on the gates' own build — **988
-    words** — plus 25 %, rounded up, which is **1235**. `budget.mjs`'s
+    site's pitch; the number is that page's own count on the gates' own build — **1030
+    words** — plus 25 %, rounded up, which is **1288**. `budget.mjs`'s
     `wordsCeilingFailures` holds the derivation to the built page the way the same file
     holds the byte budgets to theirs, so a sentence added there re-derives this line in the
     commit that adds it. **The raise is that page's and nobody else's**: every other page of
