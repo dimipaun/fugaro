@@ -768,16 +768,15 @@ describe('both document shapes decode', () => {
     // finding this test exists for was a hand-written copy agreeing with a
     // hand-written list, so the copy is gone.
     const fromTheStruct = structTags(WATCH_SOURCE, 'JSONRepo').map((tag) => tag.key)
-    // `leased_usd` is not a `JSONRepo` key: the owner approved it on
-    // 2026-10-28 and no CLI release writes it, so `REPO_KEYS` carries it as an
-    // *optional* addition beside the struct's own keys -- which is why the
-    // recorded entry below, a real `watch --json` document, still has exactly
-    // the struct's keys and still decodes.
-    const approvedNotEmitted = ['leased_usd']
-    expect([...REPO_KEYS].sort()).toEqual([...fromTheStruct, ...approvedNotEmitted].sort())
-    expect(REPO_KEYS.length).toBe(fromTheStruct.length + approvedNotEmitted.length)
+    // `leased_usd` is a `JSONRepo` key now (`JSONRepo.LeasedUSD`), so the list
+    // holds exactly the struct's keys: it was carried here as an approved
+    // *addition* while no CLI wrote it, and the struct caught up. The recorded
+    // entry below carries it too, which is what keeps this honest -- the list
+    // and the document both come from the struct.
+    expect([...REPO_KEYS].sort()).toEqual([...fromTheStruct].sort())
+    expect(REPO_KEYS.length).toBe(fromTheStruct.length)
     expect(fromTheStruct).toEqual([
-      'slug', 'repo', 'counted_usd', 'spent_usd', 'notional_usd',
+      'slug', 'repo', 'counted_usd', 'spent_usd', 'notional_usd', 'leased_usd',
       'daily_cap_usd', 'percent', 'burn', 'kill',
     ])
     for (const notARepository of ['runs', 'run_hours']) {
@@ -803,21 +802,22 @@ describe('both document shapes decode', () => {
     expect(value.total.countedUsd.state).toBe('measured')
   })
 
-  it("lists every key of `JSONTotal`, and the same one approved addition", () => {
+  it("lists every key of `JSONTotal`, and only the struct's own", () => {
     // `TOTAL_KEYS` was unexported and pinned against nothing, so this is its
     // pin, read off the struct the same way as `REPO_KEYS` above: a key added
     // to `JSONTotal` and not to the list would make `closed()` refuse the whole
     // feed, which is the drift `REPO_KEYS` and `RECORD_KEYS` were each missing
-    // once. `leased_usd` is the one entry the struct does not have
+    // once. `leased_usd` used to be the one entry the struct did not have
     // (`approvedAheadOfTheCLI` in `docs_desktop_console_test.go`, the same
-    // allowance on the Go side).
+    // allowance on the Go side); the CLI writes it now, so the two lists are
+    // the struct's keys, exactly.
     const fromTheStruct = structTags(WATCH_SOURCE, 'JSONTotal').map((tag) => tag.key)
     expect(fromTheStruct).toEqual([
-      'counted_usd', 'spent_usd', 'notional_usd', 'daily_cap_usd', 'percent',
-      'burn', 'kill', 'runs', 'run_hours',
+      'counted_usd', 'spent_usd', 'notional_usd', 'leased_usd', 'daily_cap_usd',
+      'percent', 'burn', 'kill', 'runs', 'run_hours',
     ])
-    expect([...TOTAL_KEYS].sort()).toEqual([...fromTheStruct, 'leased_usd'].sort())
-    expect(TOTAL_KEYS.length).toBe(fromTheStruct.length + 1)
+    expect([...TOTAL_KEYS].sort()).toEqual([...fromTheStruct].sort())
+    expect(TOTAL_KEYS.length).toBe(fromTheStruct.length)
     // And the recorded total still carries exactly the struct's keys, so the
     // addition did not come at the cost of the document the fixture holds.
     const wireTotal = (first as { total?: Record<string, unknown> }).total ?? {}
@@ -1008,13 +1008,19 @@ describe('a document missing a field the screens read fails decoding by name', (
     expect(gone.total.countedUsd.value).toBe(12.5)
   })
 
-  it('accepts `leased_usd` as optional on a total and on a repository, and refuses a wrong value', () => {
-    // The owner approved `leased_usd` on the `watch --json` `total` object and
-    // on every `repos[]` entry on 2026-10-28, ahead of the CLI release that
-    // will emit it, and neither struct writes it today. So the console accepts
-    // it as an *optional* money key on both shapes -- absent is `n/a`, never a
-    // lease of `$0.00` -- and a value that *is* there is read.
-    const absent = decoded(first)
+  it('reads `leased_usd` on a total and on a repository, and refuses a wrong value', () => {
+    // The CLI writes `leased_usd` on the `watch --json` `total` object and on
+    // every `repos[]` entry now, so the console reads it there -- and reads it
+    // as an *optional* money key all the same, because a document from an
+    // older CLI carries no such key: absent is `n/a`, never a lease of
+    // `$0.00`. The fixture carries it (12.5 = counted 12.5 - spent 0), and the
+    // same document with the key taken out is the older CLI's shape.
+    const written = decoded(first)
+    expect(written.total.leasedUsd.state).toBe('measured')
+    expect(written.total.leasedUsd.value).toBe(12.5)
+    expect(written.repos[0]?.leasedUsd.state).toBe('measured')
+
+    const absent = decoded(without(without(first, ['total', 'leased_usd']), ['repos', 0, 'leased_usd']))
     expect(absent.total.leasedUsd.value).toBeNull()
     expect(absent.total.leasedUsd.state).toBe('unavailable')
     expect(formatReading(absent.total.leasedUsd, 'usd')).toBe(UNAVAILABLE_MARK)
@@ -1047,9 +1053,9 @@ describe('a document missing a field the screens read fails decoding by name', (
     expect(zero.repos[0]?.leasedUsd.value).toBe(0)
 
     // A value of the wrong shape, or a negative one, is refused by its wire
-    // path rather than half-read: `leased_usd` is a key no CLI writes yet, so a
-    // document carrying something else at it is a document this console does
-    // not understand.
+    // path rather than half-read: no money field of this contract can hold one,
+    // so a document carrying one is a document this console does not
+    // understand.
     for (const [path, value, field] of [
       [['total', 'leased_usd'], '3.5', 'total.leased_usd'],
       [['total', 'leased_usd'], -1, 'total.leased_usd'],
@@ -1061,7 +1067,7 @@ describe('a document missing a field the screens read fails decoding by name', (
       expect(refusal.field, `${field} = ${String(value)}`).toBe(field)
     }
 
-    // And naming the new key did not open the shape: a key nobody approved is
+    // And reading the key did not open the shape: a key no shape here has is
     // still an unknown-key refusal beside it.
     for (const [path, field] of [
       [['total', 'leased'], 'total.leased'],

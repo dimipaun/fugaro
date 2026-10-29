@@ -396,13 +396,12 @@ describe('the scrub: the nullable Go fields', () => {
     }
   })
 
-  it('replaces a leased_usd with the invented lease, the key no CLI writes yet', () => {
-    // §intro's bounded exception: the owner approved `leased_usd` on 2026-10-28
-    // for `total` and every `repos[]` entry ahead of the release that writes it,
-    // and the console's decoders name it now so that release does not refuse
-    // every document whole. The scrub has to name it for the same reason, and
-    // the failure without a rule is the whole document: `applyRules` refuses a
-    // key it has none for, as `an unknown key at $.total.leased_usd`.
+  it('replaces a leased_usd with the invented lease, the money a lease is holding', () => {
+    // `leased_usd` is on `total` and on every `repos[]` entry, written by the
+    // CLI now (counted minus spent), so a recording carries it and the scrub
+    // has to name it: the failure without a rule is the whole document --
+    // `applyRules` refuses a key it has none for, as `an unknown key at
+    // $.total.leased_usd`.
     //
     // The amount is invented, not copied: a lease is what the installation
     // currently holds, so it is a real dollar figure like any other, and the
@@ -418,7 +417,7 @@ describe('the scrub: the nullable Go fields', () => {
     expect(JSON.stringify(out)).not.toContain('7.25')
   })
 
-  it('accepts a null leased_usd, which the pointer writes when no lease is outstanding', () => {
+  it('accepts a null leased_usd, the shape an older recording could leave', () => {
     const doc = raw()
     at(doc, 'total')['leased_usd'] = null
     at(doc, 'repos', 0)['leased_usd'] = null

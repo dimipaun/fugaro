@@ -112,7 +112,11 @@ function runBlock(overrides: JSONDoc = {}): JSONDoc {
 /** repoBlock is one repository: a cap, a bar and an off kill switch. `kill`
  * is `null` and not an object, because `jsonKill` returns nil unless the switch
  * is on (`internal/watch/json.go:134`) -- "not killed" is the key present with
- * no value, and the console reads it as a measured fact. */
+ * no value, and the console reads it as a measured fact.
+ *
+ * `leased_usd` is the one figure here that is derived rather than independent:
+ * it is `counted_usd - spent_usd`, which is what the CLI computes
+ * (`watch.LeasedUSD`), so an override that moves `counted_usd` moves it too. */
 function repoBlock(overrides: JSONDoc = {}): JSONDoc {
   return {
     slug: SLUG,
@@ -120,6 +124,7 @@ function repoBlock(overrides: JSONDoc = {}): JSONDoc {
     counted_usd: 12.5,
     spent_usd: 0,
     notional_usd: 3.25,
+    leased_usd: 12.5,
     daily_cap_usd: 50,
     percent: 25,
     burn: { known: true, usd_per_min: 0.02, fast: false },
@@ -167,6 +172,7 @@ function liveDocument(at: string, overrides: JSONDoc = {}): JSONDoc {
       counted_usd: 12.5,
       spent_usd: 0,
       notional_usd: 3.25,
+      leased_usd: 12.5,
       daily_cap_usd: 50,
       percent: 25,
       burn: { known: true, usd_per_min: 0.02, fast: false },
@@ -194,6 +200,7 @@ export const SYNTHETIC_SOURCE: readonly FixtureRecord[] = Object.freeze([
         counted_usd: 12.54,
         spent_usd: 0,
         notional_usd: 3.29,
+        leased_usd: 12.54,
         daily_cap_usd: 50,
         percent: 25.08,
         burn: { known: true, usd_per_min: 0.03, fast: false },
@@ -201,7 +208,7 @@ export const SYNTHETIC_SOURCE: readonly FixtureRecord[] = Object.freeze([
         runs: 1,
         run_hours: 0.43,
       },
-      repos: [repoBlock({ counted_usd: 12.54, notional_usd: 3.29, percent: 25.08 })],
+      repos: [repoBlock({ counted_usd: 12.54, notional_usd: 3.29, leased_usd: 12.54, percent: 25.08 })],
       runs: [runBlock({ spent_usd: 12.54, age_seconds: 1505, recipe: 'console-text-path' })],
       finished: [readyRun()],
       // The same row again: `watch --json` builds `ready` out of the finished
@@ -238,6 +245,7 @@ export const SYNTHETIC_SOURCE: readonly FixtureRecord[] = Object.freeze([
         counted_usd: 50,
         spent_usd: 0,
         notional_usd: 3.29,
+        leased_usd: 50,
         daily_cap_usd: 50,
         percent: 100,
         burn: { known: true, usd_per_min: 0, fast: false },
@@ -245,7 +253,7 @@ export const SYNTHETIC_SOURCE: readonly FixtureRecord[] = Object.freeze([
         runs: 2,
         run_hours: 0.73,
       },
-      repos: [repoBlock({ counted_usd: 50, notional_usd: 3.29, percent: 100 })],
+      repos: [repoBlock({ counted_usd: 50, notional_usd: 3.29, leased_usd: 50, percent: 100 })],
       runs: [
         runBlock({ age_seconds: 1761, health: 'lost' }),
         {

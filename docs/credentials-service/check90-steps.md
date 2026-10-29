@@ -32,8 +32,9 @@ that matter when you are reading a block are these:
   row says so, and says so as a `FAIL` naming the path if the removal did not
   work).
 - **The proxy's port.** The blocks below pass `--port "$PORT"`, a variable you
-  set. The script picks a free loopback port itself and never prints it as
-  something you have to keep.
+  set. The script passes `--port 0` instead and reads the number the kernel gave
+  that proxy out of the proxy's own first line, so there is no port for you to
+  pick and nothing you have to keep.
 
 The register's section is `docs/gcp-live-checklist.md`, "Check 90".
 
