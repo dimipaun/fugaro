@@ -472,6 +472,16 @@ var censusOutputNames = []string{
 	// is the shape these lists match, and the text is those modules' rather than
 	// this repository's, which is what they step over.
 	"THIRD_PARTY_NOTICES.md",
+	// mobile/.gitignore's google-services.json: the Android app identity a
+	// developer downloads from the Firebase console, which reaches a build as
+	// the EAS file variable GOOGLE_SERVICES_JSON rather than as a source file.
+	// It names one project's IDs, so the app never commits it -- mobile/README.md
+	// says so, and mobile/src/app-config.test.js fails if it is tracked.
+	"google-services.json",
+	// mobile/.gitignore's GoogleService-Info.plist: the same download for the iOS
+	// build, reaching it as GOOGLE_SERVICE_INFO_PLIST. A name rather than a
+	// marker, because the file has no extension the two lists could match on.
+	"GoogleService-Info.plist",
 }
 
 // censusOutputMarkers are matched against a file's base name, because the
@@ -1022,6 +1032,8 @@ var censusIgnored = []struct {
 	{"mobile/.gitignore", "dist/", "mobile/dist/index.html", false},
 	{"mobile/.gitignore", "web-build/", "mobile/web-build/index.html", false},
 	{"mobile/.gitignore", "*.log", "mobile/app.log", false},
+	{"mobile/.gitignore", "google-services.json", "mobile/google-services.json", false},
+	{"mobile/.gitignore", "GoogleService-Info.plist", "mobile/GoogleService-Info.plist", false},
 	{"deploy/sandbox/.gitignore", "node_modules/", "deploy/sandbox/node_modules/tfjs/index.js", false},
 	{"deploy/sandbox/.gitignore", "junit.xml", "deploy/sandbox/junit.xml", false},
 	{"internal/budget/rules/emulator/.gitignore", "node_modules/", "internal/budget/rules/emulator/node_modules/x/index.js", false},
