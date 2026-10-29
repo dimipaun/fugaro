@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See ee/LICENSE for the terms.
+
 package cli
 
 import (
@@ -19,11 +22,11 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/oauth2/google"
 
+	"github.com/dimipaun/fugaro/ee/coordinator"
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget"
-	"github.com/dimipaun/fugaro/internal/config"
-	"github.com/dimipaun/fugaro/internal/coordinator"
+	fcli "github.com/dimipaun/fugaro/internal/cli"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/github"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
@@ -83,7 +86,7 @@ import (
 
 // coordinatorReportOptions are report's flags.
 type coordinatorReportOptions struct {
-	cloud    cloudOptions
+	cloud    fcli.CloudFlags
 	repo     string
 	branch   string
 	release  string
@@ -128,13 +131,13 @@ func newCoordinatorReportCmd() *cobra.Command {
 	f.StringArrayVar(&o.files, "file", nil, "a path you are about to touch (repeatable)")
 	f.StringArrayVar(&o.services, "service", nil, "a service you are about to touch (repeatable)")
 	f.BoolVar(&o.asJSON, "json", false, "print the record as it was written")
-	addCloudFlags(cmd, &o.cloud)
+	fcli.AddCloudFlags(cmd, &o.cloud)
 	return cmd
 }
 
 func runCoordinatorReport(cmd *cobra.Command, o *coordinatorReportOptions) error {
 	ctx := cmd.Context()
-	env, err := openCloud(ctx, o.cloud)
+	env, err := fcli.OpenCloud(ctx, &o.cloud)
 	if err != nil {
 		return err
 	}
@@ -147,16 +150,15 @@ func runCoordinatorReport(cmd *cobra.Command, o *coordinatorReportOptions) error
 	// The caller, before anything is opened or written: a report nobody can be
 	// named for is refused, and the refusal is localcfg.Me's own (it names
 	// both places the identity can come from).
-	me, err := env.lc.Me(ctx)
+	me, err := env.Config().Me(ctx)
 	if err != nil {
-		return userErr("%v", err)
+		return fcli.UserErr("%v", err)
 	}
-	co := checkoutOf(ctx, repo)()
-	slug, err := env.repoSlug(repo, func() *config.Config { return co })
+	slug, err := env.RepoSlug(ctx, repo)
 	if err != nil {
 		return err
 	}
-	store, err := openCoordinatorStore(ctx, env.lc)
+	store, err := openCoordinatorStore(ctx, env.Config())
 	if err != nil {
 		return err
 	}
@@ -168,7 +170,7 @@ func runCoordinatorReport(cmd *cobra.Command, o *coordinatorReportOptions) error
 		Services:   o.services,
 	})
 	if err != nil {
-		return coordinatorReportErr(env.lc, err)
+		return coordinatorReportErr(env.Config(), err)
 	}
 	out := cmd.OutOrStdout()
 	if o.asJSON {
@@ -182,18 +184,18 @@ func runCoordinatorReport(cmd *cobra.Command, o *coordinatorReportOptions) error
 // must not be: a declaration is made by one caller about the work it is about
 // to start, and a report about every repository at once would be a report
 // about none of them.
-func coordinatorReportRepo(env *cloudEnv, repo string) (string, error) {
+func coordinatorReportRepo(env *fcli.Cloud, repo string) (string, error) {
 	if repo != "" {
 		return repo, nil
 	}
-	repos := slices.Sorted(maps.Keys(env.lc.Repos))
+	repos := slices.Sorted(maps.Keys(env.Config().Repos))
 	switch len(repos) {
 	case 0:
-		return "", userErr("the local config lists no repository: add one to its repos, or name one with --repo")
+		return "", fcli.UserErr("the local config lists no repository: add one to its repos, or name one with --repo")
 	case 1:
 		return repos[0], nil
 	}
-	return "", userErr("the local config lists %d repositories; name the one this report is about with --repo", len(repos))
+	return "", fcli.UserErr("the local config lists %d repositories; name the one this report is about with --repo", len(repos))
 }
 
 // coordinatorReportErr classifies a report that failed. The report path's own
@@ -205,11 +207,11 @@ func coordinatorReportRepo(env *cloudEnv, repo string) (string, error) {
 func coordinatorReportErr(lc *localcfg.Config, err error) error {
 	switch {
 	case errors.Is(err, coordinator.ErrUnnamedCaller), errors.Is(err, coordinator.ErrNothingDeclared):
-		return userErr("%v", err)
+		return fcli.UserErr("%v", err)
 	case errors.Is(err, rtdb.ErrPermission):
-		return userErr("project %s's database refused the write: /coordinator is readable by a signed-in reader and writable by nobody through the rules, so a report is written under the database role its caller holds (roles/firebasedatabase.admin, which terraform.budget_admins have); ask an owner to add you, or report through the coordinator's front door once it is deployed (%v)", lc.Name, err)
+		return fcli.UserErr("project %s's database refused the write: /coordinator is readable by a signed-in reader and writable by nobody through the rules, so a report is written under the database role its caller holds (roles/firebasedatabase.admin, which terraform.budget_admins have); ask an owner to add you, or report through the coordinator's front door once it is deployed (%v)", lc.Name, err)
 	}
-	return remote(err)
+	return fcli.RemoteErr(err)
 }
 
 // openCoordinatorStore opens the coordinator's store over the project's own
@@ -222,9 +224,9 @@ func coordinatorReportErr(lc *localcfg.Config, err error) error {
 // reach a database.
 var openCoordinatorStore = func(ctx context.Context, lc *localcfg.Config) (*coordinator.Store, error) {
 	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
-		return nil, userErr("project %s has no Firebase database to report to (budget.rtdb_url is not set in its project config): an operator runs fugaro update --firebase-project %s --name %s", lc.Name, lc.GCPProject, lc.Name)
+		return nil, fcli.UserErr("project %s has no Firebase database to report to (budget.rtdb_url is not set in its project config): an operator runs fugaro update --firebase-project %s --name %s", lc.Name, lc.GCPProject, lc.Name)
 	}
-	db, err := newBudgetClient(ctx, lc.Budget.RTDBURL, lc.Endpoints.NoAuth)
+	db, err := fcli.NewBudgetClient(ctx, lc.Budget.RTDBURL, lc.Endpoints.NoAuth)
 	if err != nil {
 		return nil, err
 	}
@@ -259,7 +261,7 @@ func coordinatorCellList(vals []string) string {
 	for _, v := range vals {
 		out = append(out, coordinatorCell(v))
 	}
-	return clipRunes(strings.Join(out, ", "), coordinatorMaxCellRunes*2)
+	return fcli.ClipRunes(strings.Join(out, ", "), coordinatorMaxCellRunes*2)
 }
 
 // fugaro coordinator sweep (docs/coordinator/implementation-plan.md, part P5):
@@ -332,59 +334,59 @@ func newCoordinatorSweepCmd() *cobra.Command {
 
 func runCoordinatorSweep(ctx context.Context, cmd *cobra.Command, getenv func(string) string, asJSON bool) error {
 	env := map[string]string{}
-	for _, k := range []string{envProject, envFirebaseFP, envRTDBURL, envRunsBucket, envCoordinatorRepos} {
+	for _, k := range []string{fcli.EnvProject, fcli.EnvFirebaseFP, fcli.EnvRTDBURL, fcli.EnvRunsBucket, envCoordinatorRepos} {
 		if env[k] = getenv(k); env[k] == "" {
-			return userErr("the coordinator's sweep needs %s in its environment (Terraform sets it on the job)", k)
+			return fcli.UserErr("the coordinator's sweep needs %s in its environment (Terraform sets it on the job)", k)
 		}
 	}
-	if strings.ContainsAny(env[envRunsBucket], "/: ") {
-		return userErr("%s must be a bucket name", envRunsBucket)
+	if strings.ContainsAny(env[fcli.EnvRunsBucket], "/: ") {
+		return fcli.UserErr("%s must be a bucket name", fcli.EnvRunsBucket)
 	}
 	repos, err := coordinatorSweepRepos(env[envCoordinatorRepos])
 	if err != nil {
 		return err
 	}
 	test := coordinatorSweepTest
-	if err := rtdb.ValidateURL(env[envRTDBURL], test != nil && test.noAuth); err != nil {
-		return userErr("%s: %v", envRTDBURL, err)
+	if err := rtdb.ValidateURL(env[fcli.EnvRTDBURL], test != nil && test.noAuth); err != nil {
+		return fcli.UserErr("%s: %v", fcli.EnvRTDBURL, err)
 	}
 	// The account may hold admin rights on several databases; write only to
 	// this Fugaro project's own (plan R-9, the history sweep's own check).
-	if err := checkDatabaseHost(env[envRTDBURL], env[envFirebaseFP]); err != nil {
-		return userErr("%v", err)
+	if err := fcli.CheckDatabaseHost(env[fcli.EnvRTDBURL], env[fcli.EnvFirebaseFP]); err != nil {
+		return fcli.UserErr("%v", err)
 	}
 
 	var dbAuth rtdb.Auth
 	if test != nil && test.noAuth {
 		dbAuth = rtdb.Auth{IDToken: func() string { return "" }}
 	} else {
-		ts, err := google.DefaultTokenSource(ctx, budgetScopes...)
+		ts, err := google.DefaultTokenSource(ctx, fcli.BudgetScopes()...)
 		if err != nil {
-			return remote(fmt.Errorf("no credentials for the coordinator's database: %w", err))
+			return fcli.RemoteErr(fmt.Errorf("no credentials for the coordinator's database: %w", err))
 		}
 		dbAuth = rtdb.Auth{Source: ts}
 	}
-	db, err := rtdb.New(env[envRTDBURL], dbAuth)
+	db, err := rtdb.New(env[fcli.EnvRTDBURL], dbAuth)
 	if err != nil {
-		return userErr("%s: %v", env[envRTDBURL], err)
+		return fcli.UserErr("%s: %v", env[fcli.EnvRTDBURL], err)
 	}
 	var raw json.RawMessage
 	found, err := db.Get(ctx, budget.PathProject, &raw)
 	if err != nil {
-		return remote(err)
+		return fcli.RemoteErr(err)
 	}
 	var mark string
-	if !found || json.Unmarshal(raw, &mark) != nil || mark != env[envProject] {
-		return userErr("the database at %s is not project %s's budget database (its /fugaro/project does not name the project); nothing was swept", env[envRTDBURL], oneLine(env[envProject]))
+	if !found || json.Unmarshal(raw, &mark) != nil || mark != env[fcli.EnvProject] {
+		return fcli.UserErr("the database at %s is not project %s's budget database (its /fugaro/project does not name the project); nothing was swept", env[fcli.EnvRTDBURL], safetext.OneLine(env[fcli.EnvProject]))
 	}
 
 	openBkt := func(ctx context.Context, name string) (*blobx.Bucket, error) { return blobx.Open(ctx, "gs://"+name) }
 	if test != nil && test.bucket != nil {
 		openBkt = test.bucket
 	}
-	bucket, err := openBkt(ctx, env[envRunsBucket])
+	bucket, err := openBkt(ctx, env[fcli.EnvRunsBucket])
 	if err != nil {
-		return remote(err)
+		return fcli.RemoteErr(err)
 	}
 	defer bucket.Close()
 
@@ -402,7 +404,7 @@ func runCoordinatorSweep(ctx context.Context, cmd *cobra.Command, getenv func(st
 	defer tokens.revoke(ctx)
 	sw := &coordinator.Sweeper{
 		Reader: reader,
-		Runs:   coordinatorRunsSource{env: &cloudEnv{bucket: bucket}, warn: warn},
+		Runs:   coordinatorRunsSource{env: fcli.CloudOverBucket(bucket), warn: warn},
 		Store:  coordinator.NewStore(db),
 	}
 	if test != nil && test.now != nil {
@@ -421,7 +423,7 @@ func runCoordinatorSweep(ctx context.Context, cmd *cobra.Command, getenv func(st
 	// recorded (the stale marker) and the exit code stays 0. A store that
 	// refused a write is the sweep's own failure, and it is the job's exit
 	// code, which is where an operator reads it.
-	return remote(err)
+	return fcli.RemoteErr(err)
 }
 
 // coordinatorSweepRepos parses envCoordinatorRepos into the repositories one
@@ -437,13 +439,13 @@ func coordinatorSweepRepos(raw string) ([]coordinator.Repo, error) {
 	dec := json.NewDecoder(strings.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&in); err != nil {
-		return nil, userErr("%s is not the JSON list of the repositories this job reconciles (%v)", envCoordinatorRepos, err)
+		return nil, fcli.UserErr("%s is not the JSON list of the repositories this job reconciles (%v)", envCoordinatorRepos, err)
 	}
 	out := make([]coordinator.Repo, 0, len(in))
 	for _, r := range in {
 		slug, err := task.Slug(r.Provider, r.Repo)
 		if err != nil {
-			return nil, userErr("%s: %v", envCoordinatorRepos, err)
+			return nil, fcli.UserErr("%s: %v", envCoordinatorRepos, err)
 		}
 		out = append(out, coordinator.Repo{Provider: r.Provider, Name: r.Repo, Slug: slug})
 	}
@@ -460,7 +462,7 @@ func coordinatorSweepRepos(raw string) ([]coordinator.Repo, error) {
 // is still a window, because a tick that read every run a repository ever had
 // would grow with the repository's history every 15 minutes.
 type coordinatorRunsSource struct {
-	env  *cloudEnv
+	env  *fcli.Cloud
 	warn io.Writer
 }
 
@@ -474,22 +476,22 @@ func (s coordinatorRunsSource) Runs(ctx context.Context, repo coordinator.Repo, 
 func writeCoordinatorSweep(w io.Writer, res coordinator.Result) error {
 	for _, r := range res.Repos {
 		if r.Stale {
-			fmt.Fprintf(w, "%s: stale: %s\n", oneLine(r.Repo), oneLine(r.Reason))
+			fmt.Fprintf(w, "%s: stale: %s\n", safetext.OneLine(r.Repo), safetext.OneLine(r.Reason))
 			continue
 		}
 		fmt.Fprintf(w, "%s: %d records, %d in flight, %d collisions, %d pull requests read, %d unread, %d records pruned\n",
-			oneLine(r.Repo), r.Records, r.InFlight, r.Collisions, r.Read, r.Unread, r.Pruned)
+			safetext.OneLine(r.Repo), r.Records, r.InFlight, r.Collisions, r.Read, r.Unread, r.Pruned)
 		if r.Omitted > 0 {
-			fmt.Fprintf(w, "%s: %d records left out of the view (its bound is %d)\n", oneLine(r.Repo), r.Omitted, coordinator.MaxViewRecords)
+			fmt.Fprintf(w, "%s: %d records left out of the view (its bound is %d)\n", safetext.OneLine(r.Repo), r.Omitted, coordinator.MaxViewRecords)
 		}
 		if r.Undecodable > 0 {
-			fmt.Fprintf(w, "%s: %d documents did not decode and were stepped over\n", oneLine(r.Repo), r.Undecodable)
+			fmt.Fprintf(w, "%s: %d documents did not decode and were stepped over\n", safetext.OneLine(r.Repo), r.Undecodable)
 		}
 	}
 	fmt.Fprintf(w, "swept %d repositories: %d reconciled, %d stale\n",
 		len(res.Repos), len(res.Repos)-res.StaleRepos(), res.StaleRepos())
 	if res.Stopped != "" {
-		fmt.Fprintf(w, "the tick stopped early on %s; the next one starts with %s\n", res.Stopped, oneLine(res.Next))
+		fmt.Fprintf(w, "the tick stopped early on %s; the next one starts with %s\n", res.Stopped, safetext.OneLine(res.Next))
 	}
 	return nil
 }
@@ -497,7 +499,7 @@ func writeCoordinatorSweep(w io.Writer, res coordinator.Result) error {
 // coordinatorDefaultSince is status's default window, and it is runs ls's:
 // the two read the same objects over the same span, and a person comparing
 // them must not have to remember that one of them looked further back.
-var coordinatorDefaultSince = lsDefaultSince
+var coordinatorDefaultSince = fcli.LsDefaultSince()
 
 // coordinatorSince is --since's span as the instant the runs bucket is read
 // from: zero for no bound (parseSince's own answer), otherwise that far back
@@ -507,7 +509,7 @@ func coordinatorSince(window time.Duration) time.Time {
 	if window <= 0 {
 		return time.Time{}
 	}
-	return lsNow().Add(-window)
+	return fcli.LsNow().Add(-window)
 }
 
 // coordinatorDeclaredNote is the line every table carries under it, because
@@ -533,7 +535,7 @@ const coordinatorTruncatedNote = "n+ in FILES is a run whose changed-file set is
 
 // coordinatorOptions are status's flags.
 type coordinatorOptions struct {
-	cloud     cloudOptions
+	cloud     fcli.CloudFlags
 	repo      string
 	all       bool
 	since     string
@@ -541,7 +543,10 @@ type coordinatorOptions struct {
 	fromStore bool
 }
 
-func newCoordinatorCmd() *cobra.Command {
+// NewCoordinatorCmd is the coordinator's command tree: report, sweep and
+// status. Exported because ee/register is what adds it to the released tree
+// (design docs/design/ee-boundary-moves.md §5.1).
+func NewCoordinatorCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "coordinator",
 		Short: "The coordinator's project view: what is in flight, and what collides",
@@ -634,17 +639,17 @@ func newCoordinatorStatusCmd() *cobra.Command {
 	f.StringVar(&o.since, "since", coordinatorDefaultSince, "only runs started within this long ("+coordinatorDefaultSince+", 36h, 90m; 0 for all)")
 	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output")
 	f.BoolVar(&o.fromStore, "from-store", false, "print the view the sweep stored, with no host read and no key (falls back to the runs alone when none is stored)")
-	addCloudFlags(cmd, &o.cloud)
+	fcli.AddCloudFlags(cmd, &o.cloud)
 	return cmd
 }
 
 func runCoordinatorStatus(cmd *cobra.Command, o *coordinatorOptions) error {
 	ctx := cmd.Context()
-	window, err := parseSince(o.since)
+	window, err := fcli.ParseSince(o.since)
 	if err != nil {
-		return userErr("%v", err)
+		return fcli.UserErr("%v", err)
 	}
-	env, err := openCloud(ctx, o.cloud)
+	env, err := fcli.OpenCloud(ctx, &o.cloud)
 	if err != nil {
 		return err
 	}
@@ -695,14 +700,14 @@ func runCoordinatorStatus(cmd *cobra.Command, o *coordinatorOptions) error {
 // person meant would print a view they did not ask for. The same rule is why
 // a config listing more than one repository is refused when neither flag is
 // given (P1's rule, unchanged).
-func coordinatorRepos(env *cloudEnv, o *coordinatorOptions) ([]string, error) {
-	repos := slices.Sorted(maps.Keys(env.lc.Repos))
+func coordinatorRepos(env *fcli.Cloud, o *coordinatorOptions) ([]string, error) {
+	repos := slices.Sorted(maps.Keys(env.Config().Repos))
 	switch {
 	case o.all && o.repo != "":
-		return nil, userErr("--all reads every repository the project lists and --repo names one; give one of the two")
+		return nil, fcli.UserErr("--all reads every repository the project lists and --repo names one; give one of the two")
 	case o.all:
 		if len(repos) == 0 {
-			return nil, userErr("the local config lists no repository: add one to its repos")
+			return nil, fcli.UserErr("the local config lists no repository: add one to its repos")
 		}
 		return repos, nil
 	case o.repo != "":
@@ -710,11 +715,11 @@ func coordinatorRepos(env *cloudEnv, o *coordinatorOptions) ([]string, error) {
 	}
 	switch len(repos) {
 	case 0:
-		return nil, userErr("the local config lists no repository: add one to its repos, or name one with --repo")
+		return nil, fcli.UserErr("the local config lists no repository: add one to its repos, or name one with --repo")
 	case 1:
 		return repos, nil
 	}
-	return nil, userErr("the local config lists %d repositories; name one with --repo, or read every one with --all", len(repos))
+	return nil, fcli.UserErr("the local config lists %d repositories; name one with --repo, or read every one with --all", len(repos))
 }
 
 // coordinatorViewOf reads one repository's view: its runs out of the bucket,
@@ -725,9 +730,9 @@ func coordinatorRepos(env *cloudEnv, o *coordinatorOptions) ([]string, error) {
 // reader's own refusal of a project it does not serve is about what the project
 // holds and not about whether it has work in flight, so a bitbucket repository
 // is refused the same way whether or not it has runs.
-func coordinatorViewOf(ctx context.Context, env *cloudEnv, reader coordinator.Reader, repo string, since time.Time, warn io.Writer) (coordinator.View, error) {
-	co := checkoutOf(ctx, repo)()
-	slug, err := env.repoSlug(repo, func() *config.Config { return co })
+func coordinatorViewOf(ctx context.Context, env *fcli.Cloud, reader coordinator.Reader, repo string, since time.Time, warn io.Writer) (coordinator.View, error) {
+	co := fcli.CheckoutOf(ctx, repo)()
+	slug, err := env.RepoSlug(ctx, repo)
 	if err != nil {
 		return coordinator.View{}, err
 	}
@@ -735,19 +740,19 @@ func coordinatorViewOf(ctx context.Context, env *cloudEnv, reader coordinator.Re
 	if err != nil {
 		return coordinator.View{}, err
 	}
-	prs, err := reader.PullRequests(ctx, env.repoProvider(repo, co), repo, coordinator.Numbers(runs))
+	prs, err := reader.PullRequests(ctx, env.RepoProvider(repo, co), repo, coordinator.Numbers(runs))
 	if err != nil {
 		// The refusal of a project this read does not serve is the
 		// configuration's (reconciliation Q12 (A), finding #30). Everything else
 		// is the host's — unless the reader kept the class of what failed, which
 		// it does for the mint's own refusal of a missing App credential
-		// (coordinator's redactedError): remote() marks a failure exit 2 only
+		// (coordinator's redactedError): fcli.RemoteErr() marks a failure exit 2 only
 		// when it does not already carry a code, so a user error the reader
 		// rewrote the text of is still a user error here.
 		if errors.Is(err, coordinator.ErrBitbucket) {
-			return coordinator.View{}, userErr("%v", err)
+			return coordinator.View{}, fcli.UserErr("%v", err)
 		}
-		return coordinator.View{}, remote(err)
+		return coordinator.View{}, fcli.RemoteErr(err)
 	}
 	return coordinator.Join(repo, prs, runs), nil
 }
@@ -759,25 +764,25 @@ func coordinatorViewOf(ctx context.Context, env *cloudEnv, reader coordinator.Re
 // A run whose object is unreadable is still a run: readRun's warning goes to
 // the command's stderr, and what could be read is what the view shows, so an
 // unreadable result.json does not make a pull request disappear.
-func coordinatorRuns(ctx context.Context, env *cloudEnv, slug string, since time.Time, warn io.Writer) ([]coordinator.Run, error) {
-	ids, err := runstore.ListRunIDs(ctx, env.bucket.Bucket, slug, since)
+func coordinatorRuns(ctx context.Context, env *fcli.Cloud, slug string, since time.Time, warn io.Writer) ([]coordinator.Run, error) {
+	ids, err := runstore.ListRunIDs(ctx, env.RunsBucket().Bucket, slug, since)
 	if err != nil {
-		return nil, remote(err)
+		return nil, fcli.RemoteErr(err)
 	}
-	objs := make([]runObjects, len(ids))
+	objs := make([]*fcli.RunObjects, len(ids))
 	errs := make([]error, len(ids))
-	parallel(len(ids), func(i int) {
-		objs[i], errs[i] = readRun(ctx, env, slug, ids[i])
+	fcli.Parallel(len(ids), func(i int) {
+		objs[i], errs[i] = env.ReadRun(ctx, slug, ids[i])
 	})
 	if err := errors.Join(errs...); err != nil {
-		return nil, remote(err)
+		return nil, fcli.RemoteErr(err)
 	}
 	out := make([]coordinator.Run, 0, len(objs))
 	for _, o := range objs {
-		if o.warning != "" {
-			fmt.Fprint(warn, multiLine(o.warning))
+		if o.Warning() != "" {
+			fmt.Fprint(warn, safetext.MultiLine(o.Warning()))
 		}
-		out = append(out, coordinatorRun(o.in))
+		out = append(out, coordinatorRun(o.Input()))
 	}
 	return out, nil
 }
@@ -840,9 +845,9 @@ func coordinatorRun(in runview.Input) coordinator.Run {
 // than deferred here because "the command is done" is the caller's fact and not
 // the reader's: the reader has no end of its own.
 func coordinatorReader(warn io.Writer) (coordinator.Reader, *coordinatorTokens, error) {
-	open, err := openCoordinatorProvider(os.Environ(), func(s string) { fmt.Fprintln(warn, multiLine(s)) })
+	open, err := openCoordinatorProvider(os.Environ(), func(s string) { fmt.Fprintln(warn, safetext.MultiLine(s)) })
 	if err != nil {
-		return nil, nil, userErr("%v", err)
+		return nil, nil, fcli.UserErr("%v", err)
 	}
 	// The mint runs on the first call a repository's provider makes, and that
 	// call happens only for a repository whose runs name a pull request: this
@@ -963,19 +968,19 @@ func coordinatorAppCredential() (appID string, key *rsa.PrivateKey, pemData stri
 	// rather than served the wrong credential. A key that is somehow in the
 	// environment anyway changes nothing, exactly as it changes nothing there.
 	if os.Getenv(providers.EnvCredentialsServiceURL) != "" {
-		return "", nil, "", userErr("%s is set, so the installation's credentials service holds the GitHub App's key and this command holds none: the project-wide read mints its own read-only token from the App's key, and the service mints a run's. Run the read where the key is", providers.EnvCredentialsServiceURL)
+		return "", nil, "", fcli.UserErr("%s is set, so the installation's credentials service holds the GitHub App's key and this command holds none: the project-wide read mints its own read-only token from the App's key, and the service mints a run's. Run the read where the key is", providers.EnvCredentialsServiceURL)
 	}
 	appID = os.Getenv(providers.EnvGitHubAppID)
 	if appID == "" {
-		return "", nil, "", userErr("%s is not set: the project-wide read mints the coordinator's own token and needs the GitHub App's ID (see docs/git-providers.md)", providers.EnvGitHubAppID)
+		return "", nil, "", fcli.UserErr("%s is not set: the project-wide read mints the coordinator's own token and needs the GitHub App's ID (see docs/git-providers.md)", providers.EnvGitHubAppID)
 	}
 	pemData, err = providers.AppKey(os.Environ())
 	if err != nil {
-		return "", nil, "", userErr("%v", err)
+		return "", nil, "", fcli.UserErr("%v", err)
 	}
 	key, err = github.ParsePrivateKey([]byte(pemData))
 	if err != nil {
-		return "", nil, "", userErr("%v", err)
+		return "", nil, "", fcli.UserErr("%v", err)
 	}
 	return appID, key, pemData, nil
 }
@@ -1006,7 +1011,7 @@ func coordinatorAppCredential() (appID string, key *rsa.PrivateKey, pemData stri
 // returns before opening when the runs name no pull request, so a project with
 // nothing in it is still read with no App credential anywhere.
 var openCoordinatorProvider = func(env []string, warn func(string)) (coordinator.ProviderOpener, error) {
-	_, open, err := providerOptions(execOptions{}, env, warn)
+	_, open, err := fcli.OpenProvider(env, warn)
 	if err != nil {
 		return nil, err
 	}
@@ -1061,7 +1066,7 @@ func installCoordinatorSource(p gitprov.Provider, src gitprov.TokenSource) error
 var coordinatorMint = func(ctx context.Context, repo string) (string, time.Time, error) {
 	owner, name, ok := gitprov.SplitRepo(repo)
 	if !ok {
-		return "", time.Time{}, userErr("repository %q must look like owner/name", repo)
+		return "", time.Time{}, fcli.UserErr("repository %q must look like owner/name", repo)
 	}
 	appID, key, pemData, err := coordinatorAppCredential()
 	if err != nil {
@@ -1075,7 +1080,7 @@ var coordinatorMint = func(ctx context.Context, repo string) (string, time.Time,
 		BaseURL:    os.Getenv(providers.EnvGitHubAPIURL),
 	}, github.CoordinatorTokenPermissions())
 	if err != nil {
-		return "", time.Time{}, remote(errors.New(agent.Redact(err.Error(), []string{pemData})))
+		return "", time.Time{}, fcli.RemoteErr(errors.New(agent.Redact(err.Error(), []string{pemData})))
 	}
 	return token, expires, nil
 }
@@ -1109,7 +1114,7 @@ func writeCoordinatorProject(w io.Writer, views []coordinator.View) error {
 
 // writeCoordinatorStatus prints the view as a table, then the collisions.
 func writeCoordinatorStatus(w io.Writer, v coordinator.View) error {
-	fmt.Fprintf(w, "%s: %d records, %d in flight\n", cellOneLine(v.Repo), len(v.Records), v.InFlight())
+	fmt.Fprintf(w, "%s: %d records, %d in flight\n", safetext.TableCell(v.Repo), len(v.Records), v.InFlight())
 	if len(v.Records) == 0 {
 		fmt.Fprintln(w, "no work in flight, and no pull request the runs bucket knows about")
 		fmt.Fprintf(w, "\n%s\n", coordinatorDeclaredNote)
@@ -1134,7 +1139,7 @@ func writeCoordinatorStatus(w io.Writer, v coordinator.View) error {
 			truncated = true
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			cellOneLine(r.Label()),
+			safetext.TableCell(r.Label()),
 			coordinatorCell(r.Branch),
 			coordinatorCell(r.Release),
 			runs,
@@ -1161,8 +1166,8 @@ func writeCoordinatorStatus(w io.Writer, v coordinator.View) error {
 			if len(c.Services) > 0 {
 				what = append(what, "service "+strings.Join(c.Services, ", "))
 			}
-			fmt.Fprintf(w, "%s and %s: %s\n", cellOneLine(c.A), cellOneLine(c.B),
-				cellOneLine(clipRunes(strings.Join(what, "; "), coordinatorMaxCellRunes*2)))
+			fmt.Fprintf(w, "%s and %s: %s\n", safetext.TableCell(c.A), safetext.TableCell(c.B),
+				safetext.TableCell(fcli.ClipRunes(strings.Join(what, "; "), coordinatorMaxCellRunes*2)))
 		}
 	}
 	fmt.Fprintf(w, "\n%s\n", coordinatorDeclaredNote)
@@ -1199,5 +1204,5 @@ func coordinatorCell(s string) string {
 	if s == "" {
 		return "-"
 	}
-	return cellOneLine(clipRunes(s, coordinatorMaxCellRunes))
+	return safetext.TableCell(fcli.ClipRunes(s, coordinatorMaxCellRunes))
 }

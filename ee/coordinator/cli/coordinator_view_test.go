@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See ee/LICENSE for the terms.
+
 package cli
 
 import (

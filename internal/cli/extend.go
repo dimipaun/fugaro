@@ -109,11 +109,10 @@ func RegisterCommand(name string, newCmd func() *cobra.Command) error {
 	return nil
 }
 
-// LaunchDeclarer declares one launch to the coordinator's record. The core
-// default is the declarer the launch has always used, so a hook that landed
-// before the move cannot stop every launch declaring itself (F16a); E2.1
-// flips the default to declaring nothing (D535) and `ee/register` registers
-// today's declarer.
+// LaunchDeclarer declares one launch to the coordinator's record. An untagged
+// build registers none, so its launches declare nothing (D535): the record is
+// the coordinator's, and the code that writes it moved out of the core.
+// `ee/register/coordinator.go` is what installs the tagged build's declarer.
 type LaunchDeclarer func(ctx context.Context, c *Cloud, slug string, spec *task.Spec) error
 
 // SetLaunchDeclarer installs the build's launch declarer. It refuses a second
@@ -133,22 +132,14 @@ func SetLaunchDeclarer(d LaunchDeclarer) error {
 
 // declareLaunch declares one launch through the build's declarer. The launch
 // path calls this rather than the declarer itself, so a build whose declarer
-// moved can register its own.
+// moved can register its own. With none registered it opens nothing and
+// answers nil: an untagged build declares nothing at all (D535).
 func declareLaunch(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec) error {
 	d := launchDeclarer
 	if d == nil {
 		return nil
 	}
 	return d(ctx, &Cloud{env: env}, slug, spec)
-}
-
-// coreLaunchDeclarer is the core default: today's declarer, read when it is
-// called rather than captured at init, so the tests that replace
-// reportLaunchIntent keep replacing exactly the one thing that reaches a
-// database — and so a build that never sets the hook declares exactly what it
-// declares today.
-func coreLaunchDeclarer(ctx context.Context, c *Cloud, slug string, spec *task.Spec) error {
-	return reportLaunchIntent(ctx, c.env, slug, spec)
 }
 
 // paidCommandNames are the command names whose code the owner moves out of the
@@ -276,7 +267,9 @@ var (
 	// rather than accepted and ignored.
 	registrationsSealed bool
 	// launchDeclarer is the build's declarer; launchDeclarerSet is what makes
-	// SetLaunchDeclarer refuse a second call.
-	launchDeclarer    LaunchDeclarer = coreLaunchDeclarer
+	// SetLaunchDeclarer refuse a second call. Nil is the untagged build's
+	// state, and it means "declare nothing" rather than "declare an empty
+	// record" (D535).
+	launchDeclarer    LaunchDeclarer
 	launchDeclarerSet bool
 )

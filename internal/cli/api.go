@@ -64,6 +64,15 @@ func OpenFromConfig(ctx context.Context, lc *localcfg.Config) (*Cloud, error) {
 // Config is the project config this cloud was opened with.
 func (c *Cloud) Config() *localcfg.Config { return c.env.lc }
 
+// CloudOverBucket is a cloud over a runs bucket alone, with no project config
+// and no backend: it is what the coordinator's sweep job needs, since that job
+// runs with no config file at all — Terraform gives it FUGARO_* environment
+// variables and it opens the runs bucket itself. Config answers nil on it, and
+// RunsBucket, ReadRun, RepoProvider and Close are the only methods that mean
+// anything: everything else on this type reads the project config the sweep
+// does not have.
+func CloudOverBucket(b *blobx.Bucket) *Cloud { return &Cloud{env: &cloudEnv{bucket: b}} }
+
 // NoBudgetCheck is --no-budget-check: the launch's own switch for skipping the
 // budget pre-check.
 func (c *Cloud) NoBudgetCheck() bool { return c.env.noBudgetCheck }

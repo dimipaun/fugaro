@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See ee/LICENSE for the terms.
+
 package coordinator
 
 import (
@@ -11,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/coordpath"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
@@ -47,20 +51,20 @@ func testCtx(t *testing.T) context.Context {
 // Hand mutation this fails on: mixing a timestamp or a counter into the ID,
 // which is the mutation that turns P4's idempotency test red.
 func TestDocumentIDIsDerivedFromWhatItDescribes(t *testing.T) {
-	if a, b := DocumentID("who", "what"), DocumentID("who", "what"); a != b {
-		t.Errorf("DocumentID is not a function of its parts: %q and %q", a, b)
+	if a, b := coordpath.DocumentID("who", "what"), coordpath.DocumentID("who", "what"); a != b {
+		t.Errorf("coordpath.DocumentID is not a function of its parts: %q and %q", a, b)
 	}
-	if a, b := DocumentID("who", "what"), DocumentID("who", "other"); a == b {
-		t.Errorf("DocumentID ignores its last part: %q", a)
+	if a, b := coordpath.DocumentID("who", "what"), coordpath.DocumentID("who", "other"); a == b {
+		t.Errorf("coordpath.DocumentID ignores its last part: %q", a)
 	}
-	if a, b := DocumentID("who", "what"), DocumentID("what", "who"); a == b {
-		t.Errorf("DocumentID ignores the order of its parts: %q", a)
+	if a, b := coordpath.DocumentID("who", "what"), coordpath.DocumentID("what", "who"); a == b {
+		t.Errorf("coordpath.DocumentID ignores the order of its parts: %q", a)
 	}
-	if a, b := DocumentID("a", "bc"), DocumentID("ab", "c"); a == b {
-		t.Errorf("DocumentID joins its parts without a separator: %q", a)
+	if a, b := coordpath.DocumentID("a", "bc"), coordpath.DocumentID("ab", "c"); a == b {
+		t.Errorf("coordpath.DocumentID joins its parts without a separator: %q", a)
 	}
-	if a := DocumentID(""); a == "" {
-		t.Error("DocumentID of one empty part is empty: an empty key is not a document")
+	if a := coordpath.DocumentID(""); a == "" {
+		t.Error("coordpath.DocumentID of one empty part is empty: an empty key is not a document")
 	}
 }
 
@@ -69,12 +73,12 @@ func TestDocumentIDIsDerivedFromWhatItDescribes(t *testing.T) {
 // is lower-case hex, so every one of those is unrepresentable in it rather
 // than escaped out of it.
 func TestDocumentIDIsADatabaseKey(t *testing.T) {
-	id := DocumentID("owner/repo", "a.b$c#d[e]")
+	id := coordpath.DocumentID("owner/repo", "a.b$c#d[e]")
 	if strings.ContainsAny(id, "./$#[]") {
-		t.Errorf("DocumentID = %q holds a character the database refuses in a key", id)
+		t.Errorf("coordpath.DocumentID = %q holds a character the database refuses in a key", id)
 	}
 	if strings.ToLower(id) != id {
-		t.Errorf("DocumentID = %q is not lower-case hex", id)
+		t.Errorf("coordpath.DocumentID = %q is not lower-case hex", id)
 	}
 }
 
@@ -84,17 +88,17 @@ func TestDocumentIDIsADatabaseKey(t *testing.T) {
 // repository rather than beside it.
 func TestPathsAreOneSubtree(t *testing.T) {
 	for _, p := range []string{
-		PathProject,
-		PathRepo("acme-webapp"),
-		PathProjectDocument(DocumentID("x")),
-		PathRepoDocument("acme-webapp", DocumentID("x")),
+		coordpath.PathProject,
+		coordpath.PathRepo("acme-webapp"),
+		coordpath.PathProjectDocument(coordpath.DocumentID("x")),
+		coordpath.PathRepoDocument("acme-webapp", coordpath.DocumentID("x")),
 	} {
-		if !strings.HasPrefix(p, PathRoot+"/") {
-			t.Errorf("%q is not under /%s: the read grant is one prefix and this is outside it", p, PathRoot)
+		if !strings.HasPrefix(p, coordpath.PathRoot+"/") {
+			t.Errorf("%q is not under /%s: the read grant is one prefix and this is outside it", p, coordpath.PathRoot)
 		}
 	}
-	if got, want := PathRepo("a.b"), PathRepos+"/a%2Eb"; got != want {
-		t.Errorf("PathRepo(%q) = %q, want %q: a slug is a key, not a path", "a.b", got, want)
+	if got, want := coordpath.PathRepo("a.b"), coordpath.PathRepos+"/a%2Eb"; got != want {
+		t.Errorf("coordpath.PathRepo(%q) = %q, want %q: a slug is a key, not a path", "a.b", got, want)
 	}
 }
 
@@ -107,7 +111,7 @@ func TestPathsAreOneSubtree(t *testing.T) {
 func TestStaleETagIsRefusedAndTheDocumentDoesNotMove(t *testing.T) {
 	s := testStore(t)
 	ctx := testCtx(t)
-	path := PathProjectDocument(DocumentID("project", "release"))
+	path := coordpath.PathProjectDocument(coordpath.DocumentID("project", "release"))
 
 	// Both writers read the same absent node and get the same ETag.
 	first, _, err := s.Read(ctx, path, nil)
@@ -144,7 +148,7 @@ func TestStaleETagIsRefusedAndTheDocumentDoesNotMove(t *testing.T) {
 func TestWriteCreatesThenReplaces(t *testing.T) {
 	s := testStore(t)
 	ctx := testCtx(t)
-	path := PathRepoDocument("acme-webapp", DocumentID("intent", "who", "what"))
+	path := coordpath.PathRepoDocument("acme-webapp", coordpath.DocumentID("intent", "who", "what"))
 
 	if err := s.Write(ctx, path, map[string]any{"state": "open"}); err != nil {
 		t.Fatalf("writing an absent document: %v", err)
@@ -166,7 +170,7 @@ func TestAnAbsentReadLeavesTheTargetAlone(t *testing.T) {
 	s := testStore(t)
 	ctx := testCtx(t)
 	got := map[string]any{"kept": true}
-	_, found, err := s.Read(ctx, PathProjectDocument(DocumentID("nope")), &got)
+	_, found, err := s.Read(ctx, coordpath.PathProjectDocument(coordpath.DocumentID("nope")), &got)
 	if err != nil || found {
 		t.Fatalf("found=%v err=%v", found, err)
 	}
@@ -208,7 +212,7 @@ func TestStoreRefusesEveryPathOutsideTheSubtree(t *testing.T) {
 		t.Errorf("the refused writes moved config/limits/policyRules: %d found=%v err=%v", marker, found, err)
 	}
 
-	for _, path := range []string{PathRoot, "/" + PathProjectDocument("a"), PathRepoDocument("acme-webapp", "b") + "/"} {
+	for _, path := range []string{coordpath.PathRoot, "/" + coordpath.PathProjectDocument("a"), coordpath.PathRepoDocument("acme-webapp", "b") + "/"} {
 		if _, _, err := s.Read(ctx, path, nil); err != nil {
 			t.Errorf("Read(%q) inside the subtree = %v", path, err)
 		}
@@ -242,7 +246,7 @@ func TestWriteRetriesOnlyALostRace(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		err = NewStore(c).Write(testCtx(t), PathProjectDocument("a"), map[string]any{"x": 1})
+		err = NewStore(c).Write(testCtx(t), coordpath.PathProjectDocument("a"), map[string]any{"x": 1})
 		srv.Close()
 		if err == nil || (tc.want != nil && !errors.Is(err, tc.want)) {
 			t.Errorf("status %d: Write = %v, want %v", tc.status, err, tc.want)

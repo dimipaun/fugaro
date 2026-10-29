@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See ee/LICENSE for the terms.
+
 package coordinator
 
 import (
@@ -6,6 +9,8 @@ import (
 	"fmt"
 	"slices"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/coordpath"
 )
 
 // This file is P4 of docs/coordinator/implementation-plan.md: the report path,
@@ -169,7 +174,7 @@ func (in Intent) checkSize() error {
 // it is hashed, so a file and a service of one name are two declarations and
 // not one.
 //
-// The answer is DocumentID's lower-case hex, which is also what makes the key
+// The answer is coordpath.DocumentID's lower-case hex, which is also what makes the key
 // safe: a branch or a path may hold a dot, a slash or a bracket, and none of
 // them is representable in hex.
 func IntentID(in Intent) string {
@@ -181,7 +186,7 @@ func IntentID(in Intent) string {
 	for _, s := range in.Services {
 		parts = append(parts, "service", s)
 	}
-	return DocumentID(parts...)
+	return coordpath.DocumentID(parts...)
 }
 
 // cleanList is a declaration's list as the record holds it: sorted,

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See ee/LICENSE for the terms.
+
 // Package coordinator holds the coordinator's deterministic half: the
 // project view, computed, with no store, no service, no MCP front door and
 // no model (docs/coordinator/implementation-plan.md, parts P1 and P2;

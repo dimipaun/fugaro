@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See ee/LICENSE for the terms.
+
 package cli
 
 import (
@@ -9,10 +12,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/dimipaun/fugaro/internal/config"
-	"github.com/dimipaun/fugaro/internal/coordinator"
+	"github.com/dimipaun/fugaro/ee/coordinator"
+	fcli "github.com/dimipaun/fugaro/internal/cli"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // `fugaro coordinator status --from-store` (D364): the read of the view the
@@ -46,11 +50,11 @@ import (
 // runCoordinatorStatusFromStore is --from-store's whole path.
 func runCoordinatorStatusFromStore(cmd *cobra.Command, o *coordinatorOptions) error {
 	ctx := cmd.Context()
-	window, err := parseSince(o.since)
+	window, err := fcli.ParseSince(o.since)
 	if err != nil {
-		return userErr("%v", err)
+		return fcli.UserErr("%v", err)
 	}
-	env, err := openCloud(ctx, o.cloud)
+	env, err := fcli.OpenCloud(ctx, &o.cloud)
 	if err != nil {
 		return err
 	}
@@ -60,7 +64,7 @@ func runCoordinatorStatusFromStore(cmd *cobra.Command, o *coordinatorOptions) er
 	if err != nil {
 		return err
 	}
-	store, err := openCoordinatorStore(ctx, env.lc)
+	store, err := openCoordinatorStore(ctx, env.Config())
 	if err != nil {
 		return err
 	}
@@ -95,15 +99,14 @@ func runCoordinatorStatusFromStore(cmd *cobra.Command, o *coordinatorOptions) er
 // credential at all, which is the point: a project whose coordinator has never
 // run still gets a view out of this command, and the document says which of
 // the two halves it is holding.
-func coordinatorStoredView(ctx context.Context, env *cloudEnv, store *coordinator.Store, repo string, since time.Time, warn io.Writer) (coordinator.RepoView, error) {
-	co := checkoutOf(ctx, repo)()
-	slug, err := env.repoSlug(repo, func() *config.Config { return co })
+func coordinatorStoredView(ctx context.Context, env *fcli.Cloud, store *coordinator.Store, repo string, since time.Time, warn io.Writer) (coordinator.RepoView, error) {
+	slug, err := env.RepoSlug(ctx, repo)
 	if err != nil {
 		return coordinator.RepoView{}, err
 	}
 	view, err := store.ReadRepoView(ctx, slug, repo)
 	if err != nil {
-		return coordinator.RepoView{}, coordinatorStoredErr(env.lc, err)
+		return coordinator.RepoView{}, coordinatorStoredErr(env.Config(), err)
 	}
 	if view.Stored {
 		return view, nil
@@ -124,9 +127,9 @@ func coordinatorStoredView(ctx context.Context, env *cloudEnv, store *coordinato
 // else — an unreachable database, a bad address — is the host's.
 func coordinatorStoredErr(lc *localcfg.Config, err error) error {
 	if errors.Is(err, rtdb.ErrPermission) {
-		return userErr("project %s's database refused the read: /coordinator is readable by a signed-in reader and by the database role its caller holds (roles/firebasedatabase.viewer, which terraform.launchers and terraform.operators have); ask an owner to add you (%v)", lc.Name, err)
+		return fcli.UserErr("project %s's database refused the read: /coordinator is readable by a signed-in reader and by the database role its caller holds (roles/firebasedatabase.viewer, which terraform.launchers and terraform.operators have); ask an owner to add you (%v)", lc.Name, err)
 	}
-	return remote(err)
+	return fcli.RemoteErr(err)
 }
 
 // writeCoordinatorStored prints one repository's stored view: what the
@@ -141,7 +144,7 @@ func coordinatorStoredErr(lc *localcfg.Config, err error) error {
 func writeCoordinatorStored(w io.Writer, v coordinator.RepoView) error {
 	fmt.Fprintln(w, coordinatorStoredLine(v))
 	if v.Stale != nil {
-		fmt.Fprintf(w, "stale since %s: %s\n", v.Stale.Since.Format(time.RFC3339), cellOneLine(v.Stale.Reason))
+		fmt.Fprintf(w, "stale since %s: %s\n", v.Stale.Since.Format(time.RFC3339), safetext.TableCell(v.Stale.Reason))
 	}
 	return writeCoordinatorStatus(w, v.View)
 }
@@ -164,7 +167,7 @@ func writeCoordinatorStoredProject(w io.Writer, views []coordinator.RepoView) er
 // at: the stored view, or the runs half and why it is that.
 func coordinatorStoredLine(v coordinator.RepoView) string {
 	if v.Stored {
-		return fmt.Sprintf("%s: stored view", cellOneLine(v.Repo))
+		return fmt.Sprintf("%s: stored view", safetext.TableCell(v.Repo))
 	}
-	return fmt.Sprintf("%s: no stored view (the coordinator has not reconciled this repository); the runs alone", cellOneLine(v.Repo))
+	return fmt.Sprintf("%s: no stored view (the coordinator has not reconciled this repository); the runs alone", safetext.TableCell(v.Repo))
 }

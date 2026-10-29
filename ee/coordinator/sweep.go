@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// See ee/LICENSE for the terms.
+
 package coordinator
 
 import (
@@ -8,6 +11,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/coordpath"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
@@ -67,7 +71,7 @@ import (
 // — IAM cannot express a path, so the rules cannot fence it and neither can a
 // role). What keeps it to its own nodes is Store's own check, which every
 // write here goes through: the sweep has no other way to reach the database,
-// and everything it writes is built from PathRoot's paths.
+// and everything it writes is built from coordpath.PathRoot's paths.
 
 // DefaultIntents is how many intent records one repository keeps, oldest
 // first out (Sweeper.Keep). A declaration is about work about to start, so
@@ -299,7 +303,7 @@ func (r Result) StaleRepos() int {
 // next tick starts with (SweepCursor). It is one small document whatever the
 // project holds, and it lives in the coordinator's subtree like everything
 // else the sweep writes.
-const PathSweepCursor = PathProject + "/sweep_cursor"
+const PathSweepCursor = coordpath.PathProject + "/sweep_cursor"
 
 // SweepCursor is the document at PathSweepCursor.
 type SweepCursor struct {
