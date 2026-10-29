@@ -53,7 +53,7 @@ import {
   buildLiveModel,
   renderLive,
 } from '../../src/renderer/screens/live'
-import type { LiveModel, ScreenElement, ScreenFactory } from '../../src/renderer/screens/live'
+import type { LiveFactory, LiveModel, ScreenElement } from '../../src/renderer/screens/live'
 import { PR_NO_LINK_REASON } from '../../src/renderer/screens/run'
 import {
   FakeDocument,
@@ -211,7 +211,10 @@ class FakeScreen implements ScreenElement {
   }
 }
 
-const factory: ScreenFactory = { create: (tag) => new FakeScreen(tag) }
+const factory: LiveFactory = {
+  create: (tag) => new FakeScreen(tag),
+  createNS: (tag) => new FakeScreen(tag),
+}
 
 /** drawnSection is the review section of a model's drawing. It is found by
  * class rather than returned by a private function, so the case is about what

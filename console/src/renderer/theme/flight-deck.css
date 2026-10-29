@@ -163,3 +163,264 @@ header.console-header {
   --radius-md: 8px;
   --radius-pill: 999px;
 }
+
+/* ---------------------------------------------------------------------------
+ * The fleet budget panel -- the Live view's total block (console redesign, step
+ * 2a-2, `console/src/renderer/screens/live.ts`'s `total()`).
+ *
+ * **The panel is a grid whose wide cell and stat column trade places as the
+ * window changes, and the two cells reach the row's ends.** The template's
+ * column count follows the window (`auto-fit`), so the two cells are placed
+ * against the grid's own edges -- `1 / -2` and `-2 / -1` -- rather than given a
+ * fixed `span 2`: a fixed span leaves an empty column between them at four
+ * columns and pushes past the end of a single-column grid, while the edge lines
+ * give the design's 2:1 at three columns and stack the cells at one.
+ *
+ * `--surface`, `--text` and `--font-mono` are still the seven names this
+ * stylesheet scopes to the shell's header (see the header comment): inside a
+ * screen they resolve to the palette the un-rebuilt screens use, which is the
+ * ground this block is painted on today. When the last screen is rebuilt they
+ * move to `:root` with the rest and every rule below follows them.
+ * ------------------------------------------------------------------------- */
+
+section.live-fleet {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
+  grid-auto-columns: minmax(0, 1fr);
+  gap: var(--space-sm);
+  margin-bottom: var(--space-lg);
+  padding: var(--panel-pad);
+  background: var(--surface);
+  border: var(--rule-width) solid var(--line);
+  border-radius: var(--radius-xl);
+}
+
+div.live-fleet-wide {
+  grid-column: 1 / -2;
+  display: grid;
+  align-content: start;
+  gap: var(--space-sm);
+  min-width: 0;
+  padding: var(--space-sm);
+  border: var(--rule-width) solid var(--line);
+  border-radius: var(--radius-lg);
+}
+
+div.live-fleet-stats {
+  grid-column: -2 / -1;
+  display: grid;
+  align-content: space-between;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+div.live-fleet-stat {
+  display: grid;
+  gap: var(--space-2xs);
+  padding: var(--space-sm);
+  border: var(--rule-width) solid var(--line);
+  border-radius: var(--radius-lg);
+}
+
+/* The caption over the pair, and the cap beside it: the label is the design's
+ * `.label` (small, letterspaced, the widest tracking in the panel). */
+p.live-fleet-cap,
+p.live-fleet-hero,
+p.live-fleet-counted,
+p.live-fleet-full {
+  margin: 0;
+}
+
+p.live-fleet-cap {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+span.live-fleet-cap-label,
+span.live-fleet-stat-label {
+  font-size: var(--text-label);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+span.live-cap {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+}
+
+/* The hero is today's notional spend: the one figure on the panel that is not
+ * on the cap's axis, so its tone is the notional one and it is the largest
+ * number in the block. */
+p.live-fleet-hero {
+  display: grid;
+  gap: var(--space-3xs);
+}
+
+span.live-total-notional {
+  font-family: var(--font-mono);
+  font-size: var(--text-hero);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  color: var(--notional);
+}
+
+span.live-fleet-hero-note {
+  font-size: var(--text-xs);
+  color: var(--text-2);
+}
+
+/* The cap bar: one 18 px track, filled left to right. The segments are drawn as
+ * `rect`s and the widths are the document's shares of the cap, so the styling
+ * is a fill per account and never a length. */
+svg.live-fleet-bar {
+  display: block;
+  width: 100%;
+  height: 18px;
+}
+
+rect.live-fleet-track {
+  fill: var(--track);
+}
+
+rect.live-fleet-segment {
+  stroke: none;
+}
+
+rect.live-fleet-segment[data-account='spent'] {
+  fill: var(--billed);
+}
+
+rect.live-fleet-segment[data-account='counted'] {
+  fill: var(--live-fill);
+}
+
+rect.live-fleet-segment[data-account='leased'] {
+  fill: var(--live-fill);
+  stroke: var(--live-border);
+  stroke-width: 1;
+}
+
+rect.live-fleet-segment[data-account='headroom'] {
+  fill: var(--track);
+}
+
+/* The legend says what the shapes mean, in words a reader can select. Each row
+ * is a swatch, the account's own word and the figure the bar drew. */
+ul.live-fleet-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2xs) var(--space-md);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+li.live-fleet-key {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+}
+
+span.live-fleet-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: var(--radius-chip);
+}
+
+span.live-fleet-swatch[data-account='spent'] {
+  background: var(--billed);
+}
+
+span.live-fleet-swatch[data-account='counted'] {
+  background: var(--live-fill);
+}
+
+span.live-fleet-swatch[data-account='leased'] {
+  background: var(--live-fill);
+  border: var(--rule-width) solid var(--live-border);
+}
+
+span.live-fleet-swatch[data-account='headroom'] {
+  background: var(--track);
+}
+
+span.live-fleet-key-word {
+  font-size: var(--text-xs);
+  color: var(--text-2);
+}
+
+/* The counted line is the CLI's own percentage beside the count, so it is an
+ * aside under the legend rather than a fourth legend row. */
+p.live-fleet-counted {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-xs);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+}
+
+p.live-fleet-counted span.live-fleet-sep {
+  color: var(--text-3);
+}
+
+/* An absent reading is the console's own mark, not a figure: the value is
+ * drawn in the faintest tone the panel has. */
+span.live-fleet-unread {
+  color: var(--text-3);
+}
+
+p.live-fleet-full {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2xs);
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--warn-tint);
+  border: var(--rule-width) solid var(--warn-border);
+  border-radius: var(--radius-lg);
+  font-size: var(--text-xs);
+  color: var(--warn-text);
+}
+
+span.live-fleet-warn-icon {
+  color: var(--warn-text);
+}
+
+/* The stat column: the burn rate, then the two counts, each with the note that
+ * qualifies it. A value and its note sit on one line -- the note is the word
+ * that says what the number means, and a note below the number reads as a
+ * second figure. */
+span.live-fleet-burn,
+span.live-fleet-active,
+span.live-fleet-queued {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2xs);
+  font-family: var(--font-mono);
+  font-size: var(--text-stat);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  color: var(--text);
+}
+
+span.live-fleet-burn-unit {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--text-2);
+}
+
+span.live-fleet-lost {
+  font-size: var(--text-xs);
+  color: var(--danger-text);
+}
+
+span.live-fleet-waiting {
+  font-size: var(--text-xs);
+  color: var(--text-2);
+}

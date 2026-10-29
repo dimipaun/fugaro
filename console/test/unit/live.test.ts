@@ -61,12 +61,13 @@ import {
   buildLiveModel,
   contradiction,
   deadlineFlag,
+  headroomOf,
   healthFlag,
   renderLive,
   sparkline,
   watchHealth,
 } from '../../src/renderer/screens/live'
-import type { LiveModel, ScreenElement, ScreenFactory } from '../../src/renderer/screens/live'
+import type { LiveFactory, LiveModel, ScreenElement, ScreenFactory } from '../../src/renderer/screens/live'
 import { SYNTHETIC_WHERE } from './synthetic'
 
 // ---------------------------------------------------------------------------
@@ -180,7 +181,7 @@ class FakeScreen implements ScreenElement {
     'action',
   ])
 
-  constructor(readonly tag: string) {}
+  constructor(readonly tag: string, readonly namespace: 'html' | 'svg' = 'html') {}
 
   setAttribute(name: string, value: string): void {
     const lowered = name.toLowerCase()
@@ -211,8 +212,14 @@ class FakeScreen implements ScreenElement {
   }
 }
 
-/** factory makes Fresh fakes, in the shape the renderer is handed. */
-const factory: ScreenFactory = { create: (tag) => new FakeScreen(tag) }
+/** factory makes Fresh fakes, in the shape the renderer is handed. The two
+ * methods are the two namespaces the real factory has, and the fake remembers
+ * which one made a node so that the attribute rule below can be about SVG nodes
+ * rather than about a tag that happens to be spelled `svg`. */
+const factory: LiveFactory = {
+  create: (tag) => new FakeScreen(tag),
+  createNS: (tag) => new FakeScreen(tag, 'svg'),
+}
 
 /** root is a fresh section to draw the screen into. */
 function root(): FakeScreen {
@@ -611,6 +618,231 @@ describe('the row model', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// The fleet budget panel (console redesign, step 2a-2).
+// ---------------------------------------------------------------------------
+
+/**
+ * fleetModel is the fixture's last frame with its `total` edited **on the wire
+ * and read back through the decoder**, the way the `queued_note` case above
+ * does it: `leased_usd` is a key the CLI does not write yet, and a panel
+ * asserted against a decoded object built by hand would be asserted against a
+ * shape `schema.ts` never produces.
+ */
+function fleetModel(total: Record<string, unknown>): LiveModel {
+  const raw = rawFrames()[rawFrames().length - 1]
+  if (raw === undefined) throw new Error('the fixture has no documents')
+  const carried = raw['total']
+  if (carried === null || typeof carried !== 'object') throw new Error('the fixture frame carries no total')
+  const decoded = decodeSnapshot(
+    { ...raw, total: { ...(carried as Record<string, unknown>), ...total } },
+    'the fixture frame with an edited total',
+  )
+  if (!decoded.ok) throw new Error(decoded.skew.because)
+  return buildLiveModel(decoded.value, new BurnHistory())
+}
+
+/** segmentNames is each drawn segment's own account, in drawing order: the
+ * `data-account` the stylesheet paints it by, read back off the node rather
+ * than assumed from the order. */
+function segmentNames(tree: ScreenElement): readonly string[] {
+  return all(tree, 'live-fleet-segment').map((segment) => segment.getAttribute('data-account') ?? '')
+}
+
+/** segmentWidths is each segment's width on the bar's own `viewBox` axis, where
+ * the whole axis is the cap. */
+function segmentWidths(tree: ScreenElement): readonly (string | null)[] {
+  return all(tree, 'live-fleet-segment').map((segment) => segment.getAttribute('width'))
+}
+
+/** legendValues is the number each legend row draws, in row order. */
+function legendValues(tree: ScreenElement): readonly (string | null)[] {
+  return all(tree, 'live-fleet-key').map(
+    (key) => all(key, 'live-num')[0]?.textContent ?? '',
+  )
+}
+
+/** legendRow is the legend row whose swatch is keyed to a money account: the
+ * account is the attribute the stylesheet paints the row's mark by. */
+function legendRow(tree: ScreenElement, account: string): FakeScreen {
+  const row = all(tree, 'live-fleet-key').find(
+    (one) => all(one, 'live-fleet-swatch')[0]?.getAttribute('data-account') === account,
+  )
+  if (row === undefined) throw new Error(`no ${account} legend row`)
+  return row
+}
+
+/** panel is the drawn fleet budget panel of a model. */
+function panel(model: LiveModel): FakeScreen {
+  return one(renderLive(factory, model, 'light'), 'live-fleet')
+}
+
+describe('the fleet budget panel', () => {
+  it('derives its own figures from the model, and derives nothing twice', () => {
+    // The fixture's last frame: a repository at its cap, a lost run beside a
+    // queued one. `headroom` is the console's arithmetic (cap less counted),
+    // and the three counts are read off the rows the model built.
+    const model = modelOf(theLastFrame())
+    expect(formatReading(model.fleet.headroom, 'usd')).toBe('$0.00')
+    expect(model.fleet.headroom.state).toBe('measured')
+    expect(formatReading(model.fleet.burn, 'usd')).toBe('$0.00')
+    expect(model.fleet.active).toBe(1)
+    expect(model.fleet.queued).toBe(1)
+    expect(model.fleet.heartbeatLost).toBe(true)
+    // The cap is the document's and the headroom is the difference: a screen
+    // that reported the cap as the headroom would show room that is not there.
+    expect(formatReading(model.total.dailyCapUsd, 'usd')).toBe('$50.00')
+    expect(formatReading(model.fleet.headroom, 'usd')).not.toBe('$50.00')
+  })
+
+  it('floors the headroom at zero and says which side it could not read', () => {
+    // An over-committed cap is a real state and "minus $10.00 of headroom" is
+    // not an amount anybody can spend; an unmeasured side is not a headroom of
+    // zero but a question the console cannot answer.
+    expect(formatReading(headroomOf(measured(50), measured(60)), 'usd')).toBe('$0.00')
+    expect(headroomOf(measured(50), measured(40)).value).toBe(10)
+    const noCap = headroomOf(unavailable('the document has no total.daily_cap_usd'), measured(40))
+    expect(noCap.value).toBeNull()
+    expect(noCap.because).toContain('daily_cap_usd')
+    const noCount = headroomOf(measured(50), unavailable('the document has no total.counted_usd'))
+    expect(noCount.value).toBeNull()
+    expect(noCount.because).toContain('counted_usd')
+  })
+
+  it('draws the three segments of the cap when the document measures a lease', () => {
+    const tree = renderLive(
+      factory,
+      fleetModel({ counted_usd: 50, spent_usd: 12.5, leased_usd: 37.5, daily_cap_usd: 100, percent: 50 }),
+      'light',
+    )
+    expect(segmentNames(tree)).toEqual(['spent', 'leased', 'headroom'])
+    // Each width is its share of the cap: spent 12.5 of 100, leased 37.5 of 100,
+    // headroom the remaining 50. The three add up to the axis and no further.
+    expect(segmentWidths(tree)).toEqual(['12.5', '37.5', '50'])
+    expect(legendValues(tree)).toEqual(['$12.50', '$37.50', '$50.00'])
+  })
+
+  it('draws two segments and says Leased is not measured while no CLI writes it', () => {
+    // `leased_usd` is approved but not emitted (2026-10-28), so every document
+    // today is this one. The split cannot be drawn, and the legend's Leased row
+    // is where the console says so -- with the reading's own reason in its
+    // title, which is what makes `n/a` an answer rather than a hole.
+    const tree = renderLive(factory, fleetModel({ counted_usd: 50, daily_cap_usd: 100, percent: 50 }), 'light')
+    expect(segmentNames(tree)).toEqual(['counted', 'headroom'])
+    expect(segmentWidths(tree)).toEqual(['50', '50'])
+    expect(legendValues(tree)).toEqual(['$0.00', UNAVAILABLE_MARK, '$50.00'])
+    const leased = legendRow(tree, 'leased')
+    expect(all(leased, 'live-num')[0]?.getAttribute('title')).toBe('the document has no total.leased_usd')
+    // The unmeasured value is marked as such for the stylesheet, and the two
+    // measured rows are not.
+    expect(all(leased, 'live-num')[0]?.classes).toContain('live-fleet-unread')
+    expect(all(legendRow(tree, 'headroom'), 'live-num')[0]?.classes).not.toContain('live-fleet-unread')
+  })
+
+  it('never puts the notional dollars on the cap axis or in a sum', () => {
+    // **The one mutation proof.** `counted_usd` and `notional_usd` are the two
+    // accounts the whole money grammar keeps apart (design section 6.1 rule 1):
+    // notional dollars are a subscription's list price, they are capped by
+    // nothing, and a bar that drew them beside the billed dollars -- or a
+    // legend that added them -- would be reporting money that was never
+    // charged. Fed the sum (50 + 3.29 against a 100 cap), the counted segment
+    // below would be 53.29 wide and the headroom $46.71, and `$53.29` would be
+    // printed; the assertions fail on all three.
+    const model = fleetModel({ counted_usd: 50, daily_cap_usd: 100, percent: 50 })
+    const tree = renderLive(factory, model, 'light')
+    const panel = one(tree, 'live-fleet')
+    expect(drawn(panel)).not.toContain('$53.29')
+    expect(segmentWidths(tree)).toEqual(['50', '50'])
+    expect(legendValues(tree)).toEqual(['$0.00', UNAVAILABLE_MARK, '$50.00'])
+    // And the notional figure is drawn once, in the hero: it is a reading of
+    // its own, outside the cap, and the bar carries none of it.
+    expect(texts(tree, 'live-total-notional')).toEqual([`${NOTIONAL_MARK}$3.29`])
+    expect(texts(one(tree, 'live-fleet-hero'), 'live-total-notional')).toEqual([`${NOTIONAL_MARK}$3.29`])
+    expect(drawn(one(tree, 'live-fleet-legend'))).not.toContain(NOTIONAL_MARK)
+  })
+
+  it('shows the full-cap banner only when the headroom is measured and gone', () => {
+    const full = renderLive(factory, fleetModel({ counted_usd: 50, daily_cap_usd: 50, percent: 100 }), 'light')
+    expect(all(full, 'live-fleet-full')).toHaveLength(1)
+    expect(drawn(one(full, 'live-fleet-full'))).toContain('the cap is fully committed')
+    const room = renderLive(factory, fleetModel({ counted_usd: 50, daily_cap_usd: 100, percent: 50 }), 'light')
+    expect(all(room, 'live-fleet-full')).toHaveLength(0)
+  })
+
+  it('draws an empty track, and no banner, when no cap was read', () => {
+    // A cap nobody read is not a cap of zero: the bar keeps its track so the
+    // panel still looks like a bar, draws no segment in it, and says `n/a`
+    // rather than showing a fill at nothing.
+    const frame = theLastFrame()
+    const model = buildLiveModel(
+      {
+        ...frame,
+        total: {
+          ...frame.total,
+          dailyCapUsd: unavailable('the document has no total.daily_cap_usd'),
+          percent: unavailable('the document has no total.percent'),
+        },
+      },
+      new BurnHistory(),
+    )
+    const tree = renderLive(factory, model, 'light')
+    expect(all(tree, 'live-fleet-track')).toHaveLength(1)
+    expect(all(tree, 'live-fleet-segment')).toHaveLength(0)
+    expect(one(tree, 'live-cap').textContent).toBe(UNAVAILABLE_MARK)
+    expect(legendValues(tree)[2]).toBe(UNAVAILABLE_MARK)
+    expect(all(tree, 'live-fleet-full')).toHaveLength(0)
+  })
+
+  it('counts the runs that are not queued as active, and says when a heartbeat is lost', () => {
+    const lost = renderLive(factory, modelOf(theLastFrame()), 'light')
+    expect(one(lost, 'live-fleet-active').textContent).toBe('1')
+    expect(texts(lost, 'live-fleet-lost')).toEqual(['heartbeat lost'])
+
+    // The same frame with the lost run healthy: the count is unchanged and the
+    // word is gone, because the note is about the heartbeat and not the count.
+    const healthy = theLastFrame()
+    const runs = healthy.runs.map((run) => ({ ...run, health: 'ok' }))
+    const tree = renderLive(factory, buildLiveModel({ ...healthy, runs }, new BurnHistory()), 'light')
+    expect(one(tree, 'live-fleet-active').textContent).toBe('1')
+    expect(all(tree, 'live-fleet-lost')).toHaveLength(0)
+  })
+
+  it('counts the queued runs and says what they are waiting for', () => {
+    const tree = renderLive(factory, modelOf(theLastFrame()), 'light')
+    expect(one(tree, 'live-fleet-queued').textContent).toBe('1')
+    expect(texts(tree, 'live-fleet-waiting')).toEqual(['waiting for a lease'])
+    // A queued run is not an active one: the two cells are the two halves of
+    // the same list, and a row counted in both would say the fleet is busier
+    // than it is.
+    expect(one(tree, 'live-fleet-active').textContent).toBe('1')
+  })
+
+  it('names the panel, and hides the shape the legend already spells out', () => {
+    const element = one(renderLive(factory, modelOf(theLastFrame()), 'light'), 'live-fleet')
+    expect(element.tag).toBe('section')
+    expect(element.getAttribute('aria-label')).toBe('Fleet budget')
+    // The bar and its segments are decorative and hidden: every value on them is
+    // written out in the legend, so nothing is reachable only through the
+    // picture (design section 6.1 rule 3).
+    const tree = renderLive(factory, modelOf(theLastFrame()), 'light')
+    expect(one(tree, 'live-fleet-bar').getAttribute('aria-hidden')).toBe('true')
+    // Nothing on the bar is a number: the shape carries no text a reader would
+    // be told and the legend does not already spell out.
+    expect(drawn(one(tree, 'live-fleet-bar'))).toBe('')
+  })
+
+  it('sets no attribute that could act, on any node of the panel', () => {
+    const tree = panel(modelOf(theLastFrame()))
+    const forbidden = new Set(['style', ['h', 'ref'].join(''), 'src'])
+    for (const node of walk(tree)) {
+      for (const name of node.attributes.keys()) {
+        expect(forbidden.has(name) || name.startsWith('on'), `${node.tag}[${name}]`).toBe(false)
+      }
+    }
+    expect(() => new FakeScreen('div').setAttribute('style', 'width: 1px')).toThrow()
+  })
+})
+
 describe('the contradiction', () => {
   it('is reported only where a run\'s own age makes it impossible', () => {
     // A 45 s old run cannot have been quiet for 60 s, so an `silent` flag on it
@@ -952,12 +1184,26 @@ describe('the rendered screen', () => {
     // attributes, `style` attribute and every `on*` handler throw, so a screen
     // that reached for one fails here. What is left is the set below: the
     // class hooks the design's density rules need and `data-` readings a test
-    // and the stylesheet read.
+    // and the stylesheet read, the three accessibility attributes (which cannot
+    // make the window do anything), and -- **on a node the SVG namespace made,
+    // and only there** -- the presentation attributes the cap bar's geometry is
+    // built from. The namespace is what the fake records, not the tag: a `rect`
+    // made with `create` is an HTML element and is not held to this set.
+    const MAXIMAL = new Set(['svg', 'rect'])
+    const SVG_ATTRIBUTES = new Set(['viewBox', 'preserveAspectRatio', 'width', 'height', 'x', 'y', 'rx'])
+    const ACCESSIBILITY = new Set(['role', 'aria-label', 'aria-hidden'])
     const tree = renderLive(factory, modelOf(theLastFrame()), 'light')
+    // The panel draws at least one of each, or the widening above would be a
+    // licence for attributes nothing sets.
+    expect(walk(tree).some((node) => node.namespace === 'svg')).toBe(true)
     for (const node of walk(tree)) {
       for (const name of node.attributes.keys()) {
         expect(
-          name === 'class' || name === 'title' || name.startsWith('data-'),
+          name === 'class' ||
+            name === 'title' ||
+            name.startsWith('data-') ||
+            ACCESSIBILITY.has(name) ||
+            (node.namespace === 'svg' && MAXIMAL.has(node.tag) && SVG_ATTRIBUTES.has(name)),
           `${node.tag}[${name}]`,
         ).toBe(true)
       }
