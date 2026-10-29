@@ -1656,15 +1656,19 @@ func TestInitRepoSilentWithoutCeiling(t *testing.T) {
 	}
 }
 
-// update --repo holds a checkout's governance against the run's ceiling too,
-// and with no project layer that ceiling carries Fugaro's own figures
-// (policy.Governance.WithDefaults, T7.1): a file that raises a guardrail is
-// named here as one the run clamps. The file's governance: block is also why
-// the merge runs at all — setsPolicy counts the key being written, so a
-// repository with no budget and no token limit still hears about the
-// guardrail it wrote — while the budget line above stays silent, because a
-// project with no budget has no ceiling to announce.
-func TestInitRepoClampsGovernanceAgainstFugarosDefaults(t *testing.T) {
+// update --repo reads a checkout's governance: block and, in a build that
+// links no ee/ features, holds nothing against it: the ceiling a raised
+// guardrail would be clamped by carries Fugaro's shipped figures, which
+// ee/register registers and this build does not carry (D521, D522). The block
+// is still decoded and accepted — refusing it would stop every repository of
+// the project (G2) — and nothing here names it as looser than anything.
+//
+// The budget line stays silent for its own reason: a project with no budget
+// has no ceiling to announce.
+//
+// The tagged build still clamps, and ee/governance's TestGovernanceTightenOnly
+// is where that rule is pinned (E2.3).
+func TestInitRepoDoesNotClampGovernanceInAnUntaggedBuild(t *testing.T) {
 	isolateProjects(t, t.TempDir())
 	path := writeProject(t, "aurora", "proj-1234")
 	data, err := os.ReadFile(path)
@@ -1684,8 +1688,8 @@ func TestInitRepoClampsGovernanceAgainstFugarosDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s\n%s", err, out, errOut)
 	}
-	if want := "fugaro.yaml governance.review_ratio: 20 is looser than 5; the runner will use 5"; !strings.Contains(errOut, want) {
-		t.Errorf("stderr lacks %q:\n%s", want, errOut)
+	if strings.Contains(errOut, "is looser than") {
+		t.Errorf("an untagged build clamped a governance value it does not enforce:\n%s", errOut)
 	}
 	if strings.Contains(errOut, "Budget ceiling") {
 		t.Errorf("a project with no budget announced one:\n%s", errOut)

@@ -11,21 +11,20 @@
 //
 // One file per writer: this one sets the edition (E1.5), and the features that
 // move in add their own — coordinator.go (cli.SetLaunchDeclarer and
-// cli.RegisterCommand for the coordinator, E2.1), report.go (RegisterCommand for
-// the report, E2.2) and governance.go (policy.SetGovernance
-// together with runner.SetStage, E2.3, one half alone being a tagged binary that
-// enforces half of the governance it registered). Every setter refuses a second
-// call and this package panics on whatever error one answers, because a tagged
-// binary that quietly kept a core default would carry the code and not the
-// enforcement.
+// cli.RegisterCommand for the coordinator, E2.1), report.go
+// (cli.RegisterCommand for the report, E2.2) and governance.go
+// (policy.SetGovernance together with runner.SetStage, E2.3, one half alone
+// being a tagged binary that enforces half of the governance it registered).
+// Every setter refuses a second call and this package panics on whatever error
+// one answers, because a tagged binary that quietly kept a core default would
+// carry the code and not the enforcement.
 //
-// The edition, the coordinator's two seams and the report's command are what is
-// set here today. The
-// seams still waiting for their feature to move keep the core's non-nil
-// defaults, so a tagged build behaves exactly as an untagged one does on those
-// paths until the task that owns them lands (G10) — and registering them now
-// would mean the core exporting its own defaults, which is new API and belongs
-// to the tasks that move the features.
+// The edition, the coordinator's two seams, the report's command and the
+// governance pair are what is set here today. The seams still waiting for their
+// feature to move keep the core's non-nil defaults, so a tagged build behaves
+// exactly as an untagged one does on those paths until the task that owns them
+// lands (G10) — and registering them now would mean the core exporting its own
+// defaults, which is new API and belongs to the tasks that move the features.
 package register
 
 import "github.com/dimipaun/fugaro/internal/cli"

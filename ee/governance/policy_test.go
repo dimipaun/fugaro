@@ -379,3 +379,48 @@ func TestTierNeverRaisesCap(t *testing.T) {
 		t.Errorf("Ignored = %+v, want %+v", only.Ignored, want)
 	}
 }
+
+// TestTheGovernanceWarningsSourceIsTheMergesRecord: the two merges the CLI
+// builds before it warns — a project layer's block as the ceiling with the
+// file's looser value under it, and no layer at all with the shipped figures
+// as the ceiling — each record the dropped value, which is what
+// `fugaro validate` and `setup --repo` render their warning from
+// (internal/cli's clampWarning). The rendering is the core's and unchanged;
+// what a tagged build has to hand it is this record, and an untagged build has
+// none to hand (D521, D522).
+//
+// The two cases are the ones the core's validate tests used to run end to end
+// (TestValidateDoesNotClampTheProjectLayersGovernance and
+// TestValidateAcceptsALooserGovernanceValueWithNoLayer): the command's own
+// arm is the core's, and the merge it reads is here.
+func TestTheGovernanceWarningsSourceIsTheMergesRecord(t *testing.T) {
+	layerCeiling := policy.Layer{Governance: policy.Governance{
+		StageTimeout: policy.StageTimeout{Implement: 200 * time.Millisecond}}.WithDefaults()}
+	e := policy.Merge(layerCeiling, policy.Layer{},
+		policy.Layer{Governance: policy.Governance{StageTimeout: policy.StageTimeout{Implement: 5 * time.Minute}}})
+	if e.Governance.StageTimeout.Implement != 200*time.Millisecond {
+		t.Errorf("the layer's stage_timeout did not hold: %v", e.Governance.StageTimeout.Implement)
+	}
+	want := []policy.Ignored{{
+		Key: policy.KeyStageTimeoutImplement, Value: "5m0s", Effective: "200ms", Source: policy.SourceCeiling}}
+	if !slices.Equal(e.Ignored, want) {
+		t.Errorf("Ignored = %+v, want %+v", e.Ignored, want)
+	}
+
+	// With no layer the shipped figures are the ceiling, so a repository that
+	// raises a guardrail is the looser side.
+	shipped := policy.Merge(
+		policy.Layer{Governance: policy.Governance{}.WithDefaults()},
+		policy.Layer{},
+		policy.Layer{Governance: policy.Governance{
+			ReviewRatio: 20,
+			Tiers:       policy.TierExpectations{Small: policy.TierExpectation{ExpectedUSD: 2}},
+		}})
+	want = []policy.Ignored{
+		{Key: policy.KeyReviewRatio, Value: "20", Effective: "5", Source: policy.SourceCeiling},
+		{Key: policy.TierKey(tier.Small, policy.KeyExpectedUSD), Value: "2", Effective: "1", Source: policy.SourceCeiling},
+	}
+	if !slices.Equal(shipped.Ignored, want) {
+		t.Errorf("Ignored = %+v, want %+v", shipped.Ignored, want)
+	}
+}

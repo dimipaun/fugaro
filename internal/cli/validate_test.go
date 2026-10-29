@@ -338,13 +338,18 @@ func TestValidateRefusesVertexEnforce(t *testing.T) {
 	}
 }
 
-// TestValidateCeilingCarriesTheProjectLayersGovernance: the project layer's
-// governance block is the ceiling a run's governance keys are merged under
-// (the runner puts it in its first layer, resolvePolicy), so a value this file
-// writes looser than the layer's is one the run clamps and this command has to
-// warn about rather than pass. Merging the file against a ceiling built
-// without the layer's governance is what let it through (T7.1).
-func TestValidateCeilingCarriesTheProjectLayersGovernance(t *testing.T) {
+// TestValidateDoesNotClampTheProjectLayersGovernance: the ceiling a run's
+// governance keys are merged under still carries the project layer's block
+// (resolvePolicy puts it in the runner's first layer), but a build that links
+// no ee/ features applies none of it, so `validate` has nothing to warn about:
+// the merge records no dropped value, and a warning naming one would be about
+// a clamp this build does not perform (D522).
+//
+// The tagged arm — the file's looser 5m against the layer's 200ms, warned
+// about as "5m0s is looser than 200ms; the runner will use 200ms" — is the
+// merge ee/governance's TestTheGovernanceWarningsSourceIsTheMergesRecord
+// pins (E2.3).
+func TestValidateDoesNotClampTheProjectLayersGovernance(t *testing.T) {
 	layer := func(d time.Duration) *config.Governance {
 		return &config.Governance{StageTimeout: config.StageTimeout{Implement: config.Duration{Duration: d}}}
 	}
@@ -352,47 +357,31 @@ func TestValidateCeilingCarriesTheProjectLayersGovernance(t *testing.T) {
 	cfg := &config.Config{Project: "aurora", Governance: layer(5 * time.Minute),
 		Layer: &config.ProjectLayer{Governance: layer(200 * time.Millisecond)}}
 	_, ws, _ := budgetProblems(context.Background(), cfg, lc, lc.Providers)
-	var found bool
 	for _, w := range ws {
-		if w.Path != "governance.stage_timeout.implement" {
-			continue
+		if strings.HasPrefix(w.Path, "governance.") {
+			t.Errorf("an untagged build warned about governance key %q: %q", w.Path, w.Message)
 		}
-		found = true
-		if want := "5m0s is looser than 200ms; the runner will use 200ms"; w.Message != want {
-			t.Errorf("warning = %q, want %q", w.Message, want)
-		}
-	}
-	if !found {
-		t.Fatalf("warnings = %v, want one about governance.stage_timeout.implement", ws)
 	}
 }
 
-// TestValidateWarnsAboutALooserGovernanceValueWithNoLayer: with no project
-// layer the ceiling is not empty of governance — it carries Fugaro's own
-// figures, filled in by policy.Governance.WithDefaults (T7.1) — so a file that
-// writes a looser guardrail is one the run clamps and this command has to say
-// so. Building the ceiling without the defaults is what let a repository raise
-// a guardrail Fugaro ships and hear nothing: the file's own value was the
-// first one written for the key, so it won with it.
+// TestValidateAcceptsALooserGovernanceValueWithNoLayer: with no project layer
+// the ceiling carries no governance at all in a build that links no ee/
+// features (D522), so a file that raises a guardrail is neither clamped nor
+// named: the command reads the block, accepts it and says nothing about it.
+// Refusing it is what it must never do (G2).
 //
-// It is the end-to-end arm of TestValidateCeilingCarriesTheProjectLayersGovernance:
-// that one proves the layer's block joins the ceiling, this one proves the
-// shipped figures do, through the command's own resolution rather than a
-// hand-built config.
-func TestValidateWarnsAboutALooserGovernanceValueWithNoLayer(t *testing.T) {
+// The tagged arm — the shipped figures as the ceiling, so a repository's 20 is
+// warned about as looser than 5 — is the merge
+// ee/governance's TestTheGovernanceWarningsSourceIsTheMergesRecord pins (E2.3).
+func TestValidateAcceptsALooserGovernanceValueWithNoLayer(t *testing.T) {
 	path := fileWithBudget(t, "budget: { mode: off }\n",
 		"governance: { review_ratio: 20, tiers: { small: { expected_usd: 2 } } }\n", "  auth: oauth")
 	out, errOut, err := execute(t, "validate", path)
 	if err != nil {
 		t.Fatalf("validate refused the file: %v\n%s%s", err, out, errOut)
 	}
-	for _, w := range []string{
-		"warning: governance.review_ratio: 20 is looser than 5; the runner will use 5",
-		"warning: governance.tiers.small.expected_usd: 2 is looser than 1; the runner will use 1",
-	} {
-		if !strings.Contains(errOut, w) {
-			t.Errorf("validate stderr lacks %q:\n%s", w, errOut)
-		}
+	if strings.Contains(errOut, "is looser than") {
+		t.Errorf("an untagged build clamped a governance value it does not enforce:\n%s", errOut)
 	}
 }
 

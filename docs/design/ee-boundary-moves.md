@@ -235,8 +235,8 @@ D521's line is *the wire and the mechanism stay, the policy goes*. Below, symbol
 | `internal/task` | `Spec.Tier`, `Spec.ExpectedScope`, and the strict `task.Parse` |
 | `internal/tier` | the whole package: the four-word vocabulary the task validator uses |
 | `internal/runstore` | `StageTiming.Calls`, `.Agents`, `.Repeats`, `Record.ReviewScope`, `Record.Checkpoint`, and the halt reasons `HaltStageBudget`, `HaltReviewRatio`, `HaltFanout`, `HaltReviewScope`, `HaltExpectedExceeded` |
-| `internal/policy` | `Governance` and the rest of the vocabulary, `Effective.Governance`, `Governance.DefaultGovernanceKeys` (`policy.go:311`), `Governance.WithDefaults`, `TierKey`, and the merge's non-governance half (`Merge`, `tightenCap`, `tightenInt`, `tightenDuration`, `toSet`, `dedupe`) |
-| `internal/runner` | `governanceHalt` (`halt.go:238`), `checkpointPR` (`halt.go:278`), `checkpointReportPart` (`prflow.go:503`), `checkpointPrompt` (`prompts.go:220`), `readReviewScope` (`diffbase.go:280`), `stageTiming` (`cost.go:37`) |
+| `internal/policy` | `Governance` and the rest of the vocabulary, `Effective.Governance`, `Governance.DefaultGovernanceKeys` (`policy.go:311`), `Governance.WithDefaults`, `TierKey`, and the merge's non-governance half (`Merge`, `tightenCap`, `tightenInt`, `tightenDuration`, `toSet`, `dedupe`). E2.3a exported the three rules the moved policy calls, so it calls them rather than keeping a copy that drifts: `(*Effective).TightenInt`, `TightenCap`, `TightenDuration` (`merge.go`) |
+| `internal/runner` | `governanceHalt` (`halt.go:238`), `checkpointPR` (`halt.go:278`), `checkpointReportPart` (`prflow.go:503`), `checkpointPrompt` (`prompts.go:220`), `readReviewScope` (`diffbase.go:280`), `stageTiming` (`cost.go:37`), and the stage-to-bound mechanism the moved tripwire reads: `stageTimeoutOf` and its export `StageTimeoutOf` (both in `governance_hook.go`, E2.3a) |
 | `internal/agent` | `SubAgents`, `Repeats` |
 | `internal/gateway` | `StageReport`, `.Agents` |
 | `internal/digest` | the halt accounting and the two report-only flags |
@@ -259,12 +259,22 @@ credentials service's tiers are other tiers.
 | --- | --- |
 | `internal/policy/policy.go`: `DefaultGovernance` (line 199), `DefaultTierExpectations` (line 122) | `policy.go` |
 | `internal/policy/merge.go`: `(*Effective).tightenGovernance` (line 138), `(*Effective).tightenTier` (line 166) | `policy.go` |
-| `internal/runner/runner.go`: `(*run).stageTimeout` (line 2477) and the stage loop's halt decision at line 2812 | `runner.go` |
+| the stage tripwire as one pair: `Timeout` (the stage's own bound, off `runner.StageTimeoutOf`) and `TimedOut` (the `stage_budget` halt by time) | `runner.go` |
 | tests: `internal/policy/governance_test.go`, `tier_test.go`, `internal/runner/stage_timeout_test.go` and the internal one #1216 adds | `policy_test.go`, `runner_test.go` |
 
-`stageTimeoutKey` (`runner.go:2497`) and `noteStageTimeoutClamped` (`runner.go:2538`) go with
-`stageTimeout`: they are how the key is named and how a clamped bound is recorded, and none of the
-three is read from outside the runner.
+**Correction (E2.3b).** An earlier draft of this section sent `stageTimeoutKey` and
+`noteStageTimeoutClamped` with `stageTimeout`. They stay in `internal/runner/runner.go`, and so do
+`stageTimeoutOf`'s unexported body, `noteIgnoredStageBound`, `governanceHalt`, `checkpointPR` and
+`checkpointReportPart`. The line D521 draws is *the wire and the mechanism stay, the policy goes*,
+and these are mechanism: `stageTimeoutKey` is the one stage-to-key mapping the bound a stage is given
+and the key a dropped one is recorded under are both read through, `stageTimeoutOf` is the same
+mapping for the bound itself, and the halt, its checkpoint and its report are what the core records.
+Moving them would put the vocabulary of the record and of `result.json` behind the seam. What moved
+is the answer, not the machinery: `(*run).stageTimeout` and the stage loop's halt decision stay in
+`runner.go` and ask the hook, and the hook's default pair is the untagged build's — no bound, no
+halt. The ignored-block line the untagged build writes (`noteIgnoredStageBound`, `D522`) is core for
+the same reason: it is read off the layers the merge consumed, so it says the same thing whether or
+not the policy half resolved anything.
 
 `ee/governance` also takes what has not been written yet: the checkpoint model call (T7.2–T7.3), the
 tier expected-cost checkpoint (T8.2) and the tier calibration (T8.3), all born there (D527), plus
