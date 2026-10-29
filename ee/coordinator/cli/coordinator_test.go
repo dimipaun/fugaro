@@ -1648,8 +1648,11 @@ func TestADeclareAgainstARefusingDatabaseAnswersTheRefusal(t *testing.T) {
 //
 // --no-budget-check is the third spelling of that switch, and it is the
 // launch's own flag rather than part of the project config: it reaches Declare
-// on the cloud the launch opens, so the launch path is where it is exercised
-// (internal/cli's run with --no-budget-check).
+// on the cloud the launch opens, which the core's launch path passes through
+// (internal/cli's declareLaunch). No test here builds such a cloud -- the flag
+// is set on a cloud the core opens, and no exported name of the core sets it
+// (design section 10) -- so that branch is reached by a tagged `fugaro run
+// --no-budget-check` and by nothing in this package.
 func TestADeclareThatSkipsTheDatabaseDeclaresNothing(t *testing.T) {
 	for _, tc := range []struct{ what, cfg string }{
 		{"a project whose budget is off", "budget: { mode: off }\n"},
