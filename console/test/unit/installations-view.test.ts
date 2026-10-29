@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The picker's view (desktop-console plan Task 3.4b, step 5; design section 3.4
 // rules 4, 5 and 7, D13; owner ruling C9; owner's ruling of 2026-10-20).

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The launch confirmation window's main-process module (design section 5.1 rule
 // 11; console V2.5.1a part 2b-1, and the seam `launch.ts`'s `LaunchConfirmer`

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The launch confirmation window's document and its view (design section 5.1
 // rule 11; console V2.5.1a part 2b-2a).
@@ -280,7 +280,7 @@ describe('the confirmation document and its view', () => {
     // The two comment lines come before the doctype, exactly as the picker's
     // document's do: the notice is the first thing in the file.
     const lines = html.split('\n')
-    expect(lines[0]).toBe('<!-- SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise -->')
+    expect(lines[0]).toBe('<!-- SPDX-License-Identifier: LicenseRef-Fugaro-Subscription -->')
     expect(lines[1]).toBe('<!-- See console/LICENSE.md for the terms. -->')
     expect(lines[2]).toBe('<!doctype html>')
     // The document draws values this process does not own, and rule 11 says it

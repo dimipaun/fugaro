@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // A secret split by an invisible character, a terminal sequence, or both, at
 // every position, must not leave any door in a readable fragment (review rounds

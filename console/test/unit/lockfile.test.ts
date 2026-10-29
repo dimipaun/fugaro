@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The committed lockfile, and the two questions a reader of it should be able
 // to answer without running npm (desktop-console plan Task 1.0; design section

@@ -335,7 +335,7 @@ with no `ee/LICENSE`.
   the `#licence` section's "the only text that governs", keep `licenceIdentifier()` working (F7), run
   `npm run check` in `website/`.
 - **R3** — Each `ee/` source file starts with a two-line legal notice:
-  `SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise` and a pointer to `ee/LICENSE`, enforced
+  `SPDX-License-Identifier: LicenseRef-Fugaro-Subscription` and a pointer to `ee/LICENSE`, enforced
   by a test beside the boundary test; legal notices are outside the comment rule. (F24) **The
   rule the test holds (amended by T1's ruling, so a reserved `ee/` passes; made exact after the
   round-1 review):**
@@ -531,7 +531,7 @@ That is a raw link pinned to one revision of the Gist, and the owner read the Gi
 byte-identical to the agreement block of [CLA.md](CLA.md), a trailing newline aside (U9: no test in
 the tree can check a network resource). `[CLA URL TO BE PUBLISHED]` is
 replaced by that URL in `ee/LICENSE`, `console/LICENSE.md`, `mobile/LICENSE.md` and the byte copy in
-`LICENSES/LicenseRef-Fugaro-Enterprise.txt` -- the placeholder token the only change, so the one
+`LICENSES/LicenseRef-Fugaro-Subscription.txt` -- the placeholder token the only change, so the one
 wording is what it was and `ee/LICENSE` and the `LICENSES/` copy stay byte for byte -- and in the pin of
 `internal/cli/docs_ee_reserved_test.go`. Plan task L0.2's checklist item for it is ticked in
 [implementation-plan.md](implementation-plan.md#l02--install-the-hosted-cla-app-owner-run).

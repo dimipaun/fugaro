@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See ee/LICENSE for the terms.
 
 // Command clidoc writes website/content/cli-reference.md from the command tree

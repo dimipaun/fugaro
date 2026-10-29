@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The e2e harness's boundary (desktop-console plan Task 1.0; design section
 // 9.2, Playwright driving the packaged app with `electron.launch`).

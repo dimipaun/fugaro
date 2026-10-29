@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See ee/LICENSE for the terms.
 
 // Package plugincheck holds the checks that read the tagged command tree: the

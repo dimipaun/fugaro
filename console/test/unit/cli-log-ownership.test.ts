@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The spawn log a `CliSource` opens is a descriptor the source owns, and every
 // way out of the source closes it (review round 4 of PR 478).

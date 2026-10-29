@@ -990,7 +990,7 @@ by O4 (expiry only). A version field may be added later, as a new task. The numb
   exists and S8.2 is signed (T18).
   - **Files:**
     - `LICENSE`, `ee/LICENSE`, `console/LICENSE.md`, `mobile/LICENSE.md`,
-      `LICENSES/LicenseRef-Fugaro-Enterprise.txt`;
+      `LICENSES/LicenseRef-Fugaro-Subscription.txt`;
     - `internal/cli/docs_licensing_test.go` (the root licence's hash);
     - the Terms' Licensor line (`docs/licensing/subscription-terms.md` §1.1);
     - any website page naming the copyright holder (none found on `main` at `d6f97594c`).

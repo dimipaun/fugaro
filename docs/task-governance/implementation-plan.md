@@ -157,7 +157,7 @@ Only the ones this plan's areas trigger; `CLAUDE.md` and the rules files hold th
 10. **Targeted tests only**, `GOFLAGS=-p=2`; `internal/runner` and `internal/cli` are never run
     whole by a task.
 11. **`ee/` files carry the two-line notice** (`.claude/rules/ee.md`): `SPDX-License-Identifier:
-    LicenseRef-Fugaro-Enterprise`, then `See ee/LICENSE for the terms.` Nothing outside `ee/`
+    LicenseRef-Fugaro-Subscription`, then `See ee/LICENSE for the terms.` Nothing outside `ee/`
     imports it except `cmd/fugaro/ee_on.go`, and a task that lands a file under `ee/governance/`
     runs `go test ./internal/eeboundary/ -count=1` after it. A test that would switch behaviour off
     lives in an `export_test.go`, never in production code, and only `ee/register` calls a `Set*`.

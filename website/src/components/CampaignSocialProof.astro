@@ -1,0 +1,88 @@
+---
+/**
+ * website/src/components/CampaignSocialProof.astro — the social-proof section (go-to-market
+ * plan, Task G2.2; spec §6, section 4; reconciliation F11, F12, D405).
+ *
+ * **This component is not rendered at all while `website/data/landing.yaml` names no partner.**
+ * The page asks the file and renders nothing when the list is empty — so the section is absent
+ * from the page rather than drawn empty — and this file refuses to render with an empty list,
+ * because the two ways of getting it wrong are one: a section with nothing in it says the
+ * campaign has proof it does not have, and a partner's name or logo on a page is a claim about
+ * a company that only that company can give. The list stays empty until the owner has each
+ * partner's written permission (F11, F12, D405).
+ *
+ * **A logo is rendered with the partner's own name as its `alt`.** The file carries a `name`
+ * and a self-hosted `image` for each entry, and the loader refuses an entry with a blank name:
+ * a picture nobody is named beside is not social proof, and a logo announced to a screen reader
+ * as an unlabelled image is a reader told nothing.
+ *
+ * **The spec's other half of this section — GitHub stars — is deliberately not here.** A star
+ * count is a figure fetched from an API at the moment somebody looks at it, and the site is a
+ * static build from the files in this repository: it makes no network call at build time and
+ * ships no request for one, so a number on this page would be either stale or fetched by the
+ * visitor's browser from a host the consent work has not admitted (Global Constraints 4 and 5,
+ * F20).
+ */
+interface Props {
+  /** The design partners whose logos may be shown, each with its own written permission. */
+  logos: { name: string; image: string }[]
+}
+
+const { logos } = Astro.props
+
+if (logos.length === 0) {
+  throw new Error(
+    'website/src/components/CampaignSocialProof.astro: it was rendered with no partner logo. website/data/landing.yaml names the partners the campaign may show, and the section is rendered only when it names one (F11, F12, D405)',
+  )
+}
+---
+
+<section class="campaign-social-proof" data-section="social-proof" data-source="website/data/landing.yaml">
+  <h2 class="campaign-social-proof-title display-md">Built with design partners</h2>
+  <ul class="campaign-social-proof-list">
+    {logos.map((logo) => (
+      <li class="campaign-social-proof-item">
+        <img src={logo.image} alt={logo.name} />
+      </li>
+    ))}
+  </ul>
+</section>
+
+<style>
+  /* Tokens only (W1.2). The logos stand in a wrapping row: two or three to a line on a phone,
+     as many as fit on a wide viewport, which is the layout the static half of
+     `website/test/landing-pages.mjs` reads. */
+  .campaign-social-proof {
+    padding-block: var(--space-xl);
+    padding-inline: var(--frame-gutter);
+  }
+
+  .campaign-social-proof-title {
+    margin: 0;
+  }
+
+  .campaign-social-proof-list {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-lg);
+    margin: var(--space-lg) 0 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .campaign-social-proof-item img {
+    max-height: var(--space-xl);
+    width: auto;
+  }
+
+  @media (min-width: 48rem) {
+    .campaign-social-proof {
+      padding-block: var(--space-2xl);
+    }
+
+    .campaign-social-proof-list {
+      gap: var(--space-2xl);
+    }
+  }
+</style>

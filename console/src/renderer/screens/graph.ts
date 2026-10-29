@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The dependency graph screen: GV2.3a's model on a canvas GV2.2's worker placed
 // (console GV2.3b; the owner's dependency graph spec §3 and its addendum §3,

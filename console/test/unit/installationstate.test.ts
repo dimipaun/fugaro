@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The rail's classification, the checkouts the console may offer, and the
 // open-first-readable rule (owner's design ruling of 2026-10-25).

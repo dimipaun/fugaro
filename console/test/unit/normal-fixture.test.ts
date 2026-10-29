@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The `normal` fixture: the shape of one real `fugaro watch --json` document
 // (0.8.6), every value invented (owner decision 2026-10-19).

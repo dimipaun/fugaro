@@ -1,0 +1,72 @@
+---
+/**
+ * website/src/components/CampaignHero.astro — the campaign hero (go-to-market plan, Task G2.2;
+ * spec §6, section 1).
+ *
+ * **The two lines are the variant's, and this file types neither.** The headline is the `h1`
+ * and the supporting line is the sentence under it, both read from `website/data/landing.yaml`
+ * by the page and passed in here (G2.1, D102): the spec quotes three of the four headlines and
+ * the data file writes them, so a campaign whose message changes changes the file and not this
+ * component.
+ *
+ * **The hero's third element — the muted looping video — is not here.** A variant's `video` is
+ * a path under `website/public/` that the owner produces, no variant names one yet, and the
+ * layout's `media` slot is where a picture or a video lands when one does (spec §6, F14, G2.5).
+ * The hero therefore renders complete without it rather than with a hole where a file would go.
+ *
+ * **The tone rides on the section, not on a second stylesheet.** `data-tone` is the variant's
+ * own word from the file (`playful` is `/crew`'s), and the campaign pages' own rules key their
+ * accents off it, so the four pages are one template with one difference the data file states.
+ */
+interface Props {
+  /** The variant's headline, from `website/data/landing.yaml`: the page's one `h1`. */
+  headline: string
+  /** The variant's supporting line, the sentence under the headline. */
+  supportingLine: string
+  /** The variant's tone (`savings`, `control`, `scale`, `playful`). */
+  tone: string
+}
+
+const { headline, supportingLine, tone } = Astro.props
+---
+
+<section class="campaign-hero" data-section="hero" data-tone={tone} data-source="website/data/landing.yaml">
+  <h1 class="campaign-hero-headline display-xl">{headline}</h1>
+  <p class="campaign-hero-line">{supportingLine}</p>
+</section>
+
+<style>
+  /* Tokens only (W1.2): the type scale's two largest steps, the site's ground and the tone the
+     sentence under the headline is set in. */
+  .campaign-hero {
+    padding-block: var(--space-2xl) var(--space-xl);
+    padding-inline: var(--frame-gutter);
+  }
+
+  .campaign-hero-headline {
+    margin: 0;
+    max-width: 22ch;
+  }
+
+  .campaign-hero-line {
+    margin: var(--space-md) 0 0;
+    max-width: var(--measure);
+    color: var(--text-muted);
+    font-size: var(--font-size-lg);
+    line-height: var(--leading-snug);
+  }
+
+  /* The playful campaign is the one the spec asks for a lighter register (`/crew`): the same
+     brand and the same type, with the headline's own line given a little more room to breathe.
+     It is a tone and not a second look, so it changes nothing a gate reads — no colour of its
+     own, no size of its own. */
+  .campaign-hero[data-tone='playful'] .campaign-hero-headline {
+    max-width: 26ch;
+  }
+
+  @media (min-width: 48rem) {
+    .campaign-hero {
+      padding-block: var(--space-3xl) var(--space-2xl);
+    }
+  }
+</style>

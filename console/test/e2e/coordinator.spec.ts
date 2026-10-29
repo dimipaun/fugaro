@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The project view in a real window (Bitbucket credentials T1.2, D364; the
 // styling work's per-screen forced-colors smoke, design section 6.4).

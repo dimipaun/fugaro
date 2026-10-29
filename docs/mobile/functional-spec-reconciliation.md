@@ -141,7 +141,7 @@ What this document does with it, and nothing more:
 | Default agent when switching to a project with several | — | **D163** (after **D161**, the agent model) |
 | Do queued prompts expire; what happens to a job if a prompt waits too long | D118 (mailbox TTL) — partly; G8 (no run waits) | **D168** |
 | How allowlist entries are managed; does pairing auto-add the scanner | D113 (user claim), D114 (account added by hand), draft #532 (`mu`) | **D165**, **D166** |
-| Pairing-token lifetime and revocation of a paired device | D111 / tension (b2) (two items per account; revocation "story" owed) | **D165**, **D166**, **D171** |
+| Pairing-token lifetime and revocation of a paired device | D111 / tension (b2) (two items per account — **amended 2026-10-29: the owner ruled D232 stands over the telemetry plan's D259, so two items (idToken, macKey) plus the pairing-delivered configuration (the installation's database URL and web API key, ordinary configuration, not secret)**; revocation "story" owed) | **D165**, **D166**, **D171** |
 | Behaviour with no network or an unreachable backend | D117 (heartbeat), `shared/presence` (P1.4), P3.5 (refuse while offline) | **D167** |
 | Text/screen fallback for prompts and summaries | D122 ("tap to speak" fallback only) | **D167** (its second question: the same screen serves the offline case) |
 | Timing and shape of the conversational front agent | D115 (phase 2 later), G4 | **D172** |

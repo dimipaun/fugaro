@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See ee/LICENSE for the terms.
 
 package register
@@ -25,7 +25,7 @@ import (
 )
 
 // TestTaggedBuildReportsEE is the headline: this package exists under the ee
-// build tag, and a binary that compiled it is the enterprise edition. The
+// build tag, and a binary that compiled it is the Subscription Edition. The
 // edition is what the render step writes into the build record and what every
 // launch-side warning judges a job image by, so a register whose init did not
 // set it would leave a tagged binary reporting core while it carries ee/ code.

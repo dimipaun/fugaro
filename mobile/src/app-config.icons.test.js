@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See mobile/LICENSE.md for the terms.
 // The app's icons, and the brand masters they are copies of (the owner's task
 // of 2026-10-21; `brand/README.md`; D125).

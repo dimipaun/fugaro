@@ -1,6 +1,10 @@
 # The mobile app's sign-in, pairing and allowlist, reconciled against the code
 
-**Status: plan only; no code is implemented, and nothing here is approved.** This document reads
+**Status: plan only; no code is implemented, and nothing here is approved. Amended 2026-10-22:**
+the owner accepted **D221–D236 as recommended**, with **P0 and P1 approved** and **P3–P5 ordered
+after P6.6 and P6.8** — recorded, with the provenance of the relay, in [README.md](README.md); every
+other part stays proposed. The paragraph below is the state of 2026-10-21 and is kept as written.
+This document reads
 the owner's [spec.md](spec.md) ("Fugaro Mobile App Auth Spec", 2026-10-20) against the tree at
 `main` `d9dda8f3` (`cli: fugaro --version and fugaro -v print the version, like fugaro version
 (#794)`) on **2026-10-21**, and against the neighbouring documents it names. Every path and symbol
@@ -34,7 +38,7 @@ restate the domain half, so the domain rule is this work's D223 and not a ruling
 ([README.md](README.md)'s collision paragraph reads the same way now) — and the glossary's
 **Pairing** entry names the node the phone writes at its real path, `pairing/<uid>/request`: the two
 pairing nodes are root-level, beside `config`, not under it (`rules.json.tmpl` and
-`testdata/rules.golden.json`; `docs/mobile/functional-spec-reconciliation.md` §3.7 was corrected in
+`internal/budget/rules/testdata/rules.golden.json`; `docs/mobile/functional-spec-reconciliation.md` §3.7 was corrected in
 the same change). No finding, decision or part moves.
 
 **One thing this document is not.** It is not a second opinion about the mobile work. The app's
@@ -94,8 +98,9 @@ than quietly worked around:
    (`docs_mobile_plan_test.go`, `docs_mobile_checks_review_test.go`, `docs_mobile_push_test.go`,
    `docs_mobile_mailbox_plan_test.go`) and four quoting it beside their own folder's claims. The
    numbers register is pinned by `internal/cli/docs_coordinator_test.go` and
-   `internal/cli/docs_voice_switch_test.go`. **`docs/mobile-auth/` has no pin yet**, and P0 of the
-   plan is the part that gives it one. (This paragraph and §F27 are the same count; the earlier
+   `internal/cli/docs_voice_switch_test.go`. **`docs/mobile-auth/` had no pin at this reading**, and
+   P0 of the plan is the part that gave it one — `internal/cli/docs_mobile_auth_test.go`, landed
+   2026-10-22. (This paragraph and §F27 are the same count; the earlier
    revision of both got the number wrong.)
 5. **The provider guidance cannot be read from here.** Expo SDK 58's options for Google (Credential
    Manager versus the Google Sign-In SDK), for Microsoft (browser OAuth) and for Apple
@@ -344,8 +349,8 @@ pins in `internal/cli`'s `docs_*_test.go` family name `docs/mobile/` — **four 
 `docs_voice_module_test.go`) — **no test reads `docs/central-orchestrator/` at all**, and the
 register is pinned by `internal/cli/docs_coordinator_test.go` and
 `internal/cli/docs_voice_switch_test.go`.
-**Consequence:** P0 of the plan gives this folder a guard, and the guard's own comment states what
-it does **not** hold.
+**Consequence:** P0 of the plan gave this folder a guard — `internal/cli/docs_mobile_auth_test.go`,
+landed 2026-10-22 — and the guard's own comment states what it does **not** hold.
 
 **F28 — Open. `belong`.** D114 (`docs/mobile/reconciliation.md`) records that `belong` is one of
 the app's installations, *"added by the owner by hand"*, and that *"no agent ever touches it"*.
@@ -447,9 +452,14 @@ domain, each with a role, exact overrides domain"* fits it as follows:
 ## 4. The decisions planning found: D221–D236
 
 **Each row is a decision, not a question**, and each is written **recommendation first**, with the
-alternative and its cost. The plan is written to the recommendations; a part whose decision is
-answered the other way is rewritten before it starts, not after. **Nothing here is answered, and
-nothing in this folder is approved.** The numbers are taken from the register the way
+alternative and its cost. (**D235 is the one that states none**: it asks what v1 is and what is
+later, so it answers with a v1 list and a later list rather than with a choice between two things,
+and there is no second option to price.) The plan is written to the recommendations; a part whose decision is
+answered the other way is rewritten before it starts, not after. **Every one of the sixteen was
+answered by the owner on 2026-10-22, each as recommended**, and each answer stands under its own
+decision below; the plan's **P0 and P1 are approved**, and **P3, P4 and P5 still wait** on the
+mobile Phase 6 tasks, exactly as the plan's §11 records. The numbers are taken from the register
+the way
 `docs/mobile/voice-session/README.md` takes its own: the highest **written** decision number in
 `docs/` at `d9dda8f3` is **D220** (that folder's own block), **D193–D197** are the coordinator's, and
 **D198–D200** are free but **D200** is recorded there as possibly held by the owner's notes — so
@@ -471,6 +481,10 @@ Fugaro component wrote (F7). **The recommendation is not a refusal of the idea**
 sign-in that *identifies* a person to the admin who is pairing them is cheap and useful, and it is
 what D222 and D226 shape.
 
+**Answered 2026-10-22: as recommended** — no provider session reaches a project's database:
+sign-in stays custom tokens only, and a provider sign-in, if the owner ever wants one, is an
+identity claim checked once, at pairing.
+
 ### D222 — What is the allowlist, and where does it live?
 
 **Recommendation: the device node, with the administered email and role as fields on it** — exactly
@@ -481,6 +495,9 @@ what the owner's answer of 2026-10-20 defines (`docs/mobile/functional-spec-reco
 cannot reproduce from `auth.token.email`; and the node would be a **second** record of the same
 fact as the device node, with the two able to disagree — which is the state D166's "delete the node
 and it is over" was written to avoid.
+
+**Answered 2026-10-22: as recommended** — the allowlist is the device node, with the
+administered email and the role as fields on it, and no email-keyed map anywhere.
 
 ### D223 — Where is the domain rule enforced?
 
@@ -498,6 +515,9 @@ literal-pattern form admits exactly one pattern per project (a set cannot be rea
 the dynamic form is UNVERIFIED (§5), and either way it admits an address **before** anyone has
 looked at it — which is the opposite of an allowlist.
 
+**Answered 2026-10-22: as recommended** — the domain rule is enforced at administration, when
+the entry is written; nothing at read time tests a domain.
+
 ### D224 — Where does "an exact email overrides its domain's role" get resolved?
 
 **Recommendation: once, in the CLI, at the write.** The resolver takes the entry being added, the
@@ -508,6 +528,9 @@ re-role anyone (a re-role is a write to the node, and it is recorded as one).
 CLI, the console, the consumer — reimplements the ordering, and the rules cannot do it at all
 (F13), so the one place where the rule would be missing is the one place it matters.
 
+**Answered 2026-10-22: as recommended** — the exact-over-domain resolution runs once, in the
+CLI, at the write, and the node stores the resolved role.
+
 ### D225 — Where does the role live, and what reads it in v1?
 
 **Recommendation: a `role` field on the device node, written from day one and read in v1 by the
@@ -516,6 +539,9 @@ else"*), with the first rule that needs it reading it as a sibling field of the 
 expressible and immediate. **Alternative:** put the role in a claim on a minted token. **Cost:** a
 claim cannot be revoked before it expires (`PathDevices`'s comment, F5), so a demoted admin stays
 an admin for up to an hour — the exact failure D166 chose a node to prevent.
+
+**Answered 2026-10-22: as recommended** — the role is a field on the device node, written day
+one, read in v1 by the CLI and the console and **never by the rules**.
 
 ### D226 — The verified email: which claim, checked where?
 
@@ -528,6 +554,9 @@ the owner takes D221's alternative. **Alternative:** `auth.token.email_verified`
 Entra ID's directory identity may carry no address at all, and Apple's may be a relay (F16) — so
 the predicate would be true of some people and silently false of others, in the one place where a
 false negative locks a person out and a false positive lets one in.
+
+**Answered 2026-10-22: as recommended** — the CLI checks the verified email at pairing, in the
+shape `userEmail` already uses, and no rule trusts a provider's email claim.
 
 ### D227 — Sign in with Apple, and the private-relay address
 
@@ -544,6 +573,9 @@ Apple's ID token *"can't be silently refreshed on the client"*, so Apple is the 
 row in the spec's own table requires a Face ID prompt **per pairing** — which is the friction the
 first two rows were chosen to avoid.
 
+**Answered 2026-10-22: as recommended** — Apple is identity-only: a private-relay address is
+never an allowlist key and the relay domain is never a domain entry.
+
 ### D228 — The email link
 
 **Recommendation: refused in v1, by name.** It is the one provider in the spec's table whose
@@ -556,6 +588,8 @@ reversed), and a second authorisation path (the address in the link) that has to
 the node — plus the one requirement the spec states and cannot be engineered around: *"the link must
 be opened on the same phone"*.
 
+**Answered 2026-10-22: as recommended** — the email link is refused in v1, by name.
+
 ### D229 — The command: `fugaro allow add|rm|ls`, or `fugaro pair`?
 
 **Recommendation: `fugaro pair`, extended — not a new `allow` family.** P6.6's planned
@@ -567,6 +601,9 @@ things in this tree — `fugaro allow-delete` over Terraform addresses and `allo
 repositories (F24) — so a third meaning would make "the allowlist" a question rather than a
 reference, in the operator pages that have to distinguish all three.
 
+**Answered 2026-10-22: as recommended** — the command is **`fugaro pair`, extended**, with the
+email and the role arriving as flags and not as a new `allow` family.
+
 ### D230 — The project creator becomes the first admin: how?
 
 **Recommendation: the first pairing writes it, and `fugaro init` seeds the address it will match.**
@@ -577,6 +614,9 @@ the way the policy is published (F25) — so the first pairing of that address i
 second admin existing. **Alternative:** `fugaro init` writes the entry itself. **Cost:** no Auth
 `uid` exists before the creator signs in, and the node is keyed by `uid` (F2), so `init` would have
 to write an entry it cannot key — or write a *second* record keyed by address, which D222 refuses.
+
+**Answered 2026-10-22: as recommended** — the first pairing writes the first entry with `role:
+admin`, and `fugaro init` records the seed address it will match.
 
 ### D231 — "Allowlist changes are saved to the project Git repo": what file, who merges, and what is
 the source of truth?
@@ -596,6 +636,10 @@ the property F5 exists to keep. **What the alternative buys, stated:** an audita
 changed what, which is the real thing the spec's sentence asks for; the recommendation buys it with
 a record beside the node rather than a record in front of it.
 
+**Answered 2026-10-22: as recommended** — the node is the source of truth; the declared list in
+the project's `fugaro.yaml` is a seed and a record, published to the node, and a publish never
+re-adds what an operator removed.
+
 ### D232 — What the app stores on the device
 
 **Recommendation: two items stay two** — `mobile/src/accounts/secret.js`'s `SECRET_ITEMS`
@@ -605,6 +649,9 @@ third item in a deliberately closed set, a refresh path per provider, and the ap
 (`mobile/src/boundary.test.js`, `mobile/src/accounts/index.js`) rewritten to admit it — which is
 exactly the deliberate act they exist to force, so the alternative is *possible*; the recommendation
 is that it is not worth what it costs while D221 stands.
+
+**Answered 2026-10-22: as recommended** — two secure-store items stay two (`idToken`,
+`macKey`), and no provider credential is stored.
 
 ### D233 — The QR payload
 
@@ -616,6 +663,9 @@ without a sign-in (F4 of §1, D165). **Alternative:** add the project's email do
 creator's address, to the payload so the app can pre-check. **Cost:** the payload is a public,
 photographable artifact; anything on it is disclosed to anyone who sees the screen, and a
 pre-check on the phone is a check nobody is accountable for.
+
+**Answered 2026-10-22: as recommended** — the QR payload is unchanged: the Firebase
+configuration and the one-shot pairing token, never an identity.
 
 ### D234 — The per-project Firebase app instance on the phone
 
@@ -629,6 +679,9 @@ session and one listener set per paired project held simultaneously, a refresh p
 and the promise of the spec's step 6 (no new sign-in for later projects) bought with the credential
 class D232 refuses. **If the owner ever takes D221's alternative**, this decision is the one that
 has to be re-taken first, because it decides how much of the device the model occupies.
+
+**Answered 2026-10-22: as recommended** — v1 has no per-project Firebase app instance, and the
+account model stays D114's.
 
 ### D235 — What is v1, and what is later?
 
@@ -645,6 +698,9 @@ the spec's *"later from the console"*, which needs the console's operator page, 
 is the spec's own deferral, and which needs `docs/credentials-service/`'s first slice to exist
 (§0.2).
 
+**Answered 2026-10-22: as recommended** — v1 is the allowlist's two fields and the CLI that
+writes them; the provider half, the console's screen and the minted custom tokens are later.
+
 ### D236 — Which release does this belong to?
 
 **Recommendation: the first release after the mobile Phase 6 tasks it extends — 0.12.0, or whatever
@@ -658,6 +714,9 @@ set and a second writer of the authorisation record in a release that has to shi
 security surfaces. **No
 part of the plan assumes a release that has not shipped**, so a later release costs nothing but
 time.
+
+**Answered 2026-10-22: as recommended** — the first release after the mobile Phase 6 tasks it
+extends, 0.12.0 or whatever that release is called, and not 0.11.0.
 
 ---
 

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See mobile/LICENSE.md for the terms.
 // The three fences around the demo (owner ruling of 2026-10-19, and the task's
 // own requirement): it can never touch the network, it can never touch secure

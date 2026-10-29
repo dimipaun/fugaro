@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // A fake `fugaro`, for the tests that must observe what the console hands a
 // child process (desktop-console plan Task 1.3).

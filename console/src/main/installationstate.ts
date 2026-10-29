@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // What the console knows about one installation, and what the rail draws for
 // it (owner's design ruling of 2026-10-25: the console never shows a picker

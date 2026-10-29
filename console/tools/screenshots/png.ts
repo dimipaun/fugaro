@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The PNG half of the screenshot run: what a captured file has to be for the
 // run to call it a picture (owner ruling 2026-10-20, step 4: "exits non-zero if
