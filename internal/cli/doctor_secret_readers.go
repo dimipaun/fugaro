@@ -73,20 +73,22 @@ func doctorSecretReaderChecks(ctx context.Context, lc *localcfg.Config, sm *gcp.
 	if sm == nil {
 		return nil
 	}
-	containers, err := sm.List(ctx, nil)
-	if err != nil {
-		return []doctorCheck{{ID: "secret-readers-unexpected", Severity: "warning",
-			Problem: "could not list the secret containers of project " + lc.GCPProject + ", so who can read them was not checked: " + oneLineCLI(err.Error()),
-			Fix:     "rerun fugaro doctor with access to the project, or as an operator"}}
-	}
-	slices.SortFunc(containers, func(a, b gcp.SecretInfo) int { return strings.Compare(a.ID, b.ID) })
-	known := fugaroSecretReaderMembers(lc)
-	roles := newIAMRoles(ctx, lc)
-
 	var (
 		ownersEditors []string
 		checks        []doctorCheck
 	)
+	containers, err := sm.List(ctx, nil)
+	if err != nil {
+		// The listing is one of the sweep's two reads, and its failure must not
+		// hide the other half: a project-level grant is a read of its own.
+		checks = append(checks, doctorCheck{ID: "secret-readers-unexpected", Severity: "warning",
+			Problem: "could not list the secret containers of project " + lc.GCPProject + ", so who can read them was not checked: " + oneLineCLI(err.Error()),
+			Fix:     "rerun fugaro doctor with access to the project, or as an operator"})
+	} else {
+		slices.SortFunc(containers, func(a, b gcp.SecretInfo) int { return strings.Compare(a.ID, b.ID) })
+	}
+	known := fugaroSecretReaderMembers(lc)
+	roles := newIAMRoles(ctx, lc)
 	// The project's own policy first: its basic roles are named once, and its
 	// reader roles are a finding of their own, since a project-level grant is
 	// every container at once.
@@ -337,7 +339,9 @@ func doctorCredentialsServiceDeployers(ctx context.Context, lc *localcfg.Config,
 	}
 	// A test configuration (no_auth with no run endpoint) has nowhere to read
 	// the service from: building the client would point it at the real Cloud
-	// Run API, which a rig must never call.
+	// Run API, which a rig must never call. The line names it unread rather
+	// than leaving it out, so "nothing grants a deploy" is never said about a
+	// policy nobody looked at.
 	if !lc.Endpoints.NoAuth || lc.Endpoints.Run != "" {
 		svc, err := runapi.NewService(ctx, doctorAPIOpts(lc, lc.Endpoints.Run)...)
 		if err != nil {
@@ -354,6 +358,8 @@ func doctorCredentialsServiceDeployers(ctx context.Context, lc *localcfg.Config,
 				deployers = append(deployers, deployerMembers(bindingsOf(sp.Bindings, runBindingFields), roles, runServiceRoles, runServicesUpdate)...)
 			}
 		}
+	} else {
+		unread = append(unread, "the IAM policy of the Cloud Run service "+infra.CredentialsServiceName+", in a test configuration")
 	}
 	account := infra.CredentialsAccountID + "@" + lc.GCPProject + ".iam.gserviceaccount.com"
 	if !lc.Endpoints.NoAuth || lc.Endpoints.IAM != "" {
@@ -369,6 +375,8 @@ func doctorCredentialsServiceDeployers(ctx context.Context, lc *localcfg.Config,
 				deployers = append(deployers, deployerMembers(bindingsOf(ap.Bindings, saBindingFields), roles, actAsRoles, actAs)...)
 			}
 		}
+	} else {
+		unread = append(unread, "the IAM policy of "+account+", in a test configuration")
 	}
 	slices.Sort(deployers)
 	deployers = slices.Compact(deployers)
