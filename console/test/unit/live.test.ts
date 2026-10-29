@@ -488,38 +488,74 @@ describe('the row model', () => {
     expect(queued.requestedBy).toBe('redacted@example.invalid')
   })
 
-  it('draws who started a run as the short form, and no cell for a run nobody is named on', () => {
-    // Owner request 2026-10-18: the Started-by column, on the Live row. The
-    // fixture predates `launched_by`, so the key is added to the frame as it
-    // arrived and read back through the decoder -- the row is built the way a
-    // 0.9.0 feed builds it, rather than around `schema.ts`.
+  it('draws the design’s seven columns, and the fields the table has no column for leave the row', () => {
+    // **Console redesign step 2b: the row is a table row now.** The design's
+    // runs table has RUN, TASK, PIPELINE, CODER / REVIEWER, COST, ELAPSED and
+    // STATUS, and the fields the flex row used to draw beside the title --
+    // who started the run, the requester, the recipe, the workflow, the verify
+    // word -- have no column. They stay in the **model** (`LiveRunRow`), so a
+    // later step that wants one has the document's value to draw; what this
+    // test holds is that no cell is drawn for them, which is the half a reader
+    // of the screen would otherwise have to guess.
     const frame = theLastFrame()
+    const dropped = [
+      'live-run-verify',
+      'live-run-recipe',
+      'live-run-workflow',
+      'live-run-requester',
+      'live-run-started-by',
+    ]
     const runs = frame.runs.map((run) =>
       run.run === QUEUED_RUN ? { ...run, launchedBy: 'dana.person+fugaro@example.com' } : run,
     )
     const tree = renderLive(factory, buildLiveModel({ ...frame, runs }, new BurnHistory()), 'light')
-    // The short form, exactly as `fugaro runs ls` writes it
-    // (`runview.LauncherShort`): the part before the address's `@`.
-    expect(texts(tree, 'live-run-started-by')).toEqual(['dana.person+fugaro'])
-    // The address the record named is in no cell of the screen: the cut is the
-    // column's, so no `@` -- and no domain -- reaches a cell.
-    for (const leaf of walk(tree)) {
-      expect(leaf.textContent ?? '').not.toContain('dana.person+fugaro@example.com')
+    for (const className of dropped) {
+      expect(all(tree, className), `${className} is drawn`).toHaveLength(0)
     }
-    // The run beside it keeps no launcher, and a row without one draws no cell
-    // at all: not an empty span, which would add a flex gap, and never another
-    // person's name (the request's "fail private").
-    const untouched = renderLive(factory, modelOf(frame), 'light')
-    expect(all(untouched, 'live-run-started-by')).toHaveLength(0)
-    // A launcher that shortens to nothing a cell can draw is that same empty
-    // cell, and not an empty span: `'  @example.com'` shortens to `'  '`, which
-    // the label class would trim to `''` and draw as a blank element with the
-    // row's `gap` around it (`launcher.ts`'s `blank`).
-    const blank = frame.runs.map((run) =>
-      run.run === QUEUED_RUN ? { ...run, launchedBy: '  @example.com' } : run,
-    )
-    const blanks = renderLive(factory, buildLiveModel({ ...frame, runs: blank }, new BurnHistory()), 'light')
-    expect(all(blanks, 'live-run-started-by')).toHaveLength(0)
+    // The model still carries them, so the columns are a drawing decision and
+    // not a hole in the decoder.
+    const model = buildLiveModel({ ...frame, runs }, new BurnHistory())
+    const row = model.repos[0]?.runs.find((one) => one.run === QUEUED_RUN)
+    if (row === undefined) throw new Error('no queued row')
+    expect(row.launchedBy).toBe('dana.person+fugaro@example.com')
+    expect(row.requestedBy).toBe('redacted@example.invalid')
+  })
+
+  it('draws one cell per column, in the design’s order, and the id cell is the door', () => {
+    // The row's shape, asserted cell by cell: `entry.ts`'s `wireRuns` reads the
+    // text of `.live-run-id` off the row it is bound to and opens Run detail
+    // with it, so the id has to be a cell of the row **and** carry the run's own
+    // drawn text. A row that drew the id somewhere else, or drew the raw wire
+    // value into an attribute, would leave the door matching nothing.
+    const tree = renderLive(factory, modelOf(theLastFrame()), 'light')
+    const rows = all(tree, 'live-run')
+    expect(rows.length).toBeGreaterThan(0)
+    for (const row of rows) {
+      expect(row.tag).toBe('tr')
+      expect(row.getAttribute('data-queued')).not.toBeNull()
+      const cells = row.childNodes().filter((child) => child.tag === 'td')
+      expect(cells).toHaveLength(7)
+      const id = one(row, 'live-run-id')
+      expect(id.tag).toBe('td')
+      expect(id.textContent).not.toBe('')
+      // The door reads this cell and nothing else on the row.
+      expect(all(row, 'live-run-id')).toHaveLength(1)
+      expect(texts(row, 'live-run-stage')).toHaveLength(1)
+      expect(texts(row, 'live-run-state')).toHaveLength(1)
+      expect(texts(row, 'live-run-spend')).toHaveLength(1)
+      expect(texts(row, 'live-run-age')).toHaveLength(1)
+    }
+    // The seven `td`s and the `th` row are the same columns: a heading with no
+    // cell under it is a column the reader looks for and does not find.
+    expect(texts(tree, 'live-table-head')).toEqual([
+      'RUN',
+      'TASK',
+      'PIPELINE',
+      'CODER / REVIEWER',
+      'COST',
+      'ELAPSED',
+      'STATUS',
+    ])
   })
 
   it('takes a run\'s rigor from the join by id, and draws no chip without one', () => {
@@ -1239,13 +1275,20 @@ describe('the rendered screen', () => {
     // that reached for one fails here. What is left is the set below: the
     // class hooks the design's density rules need and `data-` readings a test
     // and the stylesheet read, the three accessibility attributes (which cannot
-    // make the window do anything), and -- **on a node the SVG namespace made,
-    // and only there** -- the presentation attributes the cap bar's geometry is
-    // built from. The namespace is what the fake records, not the tag: a `rect`
-    // made with `create` is an HTML element and is not held to this set.
+    // make the window do anything), `type` on a `button` (which is what
+    // `writes.ts`'s `disabledWrite` draws, and it can only *stop* a form
+    // submission), and -- **on a node the SVG namespace made, and only there**
+    // -- the presentation attributes the cap bar's geometry is built from. The
+    // namespace is what the fake records, not the tag: a `rect` made with
+    // `create` is an HTML element and is not held to this set.
     const MAXIMAL = new Set(['svg', 'rect'])
     const SVG_ATTRIBUTES = new Set(['viewBox', 'preserveAspectRatio', 'width', 'height', 'x', 'y', 'rx'])
-    const ACCESSIBILITY = new Set(['role', 'aria-label', 'aria-hidden'])
+    // `aria-disabled` joins the set with the redesign: the Halt project and
+    // Reap buttons are real `button`s a reader is told are not available. The
+    // attribute describes the element to assistive technology, it schedules no
+    // handler of its own, and a control that carried no text of its own would
+    // still be caught by the tests that click it and watch nothing happen.
+    const ACCESSIBILITY = new Set(['role', 'aria-label', 'aria-hidden', 'aria-disabled'])
     const tree = renderLive(factory, modelOf(theLastFrame()), 'light')
     // The panel draws at least one of each, or the widening above would be a
     // licence for attributes nothing sets.
@@ -1257,6 +1300,7 @@ describe('the rendered screen', () => {
             name === 'title' ||
             name.startsWith('data-') ||
             ACCESSIBILITY.has(name) ||
+            (name === 'type' && node.tag === 'button') ||
             (node.namespace === 'svg' && MAXIMAL.has(node.tag) && SVG_ATTRIBUTES.has(name)),
           `${node.tag}[${name}]`,
         ).toBe(true)

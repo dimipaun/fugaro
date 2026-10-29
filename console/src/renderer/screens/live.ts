@@ -604,7 +604,9 @@ export interface LiveRunRow {
   readonly workflow: string | null
   readonly requestedBy: string | null
   /** the run's whole recorded launcher (`launched_by`), `null` when the record
-   * carries none; the cell draws `launcherShort` of it (`shared/launcher.ts`) */
+   * carries none. **The runs table has no column for it** (console redesign,
+   * step 2b): the value is the record's, and `shared/launcher.ts` is still the
+   * module that shortens it, so a step that wants the column back has both. */
   readonly launchedBy: string | null
   readonly spend: Reading
   readonly age: Reading
