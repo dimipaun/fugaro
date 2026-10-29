@@ -60,3 +60,32 @@ func TestRenderPlainReadySurvivesAFilteredView(t *testing.T) {
 		t.Fatalf("a 30h-old ready PR must still be listed:\n%s", got)
 	}
 }
+
+// TestRenderPlainWarnsAtEightyPercent: the plain frames have no colour at all,
+// so the cap figure they print must carry the 80% warning itself (R5), and the
+// threshold is the ratio, not the rounded figure: 79.9% draws "(80%)" and no
+// mark.
+func TestRenderPlainWarnsAtEightyPercent(t *testing.T) {
+	view := func(pct float64) View {
+		return View{
+			Now: t0, Day: "2026-10-03", Mode: "enforce", Conn: Connection{Kind: ConnLive},
+			Project: ProjectLine{Bar: Bar{Has: true, Used: 40 * usd, Cap: 50 * usd, Percent: pct}, Runs: 1},
+		}
+	}
+	plain := func(pct float64, ascii bool) string {
+		var b strings.Builder
+		if err := RenderPlain(&b, "aurora", view(pct), nil, PlainOptions{ASCII: ascii}); err != nil {
+			t.Fatal(err)
+		}
+		return b.String()
+	}
+	if got := plain(79.9, false); !strings.Contains(got, "counted $40.00 of $50.00 (80%)") || strings.Contains(got, "⚠") {
+		t.Fatalf("79.9%% of the cap must print no warning:\n%s", got)
+	}
+	if got := plain(80, false); !strings.Contains(got, "counted $40.00 of $50.00 (80% ⚠)") {
+		t.Fatalf("80%% of the cap drew no warning:\n%s", got)
+	}
+	if got := plain(80, true); !strings.Contains(got, "counted $40.00 of $50.00 (80% !)") {
+		t.Fatalf("the ascii warning is missing:\n%s", got)
+	}
+}

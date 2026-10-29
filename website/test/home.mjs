@@ -65,7 +65,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { cssDeclarations, cssRules, findAll, filesUnder, parse, textOf, walk } from './lib/html.mjs'
@@ -861,24 +861,10 @@ function benefitsOf(html) {
  *     quotation, while the page sold the reader the sentence about safety under the name about
  *     models. Held to the reason's own paragraph, a line that moved stops the build (Global
  *     Constraint 6, D102);
- *   - **every benefit carries exactly one icon, it draws something, it is decoration, and it
- *     fetches nothing.** The owner's feedback of 2026-10-19 asks each point for an icon; so the
- *     page may not render a benefit with none, with two, with a `<svg>` that has no shape in it
- *     and so renders as an empty box, with an icon a screen reader is handed as content beside
- *     the name that already says the point, with one that is not marked out of the tab order,
- *     or with one that references a file or an origin — an icon font, an `<image>`, a
- *     `<use href>`, an inline style. **The empty drawing is the refusal no other gate can
- *     make**: the element is present, named and clean, and the reader sees nothing, which is
- *     the defect this round is about. The four glyphs are also held to being four: four points
- *     drawn with one picture is one icon used four times, and the picture then says nothing
- *     about the point under it.
- *   - **the drawing is a mark the eye reads as symmetric, and it sits on the middle of its
- *     box.** The owner's feedback of 2026-10-21: the icon under "The newest tools and models,
- *     ready to use" is asymmetrical. A glyph drawn as one closed outline of straight edges is
- *     held to being mirrored onto itself about both lines through its own middle, and to that
- *     middle being the middle of the 24×24 box the set draws in — the rule is
- *     `glyphSymmetryFailures` below, written over the drawing rather than over the star by
- *     name, and a glyph drawn with curves or in several strokes is not read by it.
+ *   - **no benefit carries an icon** (the owner's ruling of 2026-10-23, the redesign's Step 3,
+ *     lever 5, which retired the icon-topped points the feedback of 2026-10-19 had asked for).
+ *     The glyph readings below (`glyphSymmetryFailures`) stay as the reading of a drawing, for
+ *     any glyph the site draws again.
  *
  * Written as a function over a benefits section and the README's reasons so a fixture can
  * prove it refuses.
@@ -927,53 +913,17 @@ export function benefitFailures(benefits, reasons) {
   // 2026-10-19). Read per benefit rather than as a count over the section, because "four
   // icons for four benefits" is also true of one benefit with four of them and three with
   // none.
+  // **No icons since the owner's ruling of 2026-10-23** (the redesign's Step 3, lever 5: the row
+  // of identical icon cards becomes one composed section). The feedback of 2026-10-19 asked each
+  // point for an icon; the audit of 2026-10-23 flagged the result as icon-topped cards, and the
+  // points are now four headed paragraphs. A point drawn with an icon is the retired shape.
   for (const [index, item] of benefits.items.entries()) {
     const icons = item.icons ?? []
-    const where = `benefit ${index + 1} of the benefits`
-    if (icons.length !== 1) {
+    if (icons.length > 0) {
       out.push(
-        `${where} carries ${icons.length} icon(s) and every point of the benefits carries one: the owner's feedback of 2026-10-19 asks each point for an icon, and a benefit drawn with none or with several is a point the picture does not mark (the owner's feedback of 2026-10-19)`,
-      )
-      continue
-    }
-    const [icon] = icons
-    // **The icon has to draw something.** An `<svg>` with no shape in it is a point rendered
-    // with nothing where the owner's feedback of 2026-10-19 asks for a picture, and it is the
-    // one defect of this set that no other check in this file or in `a11y.mjs` can see: the
-    // element is present, named, decorated and clean, and the reader gets an empty box. The
-    // component keeps its glyphs as drawings rather than as template branches for the same
-    // reason, and this is what holds the artifact to it.
-    if (icon.drawing === '') {
-      out.push(
-        `${where}: its icon draws nothing (an <svg> with no shape in it), and an icon is what marks the point — a glyph that renders as an empty box is a point with no picture at all, which is the defect the owner's feedback of 2026-10-19 asks this section not to have`,
+        `benefit ${index + 1} of the benefits carries ${icons.length} icon(s), and the points carry none since the owner's ruling of 2026-10-23: the row of icon-topped points is the shape that ruling retired`,
       )
     }
-    if (!icon.hidden) {
-      out.push(
-        `${where}: its icon is not marked as decoration (aria-hidden="true"), and the picture is the point's — a screen reader handed the glyph as well reads the name beside it twice (the owner's feedback of 2026-10-19)`,
-      )
-    }
-    if (!icon.focusable) {
-      out.push(
-        `${where}: its icon is not marked out of the tab order (focusable="false"), which is the other half of the decoration contract this site already writes on a drawing — \`a11y.mjs\` holds the slider's step icons to the same pair — and an icon is decoration on both (the owner's feedback of 2026-10-19)`,
-      )
-    }
-    if (icon.reference !== '') {
-      out.push(
-        `${where}: its icon references something outside itself (${icon.reference}), and an icon of this site is inline SVG drawn with the page's own tokens — an icon font, an image file, a <use href> or an inline style is another thing a reader's browser has to fetch, or a colour the palette does not carry (the owner's feedback of 2026-10-19; Global Constraints 4 and 8)`,
-      )
-    }
-    out.push(...glyphSymmetryFailures(icon.drawing, where))
-  }
-
-  // Four points, four pictures: a glyph repeated under two points is one icon used twice, and
-  // the drawing then says nothing about the point it sits under.
-  const drawings = benefits.items.flatMap((item) => (item.icons ?? []).map((icon) => icon.drawing))
-  if (new Set(drawings).size !== drawings.length) {
-    const repeated = drawings.filter((drawing, i) => drawings.indexOf(drawing) !== i)
-    out.push(
-      `the benefits draw ${drawings.length} icon(s) with ${new Set(drawings).size} distinct picture(s), so ${repeated.length} of them repeat another point's glyph (${JSON.stringify(repeated[0])}): each point carries a glyph of its own (the owner's feedback of 2026-10-19)`,
-    )
   }
   return out
 }
@@ -988,15 +938,13 @@ function iconMarkup(body, marks = 'aria-hidden="true" focusable="false"') {
   return `<svg class="benefit-icon" viewBox="0 0 24 24" ${marks}>${body}</svg>`
 }
 
-/** Four distinct drawings, one per point, so the fixture section is the page the gate passes. */
-const FIXTURE_GLYPHS = ['M1 1h2v2', 'M3 3h2v2', 'M5 5h2v2', 'M7 7h2v2']
 
 /** A page carrying nothing but a benefits section, for the refusals above. */
 function benefitsPage(items, { title = BENEFITS_TITLE, source = BENEFITS_SOURCE, sections = 1 } = {}) {
   const body = items
     .map(
       (item, index) =>
-        `<li class="benefit">${item.icon ?? iconMarkup(`<path d="${FIXTURE_GLYPHS[index % FIXTURE_GLYPHS.length]}"></path>`)}<h3 class="benefit-name">${item.name}</h3><p class="benefit-line">${item.line}</p></li>`,
+        `<li class="benefit">${item.icon ?? ''}<h3 class="benefit-name">${item.name}</h3><p class="benefit-line">${item.line}</p></li>`,
     )
     .join('')
   const section = `<section class="home-benefits" aria-labelledby="benefits-title" data-source="${source}"><h2 class="benefits-title" id="benefits-title">${title}</h2><ul class="benefit-list">${body}</ul></section>`
@@ -1077,136 +1025,20 @@ test('the benefits refusals fire on a paraphrase, a shuffled line and a dropped 
   )
 })
 
-test('the benefits refusals fire on a missing icon, a second one, a named glyph and a repeated one', () => {
-  // The owner's feedback of 2026-10-19: "use an icon for each point". Five defects, each
-  // planted alone beside the section that keeps the rule, so the gate is a gate rather than a
-  // description of today's markup: a point with no icon, a point with two, an icon a screen
-  // reader is handed as content, one that references another file, and four points drawn with
-  // one picture between them. The fixture passes with its four distinct glyphs, which is what
-  // makes the five refusals below about the planted defect and not about the fixture.
+test('the benefits refusal fires on a point drawn with an icon', () => {
+  // The owner's ruling of 2026-10-23 (the redesign's Step 3, lever 5) retired the icon on each
+  // point. The fixture passes with no icon; a point with one, or with two, is refused.
   const reasons = readmeReasons()
   const good = reasons.map((reason) => ({ name: reason.name, line: firstSentence(reason.paragraph) }))
-  assert.deepEqual(benefitFailures(benefitsOf(benefitsPage(good)), reasons), [], 'the fixture section is not the README\'s own, so the five refusals below prove nothing')
-
+  assert.deepEqual(benefitFailures(benefitsOf(benefitsPage(good)), reasons), [], 'the fixture section is not the README\'s own, so the refusals below prove nothing')
   const plant = (index, icon) => good.map((item, i) => (i === index ? { ...item, icon } : item))
   const refusal = (items) => benefitFailures(benefitsOf(benefitsPage(items)), reasons).join('\n')
-
+  assert.match(refusal(plant(0, iconMarkup('<path d="M1 1h2v2"></path>'))), /benefit 1 of the benefits carries 1 icon\(s\)/, 'a point drawn with an icon is not refused')
   assert.match(
-    refusal(plant(0, '')),
-    /benefit 1 of the benefits carries 0 icon\(s\) and every point of the benefits carries one/,
-    'a benefit drawn with no icon is not refused',
+    refusal(plant(2, iconMarkup('<path d="M1 1h2v2"></path>') + iconMarkup('<path d="M9 9h2v2"></path>'))),
+    /benefit 3 of the benefits carries 2 icon\(s\)/,
+    'a point drawn with two icons is not refused',
   )
-
-  assert.match(
-    refusal(plant(0, iconMarkup('<path d="M1 1h2v2"></path>') + iconMarkup('<path d="M9 9h2v2"></path>'))),
-    /carries 2 icon\(s\)/,
-    'a benefit drawn with two icons is not refused',
-  )
-
-  assert.match(
-    refusal(plant(0, iconMarkup('<path d="M1 1h2v2"></path>', 'focusable="false"'))),
-    /benefit 1 of the benefits: its icon is not marked as decoration/,
-    'an icon a screen reader is handed as content beside the name is not refused',
-  )
-
-  assert.match(
-    refusal(plant(0, iconMarkup('<path d="M1 1h2v2"></path>', 'aria-hidden="true"'))),
-    /benefit 1 of the benefits: its icon is not marked out of the tab order/,
-    'an icon that is nothing of the decoration contract but its aria-hidden is not refused',
-  )
-
-  // The empty icon: an `<svg>` that renders as an empty box. Three shapes, a `<title>`, a
-  // `<defs>` and nothing drawn — every one of them a picture a reader never sees, and the one
-  // defect of this set that leaves the element present, named and clean.
-  for (const [what, body] of [
-    ['no children at all', ''],
-    ['a title and nothing else', '<title>shield</title>'],
-    ['an empty group', '<g></g>'],
-    ['definitions with no shape', '<defs><clipPath id="c"></clipPath></defs>'],
-  ]) {
-    assert.match(
-      refusal(plant(0, iconMarkup(body))),
-      /benefit 1 of the benefits: its icon draws nothing/,
-      `an icon of ${what} is not refused: a glyph that renders as an empty box is a point with no picture`,
-    )
-  }
-
-  // A reference from inside the `<svg>` and one on the `<svg>` itself: an icon font or an
-  // image file arrives through the first, and the second is the shape that has no glyph in it
-  // at all.
-  assert.match(
-    refusal(plant(0, iconMarkup('<use href="/icons.svg#shield"></use>'))),
-    /references something outside itself \(<use href="\/icons\.svg#shield">\)/,
-    'an icon that pulls a glyph in from another file is not refused',
-  )
-  assert.match(
-    refusal(plant(0, iconMarkup('<path d="M1 1h2v2"></path>', 'aria-hidden="true" focusable="false" style="stroke:red"'))),
-    /references something outside itself \(<svg style="stroke:red">\)/,
-    'an icon painted by an inline style is not refused',
-  )
-
-  assert.match(
-    refusal(good.map((item) => ({ ...item, icon: iconMarkup('<path d="M1 1h2v2"></path>') }))),
-    /draw 4 icon\(s\) with 1 distinct picture\(s\)/,
-    'four points drawn with one glyph between them are not refused',
-  )
-})
-
-test('the benefit icon symmetry refusal fires on the glyph the owner saw and on a glyph off the middle of its box', () => {
-  // The owner's feedback of 2026-10-21: "icon for 'The newest tools and models, ready to use'
-  // is asymmetrical". The glyph is a four-point star drawn as one closed outline of straight
-  // edges, and the drawing that shipped had the north-west notch left as a straight edge from
-  // the west point to the north one, with the whole mark a unit above the middle of the box.
-  // Both are planted here alone beside the fixture section that keeps the rule — the fixture's
-  // four glyphs are open outlines, which the rule has nothing to say about, so the two
-  // refusals below are about the planted drawing and not about the fixture.
-  const reasons = readmeReasons()
-  const good = reasons.map((reason) => ({ name: reason.name, line: firstSentence(reason.paragraph) }))
-  const refusal = (items) => benefitFailures(benefitsOf(benefitsPage(items)), reasons).join('\n')
-  assert.deepEqual(benefitFailures(benefitsOf(benefitsPage(good)), reasons), [], 'the fixture section is not the README\'s own, so the two refusals below prove nothing')
-
-  const plant = (path) => good.map((item, index) => (index === 0 ? { ...item, icon: iconMarkup(`<path d="${path}"></path>`) } : item))
-
-  // The star as it shipped: seven corners, one of them with nothing opposite it, and its
-  // middle at (12, 11).
-  const shipped = plant('M12 3l2.2 5.8L20 11l-5.8 2.2L12 19l-2.2-5.8L4 11Z')
-  assert.match(
-    refusal(shipped),
-    /not symmetric about the vertical line through its middle — 1 of its 7 corners have no corner opposite them \(\(9\.8, 8\.8\)\)/,
-    'the glyph the owner saw — three notches and a straight edge — is not refused',
-  )
-  assert.match(
-    refusal(shipped),
-    /its glyph's middle is \(12, 11\)/,
-    'a mark symmetric in itself and sitting off the middle of its box is not refused',
-  )
-
-  // The same defect from the other side: a star with all four notches and every corner
-  // mirrored, moved a unit up and to the left. Symmetric, and still not the set's glyph.
-  assert.doesNotMatch(
-    refusal(plant('M11 2l2.2 5.8L19 10l-5.8 2.2L11 18l-2.2-5.8L3 10l5.8-2.2Z')),
-    /not symmetric/,
-    'a symmetric star is refused for asymmetry',
-  )
-  assert.match(
-    refusal(plant('M11 2l2.2 5.8L19 10l-5.8 2.2L11 18l-2.2-5.8L3 10l5.8-2.2Z')),
-    /its glyph's middle is \(11, 10\)/,
-    'a star drawn off the middle of the box is not refused',
-  )
-
-  // The two glyphs the rule must not touch: one drawn with curves, and one drawn as separate
-  // strokes. Both are asymmetric or off the middle or both, and neither is a mark the rule
-  // reads — a refusal here would be this file refusing the icon set's own style.
-  for (const [what, path] of [
-    ['curves', 'M12 3l7 3v6c0 4-3.5 6.5-7 8-3.5-1.5-7-4-7-8V6Z'],
-    ['separate strokes', 'M11 13L19 5M13 5h6v6M13 11L5 19M11 19H5v-6'],
-  ]) {
-    assert.deepEqual(
-      glyphSymmetryFailures(`path d=${JSON.stringify(path)}`, 'benefit 1 of the benefits'),
-      [],
-      `a glyph drawn with ${what} is read by the symmetry rule, which is the icon set's own drawing being refused`,
-    )
-  }
 })
 
 /** The first sentence of a paragraph, for the fixture above: markdown markers taken out. */
@@ -1422,8 +1254,8 @@ test('the hero offers the console from its call to action only while the flag is
   // whether it is offered at all. (The changes spec of 2026-10-18 has an item 6 too, and it is
   // Getting Started's console option rather than this — `console-option.mjs` holds that one.)
   // This is the flag-off half over the build `npm run check` makes, and it applies only while
-  // the checkout's flag is false. The checkout now ships the flag TRUE (the console's
-  // `console-v0.9.0` release), so this case steps aside and `console-option.mjs` holds both
+  // the checkout's flag is false. The checkout now ships the flag TRUE (the console's own
+  // release stream), so this case steps aside and `console-option.mjs` holds both
   // halves: the flag-on row off this build and the flag-off row off an unreleased copy.
   const flag = /^\s*console_downloads:\s*(true|false)\s*$/m.exec(repoFile('website/data/site.yaml'))
   assert.ok(
@@ -1444,11 +1276,8 @@ test('the hero offers the console from its call to action only while the flag is
   // "findable" is item 6's word for the released state.
   assert.deepEqual(
     [...walk(actions)].filter((el) => el.name === 'a').map((el) => [textOf(el).trim(), el.attrs.get('href')]),
-    [
-      ['Get started', '/getting-started/'],
-      ['How it works', '/how-it-works/'],
-    ],
-    'the hero\'s call to action is not exactly the two links it carries while features.console_downloads is false: the console\'s link arrives with the flag, and until then the row says nothing about the console (the owner\'s brief of 2026-10-19, item 6)',
+    [['Get started', '/getting-started/']],
+    'the hero\'s call to action is not its one action (the owner\'s rulings of 2026-10-23, lever 2): the console is surfaced in the page\'s content, and `console-option.mjs` holds that row',
   )
   assert.ok(
     !/console/i.test(textOf(actions)),
@@ -1640,26 +1469,27 @@ const srcOfRow = (row) => `/${row.dir}/${row.file}`
  * no script receives it — which is why it is a statement about the artifact rather than about
  * the script that reveals the control bar.
  */
-function homeSliderFailures(page, rows) {
+function homeSliderFailures(page, allRows) {
   const out = []
   const doc = parse(page)
+  // **Since the owner's rulings of 2026-10-23 (the redesign's Step 3)** the slot is in the "what
+  // you get" section, the slider in it is the data file's console rows, and the Watch row (the
+  // file's last) is the hero's picture rather than a slide: the page shows it once.
+  const watchRow = allRows.find((row) => row.file === WATCH_FILE)
+  const rows = allRows.filter((row) => row.file !== WATCH_FILE)
 
-  const panel = findAll(doc, (el) => el.attrs.get('id') === 'home-panel-see')[0]
-  if (!panel) return ['the homepage carries no #home-panel-see, and the "See it" panel is the slide the slider is in (the owner\'s approved draft of 2026-10-19)']
+  const panel = findAll(doc, (el) => el.name === 'section' && (el.attrs.get('class') ?? '').split(/\s+/).includes('home-get'))[0]
+  if (!panel) return ['the homepage carries no "what you get" section (`section.home-get`), and that section is where the slider is (the owner\'s rulings of 2026-10-23)']
 
   const slot = findAll(doc, (el) => el.attrs.get('data-slot') === HOME_SLOT)[0]
   if (!slot) return ['the homepage carries no [data-slot="watch-screenshot"], and the slot is where the slides go (changes spec 2026-10-18, item 3)']
 
   let insidePanel = false
   for (let parent = slot.parent; parent; parent = parent.parent) if (parent === panel) insidePanel = true
-  if (!insidePanel) out.push('the slides\' slot is not in the "See it" panel, and the draft puts what a run looks like in the slide a reader opens to see it (the owner\'s approved draft of 2026-10-19)')
+  if (!insidePanel) out.push('the slides\' slot is not in the "what you get" section, which is where the page shows what a run looks like (the owner\'s rulings of 2026-10-23)')
 
-  const children = (panel.children ?? []).filter((child) => child.name !== undefined)
-  const heading = children.find((child) => child.name === 'h2')
-  if (!heading) {
-    out.push('the "See it" panel carries no heading, and the slides and the command below it belong to a named block (the owner\'s approved draft of 2026-10-19)')
-  } else if (children[children.indexOf(heading) + 1] !== slot) {
-    out.push('the slot for the slides is not the element after the "See it" heading: the panel reads heading, slider, command (the owner\'s approved draft of 2026-10-19)')
+  if (findAll(slot, (el) => el.name === 'h2').length !== 1) {
+    out.push('the slides\' slot carries no heading of its own, and the slides and the command beside them belong to a named block (the owner\'s rulings of 2026-10-23: a heading on every section)')
   }
   for (const attribute of ['src', 'srcset', 'href', 'style', 'aria-label', 'role']) {
     if (slot.attrs.has(attribute)) out.push(`the slot carries ${attribute}, and the hook this check reads is \`data-slot\` alone (changes spec 2026-10-18, item 3)`)
@@ -1720,12 +1550,20 @@ function homeSliderFailures(page, rows) {
   // the rule is what it was: a homepage that grew a picture the data file does not name — an
   // illustration, an icon, a screenshot of a screen the run does not have — is refused here
   // (Global Constraint 9).
+  // The rows' pictures on the whole page: the Watch capture once, in the hero, before the
+  // slides, and each console row once, as its slide, in the file's order. The page's other
+  // pictures (the wordmark, the run's zoom diagrams, the Spend screen beside the cost) are its
+  // own files and not rows of this data file; every picture is served from this site.
   const pictures = [...walk(doc)]
     .filter((el) => ['img', 'picture', 'video', 'source'].includes(el.name))
     .map((el) => el.attrs.get('src') ?? el.attrs.get('srcset') ?? '')
-  const want = ['/logo.png', ...rows.map(srcOfRow)]
-  if (JSON.stringify(pictures) !== JSON.stringify(want)) {
-    out.push(`the page renders the pictures ${JSON.stringify(pictures)}, and it renders ${JSON.stringify(want)}: the wordmark beside the site's name, and the slides' own files in the data file's order (owner spec of 2026-10-18, item 5; Global Constraint 9)`)
+  // (The run section and the cost section show two of the console's screens beside their own
+  // steps, so a console row's file may appear outside the slider; the slider's own order is held
+  // slide by slide above.)
+  const watchSrc = watchRow ? srcOfRow(watchRow) : null
+  const watchAt = watchSrc ? pictures.filter((src) => src === watchSrc).length : 0
+  if (pictures[0] !== '/logo.png' || (watchSrc && watchAt !== 1) || (watchSrc && pictures[1] !== watchSrc) || pictures.some((src) => !src.startsWith('/'))) {
+    out.push(`the page renders the pictures ${JSON.stringify(pictures)}: the wordmark first, the Watch capture once and first after it (the hero's picture), and nothing from another origin (owner spec of 2026-10-18, item 5; the owner's rulings of 2026-10-23; Global Constraint 9)`)
   }
   return out
 }
@@ -1825,7 +1663,9 @@ test('every slide is in the HTML a reader receives, with no script run at all', 
   // reveals. So a reader whose browser runs no script reaches all four slides by scrolling the
   // track or by following a dot, which is the site's rule (D183) and the reason the fallback is
   // a property of the markup rather than a promise about the script.
-  const rows = readScreenRows(HOME_SCREENS_YAML)
+  // The slides are the console rows; the Watch row is the hero's picture (the owner's rulings of
+  // 2026-10-23).
+  const rows = readScreenRows(HOME_SCREENS_YAML).filter((row) => row.file !== WATCH_FILE)
   const doc = parse(builtPage(''))
   const slider = findAll(doc, (el) => el.attrs.get('data-slot') === HOME_SLIDER_SLOT)[0]
   assert.ok(slider, `the built page carries no [data-slot="${HOME_SLIDER_SLOT}"], and the slides are rendered by the console page's component rather than by a script (D183)`)
@@ -1893,7 +1733,7 @@ test('a slider that is not the rows the data file names is refused, plant by pla
     {
       what: 'a slide dropped out of the markup',
       html: spent,
-      wants: /renders 3 <img> for 4 row\(s\)/,
+      wants: /renders 2 <img> for 3 row\(s\)/,
     },
   ]
   for (const { what, html, wants } of defects) {
@@ -1905,29 +1745,37 @@ test('a slider that is not the rows the data file names is refused, plant by pla
   // **A row dropped from the file** and **the Watch row moved off the end**: the page is built
   // again from the mutated file, and the reading is taken against the file as it ships — so a
   // page that rendered the same four slides whatever the file said fails both.
-  const dropped = buildWithHomeScreens(t, screensYAML(rows.slice(0, rows.length - 1)))
+  // A build whose data file drops a console row renders one slide fewer, and the reading of the
+  // shipped rows refuses it.
+  const fewer = rows.filter((_, index) => index !== 1)
+  const dropped = buildWithHomeScreens(t, screensYAML(fewer))
   const droppedPage = readFileSync(path.join(dropped.dist, 'index.html'), 'utf8')
   assert.equal(
     [...droppedPage.matchAll(/<li class="screen[^"]*" data-slider-slide/g)].length,
-    rows.length - 1,
-    `a build with ${rows.length - 1} row(s) in ${HOME_SCREENS_YAML} rendered a different number of slides: the slider is the rows, and a slide the file does not name is a picture nothing on the site accounts for`,
+    fewer.filter((row) => row.file !== WATCH_FILE).length,
+    `a build with ${fewer.length} row(s) in ${HOME_SCREENS_YAML} rendered a different number of slides: the slider is the console rows, and a slide the file does not name is a picture nothing on the site accounts for`,
   )
   assert.ok(
-    homeSliderFailures(droppedPage, rows).some((line) => /renders 3 <img> for 4 row\(s\)/.test(line)),
-    'the reading did not refuse the build whose data file dropped its last row: a page that renders three of four rows is the defect this case exists for',
+    homeSliderFailures(droppedPage, rows).some((line) => /renders 2 <img> for 3 row\(s\)/.test(line)),
+    'the reading did not refuse the build whose data file dropped a console row',
   )
 
-  const watchFirst = [rows[rows.length - 1], ...rows.slice(0, rows.length - 1)]
-  const moved = buildWithHomeScreens(t, screensYAML(watchFirst))
+  // And the file's order is the order a reader meets the slides in: a build with the console
+  // rows the other way round renders them the other way round, and the reading of the shipped
+  // order refuses it.
+  const consoleRows = rows.filter((row) => row.file !== WATCH_FILE)
+  const reversed = [...consoleRows].reverse()
+  const moved = buildWithHomeScreens(t, screensYAML([...reversed, ...rows.filter((row) => row.file === WATCH_FILE)]))
   const movedPage = readFileSync(path.join(moved.dist, 'index.html'), 'utf8')
+  const movedSlider = findAll(parse(movedPage), (el) => el.attrs.get('data-slot') === HOME_SLIDER_SLOT)[0]
   assert.deepEqual(
-    [...movedPage.matchAll(/<img[^>]*src="([^"]+)"/g)].map((m) => m[1]).slice(1),
-    watchFirst.map(srcOfRow),
-    `a build with the Watch row first in ${HOME_SCREENS_YAML} renders its slides in another order: the file's order is the order a reader meets them in, and "Watch last" is a fact about the file rather than a rule in the component`,
+    [...walk(movedSlider)].filter((el) => el.name === 'img').map((el) => el.attrs.get('src')),
+    reversed.map(srcOfRow),
+    `a build with the console rows reversed in ${HOME_SCREENS_YAML} renders its slides in another order: the file's order is the order a reader meets them in`,
   )
   assert.ok(
-    homeSliderFailures(movedPage, rows).some((line) => /renders the pictures/.test(line)),
-    'the reading did not refuse the build whose Watch row moved off the end: the brief puts that slide last (D252), and a page that moved it is the defect this case exists for',
+    homeSliderFailures(movedPage, rows).some((line) => /want the row's own file/.test(line)),
+    'the reading did not refuse the build whose slides are not in the shipped file\'s order',
   )
 })
 
@@ -1958,7 +1806,7 @@ test('the design record quotes the caption the site ships', () => {
     .filter((file) => readFileSync(path.join(SITE, 'src/components', file), 'utf8').includes('data-slot="watch-screenshot"'))
   assert.deepEqual(
     renders,
-    ['HomeSlider.astro'],
+    ['HomeWhatYouGet.astro'],
     `the watch screenshot's slot is rendered by ${JSON.stringify(renders)}, and the record's account of where the picture is is read against that component (P9; the owner's approved draft of 2026-10-19)`,
   )
   const where = section('docs/website/redesign/README.md', 'The fugaro watch screenshot (owner spec of 2026-10-18, item 5)')
@@ -1990,7 +1838,7 @@ test('the design record quotes the caption the site ships', () => {
 // where it read the flow's captions, these read every word on the figure; where it read the
 // flow's scroll-driven reveal, these read the motion the two pages actually keep.
 
-test("the run is How It Works' own picture of one, and the homepage carries the slider instead", () => {
+test("the run is How It Works' own picture of one, and the homepage carries its one run section instead", () => {
   const ruling = item4()
   assert.equal(ruling.steps.length, 4, `the changes spec's item 4 names ${ruling.steps.length} steps, and the picture draws four (changes spec 2026-10-18, item 4)`)
 
@@ -2022,26 +1870,22 @@ test("the run is How It Works' own picture of one, and the homepage carries the 
   // 2026-10-21, item 3, turned the strip of tabs into this slider; the slides, the dots and the
   // two step controls are read in full in `website/test/slider.mjs`, and this is the homepage's
   // own gate keeping the one reading the retired flow's gate left behind.)
-  const dots = findAll(home, (el) => el.name === 'a' && classes(el).includes('slider-dot')).map((el) => el.attrs.get('href') ?? '')
-  const panels = findAll(home, (el) => classes(el).includes('panel')).map((el) => el.attrs.get('id') ?? '')
+  // **The slider is retired by the owner's rulings of 2026-10-23** (the redesign's Step 3, lever
+  // 1: the run as ONE section instead of the three overlapping explainers). The homepage carries
+  // no slider panels, and the run is one section with the run's four steps, each beside a real
+  // picture (`test/a11y.mjs` holds its list): the drawing stays /how-it-works/'s own.
   assert.equal(
-    dots.length,
-    3,
-    `the homepage's slider offers ${dots.length} dots, and the draft's first panel is the three steps of using Fugaro beside a Why Fugaro? slide and a See it slide (the owner's approved draft of 2026-10-19; the owner's feedback of 2026-10-21, item 3; changes spec 2026-10-18, item 4)`,
+    findAll(home, (el) => classes(el).includes('panel') || classes(el).includes('slider-dot')).length,
+    0,
+    'the homepage renders the retired slider\'s panels or dots (the owner\'s rulings of 2026-10-23)',
   )
-  assert.equal(
-    panels.length,
-    3,
-    `the homepage's slider carries ${panels.length} panels, and every dot it offers is a link to a panel: a dot that points at nothing shows nothing (the owner's approved draft of 2026-10-19)`,
-  )
-  assert.deepEqual(
-    dots,
-    panels.map((id) => `#${id}`),
-    `the homepage's dots point at ${JSON.stringify(dots)} and its panels are ${JSON.stringify(panels.map((id) => `#${id}`))}: each dot is the link to the panel in its place, so the block is reachable without the script (the owner's approved draft of 2026-10-19; the owner's feedback of 2026-10-21, item 3)`,
+  const runs = findAll(home, (el) => el.name === 'section' && classes(el).includes('home-run'))
+  assert.equal(runs.length, 1, `the homepage renders ${runs.length} run sections, and the run is ONE section (the owner's rulings of 2026-10-23)`)
+  assert.ok(
+    findAll(runs[0], (el) => el.name === 'a' && el.attrs.get('href') === '/how-it-works/').length === 1,
+    'the homepage\'s run section does not link to /how-it-works/, where the run is drawn whole',
   )
 
-  // **And the picture is item 4's four steps, drawn**: the drawing's boxes, its labels, the run
-  // in words under it, and the section the words are the detail of.
   const drawn = pictureOf(builtPage('how-it-works'))
   assert.equal(
     drawn.figures,
@@ -2093,15 +1937,26 @@ test("the flow's scroll-driven reveal is retired with it, and every motion the p
     )
     const flat = css.replace(/\s+/g, '')
     for (const property of ['animation-timeline', 'scroll-timeline', 'view-timeline']) {
+      // A feature query names the property too, and asks rather than declares.
       assert.ok(
-        !flat.includes(`${property}:`),
-        `the ${where} page declares \`${property}\`, and the page is not revealed by scrolling: the flow's scroll-driven animation is retired with the flow (the owner's ruling of 2026-10-20; W1.4 step 3, D105)`,
+        !flat.replace(/@supports[^{]*/g, '').includes(`${property}:`),
+        `the ${where} page declares \`${property}\`, and the page is not revealed by scrolling: the flow's scroll-driven animation is retired with the flow (the owner's ruling of 2026-10-20; W1.4 step 3, D105). The run picture's step reveal plays once in view, on a timer, not on the scroll (the owner's feedback of 2026-10-24)`,
       )
     }
-    assert.ok(
-      !/@keyframes/.test(flat),
-      `the ${where} page declares a \`@keyframes\` animation, and neither thing that replaced the flow animates: the slider's three panels are the fragment's and the drawing is a still picture (the owner's ruling of 2026-10-20; W1.4 step 3, D105)`,
-    )
+    // The homepage has a motion layer since the owner's rulings of 2026-10-23 (the redesign's
+    // Step 3, lever 7: motion with reduced-motion fallbacks): the hero's capture opens once as the
+    // page loads and the live card's rows arrive, so its keyframes are allowed, held by the
+    // reduced-motion reading above. How It Works keeps its drawing still; its only keyframes are
+    // the run picture's step reveal (owner-approved motion opportunities 2026-10-24), played once
+    // when the picture comes into view.
+    if (route !== '') {
+      const named = [...flat.matchAll(/@keyframes([\w-]+)/g)].map((match) => match[1])
+      assert.deepEqual(
+        named.filter((name) => !name.startsWith('run-step-') && !name.startsWith('run-link-')),
+        [],
+        `the ${where} page declares a \`@keyframes\` animation other than the run picture's step reveal, and the drawing is a still picture (the owner's ruling of 2026-10-20; W1.4 step 3, D105)`,
+      )
+    }
   }
 })
 
@@ -2260,6 +2115,10 @@ test('the picture refusals fire on the defect each one names', () => {
     "the flow's scroll-driven reveal passes the motion check as long as it is guarded: the flow is retired and neither thing in its place animates, so the mechanism is refused rather than guarded (the owner's ruling of 2026-10-20)",
   )
   assert.ok(
+    pageMotionFailures(`@supports (animation-timeline:view()){@media (prefers-reduced-motion:no-preference){.step-card{animation-timeline:view()}}}${guard}`).some((line) => /and the page is not revealed by scrolling/.test(line)),
+    'a guarded scroll-driven rule passes, and the flow\'s reveal is still retired',
+  )
+  assert.ok(
     pageMotionFailures(`${guard}.step-card{animation:reveal 2s} .step-card:hover{transition:none}`).length === 0,
     'a neutralised animation and a disabled transition are both refused by the motion check, and neither is motion a reader is given',
   )
@@ -2356,10 +2215,13 @@ test('the two blocks the bold redesign adds quote the repository, line by line',
     blocks.get.lead !== null,
     'the “what you get” grid carries no lead line, so the sentence the five cards are the detail of is not read here',
   )
+  // Three since the owner's rulings of 2026-10-23 (the redesign's Step 3): the pull request, the
+  // diff and the report, and the logs. The cost moved to the cost section, which quotes
+  // README.md's caps lines under its own build guard, and where the agent runs to "Why Fugaro?".
   assert.equal(
     blocks.get.lines.length,
-    5,
-    `the grid carries ${blocks.get.lines.length} card line(s), and the board draws five cards: one per thing a run leaves behind`,
+    3,
+    `the “what you get” section carries ${blocks.get.lines.length} line(s), and it carries three: one per thing a run leaves behind`,
   )
 
   const failures = quotedBlockFailures(html)
@@ -2480,10 +2342,13 @@ test('the tokens the pages name are the ones the design layer declares', () => {
  * three dots and its two step controls are `test/slider.mjs`'s, which reads them at the widths
  * the page is read at, so this reading is about the controls outside the slider.
  */
+// The hero has one action since the owner's rulings of 2026-10-23 (lever 2), and the sections
+// below it carry their own links: the console and phone app links, and the cost section's button.
 const CONTROL_TARGETS = [
   ['hero-cta', "the hero's filled call to action"],
-  ['hero-cta-quiet', "the hero's quiet call to action"],
   ['home-run-link', "the run band's link to How it works"],
+  ['home-get-link', "the “what you get” section's links to the console and the phone app"],
+  ['home-cost-button', "the cost section's button to caps and costs"],
   ['home-install-button', 'the button in the closing call to action'],
 ]
 
@@ -2519,7 +2384,7 @@ test('a control under the target is refused, wherever its minimum is missing or 
   const withoutMinimum = (klass) => css.replace(ruleOf(klass), (rule) => rule.replace(/min-height\s*:\s*[^;}]+;?/, ''))
   const cases = [
     ['the minimum taken off the hero’s filled link', withoutMinimum('hero-cta'), /the hero's filled call to action is no declared target/],
-    ['the minimum taken off the hero’s quiet link', withoutMinimum('hero-cta-quiet'), /the hero's quiet call to action is no declared target/],
+    ['the minimum taken off the cost section’s button', withoutMinimum('home-cost-button'), /the cost section's button to caps and costs is no declared target/],
     [
       'the button’s minimum moved into a media query, where it holds at one width and not at every one',
       `${withoutMinimum('home-install-button')}@media (min-width:48rem){.home-install-button{min-height:56px}}`,
@@ -2527,7 +2392,7 @@ test('a control under the target is refused, wherever its minimum is missing or 
     ],
     [
       'a minimum declared under the target',
-      css.replace(ruleOf('hero-cta'), (rule) => rule.replace('min-height:44px', 'min-height:20px')),
+      css.replace(ruleOf('hero-cta'), (rule) => rule.replace('min-height:52px', 'min-height:20px')),
       /the hero's filled call to action is a 20 px target/,
     ],
   ]
@@ -2561,4 +2426,48 @@ test('neither page names a claim the product cannot back', () => {
       )
     }
   }
+})
+
+// ---- the latest releases the hero names (owner's request of 2026-10-22, PR #940, and of
+// 2026-10-24 for the console) ------------------------------------------------------------
+
+/** The newest `vX.Y.Z` in `dir` at or below `ceiling`, read here and not from the site's own
+ *  modules, so the check and the page can disagree. */
+function newestAtOrBelow(dir, ceiling) {
+  const num = (v) => v.split('.').map(Number)
+  const cmp = (a, b) => {
+    for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] - b[i]
+    return 0
+  }
+  const top = num(ceiling)
+  const versions = readdirSync(path.join(REPO, dir))
+    .map((name) => /^v(\d+\.\d+\.\d+)\.md$/.exec(name))
+    .filter(Boolean)
+    .map((m) => m[1])
+    .filter((v) => cmp(num(v), top) <= 0)
+    .sort((a, b) => cmp(num(b), num(a)))
+  return versions[0] ?? null
+}
+
+test('the hero names the newest published CLI release and console release, each linked', () => {
+  const cli = newestAtOrBelow('docs/releases', JSON.parse(repoFile('plugin/.claude-plugin/plugin.json')).version)
+  const consoleVersion = newestAtOrBelow('docs/releases/console', JSON.parse(repoFile('console/package.json')).version)
+  assert.ok(cli, 'no CLI release file is published in this checkout, so the line would be held to nothing')
+  const html = readFileSync(path.join(SITE, 'dist', 'index.html'), 'utf8')
+  const lines = findAll(parse(html), (el) => el.name === 'p' && (el.attrs.get('class') ?? '').split(/\s+/).includes('hero-release'))
+  assert.equal(lines.length, 1, 'the hero carries no single latest-release line')
+  const links = [...walk(lines[0])].filter((el) => el.name === 'a')
+  assert.equal(textOf(links[0]).trim(), `v${cli}`, `the hero names ${textOf(links[0]).trim()} and the newest published CLI release is v${cli}`)
+  assert.equal(links[0].attrs.get('href'), '/changelog/', 'the CLI release does not link the changelog')
+  if (consoleVersion === null) {
+    assert.equal(links.length, 1, 'the hero names a console release and none is published')
+  } else {
+    assert.equal(links.length, 2, 'the hero does not name the console release')
+    assert.equal(textOf(links[1]).trim(), `Console ${consoleVersion}`, `the hero names ${textOf(links[1]).trim()} and the newest published console is ${consoleVersion}`)
+    assert.match(links[1].attrs.get('href') ?? '', new RegExp(`/releases/tag/console-v${consoleVersion.replace(/\./g, '\\.')}$`), 'the console release does not link its own release page')
+  }
+  // Under the call to action (the owner's ruling of 2026-10-24), so the headline is the first
+  // thing in the hero and the action comes before the note.
+  const order = html.indexOf('class="hero-cta"') < html.indexOf('class="hero-release"')
+  assert.ok(order, 'the latest-release line is not under the call to action')
 })

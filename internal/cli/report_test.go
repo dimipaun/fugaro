@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/report"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -82,19 +84,43 @@ type repOut struct {
 	Source   string   `json:"source"`
 	Degraded bool     `json:"degraded"`
 	Warnings []string `json:"warnings"`
-	Rows     []struct {
-		Key           string  `json:"key"`
-		Partial       bool    `json:"partial"`
-		ModelMicros   int64   `json:"model_micros"`
-		ModelUSD      string  `json:"model_usd"`
-		NotionalUSD   *string `json:"notional_usd"`
-		ComputeUSD    *string `json:"compute_usd"`
-		Runs          int64   `json:"runs"`
-		ComputeEstArg bool    `json:"compute_estimated"`
-	} `json:"rows"`
-	Totals struct {
-		ModelMicros int64 `json:"model_micros"`
-	} `json:"totals"`
+	Rows     []repRow `json:"rows"`
+	Totals   repRow   `json:"totals"`
+}
+
+// repRow is one report row as these tests read it. The money keys are
+// pointers, and modelMicros/modelUSD refuse a null rather than reading it as
+// 0/"": an unreadable by-mode row carries no measurement, and a helper that
+// decoded it as a zero would hide exactly that.
+type repRow struct {
+	Key           string  `json:"key"`
+	Partial       bool    `json:"partial"`
+	Unreadable    bool    `json:"unreadable"`
+	ModelMicros   *int64  `json:"model_micros"`
+	ModelUSD      *string `json:"model_usd"`
+	NotionalUSD   *string `json:"notional_usd"`
+	ComputeUSD    *string `json:"compute_usd"`
+	Runs          int64   `json:"runs"`
+	ComputeEstArg bool    `json:"compute_estimated"`
+}
+
+// modelUSD is a row's model_usd; a null (an unreadable row) fails here rather
+// than reading as the empty string.
+func modelUSD(t *testing.T, r repRow) string {
+	t.Helper()
+	if r.ModelUSD == nil {
+		t.Fatalf("row %q has no model_usd: an unreadable row is not a measured one", r.Key)
+	}
+	return *r.ModelUSD
+}
+
+// modelMicros is a row's model_micros, on the same rule as modelUSD.
+func modelMicros(t *testing.T, r repRow) int64 {
+	t.Helper()
+	if r.ModelMicros == nil {
+		t.Fatalf("row %q has no model_micros: an unreadable row is not a measured one", r.Key)
+	}
+	return *r.ModelMicros
 }
 
 func (f *reportFixture) json(t *testing.T, args ...string) repOut {
@@ -149,7 +175,7 @@ func TestReportFromHistoryWithLiveToday(t *testing.T) {
 	got := map[string]string{}
 	partial := map[string]bool{}
 	for _, r := range o.Rows {
-		got[r.Key] = r.ModelUSD
+		got[r.Key] = modelUSD(t, r)
 		partial[r.Key] = r.Partial
 	}
 	if got["2026-10-15"] != "1.500000" || got["2026-10-16"] != "2.000000" || got["2026-10-19"] != "0.500000" || got["2026-10-20"] != "3.000000" {
@@ -158,11 +184,11 @@ func TestReportFromHistoryWithLiveToday(t *testing.T) {
 	if partial["2026-10-15"] || partial["2026-10-16"] || !partial["2026-10-19"] || !partial["2026-10-20"] {
 		t.Fatalf("partial %v", partial)
 	}
-	if o.Totals.ModelMicros != 7_000_000 {
-		t.Fatalf("total %d", o.Totals.ModelMicros)
+	if modelMicros(t, o.Totals) != 7_000_000 {
+		t.Fatalf("total %d", modelMicros(t, o.Totals))
 	}
 	for _, r := range o.Rows {
-		if r.Key == "2026-10-16" && (r.NotionalUSD == nil || *r.NotionalUSD != "0.700000" || r.ModelUSD != "2.000000") {
+		if r.Key == "2026-10-16" && (r.NotionalUSD == nil || *r.NotionalUSD != "0.700000" || modelUSD(t, r) != "2.000000") {
 			t.Fatalf("notional leaked into model: %+v", r)
 		}
 		if r.Key == "2026-10-16" && r.ComputeUSD != nil {
@@ -191,7 +217,7 @@ func TestReportPartialIsLiveFromRTDB(t *testing.T) {
 	f.db.Set(budget.PathSpendGlobal(yesterday), map[string]any{"spent": 4_000_000, "calls": 1})
 	f.db.Set(budget.PathSpendRepo(yesterday, appSlug), map[string]any{"spent": 4_000_000, "calls": 1})
 	o := f.json(t, "--since", "2d")
-	if len(o.Rows) != 1 || o.Rows[0].ModelUSD != "4.000000" || !o.Rows[0].Partial {
+	if len(o.Rows) != 1 || modelUSD(t, o.Rows[0]) != "4.000000" || !o.Rows[0].Partial {
 		t.Fatalf("%+v", o.Rows)
 	}
 }
@@ -205,7 +231,7 @@ func TestReportByWeekMonthYearCrossingYear(t *testing.T) {
 	rows := func(by string) map[string]string {
 		m := map[string]string{}
 		for _, r := range f.json(t, "--since", "2026-12-01", "--by", by).Rows {
-			m[r.Key] = r.ModelUSD
+			m[r.Key] = modelUSD(t, r)
 		}
 		return m
 	}
@@ -232,7 +258,7 @@ func TestReportRepoFilterAndGroupings(t *testing.T) {
 		t.Fatalf("repo %+v", o.Rows)
 	}
 	o = f.json(t, "--by", "person", "--repo", "acme/app")
-	if len(o.Rows) != 1 || o.Rows[0].Key != "a@x.io" || o.Rows[0].ModelUSD != "1.000000" {
+	if len(o.Rows) != 1 || o.Rows[0].Key != "a@x.io" || modelUSD(t, o.Rows[0]) != "1.000000" {
 		t.Fatalf("person %+v", o.Rows)
 	}
 	o = f.json(t, "--by", "model")
@@ -270,7 +296,7 @@ func TestReportHostileStringsAndOddDocs(t *testing.T) {
 		}
 	}
 	o := f.json(t, "--since", "2026-10-01")
-	if len(o.Rows) != 2 || o.Rows[0].Key != "2026-10-15" || o.Rows[1].Key != "2026-10-16" || o.Rows[1].ModelUSD != "0.000000" {
+	if len(o.Rows) != 2 || o.Rows[0].Key != "2026-10-15" || o.Rows[1].Key != "2026-10-16" || modelUSD(t, o.Rows[1]) != "0.000000" {
 		t.Fatalf("%+v", o.Rows)
 	}
 	out, _, _ := execute(t, "report", "--since", "2026-10-01", "--by", "person")
@@ -301,8 +327,535 @@ func TestReportCSVCLI(t *testing.T) {
 	if _, _, err := execute(t, "report", "--csv", "--json"); err == nil {
 		t.Fatal("--csv with --json accepted")
 	}
-	if _, _, err := execute(t, "report", "--by", "decade"); err == nil || !strings.Contains(err.Error(), "--by") {
+	if _, _, err := execute(t, "report", "--by", "decade"); err == nil || !strings.Contains(err.Error(), "--by") || !strings.Contains(err.Error(), "mode") {
 		t.Fatalf("%v", err)
+	}
+}
+
+// seedModeRun writes one run's result.json under slug, with the rigor mode the
+// run resolved ("" for a record that carries no rigor block), so a test can
+// plant the one fact --by mode groups by.
+func seedModeRun(t *testing.T, f *cloudFixture, slug, id, mode string, c runstore.Cost) {
+	t.Helper()
+	ctx := context.Background()
+	b, err := blob.OpenBucket(ctx, f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	st, err := runstore.RunTime(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fin := st.Add(time.Hour)
+	rec := &runstore.Record{RunID: id, Repo: "acme/app", Status: "succeeded", StartedAt: st, FinishedAt: &fin, Cost: &c, CostUSD: c.ModelUSD}
+	if mode != "" {
+		rec.Rigor = &runstore.RigorRecord{Mode: rigor.Mode(mode)}
+	}
+	if err := runstore.Open(b, slug, id).WriteRecord(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// seedLaunchedRun writes one run's launch.json and no result.json: the run
+// started and has written no figure yet, which is a different fact about the
+// run from an unreadable record and the same fact about its money.
+func seedLaunchedRun(t *testing.T, f *cloudFixture, slug, id string) {
+	t.Helper()
+	ctx := context.Background()
+	b, err := blob.OpenBucket(ctx, f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	if err := runstore.Open(b, slug, id).WriteLaunch(ctx, &runstore.Launch{Version: 1, RunID: id}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// seedCorruptRun writes a result.json the bucket holds and this build cannot
+// read: the run did start, and its cost is unknown, which is not the same as a
+// run that never started and not the same as one that spent nothing.
+func seedCorruptRun(t *testing.T, f *cloudFixture, slug, id string) {
+	t.Helper()
+	ctx := context.Background()
+	b, err := blob.OpenBucket(ctx, f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	if err := b.WriteAll(ctx, runstore.Open(b, slug, id).Prefix()+"result.json", []byte(`{"version": 1, "run_id": `), nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// withReportMaxRuns lowers the by-mode read's cap for one test, so a window too
+// large to read whole can be driven with three runs rather than thousands.
+func withReportMaxRuns(t *testing.T, n int) {
+	t.Helper()
+	old := reportMaxRuns
+	reportMaxRuns = n
+	t.Cleanup(func() { reportMaxRuns = old })
+}
+
+// modeRows reads a document's rows into the map a by-mode test asserts on. The
+// money is read as it landed: a null model_usd is the empty string here, so a
+// test that has to tell null from a measured zero reads the raw document
+// (rawJSON) rather than this.
+func modeRows(t *testing.T, o repOut) map[string]modeRow {
+	t.Helper()
+	by := map[string]modeRow{}
+	for _, r := range o.Rows {
+		notional := "-"
+		if r.NotionalUSD != nil {
+			notional = *r.NotionalUSD
+		}
+		model := "-"
+		if r.ModelUSD != nil {
+			model = *r.ModelUSD
+		}
+		by[r.Key] = modeRow{model: model, notional: notional, runs: fmt.Sprint(r.Runs), compute: r.ComputeUSD}
+	}
+	return by
+}
+
+// modeRow is one by-mode row as a test reads it. model is "-" for a row whose
+// model_usd is null, which is not the same fact as a measured 0.
+type modeRow struct {
+	model, notional, runs string
+	compute               *string
+}
+
+// TestReportByModeGroupsRuns: the mode is the run's own record's, each run
+// counts once, an unknown mode reads as none and never as the raw text, and
+// the money and the notional stay apart.
+func TestReportByModeGroupsRuns(t *testing.T) {
+	f := newReportFixture(t)
+	seedModeRun(t, f.cloudFixture, appSlug, "20261015-120000-aaaa", "pro", runstore.NewCost(1.50, 0.25, runstore.BasisAPIList))
+	seedModeRun(t, f.cloudFixture, appSlug, "20261016-120000-bbbb", "critical", runstore.NewCost(2.25, 0.10, runstore.BasisAPIList))
+	seedModeRun(t, f.cloudFixture, appSlug, "20261017-120000-cccc", "", runstore.ModelOnlyCost(3.00, runstore.BasisSubscription))
+	seedModeRun(t, f.cloudFixture, appSlug, "20261018-120000-dddd", "turbo", runstore.ModelOnlyCost(0.50, runstore.BasisAPIList))
+
+	o := f.json(t, "--by", "mode", "--since", "2026-10-01")
+	if o.Source != "run-records" || o.Degraded {
+		t.Fatalf("source = %q, degraded = %v", o.Source, o.Degraded)
+	}
+	if len(o.Rows) != 3 {
+		t.Fatalf("rows %+v", o.Rows)
+	}
+	by := modeRows(t, o)
+	if len(by) != 3 {
+		t.Fatalf("an unknown mode did not read as none: %+v", o.Rows)
+	}
+	if p, ok := by["pro"]; !ok || p.model != "1.500000" || p.runs != "1" || p.notional != "0.000000" || p.compute == nil || *p.compute != "0.250000" {
+		t.Fatalf("pro %+v", by)
+	}
+	if c, ok := by["critical"]; !ok || c.model != "2.250000" || c.runs != "1" || c.compute == nil || *c.compute != "0.100000" {
+		t.Fatalf("critical %+v", by)
+	}
+	// none: the record with no rigor block and the record whose mode is not one
+	// of the vocabulary's, each counted once; the subscription run's figure is
+	// notional and never model money, and no run of the row estimated compute,
+	// so the column reads n/a rather than 0.
+	n, ok := by["none"]
+	if !ok || n.model != "0.500000" || n.runs != "2" || n.notional != "3.000000" || n.compute != nil {
+		t.Fatalf("none %+v", by)
+	}
+	if modelMicros(t, o.Totals) != 4_250_000 {
+		t.Fatalf("total %d", modelMicros(t, o.Totals))
+	}
+	out, errOut, err := execute(t, "report", "--by", "mode", "--since", "2026-10-01")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, errOut)
+	}
+	for _, want := range []string{"by mode", "pro", "critical", "none", "run records", "n/a"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the table lacks %q:\n%s", want, out)
+		}
+	}
+	// The key column is MODE, which the bare word cannot show: the "MODEL $"
+	// column beside it satisfies a search for "MODE". The header's own fields
+	// are the fact.
+	var head []string
+	for _, line := range strings.Split(out, "\n") {
+		if f := strings.Fields(line); len(f) > 1 && f[0] == "MODE" {
+			head = f
+			break
+		}
+	}
+	if len(head) == 0 || head[1] != "MODEL" {
+		t.Errorf("the table's key column is not MODE beside MODEL $: its header reads %q\n%s", strings.Join(head, " "), out)
+	}
+	if strings.ContainsRune(out, 0x1b) {
+		t.Fatalf("the table carries an escape:\n%q", out)
+	}
+	// A run record carries no run hours, so no row of this grouping has one to
+	// show: run_hours is null on every row and in the totals -- never the 0 a
+	// reader would take for a measured hour -- though the pro row above has a
+	// known compute. The key itself stays, as the contract pins
+	// (JSONLine.RunHours carries no omitempty), so an omitempty added later
+	// fails here rather than passing quietly.
+	raw, _, err := execute(t, "report", "--json", "--by", "mode", "--since", "2026-10-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Rows   []map[string]json.RawMessage `json:"rows"`
+		Totals map[string]json.RawMessage   `json:"totals"`
+	}
+	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
+		t.Fatalf("%v in %s", err, raw)
+	}
+	lines := append(doc.Rows, doc.Totals)
+	if len(lines) < 2 {
+		t.Fatalf("rows %+v, totals %+v: the document carries no run_hours to read", doc.Rows, doc.Totals)
+	}
+	for _, l := range lines {
+		if got := string(l["run_hours"]); got != "null" {
+			t.Errorf("run_hours = %q, want null on every row: a by-mode row knows no run hours, and the key is pinned present with no figure in it", got)
+		}
+	}
+}
+
+// TestReportByModeRange: a run outside --since/--until is in no row, and --repo
+// filters as it does everywhere else.
+func TestReportByModeRange(t *testing.T) {
+	f := newReportFixture(t)
+	seedModeRun(t, f.cloudFixture, appSlug, "20261010-120000-aaaa", "pro", runstore.NewCost(9.00, 0, runstore.BasisAPIList))
+	seedModeRun(t, f.cloudFixture, appSlug, "20261015-120000-bbbb", "pro", runstore.NewCost(1.00, 0, runstore.BasisAPIList))
+	seedModeRun(t, f.cloudFixture, appSlug, "20261020-120000-cccc", "pro", runstore.NewCost(5.00, 0, runstore.BasisAPIList))
+	seedModeRun(t, f.cloudFixture, "github-other-repo", "20261015-120000-dddd", "pro", runstore.NewCost(7.00, 0, runstore.BasisAPIList))
+
+	// The window: the run before --since and the run after --until are in no
+	// row.
+	o := f.json(t, "--by", "mode", "--since", "2026-10-14", "--until", "2026-10-16", "--repo", "acme/app")
+	if len(o.Rows) != 1 || o.Rows[0].Key != "pro" || modelUSD(t, o.Rows[0]) != "1.000000" || o.Rows[0].Runs != 1 {
+		t.Fatalf("range rows %+v", o.Rows)
+	}
+	// Both repositories of the bucket, over the whole window.
+	if o = f.json(t, "--by", "mode", "--since", "2026-10-01"); modelMicros(t, o.Totals) != 22_000_000 {
+		t.Fatalf("the whole window = %d, want every repository's runs", modelMicros(t, o.Totals))
+	}
+	// --repo names one repository's runs: three of the four.
+	o = f.json(t, "--by", "mode", "--since", "2026-10-01", "--repo", "acme/app")
+	if modelMicros(t, o.Totals) != 15_000_000 || len(o.Rows) != 1 || o.Rows[0].Runs != 3 {
+		t.Fatalf("--repo acme/app = %+v, want this repository's three runs", o)
+	}
+}
+
+// TestReportByModePastWindow: --until may end behind the newest run of the
+// bucket, and the runs after it are dropped before the read's cap rather than
+// after it. Dropped after, a couple of runs launched since would use up the
+// read and the window's own runs would be reported as nothing.
+func TestReportByModePastWindow(t *testing.T) {
+	f := newReportFixture(t)
+	withReportMaxRuns(t, 2)
+	seedModeRun(t, f.cloudFixture, appSlug, "20261015-120000-aaaa", "pro", runstore.NewCost(1.00, 0, runstore.BasisAPIList))
+	seedModeRun(t, f.cloudFixture, appSlug, "20261018-120000-bbbb", "critical", runstore.NewCost(8.00, 0, runstore.BasisAPIList))
+	seedModeRun(t, f.cloudFixture, appSlug, "20261019-120000-cccc", "critical", runstore.NewCost(9.00, 0, runstore.BasisAPIList))
+
+	o := f.json(t, "--by", "mode", "--since", "2026-10-14", "--until", "2026-10-16")
+	if len(o.Rows) != 1 || o.Rows[0].Key != "pro" || modelUSD(t, o.Rows[0]) != "1.000000" || o.Rows[0].Runs != 1 {
+		t.Fatalf("a window ending in the past = %+v, want the one run it holds", o.Rows)
+	}
+	// The window holds one run, so nothing was left unread and the report says
+	// nothing about a truncation: the runs it dropped were never the window's.
+	for _, w := range o.Warnings {
+		if strings.Contains(w, "more runs than") {
+			t.Errorf("warnings = %q, want no truncation for a window of one run", o.Warnings)
+		}
+	}
+}
+
+// TestReportByModeTruncation: a window holding more runs than the read opens is
+// reported to its newest runs, and says which, rather than publishing figures a
+// reader would take for the whole window.
+func TestReportByModeTruncation(t *testing.T) {
+	f := newReportFixture(t)
+	withReportMaxRuns(t, 2)
+	seedModeRun(t, f.cloudFixture, appSlug, "20261015-120000-aaaa", "pro", runstore.NewCost(1.00, 0, runstore.BasisAPIList))
+	seedModeRun(t, f.cloudFixture, appSlug, "20261016-120000-bbbb", "pro", runstore.NewCost(2.00, 0, runstore.BasisAPIList))
+	seedModeRun(t, f.cloudFixture, appSlug, "20261017-120000-cccc", "pro", runstore.NewCost(4.00, 0, runstore.BasisAPIList))
+
+	o := f.json(t, "--by", "mode", "--since", "2026-10-01")
+	by := modeRows(t, o)
+	if len(by) != 1 || by["pro"].runs != "2" || modelMicros(t, o.Totals) != 6_000_000 || o.Totals.Runs != 2 {
+		t.Fatalf("an over-cap window = %+v, want its newest two runs", o)
+	}
+	warnings := strings.Join(o.Warnings, "\n")
+	if !strings.Contains(warnings, "more runs than the 2") || !strings.Contains(warnings, "newest 2") {
+		t.Errorf("warnings = %q, want the truncation said", o.Warnings)
+	}
+}
+
+// TestReportByModeUnreadableRecord: a run whose result.json the bucket holds and
+// this build cannot read did launch, so it counts once among the runs and its
+// money was never measured. A row made only of such runs is marked unreadable
+// and carries null money -- never the 0 a reader would take for a measurement.
+func TestReportByModeUnreadableRecord(t *testing.T) {
+	f := newReportFixture(t)
+	seedModeRun(t, f.cloudFixture, appSlug, "20261016-120000-aaaa", "pro", runstore.NewCost(1.50, 0.25, runstore.BasisAPIList))
+	seedCorruptRun(t, f.cloudFixture, appSlug, "20261017-120000-bbbb")
+
+	o := f.json(t, "--by", "mode", "--since", "2026-10-01")
+	by := modeRows(t, o)
+	if p := by["pro"]; p.runs != "1" || p.model != "1.500000" || p.compute == nil || *p.compute != "0.250000" {
+		t.Fatalf("pro %+v", by)
+	}
+	if o.Totals.Runs != 2 || modelMicros(t, o.Totals) != 1_500_000 {
+		t.Fatalf("totals = %+v, want both runs and one run's money", o.Totals)
+	}
+	raw := f.rawJSON(t, "--by", "mode", "--since", "2026-10-01")
+	none, ok := raw.rows["none"]
+	if !ok {
+		t.Fatalf("the unreadable run's row is missing: %+v", raw.rows)
+	}
+	if got := rawJSONString(none, "unreadable"); got != "true" {
+		t.Errorf("the unreadable run's row unreadable = %s, want true", got)
+	}
+	for _, k := range []string{"model_micros", "model_usd", "notional_micros", "notional_usd", "compute_micros", "compute_usd", "run_hours"} {
+		if got := rawJSONString(none, k); got != "null" {
+			t.Errorf("the unreadable run's row %s = %s, want null: the money was never measured, and 0 is a measurement", k, got)
+		}
+	}
+	if got := rawJSONString(none, "runs"); got != "1" {
+		t.Errorf("the unreadable run's row runs = %s, want the run counted", got)
+	}
+	if got, ok := raw.rows["pro"]["unreadable"]; ok {
+		t.Errorf("a readable row carries unreadable = %s", got)
+	}
+	if got, ok := raw.totals["unreadable"]; ok {
+		t.Errorf("the totals row carries unreadable = %s: one readable row makes the total a measurement", got)
+	}
+	if got := rawJSONString(raw.totals, "model_usd"); got != `"1.500000"` {
+		t.Errorf("totals model_usd = %s, want the readable run's money", got)
+	}
+	if w := strings.Join(o.Warnings, "\n"); !strings.Contains(w, "1 of the window's runs have a result.json this build cannot read") || !strings.Contains(w, "short by whatever they spent") {
+		t.Errorf("warnings = %q, want the unreadable record counted and the money called short", o.Warnings)
+	}
+	// The human table and the CSV say n/a for the same row, never 0.00.
+	out, errOut, err := execute(t, "report", "--by", "mode", "--since", "2026-10-01")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, errOut)
+	}
+	if !strings.Contains(modeLine(t, out, "none"), "n/a") {
+		t.Errorf("the unreadable row's table line reads no n/a:\n%s", out)
+	}
+	out, errOut, err = execute(t, "report", "--csv", "--by", "mode", "--since", "2026-10-01")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, errOut)
+	}
+	if !strings.Contains(csvLine(t, out, "none"), "n/a") {
+		t.Errorf("the unreadable row's CSV line reads no n/a:\n%s", out)
+	}
+}
+
+// TestReportByModeUnreadableRecordMixedRow: a row of one readable record and one
+// the build cannot read is a measured row: it keeps the readable run's sums and
+// carries no unreadable mark, because something in it was read.
+func TestReportByModeUnreadableRecordMixedRow(t *testing.T) {
+	f := newReportFixture(t)
+	seedModeRun(t, f.cloudFixture, appSlug, "20261016-120000-aaaa", "", runstore.NewCost(2.00, 0, runstore.BasisAPIList))
+	seedCorruptRun(t, f.cloudFixture, appSlug, "20261017-120000-bbbb")
+
+	raw := f.rawJSON(t, "--by", "mode", "--since", "2026-10-01")
+	none, ok := raw.rows["none"]
+	if !ok {
+		t.Fatalf("rows %+v", raw.rows)
+	}
+	if got, ok := none["unreadable"]; ok {
+		t.Errorf("a row with a readable record carries unreadable = %s", got)
+	}
+	if got := rawJSONString(none, "model_usd"); got != `"2.000000"` {
+		t.Errorf("model_usd = %s, want the readable run's money", got)
+	}
+	if got := rawJSONString(none, "runs"); got != "2" {
+		t.Errorf("runs = %s, want both runs", got)
+	}
+	if o := f.json(t, "--by", "mode", "--since", "2026-10-01"); modelMicros(t, o.Totals) != 2_000_000 || o.Totals.Runs != 2 {
+		t.Errorf("totals = %+v, want the readable run's money over both runs", o.Totals)
+	}
+}
+
+// TestReportByModeRunWithNoRecordYet: a run that launched and has written no
+// result.json is in flight, not a record the build could not read, and the
+// report has no figure for it either way: its row is marked and carries null
+// money, and the report warns nothing -- every window reaching into the last
+// minutes holds such a run, so a warning on it would be noise on every report.
+func TestReportByModeRunWithNoRecordYet(t *testing.T) {
+	f := newReportFixture(t)
+	seedLaunchedRun(t, f.cloudFixture, appSlug, "20261016-120000-aaaa")
+
+	o := f.json(t, "--by", "mode", "--since", "2026-10-01")
+	raw := f.rawJSON(t, "--by", "mode", "--since", "2026-10-01")
+	none := raw.rows["none"]
+	if got := rawJSONString(none, "unreadable"); got != "true" {
+		t.Errorf("unreadable = %s, want true: this report has no record for the run", got)
+	}
+	if got := rawJSONString(none, "model_micros"); got != "null" {
+		t.Errorf("model_micros = %s, want null", got)
+	}
+	if got := rawJSONString(raw.totals, "unreadable"); got != "true" {
+		t.Errorf("totals unreadable = %s, want true", got)
+	}
+	if w := strings.Join(o.Warnings, "\n"); strings.Contains(w, "cannot read") {
+		t.Errorf("warnings = %q, want nothing said: a run that has written no result.json yet is in flight, not a record this build could not read", o.Warnings)
+	}
+}
+
+// TestReportByModeInFlightRunWarnsNothing: the warning counts the records the
+// bucket holds and this build cannot read, and leaves out the runs that have
+// not written one yet. A window holding both names the corrupt one and counts
+// it alone, so the number a reader acts on is the number of unreadable records.
+func TestReportByModeInFlightRunWarnsNothing(t *testing.T) {
+	f := newReportFixture(t)
+	seedLaunchedRun(t, f.cloudFixture, appSlug, "20261015-120000-aaaa")
+	seedLaunchedRun(t, f.cloudFixture, appSlug, "20261016-120000-bbbb")
+	seedCorruptRun(t, f.cloudFixture, appSlug, "20261017-120000-cccc")
+
+	o := f.json(t, "--by", "mode", "--since", "2026-10-01")
+	w := strings.Join(o.Warnings, "\n")
+	if !strings.Contains(w, "1 of the window's runs have a result.json this build cannot read") {
+		t.Errorf("warnings = %q, want the one corrupt record counted", o.Warnings)
+	}
+	if strings.Contains(w, "3 of the window's runs") || strings.Contains(w, "2 of the window's runs") {
+		t.Errorf("warnings = %q, want the two in-flight runs left out: they are routine and not unreadable records", o.Warnings)
+	}
+	// The in-flight runs are still marked in their row, and the row they share
+	// with the corrupt one carries null money: the mark is about the money, not
+	// about which of the two the run was.
+	raw := f.rawJSON(t, "--by", "mode", "--since", "2026-10-01")
+	none := raw.rows["none"]
+	if got := rawJSONString(none, "unreadable"); got != "true" {
+		t.Errorf("unreadable = %s, want true: not one of the three records was read", got)
+	}
+	if got := rawJSONString(none, "model_usd"); got != "null" {
+		t.Errorf("model_usd = %s, want null", got)
+	}
+	if got := rawJSONString(none, "runs"); got != "3" {
+		t.Errorf("runs = %s, want every run counted", got)
+	}
+}
+
+// TestReportByModeEveryRecordUnreadable: when no row of the report is a
+// measurement, the totals row is not one either -- the report's own TOTAL reads
+// n/a rather than the $0.00 that sums nothing.
+func TestReportByModeEveryRecordUnreadable(t *testing.T) {
+	f := newReportFixture(t)
+	seedCorruptRun(t, f.cloudFixture, appSlug, "20261016-120000-aaaa")
+	seedCorruptRun(t, f.cloudFixture, appSlug, "20261017-120000-bbbb")
+
+	raw := f.rawJSON(t, "--by", "mode", "--since", "2026-10-01")
+	if len(raw.rows) != 1 {
+		t.Fatalf("rows %+v, want the one row both runs land in", raw.rows)
+	}
+	if got := rawJSONString(raw.totals, "unreadable"); got != "true" {
+		t.Errorf("totals unreadable = %s, want true: nothing the total sums was measured", got)
+	}
+	for _, k := range []string{"model_micros", "model_usd", "notional_micros", "notional_usd", "compute_micros", "compute_usd", "run_hours"} {
+		if got := rawJSONString(raw.totals, k); got != "null" {
+			t.Errorf("totals %s = %s, want null", k, got)
+		}
+	}
+	if got := rawJSONString(raw.totals, "runs"); got != "2" {
+		t.Errorf("totals runs = %s, want both runs counted", got)
+	}
+	out, errOut, err := execute(t, "report", "--by", "mode", "--since", "2026-10-01")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, errOut)
+	}
+	if line := modeLine(t, out, "TOTAL"); !strings.Contains(line, "n/a") || strings.Contains(line, "0.00") {
+		t.Errorf("the TOTAL line = %q, want n/a and no 0.00:\n%s", line, out)
+	}
+}
+
+// rawRepDoc is a report document as a test reads it when a null has to be told
+// from a zero and an absent key from a present one.
+type rawRepDoc struct {
+	rows   map[string]map[string]json.RawMessage
+	totals map[string]json.RawMessage
+}
+
+// rawJSON runs the report and keys its rows, and its totals row, by row key.
+func (f *reportFixture) rawJSON(t *testing.T, args ...string) rawRepDoc {
+	t.Helper()
+	out, errOut, err := execute(t, append([]string{"report", "--json"}, args...)...)
+	if err != nil {
+		t.Fatalf("%v\nstderr: %s", err, errOut)
+	}
+	var doc struct {
+		Rows   []map[string]json.RawMessage `json:"rows"`
+		Totals map[string]json.RawMessage   `json:"totals"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("%v in %s", err, out)
+	}
+	d := rawRepDoc{rows: map[string]map[string]json.RawMessage{}, totals: doc.Totals}
+	for _, r := range doc.Rows {
+		var key string
+		if err := json.Unmarshal(r["key"], &key); err != nil {
+			t.Fatalf("%v in %s", err, out)
+		}
+		d.rows[key] = r
+	}
+	return d
+}
+
+// rawJSONString is one key of a raw row as text: "null" for a null, the quoted
+// value for a string, the bare digits for a number.
+func rawJSONString(row map[string]json.RawMessage, key string) string {
+	v, ok := row[key]
+	if !ok {
+		return "<absent>"
+	}
+	return string(v)
+}
+
+// modeLine is the table line of one by-mode row, found by its key in the first
+// column.
+func modeLine(t *testing.T, out, key string) string {
+	t.Helper()
+	for _, line := range strings.Split(out, "\n") {
+		if f := strings.Fields(line); len(f) > 1 && f[0] == key {
+			return line
+		}
+	}
+	t.Fatalf("the table has no %q row:\n%s", key, out)
+	return ""
+}
+
+// csvLine is the CSV record of one row, found by its key in the first column.
+func csvLine(t *testing.T, out, key string) string {
+	t.Helper()
+	for _, line := range strings.Split(out, "\n") {
+		if f := strings.Split(line, ","); len(f) > 1 && strings.TrimSpace(f[0]) == key {
+			return line
+		}
+	}
+	t.Fatalf("the CSV has no %q row:\n%s", key, out)
+	return ""
+}
+
+// TestReportByModeJSONSource: the document names the run records as its source,
+// --csv works, and the breakdown needs neither the spend history nor the budget
+// database: both fake backends are taken away.
+func TestReportByModeJSONSource(t *testing.T) {
+	f := newReportFixture(t)
+	f.fs.RemoveDatabase()
+	f.db.Refuse(503, "UNAVAILABLE", "", "down")
+	seedModeRun(t, f.cloudFixture, appSlug, "20261019-120000-aaaa", "hotfix", runstore.NewCost(2.00, 0.50, runstore.BasisAPIList))
+
+	o := f.json(t, "--by", "mode", "--since", "2026-10-01")
+	if o.Source != "run-records" || o.Degraded || len(o.Rows) != 1 || o.Rows[0].Key != "hotfix" ||
+		modelUSD(t, o.Rows[0]) != "2.000000" || o.Rows[0].ComputeUSD == nil || *o.Rows[0].ComputeUSD != "0.500000" {
+		t.Fatalf("%+v", o)
+	}
+	if !strings.Contains(strings.Join(o.Warnings, "\n"), "run records") {
+		t.Errorf("warnings = %q, want the run-record source named", o.Warnings)
+	}
+	out, _, err := execute(t, "report", "--csv", "--by", "mode", "--since", "2026-10-01")
+	if err != nil || !strings.Contains(out, "hotfix") || !strings.Contains(out, "2.000000") || !strings.Contains(out, "\r\n") {
+		t.Fatalf("%v\n%q", err, out)
 	}
 }
 
@@ -375,14 +928,13 @@ func TestDegradedFromRuns(t *testing.T) {
 	if !o.Degraded || o.Source != "run-records" {
 		t.Fatalf("%+v", o)
 	}
-	var sub *string
-	var model string
+	var sub, model *string
 	for _, r := range o.Rows {
 		if r.Key == "2026-10-20" {
 			sub, model = r.NotionalUSD, r.ModelUSD
 		}
 	}
-	if sub == nil || *sub != "2.000000" || model != "0.000000" {
+	if sub == nil || *sub != "2.000000" || model == nil || *model != "0.000000" {
 		t.Fatalf("subscription run must be notional only: %+v", o.Rows)
 	}
 }
@@ -421,7 +973,7 @@ func TestNoHistoryMarkMessage(t *testing.T) {
 }
 
 func TestReportDimParsing(t *testing.T) {
-	for _, s := range []string{"day", "week", "month", "year", "repo", "model", "person"} {
+	for _, s := range []string{"day", "week", "month", "year", "repo", "model", "person", "mode"} {
 		if _, err := report.ParseDim(s); err != nil {
 			t.Error(s, err)
 		}

@@ -149,11 +149,12 @@ func TestAModeArtifactLaunchRefusesWhenTheRecipeCannotBeRead(t *testing.T) {
 //     the spec.Mode gate beside the project layer's and the named token's is
 //     what refuses the launch.
 //
-// Mutation (drop the spec.Mode == ModeArtifact block from runRun's gates): the
-// repository-recipe subtest is not refused and a job starts on an image whose
-// runner cannot parse its task; mutation (revert checkRecipeImage's UsesV08
-// arm to recipesV07Since): the project-recipe subtest passes the 0.7.0 image
-// and starts that job.
+// Mutation (drop the spec.Mode == ModeArtifact block from finishLaunch's
+// gates): the repository-recipe subtest is not refused and a job starts on an
+// image whose runner cannot parse its task; mutation (revert recipeSinceFor's
+// UsesV08 arm to recipesV07Since): the project-recipe subtest is refused by
+// the spec.Mode gate instead, whose message names mode: artifact rather than
+// recipes, and it fails on the message.
 func TestAnArtifactLaunchGatesOnTheImageThatKnowsMode(t *testing.T) {
 	t.Run("a recipe the launcher embeds", func(t *testing.T) {
 		f := newCloudFixture(t)
@@ -204,18 +205,19 @@ func cloneCheckout(t *testing.T, f *cloudFixture, base, agentLines string, extra
 // installation's own base image instead):
 //
 //   - a recipe the launcher embeds (here a project one, the same as in the
-//     baked test) reaches checkCloneRecipeImage, whose UsesV08 arm raises the
-//     threshold to artifactsSince — without it the 0.7.5 image passes and the
-//     spec.Mode gate below refuses instead, with the other gate's message;
+//     baked test) reaches checkCloneRecipeImage and recipeSinceFor, whose
+//     UsesV08 arm raises the threshold to artifactsSince — without it the
+//     0.7.5 image passes and the spec.Mode gate below refuses instead, with
+//     the other gate's message;
 //   - a repository recipe is NOT embedded (the runner re-reads the file at
 //     the ref), so the recipe gate judges it at the plain recipesSince and
 //     the spec.Mode gate's clone arm is what refuses the launch.
 //
-// Mutation (drop the `UsesV08` arm of checkCloneRecipeImage): the first
+// Mutation (drop the `UsesV08` arm of recipeSinceFor): the first
 // subtest is refused by spec.Mode's clone arm instead, whose message names
 // mode: artifact rather than recipes, and it fails on the message; mutation
-// (drop the `clone` arm of runRun's spec.Mode block): the second subtest is
-// refused by the read path's own checkImageSince — a clone workflow has no
+// (drop the `clone` arm of finishLaunch's spec.Mode block): the second subtest
+// is refused by the read path's own checkImageSince — a clone workflow has no
 // build record, so that refusal says so — and it fails on the message just
 // as well. Both are message failures, not exit codes: the two gates overlap
 // on the sentence above them, so each subtest wants the sentence only its
@@ -235,7 +237,7 @@ func TestAnArtifactRecipeOnACloneWorkflowGatesOnTheCloneImage(t *testing.T) {
 		// half: the read path judges a BUILD RECORD, and for a clone
 		// workflow there is none, so its own refusal says "has no build
 		// record" — the shared prefix alone would let this subtest pass
-		// against the wrong gate (which is exactly the mutation below).
+		// against the wrong gate (which is exactly the mutation above).
 		wantRefused(t, f, "a mode: artifact recipe needs a job image whose runner knows mode: artifact (fugaro "+artifactsSince+" or later), "+
 			"but the checkout: clone job image of acme/other workflow svc is "+release075+", release 0.7.5",
 			"run", "--run-id", "20261015-100000-abcd", "--recipe", "sizzle", "Render the nightly bundle")
@@ -276,7 +278,7 @@ func appRepoCheckout(t *testing.T, files map[string]string) {
 // one; the runner stays the backstop for a launch made from outside a
 // checkout, or for a base whose file differs from this working tree's.
 //
-// Mutation (drop the `else if rcp != nil` branch of resolveFollowUp): the
+// Mutation (drop the `else if rcp != nil` branch of newFollowUpSpec): the
 // first arm launches a job; mutation (drop the refuseFollowUpRepoRecipe call
 // from carryChosenRecipe): the second arm launches one. Both fail
 // wantRefused on the execution count as well as the missing refusal.
@@ -318,14 +320,14 @@ func TestAFollowUpLaunchRefusesAModeItInheritsByRepoName(t *testing.T) {
 // TestAFollowUpLaunchRefusesAModeItInheritsByRepoName: the previous run's
 // recipe can also arrive as TEXT — an embedded project or catalog recipe in
 // the previous task.json (taskRecipe, recipes_resolve.go) — and that text is
-// parsed again at the launch (resolveFollowUp), so both follow-up refusals
+// parsed again at the launch (newFollowUpSpec), so both follow-up refusals
 // judge it before any cloud work starts. Without the artifact refusal there,
 // the launch names no mode of its own (a follow-up's spec carries none), the
 // runner refuses the pair at bootstrap instead, and a job has already started
 // and cloned by then.
 //
 // Mutation (drop the `refuseFollowUpArtifactMode(inherited, rcp.Name)` call
-// from resolveFollowUp's `rcp.YAML != ""` branch): this test starts a job and
+// from newFollowUpSpec's `rcp.YAML != ""` branch): this test starts a job and
 // fails wantRefused on the execution count as well as on the missing refusal.
 func TestAFollowUpLaunchRefusesAModeItInheritsByText(t *testing.T) {
 	f := newCloudFixture(t)

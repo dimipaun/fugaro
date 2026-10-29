@@ -1,0 +1,124 @@
+# website/data/landing.yaml -- the four campaign variants, one per audience the ads speak to
+# (go-to-market plan, Task G2.1; spec.md section 6).
+#
+# One file, four variants, four pages: /save, /control, /scale and /crew are the message names
+# and the routes, they carry no `/landing` prefix, and `website/src/lib/landing.mjs` reads this
+# file and refuses anything it does not understand rather than guessing at it. A page renders
+# what is written here and types none of it into a component -- the headline is the spec's own
+# sentence and the paths are the spec's own names, so a campaign whose message changes changes
+# this file.
+#
+# **What a proof number is.** The band under the hero prints one figure in big type, and a
+# figure is never typed into a page: `proof_number` is either the sentinel `unmeasured` -- no
+# figure is published yet -- or a figure whose `source` names an entry of
+# `website/data/typical-costs.yaml`, the owner's own measurement of this project's development
+# runs, which the loader reads through the same `loadTypicalCosts(minRuns)` the caps-and-costs
+# guide reads, so D97's minimum stays one number. The figures of the agenda behind these pages
+# -- a percentage saved, a per-PR cost, an hourly rate -- are claims, and none of them is in
+# this file until the owner's aggregation of at least `min_runs` runs backs it (F6, D96, D97).
+# The value and the source move together: `unmeasured` beside `unmeasured`, or a figure beside
+# the row it was drawn from.
+#
+# **What is deliberately not here.** No partner logo: the social-proof section is hidden while
+# `partner_logos` is empty, and a logo waits for the partner's written permission, which is the
+# owner's (F11, F12, D405, R3). No media: a variant's `video` and `image` are optional paths
+# under `website/public/`, never a YouTube or Vimeo URL -- an embedded player would be a fourth
+# third party the consent work never admitted -- and the pages build without the files until the
+# owner produces them (F14, F20, D107, G2.5).
+#
+# **The two identifiers below are public by design**: the booking link is on the page, and the
+# number is the WhatsApp Business number the links open. Neither is a secret, and neither is
+# pasted anywhere else -- the WhatsApp link is derived from the number and the variant's
+# pre-fill message, so the number is written once (R3).
+#
+# **Both are the owner's own, supplied and not invented**: the booking link and the WhatsApp
+# Business number are the two values the owner gave for this task, written here verbatim, and
+# the repository publishes no identifier the owner did not supply (R3 -- a number that reached
+# this file any other way could belong to a stranger, and the page would send visitors to it).
+# A number that changes is changed here, once: the link is derived from it rather than pasted
+# beside it. The task that puts either in front of a visitor is G2.5's (OWNER-RUN), and G2.2
+# and G2.3 render them.
+version: 1
+
+# The owner's Calendly link: the Book a demo call to action, rendered as a plain link (G2.2)
+# and as the inline embed behind the marketing consent (G2.3, D401). The page adds the UTM
+# parameters it is allowed to pass through (F22, G2.4); the file writes the link itself, with no
+# query of its own.
+calendly_url: https://calendly.com/dimi-fugaro/demo
+
+# The WhatsApp Business number in the `wa.me` form: digits alone, the country code first, with
+# no plus, no spaces and no punctuation. It is written as a string so that its YAML kind is not
+# what carries it and a refreshed number with a leading zero would survive.
+whatsapp_number: "14377842426"
+
+# The design partners whose logos the social-proof section may render, each with the partner's
+# written permission (which is why the list is empty and stays empty until the owner says
+# otherwise). An entry is a `name` and a self-hosted `image`, like a variant's media.
+partner_logos: []
+
+# One variant per campaign audience: the spec's Save, Control, Scale and Crew.
+#
+#   path            the route the page is built at, and the variant's own name: one of the four
+#                   message names, unique, with no `/landing` prefix (spec section 6).
+#   headline        the hero's own line. The spec quotes three of them; /crew is the light
+#                   rewrite of the campaign message the spec asks for ("lighter tone, same
+#                   calls to action"), and it is this file's copy rather than the spec's.
+#   supporting_line the one line under the headline, describing what the promises rest on:
+#                   the models that do the work, the recipe that holds the policy, the parallel
+#                   runs, the caps. It is never a figure (see `proof_number`).
+#   tone            the variant's voice, which the page's look keys off: `playful` is /crew's
+#                   own (spec section 6), the other three are the audience's register.
+#   proof_number    the figure the band prints, with the entry of the measured costs that backs
+#                   it, or the sentinel (see the header).
+#   whatsapp_text   the pre-filled message on the WhatsApp link, naming the page the visitor
+#                   came from -- the spec writes the pattern, and the loader refuses a message
+#                   that names another variant or none (spec section 6).
+#
+# Three more refusals the loader applies here. A blank `headline` or `supporting_line` is refused:
+# the hero prints both, and this file is the only place that copy is written, so an empty value is
+# a hero with a hole in it rather than a default to fall back on. A variant's `tone` is a
+# lowercase word, which the page's look keys off -- unlike a `name` in `partner_logos`, which is
+# the partner's own name and is read as written, though a blank one is refused as well: the
+# social-proof section prints that name beside the logo, and a picture nobody is named beside is
+# not social proof (F11, F12, D405).
+#
+# `video` and `image` are absent from every variant: no campaign video exists yet and the /crew
+# cat imagery is the owner's file, and a variant that names neither builds and renders without
+# it (F14, G2.5). They land here as `/videos/save.mp4` and `/images/crew-cat.png` -- a path the
+# site serves, which is the only kind the loader admits.
+variants:
+  - path: /save
+    headline: "Same PRs, a tenth of the price."
+    supporting_line: "Cheap models do the work, a premium model reviews it, and every call is priced as it is made."
+    tone: savings
+    proof_number:
+      value: unmeasured
+      source: unmeasured
+    whatsapp_text: "Hi Dimi, I saw Fugaro on the save page."
+
+  - path: /control
+    headline: "One review policy, enforced for every developer."
+    supporting_line: "The recipe in fugaro.yaml is the policy: every run, on every developer's machine, goes through the same review and fixing rounds."
+    tone: control
+    proof_number:
+      value: unmeasured
+      source: unmeasured
+    whatsapp_text: "Hi Dimi, I saw Fugaro on the control page."
+
+  - path: /scale
+    headline: "Your best engineer, times twenty."
+    supporting_line: "One orchestrator asks Fugaro for many runs at once, each with its own budget and its own draft pull request."
+    tone: scale
+    proof_number:
+      value: unmeasured
+      source: unmeasured
+    whatsapp_text: "Hi Dimi, I saw Fugaro on the scale page."
+
+  - path: /crew
+    headline: "Work like a crew of twenty. Nap like a cat."
+    supporting_line: "The same engine and the same caps, with the work happening in your own cloud project while you are somewhere else."
+    tone: playful
+    proof_number:
+      value: unmeasured
+      source: unmeasured
+    whatsapp_text: "Hi Dimi, I saw Fugaro on the crew page."

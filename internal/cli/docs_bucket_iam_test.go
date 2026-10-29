@@ -76,13 +76,12 @@ func TestDocsLaunchersDoNotHoldObjectAdmin(t *testing.T) {
 	// widened to runs/ and tokens/, so each is pinned with the widened half and
 	// the stale scan above bans the runs/-only phrasing.
 	required := map[string][]string{
-		"../../docs/gcp-setup.md": {
-			"can write only `runs/` and `tokens/`",
-			"launchers read the whole runs bucket, and write only `runs/` and `tokens/`",
+		// The page that carried this table was docs/gcp-setup.md, which is the
+		// short setup path now; the launcher's grant is written down in the
+		// design of record, which is the contract the code cites.
+		"../../docs/design/bucket-iam.md": {
 			"runs-bucket-iam", "add-iam-policy-binding", "DATA_WRITE",
-			"| Launcher (not an operator) | read | read | read, write | read |",
-			"| needs the operator role | a launcher ran a publish",
-			"only operators can write it",
+			"| Launcher (not an operator) | read | read | **read, write** | read |",
 		},
 		"../../docs/recipes.md": {
 			"It is an operator command: once an operator has applied the 0.7.0 bucket hardening",

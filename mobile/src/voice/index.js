@@ -1,4 +1,7 @@
-// The voice screen's one door (mobile plan, Task P3.5; D122, D127, D126).
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See mobile/LICENSE.md for the terms.
+// The voice screen's one door (mobile plan, Tasks P3.5 and P6.12; D122, D127,
+// D126, D162, D164, D168, D169).
 //
 // A screen imports `src/voice/index.js` and gets the screen, the switch it is
 // gated by, and the adapter that puts the audio pipeline behind the mailbox
@@ -18,15 +21,19 @@
 // database or a clock of its own, and the module's scan is what keeps that
 // true rather than promised.
 //
-// What is *not* here, and is on purpose: the spoken confirmation (**P6.12**,
-// which builds on this task later -- the seam is `accept` and the pipeline's
-// events, and none of it is implemented), the prompt queue and its wider
-// interrupt table (**P6.5**, which is not a dependency of this task: see
-// `interrupt.js` on the one place the two disagree), and the job list (P3.3).
-// Each of them is written against this door.
+// **P6.12 shipped the spoken confirmation through the seam P3.5 left.**
+// `dialogue.js` is where a final transcript is routed (P6.1), where a
+// destructive command's read-back is spoken and waited on (P6.2, D169) and
+// where P6.5's prompt pause is decided -- and the screen takes it as an
+// optional `utterance` delegate, so the words it routes as agent text still go
+// through the screen's own `accept` and its offline refusal. What is *not* here,
+// and is on purpose: the prompt queue itself and its wider interrupt table
+// (**P6.5**, a pure module in `shared/`), and the job list (P3.3).
 
 export { QUEUE_CAP, SCREEN_CODES, createVoiceScreen } from './screen.js';
 
 export { INTERRUPT_REASON, INTERRUPT_SWITCH, interruptDecision } from './interrupt.js';
 
 export { createPipelineSpeaker } from './speaker.js';
+
+export { DIALOGUE_CODES, DIALOGUE_OUTCOME, createVoiceDialogue } from './dialogue.js';

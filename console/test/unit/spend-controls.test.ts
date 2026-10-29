@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See console/LICENSE.md for the terms.
 // The Spend screen's controls: the range picker, the breakdown switch and the
 // operator's person-view knob (desktop-console plan Task 2.4; design sections
 // 2.3, 5.1 rule 6 and 6.2 screen 2, D15).
@@ -6,9 +8,13 @@
 // screen's half of the wiring: one `spend.report` read per change, whose
 // `--since`/`--until` come from the picker and whose `--by` comes from the
 // switch, through the **existing** `runReport` operation and the spawn table's
-// own argv -- no new write, no new spawn-table row and no new channel. (The
-// entry point that calls this library is a later task's; there is no renderer
-// entry point in this tree yet, and `spend.ts`'s header says so.)
+// own argv -- no new write, no new channel, and (for that read) no new
+// spawn-table row. **Console L5b added one**: the by-person view is a second
+// read, `runs stats --json` through `statsRuns`, and the tests below assert the
+// argv it is allowed to build -- `--since` and nothing else, never
+// `--all-users`, which is the flag that would make this console the one
+// deciding who may see whose rows. (The entry point that calls this library is
+// Task 3.4c's `entry.ts`'s `showSpend`.)
 //
 // **The reads here are real spawns.** The reader below is a `CliSource` over
 // Task 1.3's stub, and every argument the screen builds goes through the IPC
@@ -38,12 +44,14 @@ import {
   SPEND_DIMENSIONS,
   SPEND_PICKER_WINDOWS,
   buildSpendModel,
+  peopleArguments,
   personView,
   readSpend,
   renderSpend,
   spendArguments,
 } from '../../src/renderer/screens/spend'
 import type {
+  PeopleReader,
   ScreenElement,
   ScreenFactory,
   SpendControls,
@@ -181,6 +189,61 @@ const PERSON_DOCUMENT: JSONDoc = {
   ],
 }
 
+/**
+ * STATS_DOCUMENT is a `runs stats --json` document (`internal/cli/runs_stats.go`'s
+ * `userStatsDoc`, contract section 6.10), in the same window as the report
+ * above: the view the CLI resolved, the identity it resolved it for, the
+ * installation's own operator line, the window, the read's bound, the rows and
+ * the totals, and the runs of the window that never started.
+ */
+const STATS_DOCUMENT: JSONDoc = {
+  project: PROJECT,
+  by: 'user',
+  view: 'own',
+  you: 'ada@example.com',
+  operator: false,
+  since: '2026-10-05',
+  until: '2026-10-11',
+  max_runs: 5000,
+  truncated: false,
+  rows: [
+    {
+      user: 'ada@example.com',
+      currency: 'USD',
+      runs: 3,
+      succeeded: 2,
+      failed: 1,
+      halted: 0,
+      infra_error: 0,
+      other: 0,
+      no_record: 0,
+      counted_usd: 1.5,
+      notional_usd: 0.4,
+      counted_runs: 3,
+      avg_counted_usd: 0.5,
+    },
+  ],
+  totals: [
+    {
+      user: '',
+      currency: 'USD',
+      runs: 3,
+      succeeded: 2,
+      failed: 1,
+      halted: 0,
+      infra_error: 0,
+      other: 0,
+      no_record: 0,
+      counted_usd: 1.5,
+      notional_usd: 0.4,
+      counted_runs: 3,
+      avg_counted_usd: 0.5,
+    },
+  ],
+  unlaunched: 0,
+  notes: ['these are the runs you started in the window'],
+}
+
 /** json is one document as the child prints it. */
 function json(document: JSONDoc): string {
   return `${JSON.stringify(document)}\n`
@@ -192,6 +255,8 @@ interface Wired {
   /** the read the screen makes, as the app will make it: the allow-list's own
    * validator, then the source's one allow-listed `report --json` read */
   readonly read: SpendReader
+  /** the by-person read, wired the same way over `runs.stats` (console L5b) */
+  readonly readPeople: PeopleReader
   /** the stub, so a test can change what the next read answers with */
   readonly stub: Stub
   /** the console's own spawn log (design section 5.1 rule 10) */
@@ -205,7 +270,11 @@ async function wired(document: JSONDoc = WEEK_DOCUMENT): Promise<Wired> {
   const directory = mkdtempSync(join(tmpdir(), 'fugaro-spend-controls-'))
   const logPath = join(directory, 'spawn.jsonl')
   const stub = installStub(directory, {
-    commands: { version: { stdout: '1.4.2\n' }, report: { stdout: json(document) } },
+    commands: {
+      version: { stdout: '1.4.2\n' },
+      report: { stdout: json(document) },
+      'runs stats': { stdout: json(STATS_DOCUMENT) },
+    },
   })
   const source = await CliSource.create({
     target: { project: PROJECT },
@@ -221,6 +290,13 @@ async function wired(document: JSONDoc = WEEK_DOCUMENT): Promise<Wired> {
         throw new Error(`the allow-list refused the screen's own arguments: ${decision.reason}`)
       }
       return (await source.runReport(decision.args)).document
+    },
+    readPeople: async (args) => {
+      const decision = validateArguments('runs.stats', args)
+      if (!decision.ok) {
+        throw new Error(`the allow-list refused the by-person read's own arguments: ${decision.reason}`)
+      }
+      return (await source.statsRuns(decision.args)).document
     },
   }
 }
@@ -245,6 +321,12 @@ function spawns(logPath: string): readonly SpawnLogLine[] {
 /** reportSpawns is every `report` the console spawned, in order. */
 function reportSpawns(logPath: string): readonly SpawnLogLine[] {
   return spawns(logPath).filter((line) => line.argv[1] === 'report')
+}
+
+/** statsSpawns is every `runs stats` the console spawned, in order: the
+ * by-person read (console L5b) and nothing else on that command word. */
+function statsSpawns(logPath: string): readonly SpawnLogLine[] {
+  return spawns(logPath).filter((line) => line.argv[1] === 'runs')
 }
 
 /** flagsOf is a child's argv as the flag map a test can compare: every
@@ -279,6 +361,14 @@ function changedFlags(before: readonly string[], after: readonly string[]): read
 /** read is one wired read, asserted to have produced a model. */
 async function read(console: Wired, controls: SpendControls) {
   const outcome = await readSpend(console.read, controls, null)
+  if (!outcome.ok) throw new Error(`the read refused: ${outcome.reason}`)
+  return outcome
+}
+
+/** readWith is the same, with the by-person reader wired too: the shape
+ * `entry.ts`'s `showSpend` calls `readSpend` in. */
+async function readWith(console: Wired, controls: SpendControls) {
+  const outcome = await readSpend(console.read, controls, null, console.readPeople)
   if (!outcome.ok) throw new Error(`the read refused: ${outcome.reason}`)
   return outcome
 }
@@ -346,8 +436,8 @@ describe('the spend controls', () => {
     if (first === undefined || second === undefined) throw new Error('two reads, two spawns')
     expect(flagsOf(second.argv)['--by']).toBe('repo')
     expect(changedFlags(first.argv, second.argv)).toEqual(['--by'])
-    // The six other words of the switch are the same read with a different
-    // `--by`, and every one of them is a word the allow-list admits.
+    // Every word of the switch is the same read with a different `--by`, and
+    // every one of them is a word the allow-list admits.
     for (const dimension of SPEND_DIMENSIONS) {
       const decision = spendArguments({ ...SPEND_DEFAULT_CONTROLS, by: dimension, persons: true })
       expect(decision.ok).toBe(true)
@@ -385,7 +475,7 @@ describe('the spend controls', () => {
     }
   })
 
-  it('never adds NOTIONAL~ to a real total, on the first read or after a re-read', async () => {
+  it('never adds ~$ to a real total, on the first read or after a re-read', async () => {
     const console = await wired()
     const first = await read(console, SPEND_DEFAULT_CONTROLS)
     const second = await read(console, { ...SPEND_DEFAULT_CONTROLS, since: '7d' })
@@ -463,6 +553,163 @@ describe('the spend controls', () => {
     expect(outcome.ok).toBe(false)
     expect(outcome.ok ? null : outcome.args).toBeNull()
     expect(reportSpawns(console.logPath)).toEqual([])
+  })
+
+  // -------------------------------------------------------------------------
+  // The by-person read (console L5b).
+  // -------------------------------------------------------------------------
+  //
+  // The by-person view is the screen's second read, and it is the one this task
+  // added to the allow-list. What is asserted here is the *argv*: which command
+  // words, which flags, and -- the half that matters -- which flags this console
+  // can never build. The drawing the document produces is `spend.test.ts`'s.
+
+  it('spawns no by-person read at all while the knob is off', async () => {
+    // The mutation this is written against: a read made whatever the knob says,
+    // or a panel built from a read the operator never asked for. With the knob
+    // off the screen spawns the report once and nothing else.
+    const console = await wired()
+    const outcome = await readWith(console, SPEND_DEFAULT_CONTROLS)
+    expect(outcome.model.people).toBeNull()
+    expect(statsSpawns(console.logPath)).toEqual([])
+    expect(spawns(console.logPath).map((line) => line.argv.slice(1, 3))).toEqual([
+      ['version'],
+      ['report', '--json'],
+    ])
+  })
+
+  it('reads `runs stats --json --since …` once while the knob is on, and asks for nothing else', async () => {
+    const console = await wired()
+    const outcome = await readWith(console, personView(SPEND_DEFAULT_CONTROLS, true))
+
+    const [spawn] = statsSpawns(console.logPath)
+    expect(spawn).toBeDefined()
+    if (spawn === undefined) return
+    // The command words, then exactly the two flags this console may send:
+    // `--json`, and `--since` from the picker's own window.
+    expect(spawn.argv.slice(1, 4)).toEqual(['runs', 'stats', '--json'])
+    expect(flagsOf(spawn.argv)).toEqual({ '--json': null, '--since': '30d', '--project': PROJECT })
+    // **The flags this console must never be able to build.** `--all-users` is
+    // the one that would make "who may see whose rows" this window's decision
+    // rather than the CLI's; the rest are the flags design section 5.1 rule 6
+    // leaves off the operation's schema on purpose (`src/main/ipc.ts`).
+    for (const refused of ['--all-users', '--all', '--by', '--repo', '--max-runs', '--until']) {
+      expect(spawn.argv, refused).not.toContain(refused)
+      expect(JSON.stringify(spawn.argv), refused).not.toContain(refused)
+    }
+    expect(JSON.stringify(spawns(console.logPath))).not.toContain('all-users')
+    // One by-person read, one report read: the knob is one read and not a poll.
+    expect(statsSpawns(console.logPath)).toHaveLength(1)
+    expect(reportSpawns(console.logPath)).toHaveLength(1)
+    // And the document that came back is the one drawn.
+    expect(outcome.model.people?.view).toBe('own')
+    expect(outcome.model.people?.you).toBe('ada@example.com')
+  })
+
+  it('translates the picker’s four windows into the forms `runs stats --since` parses, and never sends a week form', async () => {
+    // `report --since` takes `Nd` and `Nw`; `runs stats --since` (parseSince,
+    // `internal/cli/runs.go`) takes a day count, a Go duration or `0` and has
+    // **no week form at all**. The two grammars are asserted here against the
+    // allow-list's own schema, so the translation cannot rot silently.
+    const console = await wired()
+    const sent: (string | undefined)[] = []
+    for (const window of SPEND_PICKER_WINDOWS) {
+      const controls = personView({ ...SPEND_DEFAULT_CONTROLS, since: window }, true)
+      const decision = peopleArguments(controls)
+      expect(decision.ok, window).toBe(true)
+      if (decision.ok) {
+        expect(validateArguments('runs.stats', decision.args).ok, window).toBe(true)
+      }
+      await readWith(console, controls)
+      sent.push(flagsOf(statsSpawns(console.logPath).at(-1)?.argv ?? [])['--since'] ?? undefined)
+    }
+    expect(sent).toEqual(['7d', '30d', '90d', '84d'])
+    // Twelve weeks is eighty-four days (`reportRange`'s own unit is 7), and the
+    // week spelling itself is a value this console must not be able to send:
+    // the allow-list refuses it, which is why the table exists.
+    expect(sent).not.toContain('12w')
+    expect(validateArguments('runs.stats', { since: '12w' }).ok).toBe(false)
+    // Every window the picker offers is a `--since` the *report* read accepts
+    // too, so neither read is asked for a window the console invented.
+    for (const window of SPEND_PICKER_WINDOWS) {
+      expect(validateArguments('spend.report', { since: window }).ok, window).toBe(true)
+    }
+  })
+
+  it('refuses a window the by-person read has no form for, and draws the report anyway', async () => {
+    // A day range and a range with an end are the two states `runs stats` cannot
+    // be asked about, and the console refuses rather than approximating: a
+    // window it silently altered would be drawn under the picker that holds the
+    // one the operator chose.
+    const console = await wired()
+    const cases: readonly (readonly [SpendControls, string])[] = [
+      [personView({ ...SPEND_DEFAULT_CONTROLS, since: '2026-10-05' }, true), '2026-10-05'],
+      [personView({ ...SPEND_DEFAULT_CONTROLS, until: '2026-10-11' }, true), '2026-10-11'],
+    ]
+    for (const [controls, value] of cases) {
+      const outcome = await readWith(console, controls)
+      // The report is the screen's subject: its figures are drawn, and the
+      // by-person panel is the one that has no document.
+      expect(outcome.model.rows.length, value).toBeGreaterThan(0)
+      expect(outcome.model.people?.available, value).toBe(false)
+      const reason = outcome.model.people?.reason ?? ''
+      expect(reason.length, value).toBeGreaterThan(0)
+      expect(reason, value).not.toContain(value)
+    }
+    // Nothing reached a child for the by-person read, and the report was read
+    // once per case -- the refusal is the panel's and not the screen's.
+    expect(statsSpawns(console.logPath)).toEqual([])
+    expect(reportSpawns(console.logPath)).toHaveLength(cases.length)
+  })
+
+  it('draws its own sentence, with no spawn, when the caller wired no by-person reader', async () => {
+    // `readSpend`'s fourth parameter is optional, so the three-argument call
+    // sites keep working -- and the panel they produce says the truth about
+    // itself: this console made no read.
+    const console = await wired()
+    const outcome = await read(console, personView(SPEND_DEFAULT_CONTROLS, true))
+    expect(statsSpawns(console.logPath)).toEqual([])
+    expect(outcome.model.people?.available).toBe(false)
+    expect(outcome.model.people?.reason).toContain('made no by-person read')
+  })
+
+  it('draws the CLI’s own sentence for a refused by-person read, sanitized, beside the report’s figures', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'fugaro-spend-controls-'))
+    const logPath = join(directory, 'spawn.jsonl')
+    const stub = installStub(directory, {
+      commands: {
+        version: { stdout: '1.4.2\n' },
+        report: { stdout: json(WEEK_DOCUMENT) },
+        'runs stats': {
+          stderr: 'fugaro: cannot tell who you are, and this view shows your own row alone\n',
+          code: 1,
+        },
+      },
+    })
+    const source = await CliSource.create({
+      target: { project: PROJECT },
+      configuredBinaryPath: stub.binary,
+      appEnv: { FUGARO_CONSOLE_SPAWN_LOG: logPath },
+    })
+    const outcome = await readSpend(
+      async (args) => (await source.runReport(validateOk(args))).document,
+      personView(SPEND_DEFAULT_CONTROLS, true),
+      null,
+      async (args) => {
+        const decision = validateArguments('runs.stats', args)
+        if (!decision.ok) throw new Error(decision.reason)
+        return (await source.statsRuns(decision.args)).document
+      },
+    )
+    // The screen is drawn -- the report answered -- and the panel carries the
+    // CLI's sentence and no rows.
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+    expect(outcome.model.people?.available).toBe(false)
+    expect(outcome.model.people?.reason).toBe(
+      'cannot tell who you are, and this view shows your own row alone',
+    )
+    expect(statsSpawns(logPath)).toHaveLength(1)
   })
 
   // -------------------------------------------------------------------------

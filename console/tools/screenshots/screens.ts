@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See console/LICENSE.md for the terms.
 // What the screenshot run captures: one entry per picture, its alt text, the
 // selector the run waits for, and the two facts about the set (the size every
 // capture is taken at, and the picture the owner's ruling names that this run

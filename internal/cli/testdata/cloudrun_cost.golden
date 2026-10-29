@@ -280,7 +280,8 @@ compute_micros=0 compute_estimated_runs=1 spent_micros=2000000 notional_micros=0
         "compute_estimated": true,
         "total_usd": 0.16,
         "estimate": true,
-        "model_basis": "subscription"
+        "model_basis": "subscription",
+        "model_notional_usd": 3.2
       },
       "terminal": true,
       "settled": true,

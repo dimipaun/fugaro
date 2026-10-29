@@ -226,6 +226,7 @@ func TestRecipesLsLayers(t *testing.T) {
 		{Name: "pick", Source: "catalog"},
 		{Name: "premium", Source: "catalog"},
 		{Name: "review-only", Source: "catalog"},
+		{Name: "run-digest", Source: "catalog"},
 		{Name: "solo", Source: "catalog"},
 		{Name: "standard", Source: "catalog"},
 		{Name: "test-and-fix", Source: "catalog"},

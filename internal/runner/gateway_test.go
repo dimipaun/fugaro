@@ -3,12 +3,14 @@ package runner_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -19,10 +21,13 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -188,6 +193,65 @@ func TestNoCapHaltAtBootstrap(t *testing.T) {
 	stored, err := g.store.ReadRecord(context.Background())
 	if err != nil || stored.Status != runstore.StatusHalted || stored.Halt == nil || stored.FinishedAt == nil {
 		t.Fatalf("stored = %+v, %v", stored, err)
+	}
+}
+
+// TestCascadeEnforceWithoutCapsHaltsNoCap is C1.19's admission half: a cascade
+// run is a *gatewayed* run — its model calls are leased and accounted for by
+// the credentials service's upstream, exactly as an api-key run's are (D143) —
+// so an enforcing installation with no caps has to halt it no_cap at bootstrap,
+// as TestNoCapHaltAtBootstrap's api-key run is halted, rather than admit it and
+// let the calls fail one by one against a service that has nothing to lease.
+//
+// The run is a real one through the policy path: the switch is published (O2,
+// without which the run does not start at all), the mode enforces and the caps
+// are gone from the database, so the halt is Admit's own. Its outcome is none
+// and the process exits 0: nothing was locked, pushed or opened, and no model
+// call was made.
+//
+// It is a job run, because a cascade run is: `fugaro exec` never cascades
+// (D149), and a local one is refused in bootstrap before it reaches admission
+// at all.
+//
+// Hand mutation this fails on: building Admit's Gateway flag from api-key and
+// vertex alone — the predicate C1.19 left behind here, which reads a cascade
+// run as the unleased run an oauth run is and returns no halt at all.
+func TestCascadeEnforceWithoutCapsHaltsNoCap(t *testing.T) {
+	cfg := strings.Replace(gwConfig(t, ""), "auth: api-key", "auth: cascade", 1)
+	if cfg == gwConfig(t, "") {
+		t.Fatal("the fixture's agent.auth line moved: this test is not switching it to cascade")
+	}
+	g := newGW(t, cfg, "enforce", "")
+	// A cascade run is a job run — `fugaro exec` never cascades (D149) — so
+	// the harness is the cloud here, as TestTestKnobIgnoredInCloud's is: the
+	// platform's own execution of this repository's job, and the project the
+	// job names.
+	g.deps.Local = false
+	g.deps.Project = "aurora"
+	g.deps.Execution = cloudRunExecution(gcp.JobName(repoSlug, gcp.WorkflowVariant("app", "")))
+	g.deps.Env = append(g.deps.Env, "CLOUD_RUN_EXECUTION=exec-1")
+	b := publishPolicy(t, g, fmt.Sprintf(`{"version":%d,"allow_repos":["*"],"routing":{"claude":{"via":"cascade"}},"budget":{"mode":"enforce","allowed_models":["claude-sonnet-5-5"]}}`, projectpolicy.Version))
+	// Nothing to lease against, anywhere: the run may not begin.
+	b.db.Set(budget.PathCapsRepo(repoSlug), nil)
+	b.db.Set(budget.PathCapsGlobal, nil)
+	rec, err := b.run(t) // no stage may run
+	if err != nil {
+		t.Fatalf("a bootstrap halt returned %v, want nil so exec exits 0", err)
+	}
+	if rec.Status != runstore.StatusHalted || rec.Outcome != runstore.OutcomeNone || rec.Halt == nil || rec.Halt.Reason != runstore.HaltNoCap {
+		t.Fatalf("record = %+v", rec)
+	}
+	if !strings.HasPrefix(rec.Reason, "halted: no_cap: ") || !strings.Contains(rec.Halt.Detail, "no per-run cap") {
+		t.Fatalf("reason = %q, halt = %+v", rec.Reason, rec.Halt)
+	}
+	if ok, _ := b.bucket.Exists(context.Background(), lock.Key(repoSlug, "fugaro/"+runID)); ok {
+		t.Fatal("the branch lock was taken")
+	}
+	if len(g.provider.State.PRs) != 0 {
+		t.Fatal("a halted bootstrap opened a PR")
+	}
+	if g.fake.Count() != 0 {
+		t.Fatal("the gateway was used")
 	}
 }
 
@@ -410,6 +474,126 @@ func TestStageTimingCarriesCost(t *testing.T) {
 	}
 }
 
+// subAgentCalls makes inner write n sub-agent tool calls into the stage's
+// stream, so a test's stage carries a sub-agent count the relay sees.
+func subAgentCalls(inner step, n int) step {
+	return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		for i := 0; i < n; i++ {
+			_, _ = req.Transcript.Write([]byte(`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Agent","input":{"subagent_type":"general-purpose","prompt":"x"}}]}}` + "\n"))
+		}
+		return inner(t, ctx, req)
+	}
+}
+
+// TestStageTimingRecordsGatewayCalls: a gateway run's stage records its
+// calls from the stage report, and its agents from the relay's count of the
+// sub-agent tool calls in the stage's own stream -- never the gateway's
+// distinct-agent-ID count, which rests on an ID no one verifies
+// (task-governance T1.3). The fake's model call carries no agent ID, so the
+// gateway report would count no sub-agent while the stream names two.
+func TestStageTimingRecordsGatewayCalls(t *testing.T) {
+	g := newGW(t, gwRolesConfig(t), "observe", "",
+		out4k(), // implement: sonnet, one call
+		out4k()) // review: opus, one call
+	var st []int
+	rec, err := g.run(t,
+		calling(&st, subAgentCalls(implement("feature"), 2), call{sonnet, 4000}),
+		calling(&st, review("ship", 0), call{opus, 4000}))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	want := []struct {
+		name   string
+		calls  int
+		agents int
+	}{{"implement", 1, 2}, {"review", 1, 0}}
+	if len(rec.Stages) != len(want) {
+		t.Fatalf("stages = %+v", rec.Stages)
+	}
+	for i, w := range want {
+		s := rec.Stages[i]
+		if s.Name != w.name {
+			t.Fatalf("stage %d = %+v, want %s", i, s, w.name)
+		}
+		if s.Calls == nil || *s.Calls != w.calls {
+			t.Errorf("stage %q calls = %v, want %d from the stage report", s.Name, s.Calls, w.calls)
+		}
+		if s.Agents == nil || *s.Agents != w.agents {
+			t.Errorf("stage %q agents = %v, want %d from the relay, not the gateway's distinct IDs", s.Name, s.Agents, w.agents)
+		}
+	}
+}
+
+// TestStageTimingOAuthHasNoCalls: without a gateway a stage has no call
+// count, so calls is absent rather than zero (G5), while agents is still the
+// relay's count of the stage's sub-agent tool calls (task-governance T1.3).
+func TestStageTimingOAuthHasNoCalls(t *testing.T) {
+	oauthCfg := strings.Replace(gwRolesConfig(t), "auth: api-key", "auth: oauth", 1)
+	og := newGW(t, oauthCfg, "observe", "")
+	og.deps.Env = append(filterEnv(og.deps.Env, "ANTHROPIC_API_KEY"), "CLAUDE_CODE_OAUTH_TOKEN=oauth-token-abcdef")
+	rec, err := og.run(t,
+		subAgentCalls(implement("feature"), 2),
+		review("ship", 0))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if len(rec.Stages) != 2 {
+		t.Fatalf("stages = %+v", rec.Stages)
+	}
+	for _, s := range rec.Stages {
+		if s.Calls != nil {
+			t.Errorf("stage %q calls = %d: an oauth run has no gateway, so calls is absent, never zero", s.Name, *s.Calls)
+		}
+	}
+	if a := rec.Stages[0].Agents; a == nil || *a != 2 {
+		t.Errorf("implement agents = %v, want 2 from the relay", a)
+	}
+	if a := rec.Stages[1].Agents; a == nil || *a != 0 {
+		t.Errorf("review agents = %v, want 0 from the relay", a)
+	}
+}
+
+// repeatCalls writes n runs of one identical shell command into the stage's
+// stream, the way the agent's own transcript carries them.
+func repeatCalls(inner step, command string, n int) step {
+	return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		input, err := json.Marshal(map[string]string{"command": command})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < n; i++ {
+			_, _ = req.Transcript.Write([]byte(`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":` + string(input) + `}]}}` + "\n"))
+		}
+		return inner(t, ctx, req)
+	}
+}
+
+// TestStageTimingRecordsRepeats: a stage's repeats is the relay's count of the
+// most times one identical shell command ran in the stage's own stream, which
+// is the figure the digest's loop flag reads -- the whole path from the
+// stream to the record (task-governance T1.4).
+func TestStageTimingRecordsRepeats(t *testing.T) {
+	g := newGW(t, gwRolesConfig(t), "observe", "",
+		out4k(), // implement: sonnet, one call
+		out4k()) // review: opus, one call
+	var st []int
+	rec, err := g.run(t,
+		calling(&st, repeatCalls(implement("feature"), "go test ./...", 5), call{sonnet, 4000}),
+		calling(&st, repeatCalls(review("ship", 0), "go test ./...", 2), call{opus, 4000}))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	want := []int{5, 2}
+	if len(rec.Stages) != len(want) {
+		t.Fatalf("stages = %+v", rec.Stages)
+	}
+	for i, n := range want {
+		if got := rec.Stages[i].Repeats; got == nil || *got != n {
+			t.Errorf("stage %q repeats = %v, want %d from the relay", rec.Stages[i].Name, got, n)
+		}
+	}
+}
+
 // TestStageTimingLateSpendIsUnattributed: a gateway call that settles after
 // its stage's wait ran out counts in the run's model cost and in no stage's
 // report. The stages then sum to model_usd minus cost.model_by's
@@ -594,6 +778,85 @@ func unparsed2xx() anthropicfake.Reply {
 	return anthropicfake.Reply{Status: 200, Body: "not json at all"}
 }
 
+// tierPriority is a reply that comes back at a service tier the price table
+// has no multiplier for, the shape a live OpenRouter DeepSeek call returned.
+func tierPriority() anthropicfake.Reply {
+	rep := anthropicfake.MessageOK(sonnet, pricing.Usage{Input: 1000, Output: 100})
+	rep.Body = strings.Replace(rep.Body, `"service_tier":"standard"`, `"service_tier":"priority"`, 1)
+	return rep
+}
+
+// TestServiceTierNotedInRecord: a call charged conservatively for an
+// unpriced service tier is in the run's model figure, so the record names
+// the tier: the reader of a provider run has no other way to explain the
+// figure (its provider-reported cost is recorded, and floors that charge
+// rather than pricing it) and the stage log is not part of the record. The
+// stage itself goes on.
+func TestServiceTierNotedInRecord(t *testing.T) {
+	g := newGW(t, gwConfig(t, ""), "observe", "", tierPriority())
+	var st []int
+	rec, err := g.run(t, calling(&st, implement("feature"), call{sonnet, 4000}), review("ship", 0))
+	if err != nil || rec.Cost == nil {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("status = %q: a provider's own tier must not fail the stage", rec.Status)
+	}
+	if len(rec.Cost.ServiceTiers) != 1 || rec.Cost.ServiceTiers[0] != `usage.service_tier "priority"` {
+		t.Fatalf("service_tiers = %q, want the tier named in the record", rec.Cost.ServiceTiers)
+	}
+	if !strings.Contains(g.logs.String(), "service tiers charged conservatively") {
+		t.Fatalf("no line naming the tiers:\n%s", g.logs.String())
+	}
+}
+
+// tierScript is n replies, each answering at a different service tier the
+// price table has no multiplier for: the shape a provider that never repeats
+// itself sends.
+func tierScript(n int) []anthropicfake.Reply {
+	out := make([]anthropicfake.Reply, n)
+	for i := range out {
+		rep := anthropicfake.MessageOK(sonnet, pricing.Usage{Input: 1000, Output: 100})
+		rep.Body = strings.Replace(rep.Body, `"service_tier":"standard"`, fmt.Sprintf(`"service_tier":"tier-%02d"`, i), 1)
+		out[i] = rep
+	}
+	return out
+}
+
+// TestServiceTiersCappedInRecord: however many distinct tiers a run's calls
+// come back at, the record names MaxServiceTiers of them and counts the rest
+// in one entry. A tier no longer ends its stage (design §6.1), so a provider
+// answering a different one on every call would otherwise grow result.json
+// with the call count; the stage log carries the same bounded list. The run
+// still succeeds and every call is still charged.
+func TestServiceTiersCappedInRecord(t *testing.T) {
+	const distinct = 20
+	g := newGW(t, gwConfig(t, ""), "observe", "", tierScript(distinct)...)
+	var st []int
+	made := make([]call, distinct)
+	for i := range made {
+		made[i] = call{sonnet, 4000}
+	}
+	rec, err := g.run(t, calling(&st, implement("feature"), made...), review("ship", 0))
+	if err != nil || rec.Cost == nil {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("status = %q: a provider's own tier must not fail the stage", rec.Status)
+	}
+	want := make([]string, 0, gateway.MaxServiceTiers+1)
+	for i := range gateway.MaxServiceTiers {
+		want = append(want, fmt.Sprintf(`usage.service_tier "tier-%02d"`, i))
+	}
+	want = append(want, fmt.Sprintf("+%d more", distinct-gateway.MaxServiceTiers))
+	if !slices.Equal(rec.Cost.ServiceTiers, want) {
+		t.Fatalf("service_tiers = %q, want %q", rec.Cost.ServiceTiers, want)
+	}
+	if !strings.Contains(g.logs.String(), fmt.Sprintf("+%d more", distinct-gateway.MaxServiceTiers)) {
+		t.Fatalf("the stage log does not carry the entry the record does:\n%s", g.logs.String())
+	}
+}
+
 func TestUnreconciledRecorded(t *testing.T) {
 	g := newGW(t, gwConfig(t, ""), "observe", "", unparsed2xx())
 	var st []int
@@ -754,7 +1017,7 @@ func capScript(n int) []anthropicfake.Reply {
 }
 
 func TestRunCapHaltOpensDraft(t *testing.T) {
-	g := newGW(t, gwConfig(t, ""), "enforce", "0.10", capScript(3)...)
+	g := newGW(t, gwConfig(t, critRigor), "enforce", "0.10", capScript(3)...)
 	var st []int
 	rec, err := g.run(t, calling(&st, implement("feature"), call{sonnet, 4000}, call{sonnet, 4000}, call{sonnet, 4000}))
 	if err != nil {
@@ -837,7 +1100,7 @@ func TestHaltGraceThenKill(t *testing.T) {
 func TestInFlightCallsFinishAfterHalt(t *testing.T) {
 	slow := anthropicfake.StreamOK(sonnet, pricing.Usage{Output: 4000})
 	slow.EventDelay = 60 * time.Millisecond
-	g := newGW(t, gwConfig(t, ""), "enforce", "0.10", slow, out4k())
+	g := newGW(t, gwConfig(t, critRigor), "enforce", "0.10", slow, out4k())
 	var slowStatus int
 	var slowBody string
 	step := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {

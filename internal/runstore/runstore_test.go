@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -17,6 +18,7 @@ import (
 	"gocloud.dev/blob/memblob"
 	"gocloud.dev/gcerrors"
 
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
@@ -89,6 +91,236 @@ func TestRecordRoundTripsOAuthAccount(t *testing.T) {
 	got, err = s.ReadRecord(ctx)
 	if err != nil || got.OAuthAccount != "" {
 		t.Fatalf("old record = %+v, %v", got, err)
+	}
+}
+
+// TestRecordRoundTripsToleratedFindings: what a mode let through survives the
+// round trip — the findings themselves, with the count, and not only the
+// number reviews carries (docs/rigor-modes T3.4, D9, F19) — and a record
+// written before the field existed still decodes, which is the compatibility
+// claim the unchanged version rests on.
+func TestRecordRoundTripsToleratedFindings(t *testing.T) {
+	s := newStore(t)
+	tolerated := NewTolerated([]ToleratedFinding{
+		{Title: "the retry loop has no backoff", Mode: rigor.Startup, Likelihood: 1, Impact: 3, FixCost: 2, Class: rigor.Correctness},
+		{Title: "a long comment restates the function", Mode: rigor.Startup, Likelihood: 2, Impact: 2, FixCost: 1, Class: rigor.Cosmetic},
+	})
+	rec := &Record{Version: 1, RunID: runID, Status: StatusSucceeded, Outcome: OutcomeReady,
+		StartedAt: time.Now().UTC(), Tolerated: tolerated}
+	if err := s.WriteRecord(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ReadRecord(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Tolerated, tolerated) {
+		t.Fatalf("ReadRecord tolerated = %+v, want %+v", got.Tolerated, tolerated)
+	}
+	// The label is the score's, and the entry is bounded: the word a reader
+	// sees is the one the axes derive, whatever a caller put beside them.
+	if got.Tolerated.Findings[0].Label != rigor.Nit || got.Tolerated.Findings[1].Label != rigor.Low {
+		t.Errorf("labels = %q, %q, want nit and low", got.Tolerated.Findings[0].Label, got.Tolerated.Findings[1].Label)
+	}
+	if got.Tolerated.Total != 2 || len(got.Tolerated.Findings) != 2 {
+		t.Errorf("tolerated = %+v, want 2 findings and a total of 2", got.Tolerated)
+	}
+
+	// Empty is omitted, so a run that tolerated nothing writes the record it
+	// always wrote rather than an empty block.
+	data, err := json.Marshal(&Record{Version: 1, RunID: runID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "tolerated") {
+		t.Fatalf("a run that tolerated nothing encoded the field: %s", data)
+	}
+
+	// A record written before this field existed still parses, without one.
+	old := `{"version":1,"run_id":"` + runID + `","status":"succeeded","stage":"writeback","outcome":"ready","cost_usd":1,"reviews":[{"round":2,"verdict":"changes","findings":2}],"started_at":"2026-09-26T22:15:30Z"}`
+	if err := s.PutFile(ctx, "result.json", []byte(old), "application/json"); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.ReadRecord(ctx)
+	if err != nil || got.Tolerated != nil {
+		t.Fatalf("old record = %+v, %v, want no tolerated block", got, err)
+	}
+	if len(got.Reviews) != 1 || got.Reviews[0].Findings != 2 {
+		t.Fatalf("old record reviews = %+v, want the round it always carried", got.Reviews)
+	}
+}
+
+// TestNewToleratedBoundsWhatItStores: the record is a small object every
+// listing reads, so the block is bounded — the list at MaxTolerated, each
+// title at MaxToleratedTitle — and Total says how many the mode really
+// tolerated, so a capped list is never presented as the whole one. An entry
+// the record cannot read is not stored at all.
+func TestNewToleratedBoundsWhatItStores(t *testing.T) {
+	var many []ToleratedFinding
+	for i := 0; i < MaxTolerated+5; i++ {
+		many = append(many, ToleratedFinding{Title: "a finding", Mode: rigor.Pro, Likelihood: 1, Impact: 1, FixCost: 1, Class: rigor.Correctness})
+	}
+	tf := NewTolerated(many)
+	if len(tf.Findings) != MaxTolerated || tf.Total != MaxTolerated+5 {
+		t.Fatalf("NewTolerated = %d findings, total %d, want %d and %d", len(tf.Findings), tf.Total, MaxTolerated, MaxTolerated+5)
+	}
+
+	long := strings.Repeat("x", MaxToleratedTitle+50)
+	tf = NewTolerated([]ToleratedFinding{{Title: long, Mode: rigor.Pro, Likelihood: 1, Impact: 1, FixCost: 1, Class: rigor.Correctness}})
+	if got := len([]rune(tf.Findings[0].Title)); got != MaxToleratedTitle {
+		t.Errorf("title length = %d, want %d", got, MaxToleratedTitle)
+	}
+
+	for _, tc := range []struct {
+		name string
+		f    ToleratedFinding
+	}{
+		{"no title", ToleratedFinding{Mode: rigor.Pro, Likelihood: 1, Impact: 1, FixCost: 1, Class: rigor.Correctness}},
+		{"no mode", ToleratedFinding{Title: "t", Likelihood: 1, Impact: 1, FixCost: 1, Class: rigor.Correctness}},
+		{"a mode outside the vocabulary", ToleratedFinding{Title: "t", Mode: rigor.Mode("paranoid"), Likelihood: 1, Impact: 1, FixCost: 1, Class: rigor.Correctness}},
+		{"an unscored finding", ToleratedFinding{Title: "t", Mode: rigor.Pro, Class: rigor.Correctness}},
+		{"a class outside the vocabulary", ToleratedFinding{Title: "t", Mode: rigor.Pro, Likelihood: 1, Impact: 1, FixCost: 1, Class: rigor.Class("style")}},
+	} {
+		if tf := NewTolerated([]ToleratedFinding{tc.f}); tf != nil {
+			t.Errorf("%s: NewTolerated = %+v, want nil", tc.name, tf)
+		}
+	}
+	if tf := NewTolerated(nil); tf != nil {
+		t.Errorf("NewTolerated(nil) = %+v, want nil", tf)
+	}
+}
+
+// TestNewReviewScopeBoundsWhatItStores: the comparison's Outside is the
+// review range's paths less the implement set's, and the block is bounded —
+// each list at MaxReviewScopeFiles, the two lists together at
+// MaxReviewScopeBytes, each path at MaxReviewScopePath — with
+// Truncated saying when anything was cut, so a stored set is never presented
+// as the whole one. A set the runner did not read stores no list at all,
+// which is a different fact from a set that is empty.
+//
+// The blocks that record an Outside carry a WhyNot, the shape a run writes:
+// Applicable is true only where the two sets were read from one revision, so
+// an applicable comparison has nothing outside (ReviewScope's doc). The
+// schema states that shape but does not enforce it — it carries no
+// constraint tying applicable to outside — so this test pins the blocks the
+// runner builds, not the schema.
+func TestNewReviewScopeBoundsWhatItStores(t *testing.T) {
+	sc := NewReviewScope(false, ReviewScopeNoNarrowerRange, []string{"a.txt", "b.txt"}, []string{"a.txt", "b.txt", "c.txt"})
+	if sc.Applicable || sc.WhyNot != ReviewScopeNoNarrowerRange || !slices.Equal(sc.Outside, []string{"c.txt"}) {
+		t.Errorf("NewReviewScope = %+v, want c.txt outside a range kept wide", sc)
+	}
+	if sc.Truncated {
+		t.Error("a comparison of three paths is recorded as truncated")
+	}
+	sc = NewReviewScope(false, ReviewScopeFollowUp, nil, nil)
+	if sc == nil || sc.Applicable || sc.WhyNot != ReviewScopeFollowUp {
+		t.Fatalf("NewReviewScope on no sets = %+v, want the reason alone", sc)
+	}
+	if sc.ImplementFiles != nil || sc.ReviewFiles != nil || sc.Outside != nil {
+		t.Errorf("NewReviewScope on no sets stores %v/%v/%v, want no lists", sc.ImplementFiles, sc.ReviewFiles, sc.Outside)
+	}
+	data, err := json.Marshal(sc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(data, []byte(`"implement_files"`)) || bytes.Contains(data, []byte(`"review_files"`)) || bytes.Contains(data, []byte(`"outside"`)) {
+		t.Errorf("a comparison with no sets marshals lists: %s", data)
+	}
+
+	var implement, review []string
+	for i := 0; i < MaxReviewScopeFiles+5; i++ {
+		p := fmt.Sprintf("p%03d.txt", i)
+		implement = append(implement, p)
+		review = append(review, p)
+	}
+	sc = NewReviewScope(true, "", implement, review)
+	if len(sc.ImplementFiles) != MaxReviewScopeFiles || len(sc.ReviewFiles) != MaxReviewScopeFiles || !sc.Truncated {
+		t.Errorf("NewReviewScope = %d/%d paths, truncated %v, want %d and true",
+			len(sc.ImplementFiles), len(sc.ReviewFiles), sc.Truncated, MaxReviewScopeFiles)
+	}
+	if len(sc.Outside) != 0 {
+		t.Errorf("outside = %v, want nothing outside an equal pair", sc.Outside)
+	}
+
+	// The two lists share one byte budget, so a directory rename's worth of
+	// paths stops there rather than putting the block past MaxRecordBytes.
+	wide := strings.Repeat("d", 200)
+	var many []string
+	for i := range MaxReviewScopeFiles {
+		many = append(many, fmt.Sprintf("%03d/%s", i, wide))
+	}
+	sc = NewReviewScope(true, "", many, many)
+	if !sc.Truncated {
+		t.Error("a set past the byte budget is not recorded as truncated")
+	}
+	var stored int
+	for _, p := range sc.ImplementFiles {
+		stored += len(p)
+	}
+	for _, p := range sc.ReviewFiles {
+		stored += len(p)
+	}
+	if stored > MaxReviewScopeBytes {
+		t.Errorf("stored %d bytes of path, over the bound of %d", stored, MaxReviewScopeBytes)
+	}
+	if len(sc.ImplementFiles) == len(many) {
+		t.Errorf("stored all %d paths, want the byte bound to cut the list", len(many))
+	}
+
+	long := strings.Repeat("x", MaxReviewScopePath+50)
+	sc = NewReviewScope(false, ReviewScopeNoNarrowerRange, nil, []string{long})
+	if got := len([]rune(sc.Outside[0])); got != MaxReviewScopePath {
+		t.Errorf("outside path length = %d, want %d", got, MaxReviewScopePath)
+	}
+	if !sc.Truncated {
+		t.Error("a clipped path is not recorded as truncated")
+	}
+
+	// An empty path is not a path, and a set that came to nothing stores no
+	// list rather than an empty one.
+	if sc := NewReviewScope(true, "", []string{""}, []string{""}); sc.ImplementFiles != nil || sc.ReviewFiles != nil {
+		t.Errorf("NewReviewScope on an empty path stores %v/%v, want no lists", sc.ImplementFiles, sc.ReviewFiles)
+	}
+}
+
+// TestNewCheckpointBoundsWhatItStores: the three fields a model answers the
+// checkpoint prompt with are a model's output in a record every listing
+// reads, so each is clipped to MaxCheckpointText; the trigger and the money
+// figure are the runner's own and pass through. A checkpoint a governance
+// halt writes before the checkpoint stage exists carries the trigger alone,
+// and that marshals as the trigger alone — an absent field, not an empty
+// string, which is how a reader tells "the agent said nothing" from "nothing
+// asked it".
+func TestNewCheckpointBoundsWhatItStores(t *testing.T) {
+	long := strings.Repeat("w", MaxCheckpointText+50)
+	cp := NewCheckpoint(Checkpoint{
+		Trigger:          string(HaltStageBudget),
+		Done:             long,
+		WhyOver:          long,
+		Next:             long,
+		HardInstructions: long,
+		EstimateUSD:      1.25,
+	})
+	for name, got := range map[string]string{
+		"done":              cp.Done,
+		"why_over":          cp.WhyOver,
+		"next":              cp.Next,
+		"hard_instructions": cp.HardInstructions,
+	} {
+		if n := len([]rune(got)); n != MaxCheckpointText {
+			t.Errorf("%s = %d runes, want %d", name, n, MaxCheckpointText)
+		}
+	}
+	if cp.Trigger != string(HaltStageBudget) || cp.EstimateUSD != 1.25 {
+		t.Errorf("NewCheckpoint = %+v, want the trigger and the figure as written", cp)
+	}
+
+	data, err := json.Marshal(NewCheckpoint(Checkpoint{Trigger: string(HaltFanout)}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != `{"trigger":"fanout"}` {
+		t.Errorf("a checkpoint of the trigger alone marshals %s", data)
 	}
 }
 
@@ -281,6 +513,59 @@ func TestRecordFollowUpRoundTrip(t *testing.T) {
 	data, _ = json.Marshal(&Record{Version: 1, RunID: runID})
 	if strings.Contains(string(data), "follow_up") || strings.Contains(string(data), "pushed_head") {
 		t.Fatalf("empty fields encoded: %s", data)
+	}
+}
+
+// TestStageTimingCallsRoundTrip pins the record's own contract for the stage
+// counters (docs/task-governance constraint G5): absent is not zero. A stage
+// nobody counted -- an oauth run's calls, absent because no gateway reported
+// them and no result event supplies a figure, and every record written before
+// repeats existed -- keeps the field absent, while a stage counted at zero
+// carries 0.
+func TestStageTimingCallsRoundTrip(t *testing.T) {
+	s := newStore(t)
+	at := time.Date(2026, 10, 26, 10, 0, 0, 0, time.UTC)
+	calls, agents, repeats, zero := 12, 2, 4, 0
+	rec := &Record{Version: 1, RunID: runID, Status: StatusSucceeded, Outcome: OutcomeReady, StartedAt: at,
+		Stages: []StageTiming{
+			{Name: "implement", StartedAt: at, DurationS: 61, Calls: &calls, Agents: &agents, Repeats: &repeats},
+			{Name: "review", StartedAt: at, DurationS: 30},
+			{Name: "fix", StartedAt: at, DurationS: 9, Calls: &zero, Agents: &zero, Repeats: &zero},
+		}}
+	if err := s.WriteRecord(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ReadRecord(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Stages) != 3 {
+		t.Fatalf("ReadRecord stages = %+v", got.Stages)
+	}
+	if got.Stages[0].Calls == nil || *got.Stages[0].Calls != 12 || got.Stages[0].Agents == nil || *got.Stages[0].Agents != 2 ||
+		got.Stages[0].Repeats == nil || *got.Stages[0].Repeats != 4 {
+		t.Fatalf("stage with counts = %+v", got.Stages[0])
+	}
+	if got.Stages[1].Calls != nil || got.Stages[1].Agents != nil || got.Stages[1].Repeats != nil {
+		t.Fatalf("stage with no count gained one: %+v", got.Stages[1])
+	}
+	if got.Stages[2].Calls == nil || *got.Stages[2].Calls != 0 || got.Stages[2].Agents == nil || *got.Stages[2].Agents != 0 ||
+		got.Stages[2].Repeats == nil || *got.Stages[2].Repeats != 0 {
+		t.Fatalf("stage with zero counts = %+v", got.Stages[2])
+	}
+
+	data, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"name":"implement","started_at":"2026-10-26T10:00:00Z","duration_s":61,"calls":12,"agents":2,"repeats":4`) {
+		t.Fatalf("counted stage encoded = %s", data)
+	}
+	if !strings.Contains(string(data), `"name":"review","started_at":"2026-10-26T10:00:00Z","duration_s":30}`) {
+		t.Fatalf("uncounted stage encoded = %s", data)
+	}
+	if !strings.Contains(string(data), `"name":"fix","started_at":"2026-10-26T10:00:00Z","duration_s":9,"calls":0,"agents":0,"repeats":0}`) {
+		t.Fatalf("zero-count stage encoded = %s", data)
 	}
 }
 

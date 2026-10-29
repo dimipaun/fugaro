@@ -51,6 +51,87 @@ func TestRelay(t *testing.T) {
 	}
 }
 
+// TestRelayCountsSubAgents: the relay counts the stage's sub-agent tool
+// calls -- the tool-use blocks naming the sub-agent tool ("Agent", or its
+// "Task" alias) -- and not its other tool uses, so the runner can record the
+// stage's own figure for every auth mode (task-governance T1.3).
+func TestRelayCountsSubAgents(t *testing.T) {
+	var buf bytes.Buffer
+	r := NewRelay(slog.New(slog.NewJSONHandler(&buf, nil)), nil)
+	for _, l := range []string{
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"ls"}}]}}`,
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Agent","input":{"subagent_type":"general-purpose","prompt":"x"}}]}}`,
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"a"}},{"type":"tool_use","name":"Task","input":{"subagent_type":"Explore","prompt":"y"}}]}}`,
+	} {
+		_, _ = r.Write([]byte(l + "\n"))
+	}
+	r.Flush()
+	if r.SubAgents != 2 {
+		t.Errorf("SubAgents = %d, want 2: the two sub-agent tool calls, not the Bash or Read", r.SubAgents)
+	}
+}
+
+// TestRelayCountsRepeatedCommand (task-governance T1.4, D332): the relay
+// counts the most times one identical shell command ran in the stage's
+// stream, which is the digest's loop tripwire. A count is all that leaves
+// it: a command can carry a token or a path, so the text is held only as the
+// key it is counted under, and a stage has no field to write it into
+// (schemas/result.schema.json).
+func TestRelayCountsRepeatedCommand(t *testing.T) {
+	// stage reads a stream of Bash tool calls and returns the relay that saw
+	// it.
+	stage := func(t *testing.T, commands ...string) *Relay {
+		t.Helper()
+		var buf bytes.Buffer
+		r := NewRelay(slog.New(slog.NewJSONHandler(&buf, nil)), nil)
+		for _, c := range commands {
+			input, err := json.Marshal(map[string]string{"command": c})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _ = r.Write([]byte(`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":` + string(input) + `}]}}` + "\n"))
+		}
+		r.Flush()
+		return r
+	}
+
+	if got := stage(t, "go test ./...", "ls", "go test ./...", "ls", "go test ./...").Repeats; got != 3 {
+		t.Errorf("Repeats = %d, want 3: `go test ./...` ran three times and `ls` twice", got)
+	}
+	if got := stage(t, "go test ./...", "go build ./...").Repeats; got != 1 {
+		t.Errorf("Repeats = %d, want 1: no command ran twice", got)
+	}
+	if got := stage(t).Repeats; got != 0 {
+		t.Errorf("Repeats = %d, want 0: the stage ran no shell command", got)
+	}
+
+	// A command's tool input can carry other fields, and Claude Code sends
+	// exactly those with the long commands an agent loops on: a timeout (a
+	// number) and run_in_background (a bool). Counting reads the command
+	// field alone, so none of them hides the command.
+	var buf bytes.Buffer
+	r := NewRelay(slog.New(slog.NewJSONHandler(&buf, nil)), nil)
+	for range 5 {
+		_, _ = r.Write([]byte(`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"go test ./...","timeout":600000,"run_in_background":true}}]}}` + "\n"))
+	}
+	r.Flush()
+	if r.Repeats != 5 {
+		t.Errorf("Repeats = %d, want 5: a timeout and run_in_background do not hide the command", r.Repeats)
+	}
+
+	// A repeated file read is not a repeated shell command, and neither is a
+	// sub-agent tool call: only a command counts.
+	buf.Reset()
+	r = NewRelay(slog.New(slog.NewJSONHandler(&buf, nil)), nil)
+	for range 6 {
+		_, _ = r.Write([]byte(`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"a.go"}},{"type":"tool_use","name":"Agent","input":{"subagent_type":"Explore","prompt":"x"}}]}}` + "\n"))
+	}
+	r.Flush()
+	if r.Repeats != 0 {
+		t.Errorf("Repeats = %d, want 0: six Read and six Agent calls are not a repeated shell command", r.Repeats)
+	}
+}
+
 func TestRelayRedactsAfterDecoding(t *testing.T) {
 	var buf bytes.Buffer
 	r := NewRelay(slog.New(slog.NewJSONHandler(&buf, nil)), []string{"hunter2-token"})

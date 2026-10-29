@@ -1,0 +1,8 @@
+version: 1
+project: aurora
+git: { provider: github }
+rigor:
+  areas:
+    - { match: "internal/payments/**", mode: critical }
+workflows:
+  server: { commands: { build: make, test: make test } }

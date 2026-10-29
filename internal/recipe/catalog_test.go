@@ -9,9 +9,10 @@ import (
 // set (design generic-tool.md §3.5), each one parses clean, every recipe but
 // default has a use_when, and no recipe pins max_rounds outside mode: review
 // (a catalog recipe takes the agent.* knobs, G6) other than the one-round
-// cap mode: review itself requires.
+// cap mode: review itself requires, or a digest recipe's own single review
+// round, which is the report run's shape rather than a knob.
 func TestCatalogIsTheStarterSet(t *testing.T) {
-	want := []string{"default", "lint-fix", "pick", "premium", "review-only", "solo", "standard", "test-and-fix"}
+	want := []string{"default", "lint-fix", "pick", "premium", "review-only", "run-digest", "solo", "standard", "test-and-fix"}
 	if got := CatalogNames(); !slices.Equal(got, want) {
 		t.Fatalf("catalog = %v", got)
 	}
@@ -24,8 +25,9 @@ func TestCatalogIsTheStarterSet(t *testing.T) {
 		if n != DefaultName && r.UseWhen == "" {
 			t.Errorf("%s has no use_when", n)
 		}
+		digest := len(r.Steps) > 0 && r.Steps[0].Kind == StepDigest
 		for _, s := range r.Steps {
-			if s.MaxRounds != 0 && r.Mode != ModeReview {
+			if s.MaxRounds != 0 && r.Mode != ModeReview && !digest {
 				t.Errorf("%s pins max_rounds: catalog recipes take the knobs (G6)", n)
 			}
 		}

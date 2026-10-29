@@ -1,0 +1,32 @@
+{
+  "schema_version": 2,
+  "plan": "docs/plans/2026-10-15-desktop-console-v2.md",
+  "stream": "cli",
+  "nodes": [
+    {
+      "id": "V2.2.1",
+      "title": "the graph document, its schema, and the read that prints it",
+      "run": "console-graph-1",
+      "version": "0.10",
+      "footprint": {"prediction": true, "paths": ["internal/plan/**", "internal/cli/plan.go"]}
+    },
+    {
+      "id": "V2.2.2",
+      "title": "the footprint",
+      "run": null,
+      "version": "0.10.1",
+      "footprint": {"prediction": true, "paths": []}
+    },
+    {
+      "id": "V2.2.3",
+      "title": "readiness, levels and the critical path",
+      "run": null,
+      "version": null,
+      "footprint": {"prediction": true, "paths": ["internal/plan/analyze.go"]}
+    }
+  ],
+  "edges": [
+    {"task": "V2.2.2", "needs": "V2.2.1", "reason": "the footprint is a field of the document V2.2.1 defines"},
+    {"task": "V2.2.3", "needs": "V2.2.1", "reason": "the read answers over the document V2.2.1 defines"}
+  ]
+}

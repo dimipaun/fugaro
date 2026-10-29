@@ -701,15 +701,16 @@ func jobConfigCopyRealSpec(t *testing.T, workflow string) infra.WorkflowSpec {
 	if !ok {
 		t.Fatal("not a checkout")
 	}
-	cfg, lc, _, repo, _, v := resolveCloudRepo(t.Context(), loc.Root, cloudOptions{})
+	rf, lc, _, repo, _, v := resolveCloudRepo(t.Context(), loc.Root, cloudOptions{})
 	if v != nil {
 		t.Fatalf("resolveCloudRepo: %+v", v)
 	}
+	cfg := rf.Cfg
 	repoURL, err := checkoutURL(t.Context(), loc.Root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	spec, err := infra.Workflow(infra.Inputs{LC: lc, Repo: repo, Cfg: cfg, RepoURL: repoURL}, workflow)
+	spec, err := infra.Workflow(infra.Inputs{LC: lc, Repo: repo, Cfg: cfg, FileSetsBaseBranch: fileSetsBaseBranch(rf), RepoURL: repoURL}, workflow)
 	if err != nil {
 		t.Fatal(err)
 	}

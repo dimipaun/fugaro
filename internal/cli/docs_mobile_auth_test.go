@@ -398,7 +398,6 @@ func mobileAuthCitedPaths(doc string, dirs map[string]bool) []string {
 // request. mobile/node_modules is excused differently and permanently, which is
 // why it is not an entry here either: see mobileAuthNeverCarried.
 var mobileAuthWillCreate = map[string]string{
-	"internal/mobileauth":                  "P1's entry, its roles and the resolution rule",
 	"docs/mobile-auth/provider-sign-in.md": "P6's provider path, written out and refused",
 	"internal/cli/pair.go":                 "mobile Task P6.6 (`fugaro pair`), approved 2026-10-18 and unbuilt",
 	"internal/budget/token/device.go":      "mobile Task P6.6's device token, approved 2026-10-18 and unbuilt",
@@ -416,7 +415,7 @@ var mobileAuthWillCreate = map[string]string{
 //
 // Mutation (verified, run and restored): rename a cited path in a scratch tree
 // and this test fails naming it; append a line number to a citation
-// (`rules.go:433`) and it fails on the same token; create `internal/mobileauth`
+// (`rules.go:433`) and it fails on the same token; create `internal/cli/pair.go`
 // and it fails naming the entry and the pull request that owes its deletion.
 func TestDocsMobileAuthCitationsResolve(t *testing.T) {
 	dirs := mobileAuthTopLevelDirs(t)
@@ -557,9 +556,9 @@ func TestDocsMobileAuthAnswersAreRecorded(t *testing.T) {
 	plan := readDoc(t, mobileAuthPlan)
 
 	for _, want := range []struct{ path, text, sentence string }{
-		{mobileAuthReadme, readme, "as recommended on 2026-10-22"},
+		{mobileAuthReadme, readme, "The owner's ruling of **2026-10-22**"},
 		{mobileAuthRecon, recon, "answered by the owner on 2026-10-22, each as recommended"},
-		{mobileAuthPlan, plan, "**Amended 2026-10-22**"},
+		{mobileAuthPlan, plan, "**Amended 2026-10-22:**"},
 		{mobileAuthPlan, plan, "**Passed 2026-10-22.**"},
 	} {
 		if !strings.Contains(want.text, want.sentence) {
@@ -570,12 +569,12 @@ func TestDocsMobileAuthAnswersAreRecorded(t *testing.T) {
 	// The sentences that said the opposite, and which no later reader may find
 	// again: each was true when it was written and is false of the folder now.
 	// They are checked in the documents they were written in rather than left
-	// to a reader to reconcile with the answers above them.
+	// to a reader to reconcile with the answers above them. The status lines of
+	// 2026-10-21 are the exception: main keeps them as written under a dated
+	// amendment, so they are history and not checked here.
 	for _, gone := range []struct{ path, text, sentence string }{
 		{mobileAuthRecon, recon, "Nothing here is answered"},
 		{mobileAuthRecon, recon, "nothing in this folder is approved"},
-		{mobileAuthReadme, readme, "nothing here is approved"},
-		{mobileAuthPlan, plan, "approval gate open"},
 	} {
 		if strings.Contains(gone.text, gone.sentence) {
 			t.Errorf("%s still says %q: the owner answered all sixteen decisions on 2026-10-22, so a folder that says otherwise sends a reader to ask for an answer it already has", gone.path, gone.sentence)

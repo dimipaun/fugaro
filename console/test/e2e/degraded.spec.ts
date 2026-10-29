@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See console/LICENSE.md for the terms.
 // The four conditions of design section 6.3 in a real window (desktop-console
 // plan Task 3.1).
 //
@@ -58,7 +60,7 @@ import type { CliStub } from '../support/cliStub'
 import { launchConsole } from '../support/launch'
 import { LIVE_STALE_AFTER_SECONDS } from '../../src/renderer/screens/live'
 import type { FeedHealth } from '../../src/renderer/screens/live'
-import { NO_BINARY_HEADLINE, PICKER_LEAD, refusedState } from '../../src/renderer/screens/degraded'
+import { NO_BINARY_HEADLINE, refusedState } from '../../src/renderer/screens/degraded'
 import type { NoBinaryState, RefusedState } from '../../src/renderer/screens/degraded'
 
 // The console's own directory, from this file's location: `test/e2e/x.spec.ts`
@@ -73,9 +75,12 @@ const fixturePath = join(consoleDir, 'test', 'fixtures', 'degraded.ndjson')
 const MODULES: readonly string[] = Object.freeze([
   'shared/availability.js',
   'shared/sanitize.js',
+  'shared/launcher.js',
+  'shared/rigor.js',
   'shared/version.js',
   'shared/schema.js',
   'renderer/app.js',
+  'renderer/writes.js',
   'renderer/screens/live.js',
   'renderer/screens/degraded.js',
 ])
@@ -156,6 +161,7 @@ function domFactory() {
   }
   return {
     create: function (tag) { return wrap(document.createElement(tag)); },
+    createNS: function (tag) { return wrap(document.createElementNS('http://www.w3.org/2000/svg', tag)); },
     wrap: wrap,
   };
 }
@@ -261,7 +267,6 @@ interface Drawn {
   readonly refusal: string | null
   readonly operation: string | null
   readonly installCommand: string | null
-  readonly picker: string | null
   readonly searched: string | null
   readonly stale: string | null
   readonly staleSilence: string | null
@@ -313,7 +318,6 @@ function drawn(page: Page): Promise<Drawn> {
       refusal: scope.querySelector('.unavailable-sentence')?.textContent ?? null,
       operation: scope.querySelector('.unavailable-operation')?.textContent ?? null,
       installCommand: scope.querySelector('.unavailable-install-command')?.textContent ?? null,
-      picker: scope.querySelector('.unavailable-picker')?.getAttribute('data-picker') ?? null,
       searched: scope.querySelector('.unavailable-searched-count')?.textContent ?? null,
       stale: scope.querySelector('.live-stale')?.getAttribute('data-stale') ?? null,
       staleSilence: scope.querySelector('.live-stale')?.getAttribute('data-silence') ?? null,
@@ -401,24 +405,25 @@ function asNoBinaryState(state: NoInstallationState): NoBinaryState {
   return state
 }
 
-/** anAbsentState resolves no binary at all: an empty temporary directory as the
- * only `PATH` entry, the same directory as the configured home so `~/.local/bin`
- * cannot be the owner's, and one search prefix inside it. It is a real
+/** anAbsentState resolves no binary at all: the same directory as the configured
+ * home so `~/.local/bin` cannot be the owner's, and one search prefix inside it
+ * -- an empty temporary directory, so nothing is executable in it. It is a real
  * resolution -- `resolveBinary` walks what it is given and refuses when nothing
  * is executable -- narrowed so that the answer does not depend on whether the
  * machine running this spec has a `fugaro` installed in `/opt/homebrew/bin`. */
 async function anAbsentState(directory: string): Promise<NoBinaryState> {
   const bin = join(directory, 'bin')
-  const appEnv = { PATH: bin }
   const resolution = await resolveBinary({
     prefixes: [bin],
-    appEnv,
     home: directory,
+    // The app's own environment, which rule 4 never searches: the `PATH` a test
+    // runner happens to have must not decide this spec's answer.
+    appEnv: { PATH: '/nowhere' },
     directory,
     target: { project: 'fugaro' },
   })
   if (resolution.ok) throw new Error('the spec resolved a binary it did not install')
-  return asNoBinaryState(noInstallationState({ reason: resolution.reason, appEnv, home: directory }))
+  return asNoBinaryState(noInstallationState({ reason: resolution.reason, home: directory }))
 }
 
 test.describe('the console with nothing to read', () => {
@@ -567,7 +572,7 @@ test.describe('the console with nothing to read', () => {
     // The plan's red step: a cap the console cannot read is `n/a`, and never a
     // zero drawn as one -- a project whose cap is unreadable is not a project
     // that has spent nothing, and `$0.00` of a $50 cap says it has. (A
-    // subscription row's model figure is `NOTIONAL~$0.00` and is a different
+    // subscription row's model figure is `~$0.00` and is a different
     // statement, which is why this is asserted on the cap and not on the text:
     // the notional marker is what keeps the two apart.)
     expect(screen.caps).toBe('n/a')
@@ -580,7 +585,7 @@ test.describe('the console with nothing to read', () => {
     // Two run records, one of them a subscription's and marked notional.
     expect(screen.runIds).toEqual(['20261015-123000-bb01', '20261015-121000-bb02'])
     expect(screen.notionalRows).toBe(1)
-    expect(screen.text).toContain('NOTIONAL~')
+    expect(screen.text).toContain('~$')
     // The row whose compute was not estimated is `n/a`, and the totals built
     // over it are lower bounds rather than sums of a zero.
     expect(screen.runComputes[1]).toBe('n/a')
@@ -610,8 +615,11 @@ test.describe('the console with nothing to read', () => {
     expect(screen.kind).toBe('no-binary')
     expect(screen.headline).toBe(NO_BINARY_HEADLINE)
     expect(screen.installCommand).toBe(FUGARO_INSTALL_COMMAND)
-    expect(screen.picker).toBe('binary')
-    expect(screen.text).toContain(PICKER_LEAD)
+    // And no choose-the-binary affordance: the console asks the operator for no
+    // path (the owner's ruling of 2026-10-20, §6.3's row), so the screen that
+    // used to draw one draws nothing at all where it stood.
+    expect(screen.text).not.toContain('choose a different fugaro binary')
+    expect(screen.text).not.toContain('choose the binary')
     // The count of places searched, and never the places: `sanitize.ts` draws
     // every path as `<path>` -- "a path is where the operator's user name and
     // checkout live, and neither belongs in a screenshot" -- so a list of them

@@ -220,8 +220,16 @@ export const BASE_PAIRS = [
   ['--text', '--panel', BODY_TEXT],
   ['--text-muted', '--panel', BODY_TEXT],
   ['--accent-on-dark', '--panel', BODY_TEXT],
+  // The pill is a filled shape on the surface since the owner's ruling of 2026-10-23 (lever 5:
+  // outlined boxes become tone steps), so its quieter label is read on the surface.
+  ['--text-muted', '--surface', BODY_TEXT],
   // The success tone as a step's fill, with the ground as its label.
   ['--ground', '--ok', BODY_TEXT],
+  // The copy button's checkmark, a UI glyph in the success tone, on the ground, on the panel a
+  // command block sits on and on the surface of its hover (the owner's feedback of 2026-10-24).
+  ['--ok', '--ground', LARGE_OR_UI],
+  ['--ok', '--panel', LARGE_OR_UI],
+  ['--ok', '--surface', LARGE_OR_UI],
 ]
 
 // The pairs of a palette that are below their ratio, as the lines a reader sees. Exported
@@ -511,13 +519,7 @@ test('every pair base.css paints is in the contrast set, for all four palettes',
 //     force's (so the pairs checked above are the pairs a reader gets), no shipped stylesheet
 //     paints a colour literal outside the token block, and an element that sets both its
 //     colour and its background inline (the code blocks) clears AA.
-//
-// One recorded exception, and it is a DEFECT: the docs page renders the generated CLI
-// reference, and cobra's own help text for `fugaro completion bash|zsh` writes `#### Linux:`
-// and `#### macOS:` under a `##` command heading — an h2 -> h4 jump. W1.11 may not edit the
-// generator (internal/clidoc) or the page (W1.7's), so exactly those headings are accepted on
-// that page, and a case fails once they are gone so the exception is deleted with the fix
-// (the generator demotes or escapes headings inside a command's long text).
+
 
 import { readFileSync as readBuilt } from 'node:fs'
 import {
@@ -534,14 +536,6 @@ import {
   textOf,
   walk,
 } from './lib/html.mjs'
-
-// The recorded heading-order defect described above: page, and the ids of the headings
-// that are accepted as the jump.
-export const HEADING_JUMP_DEFECT = {
-  page: 'docs/index.html',
-  ids: new Set(['linux', 'macos', 'linux-1', 'macos-1']),
-  why: "cobra's completion help writes #### headings under the reference's ## command headings",
-}
 
 const FOCUSABLE_NATIVE = (el) =>
   (el.name === 'a' && el.attrs.has('href')) ||
@@ -660,9 +654,7 @@ export function pageA11yFailures(html, rel, { css = null, dist = DIST, palette =
   for (const h of headings) {
     const level = Number(h.name[1])
     if (level > prev + 1) {
-      const known = rel === HEADING_JUMP_DEFECT.page && HEADING_JUMP_DEFECT.ids.has(h.attrs.get('id'))
-      if (!known) fail(`a heading jumps from h${prev} to h${level} ("${textOf(h).trim().slice(0, 60)}"): heading levels go down one at a time`)
-      if (known) continue // the recorded defect: the next heading is judged against its h2
+      fail(`a heading jumps from h${prev} to h${level} ("${textOf(h).trim().slice(0, 60)}"): heading levels go down one at a time`)
     }
     prev = level
   }
@@ -932,10 +924,21 @@ test('the slider is an ordered list a screen reader reads in order, and the run 
     const steps = sliderStepsOf(page.html)
     const failures = pictureA11yFailures(page.html)
     assert.deepEqual(failures, [], `${page.rel}: the slider and the run's picture are not readable in order:\n  ${failures.join('\n  ')}`)
+    // The homepage's slider is retired by the owner's ruling of 2026-10-23 (the redesign's Step 3,
+    // lever 1: the run is ONE section, an ordered list of its four steps, each with a heading and
+    // its line and its picture inside the item, held just below). No page carries the
+    // slider's steps any more; the reading above stays for any page that brings them back.
+    assert.equal(steps.length, 0, `${page.rel} carries the retired slider's steps (the owner's ruling of 2026-10-23)`)
     if (page.rel === 'index.html') {
-      assert.equal(steps.length, 3, `${page.rel} carries ${steps.length} slider steps, and the owner's approved draft of 2026-10-19 is three: you tell your agent, Fugaro runs it in your cloud, you get a draft pull request`)
-    } else {
-      assert.equal(steps.length, 0, `${page.rel} carries the slider's steps, and the slider is the homepage's own block (the owner's approved draft of 2026-10-19)`)
+      const run = parse(page.html)
+      const lists = findAll(run, (el) => el.name === 'ol' && (el.attrs.get('class') ?? '').split(/\s+/).includes('home-run-steps'))
+      assert.equal(lists.length, 1, `${page.rel} carries ${lists.length} run lists; the run is one section, one ordered list (the owner's ruling of 2026-10-23)`)
+      const items = lists[0].children.filter((el) => el.name === 'li')
+      assert.equal(items.length, 4, `${page.rel}'s run list carries ${items.length} steps, and the run is four`)
+      for (const item of items) {
+        assert.equal(findAll(item, (el) => el.name === 'h3').length, 1, `${page.rel}: a run step has no heading of its own inside its item`)
+        assert.ok(findAll(item, (el) => el.name === 'img' && (el.attrs.get('alt') ?? '').trim() !== '').length === 1, `${page.rel}: a run step's picture has no alt text`)
+      }
     }
     if (page.rel === 'how-it-works/index.html') {
       assert.equal(runDrawingsOf(page.html).length, 2, `${page.rel} draws the run ${runDrawingsOf(page.html).length} times, and it draws it twice — the wide drawing and the phone one (the owner's draft of 2026-10-19)`)
@@ -1018,16 +1021,6 @@ test('the slider and the picture refusals fire on the defect each one names', ()
   assert.ok(
     pictureA11yFailures(picture({ wordsHidden: true })).some((line) => /run in words under the picture is hidden/.test(line)),
     'the run in words hidden passes: it is what a reader who has no picture is given',
-  )
-})
-
-test('the recorded heading-order defect on the docs page is still real, so its exception is still needed', () => {
-  const docs = builtPages().find((p) => p.rel === HEADING_JUMP_DEFECT.page)
-  assert.ok(docs, `${HEADING_JUMP_DEFECT.page} was not built`)
-  const ids = [...docs.html.matchAll(/<h4 id="([^"]+)"/g)].map((m) => m[1]).filter((id) => HEADING_JUMP_DEFECT.ids.has(id))
-  assert.ok(
-    ids.length > 0,
-    `${HEADING_JUMP_DEFECT.page} no longer carries the recorded h2 -> h4 headings: the defect is fixed, so delete HEADING_JUMP_DEFECT in website/test/a11y.mjs and let every jump fail again`,
   )
 })
 

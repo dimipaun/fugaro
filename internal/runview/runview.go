@@ -35,6 +35,21 @@ const ReasonLost = "no execution found and the runner never recorded the run"
 // record never reached a final status (OOM kill, task timeout, node loss).
 const ReasonNoFinalRecord = "execution ended without finalizing"
 
+// DerivedPreempted is the read side's derivation for a run the platform
+// reclaimed: a Cloud Batch job whose Spot VM was preempted ends FAILED, Batch
+// does not retry it, and the runner never reaches finalize, so no object in
+// the runs bucket ever records what happened. The status is derived when the
+// run is read and is **never written back**: the bucket keeps what the run
+// itself wrote, the launch's lease expires by its own timeout, and the
+// history sweep settles the cost (the owner's 2026-10-21 ruling; design
+// compute-backend.md §1.3).
+const DerivedPreempted = "preempted"
+
+// ReasonPreempted explains a row whose Derived is DerivedPreempted. It says
+// what the platform did and not what the run did, because nothing about the
+// run's own work is known: the record it would have said it with never came.
+const ReasonPreempted = "the Batch job was preempted: its Spot VM was reclaimed before the run finalized"
+
 // StaleDraftAfter is how long past its last status update a running first
 // run with no recorded deadline may go before its draft is called stale.
 // Stages and verifies run for many minutes and the limits are configurable,
@@ -89,6 +104,15 @@ type Row struct {
 	Status       string                       `json:"status"`
 	Stage        string                       `json:"stage,omitempty"`
 	Reason       string                       `json:"reason,omitempty"`
+	// Derived, when set, is the read side's own reading of a run the run's
+	// record never settled: today the one value is DerivedPreempted, for a run
+	// whose Cloud Batch job ended FAILED because its Spot VM was reclaimed.
+	// It is a *derivation* and says so by being its own field: Status stays the
+	// vocabulary every reader already switches on (`failed` here), and a
+	// consumer that does not know this field loses the decoration, not the
+	// status. Nothing writes it back to the runs bucket, and nothing acts on
+	// it — a row whose record is not final is derived anew on every read.
+	Derived string `json:"derived,omitempty"`
 	// Halt is why a halted run was halted.
 	Halt        *runstore.Halt `json:"halt,omitempty"`
 	Batch       string         `json:"batch,omitempty"`
@@ -110,12 +134,33 @@ type Row struct {
 	// could rewrite a line and caps what is left. It is read for display
 	// only: nothing authorises or admits anything by it (the guard test in
 	// this package fails if any other code reads the field).
-	LaunchedBy string        `json:"launched_by,omitempty"`
-	PRURL      string        `json:"pr_url,omitempty"`
-	Execution  string        `json:"execution,omitempty"`
-	LogURL     string        `json:"log_url,omitempty"`
-	Created    time.Time     `json:"created"`
-	Cost       runstore.Cost `json:"cost"`
+	LaunchedBy string `json:"launched_by,omitempty"`
+	// PlanTask is the plan task this run works on, as the run's own
+	// launch.json recorded it at launch (runstore.Launch.PlanTask, from
+	// task.Spec.PlanTask at fugaro run --plan-task): the id of one task in
+	// one plan, the join key the console's graph screen matches a run to a
+	// node by (console dependency graph plan, decision GD5).
+	//
+	// It is the launch record's own value and nothing else, like LaunchedBy
+	// beside it: absent for a run whose launch.json has none (never
+	// launched, or launched by a CLI that recorded none), and never filled
+	// in from the task, which carries it for the recovery path and --retry
+	// rather than for display.
+	//
+	// UNTRUSTED display text, dropped here unless it passes the launcher's
+	// own shape check (task.PlanTaskProblem: the run's service account can
+	// write launch.json too) and sanitised for the same reason the launcher
+	// is (safetext.Field): a launcher writes it, and both documents
+	// this row appears in — runs ls --json and the console that reads it —
+	// are rendered as they are. It is a DISPLAY-ONLY join hint (the plan's
+	// constraint C3): nothing decides anything by it, it is never joined
+	// into a path, and a run's claim about it changes no other node's state.
+	PlanTask  string        `json:"plan_task,omitempty"`
+	PRURL     string        `json:"pr_url,omitempty"`
+	Execution string        `json:"execution,omitempty"`
+	LogURL    string        `json:"log_url,omitempty"`
+	Created   time.Time     `json:"created"`
+	Cost      runstore.Cost `json:"cost"`
 	// ImageAgeS is how old the run's image was when the run started
 	// (started_at minus built_at), in seconds; absent when either is unknown.
 	ImageAgeS *int64 `json:"image_age_s,omitempty"`
@@ -135,6 +180,15 @@ type Row struct {
 	// that died before finalize, or a record from before the field existed —
 	// so a reader never sees an empty set where the answer is unknown.
 	ChangedFiles *runstore.ChangedFiles `json:"changed_files,omitempty"`
+	// Rigor is the mode the run resolved, the layer that decided it, the
+	// areas that matched — each with the mode it sets and the moment it was
+	// first applied at, strictest first (D23) — and the moment of the block
+	// (docs/rigor-modes D22, D24): the record's own block, bounded on read
+	// (runstore.RigorRecord.Bounded), and nil when the run recorded none —
+	// a record from before the field existed, a run that died before
+	// bootstrap, or a block that cannot be read as a decision — so no reader
+	// renders "no record" as "it resolved nothing".
+	Rigor *runstore.RigorRecord `json:"rigor,omitempty"`
 	// ArtifactCount and ArtifactBytes are what the run's record says it
 	// delivered: how many artifacts, and their recorded total size (design
 	// artifact-runs.md §9). Both are the record's own account, never a
@@ -256,6 +310,11 @@ func Join(in Input, prices PriceBook, now time.Time) Row {
 	if in.Launch != nil {
 		row.Execution, row.LogURL = in.Launch.Execution, in.Launch.LogURL
 		row.LaunchedBy = safetext.Field(in.Launch.LaunchedBy)
+		// The run's own service account can write launch.json, so an id the
+		// launcher could never have accepted is dropped, not shown.
+		if task.PlanTaskProblem(in.Launch.PlanTask) == "" {
+			row.PlanTask = safetext.Field(in.Launch.PlanTask)
+		}
 	}
 	r, e := in.Record, in.Exec
 	followUpFields(&row, in.Task, r)
@@ -285,6 +344,11 @@ func Join(in Input, prices PriceBook, now time.Time) Row {
 		// Bounded again on read: the record is job-writable, so the row
 		// never carries more than the bound or a cut set dressed as whole.
 		row.ChangedFiles = r.ChangedFiles.Bounded()
+		// The same for the rigor block (docs/rigor-modes D22, D24): a block
+		// that cannot name a mode from the vocabulary, a layer from
+		// rigor.Layers or one of D22's three moments reaches the row as none
+		// at all, which is the answer its absence already gives.
+		row.Rigor = r.Rigor.Bounded()
 		row.Stage = r.Stage
 		if r.Reason != "" {
 			row.Reason = r.Reason
@@ -336,6 +400,13 @@ func Join(in Input, prices PriceBook, now time.Time) Row {
 		row.Status = StatusUnlaunched // no claim, or a stale one: its launcher is gone
 	case e != nil && e.State == backend.StateCancelled:
 		row.Status, row.Reason = string(runstore.StatusCancelled), "execution cancelled before the run finalized"
+	case e != nil && e.Preempted:
+		// The platform's own report of the execution settles what happened to
+		// the run's machine, and the record above never settled the run: this
+		// is a reclamation, not a fault, and it is derived here rather than
+		// written anywhere (DerivedPreempted). It comes after the record's own
+		// verdict and must: a run that DID finalize keeps what it recorded.
+		row.Status, row.Reason, row.Derived = string(runstore.StatusFailed), ReasonPreempted, DerivedPreempted
 	case e != nil && e.State.Terminal():
 		row.Status, row.Reason = string(runstore.StatusInfraError), ReasonNoFinalRecord+" ("+string(e.State)+")"
 	case e != nil && e.State == backend.StatePending:
@@ -503,6 +574,21 @@ func cost(r *runstore.Record, e *backend.Execution, prices PriceBook, now time.T
 	}
 	if stored != nil {
 		c.CatalogStale = stored.CatalogStale
+		// The cache token totals travel for the same reason the staleness
+		// flag does: only the run's own gateway counted them, and no
+		// execution the row re-prices can recompute them (P12).
+		c.CacheReadTokens, c.CacheWriteTokens = stored.CacheReadTokens, stored.CacheWriteTokens
+		// The tiers a call came back at that the table has no multiplier
+		// for travel for the same reason: they name the conservative charge
+		// the row's model figure holds, and no execution the row re-prices
+		// can recover them (§6.1).
+		c.ServiceTiers = stored.ServiceTiers
+		// The notional part travels with the model figure: the row is a view
+		// of the record's charge, and rebuilding the totals from ModelUSD and
+		// ModelBasis alone would bill a cascade run's tier-A dollars as money
+		// (P12, D140) -- precisely what the basis cannot tell apart. Applied
+		// through WithNotional so the row's TotalUSD is recomputed from it.
+		c = c.WithNotional(stored.ModelSubscriptionUSD())
 	}
 	return c
 }
@@ -510,7 +596,7 @@ func cost(r *runstore.Record, e *backend.Execution, prices PriceBook, now time.T
 // Totals sums rows' costs (design §10.1).
 type Totals struct {
 	Runs             int     `json:"runs"`
-	ModelUSD         float64 `json:"model_usd"`          // billed model spend (api-list)
+	ModelUSD         float64 `json:"model_usd"`          // billed model spend: the money part of the rows' model figure
 	ModelNotionalUSD float64 `json:"model_notional_usd"` // subscription model spend, not billed
 	ComputeUSD       float64 `json:"compute_usd"`
 	TotalUSD         float64 `json:"total_usd"`
@@ -523,11 +609,12 @@ type Totals struct {
 func Sum(rows []Row) Totals {
 	t := Totals{Runs: len(rows)}
 	for _, r := range rows {
-		if r.Cost.ModelBasis == runstore.BasisSubscription {
-			t.ModelNotionalUSD += r.Cost.ModelUSD
-		} else {
-			t.ModelUSD += r.Cost.ModelUSD
-		}
+		// The split is the cost's own notional part, not a reading of the
+		// basis: a mixed run's basis is api-list while part of its model
+		// figure is the subscription's (P12, D140), and summing ModelUSD into
+		// the billed column would call that part money.
+		t.ModelNotionalUSD += r.Cost.ModelSubscriptionUSD()
+		t.ModelUSD += r.Cost.ModelMoneyUSD()
 		t.ComputeUSD += r.Cost.ComputeUSD
 		t.TotalUSD += r.Cost.TotalUSD
 		if !r.Cost.ComputeEstimated {

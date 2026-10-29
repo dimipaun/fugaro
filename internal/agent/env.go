@@ -43,6 +43,19 @@ type EnvSpec struct {
 	// gets the gateway's URL and per-run token, never the real model
 	// credential (see GatewayVars). It is an error with auth: oauth.
 	Gateway *Gateway
+	// Compression, when set, points Claude Code at the context-compression
+	// sidecar, which chains to the gateway. It is an error with auth: oauth
+	// or vertex -- neither gives Claude Code a gateway token the sidecar
+	// could forward, and a vertex run routes by ANTHROPIC_VERTEX_BASE_URL,
+	// which Compression never touches -- and an error without a Gateway:
+	// the sidecar holds no credential of its own, so the run would have to
+	// send it the real key. config.Validate refuses the auth combination for
+	// a repository's own file, but nothing populates this field yet: the
+	// config key is still refused there, and starting the sidecar is a later
+	// change, so no run reaches these refusals. They are here for the same
+	// reason the existing oauth-vs-gateway refusal is -- the point closest
+	// to the real credential refuses the combination itself.
+	Compression *CompressionProxy
 	// Docker is whether this run's workflow asked for `docker: true`
 	// (design compute-backend.md §4.2): the one fact that lets DOCKER_HOST
 	// through, because it is the one fact that says a socket was mounted
@@ -90,6 +103,12 @@ func BuildEnv(parent []string, spec EnvSpec) (env, secretValues []string, err er
 			// agent, whatever a workflow declares.
 			return nil, nil, fmt.Errorf("secret %s is a provider key, which the agent never gets", k)
 		}
+		if spec.Auth == config.AuthCascade && config.IsModelSecretEnv(k) {
+			// A cascade run's agent gets no model credential at all (D143):
+			// the credentials service holds them and attaches one per call,
+			// so a declared mount of one is refused rather than mounted.
+			return nil, nil, fmt.Errorf("secret %s is a model credential and agent.auth is %s, which holds none: the credentials service attaches a credential per call and this agent never gets one (D143)", k, config.AuthCascade)
+		}
 	}
 	// Provider keys are in the runner's environment (the gateway reads them)
 	// and nowhere in the allow-list above; they are registered for redaction
@@ -97,6 +116,14 @@ func BuildEnv(parent []string, spec EnvSpec) (env, secretValues []string, err er
 	for _, k := range slices.Sorted(maps.Keys(p)) {
 		if v := p[k]; config.IsProviderKeyEnv(k) && len(v) >= 4 {
 			secretValues = append(secretValues, v)
+		}
+	}
+	if spec.Compression != nil {
+		if spec.Auth == "oauth" || spec.Auth == "vertex" {
+			return nil, nil, fmt.Errorf("agent.compression cannot be combined with auth: %s: it routes %s's calls its own way, so the sidecar could only be skipped, never used", spec.Auth, spec.Auth)
+		}
+		if spec.Gateway == nil {
+			return nil, nil, fmt.Errorf("agent.compression needs the budget gateway, and this run has none: the sidecar holds no credential of its own to send to Anthropic")
 		}
 	}
 	secretNames := slices.Clone(spec.Secrets)
@@ -132,6 +159,23 @@ func BuildEnv(parent []string, spec EnvSpec) (env, secretValues []string, err er
 			return nil, nil, fmt.Errorf("auth: oauth never goes through the gateway")
 		}
 		secretNames = append([]string{"CLAUDE_CODE_OAUTH_TOKEN"}, secretNames...)
+	case config.AuthCascade:
+		// A cascade run carries no credential of its own: the credentials
+		// service holds every model credential and attaches one per call
+		// (D143), so there is no secret to require, nothing to mount, and
+		// nothing of the job's own in the environment. What Claude Code
+		// presents is the gateway's per-run token, which GatewayVars sets
+		// below; a real key the runner's environment happens to hold is
+		// registered for redaction here and never handed to the agent.
+		if spec.Gateway == nil {
+			return nil, nil, fmt.Errorf("auth: %s runs through the gateway, and this agent has none: a cascade run has no credential of its own to fall back to (D143)", config.AuthCascade)
+		}
+		if realKey := p["ANTHROPIC_API_KEY"]; realKey != "" {
+			if len(realKey) < 4 {
+				return nil, nil, fmt.Errorf("secret ANTHROPIC_API_KEY is shorter than 4 bytes, so it cannot be redacted safely")
+			}
+			secretValues = append(secretValues, realKey)
+		}
 	default:
 		return nil, nil, fmt.Errorf("unknown agent auth %q", spec.Auth)
 	}
@@ -171,6 +215,12 @@ func BuildEnv(parent []string, spec EnvSpec) (env, secretValues []string, err er
 		}
 		maps.Copy(out, vars)
 	}
+	if spec.Compression != nil {
+		// After the gateway's own write, not before: the sidecar is where
+		// Claude Code's calls go first, and GatewayVars has just put the
+		// gateway's URL here.
+		out["ANTHROPIC_BASE_URL"] = spec.Compression.BaseURL
+	}
 	if spec.PathPrepend != "" {
 		if out["PATH"] != "" {
 			out["PATH"] = spec.PathPrepend + string(os.PathListSeparator) + out["PATH"]
@@ -187,6 +237,12 @@ func BuildEnv(parent []string, spec EnvSpec) (env, secretValues []string, err er
 // Gateway is where Claude Code sends its model calls instead of the
 // provider: the gateway's loopback URL and its per-run token.
 type Gateway struct{ BaseURL, Token string }
+
+// CompressionProxy is the context-compression sidecar Claude Code's model
+// calls route through first, which chains them on to the gateway. It is a
+// loopback URL and nothing else: the per-run token Claude Code presents is
+// the gateway's own, and travels in ANTHROPIC_API_KEY, not here.
+type CompressionProxy struct{ BaseURL string }
 
 // noProxyLoopback is added to NO_PROXY and no_proxy with a gateway, so a
 // configured proxy never sees the agent's calls to it.
@@ -208,7 +264,11 @@ func GatewayVars(auth string, g Gateway, parent map[string]string) (map[string]s
 		"no_proxy": withLoopback(parent["no_proxy"]),
 	}
 	switch auth {
-	case "api-key":
+	case "api-key", config.AuthCascade:
+		// A cascade run is the api-key case's shape with no key behind it:
+		// Claude Code is pointed at the gateway and presents the gateway's
+		// own per-run token, and the real credential is attached to the call
+		// by the credentials service, which the job never holds (D143).
 		if g.Token == "" {
 			return nil, fmt.Errorf("the gateway has no token")
 		}

@@ -55,7 +55,35 @@ type Relay struct {
 	// Dir is unset). Never required for Write to work; only actionSummary
 	// reads it.
 	Dir string
+
+	// SubAgents counts the sub-agent tool calls this stream carried: the
+	// tool_use blocks naming the sub-agent tool. The runner records it as
+	// the stage's agents, gateway or not (task-governance T1.3).
+	SubAgents int
+
+	// Repeats is the most times one identical shell command ran in this
+	// stream, and 0 when it carried no shell command at all. The runner
+	// records it as the stage's repeats, and the digest reads it as the loop
+	// tripwire: a stage running the same command five times or more is
+	// spending calls without progress (task-governance T1.4, D332). It is a
+	// count and never the command, which can carry a token or a path.
+	Repeats int
+
+	// commands counts each distinct shell command this stage has run, keyed
+	// by the command itself: "identical" is the exact string, and nothing
+	// shorter than the command can say which runs are the same one. The keys
+	// are held for as long as the stream is being read and are never logged,
+	// rendered or written anywhere -- only Repeats leaves this struct -- and
+	// they are no larger than the stage's own transcript, which the runner
+	// already holds whole.
+	commands map[string]int
 }
+
+// subAgentTools are the tool names Claude Code spawns a sub-agent with: the
+// Agent tool and its Task alias. Counting by name is the stage's own figure;
+// the gateway's count of distinct agent IDs is a different figure and rests
+// on an ID a client claims and nothing verifies.
+var subAgentTools = set("Agent", "Task")
 
 // NewRelay returns a Relay logging to log, redacting secrets.
 func NewRelay(log *slog.Logger, secrets []string) *Relay {
@@ -141,6 +169,12 @@ func (r *Relay) line(raw []byte) {
 					r.log.Info(r.msg(t, relayTextBytes), "event", "text")
 				}
 			case "tool_use":
+				if subAgentTools[c.Name] {
+					r.SubAgents++
+				}
+				if c.Name == "Bash" {
+					r.countCommand(c.Input)
+				}
 				s := "tool " + r.redact(c.Name) + ": " + r.toolSummary(c.Input)
 				r.log.Info(r.msg(s, relayToolBytes), "event", "tool")
 				if r.OnTool != nil {
@@ -161,6 +195,32 @@ func (r *Relay) line(raw []byte) {
 		}
 	case "result":
 		r.log.Info(r.msg("result "+r.redact(ev.Subtype), relayToolBytes), "event", "result", "cost_usd", ev.Cost, "is_error", ev.IsError)
+	}
+}
+
+// countCommand adds one run of a shell command to the stage's tally and keeps
+// Repeats at the largest count any one command reached. The command itself
+// stays in the tally's key and nowhere else: what a reader of the record gets
+// is a count (task-governance T1.4).
+//
+// The input is decoded into one field rather than a map of strings, because a
+// Bash call carries more than its command -- Claude Code sends timeout (a
+// number) and run_in_background (a bool) with the long commands an agent
+// loops on -- and a decode that fails on any of them would drop exactly the
+// commands this count is for.
+func (r *Relay) countCommand(input json.RawMessage) {
+	var in struct {
+		Command string `json:"command"`
+	}
+	if json.Unmarshal(input, &in) != nil || in.Command == "" {
+		return
+	}
+	if r.commands == nil {
+		r.commands = map[string]int{}
+	}
+	r.commands[in.Command]++
+	if r.commands[in.Command] > r.Repeats {
+		r.Repeats = r.commands[in.Command]
 	}
 }
 

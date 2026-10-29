@@ -293,7 +293,7 @@ func TestAdoptCopiesWhatTheOutputsExpose(t *testing.T) {
 		"launchers": []string{"group:eng@example.com"}, "registry_cleanup_dry_run": false,
 		"log_view": "", "history_service_account": "fugaro-history@proj-1234.iam.gserviceaccount.com"})}
 	r.save(t)
-	e := adoptEngine(t, r, &initOptions{yes: true})
+	e := newMachineEngine(t, r, &initOptions{yes: true})
 	var out strings.Builder
 	e.r.w = &out
 	if _, err := initflow.Run(t.Context(), []initflow.Stage{&preflightStage{e}, newInstallationStage(e)}, e.options()); err != nil {
@@ -333,7 +333,7 @@ func TestAdoptCopiesWhatTheOutputsExpose(t *testing.T) {
 	}
 	// An existing file is never overwritten.
 	before, _ := os.ReadFile(e.path)
-	e2 := adoptEngine(t, r, &initOptions{yes: true})
+	e2 := newMachineEngine(t, r, &initOptions{yes: true})
 	e2.path = e.path
 	res, err := initflow.Run(t.Context(), []initflow.Stage{&preflightStage{e2}, newInstallationStage(e2)}, e2.options())
 	after, _ := os.ReadFile(e.path)
@@ -349,7 +349,7 @@ func TestAdoptRefusesAnotherName(t *testing.T) {
 	r.installationState(t)
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"project_name": "borealis"})}
 	r.save(t)
-	e := adoptEngine(t, r, &initOptions{yes: true})
+	e := newMachineEngine(t, r, &initOptions{yes: true})
 	res, err := initflow.Run(t.Context(), []initflow.Stage{&preflightStage{e}, newInstallationStage(e)}, e.options())
 	if err != nil || res.Failed == nil || !strings.Contains(res.Failed.Error, "borealis") {
 		t.Fatalf("%v %+v", err, res.Failed)

@@ -17,6 +17,7 @@ import (
 	"gocloud.dev/gcerrors"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
@@ -51,7 +52,57 @@ const (
 	HaltTokenCap           HaltReason = "token_cap"
 	HaltBudgetUnavailable  HaltReason = "budget_unavailable"
 	HaltBudgetTokenExpired HaltReason = "budget_token_expired"
+	// HaltNoCredential is a credentials-cascade run that ran out of job: the
+	// service answered a typed "exhausted until T" (C1.10) and T is not
+	// inside what is left of the job's own timeout, so the run can wait for
+	// no credential before it must be over (C1.17). The wait-or-switch
+	// decision itself is the service's; this reason only says the reset it
+	// named fits in no job like this one.
+	HaltNoCredential HaltReason = "no_credential"
+	// HaltCredsRulesDenied is a cascade run whose write was refused by the
+	// deployed rules: the `credential` or `waiting_until` child of its own
+	// registry entry, or a by-tier counter (C1.3). It is the known gap of a
+	// rules downgrade — an older Fugaro running `fugaro update --firebase-project`
+	// redeployed a document without the cascade's children — so the message
+	// names the redeploy and the write is never retried (C1.17): silently
+	// dropping it would hide the run's credential from the dashboard, and
+	// retrying it forever would fill the log instead of the operator's queue.
+	HaltCredsRulesDenied HaltReason = "creds_rules_denied"
+
+	// The governance stops (docs/task-governance T6.1, D329, G7) are the
+	// reasons a tripwire stops a run: every one of them is a halt with a
+	// checkpoint report on the record and a draft pull request, never a
+	// silent kill, and each is a value the runner sets from its own state —
+	// never task text — so the report, the digest and the pull request can
+	// render it.
+	//
+	// HaltStageBudget is a stage that passed its own budget: its dollars,
+	// its calls, its tokens, or the stage's own timeout (T7.2, T7.6).
+	HaltStageBudget HaltReason = "stage_budget"
+	// HaltReviewRatio is review that spent more calls than the ratio allows
+	// for the implementation it read — max(review_floor_calls, N × the
+	// implement stage's calls) (T7.2).
+	HaltReviewRatio HaltReason = "review_ratio"
+	// HaltFanout is a stage that used more distinct sub-agents than the
+	// maximum (T7.2).
+	HaltFanout HaltReason = "fanout"
+	// HaltReviewScope is a review handed a range covering files the run's
+	// own commits never changed, so the reviewer would have read another
+	// branch's work (T7.3, D332).
+	HaltReviewScope HaltReason = "review_scope"
+	// HaltExpectedExceeded is a run that passed the cost its tier expected
+	// of it (T8.2, D330).
+	HaltExpectedExceeded HaltReason = "expected_exceeded"
 )
+
+// GovernanceHaltReasons is every reason a governance tripwire stops a run
+// with (T6.1, D329): the values a checkpoint's trigger can be, and the set
+// result.schema.json's checkpoint.trigger enum and the digest's halt reasons
+// are pinned to. A reason outside it is a budget or a credential halt, which
+// carries no checkpoint and no report.
+func GovernanceHaltReasons() []HaltReason {
+	return []HaltReason{HaltStageBudget, HaltReviewRatio, HaltFanout, HaltReviewScope, HaltExpectedExceeded}
+}
 
 // Halt is why and when a run was halted.
 type Halt struct {
@@ -112,6 +163,354 @@ const (
 	TierSenior = "senior"
 )
 
+// MaxReviewScopeFiles bounds each path list a review-scope comparison
+// stores. The sets come from git, both are read over a range that can be a
+// whole integration branch's divergence (the cost the narrowing exists to
+// avoid), and the record is a small object every listing reads, so the
+// lists are capped — by count, by path, and by bytes between them — and
+// Truncated says so (result.schema.json's maxItems).
+const MaxReviewScopeFiles = 200
+
+// MaxReviewScopePath bounds one stored path in runes, like MaxToleratedTitle
+// bounds a finding's title. A path is at most PATH_MAX bytes on the
+// filesystems a repository is checked out on, so this only keeps one from
+// filling the record.
+const MaxReviewScopePath = 512
+
+// MaxReviewScopeBytes caps the stored paths' total length, the two sets
+// together, like MaxChangedPathBytes: a plan that renames a directory puts a
+// megabyte of paths in a set, and the block's three lists at the count cap
+// hold 600 paths of up to MaxReviewScopePath runes — 300 KiB of ASCII path,
+// and over MaxRecordBytes once those runes average more than three bytes
+// each — in a record every listing reads.
+const MaxReviewScopeBytes = 16 << 10
+
+// The review-scope reasons (ReviewScope.WhyNot), each a short value the
+// runner sets and never anything a task wrote, so the digest can render it
+// (generic-tool plan T5.2, D332). WhyNot is "" exactly when Applicable is
+// true.
+const (
+	// ReviewScopeFollowUp: a follow-up reviews the pull request's own range,
+	// which holds whoever else contributed to it.
+	ReviewScopeFollowUp = "follow-up"
+	// ReviewScopeReviewRun: a review run has no implement stage, so it has
+	// no implement set to compare the range with.
+	ReviewScopeReviewRun = "review-run"
+	// ReviewScopeDigestRun: a report run's first step is the digest step
+	// (internal/runner/digest.go, task-governance T3.2), which the runner
+	// executes itself in place of implement: the run has no implement set to
+	// compare the range with either. Its own value, not ReviewScopeReviewRun's:
+	// a reader has to be able to tell a report run from a review run by the
+	// field that says why the comparison does not apply.
+	ReviewScopeDigestRun = "digest-run"
+	// ReviewScopeAutofix: the check step's commands.fix committed and the run
+	// skipped implement (gate.go, the Fixed gate): the run's own work is the
+	// fix's, not implement's.
+	ReviewScopeAutofix = "autofix"
+	// ReviewScopeGitTooOld: a git older than 2.44 cannot say which commits
+	// are the run's own without fetching origin's branches, so the wide range
+	// is kept and nothing is read for the comparison.
+	ReviewScopeGitTooOld = "git-too-old"
+	// ReviewScopeNoOwnCommits: the run made no commit of its own, so there is
+	// no implement set to compare the range with.
+	ReviewScopeNoOwnCommits = "no-own-commits"
+	// ReviewScopeOwnCommitsUnreadable: the run's own commits, or the parent
+	// of the first one, could not be read.
+	ReviewScopeOwnCommitsUnreadable = "own-commits-unreadable"
+	// ReviewScopeNoNarrowerRange: the recorded range holds no more commits
+	// than the run's own, so it was kept as it was — a run on its base, or one
+	// whose branch merged the base in. The comparison is recorded, and it is
+	// never a mismatch: the wide range was kept on purpose.
+	ReviewScopeNoNarrowerRange = "no-narrower-range"
+	// ReviewScopeRangeMoved: the commit the run's own commits start after no
+	// longer leads to HEAD, so the review range is not the run's own commits.
+	ReviewScopeRangeMoved = "range-moved"
+	// ReviewScopeReadFailed: one of the comparison's own git reads failed, so
+	// there are no two sets to compare.
+	ReviewScopeReadFailed = "read-failed"
+)
+
+// ReviewScope is the comparison between the paths implement changed and the
+// paths the review range covers (generic-tool plan T5.2, F2, D332): the
+// record of what the reviewer was handed beyond the run's own work, taken
+// right after implement and before the review prompt is built. It is report
+// only — nothing halts on it here; the stop is T7.3's — and it is the input
+// of the digest's review-scope flag (T1.4).
+//
+// Every path is repository-relative, as git listed it, and both sets are
+// read over the same diff form the review input is built from, so Outside is
+// exactly the review range's paths that the run's own commits did not
+// change. Applicable is true only where the review range IS the run's own
+// commits — narrowed to them, or equal to them by construction — which is
+// where the comparison is a statement about the narrowing; elsewhere the
+// range is wider on purpose and Outside is a fact, never a mismatch.
+//
+// Applicable says the two sets were read from one revision, so Outside is
+// empty by construction whenever it is true: every non-empty Outside is
+// recorded with a WhyNot (TestReviewScopeEqualRecordsNothingOutside,
+// TestReviewScopeRecordsOutsideFiles). That is the shape a later stop has to
+// know about (T7.3, D332); this record states the fact and leaves the
+// reading of it to the consumer.
+//
+// Absent — never an empty block — for a run that died before the comparison,
+// and in records from before this field existed: the field is additive, so
+// an old reader sees the record it always saw and the schema's version stays
+// 1.
+type ReviewScope struct {
+	// Applicable is whether the review range is the run's own commits, and so
+	// whether Outside is a mismatch rather than a fact about a range kept
+	// wider on purpose. True exactly when WhyNot is "".
+	Applicable bool `json:"applicable"`
+	// WhyNot is why the comparison does not apply, one of the values above,
+	// and "" when Applicable. A reader renders this and never the task.
+	WhyNot string `json:"why_not,omitempty"`
+	// ImplementFiles are the paths the run's own commits changed, at most
+	// MaxReviewScopeFiles of them. Absent — never empty — when there is no
+	// implement set to compare with, which WhyNot then says.
+	ImplementFiles []string `json:"implement_files,omitempty"`
+	// ReviewFiles are the paths the review range covers, the same way.
+	ReviewFiles []string `json:"review_files,omitempty"`
+	// Outside is the paths in ReviewFiles that are not in ImplementFiles: what
+	// the reviewer was handed that implement never wrote. Absent when there
+	// are none, which is the answer the comparison is meant to give — an
+	// empty list and no list would read as the same fact here, and the
+	// digest's flag is a non-empty Outside. It is taken over the two stored
+	// lists, so a truncated ImplementFiles can name a path here that the run
+	// did change (Truncated says the lists are not the whole ones).
+	Outside []string `json:"outside,omitempty"`
+	// Truncated is set when one of the lists was capped at
+	// MaxReviewScopeFiles, or at MaxReviewScopeBytes of path between them, or
+	// one of its paths at MaxReviewScopePath: the stored sets are then not the
+	// whole ones.
+	Truncated bool `json:"truncated,omitempty"`
+}
+
+// NewReviewScope bounds the two sets and returns the block to store:
+// Outside is ReviewFiles less ImplementFiles, in git's own (sorted) order,
+// every path clipped to MaxReviewScopePath runes and every list capped at
+// MaxReviewScopeFiles, or at MaxReviewScopeBytes of path between the two,
+// with Truncated saying whether anything was cut. Nil and empty sets are both
+// "no set", so a caller that read none stores no list rather than an empty
+// one.
+//
+// applicable must agree with whyNot — true exactly when whyNot is "" — and
+// the runner sets both from one reading of git.
+func NewReviewScope(applicable bool, whyNot string, implementFiles, reviewFiles []string) *ReviewScope {
+	sc := &ReviewScope{Applicable: applicable, WhyNot: whyNot}
+	budget := MaxReviewScopeBytes
+	var cut bool
+	if sc.ImplementFiles, cut = boundReviewScopeFiles(implementFiles, &budget); cut {
+		sc.Truncated = true
+	}
+	if sc.ReviewFiles, cut = boundReviewScopeFiles(reviewFiles, &budget); cut {
+		sc.Truncated = true
+	}
+	if len(sc.ReviewFiles) == 0 {
+		return sc
+	}
+	// The difference is taken over the bounded lists, so a path Outside names
+	// is never one the stored ImplementFiles already holds.
+	implemented := make(map[string]bool, len(sc.ImplementFiles))
+	for _, p := range sc.ImplementFiles {
+		implemented[p] = true
+	}
+	outside := make([]string, 0, len(sc.ReviewFiles))
+	for _, p := range sc.ReviewFiles {
+		if !implemented[p] {
+			outside = append(outside, p)
+		}
+	}
+	if len(outside) > 0 {
+		sc.Outside = outside
+	}
+	return sc
+}
+
+// boundReviewScopeFiles is NewReviewScope's cap and clip: paths in git's
+// order, at most MaxReviewScopeFiles of them, each at most
+// MaxReviewScopePath runes and the lot within budget bytes, which the two
+// lists share so the block never grows past MaxReviewScopeBytes whatever the
+// sets hold. It also says whether any of the three cut anything. An empty
+// path is not a path, and a set that comes to nothing is nil rather than
+// empty, so a caller stores no list at all.
+func boundReviewScopeFiles(paths []string, budget *int) ([]string, bool) {
+	if len(paths) == 0 {
+		return nil, false
+	}
+	out := make([]string, 0, min(len(paths), MaxReviewScopeFiles))
+	trimmed := false
+	for _, p := range paths {
+		if p == "" {
+			continue
+		}
+		if len(out) >= MaxReviewScopeFiles {
+			return out, true
+		}
+		if clipped := clipRunes(p, MaxReviewScopePath); clipped != p {
+			p, trimmed = clipped, true
+		}
+		if *budget < len(p) {
+			return out, true
+		}
+		*budget -= len(p)
+		out = append(out, p)
+	}
+	if len(out) == 0 {
+		return nil, trimmed
+	}
+	return out, trimmed
+}
+
+// MaxCheckpointText bounds one free-text field of a checkpoint report, in
+// runes, like MaxToleratedTitle bounds a finding's title: three of its four
+// free-text fields are a model's own answer and the record is a small object
+// every listing reads.
+const MaxCheckpointText = 500
+
+// Checkpoint is the report a governance halt leaves (T6.1, D329, G7): why
+// the run stopped, and what a person deciding whether to continue it needs to
+// know. Only a governance stop writes one — a run stopped by a cap, a kill
+// switch or a failure carries none — and it is the record half of the draft
+// pull request's checkpoint line.
+//
+// Trigger is one of the governance halt reasons, and WhyOver and EstimateUSD
+// the runner reads from the record: the runner's own words for the stop, and
+// the model spend the record had reached, which is the figure a continuation
+// starts from and the only money figure the record carries before a tier's
+// expectation exists (T8.1). Done, Next and HardInstructions are the stopping
+// agent's answer to the checkpoint prompt (prompts.go, wired in T7.3): empty
+// in every checkpoint written before that stage exists, and after it in every
+// governance stop that gets no checkpoint call — a stage timeout, or any
+// governance stop of an oauth run (T7.2). A stop that is not a governance one
+// writes no block at all, which is why a run the per-run cap halted carries
+// none.
+//
+// Absent — never an empty block — for a run that did not take a governance
+// halt, and in records from before this field existed: the field is additive,
+// so an old reader sees the record it always saw and the schema's version
+// stays 1.
+type Checkpoint struct {
+	Trigger string `json:"trigger"`
+	// Done is what the work had finished when the run stopped.
+	Done string `json:"done,omitempty"`
+	// WhyOver is why the run is over, in the runner's own words.
+	WhyOver string `json:"why_over,omitempty"`
+	// Next is what the work would do next to finish the task.
+	Next string `json:"next,omitempty"`
+	// EstimateUSD is the money the work had cost when it stopped, as the
+	// record's cost_usd holds it, notional dollars included: an oauth run's
+	// checkpoint carries a figure too, and a reader that needs the billed
+	// part splits it the way it splits the record's own.
+	EstimateUSD float64 `json:"estimate_usd,omitempty"`
+	// HardInstructions is what the work found hard to satisfy or
+	// contradictory in its instructions, if anything.
+	HardInstructions string `json:"hard_instructions,omitempty"`
+}
+
+// NewCheckpoint bounds a checkpoint report's text and returns it to store:
+// every text field is clipped to MaxCheckpointText runes. The trigger is the
+// runner's own reason and is not checked against the governance set here —
+// the runner writes it from those constants — and the number is the record's
+// own.
+func NewCheckpoint(cp Checkpoint) *Checkpoint {
+	cp.Done = clipRunes(cp.Done, MaxCheckpointText)
+	cp.WhyOver = clipRunes(cp.WhyOver, MaxCheckpointText)
+	cp.Next = clipRunes(cp.Next, MaxCheckpointText)
+	cp.HardInstructions = clipRunes(cp.HardInstructions, MaxCheckpointText)
+	return &cp
+}
+
+// MaxTolerated bounds the tolerated findings a record stores. A round's
+// findings are a model's output and the record is a small object every
+// listing reads, so the list is capped and Total says how many there really
+// were (result.schema.json's maxItems).
+const MaxTolerated = 100
+
+// MaxToleratedTitle bounds a stored finding's title in runes. It is the
+// reviewer's own sentence for the finding, and the whole summary stays in the
+// transcript: what the record keeps is a line a reader can scan.
+const MaxToleratedTitle = 200
+
+// ToleratedFindings is the findings a run's resolved mode let through
+// (docs/rigor-modes/implementation-plan.md T3.4, D9, F19): one entry per
+// finding the mode tolerated, in the reviewer's own order, so a reader — and
+// the backlog surface — can see what was let through once the job and the
+// pull request are gone.
+//
+// The findings themselves and not only the count ReviewSummary carries,
+// because a backlog of what a mode decided not to fix needs the findings
+// (F19). It is bounded data: every entry is enums, three small integers and
+// one clipped line, and the list is capped at MaxTolerated with Total saying
+// how many the mode really tolerated, so a truncated list is never presented
+// as the whole one.
+type ToleratedFindings struct {
+	// Findings is one entry per tolerated finding, in the reviewer's order.
+	// Never empty: a run that tolerated nothing carries no block at all,
+	// which is a different fact from a block that lists none.
+	Findings []ToleratedFinding `json:"findings"`
+	// Total is how many findings the mode tolerated. Never less than
+	// len(Findings).
+	Total int `json:"total"`
+}
+
+// ToleratedFinding is one finding a mode let through: the score the mode's
+// table read (D1, D2), the mode that tolerated it, the word a person reads
+// for the score, and the reviewer's own words for the finding, clipped.
+//
+// The score is stored flat rather than as a nested object, like the record's
+// other tuples, and all four parts are kept: the axes are what a reader
+// re-reads a threshold against, and the class is what the spec's severity
+// override turned on.
+type ToleratedFinding struct {
+	// Title is the reviewer's own summary of the finding, clipped to
+	// MaxToleratedTitle runes. An entry without one is not stored.
+	Title string `json:"title"`
+	// Label is the word for the score (rigor.Label): blocker, high, medium,
+	// low or nit. It is derived from the score and never an input to a
+	// decision (D2), so NewTolerated fills it from the axes beside it and no
+	// caller can store a word that disagrees with them.
+	Label rigor.Label `json:"label"`
+	// Mode is the mode that tolerated the finding: the run's resolved mode,
+	// which is one value (D9, D22).
+	Mode rigor.Mode `json:"mode"`
+	// Likelihood, Impact, FixCost and Class are the score the mode's table
+	// read, as the reviewer wrote it (D3).
+	Likelihood int         `json:"likelihood"`
+	Impact     int         `json:"impact"`
+	FixCost    int         `json:"fix_cost"`
+	Class      rigor.Class `json:"class"`
+}
+
+// NewTolerated bounds the findings a run records as tolerated and returns the
+// block to store, or nil when it holds none — a run that tolerated nothing
+// carries no block at all, rather than an empty one.
+//
+// The label is taken from the score here and never from the caller, and an
+// entry whose mode, score or title cannot be read is dropped: the table reads
+// the axes and the class (D2), and a record that carried a word of its own
+// would be a second opinion about them.
+func NewTolerated(findings []ToleratedFinding) *ToleratedFindings {
+	if len(findings) == 0 {
+		return nil
+	}
+	tf := &ToleratedFindings{Findings: []ToleratedFinding{}, Total: len(findings)}
+	for _, f := range findings {
+		s := rigor.Score{Likelihood: f.Likelihood, Impact: f.Impact, FixCost: f.FixCost, Class: f.Class}
+		if f.Title == "" || !rigor.Known(f.Mode) || !s.Scored() {
+			continue
+		}
+		if len(tf.Findings) >= MaxTolerated {
+			break
+		}
+		f.Title, f.Label = clipRunes(f.Title, MaxToleratedTitle), s.Label()
+		tf.Findings = append(tf.Findings, f)
+	}
+	if len(tf.Findings) == 0 {
+		return nil
+	}
+	return tf
+}
+
 // StageTiming records how long one stage took, and what its model calls
 // cost (generic-tool plan Task 24). ModelUSD is the gateway's StageReport
 // figure for the stage when the run went through the gateway, and the
@@ -123,6 +522,27 @@ type StageTiming struct {
 	Name      string    `json:"name"`
 	StartedAt time.Time `json:"started_at"`
 	DurationS float64   `json:"duration_s"`
+	// Calls is how many model calls the stage made, and Agents how many
+	// sub-agent tool calls its own stream carried. Calls is the gateway's
+	// stage report, absent without a gateway (an oauth run has no call
+	// count); Agents is the relay's count of the sub-agent tool calls the
+	// stream named, for every auth mode, gateway or not. The gateway's count
+	// of distinct agent IDs is a different figure and is never recorded: it
+	// rests on the agent ID a client claims, which nothing verifies. Both are
+	// pointers because a stage nobody counted has the field absent, and that
+	// is not the same fact as a stage counted at zero.
+	Calls  *int `json:"calls,omitempty"`
+	Agents *int `json:"agents,omitempty"`
+	// Repeats is the most times one identical shell command ran in this
+	// stage, counted by the relay from the stage's own stream for every auth
+	// mode (task-governance T1.4). It is a count and never the command, a
+	// hash of it or any argument: a command can carry a token or a path, and
+	// this record is read by every launcher and by the digest's report. It is
+	// a pointer for the same reason Calls and Agents are: a stage nobody
+	// counted has the field absent, which is not the same fact as a stage
+	// counted at zero, and a record written before the field existed carries
+	// none.
+	Repeats *int `json:"repeats,omitempty"`
 	// ModelUSD is what this stage's calls cost, in USD, whatever model they
 	// were on: under the gateway, every call the stage's report carried,
 	// the background model's (haiku, say) included. The stages sum to
@@ -138,6 +558,41 @@ type StageTiming struct {
 	// what the upstream served, and a stage may also have called the
 	// background model: Model does not account for ModelUSD on its own.
 	Model string `json:"model,omitempty"`
+	// ModelNotionalUSD is the part of this stage's ModelUSD that was
+	// notional: what the calls a subscription paid for would have cost at
+	// list rates (D140, P12) -- Claude Code's own figure when the stage ran
+	// on oauth, and, in a cascade run, the tier-A calls' share of what the
+	// gateway settled. The stage's own split is the only place it exists:
+	// one stage of a cascade run can hold both, so Cost.ModelNotionalUSD
+	// says how much of the run's figure was notional and this says where.
+	ModelNotionalUSD float64 `json:"model_notional_usd,omitempty"`
+}
+
+// Switch is one entry of a run's switch log (D140, C1.16): the run's cascade
+// moved its calls from one credential to another, and the credentials
+// service said why. From, To and Reason are the service's own record
+// (credsvc.Switch, C1.15) as the gateway read it off the answer; everything
+// here is a name or a word of that contract, never a credential value.
+type Switch struct {
+	// From is the credential the call was on, empty when the call started on
+	// the credential that answered it (the service's own meaning for an
+	// empty from), which is why it is not required.
+	From string `json:"from,omitempty"`
+	// To is the credential that answered.
+	To string `json:"to"`
+	// Reason is why the cascade moved, one of the service's closed set of
+	// reason words (credsvc.ValidReason), never free text.
+	Reason string `json:"reason"`
+	// CacheMissUSD is the estimated cost of re-reading what the previous
+	// call had cached, priced at the answering tier's input rate less its
+	// cache-read rate (F24, C1.16). It is an estimate for a reader and it
+	// is charged to nothing: the ledger settles the calls themselves.
+	CacheMissUSD float64 `json:"cache_miss_usd,omitempty"`
+	// CacheMissUnmeasured is true when the answering tier's cache behaviour
+	// is not measured (a Claude model on tier C's OpenRouter route, F24,
+	// Checks 46 and 50). Then the miss is unknown rather than free, and
+	// CacheMissUSD is 0 because there is no figure -- not because it is one.
+	CacheMissUnmeasured bool `json:"cache_miss_unmeasured,omitempty"`
 }
 
 // Record is result.json, the run record (design §4.6).
@@ -190,9 +645,18 @@ type Record struct {
 	CostUSD       float64         `json:"cost_usd"` // the model spend (design §4.6)
 	Cost          *Cost           `json:"cost,omitempty"`
 	Stages        []StageTiming   `json:"stages,omitempty"`
-	StartedAt     time.Time       `json:"started_at"`
-	Deadline      *time.Time      `json:"deadline,omitempty"`
-	FinishedAt    *time.Time      `json:"finished_at,omitempty"`
+	// Switches is the run's switch log (D140, C1.16): every credential
+	// switch the credentials service reported on one of this run's calls,
+	// in the order the gateway settled the answers that carried them, each
+	// beside the cache-miss estimate only the gateway can compute (F24). It
+	// is the service's record and the estimate, nothing else: no credential
+	// value is in it, and nothing reads it to decide anything. Absent for a
+	// run that never switched, and in records from before this field
+	// existed.
+	Switches   []Switch   `json:"switches,omitempty"`
+	StartedAt  time.Time  `json:"started_at"`
+	Deadline   *time.Time `json:"deadline,omitempty"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
 	// FinalizeReserveS is the workflow's timeouts.finalize_reserve at the
 	// task's ref, overrides applied, in seconds; read it with
 	// FinalizeReserve. Absent until bootstrap has read fugaro.yaml.
@@ -253,7 +717,78 @@ type Record struct {
 	// that delivered none, so a record written before this field existed
 	// is byte-for-byte the record an old reader saw.
 	Artifacts []ArtifactFile `json:"artifacts,omitempty"`
+	// Rigor is the mode the run resolved, the layer that decided it, the
+	// areas that matched and the moment of the run each was known at
+	// (docs/rigor-modes/implementation-plan.md T1.2, D22, D24, D25). Absent
+	// for a run that resolved none — every record written before this field
+	// existed, and a run that died before bootstrap — so an old reader sees
+	// the record it always saw.
+	Rigor *RigorRecord `json:"rigor,omitempty"`
+	// Tier is the expectation tier the run was dispatched at and the cost and
+	// duration Fugaro expects a run of that tier to have
+	// (docs/task-governance/implementation-plan.md T8.1, D330): the launcher's
+	// fugaro run --tier, or the tier a --pr follow-up keeps from its PR, and
+	// the expectation the run's governance resolved for it. Absent for a run
+	// that carried no tier — every record written before this field existed
+	// included — and the two figures are expectations and never caps: the
+	// deployed per-run cap stays the ceiling whatever a tier expects (G6).
+	// Nothing reads it yet, as with Backlog below; it is written because the
+	// record is what survives the run, and T8.2 is what acts on it.
+	Tier *TierRecord `json:"tier,omitempty"`
+	// Backlog is the ids of the backlog items this run filed for what it
+	// left open, in the order it filed them: the `<YYYYMMDD-NN>` names
+	// their files under docs/backlog/ are known by (docs/rigor-modes/
+	// implementation-plan.md T4.5, D9, D26). Nothing reads it yet — no
+	// `Diagnosis` field carries it and `runview.Row`, which the console's
+	// record keys are derived from, has no backlog key; the items
+	// themselves are on the run's branch and in its pull request, and
+	// `fugaro backlog list` is how they are read today. It is written
+	// because the record is what survives the run, and the ids are the one
+	// part of the filing nothing else on the record names. Absent — never
+	// an empty list — for a run that filed none, which is every record
+	// written before this field existed.
+	Backlog []string `json:"backlog,omitempty"`
+	// BacklogClosed is the ids of the backlog items this run closed as the
+	// follow-up whose review shipped the round an earlier run on its pull
+	// request left open (D31, plan T4.7), in the order it closed them, the
+	// same `<YYYYMMDD-NN>` names as Backlog. Nothing reads it yet either; it
+	// is written so the record says what the run answered as well as what it
+	// left. At most MaxBacklogClosed, and absent — never an empty list — for
+	// a run that closed none.
+	BacklogClosed []string `json:"backlog_closed,omitempty"`
+	// ReviewScope is the comparison between the paths implement changed and
+	// the paths the review range covers, taken right after implement
+	// (generic-tool plan T5.2, F2, D332): report only, and the input of the
+	// digest's review-scope flag (T1.4) and of the review-scope stop (T7.3).
+	// Absent for a run that died before the comparison, and in records from
+	// before this field existed.
+	ReviewScope *ReviewScope `json:"review_scope,omitempty"`
+	// Tolerated is the findings the run's resolved mode let through, in the
+	// reviewer's order: the findings themselves and not only the count
+	// Reviews carries, because what a mode decided not to fix is what a
+	// reader — and the backlog surface — needs (docs/rigor-modes/
+	// implementation-plan.md T3.4, D9, F19). Nothing reads it yet; it is
+	// written because the record is what survives the run. Absent — never an
+	// empty block — for a run that tolerated nothing, which is every record
+	// written before this field existed: the field is additive, so an old
+	// reader sees the record it always saw and the schema's version stays 1
+	// (F21).
+	Tolerated *ToleratedFindings `json:"tolerated,omitempty"`
+	// Checkpoint is the report a governance halt left (T6.1, D329, G7):
+	// what stopped the run, why it is over and what it would have done
+	// next, written by the runner as the run stops. Absent — never an empty
+	// block — for every run that did not take a governance halt, which is
+	// every record written before this field existed: the field is
+	// additive, so an old reader sees the record it always saw.
+	Checkpoint *Checkpoint `json:"checkpoint,omitempty"`
 }
+
+// MaxBacklogClosed bounds Record.BacklogClosed. A run closes only what the
+// runs of its own pull request filed for a round, one item a run over a walk
+// the runner bounds at twenty runs, so this is room for every close a real
+// run makes and the point past which a record is not believed
+// (result.schema.json's maxItems).
+const MaxBacklogClosed = 64
 
 // ReviewedPR is one pull request a mode: review run reviewed (design
 // generic-tool §3.6, G12): the commit it reviewed and the stage's verdict,
@@ -322,15 +857,24 @@ func (e PolicyEffective) MarshalJSON() ([]byte, error) {
 	return json.Marshal(aux)
 }
 
-// PolicyIgnored is a value a layer set that was looser than the limits in
-// force and was dropped. Value and Effective are text; Source is the layer
-// of the effective value and From the layer that asked for Value.
+// PolicyIgnored is a value a layer set that the run dropped. Value and
+// Effective are text; Source is the layer of the effective value and From the
+// layer that asked for Value.
+//
+// Clamped marks the one shape that is not "looser than the limits in force": a
+// stage timeout the run's own timeouts.stage bounds at least as tightly, which
+// the run drops rather than give a deadline of its own (T7.6). It cannot be
+// told from a merge entry by Key, Source and From alone — both can read
+// key=stage_timeout.implement source=ceiling from=branch — so the report would
+// otherwise call a merge-dropped value one the run's own bound made moot, or
+// the other way round; this is the mark that separates them.
 type PolicyIgnored struct {
 	Key       string `json:"key"`
 	Value     string `json:"value"`
 	Effective string `json:"effective"`
 	Source    string `json:"source"`
 	From      string `json:"from"`
+	Clamped   bool   `json:"clamped,omitempty"`
 }
 
 // FollowUp is what a follow-up run acted on (design §4.4).

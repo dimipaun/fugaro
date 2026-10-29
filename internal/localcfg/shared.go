@@ -27,8 +27,16 @@ const SharedMaxBytes = 64 << 10
 // with objectAdmin on it can write), update_check (same reasoning: a
 // machine's choice to silence the nag is its own operator's, not something
 // a launcher writing the shared file should be able to flip for everyone),
-// and each repo's base_branch, which the checkout's reviewed fugaro.yaml
-// names. **batch: is published**, for the opposite reason: it is the
+// and each repo's base_branch and the project's top-level base_branch, which
+// the checkout's reviewed fugaro.yaml names (the project's is published to the
+// policy node instead, by `fugaro project policy publish`: the node is written
+// only by the owner and the runner fails closed on it, while the shared file
+// is writable by any launcher). **credentials_service: is published too**, for the reason batch: and
+// mailbox: are: the installation's one Cloud Run service, and therefore the
+// URL `fugaro run` puts on a job's environment, is the installation's fact and
+// not one machine's — the machine that launches is often not the machine that
+// opted in, and a local-only copy of it is exactly what goes missing (the
+// ledger item of PR #903). **batch: is published**, for the opposite reason: it is the
 // installation's own facts (design docs/design/compute-backend.md §4.4, plan
 // 2026-10-19-compute-backend.md Task 8 step 2) — the image a run's job runs,
 // the machine type, the network and subnetwork its VMs are placed in, the
@@ -37,7 +45,12 @@ const SharedMaxBytes = 64 << 10
 // else's jobs. Every one of its values that names a cloud resource is held to
 // the anchor's GCP project when the file is read back
 // (internal/cli's ParseShared), like registry_host, base_images, log_view and
-// budget.firebase_project. The receiver is not modified. The
+// budget.firebase_project. **mailbox: is published as well**, and for the same
+// reason batch: is: the keychain item's name is the installation's (mobile
+// P4.1, M5), and a machine whose own config has no mailbox: block must not
+// erase the name another machine recorded. What it holds is the name and never
+// the key — the key lives in the operator's OS keychain and is never written to
+// disk, so nothing published here is a secret. The receiver is not modified. The
 // copy is shallow except for repos: its other maps, slices and pointers
 // alias the receiver's, which is safe because the result is only
 // marshalled, and Marshal only reads.
@@ -60,6 +73,7 @@ func (c *Config) Shared() *Config {
 	s.Profiles = nil
 	s.UpdateCheck = nil
 	s.Build.ServiceAccount = ""
+	s.BaseBranch = ""
 	s.Repos = withoutBaseBranches(c.Repos)
 	return &s
 }
@@ -134,6 +148,37 @@ func MergeShared(published, local *Config) *Config {
 	}
 	if out.Watch == nil {
 		out.Watch = published.Watch
+	}
+	if out.Mailbox == nil {
+		// The mailbox block is published for the reason batch: and watch: are
+		// (T2's plan, §13): the keychain item's name is the installation's, not
+		// one machine's, and a publisher whose own config has no mailbox: block
+		// — a machine that onboarded before the pairing existed — would
+		// otherwise erase the item name another machine recorded. What it is
+		// NOT is the key: the key never leaves the OS keychain it was generated
+		// into (M5), so nothing published here is a secret.
+		out.Mailbox = published.Mailbox
+	}
+	if out.CredentialsService == nil {
+		// The credentials service block is published for the same reason, and
+		// it is the one the launcher reads: the URL is the installation's own
+		// Cloud Run service, and the machine that runs a launch is often not
+		// the machine that opted in. A publisher whose own config has no block
+		// is a machine that never ran the opt-in — a teammate who onboarded a
+		// repository with `fugaro update --repo`, a CI box whose config came
+		// from the published file — and taking its nil over the published one
+		// would erase the installation's one record of its service, silently,
+		// so that every later launch of the project went out without the
+		// variable while the installation has the service on (the ledger item
+		// of PR #903).
+		//
+		// The cost of that rule is the opt-out's: an installation whose service
+		// is removed keeps the published block until an operator clears it, and
+		// a launch that reads it puts a dead URL on the job. That is the
+		// direction this file takes everywhere (a stale fact is recoverable; an
+		// erased one is not), and the runbook's opt-out section says what to
+		// remove.
+		out.CredentialsService = published.CredentialsService
 	}
 	if out.MaxParallel == 0 {
 		out.MaxParallel = published.MaxParallel

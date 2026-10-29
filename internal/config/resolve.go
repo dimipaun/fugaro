@@ -22,6 +22,13 @@ const (
 // SourceProfile is the source of a value a profile set.
 func SourceProfile(name string) string { return "profile " + name }
 
+// IsLayerSource is whether src names the project layer rather than the
+// repository's own file: SourceProject, or a SourceProfile of one of the
+// layer's profiles. SourceDefault and SourceRepo are not.
+func IsLayerSource(src string) bool {
+	return src == SourceProject || strings.HasPrefix(src, "profile ")
+}
+
 // CodeNeedsLayer is the Code of a problem that only a project layer can
 // solve: a profile named, or no workflows, with no layer given.
 const CodeNeedsLayer = "needs_project_layer"
@@ -101,6 +108,9 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 		if ps := Validate(repo); len(ps) > 0 {
 			return nil, nil, noLayerHint(repo, ps)
 		}
+		repo.RepoRigor = repo.Rigor
+		repo.RepoRigorSet = setsRigor(tree)
+		repo.RepoGovernanceSet = setsGovernance(tree)
 		res := &Resolution{Sources: map[string]string{}}
 		markLeaves(tree, "", SourceRepo, res.Sources)
 		res.ConfigSHA256 = repo.SHA256()
@@ -139,6 +149,13 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 		return nil, nil, ps
 	}
 	c.Layer = l
+	// The repository's own rigor: block, kept beside the merged one: the
+	// project layer's area rules stay in effect next to the repository's
+	// rather than being replaced by them (D20c), so a consumer that resolves
+	// a mode needs both (Config.RigorConfig).
+	c.RepoRigor = repo.Rigor
+	c.RepoRigorSet = setsRigor(tree)
+	c.RepoGovernanceSet = setsGovernance(tree)
 	applyDefaults(&c)
 	if ps := Validate(&c); len(ps) > 0 {
 		return nil, nil, annotate(ps, res, profileOf)
@@ -305,6 +322,26 @@ func markLeaves(v any, path, source string, sources map[string]string) {
 	if v != nil && path != "" {
 		sources[path] = source
 	}
+}
+
+// setsRigor is ProjectLayer.SetsRigor for a repository file's own tree: whether
+// the text writes the rigor: key, at any value. It reads the tree and not the
+// resolved value for the reason that method states — a runner older than
+// rigorSince decodes the file with KnownFields, so the key alone is what it
+// refuses, and an explicit null, which decodes to no block at all, is refused
+// exactly like a full one. Its answer becomes Config.RepoRigorSet.
+func setsRigor(tree map[string]any) bool {
+	_, ok := tree["rigor"]
+	return ok
+}
+
+// setsGovernance is ProjectLayer.SetsGovernance for a repository file's own
+// tree: whether the text writes the governance: key, at any value, which is
+// the same question setsRigor answers for rigor:, for the same reason. Its
+// answer becomes Config.RepoGovernanceSet.
+func setsGovernance(tree map[string]any) bool {
+	_, ok := tree["governance"]
+	return ok
 }
 
 // docTree is a YAML document as Resolve merges it (nodeTree).

@@ -2,6 +2,7 @@ package watch
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -40,6 +41,93 @@ func TestFailedRunsStayUntilAcked(t *testing.T) {
 	got, _ = f.Apply(v, func(_, run string) bool { return run == "f" })
 	if len(got.Repos[0].Finished) != 0 {
 		t.Fatal("an acknowledged failure stayed")
+	}
+}
+
+// An acknowledgement dismisses any finished run, not only a failure (owner
+// spec 2026-10-22, item 4): x means "I have seen this one", and it is the
+// same local, per-viewer record the failures have always used. Mutation
+// caught: consulting the ack set only in the failure branch.
+func TestAckDismissesAnyFinishedRun(t *testing.T) {
+	v := View{Repos: []RepoBlock{{Slug: "a", Finished: []RunRow{
+		{Run: "ok-young", Finished: true, Age: time.Minute},
+		{Run: "ok-acked", Finished: true, Age: time.Minute},
+		{Run: "bad-acked", Finished: true, Failed: true, Age: time.Minute},
+	}}}}
+	f := Filter{Keep: time.Hour, KeepCount: 15, FailedKeep: time.Hour}
+	got, hidden := f.Apply(v, func(_, run string) bool { return strings.HasSuffix(run, "acked") })
+	if len(got.Repos[0].Finished) != 1 || got.Repos[0].Finished[0].Run != "ok-young" {
+		t.Fatalf("got %+v, want only the run nobody dismissed", got.Repos[0].Finished)
+	}
+	if hidden != 2 {
+		t.Fatalf("hidden = %d, want both dismissed runs", hidden)
+	}
+}
+
+// --keep reaches every finished row, not only a success (0.10.2 fix of
+// #950): a person who widens the window wants to see the failures and the
+// halted runs too, and raising it must never make a failure less visible
+// than a success of the same age. Mutation caught: a failure branch that
+// reads the 3-minute FailedKeep floor instead of the widened window — the
+// bug this test was written red for (a 10m-old failure vanished under
+// --keep 24h while a 10m-old success stayed).
+func TestKeepWindowAppliesToEveryStatus(t *testing.T) {
+	for _, tc := range []struct {
+		status string
+		failed bool
+		age    time.Duration
+	}{
+		{"success", false, time.Minute},
+		{"success", false, 10 * time.Minute},
+		{"success", false, 2 * time.Hour},
+		{"failed", true, time.Minute},
+		{"failed", true, 10 * time.Minute},
+		{"failed", true, 2 * time.Hour},
+		{"halted", true, time.Minute},
+		{"halted", true, 10 * time.Minute},
+		{"halted", true, 2 * time.Hour},
+	} {
+		t.Run(tc.status+"/"+tc.age.String(), func(t *testing.T) {
+			r := RunRow{Run: "r1", Finished: true, Failed: tc.failed, Age: tc.age}
+			if tc.status == "halted" {
+				r.Halted = "budget"
+			}
+			v := View{Repos: []RepoBlock{{Slug: "a", Finished: []RunRow{r}}}}
+			f := Filter{Keep: 24 * time.Hour, KeepCount: 15, FailedKeep: FinishedKeep}
+			got, hidden := f.Apply(v, nil)
+			if len(got.Repos[0].Finished) != 1 || hidden != 0 {
+				t.Fatalf("--keep 24h hid the %s run %v old: kept %+v, hidden %d",
+					tc.status, tc.age, got.Repos[0].Finished, hidden)
+			}
+		})
+	}
+}
+
+// --keep-count counts a failed row like any other finished row (0.10.2):
+// with --keep-count 1 only the newest finished row stays, whatever its
+// status, so a fresh failure displaces an older success and an older failure
+// is displaced by a fresh success. Mutation caught: a failure branch that
+// skips the count, which would keep every failure in the window however many
+// successes --keep-count allows.
+func TestKeepCountAppliesToFailures(t *testing.T) {
+	f := Filter{Keep: 24 * time.Hour, KeepCount: 1, FailedKeep: FinishedKeep}
+	fresh := View{Repos: []RepoBlock{{Slug: "a", Finished: []RunRow{
+		{Run: "failed-now", Finished: true, Failed: true, Age: time.Minute},
+		{Run: "ok-earlier", Finished: true, Age: 2 * time.Minute},
+	}}}}
+	got, hidden := f.Apply(fresh, nil)
+	if len(got.Repos[0].Finished) != 1 || got.Repos[0].Finished[0].Run != "failed-now" || hidden != 1 {
+		t.Fatalf("--keep-count 1 over a fresh failure: kept %+v, hidden %d, want only failed-now",
+			got.Repos[0].Finished, hidden)
+	}
+	old := View{Repos: []RepoBlock{{Slug: "a", Finished: []RunRow{
+		{Run: "ok-now", Finished: true, Age: time.Minute},
+		{Run: "failed-earlier", Finished: true, Failed: true, Age: 2 * time.Minute},
+	}}}}
+	got, hidden = f.Apply(old, nil)
+	if len(got.Repos[0].Finished) != 1 || got.Repos[0].Finished[0].Run != "ok-now" || hidden != 1 {
+		t.Fatalf("--keep-count 1 over an older failure: kept %+v, hidden %d, want only ok-now",
+			got.Repos[0].Finished, hidden)
 	}
 }
 

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See console/LICENSE.md for the terms.
 // The recorder, held to its own contract (desktop-console plan Task 1.4).
 //
 // **The tool is agent-written and the recordings are owner-run**, and this file

@@ -60,6 +60,35 @@ func writeProject(t *testing.T, name, gcp string) string {
 	return path
 }
 
+// enrollRepo adds repo (owner/name) to project's config, as a real project
+// config enrolls one. The entry names no provider on purpose: provider: is
+// optional there and the checkout's own fugaro.yaml git.provider decides it
+// when the entry is silent, which is what makes this a fixture that says
+// "this repository belongs to this project" without also pinning a forge the
+// test may be varying.
+//
+// It may be called more than once for a project: repos: is written once, and
+// every later call adds a line to that block (a second repos: key would be a
+// duplicate key, which the strict parser refuses).
+func enrollRepo(t *testing.T, project, repo string) {
+	t.Helper()
+	path, err := localcfg.ProjectPath(os.Getenv, project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	add := "  " + repo + ": {}\n"
+	if !strings.Contains(string(b), "repos:\n") {
+		add = "repos:\n" + add
+	}
+	if err := os.WriteFile(path, append(b, add...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // Every cloud command says which project it acts on, as the first line
 // of its stderr, even when it fails after the project is selected.
 func TestCloudCommandsPrintProjectHeader(t *testing.T) {

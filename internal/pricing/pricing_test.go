@@ -249,3 +249,41 @@ func TestFromUSD(t *testing.T) {
 		t.Errorf("USD() = %v", got)
 	}
 }
+
+// TestConservativeTierMultiplierIsNeverStandardOrFree: a service tier the
+// table has no multiplier for (Anthropic's Priority Tier, which a response
+// reports as "priority", and anything else a provider names) is charged at
+// ConservativeTierMultiplier times the rates the call is otherwise priced
+// at -- the serving model's own, which the gateway applies (see
+// TestServiceTierPriorityChargedConservatively). The number must stay above
+// the standard price -- 1, the model's own rates -- so an unpriced tier can
+// only ever over-count; and StandardTier must stay the one spelling of the
+// tier the gateway prices at 1.
+func TestConservativeTierMultiplierIsNeverStandardOrFree(t *testing.T) {
+	if ConservativeTierMultiplier <= 1 {
+		t.Errorf("ConservativeTierMultiplier is %v: an unpriced tier charged at or below 1 is charged as standard", ConservativeTierMultiplier)
+	}
+	if ConservativeTierMultiplier < SurpriseMultiplier {
+		t.Errorf("ConservativeTierMultiplier is %v, below the dearest multiple the table knows (%v)", ConservativeTierMultiplier, SurpriseMultiplier)
+	}
+	if MaxMultiplier < ConservativeTierMultiplier {
+		t.Errorf("MaxMultiplier is %d, below the conservative tier multiplier %v: no rate could be validated at it",
+			MaxMultiplier, ConservativeTierMultiplier)
+	}
+	if StandardTier != "standard" {
+		t.Errorf("StandardTier is %q: the gateway's allowed list and the responses it reads must agree on one spelling", StandardTier)
+	}
+	// The charge is a multiple of the call's own rates, so for every model
+	// in the table it is above that model's standard charge: nothing priced
+	// there can be charged less than the tier nobody has priced. It is
+	// deliberately not the table's maximum rates -- those belong to the
+	// dearest model in it, and charging a cheap one them is what inflated a
+	// DeepSeek call by tens of times.
+	u := Usage{Input: 1000, CacheWrite5m: 10, CacheWrite1h: 20, CacheRead: 30, Output: 40}
+	for id, m := range testTable().Models {
+		standard := m.Rates.Cost(u)
+		if got := standard * Micros(ConservativeTierMultiplier); got <= standard {
+			t.Errorf("%s: the conservative charge %d is not above the standard charge %d", id, got, standard)
+		}
+	}
+}

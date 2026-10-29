@@ -1,16 +1,14 @@
 # The mobile app's sign-in, pairing and allowlist — the implementation plan
 
-**Status: plan only; no code is implemented; the owner approval gate is passed.** This plan
-follows from [reconciliation.md](reconciliation.md), which wins wherever it disagrees with
-[spec.md](spec.md).
+**Status: plan only; no code is implemented; approval gate open.** This plan follows from
+[reconciliation.md](reconciliation.md), which wins wherever it disagrees with [spec.md](spec.md).
+**Amended 2026-10-22:** the owner accepted the parts **as recommended**, with **P0 and P1 approved**
+and **P3–P5 ordered after P6.6 and P6.8**; the gate stays open for **every other part** — see
+[README.md](README.md), which records the ruling and the provenance of the relay.
 Every path and symbol below was re-read against `main` at `d9dda8f3` (`cli: fugaro --version and
 fugaro -v print the version, like fugaro version (#794)`) on **2026-10-21**, and is cited by **path
 and symbol, never by line number**. A path marked **new** does not exist yet.
 **Owner: Dimi Paun. Date: 2026-10-21.**
-**Amended 2026-10-22**: the owner answered **D221–D236, each as recommended**, and passed this
-plan's owner approval gate (§11) for the two parts the owner approved — **P0 and P1**.
-**P2, P3, P4, P5 and P6 were not opened**: P3, P4 and P5 wait on the mobile Phase 6 tasks this work
-extends (P6.6 and P6.8, approved 2026-10-18 and unbuilt) and on each other, and §11 says so in full.
 
 **Every part is independently mergeable.** A part lands, it is verified, and the tree works with it
 and without the parts after it. **Target release: the first release after the mobile Phase 6 tasks

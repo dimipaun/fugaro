@@ -21,6 +21,11 @@ import (
 type BucketFacts struct {
 	Bucket *blob.Bucket
 	Warn   func(string)
+	// Slugs, when set, restricts the pass to these repositories: the bucket
+	// holds every project's runs, and a caller that wants a handful of facts
+	// should not pay for a run listing per repository it will never read.
+	// Empty means every repository in the bucket.
+	Slugs []string
 }
 
 func (b BucketFacts) warnf(format string, a ...any) {
@@ -36,6 +41,19 @@ func (b BucketFacts) Facts(ctx context.Context, from, to int64) (map[int64][]Run
 	slugs, err := runstore.ListSlugs(ctx, b.Bucket)
 	if err != nil {
 		return nil, nil, err
+	}
+	if len(b.Slugs) > 0 {
+		want := make(map[string]struct{}, len(b.Slugs))
+		for _, s := range b.Slugs {
+			want[s] = struct{}{}
+		}
+		keep := make([]string, 0, len(b.Slugs))
+		for _, slug := range slugs {
+			if _, ok := want[slug]; ok {
+				keep = append(keep, slug)
+			}
+		}
+		slugs = keep
 	}
 	// A run ID is minted a little before the run starts: look a day earlier.
 	since := time.UnixMilli((from - 1) * 86_400_000).UTC()

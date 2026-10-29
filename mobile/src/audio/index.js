@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See mobile/LICENSE.md for the terms.
 // The audio module's one door (mobile plan, Task P3.4; D122, D123, D126).
 //
 // Everything the rest of the app needs from `src/audio/`, re-exported here and

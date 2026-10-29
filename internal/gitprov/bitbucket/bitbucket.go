@@ -1,5 +1,6 @@
 // Package bitbucket implements gitprov.Provider against the Bitbucket Cloud
-// REST API (2.0), authenticated with a repository access token (design §6.1).
+// REST API (2.0), authenticated with a Bitbucket access token -- a repository,
+// workspace or project one (design §6.1).
 package bitbucket
 
 import (
@@ -28,7 +29,7 @@ const GitUsername = "x-token-auth"
 type Options struct {
 	Workspace string // the repository's workspace
 	Slug      string // the repository slug
-	Token     string // repository access token: Repositories read/write, Pull requests read/write
+	Token     string // Bitbucket access token: Repositories read/write, Pull requests read/write
 	BaseURL   string // API root; empty means DefaultBaseURL
 	HTTP      *http.Client
 	// Warn, when set, receives adapter warnings meant for the run's log:
@@ -56,7 +57,7 @@ func New(o Options) (*Provider, error) {
 		return nil, errors.New("bitbucket: workspace and repository slug are required")
 	}
 	if o.Token == "" {
-		return nil, errors.New("bitbucket: a repository access token is required")
+		return nil, errors.New("bitbucket: a Bitbucket access token is required")
 	}
 	if o.BaseURL == "" {
 		o.BaseURL = DefaultBaseURL
@@ -316,7 +317,7 @@ func (p *Provider) Comment(ctx context.Context, pr gitprov.PR, body string) erro
 	return nil
 }
 
-// GitAuth implements gitprov.Provider. A repository access token is used
+// GitAuth implements gitprov.Provider. A Bitbucket access token is used
 // as is (design §6.2); it does not expire during a run.
 func (p *Provider) GitAuth(context.Context, time.Duration) (gitprov.GitAuth, error) {
 	return gitprov.GitAuth{Username: GitUsername, Token: p.o.Token}, nil

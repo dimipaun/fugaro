@@ -45,8 +45,19 @@ export const PLUGIN_FILE = path.join(REPO_ROOT, 'plugin', '.claude-plugin', 'plu
 // file must be a release file: one that is not named `vX.Y.Z.md` is a mistake in the tree
 // (a release notes draft, a stray note), and this module throws rather than dropping it
 // silently — a changelog that leaves a release out without saying so is the failure D100
-// and F44 exist to prevent.
+// and F44 exist to prevent. The directories skipped by name are `console/` and `mobile/`,
+// the desktop console's and the mobile app's own streams' notes (NON_RELEASE_DIRS, below).
 const NON_RELEASE = 'README.md'
+
+// `docs/releases/console/` and `docs/releases/mobile/` are the **desktop console's** and the
+// **mobile app's** notes directories: each has its own release stream and its own tag
+// (`console-vX.Y.Z` and `mobile-vX.Y.Z`, docs/release.md's "Console releases" and "Mobile
+// releases"), and their highlights live there rather than here. They are directories, so
+// they are skipped by name exactly as `README.md` is and for the same reason — every other
+// name that is not `vX.Y.Z.md`, a stray directory included, still throws. This changelog is
+// the CLI's: those notes are not rendered on the site's page, and the site's build must not
+// fail because they exist.
+const NON_RELEASE_DIRS = ['console', 'mobile']
 
 // The `###` headings a release file may carry inside its body, in full: the operator steps,
 // and the release's known limits (`docs/releases/README.md`). Both are optional, either may
@@ -172,9 +183,18 @@ function splitSections(lines) {
 export function buildChangelog({ releasesDir = RELEASES_DIR, pluginFile = PLUGIN_FILE } = {}) {
   const published = releasedVersion(pluginFile)
 
-  const files = readdirSync(releasesDir)
-    .filter((fileName) => fileName !== NON_RELEASE)
-    .map((fileName) => {
+  // Only the named stream directories are skipped (NON_RELEASE_DIRS, above), and only as
+  // directories: every other entry here, file or directory, is held to the rule below — a
+  // name that is not `vX.Y.Z.md` is a mistake in the tree and throws, and only README.md is
+  // skipped by name among the files.
+  const files = readdirSync(releasesDir, { withFileTypes: true })
+    .filter(
+      (entry) =>
+        !(entry.isFile() && entry.name === NON_RELEASE) &&
+        !(entry.isDirectory() && NON_RELEASE_DIRS.includes(entry.name)),
+    )
+    .map((entry) => {
+      const fileName = entry.name
       const version = versionOf(fileName)
       if (version === null) {
         throw new Error(

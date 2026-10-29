@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See mobile/LICENSE.md for the terms.
 // The demo's screen: what a reviewer reads while demo mode is on (owner ruling
 // of 2026-10-19).
 //

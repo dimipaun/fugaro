@@ -115,7 +115,7 @@ The table is `config.Scopes` in code; `docs/project-layer.md` prints it, and a d
 | `version`, `project`, `gcp_project` | | | yes | | they identify the repository and anchor the project layer |
 | `profile` | | | yes | | the project chooses its default with `default_profile` |
 | `git.provider` | yes | | yes | | |
-| `git.base_branch` | | | yes | | a project-wide branch would let a bucket writer point image builds at an unreviewed branch (the shared config refuses `repos.<r>.base_branch` for the same reason) |
+| `git.base_branch` | | | yes | | a project-wide branch would let a bucket writer point image builds at an unreviewed branch (the shared config refuses `repos.<r>.base_branch` and the project's top-level `base_branch` for the same reason; the latter is published to the policy node instead) |
 | `git.pr.labels`, `early_draft`, `checkpoints` | yes | | yes | | |
 | `git.pr.reviewers` | | | yes | | reviewers are people of one repository |
 | `agent.auth`, `models.*`, `first_line_review`, `first_line_rounds` | yes | | yes | | |
@@ -130,6 +130,10 @@ The table is `config.Scopes` in code; `docs/project-layer.md` prints it, and a d
 | `workflows.*.dockerfile` | | | yes | | it names a file in the repository |
 | `workflows.*.secrets` | | | yes | | secrets belong to one repository's Secret Manager entries |
 | `followup.trusted`, `followup.allow_public` | | | yes | | they decide whose comments steer a run with the repository's credentials |
+| `rigor.default`, `rigor.areas` | yes | | yes | | the mode is a default and not a floor, so either layer may set it and a narrower layer may lower a wider one (D21); the two `areas` lists are a union, not a replacement, so a repository's own rules never switch off the project's (D20c) |
+| `governance.*` (`review_ratio`, `review_floor_calls`, `max_subagents`, `stage_budget`, `stage_tokens`, `stage_timeout`, `tiers`) | yes (top-level, not `defaults:`) | | yes | | it is the guardrail Fugaro ships: the project layer sets it for every repository of the project and a repository can only tighten it, because the per-run cap stays the ceiling and every stage budget is a fraction under it (G6); `tiers` is the same rule one level down, and a tier's expected cost is an expectation that never becomes or moves a cap (D330) |
+
+**Where `governance` sits in the layer.** Unlike every other "project" row above, `governance:` is a **top-level** key of the layer file, like `claude_models` ([project-layer.md](../project-layer.md) §6), and not a member of `defaults:`. The merge of `defaults:` over a repository's file is replace-not-tighten, which would let a repository's own `governance:` block loosen the project's by writing a value; the top-level block is kept out of that overlay by construction, so the two layers meet only in `internal/policy`'s tighten-only merge. A layer that writes `defaults.governance` is refused as an unknown key.
 
 **Secrets and tokens.** No `fugaro.yaml` key holds a secret value: `workflows.*.secrets` maps names to variables. The project layer additionally refuses any value shaped like a credential (`sk-ant-…`, `ghp_…`, `github_pat_…`, a PEM private key, and the like), since nothing in it is secret (decision L18).
 
@@ -181,7 +185,7 @@ gcp_project: acme-fugaro
 
 That file is exactly the owner's "about two settings". Three cases need more:
 
-- `git.base_branch:` when the branch is not `main` (decision L12);
+- `git.base_branch:` when the branch is not the project's default (decision L12);
 - `profile: <name>` when the project has no `default_profile`, or the repository wants another profile;
 - `git.provider:` when the project layer does not set it.
 

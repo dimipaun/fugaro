@@ -29,8 +29,8 @@ import { REPO } from './html.mjs'
 /** The document that records D188, and that the set below is held equal to. */
 export const RECONCILIATION = 'docs/website/redesign/reconciliation.md'
 
-/** The pages D188 exempts: the three that render a document of this repository. */
-export const DOCUMENT_PAGES = new Set(['/docs/', '/security/', '/changelog/'])
+/** The pages D188 exempts: the ones that render a document of this repository. */
+export const DOCUMENT_PAGES = new Set(['/docs/', '/security/', '/changelog/', '/legal/subscription-terms/'])
 
 /** The ruling itself, as written. */
 export function readReconciliation() {
@@ -50,5 +50,5 @@ export function documentPagesNamedIn(ruling, decision = 'D188') {
       `${RECONCILIATION} carries no ${decision} row, and the pages the gates exempt are that ruling's own list (website/test/lib/exempt.mjs)`,
     )
   }
-  return [...new Set([...row.matchAll(/`(\/[a-z-]+\/)`/g)].map((match) => match[1]))]
+  return [...new Set([...row.matchAll(/`(\/[a-z-]+(?:\/[a-z-]+)*\/)`/g)].map((match) => match[1]))]
 }

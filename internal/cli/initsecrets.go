@@ -17,6 +17,7 @@ import (
 	"google.golang.org/api/googleapi"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/agentenv"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
@@ -129,20 +130,19 @@ func (e *initEngine) hold(value []byte) (release func(), err error) {
 // by the Claude Code IDE extension in the integrated terminals of VS Code and
 // JetBrains, so a person's own IDE terminal can be refused: only for that
 // marker the refusal tells the person (not the agent) what to do about it.
-var agentMarkers = []string{"CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT", "CLAUDE_CODE_REMOTE", "CURSOR_AGENT", "AI_AGENT"}
+//
+// The list lives in internal/agentenv because the owner-run live
+// credentials-rules check in internal/e2e refuses on it too
+// (credentials-service plan F33), and one list cannot drift from the other.
+var agentMarkers = agentenv.Markers
 
 // agentMarker is the first marker getenv shows set, or "" with none: a coding
 // agent's session.
-func agentMarker(getenv func(string) string) string {
-	for _, k := range agentMarkers {
-		if getenv(k) != "" {
-			return k
-		}
-	}
-	return ""
-}
+func agentMarker(getenv func(string) string) string { return agentenv.Marker(getenv) }
 
-// agentEnv reports whether getenv shows a coding agent's session.
+// agentEnv reports whether getenv shows a coding agent's session. It is
+// agentMarker, so that a caller that only wants the yes/no cannot drift from
+// the caller that names the variable to unset.
 func agentEnv(getenv func(string) string) bool { return agentMarker(getenv) != "" }
 
 // writerIsTerminal reports whether w is a terminal. Tests replace it.
@@ -617,7 +617,7 @@ func (s *secretsStage) apiErr(err error) error {
 
 func (s *secretsStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
 	s.resolve(ctx)
-	if err := s.e.adoptGuard(initflow.Secrets); err != nil {
+	if err := s.e.newMachineGuard(initflow.Secrets); err != nil {
 		return initflow.Outcome{}, err
 	}
 	f := s.terminal()

@@ -1,6 +1,7 @@
 package watch
 
 import (
+	"context"
 	"errors"
 	"net/url"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -491,33 +493,80 @@ func TestPRStateDisabled(t *testing.T) {
 	}
 }
 
-// Many rows resolve, never more than Concurrency gh processes run at once, and
-// two of them really do run at once.
+// The bound is *reached*: with more rows than slots, Concurrency lookups are
+// inside at once, and never more than that.
 //
-// The timeout is prStateTestTimeout: this test asserts an ANSWER (the peak), so
-// it must not also be a test of how fast a loaded machine can fork and exec a
-// shell. A gh killed at a short budget would answer nothing, and a killed gh
-// never runs its own decrement, which would leave the counter reading a peak
-// that is not there.
+// The lookup here is the test's own function, held open until the test lets it
+// go, so the answer is about the semaphore and nothing else: no process has to
+// start, and no clock decides it. Counting overlapping *processes* from
+// outside cannot answer this question — a machine under fork pressure can start
+// the second gh late, or fail to start it at all (a lookup that never ran fails
+// open, silently), and a gh the lookup timeout kills never runs its own
+// decrement — and the test that asked it that way read "peak concurrency = 1
+// after 20s" on CI. The timeout below is a dead man's switch: it is reached
+// only if lookups stop starting altogether.
 func TestPRStateBoundsConcurrency(t *testing.T) {
-	dir := t.TempDir()
-	live := filepath.Join(dir, "live")
-	peak := filepath.Join(dir, "peak")
-	// The script counts how many copies of itself are running at once, the
-	// only way to see the bound from outside. The counter is updated under a
-	// mkdir mutex: the reads and writes race otherwise, and a lost increment
-	// would look like a bound that is not there.
-	lock := filepath.Join(dir, "lock")
-	with := func(body string) string {
-		return "while ! mkdir " + lock + " 2>/dev/null; do sleep 0.01; done\n" + body + "\nrmdir " + lock + "\n"
+	var mu sync.Mutex
+	var live, peak int
+	var rows []ReadyRow
+	for i := 10; i < 18; i++ {
+		rows = append(rows, readyRow("https://github.com/acme/app/pull/"+strconv.Itoa(i), i))
 	}
-	calls := fakeGH(t,
-		with("n=$(cat "+live+" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "+live+"\n"+
-			"p=$(cat "+peak+" 2>/dev/null || echo 0); [ \"$n\" -gt \"$p\" ] && echo $n > "+peak)+
-			"sleep 0.2\n"+
-			with("n=$(cat "+live+" 2>/dev/null || echo 0); echo $((n-1)) > "+live)+
-			"echo OPEN\n")
+	// Room for one entry per row, so a lookup never blocks sending its own.
+	entered := make(chan struct{}, len(rows))
+	release := make(chan struct{})
+	p := NewPRState(PRStateOptions{Concurrency: 2, Timeout: prStateTestTimeout})
+	p.askFn = func(context.Context, prRef) (prStateKind, error) {
+		mu.Lock()
+		live++
+		peak = max(peak, live)
+		mu.Unlock()
+		entered <- struct{}{}
+		<-release // hold the slot until the test has read what it needs
+		mu.Lock()
+		live--
+		mu.Unlock()
+		return prOpen, nil
+	}
+	if got := p.Filter(rows); len(got) != len(rows) {
+		t.Fatalf("kept %d rows, want all of them listed while unknown", len(got))
+	}
+	// Two lookups must end up inside at once, and both stay there: the second
+	// one starting is the overlap the semaphore exists to allow.
+	for i := range 2 {
+		select {
+		case <-entered:
+		case <-time.After(prStateTestTimeout):
+			t.Fatalf("%d of 2 lookups entered in %s: Concurrency lookups must be inside at once", i, prStateTestTimeout)
+		}
+	}
+	// Both slots are the held lookups', so a third cannot be inside at all —
+	// which is the whole of what the bound says.
+	if free := cap(p.sem) - len(p.sem); free != 0 {
+		t.Fatalf("%d of %d slots free with 2 lookups inside", free, cap(p.sem))
+	}
+	close(release)
+	waitLookups(p)
+	mu.Lock()
+	got, in := peak, live
+	mu.Unlock()
+	if got != 2 {
+		t.Fatalf("peak lookups at once = %d, want exactly 2: the semaphore's bound, and the overlap it exists to allow", got)
+	}
+	if in != 0 {
+		t.Fatalf("%d lookups still inside after all of them finished", in)
+	}
+	if got := p.Filter(rows); len(got) != len(rows) {
+		t.Fatalf("kept %d rows, want every open one", len(got))
+	}
+}
 
+// Many rows against real gh processes: every row is asked exactly once, and
+// every open one stays on the list. The bound is not this test's claim (see
+// TestPRStateBoundsConcurrency); what it adds is that the lookups it counts are
+// the ones production runs, spawned and answered by a real gh.
+func TestPRStateAsksEveryRowWithRealGH(t *testing.T) {
+	calls := fakeGH(t, "echo OPEN\n")
 	p := NewPRState(PRStateOptions{Concurrency: 2, Timeout: prStateTestTimeout})
 	var rows []ReadyRow
 	for i := 10; i < 18; i++ {
@@ -531,24 +580,7 @@ func TestPRStateBoundsConcurrency(t *testing.T) {
 		t.Fatalf("kept %d rows, want every open one", len(got))
 	}
 	if n := len(ghCalls(t, calls)); n != len(rows) {
-		t.Fatalf("calls = %d, want %d", n, len(rows))
-	}
-	// The peak is read exactly. Two is the semaphore's bound, so a higher
-	// reading is a lookup that ran outside it; and the bound has to be
-	// *reached*: eight rows with a gh that holds its slot for 0.2s must put
-	// two lookups in flight at once, and a peak of one would mean this test no
-	// longer sees the overlap it exists for. A one-sided check would let that
-	// pass as a quiet machine.
-	b, err := os.ReadFile(peak)
-	if err != nil {
-		t.Fatal(err)
-	}
-	n, err := strconv.Atoi(strings.TrimSpace(string(b)))
-	if err != nil {
-		t.Fatalf("peak concurrency = %q, want a number", b)
-	}
-	if n != 2 {
-		t.Fatalf("peak concurrency = %d, want exactly 2: the semaphore's bound, and the overlap it exists to allow", n)
+		t.Fatalf("calls = %d, want %d: one per row, and no row asked twice", n, len(rows))
 	}
 }
 
@@ -571,11 +603,14 @@ func TestTUIPRStateDropsMergedReadyRow(t *testing.T) {
 	x := newTM(t)
 	x.m.o.PRState = NewPRState(PRStateOptions{Timeout: prStateTestTimeout})
 	x.m.o.Queued = func() ([]QueuedRun, []FinishedRun, string) {
+		// Inside the default window a finished run stays listed for, so the
+		// finished rows below are still rows of this screen (item 3): this test
+		// is about the ready list's PR states, not about the window.
 		return nil, []FinishedRun{
 			{Run: "r-merged", Slug: "acme/app", Title: "Already merged", Status: "succeeded",
-				Outcome: "ready", PRURL: "https://github.com/acme/app/pull/1", PRNumber: 1, FinishedAt: x.now.Add(-30 * time.Minute)},
+				Outcome: "ready", PRURL: "https://github.com/acme/app/pull/1", PRNumber: 1, FinishedAt: x.now.Add(-2 * time.Minute)},
 			{Run: "r-open", Slug: "acme/app", Title: "Still open", Status: "succeeded",
-				Outcome: "ready", PRURL: "https://github.com/acme/app/pull/2", PRNumber: 2, FinishedAt: x.now.Add(-20 * time.Minute)},
+				Outcome: "ready", PRURL: "https://github.com/acme/app/pull/2", PRNumber: 2, FinishedAt: x.now.Add(-time.Minute)},
 		}, ""
 	}
 	x.seed()
@@ -592,8 +627,10 @@ func TestTUIPRStateDropsMergedReadyRow(t *testing.T) {
 	if strings.Contains(section, "pull/1") || !strings.Contains(section, "pull/2") {
 		t.Fatalf("want only the open PR listed:\n%s", section)
 	}
-	// The row is gone from the ready list only: its finished row is untouched.
-	if !strings.Contains(s, "r-merged") {
+	// The row is gone from the ready list only: its finished row is untouched,
+	// and that row's RUN cell is the same short form as every table row's
+	// (shortRun; owner request 2026-10-24).
+	if !strings.Contains(s, shortRun("r-merged")+" Already merged") {
 		t.Fatalf("the finished row itself must stay:\n%s", s)
 	}
 }

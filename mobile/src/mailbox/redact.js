@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See mobile/LICENSE.md for the terms.
 // The redactor, wired for the wire (mobile plan, Task P3.6; decision D118).
 //
 // D118 requires that nothing leaves the app's mailbox unredacted, and P1.3 put

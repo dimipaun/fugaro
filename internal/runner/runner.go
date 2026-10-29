@@ -9,8 +9,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"maps"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -24,20 +26,27 @@ import (
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/backlog"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/followup"
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/gitprov/github"
+	"github.com/dimipaun/fugaro/internal/gitprov/providers"
+	"github.com/dimipaun/fugaro/internal/headroomproc"
 	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/logtail"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
@@ -128,6 +137,19 @@ type Deps struct {
 	// BackendErr is BackendFromEnv's error: bootstrap fails with it once the
 	// run's record is claimed.
 	BackendErr error
+	// CompressionForTest, for tests only, is the value a test's in-memory
+	// config gets for agent.compression. It is applied after the config is
+	// resolved and validated, so a test's fugaro.yaml never carries the key:
+	// config.Validate refuses it while it is reserved (the plan's P11), and
+	// what a test reaches through here is a run that is fully wired but
+	// could not be asked for from repository content.
+	CompressionForTest string
+	// StartHeadroom, for tests only, starts the compression sidecar in place
+	// of headroomproc.Start, so no test spawns a real process. Like every
+	// Deps field it is built by Fugaro's own bootstrap code (cmd/fugaro,
+	// internal/cli), never from repository content, so nothing on a run's
+	// branch can reach it.
+	StartHeadroom func(context.Context, headroomproc.Options) (SidecarProcess, error)
 }
 
 type run struct {
@@ -136,6 +158,12 @@ type run struct {
 	spec *task.Spec
 	cfg  *config.Config
 	wf   config.Workflow
+	// cfgRes is how cfg was resolved: the layer each key cfg carries came
+	// from (resolveConfig, set beside cfg). It is read to name the layer the
+	// run's own timeouts.stage came from, which is the source of the bound a
+	// dropped governance.stage_timeout is recorded against (T7.6); nothing
+	// else reads it, and it is nil only for a run that resolved no config.
+	cfgRes *config.Resolution
 	// providers are r.d.Providers with the project layer's claude_models
 	// merged in (config.ApplyClaudeClaims), set once in resolveConfig --
 	// the one place both entry points (bootstrap and readBaseConfig)
@@ -152,6 +180,12 @@ type run struct {
 	// gateSteps are the recipe's leading check steps (gate.go), run before
 	// implement; nil for a recipe with none.
 	gateSteps []recipe.Step
+	// digest is whether the resolved recipe's first step is the digest step
+	// (recipe.UsesDigest, T3.1): a report run, whose first step the runner
+	// executes itself -- the reports it writes are its own work, with no
+	// model call and no implement stage (digest.go, T3.2). Set once at
+	// bootstrap, from the recipe the run resolved.
+	digest bool
 	// review is whether this run is mode: review (reviewmode.go, Task 12
 	// of the generic-tool plan): set from spec.ReviewPRs at bootstrap,
 	// before the recipe is resolved, the same way follow is set from
@@ -184,6 +218,12 @@ type run struct {
 	// fugaro.yaml during the run changes neither.
 	spend  Spend
 	policy policy.Effective
+	// govLayers are the three layers the policy merge consumed, kept as they
+	// were handed to it: the effective policy cannot say which of them asked
+	// for a governance key, and a build whose hook ignores governance resolves
+	// none of them, so the layers themselves are what "somebody wrote this"
+	// has to be read from (governance_hook.go, noteIgnoredStageBound).
+	govLayers []policy.Layer
 	// ceiling is the layer the merge started from: the job environment's
 	// budget, or — when the project has published a policy — the policy node
 	// (resolvePolicy). Error messages name the right one.
@@ -210,10 +250,17 @@ type run struct {
 	// haltStage: the cancel watcher and, with the gateway, its halt
 	// callback record into them from other goroutines. Whichever of a halt
 	// and a cancel is recorded first wins (see haltNow and markCancelled).
-	mu            sync.Mutex
-	failReason    string
-	cancelled     bool
-	halt          *runstore.Halt
+	mu         sync.Mutex
+	failReason string
+	cancelled  bool
+	halt       *runstore.Halt
+	// haltDone is closed by the first halt recorded (recordHaltLocked), so a
+	// caller waiting outside a stage stops at once: the credential wait
+	// (C1.17) sleeps for a reset that may be hours away, and nothing else
+	// would end it. It is never closed twice and never nil'd after Run
+	// creates it, so it is either open (no halt) or closed (halted).
+	// Guarded by mu; created by Run.
+	haltDone      chan struct{}
 	tokens        int64                   // the stages' tokens so far, for the token cap
 	gatewayTokens int64                   // the last stage's tokens as the gateway counted them
 	haltStage     context.CancelCauseFunc // the running stage's cancel; nil between stages
@@ -222,18 +269,46 @@ type run struct {
 	// rules (the first fails the stage) and its token count.
 	wroteManaged bool // this run wrote the managed settings file (guarded by mu)
 	warnedKnob   bool // the routing-settings knob's Cloud Run warning was logged
-	stageExtra   func(stage string) (violations []string, tokens int64)
+	// ignoredGovernanceSaid is whether the untagged build's one line about the
+	// governance block it ignores has been written: the line is about the
+	// build, so a run says it once however many stages it has (guarded by mu).
+	ignoredGovernanceSaid bool
+	stageExtra            func(stage string) (violations []string, tokens int64)
 	// sess is the run's session with the budget backend; nil when the run
 	// has none. frozen is set when the agent loop is over, after which a
 	// halt from the backend changes nothing. Both guarded by mu.
 	sess   *budget.Session
 	frozen bool
 	// The gateway, when the budget is on for an api-key or vertex run, and
-	// what its stages cost; all guarded by mu.
-	gw           *gateway.Server
-	gwAgent      *agent.Gateway
-	gwClosed     bool
-	gwUsed       pricing.Micros
+	// what its stages cost; all guarded by mu. gwUsed is the money its calls
+	// settled -- the run's billed model spend -- and gwNotional is the tier-A
+	// part of them, which is the subscription's and never the run's (C1.16,
+	// D140): the two are disjoint, and their sum is the run's whole model
+	// figure (record.CostUSD, cost.model_usd). Only a cascade run's calls
+	// carry a tier, so gwNotional is 0 for every other run.
+	gw *gateway.Server
+	// compression is the context-compression sidecar Claude Code's calls go
+	// through first, or nil when the run has none: startCompression sets it
+	// from the sidecar it started, and it is what agent.BuildEnv and
+	// writeManagedSettings point Claude Code at. No real run can have one
+	// yet -- agent.compression is still refused by config.Validate (the
+	// plan's P11) -- so Deps.CompressionForTest is the only way in.
+	compression *agent.CompressionProxy
+	// sidecar is the process behind compression, nil when there is none; it
+	// is what fails a stage the sidecar dies under (watchSidecar) and what
+	// stopCompression ends at run end.
+	sidecar        SidecarProcess
+	sidecarStopped bool
+	gwAgent        *agent.Gateway
+	gwClosed       bool
+	gwUsed         pricing.Micros
+	gwNotional     pricing.Micros
+	// gwCacheRead and gwCacheWrite are the run's prompt-cache read and write
+	// token totals, taken from the gateway's ledger when it closes: what the
+	// run's record carries so a reader can see whether the cache behaved as
+	// the design's compression risk (§3) says it should (P12).
+	gwCacheRead  int64
+	gwCacheWrite int64
 	lastStage    *gateway.StageReport
 	modelBy      map[string]pricing.Micros
 	routeBy      map[string]pricing.Micros
@@ -241,14 +316,26 @@ type run struct {
 	reported     pricing.Micros
 	unreconciled pricing.Micros
 	unparsed     int
+	// serviceTiers are the service tiers the run's calls came back at that
+	// the price table has no multiplier for, from every stage's report:
+	// those calls were charged conservatively rather than failing the
+	// stage, and the record carries the names so the figure they are in
+	// explains itself (gateway.StageReport's ServiceTiers, design §6.1).
+	// The set is bounded when the record is written, not while the run goes
+	// on (gateway.ServiceTierSet.List).
+	serviceTiers gateway.ServiceTierSet
 	provider     gitprov.Provider
 	providerKind string
-	providerFrom string          // where providerKind came from, for mismatch errors
-	credURL      string          // scheme://host of an HTTPS origin; "" when git needs no token
-	auth         gitprov.GitAuth // current git credentials
-	authWarned   bool            // whether a mid-run refresh failure has already been logged
-	tail         *LogTail        // output of the first failed stage, for the draft PR
-	lock         *lock.Lock      // the branch lock, while held
+	providerFrom string // where providerKind came from, for mismatch errors
+	// identity is the author and committer this run's commits carry: nil
+	// until resolveCommitIdentity reads one from the provider (a GitHub
+	// App's bot account), and gitops.Identity for every run without one.
+	identity   map[string]string
+	credURL    string          // scheme://host of an HTTPS origin; "" when git needs no token
+	auth       gitprov.GitAuth // current git credentials
+	authWarned bool            // whether a mid-run refresh failure has already been logged
+	tail       *LogTail        // output of the first failed stage, for the draft PR
+	lock       *lock.Lock      // the branch lock, while held
 	// owned is whether this execution owns result.json: it created the
 	// first record, or found one naming itself. Until then the record is
 	// only ever created if absent, never overwritten (design §4.7).
@@ -257,8 +344,14 @@ type run struct {
 	cacheBase string      // the base-image part of every cache key
 	toolchain string      // the toolchain part of every cache key (toolchainHash)
 	// sessionID is the session the latest implement or fix stage's result
-	// reported: the one the next fix resumes and writeback saves.
+	// reported: the one the next fix resumes, and the one saveSession
+	// uploads as the run's session.
 	sessionID string
+	// reviewSession is the session the latest review stage ran in (C1.17,
+	// D138). It is saved too, under its own objects, and never becomes the
+	// run's session: a review runs in a session of its own, and a follow-up
+	// resumes the work, not the review of it.
+	reviewSession string
 	// follow is a follow-up's state; nil for a first run.
 	follow *followState
 	// pr is the early draft pull request's state (prflow.go).
@@ -273,8 +366,47 @@ type run struct {
 	// values (checkpoint.go). They differ when the run starts from another
 	// ref than its base branch (--ref develop with base_branch main).
 	baseSHA, startSHA string
+	// narrowBase is the commit a first run's review range starts from when
+	// it was narrowed to the run's own commits (diffbase.go,
+	// narrowReviewRange), "" when the range is origin/<diffBase>. It is set
+	// once, between stages, so no checkpoint goroutine reads it mid-write.
+	narrowBase string
+	// narrowText is narrowSummary's line, read once at finalize for both the
+	// status section and the report.
+	narrowText string
+	// rigorCfg is the run's rigor configuration *as the base branch has it*
+	// (docs/rigor-modes D25), read once at bootstrap and reused at every
+	// later moment (rigor.go); rigorRev is the revision it was read from, ""
+	// when the read could not be made, which the record leaves `revision`
+	// absent for. It is deliberately not r.cfg's own rigor: for a first run
+	// r.cfg comes from the checked-out ref, which is the artifact under
+	// review, and the mode must not come from there.
+	rigorCfg rigor.Config
+	rigorRev string
+	// rigorRaise is the last raise the run's mode took during the run, set by
+	// the moment that took it (noteRigorRaise, rigor.go) and nil while the mode
+	// has never risen above the one bootstrap resolved. It is kept here because
+	// the record's block carries no per-moment history: which moment raised the
+	// mode is what readiness reads (T3.5, outcome.go).
+	rigorRaise *RigorRaise
+	// lastSenior is the last senior review round as the loop read it: the
+	// findings the record's summary only counts, kept because the mode's
+	// threshold table reads their scores (outcome.go, T3.1). It is the round
+	// seniorReview(r.rec.Reviews) returns, which is the only one readiness
+	// reads.
+	lastSenior seniorRound
+	// filedFrom is the commit finalize's backlog filing was committed on
+	// top of, "" when the run wrote no item at all: the report names it as
+	// the commit the suite ran on (report.go's testsLine).
+	filedFrom string
 	// ckpt is the checkpoint pushes' state (checkpoint.go).
 	ckpt checkpointState
+	// stageCkptStop is the running stage's checkpointer stop — startCheckpoints'
+	// return — and nil between stages; guarded by mu. It is what lets a
+	// mid-stage governance halt stop that goroutine and wait for it before it
+	// writes any pull-request state of its own (governanceHalt, halt.go;
+	// stopStageCheckpointer, checkpoint.go), so exactly one writer is left.
+	stageCkptStop func()
 	// skipPR is set when the check gate already ended the run (clean, or an
 	// infra error of its own, gate.go): finalize, which still runs after,
 	// does nothing more. A review run and an artifact run set it for their
@@ -350,8 +482,9 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 		d.Log = slog.New(slog.DiscardHandler)
 	}
 	r := &run{
-		d:      d,
-		stageN: map[string]int{},
+		d:        d,
+		stageN:   map[string]int{},
+		haltDone: make(chan struct{}),
 		rec: &runstore.Record{Version: 1, RunID: d.Store.RunID(), Execution: d.Execution, Status: runstore.StatusRunning,
 			Stage: "bootstrap", Outcome: runstore.OutcomeNone, StartedAt: d.Now().UTC()},
 		// A local run has no duplicate to tell apart: its record is its own.
@@ -369,6 +502,7 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 			err = r.redactErr(err)
 			return
 		}
+		r.stopCompression()
 		r.closeGateway()
 		rctx, cancelRelease := context.WithTimeout(context.WithoutCancel(ctx), releaseDeferredTimeout)
 		r.releaseLock(rctx)
@@ -424,7 +558,7 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 		}
 		wctx, cancelWrite := context.WithTimeout(context.WithoutCancel(ctx), recordWriteTimeout)
 		defer cancelWrite()
-		if werr := writeRecord(d.Store, wctx, r.rec); werr != nil && err == nil {
+		if werr := writeRecord(d.Store, wctx, r.recordSnapshot()); werr != nil && err == nil {
 			err = fmt.Errorf("writing run record: %w", werr)
 		}
 		rec = r.rec
@@ -466,7 +600,9 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 	// From here nothing the backend says can stop a stage.
 	r.freezeHalts()
 	// Finalize makes no model calls: the gateway is closed first, and the
-	// run's model cost is its ledger's.
+	// run's model cost is its ledger's. The sidecar in front of it goes with
+	// it, for the same reason.
+	r.stopCompression()
 	r.closeGateway()
 	if errors.Is(context.Cause(runCtx), ErrCancelled) {
 		// The cancel may have landed after the last stage already returned
@@ -523,9 +659,52 @@ func (r *run) save(ctx context.Context) {
 	}
 	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), recordWriteTimeout)
 	defer cancel()
-	if err := writeRecord(r.d.Store, wctx, r.rec); err != nil {
+	if err := writeRecord(r.d.Store, wctx, r.recordSnapshot()); err != nil {
 		r.d.Log.Warn("writing run record failed", "err", err)
 	}
+}
+
+// recordSnapshot is the record as a write encodes it: a copy taken under the
+// run's lock, so the encode -- which reads every field of the record -- cannot
+// read a field another goroutine is writing.
+//
+// The record has two writers that are not the goroutine a save runs on: the
+// credentials service's per-call answer, which names the credential the call
+// was served with (recordCredential, C1.19) and logs the switch it made
+// (recordSwitch, C1.16), and nothing else. Both hold r.mu, so a copy taken
+// under it is consistent with them; every other field is written by the run's
+// own goroutine, which is the one that saves, and by the checkpoint poll,
+// which is a goroutine of its own and writes the run branch's tip (C1.10's
+// poll) — the poll's own writes are ordered with its own save, and a save the
+// governance halt makes while a poll is alive is ordered after that poll as
+// well, because the halt stops it and waits for it first (governanceHalt,
+// stopStageCheckpointer, checkpoint.go). Mid-stage that save is not the run
+// goroutine's: a tripwire fires the halt on a goroutine of its own, which the
+// run goroutine joins before its own unlocked writes (the paragraph below).
+//
+// What the copy does not cover is a writer that holds neither r.mu nor that
+// ordering: the run goroutine's own unlocked writes between stages (the
+// stage's cost and spend, afterStage's branch tip). No lock is held around
+// them, so a save made from a goroutine they are not ordered with would encode
+// a record they are still writing — which is why a governance halt must be
+// called by the run goroutine or by one it joins before those writes
+// (governanceHalt, halt.go). That is what makes the copy enough here rather
+// than a lock held around the write.
+//
+// The copy is shallow, and that is deliberate: the callback goroutines only
+// ever append to the record's slices and set scalars, both under the lock, so
+// what a snapshot's slice header covers cannot be rewritten after it — an
+// append writes past the length the header was copied with. A field a
+// callback goroutine ever comes to mutate in place (a map entry, say) would
+// have to be deep-copied here, and this is the comment that says so.
+func (r *run) recordSnapshot() *runstore.Record {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.rec == nil {
+		return nil
+	}
+	cp := *r.rec
+	return &cp
 }
 
 // createRecord creates result.json if absent, within recordWriteTimeout.
@@ -533,6 +712,81 @@ func (r *run) createRecord(ctx context.Context) error {
 	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), recordWriteTimeout)
 	defer cancel()
 	return createRecord(r.d.Store, wctx, r.rec)
+}
+
+// recordCredential is the cascade's own record (C1.19, D140): the name -- never
+// the value, which never leaves the service -- of the credential the run's
+// cascade answered a call with. It is written in two places, each the one its
+// reader has: the record the run ends with (runstore.Record.OAuthAccount,
+// which `fugaro runs` reads when a record exists) and the registry entry the
+// dashboard reads while the run is running (budget.AgentEntry.Credential).
+//
+// The name is whatever the service answered, so it is written as one word: a
+// name carrying a control or bidi character would have the whole PATCH denied
+// and freeze the run's registry, which clipEntry's clipString already strips
+// (internal/budget) -- this is the second bound, for the record, which no
+// clipEntry sees.
+//
+// A cascade run is the only run whose agent.auth makes a credential that is not
+// its own visible to it, and the gateway only ever forwards to the credentials
+// service for one, so no test of agent.auth is needed here to keep another
+// run's record untouched: a non-cascade run's answers carry no credential, the
+// gateway having answered them itself with its own route's key.
+//
+// Its one caller is serviceAnswer (internal/runner/gateway.go), the callback
+// startGateway hands the gateway: the write is here, with the run's other
+// record writers, and the answer that decides it arrives there.
+func (r *run) recordCredential(name string) {
+	name = safetext.Field(name)
+	if name == "" {
+		return
+	}
+	r.mu.Lock()
+	if r.rec != nil && r.rec.OAuthAccount != name {
+		r.rec.OAuthAccount = name
+	}
+	r.mu.Unlock()
+	r.noteRegistry(func(e *budget.AgentEntry) { e.Credential = name })
+}
+
+// recordSwitch writes the run's switch log (C1.16, D140): the call that just
+// was answered moved from one credential to another, and what the service said
+// about it -- from, to and the reason word -- joins the record beside the
+// cache-miss estimate only the gateway can make (F24, gateway.SwitchCost).
+//
+// raw is the contract's switch header exactly as it arrived (the gateway
+// validates nothing of its content: a switch is the run's record, not a ledger
+// input), so it is read back with the contract's own reader -- credsvc's, the
+// one the service writes it with -- rather than a second reading kept here. A
+// header that reader refuses is logged and dropped: the switch is a record of
+// what the run did and decides nothing, so a call whose switch this code cannot
+// read is still a call that was made, and nothing here echoes the value (it is
+// text from another process).
+//
+// Its caller is serviceAnswer (gateway.go), the same hand-off recordCredential
+// has, and for the same reason: the answer is the only place the switch exists,
+// and one writer of the record's switch log is what keeps its order the order
+// the gateway settled the calls in.
+func (r *run) recordSwitch(raw string, cost gateway.SwitchCost) {
+	if raw == "" {
+		return
+	}
+	h := http.Header{}
+	h.Set(credsvc.HeaderSwitch, raw)
+	sw, ok, err := credsvc.SwitchHeader(h)
+	if err != nil || !ok {
+		r.d.Log.Warn("the service's switch could not be read; the call is recorded without it")
+		return
+	}
+	e := runstore.Switch{
+		From: sw.From, To: sw.To, Reason: sw.Reason,
+		CacheMissUSD: cost.USD, CacheMissUnmeasured: cost.Unmeasured,
+	}
+	r.mu.Lock()
+	if r.rec != nil {
+		r.rec.Switches = append(r.rec.Switches, e)
+	}
+	r.mu.Unlock()
 }
 
 // errOwnerUnknown means the first record's create failed and nothing
@@ -706,11 +960,146 @@ func (r *run) openProvider(ctx context.Context, kind, from string) error {
 	if err != nil {
 		return fmt.Errorf("opening the %s provider: %w", kind, err)
 	}
+	// With the installation's credentials service on, the App's key is the
+	// service's and the provider was opened without one
+	// (providers.FromEnv): this is where the run hands it the service the
+	// installation opted into, so its installation tokens are minted there
+	// and nowhere else (C2.2, D145). The install must happen before the
+	// first GitAuth below, and it is not optional -- a provider that took
+	// ServiceHeldKey refuses every token until one is installed, so a run
+	// that skipped this would stop rather than mint in-job.
+	src, err := r.serviceTokens()
+	if err != nil {
+		return err
+	}
+	if src != nil {
+		if s, ok := p.(gitprov.ServiceTokenSetter); ok {
+			s.UseServiceTokens(src)
+		}
+	}
 	r.provider, r.providerKind, r.providerFrom = p, kind, from
 	if err := r.refreshGitAuth(ctx, bootstrapAuthMinValid); err != nil {
 		return fmt.Errorf("getting git credentials from the %s provider: %w", kind, err)
 	}
+	r.resolveCommitIdentity(ctx)
 	return nil
+}
+
+// resolveCommitIdentity sets the identity this run's commits carry, when the
+// provider names one. GitHub links a commit's author and committer to
+// accounts separately, by their own addresses, and a run sets both to that
+// account's own noreply identity (gitops.BotIdentity): without this every
+// run commit is authored by an address no account owns, so GitHub shows no
+// author for it and CLA Assistant cannot tell whose it is (docs/git-providers.md).
+//
+// A provider with no account of its own (Bitbucket's, and the file-backed
+// test provider) keeps gitops.Identity, and so does every failure here: the
+// read is one API call a run can live without, so it is logged once and the
+// run goes on rather than stopping over an identity.
+//
+// It runs in openProvider, which is called once per run and before the
+// checkout when the provider's kind is known from the flag or the origin URL
+// (bootstrap), and after it when fugaro.yaml names the provider. A checkout
+// already open gets the identity in its environment here, so both orders
+// commit as the same account.
+func (r *run) resolveCommitIdentity(ctx context.Context) {
+	reader, ok := r.provider.(gitprov.BotAccountReader)
+	if !ok {
+		return
+	}
+	account, err := reader.BotAccount(ctx)
+	identity := gitops.BotIdentity(account.ID, account.Login)
+	if err != nil || identity == nil {
+		reason := "the provider named no account"
+		if err != nil {
+			reason = r.redact(err.Error())
+		}
+		r.d.Log.Warn("this run's commits carry the default identity: the git provider's bot account could not be read",
+			"provider", r.providerKind, "reason", reason)
+		return
+	}
+	r.identity = identity
+	if r.repo != nil {
+		r.repo.Env = gitops.WithVars(r.repo.Env, identity)
+	}
+}
+
+// serviceTokens returns the installation's credentials service as the source
+// of this run's installation tokens, or nil when the installation has not
+// opted into one (providers.EnvCredentialsServiceURL unset): with the
+// service off the App's key is the job's own and its provider mints tokens
+// itself, as it always did.
+//
+// A LOCAL run whose environment names a service is refused rather than
+// served, in the words serviceUpstream refuses the same situation in (D149):
+// `fugaro exec` runs on the developer's own credentials and never through
+// the credentials service, and a local run has no run identity for a mint to
+// be verified by, so the only thing the service could do here is refuse the
+// run later, further from the reason.
+//
+// The two identities a mint is verified by are the run's own Firebase ID
+// token (runIDToken) and the job's Google ID token for the service's URL
+// (metadataIDToken), and the job name is what the run reports it is in. The
+// App's ID is the job's own environment value: a number, not a credential.
+//
+// It is built per provider, so each provider has the cache ServiceTokens
+// documents -- one mint per hour per provider, not one per API call.
+func (r *run) serviceTokens() (*github.ServiceTokens, error) {
+	url := envLookup(r.d.Env, providers.EnvCredentialsServiceURL)
+	if url == "" {
+		return nil, nil
+	}
+	if r.d.Local {
+		return nil, fmt.Errorf("this is a local run (%s) and its environment names a credentials service in %s: %s runs on the developer's own credentials and never through the credentials service (D149), and a local run has no run identity for a mint to be verified by. Unset %s to use the credentials this environment holds, or run this as a job", execName, providers.EnvCredentialsServiceURL, execName, providers.EnvCredentialsServiceURL)
+	}
+	// The job name is a claim the service holds to its own rule and decides
+	// nothing from (C1.10), and a run that cannot name its job is a refusal
+	// there rather than a call that named something else: a jobName failure
+	// is reported as no job at all, which the service refuses.
+	job, err := r.jobName()
+	if err != nil {
+		job = ""
+	}
+	return &github.ServiceTokens{
+		URL:   url,
+		AppID: envLookup(r.d.Env, providers.EnvGitHubAppID),
+		IDToken: func(ctx context.Context) (string, error) {
+			return metadataIDToken(ctx, r.d.Env, url)
+		},
+		RunIDToken: r.runIDToken,
+		Job:        job,
+		Now:        r.d.Now,
+	}, nil
+}
+
+// runIDToken is the run's own Firebase ID token: the identity the budget
+// backend admitted the run by, which is what the credentials service
+// verifies a mint with (C1.10). It is the session's token as the run has it
+// now, and never a copy taken once -- the session refreshes it under the run.
+//
+// The session that admitted the run is the budget session (r.sess), and it
+// does not exist yet when the run's first git credential is fetched: the
+// clone comes before the budget opens, and the policy read is what exchanges
+// the launcher's custom token first (exchangeIdentity), so that read's
+// session is the run's identity until the budget session takes over. Both
+// are the same identity -- the claim check of the second exchange is the
+// first's own -- so which one answers is a question of what exists, not of
+// which the service trusts.
+//
+// An empty answer is not a fallback: a run with neither session cannot be
+// verified by the service, and ServiceTokens refuses rather than calling
+// under the job's identity alone.
+func (r *run) runIDToken() string {
+	r.mu.Lock()
+	sess, tok := r.sess, r.ident.tok
+	r.mu.Unlock()
+	if sess != nil {
+		return sess.IDToken()()
+	}
+	if tok != nil {
+		return tok.Token()
+	}
+	return ""
 }
 
 // refreshGitAuth gets git credentials valid for at least minValid and puts
@@ -906,7 +1295,7 @@ const bashTimeoutSlack = 2 * time.Minute
 // and never r.d.Remote read again here: the two must be the same string the
 // admission check and the credential URL were built from.
 func (r *run) openCheckout(ctx context.Context, remote string, cloneVars map[string]string) (*gitops.Repo, error) {
-	env := gitops.WithVars(gitops.IdentityEnv(), cloneVars)
+	env := gitops.WithVars(gitops.IdentityEnvFor(r.identity), cloneVars)
 	// A checkout already here (baked into the image, or left by an earlier
 	// run on the same container), or a baked job with none to open, is
 	// OpenOrClone's case: there is no clone to choose the shape of.
@@ -1126,6 +1515,29 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// The digest step is the runner's own work (T3.2): it writes the run
+	// reports the repository is missing and commits them, with no model call,
+	// and planOf has no arm for it (it must be the first step of a mode:
+	// implement recipe, recipe.order). Marked here, right after the recipe is
+	// resolved and before any stage, and dispatched in agentLoop in place of
+	// implement: a run that reached implement instead would spend a full
+	// stage on the recipe's prompt and open an ordinary pull request in its
+	// name — the opposite of what run-digest asks for. The launcher's image
+	// gate refuses a digest launch against a release image that predates the
+	// step (digestSince, internal/cli/recipes_skew.go).
+	r.digest = recipe.UsesDigest(rcp)
+	// A follow-up cannot run one whatever this image executes: a report run
+	// is launched on its own, because it lists the records it may read and
+	// refuses while another report run of the repository is going
+	// (digestManifest, internal/cli/run_digest_manifest.go), and a follow-up
+	// carries no manifest at all — the launcher writes one for a fresh
+	// report launch only. Refused here, keyed on the RESOLVED recipe, which
+	// is the arm the launcher's own report refusals cannot be: a repository
+	// recipe by name is read here, at this run's base, and not there
+	// (refuseFollowUpReportMode, internal/cli/recipes_resolve.go).
+	if r.follow != nil && recipe.UsesDigest(rcp) {
+		return fmt.Errorf("recipe %s holds the digest step, which writes this repository's run reports; this task continues pull request #%d, and a report run is launched on its own — it lists the records it may read and refuses while another report run of the repository is going — so it cannot continue one", rrec.Name, spec.PR)
+	}
 	switch {
 	case r.review && rcp.Mode != recipe.ModeReview:
 		return fmt.Errorf("recipe %s is not mode: review, but the task names pull requests to review", rrec.Name)
@@ -1238,12 +1650,25 @@ func (r *run) bootstrap(ctx context.Context) error {
 			}
 		}
 	}
+	// The mode this run resolved, read from the base branch and recorded at
+	// D22's first moment (rigor.go). Here, and not earlier: a first run has
+	// just fetched its base above, and a follow-up's or a review run's
+	// configuration already *is* the base's. A first run's own read asks
+	// origin for the default branch, which is the file the project check and
+	// the policy are read from — the checkout cannot choose it. It never
+	// fails the run — the mode acts on nothing yet.
+	r.bootstrapRigor(ctx)
 	if err := r.checkProject(ctx, cfg); err != nil {
 		return err
 	}
 	if err := r.resolvePolicy(ctx, cfg); err != nil {
 		return err
 	}
+	// The tier the task carries and the expectation the policy just resolved
+	// for it (tier.go). Here, and not earlier: the expectation is the run's
+	// own governance's, which resolvePolicy settles, and the tier acts on
+	// nothing yet.
+	r.recordTier()
 	// The plan is derived here, *after* the policy: the routing switch is
 	// applied inside resolvePolicy and rewrites the pins the plan's
 	// first-line decision is read off — Agent.FirstLineOn asks whether the
@@ -1262,7 +1687,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 		// step, neither of which an artifact recipe's [plan], render shape
 		// has. Its own stage list is read directly (artifactHasPlan), and
 		// the render is the runner's (artifact.go).
-		plan := planOf(rcp, derived, cfg.Agent, r.modelProviders(), spec.Overrides.ReviewRounds)
+		plan := planOf(rcp, derived, cfg.Agent, r.modelProviders(), spec.Overrides.ReviewRounds, r.reachedRigor(), r.rigorCfg.Configured())
 		if err := checkPlan(plan); err != nil {
 			return fmt.Errorf("recipe %s: %w", rrec.Name, err)
 		}
@@ -1422,7 +1847,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 		// that does not exist is worse than no variable at all.
 		set["FUGARO_INPUTS_DIR"] = filepath.Join(r.d.WorkDir, inputsDir)
 	}
-	for k, v := range gitops.Identity {
+	for k, v := range gitops.IdentityFor(r.identity) {
 		set[k] = v
 	}
 	if r.follow == nil && !r.review && !r.artifact {
@@ -1448,8 +1873,14 @@ func (r *run) bootstrap(ctx context.Context) error {
 			return err
 		}
 	}
+	// After the gateway, whose loopback URL is what the sidecar forwards to,
+	// and before the agent's environment, which is pointed at the sidecar.
+	if err := r.startCompression(ctx); err != nil {
+		return err
+	}
 	env, secrets, err := agent.BuildEnv(r.d.Env, agent.EnvSpec{
-		Auth: cfg.Agent.Auth, Secrets: secretEnvs, Set: set, PathPrepend: r.d.PathPrepend, Gateway: r.gateway(),
+		Auth: cfg.Agent.Auth, Secrets: secretEnvs, Set: set, PathPrepend: r.d.PathPrepend,
+		Gateway: r.gateway(), Compression: r.compression,
 		// Docker stays false here, so the agent's environment has no
 		// DOCKER_HOST: nothing yet tells this runner that its workflow asked
 		// for `docker: true` (the workflow field and the runner's copy of it
@@ -1519,7 +1950,16 @@ type ConfigResolution struct {
 // TestEveryConsumerResolvesTheSameBytes) calls the runner's own
 // resolution, not a copy of its logic that could silently diverge from
 // it; every other caller stays (*run).resolveConfig.
-func ResolveConfig(data []byte, pl *task.ProjectLayer, project string) ConfigResolution {
+//
+// base is the task's base_branch, the project's default base branch a launch
+// resolved (internal/config's EffectiveBaseBranch): a file that writes no
+// git.base_branch of its own takes it, and the resolution says so
+// (Sources["git.base_branch"] = SourceProject, ConfigSHA256 recomputed over
+// the config that came out). A file that writes the key keeps it — the
+// repository's own reviewed text is the branch the run is cut from and the
+// one its pull request targets — and so does a task carrying none, which is
+// every task that resolved no such default.
+func ResolveConfig(data []byte, pl *task.ProjectLayer, project, base string) ConfigResolution {
 	var out ConfigResolution
 	var layer *config.ProjectLayer
 	if pl != nil {
@@ -1537,6 +1977,15 @@ func ResolveConfig(data []byte, pl *task.ProjectLayer, project string) ConfigRes
 		}
 	}
 	out.Cfg, out.Res, out.Problems = config.Resolve(data, layer)
+	if base != "" && out.Cfg != nil && out.Res.SourceOf("git.base_branch") != config.SourceRepo {
+		// The file's own value is asked for by its source, never by comparing
+		// with the default: Resolve fills main in, so a file that writes
+		// nothing and one that chose main resolve alike, and the layers below
+		// must not be lost to the second.
+		out.Cfg.Git.BaseBranch = base
+		out.Res.Sources["git.base_branch"] = config.SourceProject
+		out.Res.ConfigSHA256 = out.Cfg.SHA256()
+	}
 	return out
 }
 
@@ -1549,7 +1998,7 @@ func ResolveConfig(data []byte, pl *task.ProjectLayer, project string) ConfigRes
 // fugaro.yaml does.
 func (r *run) resolveConfig(data []byte) (*config.Config, error) {
 	pl := r.spec.ProjectLayer
-	out := ResolveConfig(data, pl, r.d.Project)
+	out := ResolveConfig(data, pl, r.d.Project, r.spec.BaseBranch)
 	if pl != nil {
 		if out.LayerErr != nil {
 			// Recorded before returning: an invalid layer still names the
@@ -1594,7 +2043,29 @@ func (r *run) resolveConfig(data []byte) (*config.Config, error) {
 		}
 		r.providers = merged
 	}
+	r.cfgRes = out.Res
 	r.rec.ConfigSHA256 = out.Res.ConfigSHA256
+	if r.d.CompressionForTest != "" {
+		// The one way a test reaches a run with compression on. It is
+		// applied here, on the resolved config and after Validate has
+		// accepted the file the test committed, so that file never has to
+		// carry the key config.Validate refuses while it is reserved (P11).
+		// Every entry point that resolves a config -- bootstrap's own read,
+		// readBaseConfig's for a follow-up or a review run -- comes through
+		// here, so no path can miss it and none can set it from repository
+		// content.
+		out.Cfg.Agent.Compression = r.d.CompressionForTest
+	}
+	if r.spec.CompressionOff {
+		// The run's own --no-compression, applied last so it wins over every
+		// other input: the configuration it overrides, and (for a test)
+		// Deps.CompressionForTest above. It is the one direction the
+		// override goes -- nothing here can turn compression on for a
+		// configuration that does not ask for it -- and it is applied on the
+		// resolved config for the same reason CompressionForTest is: every
+		// entry point that resolves one comes through here.
+		out.Cfg.Agent.Compression = ""
+	}
 	return out.Cfg, nil
 }
 
@@ -1705,7 +2176,7 @@ func (r *run) agentLoop(ctx context.Context) {
 			// usual, on top of whatever the gate found (nothing, here).
 		case g.Fixed:
 			r.rec.Gate = "fixed"
-			r.verifyOnce(ctx, verify.KindTest)
+			r.verifyOnce(ctx, verify.KindTest, "the check gate's autofix commit")
 			// A follow-up still runs implement with its own instructions,
 			// on top of the autofix commit the gate already made; only a
 			// first run (nothing else asked of it) skips straight to review.
@@ -1715,6 +2186,39 @@ func (r *run) agentLoop(ctx context.Context) {
 		default:
 			req.Prompt = GatePrompt(req.Prompt, g)
 		}
+	}
+	// The digest step takes implement's place (digest.go, T3.2): a report run's
+	// work is the runner's own, so it starts no implement stage and no model
+	// call before its review. Like the gate, it either ends the run (nothing is
+	// due: no pull request to open) or hands what it committed to the review
+	// loop below, which is the recipe's one senior round.
+	if r.digest {
+		if err := r.digestStep(ctx); err != nil {
+			// A halt recorded while the step read or committed outranks the
+			// error, exactly as it does around the check gate.
+			if h := r.haltValue(); h != nil {
+				r.endHalted(ctx, h)
+				return
+			}
+			if errors.Is(context.Cause(ctx), ErrCancelled) && r.markCancelled() {
+				r.endCancelled(ctx, "cancelled during the digest step")
+			} else {
+				r.failInfra(ctx, err)
+			}
+			return
+		}
+		if r.skipPR {
+			// The step read and committed outside r.stage(), the way the
+			// gate's own commands do, so nothing re-checked a halt (a budget
+			// cap, a kill switch, the token cap) recorded while it ran: no
+			// review round follows this path to check it (g.Clean's own
+			// haltValue check is the same guard on the same race).
+			if h := r.haltValue(); h != nil {
+				r.endHalted(ctx, h)
+			}
+			return // nothing was due: the step ended the run with no pull request
+		}
+		skipImplement = true
 	}
 	// "" until implement actually runs and starts one: a Fixed gate skips
 	// implement, so there is no session yet for fix (below) to resume.
@@ -1747,8 +2251,11 @@ func (r *run) agentLoop(ctx context.Context) {
 	// The base is the run's own base of work, not the branch its
 	// configuration came from (diffbase.go, diffBase): a run started from
 	// another ref must review its own change, not the whole of that ref's
-	// divergence from the default branch.
-	reviewPrompt := ReviewPrompt(r.cfg.Agent.Review, r.reviewFile, r.reviewPromptBase(), r.reviewDiffSize(ctx), r.baseUnreadable())
+	// divergence from the default branch — and a first run whose work was
+	// cut from another branch than its ref is narrowed to its own commits
+	// here, once, before the prompt and every round's input read the range.
+	r.narrowReviewRange(ctx)
+	reviewPrompt := ReviewPrompt(r.cfg.Agent.Review, r.reviewFile, r.reviewRev(ctx), r.reviewDiffSize(ctx), r.baseUnreadable())
 	if f := r.follow; f != nil {
 		if add := followup.ReviewAddendum(f.sel, f.nonce); add != "" {
 			reviewPrompt += "\n\n" + add
@@ -1771,7 +2278,7 @@ func (r *run) agentLoop(ctx context.Context) {
 	}
 }
 
-// seniorLoop is a review step: up to st.Rounds senior reviews on the
+// seniorLoop is a review step: up to (*run).reviewRounds senior reviews on the
 // reviewer's model, each followed by a fix while it asks for changes. Its
 // verdict alone decides readiness (seniorReview). tier is "senior" when a
 // first line came before it, "" otherwise, as runs without a first line
@@ -1781,16 +2288,24 @@ func (r *run) agentLoop(ctx context.Context) {
 // the next senior round; a bounce with FirstRounds == 0 behaves like a plain
 // review step, since there is no cheap loop to bounce back to.
 func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, sys, sessionID string) {
-	for round := 1; round <= st.Rounds; round++ {
-		res, ok, _ := r.stage(ctx, "review", agent.Request{Prompt: r.reviewPromptWithInput(ctx, reviewPrompt), SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}, stageOpts{})
+	for round := 1; ; round++ {
+		req := agent.Request{Prompt: r.reviewPromptWithInput(ctx, reviewPrompt), SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}
+		res, ok, _ := r.stage(ctx, "review", req, stageOpts{})
+		// The review's own session is saved like a work stage's (C1.17,
+		// D138), and not made the one a fix resumes: see noteReviewSession.
+		r.noteReviewSession(req, res)
 		r.countTokens(res)
 		if !ok {
 			return
 		}
 		v := ParseVerdict(res)
+		// The round is kept whole as well as counted: the mode's threshold
+		// table reads the findings' scores, which the summary does not carry
+		// (outcome.go, T3.1).
+		r.lastSenior = seniorRound{Round: round, Findings: v.Findings}
 		r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: tier, Verdict: v.Verdict, Findings: len(v.Findings)})
 		r.save(ctx)
-		if r.capReached() || v.Verdict == "ship" || round == st.Rounds {
+		if r.capReached() || v.Verdict == "ship" || round >= r.reviewRounds(st) {
 			return
 		}
 		r.afterStage(ctx, "review")
@@ -1834,6 +2349,11 @@ func (r *run) fix(ctx context.Context, v Verdict, sys, sessionID string) (string
 		return req.SessionID, false
 	}
 	r.afterStage(ctx, "fix")
+	// D22's second moment: the fix just changed the tree, so the run resolves
+	// its mode again from the diff it now carries — before the next round is
+	// asked for, so a mode the run's own work reached is the one the rounds it
+	// has left are spent at (rigor.go).
+	r.roundRigor(ctx)
 	return req.SessionID, !r.pr.gone
 }
 
@@ -1847,7 +2367,9 @@ func (r *run) fix(ctx context.Context, v Verdict, sys, sessionID string) (string
 // go on to the senior review.
 func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sessionID string) (string, bool) {
 	for round := 1; round <= rounds; round++ {
-		res, ok, err := r.stage(ctx, "review_first", agent.Request{Prompt: r.reviewPromptWithInput(ctx, reviewPrompt), SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}, stageOpts{Skippable: true})
+		req := agent.Request{Prompt: r.reviewPromptWithInput(ctx, reviewPrompt), SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}
+		res, ok, err := r.stage(ctx, "review_first", req, stageOpts{Skippable: true})
+		r.noteReviewSession(req, res)
 		r.countTokens(res)
 		sum := runstore.ReviewSummary{Round: round, Tier: runstore.TierFirst, Verdict: "none", Bounce: r.bounce}
 		var v Verdict
@@ -1926,7 +2448,166 @@ type stageOpts struct {
 // stage runs one agent stage and reports whether the loop may continue,
 // with the agent's error. The error is only for the caller to inspect: a
 // failure is already recorded, unless it is a recoveredError.
+//
+// It is stageOnce in a loop, because of the credentials cascade (C1.17,
+// D138): when the service answers its typed `exhausted_until` while a stage
+// runs, that stage did not fail — the runner waits for the reset the answer
+// names, inside the job's own timeout, and runs the very same stage again on
+// the session it had started, with --resume. The stage's own session, not
+// the run's: a review runs in a session of its own, and a wait during one
+// resumes that one.
+//
+// The loop is bounded (maxCredentialResumes): each wait is bounded by
+// waitForCredential's own check against the job's remaining time, but a
+// reset that has already passed resumes the stage at once, and a service
+// that kept answering that way would run the stage again and again with no
+// wait between. The bound ends the run named (HaltNoCredential) instead.
 func (r *run) stage(ctx context.Context, name string, req agent.Request, opts stageOpts) (agent.Result, bool, error) {
+	// resumes is how many times this stage has already been resumed on an
+	// exhausted answer, this one included.
+	resumes := 0
+	for {
+		res, ok, err := r.stageOnce(ctx, name, req, opts)
+		var ex *exhaustedError
+		if !errors.As(err, &ex) {
+			return res, ok, err
+		}
+		// The attempt that the exhausted answer ended spent what it spent,
+		// and it is a whole agent process: its tokens go on the run's total
+		// here, before the wait, because the caller's own countTokens only
+		// ever sees the last attempt of this stage (countTokens, halt.go).
+		// Without this a run could spend maxCredentialResumes attempts a
+		// stage and have the ceiling count one.
+		r.countTokens(res)
+		if resumes++; resumes > maxCredentialResumes {
+			h := runstore.Halt{Reason: runstore.HaltNoCredential, Scope: "run", At: r.d.Now().UTC(),
+				Detail: fmt.Sprintf("the credential service answered that no credential was usable %d times while stage %s ran, the last until %s; the run stopped rather than resume the stage again (see 'fugaro accounts ls' for the accounts' states)",
+					resumes, name, ex.Until.UTC().Format(time.RFC3339))}
+			r.haltNow(h)
+			return res, false, &HaltError{h}
+		}
+		// The session the ended stage ran in: what its result reported (the
+		// result event's ID, else its init event's, so a stage killed before
+		// its result still names it), or the one it was asked for when it
+		// reported none — that one is the runner's own fresh ID, and its file
+		// exists from the moment the agent started.
+		session := res.SessionID
+		if !agent.ValidSessionID(session) {
+			session = req.SessionID
+		}
+		if werr := r.waitForCredential(ctx, name, ex.Until); werr != nil {
+			return res, false, werr
+		}
+		r.d.Log.Info("the credential wait is over; resuming the stage", "stage", name, "session", session, "resume", resumes)
+		// The resumed stage is the same stage, on the same session. A
+		// further exhausted answer during it waits again, within the same
+		// bound.
+		req.SessionID, req.Resume = session, true
+	}
+}
+
+// maxCredentialResumes bounds one stage's resume loop (C1.17). The reset an
+// exhausted answer names is normally in the future, and the wait for it is
+// the whole of the runner's reaction; but an answer naming an instant that
+// has already passed resumes the stage at once, so a service that kept
+// answering that way — a stale mark, a reset that keeps moving back — would
+// run the stage again and again with no wait between, each attempt a whole
+// agent process. Three is more than the cascade needs: the service's answer
+// is already the wait-or-switch decision, and one wait covers every account
+// that is exhausted at that instant. A fourth answer ends the run named.
+const maxCredentialResumes = 3
+
+// stageTimeout is a stage's own wall-clock ceiling (T7.6), asked of the stage
+// hook: the tripwires move to ee/governance with the block they read, and the
+// stage's own bound is the first of them (R2, §5.3). The core default, and
+// what the value means, is stageTimeoutOf in governance_hook.go.
+func (r *run) stageTimeout(stage string) time.Duration {
+	return stageHook().Timeout(r.stageView(stage))
+}
+
+// stageTimeoutKey is the policy key a stage's own governance.stage_timeout is
+// read and recorded under (policy.KeyStageTimeout*, the spelling the merge's
+// sources and a dropped value's key both use). It is the one stage-to-key
+// mapping stageTimeout and noteStageTimeoutClamped are read through, so the
+// bound a stage is given and the key its record names cannot disagree. A stage
+// governance bounds none of answers "" (T7.1: an artifact run's plan and
+// render steps).
+func stageTimeoutKey(stage string) string {
+	switch {
+	case stage == "implement":
+		return policy.KeyStageTimeoutImplement
+	case config.IsReviewStage(stage):
+		return policy.KeyStageTimeoutReview
+	case stage == "fix":
+		return policy.KeyStageTimeoutFix
+	}
+	return ""
+}
+
+// noteStageTimeoutClamped records and warns about a stage's own
+// governance.stage_timeout that the run does not apply: the run's own
+// timeouts.stage bounds the stage at least as tightly, so the stage's own
+// bound is dropped rather than given a deadline of its own (stageOnce makes
+// that comparison; this is only what the drop is recorded as).
+//
+// Dropping it in silence was the finding this answers. An operator who writes
+// stage_timeout: { implement: 1h } under a run whose timeouts.stage is 40m has
+// asked for a bound no run of that repository applies, and neither the log nor
+// result.json said so. The entry is one of policy.ignored, so the report's
+// policy line and the digest carry it the way they carry a value of
+// fugaro.yaml that a stricter layer dropped.
+//
+// Source is the layer the run's own timeouts.stage came from, which is the
+// bound actually in force: the project layer's governance (the ceiling) when
+// its profile set it, the branch when either file set it, and the branch as
+// well when neither did — workflows.*.timeouts.stage is InProfile | InRepo, so
+// the common case, Fugaro's own 40m default, has no layer that set it and is
+// recorded as the branch's, the layer the run's file would have said it in.
+// Value is the bound the layer in From asked for. From is the layer the
+// stage_timeout key itself came from,
+// which for a governance key is the project layer's ceiling or one of the two
+// files, so result.schema.json's `from` carries "ceiling" as well; the two are
+// different layers, and the warning spells them as recordPolicy does
+// ("from" the asking layer, "limit_from" the one that set what is in force).
+//
+// A stage whose bound is dropped more than once — review repeats, and a
+// resumed stage runs again — is recorded and warned about once: the entry is
+// keyed by the key and the value, which are the same every time.
+func (r *run) noteStageTimeoutClamped(stage string, own time.Duration) {
+	key := stageTimeoutKey(stage)
+	if key == "" {
+		return
+	}
+	from := r.policy.Sources[key]
+	if from == "" {
+		from = policy.SourceBranch
+	}
+	source := policy.SourceBranch
+	if r.cfgRes != nil && config.IsLayerSource(r.cfgRes.SourceOf("workflows."+r.rec.Workflow+".timeouts.stage")) {
+		source = policy.SourceCeiling
+	}
+	ig := runstore.PolicyIgnored{Key: key, Value: own.String(), Effective: r.budget.Stage.String(),
+		Source: source, From: from, Clamped: true}
+	r.mu.Lock()
+	if r.rec.Policy == nil {
+		r.rec.Policy = &runstore.PolicyRecord{}
+	}
+	for _, e := range r.rec.Policy.Ignored {
+		if e.Key == ig.Key && e.Value == ig.Value {
+			r.mu.Unlock()
+			return
+		}
+	}
+	r.rec.Policy.Ignored = append(r.rec.Policy.Ignored, ig)
+	r.mu.Unlock()
+	r.d.Log.Warn("policy: a stage timeout at or above the run's timeouts.stage was ignored",
+		"key", PolicyKeyPath(key), "value", ig.Value, "effective", ig.Effective,
+		"from", ig.From, "limit_from", ig.Source)
+}
+
+// stageOnce is one attempt at a stage: the whole of what stage did before
+// C1.17, including its own failure handling.
+func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opts stageOpts) (agent.Result, bool, error) {
 	if ctx.Err() != nil {
 		r.fail(r.stageReason(ctx, name, StageError(name, ctx, r.budget, ctx.Err())))
 		if errors.Is(context.Cause(ctx), ErrCancelled) {
@@ -1998,12 +2679,39 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 
 	deadlineCtx, cancelDeadline := r.budget.StageContext(ctx)
 	defer cancelDeadline()
-	if dl, ok := deadlineCtx.Deadline(); ok {
+	// The stage's own governance.stage_timeout, when the run resolved one: it
+	// only ever shortens a stage, so a value at or above the run's own
+	// timeouts.stage leaves that bound in charge and is dropped here rather
+	// than given a deadline of its own — dropped loudly, on the run log and as
+	// one key of result.json's policy.ignored, because a bound the operator
+	// wrote and the run does not apply is exactly what ignoring it silently
+	// means (noteStageTimeoutClamped). deadlineCtx stays the context that says
+	// which of the two ended the stage (below): it is done only when the run's
+	// own bound, or the finalize reserve under it, is what fired.
+	//
+	// ownCtx is built before the registry write below, so the deadline the
+	// registry and the console show is the one the stage is actually under:
+	// when a tighter stage_timeout applies, that is the stage's own bound, and
+	// a registry naming the run's own later one would say the stage has time
+	// it does not have.
+	own := r.stageTimeout(name)
+	r.noteIgnoredStageBound(name, own)
+	ownCtx, cancelOwn := deadlineCtx, context.CancelFunc(func() {})
+	if own > 0 && own < r.budget.Stage {
+		ownCtx, cancelOwn = context.WithTimeout(deadlineCtx, own)
+	} else {
+		if own > 0 {
+			r.noteStageTimeoutClamped(name, own)
+		}
+		own = 0
+	}
+	defer cancelOwn()
+	if dl, ok := ownCtx.Deadline(); ok {
 		r.beginBudgetStage(name, n, dl)
 	}
 	// The halt's way to stop this stage: cancelling with the halt as the
 	// cause, which StageError reads.
-	stageCtx, cancelCause := context.WithCancelCause(deadlineCtx)
+	stageCtx, cancelCause := context.WithCancelCause(ownCtx)
 	r.mu.Lock()
 	r.haltStage = cancelCause
 	extra := r.stageExtra
@@ -2027,13 +2735,45 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 		done := make(chan struct{})
 		watching.Add(1)
 		go func() { defer watching.Done(); r.watchHalt(stageCtx, done) }()
+		if p := r.sidecarProc(); p != nil {
+			// The sidecar is watched with the same shape and for the same
+			// reason, and it can only be here with the gateway: a sidecar
+			// that dies or stops answering under a stage must end that stage
+			// rather than leave it waiting on a process that never will
+			// (P8, P10).
+			watching.Add(1)
+			go func() { defer watching.Done(); r.watchSidecar(stageCtx, done, name, p) }()
+		}
 		stopWatch = sync.OnceFunc(func() { close(done); watching.Wait() })
 	}
 	// Checkpoints run only while the agent does: stopped (and waited for)
-	// the moment it returns, and by the defer if it panics.
+	// the moment it returns, and by the defer if it panics. The stop is
+	// registered while it is live so a mid-stage governance halt can stop it
+	// too, before it writes pull-request state of its own (governanceHalt).
 	stopCheckpoints := r.startCheckpoints(stageCtx, name)
-	defer stopCheckpoints()
+	r.setStageCkptStop(stopCheckpoints)
+	defer func() {
+		// Stopped first, and only then unregistered: on the panic path — the
+		// only path where this defer runs with the poll still alive — a halt
+		// on another goroutine must find the stop and wait on it rather than
+		// read a nil and write the record while the poll's in-flight tick
+		// still is. stop is idempotent, so the normal path, where the stop
+		// above already ran it, is unaffected.
+		stopCheckpoints()
+		r.setStageCkptStop(nil)
+	}()
 	res, err := r.d.Agent.Run(stageCtx, req)
+	// What ended the stage is what was already true when the agent returned:
+	// the stage's own deadline is the one that fired, and not the run's own
+	// bound — or the finalize reserve under it — whose context is the parent
+	// and which is done too whenever one of those fired. Read straight away,
+	// so an agent that returned a failure of its own a moment before its
+	// stage ran out keeps that failure rather than being read as a stop. A
+	// stage whose result arrived as its deadline did is not stopped either:
+	// its work is done, the same way a result that races the run's own
+	// timeouts.stage is a stage that succeeded.
+	cutByOwn := errors.Is(stageCtx.Err(), context.DeadlineExceeded) && deadlineCtx.Err() == nil
+	ownTimedOut := own > 0 && err != nil && cutByOwn
 	stopCheckpoints()
 	stopWatch()
 	// An oauth run has no gateway: its stage's own cost figure is its
@@ -2070,19 +2810,18 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 		r.mu.Unlock()
 	}
 	if r.gw != nil {
-		// The gateway's figure is the run's cost; Claude Code's is only a
-		// cross-check. A halt it raised after the watcher looked is
-		// recorded now.
-		r.drainHalt()
-		r.crossCheckCost(name, res.CostUSD, stageCtx.Err() != nil || r.haltValue() != nil)
-		r.mu.Lock()
-		r.rec.CostUSD = r.gwUsed.USD()
-		r.mu.Unlock()
+		r.recordGatewayStageCost(name, res.CostUSD, stageCtx.Err() != nil || r.haltValue() != nil)
 	} else {
 		r.rec.CostUSD += res.CostUSD
 	}
 	r.updateCost()
-	r.rec.Stages = append(r.rec.Stages, r.stageTiming(name, started, res.CostUSD))
+	// The relay has seen the whole stream by now, so its counts of the
+	// stage's sub-agent tool calls and of the most times one identical shell
+	// command ran are final: the record carries them as the stage's agents
+	// and repeats, for every auth mode (task-governance T1.3, T1.4).
+	res.SubAgents = relay.SubAgents
+	res.Repeats = relay.Repeats
+	r.rec.Stages = append(r.rec.Stages, r.stageTiming(name, started, res.CostUSD, res.SubAgents, res.Repeats))
 	var errText any // the agent's error may carry a key an upstream echoed
 	if err != nil {
 		errText = r.redact(err.Error())
@@ -2096,10 +2835,71 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 		r.save(ctx)
 		return res, false, &HaltError{*h}
 	}
+	// A stage that reached its own governance.stage_timeout is a governance
+	// stop, not a failed stage: the run halts with the checkpoint report the
+	// other tripwires leave, and the detail is the runner's own word for the
+	// bound that fired (T7.6, D329, G7). The run's own timeouts.stage is not
+	// this — a stage that ends at that bound is the failure it has always
+	// been — which is why own is zero unless it was the tighter of the two.
+	//
+	// It runs here, on the run goroutine and after the stage's spend and
+	// history above are recorded, which is the ordering governanceHalt
+	// requires of its caller. A cancel that landed first keeps the run
+	// cancelled: governanceHalt then records nothing, and the stage fails the
+	// way it would have without the timeout.
+	//
+	// What the ceiling leaves is the stage hook's to decide (governance_hook.go,
+	// §5.3): its default is the halt above, and a build whose hook raises
+	// nothing ignores the block the ceiling came from — the stage then falls
+	// through and fails on the bound the run's own timeouts.stage set, which is
+	// the stage hook's answer and not a refusal of the run (D522, G2).
+	if ownTimedOut {
+		if d := stageHook().TimedOut(r.stageView(name)); d.Halt {
+			// The reason is the core's to write, so a hook that left one
+			// outside the vocabulary governanceHalt records — and
+			// haltReasonText has words for, in result.schema.json's enum —
+			// fails the stage named instead of writing a halt nobody can read
+			// back (D521, D529, governance_hook.go).
+			if !governanceHaltReasons[d.Reason] {
+				r.fail(fmt.Sprintf("stage %s: the stage hook left the halt reason %q, which is not a governance stop this runner can record", name, d.Reason))
+				r.keepTail(fmt.Sprintf("%s-%d", name, n), stderrTail, transcriptTail)
+				return res, false, fmt.Errorf("stage %s: unknown halt reason %q", name, d.Reason)
+			}
+			if r.governanceHalt(ctx, d.Reason, d.Detail) {
+				if h := r.haltValue(); h != nil {
+					return res, false, &HaltError{*h}
+				}
+			}
+		}
+	}
+	// What the gateway saw a moment ago decides the stage before the
+	// credential service's answer does: a call the gateway refused as a
+	// violation — a model that is not pinned, a tool the policy forbids, a
+	// request shape it will not forward — is a fact about what the agent
+	// asked for, and a stage that is about to run again must not swallow it.
+	// The stage fails, named, and the resume never happens (C1.17): the
+	// refused call would simply be made again, and the record would lose the
+	// reason the run is not to continue.
 	if len(violations) > 0 {
 		r.fail("stage " + name + ": " + violations[0])
 		r.keepTail(fmt.Sprintf("%s-%d", name, n), stderrTail, transcriptTail)
 		return res, false, fmt.Errorf("stage %s: %s", name, violations[0])
+	}
+	// The credential service's typed answer (C1.17) ended this stage: it did
+	// not fail, and nothing is recorded about it — stage waits for the reset
+	// it names and resumes it. It comes after the halt check (a halt recorded
+	// first still decides) and after the violations above.
+	//
+	// A stage whose work was already done when the answer arrived is not
+	// resumed: the answer ends a stage that the exhaustion stopped, and an
+	// agent that exited with a result event and no error finished its work,
+	// so throwing that away to run the same prompt again would spend a stage
+	// on nothing. The answer changes nothing for it; the next stage gets its
+	// own.
+	var exhausted *exhaustedError
+	if errors.As(context.Cause(stageCtx), &exhausted) && (err != nil || res.IsError) {
+		r.save(ctx)
+		return res, false, exhausted
 	}
 
 	switch {
@@ -2221,6 +3021,15 @@ func (r *run) finalize(ctx context.Context) error {
 		// there is nothing left to commit, push or open a pull request for.
 		return nil
 	}
+	// A report run's last word before anything is pushed: the files it commits
+	// under docs/fugaro-reviews/ are the runner's own, byte for byte
+	// (digest.go, T3.2's call, which T3.3 fills). The commit it put the branch
+	// back to is held to once more after the leftover commit below, because
+	// that is the last moment before the push.
+	step, err := r.digestFinalize(ctx)
+	if err != nil {
+		return err
+	}
 	base := r.cfg.Git.BaseBranch
 	halt := r.haltValue()
 	if halt != nil && r.isCancelled() {
@@ -2239,6 +3048,10 @@ func (r *run) finalize(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("committing leftover work: %w", err)
 	}
+	// A report run's branch must still be the commit the digest step made, and
+	// nothing committed on top of it: what finalize commits is what the pull
+	// request carries (digest.go's digestRefuseChangedBranch).
+	r.digestRefuseChangedBranch(ctx, step, committed)
 	if r.follow == nil {
 		// A follow-up's branch is already ahead of its base: when its
 		// agent adds nothing, the report says so rather than an empty
@@ -2267,6 +3080,27 @@ func (r *run) finalize(ctx context.Context) error {
 	// this run's too. A failed read keeps the set read at the top of
 	// finalize, which is still this run's work.
 	r.recordChangedFiles(ctx)
+	// The run's own diff is now measured, which is D22's third moment: the
+	// mode is resolved from it before Decide reads the run's gates, so the
+	// value a later slice's rules act on is the one the run's whole diff
+	// answered (rigor.go).
+	r.finalizeRigor()
+	// What the run left open is filed so the branch a reviewer reads and the
+	// pull request carry the items (D9). Filing commits, which moves HEAD, and
+	// the suite is not run again on that commit: an item is Markdown rather
+	// than code, so it cannot change the verdict the suite already gave, and a
+	// suite slower than the finalize reserve would spend the context the push
+	// needs. The readiness rule reads the commit the suite last ran on
+	// (decided), which differs from the head this run pushes only by the items
+	// — including when the filing follows a round that shipped, which is
+	// Hotfix's deferral (D30, D15) and the ordinary case for that row.
+	decided := sha
+	if r.fileOpenItems(ctx) {
+		r.filedFrom = decided
+		if sha, err = r.repo.HeadSHA(ctx); err != nil {
+			return fmt.Errorf("reading head sha after filing: %w", err)
+		}
+	}
 	records, err := verify.Records(r.d.StateDir)
 	if err != nil {
 		return fmt.Errorf("reading verify records: %w", err)
@@ -2276,7 +3110,9 @@ func (r *run) finalize(ctx context.Context) error {
 	r.rec.HeadSHA, r.rec.Verify = sha, records
 	r.uploadVerifyRecords(ctx, records)
 
-	ready, reason := Decide(records, sha, seniorReview(r.rec.Reviews))
+	pol := r.findingsPolicy()
+	ready, reason := Decide(records, decided, seniorReview(r.rec.Reviews), pol)
+	r.rec.Tolerated = r.toleratedRecord(pol)
 	if committed && reason == ReasonNoVerifiedTest {
 		reason = "uncommitted changes were committed at finalize, after the last verified test run"
 	}
@@ -2413,7 +3249,11 @@ func (r *run) finalize(ctx context.Context) error {
 		r.rec.Status, r.rec.Outcome = runstore.StatusFailed, runstore.OutcomeDraft
 	}
 	r.updateCost()
+	r.narrowText = r.narrowSummary(ctx)
 	notes, gone := r.settlePR(ctx, pr, ready, reason, records)
+	if r.narrowText != "" {
+		notes = append(notes, r.narrowText)
+	}
 	if gone {
 		r.endUnchanged(ctx, fmt.Sprintf("PR #%d was %s during the run; the branch was pushed", pr.Number, r.closedWord(ctx, pr.Number)), records)
 		return nil
@@ -2423,7 +3263,7 @@ func (r *run) finalize(ctx context.Context) error {
 		fu = r.followUpSection()
 		fu.MovedToDraft = r.follow.wasReady && !ready
 	}
-	report := agent.Redact(followUpReport(r.rec, r.d.Store.Prefix(), r.logTail(ready, records), fu, notes), r.secretList())
+	report := agent.Redact(followUpReport(r.rec, r.d.Store.Prefix(), r.logTail(ready, records), fu, notes, r.filedFrom), r.secretList())
 	// A follow-up's pull request is the one people watch: an earlier
 	// attempt of this execution may already have posted this report.
 	if r.follow != nil && r.reportPosted(ctx, pr) {
@@ -2440,6 +3280,430 @@ func (r *run) finalize(ctx context.Context) error {
 	}
 	r.storeReport(ctx, report, fu)
 	return nil
+}
+
+// openFindings is what this run left open: the last senior review, when it
+// did not ship and its findings stand. A round that shipped left nothing, a
+// run with no senior review at all — one that died before review, or ended
+// after its first line — has nothing to file either, and a "none" verdict is
+// a skipped review rather than a review with findings.
+//
+// One round's worth, not one per round: the fix loop answers an earlier
+// round's findings, and only the last round's are what the run hands over.
+func openFindings(rs []runstore.ReviewSummary) *runstore.ReviewSummary {
+	last := seniorReview(rs)
+	if last == nil || last.Findings == 0 || last.Verdict != "changes" {
+		return nil
+	}
+	return last
+}
+
+// fileOpenItems writes this run's backlog items and closes the ones it fixed,
+// and says whether it wrote anything (docs/rigor-modes/implementation-plan.md
+// T4.5, T4.6, T4.7, D9, D26, D27, D30, D31). What it writes goes into this
+// run's own checkout and one commit of its own — the same branch and the same
+// pull request as the change they belong to, so the writing dirties nothing a
+// reviewer was not already reading (D9) — and the ids it filed are recorded
+// beside the round they came from.
+//
+// Whether a run writes at all is first the repository's opt-in — a rigor:
+// block, or a project-layer rigor default (rigor.Config.Configured) — and then
+// D30's per-mode table, read from internal/rigor (T4.6): a mode whose row files
+// nothing of its own leaves the branch exactly as it was, so a Critical run's
+// tree and pull request body are the ones main produces. That gate covers the
+// closing too: the close is the same commit as a filing, and a mode with no row
+// has no such commit. The table is asked rather than compared here, so a mode
+// that files differently is a row in that package and not a branch in this one.
+//
+// A row carries two independent things a run can owe — the findings it
+// tolerated and, for Hotfix alone, the fix it deferred (D30, D15) — and a run
+// that owes both files both, in one commit: a hotfix that also could not
+// satisfy its review owes the proper fix *and* the round, and writing one of
+// them would drop the other exactly where the run has least to show for
+// itself.
+//
+// A follow-up on a pull request is the other half of D31: the run that fixes an
+// item is the run that closes it, so a follow-up whose own review shipped
+// closes the items an earlier run on the same pull request filed for a round it
+// answered (openRoundItems). Closing is the whole of what a follow-up does
+// about an item that is already open: what a run files is D30's table and
+// nothing else — one item per tolerated finding — so a follow-up that also left
+// findings open files its own round's item beside the earlier one rather than
+// suppressing it, and the pull request's status section says which ids this run
+// filed and which it closed.
+//
+// The item is written before the run's diff is what a reviewer reads and
+// after the record's own ChangedFiles was measured, so the item file is
+// deliberately not part of "the paths this run changed" (D22's third moment
+// reads that field, and an item about the run must not move the mode the run
+// resolved).
+//
+// A write that cannot be made is a warning, never the run's outcome: the
+// pull request, the report and the record are what the run is for, and an
+// item that could not be written costs a follow-up, not the run.
+//
+// The title opens with the run's own id (filedTitle), because a repository is
+// filed into by every run it has at once: two parallel runs that end at the
+// same round with the same count would otherwise compose one title, one slug
+// and one file name, and merging both branches would be a conflict over one
+// path rather than a union of two.
+func (r *run) fileOpenItems(ctx context.Context) bool {
+	// A report run files nothing, whatever its repository configures: its
+	// branch is the reports and nothing else (digest.go, T3.3), and an item is
+	// a model-written finding about the run's review, which is exactly what the
+	// digest step's own commit must not carry.
+	if r.digest {
+		return false
+	}
+	// A halted or cancelled run was stopped mid-loop: its last round is not
+	// one it finished acting on, and its push needs the time a filing spends.
+	if r.haltValue() != nil || r.isCancelled() {
+		return false
+	}
+	// Filing is opt-in: a repository that configures no rigor resolves Pro
+	// for its budget (D19) and files nothing, so its tree, pull request body
+	// and record are the ones it had before modes existed.
+	if !r.rigorCfg.Configured() {
+		return false
+	}
+	files := rigor.Files(r.reachedRigor())
+	if !files.Any() {
+		return false
+	}
+	open := openFindings(r.rec.Reviews)
+	// The items an earlier run on this pull request filed for a round and the
+	// folder still holds open: this run's checkout carries them, because a run
+	// writes into its own branch and a follow-up starts from that branch (D9).
+	earlier := r.openRoundItems(ctx)
+	// The deferral leads: it is the mode's own substance rather than a
+	// review's residue, so it takes the day's first id.
+	var owed []backlog.New
+	var what []string
+	if files.Deferred {
+		owed = append(owed, r.filedItem(nil))
+		what = append(what, "the follow-up this hotfix deferred")
+	}
+	// One item per tolerated finding, whatever the pull request already
+	// carries (D30): a follow-up that left findings open is handing over a
+	// round of its own, and an item open for an earlier run's round is not a
+	// reason to leave this one with nothing. Round numbers restart per run, so
+	// a later run cannot tell an earlier item's round from its own and could
+	// not dedup on it; suppressing the filing while any item on the pull
+	// request is open would instead lose a finding for good the moment that
+	// item is closed (implementation-plan §7 Q5, Q8).
+	if open != nil && files.Tolerated {
+		owed = append(owed, r.filedItem(open))
+		what = append(what, fmt.Sprintf("what review round %d left open", open.Round))
+	}
+	// What this run fixed: a follow-up whose review shipped answered the round
+	// an earlier run left open, so those items are closed here, in the same
+	// commit as anything this run files (D31).
+	var closing []string
+	if r.shippedItsRound() {
+		closing = earlier
+	}
+	if len(owed) == 0 && len(closing) == 0 {
+		return false
+	}
+	dir := filepath.Join(r.repo.Dir, backlog.Dir)
+	ids := make([]string, 0, len(owed))
+	for _, n := range owed {
+		item, err := backlog.Write(dir, n)
+		if err != nil {
+			r.d.Log.Warn("filing the run's open items failed", "err", r.redact(err.Error()))
+			return false
+		}
+		ids = append(ids, item.ID)
+	}
+	// A close that cannot be made is a warning per item rather than the end of
+	// the sweep: the items of one pull request are independent, and one the
+	// folder refuses must not leave the others open.
+	closed := make([]string, 0, len(closing))
+	for _, id := range closing {
+		if _, err := backlog.Close(dir, id, r.pullRequestRef()); err != nil {
+			r.d.Log.Warn("closing the item this run fixed failed", "item", id, "err", r.redact(err.Error()))
+			continue
+		}
+		closed = append(closed, id)
+	}
+	if len(ids) == 0 && len(closed) == 0 {
+		return false
+	}
+	if _, err := r.repo.CommitAll(ctx, backlogCommit(ids, what, closed)); err != nil {
+		r.d.Log.Warn("committing the run's backlog items failed", "err", r.redact(err.Error()))
+		return false
+	}
+	r.rec.Backlog = append(r.rec.Backlog, ids...)
+	// The record's list is bounded; the closed items on the branch are the
+	// whole account whatever it holds.
+	r.rec.BacklogClosed = append(r.rec.BacklogClosed, closed...)
+	if len(r.rec.BacklogClosed) > runstore.MaxBacklogClosed {
+		r.rec.BacklogClosed = r.rec.BacklogClosed[:runstore.MaxBacklogClosed]
+	}
+	return true
+}
+
+// maxRunsOnOnePR bounds the walk back through the runs of one pull request
+// (roundItemIDs). A chain longer than this is a loop or a pull request nothing
+// else bounds; the walk stops either way, and what it has read is what the run
+// acts on.
+const maxRunsOnOnePR = 20
+
+// openRoundItems is the ids an earlier run on this run's pull request filed for
+// a review round, as the items this run's own checkout holds them and only
+// while the folder still holds them open: the items D31's follow-up closes when
+// its own review shipped.
+//
+// The checkout is the only place the statuses are read: an item is closed on
+// the branch of the run that fixed it, so the folder a follow-up starts from
+// carries the closes made before it (D9, D31). A folder that is not there holds
+// none — the items have not reached this checkout — and the run then files what
+// it owes rather than closing something it cannot see: a finding that
+// disappears is the failure this feature risks (the plan's §7.5).
+func (r *run) openRoundItems(ctx context.Context) []string {
+	ids := r.roundItemsOnThisPR(ctx)
+	if len(ids) == 0 {
+		return nil
+	}
+	items, err := backlog.Load(filepath.Join(r.repo.Dir, backlog.Dir))
+	if err != nil {
+		if !errors.Is(err, fs.ErrNotExist) {
+			r.d.Log.Warn("reading the backlog folder failed; the run closes nothing and files its own round", "err", r.redact(err.Error()))
+		}
+		return nil
+	}
+	open := map[string]bool{}
+	for _, it := range items {
+		if it.Status == "open" {
+			open[it.ID] = true
+		}
+	}
+	var out []string
+	for _, id := range ids {
+		if open[id] {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// roundItemsOnThisPR walks the run chain this follow-up hangs off — its
+// previous run, and the runs before that while each record names one on this
+// pull request (runstore.Record.FollowUp) — and collects the ids each run on
+// the pull request filed for a review round. The chain is what makes "the same
+// pull request" a fact rather than a guess: a record names the pull request it
+// ran on and the run it followed, so the walk stops at the first run that was
+// not on this one. A run's own record carries the ids it filed
+// (runstore.Record.Backlog), which is what keeps this a read of what was filed
+// rather than a reading of the item files' titles.
+//
+// A chain whose records cannot be read ends the walk where it is: what was read
+// is what the run acts on, and an unreadable record is a warning rather than a
+// refusal, like every other read on this path. A record that names a previous
+// run that is not a run id ends it too, before that id names an object
+// (runstore.Store.Sibling's own rule for its callers).
+func (r *run) roundItemsOnThisPR(ctx context.Context) []string {
+	pr, id := r.spec.PR, r.spec.PreviousRun
+	if pr == 0 || id == "" || r.d.Store == nil {
+		return nil
+	}
+	var ids []string
+	seen := map[string]bool{}
+	for id != "" && !seen[id] && len(seen) < maxRunsOnOnePR {
+		if !task.ValidRunID(id) {
+			r.d.Log.Warn("a record names a previous run that is not a run id; the runs behind it are not read", "run", r.redact(id))
+			return ids
+		}
+		seen[id] = true
+		rec, err := r.d.Store.Sibling(id).ReadRecord(ctx)
+		if err != nil {
+			r.d.Log.Warn("an earlier run on this pull request has no readable record; the runs behind it are not read", "run", id, "err", r.redact(err.Error()))
+			return ids
+		}
+		if rec.PR == nil || rec.PR.Number != pr {
+			return ids
+		}
+		ids = append(ids, roundItemIDs(rec)...)
+		if rec.FollowUp == nil {
+			return ids
+		}
+		id = rec.FollowUp.PreviousRun
+	}
+	return ids
+}
+
+// roundItemIDs is the ids one run filed for a review round: what its record
+// carries, less the deferral a hotfix's row files first (D30, fileOpenItems).
+// A record whose last senior review left nothing open filed no round item, so
+// whatever it filed — a hotfix's deferral alone — is not one, and a deferral is
+// never closed by a follow-up that merely shipped its review: the run that
+// revisits the area at its normal mode is the one that answers it (D30, D15).
+func roundItemIDs(rec *runstore.Record) []string {
+	if openFindings(rec.Reviews) == nil {
+		return nil
+	}
+	if rec.Rigor != nil && rigor.Files(rec.Rigor.Mode).Deferred && len(rec.Backlog) > 0 {
+		return rec.Backlog[1:]
+	}
+	return rec.Backlog
+}
+
+// shippedItsRound reports whether this run answered the round it was handed: it
+// is a follow-up whose last senior review shipped. A run that left findings open
+// did not fix them, and a run that never reached a senior review — one that died
+// before review — fixed nothing, however empty its record's review list looks.
+func (r *run) shippedItsRound() bool {
+	if r.spec.PR == 0 || r.spec.PreviousRun == "" {
+		return false
+	}
+	last := seniorReview(r.rec.Reviews)
+	return last != nil && last.Verdict == "ship"
+}
+
+// pullRequestRef is the pull request this run is on, as D31's `## Closed by`
+// section names one. Only a follow-up reaches it: an item is closed by the
+// follow-up that fixed it, and a follow-up is the run whose spec names a pull
+// request.
+func (r *run) pullRequestRef() string { return fmt.Sprintf("#%d", r.spec.PR) }
+
+// backlogCommit is the one commit message the run's backlog writes go into:
+// what it filed and what it closed, each named by id.
+func backlogCommit(ids, what, closed []string) string {
+	var parts []string
+	if len(ids) > 0 {
+		parts = append(parts, fmt.Sprintf("file %s, %s", strings.Join(ids, " and "), strings.Join(what, " and ")))
+	}
+	if len(closed) > 0 {
+		parts = append(parts, fmt.Sprintf("close %s, fixed by this pull request", strings.Join(closed, " and ")))
+	}
+	return "fugaro: " + strings.Join(parts, "; ")
+}
+
+// filedItem is one item this run files: the round it left open when the mode's
+// row files what it tolerated, and the deferral Hotfix's row files whether or
+// not a round was left open (D30). open is nil only in that second case, which
+// is why the deferral's own text is what the item then carries.
+func (r *run) filedItem(open *runstore.ReviewSummary) backlog.New {
+	n := backlog.New{
+		Mode:    r.filedMode(),
+		Area:    r.filedArea(),
+		FiledBy: r.filedBy(),
+		FiledIn: "run:" + r.rec.RunID,
+		Date:    r.d.Now().UTC().Format("2006-01-02"),
+	}
+	if open == nil {
+		n.Title, n.Body = r.deferredTitle(), r.deferredBody()
+		return n
+	}
+	n.Title, n.Body = r.filedTitle(open), r.filedBody(open)
+	return n
+}
+
+// filedTitle is the item's title, and it opens with the run's id so that no
+// two runs compose the same one (D26). A run's own checkout is all it can read
+// — two parallel runs in one repository each allocate the day's sequence from
+// their own tree, and a run cut from a base that does not yet carry another
+// run's item sees nothing to differ from — so the run's id is the one part of
+// the name that is run-unique. It leads rather than trails, because the slug
+// is cut to MaxSlugRunes and a trailing id would be the first thing cut off a
+// long title, which would put two runs back on one name.
+//
+// The id is also the one thing a reader of a shared backlog wants first: D29
+// settles a project's items into one repository, where an item's run is not
+// obvious from the title alone, and `filed-in` repeats it in the front matter.
+func (r *run) filedTitle(open *runstore.ReviewSummary) string {
+	return fmt.Sprintf("Run %s: review round %d left %s open", r.rec.RunID, open.Round, Plural(open.Findings, "finding"))
+}
+
+// filedMode is the mode the item records: the one the run resolved (D27), or
+// `none` when the record carries no rigor block at all, which is the value a
+// run that resolved nothing leaves — never a mode nobody chose.
+func (r *run) filedMode() string {
+	if r.rec.Rigor == nil || !rigor.Known(r.rec.Rigor.Mode) {
+		return "none"
+	}
+	return string(r.rec.Rigor.Mode)
+}
+
+// filedArea is the area the item records: the names of the rules the run's
+// paths matched, strictest first as the record carries them, or the layer
+// that decided the mode when no rule matched — `project` for the project
+// layer and `repo` for everything below it, since an item about no rule in
+// particular is an item about the whole repository (D27).
+func (r *run) filedArea() string {
+	rg := r.rec.Rigor
+	if rg == nil {
+		return "repo"
+	}
+	if len(rg.Areas) > 0 {
+		names := make([]string, 0, len(rg.Areas))
+		for _, a := range rg.Areas {
+			names = append(names, a.Name)
+		}
+		return strings.Join(names, ",")
+	}
+	if rg.From == rigor.FromProject {
+		return "project"
+	}
+	return "repo"
+}
+
+// filedBy is the item's launcher: the login the task was requested by, which
+// is who asked for the run (D27). An item is committed into the repository, so
+// it never carries an email address (the owner's ruling of 2026-10-24): a
+// launcher recorded as one — the cloud account `fugaro run` reads — is not
+// shortened to a guessed login, and it records `unknown`, as does a task that
+// names nobody, rather than the empty field D27's format refuses.
+func (r *run) filedBy() string {
+	if by := strings.TrimSpace(r.spec.RequestedBy); by != "" && !strings.Contains(by, "@") {
+		return by
+	}
+	return "unknown"
+}
+
+// filedBody is the item's body: what the round left open, why it is filed
+// rather than fixed here, and what closes it (D27). The findings' own text is
+// not carried yet — a round's findings are a count on the record and their
+// text is in the run's transcript (T3.4 owns persisting them) — so the item
+// says which round and how many, and links the run it came from.
+func (r *run) filedBody(open *runstore.ReviewSummary) string {
+	who := "senior review"
+	if open.Tier == runstore.TierFirst {
+		who = "first-line review"
+	}
+	what := fmt.Sprintf("Round %d's %s ended `%s` with %s: the run did not ship them, so they are carried here rather than fixed in this pull request.",
+		open.Round, who, open.Verdict, Plural(open.Findings, "finding"))
+	why := "The run left them open: they are not what this pull request's outcome was decided on, and an item filed here is a record a later reader can cite, which a finding in a transcript is not (D9)."
+	done := "The pull request that addresses them closes this item (D31)."
+	links := []string{fmt.Sprintf("run `%s`", r.rec.RunID)}
+	if r.rec.PR != nil && r.rec.PR.Number != 0 {
+		links = append(links, fmt.Sprintf("pull request #%d", r.rec.PR.Number))
+	}
+	return backlog.Body(what, why, done, links)
+}
+
+// deferredTitle is the title of the item a hotfix files for its own deferral,
+// which is the proper fix, because the one it shipped is the expedient one
+// (spec.md, D15, D30). It opens with the run's id for the same reason
+// filedTitle does (D26).
+func (r *run) deferredTitle() string {
+	return fmt.Sprintf("Run %s: revisit this hotfix in the area's normal mode", r.rec.RunID)
+}
+
+// deferredBody is that item's body: what the hotfix deferred, why it is filed
+// rather than done here, and what closes it. Nothing else carries this — the
+// deferred text the agent wrote is the agent's own free-form file, which no
+// part of the run parses — so the item says what a hotfix is rather than
+// inventing a summary of the change.
+func (r *run) deferredBody() string {
+	what := "This run was a hotfix: it made the smallest change that stops the bleeding, and revisiting the fix properly is what it deferred (spec.md, D15)."
+	why := "Time is the dominant constraint in Hotfix mode, so the fix ships first and is done properly afterwards — in the area's normal mode, which is a separate run rather than another round of this one."
+	done := "The pull request that revisits the fix in the area's normal mode closes this item (D31)."
+	links := []string{fmt.Sprintf("run `%s`", r.rec.RunID)}
+	if r.rec.PR != nil && r.rec.PR.Number != 0 {
+		links = append(links, fmt.Sprintf("pull request #%d", r.rec.PR.Number))
+	}
+	return backlog.Body(what, why, done, links)
 }
 
 // closedWord says "merged" when the provider can tell the PR was merged,

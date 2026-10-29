@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See mobile/LICENSE.md for the terms.
 // The Keychain port: `expo-secure-store`, behind the three methods
 // `secure-store.js` calls (mobile plan, Task P3.1, decision D111).
 //

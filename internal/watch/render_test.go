@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-	"unicode/utf8"
 
 	"github.com/dimipaun/fugaro/internal/budget"
 )
@@ -96,6 +95,44 @@ func TestFrameWide(t *testing.T) {
 }
 
 func TestFrameMedium(t *testing.T) { golden(t, "medium_80", frame(fixture(), 80, 0)) }
+
+// The width tier 2 is entered at (tierOf): the narrowest screen that draws
+// the run table as columns, where its fixed cells and the title's floor have
+// to add up on their own, since there is no elastic slack left to give.
+func TestFrameMediumEntryWidth(t *testing.T) { golden(t, "medium_70", frame(fixture(), 70, 0)) }
+
+// The run table's row is complete at the width its cells add up to, and the
+// BY column (owner spec 2026-10-22, item 2) is bought out of those cells, not
+// out of the screen: a row that does not fit is cut off at the screen's edge
+// by rend.line, which takes the flags with it.
+// So at the widths the table is drawn whole at, every run row must end before
+// the edge: 70 columns and up for tier 2, 120 and up for tier 3 (the width
+// the widest golden draws). colsOf does the arithmetic; this pins it.
+func TestRunRowsFitAtEachTiersEntryWidth(t *testing.T) {
+	v := fixture()
+	ids := []string{"aa11", "bb22", "cc33", "dd44"}
+	for _, w := range []int{70, 80, 120, 140} {
+		got := frame(v, w, 0)
+		rows := 0
+		for _, l := range strings.Split(got, "\n") {
+			row := false
+			for _, id := range ids {
+				row = row || strings.Contains(l, id)
+			}
+			if !row {
+				continue
+			}
+			rows++
+			if n := dw(stripSGR(l)); n >= w {
+				t.Fatalf("width %d: a run row is %d columns, so the edge cut it off:\n%s", w, n, got)
+			}
+		}
+		if rows != len(ids) {
+			t.Fatalf("width %d: %d run rows, want %d:\n%s", w, rows, len(ids), got)
+		}
+	}
+}
+
 func TestFrameNarrow(t *testing.T) { golden(t, "narrow_50", frame(fixture(), 50, 0)) }
 
 // At tier 1 (width < 70) a selected run is marked on its own two-line row,
@@ -104,7 +141,8 @@ func TestFrameNarrow(t *testing.T) { golden(t, "narrow_50", frame(fixture(), 50,
 func TestFrameNarrowSelectedRun(t *testing.T) {
 	sel := Cursor{Slug: "acme__app", Run: "r-aaaa11"}
 	got := frame(fixture(), 50, 0, func(o *RenderOptions) { o.Selected = sel })
-	if !strings.Contains(got, "▸ r-aaaa11") {
+	// The row names the run by the last four characters of its id (item 1).
+	if !strings.Contains(got, "▸ "+shortRun("r-aaaa11")) {
 		t.Fatalf("selected run not marked at tier 1:\n%s", got)
 	}
 	if strings.Contains(got, "▸ acme/app") {
@@ -259,7 +297,6 @@ func TestWideRunesClipByWidth(t *testing.T) {
 	v.Repos[0].Name = "東京/リポジトリ🚀"
 	v.Repos[0].Runs[0].Title = long
 	v.Repos[0].Runs[0].Stage = "コーディング中です"
-	v.Repos[0].Runs[1].Models = long
 	for _, w := range []int{120, 100, 80, 70, 50, 40} {
 		for _, color := range []bool{false, true} {
 			got := frame(v, w, 0, func(o *RenderOptions) { o.Color = color })
@@ -277,7 +314,7 @@ func TestWideRunesClipByWidth(t *testing.T) {
 	col := strings.Index(hdr, "STAGE")
 	var row string
 	for _, l := range strings.Split(got, "\n") {
-		if strings.Contains(l, "r-aaaa11") {
+		if strings.Contains(l, shortRun("r-aaaa11")) {
 			row = l
 		}
 	}
@@ -381,32 +418,103 @@ func TestFrameShortTerminalPinsStatusAndBanner(t *testing.T) {
 	}
 }
 
-func TestFrameShowsRecipe(t *testing.T) {
-	v := fixture()
-	v.Repos[0].Runs[0].Recipe = "claude-solo"
-	if out := frame(v, 140, 0); !strings.Contains(out, "opus / sonnet · claude-solo") {
-		t.Fatalf("frame:\n%s", out)
+// The table has no VERIFY and no MODELS column (owner request 2026-10-24):
+// the header names neither at any width the table is drawn at.
+func TestTableNamesNoVerifyOrModelsColumn(t *testing.T) {
+	for _, w := range []int{70, 80, 100, 120, 140} {
+		got := frame(fixture(), w, 0)
+		for _, col := range []string{"VERIFY", "MODELS"} {
+			if strings.Contains(got, col) {
+				t.Fatalf("width %d: the table still names the dropped %s column:\n%s", w, col, got)
+			}
+		}
 	}
 }
 
-func TestFrameRecipeMixedRowsAligned(t *testing.T) {
+// Verify and the models with the recipe are in the run's expanded detail,
+// which is the only place watch shows them now that the table's two trailing
+// columns are gone (owner request 2026-10-24). The recipe name is whole here,
+// not clipped to a column (it was 24 columns wide in the table).
+func TestDetailCarriesVerifyAndModels(t *testing.T) {
 	v := fixture()
-	v.Repos[0].Runs[0].Recipe = "claude-solo"
-	out := frame(v, 140, 0)
-	var a, b string
-	for _, l := range strings.Split(out, "\n") {
-		switch {
-		case strings.Contains(l, "r-aaaa11"):
-			a = l
-		case strings.Contains(l, "r-bbbb22"):
-			b = l
+	long := strings.Repeat("abcdefghij", 3)
+	v.Repos[0].Runs[0].Recipe = long
+	sel := Cursor{Slug: v.Repos[0].Slug, Run: v.Repos[0].Runs[0].Run}
+	got := frame(v, 120, 0, func(o *RenderOptions) {
+		o.Selected, o.Expanded = sel, map[Cursor]bool{sel: true}
+	})
+	for _, want := range []string{"verify", "unit", "models", "opus / sonnet · " + long} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("the detail must carry %q:\n%s", want, got)
 		}
 	}
-	if a == "" || b == "" || !strings.Contains(a, "claude-solo") || strings.Contains(b, "claude") {
-		t.Fatalf("frame:\n%s", out)
+	if strings.Contains(got, "VERIFY") || strings.Contains(got, "MODELS") {
+		t.Fatalf("the header still names a dropped column:\n%s", got)
 	}
-	if ia, ib := utf8.RuneCountInString(a[:strings.Index(a, "unit")]), utf8.RuneCountInString(b[:strings.Index(b, "unit")]); ia != ib {
-		t.Fatalf("verify column at %d and %d:\n%s", ia, ib, out)
+}
+
+// A finished row's RUN cell is the table's short form (shortRun), the same
+// one every other row shows, not the whole id (owner request 2026-10-24). The
+// whole id stays in the run's detail and in --json, which is the form
+// `fugaro logs RUN` wants.
+func TestFinishedRowShowsTheShortRunID(t *testing.T) {
+	v := fixture()
+	full := "20261023-021512-abcd"
+	v = MergeFinished(v, Config{}, []FinishedRun{
+		{Run: full, Slug: "acme__app", Title: "Fix the login bug", Status: "succeeded",
+			Outcome: "draft", PRURL: "https://github.com/acme/app/pull/101", PRNumber: 101,
+			FinishedAt: t0.Add(-30 * time.Minute)},
+	}, t0)
+	got := frame(v, 100, 0)
+	var row string
+	for _, l := range strings.Split(got, "\n") {
+		if strings.Contains(l, "Fix the login bug") && strings.Contains(l, "passed review") {
+			row = l
+		}
+	}
+	if row == "" {
+		t.Fatalf("no finished row was drawn:\n%s", got)
+	}
+	if !strings.Contains(row, shortRun(full)) {
+		t.Fatalf("the finished row does not show the short id %q: %q", shortRun(full), row)
+	}
+	if strings.Contains(got, full) || strings.Contains(got, "20261023") {
+		t.Fatalf("the finished row shows more than the id's tail:\n%s", got)
+	}
+}
+
+// A run's id is shown as its LAST four characters: the leading ones are the
+// launch stamp (20261023-021512-abcd), which every run started in the same
+// minute — every run of the same day, at eight columns — shares, so a prefix
+// cannot tell two rows apart (owner spec 2026-10-22, item 1). The expanded
+// detail names the id whole, so the short form is never all the screen knows.
+func TestRunIDShowsItsLastFourCharacters(t *testing.T) {
+	v := fixture()
+	a, b := "20261023-021512-abcd", "20261023-021512-ef01"
+	v.Repos[0].Runs[0].Run, v.Repos[0].Runs[1].Run = a, b
+	for _, w := range []int{120, 80, 50} {
+		got := frame(v, w, 0)
+		for _, want := range []string{"abcd", "ef01"} {
+			if !strings.Contains(got, want) {
+				t.Fatalf("width %d: the run id's tail %q is not on the screen:\n%s", w, want, got)
+			}
+		}
+		if strings.Contains(got, "20261023") {
+			t.Fatalf("width %d: the launch stamp both runs share is still shown:\n%s", w, got)
+		}
+	}
+	// An id of four characters or fewer is its own short form: nothing is cut.
+	short := fixture()
+	short.Repos[0].Runs[0].Run = "abc"
+	if got := frame(short, 120, 0); !strings.Contains(got, "abc") {
+		t.Fatalf("a three-character run id was cut:\n%s", got)
+	}
+	// The whole id is in the detail, where there is room for it: the short
+	// form is what the column shows, not what the screen knows.
+	sel := Cursor{Slug: v.Repos[0].Slug, Run: a}
+	detail := frame(v, 120, 0, func(o *RenderOptions) { o.Selected, o.Expanded = sel, map[Cursor]bool{sel: true} })
+	if !strings.Contains(detail, a) {
+		t.Fatalf("the expanded detail must name the whole run id:\n%s", detail)
 	}
 }
 
@@ -423,7 +531,7 @@ func TestFrameSelectedRunDetail(t *testing.T) {
 	got := frame(v, 120, 0, func(o *RenderOptions) {
 		o.Selected, o.Expanded = sel, map[Cursor]bool{sel: true}
 	})
-	if !strings.Contains(got, "▸ r-aaaa11") {
+	if !strings.Contains(got, "▸ "+shortRun("r-aaaa11")) {
 		t.Fatalf("selected run not marked:\n%s", got)
 	}
 	golden(t, "detail-120", got)
@@ -489,15 +597,27 @@ func TestKeyLineAndHelpNameRunsAndDetail(t *testing.T) {
 }
 
 // The help screen names a and x, the finished-run filter toggle and the
-// failure-acknowledgement key (design generic-tool §10.3): a screen with no
-// way to recall them would leave a viewer unable to discover either.
-func TestHelpNamesFilterToggleAndAck(t *testing.T) {
+// dismissal key (design generic-tool §10.3, owner spec 2026-10-22, item 4): a
+// screen with no way to recall them would leave a viewer unable to discover
+// either.
+func TestHelpNamesFilterToggleAndDismiss(t *testing.T) {
 	help := frame(fixture(), 120, 0, func(o *RenderOptions) { o.Help = true })
 	if !strings.Contains(help, "toggle finished runs: recent / all") {
 		t.Fatalf("help must describe the a key:\n%s", help)
 	}
-	if !strings.Contains(help, "acknowledge the selected failed run") {
+	if !strings.Contains(help, "dismiss the selected finished run") {
 		t.Fatalf("help must describe the x key:\n%s", help)
+	}
+	// The flags that move the window are named where a viewer looks for the
+	// keys, and the line saying so fits an 80-column screen whole (the
+	// renderer clips, it does not wrap): a screen left open all afternoon is
+	// exactly where someone wonders why a failure disappeared, so the answer
+	// must not be the part the clip takes away.
+	narrow := frame(fixture(), 80, 0, func(o *RenderOptions) { o.Help = true })
+	for _, want := range []string{"--keep and --keep-count move that window", "failed runs included, never for less"} {
+		if !strings.Contains(narrow, want) {
+			t.Fatalf("the help must name the keep flags in full at 80 columns (%q missing):\n%s", want, narrow)
+		}
 	}
 }
 
@@ -525,11 +645,11 @@ func TestFooterNamesTheView(t *testing.T) {
 func TestReadyForReviewSection(t *testing.T) {
 	v := fixture()
 	v = MergeFinished(v, Config{}, []FinishedRun{
-		{Run: "r-ready1", Slug: "acme__app", Title: "Fix the login bug", Status: "succeeded", Outcome: "ready",
+		{Run: "20261023-021512-abcd", Slug: "acme__app", Title: "Fix the login bug", Status: "succeeded", Outcome: "ready",
 			PRURL: "https://github.com/acme/app/pull/101", PRNumber: 101, FinishedAt: t0.Add(-30 * time.Minute)},
-		{Run: "r-ready2", Slug: "acme__lib", Title: "Speed up the parser", Status: "succeeded", Outcome: "ready",
+		{Run: "20261023-021512-ef01", Slug: "acme__lib", Title: "Speed up the parser", Status: "succeeded", Outcome: "ready",
 			PRURL: "https://github.com/acme/lib/pull/55", PRNumber: 55, FinishedAt: t0.Add(-5 * time.Minute)},
-		{Run: "r-draft1", Slug: "acme__app", Title: "Half-done refactor", Status: "failed", Outcome: "draft",
+		{Run: "20261023-021512-1122", Slug: "acme__app", Title: "Half-done refactor", Status: "failed", Outcome: "draft",
 			PRURL: "https://github.com/acme/app/pull/102", PRNumber: 102, FinishedAt: t0.Add(-10 * time.Minute)},
 	}, t0)
 	got := frame(v, 100, 0, func(o *RenderOptions) { o.Ready = ReadyRowsOf(v) })
@@ -548,12 +668,52 @@ func TestReadyForReviewSection(t *testing.T) {
 	golden(t, "ready_for_review_100", got)
 }
 
-func TestFrameRecipeLongNameClipped(t *testing.T) {
-	v := fixture()
-	long := strings.Repeat("abcdefghij", 3)
-	v.Repos[0].Runs[0].Recipe = long
-	out := frame(v, 160, 0)
-	if strings.Contains(out, long) || !strings.Contains(out, long[:20]) {
-		t.Fatalf("frame:\n%s", out)
+// TestWatchBarWarnsAtEightyPercent: pctColour's warning at 80% is colour, and
+// colour can be off, so the bar's tier also carries a marker. The share is the
+// ratio, not the rounded figure: 79.9% draws "(80%)" and no marker, and 80.0%
+// draws the marker.
+func TestWatchBarWarnsAtEightyPercent(t *testing.T) {
+	project := func(pct float64) View {
+		return View{
+			Now: t0, Day: "2026-10-03", Mode: "enforce", Conn: Connection{Kind: ConnLive, Age: time.Second},
+			Project: ProjectLine{Counted: 40 * usd, Spent: 40 * usd, Bar: Bar{Has: true, Used: 40 * usd, Cap: 50 * usd, Percent: pct}, Runs: 1},
+		}
+	}
+	at := func(pct float64, ascii bool) string {
+		return frame(project(pct), 120, 0, func(o *RenderOptions) { o.ASCII, o.Color = ascii, false })
+	}
+	if got := at(79.9, false); strings.Contains(got, "80% ⚠") {
+		t.Fatalf("79.9%% of the cap drew the warning marker:\n%s", got)
+	}
+	if got := at(80, false); !strings.Contains(got, "(80% ⚠)") {
+		t.Fatalf("80%% of the cap drew no warning marker:\n%s", got)
+	}
+	if got := at(80, true); !strings.Contains(got, "(80% !)") {
+		t.Fatalf("the ascii marker is missing:\n%s", got)
+	}
+}
+
+// TestWatchNarrowBarWarnsAtEightyPercent: tier 1 draws no bar, only the figure,
+// and that branch marked the share through colour alone — so with colour off a
+// narrow screen showed no warning at all. The figure carries the same marker
+// the bar's tier writes.
+func TestWatchNarrowBarWarnsAtEightyPercent(t *testing.T) {
+	project := func(pct float64) View {
+		return View{
+			Now: t0, Day: "2026-10-03", Mode: "enforce", Conn: Connection{Kind: ConnLive, Age: time.Second},
+			Project: ProjectLine{Counted: 40 * usd, Spent: 40 * usd, Bar: Bar{Has: true, Used: 40 * usd, Cap: 50 * usd, Percent: pct}, Runs: 1},
+		}
+	}
+	at := func(pct float64, ascii bool) string {
+		return frame(project(pct), 50, 0, func(o *RenderOptions) { o.ASCII, o.Color = ascii, false })
+	}
+	if got := at(79.9, false); strings.Contains(got, "80% ⚠") {
+		t.Fatalf("79.9%% of the cap drew the warning marker:\n%s", got)
+	}
+	if got := at(80, false); !strings.Contains(got, "80% ⚠ of") {
+		t.Fatalf("80%% of the cap drew no warning marker at 50 columns:\n%s", got)
+	}
+	if got := at(80, true); !strings.Contains(got, "80% ! of") {
+		t.Fatalf("the ascii marker is missing at 50 columns:\n%s", got)
 	}
 }

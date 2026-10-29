@@ -1,0 +1,7 @@
+version: 1
+project: aurora
+gcp_project: proj-1234
+defaults:
+  rigor:
+    areas:
+      - { name: secrets, match: "../secrets/**", mode: critical }

@@ -6,6 +6,8 @@
 
 Ephemeral cloud jobs that turn tasks into pull requests.
 
+<a href="https://cla-assistant.io/dimipaun/fugaro"><img src="https://cla-assistant.io/readme/badge/dimipaun/fugaro" alt="CLA assistant" /></a>
+
 Website: [fugaro.dev](https://fugaro.dev)
 
 *Fugax* is Latin for "fleeting." Fugaro runs long, self-contained coding-agent loops (implement, test, review, fix, compile, open a pull request) in throwaway cloud containers instead of on your laptop. Each task gets its own Cloud Run job execution in your own Google Cloud project, runs Claude Code headless to completion, pushes its work, opens a pull request and disappears. Google Cloud is the only backend.
@@ -26,7 +28,7 @@ Four reasons, in the order most people decide on them.
 
 ## Getting started
 
-You need Claude Code, a Google Cloud project with billing (or a billing account and `--create-project`), `gcloud` signed in with Application Default Credentials, Terraform 1.9 or newer, and a GitHub or Bitbucket Cloud repository; for GitHub, create the GitHub App first ([docs/git-providers.md](docs/git-providers.md#github); the full list is in [Requirements](#requirements)). Install the CLI:
+You need Claude Code, a billing account (setup creates a fresh Google Cloud project for Fugaro; it never uses one that already exists), `gcloud` signed in with Application Default Credentials, Terraform 1.9 or newer, and a GitHub or Bitbucket Cloud repository; for GitHub, create the GitHub App first ([docs/git-providers.md](docs/git-providers.md#github); the full list is in [Requirements](#requirements)). Install the CLI:
 
 ```sh
 brew install dimipaun/tap/fugaro                      # Homebrew cask (tested on macOS)
@@ -50,13 +52,15 @@ fugaro diagnose <run>      # what happened: tests, review findings, cost, PR
 fugaro run --pr 42         # continue PR 42 from its trusted review comments
 ```
 
-Or ask your agent: the plugin's `working` skill launches, watches and diagnoses runs, `routing` decides what belongs in the cloud and `parallelism` how wide to fan out. Every flag, the manual setup and the rollback: [docs/gcp-setup.md](docs/gcp-setup.md).
+Or ask your agent: the plugin's `working` skill launches, watches and diagnoses runs, `routing` decides what belongs in the cloud and `parallelism` how wide to fan out. Every flag: the generated [CLI reference](website/content/cli-reference.md).
 
 ## Upgrading
 
 `brew upgrade dimipaun/tap/fugaro && fugaro upgrade`, in each checkout, in your own terminal. `fugaro upgrade` pins the plugin in `.claude/settings.json` to the new release (commit the diff), installs or updates it in Claude Code through the `claude` CLI (restart running sessions), and moves the repository's job images onto the release's base image. It asks at each cloud step; `--yes` confirms them all, each billable build included. `--local` does the first two only, `--check` only reports (exit 1 when something is stale); in Claude Code `/fugaro:upgrade` does the local half and hands you the rest ([design/upgrade.md](docs/design/upgrade.md)). If the project config (providers, model_prices, budget settings, the compute price override, the GitHub App ID) changed since the job was last deployed by `fugaro update --repo`, it also tells you to run `fugaro update --repo .` ([multi-model.md](docs/multi-model.md)); it never runs that itself.
 
 ## How it works
+
+Every run that pushed ends in a pull request, a draft one if it failed. The draft appears at the run's first checkpoint push (within about a minute of its first commit), marked not verified.
 
 ```
 your machine                        your Google Cloud project
@@ -79,6 +83,8 @@ The engine is generic: everything specific to a repository lives in its `fugaro.
 
 ## Safety and cost controls
 
+The model budget (below) can cap what one run spends on the model. A run halts when its next call's worst case would pass the cap.
+
 **What a run's agent cannot reach**
 - **Your machine.** Your laptop runs the `fugaro` CLI, Terraform and `gcloud` (during `fugaro setup`) and your own agent; the run's agent is in a Cloud Run container.
 - **Other repositories' cloud resources.** Each workflow's job runs as its own service account, which can read only the secrets that workflow mounts and only its own repository's run, cache and lock objects. Each repository builds with its own account into its own registry. **On GitHub the job holds the App's private key**, so a compromised run can mint tokens for every repository the App is installed on: install the App only on repositories Fugaro serves, or use one App per repository for isolation.
@@ -100,7 +106,7 @@ The engine is generic: everything specific to a repository lives in its `fugaro.
 - **Log isolation.** Run logs carry agent output, so by default they go to Fugaro's own log bucket, which only launchers and operators (and the project's owners and editors) can read.
 - **Pinned releases.** Release checksums are signed with cosign; `fugaro setup` resolves the base image's release tag on ghcr.io, verifies the cosign signature the release attached to that exact digest, and pins the digest through the installation's own Artifact Registry remote repository — nothing is copied and nothing is pushed; `--expect-digest` cross-checks the verified digest. It pins the plugin to the binary's release.
 
-The full model, with its residual risks: [design §6](docs/design/v1.md#6-security-model). Budget setup: [docs/gcp-setup.md](docs/gcp-setup.md#turning-the-model-budget-on).
+The full model, with its residual risks: [design §6](docs/design/v1.md#6-security-model). Budget setup: `fugaro update --firebase-project <gcp-project-id> --budget-mode observe` turns it on counting-only, `fugaro budget set` writes the caps, `--budget-mode enforce` is what refuses a call, and `off` turns it back off ([design/m9-budget-and-dashboard.md](docs/design/m9-budget-and-dashboard.md)).
 
 ## Per-repository configuration
 
@@ -114,7 +120,7 @@ git:
   provider: github            # github | bitbucket
   base_branch: main
 agent:
-  auth: oauth                 # oauth | api-key | vertex
+  auth: oauth                 # oauth | api-key | vertex | cascade
   review_rounds: 2            # review and fix rounds before the PR is marked ready
   max_budget_usd: 25          # per stage
 workflows:
@@ -129,7 +135,7 @@ workflows:
     timeouts: { total: 90m, stage: 40m, verify: 30m, finalize_reserve: 5m }
 ```
 
-`agent.models` pins a model per role (coder, reviewer, background), and an optional `budget:` block can only tighten the owner's caps ([docs/gcp-setup.md](docs/gcp-setup.md#turning-the-model-budget-on)). **Other models (experimental):** the coder can be a non-Anthropic model through OpenRouter, while Claude Code stays the harness and, by default, Claude the reviewer; the project owner opts each repository in. Setup: [Other models through OpenRouter](#other-models-through-openrouter); the full guide is [docs/multi-model.md](docs/multi-model.md).
+`agent.models` pins a model per role (coder, reviewer, background), and an optional `budget:` block can only tighten the owner's caps ([design/m9-budget-and-dashboard.md](docs/design/m9-budget-and-dashboard.md)). **Other models (experimental):** the coder can be a non-Anthropic model through OpenRouter, while Claude Code stays the harness and, by default, Claude the reviewer; the project owner opts each repository in. Setup: [Other models through OpenRouter](#other-models-through-openrouter); the full guide is [docs/multi-model.md](docs/multi-model.md).
 
 **Recipes:** pick the review loop per run (`fugaro run --recipe solo`) or per repository (`agent.recipe`); see [docs/recipes.md](docs/recipes.md).
 
@@ -166,7 +172,7 @@ A run's coder can be a non-Anthropic model served by OpenRouter — one key for 
 
    ```yaml
    agent:
-     auth: api-key                     # oauth and vertex are refused with a provider model
+     auth: api-key                     # oauth, vertex and cascade are refused with a provider model
      models:
        coder: deepseek/deepseek-v4.1-flash
        reviewer: deepseek/deepseek-v4.1-flash
@@ -178,9 +184,9 @@ A run's coder can be a non-Anthropic model served by OpenRouter — one key for 
 
 ## Requirements
 
-- For the GCP backend, the only one today: a Google Cloud project with billing enabled and `serviceusage.googleapis.com` on; `fugaro setup` enables the other APIs it needs. Setting up the installation needs the Owner role ([precondition 7](docs/gcp-setup.md#preconditions)).
+- For the GCP backend, the only one today: a Google account that may create a GCP project and link billing to it. `fugaro setup` creates the project, as you, so you are its Owner, and enables the APIs it needs ([prerequisites](docs/gcp-setup.md#prerequisites); if your organization restricts either: [what to ask IT](docs/gcp-setup.md#not-an-owner)).
 - `gcloud` signed in with Application Default Credentials, and Terraform 1.9 or newer (before 2.0) on `PATH`.
-- A GitHub or Bitbucket Cloud repository, and a GitHub App or a Bitbucket repository access token for it.
+- A GitHub or Bitbucket Cloud repository, and a GitHub App or a Bitbucket access token for it — a repository access token, or one workspace or project access token stored once for many repositories through the allow-list ([docs/git-providers.md](docs/git-providers.md#one-workspace-or-project-token-for-many-repositories)).
 - A Claude credential: a subscription token (`claude setup-token`), an Anthropic API key, or Vertex AI.
 - Claude Code, for `/fugaro:setup` and the plugin.
 - macOS or Linux (Windows: untested). Docker is optional, for local image builds.
@@ -203,6 +209,10 @@ Open design questions are tracked in [docs/SPEC.md](docs/SPEC.md#9-open-question
 
 Ideas, issues, and PRs are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). The project is young, so opening an issue to discuss a direction before a large change is appreciated. Please follow the [Code of Conduct](CODE_OF_CONDUCT.md); report vulnerabilities as [SECURITY.md](SECURITY.md) describes.
 
-## License
+## Licensing
 
-[MIT](LICENSE)
+Fugaro's core is released under the [MIT licence](LICENSE). [`LICENSING.md`](LICENSING.md) says which parts of the repository that licence does not cover: the desktop console (`console/`, from console 0.113.0), the mobile app (`mobile/`) and the reserved `ee/` directory are under a business licence of their own, counsel's text of 2026-10-27, which names the Subscription Terms (not published yet) and the contributor agreement, published at https://gist.githubusercontent.com/dimipaun/d5bb5db937f973b25be5778ce14ec8dd/raw/64918c7fc0f782327db82e7e790db53c3d47d09f/fugaro-cla.md, and the vendored skills under `.agents/` are third-party code. Every release before 0.11.0 is MIT, so is every console release up to and including 0.112.0, and the core stays MIT.
+
+### Trademarks
+
+The licences grant no right to the Fugaro name or logo: they license the code, not the brand.

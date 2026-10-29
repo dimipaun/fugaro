@@ -33,7 +33,7 @@
  * or a release page's — is the choice the draft takes off this page.
  */
 import { loadSite } from '../content.ts'
-import { copyControlHTML } from '../lib/copy-control.mjs'
+import { commandPieces, copyControlHTML } from '../lib/copy-control.mjs'
 
 const site = loadSite()
 const install = site.install
@@ -52,118 +52,127 @@ if (!path_) {
 const command = path_.commands[0]
 ---
 
-<section class="home-install" aria-labelledby="home-install-title" data-source="website/data/install.yaml">
-  <div class="home-install-panel">
-    {/* The block's own name, and the board's line: what a reader does next. It is the heading
-        a reader navigating by headings lands on, and the button below it is the same
-        instruction as a control. */}
-    <h2 class="home-install-title display-md" id="home-install-title">Ship your first run</h2>
-
-    {/* Written on one line: whitespace inside `<pre>` is shown, so an indented template would
-        indent the command on the page. The control beside it is `src/lib/copy-control.mjs`'s
-        markup, emitted `hidden` and revealed by the site's script (P6, D183) — and it is a
-        `<button>`, not a link, which is what keeps this block's one link the button below. */}
-    <div class="command-block" data-copy>
-      <Fragment set:html={copyControlHTML('Copy the install command')} />
-      <pre class="home-install-command"><code>{command}</code></pre>
+<section class="home-install" data-reveal-block aria-labelledby="home-install-title" data-source="website/data/install.yaml">
+  <div class="home-install-inner">
+    {/* The closing line: what a reader does next, set large on the accent field. */}
+    <div class="home-install-words">
+      <h2 class="home-install-title display-lg" id="home-install-title">Ship your first run</h2>
+      {path_.note && <p class="home-install-note">{path_.note}</p>}
     </div>
 
-    {path_.note && <p class="home-install-note">{path_.note}</p>}
-
-    {/* The one call to action: filled with the accent, the same pair the hero's own primary
-        link is set in, and larger than it — this is the page's last word on what to do, and
-        the reader who has read the slider is the reader it is for. */}
-    <p class="home-install-cta">
-      <a class="home-install-button" href="/getting-started/">Get started</a>
-    </p>
+    {/* The first step, already open: the command a reader runs, with its copy control, and the
+        button that leads through the rest. `data-ui` marks it as a fragment of the product's own
+        surface (a terminal line), where a control keeps its own conventions. Written on one line
+        inside `<pre>`, because whitespace there is shown. */}
+    <div class="home-install-panel" data-ui>
+      <p class="home-install-label">In a terminal</p>
+      <div class="command-block" data-copy>
+        <Fragment set:html={copyControlHTML('Copy the install command')} />
+        <pre class="home-install-command"><code>{commandPieces(command).map((piece, i) => (i === 0 ? piece : <><wbr />{piece}</>))}</code></pre>
+      </div>
+      <p class="home-install-cta">
+        <a class="home-install-button" href="/getting-started/">Get started</a>
+      </p>
+    </div>
   </div>
 </section>
 
 <style>
-  /* Tokens only (W1.2), and no colour of this component's own: the accent is the page's, and
-     the button is the second place it is used as a fill (the hero's call to action is the
-     first, and `a11y.mjs` computes that pair at 4.5:1).
-
-     **No top padding, because the block above already carries the gap**: every top-level block
-     on this page carries the gutter and the room below itself, so a top padding here would be a
-     second gap stacked on the grid's (`website/test/base-styles.mjs`'s `homeRhythmFailures`
-     refuses exactly that). The bottom stays: it is the page's own tail, the same room between
-     the last line of prose and the footer. */
+  /* Tokens only (W1.2). The page's last block: a field of the accent, the full width of the
+     page, with the ground as its ink (the pair `a11y.mjs` computes for the buttons). It carries
+     no top padding of its own beyond its field, because the block above pads the gap. */
   .home-install {
-    max-width: var(--page-max);
-    margin: 0 auto;
-    padding: 0 var(--space-md) var(--space-3xl);
+    padding: var(--space-3xl) var(--frame-gutter) var(--space-3xl);
+    background: var(--accent);
+    color: var(--ground);
   }
 
-  /* The panel: the board's box around the whole block. The hairline is the accent's, because
-     this is the page's last word and the one box on it that is a call to action rather than a
-     section; the wash behind it is a gradient of palette tones in `background-image` (a colour
-     function would be a literal no palette holds, and `background` would make the contrast
-     check read a gradient as the one colour the text sits on). */
-  .home-install-panel {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: var(--space-md);
-    padding: var(--space-2xl) var(--space-lg);
-    border: var(--border-width) solid var(--accent);
-    border-radius: var(--radius-xl);
-    background-image: linear-gradient(120deg, var(--panel) 0%, var(--surface) 60%, var(--panel) 100%);
+  .home-install-inner {
+    display: grid;
+    gap: var(--space-xl);
+    align-items: end;
   }
 
   .home-install-title {
     margin: 0;
-  }
-
-  /* The bar the command sits in, held to the site's measure rather than the page's: one command
-     does not need the whole page, and a bar that spanned it would read as a band across the
-     foot of the page rather than as a command a reader copies. */
-  .home-install .command-block {
-    width: 100%;
-    max-width: var(--measure);
-  }
-
-  /* The command's own look. What it does *not* do here is decide that the command wraps:
-     `base.css`'s `.command-block > pre` is where the wrapping is declared, for this page's
-     command and for every other command on the site. */
-  .home-install-command {
-    margin: 0;
-    padding: var(--space-2xs) var(--space-sm);
-    border-radius: var(--radius-md);
-    background: var(--ground);
-    color: var(--accent-on-dark);
-    font-family: var(--font-mono);
-    font-size: var(--font-size-sm);
+    max-width: 9ch;
+    color: var(--ground);
   }
 
   .home-install-note {
+    margin: var(--space-md) 0 0;
+    color: var(--ground);
+    font-size: var(--font-size-lg);
+    font-weight: var(--weight-semibold);
+  }
+
+  /* The open first step: a panel in the ground's tone on the accent field. */
+  .home-install-panel {
+    display: grid;
+    gap: var(--space-sm);
+    padding: var(--space-lg);
+    border-radius: var(--radius-md);
+    background: var(--ground);
+    color: var(--text);
+  }
+
+  .home-install-label {
     margin: 0;
-    max-width: var(--measure);
-    font-size: var(--font-size-sm);
-    line-height: var(--leading-normal);
     color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .home-install-command {
+    margin: 0;
+    padding: var(--space-xs) var(--space-sm);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--accent-on-dark);
+    font-family: var(--font-mono); /* taste-skill-ignore: a real command in <pre><code> */
+    font-size: var(--font-size-base);
   }
 
   .home-install-cta {
     margin: var(--space-2xs) 0 0;
   }
 
-  /* The button, at the size the board asks for: the site's own filled primary, one step up in
-     type and in padding from the hero's, and a target well over the 44 px the owner's brief
-     measures every control against. `display: inline-flex` rather than `inline-block` so the
-     label is centred in the box it makes, and `text-decoration: none` because it is a button
-     rather than a link in running text. */
+  /* The page's last word on what to do: the same shape as the hero's button, at full width in
+     the panel so a thumb finds it. */
   .home-install-button {
-    display: inline-flex;
+    display: flex;
     align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
     min-height: 56px;
     padding: 0 var(--space-xl);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-sm);
     background: var(--accent);
     color: var(--ground);
-    font-family: var(--font-sans);
     font-size: var(--font-size-lg);
     font-weight: var(--weight-black);
     text-decoration: none;
+    transition: transform var(--duration-fast) var(--ease-out), background-color var(--duration-fast) var(--ease-out);
+  }
+
+  .home-install-button:active {
+    transform: scale(0.97);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .home-install-button:hover {
+      background: var(--accent-on-dark);
+    }
+  }
+
+  @media (min-width: 64rem) {
+    .home-install {
+      padding-block: var(--space-4xl);
+    }
+
+    .home-install-inner {
+      grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+      gap: var(--space-2xl);
+    }
   }
 </style>

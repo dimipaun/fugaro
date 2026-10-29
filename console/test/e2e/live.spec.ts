@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See console/LICENSE.md for the terms.
 // The Live screen in a real window (desktop-console plan Task 2.1; design
 // sections 6.1 rules 2 and 3, 6.2 screen 1).
 //
@@ -29,11 +31,19 @@
 //
 // **The goldens.** `test/e2e/__screenshots__/live-{light,dark}-<platform>.png`
 // (one per theme per platform: `darwin` and `linux`, because macOS and Linux
-// pixels differ and CI runs both) are compared, never written by a run: `playwright.config.ts` sets
-// `updateSnapshots: 'none'`, so a missing baseline FAILS (Playwright's
-// `'missing'` would write one and pass, comparing nothing). They are recorded by
-// an owner, once on each platform the comparison runs on, with
-// `npx playwright test live.spec.ts --update-snapshots`, and the
+// pixels differ and CI runs both) are compared, never written by a run:
+// `playwright.config.ts` sets `updateSnapshots: 'none'`, so a missing baseline
+// FAILS a comparison run (Playwright's `'missing'` would write one and pass,
+// comparing nothing). They are recorded by an owner, once on each platform the
+// comparison runs on, with
+//
+//   cd console && npm run build && npx playwright test live.spec.ts --update-snapshots
+//
+// — `npm run build` is in the line because the specs read `dist/` and
+// `npx playwright test` does not build, and on Linux it takes
+// `xvfb-run --auto-servernum` before `npx playwright test` because Electron
+// needs a display. `test/support/goldens.ts`'s `recordCommand` is that line, per
+// spec and per platform, and it is what a failed golden's message prints. The
 // three PNG-writing and PNG-reading tests below are the only ones that need
 // them. Until they are committed those tests fail, on purpose. The one way to
 // run the rest of the file without them is the explicit
@@ -86,6 +96,7 @@ import type { JSONDoc } from '../../src/source/source'
 import { LIVE_THEMES } from '../../src/renderer/screens/live'
 import { inRangeCliStub } from '../support/cliStub'
 import type { CliStub } from '../support/cliStub'
+import { expectGolden, expectGrounded } from '../support/goldens'
 import { launchConsole } from '../support/launch'
 
 // The console's own directory, from this file's location: `test/e2e/x.spec.ts`
@@ -99,13 +110,20 @@ const goldenDir = join(consoleDir, 'test', 'e2e', '__screenshots__')
  * the golden tests run and a missing baseline fails them. */
 const SKIP_GOLDENS = process.env['FUGARO_CONSOLE_GOLDENS'] === 'skip'
 
+/** SPEC is this file's own name: what a re-record command has to name, and what
+ * every golden failure here quotes back to the reader. */
+const SPEC = 'live.spec.ts'
+
 /** The compiled modules the screen is made of, in dependency order. */
 const MODULES: readonly string[] = Object.freeze([
   'shared/availability.js',
   'shared/sanitize.js',
+  'shared/launcher.js',
+  'shared/rigor.js',
   'shared/version.js',
   'shared/schema.js',
   'renderer/app.js',
+  'renderer/writes.js',
   'renderer/screens/live.js',
 ])
 
@@ -182,6 +200,7 @@ function domFactory() {
   }
   return {
     create: function (tag) { return wrap(document.createElement(tag)); },
+    createNS: function (tag) { return wrap(document.createElementNS('http://www.w3.org/2000/svg', tag)); },
     wrap: wrap,
   };
 }
@@ -193,7 +212,7 @@ function domFactory() {
  * one (design section 6.3) -- and mount what the last of them draws. One document
  * is the usual case; a sequence is how a test can see the burn window itself,
  * whose bars depend on the clock the model was built at. */
-function draw(frames: readonly JSONDoc[], theme: string): string {
+function draw(frames: readonly JSONDoc[], theme: string, runs: JSONDoc | null = null): string {
   return `(function () {
 ${LOADER}${MODULES.map(moduleSource).join('\n')}${FACTORY}
 var live = load('/renderer/screens/live.js');
@@ -202,10 +221,15 @@ var history = new live.BurnHistory();
 var factory = domFactory();
 var tree = null;
 var frames = ${JSON.stringify(frames)};
+// The rigor join: the live frame carries no mode, so a row's mode is read from
+// a runs-ls document and matched by run id (shared/rigor.js). A spec that
+// passes none is a console that has not made the join.
+var runs = ${JSON.stringify(runs)};
+var rigor = runs === null ? new Map() : load('/shared/rigor.js').rigorIndex(runs);
 for (var i = 0; i < frames.length; i++) {
   var decoded = schema.decodeSnapshot(frames[i], 'the fixture frame');
   if (!decoded.ok) return { error: decoded.skew.because };
-  var model = live.buildLiveModel(decoded.value, history);
+  var model = live.buildLiveModel(decoded.value, history, null, rigor);
   if (i === frames.length - 1) tree = live.renderLive(factory, model, ${JSON.stringify(theme)});
 }
 var previous = document.getElementById('live-mount');
@@ -235,6 +259,9 @@ interface Screen {
   readonly killed: readonly (string | null)[]
   readonly killText: string | null
   readonly flags: readonly string[]
+  /** the rigor chip on each run row that carries one, in row order: empty when
+   * no row's run is in the joined run list */
+  readonly modes: readonly string[]
   readonly sparkBars: number
   /** each sparkline bar's own height, as drawn (`data-height`): the reading a
    * clock that moved the burn window's cut would change */
@@ -270,6 +297,7 @@ function screen(page: Page): Promise<Screen> {
       killed: attributes('.live-repo', 'data-killed'),
       killText: scope.querySelector('.live-kill')?.textContent ?? null,
       flags: texts('.live-run-flag'),
+      modes: texts('.live-run-mode'),
       sparkBars: all('.live-burn-bar').length,
       sparkHeights: attributes('.live-burn-bar', 'data-height'),
       anchors: all('a').length,
@@ -370,14 +398,20 @@ test.describe('the Live screen', () => {
 
   /** mount draws these documents -- one, or a sequence observed through one
    * `BurnHistory` -- and fails with the window's own words if the console's
-   * decoder refused any of them. */
-  async function mount(document: JSONDoc | readonly JSONDoc[], theme: string): Promise<void> {
+   * decoder refused any of them. `runs` is the `runs ls --json` document the
+   * rows' rigor chips are joined from, and a case that passes none is a console
+   * that has not made the join. */
+  async function mount(
+    document: JSONDoc | readonly JSONDoc[],
+    theme: string,
+    runs: JSONDoc | null = null,
+  ): Promise<void> {
     const frames = Array.isArray(document) ? document : [document]
     const result = await app.evaluate(async ({ BrowserWindow }, source) => {
       const window = BrowserWindow.getAllWindows()[0]
       if (window === undefined) return { error: 'the console has no window' }
       return (await window.webContents.executeJavaScript(source, true)) as { error?: string }
-    }, draw(frames, theme))
+    }, draw(frames, theme, runs))
     expect(result.error).toBeUndefined()
   }
 
@@ -421,18 +455,71 @@ test.describe('the Live screen', () => {
     expect(drawn.text).toContain('n/a')
   })
 
-  test('draws the live fixture', async () => {
-    test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
+  test('draws each run\'s rigor mode, joined from the runs list by run id', async () => {
+    // Owner request 2026-10-25: the mode on a Live row. **The live frame does
+    // not carry it** -- the frame is `JSONRun` -- so the chip is a join against
+    // `runs ls --json` by run id (`shared/rigor.js`'s `rigorIndex`), and this is
+    // the only place that join runs against the real compiled module in the
+    // window. The runs list names both of the frame's runs, so both rows draw a
+    // chip, and each is the word this build gives that mode.
+    const runs: JSONDoc = {
+      project: 'example-project',
+      runs: [
+        { run: '20261015-120000-aa01', rigor: { mode: 'poc', from: 'request' } },
+        { run: '20261015-120400-aa03', rigor: { mode: 'critical', from: 'area', areas: [{ name: 'payments', mode: 'critical' }] } },
+      ],
+      warnings: [],
+    }
+    await mount(theLastFrame(), 'light', runs)
+    expect((await screen(page)).modes).toEqual(['POC', 'Critical'])
+
+    // A console that has not made the join draws no chip at all -- never a mode
+    // taken from another run -- and one whose list knows only the other run
+    // draws the chip on that row alone.
     await mount(theLastFrame(), 'light')
-    await expect(page.locator(THE_MOUNT)).toHaveScreenshot('live-light.png')
+    expect((await screen(page)).modes).toEqual([])
+    const rows = runs['runs'] as readonly JSONDoc[]
+    const only = rows[0]
+    if (only === undefined) throw new Error('the runs document has no rows')
+    await mount(theLastFrame(), 'light', { ...runs, runs: [only] })
+    expect((await screen(page)).modes).toEqual(['POC'])
   })
 
-  test('draws the live fixture in the dark theme', async () => {
+  test('is painted from the design tokens, not from the browser defaults', async () => {
+    // Design section 6.2's computed-ground assertion, and the one case in this
+    // file that is red when the stylesheet stops being linked. Every read above
+    // passes on a tree nothing paints: the theme travels as a `data-theme`
+    // attribute the renderer stamps (`root.setAttribute('data-theme', theme)`),
+    // so a document with no CSS at all satisfies all of them. This draws the
+    // screen once per theme and holds the app's ground, the screen's text colour
+    // and the two tokens they are painted from to the shipped palette
+    // (`test/support/goldens.ts`).
+    //
+    // NOT a golden test, deliberately: `FUGARO_CONSOLE_GOLDENS=skip` does not
+    // skip it. Nothing here reads a PNG -- it is the assertion that the
+    // stylesheet the console serves is the one the screens are drawn with, so an
+    // unstyled tree has to be red on its own account rather than recorded as a
+    // fresh baseline nobody compared.
+    await expectGrounded(page, (theme) => mount(theLastFrame(), theme), {
+      themes: LIVE_THEMES,
+      mount: THE_MOUNT,
+      text: 'h1.live-project',
+      screen: 'the Live screen',
+    })
+  })
+
+  test('draws the live fixture', async ({}, testInfo) => {
+    test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
+    await mount(theLastFrame(), 'light')
+    await expectGolden(page.locator(THE_MOUNT), 'live-light.png', { spec: SPEC, consoleDir, testInfo })
+  })
+
+  test('draws the live fixture in the dark theme', async ({}, testInfo) => {
     await mount(theLastFrame(), 'dark')
     const drawn = await screen(page)
     expect(drawn.theme).toBe('dark')
     test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
-    await expect(page.locator(THE_MOUNT)).toHaveScreenshot('live-dark.png')
+    await expectGolden(page.locator(THE_MOUNT), 'live-dark.png', { spec: SPEC, consoleDir, testInfo })
   })
 
   test('windows the burn sparkline at the document\'s own clock', async () => {
@@ -528,7 +615,7 @@ test.describe('the Live screen', () => {
 
     const forced = await page.evaluate(() => {
       const scope: ParentNode = document.getElementById('live-mount') ?? document.createDocumentFragment()
-      const row = scope.querySelector('li.live-run')
+      const row = scope.querySelector('tr.live-run')
       const computed = row === null ? null : getComputedStyle(row)
       const number = scope.querySelector('.live-num')
       return {

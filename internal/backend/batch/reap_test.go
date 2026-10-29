@@ -837,6 +837,160 @@ func TestReaperRefusesAPartialJobListing(t *testing.T) {
 	}
 }
 
+// TestReaperRefusesAJobListedOutsideItsLocation: the reaper asks one location
+// for its jobs, and the names those jobs are acted on by are the ones it
+// derived itself (jobNameFor) -- jobs.get (deleteQueued's read-back) and
+// jobs.delete take j.Name as the pass set it, and jobs.delete is the
+// destructive verb of the five in this file's header. A listing that answers a
+// job whose name cannot be placed in this installation's location is therefore
+// not the listing this pass asked for: the runs the job claims would be the
+// one thing the job pass could not hand to the instance pass -- a job it never
+// attributed is a run whose VMs it never owned, which is exactly what the
+// instance pass deletes. So the pass ends before anything is deleted, with an
+// error rather than a report, as it does on a partial listing.
+//
+// The fake's ProjectNumber knob is what makes the API answer with a name that
+// is not this installation's: it is documented as "replaces the project ID in
+// every name the fake returns, as the real API may", and here it is set to
+// another project's ID rather than to a number -- a rendering the reaper
+// cannot read as its own project, and the one shape it must refuse. That a
+// NUMBER is accepted (and rewritten) is the other half,
+// TestReaperAcceptsTheProjectNumberSpelling; the region arm of the same check
+// is pinned by TestJobNameForKeepsEveryNameInThisInstallationsLocation, which
+// no fake can reach (a name in another region is a name the fake never
+// renders).
+//
+// The error is also read for what it must NOT carry: the name is the one value
+// this pass must not act on, and a message that printed it would read as a job
+// to go and fix rather than as a listing that is not the one that was asked
+// for.
+//
+// Mutation (drop the check): the pass deletes the stuck job and the leaked VM
+// and returns no error, so the first and last assertions fail together.
+func TestReaperRefusesAJobListedOutsideItsLocation(t *testing.T) {
+	rt := newReaperTest(t, nil)
+	rt.bf.ProjectNumber = "another-project"
+	stuck := rt.addJob(t, "20260927-100000-abcd", "RUNNING", rt.stuck())
+	rt.vm("vm-1", runLabels(t, "20260927-100002-abcd"), rt.old())
+	_, err := rt.r.Reap(context.Background())
+	if err == nil {
+		t.Fatal("Reap on a listing that answers a job of another location: want an error")
+	}
+	if want := rt.r.location(); !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want it to name the location this pass asked about (%s)", err, want)
+	}
+	if strings.Contains(err.Error(), "another-project") {
+		t.Fatalf("error = %v, want no value from the listing: the name is the thing this pass must not act on", err)
+	}
+	if got := rt.bf.Deletes(); len(got) != 0 {
+		t.Fatalf("jobs.delete = %v on a listing from outside the location, want none", got)
+	}
+	if st := rt.bf.State(stuck); st != "RUNNING" {
+		t.Fatalf("the stuck job's state is %q, want RUNNING: nothing may be deleted from a listing that is not the one this pass asked for", st)
+	}
+	if got := rt.cf.Deletes(); len(got) != 0 {
+		t.Fatalf("instances.delete = %v on a listing from outside the location, want none: a job this pass never placed is a run it never owned", got)
+	}
+}
+
+// TestReaperAcceptsTheProjectNumberSpelling is the boundary of the check
+// above, and the reason it is not "the name must start with the project ID":
+// Batch answers a job's name with the project NUMBER (design §2.3 -- the
+// backend's own canonical rewrites it back, and TestExecutionRewritesTheProjectNumber
+// pins the create-time half of it), so a check that refused the number would
+// refuse every listing from an API that spells the project that way, and the
+// reaper -- a safety net that must run unattended -- would reap nothing at all
+// and say so on every pass.
+//
+// The number is not merely tolerated, it is replaced: the name the pass acts
+// on is the one jobNameFor derived from the configured project, which is what
+// the action's target has to show. A pass that accepted the number and then
+// acted on the listing's own spelling would be sending jobs.delete to a name
+// whose project segment it never checked against anything -- the hole this
+// test's sibling refuses on the other side of the boundary.
+//
+// Mutation (compare the project segment to the configured ID exactly): this
+// fails, with the pass refusing its own listing. Mutation (accept the number
+// and keep the listing's spelling): the target assertion fails, naming
+// projects/123456789/... .
+func TestReaperAcceptsTheProjectNumberSpelling(t *testing.T) {
+	rt := newReaperTest(t, nil)
+	rt.bf.ProjectNumber = "123456789"
+	id := rt.addJob(t, "20260927-100000-abcd", "RUNNING", rt.stuck())
+	rep := rt.reap(t)
+	if !hasAction(rep, ActionDeleteJob, rt.name(id)) {
+		t.Fatalf("actions = %v, want the stuck job deleted as %s: the pass acts on the name it derived from its own project, not on the listing's spelling", rep.Actions, rt.name(id))
+	}
+	for _, a := range rep.Actions {
+		if strings.Contains(a.Target, "123456789") {
+			t.Fatalf("action target = %q, want no name carrying the project number: every name this pass acts on is in the project it was configured with", a.Target)
+		}
+	}
+	if got := rt.bf.Deletes(); len(got) != 1 || got[0] != id {
+		t.Fatalf("jobs.delete = %v, want exactly [%s]", got, id)
+	}
+}
+
+// TestJobNameForKeepsEveryNameInThisInstallationsLocation pins the check
+// itself, arm by arm: every name this pass acts on comes from jobNameFor, and
+// what it returns is either a name in this installation's own location or
+// nothing at all.
+//
+// It is a direct test because the other arm cannot be reached through the
+// fakes: gcpfake.Batch renders the project (ProjectNumber, which
+// TestReaperRefusesAJobListedOutsideItsLocation uses) but never the region --
+// it stores a job under the region its create named and answers a get, cancel,
+// delete or list naming another region with NOT_FOUND, because that is what
+// the API does. A listing that answers a name in another region is exactly the
+// server the reaper cannot trust, and no knob can produce it; the arm is still
+// the difference between a name the reaper acts on and a delete sent to
+// another region, so it is pinned here.
+//
+// The region is compared and never rewritten, the project ID is kept, the
+// number is replaced by the configured ID, and everything else -- another
+// project's ID, a malformed name, a part that is not [a-z0-9-] -- is refused.
+func TestJobNameForKeepsEveryNameInThisInstallationsLocation(t *testing.T) {
+	rt := newReaperTest(t, nil)
+	const job = "20260927-100000-abcd"
+	own := rt.name(job)
+	for _, tc := range []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"this installation's own project ID", own, own},
+		{"the project number, which Batch answers a created job with", "projects/123456789/locations/" + testRegion + "/jobs/" + job, own},
+		{"another project's ID", "projects/another-project/locations/" + testRegion + "/jobs/" + job, ""},
+		{"another region", "projects/" + testProject + "/locations/fake-region-b/jobs/" + job, ""},
+		{"another project's number in another region", "projects/987654321/locations/fake-region-b/jobs/" + job, ""},
+		{"a name that is not a Batch job name", "projects/" + testProject + "/locations/" + testRegion + "/jobs", ""},
+		{"another service's resource", "projects/" + testProject + "/locations/" + testRegion + "/executions/" + job, ""},
+		{"a part outside [a-z0-9-]", "projects/" + testProject + "/locations/" + testRegion + "/jobs/2026_0927", ""},
+		{"an empty job id", "projects/" + testProject + "/locations/" + testRegion + "/jobs/", ""},
+		{"an empty project", "projects//locations/" + testRegion + "/jobs/" + job, ""},
+		{"an empty region", "projects/" + testProject + "/locations//jobs/" + job, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := rt.r.jobNameFor(tc.in)
+			if tc.want == "" {
+				if ok {
+					t.Fatalf("jobNameFor(%q) = %q, want no name: this pass may only act inside %s", tc.in, got, rt.r.location())
+				}
+				return
+			}
+			if !ok {
+				t.Fatalf("jobNameFor(%q) = no name, want %q", tc.in, tc.want)
+			}
+			if got != tc.want {
+				t.Fatalf("jobNameFor(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+			if !strings.HasPrefix(got, rt.r.location()+"/jobs/") {
+				t.Fatalf("jobNameFor(%q) = %q, want a name under %s/jobs/", tc.in, got, rt.r.location())
+			}
+		})
+	}
+}
+
 // TestReaperJudgesStucknessByTimeInState is the destructive case the age of a
 // job cannot answer: a run may sit in the queue far longer than the queue
 // deadline -- the deadline is the previous pass's, and a reaper that was not
@@ -1050,8 +1204,9 @@ func TestReaperRefusesAJobWhoseTimeInStateIsUnknown(t *testing.T) {
 		id := rt.addJob(t, "20260927-100000-abcd", "RUNNING", rt.stuck())
 		rt.bf.SetStatusEvents(id)
 		rt.bf.SetRunDuration(id, rt.stuck().String())
-		if got := rt.reap(t).Actions; len(got) != 1 || got[0].Kind != ActionDeleteJob {
-			t.Fatalf("actions = %v, want the job deleted: runDuration says it has been running past the run budget", rt.reap(t).Lines())
+		rep := rt.reap(t)
+		if got := rep.Actions; len(got) != 1 || got[0].Kind != ActionDeleteJob {
+			t.Fatalf("actions = %v, want the job deleted: runDuration says it has been running past the run budget", rep.Lines())
 		}
 	})
 	t.Run("a task-level event is not when the job changed state", func(t *testing.T) {
@@ -1064,8 +1219,9 @@ func TestReaperRefusesAJobWhoseTimeInStateIsUnknown(t *testing.T) {
 			"eventTime": rt.now.Add(-time.Minute).Format(time.RFC3339Nano),
 		})
 		rt.bf.SetRunDuration(id, rt.stuck().String())
-		if got := rt.reap(t).Actions; len(got) != 1 || got[0].Kind != ActionDeleteJob {
-			t.Fatalf("actions = %v, want the job deleted by its runDuration", rt.reap(t).Lines())
+		rep := rt.reap(t)
+		if got := rep.Actions; len(got) != 1 || got[0].Kind != ActionDeleteJob {
+			t.Fatalf("actions = %v, want the job deleted by its runDuration", rep.Lines())
 		}
 	})
 }
@@ -1083,6 +1239,40 @@ func TestReaperKeepsAYoungVM(t *testing.T) {
 	}
 	if !refused(rep, "fake-region-a/vm-1") {
 		t.Fatalf("report = %v, want the young VM refused and named", rep.Lines())
+	}
+}
+
+// TestReaperRefusesAVMWhoseAgeItCannotRead: the age floor is the last thing
+// between a live run's VM and a delete, so a VM whose creationTimestamp the
+// pass cannot read -- an empty one (which the API answers as no timestamp, and
+// the parser reads as the zero time) or one that is not a time at all -- is
+// refused rather than deleted: an unknown age is not an age past the floor. It
+// is the same fail-closed posture as an unreadable job createTime, and the
+// refusal says which, because the report is the audit trail.
+func TestReaperRefusesAVMWhoseAgeItCannotRead(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		plant func(t *testing.T, rt *reapTest)
+	}{
+		{"an empty creationTimestamp", func(t *testing.T, rt *reapTest) {
+			rt.cf.AddInstanceCreated("fake-region-a", "vm-1", runLabels(t, "20260927-100000-abcd"), time.Time{})
+		}},
+		{"a creationTimestamp that is not a time", func(t *testing.T, rt *reapTest) {
+			rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), rt.old())
+			rt.cf.SetInstanceCreatedRaw("fake-region-a", "vm-1", "yesterday")
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			rt := newReaperTest(t, nil)
+			c.plant(t, rt)
+			rep := rt.reap(t)
+			if got := rt.cf.Deletes(); len(got) != 0 {
+				t.Fatalf("a VM whose age is unknown was deleted: %v", got)
+			}
+			if !refusedBecause(rep, "fake-region-a/vm-1", "its creation time is unreadable") {
+				t.Fatalf("report = %v, want the refusal to name the unreadable creation time", rep.Lines())
+			}
+		})
 	}
 }
 
@@ -1447,21 +1637,34 @@ func TestReaperDryRunListsWhatItWouldDelete(t *testing.T) {
 	}
 }
 
-// TestReaperRefusalsCarryAReason checks that every refusal
-// carries why, since the report is the audit trail: a bare "refused" line is
-// useless to the person reading it.
+// TestReaperRefusalsCarryAReason checks that a refusal carries why, since the
+// report is the audit trail: a bare "refused" line is useless to the person
+// reading it. The two refusals a pass with nothing to act on produces are the
+// ones asserted here, each with the reason that belongs to it -- a refusal
+// that names the wrong cause is as unusable as one that names none.
 func TestReaperRefusalsCarryAReason(t *testing.T) {
 	rt := newReaperTest(t, nil)
+	// A VM carrying this installation's managed label and nothing else: no
+	// run can be attributed to it, so it is refused rather than deleted.
 	rt.vm("vm-1", map[string]string{labelManaged: managedValue}, rt.old())
-	rt.addJob(t, "20260927-100000-abcd", "SUCCEEDING", 3*time.Hour)
+	// And a job in a state this build does not know (SUCCEEDING is not one of
+	// Batch's states), which the job pass refuses rather than guesses at.
+	id := rt.addJob(t, "20260927-100000-abcd", "SUCCEEDING", 3*time.Hour)
 	rep := rt.reap(t)
-	if len(rep.Refused) == 0 {
-		t.Fatal("no refusals, want two")
+	if len(rep.Refused) != 2 {
+		t.Fatalf("report = %v, want exactly two refusals: the VM and the job", rep.Lines())
 	}
-	for _, f := range rep.Refused {
-		if f.Target == "" || f.Reason == "" {
-			t.Fatalf("refusal %+v has no target or no reason", f)
+	for _, c := range []struct{ target, reason string }{
+		{"fake-region-a/vm-1", "it carries no " + RunLabel + " label, so it cannot be attributed to a run"},
+		{rt.name(id), `its Batch state "SUCCEEDING" is not one this build knows`},
+	} {
+		if !refusedBecause(rep, c.target, c.reason) {
+			t.Errorf("report = %v, want %s refused with %q", rep.Lines(), c.target, c.reason)
 		}
+	}
+	// Both refusals are fail-closed: neither touched anything.
+	if len(rt.bf.Deletes()) != 0 || len(rt.cf.Deletes()) != 0 {
+		t.Fatalf("a refusal acted: jobs=%v instances=%v", rt.bf.Deletes(), rt.cf.Deletes())
 	}
 }
 
@@ -1749,5 +1952,130 @@ func TestReaperListingsPageAndSort(t *testing.T) {
 	}
 	if len(targets) != 2 || targets[0] != "fake-region-a/vm-a" || targets[1] != "fake-region-b/vm-b" {
 		t.Fatalf("VM actions = %v, want them sorted by zone/name", targets)
+	}
+}
+
+// TestReportLinesPerActionKind: one line of the report, for every ActionKind
+// and for both a pass and a dry run, with and without a reason. This is the
+// rendering the reaper's own Cloud Run job logs and `fugaro reaper` prints, so
+// each line has to name the action, the target and the reason on its own: a
+// reader of a log has no other row to join it to.
+func TestReportLinesPerActionKind(t *testing.T) {
+	const (
+		jobName = "projects/proj-1234/locations/us-east5/jobs/acme-app-web-20260927-100000-abcd"
+		vmName  = "us-east5-a/acme-app-web-20260927-100001-abcd"
+		why     = "still RUNNING 900 minutes into the state, past every run deadline this installation configures"
+	)
+	for _, tc := range []struct {
+		name   string
+		kind   ActionKind
+		dryRun bool
+		target string
+		reason string
+		want   string
+	}{
+		{"a deleted job", ActionDeleteJob, false, jobName, why,
+			"deleted job " + jobName + " (" + why + ")"},
+		{"a job a dry run would delete", ActionDeleteJob, true, jobName, "stuck: " + why,
+			"would delete job " + jobName + " (stuck: " + why + ")"},
+		{"a deleted VM", ActionDeleteVM, false, vmName, "no Batch job of its run answers for it",
+			"deleted VM " + vmName + " (no Batch job of its run answers for it)"},
+		{"a VM a dry run would delete", ActionDeleteVM, true, vmName, "no Batch job of its run answers for it",
+			"would delete VM " + vmName + " (no Batch job of its run answers for it)"},
+		// An action with no reason is a line without the parentheses rather
+		// than one ending in "()".
+		{"an action with no reason", ActionDeleteJob, false, jobName, "", "deleted job " + jobName},
+		// A kind this build does not know renders as itself: a new ActionKind
+		// whose verb nobody wrote shows up in the log rather than as an empty
+		// line or a line that says it deleted something it did not.
+		{"a kind this build does not know", ActionKind("reap-something"), false, jobName, "why",
+			"reap-something " + jobName + " (why)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rep := Report{DryRun: tc.dryRun, Actions: []Action{{Kind: tc.kind, Target: tc.target, Reason: tc.reason}}}
+			if got := rep.Lines(); len(got) != 1 || got[0] != tc.want {
+				t.Fatalf("Lines() = %q, want exactly [%q]", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestReportLinesOrderAndHeadline: the report reads as a header, then what the
+// pass did, then what it refused and why. The header is the line that makes an
+// old log checkable -- the project, the region and the three deadlines every
+// deletion in it was judged by -- and it is written from the Report's own
+// fields, so a Report that names no project (one built by hand) has none.
+func TestReportLinesOrderAndHeadline(t *testing.T) {
+	rep := Report{
+		Project: "proj-1234", Region: "us-east5",
+		QueueDeadline: 25*time.Hour + backend.TaskTimeoutSlack,
+		RunBudget:     25*time.Hour + backend.TaskTimeoutSlack + ReapMargin,
+		MaxAge:        50*time.Hour + 2*backend.TaskTimeoutSlack + ReapMargin,
+		Actions: []Action{
+			{Kind: ActionDeleteJob, Target: "projects/proj-1234/locations/us-east5/jobs/j", Reason: "stuck"},
+			{Kind: ActionDeleteVM, Target: "us-east5-a/vm", Reason: "leaked"},
+		},
+		Refused: []Refusal{{Target: "us-east5-a/other", Reason: "it is not ours"}},
+	}
+	want := []string{
+		"reaped projects/proj-1234/locations/us-east5: queue deadline 25h2m0s, run budget 25h17m0s, max age 50h19m0s",
+		"deleted job projects/proj-1234/locations/us-east5/jobs/j (stuck)",
+		"deleted VM us-east5-a/vm (leaked)",
+		"refused us-east5-a/other: it is not ours",
+	}
+	if got := rep.Lines(); !slices.Equal(got, want) {
+		t.Fatalf("Lines() = %q, want %q", got, want)
+	}
+	// A dry run says so on the header as well: a log that holds only "would
+	// delete ..." lines must not read later as a pass that found nothing to
+	// delete.
+	rep.DryRun = true
+	if got := rep.Lines()[0]; got != "would reap projects/proj-1234/locations/us-east5: queue deadline 25h2m0s, run budget 25h17m0s, max age 50h19m0s" {
+		t.Errorf("a dry run's headline = %q, want it to say would reap", got)
+	}
+	// No project, no headline: the lines of a report built by hand (or of a
+	// pass that never got as far as naming where it looked) start with the
+	// first action.
+	bare := Report{Actions: []Action{{Kind: ActionDeleteJob, Target: "j", Reason: "stuck"}}}
+	if got := bare.Lines(); len(got) != 1 || got[0] != "deleted job j (stuck)" {
+		t.Errorf("Lines() of a report naming no project = %q, want the action alone", got)
+	}
+}
+
+// TestReapReportCarriesWhereItLookedAndByWhat: the context Reap fills in is
+// the one the Reaper decides by, not a second derivation -- a report whose
+// header disagreed with the deadlines the pass actually used would be worse
+// than no header at all. Including on a pass that errored before it decided
+// anything: the report a failed pass returns still says where it was looking.
+func TestReapReportCarriesWhereItLookedAndByWhat(t *testing.T) {
+	rt := newReaperTest(t, nil)
+	rep := rt.reap(t)
+	if rep.Project != testProject || rep.Region != testRegion {
+		t.Errorf("report names %s/%s, want %s/%s", rep.Project, rep.Region, testProject, testRegion)
+	}
+	if rep.QueueDeadline != rt.r.QueueDeadline() || rep.RunBudget != rt.r.RunBudget() || rep.MaxAge != rt.r.MaxAge() {
+		t.Errorf("report deadlines = %v/%v/%v, want the reaper's own %v/%v/%v",
+			rep.QueueDeadline, rep.RunBudget, rep.MaxAge, rt.r.QueueDeadline(), rt.r.RunBudget(), rt.r.MaxAge())
+	}
+	if got := rep.Lines()[0]; !strings.HasPrefix(got, "reaped projects/"+testProject+"/locations/"+testRegion+": ") {
+		t.Errorf("a clean pass's first line = %q, want the headline naming the pass", got)
+	}
+	if rep.DryRun {
+		t.Errorf("a live pass's report says DryRun")
+	}
+	// The failed pass: the instance delete is refused by the API, so Reap
+	// returns an error with the report it built up to that point.
+	rt = newReaperTest(t, nil)
+	rt.cf.FailDeleteWith = http.StatusForbidden
+	rt.vm("vm", runLabels(t, "20260927-100000-abcd"), rt.old())
+	rep, err := rt.r.Reap(context.Background())
+	if err == nil {
+		t.Fatal("Reap succeeded with an instance delete the API refused")
+	}
+	if rep.Project != testProject || rep.Region != testRegion || rep.QueueDeadline != rt.r.QueueDeadline() {
+		t.Errorf("a failed pass's report = %+v, want it to carry the project, region and deadlines it was judging by", rep)
+	}
+	if got := rep.Lines()[0]; !strings.HasPrefix(got, "reaped projects/"+testProject+"/locations/"+testRegion+": ") {
+		t.Errorf("a failed pass's first line = %q, want the headline naming the pass", got)
 	}
 }

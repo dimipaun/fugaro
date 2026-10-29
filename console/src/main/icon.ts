@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See console/LICENSE.md for the terms.
 // The console's application icon (the owner's brief of 2026-10-19): the same
 // mark the website serves, and the two places macOS takes an icon from.
 //

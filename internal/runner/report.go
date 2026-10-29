@@ -57,13 +57,16 @@ func Report(rec *runstore.Record, location string, tail *LogTail) string {
 
 // FollowUpReport is Report with a follow-up's section, when fu is non-nil.
 func FollowUpReport(rec *runstore.Record, location string, tail *LogTail, fu *FollowUpSection) string {
-	return followUpReport(rec, location, tail, fu, nil)
+	return followUpReport(rec, location, tail, fu, nil, "")
 }
 
 // followUpReport is FollowUpReport with notes about the pull request itself
 // (reviewers that could not be requested, a host without drafts), each
-// shown as a line after the outcome.
-func followUpReport(rec *runstore.Record, location string, tail *LogTail, fu *FollowUpSection, notes []string) string {
+// shown as a line after the outcome. filedFrom is the commit the run's
+// backlog write was committed on top of, "" when it wrote nothing: the
+// suite ran there, and the write commit rec.HeadSHA names only writes items —
+// it files them, and a follow-up's closes the ones it fixed (D31).
+func followUpReport(rec *runstore.Record, location string, tail *LogTail, fu *FollowUpSection, notes []string, filedFrom string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "### Fugaro run `%s`\n\n", rec.RunID)
 	if rec.Status == runstore.StatusHalted && rec.Halt != nil {
@@ -110,7 +113,13 @@ func followUpReport(rec *runstore.Record, location string, tail *LogTail, fu *Fo
 		}
 		fmt.Fprintf(&b, "**Reviews:** %s\n\n", strings.Join(parts, "; "))
 	}
-	b.WriteString(testsLine(rec))
+	// The mode and the findings it let through, right under the reviews whose
+	// rounds it decided: the line says what the run was held to, and the table
+	// says what that left unfixed (docs/rigor-modes/implementation-plan.md
+	// T4.2, D9, F19).
+	b.WriteString(rigorLine(rec.Rigor))
+	b.WriteString(toleratedSection(rec))
+	b.WriteString(testsLine(rec, filedFrom))
 	if rec.Cost != nil {
 		b.WriteString(CostLine(*rec.Cost) + "\n\n")
 	} else {
@@ -214,8 +223,93 @@ func secsText(s float64) string {
 	return time.Duration(s * float64(time.Second)).Round(time.Second).String()
 }
 
-func testsLine(rec *runstore.Record) string {
-	last := latestVerifiedTest(rec.Verify, rec.HeadSHA)
+// rigorLine is the mode the run resolved as the report prints it: the block's
+// own words (runstore.RigorRecord.Line, which `fugaro diagnose` prints too)
+// under the report's label, so the pull request and the diagnosis cannot say
+// different things about one fact.
+//
+// "" for a record carrying no block, which is every run that resolved no mode
+// and every record written before the field existed: an absent answer is not
+// the built-in default, and a line claiming one would name a mode nobody
+// resolved (D18's one-value rule).
+func rigorLine(rg *runstore.RigorRecord) string {
+	if rg == nil {
+		return ""
+	}
+	return "**Rigor:** " + rg.Line() + "\n\n"
+}
+
+// toleratedSection is the report's list of the findings the run's resolved
+// mode let through (T4.2, D9, F19): the block `fugaro diagnose --json` prints
+// back from the record under `tolerated`, one row per finding — the score the
+// mode's table read, the word a person reads for it, the mode that tolerated it
+// and the reviewer's own words for the finding — so the pull request says what
+// was left unfixed and not only how many findings the round had.
+//
+// "" for a record carrying no block, which is every run that tolerated
+// nothing: an absent block is a different fact from a block that lists none,
+// and a section over an empty list would claim a decision no mode made.
+//
+// "" too for a round the mode blocked. The record keeps the tolerated half of
+// every round the split scored, a mixed round's included, while the body names
+// what was tolerated only where the round was let through whole (prflow.go
+// toleratedPart): a table over that half would claim a decision Decide never
+// made, and it is the round's own count printed above it that a reader goes by.
+func toleratedSection(rec *runstore.Record) string {
+	tf := rec.Tolerated
+	if tf == nil || len(tf.Findings) == 0 {
+		return ""
+	}
+	// The split is a partition of the round (rigor.Split), so the findings the
+	// record counts as tolerated are all of them — the only count a round the
+	// mode let through whole can leave — and fewer of them is a round Decide
+	// blocked on the rest. The comparison is against the record's own total
+	// rather than the rows, which the cap can shorten.
+	last := seniorReview(rec.Reviews)
+	if last == nil || tf.Total != last.Findings {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("#### Tolerated\n\n")
+	b.WriteString("| Label | Likelihood | Impact | Fix cost | Class | Mode | Finding |\n|---|---|---|---|---|---|---|\n")
+	for _, f := range tf.Findings {
+		fmt.Fprintf(&b, "| %s | %d | %d | %d | %s | %s | %s |\n",
+			tableText(string(f.Label)), f.Likelihood, f.Impact, f.FixCost,
+			tableText(string(f.Class)), tableText(string(f.Mode)), toleratedCell(f.Title))
+	}
+	if tf.Total > len(tf.Findings) {
+		// The table is not the whole answer, and it says so rather than
+		// passing its last row off as the last finding the mode tolerated.
+		// The gap is not always the record's cap (runstore.MaxTolerated):
+		// NewTolerated also drops an entry it cannot read, so the rows are
+		// "some of" the total and never "the first" of it.
+		fmt.Fprintf(&b, "\n%s tolerated in all; the record lists %d of them.\n", Plural(tf.Total, "finding"), len(tf.Findings))
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
+// toleratedCell renders a reviewer's title into the one table cell it can
+// break. The title is the reviewer's own text: a newline in it would end the
+// row, and the line after it would be read as Markdown of its own — a title
+// opening "# " becomes a heading — so its whitespace is flattened first. What
+// is left is a value the render's own text chose, like an artifact's name, so
+// it goes through tableCode: the pipe that would slide the columns is escaped
+// and the fence is longer than any backtick run in it.
+func toleratedCell(title string) string {
+	return tableCode(strings.Join(strings.Fields(title), " "))
+}
+
+// testsLine is the report's account of the suite on the final commit. A run
+// that filed backlog items committed them after the suite's last run and did
+// not run it again (finalize), so for that run the line names the commit the
+// suite ran on and says the final one adds only items, rather than claiming
+// no test ran.
+func testsLine(rec *runstore.Record, filedFrom string) string {
+	last, filed := latestVerifiedTest(rec.Verify, rec.HeadSHA), false
+	if last == nil && filedFrom != "" && filedFrom != rec.HeadSHA {
+		last, filed = latestVerifiedTest(rec.Verify, filedFrom), true
+	}
 	if last == nil {
 		return "**Tests:** no recorded test run on the final commit\n\n"
 	}
@@ -231,7 +325,11 @@ func testsLine(rec *runstore.Record) string {
 	if len(last.Flaky) > 0 {
 		s += ", flaky: " + strings.Join(last.Flaky, ", ")
 	}
-	return s + ")\n\n"
+	s += ")"
+	if filed {
+		s += fmt.Sprintf("; the final commit %s only writes backlog items", shortSHA(rec.HeadSHA))
+	}
+	return s + "\n\n"
 }
 
 // tableText renders a value into a markdown table cell. A pipe ends the cell
@@ -343,15 +441,36 @@ func followUpSection(fu *FollowUpSection, reason string) string {
 	return b.String()
 }
 
-// policyLine is the report's note that fugaro.yaml values looser than the
-// limits in force were dropped, one entry per key; empty when none were.
+// policyLine is the report's note that the run dropped values a layer wrote:
+// the fugaro.yaml values looser than the limits in force, one entry per key,
+// and the stage timeouts the run's own timeouts.stage bounds at least as
+// tightly (T7.6), which are not looser than a limit but get a sentence of
+// their own so the report does not call them one. Empty when nothing was.
+//
+// The stage-timeout sentence is for the entries Clamped marks, and only those.
+// A stage timeout a tighter layer capped is a merge entry like any other — its
+// key, source and from can read exactly like a clamp's — and it takes the
+// "looser than the project's limits" sentence, as it should; a key that has
+// both shapes gets a part in each sentence.
 func policyLine(p *runstore.PolicyRecord) string {
 	if p == nil || len(p.Ignored) == 0 {
 		return ""
 	}
 	type entry struct{ first, last runstore.PolicyIgnored }
 	seen, order, fromDefault := map[string]*entry{}, []string{}, false
+	// The clamped entries, kept apart: the drop's why is the run's own bound
+	// and never "looser than the project's limits" (the value can come from
+	// the project layer itself), so they must not join the sentence below.
+	var clampedKeys []string
+	clamped := map[string]runstore.PolicyIgnored{}
 	for _, ig := range p.Ignored {
+		if ig.Clamped {
+			if _, ok := clamped[ig.Key]; !ok {
+				clampedKeys = append(clampedKeys, ig.Key)
+			}
+			clamped[ig.Key] = ig
+			continue
+		}
 		fromDefault = fromDefault || ig.From == policy.SourceDefaultBranch
 		if e := seen[ig.Key]; e != nil {
 			e.last = ig
@@ -360,22 +479,53 @@ func policyLine(p *runstore.PolicyRecord) string {
 		seen[ig.Key] = &entry{ig, ig}
 		order = append(order, ig.Key)
 	}
-	parts := make([]string, len(order))
-	for i, k := range order {
-		e := seen[k]
-		parts[i] = fmt.Sprintf("%s %s -> %s", PolicyKeyPath(k), policyValue(k, e.first.Value), policyValue(k, e.last.Effective))
+	var b strings.Builder
+	if n := len(order); n > 0 {
+		parts := make([]string, n)
+		for i, k := range order {
+			e := seen[k]
+			parts[i] = fmt.Sprintf("%s %s -> %s", PolicyKeyPath(k), policyValue(k, e.first.Value), policyValue(k, e.last.Effective))
+		}
+		where, limits := " on this branch", "the project's limits"
+		if fromDefault {
+			where, limits = "", "the limits set above them"
+		}
+		were := "were"
+		if n == 1 {
+			were = "was"
+		}
+		fmt.Fprintf(&b, "**Policy:** %s from fugaro.yaml%s %s looser than %s and %s ignored (%s)\n\n",
+			Plural(n, "value"), where, were, limits, were, strings.Join(parts, "; "))
 	}
-	n := len(order)
-	where, limits := " on this branch", "the project's limits"
-	if fromDefault {
-		where, limits = "", "the limits set above them"
+	if n := len(clampedKeys); n > 0 {
+		parts := make([]string, n)
+		for i, k := range clampedKeys {
+			ig := clamped[k]
+			parts[i] = fmt.Sprintf("%s %s from %s -> %s",
+				PolicyKeyPath(k), policyValue(k, ig.Value), policyFrom(ig.From), policyValue(k, ig.Effective))
+		}
+		were := "were"
+		if n == 1 {
+			were = "was"
+		}
+		fmt.Fprintf(&b, "**Policy:** the run's own timeouts.stage bounds a stage at least as tightly as the stage timeout asked for, so %s %s ignored (%s)\n\n",
+			Plural(n, "value"), were, strings.Join(parts, "; "))
 	}
-	were := "were"
-	if n == 1 {
-		were = "was"
+	return b.String()
+}
+
+// policyFrom names the layer that asked for a dropped stage timeout, as
+// PolicyIgnored.From spells it (the ceiling there is the project layer's
+// governance, which the run drops when its own timeouts.stage is tighter).
+func policyFrom(from string) string {
+	switch from {
+	case policy.SourceCeiling:
+		return "the project layer"
+	case policy.SourceDefaultBranch:
+		return "the default branch's fugaro.yaml"
+	default:
+		return "fugaro.yaml on this branch"
 	}
-	return fmt.Sprintf("**Policy:** %s from fugaro.yaml%s %s looser than %s and %s ignored (%s)\n\n",
-		Plural(n, "value"), where, were, limits, were, strings.Join(parts, "; "))
 }
 
 // policyValue is a limit's value for the report. An allow-list's models come

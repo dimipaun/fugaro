@@ -363,7 +363,7 @@ func openBudgetDB(ctx context.Context, o cloudOptions) (*localcfg.Config, *rtdb.
 // budgetDBFor is openBudgetDB's second half, for a config already selected.
 func budgetDBFor(ctx context.Context, lc *localcfg.Config) (*localcfg.Config, *rtdb.Client, error) {
 	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
-		return nil, nil, userErr("project %s has no Firebase budget backend (budget.rtdb_url is not set in its project config): an operator runs fugaro update --firebase-project <firebase-project-id> --name %s", lc.Name, lc.Name)
+		return nil, nil, userErr("project %s has no Firebase budget backend (budget.rtdb_url is not set in its project config): an operator runs fugaro update --firebase-project %s --name %s", lc.Name, lc.GCPProject, lc.Name)
 	}
 	db, err := newBudgetClient(ctx, lc.Budget.RTDBURL, lc.Endpoints.NoAuth)
 	if err != nil {
@@ -511,18 +511,12 @@ func parseRunRef(ref string) (slug, runID string, err error) {
 	return slug, runID, nil
 }
 
-// localRepo is the local config's entry for repo, matched in canonical form.
+// localRepo is the local config's entry for repo, matched in canonical form
+// (localcfg.Config.RepoFor, which `fugaro config list --json` reads its
+// base_branch column through for the same rows: the branch that document shows
+// has to be the branch this launch is cut from).
 func (e *cloudEnv) localRepo(repo string) (localcfg.Repo, bool) {
-	want, err := task.CanonicalRepo(repo)
-	if err != nil {
-		return localcfg.Repo{}, false
-	}
-	for name, r := range e.lc.Repos {
-		if c, err := task.CanonicalRepo(name); err == nil && c == want {
-			return r, true
-		}
-	}
-	return localcfg.Repo{}, false
+	return e.lc.RepoFor(repo)
 }
 
 // repoSlug is repo's storage slug. Its git provider kind comes from the

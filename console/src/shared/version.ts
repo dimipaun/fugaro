@@ -1,12 +1,16 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See console/LICENSE.md for the terms.
 // The version skew handshake (desktop-console plan Task 3.2; design section
 // 7.1, D7, and the skew row of section 6.3).
 //
 // The console is a client of an interface it does not own: every figure it draws
 // arrives as a `--json` document from a `fugaro` binary the operator installed,
 // and that binary is on the operator's own release train. So the console
-// carries **the CLI version it was built and tested against plus the previous
-// minor as its supported range**, reads `fugaro version` at startup, and places
-// what it read in three ways (design section 6.3, D7):
+// carries **a supported range of CLI minors** -- the one it was built and tested
+// against, the previous one, and the newest the launch half was written against
+// (`SUPPORTED_CLI_MINORS` below is the set itself, and is the one place the
+// members are named) -- reads `fugaro version` at startup, and places what it
+// read in three ways (design section 6.3, D7):
 //
 //   * **inside the range** -- it proceeds, and draws nothing about versions at
 //     all;
@@ -79,14 +83,99 @@ import { sanitizeText } from './sanitize'
 export const CLI_VERSION_BUILT_AGAINST = '0.8.1'
 
 /**
- * SUPPORTED_CLI_MINORS is the supported range, and it is exactly the design's
- * sentence: "the minor it was built against, plus the previous one". Stated as
- * minors rather than as versions because that is the granularity of the promise
- * -- the patch levels of a minor are not a compatibility axis (the JSON
- * contract is), and a console that refused `0.8.2` because it was built against
- * `0.8.1` would refuse every patch release.
+ * SUPPORTED_CLI_MINORS is the supported range, stated as minors rather than as
+ * versions because that is the granularity of the promise -- the patch levels of
+ * a minor are not a compatibility axis (the JSON contract is), and a console
+ * that refused `0.8.2` because it was built against `0.8.1` would refuse every
+ * patch release.
+ *
+ * The design's sentence for it is "the minor it was built against, plus the
+ * previous one" (design section 7.1), and **the range is no longer only that**:
+ * `0.11` is V2.5.1a's own addition, and the design names it as the newest CLI
+ * minor the launch half of this console was written against -- the shape of the
+ * reply it decodes (`internal/cli/run.go`'s `launchResult`) and the plan task
+ * its graph joins on, which 0.11.2 is the first release to carry. The range is
+ * therefore a *set*, and the gap it now has (0.9, 0.10, 0.12) is honest: those
+ * releases are drawn in the reduced mode.
+ *
+ * It is deliberately **not** `LAUNCH_CLI_FLOOR`'s minor: the range says which
+ * CLI the console draws its full dashboard for, the floor says which CLI one
+ * operation may be started on, and they are asked separately (`launchSupported`
+ * and `classifyCliVersion`) because a launch needs one read, not a dashboard. A
+ * CLI at or above the floor but above this range is drawn with the version
+ * banner and its spend views held back -- rule 11 asks the floor question and
+ * never range membership -- and a later release widens the range to the minors
+ * whose documents have been re-read.
  */
-export const SUPPORTED_CLI_MINORS: readonly string[] = Object.freeze(['0.7', '0.8'])
+export const SUPPORTED_CLI_MINORS: readonly string[] = Object.freeze(['0.7', '0.8', '0.11'])
+
+/**
+ * LAUNCH_CLI_FLOOR is the oldest CLI the launch operation may be offered to,
+ * and it is the design's number: `--plan-task` is the newest flag the launch's
+ * argv carries, its release is `internal/cli/recipes_skew.go`'s
+ * **`planTaskSince = "0.11.2"`** (a title's `titlesSince` is `0.8.5`, and
+ * `--run-id` and `--task-file` are older still), so the operation is offered
+ * only to an installation whose CLI is at least that
+ * (`docs/design/desktop-console.md` §5.1 rule 11, "a CLI too old for a flag of
+ * the row").
+ *
+ * It is a **patch-level** floor, and it is deliberately not a member of
+ * `SUPPORTED_CLI_MINORS`: that set is minor-granular and reads `0.11` as a
+ * whole minor, which puts `0.11.0` and `0.11.1` inside the range and still
+ * below this floor. Membership in the range says which CLI the console draws
+ * its full dashboard for; this constant says which CLI one operation may be
+ * started on, and the two questions are asked separately (`launchSupported` and
+ * `classifyCliVersion`).
+ *
+ * **What the floor does not cover, and why it is not a reason to raise it.** A
+ * CLI between this floor and the release that first carries `base_branch` in
+ * `config list --json` (the read the launch needs: it runs from the app's own
+ * private, empty directory, so the CLI's own merged order would fall back to
+ * `main` unseen) still answers that command -- it simply has no `base_branch`
+ * key at all. That is a state the operation draws for: `installlist.ts` keeps
+ * an **absent** key apart from a key that is present and empty (§6.8: absent is
+ * the document's word for "an older CLI"), and `recordedBaseBranch` refuses
+ * such an installation with its own sentence, "this CLI does not report base
+ * branches", rather than sending its operator to a setting they have already
+ * set. Raising the floor to that release instead would refuse every launch on
+ * today's CLI for a reason that is not the floor's -- which flag the row may
+ * carry -- and would leave the design's own floor unanswered.
+ */
+export const LAUNCH_CLI_FLOOR = '0.11.2'
+
+/**
+ * launchSupported answers whether one version line may be launched with, by
+ * comparing it against `LAUNCH_CLI_FLOOR` at the patch level.
+ *
+ * The order of the tests is the rule, and each refusal is on the safe side of a
+ * spend. An unreadable line, a `dev` build and a prerelease are all `false`: the
+ * first two cannot be placed at all, and `parseCliVersion` deliberately does not
+ * compare a prerelease tail (`0.11.2-rc.1` is read as `0.11.2`), so accepting
+ * one here would launch with a release that has not happened. A line at or above
+ * the floor -- including a build-metadata tail, which is the same release --
+ * answers `true`, and a line below it answers `false` however close: `0.11.1`
+ * carries no `--plan-task`.
+ *
+ * It is deliberately not a membership test, and the two questions disagree on
+ * the same line in both directions: `0.11` is a member of
+ * `SUPPORTED_CLI_MINORS` while `0.11.0` and `0.11.1` are below this floor, and
+ * the members `0.7` and `0.8` are below it as well. A CLI that reaches the floor
+ * but sits outside the range is drawn by this console's release with its version
+ * banner, which is a banner and not a refusal.
+ */
+export function launchSupported(version: string): boolean {
+  const parsed = parseCliVersion(version)
+  const floor = parseCliVersion(LAUNCH_CLI_FLOOR)
+  if (!parsed.ok || parsed.version.kind !== 'release') return false
+  if (!floor.ok || floor.version.kind !== 'release') return false
+  const [core = ''] = parsed.version.raw.replace(/^v/, '').split('+')
+  if (core.includes('-')) return false
+  const { major, minor, patch } = parsed.version
+  const { major: floorMajor, minor: floorMinor, patch: floorPatch } = floor.version
+  if (major !== floorMajor) return major > floorMajor
+  if (minor !== floorMinor) return minor > floorMinor
+  return patch >= floorPatch
+}
 
 /**
  * CLI_HARD_FLOOR_VERSION is the version below which the console refuses (D7).

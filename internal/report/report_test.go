@@ -364,7 +364,7 @@ func TestByModelSplitsBilledFromNotional(t *testing.T) {
 	if err := json.Unmarshal(j.Bytes(), &doc); err != nil {
 		t.Fatal(err)
 	}
-	if doc.Rows[0].ModelMicros != 0 || doc.Rows[0].NotionalMicros == nil || *doc.Rows[0].NotionalMicros != 90_132_148 {
+	if doc.Rows[0].ModelMicros == nil || *doc.Rows[0].ModelMicros != 0 || doc.Rows[0].NotionalMicros == nil || *doc.Rows[0].NotionalMicros != 90_132_148 {
 		t.Fatalf("json %+v", doc.Rows[0])
 	}
 }
@@ -417,5 +417,146 @@ func TestByPersonCountsRunsWithoutShares(t *testing.T) {
 	r.ByPerson = nil
 	if rep = Build([]Rec{r}, ByPerson); len(rep.Rows) != 1 || rep.Rows[0].Runs != 3 {
 		t.Fatalf("%+v", rep.Rows)
+	}
+}
+
+// TestByModeGroupsRecordedModes: the key is the mode the vocabulary knows, and
+// none for a record that carries no mode or text that is not one -- never the
+// raw text; the money and the notional stay apart.
+func TestByModeGroupsRecordedModes(t *testing.T) {
+	if d, err := ParseDim("mode"); err != nil || d != ByMode {
+		t.Fatalf("ParseDim(mode) = %q, %v", d, err)
+	}
+	mk := func(mode string, spent, notional, compute int64) Rec {
+		r := rec("2026-10-01", "app", spent, notional, compute)
+		r.Mode = mode
+		return r
+	}
+	rep := Build([]Rec{
+		mk("pro", 2_000_000, 0, 100),
+		mk("critical", 3_000_000, 0, 0),
+		mk("HOTFIX", 0, 9_000_000, 0),
+		mk("", 1_000_000, 5_000_000, 0),
+	}, ByMode)
+	if got := strings.Join(keys(rep), ","); got != "critical,pro,none" {
+		t.Fatalf("mode keys %s", got)
+	}
+	if rep.Totals.Spent != 6_000_000 || rep.Totals.Notional != 14_000_000 || rep.Totals.Runs != 4 {
+		t.Fatalf("totals %+v", rep.Totals)
+	}
+	for _, r := range rep.Rows {
+		if strings.Contains(r.Key, "HOTFIX") {
+			t.Fatalf("the raw text reached a key: %+v", rep.Rows)
+		}
+	}
+	var b bytes.Buffer
+	if err := Table(&b, rep, Meta{Since: "2026-10-01", Un: "2026-10-02"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), "n/a") || !strings.Contains(b.String(), "no rigor mode") {
+		t.Fatalf("table:\n%s", b.String())
+	}
+}
+
+// modeRec is one by-mode grouping input: a run's launch day, its mode and the
+// money its record settled.
+func modeRec(mode string, runs int64, spent int64, unreadable bool) Rec {
+	return Rec{
+		DayRecord:  budget.DayRecord{Date: "2026-10-01", SpentMicros: budget.Micros(spent), Runs: runs},
+		Mode:       mode,
+		Unreadable: unreadable,
+	}
+}
+
+// jsonLineOf decodes one JSON line as raw keys, so a test can tell a null from
+// a zero and an absent key from a present one.
+func jsonLineOf(t *testing.T, rep Report) (map[string]json.RawMessage, map[string]json.RawMessage) {
+	t.Helper()
+	var j bytes.Buffer
+	if err := JSON(&j, rep, Meta{Since: "2026-10-01", Un: "2026-10-02"}); err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Rows   []map[string]json.RawMessage `json:"rows"`
+		Totals map[string]json.RawMessage   `json:"totals"`
+	}
+	if err := json.Unmarshal(j.Bytes(), &doc); err != nil {
+		t.Fatalf("%v in %s", err, j.String())
+	}
+	if len(doc.Rows) == 0 {
+		t.Fatalf("the document carries no rows: %s", j.String())
+	}
+	return doc.Rows[0], doc.Totals
+}
+
+// moneyKeys is every money key of a JSON line: the ones an unreadable row
+// nulls rather than writing the 0 the sums would carry.
+var moneyKeys = []string{"model_micros", "model_usd", "notional_micros", "notional_usd", "compute_micros", "compute_usd", "run_hours"}
+
+// TestByModeUnreadableRowIsNotAMeasuredZero: a row made only of records the
+// reader could not read carries the unreadable mark and null money -- n/a in
+// the table and the CSV, never the 0 the sums would carry -- and the totals row
+// summing nothing but such rows is unreadable too, so the report's own TOTAL
+// does not read as a measured $0.00. A row holding one readable record keeps
+// its sums and no mark, and a total over a measured row keeps its figures.
+func TestByModeUnreadableRowIsNotAMeasuredZero(t *testing.T) {
+	all := Build([]Rec{modeRec("pro", 1, 0, true)}, ByMode)
+	if len(all.Rows) != 1 || !all.Rows[0].Unreadable || all.Rows[0].Runs != 1 {
+		t.Fatalf("an all-unreadable row = %+v, want it marked and still counted", all.Rows)
+	}
+	if !all.Totals.Unreadable || all.Totals.Runs != 1 {
+		t.Errorf("the totals row = %+v, want it marked: a total that sums no measured row is no measurement", all.Totals)
+	}
+	var b bytes.Buffer
+	if err := Table(&b, all, Meta{Since: "2026-10-01", Un: "2026-10-02"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"pro", "TOTAL"} {
+		for _, line := range strings.Split(b.String(), "\n") {
+			if f := strings.Fields(line); len(f) > 1 && f[0] == key {
+				if !strings.Contains(line, "n/a") || strings.Contains(line, "0.00") {
+					t.Errorf("the %s table line = %q, want n/a and no 0.00", key, line)
+				}
+			}
+		}
+	}
+	var c bytes.Buffer
+	if err := CSV(&c, all); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(c.String(), "n/a") || strings.Contains(c.String(), "0.000000") {
+		t.Errorf("the CSV = \n%s\nwant n/a in place of every 0.000000", c.String())
+	}
+	row, totals := jsonLineOf(t, all)
+	if got := string(row["unreadable"]); got != "true" {
+		t.Errorf("unreadable = %q, want true", got)
+	}
+	for _, k := range moneyKeys {
+		if got := string(row[k]); got != "null" {
+			t.Errorf("row %s = %q, want null", k, got)
+		}
+		if got := string(totals[k]); got != "null" {
+			t.Errorf("totals %s = %q, want null: the total sums no measured row", k, got)
+		}
+	}
+
+	// One readable record in the row: the sums are measurements, so neither the
+	// row nor the total over it is marked, and both write their money.
+	mixed := Build([]Rec{modeRec("pro", 1, 2_000_000, false), modeRec("pro", 1, 0, true)}, ByMode)
+	if len(mixed.Rows) != 1 || mixed.Rows[0].Unreadable || mixed.Rows[0].Spent != 2_000_000 || mixed.Rows[0].Runs != 2 {
+		t.Fatalf("a mixed row = %+v, want the readable sums and no mark", mixed.Rows)
+	}
+	mrow, mtotals := jsonLineOf(t, mixed)
+	if _, ok := mrow["unreadable"]; ok {
+		t.Errorf("a mixed row carries unreadable: %v", mrow)
+	}
+	if _, ok := mtotals["unreadable"]; ok {
+		t.Errorf("the total over a measured row carries unreadable: %v", mtotals)
+	}
+	if got := string(mrow["model_usd"]); got != `"2.000000"` {
+		t.Errorf("the mixed row's model_usd = %s, want the measured sum", got)
+	}
+	if got := string(mtotals["model_usd"]); got != `"2.000000"` {
+		t.Errorf("the total's model_usd = %s, want the measured sum", got)
 	}
 }

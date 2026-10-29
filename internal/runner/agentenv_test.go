@@ -140,6 +140,34 @@ func TestManagedSettingsBeforeEveryStage(t *testing.T) {
 	}
 }
 
+// The managed settings take precedence over the agent's environment, so a
+// file still naming the gateway would route Claude Code around the sidecar
+// however right the environment is (P5). Both name the sidecar when
+// compression is on -- the file from writeManagedSettings, the environment
+// from the EnvSpec the runner builds -- and the file carries no real key.
+func TestWriteManagedSettingsCarriesCompressionURL(t *testing.T) {
+	h := newGW(t, gwConfig(t, ""), "observe", "", anthropicfake.MessageOK(sonnet, pricing.Usage{Output: 1})).harness
+	h.deps.CompressionForTest = "headroom"
+	read := func(inner step) step {
+		return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+			env, _, raw := settingsEnv(t, h)
+			if env["ANTHROPIC_BASE_URL"] != sidecarURL {
+				t.Errorf("managed settings ANTHROPIC_BASE_URL = %q, want the sidecar's %q: %s", env["ANTHROPIC_BASE_URL"], sidecarURL, raw)
+			}
+			if strings.Contains(raw, plantedKey) {
+				t.Errorf("the real key is in the managed settings: %s", raw)
+			}
+			if got := envValue(req.Env, "ANTHROPIC_BASE_URL"); got != sidecarURL {
+				t.Errorf("the agent's environment ANTHROPIC_BASE_URL = %q, want the sidecar's %q", got, sidecarURL)
+			}
+			return inner(t, ctx, req)
+		}
+	}
+	if _, err := h.run(t, read(implement("feature")), read(review("ship", 0))); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestManagedSettingsDenyBinaryReadsInReviewStages: both review stages'
 // settings deny a Read of every binary kind, and the stages that are not
 // reviews carry the web tools alone. The prompt already tells the reviewer
@@ -331,6 +359,30 @@ func TestRepoSettingsRerouteRefused(t *testing.T) {
 				t.Fatal("the agent ran")
 			}
 		})
+	}
+}
+
+// P6: checkSettingsRouting needs no compression condition of its own, because
+// compression is only ever on with the gateway, whose call site already runs
+// it. This proves that rather than assuming it: the same committed file is
+// refused with compression on, and a run with compression on and no such file
+// is admitted and succeeds.
+func TestCheckSettingsRoutingAppliesWithCompression(t *testing.T) {
+	g := newGWFiles(t, gwConfig(t, ""), "observe", "", map[string]string{".claude/settings.json": rerouting})
+	h := g.harness
+	h.deps.CompressionForTest = "headroom"
+	rec, err := h.run(t)
+	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, ".claude/settings.json") ||
+		!strings.Contains(rec.Reason, "sets ANTHROPIC_BASE_URL") {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if len(h.agent.calls) != 0 {
+		t.Fatal("the agent ran")
+	}
+	ok := newGW(t, gwConfig(t, ""), "observe", "").harness
+	ok.deps.CompressionForTest = "headroom"
+	if rec, err := ok.run(t, implement("feature"), review("ship", 0)); err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("a compression run with no committed routing file was refused: rec = %+v, err = %v", rec, err)
 	}
 }
 

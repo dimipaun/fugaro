@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See console/LICENSE.md for the terms.
 // A fake `fugaro`, for the tests that must observe what the console hands a
 // child process (desktop-console plan Task 1.3).
 //
@@ -50,13 +52,21 @@ export interface StubAnswer {
   /** `split` writes `stdout` in two chunks with a `delayMs` gap, so a test can
    * assert that a document split across two reads is still one document. */
   readonly split?: boolean
+  /** `splitBytes` writes `stdout` as **bytes**, cut at this offset -- which is
+   * the split a `StringDecoder` exists for (T-F3): the two halves are two
+   * chunks on the pipe, and a cut inside a multi-byte character is a valid byte
+   * string whose halves are not valid text on their own. `split` cuts the
+   * *string* in half, which cannot land inside a character; this can. */
+  readonly splitBytes?: number
 }
 
 /** StubScenario keys answers by the command the stub was asked for: the command
  * path the *child* sees, which `commandKey` reads off its argv. The keys are
- * `STUB_COMMAND_KEYS` -- `version`, `watch`, `budget show`, `report`,
- * `runs ls`, `diagnose`, `logs`, `logs --url`, `secrets ls`, `accounts ls`,
- * `doctor` -- derived from the console's spawn table rather than written here.
+ * exactly `STUB_COMMAND_KEYS`, derived from the console's spawn table rather
+ * than written here, and deliberately not spelled out again in this sentence:
+ * the list that used to be here had drifted twice (it was missing `config
+ * list`, `coordinator status` and `run`), and `stub.test.ts` is where a written
+ * out list belongs, because a test is what fails when the table grows.
  * `installStub` refuses a key this list cannot produce, so the spawn table's
  * spelling (`logs --json`) is a loud error and not a silent fallback. */
 export interface StubScenario {
@@ -234,7 +244,12 @@ async function main() {
     }
   }
   if (typeof answer.stdout === 'string' && answer.stdout !== '') {
-    if (answer.split) {
+    if (typeof answer.splitBytes === 'number') {
+      const bytes = Buffer.from(answer.stdout, 'utf8')
+      process.stdout.write(bytes.subarray(0, answer.splitBytes))
+      await sleep(answer.delayMs || 20)
+      process.stdout.write(bytes.subarray(answer.splitBytes))
+    } else if (answer.split) {
       const half = Math.floor(answer.stdout.length / 2)
       process.stdout.write(answer.stdout.slice(0, half))
       await sleep(answer.delayMs || 20)
@@ -283,10 +298,12 @@ export function commandKey(argv: readonly string[]): string {
 }
 
 /**
- * STUB_COMMAND_KEYS is every key a scenario may use: the console's own spawn
- * table (`src/main/spawn.ts`'s `SPAWN_COMMANDS`), read through `commandKey`, so
- * a new operation in the table is a key the stub answers without this file
- * changing and without a second list to keep in step.
+ * STUB_COMMAND_KEYS is every key a scenario may use: the console's one spawn
+ * table, `src/main/spawn.ts`'s `SPAWN_COMMANDS`, read through `commandKey`, so a
+ * new operation in it is a key the stub answers without this file changing and
+ * without a second list to keep in step. (There were two tables until the
+ * owner's design ruling of 2026-10-25 moved the installation rail's own read
+ * onto the dashboard's.)
  *
  * It is exported so a test can hold it, and so `installStub` can refuse a key the
  * stub can never be asked for (see `refuseUnknownCommands`).

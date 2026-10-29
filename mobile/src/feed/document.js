@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See mobile/LICENSE.md for the terms.
 // The contract's document rules over the wire shape (mobile plan, Task P3.2;
 // console/docs/json-contract.md §1, §2, §10.8, §10.13).
 //
@@ -130,6 +132,11 @@ const TOTAL_FIELDS = Object.freeze([
   'counted_usd',
   'spent_usd',
   'notional_usd',
+  // `leased_usd` -- the money open leases hold and have not yet spent -- is
+  // written by `watch --json` now, so it is accepted here like every other
+  // field of the shape; the phone reads nothing from it, because no screen
+  // draws it yet and a figure nothing renders is a figure nobody checked.
+  'leased_usd',
   'daily_cap_usd',
   'percent',
   'burn',
@@ -144,6 +151,8 @@ const REPO_FIELDS = Object.freeze([
   'counted_usd',
   'spent_usd',
   'notional_usd',
+  // As on a total: accepted, and read by nothing here.
+  'leased_usd',
   'daily_cap_usd',
   'percent',
   'burn',

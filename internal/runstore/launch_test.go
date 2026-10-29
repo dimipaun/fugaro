@@ -294,3 +294,58 @@ func allowedPresent(t *testing.T, raw []byte) bool {
 	_, ok := v.Policy.Effective["allowed_models"]
 	return ok
 }
+
+// launch.json gains an optional plan task id (Launch.PlanTask, task GV1.2
+// of the console dependency graph plan): a display-only join hint, written
+// by the launching CLI and read back by runs ls, watch and the console.
+//
+// It is additive and optional, and Launch.Version stays 1: the readers of
+// launch.json decode with json.Unmarshal, which ignores a field they do not
+// know, so an older CLI reads a launch.json that carries one and an older
+// launch.json (every one written before this field) reads back with none.
+//
+// Mutation (drop omitempty from the json tag): a launch with no plan task
+// writes "plan_task": "" and the byte-for-byte assertion below fails; the
+// field would then read as recorded-and-empty rather than as absent.
+func TestOldLaunchWithoutPlanTaskDecodes(t *testing.T) {
+	ctx := context.Background()
+	s := Open(memblob.OpenBucket(nil), "acme-app", "20261024-120000-abcd")
+	// The exact bytes the previous release wrote: no plan_task key at all.
+	old := []byte(`{
+  "version": 1,
+  "run_id": "20261024-120000-abcd",
+  "backend": "cloud-run",
+  "execution": "projects/p/locations/r/jobs/j/executions/e1",
+  "job": "j",
+  "launched_at": "2026-10-24T12:00:00Z"
+}`)
+	if err := s.bucket.WriteAll(ctx, "runs/acme-app/20261024-120000-abcd/launch.json", old, nil); err != nil {
+		t.Fatal(err)
+	}
+	l, err := s.ReadLaunch(ctx)
+	if err != nil || l.PlanTask != "" || l.Version != 1 {
+		t.Fatalf("an old launch.json = %+v, %v", l, err)
+	}
+	// A launch carrying one round-trips, and a launch carrying none writes
+	// no key.
+	l.PlanTask = "setup-wizard/W1.3"
+	data, err := json.Marshal(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc["plan_task"] != "setup-wizard/W1.3" {
+		t.Fatalf("plan_task on the wire = %v", doc["plan_task"])
+	}
+	l.PlanTask = ""
+	empty, err := json.Marshal(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(empty), "plan_task") {
+		t.Fatalf("a launch with no plan task carries the key: %s", empty)
+	}
+}

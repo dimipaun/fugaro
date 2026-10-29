@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See console/LICENSE.md for the terms.
 // The v1 FugaroSource: the installed `fugaro` as a sidecar (design D1, Option A).
 //
 // This file is the join between the data plane (`src/source/source.ts`) and the
@@ -47,6 +49,7 @@ import {
   planFor,
   privateWorkingDirectory,
   resolveBinary,
+  resolveInstalledBinary,
   runToCompletion,
   startSidecar,
 } from '../main/spawn'
@@ -62,7 +65,7 @@ import { createSpawnLog } from '../main/spawnlog'
 import type { SpawnLogWriter } from '../main/spawnlog'
 import type { OperationName, ValidatedArguments } from '../main/ipc'
 import { MAX_TEXT_INPUT_LENGTH } from '../shared/sanitize'
-import { SourceRefusal, refusalFrom } from './source'
+import { SourceRefusal, refusalFrom, NO_PLAN_CHECKOUT } from './source'
 import type {
   FeedEnd,
   FugaroSource,
@@ -106,6 +109,22 @@ export const MAX_LIVE_FEEDS = 4
  * the same fact: `degraded.spec.ts` asserts the two cannot drift.
  */
 export const FEED_STALE_AFTER_SECONDS = 45
+
+/**
+ * PLAN_STATUS_MIN_INTERVAL_MS is how long `plan.status` serves the document it
+ * already read before it runs the child again: the dependency-graph plan's
+ * GV2.1 fixes the refresh at "on demand, at most once a minute, never per watch
+ * frame". The read is the most expensive one this surface has -- it walks a
+ * repository's `docs/` and joins the runs -- and a screen that redraws it on
+ * every live frame would run it several times a minute for a graph that changes
+ * when a plan file changes.
+ *
+ * The cached answer is the snapshot the read actually produced, stamped with the
+ * console clock of that read, and not a re-stamp: a screen that showed a fresh
+ * time over a minute-old document would be inventing a reading. A call inside
+ * the interval answers that document; a call outside it runs the child.
+ */
+export const PLAN_STATUS_MIN_INTERVAL_MS = 60_000
 
 /**
  * FeedSilence is what the console knows about how long the feed has been quiet:
@@ -185,8 +204,6 @@ export interface NoInstallationState {
   readonly installCommand: string
   /** every candidate the resolution looked at, in the order it looked */
   readonly searched: readonly string[]
-  /** the path the installation named, when it named one */
-  readonly configuredPath: string | null
 }
 
 /**
@@ -212,12 +229,13 @@ export class NoInstallation extends SourceRefusal {
  * noInstallationState is the state, built from the resolution that failed. The
  * candidate list is re-derived from the same `binDirectories` the resolution
  * walked, with the same options -- so the screen names the directories this
- * machine would actually be searched in, not a list written down twice.
+ * machine would actually be searched in, not a list written down twice. The
+ * configured path is an *input* and not a field: it is one of those candidates,
+ * and the screen draws the count of them and never a path.
  */
 export function noInstallationState(options: {
   readonly reason: string
   readonly configuredPath?: string | undefined
-  readonly appEnv?: Readonly<Record<string, string | undefined>>
   readonly home?: string
 }): NoInstallationState {
   return {
@@ -226,10 +244,8 @@ export function noInstallationState(options: {
     installCommand: FUGARO_INSTALL_COMMAND,
     searched: binDirectories({
       ...(options.configuredPath === undefined ? {} : { configuredPath: options.configuredPath }),
-      appEnv: options.appEnv ?? {},
       ...(options.home === undefined ? {} : { home: options.home }),
     }),
-    configuredPath: options.configuredPath === undefined || options.configuredPath === '' ? null : options.configuredPath,
   }
 }
 
@@ -251,7 +267,7 @@ export interface CliSourceOptions {
 
 /**
  * CliSource is a `FugaroSource` and a little more: `installation` is the resolved
- * header, and `close` stops the feeds. The eleven reads are one-liners over
+ * header, and `close` stops the feeds. The thirteen reads are one-liners over
  * `readDocument` and `readText`.
  */
 export class CliSource implements FugaroSource {
@@ -314,7 +330,6 @@ export class CliSource implements FugaroSource {
         noInstallationState({
           reason: resolution.reason,
           configuredPath: options.configuredBinaryPath,
-          appEnv: env,
           ...(options.home === undefined ? {} : { home: options.home }),
         }),
       )
@@ -454,6 +469,35 @@ export class CliSource implements FugaroSource {
     return this.#readDocument('runs.list', args)
   }
 
+  /** statsRuns reads `runs stats --json`: one indented document, like every
+   * other one-shot read (`console/docs/json-contract.md` section 9.2 -- the two
+   * line-delimited ones are `watch --json` and `logs RUN --json`). */
+  statsRuns(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#readDocument('runs.stats', args)
+  }
+
+  /** planStatus reads `plan status --json`, which is the one read whose answer
+   * depends on **where** the child runs: the CLI walks `docs/` from its working
+   * directory (`internal/cli/plan_status.go`), and that directory is this
+   * source's checkout (`options.checkout`, rule 5). No argv this method builds
+   * names a path -- the row in `src/main/spawn.ts` has no `--dir` and no
+   * positional word -- so the document is about the installation's own
+   * repository or it is a refusal. */
+  planStatus(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#readDocument('plan.status', args)
+  }
+
+  /** coordinatorStatus reads `coordinator status --from-store --all --json`,
+   * which is the one read here that touches nothing on this machine and no
+   * credential: the child reads the caller's own database node through
+   * `roles/firebasedatabase.viewer` and prints it. It is therefore the only read
+   * with **no precondition of its own** -- no checkout, no App key, no
+   * Bitbucket credential -- and the two flags that make it that are words of the
+   * spawn row, so no caller can turn either off. */
+  coordinatorStatus(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#readDocument('coordinator.status', args)
+  }
+
   diagnoseRun(args: ValidatedArguments): Promise<Snapshot> {
     return this.#readDocument('run.diagnose', args)
   }
@@ -531,16 +575,21 @@ interface ResolvedSource {
  * the source layer: it knows an installation's four fields and nothing about the
  * file they are kept in.
  *
- * `binaryPath` is the installation's **own** binary and it is passed to the
- * resolver as the configured path (rule 4's first place), so a source bound to
- * an installation reads that binary or refuses -- never another `fugaro` the
- * machine happens to have. That is the same rule the startup handshake follows
- * (`resolveHandshakeBinary`, review B1).
+ * `binaryPath` is the installation's **optional** binary override, and it is
+ * passed to the resolver as the configured path (rule 4's first place) only when
+ * a record carries one. **Absent is the ordinary case** (owner's ruling of
+ * 2026-10-20): the console never asks the operator for a binary and never stores
+ * the path it resolved, so a bound source resolves the installed `fugaro` itself
+ * -- `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `/usr/bin`, and
+ * never the app's inherited `PATH` -- exactly as the startup handshake does
+ * (`resolveHandshakeBinary`). An override that is there is tried first and
+ * falls through to those same locations when it has gone, so an old store entry
+ * keeps working.
  */
 export interface BoundInstallation {
   readonly id: string
   readonly project: string
-  readonly binaryPath: string
+  readonly binaryPath?: string | undefined
   /** the config path, when this installation is not the ambient one (rule 3). */
   readonly configPath?: string | undefined
   /** the checkout, which is also the child's working directory (rule 5). */
@@ -575,7 +624,13 @@ export function sourceFor(
       project: installation.project,
       ...(installation.configPath === undefined ? {} : { configPath: installation.configPath }),
     }),
-    configuredBinaryPath: installation.binaryPath,
+    // The store's override, when the record carries one. Absent means rule 4
+    // resolves the installed `fugaro`, which is what the console does by
+    // default -- and passing `undefined` as a configured path would be a second
+    // spelling of "no override", so it is left out.
+    ...(installation.binaryPath === undefined || installation.binaryPath === ''
+      ? {}
+      : { configuredBinaryPath: installation.binaryPath }),
     ...(installation.checkout === undefined ? {} : { checkout: installation.checkout }),
   })
 }
@@ -612,24 +667,61 @@ export interface BoundSource extends FugaroSource {
 }
 
 /**
+ * bindingKey is what "the same source" means: the fields of one installation
+ * that decide **what the child is and where it runs**. It is not the id alone,
+ * and that is the whole of a defect this function exists to prevent: the id is
+ * *which* installation this is -- `setCheckout` deliberately preserves it
+ * (`console/src/main/installations.ts`), and so does a record that gains or
+ * loses its override -- while the checkout is the child's working directory
+ * (`options.checkout ?? privateWorkingDirectory()`) and the override is rule 4's
+ * first candidate. A source cached by the id alone kept running in the directory
+ * the installation used to be in: the picker ran rule 7's `doctor` from the new
+ * one, the row and the header reported it, and every read still spawned with the
+ * old cwd, so the dashboard read the wrong repository (or was refused by the
+ * CLI's own pairing sentence) under a screen saying the new checkout was in use.
+ *
+ * It is serialised rather than joined with a separator: these are paths and
+ * project names, and a delimiter one of them may contain is a collision waiting
+ * to be a wrong directory.
+ */
+function bindingKey(installation: BoundInstallation): string {
+  return JSON.stringify([
+    installation.id,
+    installation.project,
+    installation.binaryPath ?? '',
+    installation.configPath ?? '',
+    installation.checkout ?? '',
+  ])
+}
+
+/**
  * createBoundSource is the join between the console's own state and the data
  * plane: every read resolves the installation that is active **now**, builds the
  * one source for it if there is not one already, and delegates.
  *
- * Three decisions are worth reading off the code rather than out of a comment:
+ * Four decisions are worth reading off the code rather than out of a comment:
  *
  *   - **no installation, no spawn.** `resolve` throws `NoInstallation` before
  *     anything is constructed, so a console with nothing chosen drives nothing.
- *   - **one source per installation.** The source is cached by the
- *     installation's id and the previous one is closed when the id changes, so a
- *     switch cannot leave a `fugaro watch` child running for an installation the
- *     console has stopped showing.
+ *   - **one source per binding.** The source is cached by `bindingKey` -- the
+ *     installation's id and the three fields the child is built from -- and the
+ *     previous one is closed when that key changes, so neither a switch nor a
+ *     checkout change can leave a `fugaro watch` child running for a directory
+ *     the console has stopped showing.
  *   - **`subscribeLive` stays synchronous and idempotent.** Building a
  *     `CliSource` is asynchronous (it resolves and probes the binary) and
  *     `FugaroSource.subscribeLive` is not, so the feed this returns is a
  *     **lazy** one: it attaches on the first `current()`, and the same argument
  *     object answers the same feed object while it is live -- the contract the
  *     interface states, kept here rather than only under it.
+ *   - **`planStatus` is the one read that decides something here** instead of
+ *     delegating a one-liner: it refuses an installation with no checkout
+ *     **before** `resolve` is reached, so nothing is spawned for a question with
+ *     no directory to be asked about, and it answers the document it read within
+ *     `PLAN_STATUS_MIN_INTERVAL_MS` rather than running the child again. Both
+ *     belong on this side of the seam because both are about the *binding*: the
+ *     checkout is the binding's, and the document is a function of the binding
+ *     and the arguments.
  */
 export function createBoundSource(deps: BoundSourceDeps): BoundSource {
   // The two seams are this function's own and are not `CliSource` options, so
@@ -637,9 +729,24 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
   const { installation: _installation, create: injected, ...options } = deps
   const create =
     injected ?? ((installation: BoundInstallation): Promise<CliSource> => sourceFor(installation, options))
-  let bound: { readonly id: string; readonly source: CliSource } | null = null
-  let pending: { readonly id: string; readonly source: Promise<CliSource> } | null = null
+  let bound: { readonly key: string; readonly source: CliSource } | null = null
+  let pending: { readonly key: string; readonly source: Promise<CliSource> } | null = null
   const feeds = new Map<string, LiveFeed>()
+
+  /**
+   * planReads holds the last `plan status` read per (binding, argv) -- the
+   * promise itself, so a read still in flight is shared -- with the console
+   * clock of the moment it finished, `null` while it runs. It is cleared wherever
+   * `feeds` is: both are answers about the binding that is being dropped, and a
+   * cached plan graph for a directory the console has stopped showing is the
+   * same defect as a live feed for one.
+   */
+  const planReads = new Map<string, { readonly reading: Promise<Snapshot>; at: number | null }>()
+
+  /** nowMs is the console's own clock in milliseconds, the one the sources are
+   * built with (`options.clock`), so a test that moves the clock moves this
+   * interval with it rather than reaching for the wall clock here. */
+  const nowMs = (): number => (deps.clock ?? ((): Date => new Date()))().getTime()
 
   /**
    * epoch is what "the build in flight is no longer the one that matters" is
@@ -657,7 +764,6 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
     new NoInstallation(
       noInstallationState({
         reason: 'no installation is chosen, so there is no binary for the console to read',
-        ...(deps.appEnv === undefined ? {} : { appEnv: deps.appEnv }),
         ...(deps.home === undefined ? {} : { home: deps.home }),
       }),
     )
@@ -674,7 +780,10 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
    * not this one, with a `searched` list and an install command to match. The
    * store is read here, at the moment of the refusal, so the sentence is about
    * what actually happened: a removal is D13's state, and a switch is a read for
-   * an installation the console has stopped showing.
+   * an installation the console has stopped showing. A build superseded by a
+   * **checkout change** lands here too, and the sentence is right for it as well:
+   * the read was for the binding that named the previous directory, which is a
+   * binding the console is no longer showing.
    */
   const superseded = (): SourceRefusal =>
     deps.installation() === null
@@ -684,37 +793,39 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
   const resolve = async (): Promise<CliSource> => {
     const installation = deps.installation()
     if (installation === null) throw noInstallation()
-    if (bound !== null && bound.id === installation.id) return bound.source
-    if (pending !== null && pending.id === installation.id) return pending.source
-    // A different installation, or none bound: the previous source's children
-    // are stopped before a new one is built. `bound` is cleared first so a read
-    // that arrives while the close is in flight cannot be handed the source that
-    // is on its way out -- and the build is registered as `pending` **before**
-    // that close is awaited, so the read that arrives in the same window joins
-    // this build instead of starting a second one for the same installation
-    // (which would leave the first refused as a superseded build, and cost a
-    // second probe of a binary that was already being probed).
+    const key = bindingKey(installation)
+    if (bound !== null && bound.key === key) return bound.source
+    if (pending !== null && pending.key === key) return pending.source
+    // A different binding, or none: the previous source's children are stopped
+    // before a new one is built. `bound` is cleared first so a read that arrives
+    // while the close is in flight cannot be handed the source that is on its way
+    // out -- and the build is registered as `pending` **before** that close is
+    // awaited, so the read that arrives in the same window joins this build
+    // instead of starting a second one for the same binding (which would leave the
+    // first refused as a superseded build, and cost a second probe of a binary
+    // that was already being probed).
     const previous = bound
     bound = null
     feeds.clear()
+    planReads.clear()
     epoch += 1
     const mine = epoch
     const source = (async (): Promise<CliSource> => {
       if (previous !== null) await previous.source.close()
       const created = await create(installation)
       if (mine !== epoch) {
-        // Dropped, or superseded by a build for another installation, while this
+        // Dropped, or superseded by a build for another binding, while this
         // one was in flight. `forget` could not close what did not exist yet, so
         // this source is closed here -- nothing else holds it -- and the read
         // that asked for it is refused for what actually happened.
         void created.close().catch(() => undefined)
         throw superseded()
       }
-      bound = { id: installation.id, source: created }
+      bound = { key, source: created }
       pending = null
       return created
     })()
-    pending = { id: installation.id, source }
+    pending = { key, source }
     // A build that failed is not kept as this installation's pending build: the
     // probe can fail for a reason that passes (a `version` that did not answer
     // in time on a loaded machine, a binary mid-upgrade), and a rejection kept
@@ -727,12 +838,20 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
   }
 
   const installationRef = (installation: BoundInstallation): InstallationRef => ({
-    binaryPath: installation.binaryPath,
+    binaryPath: installation.binaryPath ?? '',
     version: installation.version ?? '',
     project: installation.project,
-    // The binary came from the installation the operator chose, which is rule
-    // 4's first place -- there is no second spelling of this vocabulary here.
-    source: 'configured',
+    // Which rule 4 place this installation's binary comes from, **as the
+    // binding knows it**: the store's own override when the record carries one
+    // (rule 4's first candidate), and the well-known install locations
+    // otherwise -- which is the ordinary case, because the console never stores
+    // the path it resolved (owner's ruling of 2026-10-20). The binding carries
+    // the override and nothing else, so an empty `binaryPath` here means rule 4
+    // will be walked, and this field is what says so while there is no source to
+    // ask. The *built* source answers the finer question from its own
+    // resolution (`resolution.source`, this file), where an override that has
+    // gone falls through and the word is the location that answered.
+    source: installation.binaryPath === undefined || installation.binaryPath === '' ? 'well-known' : 'configured',
     ...(installation.checkout === undefined ? {} : { checkout: installation.checkout }),
   })
 
@@ -802,6 +921,7 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
     bound = null
     pending = null
     feeds.clear()
+    planReads.clear()
     // A build in flight is invalidated here rather than awaited: it is for an
     // installation that is gone, and it closes its own source when it lands.
     epoch += 1
@@ -846,6 +966,53 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
     showBudget: (args) => read('budget.show', (source) => source.showBudget(args)),
     runReport: (args) => read('spend.report', (source) => source.runReport(args)),
     listRuns: (args) => read('runs.list', (source) => source.listRuns(args)),
+    statsRuns: (args) => read('runs.stats', (source) => source.statsRuns(args)),
+    /**
+     * planStatus is the surface's one read with a precondition and a cadence.
+     *
+     * The precondition is the checkout. The CLI resolves the plan's `docs/`
+     * directory from the child's working directory, and an installation that
+     * records none has no directory for the read to be about: this refuses with
+     * `NO_PLAN_CHECKOUT` **before** `resolve` -- so no binary is probed, no
+     * child is spawned, and the console does not quietly read whatever
+     * repository it happens to be sitting in. That the renderer cannot supply a
+     * directory is `src/main/ipc.ts`'s guarantee, stated there; this is the
+     * other half, where the console refuses to guess one.
+     *
+     * The cadence is `PLAN_STATUS_MIN_INTERVAL_MS`, keyed by the binding *and*
+     * the argv the arguments become (`--all` is a different document, not a
+     * wider one; `all: false` is the same argv as no `all`). The entry is the
+     * read itself, **in flight** as well as answered, so calls that arrive while
+     * the child runs share it rather than each spawning one, and a refused read
+     * holds the floor like an answered one. The `at` recorded is the clock
+     * reading **after** the child finished, so the interval is a floor on the
+     * time between two spawns rather than on the time between a spawn and the
+     * next request.
+     */
+    planStatus: async (args) => {
+      const installation = deps.installation()
+      if (installation === null) throw noInstallation()
+      if (installation.checkout === undefined) throw new SourceRefusal(NO_PLAN_CHECKOUT)
+      const key = `${bindingKey(installation)}\u0000${args['all'] === true ? '--all' : ''}`
+      const cached = planReads.get(key)
+      if (cached !== undefined && (cached.at === null || nowMs() - cached.at < PLAN_STATUS_MIN_INTERVAL_MS)) {
+        return cached.reading
+      }
+      const reading = read('plan.status', (source) => source.planStatus(args))
+      const entry: { readonly reading: Promise<Snapshot>; at: number | null } = { reading, at: null }
+      planReads.set(key, entry)
+      const settled = (): void => {
+        entry.at = nowMs()
+      }
+      reading.then(settled, settled)
+      return reading
+    },
+    /** coordinatorStatus has no precondition and no cadence: the read touches
+     * nothing on this machine (it is the caller's own database node) and the
+     * stored view is a document the sweep replaces in place, so there is no
+     * directory to refuse for and nothing to be gained by holding a floor
+     * between two calls. */
+    coordinatorStatus: (args) => read('coordinator.status', (source) => source.coordinatorStatus(args)),
     diagnoseRun: (args) => read('run.diagnose', (source) => source.diagnoseRun(args)),
     readRunLogs: (args) => read('run.logs', (source) => source.readRunLogs(args)),
     runLogLink: (args) => read('run.logLink', (source) => source.runLogLink(args)),
@@ -1170,12 +1337,19 @@ class LiveStream implements LiveFeed {
  * project name, the config path when it is not the ambient one, the binary when
  * they chose one, and the checkout when they picked a directory. It is the D13
  * tuple minus the binary path and version the source resolves itself.
+ *
+ * **`distro` is the WSL one, and it is what puts the candidate on that route**
+ * (D2(a)): with it, `binaryPath` and `checkout` are Linux spellings *inside* the
+ * distribution and the CLI is reached through `wsl.exe`; without it -- the
+ * ordinary case, and every record this console wrote before Windows -- the
+ * installation is a host installation and the fields are host paths.
  */
 export interface InstallationCandidate {
   readonly project: string
   readonly configPath?: string | undefined
   readonly binaryPath?: string | undefined
   readonly checkout?: string | undefined
+  readonly distro?: string | undefined
 }
 
 /** InstallationStore is the in-memory list the app holds for one run. */
@@ -1264,10 +1438,20 @@ export async function verifyCandidate(
     readonly spawner?: ChildSpawner
     readonly spawnLog?: SpawnLogWriter
     readonly home?: string
+    /** `wslPath` replaces the `wsl.exe` a WSL candidate's check runs, so a test
+     * can point the route at the fake (T-A1, T-D1). */
+    readonly wslPath?: string | undefined
   },
 ): Promise<void> {
   const env = deps.appEnv ?? {}
-  const directory = candidate.checkout ?? privateWorkingDirectory()
+  // **A WSL installation is never verified from the host's checkout path.** When
+  // the candidate names a distribution its `checkout` is a Linux directory
+  // inside it (F15), which is not this process's to start a child in: the host
+  // directory is the private one, and the CLI's own directory travels as the
+  // wrapper's `--cd` (D2(a), D3(a)).
+  const distro = candidate.distro ?? ''
+  const directory =
+    distro === '' ? candidate.checkout ?? privateWorkingDirectory() : privateWorkingDirectory()
   // A log this function opened is this function's to close; one it was handed
   // is the caller's. Without the `finally`, each installation added held one
   // descriptor until the process exited (review round 2 of PR 478).
@@ -1279,19 +1463,67 @@ export async function verifyCandidate(
   }
 }
 
-/** verifyWith is `verifyCandidate`'s body, with the log already chosen. */
+/** verifyWith is `verifyCandidate`'s body, with the log already chosen.
+ *
+ * **It runs on the installation's own route** (T-D1, D2(a)): a candidate with a
+ * `distro` is checked *inside* that distribution -- the resolution and the
+ * `doctor --json` read both go through `wsl.exe`, exactly as the app's own reads
+ * do (T-C5) -- and a candidate without one is checked on the host, unchanged.
+ * The property the pairing check exists for is the CLI's own statement about the
+ * checkout it was started in, so the read has to happen where the checkout is. */
 async function verifyWith(
   candidate: InstallationCandidate,
-  deps: { readonly spawner?: ChildSpawner; readonly home?: string },
+  deps: { readonly spawner?: ChildSpawner; readonly home?: string; readonly wslPath?: string | undefined },
   env: Readonly<Record<string, string | undefined>>,
   directory: string,
   log: SpawnLogWriter,
 ): Promise<void> {
+  const target: SpawnTarget = {
+    project: candidate.project,
+    ...(candidate.configPath === undefined ? {} : { configPath: candidate.configPath }),
+  }
+  const distro = candidate.distro ?? ''
+  if (distro !== '') {
+    const resolution = await resolveInstalledBinary({
+      binaryPath: candidate.binaryPath ?? '',
+      distro,
+      appEnv: env,
+      directory,
+      target,
+      ...(candidate.checkout === undefined ? {} : { wslDirectory: candidate.checkout }),
+      ...(deps.wslPath === undefined ? {} : { wslPath: deps.wslPath }),
+      ...(deps.spawner === undefined ? {} : { spawner: deps.spawner }),
+      log,
+    })
+    if (!resolution.ok) throw new SourceRefusal(resolution.reason)
+    const plan = planFor('environment.report', {}, {
+      target,
+      binaryPath: resolution.path,
+      directory,
+      appEnv: env,
+      wsl: {
+        distro,
+        ...(candidate.checkout === undefined ? {} : { directory: candidate.checkout }),
+        ...(deps.wslPath === undefined ? {} : { executable: deps.wslPath }),
+      },
+    })
+    const result = await runToCompletion(plan, {
+      log,
+      ...(deps.spawner === undefined ? {} : { spawner: deps.spawner }),
+    })
+    if (result.code !== 0) {
+      throw refusalFrom('doctor', cliSentence(result.stderr))
+    }
+    if (parseStdout(result.stdout).document === null) {
+      throw refusalFrom('doctor', cliSentence(result.stderr) ?? 'doctor printed no JSON document')
+    }
+    return
+  }
   const resolution = await resolveBinary({
     ...(candidate.binaryPath === undefined ? {} : { configuredPath: candidate.binaryPath }),
     appEnv: env,
     directory,
-    target: { project: candidate.project, ...(candidate.configPath === undefined ? {} : { configPath: candidate.configPath }) },
+    target,
     ...(deps.spawner === undefined ? {} : { spawner: deps.spawner }),
     ...(deps.home === undefined ? {} : { home: deps.home }),
     log,
@@ -1299,10 +1531,7 @@ async function verifyWith(
   if (!resolution.ok) throw new SourceRefusal(resolution.reason)
 
   const plan = planFor('environment.report', {}, {
-    target: {
-      project: candidate.project,
-      ...(candidate.configPath === undefined ? {} : { configPath: candidate.configPath }),
-    },
+    target,
     binaryPath: resolution.path,
     directory,
     appEnv: env,

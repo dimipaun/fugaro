@@ -634,7 +634,17 @@ reads them from there and holds them to the build it makes itself — no figure 
 here, for the reason the byte-budget bullet above gives. Placing the two assets and the `<img>`
 moved the site figure and nothing else (above).
 
-**It is on the homepage now, in the slider's "See it" panel** (`website/src/components/HomeSlider.astro`;
+**Since the owner's rulings of 2026-10-23 (the redesign's Step 3) the capture is the hero's real
+picture** (`website/src/components/Hero.astro`): it sits on the hero's stage under the live card, at
+its logical size and cropped by the stage rather than shrunk, with the line "`fugaro watch`, the live
+screen of spend, repositories and running agents." under it. The slider is retired with that ruling,
+and the slot `[data-slot="watch-screenshot"]` moved to the "what you get" section
+(`website/src/components/HomeWhatYouGet.astro`), where it holds the shared slider over the data file's
+three console rows (the Watch row stays last in `website/data/home-screens.yaml`, and the hero is
+the one place the page shows it); the `fugaro watch` command and its caption are beside it. The
+paragraphs below are the history of the slot.
+
+**It was on the homepage, in the slider's "See it" panel** (`HomeSlider.astro`, retired;
 the owner's draft of 2026-10-19, the reading at the foot of this file): the panel's `div.watch-shot` is
 the slot `[data-slot="watch-screenshot"]`, and the panel reads heading, picture, command — the block that
 was empty until the asset existed is the picture the owner took. It was `AgentChat.astro`'s slot until

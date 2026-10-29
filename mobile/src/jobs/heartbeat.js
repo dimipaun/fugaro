@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See mobile/LICENSE.md for the terms.
 // The heartbeat line: what the other end is doing, as P3.6 last read it
 // (mobile plan, Task P3.3; resolved 2026-10-17, tension (b1); the presence rule
 // is P1.4's, `shared/presence/index.js`).

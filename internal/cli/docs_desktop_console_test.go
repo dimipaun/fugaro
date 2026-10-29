@@ -47,6 +47,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/coordinator"
 	"github.com/dimipaun/fugaro/internal/plan"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/report"
@@ -369,11 +370,45 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		reflect.TypeOf(doctorCheck{}),
 		reflect.TypeOf(configListDoc{}),
 		reflect.TypeOf(configListInstallation{}),
+		reflect.TypeOf(configListCheckout{}),
 		reflect.TypeOf(plan.Document{}),
 		reflect.TypeOf(plan.Node{}),
 		reflect.TypeOf(plan.Edge{}),
 		reflect.TypeOf(plan.Footprint{}),
+		// The read's own document (V2.2.3): every key of what `plan graph
+		// --json` prints, so a computed field the contract does not name fails
+		// here too, not only the artifact's own.
+		reflect.TypeOf(plan.Graph{}),
+		reflect.TypeOf(plan.NodeState{}),
+		reflect.TypeOf(plan.CriticalPath{}),
 		reflect.TypeOf(runstore.ChangedFiles{}),
+		// The rigor block and the rule inside it (docs/rigor-modes D24).
+		reflect.TypeOf(runstore.RigorRecord{}),
+		reflect.TypeOf(runstore.RigorArea{}),
+		// §6.11, the backlog index's rows (CLI 0.11.0).
+		reflect.TypeOf(backlogListDoc{}),
+		reflect.TypeOf(backlogRow{}),
+		// §6.12, the graph joined to the runs (GV1.6): the plan's own figures
+		// and the three shapes under them, plus this read's document and its
+		// totals.
+		reflect.TypeOf(plan.StatePlan{}),
+		reflect.TypeOf(plan.StateNode{}),
+		reflect.TypeOf(plan.StateRelease{}),
+		reflect.TypeOf(plan.StateStream{}),
+		reflect.TypeOf(planStatusDoc{}),
+		reflect.TypeOf(planStatusTotals{}),
+		// §6.13, the coordinator's stored project view (Bitbucket credentials
+		// T1.2): the envelope and the repository node, the view and the runs
+		// behind it, and the two keys only the sweep writes.
+		reflect.TypeOf(coordinator.StoredProjectView{}),
+		reflect.TypeOf(coordinator.RepoView{}),
+		reflect.TypeOf(coordinator.View{}),
+		reflect.TypeOf(coordinator.Record{}),
+		reflect.TypeOf(coordinator.Run{}),
+		reflect.TypeOf(coordinator.PullRequest{}),
+		reflect.TypeOf(coordinator.Collision{}),
+		reflect.TypeOf(coordinator.Unread{}),
+		reflect.TypeOf(coordinator.Stale{}),
 	}
 	for _, name := range jsonTagNames(t, namedTypes(shapes...), shapes...) {
 		if !strings.Contains(doc, "`"+name+"`") {
@@ -433,6 +468,60 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 	}
 }
 
+// TestDocsDesktopConsoleContractNamesEveryReasonCode: §6.8 of the contract is
+// what the console is written against, so the list of reasons it gives must be
+// exactly the reasons `config list --json` can emit, and in the order it gives
+// them — the order is what a reader uses to say which of a row's problems is
+// *the* reason it is not valid. (An earlier revision of that block got the
+// order wrong and omitted `unreadable` entirely, which is the drift this pins.)
+//
+// The list is read out of the numbered block §6.8 introduces ("One row carries
+// one reason, and which one it is is fixed. In order:"), not searched for in
+// the prose: the field table further up names the codes too, so a `Contains`
+// over the whole document would pass with the ordered list wrong or a code
+// missing from it.
+//
+// Mutations (run, restore): delete the `unreadable` item, or move
+// `not_enrolled` off the end; each fails here. (Both leave the field table, and
+// so a whole-document search, untouched.)
+func TestDocsDesktopConsoleContractNamesEveryReasonCode(t *testing.T) {
+	const path = "console/docs/json-contract.md"
+	doc := readDoc(t, path)
+	const intro = "**One row carries one reason, and which one it is is fixed.** In order:"
+	i := strings.Index(doc, intro)
+	if i < 0 {
+		t.Fatalf("%s no longer states the order the reasons are reported in", path)
+	}
+	// The items that follow, up to the first line that is neither one nor a
+	// wrapped continuation of one (an item's prose is indented under it).
+	var got []string
+	for _, line := range strings.Split(doc[i+len(intro):], "\n") {
+		if line == "" || line[0] == ' ' || line[0] == '\t' {
+			continue
+		}
+		m := reasonItemRE.FindStringSubmatch(line)
+		if m == nil {
+			break
+		}
+		got = append(got, m[1])
+	}
+	want := []string{
+		checkoutNotRepresentable,
+		checkoutMissing,
+		checkoutUnreadable,
+		checkoutNotACheckout,
+		checkoutOtherProject,
+		checkoutOtherRepository,
+		checkoutNotEnrolled,
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("%s's ordered reason list = %v, want %v", path, got, want)
+	}
+}
+
+// reasonItemRE is one numbered item of §6.8's ordered list: "3. `unreadable` …".
+var reasonItemRE = regexp.MustCompile("^[0-9]+\\. `([a-z_]+)`")
+
 // jsonCellRE is a backticked identifier in a field table's first cell: the
 // field names of one row, one or more of them.
 var jsonCellRE = regexp.MustCompile("`([A-Za-z_][A-Za-z0-9_]*)`")
@@ -467,13 +556,34 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		reflect.TypeOf(report.JSONDoc{}), reflect.TypeOf(report.JSONLine{}),
 		reflect.TypeOf(report.JSONTokens{}), reflect.TypeOf(Diagnosis{}),
 		reflect.TypeOf(configListDoc{}), reflect.TypeOf(configListInstallation{}),
+		reflect.TypeOf(configListCheckout{}),
 		reflect.TypeOf(plan.Document{}), reflect.TypeOf(plan.Node{}),
 		reflect.TypeOf(plan.Edge{}), reflect.TypeOf(plan.Footprint{}),
+		// The read's own document (V2.2.3): the artifact's shape plus what is
+		// computed where the graph is read.
+		reflect.TypeOf(plan.Graph{}), reflect.TypeOf(plan.NodeState{}),
+		reflect.TypeOf(plan.CriticalPath{}),
 		reflect.TypeOf(runstore.ChangedFiles{}),
+		// The rigor block and the rule inside it (docs/rigor-modes D24).
+		reflect.TypeOf(runstore.RigorRecord{}), reflect.TypeOf(runstore.RigorArea{}),
 		// §6.10, the same three shapes as the test above (CLI 0.9.0).
 		reflect.TypeOf(userStatsDoc{}),
 		reflect.TypeOf(userstats.Row{}),
 		reflect.TypeOf(userstats.Counts{}),
+		// §6.11, the backlog index's rows (CLI 0.11.0).
+		reflect.TypeOf(backlogListDoc{}),
+		reflect.TypeOf(backlogRow{}),
+		// §6.12, the plan's graph joined to its runs (GV1.6).
+		reflect.TypeOf(plan.StatePlan{}), reflect.TypeOf(plan.StateNode{}),
+		reflect.TypeOf(plan.StateRelease{}), reflect.TypeOf(plan.StateStream{}),
+		reflect.TypeOf(planStatusDoc{}), reflect.TypeOf(planStatusTotals{}),
+		// §6.13, the coordinator's stored project view (Bitbucket credentials
+		// T1.2), the same nine shapes as the test above.
+		reflect.TypeOf(coordinator.StoredProjectView{}), reflect.TypeOf(coordinator.RepoView{}),
+		reflect.TypeOf(coordinator.View{}), reflect.TypeOf(coordinator.Record{}),
+		reflect.TypeOf(coordinator.Run{}), reflect.TypeOf(coordinator.PullRequest{}),
+		reflect.TypeOf(coordinator.Collision{}), reflect.TypeOf(coordinator.Unread{}),
+		reflect.TypeOf(coordinator.Stale{}),
 	}
 	for _, name := range jsonTagNames(t, namedTypes(shapes...), shapes...) {
 		real[name] = true
@@ -493,7 +603,25 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 	// inventory, both of which name commands, not fields.
 	notAKey := map[string]bool{"watch": true, "report": true, "diagnose": true,
 		"logs": true, "doctor": true, "version": true}
+	// approvedAheadOfTheCLI are the wire keys the document names under its own
+	// bounded exception (§intro): the owner has approved a release that will
+	// write them, no shape here carries them yet, and the console accepts them
+	// as optional so that release does not refuse every document whole as
+	// `unknown-key`. Admitting them HERE, in the guard, is the point: a reviewer
+	// found the first such key documented in prose beside the tables, where this
+	// test could not see it, so the exception was invisible to the one check
+	// written to catch a field no command emits. The list is self-cleaning in
+	// both directions below -- an entry that becomes a real json key fails
+	// (its row now belongs to a shape), and one no field table names fails (the
+	// exception must not outlive the documentation that justifies it).
+	//
+	// Empty since `leased_usd` became real (JSONTotal and JSONRepo carry it):
+	// a blank entry fails the "no field table names it" half, so the list has
+	// no placeholder. `compute_usd`, the other key the exception names, is
+	// already a real key of `report --json` and so was never in here.
+	approvedAheadOfTheCLI := map[string]bool{}
 	checked := 0
+	namedInTable := map[string]bool{}
 	for _, line := range strings.Split(doc, "\n") {
 		m := tableFieldRE.FindString(line)
 		if m == "" {
@@ -505,9 +633,18 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 				continue
 			}
 			checked++
-			if !real[name] {
+			namedInTable[name] = true
+			if !real[name] && !approvedAheadOfTheCLI[name] {
 				t.Errorf("%s's field table names %q, which is not a json key of any shape it documents: a field invented rather than read", path, name)
 			}
+		}
+	}
+	for name := range approvedAheadOfTheCLI {
+		if real[name] {
+			t.Errorf("%s: %q is now a real json key of a shape this document describes; drop it from approvedAheadOfTheCLI and let its table row stand on the struct", path, name)
+		}
+		if !namedInTable[name] {
+			t.Errorf("%s: approvedAheadOfTheCLI lists %q, which no field table names; the exception has to be documented where this test can see it", path, name)
 		}
 	}
 	if checked < 100 {
@@ -651,9 +788,13 @@ func TestDocsDesktopConsoleContractStatesWhichDocumentsAreLineDelimited(t *testi
 
 // TestDocsDesktopConsoleContractNamesTheFlagInventory: the spawn contract's
 // one flag fact (design section 3.4 rule 3) must be the cobra commands', not
-// the document's word for it. Every command the console spawns except the
+// the document's word for it. Every command the dashboard spawns except the
 // version handshake carries --project and --config; version takes no flags at
 // all, so a console that appended --project to it would fail on every machine.
+// The map is the dashboard's commands, and deliberately not the picker's own
+// read: `config list --json` takes neither flag (it prints the installations,
+// so there is no project to name), which is why this inventory -- an inventory
+// of the flags a project read carries -- must not gain it (§5.1 rule 6).
 func TestDocsDesktopConsoleContractNamesTheFlagInventory(t *testing.T) {
 	const path = "console/docs/json-contract.md"
 	doc := readDoc(t, path)
@@ -662,11 +803,18 @@ func TestDocsDesktopConsoleContractNamesTheFlagInventory(t *testing.T) {
 		"budget show": newBudgetShowCmd,
 		"report":      newReportCmd,
 		"runs ls":     newLsCmd,
+		// The Spend screen's by-person view (console L5b, design §5.1 rule 6):
+		// the console spawns it with --since, so it carries --project and
+		// --config like every other dashboard read.
+		"runs stats":  newRunsStatsCmd,
 		"diagnose":    newDiagnoseCmd,
 		"logs":        newLogsCmd,
 		"secrets ls":  newSecretsLsCmd,
 		"accounts ls": newAccountsLsCmd,
 		"doctor":      newDoctorCmd,
+		// The project view (Bitbucket credentials T1.2, §6.13): the one read
+		// of the installation's repositories that asks nothing of the host.
+		"coordinator status": newCoordinatorStatusCmd,
 	}
 	for name, newCmd := range spawned {
 		for _, flag := range []string{"project", "config"} {
@@ -676,6 +824,13 @@ func TestDocsDesktopConsoleContractNamesTheFlagInventory(t *testing.T) {
 		}
 		if !strings.Contains(doc, "`"+name+"`") {
 			t.Errorf("%s never names the spawned command %q", path, name)
+		}
+		// And it must be a row of the section-8 table itself, not merely a
+		// mention somewhere in the file: a command that reached the console's
+		// set while the inventory quietly went on listing the older ones would
+		// pass the check above (§6.10's own heading names this command anyway).
+		if !strings.Contains(doc, "| `"+name+"`") {
+			t.Errorf("%s's flag inventory table has no row for the spawned command %q", path, name)
 		}
 	}
 	if cmd := newVersionCmd(); cmd.Flags().HasFlags() {
@@ -696,21 +851,41 @@ var consoleContractCommands = map[string]func() *cobra.Command{
 	"budget show": newBudgetShowCmd,
 	"report":      newReportCmd,
 	"runs ls":     newLsCmd,
-	// §6.10 documents the by-person aggregate (CLI 0.9.0). It is not on the
-	// design's spawn allow-list yet -- the Spend screen's by-person view is
-	// the task that follows -- but the document describes its flags, so the
-	// flags written there are checked against this constructor like any
-	// other's.
+	// §6.10 documents the by-person aggregate (CLI 0.9.0), and it is now on
+	// the design's spawn allow-list too (console L5b, §5.1 rule 6): the Spend
+	// screen's by-person view spawns it with --since. The document describes
+	// its flags either way, so the flags written there are checked against
+	// this constructor like any other's.
 	"runs stats":  newRunsStatsCmd,
 	"diagnose":    newDiagnoseCmd,
 	"logs":        newLogsCmd,
 	"cancel":      newCancelCmd,
 	"secrets ls":  newSecretsLsCmd,
 	"accounts ls": newAccountsLsCmd,
-	"doctor":      newDoctorCmd,
-	"version":     newVersionCmd,
-	"config list": newConfigListCmd,
-	"plan graph":  newPlanGraphCmd,
+	// §6.5a documents the operator's write to the cascade's state
+	// (credentials-service C1.21). It is deliberately NOT on the design's
+	// spawn allow-list — the console never writes — but the document
+	// describes its flags, so they are checked against this constructor like
+	// any other's.
+	"accounts clear": newAccountsClearCmd,
+	"doctor":         newDoctorCmd,
+	"version":        newVersionCmd,
+	"config list":    newConfigListCmd,
+	"plan graph":     newPlanGraphCmd,
+	// §6.11 documents the backlog index's rows (CLI 0.11.0). Like §6.10, the
+	// console does not spawn it yet -- the backlog screen is the task that
+	// follows -- but the document describes its flags, so they are checked
+	// against this constructor like any other command's.
+	"backlog list": newBacklogListCmd,
+	// §6.13 documents the coordinator's stored project view (Bitbucket
+	// credentials T1.2). The console spawns it, so its flags are checked
+	// against this constructor like any other's.
+	"coordinator status": newCoordinatorStatusCmd,
+	// §6.12 documents the graph joined to the runs (GV1.6, the CLI release after 0.11.4), and the
+	// console spawns it since GV2.1, as §5.1 rule 6's `plan status --json` row. Its flags — including the cloud
+	// ones, which this command carries and `plan graph` does not — are checked
+	// against this constructor like any other command's.
+	"plan status": newPlanStatusCmd,
 }
 
 // TestDocsDesktopConsoleContractNamesOnlyRealFlags: every --flag the document
@@ -966,9 +1141,13 @@ func firstBacktick(cell string) string {
 // the bare substring "watch --json" is satisfied by a sentence about it, which
 // is what a review of the first revision found here: the table could lose a
 // row -- or gain one -- and the test would still pass. This parses both tables
-// §5.1 rule 6 carries and compares their first cells exactly:
-// the allow-list is the eleven argvs and nothing else, and the "never" table
-// still names the two entries that make a name-based list a hole.
+// §5.1 rule 6 carries and compares their first cells exactly: the allow-list is
+// the sixteen argvs and nothing else -- the console's one spawn table
+// (SPAWN_COMMANDS) since the installation rail took the picker's read onto the
+// dashboard's surface -- and a review of an earlier revision found the picker's own
+// read, `config list --json`, absent here, which left the specification
+// forbidding the one read the picker depends on -- and the "never" table still
+// names the two entries that make a name-based list a hole.
 func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 	const path = "docs/design/desktop-console.md"
 	doc := readDoc(t, path)
@@ -978,6 +1157,10 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		"budget show --json",
 		"report --json",
 		"runs ls --json",
+		// The Spend screen's by-person view (console L5b): the one read whose
+		// rows the CLI scopes to the caller, and the one argv here the console
+		// may not widen with --all-users.
+		"runs stats --json",
 		"diagnose RUN --json",
 		"logs RUN --json",
 		"logs RUN --url",
@@ -985,6 +1168,23 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		"accounts ls --json",
 		"version",
 		"doctor --json",
+		// The installation rail's read (`installation.list`), which the picker
+		// window shares. It carries no --project and no --config, so it is absent from the
+		// contract document's flag inventory below, which is about flags.
+		"config list --json",
+		// The graph screen's per-task state (console v2 plan GV2.1, the
+		// `plan.status` operation): read-only, no path in the argv.
+		"plan status --json",
+		// The project view (Bitbucket credentials T1.2, the
+		// `coordinator.status` operation): read-only, no path in the argv.
+		// `--from-store` is what makes it need no host credential at all --
+		// it prints the view the sweep stored -- and `--all` is every
+		// repository the installation's config lists.
+		"coordinator status --from-store --all --json",
+		// The launch (console v2 plan V2.5.1a, the `run.launch` operation):
+		// the console's one write and the one thing this table is a fence
+		// against, spelled as rule 11's exact argv and nothing else.
+		"run --task-file - --json --run-id <run id> --repo <owner/name> [--title=<T>] [--plan-task=<P>] --project <name> [--config <path>]",
 	}
 	rows := docTableAfter(t, path, doc, "| Allowed argv (exact, in this order) |")
 	got := map[string]bool{}
@@ -1031,6 +1231,74 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		}
 	}
 }
+
+// TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode: §5.1 rule 6's
+// table is the console's whole read-only guarantee — D14 rests it on the
+// exact-argv table, because the CLI cannot tell an admin's identity from
+// anyone else's — and a read changes nothing on the machine. The remembered
+// checkouts are a file this machine keeps and the resolver every cloud
+// command goes through is what writes it, so the code has to know which
+// commands are console reads: consoleReadPaths (internal/cli/project.go) is
+// that knowledge, and this test reads it back off the design's own table, so
+// the two cannot drift. Adding an argv to §5.1 without adding its command
+// here fails, and so does a command on the list that the design does not
+// allow (bar the reads the design names for the console and §5.1 has no
+// row for yet).
+func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
+	const path = "docs/design/desktop-console.md"
+	doc := readDoc(t, path)
+	allowed := map[string]bool{}
+	argvs := 0
+	for _, cells := range docTableAfter(t, path, doc, "| Allowed argv (exact, in this order) |") {
+		argv := firstBacktick(cells[0])
+		if argv == "" {
+			continue
+		}
+		argvs++
+		// "budget show --json" is the command `fugaro budget show`: its own
+		// words, up to its first flag or its first ARGUMENT (the RUN a
+		// diagnose or a logs row takes, spelled in capitals in the table).
+		var words []string
+		for _, tok := range strings.Fields(argv) {
+			if strings.HasPrefix(tok, "-") || tok == strings.ToUpper(tok) {
+				break
+			}
+			words = append(words, tok)
+		}
+		cmdPath := "fugaro " + strings.Join(words, " ")
+		allowed[cmdPath] = true
+		if !consoleReadPaths[cmdPath] && !consoleLaunchPaths[cmdPath] {
+			t.Errorf("%s allows the console to spawn %q, but %q is not in consoleReadPaths (internal/cli/project.go): a command on the allow-list is a read, and a read must not write the remembered checkouts", path, argv, cmdPath)
+		}
+	}
+	// Fifteen commands: the twelve dashboard reads (logs has two argvs), the
+	// rail's `config list --json` (D13's amendment of 2026-10-20), the graph
+	// screen's `plan status --json` (GV2.1), the project view's
+	// `coordinator status --from-store --all --json` (Bitbucket credentials
+	// T1.2) and the launch `fugaro run` (V2.5.1a).
+	if len(allowed) != 15 {
+		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 15 (logs has two argvs)", path, argvs, len(allowed))
+	}
+	// The other direction: the list carries §5.1's commands and nothing else,
+	// except the read the design names for the console and §5.1 has not grown
+	// a row for yet (V2.2.1, the graph document). Another name is a command
+	// someone decided the console spawns, and that is a design change, not a
+	// table entry.
+	namedNotAllowed := map[string]bool{"fugaro plan graph": true}
+	for cmdPath := range consoleReadPaths {
+		if !allowed[cmdPath] && !namedNotAllowed[cmdPath] {
+			t.Errorf("consoleReadPaths carries %q, which is neither an argv §5.1 allows nor a read the design names for the console (%v): the read-only list is the design's, not this file's", cmdPath, namedNotAllowed)
+		}
+	}
+}
+
+// consoleLaunchPaths is §5.1's allow-list written as an exemption rather
+// than as a hole: `fugaro run` is the console's one write (rule 11, D22), so
+// it is deliberately absent from consoleReadPaths -- a write is not a read
+// and must not be -- and a table that grew a second writer would have to
+// come back here and say so. The reason sits beside the exemption because
+// the exemption is the security claim: one write, named, and nothing else.
+var consoleLaunchPaths = map[string]bool{"fugaro run": true}
 
 // planPhaseRow returns the "What ships" cell of the project-centric plan's
 // phase table row whose Phase cell names phase (a substring of it), and the
@@ -1964,6 +2232,18 @@ const (
 	// is where the owner copies it (plan Task 4.5).
 	consoleReleaseWorkflowPath = "docs/pending-workflows/console-release.yml"
 	appliedConsoleReleasePath  = ".github/workflows/console-release.yml"
+
+	// consoleReleaseTagWorkflowPath is the staged supersede file that moves the
+	// console onto its own `console-vX.Y.Z` tag stream: the console no longer
+	// releases from the CLI's `v*` tag, it has its own version line, its own
+	// notes file and its own release. While it is staged it is the file's
+	// *effective* text -- it is what the owner's copy-in writes over both copies
+	// of console-release.yml -- so these tests read it through
+	// consoleReleaseEffectiveText rather than reading console-release.yml, which
+	// is still the file that runs until that copy-in happens. The byte-identity
+	// clause between console-release.yml's two homes is unchanged and still
+	// asserted: this file supersedes it, and does not touch it.
+	consoleReleaseTagWorkflowPath = "docs/pending-workflows/console-release-tag.yml"
 )
 
 // consoleReleaseSecrets is the exact set of secrets the signing job reads, and
@@ -2050,9 +2330,18 @@ type consoleReleaseStep struct {
 // readConsoleReleaseWorkflow is the staged signing file's text, parsed both
 // ways: into the typed shape above, and into raw mappings of the trigger block
 // and of each job, where a key this test does not model is still visible.
+// It reads the file's *effective* text -- consoleReleaseEffectiveText: the
+// staged supersede file while it is staged, the applied copy afterwards -- so
+// the same suite is green on both sides of the owner's copy-in.
+//
+// The failure messages below name consoleReleaseWorkflowPath, and while the
+// supersede file is staged that is the file the change *supersedes* rather than
+// the text just read: it is kept staged, byte-identical to the copy that runs,
+// and its header names the supersede file and the copy-in -- the file a reader
+// is being pointed on to anyway (docs/pending-workflows/README.md).
 func readConsoleReleaseWorkflow(t *testing.T) (string, consoleReleaseWorkflow, map[string]any, map[string]map[string]any) {
 	t.Helper()
-	text := readDoc(t, consoleReleaseWorkflowPath)
+	text, _ := consoleReleaseEffectiveText(t)
 	var wf consoleReleaseWorkflow
 	if err := yaml.Unmarshal([]byte(text), &wf); err != nil {
 		t.Fatalf("%s is not valid YAML: %v", consoleReleaseWorkflowPath, err)
@@ -2133,8 +2422,14 @@ func TestDocsConsoleReleaseWorkflowHoldsNoPullRequestTrigger(t *testing.T) {
 	if !slices.Equal(keys, []string{"push"}) {
 		t.Errorf("%s triggers on %v, want exactly [push]: it is the tag-only signing job (plan Task 4.2's table)", consoleReleaseWorkflowPath, keys)
 	}
-	if !slices.Equal(wf.On.Push.Tags, []string{"v[0-9]+.[0-9]+.[0-9]+"}) {
-		t.Errorf("%s's push trigger tags = %v, want the strict release tag pattern release.yml and images.yml use: a loose `v*` would start a signing run for a tag the release gate refuses", consoleReleaseWorkflowPath, wf.On.Push.Tags)
+	// The console's own tag, and only the console's: `console-vX.Y.Z`. The CLI's
+	// `v*` tag releases the CLI (release.yml) and must not start a console
+	// signing run any more -- three release streams, each with its own tag
+	// (owner addendum 2026-10-22: CLI = animals, Console = fruits, Mobile =
+	// birds). A loose `console-v*` would start a signing run for a tag the
+	// version check below refuses.
+	if !slices.Equal(wf.On.Push.Tags, []string{"console-v[0-9]+.[0-9]+.[0-9]+"}) {
+		t.Errorf("%s's push trigger tags = %v, want exactly [console-v[0-9]+.[0-9]+.[0-9]+]: the console releases from its own console-vX.Y.Z tag, and a `v*` tag here would put the console back on the CLI's release stream", consoleReleaseWorkflowPath, wf.On.Push.Tags)
 	}
 	if len(wf.On.Push.Branches) != 0 {
 		t.Errorf("%s's push trigger carries branches %v: the signing job runs on a tag and never on a branch", consoleReleaseWorkflowPath, wf.On.Push.Branches)
@@ -2187,7 +2482,14 @@ const consoleNotarizeScriptPath = "console/scripts/notarize-and-staple.sh"
 // tests below run under bash with a faked `gh`.
 const (
 	consoleReleasePublishStep = "Publish the console's own release"
-	consoleReleaseTagStep     = "The tag is a strict vX.Y.Z, and its version is the app's"
+	// consoleReleaseTagStep shapes the tag, consoleReleaseVersionStep holds the
+	// tag's X.Y.Z to console/package.json's own version line, and
+	// consoleReleaseNotesStep holds it to the console's notes file for that
+	// version. All three run before anything is built, and each refuses on its
+	// own; the behavioural tests below run the first two.
+	consoleReleaseTagStep     = "The tag is a strict console-vX.Y.Z"
+	consoleReleaseVersionStep = "The tag's version is console/package.json's"
+	consoleReleaseNotesStep   = "The console's notes for this version exist"
 )
 
 // consoleArtifactPins are the upload/download-artifact pins this repository's
@@ -2638,15 +2940,48 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 		ancestry+2 >= len(onMain) || !strings.HasPrefix(onMain[ancestry+1], `echo "::error::`) || onMain[ancestry+2] != "exit 1" {
 		t.Errorf("%s's first run step (%q) does not fetch main and refuse a tagged commit that is not its ancestor", consoleReleaseWorkflowPath, job.Steps[runSteps[0]].Name)
 	}
+	// The four checks before the gate: the commit is on main, the tag is a
+	// strict `console-vX.Y.Z`, its version is console/package.json's, and the
+	// console's notes for that version exist. Every one of them refuses before
+	// the 90 minutes of packing, signing and notarising that follow, and none of
+	// them holds a secret.
 	tagIdx, tag := stepNamed(consoleReleaseTagStep)
-	if tagIdx != runSteps[1] || gateIdx != runSteps[2] {
-		t.Errorf("%s's run steps begin %v, want the ancestry check, then the tag shape (%d), then the gate (%d)", consoleReleaseWorkflowPath, runSteps[:3], tagIdx, gateIdx)
+	versionIdx, version := stepNamed(consoleReleaseVersionStep)
+	notesIdx, notes := stepNamed(consoleReleaseNotesStep)
+	if tagIdx != runSteps[1] || versionIdx != runSteps[2] || notesIdx != runSteps[3] || gateIdx != runSteps[4] {
+		t.Errorf("%s's run steps begin %v, want the ancestry check, then the tag shape (%d), console/package.json's version (%d), the notes file (%d), then the gate (%d)",
+			consoleReleaseWorkflowPath, runSteps[:5], tagIdx, versionIdx, notesIdx, gateIdx)
 	}
 	if tag.Id != "tag" || tag.Env["TAG"] != "${{ github.ref_name }}" {
 		t.Errorf("%s's tag step must have id `tag` and read TAG from github.ref_name", consoleReleaseWorkflowPath)
 	}
-	if !slices.Contains(consoleRunLines(gate.Run), `scripts/release-gate.sh "$TAG"`) || gate.Env["TAG"] != "${{ github.ref_name }}" {
-		t.Errorf("%s's gate step (%q) does not run the release gate with the tag", consoleReleaseWorkflowPath, gate.Name)
+	// The version and notes steps read the tag step's output (`steps.tag.outputs.version`),
+	// not the raw ref: the prefix is stripped in exactly one place, so a second
+	// spelling of it cannot drift.
+	if version.Env["VERSION"] != "${{ steps.tag.outputs.version }}" || notes.Env["VERSION"] != "${{ steps.tag.outputs.version }}" {
+		t.Errorf("%s's version step env = %v and notes step env = %v, want both to read ${{ steps.tag.outputs.version }}", consoleReleaseWorkflowPath, version.Env, notes.Env)
+	}
+	// The prefix is stripped with `${TAG#console-v}` and never `${TAG#v}`: a
+	// leading `v` is not the console tag's, so `${TAG#v}` would leave
+	// `console-vX.Y.Z` as the version and stamp the app with it.
+	if !strings.Contains(tag.Run, `echo "version=${TAG#console-v}" >> "$GITHUB_OUTPUT"`) || strings.Contains(tag.Run, `"${TAG#v}"`) {
+		t.Errorf("%s's tag step (%q) does not strip the `console-v` prefix: %v", consoleReleaseWorkflowPath, tag.Name, tag.Run)
+	}
+	if !slices.Contains(consoleRunLines(version.Run), `declared="$(jq -r .version console/package.json)"`) {
+		t.Errorf("%s's version step (%q) does not read console/package.json's version with jq, the way release.yml reads the plugin's: %v", consoleReleaseWorkflowPath, version.Name, version.Run)
+	}
+	if !strings.Contains(version.Run, `[ "$declared" != "$VERSION" ]`) {
+		t.Errorf("%s's version step (%q) does not compare console/package.json's version with the tag's: %v", consoleReleaseWorkflowPath, version.Name, version.Run)
+	}
+	if !strings.Contains(notes.Run, `docs/releases/console/v$VERSION.md`) {
+		t.Errorf("%s's notes step (%q) does not look for the console's own notes file docs/releases/console/v$VERSION.md", consoleReleaseWorkflowPath, notes.Name)
+	}
+	// The gate is the CLI's script, unchanged and CLI-only: it is handed `v` +
+	// the version, never the console tag, and the token it needs to read the
+	// commit's check-runs.
+	if !slices.Contains(consoleRunLines(gate.Run), `scripts/release-gate.sh "v$VERSION"`) ||
+		gate.Env["VERSION"] != "${{ steps.tag.outputs.version }}" || gate.Env["GH_TOKEN"] != "${{ github.token }}" {
+		t.Errorf("%s's gate step (%q) does not run the CLI's release gate as `v` + the tag's version, with the check-runs token: env %v", consoleReleaseWorkflowPath, gate.Name, gate.Env)
 	}
 	installIdx, install := stepNamed("Install the pinned toolchain")
 	if install.Run != "npm ci --ignore-scripts --no-audit --no-fund" || install.WorkingDirectory != "console" {
@@ -3139,14 +3474,45 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 	plines := consoleRunLines(publish.Run)
 	for _, want := range []string{
 		`CONSOLE_TAG="console-v$VERSION"`,
-		`VERSION="${TAG#v}"`,
+		`VERSION="${TAG#console-v}"`,
 		`gh release create "$CONSOLE_TAG" --repo "$GITHUB_REPOSITORY" --draft --latest=false \`,
-		`--target "$GITHUB_SHA" \`,
+		// The release's body is the console's OWN notes for this version -- the
+		// file the release job refused to build without -- read from the tagged
+		// tree, because `publish` has no checkout. A release body built from a
+		// string in this file is what the console had while it rode the CLI's
+		// tag, and the notes are the console's own end-user summary.
+		`--notes-file "$BODY" \`,
 		`gh release edit "$CONSOLE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest=false`,
 	} {
 		if !slices.Contains(plines, want) {
 			t.Errorf("%s's publish step does not run %q", consoleReleaseWorkflowPath, want)
 		}
+	}
+	// The tag is the owner's, not this job's: the `console-vX.Y.Z` push is what
+	// started this run, so the job never creates, moves or reuses it, and no
+	// `--target` (the CLI era's way of making the tag itself at $GITHUB_SHA)
+	// belongs here. What the job does is resolve the tag to a commit and refuse
+	// when that commit is not the one this run built -- publishing under a tag
+	// that has moved would put artifacts from one commit under a tag naming
+	// another. Reading it through `commits/` rather than `git/ref/tags/`, which
+	// returns the tag *object* for an annotated tag.
+	if !strings.Contains(publish.Run, `gh api "repos/$GITHUB_REPOSITORY/commits/$CONSOLE_TAG" --jq .sha`) ||
+		!strings.Contains(publish.Run, `if [ "$tag_sha" != "$GITHUB_SHA" ]`) {
+		t.Errorf("%s's publish step does not resolve the tag it publishes under to this run's commit: %v", consoleReleaseWorkflowPath, plines)
+	}
+	if strings.Contains(publish.Run, `--target "$GITHUB_SHA"`) {
+		t.Errorf("%s's publish step passes --target to `gh release create`: the tag already exists (it is this run's own tag), so the job creates nothing -- the flag is a leftover from when this workflow ran on the CLI's tag", consoleReleaseWorkflowPath)
+	}
+	// The notes are the console's own file, and they are read at the tagged
+	// commit: read at whatever the default branch holds now, a release could
+	// carry notes that disagree with the artifacts beside them.
+	if !strings.Contains(publish.Run, `NOTES_PATH="docs/releases/console/v$VERSION.md"`) ||
+		!strings.Contains(publish.Run, `?ref=$GITHUB_SHA"`) ||
+		!strings.Contains(publish.Run, `cat "$NOTES"`) {
+		t.Errorf("%s's publish step does not read the console's notes from docs/releases/console/v$VERSION.md at the tagged commit: %v", consoleReleaseWorkflowPath, plines)
+	}
+	if strings.Contains(publish.Run, `--notes "`) {
+		t.Errorf("%s's publish step still passes an inline --notes body: the console's body is its own notes file", consoleReleaseWorkflowPath)
 	}
 	// The assets it attaches: the macOS pair, the record and the sums in both
 	// states, and -- once the Linux change is applied -- the AppImage, the .deb,
@@ -3178,14 +3544,12 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 			t.Errorf("%s's publish step touches the CLI's release (%q)", consoleReleaseWorkflowPath, line)
 		}
 	}
-	// The never-clobber shape: in each `case`, the only branch that lets the
-	// job go on is the "absent" one ("" for the release list, a 404 for the
-	// tag), and the default branch `*)` errors and exits 1. The behaviour is
-	// pinned again, against a faked gh, in
-	// TestDocsConsoleReleasePublishRefusesToClobber.
+	// The never-clobber shape: in the `case` over the release list, the only
+	// branch that lets the job go on is the "absent" one (""), and the default
+	// branch `*)` errors and exits 1. The behaviour is pinned again, against a
+	// faked gh, in TestDocsConsoleReleasePublishRefusesToClobber.
 	for _, c := range []struct{ subject, pass string }{
 		{`case "$existing" in`, `"") ;;`},
-		{`case "$answer" in`, `*"(HTTP 404)"*) ;;`},
 	} {
 		i := consoleLineIndex(plines, c.subject, false)
 		if i < 0 || i+1 >= len(plines) || plines[i+1] != c.pass {
@@ -3198,8 +3562,12 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 			t.Errorf("%s's publish step: %q's default branch does not refuse", consoleReleaseWorkflowPath, c.subject)
 		}
 	}
-	if i := consoleLineIndex(plines, `if answer="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$CONSOLE_TAG" 2>&1)"; then`, false); i < 0 || plines[i+2] != "exit 1" {
-		t.Errorf("%s's publish step does not refuse an existing console tag", consoleReleaseWorkflowPath)
+	// And the tag probe is not the CLI era's: `git/ref/tags/` (which reads the
+	// tag as "does it exist", the question the job asked when *it* created the
+	// tag) is replaced by "which commit does it name", because under a
+	// tag-push trigger the tag exists on every run by construction.
+	if i := consoleLineIndex(plines, `tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/$CONSOLE_TAG" --jq .sha)"`, true); i < 0 || i+2 >= len(plines) || !strings.HasPrefix(plines[i+1], `echo "::error::`) || plines[i+2] != "exit 1" {
+		t.Errorf("%s's publish step does not resolve the console tag to a commit and stop when the lookup fails", consoleReleaseWorkflowPath)
 	}
 
 	// The Node version is console/package.json's engines.node, and no cache:
@@ -3243,12 +3611,23 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 	// scripts/release-gate.sh requires a check run named `test`, so every tag
 	// is refused -- the CLI's releases included -- until the owner copies the
 	// staged file in. Stop the merge, do not delete the assertion.
+	//
+	// What it compares is the two copies of console-release.yml, never the
+	// text these tests read: while the console-vX.Y.Z change is staged, the
+	// effective text is the supersede file, which is *meant* to differ from the
+	// file it supersedes -- comparing that would make this clause red for the
+	// one change it is not about. The supersede file is copied over both copies,
+	// so the clause is untouched by it and still holds the line it always held.
 	if _, statErr := os.Stat(filepath.Join("..", "..", appliedConsoleReleasePath)); statErr == nil {
 		applied, err := os.ReadFile(filepath.Join("..", "..", appliedConsoleReleasePath))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if string(applied) != text {
+		stagedCopy, err := os.ReadFile(filepath.Join("..", "..", consoleReleaseWorkflowPath))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(applied) != string(stagedCopy) {
 			t.Errorf("%s differs from the staged %s: the staged file has a change the owner has not copied in yet. Do not merge before running `cp %s %s` and committing it -- until then main's `test` job is red and scripts/release-gate.sh refuses every tag, the CLI's included (docs/pending-workflows/README.md, %q)",
 				appliedConsoleReleasePath, consoleReleaseWorkflowPath, consoleReleaseWorkflowPath, appliedConsoleReleasePath, "## `console-release.yml`")
 		}
@@ -3322,12 +3701,26 @@ func consoleRunScript(t *testing.T, script string, env []string) (bool, string, 
 echo "gh $*" >> "$FAKE_LOG"
 case "$*" in
   *"/releases --jq"*) printf '%s' "$FAKE_RELEASES"; exit "${FAKE_RELEASES_EXIT:-0}" ;;
-  *"git/ref/tags/"*)
+  # The tag this run was triggered by, resolved to a commit (the step asks for
+  # the sha field). The job does not create that tag -- the owner pushes it, and that
+  # push is what started this run -- so the only question here is whether it
+  # still names the commit this run built. FAKE_TAG=at-sha answers with
+  # $GITHUB_SHA (the tag has not moved), FAKE_TAG=moved with another commit, and
+  # anything else is the lookup failing: which is NOT "no such tag", because the
+  # tag exists by construction, and it must stop the job too.
+  *"/commits/"*)
     case "$FAKE_TAG" in
-      exists) echo '{"ref":"refs/tags/x"}'; exit 0 ;;
-      404) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
+      at-sha) printf '%s' "$GITHUB_SHA"; exit 0 ;;
+      moved) printf '%s' "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"; exit 0 ;;
       *) echo "gh: Server Error (HTTP 502)" >&2; exit 1 ;;
     esac ;;
+  # The console's own notes, read from the tagged tree: FAKE_NOTES_EXIT=1 is a
+  # 404 (the file is not on that commit), FAKE_NOTES_B64 is the base64 content
+  # the step pipes through base64 -d, and both spellings of "the read failed"
+  # are refused by the publish step rather than published as an empty body.
+  *"/contents/"*)
+    if [ "${FAKE_NOTES_EXIT:-0}" != 0 ]; then echo "gh: Not Found (HTTP 404)" >&2; exit "${FAKE_NOTES_EXIT}"; fi
+    printf '%s' "${FAKE_NOTES_B64-eA==}"; exit 0 ;;
   "release create"*|"release edit"*) exit 0 ;;
 esac
 echo "fake gh: unexpected call: $*" >&2
@@ -3336,7 +3729,10 @@ exit 3
 	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte(fake), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	work := filepath.Join(dir, "work")
+	// RUNNER_TEMP/console-release, which is both the step's working directory
+	// and where it writes the console's notes and the release body it composes
+	// them into (the workflow sets `working-directory: ${{ runner.temp }}/console-release`).
+	work := filepath.Join(dir, "console-release")
 	if err := os.MkdirAll(work, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -3377,10 +3773,20 @@ exit 3
 }
 
 // TestDocsConsoleReleasePublishRefusesToClobber runs the staged publish step
-// against a faked gh. It publishes only when no console release exists and the
-// tag lookup is a clean 404; a published release, a leftover draft, an existing
-// tag, a tag lookup that failed any other way (a 5xx must not read as "absent")
-// and a failed release listing all stop it before `gh release create`.
+// against a faked gh, in the world the new trigger actually produces: the
+// console tag exists and is the tag whose push started the run ($GITHUB_REF_NAME
+// / $TAG), so the tag lookup answers "present at the commit this run built".
+//
+// The `publishes` case is that world, and it is what keeps the step honest: an
+// earlier version of this step probed the tag with `git/ref/tags/` and refused
+// when it existed, which under a tag-push trigger means refusing *every* console
+// release after the full build -- a suite that only modelled "tag absent:
+// publishes" stayed green over it. So the tag-lookup cases are the two states
+// that can really happen (present at this commit, or moved off it), plus a
+// lookup that fails, which is not "no such tag" and must stop the job as well.
+//
+// A published release, a leftover draft and a failed release listing all stop it
+// before `gh release create`.
 func TestDocsConsoleReleasePublishRefusesToClobber(t *testing.T) {
 	_, wf, _, _ := readConsoleReleaseWorkflow(t)
 	_, step := consoleStepNamed(t, wf.Jobs["publish"], "publish", consoleReleasePublishStep)
@@ -3389,24 +3795,43 @@ func TestDocsConsoleReleasePublishRefusesToClobber(t *testing.T) {
 		releases    string
 		releasesErr string
 		tag         string
+		notesErr    string
+		notes       string
 		publishes   bool
 	}{
-		{"nothing there: publishes", "", "0", "404", true},
-		{"published release", "published", "0", "404", false},
-		{"draft left by an earlier attempt", "draft", "0", "404", false},
-		{"tag exists without a release", "", "0", "exists", false},
-		{"tag lookup fails with a 5xx", "", "0", "502", false},
-		{"release listing fails", "", "1", "404", false},
+		{"tag present at the tagged commit: publishes", "", "0", "at-sha", "0", "ok", true},
+		{"published release", "published", "0", "at-sha", "0", "ok", false},
+		{"draft left by an earlier attempt", "draft", "0", "at-sha", "0", "ok", false},
+		// The tag is the owner's and cannot be absent here, but it can have been
+		// moved (a force-push, a re-tag) after this run started: publishing then
+		// would put assets built from one commit under a tag naming another.
+		{"the tag has moved off this run's commit", "", "0", "moved", "0", "ok", false},
+		{"tag lookup fails", "", "0", "502", "0", "ok", false},
+		{"release listing fails", "", "1", "at-sha", "0", "ok", false},
+		// The console's notes are the release body: a version whose notes file
+		// is not on the tagged commit, or is there and empty, is not a release
+		// this job may publish -- an empty body is what the console had while it
+		// rode the CLI's tag, and the file is what replaced it.
+		{"notes missing on the tagged commit", "", "0", "at-sha", "1", "ok", false},
+		{"notes empty on the tagged commit", "", "0", "at-sha", "0", "empty", false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			notesB64 := "eA=="
+			if c.notes == "empty" {
+				notesB64 = ""
+			}
 			ok, calls, _ := consoleRunScript(t, step.Run, []string{
-				"TAG=v1.2.3", "GH_TOKEN=fake",
+				"TAG=console-v1.2.3", "GH_TOKEN=fake",
 				"FAKE_RELEASES=" + c.releases, "FAKE_RELEASES_EXIT=" + c.releasesErr, "FAKE_TAG=" + c.tag,
+				"FAKE_NOTES_EXIT=" + c.notesErr, "FAKE_NOTES_B64=" + notesB64,
 			})
 			created := strings.Contains(calls, "gh release create console-v1.2.3")
 			published := strings.Contains(calls, "gh release edit console-v1.2.3 --repo dimipaun/fugaro --draft=false --latest=false")
 			if c.publishes && (!ok || !created || !published) {
 				t.Errorf("the publish step did not create and publish console-v1.2.3 (ok=%v); gh saw:\n%s", ok, calls)
+			}
+			if c.publishes && !strings.Contains(calls, "gh api repos/dimipaun/fugaro/commits/console-v1.2.3") {
+				t.Errorf("the publish step published without resolving the tag it is publishing under to a commit; gh saw:\n%s", calls)
 			}
 			if !c.publishes && (ok || created || published) {
 				t.Errorf("the publish step went on (ok=%v, created=%v) when it must refuse; gh saw:\n%s", ok, created, calls)
@@ -3419,26 +3844,38 @@ func TestDocsConsoleReleasePublishRefusesToClobber(t *testing.T) {
 }
 
 // TestDocsConsoleReleaseTagStepStampsOnlyStrictVersions runs the staged tag
-// step: a strict vX.Y.Z yields version=X.Y.Z (the value every pack is stamped
-// with); anything else fails before a pack can run.
+// step: a strict console-vX.Y.Z yields version=X.Y.Z (the value every pack is
+// stamped with); anything else fails before a pack can run.
+//
+// The CLI's own `vX.Y.Z` tag is in the refusal list on purpose, and it is the
+// point of the change: `v1.2.3` used to start this workflow, and it releases
+// the CLI (release.yml) and nothing else now -- three release streams, each with
+// its own tag (owner addendum 2026-10-22). The mutation that proves it:
+// `^console-v` dropped from the pattern makes the two CLI-shaped cases publish a
+// console for the CLI's release.
 func TestDocsConsoleReleaseTagStepStampsOnlyStrictVersions(t *testing.T) {
 	_, wf, _, _ := readConsoleReleaseWorkflow(t)
 	_, step := consoleStepNamed(t, wf.Jobs["release"], "release", consoleReleaseTagStep)
 	for _, c := range []struct {
 		tag, version string
 	}{
-		{"v1.2.3", "1.2.3"},
-		{"v0.10.0", "0.10.0"},
-		{"v1.2", ""},
-		{"v1.2.3-rc1", ""},
-		{"v01.2.3", ""},
+		{"console-v1.2.3", "1.2.3"},
+		{"console-v0.10.0", "0.10.0"},
+		{"console-v0.11.0", "0.11.0"},
+		{"v1.2.3", ""},
+		{"v0.11.0", ""},
+		{"console-v1.2", ""},
+		{"console-v1.2.3-rc1", ""},
+		{"console-v01.2.3", ""},
+		{"console-1.2.3", ""},
 		{"1.2.3", ""},
-		{"v1.2.3\nversion=9.9.9", ""},
+		{"console-v", ""},
+		{"console-v1.2.3\nversion=9.9.9", ""},
 	} {
 		ok, _, out := consoleRunScript(t, step.Run, []string{"TAG=" + c.tag})
 		if c.version == "" {
 			if ok || out != "" {
-				t.Errorf("tag %q: the tag step passed (output %q); it must refuse anything but a strict vX.Y.Z", c.tag, out)
+				t.Errorf("tag %q: the tag step passed (output %q); it must refuse anything but a strict console-vX.Y.Z", c.tag, out)
 			}
 			continue
 		}
@@ -3446,6 +3883,83 @@ func TestDocsConsoleReleaseTagStepStampsOnlyStrictVersions(t *testing.T) {
 			t.Errorf("tag %q: ok=%v output %q, want version=%s", c.tag, ok, out, c.version)
 		}
 	}
+}
+
+// TestDocsConsoleReleaseVersionStepRefusesATagItsOwnVersionLineDisagreesWith
+// runs the staged version step, in both jobs that carry it, against a
+// console/package.json written for the occasion: the tag's X.Y.Z has to be the
+// file's own `version` (the same call release.yml makes for the plugin's
+// version, one file over).
+//
+// The mutation that proves it: dropping the comparison (`[ "$declared" !=
+// "$VERSION" ]`) publishes a console whose own version line, its update feed
+// and its file names disagree with the tag printed on the release -- and,
+// because Task 4.4's updater refuses a downgrade, a console stamped *below*
+// what console/package.json says would refuse every update it was offered
+// afterwards (docs/release.md, "Console releases").
+func TestDocsConsoleReleaseVersionStepRefusesATagItsOwnVersionLineDisagreesWith(t *testing.T) {
+	_, wf, _, _ := readConsoleReleaseWorkflow(t)
+	for _, job := range []string{"release", "linux"} {
+		jobName := job
+		t.Run(jobName, func(t *testing.T) {
+			_, step := consoleStepNamed(t, wf.Jobs[jobName], jobName, consoleReleaseVersionStep)
+			for _, c := range []struct {
+				name, version, declared string
+				ok                      bool
+			}{
+				{"the tag and the version line agree", "0.11.0", "0.11.0", true},
+				{"another release", "1.2.3", "1.2.3", true},
+				{"the version line is behind the tag", "0.11.0", "0.10.0", false},
+				{"the version line is ahead of the tag", "0.10.0", "0.11.0", false},
+				{"the version line is absent", "0.11.0", "", false},
+				{"the version line is an empty string", "0.11.0", "null", false},
+			} {
+				t.Run(c.name, func(t *testing.T) {
+					ok, _ := consoleRunVersionStep(t, step.Run, c.version, c.declared)
+					if ok != c.ok {
+						t.Errorf("console/package.json version %q and tag version %q: ok=%v, want %v", c.declared, c.version, ok, c.ok)
+					}
+				})
+			}
+		})
+	}
+}
+
+// consoleRunVersionStep runs the version step's `run:` script under bash in a
+// directory that holds one file, console/package.json, with declared as its
+// version (or with no `version` field at all when declared is ""). It returns
+// whether the step succeeded. The step reads the file with jq, the way
+// release.yml reads the plugin's, so this skips -- rather than passing -- on a
+// machine without jq.
+func consoleRunVersionStep(t *testing.T, script, version, declared string) (bool, string) {
+	t.Helper()
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not on PATH")
+	}
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq is not on PATH")
+	}
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "console"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `{"name":"fugaro-console","version":"` + declared + `"}`
+	if declared == "" {
+		manifest = `{"name":"fugaro-console"}`
+	} else if declared == "null" {
+		manifest = `{"name":"fugaro-console","version":null}`
+	}
+	if err := os.WriteFile(filepath.Join(dir, "console", "package.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "github_output")
+	cmd := exec.Command(bash, "-e", "-c", script)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GITHUB_OUTPUT="+out, "VERSION="+version)
+	runErr := cmd.Run()
+	output, _ := os.ReadFile(out)
+	return runErr == nil, string(output)
 }
 
 // TestDocsConsoleReleaseRetryHelperIsBounded runs the Apple-network retry
@@ -5115,6 +5629,14 @@ func TestDocsDesktopConsoleContractStatesTheAccountAxis(t *testing.T) {
 // order), and each tag without omitempty is present. Mutations: an unknown key
 // added to the fixture; a required key dropped; a key moved; a number made a
 // string.
+//
+// The one key the fixture may *lack* is `leased_usd`, and the reason is the
+// fixture's own subject: its header says the recording is 0.8.6's, so a
+// required key a later release added cannot be in it, and this file is
+// deliberately the old document the console must still read -- updating it to
+// the current shape would delete what it exists to prove. Lack is the only
+// allowance: a fixture that *carried* `leased_usd` would still be walked
+// against the struct like every other key.
 func TestDocsDesktopConsoleNormalFixtureMatchesTheGoTypes(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(readDoc(t, "console/test/fixtures/normal.ndjson")), "\n")
 	if len(lines) < 2 {
@@ -5138,7 +5660,7 @@ func TestDocsDesktopConsoleNormalFixtureMatchesTheGoTypes(t *testing.T) {
 		if err := dec.Decode(&doc); err != nil {
 			t.Fatalf("record %d does not decode into watch.JSONDoc: %v", i+1, err)
 		}
-		checkJSONShape(t, fmt.Sprintf("record %d", i+1), rec.Document, reflect.TypeOf(watch.JSONDoc{}))
+		checkJSONShape(t, fmt.Sprintf("record %d", i+1), rec.Document, reflect.TypeOf(watch.JSONDoc{}), mayLackOldRecording)
 	}
 	if docs == 0 {
 		t.Fatal("normal.ndjson holds no document")
@@ -5167,9 +5689,14 @@ func orderedJSONKeys(t *testing.T, raw json.RawMessage) []string {
 	return keys
 }
 
+// mayLackOldRecording are the keys a document recorded before the release that
+// added them may leave out: see TestDocsDesktopConsoleNormalFixtureMatchesTheGoTypes.
+var mayLackOldRecording = map[string]bool{"leased_usd": true}
+
 // checkJSONShape walks one JSON value against a struct type: keys in struct
-// order, required keys present, recursing into nested structs and slices.
-func checkJSONShape(t *testing.T, where string, raw json.RawMessage, rt reflect.Type) {
+// order, required keys present (bar those in mayLack), recursing into nested
+// structs and slices.
+func checkJSONShape(t *testing.T, where string, raw json.RawMessage, rt reflect.Type, mayLack map[string]bool) {
 	t.Helper()
 	for rt.Kind() == reflect.Ptr {
 		if string(raw) == "null" {
@@ -5185,7 +5712,7 @@ func checkJSONShape(t *testing.T, where string, raw json.RawMessage, rt reflect.
 			return
 		}
 		for i, item := range items {
-			checkJSONShape(t, fmt.Sprintf("%s[%d]", where, i), item, rt.Elem())
+			checkJSONShape(t, fmt.Sprintf("%s[%d]", where, i), item, rt.Elem(), mayLack)
 		}
 	case reflect.Struct:
 		var members map[string]json.RawMessage
@@ -5207,7 +5734,7 @@ func checkJSONShape(t *testing.T, where string, raw json.RawMessage, rt reflect.
 		for _, f := range fields {
 			if _, ok := members[f.name]; ok {
 				want = append(want, f.name)
-			} else if f.required {
+			} else if f.required && !mayLack[f.name] {
 				t.Errorf("%s: required key %q is missing (internal/watch/json.go has it without omitempty)", where, f.name)
 			}
 		}
@@ -5216,7 +5743,7 @@ func checkJSONShape(t *testing.T, where string, raw json.RawMessage, rt reflect.
 		}
 		for _, f := range fields {
 			if v, ok := members[f.name]; ok {
-				checkJSONShape(t, where+"."+f.name, v, f.typ)
+				checkJSONShape(t, where+"."+f.name, v, f.typ, mayLack)
 			}
 		}
 	}
@@ -5886,6 +6413,27 @@ func consoleReplacementText(t *testing.T, staged, applied string) (string, strin
 	return readDoc(t, applied), applied
 }
 
+// consoleReleaseEffectiveText is the console signing workflow's text as the
+// repository is *heading*: the staged supersede file
+// (consoleReleaseTagWorkflowPath) while it is staged, and console-release.yml
+// once the owner's copy-in has written it over both copies of that file and
+// removed the supersede file. It is what every test about the console's release
+// stream reads, so the same suite is green before and after a copy-in only a
+// human performs.
+//
+// The byte-identity clause stays live in every state: consoleWorkflowText is
+// called first, so the two copies of console-release.yml are still held to be
+// byte-identical while the supersede file is staged, and the supersede file is
+// not a licence to edit either of them.
+func consoleReleaseEffectiveText(t *testing.T) (string, string) {
+	t.Helper()
+	file, stagedPath := consoleWorkflowText(t, consoleReleaseWorkflowPath, appliedConsoleReleasePath)
+	if docExists(t, consoleReleaseTagWorkflowPath) {
+		return readDoc(t, consoleReleaseTagWorkflowPath), consoleReleaseTagWorkflowPath
+	}
+	return file, stagedPath
+}
+
 // parseConsoleWorkflow is readConsoleTestsWorkflow's parsing half: the typed
 // shape (steps, permissions, matrix) and the raw mappings of the trigger block
 // and of each job, where a key this file does not model (`needs:`,
@@ -6224,12 +6772,27 @@ func TestConsoleReleaseLinuxAddsTheLinuxLegAndMovesNothingElse(t *testing.T) {
 		}
 	}
 
+	// Which release stream this text is on. Once console-release-tag.yml has
+	// been copied in, the applied file -- the one read here after both
+	// supersede files are gone -- triggers on the console's own
+	// `console-vX.Y.Z` tag, hands the gate `v` + the version rather than the
+	// tag, and resolves the tag the owner pushed rather than asking whether it
+	// exists. Those two lines are pinned for the tag stream by
+	// TestDocsConsoleReleaseWorkflowIsStagedAndPinned; here they are only read
+	// in the form the stream this tree is on carries.
+	gateCall := `scripts/release-gate.sh "$TAG"`
+	tagRefusal := "could not tell whether the tag $CONSOLE_TAG exists"
+	if strings.Contains(text, `tags: ["console-v[0-9]+.[0-9]+.[0-9]+"]`) {
+		gateCall = `scripts/release-gate.sh "v$VERSION"`
+		tagRefusal = "could not resolve the tag $CONSOLE_TAG to a commit"
+	}
+
 	// What the linux job does: the same gate, the same pack, and -- added for
 	// Linux because an unsigned artifact has no other claim -- the shipped bytes
 	// opened and read.
 	linuxRuns := strings.Join(stepStrings(wf, "linux"), "\n")
 	for _, want := range []string{
-		`scripts/release-gate.sh "$TAG"`,
+		gateCall,
 		"npm run package:linux",
 		`sha256sum "$(basename "$APPIMAGE")" "$(basename "$DEB")"`,
 		"dpkg-deb --info",
@@ -6301,7 +6864,7 @@ func TestConsoleReleaseLinuxAddsTheLinuxLegAndMovesNothingElse(t *testing.T) {
 		// The refusals a re-run must still meet, verbatim from the old file.
 		"the release $CONSOLE_TAG is already published",
 		"delete it (gh release delete",
-		"could not tell whether the tag $CONSOLE_TAG exists",
+		tagRefusal,
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("%s lacks %q", path, want)
@@ -6622,7 +7185,7 @@ func pendingReadmeOpening(t *testing.T, doc string) string {
 func consolePendingSentence(t *testing.T, what, text, namePattern string) ([]string, int) {
 	t.Helper()
 	flat := strings.Join(strings.Fields(text), " ")
-	words := map[string]int{"no": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5}
+	words := map[string]int{"no": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6}
 	count := -1
 	for _, pattern := range []*regexp.Regexp{
 		// "**Three files are pending: `shared-tests.yml`** ..."
@@ -7445,4 +8008,740 @@ func consoleSpawnList(t *testing.T, src, constant, field string) []string {
 		t.Fatalf("%s's %s.%s is empty, and an empty list is nothing for the design to agree with", consoleSpawnPath, constant, field)
 	}
 	return out
+}
+
+// --- Check 59a and 59b: the console's owner-run live checks (plan Task 4.3) ---
+//
+// The four tests below pin the two checklist sections Task 4.3 writes. They are
+// named TestCheck59… rather than TestChecklist… on purpose: the package's
+// TestChecklist… functions are enumerated by name in the compute-backend plan's
+// open item 9 and held to the tree in both directions by
+// TestDocsComputeBackendNamesEveryChecklistTest, and that enumeration also
+// records that the guard test the project-centric design names,
+// TestChecklistChecksAreGuarded, is NOT in this tree. These four are this task's
+// own, so they wear the check's number instead.
+
+// check59Path is the live checklist, the only document Task 4.3 writes.
+const check59Path = "docs/gcp-live-checklist.md"
+
+// check59SectionAt is the one place the two headings are spelled, so a rename
+// of either fails here rather than in four places at once.
+const (
+	check59aHeading = "## Check 59a:"
+	check59bHeading = "## Check 59b:"
+)
+
+// check59Sections reads both halves of the number. A section that has gone
+// missing fails in docSection with the heading that could not be found.
+func check59Sections(t *testing.T) (doc, a, b string) {
+	t.Helper()
+	doc = readDoc(t, check59Path)
+	return doc,
+		docSection(t, check59Path, doc, check59aHeading),
+		docSection(t, check59Path, doc, check59bHeading)
+}
+
+// check59FactLines returns a section's FACT lines: the lines that carry the word
+// FACT, a command in backticks and the `→` that names what that command must
+// print. The shape is the assertion rather than the decoration — round 2 of the
+// plan found assertion (4) written as a bare sentence with nothing under it, so
+// a line without a command and an expected output is deliberately not a FACT
+// line at all here.
+func check59FactLines(section string) []string {
+	var out []string
+	for _, line := range strings.Split(section, "\n") {
+		if strings.Contains(line, "FACT:") && strings.Contains(line, "→") {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+// check59FactLine returns the one FACT line naming cmd, and fails the test when
+// there is none: a command the assertion rests on and no FACT line for it is
+// exactly the defect TestCheck59AssertionFourIsFactLined exists to catch.
+func check59FactLine(t *testing.T, facts []string, cmd string) string {
+	t.Helper()
+	for _, line := range facts {
+		if strings.Contains(line, cmd) {
+			return line
+		}
+	}
+	t.Fatalf("Check 59a's assertion (4) carries no FACT line naming `%s`: a safety property with no command and no expected output under it is the thing the plan's round 2 found", cmd)
+	return ""
+}
+
+// check59RestoreBlock returns the fenced bash block of section that is its
+// restore step: the block whose own header line names it — `# === Check 59a:
+// Restore.` — and not merely a block that mentions the word. Every other block
+// is a step, and a restore step that is not a block of its own cannot be held to
+// the one rule it exists under.
+//
+// "Mentions Restore" is not enough, and that was this helper's first version's
+// bug: the setup block comes first and its own header says "RE-RUN THIS WHOLE
+// BLOCK at the start of every step (1, 2, 3, 4, 5, Restore)", so the setup
+// block was returned for both sections and
+// TestCheck59RestoreStepSparesPreexistingIdentities never scanned either real
+// Restore block — a `security delete-identity` inserted into one left the test
+// green, which is the exact mutation it exists to fail. The header's own first
+// line is the fact to read, so it is read.
+func check59RestoreBlock(t *testing.T, heading, section string) []string {
+	t.Helper()
+	label := strings.TrimSuffix(strings.TrimPrefix(heading, "## "), ":")
+	want := "# === " + label + ": Restore."
+	for _, block := range bashBlocks(section) {
+		for _, line := range block {
+			if strings.HasPrefix(strings.TrimSpace(line), want) {
+				return block
+			}
+		}
+	}
+	t.Fatalf("%s has no fenced bash block whose own header line names its Restore step (`%s`), so nothing holds the restore to sparing what it did not create", heading, want)
+	return nil
+}
+
+// TestCheck59IsSplitIntoAAndB asserts the number is written as two sections, as
+// design D12 rules and the plan's Task 4.3 requires: `## Check 59a` and
+// `## Check 59b`, one number with two sections, the way Check 43 carries 43a to
+// 43f. The split is not tidiness — the two halves cannot run at the same moment,
+// because 59b needs a published update feed and 59a does not — so a later edit
+// that folds them back into one section that cannot run fails a named test
+// rather than shipping a check nobody can execute.
+func TestCheck59IsSplitIntoAAndB(t *testing.T) {
+	doc, a, b := check59Sections(t)
+
+	// The single section the split replaces, in either of its spellings.
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(line, "## Check 59:") || line == "## Check 59" {
+			t.Errorf("%s carries %q: Check 59 is one number with TWO sections (59a and 59b), and a single section is the version that cannot run", check59Path, line)
+		}
+	}
+	if strings.Contains(doc, "## Check 59 ") {
+		t.Error("the checklist carries a `## Check 59 ` heading: 59 is written as 59a and 59b and never as a bare section")
+	}
+
+	// 59a is the first signed build and the safety assertion, and it says so.
+	for _, want := range []string{
+		"No agent performs any step",
+		"NOT RUN",
+		"run by you",
+		"never `belong`",
+	} {
+		if !strings.Contains(a, want) {
+			t.Errorf("Check 59a does not say %q", want)
+		}
+	}
+
+	// 59b's FIRST LINES say the two things that make it unrunnable today: it
+	// needs a published update feed, and it runs after the first tag that
+	// publishes one. Both facts are the reason the two halves are two sections,
+	// so they belong where a reader meets the section, not at its end.
+	head := b
+	if len(head) > 1200 {
+		head = head[:1200]
+	}
+	for _, want := range []string{
+		"NOT RUNNABLE",
+		"published feed",
+		"Task 4.4",
+		"0.111.0",
+		"second",
+		"console-v0.110.0",
+	} {
+		if !strings.Contains(head, want) {
+			t.Errorf("Check 59b's first lines do not say %q: the section's opening is where the two preconditions that stop it running today have to be read", want)
+		}
+	}
+
+	// Both rows of the summary table, each saying whose check it is.
+	rows := map[string]string{}
+	for _, line := range strings.Split(doc, "\n") {
+		for _, n := range []string{"| 59a |", "| 59b |"} {
+			if strings.HasPrefix(line, n) {
+				rows[n] = line
+			}
+		}
+	}
+	if len(rows) != 2 {
+		t.Fatalf("the checklist's summary table carries %d of Check 59's two rows (%v): the split is one number and two rows", len(rows), rows)
+	}
+	for _, n := range []string{"| 59a |", "| 59b |"} {
+		for _, want := range []string{"run by you", "NOT RUN", "never `belong`"} {
+			if !strings.Contains(rows[n], want) {
+				t.Errorf("the `%s` row does not carry %q", n, want)
+			}
+		}
+	}
+	if !strings.Contains(rows["| 59a |"], "0.110.0") {
+		t.Error("the `| 59a |` row does not name the published release 59a runs against, which is the fact that makes it runnable today")
+	}
+	if !strings.Contains(rows["| 59b |"], "0.111.0") {
+		t.Error("the `| 59b |` row does not name the release that has to publish the feed before 59b can run")
+	}
+}
+
+// TestCheck59AssertionFourIsFactLined is the test that makes assertion (4) an
+// assertion rather than a sentence: the safety claim — that with the console
+// pointed at the sandbox installation it spawned nothing for `belong` — is only
+// as good as the commands under it, and each of those commands has to carry the
+// output it must produce.
+//
+// The three jq keys are the ones Task 1.3's spawnlog.test.ts pins the schema to
+// (`ts`, `argv`, `cwd`, `project`), so the check and the writer cannot drift; and
+// the keys that are NOT fields of anything — `.gcp_project` (D13's installation
+// tuple is a project name, a config path, a binary path and a directory),
+// `.spawns` and `.repository` — must not be read, because a jq over a key the
+// schema does not define prints null for every line and proves nothing.
+func TestCheck59AssertionFourIsFactLined(t *testing.T) {
+	_, a, _ := check59Sections(t)
+	facts := check59FactLines(a)
+
+	// Step 1 and step 4: the same commands, opposite expected outputs. The
+	// mutation control is what makes the zeroes mean something.
+	for _, req := range []struct{ cmd, want string }{
+		{`test -s "${SPAWNLOG}"`, "`0`"},
+		{`grep -c belong "${SPAWNLOG}"`, "`0`"},
+		{`grep -c edgeappinc "${SPAWNLOG}"`, "`0`"},
+	} {
+		line := check59FactLine(t, facts, req.cmd)
+		if !strings.Contains(line, req.want) {
+			t.Errorf("Check 59a's FACT line for `%s` does not name %s as its expected output:\n  %s", req.cmd, req.want, line)
+		}
+	}
+
+	// Step 2 and step 3: every spawned argv resolves to the sandbox
+	// installation, from the sandbox checkout, for the sandbox project.
+	for _, cmd := range []string{
+		`jq -r '.argv[0]' "${SPAWNLOG}"`,
+		`jq -r '.project' "${SPAWNLOG}"`,
+		`jq -r '.cwd' "${SPAWNLOG}"`,
+	} {
+		if !strings.Contains(check59FactLine(t, facts, cmd), "→") {
+			t.Errorf("Check 59a's FACT line for `%s` carries no expected output", cmd)
+		}
+	}
+
+	// The mutation control, whose expected output is 1 for the same two greps
+	// that must say 0 above.
+	control := check59FactLine(t, facts, `grep -c belong "${SPAWNLOG}.test"`)
+	if !strings.Contains(control, "`1`") {
+		t.Errorf("Check 59a's mutation control does not name `1` as its expected output, so it cannot show that the command which must say 0 says 1 when the thing it looks for is there:\n  %s", control)
+	}
+	if !strings.Contains(a, `printf`) || !strings.Contains(a, "${SPAWNLOG}.test") {
+		t.Error("Check 59a has no step that appends a `belong` record to a COPY of the log: the mutation control is what makes the three zeroes evidence")
+	}
+
+	// The launch: assertion (4) is unrunnable without the variable, and a Finder
+	// or Dock launch inherits launchd's environment rather than the shell's, so
+	// the app is started from the terminal with the variable already exported.
+	launch := "export FUGARO_CONSOLE_SPAWN_LOG=\"${SPAWNLOG}\"\n" +
+		"\"/Applications/Fugaro Console.app/Contents/MacOS/Fugaro Console\" &"
+	if !strings.Contains(a, launch) {
+		t.Error("Check 59a does not export FUGARO_CONSOLE_SPAWN_LOG and start the built bundle by its executable path on the two adjacent lines: without the export the log does not exist, and a Finder or Dock launch never sees the variable")
+	}
+	if strings.Contains(a, "open \"/Applications/Fugaro Console.app\" &") {
+		t.Error("Check 59a starts the logged run with `open`, which does not forward the shell's environment to the launched app")
+	}
+
+	// The bundle and the executable are the names Task 4.1's builder
+	// configuration pins, read out of it rather than typed here.
+	productName := consoleProductName(t)
+	if want := "/Applications/" + productName + ".app/Contents/MacOS/" + productName; !strings.Contains(a, want) {
+		t.Errorf("Check 59a does not launch %q, the executable name console/package.json's build.productName pins", want)
+	}
+
+	// And no jq over a key no shape defines.
+	for _, line := range strings.Split(a, "\n") {
+		if !strings.Contains(line, "jq") {
+			continue
+		}
+		for _, key := range []string{".gcp_project", ".spawns", ".repository"} {
+			if strings.Contains(line, key) {
+				t.Errorf("Check 59a reads `%s` with jq: no shape has that key, so the read prints null for every line and proves nothing\n  %s", key, line)
+			}
+		}
+	}
+}
+
+// TestCheck59NeverNamesBelongAsATarget is the machine-checkable half of Global
+// Constraint 6 for these sections: the string `belong` is never an argument to a
+// command the check runs, so a later edit cannot "verify" the negative the
+// forbidden way — `fugaro --project belong budget show` is red here, and that is
+// the mistake this test exists to catch.
+//
+// The reconciliation round 3 asked for is in the permitted set. Round 2's
+// version allowed only a prose prohibition and the `grep -c belong` FACT line,
+// which forbids the one line the mutation control must write: step 4 appends a
+// record whose project is `belong` to a COPY of the log. So exactly three
+// shapes are permitted, and nothing else:
+//
+//  1. prose outside a fenced block, stating the prohibition (which is why every
+//     such line has to carry the word "never");
+//  2. a comment inside a bash block — the string in a line that runs nothing;
+//  3. the step-1 grep line, and the single mutation-control `printf` whose
+//     output is redirected into `${SPAWNLOG}.test`.
+//
+// Everything else fails, most importantly any other command line naming it and
+// any `--project belong` at all.
+func TestCheck59NeverNamesBelongAsATarget(t *testing.T) {
+	_, a, _ := check59Sections(t)
+
+	// Which lines are inside a fenced block, and which are prose. A ```bash
+	// block is the only kind this section may use for a command, which is what
+	// makes "inside a block" a fact the test can read: a line between an opening
+	// and a closing fence is a command or a comment about one.
+	sectionLines := strings.Split(a, "\n")
+	inBlock := make([]bool, len(sectionLines))
+	fenced := false
+	for i, line := range sectionLines {
+		if isFence(line) {
+			fenced = !fenced
+			continue
+		}
+		inBlock[i] = fenced
+	}
+
+	for i, line := range sectionLines {
+		if !strings.Contains(line, "belong") {
+			continue
+		}
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case inBlock[i]:
+			// A command line inside a block. Only three are permitted: a
+			// comment (which runs nothing), the step-1 grep, and the mutation
+			// control.
+			if strings.HasPrefix(trimmed, "#") {
+				continue
+			}
+			if strings.Contains(line, `grep -c belong "${SPAWNLOG}"`) {
+				continue
+			}
+			if strings.Contains(line, "printf") && strings.Contains(line, "${SPAWNLOG}.test") {
+				continue
+			}
+			t.Errorf("Check 59a's bash line %d names `belong` and runs something:\n  %s\nthe only command lines that may name it are the step-1 grep and the mutation control's printf into a copy", i+1, trimmed)
+		default:
+			// Prose. Every such line states the prohibition, and the word
+			// "never" is what makes that a claim this test can read rather
+			// than a sentence it hopes is one.
+			if !strings.Contains(line, "never") {
+				t.Errorf("Check 59a's prose line %d names `belong` without stating the prohibition:\n  %s", i+1, trimmed)
+			}
+		}
+	}
+
+	if strings.Contains(a, "--project belong") {
+		t.Error("Check 59a carries `--project belong`, which is the forbidden way to verify this negative")
+	}
+	for _, bad := range []string{"belong/", "/belong"} {
+		if strings.Contains(a, bad) {
+			t.Errorf("Check 59a carries %q: the scratch copy is `${SPAWNLOG}.test`, so no path, URL or file name needs the name in it at all", bad)
+		}
+	}
+	if !strings.Contains(a, "no step of this check touches `belong`") {
+		if !strings.Contains(a, "never touches `belong`") {
+			t.Error("Check 59a does not state the prohibition in its own text: the permitted prose shape is a sentence saying no step touches that installation")
+		}
+	}
+}
+
+// TestCheck59RestoreStepSparesPreexistingIdentities is the mutation-proof half
+// of the restore rule: a restore step that "removes the keychain item it was
+// signed with" would delete the owner's own signing certificate — the identity
+// the whole pipeline depends on, which predates the check by design. So neither
+// section's restore step may invoke `security delete-identity`,
+// `security delete-certificate` or `security delete-keychain`, and both have to
+// record what existed before they started so the rule is enforceable rather than
+// remembered.
+func TestCheck59RestoreStepSparesPreexistingIdentities(t *testing.T) {
+	_, a, b := check59Sections(t)
+
+	for _, section := range []struct{ heading, text string }{
+		{check59aHeading, a},
+		{check59bHeading, b},
+	} {
+		label := strings.TrimSuffix(section.heading, ":")
+		restore := check59RestoreBlock(t, section.heading, section.text)
+		for _, line := range restore {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "#") {
+				continue
+			}
+			for _, banned := range []string{"security delete-identity", "security delete-certificate", "security delete-keychain"} {
+				if strings.Contains(line, banned) {
+					t.Errorf("%s's Restore invokes `%s`:\n  %s\nthe identity the check did not create is not the check's to remove", label, banned, trimmed)
+				}
+			}
+		}
+		// The pre-check record, which is what makes "only what it created" a
+		// rule rather than an intention.
+		if !strings.Contains(section.text, "security find-identity -v -p codesigning") {
+			t.Errorf("%s does not FACT-line `security find-identity -v -p codesigning`, so nothing records which identities predated it", label)
+		}
+		if !strings.Contains(section.text, "never deleted") {
+			t.Errorf("%s does not say a signing identity present before the check is never deleted", label)
+		}
+
+		// The app half of the same rule, held the same way, and this is the half
+		// that bites hardest: both sections install a bundle into /Applications,
+		// so a Restore that removes whatever sits at that path destroys the
+		// operator's own copy on exactly the run whose install guard stopped. The
+		// stamp is the section's own record that it installed it, and the removal
+		// has to be behind that.
+		productName := consoleProductName(t)
+		// Written by the install step, and written BEFORE the Restore that reads
+		// it: a stamp the Restore writes itself would gate the removal on nothing.
+		stampWrite := strings.Index(section.text, `> "${CHK:?}/installed-by-this-check.txt"`)
+		restoreAt := strings.Index(section.text, "# === "+strings.TrimPrefix(label, "## ")+": Restore.")
+		if stampWrite < 0 || restoreAt < 0 || stampWrite > restoreAt {
+			t.Errorf("%s installs an app into /Applications and its install step writes no stamp saying it did (stamp write at %d, Restore at %d): without it the Restore cannot tell this check's own install from one that was there before", label, stampWrite, restoreAt)
+		}
+		if !strings.Contains(section.text, `[ ! -e "$INSTALLED" ] || {`) {
+			t.Errorf("%s does not stop before installing when /Applications/%s.app already exists", label, productName)
+		}
+		stampAt, removeAt := -1, -1
+		for i, line := range restore {
+			if stampAt < 0 && strings.Contains(line, "installed-by-this-check.txt") {
+				stampAt = i
+			}
+			if removeAt < 0 && strings.Contains(line, "rm -rf") && strings.Contains(line, "$INSTALLED") {
+				removeAt = i
+			}
+		}
+		switch {
+		case removeAt < 0:
+			t.Errorf("%s's Restore never removes the app this check installs, so a completed run leaves it in /Applications", label)
+		case stampAt < 0 || stampAt > removeAt:
+			t.Errorf("%s's Restore removes /Applications/%s.app without reading the stamp that says this check installed it (stamp at line %d of the block, removal at %d): an app this check did not install is not this check's to remove", label, productName, stampAt, removeAt)
+		}
+	}
+
+	// 59a's own record is a FACT line, so a restore that could not tell the two
+	// apart is caught by the section rather than by a reader.
+	facts := check59FactLines(a)
+	if check59FactLine(t, facts, "security find-identity -v -p codesigning") == "" {
+		t.Error("Check 59a records the identities it found as a FACT line, not just as a command")
+	}
+}
+
+// consoleProductName reads the app's product name out of the builder
+// configuration: `build.productName` in console/package.json. It is the name
+// the packaged bundle and its executable carry, so a check that names
+// `/Applications/<productName>.app/Contents/MacOS/<productName>` is pinned to
+// the packer rather than to a remembered string. This file is the one Go file
+// Task 0.3's boundary test allows to mention a console/ path.
+func consoleProductName(t *testing.T) string {
+	t.Helper()
+	var pkg struct {
+		Build struct {
+			ProductName string `json:"productName"`
+		} `json:"build"`
+	}
+	if err := json.Unmarshal([]byte(readDoc(t, "console/package.json")), &pkg); err != nil {
+		t.Fatalf("console/package.json does not decode: %v", err)
+	}
+	if pkg.Build.ProductName == "" {
+		t.Fatal("console/package.json's build.productName is empty, and a packaged bundle with no product name has no bundle path for Check 59a to launch")
+	}
+	return pkg.Build.ProductName
+}
+
+// TestDocsDesktopConsoleDesignLaunchFenceIsWrittenDown pins §5.1 rule 11 — the
+// launch, the console's one write — and the never table's moved row, which is
+// the fence that rule moves.
+//
+// Rule 11 was added by the console v2 plan's V2.5.1 (2026-10-27) and amended the
+// same day by the owner's rulings and by an independent security review, and it
+// is the contract the code lands against (V2.5.1a). It is prose, so nothing else
+// holds it: the allow-list table and rule 5's count are deliberately NOT moved by
+// this design — they move with the code, in one commit, in V2.5.1a — and the
+// "never" table is the one table this rule does edit. The sentences below are
+// the claims that review found missing or untrue (the repository conversion, the
+// confirmation window, the recorded base branch, the working directory, the one
+// row allowed to write to a child, the format characters, the `=` forms, the
+// deadline, the rate limits and the replay rule), so this test is what keeps a
+// later rewrite from dropping one.
+//
+// The mutations it fails on: deleting any pinned sentence (each names itself);
+// re-wrapping one is not a mutation, because the rule is read as one run of
+// whitespace; carrying a `run` argv on the allow-list table other than rule
+// 11's, or a rule 5 count that disagrees with the code (the checks after the
+// table); and restoring a bare `run` to the never table, which would read as a
+// permission for the one argv this rule writes rather than for every other one.
+func TestDocsDesktopConsoleDesignLaunchFenceIsWrittenDown(t *testing.T) {
+	const path = "docs/design/desktop-console.md"
+	doc := readDoc(t, path)
+
+	start := strings.Index(doc, "\n11. **The launch is the console's one write")
+	if start < 0 {
+		t.Fatalf("%s has no §5.1 rule 11: the launch's fence is not written down", path)
+	}
+	end := strings.Index(doc[start:], "\n### 5.2 ")
+	if end < 0 {
+		t.Fatalf("%s never closes §5.1: no `### 5.2` heading follows rule 11", path)
+	}
+	rule := flattenDoc(doc[start : start+end])
+
+	// The one argv rule 11 writes, spelled once: the pins below and the
+	// allow-list check at the end of this test all speak of this same form,
+	// so a widened argv cannot pass by looking right in one place.
+	const rule11Argv = "run --task-file - --json --run-id <run id> --repo <owner/name> [--title=<T>] [--plan-task=<P>] --project <name> [--config <path>]"
+
+	for _, want := range []struct{ why, text string }{
+		{"the one exact argv, in its fixed order", rule11Argv},
+		{"a value that rides its own flag word cannot be read as a flag",
+			"a value after `=` is part of the flag's own word"},
+		{"the row and the code it needs land together",
+			"the operation, the preload method and the argv builder"},
+		{"a moved row is a plan and not a permission",
+			"the console spawns no `run` argv at all"},
+		{"the closed schema's five fields",
+			"`installation`, `repository`, `task`, `title` and `planTask`"},
+		{"the repository identity the records carry",
+			"`<provider>/<owner>/<name>`"},
+		{"the conversion to what --repo takes",
+			"drop the first `<provider>/` segment"},
+		{"the providers the console can open a pull request on",
+			"**`github` or `bitbucket`**"},
+		{"the example that shows the conversion",
+			"`github/owner/repo-a` becomes `owner/repo-a`"},
+		{"only the identity is read from a checkout row, never its path",
+			"Only the identity is read from those rows, never the path"},
+		{"the task text's bound, and why it is not the CLI's",
+			"at most 16 KiB of valid UTF-8 with no NUL byte"},
+		{"the task never reaches the argv",
+			"The task text goes to the child on stdin and never into the argv"},
+		{"one row is allowed to write to a child",
+			"the one row that gets `'pipe'` on stdin"},
+		{"every other row's stdin, and the type that pins it",
+			"the console never writes to a child"},
+		{"the test that holds the other rows",
+			"a test pins `'ignore'` for every other row of the spawn table"},
+		{"the confirmation is a window the main process owns",
+			"a modal window of its own"},
+		{"and it is not a native message box",
+			"`dialog.showMessageBox` is not used"},
+		{"the operator reads the whole task rather than a summary",
+			"the whole task text, displayed in full and scrollable"},
+		{"the fields the window shows, and nothing else",
+			"the installation, the repository, the ref, the title, the plan task, the run id"},
+		{"the argv the window shows",
+			"the exact argv field by field"},
+		{"cancelling is what a stray Enter does",
+			"**Cancel is the default button**"},
+		{"the renderer cannot reach the window",
+			"cannot answer for the operator"},
+		{"a run is cut from a branch the installation records",
+			"the installation's **recorded base branch**"},
+		{"the merged order, layer one",
+			"the working directory's checkout of the repository when its `fugaro.yaml` writes `git.base_branch`"},
+		{"the merged order, layers two to four",
+			"the local config's `repos.<r>.base_branch`, else the project's `base_branch`, else `main`"},
+		{"the refusal the CLI used to end on",
+			"The old refusal is gone"},
+		{"what the fallback means for a row that cannot pass --ref",
+			"with nothing recorded the CLI resolves `main` and says nothing"},
+		{"the field the console still cannot read",
+			"carried **no `base_branch`**"},
+		{"the layer a console launch cannot take its ref from",
+			"for this row it cannot be the source"},
+		{"the two layers it can both read and be cut from",
+			"the two layers a console launch can both read and be cut from"},
+		{"the setting that does not move this row",
+			"which an operator can set without moving this row"},
+		{"the read is a CLI change, not a console-only one",
+			"it was a CLI change rather than a console-only one"},
+		{"and a console-only slice could not build the rule",
+			"a console-only slice could not build this rule at all"},
+		{"what that change adds to the read",
+			"the installation's fields gained the project-level `base_branch`"},
+		{"and why it is not a new operation",
+			"a field on a read the console already has and not a new operation"},
+		{"no field of the schema names a run id",
+			"**No field of the schema names a run id**"},
+		{"the retry is safe only where the first launch wrote its claim",
+			"where the first launch got as far as writing that claim"},
+		{"a child killed before its claim leaves the container to start",
+			"a child killed before it wrote a claim leaves nothing for the retry to find"},
+		{"and a stale claim is taken over",
+			"a retry more than `ClaimTTL`'s ten minutes later finds a claim the CLI takes over as stale"},
+		{"the floor is a comparison, not the range",
+			"a version comparison and not membership in the console's supported range"},
+		{"and the range the console reads today is below it",
+			"**every CLI the console supported then was below the floor**"},
+		{"which is why this slice moves the range",
+			"moved the supported range to include `0.11`"},
+		{"the task is trimmed, so the window's bytes are the run's",
+			"the bytes the window counts and the operator confirms are the bytes the run keeps"},
+		{"and an empty task is refused before the window opens",
+			"A task that is empty once trimmed is refused on this side"},
+		{"what the window shows is what is spawned",
+			"**What the window shows is what is spawned.**"},
+		{"and it spawns the frozen object rather than rebuilding one",
+			"spawns **that frozen object verbatim**"},
+		{"an installation that moves under the window cancels it",
+			"closes the window as a cancel"},
+		{"the never table in the code, and the row it carries today",
+			"**In the console's code that table is `NEVER_REACHABLE`**"},
+		{"which V2.5.1a replaces with argv-shaped rows",
+			"with argv-shaped rows refusing every `run` argv but rule 11's form"},
+		{"and the class that test classifies `run` under moves",
+			"moves `run` out of `CLI_COMMANDS`' `mutating` class"},
+		{"and the allow-list's own argv list gains the row",
+			"adds rule 11's argv to `DESIGN_ARGV`"},
+		{"no other row of that table moves",
+			"**No other `NEVER_REACHABLE` row moves**"},
+		{"a title is not a `value` argument",
+			"argument kinds of their own"},
+		{"and the renderer alphabet is not widened for it",
+			"`ARGUMENT_RE` stays unchanged for every other field"},
+		{"the retry's ten minutes are the owner's to rule",
+			"**And one point is left open rather than ruled: (6) the held-id retry once the claim's ten minutes have passed.**"},
+		{"and the recommendation the design records",
+			"refuses the retry once `ClaimTTL`'s ten minutes are gone"},
+		{"which is where the retry offer points",
+			"how long that offer stands is open point 6"},
+		{"a repository with no record is refused, and the refusal is actionable",
+			"names the repository and what to set"},
+		{"the launch runs from the app's own directory, not the operator's checkout",
+			"always the app's own private, empty directory, never the operator's checkout"},
+		{"which is what keeps the checkout's branch out of the ref",
+			"the branch the working directory's checkout is on"},
+		{"format characters are refused wherever a value is read",
+			"Unicode format characters (`Cf`), the bidi overrides"},
+		{"the task is never shown raw",
+			"strips the format characters out of the displayed text"},
+		{"a launch is not a read, so it has its own deadline",
+			"`LAUNCH_TIMEOUT_MS` is not `READ_TIMEOUT_MS`"},
+		{"how a launch is stopped",
+			"`SIGTERM`, then `SIGKILL` after `SHUTDOWN_GRACE_MS`"},
+		{"a killed launch proves nothing and is not retried",
+			"the launch's outcome is unknown"},
+		{"a repeat of a launch in flight joins it rather than racing it",
+			"is attached to the launch in flight"},
+		{"a repeat of an answered launch is answered from the record",
+			"answered from the app's own record"},
+		{"who may replay a launch, and who may not",
+			"the window's own main-side `answer()` path"},
+		{"the killed launch's retry is the one repeat that spawns again",
+			"never a fresh window and a fresh id"},
+		{"the rate that keeps a click from becoming a queue of windows",
+			"windows are opened at most three times a minute per installation"},
+		{"the limit across the whole app",
+			"at most two launches in flight across the whole app"},
+		{"the cool-down the owner accepted",
+			"a ten-second cool-down"},
+		{"the WSL wrapper is what makes an `=`-form word safe there",
+			"quotes every word of the CLI's argv with `shellQuoteWord`"},
+		{"and the argv check takes the two prefixes on this row alone",
+			"accept exactly the `--title=` and `--plan-task=` prefixes, for the `run.launch` row alone"},
+		{"and the task still arrives there",
+			"on the same stdin the cell pipe carries"},
+		{"the spawn log records the launch and still no task text",
+			"records no task text"},
+		{"the surfaces the operator reaches it from",
+			"the Runs screen is the only place"},
+		{"a yes is refused until the window has settled",
+			"**A yes is refused until the window has settled, and the measure is the main process's own**"},
+		{"and the delay is measured where the events are, not in the page",
+			"with both events read **in the main process** and never by a timer in the page"},
+		{"which of the two events the delay runs from",
+			"**`CONFIRM_READY_DELAY_MS` (500 ms) after the window's own `show` or `focus`, whichever of the two came last**"},
+		{"a focus is not required to answer, and only extends the delay",
+			"**Focus is not required, and only ever extends the delay**"},
+		{"the quantity the delay is measured against is the double-click interval",
+			"**double-click interval** (`I`)"},
+		{"and the case it does not cover is recorded rather than claimed away",
+			"**That case is recorded rather than claimed away**"},
+		{"a re-focus starts the delay over, and Cancel does not wait for it",
+			"**Cancel takes no delay at all**"},
+		{"what re-chosen means",
+			"**Re-chosen means that same installation chosen again**"},
+		{"the dashboard a choose replaces, and the child that goes with it",
+			"**A choose closes the dashboard window as well**"},
+		{"the console with no dashboard, where no parent closes the child",
+			"**survives a switch to another installation**"},
+		{"what the next part must confirm on a real window",
+			"**V2.5.1c must confirm on a real window that closing the parent closes the child**"},
+		{"and the second platform behaviour it must confirm, whose failure mode is every launch refused",
+			"**and that this window's own `show` and `focus` arrive at all**"},
+		{"the replay record's cap, and the order it evicts in",
+			"**capped at `MAX_RECORDED_OUTCOMES` (256), oldest evicted first**"},
+		{"what an id whose record was evicted answers",
+			"**An evicted id stays issued and answers `undefined` without spawning**"},
+	} {
+		if !strings.Contains(rule, want.text) {
+			t.Errorf("%s §5.1 rule 11 no longer says %s:\n  want %q", path, want.why, want.text)
+		}
+	}
+
+	if strings.Contains(rule, "64 KiB") {
+		t.Errorf("%s §5.1 rule 11 still bounds the task at 64 KiB: the operator confirms by reading it, so the bound is 16 KiB", path)
+	}
+
+	if !strings.Contains(doc, "**The dashboard's surface is twenty-four operations**") {
+		t.Errorf("%s no longer says the surface is twenty-four operations: rule 5's count moved with the code when V2.5.1a landed, and the two cannot disagree", path)
+	}
+
+	var neverRows [][]string
+	for _, cells := range docTableAfter(t, path, doc, "| Never (the \"nothing else\" table) |") {
+		neverRows = append(neverRows, cells)
+	}
+	if len(neverRows) == 0 {
+		t.Fatalf("%s: no row follows the never table's header; update this test's marker", path)
+	}
+	// The row's first token is the form it refuses: a row that still LEADS with a
+	// bare `run` is the old row, and it reads as a permission for the one argv
+	// rule 11 writes. A bare `run` ANYWHERE ELSE in the table is the same defect
+	// one row down — the entry lived in the "every writer" row's list before
+	// rule 11 moved it, so deleting the moved row and putting the bare `run`
+	// back beside `cancel` and `sync` is the mutation, not only restoring the
+	// row this design replaced. The one row allowed to hold a bare `run` token
+	// is the moved row itself, which names the argv it excludes.
+	sawRetry := false
+	for _, cells := range neverRows {
+		leads := firstBacktick(cells[0])
+		switch leads {
+		case "run --retry":
+			sawRetry = true
+		case "run":
+			t.Errorf("%s's never table still leads a row with a bare `run`: rule 11 moved that row to `run --retry` and every other `run` argv", path)
+		}
+		if leads == "run --retry" {
+			continue
+		}
+		// The whole row and not a token walk: a row that lists an escaped "|"
+		// (the secret commands' row does) splits into several cells, and the
+		// backticks pair across that split rather than inside a cell, so a bare
+		// `run` appended after the escape is found by the literal spelling and
+		// missed by anything that has to pair delimiters. `run --retry` and
+		// `runs ls` both keep a character after `run`, so neither matches.
+		if strings.Contains(strings.Join(cells, "|"), "`run`") {
+			t.Errorf("%s's never table lists a bare `run` in the row that leads with %q: the bare entry belongs to no row but rule 11's, which spells the argv it excludes", path, leads)
+		}
+	}
+	if !sawRetry {
+		t.Errorf("%s's never table does not start a row at `run --retry`: rule 11 moved the `run` row, and this is the row it moved to", path)
+	}
+
+	// Rule 11's row is the allow-list's one `run` argv, and it landed with
+	// V2.5.1a in one commit with the operation. Exactly one row may lead with
+	// `run` and it must be that argv spelled as rule 11 writes it: any other
+	// `run` argv on the table is a second write nobody ruled on, and a `run`
+	// row that leads with anything else is the row the design replaced.
+	launches := 0
+	for _, cells := range docTableAfter(t, path, doc, "| Allowed argv (exact, in this order) |") {
+		argv := firstBacktick(cells[0])
+		if argv != "run" && !strings.HasPrefix(argv, "run ") {
+			continue
+		}
+		launches++
+		if argv != rule11Argv {
+			t.Errorf("%s's allow-list table carries %q: its one `run` row is rule 11's exact argv and nothing else", path, argv)
+		}
+	}
+	if launches != 1 {
+		t.Errorf("%s's allow-list table carries %d `run` argvs, want exactly 1 (rule 11's)", path, launches)
+	}
 }

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See console/LICENSE.md for the terms.
 // The Projects screen: the design's screen 3, drawn from `budget show --json`,
 // `runs ls --json`, `accounts ls --json` and `secrets ls --json`
 // (desktop-console plan Task 2.3; design section 6.2 screen 3).
@@ -43,8 +45,10 @@
 // draws the *caps*, their binding scopes and the kill switches (the plan's
 // "caps, kill state"), and per-job cost only as the row's own ledger -- so two
 // screens cannot disagree about a dollar figure. The three accounts stay apart
-// here too: a job whose `model_basis` is `subscription` draws its model dollars
-// as `NOTIONAL~`, exactly as the Live and Spend screens do.
+// here too: a job draws the **billed** part of its model figure as its model
+// dollars -- `model_usd` minus `model_notional_usd`, C1.16/P12 -- and
+// `~$` only when that part is the plan's whole figure, exactly as the
+// Live and Spend screens do.
 //
 // Everything else is Task 2.0's two rules, unchanged: every number enters
 // through `readNumber` and is drawn through `putReading`, and every string from
@@ -57,6 +61,9 @@
 import { measured, readNumber, unavailable } from '../../shared/availability'
 import type { Reading } from '../../shared/availability'
 import type { OperationName } from '../../main/ipc'
+import { launcherCell } from '../../shared/launcher'
+import { RIGOR_ABSENT, readRigor, rigorModeWord } from '../../shared/rigor'
+import type { RigorView } from '../../shared/rigor'
 import type { KillView } from '../../shared/schema'
 import { sanitizeRefusal, sanitizeText } from '../../shared/sanitize'
 import type { TextClass } from '../../shared/sanitize'
@@ -251,9 +258,17 @@ export interface ProjectJob {
   readonly status: string
   readonly stage: string | null
   readonly requestedBy: string | null
+  /** the row's whole recorded launcher (`launched_by`), `null` when the record
+   * carries none; the cell draws `launcherShort` of it (`shared/launcher.ts`) */
+  readonly launchedBy: string | null
   readonly branch: string | null
   readonly created: string | null
   readonly cost: ProjectJobCost
+  /** the row's rigor block, or `null` for a record that carries none this
+   * reader can show (`shared/rigor.ts`). The MODE column draws it, and it is
+   * drawn **only when some listed run carries one** -- the conditional column
+   * `runs ls` itself writes (`internal/cli/runs.go`'s `showMode`) */
+  readonly rigor: RigorView | null
 }
 
 /** ProjectJobs is the job list, its bound, and what the bound left out. */
@@ -413,15 +428,40 @@ function repoEntryOf(raw: unknown): RepoEntry | null {
   return { slug: slug ?? repo ?? '', repo }
 }
 
-/** costOf reads `runstore.Cost`'s four fields the console draws, with the
- * basis deciding the state of the model figure: a `subscription` basis is a
- * list price that was never billed, which is the notional account. */
+/** modelReading is this screen's model figure: the row's model dollars as
+ * **money** (C1.16, P12/D140), because `model_usd` is the whole model figure
+ * -- the money and the subscription's list price together -- and
+ * `model_notional_usd` is the part of it the plan paid. The billed dollars are
+ * the difference; the basis alone cannot make that split, since a mixed cascade
+ * run's basis is `api-list` for the whole run while part of its figure is the
+ * plan's. A row written before C1.16 carries no `model_notional_usd`, and then
+ * the subscription basis is the fallback: such a row's whole figure is the
+ * plan's, and that is the notional account.
+ *
+ * The state follows the figure: the money part when the row has one, and
+ * otherwise the notional figure marked notional -- the same figure and the same
+ * mark a subscription row drew before the key existed. The Run detail screen
+ * declares its own copy of this rule for its own document (`modelReading` in
+ * `run.ts`): the four screens are siblings and neither imports the other, so
+ * the two are held equal by their tests rather than by a shared module. */
+function modelReading(model: Reading, notional: Reading, basis: string | null): Reading {
+  if (model.value === null) return model
+  const plan = notional.value ?? (basis === 'subscription' ? model.value : 0)
+  const money = Math.max(0, model.value - plan)
+  if (money > 0) return { ...model, value: money }
+  if (plan > 0 || basis === 'subscription') return { ...model, value: plan, state: 'notional' }
+  return model
+}
+
+/** costOf reads `runstore.Cost`'s fields the console draws, with the model
+ * figure split into what was billed and what the plan paid (`modelReading`). */
 function costOf(raw: unknown, where: string): ProjectJobCost {
   const cost = objectAt(raw) ?? {}
   const basis = textAt(cost['model_basis'])
   const model = readNumber(cost['model_usd'], `${where}.model_usd`)
+  const notional = readNumber(cost['model_notional_usd'], `${where}.model_notional_usd`)
   return {
-    model: basis === 'subscription' && model.value !== null ? { ...model, state: 'notional' } : model,
+    model: modelReading(model, notional, basis),
     compute: computeReading(cost, `${where}.compute_usd`),
     total: readNumber(cost['total_usd'], `${where}.total_usd`),
   }
@@ -717,9 +757,11 @@ export function buildProjectsModel(inputs: ProjectsInputs): ProjectsModel {
     status: textAt(row['status']) ?? '',
     stage: textAt(row['stage']),
     requestedBy: textAt(row['requested_by']),
+    launchedBy: textAt(row['launched_by']),
     branch: textAt(row['branch']),
     created: textAt(row['created']),
     cost: costOf(row['cost'], 'runs[].cost'),
+    rigor: readRigor(row['rigor']),
   }))
 
   // The accounts: `accountsListDoc`. `complete: false` means the project config
@@ -927,6 +969,27 @@ function numberCell(
   return element
 }
 
+/**
+ * rigorCell is one row's MODE cell: the mode's own word for the five modes this
+ * build knows, the **raw value through `putText`** for one it does not, and
+ * `RIGOR_ABSENT` for a run whose record carries no block.
+ *
+ * The third case is the reason this is a function rather than a lookup: a mode
+ * string this build has never heard of is job-written text, so it takes the
+ * text path -- bounded, escaped, and `n/a` with the reason in the `title` when
+ * the sanitizer refuses it -- and never the console's own `literal` writer. A
+ * cell that wrote it as vocabulary would be putting a value no reader can check
+ * into the document under the console's own name.
+ */
+function rigorCell(parent: ScreenElement, factory: ScreenFactory, view: RigorView | null): ScreenElement {
+  const drawn = cell(parent, factory, 'span', 'projects-job-mode')
+  if (view === null) return literal(drawn, RIGOR_ABSENT)
+  const word = rigorModeWord(view.mode)
+  if (word !== null) return literal(drawn, word)
+  putText(drawn, view.mode, 'label', 'runs[].rigor.mode')
+  return drawn
+}
+
 /** sanitizedKey is a document string bound for an **attribute value** rather
  * than a text cell -- the same door `putText` uses (`live.ts` has the twin), or
  * null when the sanitizer refuses the string. */
@@ -1088,6 +1151,14 @@ function repositoriesPanel(factory: ScreenFactory, model: ProjectRepositories): 
 function jobsPanel(factory: ScreenFactory, model: ProjectJobs): ScreenElement {
   const element = make(factory, 'div', 'projects-jobs')
   const list = cell(element, factory, 'ol', 'projects-job-list')
+  // **The MODE column appears only when some listed run carries a block.** It
+  // is the conditional column `runs ls` writes (`internal/cli/runs.go`'s
+  // `showMode`): a run from before the field, or one that died before
+  // bootstrap, has no block and does not widen every other run's row for it --
+  // and a project whose runs are all older than the field draws the list it
+  // always drew. Once one row carries a block the column is on every row, and
+  // the rows without one say so with `RIGOR_ABSENT` rather than with a blank.
+  const showMode = model.rows.some((job) => job.rigor !== null)
   for (const job of model.rows) {
     const line = cell(list, factory, 'li', 'projects-job')
     textCell(line, factory, 'span', job.run, 'runId', 'runs[].run', 'projects-job-run')
@@ -1101,7 +1172,15 @@ function jobsPanel(factory: ScreenFactory, model: ProjectJobs): ScreenElement {
     if (job.requestedBy !== null) {
       textCell(line, factory, 'span', job.requestedBy, 'person', 'runs[].requested_by', 'projects-job-by')
     }
+    // Who started the job, beside who asked for it: the short form of
+    // `launched_by`, drawn as a `label` (`shared/launcher.ts` says why not
+    // `person`), and no cell at all for a row the record does not name.
+    const startedBy = launcherCell(job.launchedBy)
+    if (startedBy !== null) {
+      textCell(line, factory, 'span', startedBy, 'label', 'runs[].launched_by', 'projects-job-started-by')
+    }
     if (job.created !== null) textCell(line, factory, 'span', job.created, 'label', 'runs[].created', 'projects-job-created')
+    if (showMode) rigorCell(line, factory, job.rigor)
     // The three accounts, apart: a subscription's model dollars are notional.
     numberCell(line, factory, 'span', job.cost.model, 'usd', 'projects-job-model')
     numberCell(line, factory, 'span', job.cost.compute, 'usd', 'projects-job-compute')

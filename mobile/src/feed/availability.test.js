@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See mobile/LICENSE.md for the terms.
 // The five availability states (mobile plan, Task P3.2; json-contract §1).
 //
 // §1's first rule is the one this file exists for: **every number carries an

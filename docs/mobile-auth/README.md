@@ -1,13 +1,26 @@
 # The mobile app's sign-in, pairing and allowlist
 
 **Status: plan only.** No code is implemented, no rules document is changed, no Firebase
-configuration is touched, and **every decision in it is answered** — the owner answered **D221–D236
-as recommended on 2026-10-22** and approved the plan's **P0 and P1**, the two parts the owner
-approved (**P3, P4 and P5 wait on the mobile Phase 6 tasks**, per the plan's §11). The four
-documents below are the owner's spec, what the repository actually holds, the decisions planning
-found, and the plan that would follow from them. **Owner: Dimi Paun. Date: 2026-10-21.** Read
-against `main` at `d9dda8f3` (`cli: fugaro --version and fugaro -v print the version, like fugaro
-version (#794)`); every citation is by **path and symbol, never by line number**.
+configuration is touched, and **nothing here is approved** — the four documents below are the
+owner's spec, what the repository actually holds, the decisions planning found, and the plan that
+would follow from them. **Owner: Dimi Paun. Date: 2026-10-21.** Read against `main` at `d9dda8f3`
+(`cli: fugaro --version and fugaro -v print the version, like fugaro version (#794)`); every
+citation is by **path and symbol, never by line number**.
+
+**Amended 2026-10-22 — the owner accepted this folder as recommended, and the paragraph above is
+kept as the state it described.** The owner's ruling of **2026-10-22**: **D221–D236 accepted as
+recommended**, with **P0 and P1 approved** and **P3–P5 coming after P6.6 and P6.8** — the two mobile
+Phase 6 tasks that build the pairing CLI (`fugaro pair`, whose CLI plan is
+[../plans/2026-10-22-mobile-pairing-cli.md](../plans/2026-10-22-mobile-pairing-cli.md)) and the
+app's half of pairing, which this folder's P3 extends. The ruling is the **owner's own word, given on
+2026-10-22 and relayed to the change that wrote this note**: this folder did not carry it before, and
+it is recorded here the way [../mobile/functional-spec-reconciliation.md](../mobile/functional-spec-reconciliation.md)
+§3.7 records the owner's answer of 2026-10-20 and [../mobile/README.md](../mobile/README.md) records
+the voice-evaluation-switch ruling of 2026-10-19. So, precisely: the **decisions and parts** are
+accepted **as recommended**; the **tasks** are approved only where the ruling says so — **P0**, **P1**
+— and **P3–P5 are ordered after P6.6 and P6.8** rather than approved by it; **every other part is
+proposed and unapproved**, and **"plan only" still describes the tree**: no code, no rules document,
+no Firebase configuration, nothing built.
 
 The spec is one page of prose and a flow: sign in with an account already on the phone, scan a
 project QR, let the project's allowlist check the verified email. What the repository holds today is
@@ -50,8 +63,11 @@ session in each paired project, with a passwordless email link as a third provid
 **reversal** of a standing rule of this repository: `internal/cli/init_firebase.go`'s
 `refusePublicSignUp` refuses **any** public sign-up path, and the owner's own answer to the central
 orchestrator's D6 (recorded in `docs/mobile/functional-spec-reconciliation.md` §3.7) says the same —
-a device node plus an administered email field, the domain rule applied at administration, an
-unverified email refused **at pairing**, and **no change to custom-tokens-only**. The reconciliation
+a device node plus an administered email field, an unverified email refused **at pairing**, and
+**no change to custom-tokens-only**. The **domain rule** is **not** part of that answer: §3.7
+records that the answer does not restate the domain half and leaves it to D6, whose recommendation
+it is (D6's sub-question (b)) — this work takes it as its own **D223**, and §3.7's wording, not this
+sentence, is the record of what the owner ruled. The reconciliation
 settles that as **D221** (no provider session reaches the project's database) and writes the
 alternative out in full, in §3 and in P6, so that a decision against the recommendation is taken
 with the configuration delta, the attack surface and the per-provider verified-email question in
@@ -76,14 +92,14 @@ documents carries a credential-shaped literal — because a folder about Firebas
 exactly the folder where somebody eventually pastes a real key. **The guard states what it does not
 hold**, as the neighbouring ones do: a symbol named beside a citation without the possessive form,
 and any claim about the folders this one reconciles, which their own pins hold. It also carries the
-**excuse list** — the paths these documents cite that are not in the tree yet: `internal/mobileauth/`
-(P1), `docs/mobile-auth/provider-sign-in.md` (P6), and the four the mobile Phase 6 tasks own
+**excuse list** — the paths these documents cite that are not in the tree yet: `docs/mobile-auth/provider-sign-in.md` (P6), and the four the mobile Phase 6 tasks own
 (`internal/cli/pair.go` and `internal/budget/token/device.go` — Task **P6.6**; `mobile/src/pairing/`
 and `mobile/src/overview/` — Task **P6.8**) — each excused **only while it does not exist**, with
 the guard failing on an entry that has become stale, so the list cleans itself as the work lands.
 **`internal/cli/docs_mobile_auth_test.go` was the third path this work creates and it left that
 list in the change that landed it**, which is the same rule read the other way: P0's own pull
-request was the one that owed its deletion.
+request was the one that owed its deletion. (Amended 2026-10-29: `internal/mobileauth/`, P1's
+path, left the list the same way when P1 landed in #918.)
 
 ## Related
 

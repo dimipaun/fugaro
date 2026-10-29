@@ -395,10 +395,22 @@ func consoleBoundaryImportReachesConsole(fileRel, imp, consolePkg string) bool {
 // inside the file at fileRel (both relative to the module root) and reports
 // whether it lands in the root console/ directory. This is the one place the
 // "which console/ is this?" question is answered, so an import and an embed
-// pattern cannot disagree about it.
+// pattern cannot disagree about it. The resolution itself is shared with the
+// ee/ boundary (docs_ee_repo_test.go), which asks the same question of a
+// different directory: a second copy of the answer is how two boundaries drift.
 func consoleBoundaryResolvedIntoConsole(fileRel, p string) bool {
-	resolved := path.Join(path.Dir(fileRel), path.Clean(p))
-	return resolved == consoleDirName || strings.HasPrefix(resolved, consoleDirName+"/")
+	return boundaryResolvedIntoDir(path.Dir(fileRel), p, consoleDirName)
+}
+
+// boundaryResolvedIntoDir resolves a slash-separated path written inside the
+// directory baseDir (both relative to the module root) and reports whether it
+// lands ON the root's dirName directory: "console/docs/x" from the root package
+// and "../../ee/README.md" from internal/cli both do, while a nested
+// "somewhere/ee/x" names a different directory and does not. An empty path
+// resolves to baseDir, which is no root directory's name.
+func boundaryResolvedIntoDir(baseDir, p, dirName string) bool {
+	resolved := path.Join(baseDir, path.Clean(p))
+	return resolved == dirName || strings.HasPrefix(resolved, dirName+"/")
 }
 
 // consoleBoundaryMention reports whether a Go file mentions a path under the

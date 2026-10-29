@@ -52,6 +52,11 @@ type Record struct {
 	ImageDigest string `json:"image_digest"` // sha256:… that latest was promoted to
 
 	FugaroVersion string `json:"fugaro_version"`
+	// Edition is the edition of the binary that rendered this record — "core" or
+	// "ee", as internal/cli/edition.go reports it. It is empty only in a record
+	// written before this field existed: a binary that ran the render step
+	// always knows its own.
+	Edition string `json:"edition,omitempty"`
 	// SealedBudgetToken is true when the fugaro that rendered this record
 	// reads the sealed budget token (docs/design/budget-token-channel.md
 	// §7.1). That fugaro is the BASE image's own binary, which runs the image

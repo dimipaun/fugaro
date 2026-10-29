@@ -80,7 +80,7 @@ func budgetBackendOn(lc *localcfg.Config) (bool, error) {
 // nothing else can give a run its identity.
 func budgetSignerOn(lc *localcfg.Config) error {
 	if lc.Budget == nil || lc.Budget.TokenSigner == "" {
-		return userErr("budget.token_signer is not set in project %s's config, so runs cannot be given a budget identity: an operator runs fugaro update --firebase-project <firebase-project-id> --name %s", lc.Name, lc.Name)
+		return userErr("budget.token_signer is not set in project %s's config, so runs cannot be given a budget identity: an operator runs fugaro update --firebase-project %s --name %s", lc.Name, lc.GCPProject, lc.Name)
 	}
 	return nil
 }

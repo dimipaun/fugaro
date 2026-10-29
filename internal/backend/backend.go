@@ -165,6 +165,30 @@ type Execution struct {
 	State                       State
 	Created, Started, Completed time.Time
 	CPU, MemoryGiB              float64 // the task's limits, for compute cost
+	// Preempted reports that the platform reclaimed this execution's machine
+	// before the run could finish: the workload was killed mid-flight by
+	// something outside it, not by a fault of its own. It is a fact the
+	// platform's own report of the execution carries, read the same way State
+	// is and from the same read -- never a second call, and never inferred
+	// from a state alone: a terminal failure that is NOT a preemption (a
+	// runnable that exited non-zero, an image that would not start) leaves it
+	// false, or every dead run of a spot-using installation would read as
+	// reclaimed.
+	//
+	// Only the Batch backend sets it, from Cloud Batch's own report of a job
+	// whose VM was reclaimed (internal/backend/batch; design compute-backend.md
+	// §1.3). Cloud Run has no such report and leaves it false everywhere, so
+	// the field's presence is not what says which backend an execution came
+	// from -- it is what says the platform named a preemption, and a caller
+	// that derives anything from it must have a terminal failure to derive
+	// from as well.
+	//
+	// It is evidence about a *dead* execution and nothing else: nothing
+	// retries, finalizes or charges differently because of it. The read side
+	// uses it to say what happened to a run whose own record never did
+	// (runview.Row.Derived), and the reaper decides on state and never on this
+	// field.
+	Preempted bool
 	// Region is the region the backend resolved this execution to: the
 	// backend's own answer, from its configuration or from its codec's
 	// parse of the name it returned. Callers that price an execution use
