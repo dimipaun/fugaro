@@ -599,11 +599,10 @@ table.live-table th.live-table-head {
 table.live-table td {
   padding: var(--space-2xs) var(--space-sm);
   vertical-align: top;
-  border-bottom: var(--rule-width) solid var(--line-subtle);
 }
 
-table.live-table tr:last-child td {
-  border-bottom: none;
+table.live-table tr.live-run {
+  border-bottom: var(--rule-width) solid var(--line-subtle);
 }
 
 /* The run id is the row's door (`entry.ts`'s `wireRuns` reads this cell's drawn
