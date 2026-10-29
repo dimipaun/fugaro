@@ -75,10 +75,14 @@ func TestDocsLicensingStatement(t *testing.T) {
 
 	for _, want := range []string{
 		// The split, in the statement's own words: the core's licence, the
-		// reserved directory's exclusion, the vendored code's own terms.
+		// business-licensed directory's exclusion, the vendored code's own
+		// terms. The word for `ee/` is the one its own page uses since D532:
+		// the folder holds the business-licensed features, new ones and those
+		// moved out of the core, so "reserved for net-new organisation
+		// features" is no longer what it says (E3.1).
 		"`ee/`",
 		"excluded",
-		"reserved",
+		"business-licensed",
 		"`.agents/`",
 		"third-party",
 		// R4, in the one sentence the README and the 0.11.0 notes carry too.
@@ -127,11 +131,10 @@ func TestDocsLicensingStatement(t *testing.T) {
 	// ones and those moved out of the core, with the released MIT versions
 	// staying MIT -- plus the unpublished Subscription Terms, so the page
 	// cannot drift back to a folder that takes nothing out of the core while
-	// this cross-check is on record. `LICENSING.md` and the website's licence
-	// wording still carry the older "reserved for net-new organisation
-	// features"; task E3.1 and E3.2 realign them, and this cross-check can pin
-	// their agreement again once they have. This read is why the test's name is
-	// in eeReadingTests.
+	// this cross-check is on record. Task E3.1 realigned `LICENSING.md` to the
+	// same words (the website's licence wording is E3.2's, and still carries
+	// the older "reserved for net-new organisation features" until it lands).
+	// This read is why the test's name is in eeReadingTests.
 	eePage := strings.ToLower(flattenDoc(readRealEE(t, "README.md")))
 	for _, want := range []string{
 		"business-licensed features",
@@ -141,6 +144,44 @@ func TestDocsLicensingStatement(t *testing.T) {
 	} {
 		if !strings.Contains(eePage, want) {
 			t.Errorf("ee/README.md, the page %s links for what `ee/` is, never says %q: the statement and the page it points at have to agree on what the folder holds -- the business-licensed features, new ones and those the owner moved out of the core -- and on the Subscription Terms being the document the licence names and does not publish, or one of the two is describing a directory that does not exist", path, want)
+		}
+	}
+}
+
+// TestDocsLicensingNamesTheMovedFeatures (ee-reorg E3.1, D521, D528, D529,
+// T11): three parts of the core moved under `ee/`, and a reader who meets one
+// of them has to be able to tell which licence it is under. So the statement
+// names each by the directory it now sits in and by what a reader meets it as,
+// and names what stayed MIT beside them: the reading side.
+//
+// The halves are pinned together on purpose. A statement that named only the
+// moved features would leave a reader of `fugaro diagnose` or of the digest
+// unable to tell whether the build they hold may run them, and a statement that
+// named only the MIT half would leave `governance:` a block whose enforcement
+// has no licence written down at all.
+func TestDocsLicensingNamesTheMovedFeatures(t *testing.T) {
+	const path = "LICENSING.md"
+	flat := strings.ToLower(flattenDoc(readDoc(t, path)))
+	for _, want := range []string{
+		// The three moved parts, each by the directory it lives in and by the
+		// name a reader meets it under: governance's policy and its stage
+		// tripwires, the report command, the coordinator.
+		"business-licensed",
+		"`ee/governance/`",
+		"`ee/report/`",
+		"`ee/coordinator/`",
+		"fugaro report",
+		"the coordinator",
+		"stage tripwire",
+		// What stayed MIT with them, and why the split is visible at all: a
+		// build without the tag still reads the halts and checkpoints a tagged
+		// build wrote, through the digest and `diagnose` (D521, D528, D529).
+		"fugaro runs digest",
+		"`internal/digest`",
+		"stay mit",
+	} {
+		if !strings.Contains(flat, strings.ToLower(want)) {
+			t.Errorf("%s never says %q: the statement is where a reader finds out which parts of the repository are business-licensed, and the three that moved under `ee/` -- governance's policy and stage tripwires, `fugaro report`, the coordinator -- are the ones a reader meets in a run or a command rather than in a directory listing. Its other half is what stayed MIT beside them: the digest and the reading side, which work in a build without the tag", path, want)
 		}
 	}
 }
