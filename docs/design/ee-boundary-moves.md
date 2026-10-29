@@ -672,6 +672,25 @@ helpers those two paths call.
 | `computeSources` (`report.go:532`) | `ComputeSources` | `func ComputeSources(rows []runview.Row) []string` |
 | `applyCost` (`report.go:592`) | `ApplyCost` | `func ApplyCost(rec *budget.DayRecord, c runstore.Cost)` |
 
+The fourth block (E2.2b1) is what the *moved* command needs that the first three do not hold: the
+project selection itself (its handle opens nothing eagerly), the HTTP/2 debug refusal it makes
+before anything reaches the network, and the live-days facts reader `budget show --compute` shares
+with it.
+
+| Core helper today | Published in `api.go` | Signature |
+| --- | --- | --- |
+| `selectProject` (`project.go:247`) | `SelectProject` | `func SelectProject(ctx context.Context, f *CloudFlags) (*Cloud, error)` |
+| `refuseHTTP2Debug` (`cloud.go:778`) | `RefuseHTTP2Debug` | `func RefuseHTTP2Debug(getenv func(string) string) error` |
+| `lazyFacts` (`reportcore.go`, kept core for `budget show --compute`) | `LiveFacts` (opaque), `NewLiveFacts` | `func NewLiveFacts(lc *localcfg.Config, warn func(string), slugs []string) *LiveFacts`; `(*LiveFacts).Facts`, `(*LiveFacts).Close` |
+
+`SelectProject` answers the same `*Cloud` handle as `OpenCloud`, but over the selected config with
+**nothing opened**: the runs bucket and the backend are opened only by `OpenFromConfig(ctx,
+cloud.Config())`, on the paths that read a run record. A command whose whole path is a Firestore
+read therefore pays for no bucket, the way the core's own readers open one only where they need it.
+The test seam is the command's own constructor, not a package variable: `NewReportCmd` installs
+`fcli.BudgetNow` and `fcli.UserStatsMaxRuns`, and a moved test builds the command with the `Deps`
+it wants (§5.5: no production setter exists for a test to override).
+
 `applyCost` and `microsOfUSD` stay in the core with `recordOfRun` — the design's "what moves" list
 (§3) names them, and this corrects it: `recordOfRun` is core (it is one of the five symbols core MIT
 code reads) and calls both, so a moved copy of them would be a second implementation of the split a

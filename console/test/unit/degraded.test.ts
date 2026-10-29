@@ -227,7 +227,7 @@ function theLaterFrame(): LiveDocument {
 }
 
 /** aRefusal is the CLI refusing a Firestore read, in its own words: the two
- * role names and the remedy are `internal/cli/report.go`'s `firestoreErr`, kept
+ * role names and the remedy are `internal/cli/reportcore.go`'s `firestoreErr`, kept
  * here as the text a screen must not alter. */
 const REFUSAL_SENTENCE =
   "project sandbox's spend history refused the read: you need the Cloud Datastore Viewer role (roles/datastore.viewer) on its Firebase project sandbox-db, plus the Service Usage Consumer role (roles/serviceusage.serviceUsageConsumer); GCP owners and editors have both; gcloud auth application-default login may be needed (rpc error: code = PermissionDenied)"

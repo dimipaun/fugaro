@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See ee/LICENSE for the terms.
+
 // Package report turns spend-history day records into the rows of
 // `fugaro report`: grouping by period or dimension, exact dollar rendering,
 // and the table, CSV and JSON outputs.

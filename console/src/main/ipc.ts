@@ -179,7 +179,7 @@ export const MAX_INSTALLATION_CHECKOUT_LENGTH = 1024
 
 /**
  * REPORT_MAX_DAYS is `report --since`'s own bound on a range -- the CLI's
- * `reportMaxDays` (`internal/cli/report.go:40`), which exists because a query
+ * `reportMaxDays` (`ee/report/cli/report.go:39`), which exists because a query
  * reads a document per repository per day. A window past it is a value `report`
  * refuses, so the console refuses it here rather than forward it and let the
  * CLI's error be the answer.
@@ -212,7 +212,7 @@ export const REPORT_MAX_WEEKS = 522
  *   - `day` -- a UTC calendar day, `YYYY-MM-DD`;
  *   - `reportSince` -- `report --since`'s own forms: a UTC day, `Nd`, or `Nw`,
  *     bounded by the same `reportMaxDays` the CLI bounds the range with
- *     (`internal/cli/report.go:40`, `reportRange` at `report.go:93`). A window
+ *     (`ee/report/cli/report.go:39`, `reportRange` at `report.go:116`). A window
  *     in hours or minutes is *not* one of its forms, and neither is `0`;
  *   - `runSince` -- `runs ls --since`'s own forms, which are `parseSince`'s
  *     exactly (`internal/cli/runs.go:502`): `0` for no bound, `Nd` with one to 106751
@@ -1373,7 +1373,7 @@ export const NEVER_REACHABLE: readonly NeverReachable[] = Object.freeze([
     shape: 'flag',
     value: '--csv',
     why: 'a second document format the console does not read: the surface asks for `--json`',
-    where: 'internal/cli/report.go:87',
+    where: 'ee/report/cli/report.go:92',
   },
   {
     shape: 'flag',
@@ -1454,7 +1454,7 @@ const RUN_ID_RE = /^\d{8}-\d{6}-[0-9a-f]{4,16}$/
 const DAY_RE = /^(\d{4})-(\d{2})-(\d{2})$/
 // The two `--since` flags are two different grammars, and each one is written
 // as its own kind so neither can admit a value its own command refuses. `report`
-// takes days and weeks but not hours (`reportRange`, `internal/cli/report.go:93`
+// takes days and weeks but not hours (`reportRange`, `ee/report/cli/report.go:116`
 // -- an `h` suffix falls through to the date parser there); `runs ls` takes
 // `parseSince`'s own forms (`internal/cli/runs.go:502`), which is what the two
 // patterns below are: its grammar rather than a summary of it. `parseSince`

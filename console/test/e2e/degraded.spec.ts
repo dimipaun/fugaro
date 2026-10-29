@@ -33,7 +33,7 @@
 // committed synthetic fixture, read from disk and already redacted when it was
 // written (Task 1.4); the absent-binary screen is built from a resolution run
 // against an empty temporary directory; and the refusal is the sentence
-// `internal/cli/report.go` prints, carried the way the console carries it.
+// `internal/cli/reportcore.go` prints, carried the way the console carries it.
 
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -373,7 +373,7 @@ function theLiveFrames(): readonly JSONDoc[] {
   return out
 }
 
-/** THE_REFUSAL is `internal/cli/report.go`'s `firestoreErr` for a permission
+/** THE_REFUSAL is `internal/cli/reportcore.go`'s `firestoreErr` for a permission
  * refusal, which is the sentence the CLI prints and the console shows: the read
  * that failed, the two roles that remedy it, and the error the client
  * returned. It is written out here because it is the *input* to this spec --

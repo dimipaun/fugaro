@@ -170,7 +170,7 @@ import type { ElementLike } from '../app'
 
 /**
  * SPEND_DIMENSIONS is `report --by`'s closed set of eight words, in
- * `internal/report/report.go`'s own order (`ByDay`, `ByWeek`, `ByMonth`,
+ * `ee/report/report.go`'s own order (`ByDay`, `ByWeek`, `ByMonth`,
  * `ByYear`, `ByRepo`, `ByModel`, `ByPerson`, `ByMode`, and `ParseDim`'s list).
  * The switch draws this list; a document's `by` that is not one of them is a
  * document from a CLI this build does not know, and the screen says so rather
@@ -239,7 +239,7 @@ const MICROS_PER_USD = 1_000_000
 
 /**
  * PARTIAL_MARKER is the marker the design draws beside a partial day. It is the
- * CLI's own word: `Table` in `internal/report/render.go` appends `" (partial)"`
+ * CLI's own word: `Table` in `ee/report/render.go` appends `" (partial)"`
  * to the key of a partial row, and the console says the same word about the
  * same fact rather than inventing a second one for it.
  */

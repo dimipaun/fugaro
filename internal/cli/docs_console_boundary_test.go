@@ -129,9 +129,16 @@ const consoleBoundarySelf = "internal/cli/docs_console_boundary_test.go"
 // keeps every section whose command is still in the core, so between them the
 // two files read the same documents the one file read before, and the case for
 // the second entry is the move itself, argued in the commit that made it.
+//
+// The third arrived the same way with ee-reorg E2.2b1: the report's command and
+// the three JSON shapes §4 of the contract documents moved out of the core into
+// ee/report, so §4 and §8's report row moved with them
+// (ee/report/cli/console_contract_test.go), read as bytes and embedding nothing
+// like the other two.
 var consoleBoundaryAllowList = []string{
 	"internal/cli/docs_desktop_console_test.go",
 	"ee/coordinator/cli/console_contract_test.go",
+	"ee/report/cli/console_contract_test.go",
 }
 
 // consoleGoModRequireBaseline is go.mod's require block as recorded when Task
@@ -733,12 +740,12 @@ func TestConsoleIsOutsideTheGoModule(t *testing.T) {
 	t.Run("the_allow_list_is_exactly_what_it_says_it_is", func(t *testing.T) {
 		// The count is pinned on purpose: a new entry is a deliberate widening
 		// of the boundary, argued for in the commit that adds it (plan Task 0.3
-		// a3) and in a comment on the entry itself. The second one is
-		// ee-reorg E2.1b's -- the console contract test's coordinator half, in
-		// the package the command and the shapes moved to -- and this number is
-		// what makes a third one impossible to add quietly.
-		if len(consoleBoundaryAllowList) != 2 {
-			t.Errorf("consoleBoundaryAllowList carries %d entries, %v: it holds the console contract's own docs tests, the core's and the coordinator command's moved half, and a further entry is a widening of the boundary that must be argued for in the commit that adds it (plan Task 0.3 a3)", len(consoleBoundaryAllowList), consoleBoundaryAllowList)
+		// a3) and in a comment on the entry itself. The second is ee-reorg
+		// E2.1b's (the coordinator's moved half) and the third E2.2b1's (the
+		// report's), each in the package its command and shapes moved to, and
+		// this number is what makes a fourth one impossible to add quietly.
+		if len(consoleBoundaryAllowList) != 3 {
+			t.Errorf("consoleBoundaryAllowList carries %d entries, %v: it holds the console contract's own docs tests and the moved halves of the coordinator's and the report's commands, and a further entry is a widening of the boundary that must be argued for in the commit that adds it (plan Task 0.3 a3)", len(consoleBoundaryAllowList), consoleBoundaryAllowList)
 		}
 	})
 

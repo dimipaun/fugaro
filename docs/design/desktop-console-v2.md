@@ -58,7 +58,7 @@ So the spec's sentence is achievable, but only as D13's tuple: an installation i
 
 **F5 — "total spend across projects" is a sum no single installation can back. (Gap / Rule)**
 
-Spend lives per installation: `internal/budget/model.go` has `PathSpendGlobal`, `PathSpendRepo` and `PathSpendRun` under the installation's realtime database, `PathCapsRepo` for the caps, and the history job writes Firestore's `spendDaily` for the same installation. `fugaro budget show` prints one installation's figures (`internal/cli/budget.go`'s `budgetShowDoc`, whose `Project` and `GCPProject` fields say *which* installation they are about), and `fugaro report` reads the same installation's history (`internal/report/report.go`'s `Build`).
+Spend lives per installation: `internal/budget/model.go` has `PathSpendGlobal`, `PathSpendRepo` and `PathSpendRun` under the installation's realtime database, `PathCapsRepo` for the caps, and the history job writes Firestore's `spendDaily` for the same installation. `fugaro budget show` prints one installation's figures (`internal/cli/budget.go`'s `budgetShowDoc`, whose `Project` and `GCPProject` fields say *which* installation they are about), and `fugaro report` reads the same installation's history (`ee/report/report.go`'s `Build`).
 
 There is no cross-installation total anywhere, and the reason is not laziness: two installations' figures are two different currencies of trust — one is read live from a database this operator can read, the other may be a cached copy of a config fetched up to 7 days ago (`SharedOfflineFor`) with spend figures that are not in the shared config at all. **Rule:** the Overview shows one figure **per installation**, labelled with the installation it came from, and a summed total appears only where one installation's own documents back it. See **D32**.
 
@@ -205,7 +205,7 @@ Caps and spend are readable: `fugaro budget show`'s `budgetShowDoc` (`internal/c
 
 **F30 — spending graphs and live tasks exist. (Exists)**
 
-`fugaro report` (`internal/report/report.go`'s `Build`, and the documents in `internal/report/render.go`: `JSONDoc`, `JSONLine`, `JSONTokens`) is the history; `fugaro runs ls --json` (`lsDoc`) and the watch feed are the live tasks. Both are reads the console's allow-list can already name, and both are already in the v1 design's data-source table.
+`fugaro report` (`ee/report/report.go`'s `Build`, and the documents in `ee/report/render.go`: `JSONDoc`, `JSONLine`, `JSONTokens`) is the history; `fugaro runs ls --json` (`lsDoc`) and the watch feed are the live tasks. Both are reads the console's allow-list can already name, and both are already in the v1 design's data-source table.
 
 ### The independence-maximizing planning skill
 

@@ -1,21 +1,24 @@
-package cli
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See ee/LICENSE for the terms.
+
+package report_test
 
 import (
 	"testing"
 	"time"
 
+	report "github.com/dimipaun/fugaro/ee/report"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/digest"
-	"github.com/dimipaun/fugaro/internal/report"
 )
 
-// While both copies are still in the core, the digest prints its own
-// committed report files from internal/digest/period.go and `fugaro report`
-// prints its figures from internal/report: a drift between the two would put
-// two answers to the same run's dollars in one tree. This is the only place
-// that sees both, so it is where the cross-check lives; when internal/report
-// moves to ee/report it goes with it, and there is no second copy left to
-// check.
+// The digest prints its own committed report files from
+// internal/digest/period.go — the MIT copy it keeps so an untagged build still
+// writes a digest (D444, T11) — and `fugaro report` prints its figures from
+// ee/report: a drift between the two would put two answers to the same run's
+// dollars in one tree. This is the only place that sees both, so it is where
+// the cross-check lives; it moved here with the report (E2.2b), because a core
+// test may not import ee/.
 func TestDigestPeriodCopyMatchesReport(t *testing.T) {
 	t.Run("the vocabulary", func(t *testing.T) {
 		for _, s := range []string{"day", "week", "month", "year", "repo", "model", "person", "mode", "weekly", ""} {
