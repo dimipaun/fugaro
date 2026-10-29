@@ -35,7 +35,10 @@
  *     visitor asked for — rather than leaving it on a control that has just vanished.
  *   - **Withdrawal.** On the privacy page the banner is offered even when a decision is
  *     stored (`alwaysOffer`), which is how consent is withdrawn: the one page that says how
- *     is the one page where the choice is always available again.
+ *     is the one page where the choice is always available again. It carries the campaign
+ *     decision's key as well as the site's (`marketingKey`), so the refusal it offers takes
+ *     back both answers — a campaign decision is made on a campaign page, where the bar is
+ *     gone once it has been answered, and this is the page a visitor comes to to undo one.
  *
  * The markup is emitted hidden and `site.js` reveals it: a browser that runs no script shows
  * no control it cannot honour, and loads nothing.
@@ -54,6 +57,14 @@ interface Props {
    * else, which is why every other page is unchanged by that task.
    */
   marketing?: MarketingConfig | null
+  /**
+   * The campaign decision's key where the bar does not ask the campaign question — the privacy
+   * page, which is where a visitor withdraws one. A bar carrying the key without the
+   * configuration answers that question in the refusal direction only: `site.js` may take the
+   * campaign decision away from it, and may not give one, because this page never put the three
+   * vendors to the visitor. Null on every other page.
+   */
+  marketingKey?: string | null
 }
 
 export interface MarketingConfig {
@@ -71,7 +82,13 @@ export interface MarketingConfig {
   calendlyOrigin: string
 }
 
-const { alwaysOffer = false, measurementID, analyticsOrigin, marketing = null } = Astro.props
+const {
+  alwaysOffer = false,
+  measurementID,
+  analyticsOrigin,
+  marketing = null,
+  marketingKey = null,
+} = Astro.props
 
 // The key the decision is stored under, written once in `src/lib/consent-key.mjs`: `site.js`
 // reads it back out of the markup below, so the banner that writes the decision and the gate
@@ -88,7 +105,7 @@ import { CONSENT_KEY } from '../lib/consent-key.mjs'
   data-consent-always={alwaysOffer ? 'true' : undefined}
   data-analytics-id={measurementID}
   data-analytics-origin={analyticsOrigin}
-  data-marketing-consent-key={marketing?.key}
+  data-marketing-consent-key={marketing?.key ?? marketingKey ?? undefined}
   data-marketing-path={marketing?.path}
   data-meta-pixel-id={marketing?.metaID}
   data-meta-origin={marketing?.metaOrigin}

@@ -126,9 +126,14 @@ LinkedIn's insight tag and Calendly's booking widget.
   owner has not supplied a pixel id or a partner id, and this repository publishes no
   identifier the owner did not supply. `internal/cli`'s boundary test pins both empty and the
   three origins exact, so the day they arrive is the day that pin is relaxed.
-- **Each vendor is handed the page's path and no query** (F22): the pixel and the insight tag
-  are given `page_location` explicitly rather than left to read the address in the window, so
-  the campaign parameters a visitor arrived through reach neither.
+- **Each vendor is handed the page's path and no query** (F22): the site builds the address it
+  reports from the origin and the path, and passes it to the pixel and the insight tag as
+  `page_location` rather than leaving them to read the address in the window, so what this site
+  hands them carries none of the campaign parameters a visitor arrived through. What a vendor's
+  own script reads out of the browser once it is running is the vendor's, and not something this
+  site can promise about — the guarantee is over the hand-off, which is also the half the plan
+  asks a test to hold (a test over the loader's configuration). The parameters G2.4 passes on to
+  Calendly are allow-listed and length-capped, and reach neither of these two.
 - **Withdrawal removes what this site may remove.** The pixel is told to revoke, and `_fbp`
   and `_fbc` are deleted from this host. A script already fetched keeps running until the
   visitor reloads, and a cookie a vendor set on its own domain is the vendor's to remove,
@@ -1114,7 +1119,7 @@ added or removed without this sentence moving fails there:
     **The page's words go 492 → 868** — the boards' own labels, which are what a level says — and
     **D188's number moves with them, 600 → 900**: 900 is the smallest round ceiling above the
     page, and the next page down that D188 governs is the homepage at 563 words (Getting Started
-    is 309; the privacy statement, at 950, is the page the words-per-page ceiling itself is
+    is 309; the privacy statement, at 988, is the page the words-per-page ceiling itself is
     derived from, so D188's own number does not measure it). The
     levels' words are no longer a data file: `website/data/zoom-levels.yaml` is gone and the
     boards are the source of truth — `src/lib/zoom-boards.mjs` reads each board's visible strings
@@ -1253,7 +1258,7 @@ added or removed without this sentence moving fails there:
     The ceiling is a ceiling, not a floor — a page with no lead region is a page D188's
     definition does not describe, and this gate says nothing about how much a page's first
     section should say.
-  - **Words per page:** 1188 words. Every word a reader sees inside `main` — command blocks
+  - **Words per page:** 1235 words. Every word a reader sees inside `main` — command blocks
     and code spans included, since the ceiling is a claim about the page rather than about
     its prose — counted by `budget.mjs`'s own reader, which reads a page the way
     `test/lib/html.mjs`'s `textOf` does (a script or style body is not text, an image's
@@ -1274,8 +1279,8 @@ added or removed without this sentence moving fails there:
     **The number is no longer D188's own, and it is derived rather than picked.** The
     privacy statement is the page the App Store and Play listings link as a privacy policy,
     so it carries the software as well as the site and is the one page that is not the
-    site's pitch; the number is that page's own count on the gates' own build — **950
-    words** — plus 25 %, rounded up, which is **1188**. `budget.mjs`'s
+    site's pitch; the number is that page's own count on the gates' own build — **988
+    words** — plus 25 %, rounded up, which is **1235**. `budget.mjs`'s
     `wordsCeilingFailures` holds the derivation to the built page the way the same file
     holds the byte budgets to theirs, so a sentence added there re-derives this line in the
     commit that adds it. **The raise is that page's and nobody else's**: every other page of

@@ -496,15 +496,26 @@ export function pageOriginFailures(html, rel, facts, { analyticsEnabled = facts.
   if (campaignConfigs.length !== 0 && campaignConfigs.length !== 1) {
     out.push(`${rel}: ${campaignConfigs.length} elements carry ${MARKETING_PATH_ATTR}; the campaign gate's configuration is written once, in the banner the visitor answers`)
   }
-  // One other element may carry the campaign's key and nothing else: the banner's early-decision
-  // tag (`consent-early.js`, the owner's ruling of 2026-10-23), which is the whole reason a
-  // campaign page carries the key where the banner is drawn from the first frame. Anywhere else,
-  // a key without a configuration is a decision nothing reads.
+  // Two other elements may carry the campaign's key and nothing else, and each is a page where
+  // the decision is read or taken back rather than asked:
+  //
+  //   - the banner's early-decision tag (`consent-early.js`, the owner's ruling of 2026-10-23),
+  //     which is the whole reason a campaign page carries the key where the banner is drawn from
+  //     the first frame; and
+  //   - the bar that always offers the choice — the privacy page, where a visitor withdraws
+  //     (`data-consent-always`). A campaign page's bar is gone once it has been answered, so
+  //     without this the campaign decision could be granted and never taken back; the key is
+  //     what `site.js` writes the refusal under, and the refusal is the only answer that bar may
+  //     give (a page that never named the three vendors grants nothing).
+  //
+  // Anywhere else, a key without a configuration is a decision nothing reads.
   for (const el of campaignKeys) {
     if (el === campaignConfigs[0]) continue
     const carried = MARKETING_ATTRS.filter((name) => el.attrs.has(name))
-    if (el.name !== 'script' || el.attrs.get('src') !== EARLY_SCRIPT || carried.length !== 1) {
-      out.push(`${rel}: <${el.name}> carries ${MARKETING_KEY_ATTR} and is not the consent banner: the campaign's key belongs to the banner's configuration, with the early decision (${EARLY_SCRIPT}) the one other thing that may read it`)
+    const early = el.name === 'script' && el.attrs.get('src') === EARLY_SCRIPT && carried.length === 1
+    const withdrawing = el.name === 'aside' && el.attrs.get('id') === BANNER_ID && el.attrs.get('data-consent-always') === 'true' && carried.length === 1
+    if (!early && !withdrawing) {
+      out.push(`${rel}: <${el.name}> carries ${MARKETING_KEY_ATTR} and is neither the consent banner, its early decision (${EARLY_SCRIPT}) nor the bar that always offers the choice: the campaign's key belongs to the banner that asks the campaign question, or to the page a visitor withdraws on, and a key anywhere else is a decision nothing reads`)
     }
   }
   for (const el of campaignConfigs) {
@@ -768,14 +779,14 @@ test('with analytics on, the one admitted origin is the banner configuration, an
 test('the campaign gate\'s configuration is on the four campaign pages and on no other page', () => {
   // **This case is the red step G2.3 was written against.** Run over the build before the task
   // existed, it failed twice over: the four campaign pages carried no `data-marketing-path` (so
-  // the list below was empty against a list of four) and the deployed policy admitted none of the
-  // three hosts the campaign's vendors document (so the policy case below named each of them as a
-  // token this contract does not carry). Both halves are one defect read from two ends: a
-  // configuration nothing carries, or a policy that would block the load the configuration makes.
+  // the list below was empty against a list of four), and the contract below required three
+  // tokens of the deployed policy that the pre-task `firebase.json` did not carry — the two
+  // halves of one defect read from two ends, a configuration nothing carries and a policy that
+  // would block the load that configuration makes.
   //
-  // The configuration is keyed on `data-marketing-path`, not on the key: the key is also the one
-  // thing the banner's early-decision tag carries (`consent-early.js`), and a page that decided
-  // the question before the parse is not a page that has the vendors' addresses in it.
+  // The configuration is keyed on `data-marketing-path`, not on the key: the key is also what
+  // the page a visitor withdraws on carries, without any of the configuration, so a bar that
+  // carries the key is not a page that has the vendors' addresses in it.
   const campaign = builtPages(DIST).filter((page) => page.html.includes(`${MARKETING_PATH_ATTR}="`))
   assert.deepEqual(
     campaign.map((page) => page.rel).sort(),
@@ -815,22 +826,30 @@ test('the campaign gate\'s configuration is on the four campaign pages and on no
   }
 
   // And the other half, read from the other end: a page that does not carry the configuration
-  // carries none of the three origins and neither of the two keys, so a visitor who never opens
-  // a campaign page is unchanged by any of this (F17).
+  // carries none of the three origins and none of the campaign's configuration, so a visitor who
+  // never opens a campaign page is unchanged by any of this (F17).
   const hosts = [...marketingHosts(FACTS)]
   const campaignRels = new Set(campaign.map((page) => page.rel))
   for (const page of builtPages(DIST).filter((one) => !campaignRels.has(one.rel))) {
     for (const host of hosts) {
       assert.ok(!page.html.includes(host), `${page.rel} names ${host}, one of the campaign gate's three origins, and it is not a campaign page: the origins reach the loader through the four campaign pages' own banner (F18)`)
     }
-    // The key's *literal* is a disclosure rather than a configuration: the privacy statement
-    // names it, exactly as it names the analytics key, and it is the one page outside the four
-    // that may. Everywhere else the campaign question reaches nothing, because the banner
-    // carries the key as an attribute and the site's one script carries no key at all.
+    // The key may be here, on one element only: the bar that always offers the choice, which is
+    // the page a visitor withdraws on — it carries the decision's key and none of the
+    // configuration, and `site.js` writes a refusal with it and never a grant. The key's literal
+    // is also a disclosure, and the privacy statement is the one page outside the four that
+    // names it, exactly as it names the analytics key.
     if (page.rel !== 'privacy/index.html') {
       assert.ok(!page.html.includes(MARKETING_CONSENT_KEY), `${page.rel} names the campaign decision's key and is neither a campaign page nor the privacy statement that discloses it`)
     }
-    assert.ok(!page.html.includes(MARKETING_KEY_ATTR), `${page.rel} carries the campaign gate's configuration and is not a campaign page`)
+    for (const el of [...tokenize(page.html)].filter((t) => t.kind === 'start' && t.attrs.has(MARKETING_KEY_ATTR))) {
+      assert.equal(
+        el.attrs.get('data-consent-always'),
+        'true',
+        `${page.rel} carries the campaign decision's key on <${el.name}> and is not a campaign page: outside the four, the key belongs to the bar that always offers the choice, which is where a decision is taken back (W1.12). The gate's configuration — ${MARKETING_PATH_ATTR}, the ids and the three origins — is the four pages' alone (F18)`,
+      )
+    }
+    assert.ok(!page.html.includes(MARKETING_PATH_ATTR), `${page.rel} carries the campaign gate's configuration and is not a campaign page`)
   }
   for (const rel of filesUnder(DIST)) {
     if (!/\.(html|css|js|mjs|json|webmanifest|svg|xml|txt)$/.test(rel)) continue

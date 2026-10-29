@@ -497,8 +497,11 @@ const marketing =
         campaign variant: the same element, the same two choices and the same consent key, with
         the campaign measurement's own key and configuration beside them, so one press answers
         every question that bar is asking. Every other page renders the site's own banner, with
-        no marketing key and none of the three origins in its markup — a visitor who never opens
-        a campaign page is unchanged by G2.3 (F17). */}
+        no marketing configuration and none of the three origins in its markup — a visitor who
+        never opens a campaign page is unchanged by G2.3 (F17). The one exception is the page
+        that always offers the choice: it carries the campaign decision's key without the
+        configuration, which is what makes the withdrawal it offers reach the campaign
+        measurement too (`marketingKey`, and `site.js`'s refusal-only write). */}
     {campaign ? (
       <slot name="campaign-banner">
         {analyticsEnabled && (
@@ -512,7 +515,12 @@ const marketing =
       </slot>
     ) : (
       analyticsEnabled && (
-        <ConsentBanner alwaysOffer={alwaysOffer} measurementID={facts.analytics.measurementID} analyticsOrigin={ANALYTICS_ORIGIN} />
+        <ConsentBanner
+          alwaysOffer={alwaysOffer}
+          measurementID={facts.analytics.measurementID}
+          analyticsOrigin={ANALYTICS_ORIGIN}
+          marketingKey={alwaysOffer ? MARKETING_CONSENT_KEY : null}
+        />
       )
     )}
 

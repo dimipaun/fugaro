@@ -1393,6 +1393,55 @@ test('withdrawing the marketing consent stops the three and deletes the cookies 
   assert.deepEqual(campaignRequests(next), [], 'the withdrawn consent still loaded a vendor on the next page view')
 })
 
+test('the privacy page withdraws the campaign consent too, because the campaign bar is gone by then', () => {
+  // Where a withdrawal is REACHABLE, which is the half the case above cannot see: the campaign
+  // bar is offered only while the campaign question is open, so a visitor who accepted on /save
+  // finds no control on /save again, and the page that says how consent is withdrawn is the one
+  // whose bar is always offered (W1.12). G2.3's consent is withdrawn there or nowhere, and the
+  // privacy page's bar carries the campaign key without the campaign configuration so that the
+  // refusal it offers takes back both answers — the three still load on no page after it.
+  const granted = { [CONSENT_KEY]: 'granted', [MARKETING_CONSENT_KEY]: 'granted' }
+  const page = runPage(pageOf(SHIPPED, 'privacy/index.html'), {
+    storage: granted,
+    cookies: ['_fbp=fb.1.111.222; path=/', '_fbc=fb.1.333.444; path=/', '_gate=1; path=/'],
+  })
+  assert.ok(page.banner, 'the privacy page carries no consent banner')
+  assert.equal(
+    page.banner.hidden,
+    false,
+    'the privacy page hides the bar from a visitor who answered both questions, so the campaign consent cannot be withdrawn from the one page that says how',
+  )
+  assert.ok(page.held().includes('_fbp'), 'the cookie double did not hold the pixel\'s cookie, so the deletion below would prove nothing')
+  assert.deepEqual(campaignRequests(page), [], 'the privacy page loaded one of the campaign\'s three vendors: it carries the decision\'s key and none of the origins')
+
+  page.click('denied')
+  assert.equal(page.store[MARKETING_CONSENT_KEY], 'denied', 'declining on the privacy page left the campaign grant standing, so the three load again on the next campaign page')
+  assert.equal(page.store[CONSENT_KEY], 'denied', 'declining on the privacy page did not overwrite the site\'s own grant')
+  const left = page.held()
+  for (const name of ['_fbp', '_fbc']) {
+    assert.ok(!left.includes(name), `${name} survived a withdrawal made on the privacy page, where the pixel never ran`)
+  }
+  assert.ok(left.includes('_gate'), 'the withdrawal deleted a cookie that is not the pixel\'s')
+
+  const next = runPage(CAMPAIGN_HTML, { location: CAMPAIGN_LOCATION, storage: page.store })
+  assert.deepEqual(campaignRequests(next), [], 'the consent withdrawn on the privacy page still loaded a vendor on the next campaign page view')
+})
+
+test('a bar that carries the campaign key without the question grants nothing with it', () => {
+  // The other half of the rule above: only the four campaign pages may answer the campaign
+  // question with a yes, so a visitor is never reported to Meta or LinkedIn by a press made on
+  // a page that never named them. The privacy page's bar is the one that carries the key
+  // without the configuration, and its Accept is the site's answer alone.
+  const page = runPage(pageOf(SHIPPED, 'privacy/index.html'), { storage: {} })
+  page.click('granted')
+  assert.equal(page.store[CONSENT_KEY], 'granted', 'accepting on the privacy page did not answer the site\'s question')
+  assert.ok(
+    !(MARKETING_CONSENT_KEY in page.store),
+    'accepting on the privacy page granted the campaign measurement, which that page never asked about',
+  )
+  assert.deepEqual(campaignRequests(page), [], 'accepting on the privacy page loaded one of the campaign\'s three vendors')
+})
+
 
 
 test('the banner is labelled, its two choices are equal, and it is reachable by keyboard before the content', () => {

@@ -1077,9 +1077,14 @@
   function campaign(banner) {
     var key = banner.getAttribute(MARKETING_KEY_ATTR)
     if (!key) return
+    // What asks the question is the configuration; a bar that carries the key without one is
+    // the page a visitor withdraws on (W1.12), which loads none of the three and is here for
+    // the withdrawal at the end of this function.
     var built = banner.getAttribute(MARKETING_PATH_ATTR)
     var here = bare(window.location && window.location.pathname)
-    if (!built || route(here) !== route(built)) return
+    // And the loader runs on the page the configuration was built for and no other, so a
+    // configuration copied to another page loads nothing there (F18's "those pages only", O2).
+    var mine = built !== null && route(here) === route(built)
 
     // The page as the site reports it: its origin and its path, with no query string and no
     // fragment — the campaign parameters a visitor arrived through are the referrer's, not
@@ -1136,7 +1141,7 @@
     }
 
     function load() {
-      if (loaded) return
+      if (!mine || loaded) return
       loaded = true
       pixel(banner.getAttribute(META_ORIGIN_ATTR), banner.getAttribute(META_ID_ATTR))
       insight(banner.getAttribute(LINKEDIN_ORIGIN_ATTR), banner.getAttribute(LINKEDIN_ID_ATTR))
@@ -1147,8 +1152,13 @@
     // command and is told; the insight tag has none, and no script already fetched can be
     // unfetched — so the senders stop on the next page, and the privacy page says so. What is
     // this site's to remove is removed: the cookies Meta's pixel set on this host.
+    //
+    // It is not gated on this page having loaded anything, because the withdrawal is not always
+    // made on the page that loaded: a visitor who accepted the campaign measurement on a
+    // campaign page withdraws on the privacy page, where none of the three ever runs. The two
+    // names below are the whole of what is read, so a visitor who never accepted has nothing
+    // deleted — and nothing is written but an expiry on a cookie this host already held.
     function withdraw() {
-      if (!loaded) return
       if (window.fbq) window.fbq('consent', 'revoke')
       var host = (window.location && window.location.hostname) || ''
       var held = heldNames()
@@ -1217,8 +1227,12 @@
 
     // The campaign question, where this bar asks it (G2.3): the attribute is on the four
     // campaign pages' banner and on no other page's, so this is null everywhere else and the
-    // press below is the one the site has always made.
+    // press below is the one the site has always made. The privacy page's bar carries the key
+    // without the question — it is where a visitor withdraws one — and `asksCampaign` is what
+    // tells the two apart: the key is what a decision is written under, the question is what
+    // may be answered with a yes.
     var marketing = banner.getAttribute(MARKETING_KEY_ATTR) ? MARKETING_KEY_ATTR : null
+    var asksCampaign = marketing !== null && banner.getAttribute(MARKETING_PATH_ATTR) !== null
 
     function choose(decision) {
       // One decision per banner: a second press or an Escape while the bar collapses is not a
@@ -1231,10 +1245,14 @@
       // campaign page, a press about the campaign never rewrites an answer the visitor gave
       // the site — a visitor who accepted analytics on another page keeps that answer, and one
       // who declined it is not quietly granted it here.
-      var asksSite = marketing === null || stored(banner) === null
-      var keptSite = asksSite ? keep(banner, SITE_KEY_ATTR, decision) : true
-      var keptMarketing = marketing ? keep(banner, marketing, decision) : true
-      if (!keptSite || !keptMarketing) {
+      var siteDecision = !asksCampaign || stored(banner) === null ? decision : null
+      // And a bar that carries the campaign key without asking the question answers it in the
+      // refusal direction only (the privacy page, `marketingKey`): this page never put the
+      // three vendors to the visitor, so the bar may take that answer away and may not give it.
+      var campaignDecision = asksCampaign || (decision === DENIED && marketing !== null) ? decision : null
+      var keptSite = siteDecision === null ? true : keep(banner, SITE_KEY_ATTR, siteDecision)
+      var keptCampaign = campaignDecision === null ? true : keep(banner, marketing, campaignDecision)
+      if (!keptSite || !keptCampaign) {
         // The answer cannot be kept, so it is not honoured: nothing is loaded, the banner
         // stays, and the status line says why.
         if (status) status.hidden = false
@@ -1242,7 +1260,7 @@
         return
       }
       dismiss()
-      announce(asksSite ? decision : null, marketing ? decision : null)
+      announce(siteDecision, campaignDecision)
     }
 
     var controls = banner.querySelectorAll('[data-consent]')
@@ -1267,7 +1285,7 @@
     if (
       banner.getAttribute('data-consent-always') === 'true' ||
       stored(banner) === null ||
-      (marketing !== null && read(banner, marketing) === null)
+      (asksCampaign && read(banner, marketing) === null)
     ) {
       banner.hidden = false
     }
