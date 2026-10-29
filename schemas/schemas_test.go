@@ -3058,3 +3058,177 @@ func TestResultSchemaTierMatchesTheGoVocabulary(t *testing.T) {
 		t.Errorf("a record carrying a tier expectation the configuration side permits does not validate: %v", err)
 	}
 }
+
+// TestTaskSchemaABBlock: task.schema.json carries the pair block (model A/B
+// A1.1) in both arms and refuses the shapes task.Spec.Validate refuses. The
+// schema is additionalProperties: false, so without the property every task a
+// sampled launch writes — the only tasks that carry `ab` — is schema-invalid
+// for every consumer of the published document.
+func TestTaskSchemaABBlock(t *testing.T) {
+	sch := compile(t, "task.schema.json")
+	validate := func(t *testing.T, ab *task.AB) error {
+		t.Helper()
+		s := task.Spec{Version: 1, RunID: "20261029-120000-abcd", Repo: "owner/repo-a", Ref: "main", Task: "do it", AB: ab}
+		data, err := json.Marshal(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sch.Validate(inst)
+	}
+	const pairID = "20261029-120000-abcd"
+	challenger := &task.AB{PairID: pairID, Arm: task.ABArmChallenger, Publish: task.ABPublishNone,
+		Challenger: "invented-challenger-1", ChallengerSource: task.ABChallengerOwner}
+	for _, tc := range []struct {
+		name string
+		ab   *task.AB
+	}{
+		{"no block", nil},
+		{"a champion", &task.AB{PairID: pairID, Arm: task.ABArmChampion}},
+		{"a challenger", challenger},
+	} {
+		if err := validate(t, tc.ab); err != nil {
+			t.Errorf("schema rejects %s: %v", tc.name, err)
+		}
+	}
+	bad := func(ab *task.AB) *task.AB { return ab }
+	noPublish := *challenger
+	noPublish.Publish = ""
+	noModel := *challenger
+	noModel.Challenger = ""
+	championPublishing := task.AB{PairID: pairID, Arm: task.ABArmChampion, Publish: task.ABPublishNone}
+	unknownArm := *challenger
+	unknownArm.Arm = "shadow"
+	emptyPair := *challenger
+	emptyPair.PairID = ""
+	unknownSource := *challenger
+	unknownSource.ChallengerSource = "repo"
+	for _, tc := range []struct {
+		name string
+		ab   *task.AB
+	}{
+		{"a challenger with no publish", &noPublish},
+		{"a challenger with no model", &noModel},
+		{"a champion that publishes", &championPublishing},
+		{"an unknown arm", &unknownArm},
+		{"an empty pair_id", &emptyPair},
+		{"an unknown challenger_source", &unknownSource},
+	} {
+		if err := validate(t, bad(tc.ab)); err == nil {
+			t.Errorf("schema accepts %s", tc.name)
+		}
+	}
+	// A key inside the block that is not one of its five: the block is
+	// additionalProperties: false like the document around it.
+	raw := `{"version":1,"run_id":"20261029-120000-abcd","repo":"owner/repo-a","ref":"main","task":"do it",` +
+		`"overrides":{},"ab":{"pair_id":"20261029-120000-abcd","arm":"champion","publish_rate":0.05}}`
+	inst, err := jsonschema.UnmarshalJSON(strings.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err == nil {
+		t.Error("schema accepts an unknown key inside the ab block")
+	}
+}
+
+// TestResultSchemaABBlock: a record carrying the pair block and the patch
+// object's own two facts validates, a record carrying none of them validates
+// too (the fields are additive, so version stays 1), and the patch object is
+// the key it is rather than free text.
+func TestResultSchemaABBlock(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	at := time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)
+	validate := func(t *testing.T, rec runstore.Record) error {
+		t.Helper()
+		data, err := json.Marshal(rec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sch.Validate(inst)
+	}
+	base := runstore.Record{Version: 1, RunID: "20261029-120000-abcd", Repo: "owner/repo-a",
+		Status: runstore.StatusSucceeded, Stage: "writeback", Outcome: runstore.OutcomeReady,
+		CostUSD: 1.25, StartedAt: at}
+	if err := validate(t, base); err != nil {
+		t.Fatalf("schema rejects a record with no ab block: %v", err)
+	}
+	// A challenger records the shadow arm and the patch it uploaded; a
+	// champion records its own arm and its patch.
+	for _, ab := range []*task.AB{
+		{PairID: base.RunID, Arm: task.ABArmChampion},
+		{PairID: base.RunID, Arm: task.ABArmChallenger, Publish: task.ABPublishNone,
+			Challenger: "invented-challenger-1", ChallengerSource: task.ABChallengerOwner},
+	} {
+		rec := base
+		rec.AB = ab
+		rec.PatchObject = "runs/owner-repo-a/" + base.RunID + "/ab/patch.diff"
+		rec.PatchTruncated = true
+		if err := validate(t, rec); err != nil {
+			t.Fatalf("schema rejects a record carrying %+v: %v", ab, err)
+		}
+	}
+	rec := base
+	rec.AB = &task.AB{PairID: base.RunID, Arm: "shadow"}
+	if err := validate(t, rec); err == nil {
+		t.Error("schema accepts an unknown arm on a record")
+	}
+}
+
+// TestABSchemaEnumsMatchTheGoVocabulary ties both schemas' ab enums to the Go
+// constants they mirror: the schema and internal/task are separate copies of
+// one closed vocabulary, so without this a value added on one side would drift
+// from the other with only the fixtures noticing — and the two documents must
+// agree with each other, since a pair's task and its record carry the same
+// block.
+func TestABSchemaEnumsMatchTheGoVocabulary(t *testing.T) {
+	read := func(file string) map[string][]string {
+		t.Helper()
+		data, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc struct {
+			Properties map[string]json.RawMessage `json:"properties"`
+		}
+		if err := json.Unmarshal(data, &doc); err != nil {
+			t.Fatal(err)
+		}
+		raw, ok := doc.Properties["ab"]
+		if !ok {
+			t.Fatalf("%s has no ab property: a sampled task or record is schema-invalid (additionalProperties: false)", file)
+		}
+		var ab struct {
+			Properties map[string]struct {
+				Enum []string `json:"enum"`
+			} `json:"properties"`
+		}
+		if err := json.Unmarshal(raw, &ab); err != nil {
+			t.Fatal(err)
+		}
+		out := map[string][]string{}
+		for name, p := range ab.Properties {
+			out[name] = p.Enum
+		}
+		return out
+	}
+	want := map[string][]string{
+		"arm":               {task.ABArmChampion, task.ABArmChallenger},
+		"publish":           {task.ABPublishNone},
+		"challenger_source": {task.ABChallengerOwner},
+	}
+	for _, file := range []string{"task.schema.json", "result.schema.json"} {
+		got := read(file)
+		for name, e := range want {
+			if !slices.Equal(got[name], e) {
+				t.Errorf("%s: ab.%s enum = %v, want %v (internal/task's own constants)", file, name, got[name], e)
+			}
+		}
+	}
+}
