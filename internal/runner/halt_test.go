@@ -88,6 +88,372 @@ func TestHaltMidImplementOpensDraft(t *testing.T) {
 	}
 }
 
+// TestGovernanceHaltWritesCheckpoint: a governance stop is a halt that leaves
+// a checkpoint report on the record — the trigger the runner set from its own
+// constants, the runner's words for why the run is over, and the model spend
+// the record had reached — and the three fields the stopping agent answers
+// (done, next, hard_instructions) are empty until the checkpoint stage is
+// wired (T7.3). The record is saved with the report, not only returned, and
+// the report is on the pull request before the halted stage has returned.
+func TestGovernanceHaltWritesCheckpoint(t *testing.T) {
+	b := newHandleBox(t)
+	h := prHarness(t, prCfg(t, 2, ""))
+	var during string
+	halt := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		if !b.h.GovernanceHalt(ctx, runstore.HaltFanout, "review spawned 7 sub-agents of 5") {
+			t.Error("GovernanceHalt was refused")
+			return agent.Result{}, nil
+		}
+		// Inside the halt itself: a checkpoint that only finalize published
+		// would not be here, and "the stop leaves a person something to read"
+		// is about the moment the run stops.
+		during = onlyPR(t, h.provider).Body
+		return agent.Result{}, nil
+	}
+	rec, err := h.run(t, implement("feature"), halt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusHalted || rec.Outcome != runstore.OutcomeDraft {
+		t.Fatalf("record = %+v", rec)
+	}
+	if rec.Halt == nil || rec.Halt.Reason != runstore.HaltFanout || rec.Halt.Scope != "run" {
+		t.Fatalf("halt = %+v", rec.Halt)
+	}
+	cp := rec.Checkpoint
+	if cp == nil {
+		t.Fatal("a governance halt left no checkpoint")
+	}
+	if cp.Trigger != string(runstore.HaltFanout) {
+		t.Errorf("trigger = %q, want %q", cp.Trigger, runstore.HaltFanout)
+	}
+	if cp.WhyOver == "" {
+		t.Error("why_over is empty: the runner's own words for the stop are its to fill")
+	}
+	// implement reported $1.00 and the review stage has not finished, so the
+	// record's figure at the halt is that stage's alone.
+	if cp.EstimateUSD != 1 {
+		t.Errorf("estimate_usd = %v, want the record's 1", cp.EstimateUSD)
+	}
+	if cp.Done != "" || cp.Next != "" || cp.HardInstructions != "" {
+		t.Errorf("checkpoint = %+v, want the agent's three fields empty (T7.3)", cp)
+	}
+	for _, want := range []string{"**Halted**", "checkpoint `fanout`", "a stage used more sub-agents than the maximum"} {
+		if !strings.Contains(during, want) {
+			t.Errorf("the section the halt wrote lacks %q:\n%s", want, during)
+		}
+	}
+	stored, err := h.store.ReadRecord(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Checkpoint == nil || *stored.Checkpoint != *cp {
+		t.Fatalf("stored checkpoint = %+v, want %+v", stored.Checkpoint, cp)
+	}
+}
+
+// TestGovernanceHaltDraftsPR is the headline: a governance halt opens or
+// updates the pull request as a draft carrying the checkpoint, and never asks
+// for it to be made ready — the reviewers and labels a ready PR carries are
+// never applied, whatever the run found before it stopped. Both sections the
+// halt writes are checked: the one it writes itself, while the stage it
+// stopped is still unwinding, and the run's final one, which replaces it.
+func TestGovernanceHaltDraftsPR(t *testing.T) {
+	b := newHandleBox(t)
+	h := prHarness(t, prCfg(t, 2, ""))
+	halt := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		if !b.h.GovernanceHalt(ctx, runstore.HaltFanout, "review spawned 7 sub-agents of 5") {
+			t.Error("GovernanceHalt was refused")
+		}
+		during := onlyPR(t, h.provider)
+		if !during.Draft {
+			t.Error("the halt wrote to a pull request that is ready")
+		}
+		for _, want := range []string{"**Halted**", "checkpoint during stage `review`", "checkpoint `fanout`", "estimate $1.00"} {
+			if !strings.Contains(during.Body, want) {
+				t.Errorf("the section the halt wrote lacks %q:\n%s", want, during.Body)
+			}
+		}
+		return agent.Result{}, nil
+	}
+	rec, err := h.run(t, implement("feature"), halt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusHalted || rec.Outcome != runstore.OutcomeDraft {
+		t.Fatalf("record = %+v", rec)
+	}
+	pr := onlyPR(t, h.provider)
+	if !pr.Draft {
+		t.Fatal("a governance halt's pull request is ready")
+	}
+	if len(pr.Reviewers) != 0 || len(pr.Labels) != 0 {
+		t.Fatalf("a governance halt's draft carries reviewers %v / labels %v", pr.Reviewers, pr.Labels)
+	}
+	if n := count(ops(h), "ApplyReady", ""); n != 0 {
+		t.Fatalf("ApplyReady was called %d times on a governance halt", n)
+	}
+	if strings.Contains(pr.Body, "**Ready for review**") {
+		t.Fatalf("the pull request says it is ready:\n%s", pr.Body)
+	}
+	if !strings.Contains(pr.Body, "**Halted**") {
+		t.Fatalf("the pull request does not say the run halted:\n%s", pr.Body)
+	}
+	for _, want := range []string{
+		"checkpoint `fanout`",
+		"more sub-agents than the maximum",
+		"estimate $1.00",
+		"review spawned 7 sub-agents of 5",
+	} {
+		if !strings.Contains(pr.Body, want) {
+			t.Errorf("the pull request's status section lacks %q:\n%s", want, pr.Body)
+		}
+	}
+}
+
+// TestGovernanceHaltOpensTheDraft: when the run's branch is pushed but the
+// draft never opened — the boundary's own open failed — the halt opens it, so
+// the stop reaches a person even if finalize then cannot (a push that fails
+// after an expired token ends the run with no pull request at all). The open
+// is asserted inside the halt: an open left to finalize would pass an
+// assertion made after the run, which is why this one is made here.
+func TestGovernanceHaltOpensTheDraft(t *testing.T) {
+	b := newHandleBox(t)
+	h := prHarness(t, prCfg(t, 2, ""))
+	h.provider.FailEnsure = runner.PRAttempts // the boundary's open fails; the halt's succeeds
+	var during runstore.PRRef
+	halt := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		if !b.h.GovernanceHalt(ctx, runstore.HaltFanout, "review spawned 9 sub-agents of 5") {
+			t.Error("GovernanceHalt was refused")
+			return agent.Result{}, nil
+		}
+		pr := onlyPR(t, h.provider)
+		if !pr.Draft {
+			t.Error("the halt opened a ready pull request")
+		}
+		during = runstore.PRRef{Number: pr.Number}
+		for _, want := range []string{"**Halted**", "checkpoint `fanout`", "estimate $1.00"} {
+			if !strings.Contains(pr.Body, want) {
+				t.Errorf("the pull request the halt opened lacks %q:\n%s", want, pr.Body)
+			}
+		}
+		return agent.Result{}, nil
+	}
+	rec, err := h.run(t, implement("feature"), halt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusHalted || rec.Checkpoint == nil || during.Number == 0 {
+		t.Fatalf("record = %+v, the halt's own open = %+v", rec, during)
+	}
+	pr := onlyPR(t, h.provider)
+	if !pr.Draft || pr.Number != during.Number {
+		t.Fatalf("the halt opened PR #%d, the run ended with %+v", during.Number, pr)
+	}
+	for _, want := range []string{"**Halted**", "checkpoint `fanout`", "estimate $1.00"} {
+		if !strings.Contains(pr.Body, want) {
+			t.Errorf("the pull request the halt opened lacks %q:\n%s", want, pr.Body)
+		}
+	}
+}
+
+// TestGovernanceHaltOpensNoDraftWithEarlyDraftOff: a run whose git.pr.
+// early_draft is false has no mid-run pull request by design, and a governance
+// halt must not open one for it — not even to carry the checkpoint. The stop
+// reaches a person through the run's final pull request, which finalize opens
+// the way it opens every early_draft-off PR: with no status section, and the
+// checkpoint report where that run's report has always carried it, in the
+// record and the stored report.
+func TestGovernanceHaltOpensNoDraftWithEarlyDraftOff(t *testing.T) {
+	b := newHandleBox(t)
+	h := prHarness(t, prCfg(t, 2, ", early_draft: false"))
+	halt := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		if !b.h.GovernanceHalt(ctx, runstore.HaltFanout, "review spawned 9 sub-agents of 5") {
+			t.Error("GovernanceHalt was refused")
+			return agent.Result{}, nil
+		}
+		if prs := h.provider.Snapshot().PRs; len(prs) != 0 {
+			t.Errorf("the halt opened a pull request with early_draft off: %+v", prs)
+		}
+		// The branch is pushed all the same: the halt's draft would have had
+		// something to open on, so "no PR" below is a decision and not an
+		// accident of nothing being pushed yet.
+		if pushedHead(t, h) == "" {
+			t.Error("nothing was pushed, so the halt had nothing to open a draft on")
+		}
+		return agent.Result{}, nil
+	}
+	rec, err := h.run(t, implement("feature"), halt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusHalted || rec.Outcome != runstore.OutcomeDraft || rec.Checkpoint == nil {
+		t.Fatalf("record = %+v", rec)
+	}
+	pr := onlyPR(t, h.provider)
+	if !pr.Draft || strings.Contains(pr.Body, statusBegin) {
+		t.Fatalf("finalize's PR for a halted early_draft-off run = %+v", pr)
+	}
+	if !strings.Contains(rec.Checkpoint.WhyOver, "sub-agents") {
+		t.Fatalf("the record's checkpoint = %+v", rec.Checkpoint)
+	}
+}
+
+// TestGovernanceHaltWhileCheckpointPollRuns: a tripwire fires while the
+// stage's checkpoint poll goroutine is alive and mid-poll — the case in which
+// the halt and the poll would otherwise both write the pull request's state
+// and the run's record (the poll writes pushed_head and saves, then renders a
+// status section, from its own goroutine). The halt must leave exactly one
+// writer: it stops that poll and waits for it, so everything the poll writes
+// is ordered before the halt's own record save and pull-request write. Under
+// -race this is the test that pins it.
+func TestGovernanceHaltWhileCheckpointPollRuns(t *testing.T) {
+	g := newCkptRig(t, prCfg(t, 2, ""))
+	b := newHandleBox(t)
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once, released sync.Once
+	// The poll is held between its push and the pushed_head it saves, which is
+	// the window the halt's own save would race.
+	runner.SetCheckpointPushedSeam(t, func() {
+		once.Do(func() {
+			close(entered)
+			<-release
+		})
+	})
+	unblock := func() { released.Do(func() { close(release) }) }
+	t.Cleanup(unblock)
+	work := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		commitWIP(t, req, "wip")
+		g.tick() // sees the tip; nothing is due yet
+		g.clock.advance(runner.CheckpointMinGap)
+		go g.tick() // this poll pushes, then waits in the seam
+		select {
+		case <-entered:
+		case <-time.After(10 * time.Second):
+			t.Fatal("the checkpoint never pushed")
+		}
+		// The halt, on a goroutine of its own — a tripwire's halt does not
+		// arrive on the run goroutine — but one this stage joins before it
+		// returns, which is the ordering governanceHalt requires of a caller
+		// that is not the run goroutine itself (halt.go). It stops the poll
+		// below before it writes.
+		halted := make(chan bool, 1)
+		go func() { halted <- b.h.GovernanceHalt(ctx, runstore.HaltFanout, "review spawned 9 sub-agents of 5") }()
+		// The halt is recorded before the poll is released, so the poll's tick
+		// overlaps the halt from there — the overlap this test is about.
+		// Waiting on the halt's own answer as well means a refused halt fails
+		// here instead of spinning forever, and the deadline bounds the wait.
+		poll := time.NewTicker(time.Millisecond)
+		defer poll.Stop()
+		deadline := time.After(10 * time.Second)
+		for !b.h.Halted() {
+			select {
+			case ok := <-halted:
+				t.Fatalf("GovernanceHalt returned %v, so the run never halted", ok)
+			case <-deadline:
+				t.Fatal("the halt was never recorded")
+			case <-poll.C:
+			}
+		}
+		// The poll goes on while the halt waits for it: it writes the pushed
+		// head and saves, both before the halt's own writes, so the halt's
+		// section is the one that stands on the pull request — a poll's status
+		// render returns on the stage context the halt cancelled.
+		unblock()
+		if !<-halted {
+			t.Error("GovernanceHalt was refused")
+		}
+		return agent.Result{}, nil
+	}
+	rec, err := g.run(t, implement("feature"), work)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusHalted || rec.Outcome != runstore.OutcomeDraft || rec.Checkpoint == nil {
+		t.Fatalf("record = %+v", rec)
+	}
+	if !strings.Contains(g.logs.String(), "checkpoint pushed") {
+		t.Fatalf("no checkpoint pushed, so the halt never overlapped the poll:\n%s", g.logs)
+	}
+	pr := onlyPR(t, g.provider)
+	if !pr.Draft || !strings.Contains(pr.Body, "**Halted**") || !strings.Contains(pr.Body, "checkpoint `fanout`") {
+		t.Fatalf("the pull request after the halt and the poll:\n%s", pr.Body)
+	}
+}
+
+// TestGovernanceHaltOnThePanicPathFindsTheStageStop: the stage panics while its
+// checkpoint poll is alive and mid-poll, and the defer that ends the stage
+// (runner.go, stageOnce) must stop that poll before it unregisters the stop a
+// mid-stage halt reaches for. A defer that unregistered first would leave the
+// halt reading no stop: it would skip the wait and write the record and the
+// pull request while the poll's in-flight tick still was. The panic path is the
+// only one where that defer runs with the poll alive.
+//
+// The halt is not called here: its own record and pull-request writes are only
+// ordered when its caller is the run goroutine or one it joins before them
+// (governanceHalt, halt.go), and the panic path joins nothing — a real halt on
+// a goroutine of its own races finalize. What the order is about is the read
+// the halt makes first, so the test probes that read instead, and asserts the
+// defer stopped the poll itself.
+func TestGovernanceHaltOnThePanicPathFindsTheStageStop(t *testing.T) {
+	g := newCkptRig(t, prCfg(t, 2, ""))
+	b := newHandleBox(t)
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once, released sync.Once
+	// The poll is held between its push and the pushed_head it saves, which is
+	// the window a halt's own save would race.
+	runner.SetCheckpointPushedSeam(t, func() {
+		once.Do(func() {
+			close(entered)
+			<-release
+		})
+	})
+	unblock := func() { released.Do(func() { close(release) }) }
+	t.Cleanup(unblock)
+	probe := make(chan bool, 1)
+	work := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		commitWIP(t, req, "wip")
+		g.tick() // sees the tip; nothing is due yet
+		g.clock.advance(runner.CheckpointMinGap)
+		go g.tick() // this poll pushes, then waits in the seam
+		select {
+		case <-entered:
+		case <-time.After(10 * time.Second):
+			t.Fatal("the checkpoint never pushed")
+		}
+		// What a mid-stage halt reads before it stops the poll, on a goroutine
+		// of its own — a tripwire's halt does not arrive on the run goroutine —
+		// held back until the panic has reached the stage's own defer, the defer
+		// this test is about. The poll is released once the probe has read, so
+		// the defer is still inside its own stop when the read lands.
+		go func() {
+			time.Sleep(100 * time.Millisecond)
+			probe <- b.h.StageCkptStopRegistered()
+			unblock()
+		}()
+		panic("boom")
+	}
+	rec, err := g.run(t, implement("feature"), work)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !<-probe {
+		t.Error("the stage's stop was unregistered before the poll it stops was stopped")
+	}
+	if b.h.StageCkptStopRegistered() {
+		t.Error("the stage's stop was still registered after the panic")
+	}
+	if n := runner.CheckpointersRunning(); n != 0 {
+		t.Errorf("%d checkpoint goroutines still alive after the panic", n)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeDraft || !strings.Contains(rec.Reason, "panicked") {
+		t.Fatalf("record = %+v", rec)
+	}
+	if !strings.Contains(g.logs.String(), "checkpoint pushed") {
+		t.Fatalf("no checkpoint pushed, so the panic never overlapped the poll:\n%s", g.logs)
+	}
+}
+
 func TestHaltLeftoversCommitMessage(t *testing.T) {
 	b := newHandleBox(t)
 	h := newHarness(t, "", nil)

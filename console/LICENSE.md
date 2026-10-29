@@ -28,7 +28,7 @@ In this licence:
 
 **2. MODIFICATIONS**
 
-2.1 You may modify the Software and publish patches to it. Ownership of, and any assignment of rights in, modifications and patches made by a subscriber is governed by the Subscription Terms. Any modification or patch submitted for inclusion in the Fugaro repository must be submitted under the Fugaro contributor licence agreement published by the Licensor at [CLA URL TO BE PUBLISHED], and the Licensor may decline any submission that is not.
+2.1 You may modify the Software and publish patches to it. Ownership of, and any assignment of rights in, modifications and patches made by a subscriber is governed by the Subscription Terms. Any modification or patch submitted for inclusion in the Fugaro repository must be submitted under the Fugaro contributor licence agreement published by the Licensor at https://gist.githubusercontent.com/dimipaun/d5bb5db937f973b25be5778ce14ec8dd/raw/64918c7fc0f782327db82e7e790db53c3d47d09f/fugaro-cla.md, and the Licensor may decline any submission that is not.
 
 2.2 A modification or patch may be used, copied, modified, displayed, distributed or otherwise exploited only with a valid Fugaro Enterprise Edition subscription for the correct number of user seats.
 

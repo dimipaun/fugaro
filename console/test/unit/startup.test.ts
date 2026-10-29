@@ -855,7 +855,18 @@ describe('the entry point is wired to the handshake', () => {
     expect(indexSource).toContain('readVersion: readCliVersion')
     expect(indexSource).not.toContain('openWindowFor(')
     expect(indexSource).not.toContain('createConsoleWindow')
-    expect(indexSource).not.toContain('APP_ENTRY_URL')
+    // The two doors are shut above; what is left of the old third assertion --
+    // `APP_ENTRY_URL` named nowhere in the entry point -- is a proxy for them,
+    // and V2.5.1a part 2b-3b-1 needs the URL to *recognise* a dashboard window
+    // that is already open, as the confirmation window's parent. Recognising is
+    // not opening, so the rule is spelled out instead: the entry point loads no
+    // URL of its own, and the one place the URL is named is the recogniser,
+    // where it is compared against a window that exists rather than handed to a
+    // load.
+    const dashboard = bodyOf('function dashboardWindow(')
+    expect(indexSource).not.toContain('loadURL')
+    expect(dashboard, 'the recogniser compares a window that exists').toContain('APP_ENTRY_URL')
+    expect(dashboard, 'and reads the window rather than loading it').toContain('getURL()')
   })
 
   it('reads the version through the resolver, not through a path of its own', () => {
@@ -866,10 +877,73 @@ describe('the entry point is wired to the handshake', () => {
     expect(indexSource).toContain('resolveHandshakeBinary(')
     expect(indexSource).toContain('privateWorkingDirectory()')
     // The resolver's reason quotes what the binary printed, so the entry point
-    // hands over the category and never the reason.
-    expect(indexSource).toContain('versionReadFrom(resolution)')
-    expect(indexSource).not.toContain('.reason')
+    // hands over the category and never the reason -- **of the reader**, which
+    // is what this pair is about, and the reason the two assertions below read
+    // `readCliVersion`'s own body rather than the file. `launchLookUp`
+    // (V2.5.1a part 2a) does hand `resolution.reason` on, as the `TargetLookup`
+    // refusal the launcher's screen draws, and that is the launch's seam in
+    // `launch.ts` rather than a version category: a file-wide scan would make
+    // the reader's rule a rule about a function it does not govern, and the
+    // next legitimate reason would be argued away instead of the reader being
+    // held.
+    const reader = bodyOf('async function readCliVersion()')
+    expect(reader).toContain('versionReadFrom(resolution)')
+    expect(reader).not.toContain('.reason')
     expect(indexSource).not.toContain('child_process')
+  })
+
+  it('writes one spawn log per launch lookup, and closes it on every path out', () => {
+    // The lookup is two children -- the binary resolution and the records read
+    // -- and rule 10's log is one writer with one descriptor. Two writers opened
+    // per call and never closed leaked a descriptor for every `run.launch` the
+    // renderer asked about, refusals included, which is the cheapest way to ask
+    // for a great many. So the entry point opens one, hands it to both children,
+    // and closes it in a `finally` -- and the work is a function of its own so
+    // that the `finally` has something to wrap.
+    //
+    // The close is pinned **inside the `finally`** and not merely somewhere in
+    // the function: a close moved after the `try` (so it runs only when the
+    // lookup succeeded) is the same leak on every refusal path, which is what
+    // this case is about.
+    const lookup = bodyOf('async function launchLookUp(')
+    expect((lookup.match(/createSpawnLog\(/g) ?? []).length, 'one log per call').toBe(1)
+    const finallyAt = lookup.indexOf('finally {')
+    expect(finallyAt, 'the log is closed outside a `finally`').toBeGreaterThan(-1)
+    expect(lookup.slice(finallyAt), 'the close is not in the `finally`').toContain('log.close()')
+    const work = bodyOf('async function launchLookUpWith(')
+    expect(work, 'a second writer beside the one log').not.toContain('createSpawnLog(')
+    expect(work).toContain('spawnLog: log')
+    expect(work).toContain('runToCompletion(plan, { log })')
+  })
+
+  it('compares the launch’s record fingerprint at the answer, not the name alone', () => {
+    // "The name is still saved" is not "the installation is still the one this
+    // launch is for": a record removed and re-added under the same name, or one
+    // whose binary, distribution or checkout moved, is a different installation,
+    // and a launch cut for the old one must close as a cancel. The launch
+    // freezes the fingerprint and the answer-time read compares a fresh one
+    // (`launchrules.ts`'s `launchFingerprint`, `launch.ts`'s `stillRecorded`).
+    expect(bodyOf('async function launchLookUpWith(')).toContain('fingerprint: launchFingerprint(')
+    const still = bodyOf('async function launchStillRecorded(')
+    expect(still).toContain('launchFingerprint(')
+    expect(still).toContain('launch.fingerprint')
+    // The identity itself is `launchrules.ts`'s and is tested there field by
+    // field; what the entry point can still get wrong is which fields it hands
+    // it, so each record field is pinned here. A field dropped from this mapping
+    // is a field the answer-time read stops noticing, silently, however correct
+    // `launchFingerprint` is.
+    const facts = bodyOf('function launchRecordFacts(')
+    for (const field of ['id', 'project', 'binaryPath', 'distro', 'configPath', 'checkout']) {
+      expect(facts, `${field} is not in the launch’s identity`).toContain(`record?.${field} ?? ''`)
+    }
+    // And the rail's row is not in it at all: `listed` and `checkouts` come from
+    // a `config list` that can fail on one read and succeed on the next, and an
+    // identity that moved with it would decline a launch the operator had
+    // already confirmed; its `saved` flag is true on every path that reaches
+    // this mapping, because both callers refuse an unsaved row before it.
+    expect(facts).not.toContain('row.listed')
+    expect(facts).not.toContain('row.checkouts')
+    expect(facts).not.toContain('row.saved')
   })
 
   it('hands `activate` to the lifecycle, whose behaviour is tested above', () => {
@@ -1038,8 +1112,8 @@ describe('the entry point puts the surface on ipcMain, and only when it may', ()
     // every read; now the surface is `createBoundSource`, whose reads resolve
     // the installation the picker made active and build the one `CliSource` for
     // it. What is still true, and is what this test is for: **the entry point
-    // starts no child itself**. It names no spawn, and the one binary it
-    // resolves is the handshake's -- everything else goes through the source,
+    // starts no child itself**. It names no spawn, and the two binaries it
+    // resolves are named below -- everything else goes through the source,
     // where `src/source/cli.ts` is the only place a process is created.
     expect(indexSource).toContain('createBoundSource(')
     // The installation is read at message time, from the picker, and the
@@ -1049,10 +1123,18 @@ describe('the entry point puts the surface on ipcMain, and only when it may', ()
     expect(indexSource).toContain('installation: activeBinding')
     expect(indexSource).not.toContain('child_process')
     expect(indexSource).not.toContain('spawn(')
-    // The one resolution in the file is the handshake's, and it is the only
-    // `resolveBinary` call: an operation that resolved a binary for itself would
-    // be a second answer to "which fugaro is this console driving".
-    expect(indexSource.match(/resolve\w*Binary\(/g) ?? []).toHaveLength(1)
+    // The two resolutions in the file, and both by name. V2.5.1a part 2a added
+    // the second one on purpose: a launch resolves the CLI **the record names**
+    // (`resolveLaunchBinary`, `src/main/installations.ts`) -- inside that
+    // record's distribution, or at its own `binaryPath` -- instead of walking
+    // the host's locations, which is the substitution the record exists to
+    // prevent. Naming both keeps the guard this assertion was: a third site, or
+    // an operation that resolved a binary for itself, is still a second answer
+    // to "which fugaro is this console driving".
+    expect([...(indexSource.match(/resolve\w*Binary\(/g) ?? [])].sort()).toEqual([
+      'resolveHandshakeBinary(',
+      'resolveLaunchBinary(',
+    ])
     expect(indexSource).not.toContain('FUGARO_BIN')
     // The kill switch has no operation of its own (C10), so nothing here names
     // one: the field travels inside `live.watch`.

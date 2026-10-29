@@ -30,6 +30,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
+	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -138,6 +139,28 @@ func newCloudRig(t *testing.T, claudeScript string, cancelPoll time.Duration, op
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(bucket, filepath.FromSlash(infra.ProjectMarkerObject)), marker, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The job image's build record, as the image build writes it. The
+	// launch's per-field gates judge a derived image by the base its record
+	// was built FROM, and refuse a launch whose workflow has no record at
+	// all, so a launch carrying any field of its own needs one: the
+	// fixture's follow-up carries a mode, since a follow-up keeps the mode
+	// its pull request recorded (T5.2). The rig's jobs run this tree's own
+	// binary rather than a released image, so the record names a
+	// development base image — a ref those gates warn about instead of
+	// judging (releaseOf), which stays true as releases, and gates, come
+	// and go.
+	rec, err := json.Marshal(imagecheck.Record{Version: 1, Repo: "acme/app", Workflow: cloudWorkflow,
+		BaseRef: cloudRegion + "-docker.pkg.dev/" + cloudProject + "/fugaro-base/fugaro-base:dev-e2e", FugaroVersion: "0.0.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := filepath.Join(bucket, filepath.FromSlash(imagecheck.RecordKey(cloudSlug, cloudWorkflow)))
+	if err := os.MkdirAll(filepath.Dir(key), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(key, rec, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	r.provider = filepath.Join(dir, "provider.json")

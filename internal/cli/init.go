@@ -3110,6 +3110,11 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	if err := r.gateRigor(o, repo, lc, cfg); err != nil {
 		return err
 	}
+	// The governance: block, in either file, is the same kind of break, on
+	// governanceSince.
+	if err := r.gateGovernance(o, repo, lc, cfg); err != nil {
+		return err
+	}
 	if !o.forget {
 		w := r.w
 		if o.printVars {
@@ -3490,6 +3495,22 @@ func (r *initRun) gateRigor(o *initOptions, repo string, lc *localcfg.Config, cf
 		w = r.cmd.ErrOrStderr()
 	}
 	return refuseRigorSkew(repo, cfg.RepoRigorSet, cfg.Layer.SetsRigor(), lc.BaseImage(config.BaseKind), w)
+}
+
+// gateGovernance is fugaro update --repo's gate for governanceSince:
+// refuseGovernanceSkew, with gateRigor's escapes and for its reason — the
+// repository's half is the key being written (RepoGovernanceSet) rather than
+// the block being set, because an explicit null (`governance:`) is a line an
+// older runner's KnownFields decoder refuses too.
+func (r *initRun) gateGovernance(o *initOptions, repo string, lc *localcfg.Config, cfg *config.Config) error {
+	if o.forget || o.planOnly || cfg == nil {
+		return nil
+	}
+	w := r.w
+	if o.printVars {
+		w = r.cmd.ErrOrStderr()
+	}
+	return refuseGovernanceSkew(repo, cfg.RepoGovernanceSet, cfg.Layer.SetsGovernance(), lc.BaseImage(config.BaseKind), w)
 }
 
 // checkVertexBudget refuses a repository whose fugaro.yaml authenticates
@@ -4059,14 +4080,25 @@ func (r *initRun) forgetRepo(ctx context.Context, c *infra.Clients, t *tf.TF, ba
 // ceiling (the project config's budget) and, when the checkout's fugaro.yaml
 // has a budget block, which of its keys the ceiling would clamp.
 func printCeiling(w io.Writer, lc *localcfg.Config, cfg *config.Config) {
-	ceiling := ceilingLayer(lc)
-	if !reflect.DeepEqual(ceiling, policy.Layer{}) {
-		fmt.Fprintf(w, "Budget ceiling for %s from project %s: %s\n", cfg.Project, lc.Name, ceilingText(ceiling))
+	budget := ceilingLayer(lc)
+	if !reflect.DeepEqual(budget, policy.Layer{}) {
+		fmt.Fprintf(w, "Budget ceiling for %s from project %s: %s\n", cfg.Project, lc.Name, ceilingText(budget))
 	}
-	if !setsPolicy(cfg) {
+	// The gate is the file's own policy, governance included: a file whose only
+	// policy is a governance: block is one the layer's governance can clamp, and
+	// setsPolicy knows only the budget keys. The line above is the budget's
+	// alone, though: a project whose layer carries governance and no budget has
+	// no ceiling to state, and "none (no cap, ...)" would read as one.
+	if !setsPolicy(cfg) && cfg.Governance == nil {
 		return
 	}
-	for _, ig := range policy.Merge(ceiling, runner.FileLayer(cfg)).Ignored {
+	// The ceiling the merge is held against is the run's own (runCeiling),
+	// governance included: the project layer's block with Fugaro's figures
+	// filled in, so a governance value this file writes looser than the run's
+	// ceiling is one the run clamps and is named here too. The line above
+	// stays the budget's — ceilingText says nothing about governance, and a
+	// project with no budget has no ceiling to announce.
+	for _, ig := range policy.Merge(runCeiling(lc, cfg), runner.FileLayer(cfg)).Ignored {
 		p := clampWarning(ig)
 		fmt.Fprintf(w, "  fugaro.yaml %s: %s\n", p.Path, p.Message)
 	}

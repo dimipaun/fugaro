@@ -436,8 +436,8 @@ describe('the spend controls', () => {
     if (first === undefined || second === undefined) throw new Error('two reads, two spawns')
     expect(flagsOf(second.argv)['--by']).toBe('repo')
     expect(changedFlags(first.argv, second.argv)).toEqual(['--by'])
-    // The six other words of the switch are the same read with a different
-    // `--by`, and every one of them is a word the allow-list admits.
+    // Every word of the switch is the same read with a different `--by`, and
+    // every one of them is a word the allow-list admits.
     for (const dimension of SPEND_DIMENSIONS) {
       const decision = spendArguments({ ...SPEND_DEFAULT_CONTROLS, by: dimension, persons: true })
       expect(decision.ok).toBe(true)
@@ -475,7 +475,7 @@ describe('the spend controls', () => {
     }
   })
 
-  it('never adds NOTIONAL~ to a real total, on the first read or after a re-read', async () => {
+  it('never adds ~$ to a real total, on the first read or after a re-read', async () => {
     const console = await wired()
     const first = await read(console, SPEND_DEFAULT_CONTROLS)
     const second = await read(console, { ...SPEND_DEFAULT_CONTROLS, since: '7d' })

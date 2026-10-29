@@ -15,7 +15,7 @@
 // The five states are the contract's, and so are the spellings:
 //
 //   measured     the number               a counter the CLI read
-//   notional     NOTIONAL~ + the number   a subscription's list price: never
+//   notional     ~ + the number           a subscription's list price: never
 //                                         billed, never capped
 //   estimated    est. + the number        compute, an estimate by design
 //   unavailable  n/a                      the document says it is not known
@@ -58,11 +58,15 @@ export const AVAILABILITY_STATES: readonly AvailabilityState[] = Object.freeze([
 ])
 
 /**
- * NOTIONAL_MARK prefixes a subscription's list price on screen. It is the
- * contract's own spelling (section 1), and it is deliberately loud: a notional
- * dollar drawn as a billed one is a wrong number that looks right.
+ * NOTIONAL_MARK prefixes a subscription's list price on screen. The owner ruled
+ * the mark is `~` (2026-10-28), and it is part of the value, so the meaning
+ * survives without colour. A tilde also reads as prose's "approximately" -- the
+ * state this most resembles -- so a notional figure is told apart from an
+ * estimated one by ESTIMATED_MARK's `est.`, never by the tilde: `~$0.40` is a
+ * subscription's list price, `est. $0.40` is compute. Drawing a notional dollar
+ * as a billed one is a wrong number that looks right.
  */
-export const NOTIONAL_MARK = 'NOTIONAL~'
+export const NOTIONAL_MARK = '~'
 
 /**
  * ESTIMATED_MARK prefixes compute, which is an estimate by design
@@ -93,7 +97,7 @@ export const GAP_MARK = '—'
 export const LOWER_BOUND_MARK = '≥'
 
 /** Unit is how a measured number is drawn: dollars, a share, a duration. */
-export type Unit = 'usd' | 'percent' | 'seconds' | 'minutes' | 'hours' | 'count'
+export type Unit = 'usd' | 'percent' | 'seconds' | 'minutes' | 'hours' | 'duration' | 'count'
 
 /**
  * Reading is one number and its state.
@@ -282,6 +286,30 @@ function fixed(value: number, digits: number): string {
   return `${negative ? '-' : ''}${grouped}${fraction === '' ? '' : `.${fraction}`}`
 }
 
+/**
+ * durationText draws a span of seconds the way a person says it, in the three
+ * scales a run's age reaches: `21s`, `29m 21s`, `1h 02m`.
+ *
+ * **It is not `seconds`**, and the difference is the whole reason it exists: a
+ * raw second count (`1,505 s`) is a measurement, and an operator reading a run
+ * row wants the span. The scales change at the unit and never before it -- 59 s
+ * is still seconds, 3,599 s is still minutes and seconds, and the hour form
+ * drops the seconds rather than growing a third part -- so the digits only
+ * change when the unit does. The minutes of the hour form are padded to two so
+ * that a column of ages aligns; the seconds of the minute form are padded for
+ * the same reason. A span below zero is not a span: it is drawn as `0s` rather
+ * than with a sign, because there is no such age to report.
+ */
+function durationText(seconds: number): string {
+  const total = Math.round(seconds)
+  if (total <= 0) return '0s'
+  if (total < 60) return `${String(total)}s`
+  if (total < 3600) {
+    return `${String(Math.floor(total / 60))}m ${String(total % 60).padStart(2, '0')}s`
+  }
+  return `${String(Math.floor(total / 3600))}h ${String(Math.floor((total % 3600) / 60)).padStart(2, '0')}m`
+}
+
 /** formatValue draws one number in its unit. */
 function formatValue(value: number, unit: Unit): string {
   switch (unit) {
@@ -299,6 +327,8 @@ function formatValue(value: number, unit: Unit): string {
       return `${fixed(value, 1)} min`
     case 'hours':
       return `${fixed(value, 2)} h`
+    case 'duration':
+      return durationText(value)
     case 'count':
       return fixed(value, 0)
   }
@@ -309,7 +339,7 @@ function formatValue(value: number, unit: Unit): string {
  * shows. Every state has a presentation and no state has two:
  *
  *   measured     $12.50
- *   notional     NOTIONAL~$3.25
+ *   notional     ~$3.25
  *   estimated    est. $0.40
  *   unavailable  n/a
  *   gap          an em dash

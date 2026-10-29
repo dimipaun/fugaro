@@ -1,0 +1,14 @@
+version: 1
+project: aurora
+gcp_project: proj-1234
+governance:
+  review_ratio: 20
+  max_subagents: 12
+  stage_budget: { implement: 0.9, review: 0.8, fix: 0.5 }
+  stage_timeout: { review: 1h }
+  tiers:
+    small: { expected_usd: 1.5, expected_minutes: 45, max_subagents: 4 }
+    large: { expected_usd: 12, expected_minutes: 300 }
+profiles:
+  app:
+    commands: { build: make, test: make test }

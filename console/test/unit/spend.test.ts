@@ -63,6 +63,7 @@ import {
   SPEND_DIMENSIONS,
   SPEND_MAX_RANGE_DAYS,
   SPEND_THEMES,
+  UNREADABLE_MARKER,
   buildSpendModel,
   dayRange,
   keyClass,
@@ -477,6 +478,213 @@ const PERSON_REPORT: JSONDoc = {
 }
 
 /**
+ * MODE_ROWS is a by-mode report: `report --by mode` reads the run records
+ * rather than the spend history (`source: "run-records"`, and not degraded), so
+ * a row's key is a rigor mode or the CLI's own `none` (`internal/report/
+ * report.go`'s `ModeNone`) for a run whose record carries no mode -- or one
+ * this build does not know, which reads as `none` rather than as the raw text.
+ * There is no `start` (a mode is not a period), `calls` is 0 and `run_hours` is
+ * null (a run record carries neither), and a row with no estimated run reads
+ * compute `n/a` rather than 0.
+ */
+const MODE_ROWS = [
+  {
+    key: 'pro',
+    end: '2026-10-15',
+    partial: false,
+    model_micros: 1_500_000,
+    model_usd: '1.500000',
+    notional_micros: null,
+    notional_usd: null,
+    compute_micros: 250_000,
+    compute_usd: '0.250000',
+    compute_estimated: true,
+    run_hours: null,
+    runs: 1,
+    calls: 0,
+  },
+  {
+    key: 'none',
+    end: '2026-10-17',
+    partial: false,
+    model_micros: 500_000,
+    model_usd: '0.500000',
+    notional_micros: 3_000_000,
+    notional_usd: '3.000000',
+    compute_micros: null,
+    compute_usd: null,
+    compute_estimated: false,
+    run_hours: null,
+    runs: 2,
+    calls: 0,
+  },
+] as const
+
+const MODE_REPORT: JSONDoc = {
+  project: 'fugaro-demo',
+  source: 'run-records',
+  degraded: false,
+  by: 'mode',
+  since: '2026-10-12',
+  until: '2026-10-15',
+  weeks: 'iso-utc-monday',
+  rows: MODE_ROWS,
+  totals: {
+    key: 'TOTAL',
+    end: '2026-10-17',
+    partial: false,
+    model_micros: 2_000_000,
+    model_usd: '2.000000',
+    notional_micros: 3_000_000,
+    notional_usd: '3.000000',
+    compute_micros: 250_000,
+    compute_usd: '0.250000',
+    compute_estimated: true,
+    run_hours: null,
+    runs: 3,
+    calls: 0,
+  },
+  warnings: [],
+}
+
+/**
+ * MODE_UNREADABLE_REPORT is the document `report --by mode` writes for a window
+ * that holds one readable run record and one it cannot read at all: the JSON is
+ * copied **verbatim** from the merged CLI's own output for exactly that window
+ * (`internal/cli/report_test.go`'s `TestReportByModeUnreadableRecord`, whose
+ * fixture seeds `pro` run `20261016-120000-aaaa` and corrupt run
+ * `20261017-120000-bbbb`). Two things here are the CLI's and not this file's
+ * invention: the unreadable row `none` carries `unreadable: true` with **every
+ * money key null** -- a run whose record the build cannot read did launch, so
+ * it counts once in `runs`, and its money was never measured, so a `0` there
+ * would be a measurement nobody made (`n/a`, never `$0.00`) -- and the readable
+ * row keeps its own sums. The `totals` row sums the readable row only, and is
+ * **not** marked: one readable row makes the total a measurement.
+ */
+const MODE_UNREADABLE_ROWS = [
+  {
+    key: 'pro',
+    end: '2026-10-16',
+    partial: false,
+    model_micros: 1_500_000,
+    model_usd: '1.500000',
+    notional_micros: 0,
+    notional_usd: '0.000000',
+    compute_micros: 250_000,
+    compute_usd: '0.250000',
+    compute_estimated: true,
+    run_hours: null,
+    runs: 1,
+    calls: 0,
+  },
+  {
+    key: 'none',
+    end: '2026-10-17',
+    partial: false,
+    unreadable: true,
+    model_micros: null,
+    model_usd: null,
+    notional_micros: null,
+    notional_usd: null,
+    compute_micros: null,
+    compute_usd: null,
+    compute_estimated: false,
+    run_hours: null,
+    runs: 1,
+    calls: 0,
+  },
+] as const
+
+const MODE_UNREADABLE_TOTALS = {
+  key: 'TOTAL',
+  end: '2026-10-17',
+  partial: false,
+  model_micros: 1_500_000,
+  model_usd: '1.500000',
+  notional_micros: 0,
+  notional_usd: '0.000000',
+  compute_micros: 250_000,
+  compute_usd: '0.250000',
+  compute_estimated: true,
+  run_hours: null,
+  runs: 2,
+  calls: 0,
+} as const
+
+const MODE_UNREADABLE_REPORT: JSONDoc = {
+  project: 'aurora',
+  source: 'run-records',
+  degraded: false,
+  by: 'mode',
+  since: '2026-10-01',
+  until: '2026-10-20',
+  weeks: 'iso-utc-monday',
+  rows: MODE_UNREADABLE_ROWS,
+  totals: MODE_UNREADABLE_TOTALS,
+  warnings: [
+    'these rows come from run records (the runs bucket), not the Firestore spend history: a run\'s rigor mode is written in its own record, and every run counts once, on its launch day',
+    '1 of the window\'s runs have no record this report can read (1 hold a result.json this build cannot read, 0 have none in the bucket): they count in RUNS, and the money is short by whatever they spent',
+  ],
+}
+
+/**
+ * MODE_ALL_UNREADABLE_REPORT is the same read for a window in which **no** run
+ * record could be read, copied verbatim from the CLI's output for
+ * `TestReportByModeEveryRecordUnreadable`'s two corrupt runs. One row and the
+ * totals line are both marked: the document's rule for the totals is that it
+ * follows the rows (`Row.Unreadable`, `report.Build`; contract §4), so a total
+ * that sums nothing but unreadable rows reads `n/a` rather than the `$0.00`
+ * that sums nothing.
+ */
+const MODE_ALL_UNREADABLE_REPORT: JSONDoc = {
+  project: 'aurora',
+  source: 'run-records',
+  degraded: false,
+  by: 'mode',
+  since: '2026-10-01',
+  until: '2026-10-20',
+  weeks: 'iso-utc-monday',
+  rows: [
+    {
+      key: 'none',
+      end: '2026-10-17',
+      partial: false,
+      unreadable: true,
+      model_micros: null,
+      model_usd: null,
+      notional_micros: null,
+      notional_usd: null,
+      compute_micros: null,
+      compute_usd: null,
+      compute_estimated: false,
+      run_hours: null,
+      runs: 2,
+      calls: 0,
+    },
+  ],
+  totals: {
+    key: 'TOTAL',
+    end: '2026-10-17',
+    partial: false,
+    unreadable: true,
+    model_micros: null,
+    model_usd: null,
+    notional_micros: null,
+    notional_usd: null,
+    compute_micros: null,
+    compute_usd: null,
+    compute_estimated: false,
+    run_hours: null,
+    runs: 2,
+    calls: 0,
+  },
+  warnings: [
+    'these rows come from run records (the runs bucket), not the Firestore spend history: a run\'s rigor mode is written in its own record, and every run counts once, on its launch day',
+    '2 of the window\'s runs have no record this report can read (2 hold a result.json this build cannot read, 0 have none in the bucket): they count in RUNS, and the money is short by whatever they spent',
+  ],
+}
+
+/**
  * THE_REPOS is `budget show --json`'s `repos` array with one repository at each
  * binding scope the CLI can name: a repository with its own two caps, one whose
  * per-run cap comes from the repository default, and one whose per-run cap
@@ -615,10 +823,12 @@ function sourceConstant(relative: string, name: string): string {
 }
 
 describe('the Spend screen constants', () => {
-  it('are the CLI\'s seven breakdowns, by name, and cannot drift from them', () => {
+  it('are the CLI\'s eight breakdowns, by name, and cannot drift from them', () => {
     // `internal/report/report.go`'s `Dim` values, one by one: the switch draws
     // the CLI's vocabulary, and a word the CLI renamed would leave the switch
-    // offering a breakdown `report` refuses.
+    // offering a breakdown `report` refuses. The whole list against the CLI's
+    // own `--by` help is `report-dimensions.test.ts`; this is the same fact
+    // held name by name.
     const go = 'internal/report/report.go'
     expect(sourceConstant(go, 'ByDay')).toBe('"day"')
     expect(sourceConstant(go, 'ByWeek')).toBe('"week"')
@@ -627,8 +837,9 @@ describe('the Spend screen constants', () => {
     expect(sourceConstant(go, 'ByRepo')).toBe('"repo"')
     expect(sourceConstant(go, 'ByModel')).toBe('"model"')
     expect(sourceConstant(go, 'ByPerson')).toBe('"person"')
+    expect(sourceConstant(go, 'ByMode')).toBe('"mode"')
 
-    expect(SPEND_DIMENSIONS).toEqual(['day', 'week', 'month', 'year', 'repo', 'model', 'person'])
+    expect(SPEND_DIMENSIONS).toEqual(['day', 'week', 'month', 'year', 'repo', 'model', 'person', 'mode'])
   })
 
   it('bounds a day series at the CLI\'s own reportMaxDays, on both sides of it', () => {
@@ -1009,6 +1220,183 @@ describe('the person breakdown', () => {
     expect(text).not.toContain('ada@example.com')
     expect(text).not.toContain('ada')
     expect(keyClass('person', 'ada@example.com')).toBe('person')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The by-mode breakdown (`report --by mode`).
+// ---------------------------------------------------------------------------
+
+describe('the by-mode breakdown', () => {
+  it('is a word the console knows, so a by-mode document is drawn and not read as unknown', () => {
+    // Red before `mode` was in `SPEND_DIMENSIONS`: `dimensionOf('mode')` was
+    // null, so the screen took the unknown-breakdown path -- the switch drew
+    // "an unknown breakdown" and the note said it could not name the grouping.
+    const model = buildSpendModel(MODE_REPORT, BUDGET)
+    expect(model.dimensionKnown).toBe(true)
+    expect(model.dimension).toBe('mode')
+    expect(model.notes).toEqual([])
+    expect(model.rows.map((row) => row.key)).toEqual(['pro', 'none'])
+    // The switch offers every word, and `mode` is the one the document asked for.
+    expect(model.switches.map((one) => one.dimension)).toEqual([...SPEND_DIMENSIONS])
+    expect(model.switches.find((one) => one.dimension === 'mode')).toMatchObject({
+      enabled: true,
+      current: true,
+    })
+  })
+
+  it('draws a mode and the CLI\'s own `none` as labels, never as an error', () => {
+    const tree = renderSpend(factory, buildSpendModel(MODE_REPORT, BUDGET), 'light')
+    // A mode word and `none` take the free-text class, exactly as a model name
+    // does -- so `none` is its own row and not the switch's unknown word.
+    expect(keyClass('mode', 'pro')).toBe('label')
+    expect(keyClass('mode', 'none')).toBe('label')
+    expect(texts(tree, 'spend-key')).toEqual(['pro', 'none'])
+    expect(all(tree, 'spend-dim-unknown')).toEqual([])
+    expect(drawn(tree)).not.toContain('an unknown breakdown')
+  })
+
+  it('keeps the money grammar: the three accounts stay apart and are never summed', () => {
+    const model = buildSpendModel(MODE_REPORT, BUDGET)
+    const tree = renderSpend(factory, model, 'light')
+    // The notional row is marked and the row with no estimated run reads `n/a`;
+    // no cell is model + notional or model + compute.
+    expect(texts(tree, 'spend-notional')).toEqual([UNAVAILABLE_MARK, `${NOTIONAL_MARK}$3.00`])
+    expect(texts(tree, 'spend-compute')).toEqual(['est. $0.25', UNAVAILABLE_MARK])
+    expect(drawn(tree)).not.toContain('$3.50')
+    expect(drawn(tree)).not.toContain('$2.25')
+    // A mode row carries no run-hours, so the column is `n/a` and never `0.00 h`.
+    expect(texts(tree, 'spend-run-hours')).toEqual([UNAVAILABLE_MARK, UNAVAILABLE_MARK])
+  })
+
+  it('says `no readable record`, the fact a corrupt record and a run in flight share', () => {
+    // The words are the console's own -- `report`'s table and CSV draw `n/a`
+    // on such a row and name no mark -- and they name the fact a corrupt
+    // record and a run that has not written one share, rather than
+    // "unreadable", which misnames the in-flight run: the usual `none` row of
+    // a window that reaches into today.
+    expect(UNREADABLE_MARKER).toBe('no readable record')
+  })
+
+  it('reads an unreadable row as `n/a`, not as a measured zero', () => {
+    // Red before `rowOf` read `unreadable`: the row was kept, but nothing said
+    // why its money was `n/a` rather than `$0.00`, and a reader could not tell
+    // a run whose record the build cannot read from a run that spent nothing.
+    const model = buildSpendModel(MODE_UNREADABLE_REPORT, BUDGET)
+    expect(model.dimensionKnown).toBe(true)
+    expect(model.notes).toEqual([])
+    // Both rows survive the read: the unreadable one is a row of the document,
+    // and dropping it would hide the run the CLI counted.
+    expect(model.rows.map((row) => row.key)).toEqual(['pro', 'none'])
+
+    const none = rowFor(model, 'none')
+    expect(none.unreadable).toBe(true)
+    // A null money key is *unavailable* -- the reading, not a zero -- and its
+    // reason is the row's own fact, not "the document has no model_micros": the
+    // key is present and null on purpose, and there was no record to read.
+    for (const reading of [none.model, none.notional, none.compute]) {
+      expect(reading.state).toBe('unavailable')
+      expect(reading.value).toBeNull()
+      expect(reading.because).toBe('no readable record for these runs')
+    }
+    // The run itself is counted: the record could not be read, but the run did
+    // launch, and the CLI counts it once.
+    expect(none.runs.value).toBe(1)
+    expect(none.runs.state).toBe('measured')
+
+    const pro = rowFor(model, 'pro')
+    expect(pro.unreadable).toBe(false)
+    expect(pro.model).toMatchObject({ state: 'measured', value: 1.5 })
+    expect(pro.notional).toMatchObject({ state: 'notional', value: 0 })
+    expect(pro.compute).toMatchObject({ state: 'estimated', value: 0.25 })
+    // A mode row carries no run-hours, which is its own `n/a` and unrelated to
+    // the mark.
+    expect(pro.runHours.state).toBe('unavailable')
+    expect(pro.runs.value).toBe(1)
+
+    // The totals are the document's own row and are never recomputed from the
+    // rows: a sentinel proves the screen reads them.
+    expect(model.totals.model.value).toBe(1.5)
+    const sentinel = buildSpendModel(
+      { ...MODE_UNREADABLE_REPORT, totals: { ...MODE_UNREADABLE_TOTALS, model_micros: 9_000_000 } },
+      BUDGET,
+    )
+    expect(sentinel.totals.model.value).toBe(9)
+    expect(sentinel.totals.model.value).not.toBe(1.5)
+
+    // The row line says which fact the `n/a`s are, beside them.
+    const tree = renderSpend(factory, model, 'light')
+    const rows = all(tree, 'spend-row')
+    const unreadableRow = rows.find((row) => row.getAttribute('data-key') === 'none')
+    const ordinaryRow = rows.find((row) => row.getAttribute('data-key') === 'pro')
+    if (unreadableRow === undefined || ordinaryRow === undefined) throw new Error('a row is missing')
+    expect(texts(unreadableRow, 'spend-unreadable')).toEqual([UNREADABLE_MARKER])
+    expect(texts(unreadableRow, 'spend-model')).toEqual([UNAVAILABLE_MARK])
+    expect(texts(unreadableRow, 'spend-notional')).toEqual([UNAVAILABLE_MARK])
+    expect(texts(unreadableRow, 'spend-compute')).toEqual([UNAVAILABLE_MARK])
+    // The `n/a`'s own explanation is the row's, in the drawn cell's `title`.
+    expect(one(unreadableRow, 'spend-model').getAttribute('title')).toBe('no readable record for these runs')
+    expect(drawn(unreadableRow)).not.toContain('$0.00')
+    // The hook is a fact a stylesheet keys off (design §2.4), so it is read
+    // back rather than left to the class scan, which reads CSS and not the
+    // renderer: an attribute silently dropped would otherwise pass every test.
+    expect(unreadableRow.getAttribute('data-unreadable')).toBe('true')
+    expect(ordinaryRow.getAttribute('data-unreadable')).toBe('false')
+    expect(texts(ordinaryRow, 'spend-unreadable')).toEqual([])
+    expect(texts(ordinaryRow, 'spend-model')).toEqual(['$1.50'])
+    // The mixed document's total is a measurement, and says so.
+    expect(one(tree, 'spend-totals').getAttribute('data-unreadable')).toBe('false')
+    expect(texts(one(tree, 'spend-totals'), 'spend-unreadable')).toEqual([])
+  })
+
+  it('draws an all-unreadable window\'s total as `n/a` too, never as $0.00', () => {
+    // Red before `totalsOf` read `unreadable`: a window in which every run was
+    // unreadable drew a TOTAL of three `$0.00`-looking `n/a`s with no sentence
+    // saying why, under rows that all carried one, and the false title "the
+    // document has no model_micros" for a key that is present and null.
+    const model = buildSpendModel(MODE_ALL_UNREADABLE_REPORT, BUDGET)
+    expect(model.rows.map((row) => row.key)).toEqual(['none'])
+    expect(rowFor(model, 'none').unreadable).toBe(true)
+    expect(model.totals.unreadable).toBe(true)
+    // The total counted both runs and measured nothing.
+    expect(model.totals.runs.value).toBe(2)
+    for (const reading of [model.totals.model, model.totals.notional, model.totals.compute]) {
+      expect(reading.state).toBe('unavailable')
+      expect(reading.value).toBeNull()
+      expect(reading.because).toBe('no readable record for these runs')
+    }
+
+    const tree = renderSpend(factory, model, 'light')
+    const totals = one(tree, 'spend-totals')
+    expect(totals.getAttribute('data-unreadable')).toBe('true')
+    expect(texts(totals, 'spend-unreadable')).toEqual([UNREADABLE_MARKER])
+    expect(texts(totals, 'spend-total-model')).toEqual([UNAVAILABLE_MARK])
+    expect(texts(totals, 'spend-total-notional')).toEqual([UNAVAILABLE_MARK])
+    expect(texts(totals, 'spend-total-compute')).toEqual([UNAVAILABLE_MARK])
+    expect(one(totals, 'spend-total-model').getAttribute('title')).toBe('no readable record for these runs')
+    expect(texts(totals, 'spend-total-runs')).toEqual(['2'])
+    expect(drawn(totals)).not.toContain('$0.00')
+  })
+
+  it('ignores a per-row key it does not know, so a newer document is not a refusal', () => {
+    // The contract grows a row key from one CLI release to the next, and the
+    // console reads the keys it knows -- `rowOf` and `totalsOf` reach for each
+    // key by name, so one they never name is simply not read. An unknown extra
+    // key is therefore not a version mismatch and not a refusal, on a readable
+    // row, on the unreadable one, or on the totals line.
+    const report: JSONDoc = {
+      ...MODE_UNREADABLE_REPORT,
+      rows: MODE_UNREADABLE_ROWS.map((row) => ({ ...row, something_new: 'from a newer CLI' })),
+      totals: { ...MODE_UNREADABLE_TOTALS, something_new: 'from a newer CLI' },
+    }
+    const model = buildSpendModel(report, BUDGET)
+    expect(model.dimensionKnown).toBe(true)
+    expect(model.notes).toEqual([])
+    expect(model.rows.map((row) => row.key)).toEqual(['pro', 'none'])
+    expect(rowFor(model, 'pro').model.value).toBe(1.5)
+    // The unknown key does not disturb the unreadable read either.
+    expect(rowFor(model, 'none').unreadable).toBe(true)
+    expect(model.totals.model.value).toBe(1.5)
   })
 })
 
@@ -1498,6 +1886,41 @@ describe('the caps panel', () => {
     expect(texts(row, 'spend-cap-notional')).toEqual([`${NOTIONAL_MARK}$0.00`])
   })
 
+  it('reads `compute_usd` off a cap row as an estimate, and n/a where there is none', () => {
+    // The owner approved `compute_usd` on each `showRepo` on 2026-10-28, and
+    // `budget show --compute` writes it since 2026-10-29. This console passes
+    // no such flag -- its spawn row is its own reviewed run -- so the key is
+    // still only in a document a person hands this reader. The row reader
+    // already ignores keys it does not know, so the console reads the new one
+    // into the model -- as an **estimate**, compute's own account -- and draws
+    // nothing with it yet; the Spend redesign is the screen that will.
+    const model = buildSpendModel(DAY_REPORT, {
+      ...BUDGET,
+      repos: [{ ...THE_REPOS[0], compute_usd: 0.75 }],
+    })
+    const row = model.caps.repos[0]
+    expect(row?.compute.state).toBe('estimated')
+    expect(row?.compute.value).toBe(0.75)
+    // A measured `0` is not the `n/a` an absent key draws -- compute the
+    // document priced at nothing is a figure, and the one value that tells the
+    // two apart.
+    const zero = buildSpendModel(DAY_REPORT, {
+      ...BUDGET,
+      repos: [{ ...THE_REPOS[0], compute_usd: 0 }],
+    })
+    expect(zero.caps.repos[0]?.compute.state).toBe('estimated')
+    expect(zero.caps.repos[0]?.compute.value).toBe(0)
+    // And a row without it -- the recorded document, and a `null` alike -- is
+    // `n/a`, never `$0.00`.
+    expect(modelOf().caps.repos[0]?.compute.state).toBe('unavailable')
+    expect(modelOf().caps.repos[0]?.compute.value).toBeNull()
+    const nulled = buildSpendModel(DAY_REPORT, {
+      ...BUDGET,
+      repos: [{ ...THE_REPOS[0], compute_usd: null }],
+    })
+    expect(nulled.caps.repos[0]?.compute.value).toBeNull()
+  })
+
   it('draws an unrecognised scope word as an unknown, and never echoes it', () => {
     const caps: JSONDoc = {
       ...BUDGET,
@@ -1629,7 +2052,7 @@ describe('the caps panel', () => {
 // ---------------------------------------------------------------------------
 
 describe('the breakdown switch', () => {
-  it('draws the seven words and marks the document\'s own', () => {
+  it('draws the eight words and marks the document\'s own', () => {
     const tree = renderSpend(factory, modelOf(), 'light')
     const dims = all(tree, 'spend-dim')
     expect(dims.map((dim) => dim.textContent)).toEqual([
@@ -1640,6 +2063,7 @@ describe('the breakdown switch', () => {
       'repo',
       'model',
       'person',
+      'mode',
     ])
     expect(dims.filter((dim) => dim.getAttribute('data-current') === 'true').map((dim) => dim.textContent)).toEqual([
       'day',
@@ -1647,7 +2071,7 @@ describe('the breakdown switch', () => {
     expect(one(tree, 'spend-switch').getAttribute('data-known')).toBe('true')
   })
 
-  it('names an eighth breakdown as unknown without echoing its word', () => {
+  it('names a ninth breakdown as unknown without echoing its word', () => {
     // An `by` this build does not know is a newer CLI, and the console says so
     // in its own words: the value is not drawn, the same rule the Live screen's
     // unknown flags follow.
@@ -1720,6 +2144,11 @@ describe('a report row', () => {
     // The run hours of a day whose compute was not estimated are `null` on the
     // wire (`RunHours` is only set under `ComputeKnown`), which is `n/a`.
     expect(rowFor(modelOf(), '2026-10-13').runHours.state).toBe('unavailable')
+    // A *readable* row's null key keeps `readNumber`'s own sentence: the
+    // row-own reason is the unreadable row's alone, and only a key present and
+    // null because there was no record to read gets it.
+    expect(rowFor(modelOf(), '2026-10-13').notional.because).toBe('the document has no notional_micros')
+    expect(rowFor(modelOf(), '2026-10-13').runHours.because).toBe('the document has no run_hours')
   })
 
   it('carries a model row\'s tokens, and none for a model whose tokens were not tracked', () => {
@@ -1882,7 +2311,7 @@ describe('renderSpend', () => {
     expect(texts(tree, 'spend-peak')).toEqual(['$1.25', `${NOTIONAL_MARK}$0.40`, 'est. $0.12'])
     expect(texts(tree, 'spend-series').length).toBe(3)
     expect(
-      texts(tree, 'spend-account-title').map((title) => (title ?? '').includes('NOTIONAL~')),
+      texts(tree, 'spend-account-title').map((title) => (title ?? '').includes(NOTIONAL_MARK)),
     ).toEqual([false, true, false])
   })
 

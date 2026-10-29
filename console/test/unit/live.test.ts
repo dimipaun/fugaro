@@ -58,15 +58,28 @@ import {
   LIVE_SILENT_AFTER_SECONDS,
   LIVE_STALE_AFTER_SECONDS,
   LIVE_THEMES,
+  PIPELINE_SEGMENTS,
   buildLiveModel,
   contradiction,
   deadlineFlag,
+  headroomOf,
   healthFlag,
+  pipelineOf,
   renderLive,
+  runStateOf,
   sparkline,
+  stageSegment,
   watchHealth,
 } from '../../src/renderer/screens/live'
-import type { LiveModel, ScreenElement, ScreenFactory } from '../../src/renderer/screens/live'
+import type {
+  LiveFactory,
+  LiveModel,
+  LiveRunRow,
+  RunFlag,
+  ScreenElement,
+  ScreenFactory,
+} from '../../src/renderer/screens/live'
+import { WRITE_UNAVAILABLE } from '../../src/renderer/writes'
 import { SYNTHETIC_WHERE } from './synthetic'
 
 // ---------------------------------------------------------------------------
@@ -180,7 +193,7 @@ class FakeScreen implements ScreenElement {
     'action',
   ])
 
-  constructor(readonly tag: string) {}
+  constructor(readonly tag: string, readonly namespace: 'html' | 'svg' = 'html') {}
 
   setAttribute(name: string, value: string): void {
     const lowered = name.toLowerCase()
@@ -211,8 +224,14 @@ class FakeScreen implements ScreenElement {
   }
 }
 
-/** factory makes Fresh fakes, in the shape the renderer is handed. */
-const factory: ScreenFactory = { create: (tag) => new FakeScreen(tag) }
+/** factory makes Fresh fakes, in the shape the renderer is handed. The two
+ * methods are the two namespaces the real factory has, and the fake remembers
+ * which one made a node so that the attribute rule below can be about SVG nodes
+ * rather than about a tag that happens to be spelled `svg`. */
+const factory: LiveFactory = {
+  create: (tag) => new FakeScreen(tag),
+  createNS: (tag) => new FakeScreen(tag, 'svg'),
+}
 
 /** root is a fresh section to draw the screen into. */
 function root(): FakeScreen {
@@ -481,38 +500,74 @@ describe('the row model', () => {
     expect(queued.requestedBy).toBe('redacted@example.invalid')
   })
 
-  it('draws who started a run as the short form, and no cell for a run nobody is named on', () => {
-    // Owner request 2026-10-18: the Started-by column, on the Live row. The
-    // fixture predates `launched_by`, so the key is added to the frame as it
-    // arrived and read back through the decoder -- the row is built the way a
-    // 0.9.0 feed builds it, rather than around `schema.ts`.
+  it('draws the design’s seven columns, and the fields the table has no column for leave the row', () => {
+    // **Console redesign step 2b: the row is a table row now.** The design's
+    // runs table has RUN, TASK, PIPELINE, CODER / REVIEWER, COST, ELAPSED and
+    // STATUS, and the fields the flex row used to draw beside the title --
+    // who started the run, the requester, the recipe, the workflow, the verify
+    // word -- have no column. They stay in the **model** (`LiveRunRow`), so a
+    // later step that wants one has the document's value to draw; what this
+    // test holds is that no cell is drawn for them, which is the half a reader
+    // of the screen would otherwise have to guess.
     const frame = theLastFrame()
+    const dropped = [
+      'live-run-verify',
+      'live-run-recipe',
+      'live-run-workflow',
+      'live-run-requester',
+      'live-run-started-by',
+    ]
     const runs = frame.runs.map((run) =>
       run.run === QUEUED_RUN ? { ...run, launchedBy: 'dana.person+fugaro@example.com' } : run,
     )
     const tree = renderLive(factory, buildLiveModel({ ...frame, runs }, new BurnHistory()), 'light')
-    // The short form, exactly as `fugaro runs ls` writes it
-    // (`runview.LauncherShort`): the part before the address's `@`.
-    expect(texts(tree, 'live-run-started-by')).toEqual(['dana.person+fugaro'])
-    // The address the record named is in no cell of the screen: the cut is the
-    // column's, so no `@` -- and no domain -- reaches a cell.
-    for (const leaf of walk(tree)) {
-      expect(leaf.textContent ?? '').not.toContain('dana.person+fugaro@example.com')
+    for (const className of dropped) {
+      expect(all(tree, className), `${className} is drawn`).toHaveLength(0)
     }
-    // The run beside it keeps no launcher, and a row without one draws no cell
-    // at all: not an empty span, which would add a flex gap, and never another
-    // person's name (the request's "fail private").
-    const untouched = renderLive(factory, modelOf(frame), 'light')
-    expect(all(untouched, 'live-run-started-by')).toHaveLength(0)
-    // A launcher that shortens to nothing a cell can draw is that same empty
-    // cell, and not an empty span: `'  @example.com'` shortens to `'  '`, which
-    // the label class would trim to `''` and draw as a blank element with the
-    // row's `gap` around it (`launcher.ts`'s `blank`).
-    const blank = frame.runs.map((run) =>
-      run.run === QUEUED_RUN ? { ...run, launchedBy: '  @example.com' } : run,
-    )
-    const blanks = renderLive(factory, buildLiveModel({ ...frame, runs: blank }, new BurnHistory()), 'light')
-    expect(all(blanks, 'live-run-started-by')).toHaveLength(0)
+    // The model still carries them, so the columns are a drawing decision and
+    // not a hole in the decoder.
+    const model = buildLiveModel({ ...frame, runs }, new BurnHistory())
+    const row = model.repos[0]?.runs.find((one) => one.run === QUEUED_RUN)
+    if (row === undefined) throw new Error('no queued row')
+    expect(row.launchedBy).toBe('dana.person+fugaro@example.com')
+    expect(row.requestedBy).toBe('redacted@example.invalid')
+  })
+
+  it('draws one cell per column, in the design’s order, and the id cell is the door', () => {
+    // The row's shape, asserted cell by cell: `entry.ts`'s `wireRuns` reads the
+    // text of `.live-run-id` off the row it is bound to and opens Run detail
+    // with it, so the id has to be a cell of the row **and** carry the run's own
+    // drawn text. A row that drew the id somewhere else, or drew the raw wire
+    // value into an attribute, would leave the door matching nothing.
+    const tree = renderLive(factory, modelOf(theLastFrame()), 'light')
+    const rows = all(tree, 'live-run')
+    expect(rows.length).toBeGreaterThan(0)
+    for (const row of rows) {
+      expect(row.tag).toBe('tr')
+      expect(row.getAttribute('data-queued')).not.toBeNull()
+      const cells = row.childNodes().filter((child) => child.tag === 'td')
+      expect(cells).toHaveLength(7)
+      const id = one(row, 'live-run-id')
+      expect(id.tag).toBe('td')
+      expect(id.textContent).not.toBe('')
+      // The door reads this cell and nothing else on the row.
+      expect(all(row, 'live-run-id')).toHaveLength(1)
+      expect(texts(row, 'live-run-stage')).toHaveLength(1)
+      expect(texts(row, 'live-run-state')).toHaveLength(1)
+      expect(texts(row, 'live-run-spend')).toHaveLength(1)
+      expect(texts(row, 'live-run-age')).toHaveLength(1)
+    }
+    // The seven `td`s and the `th` row are the same columns: a heading with no
+    // cell under it is a column the reader looks for and does not find.
+    expect(texts(tree, 'live-table-head')).toEqual([
+      'RUN',
+      'TASK',
+      'PIPELINE',
+      'CODER / REVIEWER',
+      'COST',
+      'ELAPSED',
+      'STATUS',
+    ])
   })
 
   it('takes a run\'s rigor from the join by id, and draws no chip without one', () => {
@@ -608,6 +663,536 @@ describe('the row model', () => {
     expect(drawn(tree)).toContain('KILLED')
     expect(one(tree, 'live-kill').getAttribute('data-killed')).toBe('true')
     expect(texts(tree, 'live-kill-reason')).toEqual(['runaway spend'])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The pipeline bar, the run's own word, and the two write buttons the redesign
+// draws (console redesign, step 2b).
+// ---------------------------------------------------------------------------
+
+/** runnerSources is every Go file of `internal/runner` and `internal/watch`,
+ * joined, so a test can hold a stage name against the source that writes it
+ * rather than against a list this file keeps. */
+function runnerSources(): string {
+  const out: string[] = []
+  for (const name of ['runner', 'watch']) {
+    const where = path.join(REPO_ROOT, 'internal', name)
+    for (const entry of readdirSync(where)) {
+      if (entry.endsWith('.go')) out.push(readFileSync(path.join(where, entry), 'utf8'))
+    }
+  }
+  return out.join('\n')
+}
+
+/** aRow is one row of the fixture's last frame with the fields a test names
+ * changed. The pipeline and the chip read the recorded stage and the flags and
+ * nothing else, so a test that wants a run at another point of its pipeline
+ * edits the stage the CLI would have written rather than inventing a row. */
+function aRow(edit: Partial<LiveRunRow>): LiveRunRow {
+  const model = modelOf(theLastFrame())
+  const base = model.repos[0]?.runs[0] ?? model.orphans[0]
+  if (base === undefined) throw new Error('the fixture has no run row')
+  return { ...base, ...edit }
+}
+
+/** LOST is the flag `internal/watch` raises when a run's heartbeat is gone. */
+const LOST: RunFlag = { name: 'lost', because: 'no heartbeat for 3m', tone: 'alarm' }
+
+describe('the pipeline bar', () => {
+  it('draws the five segments in the order a run moves through them', () => {
+    expect(PIPELINE_SEGMENTS).toEqual(['queued', 'build', 'implement', 'review', 'done'])
+  })
+
+  it('maps the runner\'s own stage names onto the five segments, and only those names', () => {
+    // **The names are `internal/runner`'s, not this file's.** Each one is a
+    // string the runner writes onto the record (`r.rec.Stage = ...`, or
+    // `r.stage(ctx, name, ...)`'s callers), plus the `queued` the CLI's queued
+    // rows carry -- so a rename in the runner fails here rather than on a
+    // screen. The scan reads the Go sources; the assertions beside it are the
+    // mapping a reader wants to see in one place.
+    const sources = runnerSources()
+    for (const stage of [
+      'queued',
+      'provision',
+      'bootstrap',
+      'plan',
+      'implement',
+      'fix',
+      'review_first',
+      'check',
+      'review',
+      'finalize',
+      'writeback',
+      'render',
+      'digest',
+    ]) {
+      expect(sources.includes(`"${stage}"`), `no Go source writes "${stage}"`).toBe(true)
+    }
+
+    expect(stageSegment('queued')).toBe('queued')
+    expect(stageSegment('provision')).toBe('build')
+    expect(stageSegment('bootstrap')).toBe('build')
+    expect(stageSegment('plan')).toBe('build')
+    expect(stageSegment('implement')).toBe('implement')
+    expect(stageSegment('fix')).toBe('implement')
+    expect(stageSegment('review_first')).toBe('implement')
+    expect(stageSegment('check')).toBe('review')
+    expect(stageSegment('review')).toBe('review')
+    for (const stage of ['finalize', 'writeback', 'render', 'digest']) {
+      expect(stageSegment(stage), stage).toBe('done')
+    }
+  })
+
+  it('answers nothing for a stage this build has never heard of', () => {
+    // A stage string is the document's, and `STAGE_SEGMENTS` is a `Map` for
+    // exactly these words: on an object literal `constructor`, `toString` and
+    // the like answer with something *inherited* rather than with nothing, and
+    // an inherited answer would light a segment no stage named.
+    for (const stage of ['', 'kanban', 'constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+      expect(stageSegment(stage), stage).toBeNull()
+    }
+  })
+
+  it('draws what is behind the run past, its own segment current and what is ahead future', () => {
+    expect(pipelineOf(aRow({ stage: 'review', flags: [] }))).toEqual([
+      { stage: 'queued', mark: 'past' },
+      { stage: 'build', mark: 'past' },
+      { stage: 'implement', mark: 'past' },
+      { stage: 'review', mark: 'current' },
+      { stage: 'done', mark: 'future' },
+    ])
+    // The two ends are reachable: a run that has just been queued has nothing
+    // behind it, and one at its last stage has nothing ahead.
+    expect(pipelineOf(aRow({ stage: 'queued', flags: [] })).map((one) => one.mark)).toEqual([
+      'current',
+      'future',
+      'future',
+      'future',
+      'future',
+    ])
+    expect(pipelineOf(aRow({ stage: 'digest', flags: [] })).map((one) => one.mark)).toEqual([
+      'past',
+      'past',
+      'past',
+      'past',
+      'current',
+    ])
+  })
+
+  it('turns the current segment into the danger mark for a lost heartbeat, and moves nothing', () => {
+    // A lost run is still *at* the segment the CLI last recorded; what changed
+    // is that the console stopped hearing from it. A bar that backed the run up
+    // a segment, or cleared the ones behind it, would report a position the
+    // record does not carry.
+    expect(pipelineOf(aRow({ stage: 'implement', flags: [LOST] })).map((one) => one.mark)).toEqual([
+      'past',
+      'past',
+      'danger',
+      'future',
+      'future',
+    ])
+  })
+
+  it('lights no segment for an unknown stage, and still prints the stage under the bar', () => {
+    expect(pipelineOf(aRow({ stage: 'kanban' })).map((one) => one.mark)).toEqual([
+      'future',
+      'future',
+      'future',
+      'future',
+      'future',
+    ])
+    // The text line is what carries the meaning, so an unknown word reaches the
+    // reader even though the bar can say nothing about it.
+    const frame = theLastFrame()
+    const runs = frame.runs.map((run) => (run.run === OAUTH_RUN ? { ...run, stage: 'kanban' } : run))
+    const tree = renderLive(factory, buildLiveModel({ ...frame, runs }, new BurnHistory()), 'light')
+    expect(texts(tree, 'live-run-stage')).toContain('kanban')
+    const row = all(tree, 'live-run').find((one) => one.getAttribute('data-queued') === 'false')
+    if (row === undefined) throw new Error('no running row')
+    expect(
+      all(row, 'live-pipeline-segment').map((segment) => segment.getAttribute('data-mark')),
+    ).toEqual(['future', 'future', 'future', 'future', 'future'])
+  })
+
+  it('draws the segments as decoration and the stage, round and state as the text', () => {
+    const tree = renderLive(factory, modelOf(theLastFrame()), 'light')
+    for (const segments of all(tree, 'live-pipeline-segments')) {
+      expect(segments.tag).toBe('ol')
+      expect(segments.getAttribute('aria-hidden')).toBe('true')
+      expect(segments.childNodes()).toHaveLength(5)
+    }
+    // The words under the bar are the row's own three cells, so the meaning is
+    // never only the colour of a segment.
+    for (const row of all(tree, 'live-run')) {
+      expect(texts(row, 'live-run-stage')).toHaveLength(1)
+      expect(texts(row, 'live-run-round')).toHaveLength(1)
+      expect(texts(row, 'live-run-state')).toHaveLength(1)
+    }
+  })
+})
+
+describe('the run\'s word', () => {
+  it('is queued, lost, done or running, in that order of precedence', () => {
+    // A queued run has no stage to be lost at, and a lost heartbeat is the worse
+    // fact of the two remaining: the order is the whole of the rule.
+    expect(runStateOf(aRow({ queued: true, flags: [LOST] }))).toBe('queued')
+    expect(runStateOf(aRow({ stage: 'digest', flags: [LOST] }))).toBe('lost')
+    expect(runStateOf(aRow({ stage: 'finalize', flags: [] }))).toBe('done')
+    expect(runStateOf(aRow({ stage: 'implement', flags: [] }))).toBe('running')
+    // An unknown stage is not `done`: the console has no ground to say a
+    // finishing stage a word it does not know.
+    expect(runStateOf(aRow({ stage: 'kanban', flags: [] }))).toBe('running')
+  })
+
+  it('is drawn as a word every time, whatever the row\'s colour', () => {
+    const tree = renderLive(factory, modelOf(theLastFrame()), 'light')
+    const words = new Set(['queued', 'running', 'lost', 'done'])
+    for (const chip of all(tree, 'live-run-chip')) {
+      expect(words.has(chip.textContent ?? '')).toBe(true)
+    }
+  })
+
+  it('gives the lost chip its pip as decoration, and the word either way', () => {
+    const frame = theLastFrame()
+    const runs = frame.runs.map((run) => (run.run === OAUTH_RUN ? { ...run, health: 'lost' } : run))
+    const tree = renderLive(factory, buildLiveModel({ ...frame, runs }, new BurnHistory()), 'light')
+    const lost = all(tree, 'live-run').find((row) => row.classes.includes('live-run-lost'))
+    if (lost === undefined) throw new Error('the fixture has no lost run')
+    expect(texts(lost, 'live-run-state')).toEqual(['lost'])
+    const pip = one(lost, 'live-run-pip')
+    expect(pip.getAttribute('aria-hidden')).toBe('true')
+    // The pip says nothing the word does not: it is one character beside it.
+    expect(pip.textContent).toBe('●')
+  })
+})
+
+describe('the two write buttons the redesign draws', () => {
+  it('draws Halt project and Reap disabled, with the reason, and binds nothing to them', () => {
+    // **The console performs no write but launch-from-console.** Both controls
+    // go through `writes.ts`'s `disabledWrite`, which draws a real `button` a
+    // reader is told about and attaches no listener of any kind -- no IPC
+    // channel, no preload member, no spawn entry. The screen builds no listener
+    // either: `live.ts` is a pure drawing file, and the test below reads its
+    // source rather than trusting that.
+    const frame = theLastFrame()
+    const runs = frame.runs.map((run) => (run.run === OAUTH_RUN ? { ...run, health: 'lost' } : run))
+    const tree = renderLive(factory, buildLiveModel({ ...frame, runs }, new BurnHistory()), 'light')
+
+    const halt = one(tree, 'live-halt')
+    expect(halt.tag).toBe('button')
+    expect(halt.getAttribute('type')).toBe('button')
+    expect(halt.getAttribute('aria-disabled')).toBe('true')
+    expect(halt.getAttribute('title')).toBe(WRITE_UNAVAILABLE)
+    expect(halt.getAttribute('aria-label')).toBe(`Halt project: ${WRITE_UNAVAILABLE.toLowerCase()}`)
+    expect(halt.childNodes().map((one) => one.textContent)).toEqual(['Halt project'])
+
+    const reap = one(tree, 'live-reap')
+    expect(reap.tag).toBe('button')
+    expect(reap.getAttribute('aria-disabled')).toBe('true')
+    expect(reap.getAttribute('title')).toBe(WRITE_UNAVAILABLE)
+    expect(reap.getAttribute('aria-label')).toBe(`Reap: ${WRITE_UNAVAILABLE.toLowerCase()}`)
+    expect(reap.childNodes().map((one) => one.textContent)).toEqual(['Reap'])
+
+    // Both are drawn through `disabledWrite` and nothing else, so the attributes
+    // above are that function's and not a second drawing of the same control.
+    const source = readFileSync(path.join(SRC, 'renderer', 'screens', 'live.ts'), 'utf8')
+    expect(source.includes("disabledWrite(factory, 'live-halt', 'Halt project')")).toBe(true)
+    expect(source.includes("disabledWrite(factory, 'live-reap', 'Reap')")).toBe(true)
+    expect(source.includes('addEventListener')).toBe(false)
+  })
+})
+
+describe('the runs table\'s own scrolling box', () => {
+  it('scrolls the table sideways inside its box rather than widening the panel', () => {
+    // The table is seven columns wide with a floor (`min-width`), so at a narrow
+    // window the box scrolls and the panel it sits in does not. Both halves are
+    // asserted by name: a table given a floor with no scrolling ancestor is a
+    // table whose last column is off the screen with no way to reach it.
+    const css = readFileSync(path.join(SRC, 'renderer', 'theme', 'flight-deck.css'), 'utf8')
+    const box = /div\.live-runs\s*\{([^}]*)\}/.exec(css)
+    expect(box?.[1]).toContain('overflow-x: auto')
+    const table = /table\.live-table\s*\{([^}]*)\}/.exec(css)
+    expect(table?.[1]).toContain('min-width: 1080px')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The fleet budget panel (console redesign, step 2a-2).
+// ---------------------------------------------------------------------------
+
+/**
+ * fleetModel is the fixture's last frame with its `total` edited **on the wire
+ * and read back through the decoder**, the way the `queued_note` case above
+ * does it: `leased_usd` is optional in `schema.ts` (a recording made before it
+ * shipped does not carry it), and a panel
+ * asserted against a decoded object built by hand would be asserted against a
+ * shape `schema.ts` never produces.
+ */
+function fleetModel(total: Record<string, unknown>): LiveModel {
+  const raw = rawFrames()[rawFrames().length - 1]
+  if (raw === undefined) throw new Error('the fixture has no documents')
+  const carried = raw['total']
+  if (carried === null || typeof carried !== 'object') throw new Error('the fixture frame carries no total')
+  const decoded = decodeSnapshot(
+    { ...raw, total: { ...(carried as Record<string, unknown>), ...total } },
+    'the fixture frame with an edited total',
+  )
+  if (!decoded.ok) throw new Error(decoded.skew.because)
+  return buildLiveModel(decoded.value, new BurnHistory())
+}
+
+/** segmentNames is each drawn segment's own account, in drawing order: the
+ * `data-account` the stylesheet paints it by, read back off the node rather
+ * than assumed from the order. */
+function segmentNames(tree: ScreenElement): readonly string[] {
+  return all(tree, 'live-fleet-segment').map((segment) => segment.getAttribute('data-account') ?? '')
+}
+
+/** segmentWidths is each segment's width on the bar's own `viewBox` axis, where
+ * the whole axis is the cap. */
+function segmentWidths(tree: ScreenElement): readonly (string | null)[] {
+  return all(tree, 'live-fleet-segment').map((segment) => segment.getAttribute('width'))
+}
+
+/** segmentOffsets is each segment's own left edge on that axis. A bar that drew
+ * every segment at zero -- stacking them, drawing past the end or losing the
+ * clamp -- has the right widths and the wrong picture. */
+function segmentOffsets(tree: ScreenElement): readonly (string | null)[] {
+  return all(tree, 'live-fleet-segment').map((segment) => segment.getAttribute('x'))
+}
+
+/** legendValues is the number each legend row draws, in row order. */
+function legendValues(tree: ScreenElement): readonly (string | null)[] {
+  return all(tree, 'live-fleet-key').map(
+    (key) => all(key, 'live-num')[0]?.textContent ?? '',
+  )
+}
+
+/** legendRow is the legend row that carries a given word. The word is what a
+ * reader has: a row the bar paints no shape for has no swatch to key it by, and
+ * that is exactly the row this suite is about. */
+function legendRow(tree: ScreenElement, word: string): FakeScreen {
+  const row = all(tree, 'live-fleet-key').find(
+    (one) => all(one, 'live-fleet-key-word')[0]?.textContent === word,
+  )
+  if (row === undefined) throw new Error(`no ${word} legend row`)
+  return row
+}
+
+/** legendSwatches is each legend row's swatch, or null where the row has none:
+ * a swatch keys a shape, so a row whose account the bar does not draw has none. */
+function legendSwatches(tree: ScreenElement): readonly (string | null)[] {
+  return all(tree, 'live-fleet-key').map(
+    (key) => all(key, 'live-fleet-swatch')[0]?.getAttribute('data-account') ?? null,
+  )
+}
+
+/** panel is the drawn fleet budget panel of a model. */
+function panel(model: LiveModel): FakeScreen {
+  return one(renderLive(factory, model, 'light'), 'live-fleet')
+}
+
+describe('the fleet budget panel', () => {
+  it('derives its own figures from the model, and derives nothing twice', () => {
+    // The fixture's last frame: a repository at its cap, a lost run beside a
+    // queued one. `headroom` is the console's arithmetic (cap less counted),
+    // and the three counts are read off the rows the model built.
+    const model = modelOf(theLastFrame())
+    expect(formatReading(model.fleet.headroom, 'usd')).toBe('$0.00')
+    expect(model.fleet.headroom.state).toBe('measured')
+    expect(formatReading(model.fleet.burn, 'usd')).toBe('$0.00')
+    expect(model.fleet.active).toBe(1)
+    expect(model.fleet.queued).toBe(1)
+    expect(model.fleet.heartbeatLost).toBe(true)
+    // The cap is the document's and the headroom is the difference: a screen
+    // that reported the cap as the headroom would show room that is not there.
+    expect(formatReading(model.total.dailyCapUsd, 'usd')).toBe('$50.00')
+    expect(formatReading(model.fleet.headroom, 'usd')).not.toBe('$50.00')
+  })
+
+  it('floors the headroom at zero and says which side it could not read', () => {
+    // An over-committed cap is a real state and "minus $10.00 of headroom" is
+    // not an amount anybody can spend; an unmeasured side is not a headroom of
+    // zero but a question the console cannot answer.
+    expect(formatReading(headroomOf(measured(50), measured(60)), 'usd')).toBe('$0.00')
+    expect(headroomOf(measured(50), measured(40)).value).toBe(10)
+    const noCap = headroomOf(unavailable('the document has no total.daily_cap_usd'), measured(40))
+    expect(noCap.value).toBeNull()
+    expect(noCap.because).toContain('daily_cap_usd')
+    const noCount = headroomOf(measured(50), unavailable('the document has no total.counted_usd'))
+    expect(noCount.value).toBeNull()
+    expect(noCount.because).toContain('counted_usd')
+  })
+
+  it('draws the three segments of the cap when the document measures a lease', () => {
+    const tree = renderLive(
+      factory,
+      fleetModel({ counted_usd: 50, spent_usd: 12.5, leased_usd: 37.5, daily_cap_usd: 100, percent: 50 }),
+      'light',
+    )
+    expect(segmentNames(tree)).toEqual(['spent', 'leased', 'headroom'])
+    // Each width is its share of the cap: spent 12.5 of 100, leased 37.5 of 100,
+    // headroom the remaining 50. The three add up to the axis and no further,
+    // and each starts where the one before it ended.
+    expect(segmentWidths(tree)).toEqual(['12.5', '37.5', '50'])
+    expect(segmentOffsets(tree)).toEqual(['0', '12.5', '50'])
+    expect(legendValues(tree)).toEqual(['$12.50', '$37.50', '$50.00'])
+    // Every row here has a shape on the bar, so every row is keyed by one.
+    expect(legendSwatches(tree)).toEqual(['spent', 'leased', 'headroom'])
+  })
+
+  it('stops drawing at the end of the cap when the parts overrun it', () => {
+    // A lease the CLI recorded beside a spend that moved: 80 + 80 against a 100
+    // cap. Each share is clamped on its own, which is not enough -- the two
+    // together reach 160 and the second segment would be drawn past the end of
+    // the axis, over the headroom and out of the bar. The clamp is cumulative,
+    // so the bar stops at 100: the lease takes what is left of the axis and the
+    // headroom, which is truly zero here, is drawn as nothing at 100.
+    const tree = renderLive(
+      factory,
+      fleetModel({ counted_usd: 160, spent_usd: 80, leased_usd: 80, daily_cap_usd: 100, percent: 100 }),
+      'light',
+    )
+    expect(segmentNames(tree)).toEqual(['spent', 'leased', 'headroom'])
+    expect(segmentWidths(tree)).toEqual(['80', '20', '0'])
+    expect(segmentOffsets(tree)).toEqual(['0', '80', '100'])
+  })
+
+  it('draws two segments and says Leased is not measured when the document lacks it', () => {
+    // `leased_usd` is optional on the wire, so a recording made before it
+    // shipped is this one. The split cannot be drawn, and the legend's Leased row
+    // is where the console says so -- with the reading's own reason in its
+    // title, which is what makes `n/a` an answer rather than a hole.
+    const tree = renderLive(factory, fleetModel({ counted_usd: 50, spent_usd: undefined, leased_usd: undefined, daily_cap_usd: 100, percent: 50 }), 'light')
+    expect(segmentNames(tree)).toEqual(['counted', 'headroom'])
+    expect(segmentWidths(tree)).toEqual(['50', '50'])
+    expect(segmentOffsets(tree)).toEqual(['0', '50'])
+    expect(legendValues(tree)).toEqual(['$50.00', UNAVAILABLE_MARK, '$50.00'])
+    // The rows are the accounts the bar has, not the design's three: the one
+    // segment under the cap is counted, so the row above it says counted and
+    // carries the swatch that keys the fill the bar painted for it. The Leased
+    // row keeps its place and its `n/a`, and has no swatch, because there is no
+    // leased shape on the bar for a mark to key.
+    expect(legendSwatches(tree)).toEqual(['counted', null, 'headroom'])
+    const leased = legendRow(tree, 'Leased')
+    expect(all(leased, 'live-num')[0]?.getAttribute('title')).toBe('the document has no total.leased_usd')
+    // The unmeasured value is marked as such for the stylesheet, and the two
+    // measured rows are not.
+    expect(all(leased, 'live-num')[0]?.classes).toContain('live-fleet-unread')
+    expect(all(legendRow(tree, 'Headroom'), 'live-num')[0]?.classes).not.toContain('live-fleet-unread')
+  })
+
+  it('never puts the notional dollars on the cap axis or in a sum', () => {
+    // **The one mutation proof.** `counted_usd` and `notional_usd` are the two
+    // accounts the whole money grammar keeps apart (design section 6.1 rule 1):
+    // notional dollars are a subscription's list price, they are capped by
+    // nothing, and a bar that drew them beside the billed dollars -- or a
+    // legend that added them -- would be reporting money that was never
+    // charged. Fed the sum (50 + 3.29 against a 100 cap), the counted segment
+    // below would be 53.29 wide and the headroom $46.71, and `$53.29` would be
+    // printed; the assertions fail on all three.
+    const model = fleetModel({ counted_usd: 50, spent_usd: undefined, leased_usd: undefined, daily_cap_usd: 100, percent: 50 })
+    const tree = renderLive(factory, model, 'light')
+    const panel = one(tree, 'live-fleet')
+    expect(drawn(panel)).not.toContain('$53.29')
+    expect(segmentWidths(tree)).toEqual(['50', '50'])
+    expect(legendValues(tree)).toEqual(['$50.00', UNAVAILABLE_MARK, '$50.00'])
+    // And the notional figure is drawn once, in the hero: it is a reading of
+    // its own, outside the cap, and the bar carries none of it.
+    expect(texts(tree, 'live-total-notional')).toEqual([`${NOTIONAL_MARK}$3.29`])
+    expect(texts(one(tree, 'live-fleet-hero'), 'live-total-notional')).toEqual([`${NOTIONAL_MARK}$3.29`])
+    expect(drawn(one(tree, 'live-fleet-legend'))).not.toContain(NOTIONAL_MARK)
+  })
+
+  it('shows the full-cap banner only when the headroom is measured and gone', () => {
+    const full = renderLive(factory, fleetModel({ counted_usd: 50, daily_cap_usd: 50, percent: 100 }), 'light')
+    expect(all(full, 'live-fleet-full')).toHaveLength(1)
+    expect(drawn(one(full, 'live-fleet-full'))).toContain('the cap is fully committed')
+    const room = renderLive(factory, fleetModel({ counted_usd: 50, spent_usd: undefined, leased_usd: undefined, daily_cap_usd: 100, percent: 50 }), 'light')
+    expect(all(room, 'live-fleet-full')).toHaveLength(0)
+  })
+
+  it('draws an empty track, and no banner, when no cap was read', () => {
+    // A cap nobody read is not a cap of zero: the bar keeps its track so the
+    // panel still looks like a bar, draws no segment in it, and says `n/a`
+    // rather than showing a fill at nothing.
+    const frame = theLastFrame()
+    const model = buildLiveModel(
+      {
+        ...frame,
+        total: {
+          ...frame.total,
+          dailyCapUsd: unavailable('the document has no total.daily_cap_usd'),
+          percent: unavailable('the document has no total.percent'),
+        },
+      },
+      new BurnHistory(),
+    )
+    const tree = renderLive(factory, model, 'light')
+    expect(all(tree, 'live-fleet-track')).toHaveLength(1)
+    expect(all(tree, 'live-fleet-segment')).toHaveLength(0)
+    expect(one(tree, 'live-cap').textContent).toBe(UNAVAILABLE_MARK)
+    expect(legendValues(tree)[2]).toBe(UNAVAILABLE_MARK)
+    expect(all(tree, 'live-fleet-full')).toHaveLength(0)
+  })
+
+  it('counts the runs that are not queued as active, and says when a heartbeat is lost', () => {
+    const lost = renderLive(factory, modelOf(theLastFrame()), 'light')
+    expect(one(lost, 'live-fleet-active').textContent).toBe('1')
+    expect(texts(lost, 'live-fleet-lost')).toEqual(['heartbeat lost'])
+
+    // The same frame with the lost run healthy: the count is unchanged and the
+    // word is gone, because the note is about the heartbeat and not the count.
+    const healthy = theLastFrame()
+    const runs = healthy.runs.map((run) => ({ ...run, health: 'ok' }))
+    const tree = renderLive(factory, buildLiveModel({ ...healthy, runs }, new BurnHistory()), 'light')
+    expect(one(tree, 'live-fleet-active').textContent).toBe('1')
+    expect(all(tree, 'live-fleet-lost')).toHaveLength(0)
+  })
+
+  it('counts the queued runs and says what they are waiting for', () => {
+    const tree = renderLive(factory, modelOf(theLastFrame()), 'light')
+    expect(one(tree, 'live-fleet-queued').textContent).toBe('1')
+    expect(texts(tree, 'live-fleet-waiting')).toEqual(['waiting for a lease'])
+    // A queued run is not an active one: the two cells are the two halves of
+    // the same list, and a row counted in both would say the fleet is busier
+    // than it is.
+    expect(one(tree, 'live-fleet-active').textContent).toBe('1')
+
+    // A fleet with nothing queued is waiting for nothing: the note is drawn
+    // only where it is true of the number beside it, the way the active cell's
+    // lost-heartbeat note is.
+    const empty = theLastFrame()
+    const runs = empty.runs.map((run) => ({ ...run, queued: false }))
+    const mover = renderLive(factory, buildLiveModel({ ...empty, runs }, new BurnHistory()), 'light')
+    expect(one(mover, 'live-fleet-queued').textContent).toBe('0')
+    expect(all(mover, 'live-fleet-waiting')).toHaveLength(0)
+  })
+
+  it('names the panel, and hides the shape the legend already spells out', () => {
+    const element = one(renderLive(factory, modelOf(theLastFrame()), 'light'), 'live-fleet')
+    expect(element.tag).toBe('section')
+    expect(element.getAttribute('aria-label')).toBe('Fleet budget')
+    // The bar and its segments are decorative and hidden: every value on them is
+    // written out in the legend, so nothing is reachable only through the
+    // picture (design section 6.1 rule 3).
+    const tree = renderLive(factory, modelOf(theLastFrame()), 'light')
+    expect(one(tree, 'live-fleet-bar').getAttribute('aria-hidden')).toBe('true')
+    // Nothing on the bar is a number: the shape carries no text a reader would
+    // be told and the legend does not already spell out.
+    expect(drawn(one(tree, 'live-fleet-bar'))).toBe('')
+  })
+
+  it('sets no attribute that could act, on any node of the panel', () => {
+    const tree = panel(modelOf(theLastFrame()))
+    const forbidden = new Set(['style', ['h', 'ref'].join(''), 'src'])
+    for (const node of walk(tree)) {
+      for (const name of node.attributes.keys()) {
+        expect(forbidden.has(name) || name.startsWith('on'), `${node.tag}[${name}]`).toBe(false)
+      }
+    }
+    expect(() => new FakeScreen('div').setAttribute('style', 'width: 1px')).toThrow()
   })
 })
 
@@ -816,7 +1401,10 @@ describe('the rows the fixture does not carry', () => {
     )
     const row = all(tree, 'live-run').find((one) => one.getAttribute('data-queued') === 'false')
     expect(row?.getAttribute('data-tone')).toBe('alarm')
-    expect(texts(tree, 'live-run-flag')).toEqual(expect.arrayContaining(['lost', 'near deadline']))
+    // The health flag is the chip's own word (`lost`), so it is not drawn beside
+    // it; the deadline flag, which is a different word, still is.
+    expect(texts(tree, 'live-run-flag')).toEqual(['near deadline'])
+    expect(all(tree, 'live-run-chip')[0]?.getAttribute('title')).toContain('180 s')
   })
 })
 
@@ -899,11 +1487,36 @@ describe('the rendered screen', () => {
   })
 
   it('draws a flag as a word with its threshold in the title', () => {
-    const tree = renderLive(factory, modelOf(frameAt('2026-10-15T12:04:20Z')), 'light')
+    // A `silent` health is a flag whose word is not the chip's own (`running`),
+    // so it is drawn beside the chip rather than folded into it.
+    const frame = frameAt('2026-10-15T12:04:20Z')
+    const runs = frame.runs.map((run) => ({ ...run, health: 'silent' }))
+    const tree = renderLive(factory, buildLiveModel({ ...frame, runs }, new BurnHistory()), 'light')
     const flags = all(tree, 'live-run-flag')
-    expect(flags.map((flag) => flag.textContent)).toEqual(['lost'])
-    expect(flags[0]?.getAttribute('title')).toContain('180 s')
-    expect(flags[0]?.getAttribute('data-flag')).toBe('lost')
+    expect(flags.map((flag) => flag.textContent)).toEqual(['silent'])
+    expect(flags[0]?.getAttribute('title')).toContain('no heartbeat for over')
+    expect(flags[0]?.getAttribute('data-flag')).toBe('silent')
+    expect(flags[0]?.getAttribute('data-tone')).toBe('amber')
+  })
+
+  it('says a run\'s state once: a flag that is the chip\'s own word joins its title', () => {
+    // The bucket's `queued` and the health's `lost` are the two flags whose name
+    // *is* the state the chip spells. Drawn beside the chip they would repeat it,
+    // and the pipeline line above says it too, so the word is drawn once and the
+    // flag's reason moves onto the chip's `title`.
+    const tree = renderLive(factory, modelOf(frameAt('2026-10-15T12:04:20Z')), 'light')
+    const chips = all(tree, 'live-run-chip')
+    expect(chips.map((chip) => chip.textContent)).toContain('lost')
+    const lost = chips.find((chip) => chip.textContent === 'lost')
+    expect(lost?.getAttribute('title')).toContain('180 s')
+    expect(texts(tree, 'live-run-flag')).not.toContain('lost')
+
+    // The last frame is the one that carries a queued run (and a lost one).
+    const queued = renderLive(factory, modelOf(theLastFrame()), 'light')
+    const queuedChip = all(queued, 'live-run-chip').find((chip) => chip.textContent === 'queued')
+    expect(queuedChip).toBeDefined()
+    expect(queuedChip?.getAttribute('title')).toContain('runs bucket only')
+    expect(texts(queued, 'live-run-flag')).not.toContain('queued')
   })
 
   it('draws the notional mark on an OAuth run\'s spend', () => {
@@ -952,12 +1565,34 @@ describe('the rendered screen', () => {
     // attributes, `style` attribute and every `on*` handler throw, so a screen
     // that reached for one fails here. What is left is the set below: the
     // class hooks the design's density rules need and `data-` readings a test
-    // and the stylesheet read.
+    // and the stylesheet read, the three accessibility attributes (which cannot
+    // make the window do anything), `type` on a `button` (which is what
+    // `writes.ts`'s `disabledWrite` draws, and it can only *stop* a form
+    // submission), and -- **on a node the SVG namespace made, and only there**
+    // -- the presentation attributes the cap bar's geometry is built from. The
+    // namespace is what the fake records, not the tag: a `rect` made with
+    // `create` is an HTML element and is not held to this set.
+    const MAXIMAL = new Set(['svg', 'rect'])
+    const SVG_ATTRIBUTES = new Set(['viewBox', 'preserveAspectRatio', 'width', 'height', 'x', 'y', 'rx'])
+    // `aria-disabled` joins the set with the redesign: the Halt project and
+    // Reap buttons are real `button`s a reader is told are not available. The
+    // attribute describes the element to assistive technology, it schedules no
+    // handler of its own, and a control that carried no text of its own would
+    // still be caught by the tests that click it and watch nothing happen.
+    const ACCESSIBILITY = new Set(['role', 'aria-label', 'aria-hidden', 'aria-disabled'])
     const tree = renderLive(factory, modelOf(theLastFrame()), 'light')
+    // The panel draws at least one of each, or the widening above would be a
+    // licence for attributes nothing sets.
+    expect(walk(tree).some((node) => node.namespace === 'svg')).toBe(true)
     for (const node of walk(tree)) {
       for (const name of node.attributes.keys()) {
         expect(
-          name === 'class' || name === 'title' || name.startsWith('data-'),
+          name === 'class' ||
+            name === 'title' ||
+            name.startsWith('data-') ||
+            ACCESSIBILITY.has(name) ||
+            (name === 'type' && node.tag === 'button') ||
+            (node.namespace === 'svg' && MAXIMAL.has(node.tag) && SVG_ATTRIBUTES.has(name)),
           `${node.tag}[${name}]`,
         ).toBe(true)
       }

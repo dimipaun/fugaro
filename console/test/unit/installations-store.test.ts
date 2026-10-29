@@ -52,6 +52,7 @@ import {
   installationOperationFor,
   nodeInstallationFs,
   probeInstallation,
+  resolveLaunchBinary,
   withResolvedBinary,
 } from '../../src/main/installations'
 import type { InstallationFs, StoredInstallation } from '../../src/main/installations'
@@ -763,6 +764,66 @@ describe('validation', () => {
     // The check ran, and nothing came of it: `validateInstallation` answers a
     // value, so no caller can be the one that decides to store a refused one.
     expect(stored).toBe(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// A launch's own resolution: the record decides the route
+// ---------------------------------------------------------------------------
+
+describe('the launch’s resolution', () => {
+  it('resolves the record’s own binaryPath rather than a host prefix’s fugaro', async () => {
+    // V2.5.1a's launch is the one caller that reads an installation's record and
+    // then drives a CLI: a record with a `binaryPath` override must be resolved
+    // **at that path**, not at whichever `fugaro` the host's well-known
+    // locations happen to hold -- a different CLI, a different config, a
+    // different credential, reported as this installation's. The override is
+    // rule 4's *candidate* and the walk does carry on past one that has gone
+    // (owner's ruling of 2026-10-20); this case is the other half, where it
+    // resolves and the prefix is therefore never reached.
+    const root = freshDirectory()
+    const own = installStub(join(root, 'own'), { commands: { version: { stdout: '0.11.2\n' } } })
+    const decoy = installStub(join(root, 'elsewhere', 'bin'), {
+      commands: { version: { stdout: '0.5.0\n' } },
+    })
+
+    const resolved = await resolveLaunchBinary(installation({ binaryPath: own.binary }), {
+      appEnv: {},
+      prefixes: [join(root, 'elsewhere', 'bin')],
+    })
+    expect(resolved.ok).toBe(true)
+    if (!resolved.ok) return
+    expect(resolved.value.path).toBe(own.binary)
+    expect(resolved.value.version).toBe('0.11.2')
+    // The prefix on `deps.prefixes` holds a `fugaro` of its own, and the walk
+    // must not have reached it: a resolution that read the record's project and
+    // then walked the host would have probed the decoy's `version`, which would
+    // have answered 0.5.0 and been reported as this installation's CLI.
+    expect(decoy.calls()).toBe(0)
+  })
+
+  it('resolves the binary inside the record’s distribution, never on the host', async () => {
+    // The record's `distro` is the route (T-D1, D2(a)): that record's paths are
+    // Linux spellings *inside* the distribution, which this filesystem cannot
+    // see at all (F4, F15). A resolution that dropped the field would hand the
+    // host a path it cannot `stat` -- and, worse, could resolve some other
+    // `fugaro` and report it as this installation's.
+    const wsl = installWslStub(freshDirectory(), {
+      distros: { list: 'Ubuntu\r\n', status: 'Default Distribution: Ubuntu\r\n' },
+      scenario: { commands: { version: { stdout: '0.11.2\n' } } },
+    })
+    const linuxBinary = '/home/dimi/.local/bin/fugaro'
+
+    const resolved = await resolveLaunchBinary(installation({ distro: 'Ubuntu', binaryPath: linuxBinary }), {
+      appEnv: {},
+      wslPath: wsl.binary,
+    })
+    expect(resolved.ok).toBe(true)
+    if (!resolved.ok) return
+    expect(resolved.value.path).toBe(linuxBinary)
+    expect(resolved.value.version).toBe('0.11.2')
+    const spawn = only(wsl.reports().filter((report) => report.kind === 'spawn'))
+    expect(spawn.distro).toBe('Ubuntu')
   })
 })
 

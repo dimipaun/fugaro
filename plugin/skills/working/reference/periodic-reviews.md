@@ -46,6 +46,8 @@ The report holds the period's runs, the flagged ones first and the dearest of th
 - `subagents` — a stage fanned out to sub-agents.
 - `halt` — the run stopped on a cap or a kill switch.
 - `fix_rounds` — the run needed more than one fix round.
+- `repeated_command` — a stage ran the same shell command five times or more: a loop, not progress.
+- `review_scope_drift` — the review range moved: it covered files the run's own commits never changed. A range kept deliberately wider is not this flag.
 
 Read the flagged runs first, then the dearest 10-20% of the period — one or two rows in twenty. The reading is read-only, and it is where the next run gets cheaper.
 
@@ -80,10 +82,14 @@ Write each lesson where the next run will read it — the project's `CLAUDE.md` 
 
 A run that failed is never retried automatically, and no report launches one. A relaunch is the user's decision, and it says why the first attempt failed and what changed: the task, the recipe, the account, or the configuration. One that repeats the first attempt spends the same money for the same result.
 
+**A report run is launched again, never retried or continued.** `fugaro run --retry RUN` refuses a run whose recipe holds the `digest` step, and `fugaro run --pr N` cannot continue one either: a report run lists the records it may read and refuses while another report run of this repository is going, and neither a retry (which carries the listing its first launch made) nor a follow-up (which carries none) reads the records the period's reports are written from. A report that has to be written again is a new report run — `fugaro run --recipe run-digest "TEXT"` — not a relaunch of the old one. Say so instead of relaunching, and never reach for `--retry` on a run that wrote a report.
+
+**A launch with nothing to report is refused before anything is started.** The launch lists this repository's runs of the last 40 days — the month the reports cover plus the days the step catches up — and refuses one that has none of them, with `<owner/name> has no runs in the last 40 days: no runs in the period, nothing to report`. Nothing was started, so nothing was spent and nothing failed: the records a report is written from really hold no runs, and there is no report to write. Say that instead of launching again, and leave the cadence to the user.
+
 ## 7. Sharing a learning with Fugaro
 
 Some lessons are about Fugaro itself rather than about this repository. The user decides whether one is worth sending to Fugaro's maintainers:
 
-- **Draft it with the user, redacted.** No repository name, no run IDs, no person's name or account, no task text: a public issue is public.
-- **Submit only through `gh issue create --web`**, which opens the browser and leaves the submit button to the user. The agent never submits a learning on its own, and never runs that command in any other form: a learning goes out only after the person's word.
+- **Draft it with `fugaro runs digest --submit-draft`.** It prints the period's figures redacted — no repository name, no run IDs, no person's name or account, no task text — and sends nothing: a public issue is public.
+- **Submit only through `gh issue create --web -R dimipaun/fugaro`**, which opens Fugaro's new-issue form in the browser and leaves the submit button to the user; the form to pick there is "Skill learning". The agent never submits a learning on its own, and never runs that command in any other form: a learning goes out only after the person's word.
 - **Leave it out of the skill.** A submitted learning is input for the maintainers, who rewrite it into a normal pull request with review. It is never pasted into a skill.

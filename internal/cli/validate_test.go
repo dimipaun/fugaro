@@ -338,6 +338,64 @@ func TestValidateRefusesVertexEnforce(t *testing.T) {
 	}
 }
 
+// TestValidateCeilingCarriesTheProjectLayersGovernance: the project layer's
+// governance block is the ceiling a run's governance keys are merged under
+// (the runner puts it in its first layer, resolvePolicy), so a value this file
+// writes looser than the layer's is one the run clamps and this command has to
+// warn about rather than pass. Merging the file against a ceiling built
+// without the layer's governance is what let it through (T7.1).
+func TestValidateCeilingCarriesTheProjectLayersGovernance(t *testing.T) {
+	layer := func(d time.Duration) *config.Governance {
+		return &config.Governance{StageTimeout: config.StageTimeout{Implement: config.Duration{Duration: d}}}
+	}
+	lc := &localcfg.Config{Name: "aurora"}
+	cfg := &config.Config{Project: "aurora", Governance: layer(5 * time.Minute),
+		Layer: &config.ProjectLayer{Governance: layer(200 * time.Millisecond)}}
+	_, ws, _ := budgetProblems(context.Background(), cfg, lc, lc.Providers)
+	var found bool
+	for _, w := range ws {
+		if w.Path != "governance.stage_timeout.implement" {
+			continue
+		}
+		found = true
+		if want := "5m0s is looser than 200ms; the runner will use 200ms"; w.Message != want {
+			t.Errorf("warning = %q, want %q", w.Message, want)
+		}
+	}
+	if !found {
+		t.Fatalf("warnings = %v, want one about governance.stage_timeout.implement", ws)
+	}
+}
+
+// TestValidateWarnsAboutALooserGovernanceValueWithNoLayer: with no project
+// layer the ceiling is not empty of governance — it carries Fugaro's own
+// figures, filled in by policy.Governance.WithDefaults (T7.1) — so a file that
+// writes a looser guardrail is one the run clamps and this command has to say
+// so. Building the ceiling without the defaults is what let a repository raise
+// a guardrail Fugaro ships and hear nothing: the file's own value was the
+// first one written for the key, so it won with it.
+//
+// It is the end-to-end arm of TestValidateCeilingCarriesTheProjectLayersGovernance:
+// that one proves the layer's block joins the ceiling, this one proves the
+// shipped figures do, through the command's own resolution rather than a
+// hand-built config.
+func TestValidateWarnsAboutALooserGovernanceValueWithNoLayer(t *testing.T) {
+	path := fileWithBudget(t, "budget: { mode: off }\n",
+		"governance: { review_ratio: 20, tiers: { small: { expected_usd: 2 } } }\n", "  auth: oauth")
+	out, errOut, err := execute(t, "validate", path)
+	if err != nil {
+		t.Fatalf("validate refused the file: %v\n%s%s", err, out, errOut)
+	}
+	for _, w := range []string{
+		"warning: governance.review_ratio: 20 is looser than 5; the runner will use 5",
+		"warning: governance.tiers.small.expected_usd: 2 is looser than 1; the runner will use 1",
+	} {
+		if !strings.Contains(errOut, w) {
+			t.Errorf("validate stderr lacks %q:\n%s", w, errOut)
+		}
+	}
+}
+
 // With unreadable model_prices the one problem is reported; models are not
 // also called unpriced against a table that was never the file's.
 func TestBudgetProblemsSkipPinsWhenPricesAreUnreadable(t *testing.T) {

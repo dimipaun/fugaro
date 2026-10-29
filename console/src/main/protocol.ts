@@ -91,17 +91,19 @@ export const PICKER_ENTRY_URL = `${APP_ORIGIN}${PICKER_ENTRY_PATH}`
 /**
  * SERVED_FILES is the whole of what the served root holds (desktop-console plan
  * Task 3.4a, step 4; Task 3.4b's second entry; Task 6.2's stylesheet; GV2.2's
- * layout worker): the dashboard's and the refusal's documents, the script the
- * dashboard loads and the one the picker loads, the one stylesheet every
+ * layout worker; V2.5.1a's confirmation window): the dashboard's, the refusal's,
+ * the picker's and the confirmation's documents, the script the dashboard loads
+ * and the ones the picker and the confirmation load, the one stylesheet every
  * document links, and elkjs's layout worker.
  *
  * The root itself is `dist/bundle/` (`rendererRoot` in `src/main/index.ts`),
- * and the seven files are there because `npm run build` puts them there: `tsc`
- * compiles `src/renderer/entry.ts` and `src/renderer/installations.ts` and
- * everything they require, and `tools/bundle-renderer/index.ts` writes
- * `console.js`, `installations.js` and `console.css`, copies the three documents
- * verbatim, and copies `elk-worker.min.js` verbatim out of the installed `elkjs`
- * package. `test/unit/bundle.test.ts` holds this list and that
+ * and the nine files are there because `npm run build` puts them there: `tsc`
+ * compiles `src/renderer/entry.ts`, `src/renderer/installations.ts` and
+ * `src/renderer/confirm.ts` and everything they require, and
+ * `tools/bundle-renderer/index.ts` writes
+ * `console.js`, `installations.js`, `confirm.js` and `console.css`, copies the
+ * four documents verbatim, and copies `elk-worker.min.js` verbatim out of the
+ * installed `elkjs` package. `test/unit/bundle.test.ts` holds this list and that
  * directory equal in both directions, so a file that appears beside the bundle
  * -- or a name dropped from this list -- is a failing test rather than a
  * document the console serves and nothing vouches for.
@@ -126,6 +128,12 @@ export const PICKER_ENTRY_URL = `${APP_ORIGIN}${PICKER_ENTRY_PATH}`
  * `<link>` is not a fetch `connect-src` governs). `mediaTypeFor` already maps
  * `.css`, so this entry is the whole of the handler's change.
  *
+ * **The seven `.woff2` files are the redesign's vendored fonts** (owner's ruling
+ * of 2026-10-28): Instrument Sans and IBM Plex Mono, OFL-1.1, copied byte for byte
+ * from `src/renderer/fonts/` by the build. `font-src 'self'` was always the fifth
+ * directive below and admits `app://console/*.woff2`, and `mediaTypeFor` already
+ * maps `.woff2`, so no directive is added and none is loosened.
+ *
  * It is a list of URL paths rather than of file names because that is how the
  * handler speaks, and it is deliberately **not** a second filter inside
  * `resolveBundleRequest`: the root's contents are already decided by the build,
@@ -135,6 +143,15 @@ export const PICKER_ENTRY_URL = `${APP_ORIGIN}${PICKER_ENTRY_PATH}`
  * it does not list.
  */
 export const SERVED_FILES: readonly string[] = Object.freeze([
+  '/IBMPlexMono-Medium.woff2',
+  '/IBMPlexMono-Regular.woff2',
+  '/IBMPlexMono-SemiBold.woff2',
+  '/InstrumentSans-Bold.woff2',
+  '/InstrumentSans-Medium.woff2',
+  '/InstrumentSans-Regular.woff2',
+  '/InstrumentSans-SemiBold.woff2',
+  '/confirm.html',
+  '/confirm.js',
   '/console.css',
   '/console.js',
   '/elk-worker.min.js',

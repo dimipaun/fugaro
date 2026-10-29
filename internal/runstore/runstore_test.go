@@ -283,6 +283,47 @@ func TestNewReviewScopeBoundsWhatItStores(t *testing.T) {
 	}
 }
 
+// TestNewCheckpointBoundsWhatItStores: the three fields a model answers the
+// checkpoint prompt with are a model's output in a record every listing
+// reads, so each is clipped to MaxCheckpointText; the trigger and the money
+// figure are the runner's own and pass through. A checkpoint a governance
+// halt writes before the checkpoint stage exists carries the trigger alone,
+// and that marshals as the trigger alone — an absent field, not an empty
+// string, which is how a reader tells "the agent said nothing" from "nothing
+// asked it".
+func TestNewCheckpointBoundsWhatItStores(t *testing.T) {
+	long := strings.Repeat("w", MaxCheckpointText+50)
+	cp := NewCheckpoint(Checkpoint{
+		Trigger:          string(HaltStageBudget),
+		Done:             long,
+		WhyOver:          long,
+		Next:             long,
+		HardInstructions: long,
+		EstimateUSD:      1.25,
+	})
+	for name, got := range map[string]string{
+		"done":              cp.Done,
+		"why_over":          cp.WhyOver,
+		"next":              cp.Next,
+		"hard_instructions": cp.HardInstructions,
+	} {
+		if n := len([]rune(got)); n != MaxCheckpointText {
+			t.Errorf("%s = %d runes, want %d", name, n, MaxCheckpointText)
+		}
+	}
+	if cp.Trigger != string(HaltStageBudget) || cp.EstimateUSD != 1.25 {
+		t.Errorf("NewCheckpoint = %+v, want the trigger and the figure as written", cp)
+	}
+
+	data, err := json.Marshal(NewCheckpoint(Checkpoint{Trigger: string(HaltFanout)}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != `{"trigger":"fanout"}` {
+		t.Errorf("a checkpoint of the trigger alone marshals %s", data)
+	}
+}
+
 func TestCancelMarker(t *testing.T) {
 	s := newStore(t)
 	if ok, err := s.CancelRequested(ctx); err != nil || ok {
@@ -475,20 +516,21 @@ func TestRecordFollowUpRoundTrip(t *testing.T) {
 	}
 }
 
-// TestStageTimingCallsRoundTrip pins the record's own contract for the two
-// stage counters (docs/task-governance constraint G5): absent is not zero.
-// A stage nobody counted -- an oauth run's calls, absent because no gateway
-// reported them and no result event supplies a figure -- keeps the field
-// absent, while a stage counted at zero carries 0.
+// TestStageTimingCallsRoundTrip pins the record's own contract for the stage
+// counters (docs/task-governance constraint G5): absent is not zero. A stage
+// nobody counted -- an oauth run's calls, absent because no gateway reported
+// them and no result event supplies a figure, and every record written before
+// repeats existed -- keeps the field absent, while a stage counted at zero
+// carries 0.
 func TestStageTimingCallsRoundTrip(t *testing.T) {
 	s := newStore(t)
 	at := time.Date(2026, 10, 26, 10, 0, 0, 0, time.UTC)
-	calls, agents, zero := 12, 2, 0
+	calls, agents, repeats, zero := 12, 2, 4, 0
 	rec := &Record{Version: 1, RunID: runID, Status: StatusSucceeded, Outcome: OutcomeReady, StartedAt: at,
 		Stages: []StageTiming{
-			{Name: "implement", StartedAt: at, DurationS: 61, Calls: &calls, Agents: &agents},
+			{Name: "implement", StartedAt: at, DurationS: 61, Calls: &calls, Agents: &agents, Repeats: &repeats},
 			{Name: "review", StartedAt: at, DurationS: 30},
-			{Name: "fix", StartedAt: at, DurationS: 9, Calls: &zero, Agents: &zero},
+			{Name: "fix", StartedAt: at, DurationS: 9, Calls: &zero, Agents: &zero, Repeats: &zero},
 		}}
 	if err := s.WriteRecord(ctx, rec); err != nil {
 		t.Fatal(err)
@@ -500,13 +542,15 @@ func TestStageTimingCallsRoundTrip(t *testing.T) {
 	if len(got.Stages) != 3 {
 		t.Fatalf("ReadRecord stages = %+v", got.Stages)
 	}
-	if got.Stages[0].Calls == nil || *got.Stages[0].Calls != 12 || got.Stages[0].Agents == nil || *got.Stages[0].Agents != 2 {
+	if got.Stages[0].Calls == nil || *got.Stages[0].Calls != 12 || got.Stages[0].Agents == nil || *got.Stages[0].Agents != 2 ||
+		got.Stages[0].Repeats == nil || *got.Stages[0].Repeats != 4 {
 		t.Fatalf("stage with counts = %+v", got.Stages[0])
 	}
-	if got.Stages[1].Calls != nil || got.Stages[1].Agents != nil {
+	if got.Stages[1].Calls != nil || got.Stages[1].Agents != nil || got.Stages[1].Repeats != nil {
 		t.Fatalf("stage with no count gained one: %+v", got.Stages[1])
 	}
-	if got.Stages[2].Calls == nil || *got.Stages[2].Calls != 0 || got.Stages[2].Agents == nil || *got.Stages[2].Agents != 0 {
+	if got.Stages[2].Calls == nil || *got.Stages[2].Calls != 0 || got.Stages[2].Agents == nil || *got.Stages[2].Agents != 0 ||
+		got.Stages[2].Repeats == nil || *got.Stages[2].Repeats != 0 {
 		t.Fatalf("stage with zero counts = %+v", got.Stages[2])
 	}
 
@@ -514,13 +558,13 @@ func TestStageTimingCallsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), `"name":"implement","started_at":"2026-10-26T10:00:00Z","duration_s":61,"calls":12,"agents":2`) {
+	if !strings.Contains(string(data), `"name":"implement","started_at":"2026-10-26T10:00:00Z","duration_s":61,"calls":12,"agents":2,"repeats":4`) {
 		t.Fatalf("counted stage encoded = %s", data)
 	}
 	if !strings.Contains(string(data), `"name":"review","started_at":"2026-10-26T10:00:00Z","duration_s":30}`) {
 		t.Fatalf("uncounted stage encoded = %s", data)
 	}
-	if !strings.Contains(string(data), `"name":"fix","started_at":"2026-10-26T10:00:00Z","duration_s":9,"calls":0,"agents":0}`) {
+	if !strings.Contains(string(data), `"name":"fix","started_at":"2026-10-26T10:00:00Z","duration_s":9,"calls":0,"agents":0,"repeats":0}`) {
 		t.Fatalf("zero-count stage encoded = %s", data)
 	}
 }

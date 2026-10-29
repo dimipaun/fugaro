@@ -192,6 +192,7 @@ function pickerOver(
     readonly spawnLog?: unknown
     readonly onChosen?: Parameters<typeof createInstallationPicker>[0]['onChosen']
     readonly onRemoved?: Parameters<typeof createInstallationPicker>[0]['onRemoved']
+    readonly onRecordRemoved?: Parameters<typeof createInstallationPicker>[0]['onRecordRemoved']
     readonly openExternal?: (url: string) => Promise<boolean>
     readonly reveal?: (path: string) => Promise<boolean> | boolean
   } = {},
@@ -246,6 +247,7 @@ function pickerOver(
     appEnv: options.appEnv ?? {},
     ...(options.onChosen === undefined ? {} : { onChosen: options.onChosen }),
     ...(options.onRemoved === undefined ? {} : { onRemoved: options.onRemoved }),
+    ...(options.onRecordRemoved === undefined ? {} : { onRecordRemoved: options.onRecordRemoved }),
   })
   return { picker, ipcMain, windows, opened, revealed, menu: () => applicationMenu }
 }
@@ -958,6 +960,51 @@ describe('the picker’s checkout', () => {
 })
 
 describe('the picker’s remove', () => {
+  it('names every removal that happened to the launch seam, active or not, and none that refused', async () => {
+    // `onRemoved` is the dashboard's seam and it fires only for the **active**
+    // installation, because a removal of another row leaves the dashboard with
+    // an installation to drive. A launch in flight is a different fact: it names
+    // its own installation, so a window open for a project whose record just
+    // went must close whichever row was active. That is what `onRecordRemoved`
+    // is for, and it is handed the **project** -- the name the launcher maps to
+    // a run id -- rather than the record id `onRemoved` carries.
+    const notified: string[] = []
+    const removed: string[] = []
+    const { picker, ipcMain } = pickerOver({
+      prefixes: [listableStub().directory],
+      onRemoved: (id) => notified.push(id),
+      onRecordRemoved: (project) => removed.push(project),
+    })
+    void picker
+    await answer(ipcMain, 'list')
+    // Two records, and the open rule settles which one this run drives: `choose`
+    // moves the store's active installation, and the row the console is open on
+    // is the rail's own decision (`openProject`). `acme` is chosen second, so it
+    // is the active one; the row that stays open -- and so the one `onRemoved`
+    // speaks for -- is `sandbox`.
+    expect((await answer(ipcMain, 'choose', { project: 'sandbox' })).ok).toBe(true)
+    expect((await answer(ipcMain, 'choose', { project: 'acme' })).ok).toBe(true)
+
+    // The row the dashboard is **not** on: `onRemoved` says nothing, because the
+    // console still has an installation to drive, but the removal happened and
+    // the launch seam is told which project it was.
+    expect((await answer(ipcMain, 'remove', { project: 'acme' })).ok).toBe(true)
+    expect(removed).toStrictEqual(['acme'])
+    expect(notified).toStrictEqual([])
+
+    // The row the console is open on: both seams fire, and the project is named
+    // here too.
+    expect((await answer(ipcMain, 'remove', { project: 'sandbox' })).ok).toBe(true)
+    expect(removed).toStrictEqual(['acme', 'sandbox'])
+    expect(notified).toHaveLength(1)
+
+    // A refusal is not a removal: a project this console holds no record for
+    // writes nothing and names nothing.
+    expect((await answer(ipcMain, 'remove', { project: 'never-chosen' })).ok).toBe(false)
+    expect(removed).toStrictEqual(['acme', 'sandbox'])
+    expect(notified).toHaveLength(1)
+  })
+
   it('drops this console’s record, and tells the dashboard when the active one went', async () => {
     const removed: string[] = []
     const { picker, ipcMain } = pickerOver({ prefixes: [listableStub().directory], onRemoved: (id) => removed.push(id) })

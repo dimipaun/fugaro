@@ -135,9 +135,16 @@ function resolveSource(token) {
     return `${symbolName} is not declared in any Go file of ${pkgDir}/`
   }
 
-  if (token.startsWith('go run ./internal/clidoc')) {
-    // The generator's real flag set: every stdflag definition in internal/clidoc.
-    const dir = path.join(REPO_ROOT, 'internal', 'clidoc')
+  // A generator: `go run ./internal/clidoc` for the security and terms pages, `go run
+  // ./ee/clidoc` for the CLI reference (design docs/design/ee-boundary-moves.md §9). What
+  // makes the token real is the flag set the directory it names declares: a command run
+  // with a flag its generator does not define fails on the reader's machine.
+  const generator = /^go run (\.\/\S+)/.exec(token)
+  if (generator) {
+    const dir = path.resolve(REPO_ROOT, generator[1])
+    if (!dir.startsWith(REPO_ROOT + path.sep) || !existsSync(dir) || !statSync(dir).isDirectory()) {
+      return `${generator[1]} is not a directory in this repository`
+    }
     const real = new Set()
     for (const name of readdirSync(dir).filter((n) => n.endsWith('.go'))) {
       for (const m of readFileSync(path.join(dir, name), 'utf8').matchAll(/stdflag\.\w+\("([^"]+)"/g)) real.add(m[1])
@@ -146,7 +153,7 @@ function resolveSource(token) {
     const bad = words.filter((w) => w.startsWith('-') && !real.has(w.replace(/^-+/, '').split('=')[0]))
     const extra = words.filter((w) => !w.startsWith('-'))
     if (bad.length === 0 && extra.length === 0) return null
-    return `internal/clidoc defines no ${[...bad, ...extra].map((f) => `\`${f}\``).join(', ')}`
+    return `${generator[1]} defines no ${[...bad, ...extra].map((f) => `\`${f}\``).join(', ')}`
   }
 
   if (token.startsWith('fugaro ')) {
@@ -232,17 +239,25 @@ test('the Go gate the README prints selects the site\'s own tests', () => {
   const pattern = new RegExp(command[1])
   assert.ok(text.includes('./internal/clidoc'), 'the Go gate the README prints does not name ./internal/clidoc, where the generator\'s own tests live')
 
-  // The site's Go test files: the docs_website_* pins in internal/cli, and internal/clidoc's
-  // own tests (cliref_test.go / secdoc_test.go), which the reference's pins are split across.
+  // The site's Go test files: the docs_website_* pins in internal/cli, and the generated
+  // documents' own tests -- internal/clidoc's, the renderer's beside it in
+  // internal/clidoc/cliref, and ee/clidoc's, where the committed reference is held to the
+  // tagged tree (design docs/design/ee-boundary-moves.md §9).
   const cliDir = path.join(REPO_ROOT, 'internal', 'cli')
-  const clidocDir = path.join(REPO_ROOT, 'internal', 'clidoc')
+  const generatorDirs = [
+    path.join(REPO_ROOT, 'internal', 'clidoc'),
+    path.join(REPO_ROOT, 'internal', 'clidoc', 'cliref'),
+    path.join(REPO_ROOT, 'ee', 'clidoc'),
+  ]
   const files = [
     ...readdirSync(cliDir)
       .filter((name) => /^docs_website_.*_test\.go$/.test(name))
       .map((name) => path.join(cliDir, name)),
-    ...readdirSync(clidocDir)
-      .filter((name) => name.endsWith('_test.go'))
-      .map((name) => path.join(clidocDir, name)),
+    ...generatorDirs.flatMap((dir) =>
+      readdirSync(dir)
+        .filter((name) => name.endsWith('_test.go'))
+        .map((name) => path.join(dir, name)),
+    ),
   ]
   assert.ok(files.length >= 4, `only ${files.length} of the site's Go test files were found, so this check is looking at a fraction of the site`)
 
@@ -436,7 +451,10 @@ test('every command in the README table Regenerate column resolves, flags includ
     const tokens = [...row.regenerate.matchAll(/`([^`]+)`/g)].map((m) => m[1])
     assert.ok(tokens.length > 0, `${row.file}'s Regenerate cell names no command: ${row.regenerate}`)
     for (const token of tokens) {
-      assert.ok(token.startsWith('go run ./internal/clidoc') || token.startsWith('fugaro '), `${row.file}'s Regenerate cell names \`${token}\`, which is neither the generator nor a fugaro command`)
+      assert.ok(
+        token.startsWith('go run ./internal/clidoc') || token.startsWith('go run ./ee/clidoc') || token.startsWith('fugaro '),
+        `${row.file}'s Regenerate cell names \`${token}\`, which is neither a generator nor a fugaro command`,
+      )
       assert.equal(resolveSource(token), null, `${row.file}'s Regenerate cell names \`${token}\`, and ${resolveSource(token)}`)
     }
   }

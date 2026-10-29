@@ -23,6 +23,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/tier"
 )
 
 // followUpLookback is how far back fugaro run --pr looks for a pull
@@ -54,6 +55,14 @@ type prChain struct {
 	// back on: --no-compression sets it, and nothing clears it.
 	CompressionOff bool
 	Recipe         *task.Recipe // the previous run's: a follow-up keeps it unless --recipe names one
+	// PrevReport is whether the previous run's task carried a manifest
+	// (task.Spec.DigestRuns), and so whether the recipe this follow-up
+	// inherits is a report recipe: a manifest is accepted under no other
+	// (task.Validate). It is the one fact about that recipe the launcher
+	// holds when it cannot read the recipe's own file — a repository recipe
+	// by name, read at the run's base, is not in a launcher with no
+	// checkout of that repository (refuseFollowUpRepoRecipe).
+	PrevReport bool
 	// Title is the previous run's own job title (task.Spec.Title, "") when
 	// it has none: a follow-up keeps its run's title, so a chain of
 	// follow-ups stays one job in fugaro watch instead of being listed
@@ -62,6 +71,22 @@ type prChain struct {
 	// Chosen is the recipe the runner chose for the previous run (its record's),
 	// when that run's task named none; nil when unknown, absent or default.
 	Chosen *runstore.RecipeRecord
+	// Rigor is the mode the previous run recorded (runstore.RigorRecord.Mode),
+	// when it recorded a readable one: a follow-up keeps it and may only raise
+	// it (T5.2, D6, F14). Empty — no record, a block no reader may trust, or a
+	// readable block whose mode is hotfix, which is off the axis and so not a
+	// mode a follow-up keeps (D12, resolvePR) — imposes nothing, which is what
+	// the record of an older run says.
+	Rigor rigor.Mode
+	// Tier is the tier the previous run recorded (runstore.TierRecord.Tier),
+	// when it recorded a readable one: a follow-up keeps it, as it keeps the
+	// mode above, so a chain of follow-ups stays the one envelope its pull
+	// request was dispatched under. Empty — no record, or a block no reader
+	// may trust — imposes nothing, which is what the record of an older run
+	// says. Unlike the mode there is no axis to raise along: a tier is an
+	// expectation and not a guardrail (G6 keeps the cap out of it), so --tier
+	// replaces the kept one rather than being held to it.
+	Tier tier.Tier
 }
 
 // readRunRecord reads a run's result.json; tests replace it.
@@ -151,20 +176,45 @@ func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, ex
 	c.CompressionOff = prev.CompressionOff
 	c.Recipe = prev.Recipe
 	c.Title = prev.Title
-	if c.Recipe == nil {
+	c.PrevReport = len(prev.DigestRuns) > 0
+	// The previous run's record, read once for the two things only it knows:
+	// the mode that run resolved, which a follow-up keeps and may only raise
+	// (T5.2), and the recipe the runner chose for it, which a follow-up keeps
+	// when its task names none. A record that cannot be read is a refusal
+	// either way, and the mode is the half that makes it fail closed: a
+	// follow-up that read no mode would let --mode lower one this launch could
+	// not see. The block goes through RigorRecord.Bounded, the reader's own
+	// bound: the record is an object the job's service account can write, so a
+	// block no reader may trust is the same answer as no block at all.
+	rec, err := readRunRecord(ctx, runstore.Open(env.bucket.Bucket, slug, c.Previous.RunID))
+	switch {
+	case errors.Is(err, runstore.ErrNotFound):
+	case corruptObject(err):
+		return nil, userErr("run %s's result.json is unreadable (%v), so the mode it ran under and the recipe the runner chose for it are unknown; nothing was launched", c.Previous.Run, err)
+	case err != nil:
+		return nil, remote(fmt.Errorf("reading the record of run %s to keep its mode and its recipe: %w; nothing was launched", c.Previous.Run, err))
+	default:
 		// The runner chose this run's recipe (agent.recipe at the ref); a
 		// follow-up keeps it, as the runner ignores agent.recipe on follow-ups.
-		// A run with no record yet carries nothing; any other failure to read
-		// it stops the launch, as a different loop must never run silently.
-		rec, err := readRunRecord(ctx, runstore.Open(env.bucket.Bucket, slug, c.Previous.RunID))
-		switch {
-		case errors.Is(err, runstore.ErrNotFound):
-		case corruptObject(err):
-			return nil, userErr("run %s's result.json is unreadable (%v), so the recipe the runner chose for it is unknown; nothing was launched", c.Previous.Run, err)
-		case err != nil:
-			return nil, remote(fmt.Errorf("reading the record of run %s to keep its recipe: %w; nothing was launched", c.Previous.Run, err))
-		case rec.Recipe != nil && rec.Recipe.Name != recipe.DefaultName && recipe.NameRE.MatchString(rec.Recipe.Name):
+		if c.Recipe == nil && rec.Recipe != nil && rec.Recipe.Name != recipe.DefaultName && recipe.NameRE.MatchString(rec.Recipe.Name) {
 			c.Chosen = rec.Recipe
+		}
+		// A bounded block that recorded hotfix imposes nothing either: hotfix
+		// is off the axis (it ranks below every on-axis mode), so a follow-up
+		// never keeps it. It is D12's own mode — reached by an operator's run
+		// under the base branch's opt-in, and refused outright as a request —
+		// and a follow-up that inherited it would be a second route to it, one
+		// no configuration asked for and one a stored task could then be
+		// refused for on --retry. The record still says hotfix; that is what
+		// the run it describes resolved.
+		if bounded := rec.Rigor.Bounded(); bounded != nil && bounded.Mode != rigor.Hotfix {
+			c.Rigor = bounded.Mode
+		}
+		// The tier this run recorded, bounded the same way: the record is an
+		// object the job's service account can write, so a block naming a tier
+		// no runner resolved is the same answer as no block at all.
+		if bounded := rec.Tier.Bounded(); bounded != nil {
+			c.Tier = bounded.Tier
 		}
 	}
 	recorded := c.Ref != ""
@@ -435,6 +485,7 @@ func storedFollowUp(ctx context.Context, env *cloudEnv, slug string, o *runOptio
 		(o.token != "" && o.token != cmp.Or(have.OAuthToken, config.DefaultClaudeAccount)) ||
 		(o.planTask != "" && have.PlanTask != o.planTask) ||
 		(o.rigor != "" && string(have.Rigor) != o.rigor) ||
+		(o.tier != "" && string(have.Tier) != o.tier) ||
 		(len(o.paths) > 0 && !slices.Equal(have.Paths, o.paths)) {
 		return nil, userErr("run ID %s already holds a different task", o.runID)
 	}
@@ -534,6 +585,9 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 		if err := refuseFollowUpArtifactMode(rr.Recipe, rr.Name); err != nil {
 			return nil, err
 		}
+		if err := refuseFollowUpReportMode(rr.Recipe, rr.Name); err != nil {
+			return nil, err
+		}
 		printRecipeNote(warn, rr, true)
 		rcp = rr.taskRecipe()
 	} else if rcp == nil && c.Chosen != nil {
@@ -553,12 +607,27 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 		if err := refuseFollowUpArtifactMode(inherited, rcp.Name); err != nil {
 			return nil, err
 		}
+		if err := refuseFollowUpReportMode(inherited, rcp.Name); err != nil {
+			return nil, err
+		}
 	} else if rcp != nil {
 		// An inherited repository recipe by name: task.Recipe carries no
 		// text for one (taskRecipe, recipes_resolve.go), so there is
 		// nothing to parse here. This checkout's copy is read when there
 		// is one; otherwise the runner refuses the file it reads at this
 		// task's base.
+		//
+		// A launcher with no copy of that file can still tell that the
+		// previous run's recipe was a report recipe, from the previous run's
+		// own task: the recipe this follow-up inherits is the one that task
+		// ran, and only a report recipe's task carries a manifest
+		// (task.Validate). Refused from the manifest, here, because the file
+		// this checkout does not have is the one the agent would have run —
+		// the runner's own backstop refuses the same task after it is paid
+		// for, at its base.
+		if c.PrevReport {
+			return nil, refuseReportFollowUp(rcp.Name)
+		}
 		if err := refuseFollowUpRepoRecipe(ctx, repo, rcp.Name); err != nil {
 			return nil, err
 		}
@@ -573,12 +642,23 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 	// number (the run it follows holds the node), and a chain that kept
 	// re-claiming a task would say the task is running again with every
 	// follow-up. An explicit --plan-task claims one for this run itself.
+	//
+	// The mode this follow-up runs at (T5.2, D6, F14) is resolved here,
+	// before the spec is built, so a request it refuses writes nothing.
+	mode, err := followUpRigor(o, c)
+	if err != nil {
+		return nil, err
+	}
+	// The follow-up's tier is the flag's when it is given, else the tier the
+	// run it continues recorded: the envelope its pull request was dispatched
+	// under, which a follow-up of it keeps (resolvePR). No flag and no
+	// recorded tier is no expectation at all.
 	spec := &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: c.Ref, BaseBranch: specBaseBranch(c.Ref), Workflow: workflow, Task: text,
 		Title:          cmp.Or(o.title, c.Title),
 		PlanTask:       o.planTask,
 		CompressionOff: c.CompressionOff,
 		Branch:         c.Branch, PR: o.pr[0], PreviousRun: c.Previous.RunID, RequestedBy: me, Batch: o.batch, Recipe: rcp,
-		Rigor: rigor.Mode(o.rigor), Paths: o.paths}
+		Rigor: mode, Paths: o.paths, Tier: cmp.Or(tier.Tier(o.tier), c.Tier)}
 	if total > 0 {
 		spec.Overrides.TotalTimeout = total.String()
 	}
@@ -589,6 +669,58 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 		return nil, userErr("%v", err)
 	}
 	return spec, nil
+}
+
+// followUpRigor is the mode a follow-up asks for (T5.2, D6, F14): the
+// launcher's --mode raised to the mode the PR's previous run recorded, or that
+// recorded mode alone when no flag is given, so a chain of follow-ups cannot
+// walk a pull request's rigor back. A request the rule refuses is refused
+// before the spec is built, so nothing is written (refuseFollowUpRigor).
+//
+// A record that carries no readable mode — an older run, or one that died
+// before bootstrap — imposes nothing: Strictest skips the empty value, so the
+// flag stands exactly as it does on a first run. A recorded hotfix is dropped
+// before it gets here, for the reason resolvePR gives, so it imposes nothing
+// the same way.
+func followUpRigor(o *runOptions, c *prChain) (rigor.Mode, error) {
+	req := rigor.Mode(o.rigor)
+	if err := refuseFollowUpRigor(req, c.Rigor, c.Previous.Run, o.pr[0], "--mode", ""); err != nil {
+		return "", err
+	}
+	return rigor.Strictest(req, c.Rigor), nil
+}
+
+// refuseFollowUpRigor is the raise-only rule of a follow-up's mode (T5.2, D6,
+// F14), as a refusal: req is the mode the launch asks for — the flag's on a
+// fresh follow-up, the request a stored task already carries on a reused one —
+// and recorded is the mode one run on the pull request recorded: the last to
+// update it (c.Previous), which is the one record resolvePR reads and so the
+// only one the rule judges. recordedBy names that run, because the refusal says
+// which record it read rather than "the runs on PR #N", a claim over runs
+// nobody looked at — a run on the PR that pushed nothing is skipped by
+// resolvePR, and the mode it recorded is not part of this rule.
+//
+// Two requests are refused instead of resolved. One below the recorded mode,
+// naming what the PR carries: a follow-up is the comment-sourced surface (F13),
+// so its own flag would otherwise be the way down. And hotfix, which is off the
+// axis and ranks below every on-axis mode, and which an operator reaches with
+// their own run under the base branch's opt-in, never through --pr (D12).
+//
+// A zero req asks for nothing, and is never below a mode the PR recorded:
+// resolving one is the caller's (Strictest, in followUpRigor), and only a
+// stored task, reused as it is, has no resolution left to make — which is why
+// recheckFollowUp asks this with the task's own request. subject names the
+// request in the refusal's sentence, and cure what the launcher does instead.
+func refuseFollowUpRigor(req, recorded rigor.Mode, recordedBy string, pr int, subject, cure string) error {
+	switch {
+	case req == rigor.Hotfix:
+		return userErr("%s asks for hotfix, which is an operator's own run and not a follow-up's: it is reached by fugaro run --mode hotfix under the base branch's opt-in (D12), never through --pr %d%s",
+			subject, pr, cure)
+	case req != "" && req.Rank() < recorded.Rank():
+		return userErr("%s asks for %s, lower than %s, the mode run %s, the last to update PR #%d, recorded; a follow-up may raise a pull request's mode and never lower it%s",
+			subject, req, recorded, recordedBy, pr, cure)
+	}
+	return nil
 }
 
 // recheckFollowUp runs the PR's checks again for a stored follow-up about
@@ -607,13 +739,33 @@ func recheckFollowUp(ctx context.Context, env *cloudEnv, slug string, spec *task
 		return userErr("run %s/%s follows %s, but run %s has updated PR #%d since; start a new follow-up: fugaro run --pr %d",
 			slug, spec.RunID, spec.PreviousRun, c.Previous.Run, spec.PR, spec.PR)
 	}
+	// The raise-only rule again, on the request the stored task itself carries
+	// (T5.2, D6, F14), after the two checks above because both read the chain
+	// this one judges against. A stored task is what the job reads, and this is
+	// the one launch shape whose mode nobody resolves a second time: a task
+	// stored before the rule existed, or one whose previous run recorded a
+	// higher mode since it was stored, would otherwise walk the pull request's
+	// rigor back here. A task that asks for nothing is the same hole from the
+	// other side — with no request the runner resolves from the configuration
+	// alone, which is what the recorded mode is not — and it has no resolution
+	// left to make, since the task is reused as it is. Both are refused, and
+	// the cure is a new follow-up, which resolves the mode again.
+	subject := fmt.Sprintf("the stored task of run %s/%s", slug, spec.RunID)
+	cure := fmt.Sprintf("; start a new follow-up: fugaro run --pr %d", spec.PR)
+	if err := refuseFollowUpRigor(rigor.Mode(spec.Rigor), c.Rigor, c.Previous.Run, spec.PR, subject, cure); err != nil {
+		return err
+	}
+	if spec.Rigor == "" && c.Rigor != "" {
+		return userErr("%s asks for no rigor mode, but run %s, the last to update PR #%d, recorded %s, which a follow-up keeps%s",
+			subject, c.Previous.Run, spec.PR, c.Rigor, cure)
+	}
 	return nil
 }
 
 // carryChosenRecipe is the recipe a follow-up keeps when the runner chose the
 // previous run's: a repository recipe by name (the runner reads it at the
 // base), any other resolved now and embedded. A repository recipe is refused
-// for the two modes a follow-up cannot run first (refuseFollowUpRepoRecipe),
+// for the mismatches a follow-up cannot carry (refuseFollowUpRepoRecipe),
 // from this checkout's copy of it; the runner refuses the file it reads at
 // the base when there is none here. A note says what is kept, and that the
 // text changed since when it did.
@@ -645,6 +797,9 @@ func carryChosenRecipe(ctx context.Context, env *cloudEnv, repo string, c *prCha
 			return nil, wrap(err)
 		}
 		if err := refuseFollowUpArtifactMode(rr.Recipe, rr.Name); err != nil {
+			return nil, wrap(err)
+		}
+		if err := refuseFollowUpReportMode(rr.Recipe, rr.Name); err != nil {
 			return nil, wrap(err)
 		}
 		printRecipeNote(warn, rr, true)

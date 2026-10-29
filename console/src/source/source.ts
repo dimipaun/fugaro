@@ -437,17 +437,19 @@ export function handlersFor(
 }
 
 /**
- * CliBackedHandlers is the whole surface **minus the one operation that is not
- * a read of the CLI**: `startup.compatibility` (desktop-console plan Task 3.3),
+ * CliBackedHandlers is the whole surface **minus the two operations that are not
+ * reads of the CLI**: `startup.compatibility` (desktop-console plan Task 3.3),
  * whose answer is the handshake `src/main/index.ts` ran before it built any
- * window. It is not a read this module can make -- the source spawns, and the
- * compatibility is the console's own state -- so `handlersFor` leaves that key
- * out on purpose, and the renderer-entry task (Task 3.4a) is what joins it in at
- * the entry point, as
- * `{ ...handlersFor(source, deps), 'startup.compatibility': startupCompatibility(read) }`
- * with `startupCompatibility` from `src/main/ipc.ts`. **Nothing registers the
- * handlers until that task lands**: today `main()` serves the bundle and starts
- * the lifecycle, and no window has a preload to reach a channel with.
+ * window, and `run.launch` (V2.5.1a, design section 5.1 rule 11), which is the
+ * console's **one write**: it is not a read of the active installation's source
+ * at all -- it takes the installation's name as an argument, resolves its own
+ * records, and goes through the confirmation seam (`src/main/launch.ts`) rather
+ * than a `CliSource`. Both are joined in at the entry point, as
+ * `{ ...handlersFor(source, deps), 'startup.compatibility': … , 'run.launch': … }`
+ * with `startupCompatibility` from `src/main/ipc.ts` and the launcher from
+ * `src/main/launch.ts`. **Nothing registers the handlers until that task lands**:
+ * today `main()` serves the bundle and starts the lifecycle, and no window has a
+ * preload to reach a channel with.
  *
  * The `Omit` is still a *closed* type: a key typed here that is not an operation
  * is an excess property, and an operation deleted from `CONSOLE_OPERATIONS`
@@ -456,4 +458,4 @@ export function handlersFor(
  * whole surface, so a console that forgets the join fails to register rather
  * than answering one operation with nothing.
  */
-export type CliBackedHandlers = Omit<ConsoleHandlers, 'startup.compatibility'>
+export type CliBackedHandlers = Omit<ConsoleHandlers, 'startup.compatibility' | 'run.launch'>

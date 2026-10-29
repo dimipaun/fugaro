@@ -667,11 +667,14 @@ func TestSetupSkillHandlesSeveralProjects(t *testing.T) {
 		return
 	}
 	hasFlag := func(name string) bool {
-		c, _, err := root.Find(strings.Fields(name))
-		if err != nil || c == root {
+		c := resolveSkillCommand(root, strings.Fields(name)...)
+		if !c.known() {
 			t.Fatalf("the skill names a command %q that does not exist", name)
 		}
-		return c.Flags().Lookup("project") != nil
+		if c.paid {
+			t.Fatalf("the skill lists %q, a paid command: the core tree answers to the name with a stub that parses no flags, so --project is the tagged tree's to check (ee/plugincheck), and this list cannot hold one", name)
+		}
+		return c.cmd.Flags().Lookup("project") != nil
 	}
 	for _, c := range listed(m[1]) {
 		if !hasFlag(c) {

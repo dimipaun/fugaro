@@ -1,24 +1,16 @@
-package main
+package cliref
 
 // The generator's own tests (website plan, Task W0.4).
 //
-// TestCliReferenceIsCurrent is the one that makes "generated" true rather than
-// "generated once": it runs Generate over the real command tree and compares
-// the bytes with the committed website/content/cli-reference.md, so a command
-// or a flag that lands in internal/cli without the reference being regenerated
-// fails here, with the command that regenerates it in the message.
-//
-// The rest are the generator's own rules, checked on a synthetic tree so they
-// hold whatever the real tree happens to contain: a hidden command and a
-// hidden flag stay out, a required flag is marked as one, and the same tree
-// produces the same bytes twice. The two directions of the drift check against
-// the real tree -- every command and flag named, nothing invented -- live in
-// internal/cli/docs_website_cliref_test.go, which is where the command tree
-// and the other docs tests are; this package cannot be imported from there,
-// because it imports internal/cli.
+// These are the generator's rules, checked on a synthetic tree so they hold
+// whatever the real tree happens to contain: a hidden command and a hidden
+// flag stay out, a required flag is marked as one, and the same tree produces
+// the same bytes twice. The drift checks against the real tree live where the
+// tree does: internal/clidoc's TestCoreCommandsAreInTheReference holds the
+// core's half of the committed file, and ee/clidoc's TestCliReferenceIsCurrent
+// holds the file to the tagged tree's output.
 
 import (
-	"os"
 	"strings"
 	"testing"
 
@@ -26,19 +18,6 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/cli"
 )
-
-// TestCliReferenceIsCurrent holds the committed reference to the generator's
-// output. The two files cannot differ: the committed one is the generated one.
-func TestCliReferenceIsCurrent(t *testing.T) {
-	want := Generate(cli.NewRootCmd())
-	got, err := os.ReadFile("../../" + defaultPath)
-	if err != nil {
-		t.Fatalf("%s: %v (regenerate it with `go run ./internal/clidoc` at the repository root)", defaultPath, err)
-	}
-	if string(got) != want {
-		t.Errorf("%s is not what the command tree generates: regenerate it with `go run ./internal/clidoc` at the repository root (generated %d bytes, committed %d)", defaultPath, len(want), len(got))
-	}
-}
 
 // TestCliReferenceGeneratorSkipsHiddenCommandsAndFlags: the skip rule is read
 // off the tree (cobra's Hidden), so a hidden command, the subtree under it and

@@ -123,6 +123,14 @@ func TestScopesMatchDesignDoc(t *testing.T) {
 		"budget.allowed_models": InRepo,
 		"budget.per_day_usd":    InRepo,
 
+		"governance.review_ratio":       InProject | InRepo,
+		"governance.review_floor_calls": InProject | InRepo,
+		"governance.max_subagents":      InProject | InRepo,
+		"governance.stage_budget":       InProject | InRepo,
+		"governance.stage_tokens":       InProject | InRepo,
+		"governance.stage_timeout":      InProject | InRepo,
+		"governance.tiers":              InProject | InRepo,
+
 		"workflows.*.profile":                   InRepo,
 		"workflows.*.job_profile":               InRepo,
 		"workflows.*.base":                      InProfile | InRepo,

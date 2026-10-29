@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -16,6 +17,7 @@ const (
 	pricedTable    = "table"    // the serving model's rates
 	pricedMax      = "max"      // an unknown serving model: the table's maximum rates
 	pricedSurprise = "surprise" // a dimension the request didn't allow: maximum rates × SurpriseMultiplier
+	pricedTier     = "tier"     // a service tier no one prices: the rates the call was priced at × ConservativeTierMultiplier, or the provider's own reported cost where that is dearer
 
 	settledUsage    = "usage"    // the usage a complete response reported
 	settledPartial  = "partial"  // input and cache from message_start, plus the reserved output
@@ -84,13 +86,21 @@ func (s *Server) reserve(ctx context.Context, st *stageState, w pricing.Micros) 
 type charge struct {
 	amount       pricing.Micros
 	unreconciled pricing.Micros
-	model        string         // the serving model, for ByModel
-	unparsed     bool           // a 2xx settled at its reservation
-	tokens       int64          // reported tokens
-	sent         bool           // the call reached the upstream (it counts as a call)
-	violation    string         // a surprise pricing dimension
-	route        string         // the provider route the call went to; "" is Anthropic
-	reported     pricing.Micros // the cost the provider reported, never charged
+	model        string // the serving model, for ByModel
+	unparsed     bool   // a 2xx settled at its reservation
+	tokens       int64  // reported tokens
+	sent         bool   // the call reached the upstream (it counts as a call)
+	violation    string // a surprise pricing dimension
+	// serviceTier is the usage.service_tier value the response reported and
+	// the call was charged conservatively for, as a message shows it
+	// (`"priority"`, `12` for a value that isn't a string). It is recorded
+	// on the stage and in the call log, and it is not a violation: the
+	// provider's own answer, not the agent's request, is where it came
+	// from, and the conservative charge is what bounds it. "" for every
+	// call the table priced, the standard tier included.
+	serviceTier string
+	route       string         // the provider route the call went to; "" is Anthropic
+	reported    pricing.Micros // the cost the provider reported: recorded for comparison, and the floor under a tier charge, but never the price of a call the table priced
 	// agentID is Claude Code's x-claude-code-agent-id for this call: the
 	// sub-agent that made it, or "" for the main session. The stage's
 	// report counts the distinct ones.
@@ -204,6 +214,11 @@ func (s *Server) settle(st *stageState, w pricing.Micros, c charge) {
 	r.Tokens = int64(satAdd(pricing.Micros(r.Tokens), pricing.Micros(c.tokens)))
 	if c.violation != "" && !contains(r.Violations, c.violation) {
 		r.Violations = append(r.Violations, c.violation)
+	}
+	if c.serviceTier != "" {
+		// Recorded the way a violation is, field and value, so a reader can
+		// tell the two apart at a glance: this one was charged, not refused.
+		r.ServiceTiers.Add("usage.service_tier " + c.serviceTier)
 	}
 	if over > 0 {
 		s.log.Warn("budget: call cost more than its reservation", "stage", st.st.Name, "model", logValue(c.model),
@@ -325,6 +340,78 @@ func contains(xs []string, x string) bool {
 		}
 	}
 	return false
+}
+
+// MaxServiceTiers is how many distinct service tier names a stage report, and
+// the run record built from its reports, name before the rest are counted in
+// one "+N more" entry.
+const MaxServiceTiers = 8
+
+// ServiceTierSet is the usage.service_tier values a stage's responses
+// reported that the table has no multiplier for ("priority" among them), each
+// recorded once, first first.
+//
+// A tier the table does not price no longer ends its stage (design §6.1): the
+// call is charged conservatively and the stage goes on, so a provider that
+// answered a different tier on every call would otherwise grow the stage
+// report, and the run record built from it, with the call count. List bounds
+// what those carry: the first MaxServiceTiers distinct names, then one
+// "+N more" entry standing for the distinct names beyond them. The set itself
+// keeps every name it has seen -- a count of distinct values cannot be kept
+// without them, and a name per call the run paid for is nothing beside the
+// call -- while what a reader, a log line and the stored record pay for is
+// what List prints.
+type ServiceTierSet struct {
+	names []string
+	seen  map[string]struct{}
+}
+
+// Add records one tier name, once.
+func (s *ServiceTierSet) Add(name string) {
+	if _, dup := s.seen[name]; dup {
+		return
+	}
+	if s.seen == nil {
+		s.seen = make(map[string]struct{}, MaxServiceTiers)
+	}
+	s.seen[name] = struct{}{}
+	s.names = append(s.names, name)
+}
+
+// Merge adds every name o saw, in o's own order: a run's record is the union
+// of its stages' reports, and the count the "+N more" entry stands for is of
+// distinct values across them all.
+func (s *ServiceTierSet) Merge(o ServiceTierSet) {
+	for _, name := range o.names {
+		s.Add(name)
+	}
+}
+
+// List is what a report, a log line and the record carry: the first
+// MaxServiceTiers distinct names, then one "+N more" entry when further
+// distinct names were seen, N of them. The entry is not a tier name and
+// cannot be mistaken for one: every name recorded is "usage.service_tier"
+// and a value.
+func (s *ServiceTierSet) List() []string {
+	if len(s.names) <= MaxServiceTiers {
+		return slices.Clone(s.names)
+	}
+	out := make([]string, 0, MaxServiceTiers+1)
+	out = append(out, s.names[:MaxServiceTiers]...)
+	return append(out, fmt.Sprintf("+%d more", len(s.names)-MaxServiceTiers))
+}
+
+// clone is the copy a report hands out, so a stage that goes on recording
+// tiers cannot change a report a reader already holds.
+func (s ServiceTierSet) clone() ServiceTierSet {
+	out := ServiceTierSet{names: slices.Clone(s.names)}
+	if len(s.seen) > 0 {
+		out.seen = make(map[string]struct{}, len(s.seen))
+		for name := range s.seen {
+			out.seen[name] = struct{}{}
+		}
+	}
+	return out
 }
 
 // dollars formats µ$ as "$12.34", with more digits below a cent so a

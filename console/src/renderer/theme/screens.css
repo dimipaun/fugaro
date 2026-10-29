@@ -4,11 +4,12 @@
  * plan Task 6.4; design section 2's inventory, with sections 3.5, 3.7, 3.8, 4.2
  * and 4.4 as the rules it keeps).
  *
- * This is the last layer of the one stylesheet the three documents
+ * This is the last layer of the one stylesheet the four documents
  * link: `tokens.css` is the vocabulary, `palette.css` the value set, `base.css`
  * the reset, the document and the chrome, and this file is the per-screen rules
  * — Live, Spend, Projects, Run detail, the degraded and unavailable screens, the
- * refusal document and the installation picker, in the order section 2
+ * refusal document, the installation picker and the launch confirmation window,
+ * in the order section 2
  * inventories them.
  *
  * **It is wired, and Task 6.2 is what wired the layer it joins.** The bundler
@@ -34,7 +35,7 @@
  * that paints a state paints it *beside* a word, a mark or a number the code
  * already emits: `KILLED by`, `HALTED`, `silent`, `lost`, `near deadline`,
  * `queued`, `stuck`, the em dash of a gap, `n/a` with its reason in `title`, the
- * `NOTIONAL~` / `est.` marks, `(partial)`, `degraded`, `polling`, and the cap's
+ * `~$` / `est.` marks, `(partial)`, `degraded`, `polling`, and the cap's
  * own percentage. A reader who sees no hue difference at all still reads every
  * state.
  *
@@ -195,8 +196,6 @@ p.live-review-capped {
  * 4.2), so a narrow window costs a line and never a reading.
  */
 
-li.live-repo,
-li.live-run,
 li.live-review-row,
 li.spend-row,
 li.spend-point,
@@ -220,10 +219,6 @@ li.run-log-line {
   border-bottom: var(--rule-width) solid var(--border);
 }
 
-div.live-total,
-ol.live-repos,
-ol.live-orphans,
-ol.live-runs,
 ol.spend-rows,
 ol.spend-series,
 ol.spend-switch,
@@ -264,19 +259,10 @@ div.degraded-totals {
   border-radius: var(--radius-md);
 }
 
-/* A repository's block is the raised surface inside the panel, and its runs sit
- * on the panel's own ground, one step apart (design section 3.2's three
- * surfaces). */
-li.live-repo {
-  margin-bottom: var(--space-sm);
-  padding: var(--space-sm);
-  background: var(--surface-alt);
-  border-radius: var(--radius-sm);
-}
-
-li.live-run {
-  background: var(--surface);
-}
+/* A repository's block and its run rows are the redesign's panel and table now:
+ * the ground, the border and the row treatment live in `flight-deck.css` against
+ * `section.live-repo` and `tr.live-run` (console redesign, step 2b), so the two
+ * rules that painted a flex row here have nothing left to select. */
 
 /* ---- Identity: an id, a repository, a slug, a path, a timestamp ------------
  *
@@ -284,7 +270,6 @@ li.live-run {
  * (design section 3.7). Prose never is.
  */
 
-span.live-run-id,
 span.live-review-run-id,
 span.live-review-repo,
 span.live-review-number,
@@ -414,15 +399,6 @@ p.live-note {
   color: var(--text-muted);
 }
 
-/* The total block: three figures read together, so they sit together (design
- * section 3.8's last bullet). */
-div.live-total {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--space-2xs) var(--space-sm);
-  align-items: baseline;
-}
-
 /* The burn window: one tick per sample, the tone saying whether the sample is
  * plottable, and the rate in each bar's `title`. */
 ol.live-burn {
@@ -452,13 +428,6 @@ span.live-burn-unit {
   font-size: var(--font-size-xs);
 }
 
-ol.live-runs {
-  margin-top: var(--space-2xs);
-  padding: var(--space-2xs);
-  background: var(--surface);
-  border-radius: var(--radius-sm);
-}
-
 /* A run row's flags: the word is the mark and the tone is the second channel.
  * `--warn` is attention, `--error` is failed or lost (design section 3.2). */
 span.live-run-flag[data-tone='amber'] {
@@ -473,44 +442,20 @@ span.live-run-flag {
   font-size: var(--font-size-xs);
 }
 
-/* Queued and stuck carry the flag's word *and* the all-caps row treatment
- * (design section 3.5's table), so the tone is never the only carrier. */
-li.live-run-queued .live-run-flag,
-li.live-run-stuck .live-run-flag {
+/* Queued and stuck carry the flag's word *and* the all-caps flag treatment
+ * (design section 3.5's table), so the tone is never the only carrier. The row's
+ * own tone -- the accent and the error rule down its first cell -- is the
+ * redesign's, in `flight-deck.css` (console redesign, step 2b). */
+tr.live-run-queued .live-run-flag,
+tr.live-run-stuck .live-run-flag {
   text-transform: uppercase;
   letter-spacing: 0.08em;
 }
 
-/* The queued row's left border is a **rule**, so it takes `--accent`: section
- * 3.2's role cell gives that token the rules ("structure: rules, the focus ring,
- * a filled control, the cap bar below its threshold"), and the rail's selected
- * row draws its own 3 px left border in it (section 4.1). It is **not**
- * `--accent-ink`, whose cell is "the accent **as text** -- links, an accent
- * heading": that is the tone for text, and a border is not text. `queued` is not
- * one of the five state colours either, so the structural tone is the one the
- * design leaves for it, and `test/unit/theme-tokens.test.ts` holds
- * `--accent-ink` to text. */
-li.live-run-queued {
-  border-left: 3px solid var(--accent);
-}
-
-li.live-run-stuck {
-  border-left: 3px solid var(--error);
-}
-
-span.live-run-title {
-  font-size: var(--font-size-base);
-}
-
 span.live-run-stage,
 span.live-run-round,
-span.live-run-verify,
 span.live-run-models,
-span.live-run-recipe,
 span.live-run-auth,
-span.live-run-requester,
-span.live-run-started-by,
-span.live-run-workflow,
 span.live-run-contradiction {
   color: var(--text-muted);
   font-size: var(--font-size-xs);
@@ -518,7 +463,8 @@ span.live-run-contradiction {
 
 /* The kill banner, on both shapes the code emits it in: the repository block
  * carries `data-killed` itself and the banner is appended inside it (design
- * section 2.9), while `div.live-total` appends the banner and carries no
+ * section 2.9), while the fleet budget panel (`section.live-fleet`, the total
+ * block) appends the banner and carries no
  * attribute. `--halted` is a DELIBERATE STOP and not a failure, which is why it
  * is not `--error`. */
 div.live-kill,
@@ -546,7 +492,7 @@ span.run-halt-word {
   letter-spacing: 0.08em;
 }
 
-li.live-repo[data-killed='true'] {
+section.live-repo[data-killed='true'] {
   border-left: 3px solid var(--halted);
 }
 
@@ -769,7 +715,7 @@ span.spend-degraded[data-degraded='true'] {
 /* The three account charts. A point is a figure like any other: mono, tabular,
  * and the tone of the account whose column it reads -- measured, notional or
  * estimated (design section 2.9). The mark that carries the state is the
- * `NOTIONAL~` / `est.` prefix inside the number itself. */
+ * `~$` / `est.` prefix inside the number itself. */
 div.spend-account {
   margin-bottom: var(--space-sm);
 }
@@ -803,20 +749,25 @@ span.spend-point-value {
   text-align: right;
 }
 
-/* `(partial)` and `hollow` are Spend's own honesty states, and both carry the
- * marker text (design section 3.5).
+/* `(partial)`, `hollow` and `no readable record` are Spend's own honesty
+ * states, and each carries the marker text (design section 3.5; §2.4's states).
+ * An unreadable row's money was never measured, so its `n/a` cells take the
+ * same warning tone as a partial day rather than reading as a figure.
  *
  * **The attributes are on the row, not on the marker.** §2.4 puts
- * `data-partial` on the points, the rows and `div.spend-totals`, and
- * `data-hollow` on the points and the rows; `span.spend-partial` inside them
- * holds the text `(partial)` and carries no attribute at all, so a rule
- * spelling it `span.spend-partial[data-partial='true']` selects nothing -- the
+ * `data-partial` on the points, the rows and `div.spend-totals`, `data-hollow`
+ * on the points and the rows, and `data-unreadable` on the rows and
+ * `div.spend-totals`; `span.spend-partial` and `span.spend-unreadable` inside
+ * them hold the marker text and carry no attribute at all, so a rule spelling
+ * one `span.spend-unreadable[data-unreadable='true']` selects nothing -- the
  * tone has to be on the element that knows. */
 li.spend-point[data-partial='true'],
 li.spend-row[data-partial='true'],
 div.spend-totals[data-partial='true'],
 li.spend-point[data-hollow='true'],
-li.spend-row[data-hollow='true'] {
+li.spend-row[data-hollow='true'],
+li.spend-row[data-unreadable='true'],
+div.spend-totals[data-unreadable='true'] {
   color: var(--warn);
 }
 
@@ -939,7 +890,7 @@ section.projects-panel[data-state='read'] {
  * **The row is marked by the banner it holds.** `data-killed` is the
  * **banner's** attribute and not the row's (§2.5's `data-*` line, and §3.5's
  * states table: "the attribute is on the banner, and on Live's repository
- * block itself" -- Live's `li.live-repo` carries it, Projects' row does not),
+ * block itself" -- Live's `section.live-repo` carries it, Projects' row does not),
  * so a rule spelling the row's own border `div.projects-kill-row[data-killed]`
  * selects nothing. `:has()` is the one selector that can see the banner inside,
  * and a row that *has* one is exactly a killed repository: the row without a
@@ -1350,6 +1301,78 @@ main p {
 #picker-onboarding button:disabled {
   color: var(--text-muted);
   border-style: dashed;
+}
+
+/* ---- The launch confirmation window (design section 5.1 rule 11) ----------
+ *
+ * The window's document is hand-written HTML like the picker's, but its hooks
+ * are **classes rather than ids** (design §2.13): the scan in
+ * `installations-view.test.ts` reads this file for id selectors and holds every
+ * one of them to the ids `installations.html` declares, so a second document's
+ * ids here would read as undeclared there. The names carry the chrome's
+ * `console-` prefix, because this window is chrome the main process owns rather
+ * than a screen the dashboard mounts -- and because that is the vocabulary the
+ * design's inventory scan licenses a hook by.
+ *
+ * The task box is the reason this section exists. Rule 11 shows the **whole**
+ * task text, never cut, so the box is bounded and scrolls rather than the
+ * document shortening it -- and a 16 KiB task that pushed the two buttons off
+ * the window would be a window an operator cannot answer.
+ */
+
+/* `white-space: pre-wrap` with `overflow-wrap: anywhere` is what keeps the task
+ * box bounded. This document's `main` is the body grid's only child, so it
+ * auto-places into the `auto` column (base.css), whose base size is the item's
+ * min-content contribution -- and a `<pre>`'s default `white-space: pre` makes
+ * that contribution the longest line, so one unbroken 16 KiB line widens the
+ * column and scrolls the page sideways. `pre-wrap` keeps the line breaks and the
+ * spacing the text was written with while allowing a wrap, and `anywhere` -- not
+ * `break-word`, which does not count toward min-content -- lets an unbroken
+ * value break, so the box scrolls inside its bound instead of moving the window. */
+.console-confirm-task {
+  max-height: 40vh;
+  margin: 0 0 var(--space-md);
+  padding: var(--space-xs);
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  background: var(--surface-alt);
+  border: var(--rule-width) solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+
+/* A field value is a repository title, a ref or a path, and the bounds are
+ * uneven: a title is at most `MAX_LAUNCH_TITLE_RUNES` characters and a plan task
+ * at most `launchrules.ts`'s own byte cap, but a ref is bounded only by git's ref
+ * rules and an argv word's path only by `PATH_MAX`, and none of them has a space
+ * to break at. A 100-character title with no break already overflows this
+ * document's 720px window. This document's `main` is the body grid's only child,
+ * so it auto-places into the `auto` column, whose base size is the item's
+ * min-content contribution: a value like that widens the column and scrolls the
+ * whole page sideways. `anywhere` lets a long value wrap inside the `dd` rather
+ * than move the window. The `dl` carries the hook. */
+.console-confirm-fields dd {
+  overflow-wrap: anywhere;
+}
+
+/* The two answers are buttons and a button's boundary is `--border-strong` (the
+ * role table the picker's controls read from). The rule is one rule for both
+ * because the view gives them the same treatment: it draws the confirming button
+ * first and Cancel second, and Cancel is the default by being the one focused on
+ * load rather than by being drawn first. */
+.console-confirm-actions button {
+  padding: var(--space-2xs) var(--space-xs);
+  color: var(--text);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+.console-confirm-actions button:hover {
+  color: var(--accent-ink);
 }
 
 /* ---- Graph (design section 2.11) ------------------------------------------
@@ -2209,7 +2232,6 @@ span.coordinator-unread-retry {
     max-width: 50%;
   }
 
-  li.live-run,
   li.spend-row,
   li.projects-job,
   li.run-log-line {
@@ -2219,7 +2241,6 @@ span.coordinator-unread-retry {
 
 @media (max-width: 48.75em) {
   /* Any three-column figure group becomes two. */
-  div.live-total,
   div.spend-totals,
   section.run-ledger {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2228,7 +2249,6 @@ span.coordinator-unread-retry {
 
 @media (max-width: 35em) {
   /* The ledger, the caps panel and the panels' source lines stack. */
-  div.live-total,
   div.spend-totals,
   section.run-ledger {
     grid-template-columns: minmax(0, 1fr);
@@ -2263,11 +2283,12 @@ span.coordinator-unread-retry {
   section.projects,
   section.degraded,
   section.console-unavailable,
-  li.live-repo,
+  section.live-repo,
   li.projects-secret,
   li.projects-account,
-  li.live-run,
-  ol.live-runs,
+  tr.live-run,
+  div.live-runs,
+  table.live-table,
   li.spend-row,
   li.spend-point,
   li.projects-cap,
@@ -2290,8 +2311,8 @@ span.coordinator-unread-retry {
   div.projects-kill,
   div.run-halt,
   div.live-stale,
-  li.live-run-queued,
-  li.live-run-stuck,
+  tr.live-run-queued,
+  tr.live-run-stuck,
   span.run-stage-passed,
   span.run-stage-deadline,
   span.live-run-flag,
@@ -2308,6 +2329,7 @@ span.coordinator-unread-retry {
   span.run-follow-up,
   span.run-stale,
   span.spend-partial,
+  span.spend-unreadable,
   span.live-stale-word,
   span.live-burn-unit,
   span.live-repo-name,
@@ -2331,16 +2353,11 @@ span.coordinator-unread-retry {
   span.unavailable-searched-lead,
   span.unavailable-operation,
   span.unavailable-searched-count,
-  span.live-run-title,
+  td.live-run-title,
   span.live-run-stage,
   span.live-run-round,
-  span.live-run-verify,
   span.live-run-models,
-  span.live-run-recipe,
   span.live-run-auth,
-  span.live-run-requester,
-  span.live-run-started-by,
-  span.live-run-workflow,
   span.live-run-contradiction,
   span.live-run-mode,
   span.projects-job-mode,
@@ -2462,9 +2479,9 @@ span.coordinator-unread-retry {
   section.projects-panel,
   section.spend-caps,
   section.spend-people,
-  div.live-total,
-  ol.live-repos,
-  ol.live-runs,
+  section.live-fleet,
+  section.live-repo,
+  div.live-runs,
   ol.spend-rows,
   ol.spend-series,
   section.run-ledger,
@@ -2481,8 +2498,7 @@ span.coordinator-unread-retry {
     border: var(--rule-width) solid CanvasText;
   }
 
-  li.live-repo,
-  li.live-run,
+  tr.live-run,
   li.spend-row,
   li.spend-point,
   li.spend-person,
@@ -2499,10 +2515,14 @@ span.coordinator-unread-retry {
   div.spend-kill,
   div.projects-kill,
   div.run-halt,
-  li.live-run-queued,
-  li.live-run-stuck,
+  /* The redesign moved the queued and stuck rules off the row and onto its
+   * first cell (`flight-deck.css`), so this arm names the cell that carries the
+   * border: a `tr` in a collapsed table paints no edge of its own, and a rule
+   * naming it here would keep nothing. */
+  tr.live-run-queued td:first-child,
+  tr.live-run-stuck td:first-child,
   div.live-stale,
-  li.live-repo[data-killed='true'],
+  section.live-repo[data-killed='true'],
   /* The rigor chips are boundaries and nothing else, so the boundary is what
    * has to survive the author's colours going away. */
   span.live-run-mode,

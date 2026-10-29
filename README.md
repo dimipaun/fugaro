@@ -6,6 +6,8 @@
 
 Ephemeral cloud jobs that turn tasks into pull requests.
 
+<a href="https://cla-assistant.io/dimipaun/fugaro"><img src="https://cla-assistant.io/readme/badge/dimipaun/fugaro" alt="CLA assistant" /></a>
+
 Website: [fugaro.dev](https://fugaro.dev)
 
 *Fugax* is Latin for "fleeting." Fugaro runs long, self-contained coding-agent loops (implement, test, review, fix, compile, open a pull request) in throwaway cloud containers instead of on your laptop. Each task gets its own Cloud Run job execution in your own Google Cloud project, runs Claude Code headless to completion, pushes its work, opens a pull request and disappears. Google Cloud is the only backend.
@@ -209,7 +211,7 @@ Ideas, issues, and PRs are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). The 
 
 ## Licensing
 
-Fugaro's core is released under the [MIT licence](LICENSE). [`LICENSING.md`](LICENSING.md) says which parts of the repository that licence does not cover: the desktop console (`console/`, from console 0.113.0), the mobile app (`mobile/`) and the reserved `ee/` directory are under a business licence of their own, counsel's text of 2026-10-27, which names Subscription Terms and a contributor agreement that are not published yet, and the vendored skills under `.agents/` are third-party code. Every release before 0.11.0 is MIT, so is every console release up to and including 0.112.0, and the core stays MIT.
+Fugaro's core is released under the [MIT licence](LICENSE). [`LICENSING.md`](LICENSING.md) says which parts of the repository that licence does not cover: the desktop console (`console/`, from console 0.113.0), the mobile app (`mobile/`) and the reserved `ee/` directory are under a business licence of their own, counsel's text of 2026-10-27, which names the Subscription Terms (not published yet) and the contributor agreement, published at https://gist.githubusercontent.com/dimipaun/d5bb5db937f973b25be5778ce14ec8dd/raw/64918c7fc0f782327db82e7e790db53c3d47d09f/fugaro-cla.md, and the vendored skills under `.agents/` are third-party code. Every release before 0.11.0 is MIT, so is every console release up to and including 0.112.0, and the core stays MIT.
 
 ### Trademarks
 

@@ -126,7 +126,7 @@ function fakeFuses(wire?: Partial<Record<FuseV1Options, FuseState>>): FuseTools 
     },
     async getCurrentFuseWire(path: string) {
       const flipped: Record<number, FuseState> = {}
-      // The untouched fuses at the states the pinned Electron 44.7.2 ships them
+      // The untouched fuses at the states the pinned Electron 45.0.0 ships them
       // in (read off the real binary: cookie encryption and the browser-process
       // snapshot off, WasmTrapHandlers on), so the fake wire is as long as the
       // real one.
@@ -238,7 +238,7 @@ describe('the three fuses left at their upstream default', () => {
   })
 
   it('carries no fuse beyond the package: the pinned Electron’s nine are all named by it', () => {
-    // Electron 44.7.2's wire holds nine fuses and `@electron/fuses` 2.1.3 names
+    // Electron 45.0.0's wire holds nine fuses and `@electron/fuses` 2.1.3 names
     // all nine, so nothing is left to the beyond-the-pin list.
     expect(BEYOND_PIN_FUSES).toEqual([])
     expect(ACCOUNTED_FUSE_COUNT).toBe(9)
@@ -487,13 +487,16 @@ describe('the packaging configuration the fuses belong to', () => {
   it('ships the compiled main process, the document the window loads, and nothing else', () => {
     // The served root is `dist/bundle` (see `rendererRoot` in
     // src/main/index.ts, Task 3.4a): `npm run build` writes the scripts and the
-    // stylesheet, copies the documents and elkjs's worker there, and those
-    // seven files -- `SERVED_FILES` in src/main/protocol.ts -- are listed by
+    // stylesheet, copies the documents, elkjs's worker and the redesign's seven
+    // vendored fonts there, and those sixteen files -- `SERVED_FILES` in
+    // src/main/protocol.ts -- are listed by
     // name, or a packaged console opens a window with no page in it. The
     // preloads are named exactly: the dashboard window loads
-    // `dist/preload/index.js` and the picker's window
-    // `dist/preload/installations.js` (Task 3.4b), and nothing else under that
-    // directory ships. Only `.js`, the documents, the served stylesheet (Task
+    // `dist/preload/index.js`, the picker's window
+    // `dist/preload/installations.js` (Task 3.4b) and the launch confirmation
+    // window `dist/preload/confirm.js` (V2.5.1a part 2b-1), and nothing else
+    // under that directory ships. Only `.js`, the documents, the served
+    // stylesheet (Task
     // 6.2, which every document links), the worker's notices file
     // (`THIRD_PARTY_NOTICES.md`, GV2.2) and the console's own licence
     // (`LICENSE.md`, D311) are shipped, so no source map is;
@@ -508,12 +511,22 @@ describe('the packaging configuration the fuses belong to', () => {
       '!dist/main/fuses.js',
       'dist/preload/index.js',
       'dist/preload/installations.js',
+      'dist/preload/confirm.js',
       'dist/shared/**/*.js',
       'dist/source/**/*.js',
       '!dist/source/fixture.js',
+      'dist/bundle/confirm.html',
+      'dist/bundle/confirm.js',
       'dist/bundle/console.css',
       'dist/bundle/console.js',
       'dist/bundle/elk-worker.min.js',
+      'dist/bundle/IBMPlexMono-Medium.woff2',
+      'dist/bundle/IBMPlexMono-Regular.woff2',
+      'dist/bundle/IBMPlexMono-SemiBold.woff2',
+      'dist/bundle/InstrumentSans-Bold.woff2',
+      'dist/bundle/InstrumentSans-Medium.woff2',
+      'dist/bundle/InstrumentSans-Regular.woff2',
+      'dist/bundle/InstrumentSans-SemiBold.woff2',
       'dist/bundle/index.html',
       'dist/bundle/installations.html',
       'dist/bundle/installations.js',
@@ -531,7 +544,7 @@ describe('the packaging configuration the fuses belong to', () => {
     const patterns = build.files ?? []
     for (const pattern of patterns) {
       expect(pattern, `${pattern} is not a shape this test can read`).toMatch(
-        /^!?(?:[a-z]+\/[a-z]+\/\*\*\/\*\.js|[a-z]+(?:\/[a-z]+)*\/[a-z][a-z.-]*\.(?:js|html|css)|THIRD_PARTY_NOTICES\.md|LICENSE\.md)$/,
+        /^!?(?:[a-z]+\/[a-z]+\/\*\*\/\*\.js|[a-z]+(?:\/[a-z]+)*\/[a-z][a-z.-]*\.(?:js|html|css)|dist\/bundle\/[A-Za-z-]+\.woff2|THIRD_PARTY_NOTICES\.md|LICENSE\.md)$/,
       )
     }
     const ships = (file: string): boolean => {
@@ -585,7 +598,7 @@ describe('the packaging configuration the fuses belong to', () => {
     // include in the list ends in `.js`, names one of the `.html` documents, or
     // is the served `.css` (Task 6.2) -- so no include names a `.map`, and a
     // pattern that started to would fail here.
-    for (const pattern of build.files ?? []) expect(pattern).toMatch(/\.(?:js|html|css|md)$/)
+    for (const pattern of build.files ?? []) expect(pattern).toMatch(/\.(?:js|html|css|md|woff2)$/)
   })
 
   it('publishes nowhere: publish is null, not merely absent', () => {

@@ -48,13 +48,9 @@ import {
   LIVE_RIGOR_TTL_MS,
   RAIL_ADD_CLASS,
   RAIL_CLASS,
-  RAIL_COLLAPSE_CLASS,
-  RAIL_EXPAND_LABEL,
-  RAIL_COLLAPSE_LABEL,
   RAIL_HEAD_CLASS,
   RAIL_HINT_CLASS,
   RAIL_LIST_CLASS,
-  RAIL_LIST_ID,
   RAIL_NAME_CLASS,
   RAIL_PROJECT_CLASS,
   RAIL_ROW_CLASS,
@@ -81,6 +77,21 @@ import {
   READ_UNREADABLE,
   VIEW_BUTTON_CLASS,
   VIEW_NAV_CLASS,
+  GAUGE_CAP_CLASS,
+  GAUGE_CLASS,
+  GAUGE_FILL_CLASS,
+  GAUGE_LABEL_CLASS,
+  GAUGE_NOTIONAL_CLASS,
+  HALT_CLASS,
+  SHELL_HEADER_CLASS,
+  SHELL_PAGE_CLASS,
+  SHELL_WORDMARK_CLASS,
+  SWITCHER_BUTTON_CLASS,
+  SWITCHER_CLASS,
+  SWITCHER_DOT_CLASS,
+  SWITCHER_MENU_CLASS,
+  SWITCHER_NAME_CLASS,
+  SWITCHER_VERSION_CLASS,
   VIEW_PANEL_CLASS,
   bootDashboard,
   isMacPlatform,
@@ -90,6 +101,14 @@ import {
   tabTarget,
 } from '../../src/renderer/entry'
 import { decodeSnapshot } from '../../src/shared/schema'
+import { WRITE_UNAVAILABLE } from '../../src/renderer/writes'
+import {
+  LAUNCH_FORM_CLASS,
+  LAUNCH_OPEN_CLASS,
+  LAUNCH_REPOSITORY_CLASS,
+  LAUNCH_TASK_CLASS,
+  LAUNCH_TITLE_CLASS,
+} from '../../src/renderer/screens/launch'
 import {
   FakeDocument,
   FakeNode,
@@ -987,6 +1006,85 @@ describe('the fixture source', () => {
   })
 })
 
+// The confirmation window (V2.5.1a part 2b-3b-1): the one place in this app a
+// `fugaro run` child becomes possible.
+// ---------------------------------------------------------------------------
+
+describe('the launch the entry wires', () => {
+  it('builds the confirmation window inside main, over the default session, and rebuilds the runner over it', () => {
+    // The window needs `session.defaultSession` and it registers its two IPC
+    // channels once, so it cannot be built at module scope -- and it has to
+    // exist before a renderer can reach `run.launch`. What makes building it in
+    // `main` safe is that the handler reads `launchRunner` at message time and
+    // the surface goes on `ipcMain` only from `onDecided`, which only
+    // `lifecycle.start()` and `choose` reach, both from inside `main`.
+    //
+    // This file imports Electron's runtime, so the claims are read off `index.ts`
+    // as **text**, and the *function bodies* are what is read: naming a constant
+    // in prose elsewhere in the file cannot satisfy any of them.
+    const index = readFileSync(join(CONSOLE_ROOT, 'src', 'main', 'index.ts'), 'utf8')
+    const main = /async function main\(\): Promise<void> \{[\s\S]*?\n\}\n/.exec(index)
+    if (main === null) throw new Error('the scan found no main(): it would pass by finding nothing')
+    // The **code**, with the comments blanked: a comment inside these bodies can
+    // name a call to say why another one comes first, so a scan that read prose
+    // would answer about that sentence rather than about the call.
+    const body = withoutComments(main[0])
+
+    // The window is built in `main`'s own body, before the startup opens a
+    // window -- the first moment a renderer could ask for a launch -- and on
+    // `session.defaultSession`, which is the only session the `app://` handler
+    // serves: a window on a partition would issue its document request where
+    // nothing answers it, and every launch would be declined.
+    expect(body).toContain('createConfirmWindow(')
+    expect(body).toContain('session: session.defaultSession')
+    expect(body.indexOf('createConfirmWindow(')).toBeLessThan(body.indexOf('await lifecycle.start()'))
+    expect(index).not.toContain('fromPartition')
+
+    // ...and before the **picker**, which is the other path that puts the
+    // surface on `ipcMain`: `installInstallationPicker` registers the rail's
+    // operations and closes over `onChosen`, so a picker installed first is a
+    // window whose choose can reach `run.launch` -- and `cancelFor` -- before the
+    // confirmer the launch would be answered through exists.
+    const pickerAt = body.indexOf('installInstallationPicker(')
+    if (pickerAt < 0) throw new Error('the scan found no installInstallationPicker: it would pass by finding nothing')
+    expect(body.indexOf('createConfirmWindow(')).toBeLessThan(pickerAt)
+
+    // The module-scope runner is the fail-closed default: the declining
+    // confirmer is what answers a launch before `main` has built the window.
+    const declared = /let launchRunner = createLaunchRunner\(\{[\s\S]*?\n\}\)\n/.exec(index)
+    if (declared === null) throw new Error('the entry has no module-scope launchRunner to read')
+    expect(declared[0]).toContain('confirmer: DECLINING_CONFIRMER')
+
+    // Exactly the two: the fail-closed one at module scope and the one `main`
+    // builds over the window's confirmer. A third would be a second launcher --
+    // its own in-flight caps, its own run ids, its own held windows -- beside
+    // the one the surface and the cancel paths read.
+    expect(withoutComments(index).match(/createLaunchRunner\(/g) ?? []).toHaveLength(2)
+
+    // And the runner built in `main` is over the window's own confirmer, never
+    // over the declining one.
+    expect(body).toContain('confirmer: createConfirmWindow(')
+    expect(body).not.toContain('DECLINING_CONFIRMER')
+
+    // Both places the entry learns an installation moved cancel the launch its
+    // project has in flight: the choose -- "re-chosen" is that installation
+    // being chosen again, since a launch names its own installation -- and the
+    // rail's removal. The cancel comes before `lifecycle.choose`, so the window
+    // is already gone by the time the new installation's window opens.
+    const chosen = /onChosen: \(chosen\) => \{[\s\S]*?\n    \},\n/.exec(body)
+    if (chosen === null) throw new Error('the entry has no onChosen to read')
+    expect(chosen[0]).toContain('launchRunner.cancelFor(chosen.project)')
+    expect(chosen[0].indexOf('launchRunner.cancelFor(chosen.project)')).toBeLessThan(
+      chosen[0].indexOf('lifecycle.choose'),
+    )
+    expect(chosen[0]).toContain('lifecycle.choose')
+
+    const removed = /onRecordRemoved: \(project\) => \{[\s\S]*?\n    \},\n/.exec(body)
+    if (removed === null) throw new Error('the entry has no onRecordRemoved to read')
+    expect(removed[0]).toContain('launchRunner.cancelFor(project)')
+  })
+})
+
 // The entry spec draws nothing into its window by hand.
 // ---------------------------------------------------------------------------
 
@@ -1106,28 +1204,106 @@ describe('the installation rail', () => {
     }
   })
 
-  it('announces the collapse and toggles the rail’s own collapsed state', async () => {
-    const { bridge } = fakeBridge({})
+  it('draws the shell: a header with the switcher holding the rail, and a page holding the panel', async () => {
+    const frame = syntheticDocuments()[0] as Readonly<Record<string, unknown>>
+    const { bridge } = fakeBridge({ replies: { subscribeLive: () => snapshotReply(frame, nowStamp()) } })
     const document = await boot(bridge, new FakeDocument())
-    const rail = railOf(document)
-    const control = classed(rail, RAIL_COLLAPSE_CLASS)[0]
-    expect(control, 'the rail drew no collapse control').toBeDefined()
-    const button = control as FakeNode
-    // The control names what it is about and says which state it is in, so the
-    // collapse is announced rather than drawn only (design section 4.1).
-    expect(button.attributes.get('aria-controls')).toBe(RAIL_LIST_ID)
-    expect(classed(rail, RAIL_LIST_CLASS)[0]?.attributes.get('id')).toBe(RAIL_LIST_ID)
-    expect(button.attributes.get('aria-expanded')).toBe('true')
-    expect(button.attributes.get('aria-label')).toBe(RAIL_COLLAPSE_LABEL)
-    expect(rail.attributes.get('data-collapsed')).toBeUndefined()
-    button.click()
+    // The header switcher replaced the rail (owner's ruling of 2026-10-28): the
+    // body holds the header and the page, and the rail is inside the menu.
+    expect(document.body.children.map((child) => child.attributes.get('class'))).toEqual([
+      SHELL_HEADER_CLASS,
+      SHELL_PAGE_CLASS,
+    ])
+    const header = document.body.children[0] as FakeNode
+    expect(header.tagName).toBe('HEADER')
+    expect(header.children.map((child) => child.attributes.get('class'))).toEqual([
+      SHELL_WORDMARK_CLASS,
+      SWITCHER_CLASS,
+      VIEW_NAV_CLASS,
+      GAUGE_CLASS,
+      HALT_CLASS,
+    ])
+    const page = document.body.children[1] as FakeNode
+    expect(page.tagName).toBe('MAIN')
+    expect(page.children.map((child) => child.attributes.get('class'))).toEqual([VIEW_PANEL_CLASS])
+
+    // The switcher names the installation and its CLI, and its menu holds the
+    // installation line (the CLI's full path) and the rail, folded at first.
+    const switcher = classed(header, SWITCHER_CLASS)[0] as FakeNode
+    const button = classed(switcher, SWITCHER_BUTTON_CLASS)[0] as FakeNode
+    const menu = classed(switcher, SWITCHER_MENU_CLASS)[0] as FakeNode
+    expect(classed(button, SWITCHER_NAME_CLASS)[0]?.textContent).toBe('acme')
+    expect(classed(button, SWITCHER_VERSION_CLASS)[0]?.textContent).toBe('CLI 1.2.3 · ok')
+    expect(classed(button, SWITCHER_DOT_CLASS)[0]?.attributes.get('data-state')).toBe('running')
+    expect(menu.children.map((child) => child.attributes.get('class'))).toEqual(['console-installation', RAIL_CLASS])
+    expect(textOf(menu)).toContain('/opt/fugaro/bin/fugaro')
+    expect(menu.attributes.get('hidden')).toBe('')
     expect(button.attributes.get('aria-expanded')).toBe('false')
-    expect(button.attributes.get('aria-label')).toBe(RAIL_EXPAND_LABEL)
-    expect(rail.attributes.get('data-collapsed')).toBe('true')
+    expect(button.attributes.get('aria-controls')).toBe(menu.attributes.get('id'))
     button.click()
+    expect(menu.attributes.has('hidden')).toBe(false)
     expect(button.attributes.get('aria-expanded')).toBe('true')
-    expect(button.attributes.get('aria-label')).toBe(RAIL_COLLAPSE_LABEL)
-    expect(rail.attributes.get('data-collapsed')).toBe('false')
+    // Escape folds it and hands the focus back to the button.
+    const escape = switcher.press('Escape')
+    expect(escape.defaultPrevented).toBe(true)
+    expect(menu.attributes.get('hidden')).toBe('')
+    expect(document.activeElement).toBe(button)
+    // Activating a row folds the menu as well.
+    button.click()
+    railRow(document).click()
+    expect(menu.attributes.get('hidden')).toBe('')
+  })
+
+  it('draws Halt fleet disabled, with its reason, and binds nothing to it', async () => {
+    const { bridge, calls } = fakeBridge({})
+    const document = await boot(bridge, new FakeDocument())
+    const halt = classed(document.body, HALT_CLASS)[0] as FakeNode
+    expect(halt.tagName).toBe('BUTTON')
+    expect(halt.attributes.get('aria-disabled')).toBe('true')
+    expect(halt.attributes.get('title')).toBe(WRITE_UNAVAILABLE)
+    expect(textOf(halt).trim()).toBe('Halt fleet')
+    // No listener of any kind: the console's one approved write is not this.
+    expect(halt.listeners.size).toBe(0)
+    const before = calls.length
+    halt.click()
+    expect(calls.length).toBe(before)
+  })
+
+  it('fills the fleet gauge from the Live total, and from the budget read', async () => {
+    const frame = syntheticDocuments()[0] as Readonly<Record<string, unknown>>
+    const budget = {
+      global: { daily_cap_usd: 40, counted_usd: 10, spent_usd: 4, notional_usd: 1.5 },
+    }
+    const { bridge } = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(frame, nowStamp()),
+        showBudget: () => ({ ok: true, data: { document: budget } }),
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    const gauge = classed(document.body, GAUGE_CLASS)[0] as FakeNode
+    expect(classed(gauge, GAUGE_LABEL_CLASS)[0]?.textContent).toBe('GLOBAL')
+    const total = (frame['total'] ?? {}) as Record<string, unknown>
+    const cap = total['daily_cap_usd']
+    const capText = classed(gauge, GAUGE_CAP_CLASS)[0]?.textContent
+    if (typeof cap === 'number') expect(capText).toBe(`$${cap.toFixed(2)}`)
+    else expect(capText).toBe('n/a')
+    buttonFor(document, 'spend').click()
+    await flush()
+    expect(classed(gauge, GAUGE_CAP_CLASS)[0]?.textContent).toBe('$40.00')
+    expect(classed(gauge, GAUGE_NOTIONAL_CLASS)[0]?.textContent).toContain('1.50')
+    // The bar is counted over cap, as the fill's width in the SVG's units, and
+    // carries no notional segment.
+    expect(classed(gauge, GAUGE_FILL_CLASS)[0]?.attributes.get('width')).toBe('24')
+    expect(gauge.attributes.get('title')).toBe('counted $10.00 of the $40.00 daily cap (25.0%)')
+  })
+
+  it('withholds the gauge’s figures when the mode withholds caps', async () => {
+    const { bridge } = fakeBridge({ compatibility: aReducedCompatibility() })
+    const document = await boot(bridge, new FakeDocument())
+    const gauge = classed(document.body, GAUGE_CLASS)[0] as FakeNode
+    expect(classed(gauge, GAUGE_CAP_CLASS)[0]?.textContent).toBe('n/a')
+    expect(classed(gauge, GAUGE_FILL_CLASS)[0]?.attributes.get('width')).toBe('0')
   })
 
   it('says silent when the live read was refused, and draws the budget read the console made itself', async () => {
@@ -1185,8 +1361,11 @@ function railListOf(document: FakeDocument): FakeNode {
   return list
 }
 
-describe('the view navigation’s keyboard', () => {
-  it('is a tablist with one tab stop, and the arrows move the view and the focus with it', async () => {
+describe('the view navigation', () => {
+  it('is five buttons, each a tab stop, the view on screen marked aria-current="page"', async () => {
+    // The redesign's tabs (owner's ruling of 2026-10-28) replaced Task 6.5's nav tablist:
+    // ordinary tab stops whose own Enter and Space are the click. They stay buttons because
+    // the renderer writes no `href`.
     const { bridge, calls } = fakeBridge({
       replies: { showBudget: () => ({ ok: true, data: { document: { global: { counted_usd: 12.5 } } } }) },
     })
@@ -1197,81 +1376,39 @@ describe('the view navigation’s keyboard', () => {
     const spend = buttonFor(document, 'spend')
     const projects = buttonFor(document, 'projects')
     const coordinator = buttonFor(document, 'coordinator')
-
-    // The nav is a tablist and its buttons are its tabs (design section 4.3). The view on
-    // screen is marked twice: `aria-current` is the navigation's own mark, which the code
-    // emitted before this task and `base.css` already selects, and `aria-selected` is the
-    // same fact in the vocabulary a tablist is read with.
-    expect(nav.attributes.get('role')).toBe('tablist')
+    expect(nav.attributes.get('role')).toBeUndefined()
+    expect(nav.attributes.get('aria-label')).toBe('Console')
     for (const button of [live, graph, spend, projects, coordinator]) {
-      expect(button.attributes.get('role')).toBe('tab')
+      expect(button.tagName).toBe('BUTTON')
       expect(button.attributes.get('type')).toBe('button')
+      expect(button.attributes.has('tabindex')).toBe(false)
+      expect(button.attributes.has('role')).toBe(false)
     }
-    expect(live.attributes.get('aria-current')).toBe('true')
-    expect(live.attributes.get('aria-selected')).toBe('true')
-    expect(live.attributes.get('tabindex')).toBe('0')
-    // The roving half: the other four are out of the tab order, so the whole navigation is
-    // one stop rather than five.
-    for (const other of [graph, spend, projects, coordinator]) {
-      expect(other.attributes.get('aria-current')).toBe('false')
-      expect(other.attributes.get('aria-selected')).toBe('false')
-      expect(other.attributes.get('tabindex')).toBe('-1')
-    }
+    expect(live.attributes.get('aria-current')).toBe('page')
+    for (const other of [graph, spend, projects, coordinator]) expect(other.attributes.has('aria-current')).toBe(false)
 
-    // Right moves to the next tab **and shows it**: a nav button's selection *is* the view
-    // it puts on screen (design section 4.3), so the read behind the view is made and no
-    // second key is needed. The second tab is the Graph, whose screen opens by reading the
-    // plan -- so a handler that moved the marks without calling `show` leaves this list
-    // empty, which is the same claim the Spend step below makes about the budget.
-    const pressed = live.press('ArrowRight')
+    // A click shows the view and makes its read.
+    graph.click()
     await flush()
-    expect(pressed.defaultPrevented, 'the arrow key was left to the window').toBe(true)
-    expect(graph.attributes.get('aria-current')).toBe('true')
-    expect(graph.attributes.get('aria-selected')).toBe('true')
-    expect(graph.attributes.get('tabindex')).toBe('0')
-    expect(live.attributes.get('aria-current')).toBe('false')
-    expect(live.attributes.get('tabindex')).toBe('-1')
-    expect(document.activeElement, 'the ring did not follow the arrow').toBe(graph)
+    expect(graph.attributes.get('aria-current')).toBe('page')
+    expect(live.attributes.has('aria-current')).toBe(false)
     expect(calls.filter((call) => call.name === 'planStatus')).toHaveLength(1)
-
-    // And on to Spend, which is the view that reads the budget.
-    graph.press('ArrowRight')
+    spend.click()
     await flush()
-    expect(spend.attributes.get('aria-current')).toBe('true')
-    expect(spend.attributes.get('tabindex')).toBe('0')
-    expect(document.activeElement).toBe(spend)
+    expect(spend.attributes.get('aria-current')).toBe('page')
     expect(calls.filter((call) => call.name === 'showBudget')).toHaveLength(1)
 
-    // End goes to the last tab -- the project view, since T1.2 appended it -- Home to the
-    // first, and Left wraps back from the first: the one behaviour `tabTarget` documents as
-    // the pattern's own.
-    spend.press('End')
-    await flush()
-    expect(coordinator.attributes.get('aria-current')).toBe('true')
-    expect(document.activeElement).toBe(coordinator)
-    coordinator.press('Home')
-    await flush()
-    expect(live.attributes.get('aria-current')).toBe('true')
-    expect(document.activeElement).toBe(live)
-    live.press('ArrowLeft')
-    await flush()
-    expect(coordinator.attributes.get('aria-current')).toBe('true')
-    expect(document.activeElement).toBe(coordinator)
+    // The arrows are not the nav's any more: they are left to the window.
+    expect(spend.press('ArrowRight').defaultPrevented).toBe(false)
+    expect(spend.attributes.get('aria-current')).toBe('page')
 
-    // A key the navigation does not own is left to the window: the nav is a horizontal
-    // tablist and its arrows are Left and Right (design section 4.3), while Up and Down are
-    // the rail's (section 4.1).
-    const down = coordinator.press('ArrowDown')
-    expect(down.defaultPrevented, 'the navigation took a key that is the rail’s').toBe(false)
-    expect(coordinator.attributes.get('aria-current')).toBe('true')
+    // The wordmark goes to Live and takes the focus there.
+    ;(classed(document.body, SHELL_WORDMARK_CLASS)[0] as FakeNode).click()
+    expect(live.attributes.get('aria-current')).toBe('page')
+    expect(document.activeElement).toBe(live)
   })
 
-  it('keeps one tab stop while Run detail is up, when no offered view is current', async () => {
-    // Run detail is a view with no button (design section 2.1), so while it is up every
-    // button is unmarked -- and a roving `tabindex` written as "the current view is 0" alone
-    // would leave the navigation with no stop at all, which is a tablist the keyboard cannot
-    // enter. The stop falls back to the first offered button, and this is the case that
-    // fails if that fallback goes.
+  it('marks no view while Run detail is up', async () => {
     const documents = syntheticDocuments()
     const frame = documents[documents.length - 1] as Readonly<Record<string, unknown>>
     const { bridge } = fakeBridge({
@@ -1287,16 +1424,36 @@ describe('the view navigation’s keyboard', () => {
     ;(row as FakeNode).click()
     await flush()
     expect((panelOf(document).children[0] as FakeNode).attributes.get('class')).toBe('run')
-    for (const button of navButtons(document)) {
-      expect(button.attributes.get('aria-current')).toBe('false')
-      expect(button.attributes.get('aria-selected')).toBe('false')
+    for (const button of navButtons(document)) expect(button.attributes.has('aria-current')).toBe(false)
+  })
+
+  it('draws Halt project and Reap disabled, and neither asks the main process for anything', async () => {
+    // The redesign (step 2b) draws the two controls a reader of a project panel
+    // and of a lost run expects. They are **drawn** and not wired: the console's
+    // one approved write is launch-from-console, so both go through `writes.ts`'s
+    // `disabledWrite` and neither is a channel, a preload member or a spawn
+    // entry. `live.ts` being a pure drawing file is what makes that true; this
+    // reads it off the booted window rather than off the source.
+    const documents = syntheticDocuments()
+    const frame = documents[documents.length - 1] as Readonly<Record<string, unknown>>
+    const { bridge, calls } = fakeBridge({
+      replies: { subscribeLive: () => snapshotReply(frame) },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    const panel = panelOf(document)
+    for (const className of ['live-halt', 'live-reap']) {
+      const drawn = classed(panel, className)[0] as FakeNode | undefined
+      expect(drawn, `.${className} was not drawn`).toBeDefined()
+      const button = drawn as FakeNode
+      expect(button.tagName).toBe('BUTTON')
+      expect(button.attributes.get('aria-disabled')).toBe('true')
+      expect(button.attributes.get('title')).toBe(WRITE_UNAVAILABLE)
+      expect(button.listeners.size).toBe(0)
+      const before = calls.length
+      button.click()
+      await flush()
+      expect(calls.length, `.${className} asked the main process for something`).toBe(before)
     }
-    expect(
-      navButtons(document)
-        .filter((button) => button.attributes.get('tabindex') === '0')
-        .map((button) => button.attributes.get('data-view')),
-      'the navigation left the tab order while a run was on screen',
-    ).toEqual(['live'])
   })
 })
 
@@ -1391,21 +1548,16 @@ describe('the installation rail’s keyboard', () => {
     expect(row.attributes.get('aria-selected')).toBe('true')
   })
 
-  it('keeps the rail’s three tab stops in the order a reader sees them', async () => {
-    // The focus order is the DOM order and the rail is first (design section 4.3): the
-    // collapse control, the list -- **one stop however many installations it holds**, which
-    // is what the roving `tabindex` buys -- and the add row. Three, and in that order.
+  it('keeps the rail’s two tab stops in the order a reader sees them', async () => {
+    // Inside the switcher's menu the rail's stops are the list -- **one stop however many
+    // installations it holds**, which is what the roving `tabindex` buys -- and the add row.
     const { bridge } = fakeBridge({})
     const document = await boot(bridge, new FakeDocument())
     const rail = railOf(document)
     const stops = everyNode(rail).filter(
       (node) => node.tagName === 'BUTTON' || node.attributes.has('tabindex'),
     )
-    expect(stops.map((node) => node.attributes.get('class'))).toEqual([
-      RAIL_COLLAPSE_CLASS,
-      RAIL_ROW_CLASS,
-      RAIL_ADD_CLASS,
-    ])
+    expect(stops.map((node) => node.attributes.get('class'))).toEqual([RAIL_ROW_CLASS, RAIL_ADD_CLASS])
     // Exactly one of them is the roving stop and it is the selected row: a list with no `0`
     // at all is a list the keyboard cannot enter, and two of them is a list that is two
     // stops.
@@ -1791,6 +1943,75 @@ describe('the rail over the installation list', () => {
     add?.click()
     await flush()
     expect(rail.at(-1)).toEqual({ name: 'openInstallations', args: {} })
+  })
+})
+
+// The launch control the Live poll redraws around (V2.5.1b follow-up).
+// ---------------------------------------------------------------------------
+
+/** launchField is one of the launch form's controls, by its class. */
+function launchField(document: FakeDocument, className: string): FakeNode {
+  const found = classed(document.body, className)[0]
+  if (found === undefined) throw new Error(`the launch form drew no .${className}`)
+  return found
+}
+
+/** valueOf is the value a control carries, which the fake holds only where the
+ * entry (or a case) put one. */
+function valueOf(node: FakeNode): string {
+  const value = (node as unknown as { readonly value?: unknown }).value
+  return typeof value === 'string' ? value : ''
+}
+
+/** typeInto writes one control's value the way an operator's typing would. */
+function typeInto(document: FakeDocument, className: string, value: string): void {
+  ;(launchField(document, className) as unknown as { value: string }).value = value
+}
+
+describe('the launch control the Live poll redraws around', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('keeps the form, the task, the title and the repository across a poll tick', async () => {
+    // The poll replaces the Live screen under the control once a second, and a
+    // control **rebuilt** on that tick would be a form that emptied itself while
+    // the operator was typing: the typed task and title and the repository the
+    // select holds all have to survive it. The entry keeps the control it built
+    // for the same offer of repositories and appends the same element back --
+    // this case is that claim, driven through a real tick.
+    const frame = syntheticDocuments()[0] as Readonly<Record<string, unknown>>
+    const row = {
+      ...listRow('aurora', { open: true }),
+      repositories: ['github/owner/repo-a', 'github/owner/repo-b'],
+    }
+    const { bridge, calls } = railBridge([row], { subscribeLive: () => snapshotReply(frame, nowStamp()) })
+    const document = await boot(bridge, new FakeDocument())
+
+    ;(launchField(document, LAUNCH_OPEN_CLASS) as FakeNode).click()
+    await flush()
+    const form = launchField(document, LAUNCH_FORM_CLASS)
+    const screen = panelOf(document).children[0]
+    typeInto(document, LAUNCH_TASK_CLASS, 'summarise the alerting backlog')
+    typeInto(document, LAUNCH_TITLE_CLASS, 'the nightly backlog')
+    typeInto(document, LAUNCH_REPOSITORY_CLASS, 'github/owner/repo-b')
+
+    await vi.advanceTimersByTimeAsync(LIVE_POLL_MS)
+    await flush()
+
+    // The tick really happened: a second watch, and the Live screen under the
+    // control is a new element. Without this the assertions below would hold for
+    // a poll that drew nothing at all.
+    expect(calls.filter((call) => call.name === 'subscribeLive')).toHaveLength(2)
+    expect(panelOf(document).children[0], 'the tick replaced no screen').not.toBe(screen)
+    // ...and through it the form is the one the operator was typing into.
+    expect(launchField(document, LAUNCH_FORM_CLASS), 'the poll rebuilt the launch form').toBe(form)
+    expect(valueOf(launchField(document, LAUNCH_TASK_CLASS))).toBe('summarise the alerting backlog')
+    expect(valueOf(launchField(document, LAUNCH_TITLE_CLASS))).toBe('the nightly backlog')
+    expect(valueOf(launchField(document, LAUNCH_REPOSITORY_CLASS))).toBe('github/owner/repo-b')
   })
 })
 

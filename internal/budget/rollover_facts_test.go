@@ -59,3 +59,34 @@ func TestBucketFactsAttribution(t *testing.T) {
 		t.Fatalf("repos %v warns %v", repos, warns)
 	}
 }
+
+// Slugs narrows the pass to the repositories named: a caller that wants one
+// repository's facts reads no other repository's runs, so an unreadable record
+// elsewhere is not even looked at.
+func TestBucketFactsSlugFilter(t *testing.T) {
+	b := blobx.Wrap(memblob.OpenBucket(nil))
+	day := budget.Day(time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC))
+	start := time.Date(2026, 10, 18, 10, 0, 0, 0, time.UTC)
+	fin := start.Add(time.Hour)
+	c := runstore.NewCost(1, 0.25, runstore.BasisAPIList)
+	putRecord(t, b, "acme-app", "20261018-100000-aaaa", runstore.Record{Repo: "acme/app", StartedAt: start, FinishedAt: &fin, Cost: &c})
+	putRecord(t, b, "acme-other", "20261018-100000-bbbb", runstore.Record{Repo: "acme/other", StartedAt: start, FinishedAt: &fin, Cost: &c})
+	if err := b.WriteAll(context.Background(), "runs/acme-other/20261018-110000-cccc/result.json", []byte("{nope"), nil); err != nil {
+		t.Fatal(err)
+	}
+	var warns []string
+	f := budget.BucketFacts{Bucket: b.Bucket, Warn: func(s string) { warns = append(warns, s) }, Slugs: []string{"acme-app"}}
+	facts, repos, err := f.Facts(context.Background(), day, day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(facts[day]) != 1 || facts[day][0].Slug != "acme-app" || facts[day][0].ComputeUSD != 0.25 {
+		t.Fatalf("facts[day] = %+v", facts[day])
+	}
+	if len(repos) != 1 || repos["acme-app"] != "acme/app" {
+		t.Fatalf("repos = %v", repos)
+	}
+	if len(warns) != 0 {
+		t.Fatalf("a narrowed pass read another repository's runs: %v", warns)
+	}
+}

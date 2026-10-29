@@ -447,6 +447,7 @@ func (r *run) endGatewayStage(stage string) ([]string, int64) {
 	r.reported += rep.Reported
 	r.unreconciled += rep.Unreconciled
 	r.unparsed += rep.UsageUnparsed
+	r.serviceTiers.Merge(rep.ServiceTiers)
 	r.mu.Unlock()
 	log := r.d.Log.With("stage", stage)
 	if rep.UsageUnparsed > 0 {
@@ -454,6 +455,14 @@ func (r *run) endGatewayStage(stage string) ([]string, int64) {
 	}
 	if rep.WouldHalt > 0 {
 		log.Warn("budget: calls the cap would have refused", "calls", rep.WouldHalt)
+	}
+	// A response that named a service tier the table has no multiplier for
+	// was charged the conservative multiple rather than failing the stage:
+	// the run says which tiers, so an operator reading the log can tell a
+	// provider's own tier from a price that is wrong (gateway.StageReport's
+	// ServiceTiers, which the line prints as a record carries it).
+	if tiers := rep.ServiceTiers.List(); len(tiers) > 0 {
+		log.Warn("budget: service tiers charged conservatively", "tiers", strings.Join(tiers, ", "))
 	}
 	return rep.Violations, rep.Tokens
 }
@@ -699,8 +708,10 @@ func (r *run) checkBudget() error {
 // warnReportedGap logs, once, when the providers' own cost figures are more
 // than reportedGapPct above what the gateway charged on the provider routes
 // without the route fee, which providers don't report (the table price
-// settles, so a high report means a wrong price or a served-by fallback; a
-// low one only means Fugaro over-charged).
+// settles, except where the report floors an unpriced tier's charge up to the
+// call's reservation, so a high report means a wrong price, a served-by
+// fallback, or a tier report above that reservation; a low one only means
+// Fugaro over-charged).
 func (r *run) warnReportedGap() {
 	r.mu.Lock()
 	var charged pricing.Micros

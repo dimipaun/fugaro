@@ -425,6 +425,104 @@ func TestResetToDiscardsACommitMadeAfterRef(t *testing.T) {
 	}
 }
 
+// TestResetToIgnoresAReplaceRef: a refs/replace/<sha> entry -- which the run's
+// own agent can write into the checkout's .git, and which git otherwise
+// honours when it looks an object up -- must not decide what ResetTo puts the
+// working tree at. ResetTo is the runner putting the branch back to a commit
+// it made itself (gate.go's runAutofix, digest.go's digestFinalize), and that
+// commit's own tree is the whole point of it.
+//
+// Mutation (run the reset without --no-replace-objects): the working tree is
+// the replacement object's, so the branch holds content no commit of this
+// run's ever had.
+func TestResetToIgnoresAReplaceRef(t *testing.T) {
+	repo, _ := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	step, err := repo.HeadSHA(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	testutil.WriteFiles(t, repo.Dir, map[string]string{"evil.txt": "evil\n"})
+	testutil.Git(t, repo.Dir, "add", "-A")
+	testutil.Git(t, repo.Dir, "commit", "--quiet", "-m", "evil")
+	testutil.Git(t, repo.Dir, "replace", step, testutil.Git(t, repo.Dir, "rev-parse", "HEAD"))
+
+	if err := repo.ResetTo(ctx, step); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := repo.HeadSHA(ctx); err != nil || got != step {
+		t.Fatalf("HEAD = %s, %v, want %s", got, err, step)
+	}
+	if _, err := os.Stat(filepath.Join(repo.Dir, "evil.txt")); !os.IsNotExist(err) {
+		t.Fatal("the replacement object's file survived ResetTo: the working tree is not the commit's own")
+	}
+	if data, err := os.ReadFile(filepath.Join(repo.Dir, "README.md")); err != nil || string(data) != "hello\n" {
+		t.Fatalf("README.md = %q, %v, want the commit's own content", data, err)
+	}
+}
+
+// TestIsCleanIgnoresReplaceRefs: the agent writes the checkout's own .git, so a
+// refs/replace/<sha> it plants must not change what git says the tree is. `git
+// status` compares the index against the tree of HEAD's commit, and a
+// replacement whose tree differs from HEAD's makes a tree with no changes read
+// as staged -- which sends CommitAll off to commit nothing.
+//
+// Mutation (plain `git status`): IsClean is false on a clean tree, and
+// CommitAll fails instead of reporting that there was nothing to commit.
+func TestIsCleanIgnoresReplaceRefs(t *testing.T) {
+	repo, _ := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	base := testutil.Git(t, repo.Dir, "rev-parse", "HEAD")
+	testutil.WriteFiles(t, repo.Dir, map[string]string{"a.txt": "a\n"})
+	if changed, err := repo.CommitAll(ctx, "add a"); err != nil || !changed {
+		t.Fatalf("CommitAll = %v, %v", changed, err)
+	}
+	head := testutil.Git(t, repo.Dir, "rev-parse", "HEAD")
+	testutil.Git(t, repo.Dir, "replace", head, base)
+	// The plant does bite a plain read -- without this the test would pass on
+	// a git that ignored the ref for some other reason.
+	if out := testutil.Git(t, repo.Dir, "status", "--porcelain"); out == "" {
+		t.Fatal("the planted replacement ref changed nothing about a plain `git status`; the test is not exercising it")
+	}
+	if clean, err := repo.IsClean(ctx); err != nil || !clean {
+		t.Fatalf("IsClean with a planted replacement ref = %v, %v; want a clean tree", clean, err)
+	}
+	if changed, err := repo.CommitAll(ctx, "nothing"); err != nil || changed {
+		t.Fatalf("CommitAll with a planted replacement ref = %v, %v; want nothing to commit", changed, err)
+	}
+}
+
+// TestIsCleanSeesPastAReplaceRefThatMatchesTheIndex is the mirror of the test
+// above: a replacement whose tree equals the index makes a plain `git status`
+// read a tree with staged changes as clean, which would let CommitAll report
+// there was nothing to commit while the agent's work sat uncommitted. The
+// replacement-blind read still sees the staged change.
+func TestIsCleanSeesPastAReplaceRefThatMatchesTheIndex(t *testing.T) {
+	repo, _ := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	head := testutil.Git(t, repo.Dir, "rev-parse", "HEAD")
+	// A staged change, never committed: the index differs from HEAD's tree.
+	testutil.WriteFiles(t, repo.Dir, map[string]string{"a.txt": "a\n"})
+	testutil.Git(t, repo.Dir, "add", "-A")
+	tree := testutil.Git(t, repo.Dir, "write-tree")
+	alt := testutil.Git(t, repo.Dir, "commit-tree", tree, "-p", head, "-m", "the index as a commit")
+	testutil.Git(t, repo.Dir, "replace", head, alt)
+	// The plant does bite a plain read: with replacements on, the index
+	// matches the replacement tree and the staged change reads as clean.
+	if out := testutil.Git(t, repo.Dir, "status", "--porcelain"); out != "" {
+		t.Fatalf("the planted replacement did not hide the staged change from a plain `git status`: %q", out)
+	}
+	if clean, err := repo.IsClean(ctx); err != nil || clean {
+		t.Fatalf("IsClean with a replacement matching the index = %v, %v; want a dirty tree", clean, err)
+	}
+}
+
 func TestCommitAllAheadAndClean(t *testing.T) {
 	repo, _ := setup(t)
 	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {

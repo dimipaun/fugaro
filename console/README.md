@@ -75,7 +75,7 @@ hold the three (`test/unit/{redact,fixture,recorder}.test.ts`).
 
 ## The toolchain, pinned (Task 1.0)
 
-**Electron is pinned to exactly `44.7.2`, and it is bumped on purpose**, with the
+**Electron is pinned to exactly `45.0.0`, and it is bumped on purpose**, with the
 toolchain task and the lockfile in the same commit — the same rule
 `internal/budget/rules/emulator/package.json` states for its own `firebase-tools`
 pin. Electron is not an ordinary dependency: it pulls a large prebuilt runtime
@@ -88,7 +88,7 @@ runtime dependency today; see below):
 
 | Package | Version | Where | Why it is here |
 |---|---|---|---|
-| `electron` | `44.7.2` | `devDependencies` | the app's runtime, bumped on purpose |
+| `electron` | `45.0.0` | `devDependencies` | the app's runtime, bumped on purpose |
 | `typescript` | `7.0.2` | `devDependencies` | `tsc --noEmit` for `npm run typecheck`, and `tsc -p tsconfig.build.json` for `npm run build` (Task 1.1: the build is `tsc` too, because the pinning rule leaves no room for a bundler) |
 | `vitest` | `5.0.5` | `devDependencies` | `npm run test:unit` |
 | `@playwright/test` | `1.64.1` | `devDependencies` | `npm run test:e2e`, Electron driven by `electron.launch` (Task 1.1) |
@@ -107,7 +107,7 @@ test asserts the `dependencies` set is exactly empty until then.
 
 **The Node is pinned exactly too: `engines.node` is `22.23.3`, not a range.**
 It is the version every command in this task was run on, and it is a member of
-both pinned tools' own engine ranges (Electron 44.7.2 declares `>= 22.12.0`,
+both pinned tools' own engine ranges (Electron 45.0.0 declares `>= 22.12.0`,
 Vitest 5.0.5 declares `^22.12.0 || ^24.0.0 || >=26.0.0`), so nothing in the
 toolchain is asking for anything narrower. A range here would have been the one
 float left in a task whose whole subject is exact pins — and the plan already
@@ -147,7 +147,7 @@ install step, because Electron's runtime is not fetched by a lifecycle script
 here.** Electron is not an ordinary dependency — the pin, the download and the
 checksum are hand-bumped and documented rather than floated (design section
 5.2) — but with `--ignore-scripts` the download simply happens later: Electron
-44.7.2 fetches its runtime on the first `require('electron')` (its `index.js`
+45.0.0 fetches its runtime on the first `require('electron')` (its `index.js`
 spawns `install.js` when `path.txt` and `dist/` are missing, printing
 `Downloading Electron binary...`). Verified on this tree: `npm ci
 --ignore-scripts --no-audit --no-fund`, then `require('electron')`, downloads
@@ -1050,7 +1050,7 @@ two files and no recording at all, and each is labelled for what it is:
 
 ```
 {"fugaro_fixture":{"version":1,"redactor":"fugaro-console-redact/2","case":"synthetic",
- "project":"<project>","synthetic":true,"records":6,"sha256":"ee29b66642fb538e2ff17d37a9dfaf1be9ec635706fe11c8d9b7368beb528669",
+ "project":"<project>","synthetic":true,"records":6,"sha256":"183119f546d9b1875aac902b79f68817af8fe9e93b0659b7d731adf552ad5f0f",
  "note":"synthetic: invented documents put through the same redaction path as a recording; never recorded from any installation or cloud"}}
 ```
 
@@ -1867,25 +1867,33 @@ seam the renderer entry (Task 3.4a) needs to answer the dashboard's
   Task 4.1 (#540) wrote the list and Task 3.4a moved the served root to the
   bundler's output; this task adds its two files to it. `build.files` carries
   the documents the handler serves, as the bundler's copies of
-  `src/renderer/index.html`, `src/renderer/refusal.html` and
-  `src/renderer/installations.html` in `dist/bundle/`; the two bundles,
-  `dist/bundle/console.js` and `dist/bundle/installations.js`; **the served
+  `src/renderer/index.html`, `src/renderer/refusal.html`,
+  `src/renderer/installations.html` and `src/renderer/confirm.html` in
+  `dist/bundle/`; the three bundles,
+  `dist/bundle/console.js`, `dist/bundle/installations.js` and
+  `dist/bundle/confirm.js`; **the served
   stylesheet, `dist/bundle/console.css`** (Task 6.2 — every document links it,
-  so an app packaged without it opens a window with no style at all); the two
-  preloads a window loads by absolute path, `dist/preload/index.js` and
-  `dist/preload/installations.js`; and the compiled main process, shared and
+  so an app packaged without it opens a window with no style at all); the three
+  preloads a window loads by absolute path, `dist/preload/index.js`,
+  `dist/preload/installations.js` and `dist/preload/confirm.js` (the launch
+  confirmation window's, V2.5.1a part 2b-1); and the compiled main process,
+  shared and
   source modules under `dist/**` except the two Task 4.1 excludes by name.
   `test/unit/build-files.test.ts` reads that list off the tree rather than
-  repeating it, so a third document or a third preload is covered when it is
+  repeating it, so the next document or the next preload is covered when it is
   added, and a file that works here but is missing from the shipped bundle
   fails a named test instead of shipping — the stylesheet is the one
   `bundlerOutputs` names by hand, and that is why a `build.files` that dropped
   it fails by name.
 - **The picker's bundle entry** is the bundler's second entry
-  (`pickerBundlePaths` in `tools/bundle-renderer/index.ts`): `npm run build`
-  writes `dist/bundle/installations.js` beside `console.js`, each bundle step
-  told the other's name so the served root still refuses any file it did not
-  write, and `SERVED_FILES` names both documents and both scripts.
+  (`pickerBundlePaths` in `tools/bundle-renderer/index.ts`) and the launch
+  confirmation window's the third (`confirmBundlePaths`, V2.5.1a part 2b-2a):
+  `npm run build`
+  writes `dist/bundle/installations.js` and `dist/bundle/confirm.js` beside
+  `console.js`, each bundle step
+  told the others' names so the served root still refuses any file it did not
+  write, and `SERVED_FILES` names all four documents, the three window scripts,
+  the worker and the stylesheet.
 - **A picker e2e spec.** The picker's coverage is
   `test/unit/installations-store.test.ts`, `test/unit/installations-ipc.test.ts`
   and `test/unit/installations-view.test.ts` (the last drives the view over a
@@ -2010,7 +2018,7 @@ because "left at its upstream default" is a decision and not an oversight:
 | `GrantFileProtocolExtraPrivileges` | **disabled** | `file://` keeps no extra privileges; the console serves itself over `app://` (Task 1.1). |
 | `EnableCookieEncryption` | *left alone* | The console keeps no cookie store: no sign-in is stored. |
 | `LoadBrowserProcessSpecificV8Snapshot` | *left alone* | A startup optimisation for a browser process that loads web content. |
-| `WasmTrapHandlers` (index 8) | *left alone, enabled* | Upstream default kept: V8's WebAssembly bounds-check strategy loads no code, reads no environment variable or flag, and the console runs no WebAssembly. It was beyond the pin until `@electron/fuses` 2.1 named it; `BEYOND_PIN_FUSES` is now empty, because Electron 44.7.2's nine fuses are all named by the package. |
+| `WasmTrapHandlers` (index 8) | *left alone, enabled* | Upstream default kept: V8's WebAssembly bounds-check strategy loads no code, reads no environment variable or flag, and the console runs no WebAssembly. It was beyond the pin until `@electron/fuses` 2.1 named it; `BEYOND_PIN_FUSES` is now empty, because Electron 45.0.0's nine fuses are all named by the package. |
 
 Three properties of the hook are worth stating here, because they are what make
 the six a fact rather than an intention:
@@ -2048,7 +2056,7 @@ the six a fact rather than an intention:
   differ, so an Electron bump that adds a fuse cannot reach the signer
   unexamined. The three fuses it leaves alone are checked **by value** too: the
   cookie and snapshot fuses must still be disabled and `WasmTrapHandlers` enabled,
-  the defaults the pinned Electron 44.7.2 ships, or the build stops.
+  the defaults the pinned Electron 45.0.0 ships, or the build stops.
   `fuses.test.ts` also reads the real binary's wire when
   `node_modules/electron/dist` is installed, and on macOS runs the real hook over
   a copy of it in a temporary directory; without the binary those two tests skip
@@ -2293,7 +2301,9 @@ rather than moving it: `build.files` is
 ```json
 ["THIRD_PARTY_NOTICES.md", "dist/main/**/*.js", "!dist/main/fuses.js",
  "dist/preload/index.js", "dist/preload/installations.js",
+ "dist/preload/confirm.js",
  "dist/shared/**/*.js", "dist/source/**/*.js", "!dist/source/fixture.js",
+ "dist/bundle/confirm.html", "dist/bundle/confirm.js",
  "dist/bundle/console.css", "dist/bundle/console.js",
  "dist/bundle/elk-worker.min.js", "dist/bundle/index.html",
  "dist/bundle/installations.html", "dist/bundle/installations.js",
@@ -2302,8 +2312,10 @@ rather than moving it: `build.files` is
 
 (as amended when Task 3.4a moved the served root to `dist/bundle/`, Task 3.4b
 added the picker's document, script and preload, Task 6.2 added the served
-stylesheet, and GV2.2 added the pinned worker the build copies verbatim and the
-notices file packed beside the app; the paragraph below is Task 4.1's record of its own first list)
+stylesheet, GV2.2 added the pinned worker the build copies verbatim and the
+notices file packed beside the app, and V2.5.1a part 2b-2a added the launch
+confirmation window's document and bundle; the paragraph below is Task 4.1's
+record of its own first list)
 
 — the compiled main process, preload, shared and source modules, the document
 the window actually loads, and nothing else. Two compiled files are excluded by
@@ -2914,7 +2926,7 @@ that follows is the record of the stage before that.** Each is named by `THEME_S
 `tools/bundle-renderer/index.ts`, the bundler's stylesheet step concatenates them (in list
 order) into `dist/bundle/console.css`, `/console.css` is one of the entries `SERVED_FILES`
 names — the list `test/unit/bundle.test.ts` holds the served root to, not a filter the
-handler consults — and each of the three documents links it — see the section at the foot of
+handler consults — and each of the four documents links it — see the section at the foot of
 this file.
 `test/unit/bundle.test.ts` fails if a stylesheet `THEME_STYLESHEETS` names still says in its
 own prose that nothing reads it, which is the sentence this paragraph used to open with and

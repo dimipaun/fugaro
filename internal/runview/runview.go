@@ -578,6 +578,11 @@ func cost(r *runstore.Record, e *backend.Execution, prices PriceBook, now time.T
 		// flag does: only the run's own gateway counted them, and no
 		// execution the row re-prices can recompute them (P12).
 		c.CacheReadTokens, c.CacheWriteTokens = stored.CacheReadTokens, stored.CacheWriteTokens
+		// The tiers a call came back at that the table has no multiplier
+		// for travel for the same reason: they name the conservative charge
+		// the row's model figure holds, and no execution the row re-prices
+		// can recover them (§6.1).
+		c.ServiceTiers = stored.ServiceTiers
 		// The notional part travels with the model figure: the row is a view
 		// of the record's charge, and rebuilding the totals from ModelUSD and
 		// ModelBasis alone would bill a cascade run's tier-A dollars as money

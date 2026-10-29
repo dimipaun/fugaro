@@ -33,6 +33,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/tier"
 )
 
 // Launch timing. claimWait and claimPoll are variables so tests can shrink them.
@@ -177,6 +178,15 @@ type runOptions struct {
 	// rigorFlags, because a value outside it is a launcher's mistake rather
 	// than a run's opinion.
 	rigor string
+	// tier is --tier: the expectation tier this run's own launcher dispatches
+	// it at (docs/task-governance spec §3, implementation-plan T8.1): how much
+	// the run is expected to cost and take, which the runner records with the
+	// expectation the governance resolved for it. Empty (the default) is no
+	// expectation at all: the launch writes no such field and the record
+	// carries no tier block. Kept as the flag's own string and validated
+	// against the vocabulary once, in tierFlag, because a value outside it is
+	// a launcher's mistake rather than a run's opinion about its own size.
+	tier string
 	// noCompression is --no-compression: turn the repository's
 	// agent.compression off for this run only (docs/design/
 	// headroom-compression.md §4). The override is deliberately
@@ -241,10 +251,13 @@ func newRunCmd() *cobra.Command {
 			"It may raise the mode the run resolves from its own configuration\n" +
 			"(rigor.default and rigor.areas in fugaro.yaml, the project layer's defaults)\n" +
 			"and never lower it, so a launch that asks for less cannot outvote a repository\n" +
-			"that asked for more. --path PATH declares a path this run will touch,\n" +
-			"repeatable, matched against those area rules before the run starts; without\n" +
-			"either flag the run resolves from its configuration alone. Both are recorded\n" +
-			"in the run's record and named in the pull request's status line.",
+			"that asked for more. A follow-up (--pr) keeps the mode the PR's runs recorded\n" +
+			"and may only raise it: asking for less is refused, and so is hotfix, which\n" +
+			"only an operator's own run reaches. --path PATH declares a path this run will\n" +
+			"touch, repeatable, matched against those area rules before the run starts;\n" +
+			"without either flag a first run resolves from its configuration alone, and a\n" +
+			"follow-up from that and the mode it keeps. Both are\n" +
+			"recorded in the run's record and named in the pull request's status line.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error { return runRun(cmd, &o, args) },
 	}
@@ -263,8 +276,9 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&o.recipe, "recipe", "", "the recipe (task loop) to run: .fugaro/recipes/NAME.yaml, the project's, or the catalog's ("+strings.Join(recipe.CatalogNames(), ", ")+"); default: agent.recipe in fugaro.yaml, else default; a follow-up (--pr) keeps its previous run's")
 	f.StringVar(&o.token, "token", "", "named Claude account (claude_accounts in the local config) this run uses, for a workflow whose agent.auth is oauth; default: agent.oauth_token in fugaro.yaml, else the repository's default account; a follow-up (--pr) keeps its previous run's account unless this is given explicitly, which overrides it (checked the same way as a first run's)")
 	f.StringArrayVar(&o.attach, "attach", nil, "attach a file to the run: repeatable, uploaded to the run's own inputs/ and downloaded by a mode: artifact run into the checkout's inputs/ (needs a mode: artifact recipe; refused on a run ID that already has a task)")
-	f.StringVar(&o.rigor, "mode", "", "the rigor mode to ask for: "+rigor.ModeList()+"; it may raise the mode the run resolves from its configuration (rigor.default, rigor.areas, the project layer) and never lower it; without it the run resolves from those layers alone")
-	f.StringArrayVar(&o.paths, "path", nil, "declare a path this run will touch, matched against the rigor.areas rules in effect (the repository's, and the project layer's beside them): repeatable; a run that declares none resolves from its configuration alone")
+	f.StringVar(&o.rigor, "mode", "", "the rigor mode to ask for: "+rigor.ModeList()+"; it may raise the mode the run resolves from its configuration (rigor.default, rigor.areas, the project layer) and never lower it; a follow-up (--pr) keeps the mode the PR's runs recorded and may only raise it, and takes no hotfix; without it a first run resolves from those layers alone, and a follow-up from those and the mode it keeps")
+	f.StringArrayVar(&o.paths, "path", nil, "declare a path this run will touch, matched against the rigor.areas rules in effect (the repository's, and the project layer's beside them): repeatable; a run that declares none matches no area rule")
+	f.StringVar(&o.tier, "tier", "", "the expectation tier to dispatch this run at: "+tier.List()+". It is what the run is expected to cost and take (governance.tiers in fugaro.yaml and the project layer), and never a cap: the run's own budget cap stays the ceiling. A --pr follow-up keeps the tier its PR's runs recorded; without this flag a run carries no expectation at all")
 	f.IntVar(&o.attempts, "attempts", 0, "launch N (2 to 4) independent runs of the same task, workflow, ref and recipe as a best-of-N batch (bestof-<first run id> unless --batch is given); refused with --pr, --run-id, --retry or a review-mode recipe")
 	f.BoolVar(&o.noCompression, "no-compression", false, "turn agent.compression off for this run only, overriding fugaro.yaml; there is no flag to turn it on, which is a reviewed fugaro.yaml change")
 	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output")
@@ -274,7 +288,7 @@ func newRunCmd() *cobra.Command {
 }
 
 // taskFlags are the flags --retry excludes: the stored task.json supplies them.
-var taskFlags = []string{"repo", "ref", "workflow", "run-id", "batch", "title", "plan-task", "task-file", "total-timeout", "pr", "recipe", "token", "attach", "mode", "path", "no-compression"}
+var taskFlags = []string{"repo", "ref", "workflow", "run-id", "batch", "title", "plan-task", "task-file", "total-timeout", "pr", "recipe", "token", "attach", "mode", "path", "tier", "no-compression"}
 
 // prFlags are the flags --pr excludes: the previous run on the PR supplies them.
 var prFlags = []string{"ref", "workflow"}
@@ -335,6 +349,11 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		// --title is: a request the launcher accepts here is the one every
 		// spec builder writes, and a refused one leaves nothing behind.
 		if err = rigorFlags(o); err != nil {
+			return err
+		}
+		// --tier, resolved the same way and for the same reason: the
+		// vocabulary is closed, and a launch that names none writes no field.
+		if err = tierFlag(o); err != nil {
 			return err
 		}
 		if text, err = taskText(cmd, o.tf, args, prSet); err != nil {
@@ -663,14 +682,35 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			if err := checkCloneRigorImage(ctx, env, spec, warn); err != nil {
 				return launchResult{}, err
 			}
+			// The governance: gate, judged the same way and for the same
+			// reason: see checkGovernanceImage.
+			if err := checkCloneGovernanceImage(ctx, env, spec, warn); err != nil {
+				return launchResult{}, err
+			}
 			// The run's own rigor request, gated on the field the same way:
 			// a runner older than rigorRequestSince refuses a task carrying
 			// rigor or paths outright (task.Parse decodes with
-			// DisallowUnknownFields). A launch that asks for nothing carries
-			// neither field and is never gated.
+			// DisallowUnknownFields). A launch that carries neither field is
+			// never gated — but a follow-up that passed no flag still carries
+			// one when its PR recorded a mode (T5.2), which is what
+			// rigorGateSubject says in the refusal.
 			if asksForRigor(spec) {
 				if err := checkCloneImageSince(env.lc, spec, rigorRequestSince,
-					"the run's own rigor request (--mode, --path)", "the rigor request", "", warn); err != nil {
+					rigorGateSubject(o, spec), "the rigor request", "", warn); err != nil {
+					return launchResult{}, err
+				}
+			}
+			// The tier a task carries, judged on the field like the request
+			// above and under the release that ships both the field and the
+			// governance: block its expectation comes from (governanceSince):
+			// a runner older than that refuses a task carrying a tier outright
+			// (task.Parse decodes with DisallowUnknownFields). A launch that
+			// carries none is never gated — but a follow-up that passed no
+			// flag still carries one when its PR recorded a tier, which is
+			// what tierGateSubject says in the refusal.
+			if spec.Tier != "" {
+				if err := checkCloneImageSince(env.lc, spec, governanceSince,
+					tierGateSubject(o, spec), "the tier", "", warn); err != nil {
 					return launchResult{}, err
 				}
 			}
@@ -733,15 +773,30 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			if err := checkRigorImage(ctx, env, slug, spec, kind, warn); err != nil {
 				return launchResult{}, err
 			}
+			// The governance: gate, the same shape as the clone branch's
+			// above and for the same reason.
+			if err := checkGovernanceImage(ctx, env, slug, spec, kind, warn); err != nil {
+				return launchResult{}, err
+			}
 			// The same gate as the clone branch's above, and for the same
 			// reason: the request is a new task field, and a runner that
 			// predates it refuses the whole spec at bootstrap — bytes in the
 			// bucket under a run that never starts. Judged from the deployed
-			// job's build record, and never reached by a launch that asks for
-			// nothing.
+			// job's build record, and never reached by a launch that carries
+			// no such field at all.
 			if asksForRigor(spec) {
 				if err := checkImageSince(ctx, env, slug, spec, kind, rigorRequestSince,
-					"the run's own rigor request (--mode, --path)", "the rigor request", "", warn); err != nil {
+					rigorGateSubject(o, spec), "the rigor request", "", warn); err != nil {
+					return launchResult{}, err
+				}
+			}
+			// The same gate as the clone branch's above, and for the same
+			// reason: the tier is a new task field, a runner older than
+			// governanceSince refuses the whole spec at bootstrap, and a
+			// launch that carries none is never gated.
+			if spec.Tier != "" {
+				if err := checkImageSince(ctx, env, slug, spec, kind, governanceSince,
+					tierGateSubject(o, spec), "the tier", "", warn); err != nil {
 					return launchResult{}, err
 				}
 			}
@@ -963,6 +1018,24 @@ func rigorFlags(o *runOptions) error {
 	return nil
 }
 
+// tierFlag is the expectation tier the run's own launcher asks for, validated
+// once for every launch shape that accepts it (a first run, a best-of-N batch,
+// a review, a follow-up): the tier against the closed vocabulary (tier.Tiers,
+// spec §3).
+//
+// Like rigorFlags it runs before openCloud and before any write, so a near
+// miss — "Trivial", a trailing space, "huge" — is the launcher's own mistake,
+// refused with the vocabulary in the message, rather than a value the runner
+// reads as an unknown tier. The same rule is applied again by
+// task.Spec.Validate to whatever a task carries, so a hand-written task.json
+// cannot smuggle one past a launcher.
+func tierFlag(o *runOptions) error {
+	if o.tier != "" && !tier.Known(tier.Tier(o.tier)) {
+		return userErr("--tier %q: use %s, or leave it off to dispatch the run with no expectation", o.tier, tier.List())
+	}
+	return nil
+}
+
 // noteRigorRequest says, once per launch, when --mode asks for a mode the
 // layers already meet: the request may raise and never lower (D6), so such a
 // request is recorded as asked and changes nothing, and a launcher that typed
@@ -1007,6 +1080,11 @@ type attemptPlan struct {
 	// into the spec, and it is empty for implement and review, so those
 	// specs stay byte-identical to what the previous release wrote.
 	mode string
+	// digestRuns is the manifest of a report run (run_digest_manifest.go):
+	// this repository's runs its digest step may read, listed once here so
+	// every attempt of a batch carries the same list, and empty for every
+	// other launch, whose task stores no manifest at all.
+	digestRuns []string
 }
 
 // resolveAttemptPlan resolves everything a new run's spec needs except its
@@ -1069,11 +1147,23 @@ func resolveAttemptPlan(ctx context.Context, env *cloudEnv, o *runOptions, total
 	if err != nil {
 		return nil, err
 	}
-	rcp, mode, err := chooseRecipe(ctx, env, o.recipe, checkout, checkoutRoot(ctx, repo), warn, forAttempts)
+	root := checkoutRoot(ctx, repo)
+	rcp, mode, err := chooseRecipe(ctx, env, o.recipe, checkout, root, warn, forAttempts)
 	if err != nil {
 		return nil, err
 	}
-	return &attemptPlan{repo: repo, slug: slug, workflow: workflow, ref: ref, base: base, me: me, account: account, totalOverride: totalOverride, recipe: rcp, mode: mode}, nil
+	// The report run's manifest is listed here, once per launch, and before
+	// the launch itself: the listing and the horizon it needs are cloud
+	// calls of their own, but they come before the task is stored and the
+	// execution started, so a repository already writing its reports is
+	// refused without launching anything. A batch never reaches this with a
+	// report recipe (chooseRecipe refuses --attempts for one), so no
+	// attempt reads another's stored task as a report run still going.
+	digestRuns, err := digestManifest(ctx, env, slug, root, rcp, time.Now(), warn)
+	if err != nil {
+		return nil, err
+	}
+	return &attemptPlan{repo: repo, slug: slug, workflow: workflow, ref: ref, base: base, me: me, account: account, totalOverride: totalOverride, recipe: rcp, mode: mode, digestRuns: digestRuns}, nil
 }
 
 // buildAttemptSpec stamps a fresh run id (or o.runID, when given) onto plan,
@@ -1089,7 +1179,7 @@ func buildAttemptSpec(plan *attemptPlan, o *runOptions, text string) (string, *t
 	}
 	spec := &task.Spec{Version: 1, RunID: runID, Repo: plan.repo, Ref: plan.ref, BaseBranch: plan.base, Workflow: plan.workflow, Task: text, Title: o.title,
 		PlanTask: o.planTask, RequestedBy: plan.me, Batch: o.batch, Recipe: plan.recipe, Mode: plan.mode,
-		Rigor: rigor.Mode(o.rigor), Paths: o.paths}
+		Rigor: rigor.Mode(o.rigor), Paths: o.paths, Tier: tier.Tier(o.tier), DigestRuns: plan.digestRuns}
 	if plan.totalOverride != "" {
 		spec.Overrides.TotalTimeout = plan.totalOverride
 	}
@@ -1337,7 +1427,7 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 	printRecipeNote(warn, rr, true)
 	spec := &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: ref, BaseBranch: base, Workflow: workflow, Task: text, Title: o.title, PlanTask: o.planTask,
 		RequestedBy: me, Batch: o.batch, Recipe: rr.taskRecipe(), ReviewPRs: append([]int(nil), o.pr...),
-		Rigor: rigor.Mode(o.rigor), Paths: o.paths}
+		Rigor: rigor.Mode(o.rigor), Paths: o.paths, Tier: tier.Tier(o.tier)}
 	if total > 0 {
 		spec.Overrides.TotalTimeout = total.String()
 	}
@@ -1653,6 +1743,17 @@ func chooseRecipe(ctx context.Context, env *cloudEnv, flag string, checkout func
 		if forAttempts {
 			return nil, "", userErr("recipe %s is mode: artifact, which renders a deliverable into the run's bucket and opens no pull request; --attempts launches a fresh batch of pull requests and cannot use it", rr.Name)
 		}
+	}
+	// A report recipe reads this repository's own run records and writes the
+	// reports the repository is missing (task-governance plan T3.6), and the
+	// repository has one report run at a time: a batch's attempts are
+	// launched together, each carrying the same manifest, so they would all
+	// write the same reports into their own pull requests. The batch is
+	// refused here, where the recipe is known, rather than by the
+	// in-flight check in resolveAttemptPlan, which a batch's own attempts
+	// cannot see (they are stored only as they launch).
+	if forAttempts && recipe.UsesDigest(rr.Recipe) {
+		return nil, "", userErr("recipe %s writes this repository's run reports, and a repository has one report run at a time; --attempts launches a batch of runs at once and cannot use it", rr.Name)
 	}
 	printRecipeNote(warn, rr, explicit)
 	// An explicit --recipe default overrides agent.recipe, which applies when
@@ -2219,6 +2320,21 @@ func retrySpec(ctx context.Context, env *cloudEnv, ref string) (string, *task.Sp
 	if err := claudeAccountAllowed(env, spec.Repo, cmp.Or(spec.OAuthToken, config.DefaultClaudeAccount), checkoutAgentAuth(checkout())); err != nil {
 		return "", nil, err
 	}
+	// A report run is refused, the way a follow-up carrying one is
+	// (refuseFollowUpReportMode): --retry launches the task of a first
+	// launch as it stands, so the manifest it carries is the one that launch
+	// listed, stale by now, and none of the checks a fresh report launch
+	// makes — digestManifest's in-flight refusal among them — run at all. A
+	// repository has one report run at a time because both would write the
+	// same reports, and a stale manifest writes a report of records that
+	// have moved on; the launcher of a fresh report run lists them again.
+	// The task says it is one two ways: the manifest itself (digest_runs is
+	// accepted under no other recipe, task.Validate), which is the only one
+	// that speaks for a repository recipe, and the recipe's text or file,
+	// for a report run whose manifest came out empty.
+	if spec.Recipe != nil && (len(spec.DigestRuns) > 0 || digestRecipe(checkoutRoot(ctx, spec.Repo), spec.Recipe)) {
+		return "", nil, userErr("run %s/%s is a report run, and --retry launches the task of its first launch as it stands: its manifest is stale by now, and a repository has one report run at a time, because both would write the same reports — launch a new report run with fugaro run --recipe %s", slug, runID, spec.Recipe.Name)
+	}
 	return slug, spec, nil
 }
 
@@ -2236,17 +2352,29 @@ func checkMaxParallel(ctx context.Context, env *cloudEnv) error {
 	return checkMaxParallelFor(ctx, env, 1)
 }
 
+// activeHorizon is the longest a run can still be going: the longest job
+// timeout, or the cap a per-run override may reach, whichever is more, plus
+// the task timeout slack and the queueing margin. It bounds every "is a run
+// still active" question, which is why the report run's launch shares it
+// with checkMaxParallelFor below (run_digest_manifest.go).
+func activeHorizon(ctx context.Context, env *cloudEnv) (time.Duration, error) {
+	longest, err := env.be.LongestTaskTimeout(ctx)
+	if err != nil {
+		return 0, remote(err)
+	}
+	return max(longest, OverrideCap) + backend.TaskTimeoutSlack + horizonMargin, nil
+}
+
 // checkMaxParallelFor is checkMaxParallel, generalized to a launch that
 // needs room for `need` runs at once: a best-of-N batch (runAttempts) checks
 // for all of N before its first launch, so it never starts part of a batch
 // it cannot finish (design generic-tool G13). need is always 1 outside that
 // one caller, which checkMaxParallel keeps as the common case.
 func checkMaxParallelFor(ctx context.Context, env *cloudEnv, need int) error {
-	longest, err := env.be.LongestTaskTimeout(ctx)
+	horizon, err := activeHorizon(ctx, env)
 	if err != nil {
-		return remote(err)
+		return err
 	}
-	horizon := max(longest, OverrideCap) + backend.TaskTimeoutSlack + horizonMargin
 	active, err := env.be.List(ctx, backend.ListFilter{ActiveOnly: true, Since: time.Now().Add(-horizon)})
 	if err != nil {
 		return remote(err)
@@ -2539,8 +2667,10 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	// only budget admins may write the record, so a refusal is what most
 	// launchers get on every run, and a warning each time would be noise about
 	// something they cannot change (owner ruling 2026-10-24). The error text can
-	// quote what the database answered, so it goes through oneLine.
-	if err := reportLaunchIntent(hctx, env, slug, spec); err != nil && !errors.Is(err, rtdb.ErrPermission) {
+	// quote what the database answered, so it goes through oneLine. The call
+	// goes through the build's declarer (extend.go), whose core default is this
+	// very declarer, so a build whose declarer moved can register its own.
+	if err := declareLaunch(hctx, env, slug, spec); err != nil && !errors.Is(err, rtdb.ErrPermission) {
 		fmt.Fprintf(launchWarn, "warning: the launch was not reported to the coordinator: %s\n", oneLine(err.Error()))
 	}
 	// The run's budget identity: minted, sealed under a key drawn for this

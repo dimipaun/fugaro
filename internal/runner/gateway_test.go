@@ -3,12 +3,14 @@ package runner_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -20,6 +22,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/lock"
@@ -550,6 +553,47 @@ func TestStageTimingOAuthHasNoCalls(t *testing.T) {
 	}
 }
 
+// repeatCalls writes n runs of one identical shell command into the stage's
+// stream, the way the agent's own transcript carries them.
+func repeatCalls(inner step, command string, n int) step {
+	return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		input, err := json.Marshal(map[string]string{"command": command})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < n; i++ {
+			_, _ = req.Transcript.Write([]byte(`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":` + string(input) + `}]}}` + "\n"))
+		}
+		return inner(t, ctx, req)
+	}
+}
+
+// TestStageTimingRecordsRepeats: a stage's repeats is the relay's count of the
+// most times one identical shell command ran in the stage's own stream, which
+// is the figure the digest's loop flag reads -- the whole path from the
+// stream to the record (task-governance T1.4).
+func TestStageTimingRecordsRepeats(t *testing.T) {
+	g := newGW(t, gwRolesConfig(t), "observe", "",
+		out4k(), // implement: sonnet, one call
+		out4k()) // review: opus, one call
+	var st []int
+	rec, err := g.run(t,
+		calling(&st, repeatCalls(implement("feature"), "go test ./...", 5), call{sonnet, 4000}),
+		calling(&st, repeatCalls(review("ship", 0), "go test ./...", 2), call{opus, 4000}))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	want := []int{5, 2}
+	if len(rec.Stages) != len(want) {
+		t.Fatalf("stages = %+v", rec.Stages)
+	}
+	for i, n := range want {
+		if got := rec.Stages[i].Repeats; got == nil || *got != n {
+			t.Errorf("stage %q repeats = %v, want %d from the relay", rec.Stages[i].Name, got, n)
+		}
+	}
+}
+
 // TestStageTimingLateSpendIsUnattributed: a gateway call that settles after
 // its stage's wait ran out counts in the run's model cost and in no stage's
 // report. The stages then sum to model_usd minus cost.model_by's
@@ -732,6 +776,85 @@ func TestCostCrossCheckSkipsAHaltedStage(t *testing.T) {
 
 func unparsed2xx() anthropicfake.Reply {
 	return anthropicfake.Reply{Status: 200, Body: "not json at all"}
+}
+
+// tierPriority is a reply that comes back at a service tier the price table
+// has no multiplier for, the shape a live OpenRouter DeepSeek call returned.
+func tierPriority() anthropicfake.Reply {
+	rep := anthropicfake.MessageOK(sonnet, pricing.Usage{Input: 1000, Output: 100})
+	rep.Body = strings.Replace(rep.Body, `"service_tier":"standard"`, `"service_tier":"priority"`, 1)
+	return rep
+}
+
+// TestServiceTierNotedInRecord: a call charged conservatively for an
+// unpriced service tier is in the run's model figure, so the record names
+// the tier: the reader of a provider run has no other way to explain the
+// figure (its provider-reported cost is recorded, and floors that charge
+// rather than pricing it) and the stage log is not part of the record. The
+// stage itself goes on.
+func TestServiceTierNotedInRecord(t *testing.T) {
+	g := newGW(t, gwConfig(t, ""), "observe", "", tierPriority())
+	var st []int
+	rec, err := g.run(t, calling(&st, implement("feature"), call{sonnet, 4000}), review("ship", 0))
+	if err != nil || rec.Cost == nil {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("status = %q: a provider's own tier must not fail the stage", rec.Status)
+	}
+	if len(rec.Cost.ServiceTiers) != 1 || rec.Cost.ServiceTiers[0] != `usage.service_tier "priority"` {
+		t.Fatalf("service_tiers = %q, want the tier named in the record", rec.Cost.ServiceTiers)
+	}
+	if !strings.Contains(g.logs.String(), "service tiers charged conservatively") {
+		t.Fatalf("no line naming the tiers:\n%s", g.logs.String())
+	}
+}
+
+// tierScript is n replies, each answering at a different service tier the
+// price table has no multiplier for: the shape a provider that never repeats
+// itself sends.
+func tierScript(n int) []anthropicfake.Reply {
+	out := make([]anthropicfake.Reply, n)
+	for i := range out {
+		rep := anthropicfake.MessageOK(sonnet, pricing.Usage{Input: 1000, Output: 100})
+		rep.Body = strings.Replace(rep.Body, `"service_tier":"standard"`, fmt.Sprintf(`"service_tier":"tier-%02d"`, i), 1)
+		out[i] = rep
+	}
+	return out
+}
+
+// TestServiceTiersCappedInRecord: however many distinct tiers a run's calls
+// come back at, the record names MaxServiceTiers of them and counts the rest
+// in one entry. A tier no longer ends its stage (design §6.1), so a provider
+// answering a different one on every call would otherwise grow result.json
+// with the call count; the stage log carries the same bounded list. The run
+// still succeeds and every call is still charged.
+func TestServiceTiersCappedInRecord(t *testing.T) {
+	const distinct = 20
+	g := newGW(t, gwConfig(t, ""), "observe", "", tierScript(distinct)...)
+	var st []int
+	made := make([]call, distinct)
+	for i := range made {
+		made[i] = call{sonnet, 4000}
+	}
+	rec, err := g.run(t, calling(&st, implement("feature"), made...), review("ship", 0))
+	if err != nil || rec.Cost == nil {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("status = %q: a provider's own tier must not fail the stage", rec.Status)
+	}
+	want := make([]string, 0, gateway.MaxServiceTiers+1)
+	for i := range gateway.MaxServiceTiers {
+		want = append(want, fmt.Sprintf(`usage.service_tier "tier-%02d"`, i))
+	}
+	want = append(want, fmt.Sprintf("+%d more", distinct-gateway.MaxServiceTiers))
+	if !slices.Equal(rec.Cost.ServiceTiers, want) {
+		t.Fatalf("service_tiers = %q, want %q", rec.Cost.ServiceTiers, want)
+	}
+	if !strings.Contains(g.logs.String(), fmt.Sprintf("+%d more", distinct-gateway.MaxServiceTiers)) {
+		t.Fatalf("the stage log does not carry the entry the record does:\n%s", g.logs.String())
+	}
 }
 
 func TestUnreconciledRecorded(t *testing.T) {

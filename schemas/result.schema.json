@@ -90,11 +90,12 @@
         "model_source": { "enum": ["gateway", "claude-code"], "description": "Where model_usd came from: the gateway's settled ledger or Claude Code's own total." },
         "model_by": { "type": "object", "additionalProperties": { "type": "number", "minimum": 0 }, "description": "Model spend in USD, by model." },
         "route_by": { "type": "object", "additionalProperties": { "type": "number", "minimum": 0 }, "description": "Model spend in USD, by provider route; calls on Anthropic have no route." },
-        "reported_usd": { "type": "number", "minimum": 0, "description": "What providers said their calls cost, summed. For comparison with model_usd; never charged." },
+        "reported_usd": { "type": "number", "minimum": 0, "description": "What providers said their calls cost, summed. For comparison with model_usd: it never prices a call the table priced, but it floors the charge for a service tier no one prices (up to that call's reservation), so a model_usd above it is not always an overcharge." },
         "unreconciled": { "type": "number", "minimum": 0, "description": "USD charged from reservations rather than from reported usage." },
         "cache_read_tokens": { "type": "integer", "minimum": 0, "description": "The run's prompt-cache read token total, summed from the gateway's per-call usage. A token count and not a dollar split: the price table returns one blended figure per call, so a cache read's dollars cannot be told from a write's (P12). Absent when the run read nothing from cache, and for a run with no gateway." },
         "cache_write_tokens": { "type": "integer", "minimum": 0, "description": "The run's prompt-cache write token total, summed from the gateway's per-call usage, both cache TTLs together. Absent when the run wrote nothing to cache, and for a run with no gateway." },
         "usage_unparsed": { "type": "integer", "minimum": 0, "description": "Calls settled at their reservation because their usage could not be read." },
+        "service_tiers": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "The service tiers the run's calls came back at that the price table has no multiplier for, spelled as a violation is (`usage.service_tier \"priority\"`). Those calls were charged the conservative multiple of the rates each call was priced at -- or, where the route reported what the call cost, the dearer of that multiple and the provider's own figure plus the route fee, up to the reservation that call made -- rather than failing their stage, so model_usd counts that charge and this is what names it. At most eight distinct names, then one `+N more` entry counting the distinct names beyond them, so a provider that answers a new tier on every call cannot grow the record with the call count. Absent when every call was priced at the model's own rates." },
         "catalog_stale": { "type": "boolean", "description": "True when the built-in provider price catalog was older than its own 30-day threshold (catalog.StaleAfter, internal/pricing/catalog), so every model it priced was charged the dearest end of its tier's range rather than the end price_policy asked for. The run over-counts on purpose and logs one `budget: price catalog stale` WARN. Absent when the catalog was fresh, or when no catalog-priced model was charged." }
       }
     },
@@ -110,6 +111,7 @@
           "duration_s": { "type": "number", "minimum": 0 },
           "calls": { "type": "integer", "minimum": 0, "description": "How many model calls the stage made: the gateway's stage report. Absent without a gateway, so on an oauth run, where no result event supplies a call count either, and absent when nobody counted -- which is not the same as a stage that made no calls (0)." },
           "agents": { "type": "integer", "minimum": 0, "description": "How many sub-agent tool calls the stage's own stream carried, counted by the relay for every auth mode, gateway or not. The gateway's count of distinct agent IDs is a different figure and is never recorded, because it rests on the agent ID a client claims. Absent when nobody counted, which is not the same as a stage that ran none (0)." },
+          "repeats": { "type": "integer", "minimum": 0, "description": "The most times one identical shell command ran in the stage, counted by the relay from the stage's own stream. A count alone, never the command, a hash of it or any argument: a command can carry a token or a path, and this record is read by every launcher and by the digest's report, which flags a stage at five repeats or more as a loop (task-governance T1.4, D332). Absent when nobody counted, and in records written before the field existed, which is not the same as a stage that ran no command (0)." },
           "model_usd": { "type": "number", "minimum": 0, "description": "What this stage's model calls cost, whatever model they were on: the gateway's figure for the stage (the background model's calls included), or, without the gateway, the result event's total_cost_usd. The stages sum to cost.model_usd to the micro-dollar, except for gateway spend that settled after its stage's wait ran out, which is cost.model_by's \"unattributed\" and in no stage." },
           "model": { "type": "string", "description": "The model the stage was pinned to: the stage role's models.<role>, else agent.model. It is not what the upstream served, and a stage may also have called the background model, so it does not account for model_usd on its own. Absent when the config pinned none." },
           "model_notional_usd": { "type": "number", "minimum": 0, "description": "The part of this stage's model_usd that was notional: Claude Code's own figure when the stage ran on oauth, and, in a cascade run, the tier-A calls' share of what the gateway settled (D140). The stage's own split is the only place it exists -- one stage of a cascade run can hold both -- so cost.model_notional_usd says how much of the run's figure was notional and this says where. Absent when the stage's figure was all billed." }
@@ -169,10 +171,24 @@
       "required": ["reason", "scope", "at"],
       "description": "Why the run was halted; set when status is halted.",
       "properties": {
-        "reason": { "enum": ["kill_switch", "run_cap", "repo_daily_cap", "global_daily_cap", "no_cap", "token_cap", "budget_unavailable", "budget_token_expired", "no_credential", "creds_rules_denied"] },
+        "reason": { "enum": ["kill_switch", "run_cap", "repo_daily_cap", "global_daily_cap", "no_cap", "token_cap", "budget_unavailable", "budget_token_expired", "no_credential", "creds_rules_denied", "stage_budget", "review_ratio", "fanout", "review_scope", "expected_exceeded"] },
         "scope": { "enum": ["run", "repo", "global"] },
         "at": { "type": "string", "format": "date-time" },
         "detail": { "type": "string" }
+      }
+    },
+    "checkpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trigger"],
+      "description": "The report a governance halt leaves (docs/task-governance/implementation-plan.md T6.1, D329, G7): why the run stopped, and what a person deciding whether to continue it needs to know. A governance stop is never a silent kill — it halts the run and opens a draft pull request carrying this report — so the block is written exactly where halt.reason is one of the governance reasons, and no other stop (a cap, a kill switch, a failure) writes one. trigger, why_over and estimate_usd are the runner's own values read from the record; done, next and hard_instructions are the stopping agent's answer to the checkpoint prompt (wired in T7.3), so they are absent for every checkpoint written before that stage exists and for a per-run cap or stage timeout, which gets no checkpoint call. Every text field is bounded at runstore.MaxCheckpointText runes. Absent — never an empty block — for a run that did not take a governance halt, and in records from before this field existed; the field is additive, so an old reader sees the record it always saw and `version` stays 1.",
+      "properties": {
+        "trigger": { "enum": ["stage_budget", "review_ratio", "fanout", "review_scope", "expected_exceeded"], "description": "Which tripwire stopped the run (internal/runstore's governance HaltReason constants): a stage past its own budget, review that spent more calls than the ratio allows, more distinct sub-agents than the maximum, a review range covering files the run's own commits never changed, or a run past the cost its tier expected. The runner sets it from those constants, never from task text, so a reader renders the value itself." },
+        "done": { "type": "string", "minLength": 1, "maxLength": 500, "description": "What the work had finished when the run stopped, in the stopping agent's own words, clipped to 500 runes (runstore.MaxCheckpointText). Model-written: a reader treats it as untrusted text, never as markup." },
+        "why_over": { "type": "string", "minLength": 1, "maxLength": 500, "description": "Why the run is over, in the runner's own words for the trigger it recorded (internal/runner's haltReasonText), so the report says what the tripwire was without repeating the halt's own detail." },
+        "next": { "type": "string", "minLength": 1, "maxLength": 500, "description": "What the work would do next to finish the task, in the stopping agent's own words, bounded the same way." },
+        "estimate_usd": { "type": "number", "minimum": 0, "description": "The money the work had cost when it stopped, as the record's cost_usd holds it: the runner's only money figure for a checkpoint, and the figure a continuation starts from. Notional dollars included, the way cost_usd includes them." },
+        "hard_instructions": { "type": "string", "minLength": 1, "maxLength": 500, "description": "What the work found hard to satisfy or contradictory in its instructions, if anything, in the stopping agent's own words, bounded the same way." }
       }
     },
     "recipe": {
@@ -228,7 +244,7 @@
         },
         "ignored": {
           "type": "array",
-          "description": "Values a layer set that were looser than the limits in force and were dropped.",
+          "description": "Values a layer set that the run dropped: a value looser than the limits in force, or — absent clamped, below — a stage timeout the run's own timeouts.stage bounds at least as tightly (T7.6).",
           "items": {
             "type": "object",
             "additionalProperties": false,
@@ -238,7 +254,8 @@
               "value": { "type": "string" },
               "effective": { "type": "string" },
               "source": { "enum": ["ceiling", "default-branch", "branch", "policy"], "description": "The layer of the effective value." },
-              "from": { "enum": ["default-branch", "branch"], "description": "The layer that asked for the dropped value." }
+              "from": { "enum": ["ceiling", "default-branch", "branch"], "description": "The layer that asked for the dropped value. The ceiling is here for one case: a stage timeout the run's own timeouts.stage bounds at least as tightly, which the run drops and records (T7.6) — the layer that wrote it can be the project layer's governance, which is the ceiling." },
+              "clamped": { "type": "boolean", "description": "True for the one shape that is not 'looser than the limits in force': a stage timeout the run's own timeouts.stage bounds at least as tightly, which the run drops rather than give a deadline of its own (T7.6). Absent (false) for the merge's looser values, which is also a stage timeout dropped because a tighter layer capped it — the two cannot be told apart by key, source and from alone." }
             }
           }
         }
@@ -351,7 +368,7 @@
       "description": "The mode the run resolved, the layer that decided it, the areas that matched and the moment of the run each was known at (docs/rigor-modes/implementation-plan.md T1.2, D22, D24, D25). The mode's configuration is read from the base branch (D25), so revision names where it came from. Absent for a run that resolved none — a record from before this field existed, or a run that died before bootstrap — and absent means 'no record of this run's rigor', never 'it resolved nothing'.",
       "properties": {
         "mode": { "enum": ["poc", "startup", "pro", "critical", "hotfix"], "description": "The resolved mode (internal/rigor's vocabulary; pro is Fugaro's built-in default, D19)." },
-        "from": { "enum": ["area", "repo", "project", "default", "request"], "description": "The layer that decided the mode: an area rule the run's paths matched, the repository's rigor.default, the project layer's defaults.rigor.default, Fugaro's built-in default, or the run's own request (fugaro run --mode), which may raise and never lower (D6). It is never reached: that is the resolver's answer to a later moment asking again — hold what you already have (D22) — and the record keeps the earlier, narrower reason instead, which is the layer that actually set the mode (D24's 'the layer that won'). internal/runstore's KnownRigorFrom is this set." },
+        "from": { "enum": ["area", "repo", "project", "default", "request"], "description": "The layer that decided the mode: an area rule the run's paths matched, the repository's rigor.default, the project layer's defaults.rigor.default, Fugaro's built-in default, or the run's own request, which may raise and never lower (D6): fugaro run --mode, or the mode a --pr follow-up keeps from its pull request, which it records as request with or without the flag (T5.2). It is never reached: that is the resolver's answer to a later moment asking again — hold what you already have (D22) — and the record keeps the earlier, narrower reason instead, which is the layer that actually set the mode (D24's 'the layer that won'). internal/runstore's KnownRigorFrom is this set." },
         "areas": {
           "type": "array",
           "maxItems": 100,
@@ -369,6 +386,17 @@
         },
         "at": { "enum": ["bootstrap", "round", "finalize"], "description": "The moment of the resolution this block records: the last one that changed it, so a moment that resolved the same answer leaves it as it was." },
         "revision": { "type": "string", "maxLength": 120, "description": "The revision of the configuration the mode was read from, origin/<base branch> (D25), so a run whose other keys came from the checked-out ref can be told apart from the mode it ran under (F35's 'two answers' made visible). Absent when the run could not name it." }
+      }
+    },
+    "tier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tier", "expected_usd", "expected_minutes"],
+      "description": "The expectation tier the run was dispatched at and what Fugaro expected a run of that tier to cost and take (docs/task-governance/implementation-plan.md T8.1, D330): fugaro run --tier, or the tier a --pr follow-up keeps from its PR, and the expectation the run's governance resolved for it (governance.tiers). Neither figure is a cap: the deployed per-run cap stays the ceiling whatever a tier expects (G6), so an expected cost above the cap is an expectation the run still stops at the cap for. Absent — never a block with an empty tier — for a run that carried no tier, which is every record written before this field existed, so an old reader sees the record it always saw and version stays 1 (the field is additive).",
+      "properties": {
+        "tier": { "enum": ["trivial", "small", "medium", "large"], "description": "The tier (internal/tier's vocabulary). An unknown value is not a tier any runner resolved, and internal/runstore's TierRecord.Bounded refuses a block carrying one." },
+        "expected_usd": { "type": "number", "minimum": 0, "description": "What a run of the tier is expected to cost, in dollars (policy.TierExpectation.ExpectedUSD). Bounded below and not above, like the same figure in fugaro.schema.json's governance.tiers: the project layer may loosen a tier past any figure Fugaro ships, and an expectation over the per-run cap is still only an expectation (G6), so a ceiling here would be a record the runner legally wrote that its own published schema calls impossible." },
+        "expected_minutes": { "type": "integer", "minimum": 0, "description": "What a run of the tier is expected to take, in minutes (policy.TierExpectation.ExpectedMinutes). Bounded below and not above, for the reason expected_usd is." }
       }
     },
     "backlog": {
@@ -411,7 +439,7 @@
       "description": "The comparison between the paths implement changed and the paths the review range covers, taken right after implement (docs/task-governance/implementation-plan.md T5.2, F2, D332). Report only: nothing halts on it, and it is the input of the digest's review-scope flag (T1.4) and of the review-scope stop (T7.3). Both sets are repository-relative paths git listed, read over the same range the review input is built from, so outside is exactly what the reviewer was handed that implement never wrote. Bounded (runstore.MaxReviewScopeFiles paths per list, the two lists together within runstore.MaxReviewScopeBytes of path, each path at runstore.MaxReviewScopePath runes). Absent for a run that died before the comparison, and in records from before this field existed; the field is additive, so `version` stays 1.",
       "properties": {
         "applicable": { "type": "boolean", "description": "Whether the review range is the run's own commits — narrowed to them, or equal to them by construction — and so whether outside is a mismatch rather than a fact about a range kept wider on purpose. True exactly when why_not is absent. The two sets are read from one revision when it is true, so outside is empty by construction and a non-empty outside always comes with a why_not." },
-        "why_not": { "enum": ["follow-up", "review-run", "autofix", "git-too-old", "no-own-commits", "own-commits-unreadable", "no-narrower-range", "range-moved", "read-failed"], "description": "Why the comparison does not apply (internal/runstore's ReviewScope* values): a follow-up or a review run reviews the pull request's range; an autofix gate skipped implement; a git older than 2.44 cannot say which commits are the run's own; the run made no commit of its own, or they could not be read; the recorded range holds no more commits than the run's own, so it was kept; the commit the run's own commits start after no longer leads to HEAD; or one of the comparison's own git reads failed. A reader renders this value and never task text." },
+        "why_not": { "enum": ["follow-up", "review-run", "digest-run", "autofix", "git-too-old", "no-own-commits", "own-commits-unreadable", "no-narrower-range", "range-moved", "read-failed"], "description": "Why the comparison does not apply (internal/runstore's ReviewScope* values): a follow-up or a review run reviews the pull request's range; a report run's first step is the digest step, which no implement stage follows; an autofix gate skipped implement; a git older than 2.44 cannot say which commits are the run's own; the run made no commit of its own, or they could not be read; the recorded range holds no more commits than the run's own, so it was kept; the commit the run's own commits start after no longer leads to HEAD; or one of the comparison's own git reads failed. A reader renders this value and never task text." },
         "implement_files": {
           "type": "array",
           "maxItems": 200,

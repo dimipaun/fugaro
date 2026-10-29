@@ -131,13 +131,14 @@ upstream response carries.
 
 ### G2.1 Variant data, its loader and the claims guard
 
-- **Files:** `website/data/landing.yaml` (new), `website/src/lib/landing.mjs` (new: the loader and its validation, a plain module as `consent-key.mjs` and `changelog.mjs` are, so the test imports it directly), `website/test/landing-data.mjs` (new).
+- **Files:** `website/data/landing.yaml` (new), `website/src/lib/landing.mjs` (new: the loader and its validation, a plain module as `consent-key.mjs` and `changelog.mjs` are, so the test imports it directly), `website/src/content.ts` (six exports added — `parseYAML`, `describe`, `asMap`, `asList`, `asString` and `refuseUnknownKeys` — so the loader reads YAML and validates through the site's own reader rather than a second copy of it), `website/test/landing-data.mjs` (new).
 - **Interfaces:** produces `loadLanding()`: per variant, path, headline, supporting line, self-hosted video
   file (optional), proof number with its source, tone, WhatsApp pre-fill text; and a `partner_logos` list
-  (empty) and an optional self-hosted `image` (the `/crew` cat imagery).
+  (empty: each entry is a partner's own name beside a self-hosted image) and an optional self-hosted
+  `image` (the `/crew` cat imagery).
 - **Schema/config change:** `landing.yaml` is new; paths are the four message names, unique, no
   `/landing` prefix.
-- **Tests:** unknown field is an error; duplicate path is an error; a proof number carries a `source` naming an entry of the existing typical-costs data, read through the existing `loadTypicalCosts(minRuns)` so `min_runs` stays one number (D96-D97), or the sentinel `unmeasured`, and a figure whose entry is missing or under `min_runs` fails the loader; a video is a path under `website/`, an `http(s)` URL fails; the WhatsApp text
+- **Tests:** unknown field is an error; duplicate path is an error; a proof number carries a `source` naming an entry of the existing typical-costs data, read through the existing `loadTypicalCosts(minRuns)` so `min_runs` stays one number (D96-D97), or the sentinel `unmeasured`, and a figure whose entry is missing or under `min_runs` fails the loader; a video is a path under `website/`, an `http(s)` URL fails; a partner logo is a name beside a self-hosted image, and a blank (or spaces-only) name fails the loader; the WhatsApp text
   names the variant.
 - **Command:** `cd website && node --test test/landing-data.mjs`
 - **Depends on:** none.
@@ -170,8 +171,13 @@ upstream response carries.
   `layout.mjs`, `privacy.mjs`, plus `internal/cli/docs_website_boundary_test.go` if it pins the CSP.
 - **Interfaces:** a separate marketing consent under its own key (not a bump of the analytics key, which would re-ask visitors on every page), asked only on the four campaign paths; loaders for the pixel, the insight tag and the Calendly script that run only
   with that purpose granted and only on the four paths; withdrawal removes the first-party cookies the trackers set (cookies on the vendors' own domains and scripts already loaded persist until a reload, which the privacy text says).
-- **Config change:** `site.yaml` gains the three public identifiers and the origins (as the file's own
-  rule says, load origins are admitted by the consent check, not `allowed_hosts`); the CSP widens site-wide (F18) by exact hosts, each vendor's documented origins, with no wildcard in `script-src` and any other directive that needs one raised to the owner (O3), per directive (`script-src`, `img-src`, `connect-src`, `style-src` for Calendly's stylesheet, and a new `frame-src`); the test holds that exact per-directive list. **The owner approves the
+- **Config change:** `site.yaml` gains the Meta and LinkedIn ids (GA's `measurement_id` is already in the
+  file) and the origins (as the file's own
+  rule says, load origins are admitted by the consent check, not `allowed_hosts`). `calendly_url` and
+  `whatsapp_number` are not among them: both are the campaign's own inputs and live in
+  `website/data/landing.yaml`, which G2.1 wrote and the pages read (`whatsapp_number` is quoted there,
+  and the loader derives the `wa.me` link from it), so the booking link the Calendly embed renders stays
+  where G2.1 put it and is not copied into `site.yaml`. The CSP widens site-wide (F18) by exact hosts, each vendor's documented origins, with no wildcard in `script-src` and any other directive that needs one raised to the owner (O3), per directive (`script-src`, `img-src`, `connect-src`, `style-src` for Calendly's stylesheet, and a new `frame-src`); the test holds that exact per-directive list. **The owner approves the
   privacy wording and the rules-file line** before the task merges.
 - **Tests:** the Meta and LinkedIn tags are configured to send the page URL without its query (a test over the loader's configuration); a non-campaign page where a visitor already decided analytics shows no new banner; no request to any of the three before the marketing purpose is granted, including after an
   analytics-only consent; none on a non-campaign page; withdrawal stops them and clears the first-party cookies (for example `_fbp`); the

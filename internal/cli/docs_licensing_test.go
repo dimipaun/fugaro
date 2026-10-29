@@ -85,7 +85,8 @@ func TestDocsLicensingStatement(t *testing.T) {
 		"every release before 0.11.0 is MIT",
 		// D311: the console, the mobile app and ee/ under the business
 		// licence, the console from 0.113.0 with what came before staying MIT,
-		// and counsel's text with its two unpublished documents. The console's own path is
+		// and counsel's text naming the two documents, of which only the
+		// Subscription Terms is still unpublished. The console's own path is
 		// left out of this file on purpose: no Go file outside
 		// docs_console_boundary_test.go's allow-list names it.
 		"the desktop console",
@@ -118,14 +119,28 @@ func TestDocsLicensingStatement(t *testing.T) {
 		}
 	}
 
-	// The link to `ee/README.md` is checked against the page it points at: what
-	// "reserved" means is that page's to say, and a statement that pointed a
-	// reader at a page contradicting it would read as correct on both sides.
-	// This read is why the test's name is in eeReadingTests.
-	reserved := strings.ToLower(flattenDoc(readRealEE(t, "README.md")))
-	for _, want := range []string{"reserved", "not published yet"} {
-		if !strings.Contains(reserved, want) {
-			t.Errorf("ee/README.md, the page %s links for what `ee/` is, never says %q: the statement and the page it points at have to agree on what the folder is for and on the licence naming documents that are not published yet, or one of the two is describing a directory that does not exist", path, want)
+	// The link to `ee/README.md` is checked against the page it points at: a
+	// statement that pointed a reader at a page contradicting it would read as
+	// correct on both sides. D532 (2026-10-29) replaced the page's "reserved
+	// for net-new organisation features" with what the folder now holds, and
+	// the pins here are that statement -- the business-licensed features, new
+	// ones and those moved out of the core, with the released MIT versions
+	// staying MIT -- plus the unpublished Subscription Terms, so the page
+	// cannot drift back to a folder that takes nothing out of the core while
+	// this cross-check is on record. `LICENSING.md` and the website's licence
+	// wording still carry the older "reserved for net-new organisation
+	// features"; task E3.1 and E3.2 realign them, and this cross-check can pin
+	// their agreement again once they have. This read is why the test's name is
+	// in eeReadingTests.
+	eePage := strings.ToLower(flattenDoc(readRealEE(t, "README.md")))
+	for _, want := range []string{
+		"business-licensed features",
+		"moved out of the core",
+		"released mit versions stay mit",
+		"not published yet",
+	} {
+		if !strings.Contains(eePage, want) {
+			t.Errorf("ee/README.md, the page %s links for what `ee/` is, never says %q: the statement and the page it points at have to agree on what the folder holds -- the business-licensed features, new ones and those the owner moved out of the core -- and on the Subscription Terms being the document the licence names and does not publish, or one of the two is describing a directory that does not exist", path, want)
 		}
 	}
 }
@@ -230,9 +245,9 @@ const licenceRefCopy = "LICENSES/LicenseRef-Fugaro-Enterprise.txt"
 // compared to `ee/LICENSE` byte for byte, both ways -- so the copy cannot
 // drift from the licence the notice's identifier names, and a fifth copy
 // cannot quietly answer to the same identifier with different terms. Three
-// files of identical wording are checked against each other elsewhere in this
-// package; this is the one that has to be identical to them, not merely
-// similar.
+// files of identical wording are checked against each other by
+// TestDocsLicensingOneWording; this is the one that has to be identical to
+// them, not merely similar.
 //
 // It reads the real `ee/` through readRealEE, so its name is in
 // eeReadingTests and the "core without ee/" workflow skips it there.
@@ -250,5 +265,63 @@ The file exists so that the identifier every notice under ee/, the console and t
 	// means has to see the identifier in it.
 	if !strings.Contains(licence, "LicenseRef-Fugaro-Enterprise") {
 		t.Errorf("%s never names LicenseRef-Fugaro-Enterprise: the file is named for the identifier a reader arrives with, and the two halves have to be visible in one page", licenceRefCopy)
+	}
+}
+
+// claURL is the contributor licence agreement's published URL, as the owner gave
+// it (plan task L0.2's last item, 2026-10-29). It is a raw Gist link pinned to
+// one revision, so editing the Gist later does not change what the licence files
+// say: a new revision needs a new URL written into them. The URL is spelled once
+// in this package -- docs_ee_reserved_test.go derives its scheme-less pin from
+// this constant -- so the two pins cannot name different revisions.
+const claURL = "https://gist.githubusercontent.com/dimipaun/d5bb5db937f973b25be5778ce14ec8dd/raw/64918c7fc0f782327db82e7e790db53c3d47d09f/fugaro-cla.md"
+
+// TestDocsLicensingOneWording: counsel's text is one wording in `ee/LICENSE`,
+// the console's own `LICENSE.md` and the mobile app's (D311), and clause 2.1 --
+// the sentence that requires the contributor licence agreement, and so the one
+// this work edited -- carries the same bytes in all three. Until this test, only
+// `ee/LICENSE` and the `LICENSES/` copy were read by any test, so a URL, a
+// revision or a path written differently into the console's or the mobile app's
+// file passed every gate; the drift `TestDocsLicensingLicenceRefCopy` says is
+// "checked against each other elsewhere in this package" had no such check.
+//
+// The two Markdown files are also the same file: their differences from
+// `ee/LICENSE` are decoration (headings, bullets, bold) and never wording, so an
+// edit to one that the other does not carry is reported here.
+//
+// It reads the real `ee/` through readRealEE, so its name is in eeReadingTests
+// and the "core without ee/" workflow skips it there.
+func TestDocsLicensingOneWording(t *testing.T) {
+	// The console's path is spelled through consoleDirName for the reason
+	// docs_ee_reserved_test.go gives: no Go file outside
+	// docs_console_boundary_test.go's allow-list names it.
+	consoleLicence := consoleDirName + "/LICENSE.md"
+	const mobileLicence = "mobile/LICENSE.md"
+
+	fold := func(doc string) string { return strings.ReplaceAll(doc, "\r\n", "\n") }
+	console, mobile := fold(readDoc(t, consoleLicence)), fold(readDoc(t, mobileLicence))
+	if console != mobile {
+		t.Errorf("%s and %s are not the same file: counsel's text is one wording in the three files, and these two carry the same Markdown, so an edit to one belongs in the other too", consoleLicence, mobileLicence)
+	}
+
+	// clause21 is the clause-2.1 line: the one sentence of the three files that
+	// names the contributor licence agreement, and the line this work edited.
+	clause21 := func(path, doc string) string {
+		for _, line := range strings.Split(doc, "\n") {
+			if strings.HasPrefix(line, "2.1 You may modify the Software") {
+				return line
+			}
+		}
+		t.Fatalf("%s has no clause 2.1 line: the agreement's URL lives in that sentence, so a rewrite that loses the line takes the licence's own reference to the agreement with it", path)
+		return ""
+	}
+	want := clause21("ee/LICENSE", fold(readRealEE(t, "LICENSE")))
+	for _, one := range []struct{ path, doc string }{{consoleLicence, console}, {mobileLicence, mobile}} {
+		if got := clause21(one.path, one.doc); got != want {
+			t.Errorf("%s's clause 2.1 reads %q, want ee/LICENSE's %q: counsel's text is one wording in the three files, and a difference here is drift a reader of either file cannot see", one.path, got, want)
+		}
+	}
+	if !strings.Contains(want, claURL) {
+		t.Errorf("clause 2.1 of the three licence files does not name %s: the bracketed placeholder it replaced is gone, and the agreement the Licensor publishes has to be reachable from the sentence that requires it", claURL)
 	}
 }

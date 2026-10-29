@@ -23,7 +23,11 @@ checks **130–134** (the highest check section written in the register on `main
 **119** and **123** are claimed by the console-windows and console dependency graph plans, and
 open PR #1022 takes **124**; **130** is free either way).
 Findings are **F1–F27**; resolutions (one defensible answer) are **R1–R8**; decisions
-**D300–D311** are used (D311 on 2026-10-26) and **D312–D319** are reserved and unused; checks **131–134** are reserved
+**D300–D311** are used (D311 on 2026-10-26) and **D312–D319** are reserved and unused; **D531**
+is the owner's ruling of 2026-10-29 (the coordinator leaves the Terms' Core), written at the
+owner's own number rather than inside this block: it is above the highest number reserved on
+`main` (the secrets-brokering work's D519), **D520–D530** are allocated nowhere and stay unused as
+D272–D299 are, and this block's D312–D319 stay reserved; checks **131–134** are reserved
 and unused.
 
 ## Headline: spec concept → what the repository already has
@@ -506,16 +510,45 @@ governing law and venue are Ontario, Canada (the owner's ruling of 2026-10-27); 
 the wording and its enforceability against contributors outside Canada. Plan task L0.1's CLA-text item is drafted;
 L0.2, the owner's CLA Assistant install, is written out as a checklist in
 [implementation-plan.md](implementation-plan.md#l02--install-the-hosted-cla-app-owner-run). The
-`[CLA URL TO BE PUBLISHED]` placeholder in the three licence files stays until the owner has
-created the Gist.
+`[CLA URL TO BE PUBLISHED]` placeholder was in the three licence files until the owner created the
+Gist; the amendment of 2026-10-29 below fills it.
 
 ## Amendment 2026-10-28 (the CLA is final)
 
 Counsel reviewed [CLA.md](CLA.md) and blessed it as-is, with no operative clause changed. The draft
 banner and the `(draft)` marker on its version line are gone, so the file is the agreement as
-counsel approved it. The `[CLA URL TO BE PUBLISHED]` placeholder stays in the three licence files
-until the owner creates the Gist, and the owner's CLA Assistant install (L0.2) is unchanged; the
-note at the top of CLA.md still tells the owner how to keep the Gist in step with the file.
+counsel approved it. The `[CLA URL TO BE PUBLISHED]` placeholder stayed in the three licence files
+until the owner created the Gist (filled on 2026-10-29, below), and the owner's CLA Assistant
+install (L0.2) is unchanged; the note at the top of CLA.md tells the owner how to keep the Gist in
+step with the file.
+
+## Amendment 2026-10-29 (the CLA's URL is published)
+
+The owner published the contributor licence agreement as a Gist (one Markdown file, `fugaro-cla.md`,
+renamed from `gistfile1.txt` before publication) and gave the URL to be used exactly as given:
+https://gist.githubusercontent.com/dimipaun/d5bb5db937f973b25be5778ce14ec8dd/raw/64918c7fc0f782327db82e7e790db53c3d47d09f/fugaro-cla.md.
+That is a raw link pinned to one revision of the Gist, and the owner read the Gist's file as
+byte-identical to the agreement block of [CLA.md](CLA.md), a trailing newline aside (U9: no test in
+the tree can check a network resource). `[CLA URL TO BE PUBLISHED]` is
+replaced by that URL in `ee/LICENSE`, `console/LICENSE.md`, `mobile/LICENSE.md` and the byte copy in
+`LICENSES/LicenseRef-Fugaro-Enterprise.txt` -- the placeholder token the only change, so the one
+wording is what it was and `ee/LICENSE` and the `LICENSES/` copy stay byte for byte -- and in the pin of
+`internal/cli/docs_ee_reserved_test.go`. Plan task L0.2's checklist item for it is ticked in
+[implementation-plan.md](implementation-plan.md#l02--install-the-hosted-cla-app-owner-run).
+**Because the URL names a revision, editing the Gist later does not change what the licence files
+say**: a new revision needs a new URL written into the licence files, which is a change counsel
+should see. The Subscription Terms page is still not published (L4.3), CLA Assistant is still to be
+installed (the CONTRIBUTING gate), and `docs/ee-reorg/` is untouched: it is on another branch.
+
+## Amendment 2026-10-28 (the CLA Assistant install)
+
+The owner installed CLA Assistant on `dimipaun/fugaro`. What that closes is the half of L0.2 a
+reader can see: the signing link is published in `CONTRIBUTING.md`'s `## Licensing of
+contributions` section, and the app's badge is in the README's opening, so the requirement and the
+place to sign are on the two pages a contributor reads first. L0.2's remaining steps — the Gist's
+raw URL in the three licence files (L4.4), the allow-list, the status on pull requests and the test
+pull request from a second account — are the owner's own session and are unchanged; the install
+checklist is in [implementation-plan.md](implementation-plan.md#l02--install-the-hosted-cla-app-owner-run).
 
 ## Amendment 2026-10-27 (the Subscription Terms draft)
 
@@ -551,7 +584,8 @@ L4.5). What changed in the draft:
   sale, with the copyright assigned to it; a merchant of record may sell self-serve purchases under
   its own buyer terms; Enterprise is invoiced directly.
 - **Plans and free use** (section 4): Community, Team and Enterprise; one free seat per organisation
-  without a subscription, for proof of concept and evaluation; Team free for entirely open-source
+  (amended 2026-10-29: per legal person and its Affiliates, counsel's section 10.2(a)) without a
+  subscription, for proof of concept and evaluation; Team free for entirely open-source
   teams (checked from the repository URLs) and academic institutions; discounts for nonprofits and
   startups by application, their amounts on the Order Form; the free seat's three-month key is the
   trial.
@@ -578,7 +612,92 @@ The draft's counsel list gains the items the session added. The licence files, t
 
 ## Amendment 2026-10-27 (the Subscription Terms URL)
 
-The owner chose `https://fugaro.dev/legal/subscription-terms` as the Subscription Terms URL and had it written into the four licence files (L4.4). The page is published only after counsel approves the text (L4.3); until then the link does not resolve. The CLA placeholder is unchanged.
+The owner chose `https://fugaro.dev/legal/subscription-terms` as the Subscription Terms URL and had it written into the four licence files (L4.4). The page is published only after counsel approves the text (L4.3); until then the link does not resolve. The CLA's placeholder was unchanged by this amendment; it is filled by the amendment of 2026-10-29 above.
+
+## Amendment 2026-10-29 (the coordinator leaves the Terms' Core)
+
+The owner ruled (**D531**, 2026-10-29) that the coordinator moves under `ee/`, and that the
+Subscription Terms must stop saying it is Core **now**, without waiting for counsel's next revision
+of the text; the owner tells counsel, this being the owner's call and not a recommendation.
+
+**The move is planned, not landed.** `ee/` still holds only `ee/LICENSE` and `ee/README.md`, so
+under section 2's path definition ("the parts of the Fugaro repository outside `ee/`, `console/`
+and `mobile/`") the coordinator is part of the Core today, and its released MIT versions stay MIT.
+The edit is the owner's instruction that the Terms stop reading the other way now; the move itself
+ships with the S1 tasks named below.
+
+**The one sentence changed** is section 9.1 of [subscription-terms.md](subscription-terms.md), in
+the list of what runs where:
+
+> before: **…the optional credentials service and the coordinator are designed to run in the
+> Customer's own cloud project (both are part of the Core today, not of the Software).**
+>
+> after: **…the optional credentials service and the coordinator are designed to run in the
+> Customer's own cloud project (the credentials service is part of the Core today, not of the
+> Software).**
+
+Only the words that classified the coordinator as Core are gone: the coordinator keeps its place in
+the sentence about where it runs, the credentials service keeps its classification (it is still
+inside the three-directory boundary's complement), and no other wording in the draft changed. A
+**Note for counsel** beside section 9.1 carries the dated note — *edited 2026-10-29 on the owner's
+ruling D531 (counsel not yet consulted: tell counsel in the next revision round)* — and, being a
+drafting note, it is cut from the published page. `website/content/subscription-terms.md` is
+regenerated from the document with `go run ./internal/clidoc`, so the page and the draft stay in
+step, and its text below the status line is the agreement alone.
+
+**Not changed.** The four licence files are untouched (D531 edits Terms text, not the licence), as
+are the decision rows that record the earlier answers (D302's "stay core MIT", D434 and T10 in
+[subscriptions/reconciliation.md](../subscriptions/reconciliation.md)): they are what was decided
+then. The documents that record the moves are tasks S0.3 and S0.4 of
+[subscriptions/implementation-plan.md](../subscriptions/implementation-plan.md); the moves
+themselves are S1.1 (the design), S1.4 (the coordinator's command and library), S1.5
+(`fugaro report`) and S1.9 (the key-gated job image). Counsel's question
+about the licence's own coverage sentence and the coordinator's released MIT versions (F38, T10)
+is untouched by this edit.
+
+## Amendment 2026-10-29 (counsel's restructured Subscription Terms)
+
+Counsel returned the Subscription Terms restructured by plan, dated 2026-10-28 by the document
+(its text carries no date or version of its own). [subscription-terms.md](subscription-terms.md)
+now holds that text as written, in Parts A (General) to G (Legal terms for every plan), sections 1
+to 34, with the earlier draft's drafting notes and its two question lists replaced by one list of
+the points still open. `website/content/subscription-terms.md` is regenerated from it, and the page
+renders the Part headings above the sections they group.
+
+**Where the earlier sections went** (earlier draft of 2026-10-27, then counsel's numbering):
+
+| Earlier draft | Counsel's text |
+| --- | --- |
+| 1 Parties and acceptance (1.4 Who sells) | 1 Parties and acceptance; who sells moves to 3.3, 11.5 and 13.1 |
+| 2 Definitions | 2 Definitions |
+| 3 What the Subscription grants | 4 What the Subscription grants (3.3 becomes 5.2 and 9.2; 3.6 becomes a patent licence, 4.5) |
+| 4 Plans and Order Forms | 3 Plans, 10 Community and Free Plans, 11 Order Forms, 17 Discounts and trials |
+| 5 User Seats | 5 User Seats; 11.3 and 11.4 seat changes; 16 True-up; 20 Audit |
+| 6 Term and renewal | 14 Term and renewal (Team); 19 Enterprise commercial terms; 12.4 Price changes; 27.1 Duration |
+| 7 Fees, payment and taxes | 12 Fees, payment and taxes; 15 Refunds |
+| 8 License Keys | 6 License Keys and offline activation; 7.5(b) sign-up data |
+| 9 Customer Data and privacy | 7 Customer Data and Privacy (9.3 Telemetry becomes 7.3 Crash reports and diagnostics) |
+| 10 Support and updates | 8 Support and updates; 9 After the Subscription ends |
+| 11 to 14 | 21 to 24 |
+| 15 Indemnification (placeholder) | 25 Indemnification |
+| 16 Confidentiality | 26 Confidentiality |
+| 17 Suspension and termination | 12.6 Suspension; 27 Duration and termination |
+| 18 to 23 | 28 to 33 |
+| 24 Governing law and venue | 34 Governing law, venue and language |
+
+**Held back from this repository.** Counsel's text states a late-payment interest rate (section
+12.2) and a liability cap for the Community Plan, Free Plans and Beta Features (section 10.5).
+Neither figure was published here before, so both stand as bracketed items until the owner
+decides; every other figure in counsel's text was already in the earlier draft.
+
+**Open**, as the list after the agreement records: counsel's comment on section 4.4
+(Modifications); the provisions counsel's document highlights (5.1(i), 5.3 and 5.5); the owner's
+rulings counsel's text does not carry (read-only use that can still cancel, T12; one key per
+organisation; no covered-versions date, O4; the free seat per legal person, T15); crash reports
+the Customer cannot turn off (section 7.3); publicity without consent (section 30.1); the
+coordinator named as Core in section 7.1 (D531); and whether the licence files need a matching
+revision now that the Terms no longer cite the licence's clauses. The licence files are not edited.
+(amended 2026-10-29: the four owner rulings are applied, counsel approved: read-only use keeps cancel and the kill switch, section 9.1; one License Key per Customer for its organisation, stating its User Seats; no covered-versions date, sections 6.1 and 8.2; one free seat per legal person and its Affiliates, sections 6.3, 7.5 and 10.2(a). Sections 5.1(i), 5.3 and 5.5 are written in the present tense on the owner's word of 2026-10-29, and the roles and the seat estimate must be released before the Terms go public).
 
 ## UNVERIFIED
 
@@ -597,3 +716,11 @@ The owner chose `https://fugaro.dev/legal/subscription-terms` as the Subscriptio
 - **U7** — **Resolved 2026-10-24** (F27): both texts read over HTTPS, URLs and commits cited.
 - **U8** — Which source-available licences are published expressly for reuse, and their terms
   (T1 choice (ii)); not read.
+- **U9** — That the published Gist's file is byte-identical to the agreement block of
+  [CLA.md](CLA.md), a trailing newline aside (the 2026-10-29 amendment). The owner read the two
+  against each other when publishing; **nothing in the tree can check it**, because every test here
+  is hermetic and reads no network. Re-read it if the Gist is ever re-published:
+  `sed -n '/BEGIN AGREEMENT/,/END AGREEMENT/p' docs/licensing/CLA.md` against
+  `curl -s https://gist.githubusercontent.com/dimipaun/d5bb5db937f973b25be5778ce14ec8dd/raw/64918c7fc0f782327db82e7e790db53c3d47d09f/fugaro-cla.md`.
+  A mismatch would not reach a licensee through the licence files until a new revision's URL is
+  written into them, which is the step counsel sees.

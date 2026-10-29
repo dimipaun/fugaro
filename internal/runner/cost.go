@@ -18,6 +18,10 @@ import (
 // event reported (an oauth run). Read this right after the stage's agent
 // returned, before anything else closes a stage in the gateway.
 //
+// subAgents and repeats are the relay's counts over the stage's own stream:
+// its sub-agent tool calls, and the most times one identical shell command
+// ran (task-governance T1.3, T1.4).
+//
 // The stages sum to cost.model_usd only up to gateway spend no stage
 // report carried: a call that settles after its stage's wait ran out is in
 // the ledger's total (gwUsed, so in cost.model_usd) and in the split only
@@ -30,7 +34,7 @@ import (
 // the stage was pinned to, never what the upstream served, and a gateway
 // stage may also have made background-model calls: both are inside this
 // stage's ModelUSD, so it is the stage's spend, not the pinned model's.
-func (r *run) stageTiming(name string, started time.Time, claudeUSD float64, subAgents int) runstore.StageTiming {
+func (r *run) stageTiming(name string, started time.Time, claudeUSD float64, subAgents, repeats int) runstore.StageTiming {
 	st := runstore.StageTiming{
 		Name:      name,
 		StartedAt: started.UTC(),
@@ -41,6 +45,10 @@ func (r *run) stageTiming(name string, started time.Time, claudeUSD float64, sub
 		// a stage that spawned none, and 0 sub-agents is a figure, unlike an
 		// absent call count (G5).
 		Agents: &subAgents,
+		// The relay's count of the most times one identical shell command ran
+		// in the stage, always set like Agents and for the same reason: 0 is a
+		// stage that ran no command, not a stage nobody counted (G5).
+		Repeats: &repeats,
 	}
 	r.mu.Lock()
 	gateway, rep := r.gw != nil, r.lastStage
@@ -105,6 +113,14 @@ func (r *run) updateCost() {
 		// The run's prompt-cache token totals, which only the gateway can
 		// count: they are of its per-call usage and of nothing else (P12).
 		c.CacheReadTokens, c.CacheWriteTokens = r.gwCacheRead, r.gwCacheWrite
+		// The tiers a call came back at that the table has no multiplier
+		// for: their calls were charged conservatively (design §6.1), so
+		// the record naming them is what explains the figure a reader sees
+		// (on a provider route nothing else does: the provider's own
+		// reported cost is recorded, and floors that charge rather than
+		// pricing it). List bounds the names the record carries, however
+		// many distinct tiers the calls came back at.
+		c.ServiceTiers = r.serviceTiers.List()
 		notional = r.gwNotional.USD()
 		// The catalog only prices the routes' models, so its staleness is a
 		// fact about what this run charged: a table that holds a stale row for

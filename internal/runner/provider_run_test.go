@@ -96,7 +96,7 @@ func TestProviderRunEndsInPR(t *testing.T) {
 		t.Fatalf("want %v: cost_usd = %v, cost = %+v", want, rec.CostUSD, rec.Cost)
 	}
 	if !near(rec.Cost.ReportedUSD, 0.0021) {
-		t.Fatalf("reported_usd = %v, want the provider's figure, which is never charged", rec.Cost.ReportedUSD)
+		t.Fatalf("reported_usd = %v, want the provider's figure, which is recorded beside the charge rather than charged", rec.Cost.ReportedUSD)
 	}
 	stored, err := g.store.ReadRecord(context.Background())
 	if err != nil || stored.Cost == nil || !near(stored.Cost.RouteBy["openrouter"], want) || !near(stored.Cost.ReportedUSD, 0.0021) {

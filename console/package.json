@@ -38,12 +38,22 @@
       "!dist/main/fuses.js",
       "dist/preload/index.js",
       "dist/preload/installations.js",
+      "dist/preload/confirm.js",
       "dist/shared/**/*.js",
       "dist/source/**/*.js",
       "!dist/source/fixture.js",
+      "dist/bundle/confirm.html",
+      "dist/bundle/confirm.js",
       "dist/bundle/console.css",
       "dist/bundle/console.js",
       "dist/bundle/elk-worker.min.js",
+      "dist/bundle/IBMPlexMono-Medium.woff2",
+      "dist/bundle/IBMPlexMono-Regular.woff2",
+      "dist/bundle/IBMPlexMono-SemiBold.woff2",
+      "dist/bundle/InstrumentSans-Bold.woff2",
+      "dist/bundle/InstrumentSans-Medium.woff2",
+      "dist/bundle/InstrumentSans-Regular.woff2",
+      "dist/bundle/InstrumentSans-SemiBold.woff2",
       "dist/bundle/index.html",
       "dist/bundle/installations.html",
       "dist/bundle/installations.js",
@@ -54,9 +64,9 @@
     "npmRebuild": false,
     "electronDownload": {
       "checksums": {
-        "electron-v44.7.2-darwin-arm64.zip": "07d73d3d6dd0b8679c2f1849e30df179ea50c1d6b17630fcc398ae05221f0bd2",
-        "electron-v44.7.2-darwin-x64.zip": "915cb638692e3595926fa64903ee0562c3c0c5a1febb84724175756ca2f0f3b7",
-        "electron-v44.7.2-linux-x64.zip": "777b26a64aee3d185acb9f93c04782bb51eae7c2c61c793963ef24374e5a1539"
+        "electron-v45.0.0-darwin-arm64.zip": "896c3a50b148e89a158dca08a6996a022ddf39b23aac871e107f5b4087f8caa9",
+        "electron-v45.0.0-darwin-x64.zip": "7877c282e74a52f8d87949536a25735cf9982de1265b544c9cd258dd14eff4de",
+        "electron-v45.0.0-linux-x64.zip": "22f6a10bd3f7fef987ddbb379d3375ce664ad0c98a9a50f80c89f1718a0c3e3a"
       }
     },
     "mac": {
@@ -97,7 +107,7 @@
     "@electron/fuses": "2.1.3",
     "@playwright/test": "1.64.1",
     "@types/node": "26.6.5",
-    "electron": "44.7.2",
+    "electron": "45.0.0",
     "electron-builder": "26.18.0",
     "elkjs": "0.11.0",
     "typescript": "7.0.2",

@@ -73,9 +73,9 @@ frame-ancestors 'none'; object-src 'none'
 used.** `'self'` permits a stylesheet served from `app://console` — the console's own
 bundle — and the policy has no `'unsafe-inline'`, so a `<style>` element and a `style="…"`
 attribute are both refused by the browser whatever the code does. The `<meta
-http-equiv>` copy in each of the three documents is byte-identical to the header:
+http-equiv>` copy in each of the four documents is byte-identical to the header:
 `console/test/unit/csp-document.test.ts` derives the document list from `SERVED_FILES`, so it
-holds **all three** copies equal to the header and to each other, and
+holds **all four** copies equal to the header and to each other, and
 `console/test/unit/window.test.ts` holds the same for the two documents it reads
 (`index.html` and `refusal.html`) alongside the assertion that the policy contains neither
 `unsafe-inline`, `unsafe-eval` nor `*`.
@@ -171,7 +171,7 @@ Three facts hold across every screen and are stated once:
 
 - **A number is never bare.** Every figure goes through `putReading` (`app.ts`), which
   calls `formatReading` (`console/src/shared/availability.ts`), so the marks are fixed console-wide:
-  `NOTIONAL~` prefix, `est.` prefix, `n/a` (`UNAVAILABLE_MARK`), `—` (`GAP_MARK`), and a
+  `~$` prefix, `est.` prefix, `n/a` (`UNAVAILABLE_MARK`), `—` (`GAP_MARK`), and a
   `≥` (`LOWER_BOUND_MARK`) in front of a sum that is a lower bound. An element carrying a
   reading with no value also carries its **reason in `title`** — the console's own
   sentence, never the value it refused.
@@ -184,47 +184,43 @@ Three facts hold across every screen and are stated once:
 
 ### 2.1 The dashboard's chrome — `src/renderer/entry.ts`
 
-The entry draws the body's four children, in this order, all from `domSurface`'s mount:
-`aside.console-rail` (§4.1's installation rail), `section.console-installation`,
-`nav.console-views`, `div.console-panel` — asserted by `test/e2e/entry.spec.ts`:
-`expect(shape.bodyChildren).toEqual(['console-rail', 'console-installation', 'console-views', 'console-panel'])`
-in an `ok` run. The rail is the canvas's one structural addition and the fourth child is the
-one this document adds to an assertion the spec already carries, so the list is **four names
-and not three**: a spec left at three fails against the entry the same task writes, and a
-table below that lists three regions leaves the rail's hooks unlisted, which §2's licence
-rule does not allow. **A fifth child precedes these four whenever the mode is not `ok`**:
-`startConsole` appends the version-skew banner to the same mount first (§2.8, §4.1), and in
-**refused** mode it is the whole document.
+**The header switcher replaced the installation rail** (owner's ruling of 2026-10-28, console
+redesign step 1). The entry draws the body's two children, in this order, all from
+`domSurface`'s mount: `header.console-header` and `main.console-page` — asserted by
+`test/e2e/entry.spec.ts`:
+`expect(shape.bodyChildren).toEqual(['console-header', 'console-page'])`
+in an `ok` run. The header holds the wordmark, the installation switcher, the navigation, the
+fleet gauge and Halt fleet; the switcher's menu holds the installation line and the rail's tree
+(§4.1), and the page holds the panel. **A third child precedes these two whenever the mode is
+not `ok`**: `startConsole` appends the version-skew banner to the same mount first (§2.8, §4.1),
+and in **refused** mode it is the whole document.
 
 | Region | Element and hooks | What it holds |
 |---|---|---|
-| Installation rail | `aside.console-rail` (with its own `data-collapsed`) → `div.console-rail-head` (`p.console-rail-title`, `button.console-rail-collapse`), `div.console-rail-list` → one `button.console-rail-row` per installation it draws (`div.console-rail-nameline` → `span.console-rail-name` and, for an installation with an issue, `span.console-rail-warning` with `role="img"` and an `aria-label`; `span.console-rail-project`, `span.console-rail-state` with `data-state`, `span.console-rail-spend`), `p.console-rail-empty` (the line drawn, unhidden, when the rail has no row), `div.console-rail-add` → `button.console-rail-add`, `p.console-rail-hint`; the ARIA is `role="tablist"` on the list, `role="tab"` and `aria-selected` on its rows, `aria-controls`/`aria-expanded` on the collapse control | the canvas's structural addition (§4.1): the header row and its collapse control, one tab per row, **one row per installation the CLI listed or this console holds, readable or not** (§4.1, owner's design ruling of 2026-10-25), the add row and the hint. The first `role=` in the renderer. **Fifteen hooks on sixteen elements** — `console-rail-add` names the foot row and its button both — and a rule selects no other: the tree, the tokens and the keyboard are §4.1's. The two `data-*` hooks are Task 6.3's, added here in the PR that wrote the rules that select them (§2's licence rule): `data-collapsed` on the rail is which of the two widths it is drawn at, and `data-state` on the state span is the word it already draws, repeated as the tone's hook |
+| Header | `header.console-header` → `button.console-wordmark` (an `svg` and `span.console-wordmark-name`), `div.console-switcher`, `nav.console-views`, `div.console-gauge`, `button.console-halt` | the redesign's one header row on `--bg-header`, wrapping on a narrow window. The wordmark goes to Live |
+| Installation switcher | `div.console-switcher` → `button.console-switcher-button` (`span.console-switcher-dot` with `data-state` and `role="img"`, `span.console-switcher-name`, `span.console-switcher-version`; `aria-haspopup`, `aria-expanded`, `aria-controls`), `div.console-switcher-menu` (`hidden` while folded) → `section.console-installation`, `aside.console-rail` | the installation the console reads, its CLI version and mode, and the status dot carrying the open row's rail word. The menu holds the installation line (the CLI's full path) and the rail's tree; Escape and a click outside fold it |
+| Fleet gauge | `div.console-gauge` (`role="group"`) → `span.console-gauge-label`, `span.console-gauge-notional`, `svg.console-gauge-bar` (`rect.console-gauge-track`, `rect.console-gauge-fill`), `span.console-gauge-cap` | GLOBAL, today's notional spend, the counted dollars against the global daily cap as the fill's `width` attribute (no notional segment: notional counts toward no cap), and the cap. `n/a` until a read lands, and when the mode withholds caps |
+| Halt fleet | `button.console-halt` with `aria-disabled="true"` | drawn as designed and not performed (`src/renderer/writes.ts`): no listener, no IPC, no spawn entry. The console's one approved write is launch-from-console |
+| Installation rail | `aside.console-rail` → `div.console-rail-head` (`p.console-rail-title`), `div.console-rail-list` → one `button.console-rail-row` per installation it draws (`div.console-rail-nameline` → `span.console-rail-name` and, for an installation with an issue, `span.console-rail-warning` with `role="img"` and an `aria-label`; `span.console-rail-project`, `span.console-rail-state` with `data-state`, `span.console-rail-spend`), `p.console-rail-empty` (the line drawn, unhidden, when the rail has no row), `div.console-rail-add` → `button.console-rail-add`, `p.console-rail-hint`; the ARIA is `role="tablist"` on the list, `role="tab"` and `aria-selected` on its rows | the rail's tree, drawn inside the switcher's menu (§4.1): the header row, one tab per row, **one row per installation the CLI listed or this console holds, readable or not** (§4.1, owner's design ruling of 2026-10-25), the add row and the hint. **Fourteen hooks on fifteen elements** — `console-rail-add` names the foot row and its button both — and a rule selects no other. `data-state` on the state span is the word it already draws, repeated as the tone's hook |
 | Installation line | `section.console-installation`, `data-installation`, `data-mode` | `data-installation="chosen"` with `p.installation-project`, `p.installation-binary`, `p.installation-version` and `data-mode`; `data-installation="none"` with `p.installation-none`; `data-installation="unreadable"` with `p.installation-unreadable`; and `p.installation-store-refusal` |
-| Navigation | `nav.console-views` → one `button.console-view` per view | `type="button"`, `data-view="live\|spend\|projects"`, `aria-current="true\|false"`, label as text |
-| Panel | `div.console-panel` | the mounted screen's root, the installation issue view, or the onboarding view |
+| Navigation | `nav.console-views` → one `button.console-view` per view | `type="button"`, at least 44 px tall (the redesign draws links; the renderer writes no `href`, so they stay buttons), `data-view="live\|graph\|spend\|projects\|coordinator"`, `aria-current="page"` on the view on screen and on no other, label as text |
+| Page | `main.console-page` → `div.console-panel` | the page scrolls and the header does not; the panel is the page container (`max-width: var(--page-max)`, centred, padding 28 px 32 px 64 px) and holds the mounted screen's root, the installation issue view, or the onboarding view |
 | Onboarding | `section.installation-onboarding` → `h1.installation-onboarding-title`, `p.installation-onboarding-body`, `p.installation-onboarding-reason` (the CLI resolution's own sentence, only when no CLI was found), `code.installation-onboarding-command` | drawn by `drawOnboarding` into the panel when the machine has no installation at all: the picker's own words for the two onboarding screens (`ONBOARDING_COPY`) and the command the main process names (`src/main/onboarding.ts`). Nothing is read |
 | Installation issue | `section.installation-issue` → `h1.installation-issue-headline`, `p.installation-issue-sentence`, `code.installation-issue-command`, `details.installation-issue-details` (`summary.installation-issue-summary`, `pre.installation-issue-lines`), `div.installation-issue-actions` (`button.installation-issue-choose`, `button.installation-issue-remove`, `button.installation-issue-reveal`, `p.installation-issue-checkout-lead`, `button.installation-issue-checkout`) | drawn by `drawIssue` into the panel when a rail row with an issue is clicked, or at boot when no installation can be read (§4.1): the installation's name, **one plain sentence first** with the exact command, the CLI's own text behind the `details` disclosure, and the row's actions. No banner. The `data-issue` it carries is the main process's classification and no rule selects it |
-| Reduced/refused banner | `section.console-skew`, drawn by `renderVersionSkew` into the mount, **first of all** — before the rail and the installation line as well as the nav | see §2.8 |
+| Reduced/refused banner | `section.console-skew`, drawn by `renderVersionSkew` into the mount, **first of all** — before the header and the page | see §2.8 |
 
-- **`VIEWS`** is `live` (label `Live`, never withheld), `spend` (label `Spend`, view
-  `spend`) and `projects` (label `Projects`, view `caps`). A view the mode withholds is
-  **not offered**: no button is created for it.
-- **Run detail has no button.** `currentView` may be `'run'`, reached from a `live-run`
-  row; when it is, every nav button is `aria-current="false"`, "which is the truth about
-  the navigation: none of the offered views is the one on screen". The installation issue
-  view is the same kind of view (`currentView` is `'issue'`), reached from a rail row.
-- **There is no keyboard handling in `entry.ts` at all**: no `keydown`, no roving tabindex,
-  no focus management. Interaction is `click` plus one `visibilitychange` listener. Tab
-  order is implicit DOM order. **This is the gap [§4.3](#43-keyboard-and-focus) has to
-  close in CSS and in one small entry change** — two of them, since the rail's list is a
-  second tablist (§4.3), and both are Task 6.5's.
-- The only ARIA attribute in the whole renderer is `aria-current`; **no element carries
-  `role=`**. The rail is where that changes, and **the split is the same one the nav gets**:
-  `role="tablist"` on `div.console-rail-list`, `role="tab"` and `aria-selected` on its rows
-  are the renderer's first `role=` and its first tablist, and they are **Task 6.5's** — the
-  keyboard task, which also gives the nav's buttons their role and their `aria-selected` —
-  while the collapse control's `aria-controls`/`aria-expanded` come with the control itself,
-  in Task 6.3.
+- **`VIEWS`** is `live`, `graph` and `coordinator` (never withheld), `spend` (view `spend`)
+  and `projects` (view `caps`). A view the mode withholds is **not offered**: no link is
+  created for it.
+- **Run detail has no button.** `currentView` may be `'run'`, reached from a `live-run` row;
+  when it is, no nav button carries `aria-current`, "which is the truth about the navigation:
+  none of the offered views is the one on screen". The installation issue view is the same
+  kind of view (`currentView` is `'issue'`), reached from a rail row in the switcher's menu.
+- **The keyboard.** The nav's buttons are ordinary tab stops (the redesign's tabs, which
+  replaced Task 6.5's nav tablist on 2026-10-28). The rail's list keeps Task 6.5's tablist:
+  `role="tablist"` on `div.console-rail-list`, `role="tab"` and `aria-selected` on its rows,
+  a roving tabindex and Enter to select (§4.3). The switcher's button carries
+  `aria-expanded` and `aria-controls` for its menu.
 
 ### 2.2 The installation picker — `console/src/renderer/installations.html` + `console/src/renderer/installations.ts`
 
@@ -267,19 +263,24 @@ not read is drawn **with the CLI's warning line underneath it**, never hidden.
 ### 2.3 Live — `console/src/renderer/screens/live.ts`
 
 The default screen: one glance at what is spending money now. Regions in tree order:
-header → total block → `ol.live-repos` of `li.live-repo`, each with a cap bar, a burn
-sparkline and a kill banner and an `ol.live-runs` of `li.live-run` → an optional
-`ol.live-orphans` → **`section.live-review`**, the review inbox (v2 plan Task V2.7.1,
+header → total block → `div.live-repos` of `section.live-repo`, each with a meters row (a
+cap bar and a burn sparkline), a kill banner and a `div.live-runs` holding a
+`table.live-table` of `tr.live-run` → an optional
+`div.live-orphans` → **`section.live-review`**, the review inbox (v2 plan Task V2.7.1,
 design F26). The header is `header.live-header` (`h1.live-project`, mode, day, the
 connection cell, an optional note, and — when the caller keeps a feed reading — the
 `p.live-since` "last read" line, with the `div.live-stale` banner after it once that feed is
 stale). **The stale banner and the last-read line are the header's last children, not
 siblings after the repositories**: `header()` appends them itself, inside the `header` it
 builds, and `renderLive` appends exactly five things to the
-root — the header, the total, `ol.live-repos`, the optional `ol.live-orphans` and
+root — the header, the total, `div.live-repos`, the optional `div.live-orphans` and
 `section.live-review`.
 A rule that puts the banner below the repos list is a rule that selects it in a place it
-never occupies.
+never occupies. **The orphan box holds the same `table.live-table` as a repository panel
+does**: `runTable` draws the table and no box around it, so each caller draws the box that
+scrolls — `div.live-runs` inside a project, and `div.live-orphans` where there is no panel
+at all — because the table has a `min-width` and a table with a floor and no scrolling
+ancestor leaves its last columns off a narrow window.
 
 **The review inbox is drawn whether or not it has a row**, which is why its section is not
 in the optional list above: "nothing is waiting for you" is an answer, and a section that
@@ -296,10 +297,10 @@ section at all: not an inert one, and not one waiting for a provider.
 | Group | Class hooks |
 |---|---|
 | Header | `live-header`, `live-project`, `live-mode`, `live-day`, `live-connection`, `live-connection-age`, `live-connection-reason`, `live-note` |
-| Total | `live-total`, `live-counted`, `live-cap`, `live-percent`, `live-total-notional`, `live-total-percent` |
-| Repository | `live-repos`, `live-repo`, `live-repo-name`, `live-repo-counted`, `live-repo-cap`, `live-repo-percent`, `live-repo-notional`, `live-burn-rate`, `live-burn`, `live-burn-bar`, `live-burn-unit`, `live-runs`, `live-orphans` |
-| Run row | `live-run`, `live-run-id`, `live-run-title`, `live-run-mode`, `live-run-stage`, `live-run-round`, `live-run-verify`, `live-run-models`, `live-run-recipe`, `live-run-auth`, `live-run-spend`, `live-run-age`, `live-run-flag`, `live-run-contradiction`, `live-run-workflow`, `live-run-requester`, `live-run-started-by` |
-| Condition classes on a row | `live-run-queued`, `live-run-stuck` |
+| Total | `live-total` (the panel root, with `live-fleet`), `live-counted`, `live-cap`, `live-percent`, `live-total-notional`, `live-total-percent` (the cap bar, an `svg`), `live-fleet-wide` (the wide cell), `live-fleet-cap`, `live-fleet-cap-label`, `live-fleet-hero`, `live-fleet-hero-note`, `live-fleet-bar`, `live-fleet-track`, `live-fleet-segment` (one `rect` per account the bar draws, keyed by `data-account`), `live-fleet-legend`, `live-fleet-key`, `live-fleet-swatch` (one mark per account the bar draws — a row whose account it does not draw has none), `live-fleet-key-word`, `live-fleet-unread` (a value the document does not carry), `live-fleet-counted`, `live-fleet-sep`, `live-fleet-full`, `live-fleet-warn-icon`, `live-fleet-full-word`, `live-fleet-stats`, `live-fleet-stat`, `live-fleet-stat-label`, `live-fleet-burn`, `live-fleet-burn-unit`, `live-fleet-active`, `live-fleet-lost`, `live-fleet-queued`, `live-fleet-waiting` |
+| Repository | `live-repos`, `live-repo` (a `section` with an accessible name — "Project runs"), `live-repo-head`, `live-repo-label`, `live-repo-name`, `live-repo-figures`, `live-repo-figure`, `live-repo-figure-label`, `live-repo-sep`, `live-repo-counted`, `live-repo-cap`, `live-repo-notional`, `live-repo-percent`, `live-repo-meters`, `live-halt` (a `button`, drawn disabled), `live-burn-rate`, `live-burn`, `live-burn-bar`, `live-burn-unit`, `live-runs`, `live-orphans` |
+| Run row | `live-table` (the `table` itself), `live-table-head` (one `th` per column), `live-run` (a `tr`), `live-run-id`, `live-run-title`, `live-run-mode`, `live-pipeline`, `live-pipeline-segments`, `live-pipeline-segment` (one `li` per segment, keyed by `data-mark`), `live-run-when`, `live-run-dot`, `live-run-word`, `live-run-stage`, `live-run-round`, `live-run-state`, `live-run-coder`, `live-run-models`, `live-run-auth`, `live-run-spend`, `live-run-age`, `live-run-status`, `live-run-chip` (the state's own word), `live-run-pip` (the lost chip's decorative mark), `live-run-flag` (one per flag **except** a flag whose name is the chip's own word — the health `lost` and the bucket `queued` — which joins the chip's `title` instead, §2.9), `live-run-contradiction`, `live-reap` (a `button`, drawn disabled and only on a lost run) |
+| Condition classes on a row | `live-run-queued`, `live-run-stuck`, `live-run-lost`, `live-run-done` |
 | Review inbox | `live-review`, `live-review-title` (the CLI's one line, `Ready for your review (N)`, drawn as **one text run** — `reviewSection` writes the words, the parentheses and the count together, so no rule can space them apart), `live-review-list`, `live-review-row`, `live-review-repo`, `live-review-number`, `live-review-url`, `live-review-run-title`, `live-review-age`, `live-review-run-id`, `live-review-empty`, `live-review-note`, `live-review-capped`, `live-review-dropped` (the count of rows the cap left out), `live-review-of`, `live-review-total` |
 | Kill banner | `live-kill`, `live-kill-word`, `live-kill-by`, `live-kill-at`, `live-kill-reason` |
 | Stale / recency | `live-stale`, `live-stale-word`, `live-stale-silence`, `live-stale-threshold`, `live-stale-at`, `live-since`, `live-since-word`, `live-since-at`, `live-since-age` |
@@ -322,15 +323,17 @@ whose mode is the built-in default.
 |---|---|---|
 | `data-theme` | `light` \| `dark` | on the `section.live` root |
 | `data-received-at` | an ISO stamp, or `''` | the newest frame |
-| `data-fill` | `12.5%` or `n/a` — one decimal, and **nothing else** | a bar's fill, as text. `bar()` writes it from the **same percent reading** it writes `data-state` from (`live.ts`), and both call sites pass a *percent* figure — `repo.percent`, `total.percent` — which `schema.ts` reads through `readNumber`, whose only two states are `measured` and `unavailable`. So this attribute is never `≥ 12.5%` (no `lowerBound` reaches a percent reading), never `NOTIONAL~12.5%` or `est. 12.5%` (no percent reading is marked), and never the em dash; **a rule keyed on a marked form here would match nothing** |
+| `data-fill` | `12.5%` or `n/a` — one decimal, and **nothing else** | a repository cap bar's fill, as text. `bar()` writes it from the **same percent reading** it writes `data-state` from (`live.ts`), and its one call site passes a *percent* figure — `repo.percent` — which `schema.ts` reads through `readNumber`, whose only two states are `measured` and `unavailable`. **The fleet budget panel's cap bar is not this element**: it is the `svg` of §2.3's Total row, drawn from the cap's own shares, and it writes neither this attribute nor `data-state`. So this attribute is never `≥ 12.5%` (no `lowerBound` reaches a percent reading), never `~$12.5%` or `est. 12.5%` (no percent reading is marked), and never the em dash; **a rule keyed on a marked form here would match nothing** |
 | `data-height` | `12.5%` or `—` — and **never `n/a`** | each sparkline bar, **except the empty one**. The heights are the bar's own shapes, not the reading's: `sparkline()` builds every one as `measured(share)` or, for a sample that is not plottable, `gap(...)` (`live.ts` 472-490), and `spark()` draws those bars and copies each height's state — so a bar the console cannot fill draws the em dash and never the `n/a` a `data-fill` may carry. **The one-bar empty sparkline is drawn outside that loop** (`live.ts` 900-910): a line with no sample appends a single `li.live-burn-bar` carrying `data-state="gap"` and **no `data-height` at all** (909), so a rule keyed on `[data-height]` selects every bar of a drawn window and misses the bar of an empty one — the case the empty-sparkline rule of §2.3's state list is about |
-| `data-state` | **two vocabularies.** On a bar: the reading's availability, of which **three of the contract's five words reach this screen** — `measured`, `unavailable`, `gap`. Or, on the connection cell only, **the word that cell drew**: the CLI's connection state, or `n/a` when `putText` refused it | `bar()` writes it from a **percent** reading (`live.ts` 877-882), and both call sites pass one (`repo.percent`, `total.percent`), whose only two states are `measured` and `unavailable`; `spark()`'s bars write `measured` or `gap` — `gap` for a sample that is not plottable and for the one bar of an empty sparkline (896-925). **`notional` and `estimated` are in the attribute's vocabulary and never on this screen**: Live's notional figures go through `numberCell`, which writes the text and the `NOTIONAL~` mark and no state, so a rule for `[data-state='notional']` matches nothing here (the attribute is Spend's, §2.4). `header()` sets it on `span.live-connection` from the cell's own `textContent`, deliberately — an attribute echoing the raw value would put back on screen exactly what the refusal kept off it. **A `[data-state='…']` rule for a state colour must therefore name the words this screen draws — `measured`, `unavailable`, `gap` — and may not assume the connection cell carries one of them**; a rule that paints every `[data-state]` element would paint that cell for a value that is not a state |
+| `data-state` | **two vocabularies.** On a bar: the reading's availability, of which **three of the contract's five words reach this screen** — `measured`, `unavailable`, `gap`. Or, on the connection cell only, **the word that cell drew**: the CLI's connection state, or `n/a` when `putText` refused it | `bar()` writes it from a **percent** reading (`live.ts` 877-882), and its one call site passes one (`repo.percent`), whose only two states are `measured` and `unavailable`; **the fleet budget panel's cap bar carries no `data-state` at all** — it is an `svg` of `rect`s keyed by `data-account`, and the panel's own cap, headroom and counts carry the text and, where there is no number, the reason in `title`; `spark()`'s bars write `measured` or `gap` — `gap` for a sample that is not plottable and for the one bar of an empty sparkline (896-925). **`notional` and `estimated` are in the attribute's vocabulary and never on this screen**: Live's notional figures go through `numberCell`, which writes the text and the `~$` mark and no state, so a rule for `[data-state='notional']` matches nothing here (the attribute is Spend's, §2.4). `header()` sets it on `span.live-connection` from the cell's own `textContent`, deliberately — an attribute echoing the raw value would put back on screen exactly what the refusal kept off it. **A `[data-state='…']` rule for a state colour must therefore name the words this screen draws — `measured`, `unavailable`, `gap` — and may not assume the connection cell carries one of them**; a rule that paints every `[data-state]` element would paint that cell for a value that is not a state |
+| `data-account` | `counted` \| `spent` \| `leased` \| `headroom` | which money account a shape on the fleet budget panel draws. The **account is the attribute and not part of the class name**: every `rect.live-fleet-segment` and every `span.live-fleet-swatch` carries one class in common, and a rule reads the account off this attribute — the shape every other tone on this tree uses. `fleetAccounts` names them, so the value is one of the four words above and never a word from the document. **A swatch is drawn only for an account the bar draws**: a mark keys a fill, so the Leased row of the two-segment fallback (the bar paints no lease there) has none, and a rule may not read a row's mark as an account the bar drew |
 | `data-segments` | an integer as a string | how many pieces a sparkline broke into |
+| `data-mark` | `past` \| `current` \| `future` \| `danger` | what a pipeline segment draws: one `li.live-pipeline-segment` per segment, and the mark is the attribute rather than part of the class name, the shape every other tone on this tree uses (the fleet bar's `data-account`, a row's `data-tone`). **The segments are decoration** — the list is `aria-hidden` and the run's stage, round and state are written as text under it (`div.live-run-when`) — so no rule may read a mark as the only place a state lives. A stage this build does not know draws **no `current` segment at all**: every segment is `future` and the stage's own word is still drawn |
 | `data-tone` | `plain` \| `amber` \| `alarm` \| `queued` | row and flag severity |
 | `data-queued` | `true` \| `false` | |
-| `data-flag` | `silent` \| `lost` \| `near deadline` \| `over deadline` \| `stuck` \| `queued` \| `unknown health` \| `unknown deadline` | one `span.live-run-flag` per flag |
+| `data-flag` | `silent` \| `near deadline` \| `over deadline` \| `stuck` \| `unknown health` \| `unknown deadline` | one `span.live-run-flag` per flag, **except a flag whose name is the state chip's own word** — the health `lost` and the bucket `queued` — which is not drawn as a span at all: the chip already says the word, so the flag's reason joins the chip's `title` and the row says its state once (§2.3) |
 | `data-contradiction` | `true` (present only) | health says quiet longer than the run is old |
-| `data-killed` | `true` \| `false` | **the repository block only** (`li.live-repo`, `true`/`false`), and `true` on the kill banner `div.live-kill`. **Not on `div.live-total`**: `total()` emits no `data-killed` and appends the banner instead, so a rule that colours the total block by this attribute selects nothing |
+| `data-killed` | `true` \| `false` | **the repository block only** (`section.live-repo`, `true`/`false`), and `true` on the kill banner `div.live-kill`. **Not on the total block** (`section.live-total.live-fleet`): `total()` emits no `data-killed` and appends the banner instead, so a rule that colours the total block by this attribute selects nothing |
 | `data-key` | a sanitized slug, or `''` | the repository |
 | `data-fast` | `true` \| `false` | burn faster than the cap allows |
 | `data-stale` | `true` (present only) | the stale banner |
@@ -342,9 +345,12 @@ State variants and **how each is marked**: killed/halted (`div.live-kill` with
 with `data-stale="true"` and the sentence "…(a feed is stale after 45 s), so the values
 above are the last ones read and the graphs break where the console stopped observing");
 gap (`data-state="gap"`, the mark `—`); silent (`data-flag="silent"`, `data-tone="amber"`);
-lost (`data-flag="lost"`, `data-tone="alarm"`); near/over deadline (`data-flag`, amber and
-alarm); queued (the `live-run-queued` class, `data-queued="true"`, `data-tone="queued"`);
-stuck (`live-run-stuck`, `data-tone="alarm"`); notional (**the text mark `NOTIONAL~` alone** —
+lost (the state chip's **own word**, `data-tone="alarm"`, the pip `●` beside it and the flag's
+reason in the chip's `title` — the flag is not drawn as a second span, so a rule that paints
+`span.live-run-flag` for `lost` matches nothing); near/over deadline (`data-flag`, amber and
+alarm); queued (the `live-run-queued` class, `data-queued="true"`, `data-tone="queued"`, and
+the chip's own word, its reason in the chip's `title`);
+stuck (`live-run-stuck`, `data-tone="alarm"`); notional (**the text mark `~$` alone** —
 Live's `data-state` comes from a `percent` reading, which is `measured` or `unavailable`, or
 from a sparkline bar's height, which is `measured` or `gap`, so this screen never writes
 `data-state="notional"`; the attribute is Spend's, §2.4); unavailable
@@ -352,8 +358,10 @@ from a sparkline bar's height, which is `measured` or `gap`, so this screen neve
 `title`); empty (a sparkline with no sample draws **one** bar whose reading is a `gap`).
 **There is no loading state**: the screen is drawn from a model, and the entry draws
 nothing until the handshake answers. **There is no cap-reached flag**: the cap is a
-`percent` reading and a bar's `data-fill`, and nothing else — colouring it at a threshold
-is a rule the stylesheet writes, not a state the code emits.
+`percent` reading and the repository bar's `data-fill`, and no attribute beside them —
+colouring it at a threshold is a rule the stylesheet writes, not a state the code emits.
+The fleet budget panel's own word for a cap at its limit is a sentence rather than a
+state: `p.live-fleet-full`, drawn when a measured headroom is 0.
 
 Time constants the stylesheet's threshold rules must agree with:
 `LIVE_STALE_AFTER_SECONDS = 45`, `LIVE_SILENT_AFTER_SECONDS = 60`,
@@ -372,22 +380,27 @@ warnings → the caps panel.
 | Header | `spend-header`, `spend-project`, `spend-source`, `spend-since`, `spend-until`, `spend-weeks`, `spend-degraded`, `spend-notice` |
 | Picker & switch | `spend-picker`, `spend-window`, `spend-switch`, `spend-dim`, `spend-dim-unknown`, `spend-persons`, `spend-persons-word`, `spend-persons-state`, `spend-persons-note` |
 | Charts | `spend-accounts`, `spend-account`, `spend-account-title`, `spend-peak`, `spend-series`, `spend-point`, `spend-point-key`, `spend-point-value`, `spend-partial`, `spend-compute`, `spend-notional`, `spend-model`, `spend-key`, `spend-num` |
-| Rows | `spend-rows`, `spend-row`, `spend-runs`, `spend-run-hours`, `spend-tokens-in`, `spend-tokens-out` |
+| Rows | `spend-rows`, `spend-row`, `spend-runs`, `spend-run-hours`, `spend-tokens-in`, `spend-tokens-out`, `spend-unreadable` |
 | Totals | `spend-totals`, `spend-totals-word`, `spend-total-model`, `spend-total-notional`, `spend-total-compute`, `spend-total-runs`, `spend-total-run-hours` |
 | Caps | `spend-caps`, `spend-caps-project`, `spend-caps-day`, `spend-caps-mode`, `spend-scope`, `spend-cap-limit`, `spend-cap-word`, `spend-cap-reserve`, `spend-cap-global`, `spend-cap-counted`, `spend-cap-daily`, `spend-cap-per-run`, `spend-cap-notional`, `spend-cap-headroom`, `spend-cap-defaults`, `spend-cap-repos`, `spend-cap-repo`, `spend-cap-repo-name`, `spend-cap-spent`, `spend-kill`, `spend-kill-word`, `spend-kill-by`, `spend-kill-at`, `spend-kill-reason` |
 | Notes | `spend-note`, `spend-warning` |
 | By person | `spend-people`, `spend-people-title`, `spend-people-view`, `spend-people-you`, `spend-people-operator`, `spend-people-since`, `spend-people-until`, `spend-people-bound`, `spend-people-max-runs`, `spend-people-reason`, `spend-people-note`, `spend-people-rows`, `spend-people-totals`, `spend-people-unlaunched-word`, `spend-people-unlaunched`, `spend-person`, `spend-person-user`, `spend-person-total`, `spend-person-currency`, `spend-person-runs`, `spend-person-succeeded`, `spend-person-failed`, `spend-person-halted`, `spend-person-infra`, `spend-person-other`, `spend-person-no-record`, `spend-person-counted`, `spend-person-notional`, `spend-person-counted-runs`, `spend-person-average`, `spend-person-note` |
 
 `data-*`: `data-theme`; `data-current`, `data-enabled`, `data-known` (on the
-`ol.spend-switch` itself, beside the seven words), `data-dimension`
-(`day|week|month|year|repo|model|person`, or `unknown`), `data-day`,
+`ol.spend-switch` itself, beside the eight words), `data-dimension`
+(`day|week|month|year|repo|model|person|mode`, or `unknown`), `data-day`,
 `data-until` (`set` \| `cli`) on the controls; `data-state`
 (`measured|notional|estimated|unavailable|gap`), `data-height`, `data-account`
 (`model|notional|compute`), `data-peak`, `data-segments` on the **chart points and their
 accounts** — an `li.spend-row` carries **none of those five**, so a `[data-state]` or
 `[data-height]` rule is a rule about the charts; `data-partial`, `data-hollow`, `data-key`
 on **both** the points and the rows (`data-partial` also on `div.spend-totals`, `data-key`
-also on the caps panel's `li.spend-cap-repo`); `data-degraded` (`true`) on
+also on the caps panel's `li.spend-cap-repo`); `data-unreadable` (`true|false`) on the
+**rows and `div.spend-totals`** — it is the honesty state of a by-mode row whose every run
+has no readable record (a record the build cannot read, or one not written yet), so a rule
+about it selects the row (or the total) and never the `span.spend-unreadable` inside it,
+which carries the marker text and no attribute;
+`data-degraded` (`true`) on
 `span.spend-degraded`; `data-available`, `data-scope-known`, `data-daily-scope`,
 `data-per-run-scope` (a document word, or `unknown`) on the caps panel, `data-available` also
 on **`section.spend-people`**, where `data-view` (`all|own|unknown`), `data-operator`
@@ -403,7 +416,12 @@ panel does select it.
 
 States: killed (the kill banner, `data-killed="true"`); partial/hollow
 (`data-partial="true"` / `data-hollow="true"` plus the `(partial)` marker text in
-`span.spend-partial`); gap (a day with no document → `data-state="gap"`, `data-height="—"`,
+`span.spend-partial`); unreadable (`data-unreadable="true"` on a `li.spend-row` or on
+`div.spend-totals` plus the marker text `no readable record` in `span.spend-unreadable`;
+the money cells are `n/a`, never `$0.00`, and the row keeps its `runs` — a by-mode row is
+unreadable exactly when no run behind it has a readable record (a record the build cannot
+read, or one not written yet), and the totals line exactly when every row it sums is);
+gap (a day with no document → `data-state="gap"`, `data-height="—"`,
 reason in `title`); unavailable (caps absent: `data-available="false"` and the sentence
 "…every cap here is n/a, not zero"); empty per account (a `gap` reading, `data-state="gap"`);
 degraded (`span.spend-degraded` with `data-degraded="true"` and the word `degraded`);
@@ -430,8 +448,8 @@ Formatting: money is `usd` (2 decimals, grouping, sign before `$`), shares are `
 (1 decimal, used only for `data-height`), time is `hours` (2 decimals + ` h`), counts are
 `count` (0 decimals). Exported: `SPEND_DEFAULT_CONTROLS = {since:'30d', until:null,
 by:'day', persons:false}`, `SPEND_PICKER_WINDOWS = ['7d','30d','90d','12w']`,
-`SPEND_DIMENSIONS` (seven), `SPEND_ACCOUNTS = ['model','notional','compute']`,
-`PARTIAL_MARKER = '(partial)'`.
+`SPEND_DIMENSIONS` (eight), `SPEND_ACCOUNTS = ['model','notional','compute']`,
+`PARTIAL_MARKER = '(partial)'`, `UNREADABLE_MARKER = 'no readable record'`.
 
 ### 2.5 Projects — `console/src/renderer/screens/projects.ts`
 
@@ -624,15 +642,17 @@ carry `data-theme` from code — see [§3.6](#36-how-the-theme-is-chosen).
 
 | State | Screen(s) | How it is marked in the DOM |
 |---|---|---|
-| killed / halted | killed: Live (the repo block, and the banner the total block appends), Spend (the caps panel's banner), Projects (kill panel, banner). halted: Run (`div.run-halt`) | a banner element with `data-killed="true"` and the word `KILLED by` + who, when, why — or, on Run, `div.run-halt` with the word `HALTED` + who, when, why and **no attribute at all** (§2.6: that screen's `data-*` is `data-theme`, plus `data-href` on a log link). **The attribute is on the banner, and on Live's repository block itself** — `li.live-repo` carries `true`/`false` and the banner is appended into that same `li` (`live.ts`), so `.live-repo[data-killed="true"]` is a rule this design allows; the two blocks that only *append* a banner, `div.live-total` and `div.spend-caps`, carry none (§2.3, §2.4) |
+| killed / halted | killed: Live (the repo block, and the banner the total block appends), Spend (the caps panel's banner), Projects (kill panel, banner). halted: Run (`div.run-halt`) | a banner element with `data-killed="true"` and the word `KILLED by` + who, when, why — or, on Run, `div.run-halt` with the word `HALTED` + who, when, why and **no attribute at all** (§2.6: that screen's `data-*` is `data-theme`, plus `data-href` on a log link). **The attribute is on the banner, and on Live's repository block itself** — `section.live-repo` carries `true`/`false` and the banner is appended into that same `section` (`live.ts`), so `.live-repo[data-killed="true"]` is a rule this design allows; the two blocks that only *append* a banner, `section.live-total.live-fleet` and `div.spend-caps`, carry none (§2.3, §2.4) |
 | stale (console clock) | Live | `data-stale="true"` banner + the threshold sentence |
 | stale (document age) | Live | `data-stale-by-age="true"` on the connection cell |
-| silent / lost / near / over deadline | Live run rows | `span.live-run-flag` with `data-flag` and `data-tone` (`amber`/`alarm`) |
-| queued / stuck | Live run rows | the `live-run-queued` / `live-run-stuck` class + `data-queued` + `data-flag` |
+| silent / near / over deadline | Live run rows | `span.live-run-flag` with `data-flag` and `data-tone` (`amber`/`alarm`) |
+| lost / queued | Live run rows | the state chip `span.live-run-chip`'s **own word** (on a `live-run-lost` / `live-run-queued` row), the flag's reason in the chip's `title`, and — for `lost` — the pip `●`. The flag is **not** drawn as a `span.live-run-flag`: the chip already says the word, and the pipeline line above says it again, so the row says its state once |
+| stuck | Live run rows | the `live-run-stuck` class + `data-queued` + `data-flag` |
 | gap | Live, Spend | `data-state="gap"`, the mark `—`, a reason in `title` |
-| unavailable | `data-state="unavailable"`: Live (**the cap bar**, `bar()`), Spend (a point), Projects (**the panel state**, beside `read` and `not-built`), degraded (the cap line). **Not the sparkline's bars**: their state is the bar's own height, `measured` or `gap` (`spark()`, `live.ts` 896-925), so `[data-state='unavailable']` selects no bar of a burn window. `data-available="false"`: Spend's caps panel. The text `n/a` with a reason in `title`: **every** screen | **Run writes no `data-state` at all** — its numbers go through `putReading`, which sets the text and, for a value with no number, the `title` reason, and nothing else (§2.6), so a `[data-state]` colour rule selects nothing on that screen |
-| notional / estimated | the text marks: Live, Spend, Projects, Run, degraded. The attribute `data-state`: **Spend alone** | `NOTIONAL~` / `est.` are `formatReading`'s marks, so they appear wherever a notional or estimated reading is drawn, on all five screens (Live's repository and total notional figures, §2.3; the subscription model and the estimated compute on Projects and Run, §2.5, §2.6; the degraded compute, §2.7). The **attribute** `data-state="notional"` / `"estimated"` is written by Spend alone, on `.spend-point` (and on the single point an account with nothing to draw appends), and it is the **account's** state, not the breakdown on the axis: `SPEND_ACCOUNTS` is three charts, and each of the three reads its own column into its own state — `model_micros` → `measured`, `notional_micros` → `notional`, `compute_micros` → `estimated` (`microsReading`, `spend.ts` 512-536) — with the point copying that reading's state into the attribute (`point()`, 1521). `data-dimension` is the switch's word for the x-axis (`day\|week\|month\|year\|repo\|model\|person`) and decides nothing here: the notional chart is notional whether the rows are days or repositories. Projects' `data-state` is its panel state, Live's comes from a `percent` reading, Run writes none, and the degraded cap is always `unavailable` |
+| unavailable | `data-state="unavailable"`: Live (**the repository's cap bar**, `bar()` — the fleet budget panel writes no state anywhere: its cap, headroom and counts carry the `n/a` and the reason in `title` instead), Spend (a point), Projects (**the panel state**, beside `read` and `not-built`), degraded (the cap line). **Not the sparkline's bars**: their state is the bar's own height, `measured` or `gap` (`spark()`, `live.ts` 896-925), so `[data-state='unavailable']` selects no bar of a burn window. `data-available="false"`: Spend's caps panel. The text `n/a` with a reason in `title`: **every** screen | **Run writes no `data-state` at all** — its numbers go through `putReading`, which sets the text and, for a value with no number, the `title` reason, and nothing else (§2.6), so a `[data-state]` colour rule selects nothing on that screen |
+| notional / estimated | the text marks: Live, Spend, Projects, Run, degraded. The attribute `data-state`: **Spend alone** | `~$` / `est.` are `formatReading`'s marks, so they appear wherever a notional or estimated reading is drawn, on all five screens (Live's repository and total notional figures, §2.3; the subscription model and the estimated compute on Projects and Run, §2.5, §2.6; the degraded compute, §2.7). The **attribute** `data-state="notional"` / `"estimated"` is written by Spend alone, on `.spend-point` (and on the single point an account with nothing to draw appends), and it is the **account's** state, not the breakdown on the axis: `SPEND_ACCOUNTS` is three charts, and each of the three reads its own column into its own state — `model_micros` → `measured`, `notional_micros` → `notional`, `compute_micros` → `estimated` (`microsReading`, `spend.ts` 512-536) — with the point copying that reading's state into the attribute (`point()`, 1521). `data-dimension` is the switch's word for the x-axis (`day\|week\|month\|year\|repo\|model\|person\|mode`) and decides nothing here: the notional chart is notional whether the rows are days or repositories. Projects' `data-state` is its panel state, Live's comes from a `percent` reading, Run writes none, and the degraded cap is always `unavailable` |
 | partial / hollow | Spend | `data-partial="true"` / `data-hollow="true"` + the `(partial)` marker |
+| unreadable | Spend | `data-unreadable="true"` on the row / `div.spend-totals` + the `no readable record` marker |
 | degraded | Spend | `span.spend-degraded` with `data-degraded="true"` |
 | polling (no Firebase) | degraded | `data-kind="no-firebase"` + `data-state="polling"` |
 | no binary / refused | unavailable | `data-kind="no-binary"` / `"refused"` |
@@ -640,7 +660,7 @@ carry `data-theme` from code — see [§3.6](#36-how-the-theme-is-chosen).
 | the rail's row states (§4.1) | chrome (the installation rail) | `span.console-rail-state` with the **word** `running` / `silent` / `idle` beside its glyph `●` / `▲` / `○`. **Not a state the code emits today** — the rail is the canvas's addition, and what a row reads is §4.1's open item — so whichever task draws the row draws the word with it: the word is what makes the tone redundant, and the collapsed rail keeps it in the row's accessible name |
 | not built | Projects (`policy`, `enrollment`) | `data-state="not-built"` + a `projects-because` sentence |
 | empty | picker (status line), Live (a `gap` bar, and `p.live-review-empty` with the review inbox's own sentence), Spend (a `gap` point, a caps note) | the console's own sentence, never an empty box. The inbox's sentence says "in this feed" on purpose: `ready[]` ships empty when the runs bucket could not be read as well as when nothing is waiting, and the CLI's own `queued_note` — drawn in the header as `p.live-note` — is what tells the two apart |
-| cap reached | **none — not a state in the code.** The cap is a `percent` reading and a bar's `data-fill` | the stylesheet may colour a threshold; the code emits no flag |
+| cap reached | **no attribute — not a state in the code.** The cap is a `percent` reading and the repository bar's `data-fill`; the fleet budget panel draws instead a sentence, `p.live-fleet-full` ("the cap is fully committed: new runs wait in the queue until a lease settles"), when a measured headroom is 0 | the stylesheet may colour a threshold; the code emits no flag — and a rule keyed on `p.live-fleet-full` may not read it as a state (§2.3) |
 | loading | **none — not a state in the code** | the entry draws nothing before the handshake answers |
 
 ### 2.10 Numbers, money and time — what the stylesheet must align
@@ -649,14 +669,16 @@ carry `data-theme` from code — see [§3.6](#36-how-the-theme-is-chosen).
 |---|---|---|---|
 | **Money** | `usd` | Live (spend, counted, cap, notional, burn rate, sparkline title), Spend (points, peaks, rows, totals, every cap), Projects (reserve, caps, job model/compute/total), Run (ledger, stage spend, reported, charged, routes, models), degraded (all totals) | `$` + grouping + **2 decimals**, sign before the `$` |
 | **Share** | `percent` | Live (cap percent, bar fills), Spend (`data-height`) | 1 decimal + `%` |
-| **Duration / time** | `seconds` | Live (run age, connection age, silence), Run (stage duration, replay window), degraded (feed age) | 0 decimals + ` s` |
+| **Duration / time** | `seconds` | Live (connection age, silence), Run (stage duration, replay window), degraded (feed age) | 0 decimals + ` s` |
+| **A span, as a person says it** | `duration` | Live (**a run's age only**, the ELAPSED column of the runs table) | `21s`, `29m 21s`, `1h 02m` — the three scales, never a raw count |
 | **Time (money-shaped)** | `hours` | Spend (run hours, totals) | 2 decimals + ` h` |
 | **Count** | `count` | Live (**the review inbox only**: the ready rows it holds, how many it drew and how many the document carried), Spend (runs, tokens), Projects (counts, versions), Run (tests, lines, records), Coordinator (a repository's records, how many of them are in flight, its collisions, and what a bound left out), degraded (runs, searched) | 0 decimals + grouping |
 
 **Live's money, shares and durations are what its *run* rows are made of**; the only `count`
 readings on the screen are the review inbox's three (v2 plan Task V2.7.1), each a count of a
 list the document carries and therefore `measured` — which is why the section can draw it
-without a reason. The rest of the screen's numbers are `usd`, `percent` and `seconds`, and
+without a reason. The rest of the screen's numbers are `usd`, `percent`, `seconds` and the
+run row's one `duration`, and
 `data-segments` — the one other integer it puts on an element — is a bare attribute on the
 sparkline list (`String(line.segments)`), not a reading drawn through `formatReading`, so it
 carries no mark, no `title` and no state.
@@ -855,6 +877,33 @@ either of them.
 no time by design, so the marker's stamp is drawn as the string the document holds and never
 reformatted into a date: the console's own sentence about the time it does not have is the
 `coordinator-age` paragraph, and it is drawn as prose.
+
+### 2.13 The launch confirmation window — `console/src/renderer/confirm.html` + `console/src/renderer/confirm.ts`
+
+The modal the main process opens before it spawns a run (`desktop-console.md`, §5.1 rule 11;
+V2.5.1a). It shows one launch — the installation, the repository the
+launch recorded and the one it converted, the ref, the title and the plan task, the run id,
+the command line word by word, the size of the task as submitted and the **whole** task text —
+and asks the operator for one of two answers: cancel, which is the default, or go ahead.
+
+| Region | Hook | What it holds |
+|---|---|---|
+| The task | `console-confirm-task` | the `pre` holding the task text as submitted, drawn in full and bounded, so a long task scrolls inside the box rather than being shortened or pushing the two answers off the window |
+| The field list | `console-confirm-fields` | the `dl` holding the `dt`/`dd` field rows, carrying the one rule that wraps a long value inside its `dd` rather than widening the window |
+| The answers | `console-confirm-actions` | the row the view appends its two buttons to: the confirming one, and Cancel |
+
+**Its hooks are classes and not the picker's ids**, although its document is hand-written
+HTML like the picker's: the scan in `console/test/unit/installations-view.test.ts` reads this
+stylesheet for id selectors and holds every one of them to the ids `installations.html`
+declares, so a second document's ids in this file would read there as rules for a page that
+is not served. The four containers the view looks up (`confirm-status`, `confirm-fields`,
+`confirm-task`, `confirm-actions`) are the document's own declarations, and the ids and the
+three hooks above are the whole of what the window carries: **no `data-*` of its own, and no
+rule here keyed on a theme attribute**, since the window is one surface with one ground. The
+field rows are the view's `dt`/`dd` pairs and carry **no hook of their own**: the `dl` that
+holds them is `console-confirm-fields`, whose one rule wraps a long value inside its `dd`,
+and apart from that they carry only what `base.css`'s reset gives every `dt` and `dd`. A
+rule that wanted a hook on a row itself adds it here first.
 
 ---
 
@@ -1180,14 +1229,15 @@ the code already emits**, and the stylesheet must never be the only carrier of a
 | the rail's three row states (§4.1) | the **word** `running` / `silent` / `idle` beside its glyph `●` / `▲` / `○`, both in `span.console-rail-state`; the glyph alone is what the collapsed rail draws, and the row's accessible name then carries the word, so the tone is never the only carrier in either state |
 | killed / halted | the banner's **words**: `KILLED by <who> <when> "<reason>"` / `HALTED` |
 | stale | the banner's sentence, naming the 45 s threshold, plus `last read <at>` |
-| silent / lost / near / over deadline | the flag's **text** (`silent`, `lost`, `near deadline`, …) in `span.live-run-flag` |
-| queued / stuck | the flag text plus the all-caps row treatment |
+| silent / near / over deadline | the flag's **text** (`silent`, `near deadline`, …) in `span.live-run-flag` |
+| lost / queued | the state chip's **word** (`lost`, `queued`) in `span.live-run-chip`, with the flag's reason in its `title` — the word is the mark, and the chip's tone is never the only carrier |
+| stuck | the flag text plus the all-caps row treatment |
 | gap | the mark `—` in the cell and a `title` |
 | unavailable | the mark `n/a` and a `title` |
-| notional / estimated | the `NOTIONAL~` / `est.` prefix **in the number itself** |
+| notional / estimated | the `~$` / `est.` prefix **in the number itself** |
 | partial | the `(partial)` marker text |
 | degraded / polling | the words `degraded` and `polling` |
-| cap near / over | the **number**: the percent reading, and the bar's `data-fill` |
+| cap near / over | the **number**: the percent reading and the repository bar's `data-fill`, and, on the fleet budget panel, the cap, the legend's figures and the full-cap banner's own sentence |
 | not-built | the panel's own sentence |
 | a run's rigor mode | the mode's own **word** — `POC`, `Startup`, `Pro`, `Critical`, `Hotfix` — in the chip on a Live row (§2.3), the MODE cell on Projects (§2.5) and the Rigor row on the run detail (§2.6). **This mark carries no colour at all**, and the row is here to say so: the five modes have no colour of their own in this tree, so the word is the whole of the mark and a rule must not paint the modes apart |
 
@@ -1263,7 +1313,7 @@ The `:root, [data-theme]` pair is load-bearing and not decoration: a custom prop
 **computed where it is declared**, so a token declared only on `:root` would inherit an
 already-resolved colour into a mount that switched, and the light golden frame would be a
 picture of the dark theme. Declaring the set on `[data-theme]` too makes the switch work at
-any depth. `light-dark()` needs Chromium 123; the console pins Electron 44.7.2
+any depth. `light-dark()` needs Chromium 123; the console pins Electron 45.0.0
 (`console/package.json`), which is far past it — and the fallback, if the owner prefers no
 modern function, is two explicit blocks selected by attribute, with the token test
 asserting both blocks name exactly the same vocabulary (see [§9](#9-alternatives-considered)).
@@ -1400,80 +1450,57 @@ the dark literal against `--ground` in the dark set and the light literal agains
 in the light set — rather than the ambiguous "equal to `--ground`" the first revision
 wrote.
 
-**Under the canvas the owner approved on 2026-10-19 the document is a two-column grid**,
-and the entry appends up to **five** children to `document.body`, which is the mount
-`startConsole` is handed. The canvas's one structural addition is a **left vertical
-installation rail** — the block below describes it — and the entry draws it as **one**
-child, `aside.console-rail`, in the grid's first column. The three bands of the bullets
-below are the second column and are otherwise unchanged:
+**The header switcher replaced the rail (owner's ruling of 2026-10-28).** The console
+redesign's shell is one header row and a page; its installation switcher in the header
+replaces the canvas's left vertical rail of 2026-10-19, and its menu holds what the rail held.
+The entry appends up to **three** children to `document.body`, which is the mount
+`startConsole` is handed:
 
 ```
-┌───────────────────┬───────────────────────────────────────────────────────┐
-│ section.console-skew   spans both columns — reduced mode only          │  when there is one
-├───────────────────┼───────────────────────────────────────────────────────┤
-│ aside.console-rail│ section.console-installation   project · binary · …   │  1 line
-│   the installation├───────────────────────────────────────────────────────┤
-│   rail, §4.1 below│ nav.console-views   [ Live ] [ Spend ] [ Projects ]   │  1 line
-│                   ├───────────────────────────────────────────────────────┤
-│                   │ div.console-panel                                     │
-│                   │   section.live | .spend | .projects | .run | .degraded │
-│                   │   | .console-unavailable                              │
-└───────────────────┴───────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│ section.console-skew                               reduced mode only     │
+├──────────────────────────────────────────────────────────────────────────┤
+│ header.console-header   wordmark · switcher · nav · gauge · Halt fleet   │
+├──────────────────────────────────────────────────────────────────────────┤
+│ main.console-page                                                        │
+│   div.console-panel   the page container, max-width --page-max           │
+│     section.live | .graph | .spend | .projects | .coordinator | .run     │
+│     | .degraded | .console-unavailable                                   │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **The rail is the body's second child when there is a banner, and its first when there is
-  not**, and it comes **before** the installation line in both cases: the entry appends it
-  after `startConsole` has drawn the skew banner and before `drawInstallation`'s line, so
-  DOM order and visual order agree — a rail drawn on the left but appended last would put
-  the chrome after the content in the tab order, which is the one thing a rail may not do.
-  Under the canvas's grid the banner **spans both columns**; when it is present the rail and
-  the three bands below it share the rows under it.
-- **The version-skew banner is not in the panel, and it is not the panel's first child
-  either.** `startConsole` appends it to the mount it was handed (`app.ts` 333) and that
-  mount is `document.body` (`entry.ts` 180-183), so the banner is the body's **first
-  child**, appended before the installation line, the nav and the panel — which
-  `mountDashboard` builds afterwards, in that order (`entry.ts` 615, 760, 783). A rule that
-  places it inside `div.console-panel` selects it nowhere: the panel is created later and
-  holds the screen and nothing else. It is `section.console-skew` — a section, not a div —
-  and it carries `data-theme`, `data-mode` and `data-skew` (`shared/version.ts` 579-587). In
-  **refused** mode it is the whole document, because `bootDashboard` returns straight after
-  it and **the other four children — the rail included — are never appended**.
-- **The installation line and the nav are chrome and never scroll**; the panel scrolls.
-  A sticky header is the difference between a dense screen and a screen that looks broken
-  the moment it is longer than the window.
-- **`nav.console-views` is a tab list in all but name** and is styled as one: a row of
-  equal-weight buttons separated by rules, the current one marked with `aria-current`
-  (which the code emits) plus a weight and an underline in `--accent`. Because `aria-current`
-  is already the marker, the style rule is `[aria-current='true']` and not a class.
+- **The version-skew banner is not in the panel.** `startConsole` appends it to the mount it
+  was handed, so the banner is the body's **first child**, appended before the header and the
+  page. It is `section.console-skew` and it carries `data-theme`, `data-mode` and `data-skew`
+  (`shared/version.ts`). In **refused** mode it is the whole document, because `bootDashboard`
+  returns straight after it and **the other two children are never appended**.
+- **The header is chrome and never scrolls**; the page scrolls. It wraps on a narrow window.
+- **`nav.console-views` is five tabs** (`button.console-view`, at least 44 px tall; the
+  redesign draws links, and the renderer writes no `href`), the
+  current one marked with `aria-current="page"` and a 2 px inset `--live` underline. Because
+  `aria-current` is the marker, the style rule is `[aria-current='page']` and not a class.
 - **A screen's own root is the panel's only child** and carries the screen's `data-theme`,
   so a rule may be written `section.live { … }` or `.live { … }` but never
   `div.console-panel .live` — the panel is chrome and the screen is content.
 - The installation line's three states (`chosen`, `none`, `unreadable`) are styled as
-  three states: `chosen` is `--text`, `none` is `--text-muted`, and `unreadable` carries
-  the `--warn` rule and its own sentence.
+  three states, at the top of the switcher's menu, with the CLI's full path under the name.
 
-**The installation rail — the canvas's one structural addition.** The canvas the owner
-approved on 2026-10-19 draws a **left vertical rail**: the installations as vertical tabs, a
-region the bands above do not have. It is the canvas's *only* structural addition. The
-content column to its right keeps the title bar, the view nav and the panel exactly as the
-bullets above describe them, and the four screens the canvas draws — Live, Spend, Projects
-and Run detail — are reached as [§2](#2-screen-inventory) says: three from the nav, and Run
-detail from a run row. The rail adds no tab of its own, and the console gains no view.
-
-The rail itself is `aside.console-rail` — the one element the entry appends for it — and its
-tree is **sixteen classed elements**, each element's class a hook a rule may select. Those
-sixteen elements carry **fifteen classes**: the foot row and its button share
-`console-rail-add` (a row and the control inside it are one region, and the class names the
-region), so a stylesheet selects fifteen distinct hooks and
-[§2.1](#21-the-dashboards-chrome--srcrendererentryts) lists the same fifteen. **The count is
-stated here and in §2.1 because it is what a reader checks the tree against**, and the tree
-below is the list:
+**The installation rail — now the switcher's menu.** The canvas the owner approved on
+2026-10-19 drew a **left vertical rail** (216 px wide, 56 px collapsed); the owner's ruling of
+2026-10-28 replaced it with the redesign's header switcher, so the rail is no longer a column
+and has no collapse control. What it held is unchanged and is drawn inside
+`div.console-switcher-menu`, under the installation line: the rail itself is
+`aside.console-rail`, and its tree is **fifteen classed elements**. Those fifteen elements carry
+**fourteen classes**: the foot row and its button share `console-rail-add` (a row and the
+control inside it are one region, and the class names the region), so a stylesheet selects
+fourteen distinct hooks and [§2.1](#21-the-dashboards-chrome--srcrendererentryts) lists the same
+fourteen. **The count is stated here and in §2.1 because it is what a reader checks the tree
+against**, and the tree below is the list:
 
 ```
-aside.console-rail                        the rail — the grid's first column
+aside.console-rail                        the rail's tree, inside the switcher's menu
 ├─ div.console-rail-head                  the header row
-│   ├─ p.console-rail-title               the word "Installations"
-│   └─ button.console-rail-collapse       the collapse control
+│   └─ p.console-rail-title               the word "Installations"
 ├─ div.console-rail-list  role="tablist"  the installation rows, one tab each
 │   └─ button.console-rail-row  role="tab"
 │       ├─ div.console-rail-nameline      the name, and the warning mark beside it
@@ -1488,28 +1515,9 @@ aside.console-rail                        the rail — the grid's first column
 └─ p.console-rail-hint                    "Switch with the shortcut keys 1 2 3"
 ```
 
-- **The width is a fixed 216 px expanded and 56 px collapsed**, two literals in `base.css`
-  and **not tokens**: like `CONSOLE_WINDOW_SIZE`'s 1180 × 780 they are facts about this
-  window rather than values a screen reads, and no §3.1 table gains a row for them. The
-  collapsed width is the icon column — 16 px of padding, a 24 px glyph, 16 px again — so a
-  collapsed row still draws its glyph at the size the expanded rail draws it and the
-  collapse control keeps its own box in the header row above. **Both are stated here rather
-  than left to the task**: a rail whose collapsed width is the implementer's invention is a
-  rail whose icons sit at a different size in the two states, and the canvas draws the
-  icons-only state without its arithmetic. [§4.2](#42-narrow-windows)'s
-  breakpoints are the **window's**, written in `em` against the root size, and the rail is a
-  fixed 216 px of what is left: **the layers therefore fire with the content column 216 px
-  narrower than the width each one names** — §4.2 states it, and the figures are kept as the
-  window's rather than re-cut here, because they were chosen against a window whose resize
-  the operator controls. The rail itself never narrows with the window — it narrows only when
-  the operator collapses it, which is a control and not a media query.
-- **Tokens, and no new ones.** The rail's ground is `--surface`, the rules between its rows
-  are the `--border` hairline, the selected row is `--surface-alt` (the raised surface) with
-  a **3 px `--accent` left border**, the header's title and a row's name are `--text`, and
-  the small text and the add row are `--text-muted`. Every value here is a row of the set
-  that ships, [§3.2](#32-the-dark-value-set--the-consoles-first-screen); the palette gains
-  nothing, and a rule that wants a tone this list does not name is a rule that has not read
-  [§3.1](#31-one-file-one-value-set-one-vocabulary).
+- **The switcher's button** draws a status dot, the installation's name and `CLI <version> ·
+  <mode>`. The dot carries the open row's state word as `data-state` and as its accessible
+  name, so the menu's state is visible while it is folded.
 - **The three state words, each beside its glyph.** The glyph is drawn **and** the word is
   drawn — never one instead of the other ([§3.5](#35-never-colour-alone)):
 
@@ -1519,23 +1527,9 @@ aside.console-rail                        the rail — the grid's first column
 | `silent` | `▲` | `--warn` | its last read was refused, or its feed has gone quiet |
 | `idle` | `○` | `--text-muted` | it is stored, and nothing is being read from it |
 
-- **The selected row** carries `aria-selected="true"` **and** the 3 px `--accent` left
-  border on `--surface-alt`; the attribute is the machine-readable mark and the border is
-  the drawn one, so the selection is not a colour alone either. The nav's `aria-current`
-  stays the nav's own marker — the rail is a tablist and marks itself as one.
-- **The header row** is a title and a control: `p.console-rail-title` reads
-  "Installations", and `button.console-rail-collapse` toggles the rail between its full
-  width and its icons-only state. **The button has an accessible name in both states** —
-  "Collapse the installations rail" and "Expand the installations rail" — and it carries
-  `aria-controls` naming `div.console-rail-list` and `aria-expanded`, so the state it is
-  about is announced rather than drawn only.
-- **The collapsed state is icons only, and it is a name-preserving collapse.** A row keeps
-  its glyph and drops its name, its project, its state word and its spend from *sight*; the
-  row's accessible name is then the whole of what it draws — the installation's name, its
-  project, the state word and the spend — so the word §3.5 requires is still announced and
-  the collapse removes no fact. The add row keeps its label and its accessible name, the
-  hint is hidden, and the rail's width is the **56 px** the width bullet above states — a
-  second literal beside the 216 px one and not a second token.
+- **The selected row** carries `aria-selected="true"` **and** a 3 px `--live` left border;
+  the attribute is the machine-readable mark and the border is the drawn one, so the
+  selection is not a colour alone either.
 - **The console never shows a picker screen** (owner's design ruling of 2026-10-25). Every
   installation is listed in the rail, readable or not, the first readable one is open in the
   main area, and switching is a click on the rail. "+ Add installation" opens the **existing**
@@ -1584,20 +1578,21 @@ aside.console-rail                        the rail — the grid's first column
   (the ones the CLI listed, plus the console's own recorded checkout), with temporary and
   tool-owned paths (and symlinks into them) refused in the main process as well as left off the
   screen, and the folder the file manager opens is computed from the console's own record.
-  Nothing on the rail writes to the cloud or to the CLI's configuration.
+  Nothing on the rail writes to the cloud or to the CLI's configuration. **Halt fleet**, in
+  the header, is drawn as the redesign draws it and performs nothing: `aria-disabled`, the
+  title "Not available in this release", and no listener, IPC channel or spawn entry behind it
+  (`src/renderer/writes.ts`; owner's ruling of 2026-10-28).
 - **The keyboard** — the detail is [§4.3](#43-keyboard-and-focus): the rail's list is **a
   tablist in its own right**, `div.console-rail-list` with `role="tablist"` and one
   `role="tab"` row each; it uses a **roving `tabindex`** (the selected row is `0`, the rest
   `-1`), Arrow Up and Arrow Down move between the rows, **Home** and **End** go to the first
   and the last, and **Enter selects** — the arrow keys move focus and the key that chooses is
   Enter, which is the pattern's manual-activation form; **selecting a row is the click**: it
-  switches the console to that installation, or opens its issue. The
-  **shortcut keys** select by position: **Command-1** to **Command-3** on macOS and
-  **Control-1** to **Control-3** elsewhere address the first three rows **the rail draws**,
-  which is the hint's own sentence. The collapse
-  control is a tab stop **before** the list and the add row is a tab stop **after** it, so
-  the rail's tab stops are the button, the list and the add row — three, whatever the number
-  of installations.
+  switches the console to that installation, or opens its issue, and folds the menu. The
+  **shortcut keys** select by position whether the menu is open or folded: **Command-1** to
+  **Command-3** on macOS and **Control-1** to **Control-3** elsewhere address the first three
+  rows **the rail draws**, which is the hint's own sentence. Escape folds the menu and returns
+  the focus to the switcher's button.
 
 **Two things the canvas did not decide, and what this design does with each.**
 
@@ -1633,17 +1628,11 @@ and is lost the moment a query is written in `px`:
 | ≤ 48.75em (780 px) | the nav wraps to two rows, the installation line drops to project · mode, and any three-column figure group becomes two |
 | ≤ 35em (560 px) | the ledger, the caps panel and the panels' source lines stack; **no figure is ever dropped or truncated** — what is dropped is a column, and a dropped column is one whose value is repeated in a `title` |
 
-**The rail is 216 px of every width above, and the three figures are the window's.** The
-queries measure the viewport, so each one fires with the content column **216 px narrower
-than the number it names** — 1000 px of window is 784 px of column while the rail is
-expanded. The figures are kept rather than re-cut: they were chosen as window widths an
-operator resizes to, the column's own width is not what a media query can see, and [§4.1](#41-the-windows-structure)
-is where the rail's width is stated. **What the layers may not do is assume the column they
-used to get**: a layer that used to have 1000 px has 784, so a table that drops a column at
-the first breakpoint is dropping it from a column a fifth narrower than the one the choice
-was made against, and Task 6.3 — the task that draws the rail — re-reads the three figures
-against the column it leaves rather than against the window. Collapsing the rail returns the
-216 px, which is why the collapse control is a control and not a breakpoint.
+**The three figures are the window's, and since the header switcher replaced the rail
+(2026-10-28) the content column is the whole window**, less the page container's padding. The
+rail was a fixed 216 px column, so each layer used to fire with the column 216 px narrower than
+the number it names; the switcher's menu overlays the page instead of taking a column from it.
+The header wraps by itself; below 35em the page's side padding drops to 16 px.
 
 **The rule that outranks the breakpoints: a figure is never hidden to make a layout fit.**
 A dense console that hides a cap on a narrow window is the console lying about spend,
@@ -1658,30 +1647,18 @@ which §6.1 rule 1 forbids more strongly than any layout does.
   sets — which is exactly the requirement for a focus indicator.
 - **`:focus-visible` and never `:focus`** — a mouse click must not leave a ring on a nav
   button, and a keyboard user must never lose one.
-- **The console needs a roving tabindex in two places, and it has one in neither.** Today
-  `entry.ts` creates one `button.console-view` per view with no keyboard handling at all, so
-  Tab walks all three buttons and neither arrow keys nor Home/End move between them. Task
-  6.5 adds the WAI-ARIA tablist behaviour in ~15 lines: `role="tablist"` on the nav,
-  `role="tab"` on each button, `aria-current` (already there) plus `aria-selected`,
-  **roving `tabindex`** (the current view is `0`, the others `-1`), and Arrow/Home/End
-  handling that calls the existing `show(id)`. **And the rail's list is the second** — §4.1
-  gives it the same treatment over `div.console-rail-list` and its `role="tab"` rows, one
-  tab stop for the whole list rather than one per installation, with **Enter** as the key
-  that selects (the nav's `show(id)` **is** its selection, so a nav button needs no second
-  key and the rail's rows do: the arrows move focus and Enter chooses). **Both are renderer
-  changes and neither is a style change** — no attribute either writes is a style, so the
-  CSP and `ElementLike` are untouched. They are in the styling plan because a keyboard-less
-  tablist is a layout defect, and the styling work is where you notice it.
-- **The focus order is the DOM order, and the rail is first.** A tab through the chrome
-  goes: the rail's collapse control, the rail's list (one stop, however many installations),
-  the rail's add row — then the view nav, then the panel's own controls, and the panel's
-  contents in the order the screen draws them. That is the layout's promise and not a
-  preference: the rail is appended before the installation line (§4.1), so the tab order a
-  reader gets is the order they see, left to right and top to bottom. **A rail drawn on the left
-  and appended last would put the whole chrome ahead of it**, which is
-  the WCAG 2.4.3 failure this ordering exists to avoid — and it is also why the shortcut
-  keys exist: `Ctrl`/`Cmd` + digit reaches the first three rows the rail draws (§4.1)
-  without walking the tab order at all.
+- **The rail's list is the console's roving tabindex.** Task 6.5 gave the nav and the rail's
+  list the WAI-ARIA tablist behaviour; since the redesign's header (2026-10-28) the nav is
+  five buttons, ordinary tab stops whose Enter is their click, and the rail's list keeps the
+  tablist: `role="tablist"` over `div.console-rail-list` and its `role="tab"` rows, one tab
+  stop for the whole list rather than one per installation, the arrows move focus and
+  **Enter** selects. **It is a renderer change and not a style change** — no attribute it
+  writes is a style, so the CSP and `ElementLike` are untouched.
+- **The focus order is the DOM order.** A tab through the chrome goes: the wordmark, the
+  switcher's button — and, while its menu is open, the menu's rows (one stop) and its add
+  row — then the five nav buttons, the gauge's group, Halt fleet, and the page's own controls
+  in the order the screen draws them. The shortcut keys exist so that `Ctrl`/`Cmd` + digit
+  reaches the first three rows (§4.1) without opening the menu or walking the tab order.
 - **A skipped-by-default DOM stays skipped**: the console has no skip link and does not
   need one (there is no repeated block of links before the content), and it must not gain
   a link that would need the allow-list's `openExternal` to do nothing.
@@ -1833,7 +1810,7 @@ are **different sources, which is what makes the comparison worth making**: `bui
 than ship. **The test's non-vacuity assertion is the load-bearing half**: a name dropped from
 the list, or a file written into `dist/bundle/` that nothing vouches for, still fails.
 
-### 5.4 The three `<link>` elements
+### 5.4 The `<link>` elements
 
 One `<link rel="stylesheet" href="./console.css" />` in the `<head>` of **each** of
 `console/src/renderer/index.html`, `console/src/renderer/installations.html` and `console/src/renderer/refusal.html`, beside the existing CSP `<meta>`:
@@ -1846,6 +1823,12 @@ One `<link rel="stylesheet" href="./console.css" />` in the `<head>` of **each**
   maintains;
 - the refusal document **is included**, and that is the point: the one page a console below
   the floor shows must not be the unstyled one.
+
+**Amended 2026-10-28: `console/src/renderer/confirm.html` is the fourth document and links
+the same file the same way** (the launch confirmation window, §2.13, V2.5.1a). Nothing else
+about this section moves with it: the stylesheet is still one file, still served by the same
+handler under the same directive, and the document the window loads is the one page in the
+bundle whose rules are classes rather than the picker's ids.
 
 ### 5.5 The CSP is unchanged, proved
 
@@ -1860,7 +1843,7 @@ a fetch the CSP's `connect-src` governs, and no script fetches the CSS).
 The evidence a reviewer should require, and which the tests provide:
 
 - `CONTENT_SECURITY_POLICY` is byte-identical before and after, and so is the `<meta>`
-  copy in each of the three documents — held for **all three** by
+  copy in each of the four documents — held for **all four** by
   `console/test/unit/csp-document.test.ts`, whose document list is derived from
   `SERVED_FILES`, and for the two it reads by `console/test/unit/window.test.ts`, whose
   `expect(CONTENT_SECURITY_POLICY).toBe(DESIGN_CSP)` pins the policy itself;
@@ -2059,7 +2042,7 @@ in `base.css` and the rows' and badges' is in `screens.css`.
 
 1. a **presence test** over this document's eleven section headings and its load-bearing
    strings — the status line, `SERVED_FILES`, "No inline style attribute", `Never colour
-   alone`, `KILLED by`, `NOTIONAL~`, `(partial)`, `tabular-nums`, `prefers-color-scheme`,
+   alone`, `KILLED by`, `~$`, `(partial)`, `tabular-nums`, `prefers-color-scheme`,
    `light-dark(`, `forced-colors`, "is already the directive a stylesheet needs",
    `mediaTypeFor`, `text/css; charset=utf-8`, `console.css`, `adoptedStyleSheets`,
    `Task 6.2`, "No D-number is allocated" — and over §2's vocabulary rows, failing when a
@@ -2270,7 +2253,8 @@ element with no keys. 6.6 (the frames) is last and owner-run.
 - **Scope:** the bundler's stylesheet step (§5.2) — `THEME_STYLESHEETS` **with the files
   that exist at this point** (`tokens.css`, `palette.css`, both from Task 6.1), the
   refusals, the `dist/bundle/console.css` artefact and its ownership; `SERVED_FILES`
-  (§5.3); the three `<link>` elements (§5.4); `build.files` and the README's list (§5.6);
+  (§5.3); the `<link>` elements (§5.4 — three when this task landed, amended to four by
+  V2.5.1a on 2026-10-28); `build.files` and the README's list (§5.6);
   and the tests that pin all of it — `bundle.test.ts`, `csp-document.test.ts`,
   `build-files.test.ts`, and the `style` scan extension to `screen-literals.test.ts` (§5.5).
   **The whole-directory list is not this task's**, and cannot be: the bundler refuses a
@@ -2517,7 +2501,7 @@ console plan's `C`-series style only in shape, and a number is the owner's to gi
   installations file, and nothing else") and needs the owner's ruling the way C8 did;
   (c) a key inside the existing `installations.json`, which is schema-closed and would
   need a version bump; (d) `nativeTheme.themeSource` in the main process, which themes all
-  three documents including the refusal page.
+  four documents including the refusal page.
 - *Recommendation:* (a) for v1, with (d) named as the natural home if the owner later wants
   one — (d) needs no new setting to *decide the colour* but still needs one to *remember*
   the choice. *Why:* v1 writes two files and rule 10 says so in the owner's own words;
@@ -2642,9 +2626,9 @@ no task owns.*
    kill banner (draw one **without** a kill and one **with** `KILLED by <who> <when>
    "<reason>"`); under each, four run rows at 24 px with the columns §2.3 lists. Draw one
    row `silent` (amber flag word), one `lost` (alarm flag word), one `queued` (its own
-   treatment), and one run whose spend reads `NOTIONAL~`.
+   treatment), and one run whose spend reads `~$`.
 2. **Spend** — the header with the range picker and the breakdown switch; three chart
-   blocks (`billed model spend`, `NOTIONAL~ subscription list price`, `compute
+   blocks (`billed model spend`, `~$ subscription list price`, `compute
    (estimated)` — draw them as **separate**, never summed, per the design's own rule);
    the rows table with money, counts and run hours; the totals; and the caps panel with the
    global cap, the defaults and one per-repository override, each naming the **binding

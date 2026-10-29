@@ -12,7 +12,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/config"
-	"github.com/dimipaun/fugaro/internal/coordinator"
+	"github.com/dimipaun/fugaro/internal/coordpath"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -604,7 +604,7 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		if c.Problem != rulesMarkerOlderText(rulesDeviceGeneration) {
 			t.Errorf("the body is not rulesMarkerOlderText:\n got %q\nwant %q", c.Problem, rulesMarkerOlderText(rulesDeviceGeneration))
 		}
-		for _, want := range []string{fmt.Sprintf("generation %d", rulesDeviceGeneration), coordinator.PathRoot + "/", fmt.Sprintf("generation %d or newer", projectpolicy.RulesVersion)} {
+		for _, want := range []string{fmt.Sprintf("generation %d", rulesDeviceGeneration), coordpath.PathRoot + "/", fmt.Sprintf("generation %d or newer", projectpolicy.RulesVersion)} {
 			if !strings.Contains(c.Problem, want) {
 				t.Errorf("the body does not carry %q: %q", want, c.Problem)
 			}

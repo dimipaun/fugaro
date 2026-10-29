@@ -80,6 +80,7 @@ const MODULES: readonly string[] = Object.freeze([
   'shared/schema.js',
   'shared/version.js',
   'renderer/app.js',
+  'renderer/writes.js',
   'renderer/screens/live.js',
 ])
 
@@ -160,6 +161,7 @@ function domFactory() {
   }
   return {
     create: function (tag) { return wrap(document.createElement(tag)); },
+    createNS: function (tag) { return wrap(document.createElementNS('http://www.w3.org/2000/svg', tag)); },
     wrap: wrap,
   };
 }

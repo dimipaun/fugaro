@@ -51,7 +51,7 @@ func newReportCmd() *cobra.Command {
 	var o reportOptions
 	cmd := &cobra.Command{
 		Use:   "report",
-		Short: "Report what the project spent, by day, week, month, year, repository, model or person",
+		Short: "Report what the project spent, by day, week, month, year, repository, model, person or mode",
 		Long: "Report model spend from the project's spend history.\n\n" +
 			"Finished days are read from the spendDaily documents in the project's Firebase\n" +
 			"Firestore (you need roles/datastore.viewer on the Firebase project, which\n" +
@@ -60,19 +60,25 @@ func newReportCmd() *cobra.Command {
 			"marked (partial). --since and --until are UTC dates (YYYY-MM-DD); --since also\n" +
 			"takes Nd, the last N days up to --until (default 30d); --until defaults to today.\n\n" +
 			"--by day|week|month|year groups in time; weeks are ISO weeks in UTC, starting on\n" +
-			"Monday (2026-W40). --by repo|model|person groups across the range. Dollars are\n" +
-			"exact (integer micro-dollars). Model $, NOTIONAL~ (a subscription's list-price\n" +
-			"figure, never billed) and COMPUTE $ are separate columns and never summed;\n" +
-			"compute reads n/a when no run's compute was estimated. A person is the stored\n" +
-			"requester address; `unknown` is spend, and runs, with no requester recorded.\n" +
-			"By model, a subscription model's dollars are notional (priced from its tokens,\n" +
-			"so they can differ slightly from the run's recorded notional total).\n\n" +
+			"Monday (2026-W40). --by repo|model|person groups across the range, and --by mode\n" +
+			"groups by the rigor mode each run resolved (poc, startup, pro, critical, hotfix,\n" +
+			"and none for a run whose record carries no mode, or carries one this version does\n" +
+			"not know), read from the run records and not from this history: a mode row made\n" +
+			"only of runs whose records could not be read is marked unreadable and reads n/a,\n" +
+			"never 0. Dollars are exact (integer micro-dollars). Model $, NOTIONAL~ (a\n" +
+			"subscription's list-price figure, never billed) and COMPUTE $ are separate\n" +
+			"columns and never summed; compute reads n/a when no run's compute was estimated.\n" +
+			"A person is the stored requester address; `unknown` is spend, and runs, with no\n" +
+			"requester recorded. By model, a subscription model's dollars are notional\n" +
+			"(priced from its tokens, so they can differ slightly from the run's recorded\n" +
+			"notional total).\n\n" +
 			"--csv writes RFC 4180 with spreadsheet-safe cells (a cell starting with = + - @\n" +
 			"is prefixed with '). --json prints {project, source, degraded, by, since, until,\n" +
-			"weeks, rows[{key, start, end, partial, model_micros, model_usd, notional_micros,\n" +
-			"notional_usd, compute_micros, compute_usd, compute_estimated, run_hours, runs,\n" +
-			"calls, tokens}], totals, warnings}; *_usd are exact decimal strings and null\n" +
-			"means n/a or not recorded for that breakdown.\n\n" +
+			"weeks, rows[{key, start, end, partial, unreadable, model_micros, model_usd,\n" +
+			"notional_micros, notional_usd, compute_micros, compute_usd, compute_estimated,\n" +
+			"run_hours, runs, calls, tokens}], totals, warnings}; *_usd are exact decimal\n" +
+			"strings and null means n/a or not recorded for that breakdown (an unreadable\n" +
+			"row carries null money).\n\n" +
 			"A project without Firestore history says so and shows run-record totals instead\n" +
 			"(from the runs bucket, not budget history).",
 		Args: cobra.NoArgs,
@@ -82,7 +88,7 @@ func newReportCmd() *cobra.Command {
 	f.StringVar(&o.repo, "repo", "", "only this repository (owner/name)")
 	f.StringVar(&o.since, "since", reportDefaultSince, "first day: YYYY-MM-DD (UTC) or Nd, the last N days")
 	f.StringVar(&o.til, "until", "", "last day, YYYY-MM-DD (UTC; default today)")
-	f.StringVar(&o.by, "by", "day", "group by day, week, month, year, repo, model or person")
+	f.StringVar(&o.by, "by", "day", "group by day, week, month, year, repo, model, person or mode")
 	f.BoolVar(&o.json, "json", false, "print machine-readable output")
 	f.BoolVar(&o.csv, "csv", false, "print CSV (RFC 4180)")
 	addCloudFlags(cmd, &o.cloud)
@@ -153,14 +159,17 @@ func runReport(cmd *cobra.Command, o *reportOptions) error {
 	if err != nil {
 		return err
 	}
+	m := report.Meta{Project: lc.Name, Source: "firestore", Since: budget.DayDate(from), Un: budget.DayDate(to)}
+	warn := func(s string) { m.Warnings = append(m.Warnings, s) }
+	if dim == report.ByMode {
+		return reportByMode(ctx, cmd, o, lc, m, from, to)
+	}
 	var wantSlug string
 	if o.repo != "" {
 		if wantSlug, err = repoSlugOf(ctx, lc, o.repo); err != nil {
 			return err
 		}
 	}
-	m := report.Meta{Project: lc.Name, Source: "firestore", Since: budget.DayDate(from), Un: budget.DayDate(to)}
-	warn := func(s string) { m.Warnings = append(m.Warnings, s) }
 
 	recs, why, err := reportHistory(ctx, lc, wantSlug, from, to, today, warn)
 	if err != nil {
@@ -319,7 +328,10 @@ func reportLive(ctx context.Context, lc *localcfg.Config, days []int64, warn fun
 type lazyFacts struct {
 	lc   *localcfg.Config
 	warn func(string)
-	env  *cloudEnv
+	// slugs narrows the pass to these repositories; empty reads every one in
+	// the bucket (budget.BucketFacts).
+	slugs []string
+	env   *cloudEnv
 }
 
 func (l *lazyFacts) Facts(ctx context.Context, from, to int64) (map[int64][]budget.RunFact, map[string]string, error) {
@@ -328,7 +340,7 @@ func (l *lazyFacts) Facts(ctx context.Context, from, to int64) (map[int64][]budg
 		return nil, nil, err
 	}
 	l.env = env
-	return budget.BucketFacts{Bucket: env.bucket.Bucket, Warn: l.warn}.Facts(ctx, from, to)
+	return budget.BucketFacts{Bucket: env.bucket.Bucket, Warn: l.warn, Slugs: l.slugs}.Facts(ctx, from, to)
 }
 
 func (l *lazyFacts) close() {
@@ -365,6 +377,103 @@ func firestoreErr(lc *localcfg.Config, err error) error {
 			lc.Name, safetext.Strip(lc.Budget.FirebaseProject), safetext.Strip(err.Error()))
 	}
 	return remote(fmt.Errorf("reading the spend history: %s", safetext.Strip(err.Error())))
+}
+
+// ------------------------------------------------------------- by mode
+
+// reportMaxRuns is how many runs the by-mode read opens. It bounds the read
+// rather than the window: a window holding more is reported to its newest
+// reportMaxRuns runs, and the report says so. It is a variable so a test can
+// drive the truncation without planting thousands of runs.
+var reportMaxRuns = userStatsMaxRuns
+
+// reportModeSourceNote is what the by-mode rows say about where they come from:
+// the mode a run resolved is written in the run's own record and in no day
+// rollup, so this breakdown reads the runs bucket and never the spend history.
+const reportModeSourceNote = "these rows come from run records (the runs bucket), not the Firestore spend history: a run's rigor mode is written in its own record, and every run counts once, on its launch day"
+
+// reportByMode is --by mode: what the project spent in each rigor mode its runs
+// resolved, from the run records. It needs neither Firestore nor the budget
+// database, so there is no degraded path for it.
+func reportByMode(ctx context.Context, cmd *cobra.Command, o *reportOptions, lc *localcfg.Config, m report.Meta, from, to int64) error {
+	m.Source = "run-records"
+	m.Warnings = append(m.Warnings, reportModeSourceNote)
+	env, err := openCloudFor(ctx, lc)
+	if err != nil {
+		return err
+	}
+	defer env.Close()
+	// Every repository the runs bucket holds, not only the ones the local
+	// config lists: the history-backed breakdowns cover every repository of
+	// the project's Firestore collection, so this one covers the project too.
+	// --repo still names one.
+	slugs, err := lsSlugs(ctx, env, &lsOptions{repo: o.repo, all: true}, cmd.ErrOrStderr())
+	if err != nil {
+		return err
+	}
+	// The window's end as an instant, so a run launched after --until is
+	// dropped by the reader: --until may be in the past, and a run outside the
+	// window must not take a place the cap keeps for a run of it.
+	until := time.UnixMilli((to + 1) * 86_400_000).UTC()
+	objs, _, truncated, err := readRunObjects(ctx, env, slugs, time.UnixMilli(from*86_400_000).UTC(), until, reportMaxRuns)
+	if err != nil {
+		return err
+	}
+	if truncated {
+		m.Warnings = append(m.Warnings, fmt.Sprintf("the window holds more runs than the %d this report reads: only its newest %d are counted, so a run outside them is in no row", reportMaxRuns, reportMaxRuns))
+	}
+	recs, corrupt := modeRecords(objs, to)
+	rep := report.Build(recs, report.ByMode)
+	rep.NoHours = true
+	if corrupt > 0 {
+		// A record the bucket holds and this read cannot use is money the total
+		// is short by, and a reader has to be told rather than left to take the
+		// total for the window's whole spend. A run still in flight has written
+		// no figure yet, which every window reaching into the last minutes
+		// holds: its row is marked like this one's, and it warns nothing.
+		m.Warnings = append(m.Warnings, fmt.Sprintf(
+			"%d of the window's runs have a result.json this build cannot read: they count in RUNS, and the money is short by whatever they spent", corrupt))
+	}
+	return reportEmit(cmd, o, rep, m)
+}
+
+// modeRecords is the by-mode grouping's input: one Rec per run of the window,
+// dated on its launch day, carrying the rigor mode its record resolved and the
+// money its record settled. A run this report has no readable record for -- the
+// bucket holds a result.json it cannot read, or holds none because the run has
+// not written one -- did launch, so it counts once among the runs and adds
+// nothing to the money: the record is marked unreadable, so a row made only of
+// such runs reads n/a rather than the 0 a reader would take for a measured
+// spend. The count returned is of the first kind alone: a record that exists
+// and cannot be read is worth warning about, and a run that has not written one
+// yet is routine and says nothing about the money a reader can trust.
+func modeRecords(objs []runObject, to int64) ([]report.Rec, int) {
+	var recs []report.Rec
+	var corrupt int
+	for _, o := range objs {
+		t, err := runstore.RunTime(o.id)
+		if err != nil || budget.Day(t) > to {
+			continue
+		}
+		// Only the fields the by-mode grouping reads: it groups the run's own
+		// record, not a repository's day.
+		rec := report.Rec{DayRecord: budget.DayRecord{Date: budget.DayDate(budget.Day(t)), Runs: 1}}
+		if c := o.record; c != nil {
+			if c.Rigor != nil {
+				rec.Mode = string(c.Rigor.Mode)
+			}
+			if c.Cost != nil {
+				applyCost(&rec.DayRecord, *c.Cost)
+			}
+		} else {
+			rec.Unreadable = true
+			if o.recordCorrupt {
+				corrupt++
+			}
+		}
+		recs = append(recs, rec)
+	}
+	return recs, corrupt
 }
 
 // ------------------------------------------------------------- degraded
@@ -475,24 +584,28 @@ func microsOfUSD(v float64) budget.Micros {
 	return budget.Micros(math.Round(v * 1e6))
 }
 
+// applyCost writes a run's cost into a one-run day record: the two halves of
+// the model figure (P12, D140), so a mixed cascade run's tier-A dollars are
+// notional in the history and a subscription run's whole figure still is. One
+// split for both readers of a run record -- the run-record totals and the
+// by-mode rows -- so the two divide a mixed run the same way.
+func applyCost(rec *budget.DayRecord, c runstore.Cost) {
+	rec.SpentMicros = microsOfUSD(c.ModelMoneyUSD())
+	rec.NotionalMicros = microsOfUSD(c.ModelSubscriptionUSD())
+	if c.ComputeEstimated {
+		rec.ComputeMicros, rec.ComputeEstimatedRuns = microsOfUSD(c.ComputeUSD), 1
+	}
+}
+
 // recordOfRun is one run as a one-run day record, so the run-record totals
-// group like the history does. Subscription model spend is notional, and a
-// mixed run's model figure is split into its money and notional halves
-// (P12, D140).
+// group like the history does.
 func recordOfRun(r runview.Row) budget.DayRecord {
 	rec := budget.DayRecord{
 		Repo: r.Repo, Slug: r.Repo, Date: budget.DayDate(budget.Day(r.Created.UTC())), Runs: 1,
 		Outcomes: map[string]int64{}, ByModel: map[string]budget.ModelTotals{}, ByPerson: map[string]budget.PersonTotals{},
 	}
-	// The two halves of the model figure (P12, D140), so a mixed cascade
-	// run's tier-A dollars are notional in the history and a subscription
-	// run's whole figure still is.
-	spent := microsOfUSD(r.Cost.ModelMoneyUSD())
-	notional := microsOfUSD(r.Cost.ModelSubscriptionUSD())
-	rec.SpentMicros, rec.NotionalMicros = spent, notional
-	if r.Cost.ComputeEstimated {
-		rec.ComputeMicros, rec.ComputeEstimatedRuns = microsOfUSD(r.Cost.ComputeUSD), 1
-	}
+	applyCost(&rec, r.Cost)
+	spent, notional := rec.SpentMicros, rec.NotionalMicros
 	// The by-model split of a run with a notional part is of its whole model
 	// figure and cannot be told apart per model, so it is left out rather
 	// than counted as money (a subscription run always had none of it here).

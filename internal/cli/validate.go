@@ -15,7 +15,9 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/policy"
@@ -72,6 +74,29 @@ func ceilingLayer(lc *localcfg.Config) policy.Layer {
 		l.Mode = m
 	}
 	return l
+}
+
+// runCeiling is the ceiling a run starts under, as much of it as an offline
+// command can build: ceilingLayer, plus the project layer's governance block
+// with Fugaro's own figures filled in where the layer is silent
+// (policy.Governance.WithDefaults). resolvePolicy builds the runner's ceiling
+// exactly this way (T7.1, D331), so the project layer is the one layer that
+// may loosen a guardrail and every layer under it — the default branch's
+// fugaro.yaml and the branch the run checks out — may only tighten one.
+//
+// It is one function because both commands that hold a fugaro.yaml against the
+// ceiling build it here: `fugaro validate` judges the file in hand, and
+// `fugaro update --repo` says which of its keys the ceiling would clamp. A
+// ceiling without the defaults is what let a repository raise a guardrail
+// Fugaro ships and hear nothing.
+func runCeiling(lc *localcfg.Config, cfg *config.Config) policy.Layer {
+	ceiling := ceilingLayer(lc)
+	var gov policy.Governance
+	if cfg != nil && cfg.Layer != nil {
+		gov = cfg.Layer.Governance.Policy()
+	}
+	ceiling.Governance = gov.WithDefaults()
+	return ceiling
 }
 
 // clampWarning says in words what the runner will do with one value of the
@@ -174,7 +199,14 @@ func budgetProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Config
 		}
 		return problems, warnings, nil
 	}
-	e := policy.Merge(ceilingLayer(lc), runner.FileLayer(cfg))
+	// The ceiling is the run's own, governance included: the runner puts the
+	// project layer's governance block in its first layer, with Fugaro's
+	// figures filled in where the layer is silent (resolvePolicy, runCeiling),
+	// so a value this file writes looser than either is one the run clamps.
+	// Merging the file against a ceiling without it is what made this command
+	// pass a file whose governance the run would never apply (T7.1).
+	ceiling := runCeiling(lc, cfg)
+	e := policy.Merge(ceiling, runner.FileLayer(cfg))
 	for _, ig := range e.Ignored {
 		warnings = append(warnings, clampWarning(ig))
 	}
@@ -230,7 +262,7 @@ func budgetProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Config
 		return a
 	}
 	allow := func(a config.Agent) []config.Problem {
-		return config.CheckAllowed(a, ef, ceilingLayer(lc).AllowedModels, lc.Routing, routes)
+		return config.CheckAllowed(a, ef, ceiling.AllowedModels, lc.Routing, routes)
 	}
 	allowed, allowNotes := splitByReach(reach, allow(runPins(routed)), allow(runPins(cfg.Agent)))
 	problems = append(problems, allowed...)
@@ -1464,10 +1496,15 @@ func keyStates(model string) string {
 	return fmt.Sprintf(`%s is pinned and goes direct, and this call needs a stored Anthropic API key whenever the job holds none: a job with a version of the anthropic-api-key secret mounts one and sends this call to Anthropic as it stands, and a job with none halts — "%s". Whether this job holds one is not a fact this command reads offline, so this is a note and never a refusal`, model, config.MissingAnthropicKey)
 }
 
-// setsPolicy is whether the file has a budget: block or a token limit: the
-// keys that the default branch's file bounds.
+// setsPolicy is whether the file has a budget: block, a token limit or a
+// governance: block: the keys the run's ceiling bounds, and so the keys a
+// command that holds the file against that ceiling has something to say about.
+// The governance half is the key being written rather than the block's
+// contents (RepoGovernanceSet), so an empty block counts — what it bounds is
+// Fugaro's defaults.
 func setsPolicy(cfg *config.Config) bool {
-	return cfg.Budget != nil || cfg.Agent.MaxRunTokens > 0 || cfg.Agent.MaxOutputTokens != (config.RoleTokens{})
+	return cfg.Budget != nil || cfg.Agent.MaxRunTokens > 0 ||
+		cfg.Agent.MaxOutputTokens != (config.RoleTokens{}) || cfg.RepoGovernanceSet
 }
 
 // branchNote says, when the file is a checkout's and its branch isn't the
@@ -1521,6 +1558,100 @@ type validateOutput struct {
 	// Anthropic key, for a pin that goes direct).
 	Notes        []config.Problem `json:"notes,omitempty"`
 	ProjectLayer *validateLayer   `json:"project_layer,omitempty"`
+}
+
+// governanceEditions is the job images' edition, for governanceImageWarnings:
+// a lookup over the file's workflows, and the note to print instead when it
+// could not be built ("" when it could).
+//
+// The edition is a field of the build record the runs bucket holds
+// (imagecheck.Record.Edition), so building this is a bucket read, and --offline
+// does not make it: the flag promises this command reads neither the runs
+// bucket nor the project's published policy, and the note says the edition is
+// unresolved offline the way the layer and the published policy do (design
+// ee-boundary-moves §7). Everything else that can leave the edition unknown is
+// a state this command already reports for other reasons — no project config
+// selected for the file's project, a directory that is no checkout of a
+// repository it can name, a bucket this checkout's credentials cannot open —
+// and each is a note and never a problem: the file is valid whichever image it
+// ends up built for. Each such note names the fix that would let the read
+// happen — select the config, run from the checkout, open the bucket — the way
+// the offline note names --offline's.
+//
+// The road is the one every other command in this package takes to an image
+// from a checkout: the project config's own client (openCloudFor), the origin's
+// slug, and one read of RecordKey(slug, workflow) per workflow a record can
+// speak for. The map is the memo: a workflow is read once, and a record that is
+// missing or unreadable leaves its workflow unknown rather than failing the
+// command.
+//
+// A file that writes no governance: block asks nothing of any image, so this
+// opens nothing and answers (nil, "") — the same condition
+// governanceImageWarnings returns early on, and the reason a plain `fugaro
+// validate` acquires no runs-bucket read at all.
+func governanceEditions(ctx context.Context, lc *localcfg.Config, cfg *config.Config, offline bool) (func(workflow string) (string, bool), string) {
+	if !cfg.RepoGovernanceSet && !cfg.Layer.SetsGovernance() {
+		return nil, ""
+	}
+	if offline {
+		return nil, "the job images' edition unresolved offline: --offline reads neither the runs bucket nor the published policy, so whether their runners read the governance: block is not known here; run validate without --offline to have the records read"
+	}
+	if lc == nil || lc.Name != cfg.Project {
+		return nil, editionUnresolved("no project config for "+pluginwire.Printable(cfg.Project)+" is selected here",
+			"set $FUGARO_PROJECT or $FUGARO_CONFIG, or run fugaro setup to create this project's config")
+	}
+	repo, err := originRepo(ctx)
+	if err != nil {
+		return nil, editionUnresolved(fmt.Sprintf("this directory is no checkout of a repository whose name can be read here (%v)", oneLine(err.Error())),
+			"run validate in the repository's own checkout")
+	}
+	slug, err := repoSlugOf(ctx, lc, repo)
+	if err != nil {
+		return nil, editionUnresolved(fmt.Sprintf("the storage slug of %s could not be resolved (%v)", pluginwire.Printable(repo), oneLine(err.Error())),
+			"run validate in the checkout whose origin names the repository")
+	}
+	env, err := openCloudFor(ctx, lc)
+	if err != nil {
+		return nil, editionUnresolved(fmt.Sprintf("the installation's runs bucket could not be opened (%v)", oneLine(err.Error())),
+			"check that this machine's credentials can read the installation's runs bucket")
+	}
+	defer env.Close()
+	b, err := env.recordBucket(ctx)
+	if err != nil {
+		return nil, editionUnresolved(fmt.Sprintf("the installation's runs bucket could not be opened (%v)", oneLine(err.Error())),
+			"check that this machine's credentials can read the installation's runs bucket")
+	}
+	editions := make(map[string]string, len(cfg.Workflows))
+	for _, name := range governanceEditionWorkflows(cfg) {
+		editions[name] = recordEditionIn(ctx, b, slug, name)
+	}
+	return func(workflow string) (string, bool) {
+		e := editions[workflow]
+		return e, e != ""
+	}, ""
+}
+
+// editionUnresolved is the note for a command that could not read the job
+// images' records for a reason other than --offline: why the read could not
+// happen, and the fix that would let it (the wording validation.md documents,
+// and the shape the offline note above already has).
+func editionUnresolved(why, fix string) string {
+	return "the job images' edition unresolved: " + why + ", so whether their runners read the governance: block is not known here; " + fix
+}
+
+// recordEditionIn is the edition the build record of slug's workflow reports,
+// and "" when no record can say: no record at all, an unreadable one, or one
+// written before the field existed.
+func recordEditionIn(ctx context.Context, b *blobx.Bucket, slug, workflow string) string {
+	data, _, err := b.Read(ctx, imagecheck.RecordKey(slug, workflow))
+	if err != nil {
+		return ""
+	}
+	rec, err := imagecheck.ParseRecord(data)
+	if err != nil {
+		return ""
+	}
+	return rec.Edition
 }
 
 func newValidateCmd() *cobra.Command {
@@ -1631,6 +1762,9 @@ func newValidateCmd() *cobra.Command {
 				warnings = append(warnings, config.CheckWarnings(cfg, filepath.Dir(path))...)
 				warnings = append(warnings, cloneWorkflowWarnings(cfg)...)
 				warnings = append(warnings, rigorImageWarnings(cfg)...)
+				editionOf, note := governanceEditions(cmd.Context(), lc, cfg, offline)
+				gw, gn := governanceImageWarnings(cfg, editionOf, note)
+				warnings, notes = append(warnings, gw...), append(notes, gn...)
 				pp, pw, pn := providerProblems(cmd.Context(), ecfg, lc, claimed)
 				problems, warnings, notes = append(problems, pp...), append(warnings, pw...), append(notes, pn...)
 				rtp, rtn := routingProblems(cmd.Context(), ecfg, lc, routes, lcErr)

@@ -280,6 +280,21 @@ func TestDigestFlags(t *testing.T) {
 	if got := flagOf(halted); len(got) != 1 || got[0] != FlagHalt+":"+string(runstore.HaltTokenCap) {
 		t.Errorf("a halted run = %v, want %s", got, FlagHalt+":"+string(runstore.HaltTokenCap))
 	}
+	// A governance stop (T6.1) is a halt reason like any other: the set has to
+	// carry every one of runstore's, or the report a person reads about a run
+	// this runner stopped names it halt:other -- the value reserved for a
+	// record this runner did not write.
+	reasons := runstore.GovernanceHaltReasons()
+	if len(reasons) == 0 {
+		t.Fatal("runstore names no governance halt reason: this test proves nothing")
+	}
+	for _, reason := range reasons {
+		gov := halted
+		gov.Halt = &runstore.Halt{Reason: reason, Scope: "run", At: at(t, "2026-10-21T09:00:00Z")}
+		if got := flagOf(gov); len(got) != 1 || got[0] != FlagHalt+":"+string(reason) {
+			t.Errorf("a run halted by %s = %v, want %s", reason, got, FlagHalt+":"+string(reason))
+		}
+	}
 
 	// One fix round is ordinary; a second one is flagged.
 	fix := func(n int) runstore.Record {
@@ -294,6 +309,108 @@ func TestDigestFlags(t *testing.T) {
 	}
 	if got := flagOf(fix(MaxFixRounds + 1)); len(got) != 1 || got[0] != FlagFixRounds {
 		t.Errorf("%d fix rounds = %v, want %s", MaxFixRounds+1, got, FlagFixRounds)
+	}
+}
+
+// TestDigestFlagsRepeatsAndReviewScopeDrift (task-governance T1.4, D332): the
+// two report-only tripwires -- a stage that ran one identical shell command
+// RepeatedCommandThreshold times or more, and a review the run's own commits
+// no longer cover (T5.2). Both are read off the record as a count and a set
+// the runner wrote: no command text is read here, and neither flag changes
+// anything about the run.
+func TestDigestFlagsRepeatsAndReviewScopeDrift(t *testing.T) {
+	p := week43(t)
+	flagOf := func(rec runstore.Record) []string {
+		var out []string
+		for _, f := range Build([]runstore.Record{rec}, p).Runs[0].Flags {
+			out = append(out, f.String())
+		}
+		return out
+	}
+	// A stage at the threshold is flagged, one below it is not.
+	repeats := func(n int) runstore.Record {
+		return run(t, "20261021-090000-abcd", "2026-10-21T09:00:00Z", 0.10, 0,
+			runstore.StageTiming{Name: "implement", Calls: counted(1), Agents: counted(0), Repeats: counted(n)})
+	}
+	if got := flagOf(repeats(RepeatedCommandThreshold - 1)); len(got) != 0 {
+		t.Errorf("%d repeats are flagged: %v", RepeatedCommandThreshold-1, got)
+	}
+	if got := flagOf(repeats(RepeatedCommandThreshold)); len(got) != 1 || got[0] != FlagRepeatedCommand {
+		t.Errorf("%d repeats = %v, want %s", RepeatedCommandThreshold, got, FlagRepeatedCommand)
+	}
+	// A stage nobody counted, and every record written before the field
+	// existed, carries no repeats at all: absent is not zero (G5).
+	uncounted := run(t, "20261021-090000-abcd", "2026-10-21T09:00:00Z", 0.10, 0,
+		runstore.StageTiming{Name: "implement", Calls: counted(1), Agents: counted(0)})
+	if got := flagOf(uncounted); len(got) != 0 {
+		t.Errorf("a stage with no repeats count is flagged: %v", got)
+	}
+
+	// The review-scope flag is the drift T7.3 stops on: the range was narrowed
+	// to the run's own commits and then moved off them, so the reviewer was
+	// handed paths implement never wrote. A range kept wider on purpose is a
+	// fact about the run and never a mismatch (D332), so a wide range, a
+	// follow-up, a review run or an autofix is not flagged -- and neither is
+	// drift that handed the reviewer nothing new.
+	scope := func(sc *runstore.ReviewScope) runstore.Record {
+		rec := run(t, "20261021-090000-abcd", "2026-10-21T09:00:00Z", 0.10, 0,
+			runstore.StageTiming{Name: "implement", Calls: counted(1), Agents: counted(0)})
+		rec.ReviewScope = sc
+		return rec
+	}
+	// A truncated comparison never raises the flag: Outside is taken over the
+	// two bounded lists (runstore.NewReviewScope), so a capped ImplementFiles
+	// can name a path the run did change. Here the review range moved off the
+	// run's commits and added a path implement never wrote -- real drift -- but
+	// implement's list was capped at runstore.MaxReviewScopeFiles, so the
+	// comparison is over sets that are not the whole ones and nothing is
+	// trusted.
+	wrote := make([]string, 0, runstore.MaxReviewScopeFiles+5)
+	for i := range runstore.MaxReviewScopeFiles + 5 {
+		wrote = append(wrote, fmt.Sprintf("w%03d.go", i))
+	}
+	movedTruncated := runstore.NewReviewScope(false, runstore.ReviewScopeRangeMoved,
+		wrote, append([]string{"a.go"}, wrote...))
+	if !movedTruncated.Truncated || len(movedTruncated.Outside) == 0 {
+		t.Fatalf("the fixture is not a truncated comparison with an outside: truncated %v, outside %v",
+			movedTruncated.Truncated, movedTruncated.Outside)
+	}
+	for _, tc := range []struct {
+		name string
+		sc   *runstore.ReviewScope
+		want bool
+	}{
+		{"no comparison at all", nil, false},
+		{"the range is the run's own commits", runstore.NewReviewScope(true, "", []string{"a.go"}, []string{"a.go"}), false},
+		{"the range was narrowed and moved off the run's commits", runstore.NewReviewScope(false, runstore.ReviewScopeRangeMoved, []string{"a.go"}, []string{"a.go", "b.go"}), true},
+		{"the range moved but handed over nothing new", runstore.NewReviewScope(false, runstore.ReviewScopeRangeMoved, []string{"a.go"}, []string{"a.go"}), false},
+		{"a range kept wider on purpose", runstore.NewReviewScope(false, runstore.ReviewScopeNoNarrowerRange, []string{"a.go"}, []string{"a.go", "b.go"}), false},
+		{"a review run with no implement set", runstore.NewReviewScope(false, runstore.ReviewScopeReviewRun, nil, []string{"b.go"}), false},
+		{"a comparison whose reads failed", runstore.NewReviewScope(false, runstore.ReviewScopeReadFailed, nil, nil), false},
+		{"a moved range whose lists were truncated", movedTruncated, false},
+	} {
+		got := flagOf(scope(tc.sc))
+		if tc.want {
+			if len(got) != 1 || got[0] != FlagReviewScopeDrift {
+				t.Errorf("%s = %v, want %s", tc.name, got, FlagReviewScopeDrift)
+			}
+			continue
+		}
+		if len(got) != 0 {
+			t.Errorf("%s is flagged: %v", tc.name, got)
+		}
+	}
+
+	// Report only (G8): the flagged run is the run it was, in the row the
+	// report prints like any other.
+	flagged := repeats(RepeatedCommandThreshold)
+	flagged.ReviewScope = runstore.NewReviewScope(false, runstore.ReviewScopeRangeMoved, nil, []string{"b.go"})
+	row := Build([]runstore.Record{flagged}, p).Runs[0]
+	if row.Status != string(runstore.StatusSucceeded) {
+		t.Errorf("a flagged run's status = %q, want %q: the flags are report only", row.Status, runstore.StatusSucceeded)
+	}
+	if len(row.Flags) != 2 {
+		t.Errorf("a run with both tripwires carries %v, want both flags", row.Flags)
 	}
 }
 
@@ -481,8 +598,13 @@ func TestDigestSizeCap(t *testing.T) {
 	if out := Markdown(got); len(out) > budget {
 		t.Errorf("capTo left the report at %d bytes, over its %d-byte budget", len(out), budget)
 	}
-	if out := string(Markdown(got)); !strings.Contains(out, fmt.Sprintf("Rows not shown: %d.", got.Dropped)) {
-		t.Errorf("the report does not say how many rows it left out:\n%s", out)
+	// How many it left out, and the rule the cap went by: the sentence says the
+	// cap is on the report's own bytes and that extra sections come after it,
+	// which is what a reader of a build that registered a section hook needs to
+	// know to read the file's size (capTo, design ee-boundary-moves §5.4).
+	wantNote := fmt.Sprintf("Rows not shown: %d. The report is capped at %d bytes before extra sections, and the cheapest unflagged rows go first.", got.Dropped, MaxBytes)
+	if out := string(Markdown(got)); !strings.Contains(out, wantNote) {
+		t.Errorf("the report does not carry the cap's rule %q:\n%s", wantNote, out)
 	}
 	shown := map[string]Run{}
 	for _, r := range got.Runs {

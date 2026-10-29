@@ -2,9 +2,10 @@ package cli
 
 // The one reader for the real repository's ee/ tree (licensing plan L1.2).
 //
-// ee/ is reserved: it holds a README that says so and nothing else, and the
-// folder's whole point is that nothing in the core depends on it. A test that
-// reads it therefore reads something the core is supposed to survive without,
+// ee/ holds the business-licensed features (D532): a README, `ee/LICENSE`, and
+// whatever files the features that land there bring with them. The folder's
+// whole point is that nothing in the core depends on it: a test that reads it
+// therefore reads something the core is supposed to survive without,
 // and the licensing plan's "core without ee/" workflow deletes the directory to
 // prove the core does: every test that reads the real ee/ has to be known by
 // name, so that workflow can skip exactly those tests and nothing else.
@@ -60,6 +61,7 @@ const eeBoundaryPackage = "internal/eeboundary/"
 var eeReadingTests = []string{
 	"TestDocsEELicensed",
 	"TestDocsLicensingLicenceRefCopy",
+	"TestDocsLicensingOneWording",
 	"TestDocsLicensingStatement",
 }
 
@@ -67,10 +69,11 @@ var eeReadingTests = []string{
 // read of it goes through one place the workflow can be told about.
 //
 // rel is slash-separated and relative to ee/: readRealEE(t, "README.md") reads
-// ee/README.md. The empty rel names ee/ itself, and readRealEE then answers the
-// directory's entries, sorted, one per line -- which files the folder holds is a
-// fact about ee/ like any other, and a reader that reached for os.ReadDir itself
-// would be a second place the workflow has to know about.
+// ee/README.md. A rel that names a directory answers the directory's entries,
+// sorted, one per line -- which files the folder holds is a fact about ee/ like
+// any other, and a reader that reached for os.ReadDir itself would be a second
+// place the workflow has to know about. A subdirectory is listed as `name/`, so
+// a reader walking the tree can tell it from a file of the same name.
 //
 // It fails the calling test rather than returning an error: a missing ee/ is
 // exactly what a reader must not quietly read as an empty file.
@@ -78,14 +81,22 @@ func readRealEE(t *testing.T, rel string) string {
 	t.Helper()
 	root := consoleBoundaryRoot(t)
 	p := filepath.Join(root, eeDirName, filepath.FromSlash(rel))
-	if rel == "" {
+	info, err := os.Stat(p)
+	if err != nil {
+		t.Fatalf("cannot read %s/%s: %v", eeDirName, rel, err)
+	}
+	if info.IsDir() {
 		entries, err := os.ReadDir(p)
 		if err != nil {
-			t.Fatalf("cannot list the repository's %s/ directory: %v", eeDirName, err)
+			t.Fatalf("cannot list the repository's %s/%s directory: %v", eeDirName, rel, err)
 		}
 		names := make([]string, 0, len(entries))
 		for _, e := range entries {
-			names = append(names, e.Name())
+			name := e.Name()
+			if e.IsDir() {
+				name += "/"
+			}
+			names = append(names, name)
 		}
 		slices.Sort(names)
 		return strings.Join(names, "\n")
@@ -313,9 +324,18 @@ func TestEEReadersAreListed(t *testing.T) {
 A new reader joins the list in the same commit, and a name whose test no longer reads ee/ leaves it: the "core without ee/" workflow skips exactly this list, so a name left behind costs coverage and a reader left out takes that workflow down.`, eeDirName, readers, listed)
 	}
 
+	// A test file under ee/ is exempt for the reason eeBoundaryPackage is: what
+	// this scan protects is the core's suite, which the "core without ee/"
+	// workflow runs with the directory deleted -- and a test of an ee/ package
+	// is deleted with it, so it can never be a reader there. It cannot use the
+	// helper either: readRealEE lives in this package, and eeReadingTests is a
+	// list of this package's test names, which the workflow skips by name. So
+	// ee/register's test scanning its own directory is left to that package,
+	// the way internal/eeboundary's walks of the module are left to its own.
 	var found []string
 	for _, rel := range files {
-		if !strings.HasSuffix(rel, "_test.go") || rel == eeRepoFile || strings.HasPrefix(rel, eeBoundaryPackage) {
+		if !strings.HasSuffix(rel, "_test.go") || rel == eeRepoFile ||
+			strings.HasPrefix(rel, eeBoundaryPackage) || strings.HasPrefix(rel, eeDirName+"/") {
 			continue
 		}
 		src, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
@@ -330,7 +350,7 @@ A new reader joins the list in the same commit, and a name whose test no longer 
 		t.Errorf(`a test reads the real %s/ without going through readRealEE:
   %s
 
-ee/ is reserved and the core is expected to build and test without it, so every read of the real directory goes through the one helper in %s and every such test is named in eeReadingTests. A test that only matches content naming ee/ -- a link in LICENSING.md, the workflow's own rm -rf -- is not a read and is not reported here.`,
+ee/ holds the business-licensed features and the core is expected to build and test without it, so every read of the real directory goes through the one helper in %s and every such test is named in eeReadingTests. A test that only matches content naming ee/ -- a link in LICENSING.md, the workflow's own rm -rf -- is not a read and is not reported here.`,
 			eeDirName, strings.Join(found, "\n  "), eeRepoFile)
 	}
 }

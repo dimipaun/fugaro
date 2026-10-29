@@ -48,7 +48,7 @@ func TestStageTimingReadsGatewayUnderLock(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_ = r.stageTiming("implement", time.Now(), 1, 0)
+		_ = r.stageTiming("implement", time.Now(), 1, 0, 0)
 	}()
 	select {
 	case <-done:

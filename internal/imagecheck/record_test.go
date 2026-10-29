@@ -213,6 +213,42 @@ func TestRecordJSON(t *testing.T) {
 	}
 }
 
+// TestRecordEditionRoundTrips: the edition the render step writes travels in
+// the record like any other field, and a record that cannot say — an empty
+// edition, which is every record written before the field existed — omits the
+// key entirely. The gates read "unknown" from its absence (design
+// docs/design/ee-boundary-moves.md §7), and a record an older fugaro wrote must
+// not gain a key it never wrote.
+func TestRecordEditionRoundTrips(t *testing.T) {
+	for _, c := range []struct {
+		edition string
+		present bool
+	}{{"", false}, {"core", true}, {"ee", true}} {
+		data, err := json.Marshal(Record{Version: RecordVersion, Edition: c.edition})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(data, &m); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := m["edition"]; ok != c.present {
+			t.Errorf("edition %q: written = %v, want %v (%s)", c.edition, ok, c.present, data)
+		}
+		rec, err := ParseRecord(data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rec.Edition != c.edition {
+			t.Errorf("Edition = %q, want %q", rec.Edition, c.edition)
+		}
+	}
+	rec, err := ParseRecord([]byte(`{"version": 1, "repo": "acme/webapp", "workflow": "web"}`))
+	if err != nil || rec.Edition != "" {
+		t.Fatalf("a record written before the field existed: %+v, %v", rec, err)
+	}
+}
+
 const baseWorkflowYAML = `version: 1
 project: aurora
 git: { provider: github }

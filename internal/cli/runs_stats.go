@@ -338,14 +338,36 @@ type userStatsRead struct {
 	truncated bool
 }
 
-// readUserStatsRuns reads the window's runs the way runs ls reads them -- the
+// runObject is one run's two objects as a bucket read found them, and the run
+// ID that says when it was minted.
+type runObject struct {
+	id     string
+	launch *runstore.Launch
+	record *runstore.Record
+	// recordCorrupt is "the bucket holds a result.json this read could not
+	// use", as opposed to a run that has not written one. A nil record alone
+	// cannot say which, and the two are different facts about a run.
+	recordCorrupt bool
+}
+
+// readRunObjects reads the window's runs the way runs ls reads them -- the
 // runs bucket's listing, one directory per repository, then one object per
-// run -- and maps each to the narrow view internal/userstats aggregates.
+// run. It is the one reader behind both views over the records, runs stats'
+// by-user rows and report's by-mode rows.
 //
 // The read is bounded: at most max runs, newest first, across every
 // repository. The listing is already the window's, so the cap decides what a
 // window too large to read whole publishes, and the caller says so rather
 // than leaving a reader to think the figures cover the whole window.
+//
+// until is the window's end as an instant, and the zero time means no end:
+// runs minted at or after it are outside the window, so they are dropped
+// before the cap rather than after it. A caller whose window can end in the
+// past needs that order -- a run launched since would otherwise take a place
+// the cap keeps for a run of the window, and a window small enough to read
+// whole could come back empty. A run ID this build cannot read as a launch
+// time is kept: dropping it would be this reader deciding the end of the
+// window on a guess.
 //
 // Only launch.json and result.json are read, and neither the task nor the
 // transcript: the launcher is launch.json's own record of itself, and the
@@ -362,18 +384,18 @@ type userStatsRead struct {
 // Unreadable is not absent, and the two are counted apart. A run whose
 // objects are both *absent* never started (unlaunched, in no figure); a run
 // whose launch.json or result.json is *there and unreadable* did start, so it
-// is counted among the runs -- under 'unknown', the group the runs that
+// is returned like any other run -- under 'unknown', the group the runs that
 // recorded no launcher are in, since a launcher nobody can read is not a
 // launcher nobody recorded. A run whose corrupt launch.json and absent
 // result.json were read as "never started" would be a run missing from every
 // by-user figure while runs ls shows the same object as an error row.
-func readUserStatsRuns(ctx context.Context, env *cloudEnv, slugs []string, since time.Time, max int) (userStatsRead, error) {
+func readRunObjects(ctx context.Context, env *cloudEnv, slugs []string, since, until time.Time, max int) (objs []runObject, unlaunched int, truncated bool, err error) {
 	type ref struct{ slug, id string }
 	var refs []ref
 	for _, slug := range slugs {
 		ids, err := runstore.ListRunIDs(ctx, env.bucket.Bucket, slug, since)
 		if err != nil {
-			return userStatsRead{}, remote(err)
+			return nil, 0, false, remote(err)
 		}
 		for _, id := range ids {
 			refs = append(refs, ref{slug, id})
@@ -388,14 +410,23 @@ func readUserStatsRuns(ctx context.Context, env *cloudEnv, slugs []string, since
 		}
 		return strings.Compare(b.slug, a.slug)
 	})
-	var read userStatsRead
+	if !until.IsZero() {
+		refs = slices.DeleteFunc(refs, func(r ref) bool {
+			t, err := runstore.RunTime(r.id)
+			return err == nil && !t.Before(until)
+		})
+	}
 	if len(refs) > max {
-		refs, read.truncated = refs[:max], true
+		refs, truncated = refs[:max], true
 	}
 
 	type objects struct {
 		launch *runstore.Launch
 		record *runstore.Record
+		// recordCorrupt is corrupt for the result.json alone, which is the
+		// object a reader of a run's figures needs to tell an unreadable
+		// record from one not written yet.
+		recordCorrupt bool
 		// corrupt is "the bucket holds an object this read could not use" --
 		// a launch.json or a result.json that is unreadable (a syntax error,
 		// an oversized object) rather than absent. It is what tells the two
@@ -404,7 +435,7 @@ func readUserStatsRuns(ctx context.Context, env *cloudEnv, slugs []string, since
 		// one nobody can read.
 		corrupt bool
 	}
-	objs := make([]objects, len(refs))
+	read := make([]objects, len(refs))
 	errs := make([]error, len(refs))
 	parallel(len(refs), func(i int) {
 		s := runstore.Open(env.bucket.Bucket, refs[i].slug, refs[i].id)
@@ -414,9 +445,9 @@ func readUserStatsRuns(ctx context.Context, env *cloudEnv, slugs []string, since
 		l, err := absent(s.ReadLaunch(ctx))
 		switch {
 		case err == nil:
-			objs[i].launch = l
+			read[i].launch = l
 		case corruptObject(err):
-			objs[i].corrupt = true
+			read[i].corrupt = true
 		default:
 			errs[i] = err
 			return
@@ -424,33 +455,47 @@ func readUserStatsRuns(ctx context.Context, env *cloudEnv, slugs []string, since
 		r, err := absent(s.ReadRecord(ctx))
 		switch {
 		case err == nil:
-			objs[i].record = r
+			read[i].record = r
 		case corruptObject(err):
-			objs[i].corrupt = true
+			read[i].corrupt, read[i].recordCorrupt = true, true
 		default:
 			errs[i] = err
 		}
 	})
 	if err := errors.Join(errs...); err != nil {
-		return userStatsRead{}, remote(fmt.Errorf("reading the window's run records: %w", err))
+		return nil, 0, false, remote(fmt.Errorf("reading the window's run records: %w", err))
 	}
-	for _, o := range objs {
-		switch {
-		case o.launch == nil && o.record == nil && !o.corrupt:
+	for i, o := range read {
+		if o.launch == nil && o.record == nil && !o.corrupt {
 			// No launch and no record, and neither object is there to be
 			// unreadable: the run never started, and no launcher is on
 			// record either. It is counted, and in no figure.
-			read.unlaunched++
-		default:
-			// A run with a launch, a record, or an object the bucket holds
-			// and this read could not use. The last is why the arm above
-			// tests corrupt: an unreadable launch.json is a run that did
-			// launch with a launcher nobody can read, so it belongs under
-			// 'unknown' with the runs that recorded none -- runs ls reports
-			// the same object as an error row -- and never in the count of
-			// runs that never started.
-			read.runs = append(read.runs, userStatsRun(o.launch, o.record))
+			unlaunched++
+			continue
 		}
+		// A run with a launch, a record, or an object the bucket holds and
+		// this read could not use. The last is why the arm above tests
+		// corrupt: an unreadable launch.json is a run that did launch with a
+		// launcher nobody can read, so it is returned like any other run --
+		// runs ls reports the same object as an error row -- and never
+		// counted among the runs that never started.
+		objs = append(objs, runObject{id: refs[i].id, launch: o.launch, record: o.record, recordCorrupt: o.recordCorrupt})
+	}
+	return objs, unlaunched, truncated, nil
+}
+
+// readUserStatsRuns maps the window's run objects to the narrow view
+// internal/userstats aggregates.
+func readUserStatsRuns(ctx context.Context, env *cloudEnv, slugs []string, since time.Time, max int) (userStatsRead, error) {
+	// runs stats has no window end: its --since is the whole window, so the
+	// read is bounded by the cap alone.
+	objs, unlaunched, truncated, err := readRunObjects(ctx, env, slugs, since, time.Time{}, max)
+	if err != nil {
+		return userStatsRead{}, err
+	}
+	read := userStatsRead{unlaunched: unlaunched, truncated: truncated}
+	for _, o := range objs {
+		read.runs = append(read.runs, userStatsRun(o.launch, o.record))
 	}
 	return read, nil
 }

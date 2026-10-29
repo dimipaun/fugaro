@@ -8,6 +8,36 @@ import (
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
+// TestHaltTextNamesEachGovernanceStop: every governance reason has words of
+// its own, and they are the runner's own vocabulary rather than the reason
+// constant echoed back — the checkpoint's why_over is this text, so a value
+// that fell through to the default would put "stage_budget" in front of a
+// person as the explanation of their stopped run. One reason has two texts:
+// stage_budget stops a stage that passed its own dollars and one that passed
+// its own timeout (T7.6), and the detail is the runner's own word for which.
+func TestHaltTextNamesEachGovernanceStop(t *testing.T) {
+	for _, tc := range []struct {
+		reason runstore.HaltReason
+		detail string
+		want   string
+	}{
+		{runstore.HaltStageBudget, "", "a stage passed its own budget"},
+		{runstore.HaltStageBudget, "time", "a stage passed its own time bound"},
+		{runstore.HaltReviewRatio, "", "review spent more calls than the ratio allows for the implementation it read"},
+		{runstore.HaltFanout, "", "a stage used more sub-agents than the maximum"},
+		{runstore.HaltReviewScope, "", "the review range covers files this run never changed"},
+		{runstore.HaltExpectedExceeded, "", "the run passed the cost its tier expected of it"},
+	} {
+		got := haltReasonText(runstore.Halt{Reason: tc.reason, Scope: "run", Detail: tc.detail})
+		if got != tc.want {
+			t.Errorf("haltReasonText(%s) = %q, want %q", tc.reason, got, tc.want)
+		}
+		if got == string(tc.reason) {
+			t.Errorf("%s falls through to the reason constant", tc.reason)
+		}
+	}
+}
+
 // TestHaltedReportNamesCauseAndRemedy: each halt of the shared budget says
 // what stopped the run and what to do next, in the report people read.
 func TestHaltedReportNamesCauseAndRemedy(t *testing.T) {

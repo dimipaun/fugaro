@@ -1200,7 +1200,8 @@ func TestLiveInitCensusMatchesTheFrozenList(t *testing.T) {
 	// Both generated pages are off the list, and neither left it by hand:
 	// a page leaves the list when its generator runs, and the census is where
 	// that is visible. cli-reference.md is rendered from the command tree
-	// (`go run ./internal/clidoc`), so W2.1's rename reached it and it left;
+	// (today by `go run ./ee/clidoc`; at W2.1's rename it was
+	// `./internal/clidoc`), so W2.1's rename reached it and it left;
 	// security.md is SECURITY.md byte for byte, so W2.3's rename of the
 	// document reached it and the same command regenerated it in that commit.
 	// The rows stay as the invariant they assert -- no generated page is ever

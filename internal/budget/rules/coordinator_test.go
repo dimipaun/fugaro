@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dimipaun/fugaro/internal/coordinator"
+	"github.com/dimipaun/fugaro/internal/coordpath"
 )
 
 // The coordinator's read grant (docs/coordinator/implementation-plan.md, part
@@ -31,30 +31,30 @@ import (
 // child (the subtree a reader is not told about is not granted).
 
 func TestCoordinatorReadGrantIsTheSignedInReaderAlone(t *testing.T) {
-	root, ok := generatedPaths(t)[coordinator.PathRoot]
+	root, ok := generatedPaths(t)[coordpath.PathRoot]
 	if !ok {
-		t.Fatalf("the generated rules carry no /%s node: the coordinator's state is granted to nobody", coordinator.PathRoot)
+		t.Fatalf("the generated rules carry no /%s node: the coordinator's state is granted to nobody", coordpath.PathRoot)
 	}
 	got, _ := root[".read"].(string)
 	if got != userClaim {
-		t.Errorf("/%s .read = %q, want the signed-in reader's claim alone (%q)", coordinator.PathRoot, root[".read"], userClaim)
+		t.Errorf("/%s .read = %q, want the signed-in reader's claim alone (%q)", coordpath.PathRoot, root[".read"], userClaim)
 	}
 }
 
 func TestCoordinatorIsWrittenByNoClient(t *testing.T) {
 	walk(rulesTree(t), nil, func(p []string, attrs map[string]any) {
-		if len(p) == 0 || p[0] != coordinator.PathRoot {
+		if len(p) == 0 || p[0] != coordpath.PathRoot {
 			return
 		}
 		if w, has := attrs[".write"]; has && w != false {
-			t.Errorf("/%s: .write = %v under /%s, where the coordinator is the only writer and writes over IAM", strings.Join(p, "/"), w, coordinator.PathRoot)
+			t.Errorf("/%s: .write = %v under /%s, where the coordinator is the only writer and writes over IAM", strings.Join(p, "/"), w, coordpath.PathRoot)
 		}
 	})
 }
 
 func TestRunTokenCannotReadTheCoordinator(t *testing.T) {
 	for p, attrs := range generatedPaths(t) {
-		if p != coordinator.PathRoot && !strings.HasPrefix(p, coordinator.PathRoot+"/") {
+		if p != coordpath.PathRoot && !strings.HasPrefix(p, coordpath.PathRoot+"/") {
 			continue
 		}
 		r, _ := attrs[".read"].(string)

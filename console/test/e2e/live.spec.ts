@@ -123,6 +123,7 @@ const MODULES: readonly string[] = Object.freeze([
   'shared/version.js',
   'shared/schema.js',
   'renderer/app.js',
+  'renderer/writes.js',
   'renderer/screens/live.js',
 ])
 
@@ -199,6 +200,7 @@ function domFactory() {
   }
   return {
     create: function (tag) { return wrap(document.createElement(tag)); },
+    createNS: function (tag) { return wrap(document.createElementNS('http://www.w3.org/2000/svg', tag)); },
     wrap: wrap,
   };
 }
@@ -613,7 +615,7 @@ test.describe('the Live screen', () => {
 
     const forced = await page.evaluate(() => {
       const scope: ParentNode = document.getElementById('live-mount') ?? document.createDocumentFragment()
-      const row = scope.querySelector('li.live-run')
+      const row = scope.querySelector('tr.live-run')
       const computed = row === null ? null : getComputedStyle(row)
       const number = scope.querySelector('.live-num')
       return {

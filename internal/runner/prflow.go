@@ -47,7 +47,13 @@ const (
 // the PR if this does not. A variable so a test can shorten it.
 var earlyOpenTimeout = time.Minute
 
-// prFlow is the run's early-PR state. Only the run goroutine touches it.
+// prFlow is the run's early-PR state. While a stage runs, its checkpoint poll
+// goroutine is the only one that touches it (prflow.go's openDraftPR and
+// statusUpdate are reached from the poll, checkpoint.go); between stages, and
+// after that poll's stop has returned, the run goroutine's own boundary and
+// finalize paths do. A governance halt in the middle of a stage stops the poll
+// and waits for it before it touches any of this (governanceHalt, halt.go), so
+// the two never write it at once.
 type prFlow struct {
 	lastStatus time.Time // when the last status update was attempted
 	fails      int       // consecutive failed updates
@@ -120,7 +126,10 @@ func (r *run) verifiedHead(ctx context.Context) (string, bool) {
 // succeeded) and before the next one. A first run opens its draft here, at
 // the end of the first implement or fix stage whose HEAD has a passing test
 // on a clean tree, pushes later verified tips, and keeps the status section
-// current. Nothing here fails the run.
+// current. A report run pushes nothing here: a fix stage's commit is a
+// stage's, and the bytes a report run's pull request carries must be the
+// generator's (digest.go, T3.3), so its branch reaches the remote at finalize
+// and nowhere else. Nothing here fails the run.
 func (r *run) afterStage(ctx context.Context, stage string) {
 	defer func() {
 		// Whatever goes wrong here must not fail the run: finalize still
@@ -134,7 +143,9 @@ func (r *run) afterStage(ctx context.Context, stage string) {
 		return
 	}
 	if r.follow == nil {
-		if r.cfg.Git.PR.EarlyDraftOn() && (stage == "implement" || stage == "fix") {
+		// A report run's only push is finalize's: checkpointsOn() is false
+		// for it, so the boundary checkpoint below pushes nothing.
+		if r.cfg.Git.PR.EarlyDraftOn() && !r.digest && (stage == "implement" || stage == "fix") {
 			if sha, ok := r.verifiedHead(ctx); ok {
 				if r.rec.PR == nil {
 					r.openDraft(ctx, sha, stage)
@@ -470,6 +481,63 @@ func toleratedPart(pol FindingsPolicy, last runstore.ReviewSummary) string {
 	return ", tolerated at " + inlineText(string(pol.Mode)) + " (" + inlineText(strings.Join(labels, ", ")) + ")"
 }
 
+// checkpointReportPart is the section's checkpoint report, written when a
+// governance stop halted the run (T6.1, D329, G7): the tripwire's trigger, the
+// runner's words for why the run is over, and whichever of the stopping
+// agent's three answers the checkpoint stage filled (T7.3). Only fields that
+// are set are rendered — a checkpoint written before that stage exists carries
+// the trigger and the runner's own two facts alone — and every one of them
+// goes through inlineText, so the fields the agent fills cannot forge section
+// markup.
+//
+// The trigger is in a code span so it reads as the vocabulary value it is; the
+// estimate says whose figure it is, because it is the record's model spend and
+// not a forecast of what finishing would cost. "" for every run that did not
+// take a governance halt.
+//
+// The report is read under r.mu (checkpointValue), the lock the halt writes it
+// under (governanceHalt). Today the halt has stopped the stage's checkpoint
+// poll before either happens, so no poll renders this section beside that
+// write; the copy is what keeps a reader whole if the stopping agent's answers
+// are later filled in through the same report (T7.3).
+func (r *run) checkpointReportPart() string {
+	cp := r.checkpointValue()
+	if cp == nil {
+		return ""
+	}
+	parts := []string{"checkpoint `" + inlineText(cp.Trigger) + "`"}
+	if cp.WhyOver != "" {
+		parts = append(parts, inlineText(cp.WhyOver))
+	}
+	if cp.Done != "" {
+		parts = append(parts, "done: "+inlineText(cp.Done))
+	}
+	if cp.Next != "" {
+		parts = append(parts, "next: "+inlineText(cp.Next))
+	}
+	if cp.EstimateUSD > 0 {
+		parts = append(parts, fmt.Sprintf("estimate $%.2f (the model spend so far)", cp.EstimateUSD))
+	}
+	if cp.HardInstructions != "" {
+		parts = append(parts, "hard to satisfy: "+inlineText(cp.HardInstructions))
+	}
+	return strings.Join(parts, "; ")
+}
+
+// checkpointValue is a copy of the record's checkpoint report, or nil: it is
+// read under r.mu, where the halt writes it (governanceHalt), and copied
+// rather than taken by pointer because the fields a later stage fills in are
+// written through it (T7.3).
+func (r *run) checkpointValue() *runstore.Checkpoint {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.rec.Checkpoint == nil {
+		return nil
+	}
+	cp := *r.rec.Checkpoint
+	return &cp
+}
+
 // backlogPart is the section's account of the items the run wrote: the ids it
 // filed and the ids it closed as the follow-up that fixed them, beside the
 // review line that says what was left open, so a reader of the pull request can
@@ -571,11 +639,15 @@ func (r *run) updated(label string) string {
 
 // runningSection is the section while the run is in progress: after stage
 // ended, or (during) at a checkpoint in the middle of it. A first run's
-// pushed commit without a passing clean test is marked not verified.
+// pushed commit without a passing clean test is marked not verified, and a
+// halt recorded while the stage it stopped is still unwinding says so rather
+// than "Running" (governanceHalt writes the section before the stage ends).
 func (r *run) runningSection(stage string, during bool) string {
 	records, _ := verify.Records(r.d.StateDir)
 	head := "**Running**"
 	switch {
+	case r.haltValue() != nil:
+		head = "**Halted**"
 	case r.follow != nil:
 		head = "**Follow-up running**"
 	case r.rec.PushedHead != "" && !pushedVerified(records, r.rec.PushedHead):
@@ -592,7 +664,7 @@ func (r *run) runningSection(stage string, during bool) string {
 			what = p
 		}
 	}
-	return r.sectionLines(head, what, verifyPart(records), r.pushedPart(records), r.costPart(), r.updated("updated"))
+	return r.sectionLines(head, what, r.checkpointReportPart(), verifyPart(records), r.pushedPart(records), r.costPart(), r.updated("updated"))
 }
 
 // pushedVerified reports whether sha has a passing test on a clean tree.
@@ -627,7 +699,7 @@ func (r *run) finalSection(ready bool, reason string, records []verify.Record) s
 	case r.rec.Status == runstore.StatusCancelled:
 		head = "**Cancelled**"
 	}
-	return r.sectionLines(head, why, r.rigorPart(), verifyPart(records), reviewsPart(r.rec.Reviews, r.findingsPolicy()), r.narrowText, r.backlogPart(), r.costPart(), r.updated("finished"))
+	return r.sectionLines(head, why, r.checkpointReportPart(), r.rigorPart(), verifyPart(records), reviewsPart(r.rec.Reviews, r.findingsPolicy()), r.narrowText, r.backlogPart(), r.costPart(), r.updated("finished"))
 }
 
 // ---- finalize ----

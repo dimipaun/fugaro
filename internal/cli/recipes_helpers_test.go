@@ -48,10 +48,20 @@ func writeBucketFile(t *testing.T, f *cloudFixture, key, text string) {
 	}
 }
 
-// writeBuildRecord stores the build record of slug's workflow with baseRef.
+// writeBuildRecord stores the build record of slug's workflow with baseRef,
+// and no edition: a record that cannot say which edition built it is the
+// "unknown" state (imagecheck.Record.Edition), which gets no edition warning.
 func writeBuildRecord(t *testing.T, f *cloudFixture, slug, workflow, baseRef string) {
 	t.Helper()
-	data, err := json.Marshal(imagecheck.Record{Version: 1, Repo: "acme/app", Workflow: workflow, BaseRef: baseRef, FugaroVersion: "0.5.0"})
+	writeEditionBuildRecord(t, f, slug, workflow, baseRef, "")
+}
+
+// writeEditionBuildRecord is writeBuildRecord with the record's edition: the
+// build the record describes was made by a fugaro of edition (EditionCore or
+// EditionEE), which is what the launch-side edition warnings judge.
+func writeEditionBuildRecord(t *testing.T, f *cloudFixture, slug, workflow, baseRef, edition string) {
+	t.Helper()
+	data, err := json.Marshal(imagecheck.Record{Version: 1, Repo: "acme/app", Workflow: workflow, BaseRef: baseRef, FugaroVersion: "0.5.0", Edition: edition})
 	if err != nil {
 		t.Fatal(err)
 	}

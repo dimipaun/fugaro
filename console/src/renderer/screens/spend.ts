@@ -44,7 +44,7 @@
 //
 // **The three accounts are never summed, and that is the shape of this file.**
 // `m9-budget-and-dashboard.md` section 10 and the design's section 6.2 are one
-// rule: model dollars, `NOTIONAL~` (a subscription's list price, never billed,
+// rule: model dollars, `~$` (a subscription's list price, never billed,
 // never capped) and compute (an estimate by design) are three accounts, and a
 // screen that adds them is drawing a number nobody can be billed for. So the
 // model carries them as **three readings** (`model`, `notional`, `compute`),
@@ -169,12 +169,19 @@ import type { ElementLike } from '../app'
 // ---------------------------------------------------------------------------
 
 /**
- * SPEND_DIMENSIONS is `report --by`'s closed set of seven words, in
+ * SPEND_DIMENSIONS is `report --by`'s closed set of eight words, in
  * `internal/report/report.go`'s own order (`ByDay`, `ByWeek`, `ByMonth`,
- * `ByYear`, `ByRepo`, `ByModel`, `ByPerson`, and `ParseDim`'s list). The switch
- * draws this list; a document's `by` that is not one of them is a document from
- * a CLI this build does not know, and the screen says so rather than drawing an
- * eighth word.
+ * `ByYear`, `ByRepo`, `ByModel`, `ByPerson`, `ByMode`, and `ParseDim`'s list).
+ * The switch draws this list; a document's `by` that is not one of them is a
+ * document from a CLI this build does not know, and the screen says so rather
+ * than drawing a ninth word.
+ *
+ * `mode` groups by the rigor mode each run resolved, read from the run records
+ * rather than from the spend history, so its rows are mode words (`poc`,
+ * `startup`, `pro`, `critical`, `hotfix`) or the CLI's own `none` for a run
+ * whose record carries no mode -- and `none` is drawn as its own label, not as
+ * an error. The money grammar is unchanged: model, notional and compute stay
+ * three columns and are never summed, and this breakdown carries no run-hours.
  */
 export const SPEND_DIMENSIONS = Object.freeze([
   'day',
@@ -184,14 +191,15 @@ export const SPEND_DIMENSIONS = Object.freeze([
   'repo',
   'model',
   'person',
+  'mode',
 ] as const)
 
-/** SpendDimension is one of the seven. */
+/** SpendDimension is one of them. */
 export type SpendDimension = (typeof SPEND_DIMENSIONS)[number]
 
 /**
  * SPEND_ACCOUNTS is the three accounts the design keeps apart, in the order the
- * screen draws them: the billed model dollars, the notional `NOTIONAL~` of a
+ * screen draws them: the billed model dollars, the notional `~$` of a
  * subscription, and compute (an estimate by design). It is a list rather than
  * three fields so that "there are exactly three charts" is a fact a test can
  * read off it.
@@ -236,6 +244,31 @@ const MICROS_PER_USD = 1_000_000
  * same fact rather than inventing a second one for it.
  */
 export const PARTIAL_MARKER = '(partial)'
+
+/**
+ * UNREADABLE_MARKER is the console's sentence beside a row whose every run
+ * record was unreadable (`JSONLine.Unreadable`, contract section 4). Only
+ * `report --by mode` sets the mark: a record the build cannot read, or one the
+ * run has not written yet, still means the run launched, so it counts once in
+ * `runs` and the money keys are `null`. The words name the fact the two cases
+ * share -- there is no readable record -- rather than "unreadable" alone,
+ * because the usual `none` row of a window that reaches into today is a run
+ * still in flight, whose record is not corrupt but simply not written
+ * (`modeRecords`, `internal/cli/report.go`). The figures beside this sentence
+ * are therefore the `n/a` the reader already draws for an absent key -- never a
+ * `$0.00` that would read as a measurement. The words are the console's own;
+ * `report`'s table and CSV draw `n/a` there and name no mark.
+ */
+export const UNREADABLE_MARKER = 'no readable record'
+
+/**
+ * NO_RECORD_REASON is the `title` an unreadable row's money cells carry, in
+ * place of `readNumber`'s "the document has no <field>". Such a row's `*_micros`
+ * is present and `null` on purpose -- there was no readable record to measure --
+ * so naming the missing key would be the false sentence the marker exists to
+ * prevent. Every other null keeps `readNumber`'s own reason.
+ */
+const NO_RECORD_REASON = 'no readable record for these runs'
 
 /**
  * RESERVE_LABEL is the words the caps panel puts beside `max_reserve_usd`. They
@@ -320,6 +353,10 @@ export interface SpendRow {
   readonly partial: boolean
   /** a partial row is drawn hollow */
   readonly hollow: boolean
+  /** every run record behind the row was unreadable, so its money keys are
+   * `null` and the row is drawn `n/a` (`JSONLine.Unreadable`; absent -- and so
+   * `false` -- on a measured row) */
+  readonly unreadable: boolean
   readonly model: Reading
   readonly notional: Reading
   readonly compute: Reading
@@ -379,6 +416,11 @@ export interface SpendTotals {
   readonly runHours: Reading
   readonly runs: Reading
   readonly partial: boolean
+  /** every row the total sums was unreadable, so its money keys are `null` and
+   * the total is drawn `n/a` with the mark -- the document's own rule for the
+   * totals line (`Row.Unreadable`, `report.Build`; contract section 4, "The
+   * `totals` row follows the rows the same way") */
+  readonly unreadable: boolean
 }
 
 /** SpendGlobalCaps is `budget show`'s `global` block, and nothing but it: the
@@ -415,6 +457,22 @@ export interface SpendCapRow {
   readonly counted: Reading
   readonly spent: Reading
   readonly notional: Reading
+  /** compute is the repository's compute dollars, an **estimated** figure by
+   * design (`runstore.Cost.ComputeUSD`). The owner approved `compute_usd` on
+   * each `showRepo` on 2026-10-28, and `budget show --compute` writes it since
+   * 2026-10-29 -- but this console's `budget.show` row passes no such flag
+   * (adding one is its own reviewed run), so the key still only arrives in a
+   * document a person hands this reader. It reads absent and `null` as `n/a`
+   * and draws nothing with it: the Spend redesign is the screen that will.
+   *
+   * A value that is not a number is `n/a` too, and not a refusal, because this
+   * reader refuses no document at all -- the caps panel is the console's
+   * tolerant reader, and every number it cannot read is `n/a`. The contract
+   * states that as one rule (console/docs/json-contract.md §2): a key named
+   * ahead of its release is handled the way the decoder that owns the document
+   * handles a shape it cannot read; the closed decoders (`shared/schema.ts`,
+   * the digest) refuse it by name, and this one draws `n/a`. */
+  readonly compute: Reading
   readonly headroom: Reading
   readonly dailyCap: Reading
   readonly dailyScope: SpendScope
@@ -520,7 +578,7 @@ export interface SpendPersonRow {
   /** `counted_usd`: the **model** dollars that count toward the caps */
   readonly counted: Reading
   /** `notional_usd`: the part of the model figure a subscription paid --
-   * `NOTIONAL~`, never summed with `counted` */
+   * `~$`, never summed with `counted` */
   readonly notional: Reading
   /** `counted_runs`: the sample `average` is over, published because an average
    * without its sample is a figure a reader cannot weigh */
@@ -693,10 +751,21 @@ function boolAt(raw: unknown): boolean {
  * of them with the flag off is not a shape `report` writes; reading the number
  * would still be reading the same integer, and hiding it would be the worse
  * error of the two.
+ *
+ * On a row the document marks `unreadable` every money key is `null` because
+ * there was no record to read, not because a key is missing, so the `n/a`
+ * carries `NO_RECORD_REASON` rather than `readNumber`'s field sentence. The
+ * flag is passed in, like the account, so a caller that forgets it is a line a
+ * reviewer can see.
  */
-function microsReading(line: Record<string, unknown>, key: string, account: SpendAccount): Reading {
+function microsReading(
+  line: Record<string, unknown>,
+  key: string,
+  account: SpendAccount,
+  unreadable: boolean,
+): Reading {
   const micros = readNumber(line[key], key)
-  if (micros.value === null) return micros
+  if (micros.value === null) return unreadable ? unavailable(NO_RECORD_REASON) : micros
   const usd = micros.value / MICROS_PER_USD
   switch (account) {
     case 'model':
@@ -753,15 +822,17 @@ function rowOf(raw: unknown): SpendRow | null {
   const line = objectAt(raw)
   if (line === null) return null
   const partial = boolAt(line['partial'])
+  const unreadable = boolAt(line['unreadable'])
   return {
     key: textAt(line['key']) ?? '',
     start: textAt(line['start']),
     end: textAt(line['end']),
     partial,
     hollow: partial,
-    model: microsReading(line, 'model_micros', 'model'),
-    notional: microsReading(line, 'notional_micros', 'notional'),
-    compute: microsReading(line, 'compute_micros', 'compute'),
+    unreadable,
+    model: microsReading(line, 'model_micros', 'model', unreadable),
+    notional: microsReading(line, 'notional_micros', 'notional', unreadable),
+    compute: microsReading(line, 'compute_micros', 'compute', unreadable),
     runHours: readNumber(line['run_hours'], 'run_hours'),
     runs: countReading(line, 'runs'),
     calls: countReading(line, 'calls'),
@@ -773,13 +844,15 @@ function rowOf(raw: unknown): SpendRow | null {
  * other and is **not** recomputed from the rows. */
 function totalsOf(raw: unknown): SpendTotals {
   const line = objectAt(raw) ?? {}
+  const unreadable = boolAt(line['unreadable'])
   return {
-    model: microsReading(line, 'model_micros', 'model'),
-    notional: microsReading(line, 'notional_micros', 'notional'),
-    compute: microsReading(line, 'compute_micros', 'compute'),
+    model: microsReading(line, 'model_micros', 'model', unreadable),
+    notional: microsReading(line, 'notional_micros', 'notional', unreadable),
+    compute: microsReading(line, 'compute_micros', 'compute', unreadable),
     runHours: readNumber(line['run_hours'], 'run_hours'),
     runs: countReading(line, 'runs'),
     partial: boolAt(line['partial']),
+    unreadable,
   }
 }
 
@@ -1174,11 +1247,11 @@ export function dayRange(since: string | null, until: string | null): readonly s
 // ---------------------------------------------------------------------------
 
 /** ACCOUNT_TITLES are the three headings, in the console's own words. The
- * notional one carries the contract's own mark, because that is the word the
- * design uses for the account and the one a reader has to recognise on sight. */
+ * notional one carries the money mark, because the heading names the form the
+ * figures beneath it are drawn in. */
 const ACCOUNT_TITLES: Readonly<Record<SpendAccount, string>> = Object.freeze({
   model: 'billed model spend',
-  notional: 'NOTIONAL~ subscription list price',
+  notional: '~$ subscription list price',
   compute: 'compute (estimated)',
 })
 
@@ -1393,6 +1466,7 @@ function capRowOf(raw: unknown): SpendCapRow | null {
     counted: readNumber(repo['counted_usd'], 'repos[].counted_usd'),
     spent: readNumber(repo['spent_usd'], 'repos[].spent_usd'),
     notional: usdReading(repo, 'notional_usd', 'notional'),
+    compute: usdReading(repo, 'compute_usd', 'compute'),
     headroom: readNumber(repo['headroom_usd'], 'repos[].headroom_usd'),
     dailyCap: readNumber(repo['daily_cap_usd'], 'repos[].daily_cap_usd'),
     dailyScope: scopeOf(textAt(repo['daily_cap_source']) ?? ''),
@@ -1430,10 +1504,11 @@ function dimensionOf(raw: string | null): SpendDimension | null {
  * keyClass is the text class a row's key carries, and it is the dimension that
  * decides it: `by repo`'s key is a repository path (or, when the record has no
  * path, the bucket slug `Build` falls back to), `by person`'s is a person,
- * `by model`'s is a model name and a period's is a date. A label is the class
- * for the two that are free text, and it is not a weak class: the free-text
- * rules redact an address, a URL, a path and a token out of a label exactly as
- * they do out of a sentence.
+ * `by model`'s is a model name, `by mode`'s is a mode word or the CLI's own
+ * `none`, and a period's is a date. A label is the class for the ones that are
+ * free text, and it is not a weak class: the free-text rules redact an address,
+ * a URL, a path and a token out of a label exactly as they do out of a
+ * sentence.
  */
 export function keyClass(dimension: SpendDimension | null, key: string): TextClass {
   switch (dimension) {
@@ -1449,6 +1524,7 @@ export function keyClass(dimension: SpendDimension | null, key: string): TextCla
     case 'month':
     case 'year':
     case 'model':
+    case 'mode':
     case null:
       return 'label'
   }
@@ -1498,7 +1574,7 @@ export function buildSpendModel(
     notes.push(`${stray} row(s) outside the range the document covers are listed below and not drawn in the charts: a day axis places a point by its date`)
   }
   if (dimension === null) {
-    notes.push('the document groups by a breakdown this console does not know, so the switch below cannot say which of its seven words it is')
+    notes.push('the document groups by a breakdown this console does not know, so the switch below cannot say which of its eight words it is')
   }
 
   return {
@@ -1665,7 +1741,7 @@ function pickerSince(since: string): string | null {
  * not the first.
  *
  * The three fields are that operation's own: `since` a day or `Nd`/`Nw`,
- * `until` a day, `by` one of the seven words. `--repo` is admitted on this
+ * `until` a day, `by` one of the eight words. `--repo` is admitted on this
  * command by the design's allow-list and is deliberately not here -- this screen
  * draws the whole project, and a field it does not draw is a field it must not
  * send. There is no `--csv`, no path, no free-form string, no command and no
@@ -2050,7 +2126,7 @@ function windowItem(parent: ScreenElement, factory: ScreenFactory, current: bool
  * read as a range nobody chose.
  *
  * Every word is a literal, because they are the console's vocabulary and not a
- * document's strings -- the same rule the breakdown switch's seven words follow.
+ * document's strings -- the same rule the breakdown switch's eight words follow.
  */
 function picker(factory: ScreenFactory, controls: SpendControls): ScreenElement {
   const element = make(factory, 'ol', 'spend-picker')
@@ -2079,7 +2155,7 @@ function picker(factory: ScreenFactory, controls: SpendControls): ScreenElement 
  * by default.
  *
  * It is a control of its own rather than a state of the breakdown switch: the
- * switch's `person` word is one of the seven the CLI has, and the operator's
+ * switch's `person` word is one of the eight the CLI has, and the operator's
  * decision about it is a different thing from the breakdown the screen is
  * currently drawn by. The knob's own `data-enabled` is what the event wiring
  * reads, and the switch's `person` word is drawn disabled until it is on.
@@ -2098,14 +2174,14 @@ function personKnob(factory: ScreenFactory, model: SpendModel): ScreenElement {
   return element
 }
 
-/** tabs draws the breakdown switch: the seven words, which of them is the
+/** tabs draws the breakdown switch: the eight words, which of them is the
  * document's own grouping, and which this console may show. */
 function tabs(factory: ScreenFactory, model: SpendModel): ScreenElement {
   const element = make(factory, 'ol', 'spend-switch')
   element.setAttribute('data-known', model.dimensionKnown ? 'true' : 'false')
   for (const entry of model.switches) {
     const item = cell(element, factory, 'li', 'spend-dim')
-    // The seven words are the CLI's own (`ParseDim`'s help line) and this is
+    // The eight words are the CLI's own (`ParseDim`'s help line) and this is
     // the console drawing its own vocabulary for them, not a document's string.
     literal(item, entry.dimension)
     item.setAttribute('data-dimension', entry.dimension)
@@ -2114,7 +2190,7 @@ function tabs(factory: ScreenFactory, model: SpendModel): ScreenElement {
     if (entry.note !== null) item.setAttribute('title', entry.note)
   }
   if (!model.dimensionKnown) {
-    // An eighth word is a newer CLI. The switch says so in the console's own
+    // A ninth word is a newer CLI. The switch says so in the console's own
     // words rather than drawing the word it does not know -- the value is not
     // echoed, the same rule the Live screen's unknown flags follow.
     const unknown = cell(element, factory, 'li', 'spend-dim', 'spend-dim-unknown')
@@ -2183,6 +2259,7 @@ function rowLine(factory: ScreenFactory, model: SpendModel, row: SpendRow): Scre
   const element = make(factory, 'li', 'spend-row')
   element.setAttribute('data-partial', row.partial ? 'true' : 'false')
   element.setAttribute('data-hollow', row.hollow ? 'true' : 'false')
+  element.setAttribute('data-unreadable', row.unreadable ? 'true' : 'false')
   const keyed = textCell(element, factory, 'span', row.key, keyClass(model.dimension, row.key), 'rows[].key', 'spend-key')
   element.setAttribute('data-key', drawnKey(keyed))
   numberCell(element, factory, 'span', row.model, 'usd', 'spend-model')
@@ -2194,6 +2271,7 @@ function rowLine(factory: ScreenFactory, model: SpendModel, row: SpendRow): Scre
     numberCell(element, factory, 'span', row.tokens.in, 'count', 'spend-tokens-in')
     numberCell(element, factory, 'span', row.tokens.out, 'count', 'spend-tokens-out')
   }
+  if (row.unreadable) literal(cell(element, factory, 'span', 'spend-unreadable'), UNREADABLE_MARKER)
   if (row.partial) literal(cell(element, factory, 'span', 'spend-partial'), PARTIAL_MARKER)
   return element
 }
@@ -2202,12 +2280,14 @@ function rowLine(factory: ScreenFactory, model: SpendModel, row: SpendRow): Scre
 function totalsLine(factory: ScreenFactory, model: SpendModel): ScreenElement {
   const element = make(factory, 'div', 'spend-totals')
   element.setAttribute('data-partial', model.totals.partial ? 'true' : 'false')
+  element.setAttribute('data-unreadable', model.totals.unreadable ? 'true' : 'false')
   literal(cell(element, factory, 'span', 'spend-totals-word'), 'total')
   numberCell(element, factory, 'span', model.totals.model, 'usd', 'spend-total-model')
   numberCell(element, factory, 'span', model.totals.notional, 'usd', 'spend-total-notional')
   numberCell(element, factory, 'span', model.totals.compute, 'usd', 'spend-total-compute')
   numberCell(element, factory, 'span', model.totals.runs, 'count', 'spend-total-runs')
   numberCell(element, factory, 'span', model.totals.runHours, 'hours', 'spend-total-run-hours')
+  if (model.totals.unreadable) literal(cell(element, factory, 'span', 'spend-unreadable'), UNREADABLE_MARKER)
   if (model.totals.partial) literal(cell(element, factory, 'span', 'spend-partial'), PARTIAL_MARKER)
   return element
 }

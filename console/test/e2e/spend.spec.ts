@@ -284,6 +284,8 @@ return spend.readSpend(read, controls, ${JSON.stringify(BUDGET)}, readPeople).th
 interface Screen {
   readonly theme: string | null
   readonly accounts: readonly (string | null)[]
+  /** the breakdown switch's own words, in the order it draws them */
+  readonly dimensions: readonly string[]
   readonly titles: readonly string[]
   readonly peaks: readonly string[]
   readonly segments: readonly (string | null)[]
@@ -335,6 +337,7 @@ function screen(page: Page): Promise<Screen> {
     return {
       theme: scope.querySelector('.spend')?.getAttribute('data-theme') ?? null,
       accounts: attributes('.spend-account', 'data-account'),
+      dimensions: texts('.spend-dim'),
       titles: texts('.spend-account-title'),
       peaks: texts('.spend-peak'),
       segments: attributes('.spend-series', 'data-segments'),
@@ -775,14 +778,19 @@ test.describe('the Spend screen', () => {
 
     expect(drawn.theme).toBe('light')
     expect(drawn.accounts).toEqual(['model', 'notional', 'compute'])
+    // The breakdown switch offers the CLI's whole `--by` vocabulary, the
+    // by-mode word among it: the report this screen read is by day, and a
+    // breakdown the console's table did not carry would be refused on the wire
+    // before the window ever asked for it.
+    expect(drawn.dimensions).toContain('mode')
     // Three charts, three axis tops: a shared scale would put a notional bar
     // and a billed bar at heights that invite the comparison the design forbids.
     expect(drawn.titles).toEqual([
       'billed model spend',
-      'NOTIONAL~ subscription list price',
+      '~$ subscription list price',
       'compute (estimated)',
     ])
-    expect(drawn.peaks).toEqual(['$1.25', 'NOTIONAL~$0.40', 'est. $0.12'])
+    expect(drawn.peaks).toEqual(['$1.25', '~$0.40', 'est. $0.12'])
     // The billed chart is broken at the day with no document and whole either
     // side of it, and the notional chart is broken twice.
     expect(drawn.segments).toEqual(['2', '2', '1'])
@@ -793,7 +801,7 @@ test.describe('the Spend screen', () => {
     ])
     // The notional column of the rows is marked, so the window never shows a
     // subscription's list price as a billed dollar.
-    expect(drawn.notionalCells).toEqual(['NOTIONAL~$0.40', 'n/a', 'NOTIONAL~$0.10'])
+    expect(drawn.notionalCells).toEqual(['~$0.40', 'n/a', '~$0.10'])
     // No cell of the window is the sum of two accounts.
     expect(drawn.text).not.toContain('$1.65')
   })
@@ -959,10 +967,10 @@ test.describe('the Spend screen', () => {
     // $0.65 + $0.00) and never a sum this screen computed.
     expect(drawn.peopleMoney).toEqual(['$1.50', '$0.65', '$0.00', '$2.15'])
     expect(drawn.peopleNotional).toEqual([
-      `NOTIONAL~$0.40`,
-      `NOTIONAL~$0.00`,
-      `NOTIONAL~$0.00`,
-      `NOTIONAL~$0.40`,
+      `~$0.40`,
+      `~$0.00`,
+      `~$0.00`,
+      `~$0.40`,
     ])
     expect(drawn.peopleAverages).toEqual(['$0.50', '$0.65', 'n/a', '$0.54'])
     expect(drawn.peopleSamples).toEqual(['3', '1', '0', '4'])

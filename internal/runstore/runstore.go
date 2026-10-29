@@ -68,7 +68,41 @@ const (
 	// dropping it would hide the run's credential from the dashboard, and
 	// retrying it forever would fill the log instead of the operator's queue.
 	HaltCredsRulesDenied HaltReason = "creds_rules_denied"
+
+	// The governance stops (docs/task-governance T6.1, D329, G7) are the
+	// reasons a tripwire stops a run: every one of them is a halt with a
+	// checkpoint report on the record and a draft pull request, never a
+	// silent kill, and each is a value the runner sets from its own state —
+	// never task text — so the report, the digest and the pull request can
+	// render it.
+	//
+	// HaltStageBudget is a stage that passed its own budget: its dollars,
+	// its calls, its tokens, or the stage's own timeout (T7.2, T7.6).
+	HaltStageBudget HaltReason = "stage_budget"
+	// HaltReviewRatio is review that spent more calls than the ratio allows
+	// for the implementation it read — max(review_floor_calls, N × the
+	// implement stage's calls) (T7.2).
+	HaltReviewRatio HaltReason = "review_ratio"
+	// HaltFanout is a stage that used more distinct sub-agents than the
+	// maximum (T7.2).
+	HaltFanout HaltReason = "fanout"
+	// HaltReviewScope is a review handed a range covering files the run's
+	// own commits never changed, so the reviewer would have read another
+	// branch's work (T7.3, D332).
+	HaltReviewScope HaltReason = "review_scope"
+	// HaltExpectedExceeded is a run that passed the cost its tier expected
+	// of it (T8.2, D330).
+	HaltExpectedExceeded HaltReason = "expected_exceeded"
 )
+
+// GovernanceHaltReasons is every reason a governance tripwire stops a run
+// with (T6.1, D329): the values a checkpoint's trigger can be, and the set
+// result.schema.json's checkpoint.trigger enum and the digest's halt reasons
+// are pinned to. A reason outside it is a budget or a credential halt, which
+// carries no checkpoint and no report.
+func GovernanceHaltReasons() []HaltReason {
+	return []HaltReason{HaltStageBudget, HaltReviewRatio, HaltFanout, HaltReviewScope, HaltExpectedExceeded}
+}
 
 // Halt is why and when a run was halted.
 type Halt struct {
@@ -162,6 +196,13 @@ const (
 	// ReviewScopeReviewRun: a review run has no implement stage, so it has
 	// no implement set to compare the range with.
 	ReviewScopeReviewRun = "review-run"
+	// ReviewScopeDigestRun: a report run's first step is the digest step
+	// (internal/runner/digest.go, task-governance T3.2), which the runner
+	// executes itself in place of implement: the run has no implement set to
+	// compare the range with either. Its own value, not ReviewScopeReviewRun's:
+	// a reader has to be able to tell a report run from a review run by the
+	// field that says why the comparison does not apply.
+	ReviewScopeDigestRun = "digest-run"
 	// ReviewScopeAutofix: the check step's commands.fix committed and the run
 	// skipped implement (gate.go, the Fixed gate): the run's own work is the
 	// fix's, not implement's.
@@ -320,6 +361,65 @@ func boundReviewScopeFiles(paths []string, budget *int) ([]string, bool) {
 	return out, trimmed
 }
 
+// MaxCheckpointText bounds one free-text field of a checkpoint report, in
+// runes, like MaxToleratedTitle bounds a finding's title: three of its four
+// free-text fields are a model's own answer and the record is a small object
+// every listing reads.
+const MaxCheckpointText = 500
+
+// Checkpoint is the report a governance halt leaves (T6.1, D329, G7): why
+// the run stopped, and what a person deciding whether to continue it needs to
+// know. Only a governance stop writes one — a run stopped by a cap, a kill
+// switch or a failure carries none — and it is the record half of the draft
+// pull request's checkpoint line.
+//
+// Trigger is one of the governance halt reasons, and WhyOver and EstimateUSD
+// the runner reads from the record: the runner's own words for the stop, and
+// the model spend the record had reached, which is the figure a continuation
+// starts from and the only money figure the record carries before a tier's
+// expectation exists (T8.1). Done, Next and HardInstructions are the stopping
+// agent's answer to the checkpoint prompt (prompts.go, wired in T7.3): empty
+// in every checkpoint written before that stage exists, and after it in every
+// governance stop that gets no checkpoint call — a stage timeout, or any
+// governance stop of an oauth run (T7.2). A stop that is not a governance one
+// writes no block at all, which is why a run the per-run cap halted carries
+// none.
+//
+// Absent — never an empty block — for a run that did not take a governance
+// halt, and in records from before this field existed: the field is additive,
+// so an old reader sees the record it always saw and the schema's version
+// stays 1.
+type Checkpoint struct {
+	Trigger string `json:"trigger"`
+	// Done is what the work had finished when the run stopped.
+	Done string `json:"done,omitempty"`
+	// WhyOver is why the run is over, in the runner's own words.
+	WhyOver string `json:"why_over,omitempty"`
+	// Next is what the work would do next to finish the task.
+	Next string `json:"next,omitempty"`
+	// EstimateUSD is the money the work had cost when it stopped, as the
+	// record's cost_usd holds it, notional dollars included: an oauth run's
+	// checkpoint carries a figure too, and a reader that needs the billed
+	// part splits it the way it splits the record's own.
+	EstimateUSD float64 `json:"estimate_usd,omitempty"`
+	// HardInstructions is what the work found hard to satisfy or
+	// contradictory in its instructions, if anything.
+	HardInstructions string `json:"hard_instructions,omitempty"`
+}
+
+// NewCheckpoint bounds a checkpoint report's text and returns it to store:
+// every text field is clipped to MaxCheckpointText runes. The trigger is the
+// runner's own reason and is not checked against the governance set here —
+// the runner writes it from those constants — and the number is the record's
+// own.
+func NewCheckpoint(cp Checkpoint) *Checkpoint {
+	cp.Done = clipRunes(cp.Done, MaxCheckpointText)
+	cp.WhyOver = clipRunes(cp.WhyOver, MaxCheckpointText)
+	cp.Next = clipRunes(cp.Next, MaxCheckpointText)
+	cp.HardInstructions = clipRunes(cp.HardInstructions, MaxCheckpointText)
+	return &cp
+}
+
 // MaxTolerated bounds the tolerated findings a record stores. A round's
 // findings are a model's output and the record is a small object every
 // listing reads, so the list is capped and Total says how many there really
@@ -433,6 +533,16 @@ type StageTiming struct {
 	// is not the same fact as a stage counted at zero.
 	Calls  *int `json:"calls,omitempty"`
 	Agents *int `json:"agents,omitempty"`
+	// Repeats is the most times one identical shell command ran in this
+	// stage, counted by the relay from the stage's own stream for every auth
+	// mode (task-governance T1.4). It is a count and never the command, a
+	// hash of it or any argument: a command can carry a token or a path, and
+	// this record is read by every launcher and by the digest's report. It is
+	// a pointer for the same reason Calls and Agents are: a stage nobody
+	// counted has the field absent, which is not the same fact as a stage
+	// counted at zero, and a record written before the field existed carries
+	// none.
+	Repeats *int `json:"repeats,omitempty"`
 	// ModelUSD is what this stage's calls cost, in USD, whatever model they
 	// were on: under the gateway, every call the stage's report carried,
 	// the background model's (haiku, say) included. The stages sum to
@@ -614,6 +724,17 @@ type Record struct {
 	// existed, and a run that died before bootstrap — so an old reader sees
 	// the record it always saw.
 	Rigor *RigorRecord `json:"rigor,omitempty"`
+	// Tier is the expectation tier the run was dispatched at and the cost and
+	// duration Fugaro expects a run of that tier to have
+	// (docs/task-governance/implementation-plan.md T8.1, D330): the launcher's
+	// fugaro run --tier, or the tier a --pr follow-up keeps from its PR, and
+	// the expectation the run's governance resolved for it. Absent for a run
+	// that carried no tier — every record written before this field existed
+	// included — and the two figures are expectations and never caps: the
+	// deployed per-run cap stays the ceiling whatever a tier expects (G6).
+	// Nothing reads it yet, as with Backlog below; it is written because the
+	// record is what survives the run, and T8.2 is what acts on it.
+	Tier *TierRecord `json:"tier,omitempty"`
 	// Backlog is the ids of the backlog items this run filed for what it
 	// left open, in the order it filed them: the `<YYYYMMDD-NN>` names
 	// their files under docs/backlog/ are known by (docs/rigor-modes/
@@ -653,6 +774,13 @@ type Record struct {
 	// reader sees the record it always saw and the schema's version stays 1
 	// (F21).
 	Tolerated *ToleratedFindings `json:"tolerated,omitempty"`
+	// Checkpoint is the report a governance halt left (T6.1, D329, G7):
+	// what stopped the run, why it is over and what it would have done
+	// next, written by the runner as the run stops. Absent — never an empty
+	// block — for every run that did not take a governance halt, which is
+	// every record written before this field existed: the field is
+	// additive, so an old reader sees the record it always saw.
+	Checkpoint *Checkpoint `json:"checkpoint,omitempty"`
 }
 
 // MaxBacklogClosed bounds Record.BacklogClosed. A run closes only what the
@@ -729,15 +857,24 @@ func (e PolicyEffective) MarshalJSON() ([]byte, error) {
 	return json.Marshal(aux)
 }
 
-// PolicyIgnored is a value a layer set that was looser than the limits in
-// force and was dropped. Value and Effective are text; Source is the layer
-// of the effective value and From the layer that asked for Value.
+// PolicyIgnored is a value a layer set that the run dropped. Value and
+// Effective are text; Source is the layer of the effective value and From the
+// layer that asked for Value.
+//
+// Clamped marks the one shape that is not "looser than the limits in force": a
+// stage timeout the run's own timeouts.stage bounds at least as tightly, which
+// the run drops rather than give a deadline of its own (T7.6). It cannot be
+// told from a merge entry by Key, Source and From alone — both can read
+// key=stage_timeout.implement source=ceiling from=branch — so the report would
+// otherwise call a merge-dropped value one the run's own bound made moot, or
+// the other way round; this is the mark that separates them.
 type PolicyIgnored struct {
 	Key       string `json:"key"`
 	Value     string `json:"value"`
 	Effective string `json:"effective"`
 	Source    string `json:"source"`
 	From      string `json:"from"`
+	Clamped   bool   `json:"clamped,omitempty"`
 }
 
 // FollowUp is what a follow-up run acted on (design §4.4).

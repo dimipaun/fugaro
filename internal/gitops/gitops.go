@@ -58,7 +58,11 @@ func ValidCommitSHA(sha string) bool { return commitSHARE.MatchString(sha) }
 // production's only defense.
 const gitWaitDelay = 5 * time.Second
 
-// Identity is the author and committer of commits made during a run.
+// Identity is the author and committer of commits made during a run whose
+// provider names no account of its own. It is Fugaro's own name and an
+// address in the reserved .invalid domain: no account owns a commit made
+// under it, which is why a provider that does own an account (a GitHub App)
+// hands the run that account's identity instead -- see BotIdentity.
 var Identity = map[string]string{
 	"GIT_AUTHOR_NAME":     "Fugaro",
 	"GIT_AUTHOR_EMAIL":    "fugaro@users.noreply.invalid",
@@ -66,11 +70,50 @@ var Identity = map[string]string{
 	"GIT_COMMITTER_EMAIL": "fugaro@users.noreply.invalid",
 }
 
+// BotIdentity is the commit identity of a git host's bot account: the
+// account's login as the name, and its noreply address as the email, which is
+// the form the host links a commit by -- GitHub attributes a commit to a
+// GitHub App's bot account when the author and committer are
+// "<id>+<login>@users.noreply.github.com" (dependabot[bot] commits as
+// "49699333+dependabot[bot]@users.noreply.github.com"), and that link is what
+// makes CLA Assistant and blame recognise a run's commits.
+//
+// An empty id or login is no identity at all, and returns nil: a caller that
+// could not read the account keeps Identity rather than half an identity that
+// owns nothing.
+func BotIdentity(id, login string) map[string]string {
+	if id == "" || login == "" {
+		return nil
+	}
+	email := id + "+" + login + "@users.noreply.github.com"
+	return map[string]string{
+		"GIT_AUTHOR_NAME":     login,
+		"GIT_AUTHOR_EMAIL":    email,
+		"GIT_COMMITTER_NAME":  login,
+		"GIT_COMMITTER_EMAIL": email,
+	}
+}
+
+// IdentityFor returns the identity a run's commits carry: identity when the
+// run has one of its own (a provider's bot account), else the default
+// Identity.
+func IdentityFor(identity map[string]string) map[string]string {
+	if identity == nil {
+		return Identity
+	}
+	return identity
+}
+
 // IdentityEnv returns Identity as KEY=VALUE pairs.
-func IdentityEnv() []string {
-	out := make([]string, 0, len(Identity))
-	for _, k := range slices.Sorted(maps.Keys(Identity)) {
-		out = append(out, k+"="+Identity[k])
+func IdentityEnv() []string { return IdentityEnvFor(nil) }
+
+// IdentityEnvFor returns IdentityFor(identity) as KEY=VALUE pairs: the
+// environment every git call a run makes is made under.
+func IdentityEnvFor(identity map[string]string) []string {
+	identity = IdentityFor(identity)
+	out := make([]string, 0, len(identity))
+	for _, k := range slices.Sorted(maps.Keys(identity)) {
+		out = append(out, k+"="+identity[k])
 	}
 	return out
 }
@@ -478,9 +521,14 @@ func (r *Repo) HeadSHA(ctx context.Context) (string, error) {
 	return r.git(ctx, "rev-parse", "HEAD")
 }
 
-// IsClean reports whether the working tree has no changes and no untracked files.
+// IsClean reports whether the working tree has no changes and no untracked
+// files. Replacement refs are ignored: `git status` compares the index against
+// the tree of HEAD's commit, so a refs/replace/<sha> the agent plants in the
+// checkout it writes makes a clean tree read as changed (and the other way
+// round), and the callers that decide what to commit have to see the tree this
+// checkout actually has.
 func (r *Repo) IsClean(ctx context.Context) (bool, error) {
-	out, err := r.git(ctx, "status", "--porcelain")
+	out, err := r.git(ctx, "--no-replace-objects", "status", "--porcelain")
 	return out == "", err
 }
 
@@ -516,8 +564,14 @@ func (r *Repo) CommitEmpty(ctx context.Context, msg string) error {
 // -fd gives a fresh checkout. Used when a command's output, or its own
 // history, cannot be trusted (gate.go: commands.fix timed out, failed, or
 // committed on its own).
+//
+// The reset runs with --no-replace-objects: the agent writes the checkout's
+// own .git, so a refs/replace/<sha> it plants for ref would otherwise decide
+// the tree this puts the working tree at — the caller resets to a commit the
+// runner made itself and means that commit's own tree. The clean that follows
+// reads no object and needs none.
 func (r *Repo) ResetTo(ctx context.Context, ref string) error {
-	if _, err := r.git(ctx, "reset", "--quiet", "--hard", ref); err != nil {
+	if _, err := r.git(ctx, "--no-replace-objects", "reset", "--quiet", "--hard", ref); err != nil {
 		return err
 	}
 	_, err := r.git(ctx, "clean", "-fd", "--quiet")

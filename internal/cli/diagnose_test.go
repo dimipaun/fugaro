@@ -22,6 +22,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -546,6 +547,260 @@ func TestDiagnoseHaltBlock(t *testing.T) {
 	}
 }
 
+// TestDiagnosePrintsCheckpoint: a governance halt leaves a checkpoint report on
+// the record (T6.1, D329, G7) and diagnose is where a person reads it before
+// deciding whether to continue the run. The block prints the runner's own three
+// fields -- the trigger, its words for why the run is over, and the spend it had
+// reached -- and the three the stopping agent answers, each only when the record
+// carries it: the checkpoint stage that fills them is wired in T7.3, so before
+// that every one of the three is empty, and an empty field prints as nothing
+// rather than as a fabricated or zero value. The free text comes from the run,
+// so it is redacted and printed as data, the way every other string of a record
+// is here.
+func TestDiagnosePrintsCheckpoint(t *testing.T) {
+	const secret = "ghp_test0123456789abcdef"
+	t.Setenv("FUGARO_BITBUCKET_TOKEN", secret)
+	f := newCloudFixture(t)
+	const id = "20260927-100000-abce"
+	exec := seedRun(t, f, id, "", "someone@example.com", true)
+	f.run.SetState(exec, backend.StateSucceeded)
+	at := time.Date(2026, 9, 27, 10, 5, 0, 0, time.UTC)
+	rec := prRecord(id, exec, 7, 2)
+	rec.Status, rec.Halt = runstore.StatusHalted, &runstore.Halt{
+		Reason: runstore.HaltStageBudget, Scope: "run", At: at, Detail: "implement spent $2.00 of $1.50"}
+	rec.Reason = "halted: stage_budget: implement spent $2.00 of $1.50"
+	rec.Checkpoint = runstore.NewCheckpoint(runstore.Checkpoint{
+		Trigger:          string(runstore.HaltStageBudget),
+		WhyOver:          "a stage passed its own budget",
+		EstimateUSD:      2,
+		Done:             "the parser: " + secret,
+		Next:             "wire the flag into the CLI\nand run the tests",
+		HardInstructions: "the spec asks for \x1b[31mX\x1b[0m and forbids it",
+	})
+	writeRecord(t, f, id, rec)
+
+	out, _, err := execute(t, "diagnose", "--json", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, secret) {
+		t.Fatalf("the document carries the secret:\n%s", out)
+	}
+	var d Diagnosis
+	if err := json.Unmarshal([]byte(out), &d); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if !strings.Contains(out, `"checkpoint": {`) {
+		t.Fatalf("JSON has no checkpoint block:\n%s", out)
+	}
+	if d.Checkpoint == nil {
+		t.Fatalf("json checkpoint is absent:\n%s", out)
+	}
+	want := runstore.Checkpoint{
+		Trigger:          "stage_budget",
+		WhyOver:          "a stage passed its own budget",
+		EstimateUSD:      2,
+		Done:             "the parser: [REDACTED]",
+		Next:             "wire the flag into the CLI\nand run the tests",
+		HardInstructions: "the spec asks for \x1b[31mX\x1b[0m and forbids it",
+	}
+	if *d.Checkpoint != want {
+		t.Fatalf("json checkpoint = %+v, want %+v", *d.Checkpoint, want)
+	}
+
+	human, _, err := execute(t, "diagnose", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{
+		"\nCheckpoint\n",
+		"  Trigger:  stage_budget\n",
+		"  Why over: a stage passed its own budget\n",
+		"  Estimate: $2.0000\n",
+		"  Done:     the parser: [REDACTED]\n",
+		"  Next:     wire the flag into the CLI\n            and run the tests\n",
+		"  Hard:     the spec asks for X and forbids it\n",
+	} {
+		if !strings.Contains(human, line) {
+			t.Fatalf("diagnose lacks %q:\n%s", line, human)
+		}
+	}
+	if strings.ContainsAny(human, "\x1b") {
+		t.Fatalf("the checkpoint carries a terminal escape:\n%q", human)
+	}
+
+	// The runner's fields alone, as a checkpoint written before the checkpoint
+	// stage exists: the three the agent answers are absent from the record, so
+	// they are absent from both outputs rather than printed empty.
+	const bare = "20260927-110000-bbbf"
+	e2 := seedRun(t, f, bare, "", "", true)
+	f.run.SetState(e2, backend.StateSucceeded)
+	rec2 := prRecord(bare, e2, 8, 1)
+	rec2.Status, rec2.Halt = runstore.StatusHalted, &runstore.Halt{
+		Reason: runstore.HaltFanout, Scope: "run", At: at, Detail: "implement ran 3 sub-agents of 1"}
+	rec2.Checkpoint = runstore.NewCheckpoint(runstore.Checkpoint{
+		Trigger: string(runstore.HaltFanout), WhyOver: "a stage used more sub-agents than the maximum", EstimateUSD: 1})
+	writeRecord(t, f, bare, rec2)
+	human, _, err = execute(t, "diagnose", bare)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{"  Trigger:  fanout\n", "  Why over: a stage used more sub-agents than the maximum\n", "  Estimate: $1.0000\n"} {
+		if !strings.Contains(human, line) {
+			t.Fatalf("diagnose lacks %q:\n%s", line, human)
+		}
+	}
+	for _, absent := range []string{"  Done:", "  Next:", "  Hard:"} {
+		if strings.Contains(human, absent) {
+			t.Fatalf("diagnose prints %q for a field the record does not carry:\n%s", absent, human)
+		}
+	}
+	out, _, err = execute(t, "diagnose", "--json", bare)
+	if err != nil || strings.Contains(out, `"done"`) || strings.Contains(out, `"next"`) || strings.Contains(out, `"hard_instructions"`) {
+		t.Fatalf("json carries an empty checkpoint field (%v):\n%s", err, out)
+	}
+
+	// A budget halt carries no checkpoint (only a governance stop does), and a
+	// run without one prints no block at all.
+	const other = "20260927-120000-bbb0"
+	e3 := seedRun(t, f, other, "", "", true)
+	f.run.SetState(e3, backend.StateSucceeded)
+	rec3 := prRecord(other, e3, 9, 1)
+	rec3.Status, rec3.Halt = runstore.StatusHalted, &runstore.Halt{Reason: runstore.HaltRunCap, Scope: "run", At: at}
+	writeRecord(t, f, other, rec3)
+	for _, args := range [][]string{{"diagnose", other}, {"diagnose", "--json", other}} {
+		out, _, err := execute(t, args...)
+		if err != nil || strings.Contains(out, "Checkpoint") || strings.Contains(out, `"checkpoint"`) {
+			t.Fatalf("%v prints a checkpoint for a run that has none (%v):\n%s", args, err, out)
+		}
+	}
+
+	// The record is an object a hand can edit, so the empty block it can write
+	// -- `{"trigger": ""}` -- is the absent one: a block with no report in it
+	// prints nowhere, rather than as a bare header and a trigger of "".
+	const blank = "20260927-130000-bbb1"
+	e4 := seedRun(t, f, blank, "", "", true)
+	f.run.SetState(e4, backend.StateSucceeded)
+	rec4 := prRecord(blank, e4, 10, 1)
+	rec4.Checkpoint = &runstore.Checkpoint{}
+	writeRecord(t, f, blank, rec4)
+	for _, args := range [][]string{{"diagnose", blank}, {"diagnose", "--json", blank}} {
+		out, _, err := execute(t, args...)
+		if err != nil || strings.Contains(out, "Checkpoint") || strings.Contains(out, `"checkpoint"`) {
+			t.Fatalf("%v prints a checkpoint block the record does not carry (%v):\n%s", args, err, out)
+		}
+	}
+
+	// The bound on read: a hand can write a text field longer than the one the
+	// write path clips to (runstore.NewCheckpoint), and the document clips it
+	// again -- like the stage and tolerated bounds above.
+	const long = "20260927-140000-bbb2"
+	e5 := seedRun(t, f, long, "", "", true)
+	f.run.SetState(e5, backend.StateSucceeded)
+	rec5 := prRecord(long, e5, 11, 1)
+	rec5.Checkpoint = &runstore.Checkpoint{Trigger: "fanout", Done: strings.Repeat("x", runstore.MaxCheckpointText+50)}
+	writeRecord(t, f, long, rec5)
+	out, _, err = execute(t, "diagnose", "--json", long)
+	var d5 Diagnosis
+	if err != nil || json.Unmarshal([]byte(out), &d5) != nil || d5.Checkpoint == nil {
+		t.Fatalf("diagnose --json: %v:\n%s", err, out)
+	}
+	// clipRunes keeps the bound's runes and marks the cut, the way every other
+	// bound here does.
+	if done := d5.Checkpoint.Done; len(done) != runstore.MaxCheckpointText+len("…") || !strings.HasSuffix(done, "…") || len([]rune(done)) != runstore.MaxCheckpointText+1 {
+		t.Fatalf("a hand-edited checkpoint field is %d runes, %q, want the bound %d marked", len([]rune(done)), done[len(done)-3:], runstore.MaxCheckpointText)
+	}
+
+	// A value that ends in a newline: the block prints it without the line of
+	// alignment padding a trailing newline would otherwise leave behind.
+	rec5.Checkpoint = &runstore.Checkpoint{Trigger: "fanout", Done: "the parser\n\n"}
+	writeRecord(t, f, long, rec5)
+	human, _, err = execute(t, "diagnose", long)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(human, "\n") {
+		if line != "" && strings.TrimSpace(line) == "" {
+			t.Fatalf("a checkpoint field's trailing newline left a blank line:\n%q", human)
+		}
+	}
+}
+
+// TestDiagnoseReadsACheckpointUntagged pins G6 (D521, D529) in this core
+// build: a record with a governance stop and the checkpoint report the stop
+// left is read and shown by diagnose, in the text a person reads and in the
+// JSON the console reads, with nothing under ee/ in the binary. diagnose reads
+// the record's own fields -- the halt, its reason, and the checkpoint -- and
+// the governance vocabulary they arrive in is the core's (D522: an untagged
+// build decodes a governance block and never refuses it), so a halt a tagged
+// runner wrote is explained here exactly as it is there. This file carries no
+// build tag and registers no seam, so it is the untagged reader's own test.
+func TestDiagnoseReadsACheckpointUntagged(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260927-090000-abcf"
+	exec := seedRun(t, f, id, "", "", true)
+	f.run.SetState(exec, backend.StateSucceeded)
+	at := time.Date(2026, 9, 27, 9, 4, 0, 0, time.UTC)
+	rec := prRecord(id, exec, 6, 1.75)
+	rec.Status = runstore.StatusHalted
+	rec.Reason = "halted: stage_budget: implement spent $1.20 of $0.90"
+	rec.Halt = &runstore.Halt{Reason: runstore.HaltStageBudget, Scope: "run", At: at,
+		Detail: "implement spent $1.20 of $0.90"}
+	rec.Checkpoint = runstore.NewCheckpoint(runstore.Checkpoint{
+		Trigger:     string(runstore.HaltStageBudget),
+		WhyOver:     "the implement stage passed the budget the repository set for it",
+		EstimateUSD: 1.2,
+		Next:        "finish the parser tests",
+	})
+	writeRecord(t, f, id, rec)
+
+	if !slices.Contains(runstore.GovernanceHaltReasons(), runstore.HaltStageBudget) {
+		t.Fatalf("this build does not decode stage_budget as a governance stop: %v", runstore.GovernanceHaltReasons())
+	}
+
+	out, _, err := execute(t, "diagnose", "--json", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d Diagnosis
+	if err := json.Unmarshal([]byte(out), &d); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if d.Halt == nil || d.Halt.Reason != runstore.HaltStageBudget {
+		t.Fatalf("json halt = %+v:\n%s", d.Halt, out)
+	}
+	want := runstore.Checkpoint{
+		Trigger:     "stage_budget",
+		WhyOver:     "the implement stage passed the budget the repository set for it",
+		EstimateUSD: 1.2,
+		Next:        "finish the parser tests",
+	}
+	if d.Checkpoint == nil || *d.Checkpoint != want {
+		t.Fatalf("json checkpoint = %+v:\n%s", d.Checkpoint, out)
+	}
+	if !strings.Contains(out, `"checkpoint": {`) {
+		t.Fatalf("json has no checkpoint block:\n%s", out)
+	}
+
+	human, _, err := execute(t, "diagnose", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{
+		"Status:   halted (stage writeback)\n",
+		"Halted:   stage_budget (run) at 2026-09-27T09:04:00Z: implement spent $1.20 of $0.90\n",
+		"\nCheckpoint\n",
+		"  Trigger:  stage_budget\n",
+		"  Why over: the implement stage passed the budget the repository set for it\n",
+		"  Estimate: $1.2000\n",
+		"  Next:     finish the parser tests\n",
+	} {
+		if !strings.Contains(human, line) {
+			t.Fatalf("diagnose lacks %q:\n%s", line, human)
+		}
+	}
+}
+
 func staleRecord(id, exec string, statusAt time.Time) *runstore.Record {
 	rec := prRecord(id, exec, 7, 2)
 	rec.Status, rec.Outcome, rec.Stage = runstore.StatusRunning, "", "review"
@@ -707,7 +962,10 @@ func TestDiagnoseShowsRouteReportedAndPinWarnings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Route:", "openrouter $0.3000", "Reported:", "$0.4000", "charged $0.3000", "built-in provider price catalog", "zdr", "more than 10% above", "may be too low"} {
+	// The Reported line's parenthetical says the table price settles and
+	// names the one exception, so it does not contradict the Tier line above
+	// it on a run whose tier charge the report floored.
+	for _, want := range []string{"Route:", "openrouter $0.3000", "Reported:", "$0.4000", "charged $0.3000", "the table price settles; an unpriced tier's charge is floored by the report", "built-in provider price catalog", "zdr", "more than 10% above", "may be too low"} {
 		if !strings.Contains(human, want) {
 			t.Fatalf("diagnose lacks %q:\n%s", want, human)
 		}
@@ -936,6 +1194,102 @@ func TestDiagnosePutsTheComputeSourceOnItsOwnLine(t *testing.T) {
 	}
 	if strings.Contains(b.String(), "Compute source") {
 		t.Errorf("a cost with no source line rendered one:\n%s", b.String())
+	}
+}
+
+// TestDiagnoseNamesChargedServiceTiers: a run whose calls came back at a
+// service tier the price table has no multiplier for charged them
+// conservatively (design §6.1), so diagnose names the tier and the multiple
+// over the Cost line: without it a reader has a figure nothing explains --
+// on a provider route the charge is the dearer of that multiple and the
+// provider's own reported cost, so the tier's name is what explains the
+// figure. That second figure is named only for a run that recorded one: a
+// Claude run has no route and no report. A run whose calls were all priced
+// normally prints no such line at all.
+func TestDiagnoseNamesChargedServiceTiers(t *testing.T) {
+	f := newCloudFixture(t)
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	for i, tc := range []struct {
+		tiers    []string
+		reported float64
+		want     string
+	}{
+		{nil, 0, ""},
+		{[]string{`usage.service_tier "priority"`}, 0, `Tier:     usage.service_tier "priority" charged at 2x the rates the call was priced at (no published price for the tier)`},
+		{[]string{`usage.service_tier "priority"`}, 1.5, `Tier:     usage.service_tier "priority" charged at 2x the rates the call was priced at, or the provider's reported cost with the route fee if dearer (no published price for the tier)`},
+		{[]string{`usage.service_tier "priority"`, `usage.service_tier 12`}, 1.5, `Tier:     usage.service_tier "priority", usage.service_tier 12 charged at 2x the rates the call was priced at, or the provider's reported cost with the route fee if dearer (no published price for the tier)`},
+	} {
+		id := fmt.Sprintf("20260927-19000%d-aaaa", i)
+		exec := seedRun(t, f, id, "", "someone@example.com", true)
+		s := runstore.Open(b, appSlug, id)
+		cost := runstore.NewCost(1.23, 0, runstore.BasisAPIList)
+		cost.ServiceTiers = tc.tiers
+		// The reported cost is what decides the clause: a run with none --
+		// every Claude run -- has no figure to name, and the line stops at
+		// the multiple.
+		if tc.reported > 0 {
+			cost.ReportedUSD, cost.RouteBy = tc.reported, map[string]float64{"openrouter": 2}
+		}
+		if err := s.WriteRecord(ctx, &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web", Execution: exec,
+			Status: runstore.StatusSucceeded, Stage: "writeback", Outcome: runstore.OutcomeReady, CostUSD: 1.23, Cost: &cost}); err != nil {
+			t.Fatal(err)
+		}
+		human, _, err := execute(t, "diagnose", id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines := 0
+		for _, ln := range strings.Split(human, "\n") {
+			if strings.HasPrefix(ln, "Tier:") {
+				lines++
+			}
+		}
+		if tc.want == "" {
+			if lines != 0 {
+				t.Fatalf("a run charged no tier premium printed a tier line:\n%s", human)
+			}
+		} else if lines != 1 || !strings.Contains(human, tc.want+"\n") {
+			t.Fatalf("want exactly %q:\n%s", tc.want, human)
+		}
+	}
+}
+
+// TestDiagnoseRendersTheServiceTierCounter: a run that came back at more
+// distinct unpriced tiers than the record names carries the gateway's own
+// "+N more" entry as the last element of cost.service_tiers (it is
+// ServiceTierSet.List that is bounded, not the count), and diagnose prints
+// the list as it stands. Dropping the entry would read as a run that saw
+// only the MaxServiceTiers names above it, which is the over-claim the bound
+// exists to avoid.
+func TestDiagnoseRendersTheServiceTierCounter(t *testing.T) {
+	f := newCloudFixture(t)
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	tiers := make([]string, 0, gateway.MaxServiceTiers+1)
+	for i := range gateway.MaxServiceTiers {
+		tiers = append(tiers, fmt.Sprintf(`usage.service_tier "tier-%02d"`, i))
+	}
+	tiers = append(tiers, "+3 more")
+	const id = "20260927-190009-aaaa"
+	exec := seedRun(t, f, id, "", "someone@example.com", true)
+	s := runstore.Open(b, appSlug, id)
+	cost := runstore.NewCost(1.23, 0, runstore.BasisAPIList)
+	cost.ServiceTiers = tiers
+	cost.ReportedUSD, cost.RouteBy = 1.5, map[string]float64{"openrouter": 2}
+	if err := s.WriteRecord(ctx, &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web", Execution: exec,
+		Status: runstore.StatusSucceeded, Stage: "writeback", Outcome: runstore.OutcomeReady, CostUSD: 1.23, Cost: &cost}); err != nil {
+		t.Fatal(err)
+	}
+	human, _, err := execute(t, "diagnose", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "Tier:     " + strings.Join(tiers, ", ") + " charged at 2x the rates the call was priced at, or the provider's reported cost with the route fee if dearer (no published price for the tier)"
+	if !strings.Contains(human, want+"\n") {
+		t.Fatalf("want %q:\n%s", want, human)
 	}
 }
 

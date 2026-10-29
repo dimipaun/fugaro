@@ -1,8 +1,8 @@
 # Pending workflow changes
 
-**Three files are pending: `images.yml`** (the credentials service's image leg, credentials-service plan Task C1.14; see `## images.yml` below), **`console-windows.yml`** (the console's Windows
+**Two files are pending: `images.yml`** (the credentials service's image leg, credentials-service plan Task C1.14; see `## images.yml` below) **and `console-windows.yml`** (the console's Windows
 installer pack, 2026-10-20 — a release-time job, not a pull-request check; see
-`## console-windows.yml` below) **and `core-without-ee.yml`** (the core's build and tests with `ee/` deleted, licensing plan task L1.7 — a push-to-`main` check, not a pull-request one; see `## core-without-ee.yml` below). **Two other files stay staged here by design: `console-tests.yml` and `console-release.yml`.** Both were copied into `.github/workflows/` by the owner, and unlike every other file here their staged copies are kept, because their tests assert the copy under `.github/workflows/` is byte-identical to the staged one (see their sections below). Nothing else is pending: the shared package's test job, `shared-tests.yml` (mobile plan Task P4.3), was copied into `.github/workflows/` by the owner on 2026-10-22 (its staged copy is removed; see `## shared-tests.yml` below); Dependabot's watch over `console/`'s npm dependencies, `dependabot-console.yml`, was copied over `.github/dependabot.yml` on the owner's approval of 2026-10-23 (its staged copy is removed; see `## dependabot-console.yml` below); the mobile app's release workflow, `mobile-release.yml`, was copied into `.github/workflows/` on the owner's approval of 2026-10-23 (its staged copy is removed; see `## mobile-release.yml` below); the website's two manual deploy workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the owner (their staged copies are removed); `ci.yml` was copied in on 2026-10-17 (#504, staged copy removed in #508); and `images.yml` was copied in and its staged copy removed in `6b57ba9`, then staged again by C1.14 for the change its section below describes. A future workflow change that a run needs is staged here as the real file plus the change, and the owner copies it in.
+`## console-windows.yml` below). **Two other files stay staged here by design: `console-tests.yml` and `console-release.yml`.** Both were copied into `.github/workflows/` by the owner, and unlike every other file here their staged copies are kept, because their tests assert the copy under `.github/workflows/` is byte-identical to the staged one (see their sections below). Nothing else is pending: the shared package's test job, `shared-tests.yml` (mobile plan Task P4.3), was copied into `.github/workflows/` by the owner on 2026-10-22 (its staged copy is removed; see `## shared-tests.yml` below); Dependabot's watch over `console/`'s npm dependencies, `dependabot-console.yml`, was copied over `.github/dependabot.yml` on the owner's approval of 2026-10-23 (its staged copy is removed; see `## dependabot-console.yml` below); the mobile app's release workflow, `mobile-release.yml`, was copied into `.github/workflows/` on the owner's approval of 2026-10-23 (its staged copy is removed; see `## mobile-release.yml` below); the website's two manual deploy workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the owner (their staged copies are removed); `ci.yml` was copied in on 2026-10-17 (#504, staged copy removed in #508); and `images.yml` was copied in and its staged copy removed in `6b57ba9`, then staged again by C1.14 for the change its section below describes. A future workflow change that a run needs is staged here as the real file plus the change, and the owner copies it in.
 
 - **`shared-tests.yml`** — the whole CI job for `shared/`'s tests, mobile plan Task **P4.3**: a `main`-filtered push and pull request under `shared/**`, `contents: read`, `npm ci` and `npm test` on Node 22 and Node 26, and every `shared/*/mutation-proof.sh` in the package, every action pinned by full commit SHA. `shared/` is outside the Go module, so no job in `ci.yml` runs it. **Applied, not pending:** it was staged by a Fugaro run that cannot push a `.github/workflows/**` change, copied into `.github/workflows/shared-tests.yml` on 2026-10-22 and its staged copy removed; see `## shared-tests.yml` below, which also records what the job will report on `main`.
 - **`website-preview.yml`** and **`website-promote.yml`** — the website's two new workflows, both `workflow_dispatch`-only: one builds a chosen ref and deploys it to a Firebase Hosting preview channel of the site's own project and prints the preview URL, the other promotes an existing preview channel to live and is the owner's alone (`environment: website-live` plus a guard on `github.actor`). Staged by a Fugaro run that cannot push a `.github/workflows/**` change. **Read `docs/website/preview-promote.md` first**: it carries the owner-only one-time setup (the Workload Identity Federation pool and provider, the deployer service account and its Firebase Hosting roles, the `website-live` environment and the three repository variables) that both files need before they can run at all.
@@ -48,9 +48,9 @@ pair and `shared-tests.yml`: while a staged copy exists, `images/base_workflow_t
 `readWorkflow` reads *it*, so leaving it in place would freeze those checks on
 its bytes and hide a later edit or deletion of the real file's jobs.
 (3) Update the sentence at the end of `website/README.md` that says what
-`docs/pending-workflows/` holds: it says "now holds **six** pending workflows"
+`docs/pending-workflows/` holds: it says "now holds **four** pending workflows"
 and names `docs/pending-workflows/images.yml` among them; after this copy it
-holds five (fewer if another has been copied in by then), and
+holds three (fewer if another has been copied in by then), and
 `website/test/readme.mjs` checks the count, the names and the directory in both
 directions (it reads the whole flattened page, so the name has to go from
 every backticked mention on it, not only from that sentence). (4) Update **this
@@ -71,7 +71,7 @@ pins with the other workflows' first — Dependabot does not watch
 `docs/pending-workflows/`, so nothing else will (see `## Before you copy: check
 the action pins` at the end).
 
-The website pair's two commands are above; **seven other files' sections are below, and each carries its own copy-in block**: `console-windows.yml`, `mobile-release.yml` (both 2026-10-20), `dependabot-console.yml` (2026-10-23), `core-without-ee.yml` (2026-10-24, licensing plan task L1.7) and — as the record of changes the owner has since applied — `console-linux.yml`, `console-release-linux.yml` and `console-release-tag.yml`, the two release ones with an extra command because each also replaces the staged `console-release.yml`. **`console-linux.yml`, `console-release-linux.yml`, `console-release-tag.yml`, `mobile-release.yml`, `dependabot-console.yml` and `shared-tests.yml` are applied and their staged copies are gone**; what is pending today is the opening line's three files, and the directory is the authority for that.
+The website pair's two commands are above; **eight other files' sections are below, and each carries its own copy-in block**: `console-windows.yml`, `mobile-release.yml` (both 2026-10-20), `dependabot-console.yml` (2026-10-23), `core-without-ee.yml` (2026-10-24, licensing plan task L1.7), `ee-edition.yml` (2026-10-29, ee-reorg plan task E1.6) and — as the record of changes the owner has since applied — `console-linux.yml`, `console-release-linux.yml` and `console-release-tag.yml`, the two release ones with an extra command because each also replaces the staged `console-release.yml`. **`console-linux.yml`, `console-release-linux.yml`, `console-release-tag.yml`, `mobile-release.yml`, `dependabot-console.yml` and `shared-tests.yml` are applied and their staged copies are gone**; what is pending today is the opening line's four files, and the directory is the authority for that.
 
 **The website pair's own copy-in steps, in order.** (1) Do the one-time setup
 in `docs/website/preview-promote.md` first — the workflows refuse to run
@@ -837,7 +837,7 @@ What it adds, and nothing else in the file moved:
    sign with, so there is nothing to protect. It runs the same three gate checks
    through the same `scripts/release-gate.sh`, installs the same pinned
    toolchain, downloads Electron against the same
-   `electron-v44.7.2-linux-x64.zip` checksum, builds with the same pinned packer
+   `electron-v45.0.0-linux-x64.zip` checksum, builds with the same pinned packer
    (`npm run package:linux`, `--publish never`), and then verifies **what
    ships**: the SHA-256 of the `.AppImage` and the `.deb`, the `.deb` opened with
    `dpkg-deb --info`/`--contents`/`--extract`, the AppImage unpacked with its own
@@ -2471,7 +2471,7 @@ Re-staging `ci.yml` therefore means rewriting both guards (and the plan text the
 
 ## `core-without-ee.yml`
 
-**Status: `core-without-ee.yml` is staged and pending.** It is licensing plan task **L1.7**: the check that the core builds and passes its tests with `ee/` deleted, which is the claim `LICENSING.md`, `ee/README.md` and the boundary tests under `internal/eeboundary/` all rest on. `ee/` is reserved for future organisation features under their own licence, and the one thing no test in this repository can do is delete the directory and run the suite without it — that needs a runner. One job, `core-without-ee`, on `ubuntu-latest`, `contents: read`, **no environment and no secret at all**, `timeout-minutes: 90`, every action pinned by full commit SHA: `rm -rf ee` (the deletion is never committed — it is the checkout's own working tree, which is why the job needs no write scope), then `go build ./...` and `go vet ./...` **with the default build tags**, then the tests in two steps.
+**Status: `core-without-ee.yml` is applied, not pending.** It is licensing plan task **L1.7**: the check that the core builds and passes its tests with `ee/` deleted, which is the claim `LICENSING.md`, `ee/README.md` and the boundary tests under `internal/eeboundary/` all rest on. `ee/` is reserved for future organisation features under their own licence, and the one thing no test in this repository can do is delete the directory and run the suite without it — that needs a runner. One job, `core-without-ee`, on `ubuntu-latest`, `contents: read`, **no environment and no secret at all**, `timeout-minutes: 90`, every action pinned by full commit SHA: `rm -rf ee` (the deletion is never committed — it is the checkout's own working tree, which is why the job needs no write scope), then `go build ./...` and `go vet ./...` **with the default build tags**, then the tests in two steps.
 
 **Why the tests are two steps.** The suite is one command's worth of work except for `internal/runner`, whose package takes about 25 minutes under `GOFLAGS=-p=2` and needs the 40-minute bound `CONTRIBUTING.md` gives it; running the package twice would double the job and put it under the wrong bound. So step A runs everything else at `-timeout 30m` and excludes the package, and step B runs `./internal/runner/...` at `-timeout 40m` alone, with no skip.
 
@@ -2481,19 +2481,19 @@ Re-staging `ci.yml` therefore means rewriting both guards (and the plan text the
 
 **It runs on a push to `main` and on a manual dispatch, and its `name:` is `core-without-ee`**, so `gh workflow run core-without-ee` finds it. The cost is a run about as long as `ci.yml`'s `test` job, on pushes to `main` only: the file is not in `scripts/release-gate.sh`'s list and gates nothing.
 
-**To copy it in**, from the repository root:
+**To move it in**, from the repository root — **with `ee-edition.yml`, which is due with it** (see `## ee-edition.yml` below): G1 is one claim with two halves, the core builds without `ee/` and the tagged edition builds with it, so the pair moves in one commit, and one commit is what the follow-up count below assumes.
 
 ```sh
-cp docs/pending-workflows/core-without-ee.yml .github/workflows/core-without-ee.yml
-git add .github/workflows/core-without-ee.yml
-git rm docs/pending-workflows/core-without-ee.yml
-git commit -m "workflows: the core builds and tests with ee/ deleted"
+git mv docs/pending-workflows/core-without-ee.yml .github/workflows/core-without-ee.yml
+git mv docs/pending-workflows/ee-edition.yml .github/workflows/ee-edition.yml
+git commit -m "workflows: build and test both editions"
 gh workflow run core-without-ee --ref main
+gh workflow run ee-edition --ref main
 ```
 
-**The `git rm` is load-bearing**, as it is for `images.yml` and `shared-tests.yml`: while the staged copy exists `TestDocsCoreWithoutEEWorkflow` reads *it*, so leaving it in place would freeze those checks on its bytes and hide a later edit — including a deletion — to the file that runs.
+**The `git mv` is load-bearing**, as the `git rm` is for `images.yml` and `shared-tests.yml`: while the staged copy exists `TestDocsCoreWithoutEEWorkflow` reads *it*, so leaving it in place would freeze those checks on its bytes and hide a later edit — including a deletion — to the file that runs.
 
-**Two follow-up edits belong in that commit**, because two sentences count the files still pending here and both are held to the directory: this document's opening line (`TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere`) and the last section of `website/README.md` (`website/test/readme.mjs`, which reads the whole flattened page). Both go from **three** to **two** and drop this file's name; the opening line is then:
+**Two follow-up edits belong in that commit**, because two sentences count the files still pending here and both are held to the directory: this document's opening line (`TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere`) and the last section of `website/README.md` (`website/test/readme.mjs`, which reads the whole flattened page). Both go from **four** to **two**, and drop this file's name and `ee-edition.yml`'s, because the two move in together (see `## ee-edition.yml` below); the opening line is then:
 
 ```
 **Two files are pending: `images.yml`** (the credentials service's image leg, credentials-service plan Task C1.14; see `## images.yml` below) **and `console-windows.yml`** (the console's Windows installer pack, 2026-10-20 — a release-time job, not a pull-request check; see `## console-windows.yml` below).
@@ -2502,6 +2502,36 @@ gh workflow run core-without-ee --ref main
 Read the count and the names off `docs/pending-workflows/` before you write them: another staging may have landed beside this one, and the directory is what both checks read.
 
 **Not verified.** The file has never run. What is verified offline is its text — the trigger surface, the permissions, the pins, the timeout, the deletion before the build, the two test steps and the `-skip` list — by `TestDocsCoreWithoutEEWorkflow`. That the suite is green with `ee/` gone, and that `go build` and `go vet` need no tag, is what the first real run shows, and that run is yours to start after the copy-in.
+
+## `ee-edition.yml`
+
+**Status: `ee-edition.yml` is applied, not pending.** It is ee-reorg plan task **E1.6**: the other half of G1, the check that the **tagged** edition — the one `//go:build ee` compiles, where `cmd/fugaro/ee_on.go` is in the build and the `ee/` packages are assembled into the command tree — still vets, tests and builds. `core-without-ee.yml` above proves the untagged core survives the directory's deletion; neither of the two proves the edition an Enterprise installation ships, and only a runner can. One job, `ee-edition`, on `ubuntu-latest`, `contents: read`, **no environment and no secret at all**, `timeout-minutes: 30`, every action pinned by full commit SHA: `go vet -tags ee ./...`, then the `ee/` packages' tests, then `go build -tags ee ./cmd/fugaro`.
+
+**It is a file of its own rather than a job in `ci.yml`.** A staged `docs/pending-workflows/ci.yml` turns `TestDocsComputeBackendCIReachMatchesTheTree` red — the compute-backend plan's Global Constraint 3 says its staged request was applied to the workflow instead and nothing was re-staged — and `images/cloudbuild_test.go` reads that path. So the tagged edition is a second staged file, not a staged `ci.yml`.
+
+**What each step checks.** `go vet -tags ee ./...` and `go build -tags ee ./cmd/fugaro` both hand the go tool the `ee` tag, which is what makes them a check on the tagged edition rather than the untagged one — once a file carries the constraint (the next paragraph says what is true until one does) — and the step that fails is the one that catches `ee_on.go` or an `ee/` package that stops compiling under the tag. The `ee/` test step carries **no** tag on purpose: the packages under `ee/` build without `//go:build ee` (only `cmd/fugaro/ee_on.go` carries it), so they are tested in the default build too, which is where the core's own suite sees them once an E2.x move puts one there.
+
+**Both tagged steps are vacuous until a file carries the tag, and that has to be read as a temporary state rather than a claim.** No file in the tree carries `//go:build ee` as E1.6 lands — `cmd/fugaro/ee_on.go` is E1.5's, and the `ee/` packages are the E2.x moves' — so today `-tags ee` selects nothing and the two steps compile exactly the untagged tree: they would pass whatever the tagged edition does, and they prove nothing about it yet. They are staged anyway because they are what the file *is*, and E1.5/E1.1 are the tasks that give them something to compile: the first file with the constraint makes them the real check, with no edit to this file. Until then their value is that they cannot be forgotten — the steps are already in the staged file the owner moves in, rather than in a follow-up staging the edition change would have to remember.
+
+**The `ee/` test step is guarded, and that guard is the one line to read before editing the file.** `ee/` holds no Go package yet — E1.5's assembly file and the E2.x moves add the first ones — and `go test ./ee/...` exits non-zero on a directory with no packages ("no packages to test"). The step lists what is there with `go list ./ee/...` and, when the list is empty, says so in the log and exits zero rather than failing; it never reports a pass it did not run, because the real `go test ./ee/... -count=1` runs the moment a package exists. The guard goes away with the first package under `ee/`.
+
+**It runs on a push to `main` and on a manual dispatch, and its `name:` is `ee-edition`**, so `gh workflow run ee-edition` finds it. Like `core-without-ee.yml` it is not in `scripts/release-gate.sh`'s list and gates nothing.
+
+**`core-without-ee.yml` is due with it.** G1 is one claim with two halves — the core builds without `ee/`, and the tagged edition builds with it — so the owner moves both files in one commit, and this file's arrival is what makes the pair due. The plan's OWNER-RUN line is the two `git mv` commands below; from the repository root:
+
+```sh
+git mv docs/pending-workflows/ee-edition.yml .github/workflows/ee-edition.yml
+git mv docs/pending-workflows/core-without-ee.yml .github/workflows/core-without-ee.yml
+git commit -m "workflows: build and test both editions"
+gh workflow run ee-edition --ref main
+gh workflow run core-without-ee --ref main
+```
+
+**The `git mv` is load-bearing**, as the `git rm` is for the other staged files: while a staged copy exists `TestStagedCIBuildsBothEditions` reads *it* (and `TestDocsCoreWithoutEEWorkflow` reads `core-without-ee.yml`'s), so leaving a staged copy in place would freeze those checks on its bytes and hide a later edit — including a deletion — to the file that runs.
+
+**Two follow-up edits belong in that commit**, the same two sentences `## core-without-ee.yml` names: this document's opening line (`TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere`) and the last section of `website/README.md` (`website/test/readme.mjs`, which reads the whole flattened page). Both go from **four** to **two** and drop both this file's name and `core-without-ee.yml`'s, leaving `images.yml` and `console-windows.yml`; `## core-without-ee.yml` above carries the resulting opening line. Read the count and the names off `docs/pending-workflows/` before you write them: another staging may have landed beside these two, and the directory is what both checks read.
+
+**Not verified.** The file has never run. What is verified offline is its text — the trigger surface, the permissions, the pins, the timeout, the two tagged steps, the untagged test step and its guard — by `TestStagedCIBuildsBothEditions`. That the tagged tree vets and builds, and that `go test ./ee/...` is green once a package is there, is what the first real run shows, and that run is yours to start after the move.
 
 ## Before you copy: check the action pins
 

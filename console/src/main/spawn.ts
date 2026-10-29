@@ -412,6 +412,11 @@ export const SPAWN_FLAGS: readonly string[] = Object.freeze([
   '--pr',
   '--project-wide',
   '--from-store',
+  // V2.5.1a's two, and the launch's argv is the only place either can appear:
+  // `--task-file -` hands the task over on stdin, and `--run-id` launches under
+  // the id the main process generated rather than one the CLI would invent.
+  '--task-file',
+  '--run-id',
 ])
 
 /** DEFAULT_BACKOFF is the CLI's own stream backoff (`backMin`/`backMax`,
@@ -499,8 +504,18 @@ export interface Backoff {
  * `assertSpawnSurface` refuses a table that disagrees with it -- which is what
  * makes "the validator emits a number here" and "argv wants a string there" a
  * build-time failure rather than a refusal a user sees.
+ *
+ * **`title`, `planTask` and `stdin` are the launch's three** (design §5.1 rule
+ * 11). The first two are the only kinds emitted as `--flag=value` in one word:
+ * a value inside the flag's own word cannot be read as a flag, so a title that
+ * begins with `-` is a title. They cannot ride `value`, whose alphabet
+ * (`ARGUMENT_RE`) refuses the space a title is allowed to have and whose
+ * leading-`-` rule would refuse `-draft` -- the design's point is that widening
+ * that alphabet for a title would widen it for `--repo` and every other value
+ * too. `stdin` is an argument that reaches **no argv word at all**: the task
+ * text goes to the child on its standard input (below).
  */
-export type SpawnArgumentKind = 'value' | 'boolean' | 'secretScope' | 'pullRequest'
+export type SpawnArgumentKind = 'value' | 'boolean' | 'secretScope' | 'pullRequest' | 'title' | 'planTask' | 'stdin'
 
 /**
  * SPAWN_KIND_FOR is the one place the two kind vocabularies are related: the
@@ -521,6 +536,9 @@ export const SPAWN_KIND_FOR: Record<ArgumentKind, SpawnArgumentKind> = Object.fr
   link: 'value',
   installationName: 'value',
   installationCheckout: 'value',
+  launchTask: 'stdin',
+  launchTitle: 'title',
+  launchPlanTask: 'planTask',
 })
 
 /** SpawnArgument is one declared argument of one command. `flag` is null for a
@@ -568,6 +586,15 @@ export interface SpawnCommand {
   readonly args: readonly SpawnArgument[]
   /** `dirFlag` is true for the one command that takes `--dir`: `doctor`. */
   readonly dirFlag: boolean
+  /**
+   * `runIdFlag` is the flag the row's **run id** is emitted under, and it is
+   * present on exactly one row: `run.launch`, whose `--run-id` is the id the
+   * main process generated for the confirmed window rather than an argument a
+   * renderer sent. It is a column of the row rather than an argument because
+   * no field of the launch's schema names a run id (design §5.1 rule 11), and
+   * it is emitted from `argvFor`'s own `runId`, never from `args`.
+   */
+  readonly runIdFlag?: string
 }
 
 /**
@@ -754,13 +781,45 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     args: [],
     dirFlag: false,
   },
+  {
+    // **The launch, and the console's only write** (design §5.1 rule 11, D22).
+    // The row is rule 11's argv word for word: `run --task-file - --json
+    // --run-id <id> --repo <owner/name> [--title=<T>] [--plan-task=<P>]
+    // --project <name> [--config <path>]`. `--task-file -` is the literal word
+    // `-`, and it means the task arrives on the child's stdin -- which is why
+    // the `task` argument's kind is `stdin` and why it emits no word at all.
+    // `--run-id` is the main process's own (`runIdFlag` above); `--title=` and
+    // `--plan-task=` are one word each and appear only when filled in, and the
+    // order of the columns here is the order the row is compared as a string in.
+    //
+    // The exclusion list is closed by construction rather than by a check: the
+    // five named fields are the whole schema, the four declared arguments are
+    // the whole of what this row can emit, and `--pr`, `--retry`, `--attempts`,
+    // `--recipe`, `--attach`, `--no-budget-check`, `--token`, `--mode`,
+    // `--path`, `--ref`, `--workflow`, `--total-timeout`, `--no-compression`,
+    // `--gcp-project`, `--region` and `--batch` are each on no `SPAWN_FLAGS`
+    // entry, so `assertArgvFlags` refuses an argv carrying one, and each is on
+    // its own `NEVER_REACHABLE` row for the `run` command. No positional TEXT:
+    // `run` refuses one together with `--task-file`, so this row has none.
+    operation: 'run.launch',
+    words: ['run', '--task-file', '-', '--json'],
+    takesProject: true,
+    runIdFlag: '--run-id',
+    args: [
+      { key: 'task', flag: null, kind: 'stdin' },
+      { key: 'repository', flag: '--repo', kind: 'value' },
+      { key: 'title', flag: '--title=', kind: 'title' },
+      { key: 'planTask', flag: '--plan-task=', kind: 'planTask' },
+    ],
+    dirFlag: false,
+  },
 ] as const satisfies readonly SpawnCommand[])
 
 /**
  * ARGUMENT_RE is the alphabet a *renderer* argument may use. It is deliberately
  * a whitelist rather than a blacklist: a repository is `owner/name`, a run id is
  * `YYYYMMDD-HHMMSS-xxxx`, a day is `YYYY-MM-DD`, `--since` is `Nd`/`3h`/`0` or
- * `report`'s `12w`, `--by` is one of `report`'s seven words -- the schema is
+ * `report`'s `12w`, `--by` is one of `report`'s eight words -- the schema is
  * what closes that set, and this alphabet only has to be wide enough for it --
  * and a pull request reaches this function as the digits its `IntVar` reads, so
  * every legitimate value is covered -- and whitespace, quotes, `$`, `;`, `|`, `&`, `<`, `>`,
@@ -894,9 +953,15 @@ export function spawnCommandFor(operation: string): SpawnCommand {
  *   2. the row's declared arguments, each emitted as its own element -- a
  *      positional as itself, a boolean as its flag, a secret scope as
  *      `--project-wide` (its `--repo R` half is the `repo` argument, and Task
- *      1.2's schema is what makes exactly one of the two present);
+ *      1.2's schema is what makes exactly one of the two present), and the
+ *      launch's title and plan task as one `--flag=value` word each;
  *   3. `--project <name>` and, when the installation declares one,
  *      `--config <path>` -- and then, for `doctor` alone, `--dir <directory>`.
+ *
+ * The launch's own `--run-id` is emitted between the row's words and its
+ * declared arguments, from `context.runId` rather than from `args`: no field of
+ * the launch's schema names a run id (design §5.1 rule 11), so a caller cannot
+ * propose one, and the order is the order rule 11 writes.
  *
  * An argument key the row does not declare is refused by name rather than
  * ignored: a payload that reached here from a document could otherwise carry a
@@ -906,7 +971,14 @@ export function spawnCommandFor(operation: string): SpawnCommand {
 export function argvFor(
   operation: SpawnOperationName,
   args: ValidatedArguments,
-  context: { readonly target: SpawnTarget; readonly directory: string | undefined },
+  context: {
+    readonly target: SpawnTarget
+    readonly directory: string | undefined
+    /** `runId` is the id the main process generated for this launch. It is
+     * required by the one row that carries a `runIdFlag` and refused by every
+     * other row, so an id cannot be smuggled into a read's argv. */
+    readonly runId?: string | undefined
+  },
 ): readonly string[] {
   const row = spawnCommandFor(operation)
   const declared = new Set(row.args.map((spec) => spec.key))
@@ -917,6 +989,15 @@ export function argvFor(
   }
 
   const argv: string[] = [...row.words]
+  if (row.runIdFlag !== undefined) {
+    const runId = context.runId
+    if (runId === undefined || !RUN_ID_ARGUMENT_RE.test(runId)) {
+      refused(`${operation} needs the run id the main process generated, in \`task.NewRunID\`'s shape`)
+    }
+    argv.push(row.runIdFlag, runId)
+  } else if (context.runId !== undefined) {
+    refused(`${operation} takes no run id: only the launch's own row carries one`)
+  }
   for (const spec of row.args) {
     const value: ValidatedArgument | undefined = args[spec.key]
     if (value === undefined) continue
@@ -931,6 +1012,29 @@ export function argvFor(
           refused(`${operation}'s ${spec.key} is not one of the two scopes`)
         }
         if (value === 'project-wide') argv.push('--project-wide')
+        break
+      }
+      case 'stdin': {
+        // The task text is the one argument that reaches no argv word: it is
+        // written to the child's standard input by the launch (`launch.ts`), so
+        // it is in neither the process table nor the spawn log. Nothing is
+        // emitted here, and the caller's own value is checked where it is read.
+        if (typeof value !== 'string') refused(`${operation}'s ${spec.key} is not a string`)
+        break
+      }
+      case 'title':
+      case 'planTask': {
+        // One word, `--flag=value`, and never two: a value inside the flag's
+        // own word cannot be read as a flag, which is what makes `--title=-x`
+        // a title. The value itself is the validator's (`ipc.ts` runs
+        // `launchrules.ts`'s checker for this kind), so the only thing left to
+        // refuse here is the one word an argv could not carry at all.
+        if (typeof value !== 'string') refused(`${operation}'s ${spec.key} is not a string`)
+        const word = `${spec.flag ?? ''}${value}`
+        if (value === '' || word.includes('\u0000')) {
+          refused(`${operation}'s ${spec.key} is not a value this console will pass to the CLI`)
+        }
+        argv.push(word)
         break
       }
       case 'value': {
@@ -989,20 +1093,70 @@ export function argvFor(
   return Object.freeze(argv)
 }
 
+/** RUN_ID_ARGUMENT_RE is `task.NewRunID`'s shape as this module requires it of
+ * the id the main process generated: a UTC stamp and four hex digits. It is
+ * narrower than `ipc.ts`'s `RUN_ID_RE` -- which has to accept any run id a CLI
+ * ever printed -- because this one is about the id the *console* makes. */
+const RUN_ID_ARGUMENT_RE = /^\d{8}-\d{6}-[0-9a-f]{4}$/
+
+/** RUN_LAUNCH_OPERATION is the one row whose argv may carry a word that is not
+ * on `SPAWN_FLAGS` verbatim: the launch's two `=`-form flags (below). */
+const RUN_LAUNCH_OPERATION = 'run.launch'
+
+/** RUN_LAUNCH_EQUALS_FLAGS are the two prefixes `assertArgvFlags` admits for
+ * that row and no other. They are `spawn.ts`'s own spelling of the two words
+ * rule 11 fixes, and the design names this exact list: "the `--title=` and
+ * `--plan-task=` prefixes, for the `run.launch` row alone". */
+export const RUN_LAUNCH_EQUALS_FLAGS: readonly string[] = Object.freeze(['--title=', '--plan-task='])
+
 /** assertArgvFlags refuses an argv carrying a flag outside `SPAWN_FLAGS`, and one
  * carrying a flag the design's never-table names. Both checks are here rather
- * than in the callers because this function is the only producer of an argv. */
+ * than in the callers because this function is the only producer of an argv.
+ *
+ * **The launch's two `=`-form flags are the one exception, and it is spelled
+ * out rather than implied.** `--title=<T>` and `--plan-task=<P>` are one word
+ * each -- the design fixes that form because a value inside the flag's own word
+ * cannot be read as a flag -- so they can never match a `SPAWN_FLAGS` entry
+ * that is a flag *name*. Accepting them here is what makes that form
+ * expressible at all, and the exception is bounded in three ways: it is the
+ * `run.launch` row alone, it is those two prefixes alone, and the value after
+ * the `=` has to be non-empty. A bare `--title` (no `=`) is not on this list,
+ * and neither prefix is admitted for any other row -- so a read cannot grow an
+ * `=`-form flag by copying it. The value's own rules (its cap, one line, no
+ * control character, no format character) are the validator's: `ipc.ts` runs
+ * `launchrules.ts`'s checker for the `title` and `planTask` kinds before any of
+ * this is reached. */
 export function assertArgvFlags(operation: string, argv: readonly string[]): void {
+  const command = commandPathIn(argv)
   for (const element of argv) {
     if (!element.startsWith('--')) continue
+    if (operation === RUN_LAUNCH_OPERATION) {
+      const equals = RUN_LAUNCH_EQUALS_FLAGS.find((prefix) => element.startsWith(prefix))
+      if (equals !== undefined && element.length > equals.length) continue
+    }
     if (!SPAWN_FLAGS.includes(element)) {
       refused(`${operation} would emit ${element}, which is not a flag this console may spawn`)
     }
-    const forbidden = isNeverReachable({ command: null, flags: [element] })
+    const forbidden = isNeverReachable({ command, flags: argv })
     if (forbidden !== null) {
       refused(`${operation} would emit ${forbidden.value}: ${forbidden.why} (${forbidden.where})`)
     }
   }
+}
+
+/** commandPathIn is an argv's own command path: the leading words up to the
+ * first flag. An argv-shaped never row names a command, not a flag, so the check
+ * below has to be run against the argv's command rather than against `null` --
+ * otherwise a row like `run --pr`, which is argv-shaped precisely because a bare
+ * `--pr` is a legitimate flag of other commands, could never match and the
+ * exclusion list would go unenforced. */
+function commandPathIn(argv: readonly string[]): string {
+  const words: string[] = []
+  for (const word of argv) {
+    if (word.startsWith('-')) break
+    words.push(word)
+  }
+  return words.join(' ')
 }
 
 /**
@@ -1193,6 +1347,16 @@ export function assertSpawnSurface(rows: readonly SpawnCommand[]): void {
     const wantsDir = COMMANDS_TAKING_DIR.includes(operation.command)
     if (row.dirFlag !== wantsDir) {
       refused(`${row.operation} ${wantsDir ? 'must carry' : 'must not carry'} ${DIR_FLAG}: only doctor takes it (rule 5)`)
+    }
+    // The run id column, held the same way as the two above: the one row that
+    // carries it is the launch, and its flag is one this module may spawn.
+    if (row.runIdFlag !== undefined) {
+      if (row.operation !== RUN_LAUNCH_OPERATION) {
+        refused(`${row.operation} carries a run id flag: only the launch's own row has one`)
+      }
+      if (!SPAWN_FLAGS.includes(row.runIdFlag)) {
+        refused(`${row.operation} would emit ${row.runIdFlag}, which is not a flag this console may spawn`)
+      }
     }
     const declared = new Set<string>(operation.args.map((spec) => spec.key))
     for (const spec of row.args) {
@@ -1550,15 +1714,19 @@ export interface SpawnOptionsLike {
   readonly cwd: string
   readonly env: Readonly<Record<string, string>>
   readonly shell: false
-  /** `stdio` is the three descriptors the child gets, and stdin is always
-   * `'ignore'`: the console never writes to a child, so a child that reads its
-   * stdin sees it closed rather than hanging on a terminal nobody is at (Part
-   * E). stdout and stderr are `'pipe'` for every read the console makes; the
-   * one child whose output is nobody's is the stop sent **inside** a
-   * distribution (T-F4), which is fired and never read -- and a pipe nobody
-   * drains is a child that blocks on write. `nodeSpawner` passes this through
-   * as it stands, so the `'ignore'`s are what the stop's child really gets. */
-  readonly stdio: readonly ['ignore', 'ignore' | 'pipe', 'ignore' | 'pipe']
+  /** `stdio` is the three descriptors the child gets. stdin is `'ignore'` for
+   * every spawn but one: the console never writes to a child, so a child that
+   * reads its stdin sees it closed rather than hanging on a terminal nobody is
+   * at (Part E). **`run.launch` is the one row that asks for `'pipe'` on
+   * stdin** -- the task text is handed over there rather than in an argv word
+   * (design §5.1 rule 11)-- so the type admits `'pipe'` in that one slot and
+   * `runToCompletion`'s `stdinBytes` is the one caller that uses it.
+   * stdout and stderr are `'pipe'` for every read the console makes; the one
+   * child whose output is nobody's is the stop sent **inside** a distribution
+   * (T-F4), which is fired and never read -- and a pipe nobody drains is a
+   * child that blocks on write. `nodeSpawner` passes this through as it stands,
+   * so the `'ignore'`s are what the stop's child really gets. */
+  readonly stdio: readonly ['ignore' | 'pipe', 'ignore' | 'pipe', 'ignore' | 'pipe']
 }
 
 /** ReadableLike is the slice of a child's stream this module reads. */
@@ -1600,12 +1768,31 @@ function readText(
   })
 }
 
+/** WritableLike is the slice of a child's standard input this module writes to:
+ * the launch hands the task over there and ends the stream, and it never waits
+ * for the child to ask for it. */
+export interface WritableLike {
+  write(chunk: Uint8Array): unknown
+  end(): unknown
+  /** `on` is here for the write's own failure: a child that exits before it
+   * drains its stdin closes the read end, and the resulting `EPIPE` arrives as
+   * an `error` event -- which, unheard, is an uncaught exception in the main
+   * process. See the write in `runToCompletion`. */
+  on(event: 'error', listener: (error: Error) => void): unknown
+}
+
 /** SpawnedChildLike is the slice of `ChildProcess` this module uses, as an
  * interface so the test can pass a recording fake and assert on `shell` and on
  * the argv it was handed. */
 export interface SpawnedChildLike {
   readonly stdout: ReadableLike | null
   readonly stderr: ReadableLike | null
+  /** `stdin` is the child's standard input, present exactly when the caller
+   * asked for `'pipe'` on that descriptor -- which is the launch's own request
+   * and no other read's. It is optional because a fake need not have it and
+   * because most children are spawned with `'ignore'` there, where Node hands
+   * back `null`. */
+  readonly stdin?: WritableLike | null
   /** `spawn` fires once the process exists: Node emits it before any I/O and
    * never for a spawn that failed, where a missing or non-executable binary
    * hands back a `ChildProcess` and then emits `error` (ENOENT/EACCES) instead.
@@ -2161,11 +2348,19 @@ export function planFor(
     readonly appEnv: Readonly<Record<string, string | undefined>>
     readonly wsl?: WslRoute | undefined
     readonly backoff?: Backoff
+    /** `runId` is the launch's own (`argvFor`'s `context.runId`): it is present
+     * on `run.launch`'s plan and absent from every read's, so a read cannot
+     * carry a run id and the one row that must cannot leave it out. */
+    readonly runId?: string | undefined
   },
 ): SpawnPlan {
   const wsl = context.wsl
   if (wsl !== undefined) {
-    const cliArgs = argvFor(operation, args, { target: context.target, directory: wsl.directory })
+    const cliArgs = argvFor(operation, args, {
+      target: context.target,
+      directory: wsl.directory,
+      runId: context.runId,
+    })
     // Both rules of this route, and both before a process exists: the words the
     // distribution's shell would read as syntax, and the paths spelled for the
     // wrong side (T-D3, and Part D's carry-over for `$(…)` in a project name).
@@ -2210,7 +2405,11 @@ export function planFor(
       backoff: context.backoff ?? DEFAULT_BACKOFF,
     })
   }
-  const argv = argvFor(operation, args, { target: context.target, directory: context.directory })
+  const argv = argvFor(operation, args, {
+    target: context.target,
+    directory: context.directory,
+    runId: context.runId,
+  })
   return Object.freeze({
     operation,
     command: context.binaryPath,
@@ -2315,6 +2514,13 @@ export function runToCompletion(
      * maps each byte to one code unit, which is a lossless carry for any byte
      * string, so the caller decodes the bytes it actually has. */
     readonly stdoutEncoding?: 'utf8' | 'latin1'
+    /** `stdinBytes` is what the child is given on its standard input, and
+     * **the launch is the one caller that passes it** (design §5.1 rule 11):
+     * the body is written and the stream is ended immediately. It is the only
+     * thing that asks for `'pipe'` on stdin -- every other read asks for
+     * `'ignore'`, so a child that reads its stdin sees it closed. A child that
+     * never drains the pipe is not waited for: the write is not awaited. */
+    readonly stdinBytes?: Uint8Array
   },
 ): Promise<RunResult> {
   const spawner = deps.spawner ?? nodeSpawner
@@ -2335,7 +2541,7 @@ export function runToCompletion(
         cwd: plan.cwd,
         env: plan.env,
         shell: false,
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: [deps.stdinBytes === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
       })
     } catch (error) {
       reject(error instanceof Error ? error : new Error(String(error)))
@@ -2350,6 +2556,26 @@ export function runToCompletion(
     // the same rule and records nothing either.
     child.on('spawn', () => {
       deps.log?.record({ argv: spawnedArgv(plan), cwd: plan.cwd, project: plan.project })
+      // The task is written the moment the process exists, and the stream is
+      // ended with it: the CLI's `taskText` reads stdin to EOF, so a stream
+      // left open is a launch the CLI waits on for ever. It is written and not
+      // waited for -- a child that exits without reading must not hang the
+      // console, and the deadline below is what bounds the whole thing.
+      if (deps.stdinBytes !== undefined) {
+        // An `error` listener, because this is the one child whose stdin the
+        // console writes to: a CLI (or a `wsl.exe`) that exits before draining
+        // it -- a bad flag, a config refusal, an `sh -c` that dies at once --
+        // closes the read end, and the write's `EPIPE` arrives as an `error`
+        // event on the socket. With nothing listening, Node raises that as an
+        // uncaught exception in the **main process**: a crashed console on the
+        // one row the design allows to write to a child. The failure it
+        // describes is already handled where every other failure is -- the
+        // child's exit code, its stderr and the deadline below -- so there is
+        // nothing to do here but not crash.
+        child.stdin?.on('error', () => undefined)
+        child.stdin?.write(deps.stdinBytes)
+        child.stdin?.end()
+      }
     })
     let stdout = ''
     let stderr = ''

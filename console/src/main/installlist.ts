@@ -19,11 +19,16 @@
 //      as the wrong type is a refusal: an installation drawn from a document the
 //      console does not understand is a screen that lies. That covers
 //      `installations` itself (an array, never a map), each row's `name`,
-//      `gcp_project` and `region`, and a `warnings` that is present and is not an
-//      array. Two tolerances are deliberate and are made where they are used: an
+//      `gcp_project`, `region` and `base_branch`, and a `warnings` that is
+//      present and is not an array. Two tolerances are deliberate and are made where they are used: an
 //      **absent** optional field reads as the empty value (a row with no
 //      `gcp_project`, a document with no `warnings` — in both cases the CLI sent
-//      nothing, so nothing is hidden), and `checkouts`, where what is tolerated
+//      nothing, so nothing is hidden) — and **`base_branch` is the one exception
+//      to that rule**, because for it an absent key and an empty value are two
+//      different facts (§6.8): absent is an older CLI that does not report base
+//      branches, `''` is a config that records none, and the launch draws a
+//      different sentence for each. It is read by `branchField` below rather than
+//      by `textField` for exactly that reason — and `checkouts`, where what is tolerated
 //      is an **element** and not the field: a `checkouts` that is not an array
 //      carries no directory the operator could be offered, and an element that is
 //      not a non-empty string is not a directory the CLI printed (its own field
@@ -78,12 +83,48 @@ export const MAX_DOCUMENT_STRING = 4096
  * (§6.8's version-skew note), and the picker offers the entries it does have as
  * a way to give this installation a working directory. Nothing here reads,
  * resolves or validates a filesystem path.
+ *
+ * `baseBranch` and `repositories` are the recorded base branch, which is the
+ * branch an installation's runs are cut from: the installation's own value, and
+ * each repository's own with the installation's below it (design §5.1 rule 11 —
+ * the window shows the branch the run is cut from, and a launch has no checkout
+ * for the CLI's order to read it from). **`null` is a key the CLI did not print
+ * at all** — an older CLI, which does not report base branches — and `''` is a
+ * key that is there and records none. §6.8 keeps those two apart on purpose, and
+ * so does this reader: reading an older CLI's silence as `''` would send an
+ * operator to set a setting they have already set.
  */
 export interface DiscoveredInstallation {
   readonly name: string
   readonly gcpProject: string
   readonly region: string
+  /** the installation's own recorded base branch; `null` when the CLI does not
+   * report base branches at all, `''` when its config records none */
+  readonly baseBranch: string | null
+  /** every checkout row's repository and its recorded base branch */
+  readonly repositories: readonly DiscoveredRepository[]
   readonly checkouts: readonly string[]
+}
+
+/**
+ * DiscoveredRepository is one repository an installation records, and the base
+ * branch its runs are cut from: the CLI's `checkouts[]` row's `repository` and
+ * `base_branch`, kept as the pair the launch needs (§6.8).
+ *
+ * It is read off **every** row the CLI printed, whatever that row's `valid` is:
+ * which branch a repository's runs are cut from is a fact of the project config,
+ * not of the directory a path named, and a row whose path has been deleted still
+ * records it. `repository` is the CLI's own `<provider>/<owner>/<name>` and is
+ * never resolved, joined or looked up here — the launch's own conversion is what
+ * admits it or refuses it. `baseBranch` is `null` when the row carries no
+ * `base_branch` key at all (an older CLI) and `''` when the key is there and the
+ * config records none for that repository, in which case the installation's own
+ * `baseBranch` is the layer below it. The two are different facts and a reader
+ * must not merge them (§6.8).
+ */
+export interface DiscoveredRepository {
+  readonly repository: string
+  readonly baseBranch: string | null
 }
 
 /** InstallationsDocument is the whole read: the installations, in the CLI's own
@@ -152,11 +193,12 @@ export function parseInstallationsDocument(text: string): InstallationsParse {
     }
     const gcpProject = textField(entry, 'gcp_project')
     const region = textField(entry, 'region')
-    if (gcpProject === null || region === null) {
+    const baseBranch = branchField(entry, 'base_branch')
+    if (gcpProject === null || region === null || baseBranch.kind === 'unreadable') {
       return { ok: false, reason: `the CLI listed ${JSON.stringify(name)} with a field that is not a string` }
     }
-    const checkouts = checkoutsOf(entry)
-    if (checkouts === null) {
+    const rows = checkoutsOf(entry)
+    if (rows.kind === 'too-many') {
       // Rule 3, one row down: the bound is kept and the omission is *named* --
       // here the count is a refusal rather than a shortened row, because a row
       // is what the picker draws its buttons from, and a row missing half its
@@ -168,8 +210,25 @@ export function parseInstallationsDocument(text: string): InstallationsParse {
           `${JSON.stringify(name)}, which this console will not draw`,
       }
     }
+    if (rows.kind === 'bad-branch') {
+      // The base branch is one of the values the launch reads off this row and
+      // a screen shows: a row carrying something that is not text is a document
+      // this console does not understand, and reading it as "unrecorded" would
+      // silently move the branch the window names.
+      return {
+        ok: false,
+        reason: `the CLI listed a checkout of ${JSON.stringify(name)} with a \`base_branch\` that is not a string`,
+      }
+    }
     installations.push(
-      Object.freeze({ name, gcpProject, region, checkouts }),
+      Object.freeze({
+        name,
+        gcpProject,
+        region,
+        baseBranch: baseBranch.kind === 'absent' ? null : baseBranch.value,
+        repositories: rows.repositories,
+        checkouts: rows.paths,
+      }),
     )
   }
   const warned = value['warnings']
@@ -223,44 +282,104 @@ function textField(entry: Record<string, unknown>, key: string): string | null {
   return value.length > MAX_DOCUMENT_STRING ? value.slice(0, MAX_DOCUMENT_STRING) : value
 }
 
+/** BranchField is one `base_branch` key's three states, and they are three
+ * different facts. `absent` is a key the CLI did not print at all — an older
+ * CLI, which does not report base branches (§6.8) — `branch` with `""` is a key
+ * that is there and records none, and `unreadable` is the key with a value of
+ * another type, which the caller refuses the document for. `textField` cannot
+ * be used for this one: it reads an absent key as `""`, which is the merge §6.8
+ * forbids and which would tell an operator to set a setting they have already
+ * set. */
+type BranchField =
+  | { readonly kind: 'absent' }
+  | { readonly kind: 'branch'; readonly value: string }
+  | { readonly kind: 'unreadable' }
+
+function branchField(entry: Record<string, unknown>, key: string): BranchField {
+  const value = entry[key]
+  if (value === undefined) return { kind: 'absent' }
+  if (typeof value !== 'string') return { kind: 'unreadable' }
+  // A value past the document bound is `unreadable` rather than cut down to it:
+  // this string is what the launch is cut from and what the confirmation window
+  // shows, so a silently shortened one would name a branch the run does not use
+  // -- the same lie `textField` avoids by only ever cutting a *warning* line,
+  // which is display text and nothing else.
+  if (value.length > MAX_DOCUMENT_STRING) return { kind: 'unreadable' }
+  return { kind: 'branch', value }
+}
+
+/** CheckoutRows is what one installation's `checkouts` array yields: the two
+ * lists the console keeps, or why the document is refused. The refusal is a
+ * value rather than a sentence because only the caller knows which installation
+ * it is reading and can name it in the sentence a screen shows. */
+type CheckoutRows =
+  | {
+      readonly kind: 'rows'
+      readonly paths: readonly string[]
+      readonly repositories: readonly DiscoveredRepository[]
+    }
+  /** more rows than the console will hold from one document */
+  | { readonly kind: 'too-many' }
+  /** a row whose recorded base branch is present and is not text */
+  | { readonly kind: 'bad-branch' }
+
 /**
- * checkoutsOf reads the optional `checkouts` array: the directories this
- * installation is used from, as the CLI listed them.
+ * checkoutsOf reads the optional `checkouts` array once, for both of the things
+ * this console needs from it: the directories this installation is used from,
+ * and the repository records the launch reads a recorded base branch from.
  *
  * Each entry is an object (`console/docs/json-contract.md` §6.8: `repository`,
- * `path`, `enrolled`, `valid`, `reason`), and **only an entry with `valid: true`
- * and an absolute `path` is kept** -- the contract's one exception to "nothing in
- * this document is a path the console acts on" is a row the CLI has just
- * re-validated, and a `valid: false` row (any `reason`, including
- * `not_representable`) is never used for anything. Entries of any other shape
- * are dropped, an absent key is an empty list (an older CLI), and the *count* is
+ * `path`, `base_branch`, `enrolled`, `valid`, `reason`). **A path is kept only
+ * from an entry with `valid: true`, an absolute `path` and no control
+ * character** -- the contract's one exception to "nothing in this document is a
+ * path the console acts on" is a row the CLI has just re-validated, and a
+ * `valid: false` row (any `reason`, including `not_representable`) is never used
+ * for anything. A **repository record** is kept from every entry that names one,
+ * whatever its `valid` is, because the base branch is a fact of the project
+ * config and not of the directory the path named. Entries of any other shape are
+ * dropped, an absent key is an empty list (an older CLI), and the *count* is
  * bounded by `MAX_DISCOVERED_INSTALLATIONS`. What this refuses to do is guess: a
- * kept path is verbatim and is never a path the console went and looked at.
+ * kept path is verbatim, and neither list is ever resolved, joined or looked at.
  *
  * **Past the bound it refuses the document, and does not return a short
  * array.** The picker draws one button per checkout this carries
  * (`docs/design/console-styling.md` §2.2), so a truncation here is a screen
  * showing fewer directories than the CLI printed with nothing said about the
- * ones that went -- the silent omission rule 3 forbids. The refusal is the
- * caller's, because only the caller knows which installation it is reading; the
- * `null` this returns for a document past the bound is the same shape
- * `textField` uses, and it is turned into a sentence naming the row.
+ * ones that went -- the silent omission rule 3 forbids. The same goes for a
+ * repository record: a launch that offered fewer repositories than the
+ * installation records would be a launch the operator cannot make.
+ *
+ * The one field of a row that is *refused* rather than dropped is `base_branch`
+ * (`branchField`'s rule for a field this console reads): the value is shown in
+ * the launch window as the branch the run is cut from, so a row carrying
+ * something that is not text is a document this console does not understand, and
+ * reading it as "unrecorded" would move that branch in silence. The key's
+ * *absence* is not that: it is kept as `null`, the one value that says this CLI
+ * does not report base branches at all.
  */
-function checkoutsOf(entry: Record<string, unknown>): readonly string[] | null {
+function checkoutsOf(entry: Record<string, unknown>): CheckoutRows {
   const value = entry['checkouts']
-  if (!Array.isArray(value)) return Object.freeze([])
-  if (value.length > MAX_DISCOVERED_INSTALLATIONS) return null
-  const checkouts: string[] = []
-  for (const entry of value) {
-    if (!isRecord(entry) || entry['valid'] !== true) continue
-    const candidate = entry['path']
+  if (!Array.isArray(value)) return { kind: 'rows', paths: Object.freeze([]), repositories: Object.freeze([]) }
+  if (value.length > MAX_DISCOVERED_INSTALLATIONS) return { kind: 'too-many' }
+  const paths: string[] = []
+  const repositories: DiscoveredRepository[] = []
+  for (const row of value) {
+    if (!isRecord(row)) continue
+    const branch = branchField(row, 'base_branch')
+    if (branch.kind === 'unreadable') return { kind: 'bad-branch' }
+    const repository = row['repository']
+    if (typeof repository === 'string' && repository !== '' && repository.length <= MAX_DOCUMENT_STRING) {
+      repositories.push(Object.freeze({ repository, baseBranch: branch.kind === 'absent' ? null : branch.value }))
+    }
+    if (row['valid'] !== true) continue
+    const candidate = row['path']
     if (typeof candidate !== 'string') continue
     if (candidate === '' || candidate.length > MAX_DOCUMENT_STRING || !candidate.startsWith('/')) continue
     // eslint-disable-next-line no-control-regex
     if (/[\u0000-\u001f\u007f]/.test(candidate)) continue
-    checkouts.push(candidate)
+    paths.push(candidate)
   }
-  return Object.freeze(checkouts)
+  return { kind: 'rows', paths: Object.freeze(paths), repositories: Object.freeze(repositories) }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -28,11 +28,15 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  MAX_AMBIGUOUS_SCAN,
+  MAX_SPLIT_SCAN,
   MAX_TEXT_INPUT_LENGTH,
   TOKEN_PLACEHOLDER,
+  resetScanWork,
   resolveAmbiguousSequences,
   sanitizeRefusal,
   sanitizeText,
+  scanWorkDone,
   stripTerminalSequences,
   tracedRefusalRules,
 } from '../../src/shared/sanitize'
@@ -248,39 +252,144 @@ describe('the recorder never mangles its own marker (finding 4b)', () => {
   })
 })
 
-/** BOUND_MS is the linear-time bound terminal-sequences.test.ts holds. */
-const BOUND_MS = 250
+/** SCALING_RATIO is how much more work eight times the text may cost. The
+ * property is the design's own: the sanitiser is linear in the text and not
+ * quadratic in the number of ambiguous sites, so 10,000 sites in separate words
+ * cost a pass over the text rather than a pass per site. Eight times the text is
+ * eight times the work; a resolver that read once per site would cost
+ * sixty-four. */
+const SCALING_RATIO = 16
 
-function timed(run: () => unknown): number {
+/** CEILING_MS is the sanity net this test's absolute bound became: ten times
+ * the 250 ms a healthy machine reads for a 64 KiB input. It is not the property
+ * -- a wall-clock bound tight enough to catch a quadratic pass is a bound a busy
+ * runner trips on, which is what happened (`expected 263.27 to be less than
+ * 250` on a loaded ubuntu runner, passing on rerun). The counters are the
+ * property: the same number in every run on every machine (`scanWork` in
+ * sanitize.ts, and `split-secrets.test.ts`, deflaked the same way after a
+ * loaded runner turned its 45 ms pass into 435 ms). */
+const CEILING_MS = 2_500
+
+/** workCap is the ceiling the 250 ms bound was really pinning, in the unit the
+ * counters count: the characters every reading scans over one value of `length`.
+ * It is the resolver's own arithmetic, in the terms `split-secrets.test.ts`
+ * states it -- the ambiguous sequence clusters, which `resolve` refuses rather
+ * than read past `MAX_AMBIGUOUS_SCAN`; the split readings, at most
+ * `2 * (MAX_SPLIT_SCAN + length)` because that budget divides by the prepared
+ * form while each reading carries a SPLIT_MARK per character of it; and the one
+ * reading of the prepared form every value pays. */
+const workCap = (length: number): number => MAX_AMBIGUOUS_SCAN + 2 * (MAX_SPLIT_SCAN + length) + length
+
+/** Answer is what a layer did with the input: read it and drawn something, or
+ * refused it. A refusal is an answer too, and it is the one the counters cannot
+ * see -- a layer that refuses costs no work at all, so a case that asserted
+ * only work would pass a layer that refuses everything. That is exactly the
+ * shape of the regression this file exists for: a resolver that takes a
+ * cluster's readings as a *sum* rather than their maximum spends
+ * `MAX_AMBIGUOUS_SCAN` at its own pre-check and refuses the whole input before a
+ * single reading, `scanWork` collapses to 0 and every work assertion passes
+ * while the drawn value becomes a refusal. So the expected answer is a column of
+ * the table below, the same for the eighth of the input as for the whole of it. */
+type Answer = 'read' | 'refused'
+
+/** Layer is one of the four doors a value goes through, and how to read its own
+ * answer: the resolver answers with `null` for a refusal, the two sanitisers
+ * with a result whose `ok` is false, and the recorder with the marker it writes
+ * in place of a value it will not read. */
+interface Layer {
+  readonly name: string
+  readonly run: (input: string) => unknown
+  readonly refused: (out: unknown) => boolean
+}
+
+const resultRefused = (out: unknown): boolean => !(out as { ok?: boolean }).ok
+
+/** Cost is one call, all three ways: what the layer answered (a refusal costs no
+ * work, so a case that did not ask would not know it had been refused), the
+ * characters every reading scanned (`scanWork`, the quantity `MAX_AMBIGUOUS_SCAN`
+ * bounds and the one that grows with the number of sites once a resolver stops
+ * being linear), and the time it took, which is only ever read against the
+ * coarse ceiling. */
+interface Cost {
+  readonly work: number
+  readonly ms: number
+  readonly answer: Answer
+}
+
+function cost(layer: Layer, input: string): Cost {
+  resetScanWork()
   const start = performance.now()
+  let answer: Answer = 'read'
   try {
-    run()
+    if (layer.refused(layer.run(input))) answer = 'refused'
   } catch {
-    // A refusal is an answer; only the time it took matters here.
+    // A throw is a refusal by another name, and the work it took is still work.
+    answer = 'refused'
   }
-  return performance.now() - start
+  return { work: scanWorkDone(), ms: performance.now() - start, answer }
 }
 
-function fill(unit: string): string {
-  return unit.repeat(Math.floor(MAX_TEXT_INPUT_LENGTH / unit.length))
+/** fill builds the input a case reads: the unit repeated to the layer's own
+ * limit, or to the `divisor`th of it -- the eighth is what the scaling below
+ * compares the whole input against. */
+function fill(unit: string, divisor = 1): string {
+  return unit.repeat(Math.floor(MAX_TEXT_INPUT_LENGTH / divisor / unit.length))
 }
 
-describe('10,000 ambiguous sites cost every layer milliseconds', () => {
-  const inputs: readonly (readonly [string, string])[] = [
-    ['ESC [ K word, apart', fill(`${ESC}[Kab `)],
-    ['ESC [ 1 A word, apart', fill(`${ESC}[1Ab `)],
-    ['ESC c, apart', fill(`${ESC}c `)],
-    ['C1 CSI 1 A, apart', fill(`${CSI1}1Ax `)],
-    ['ESC [ K glued', fill(`${ESC}[Ka`)],
-    ['colour codes around words', fill(`${ESC}[31mred${ESC}[0m `)],
-    ['ESC [ before a token fragment', fill(`${ESC}[${fake.githubToken().slice(0, 6)} `)],
-    ['ESC [ before a whole token', fill(`${ESC}[${fake.githubToken()} `)],
+describe('10,000 ambiguous sites cost every layer linear work, and milliseconds', () => {
+  // Every unit but the glued one is read: its sites sit in separate words, which
+  // is the shape the resolver's own doc prices at four readings for 10,000 of
+  // them, and the value is drawn rather than refused. The glued unit is one
+  // cluster of 10,000 combinations, past `MAX_AMBIGUOUS_COMBINATIONS`, so
+  // refusing it is the fail-closed answer the resolver's other cases pin.
+  const units: readonly (readonly [string, string, Answer])[] = [
+    ['ESC [ K word, apart', `${ESC}[Kab `, 'read'],
+    ['ESC [ 1 A word, apart', `${ESC}[1Ab `, 'read'],
+    ['ESC c, apart', `${ESC}c `, 'read'],
+    ['C1 CSI 1 A, apart', `${CSI1}1Ax `, 'read'],
+    ['ESC [ K glued', `${ESC}[Ka`, 'refused'],
+    ['colour codes around words', `${ESC}[31mred${ESC}[0m `, 'read'],
+    ['ESC [ before a token fragment', `${ESC}[${fake.githubToken().slice(0, 6)} `, 'read'],
+    ['ESC [ before a whole token', `${ESC}[${fake.githubToken()} `, 'read'],
   ]
-  it.each(inputs)('%s', (_name, input) => {
+  const layers: readonly Layer[] = [
+    {
+      name: 'resolveAmbiguousSequences',
+      run: (input) => resolveAmbiguousSequences(input),
+      refused: (out) => out === null,
+    },
+    { name: 'sanitizeText', run: (input) => sanitizeText(input, 'sentence'), refused: resultRefused },
+    { name: 'sanitizeRefusal', run: (input) => sanitizeRefusal(input), refused: resultRefused },
+    {
+      name: 'redactText',
+      run: (input) => createRedactor().redactText(input),
+      refused: (out) => out === TOKEN_PLACEHOLDER,
+    },
+  ]
+  it.each(units)('%s', (_name, unit, expected) => {
+    const input = fill(unit)
+    const eighth = fill(unit, 8)
     expect(input.length).toBeLessThanOrEqual(MAX_TEXT_INPUT_LENGTH)
-    expect(timed(() => resolveAmbiguousSequences(input))).toBeLessThan(BOUND_MS)
-    expect(timed(() => sanitizeText(input, 'sentence'))).toBeLessThan(BOUND_MS)
-    expect(timed(() => sanitizeRefusal(input))).toBeLessThan(BOUND_MS)
-    expect(timed(() => createRedactor().redactText(input))).toBeLessThan(BOUND_MS)
+    for (const layer of layers) {
+      const smaller = cost(layer, eighth)
+      const larger = cost(layer, input)
+      // The answer first, because it is the assertion the work cannot make: a
+      // resolver that stopped being linear refuses this input, and a refusal
+      // costs no work, so the two assertions below would hold over a value that
+      // is no longer read at all.
+      expect(smaller.answer, `${layer.name}: the eighth's answer`).toBe(expected)
+      expect(larger.answer, `${layer.name}: the whole input's answer`).toBe(expected)
+      // Eight times the text, at most sixteen times the work. The eighth is
+      // floored at one character because a value the resolver refuses costs no
+      // work at all -- the bound working, not a reading -- and the whole input
+      // is refused for the same reason rather than read in more readings.
+      expect(larger.work, `${layer.name}: the work eight times the text costs`).toBeLessThanOrEqual(
+        Math.max(smaller.work, 1) * SCALING_RATIO,
+      )
+      expect(larger.work, `${layer.name}: every reading, against the resolver's own cap`).toBeLessThanOrEqual(
+        workCap(input.length),
+      )
+      expect(larger.ms, `${layer.name}: the time`).toBeLessThan(CEILING_MS)
+    }
   })
 })

@@ -603,7 +603,25 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 	// inventory, both of which name commands, not fields.
 	notAKey := map[string]bool{"watch": true, "report": true, "diagnose": true,
 		"logs": true, "doctor": true, "version": true}
+	// approvedAheadOfTheCLI are the wire keys the document names under its own
+	// bounded exception (§intro): the owner has approved a release that will
+	// write them, no shape here carries them yet, and the console accepts them
+	// as optional so that release does not refuse every document whole as
+	// `unknown-key`. Admitting them HERE, in the guard, is the point: a reviewer
+	// found the first such key documented in prose beside the tables, where this
+	// test could not see it, so the exception was invisible to the one check
+	// written to catch a field no command emits. The list is self-cleaning in
+	// both directions below -- an entry that becomes a real json key fails
+	// (its row now belongs to a shape), and one no field table names fails (the
+	// exception must not outlive the documentation that justifies it).
+	//
+	// Empty since `leased_usd` became real (JSONTotal and JSONRepo carry it):
+	// a blank entry fails the "no field table names it" half, so the list has
+	// no placeholder. `compute_usd`, the other key the exception names, is
+	// already a real key of `report --json` and so was never in here.
+	approvedAheadOfTheCLI := map[string]bool{}
 	checked := 0
+	namedInTable := map[string]bool{}
 	for _, line := range strings.Split(doc, "\n") {
 		m := tableFieldRE.FindString(line)
 		if m == "" {
@@ -615,9 +633,18 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 				continue
 			}
 			checked++
-			if !real[name] {
+			namedInTable[name] = true
+			if !real[name] && !approvedAheadOfTheCLI[name] {
 				t.Errorf("%s's field table names %q, which is not a json key of any shape it documents: a field invented rather than read", path, name)
 			}
+		}
+	}
+	for name := range approvedAheadOfTheCLI {
+		if real[name] {
+			t.Errorf("%s: %q is now a real json key of a shape this document describes; drop it from approvedAheadOfTheCLI and let its table row stand on the struct", path, name)
+		}
+		if !namedInTable[name] {
+			t.Errorf("%s: approvedAheadOfTheCLI lists %q, which no field table names; the exception has to be documented where this test can see it", path, name)
 		}
 	}
 	if checked < 100 {
@@ -1115,7 +1142,7 @@ func firstBacktick(cell string) string {
 // is what a review of the first revision found here: the table could lose a
 // row -- or gain one -- and the test would still pass. This parses both tables
 // §5.1 rule 6 carries and compares their first cells exactly: the allow-list is
-// the fourteen argvs and nothing else -- the console's one spawn table
+// the sixteen argvs and nothing else -- the console's one spawn table
 // (SPAWN_COMMANDS) since the installation rail took the picker's read onto the
 // dashboard's surface -- and a review of an earlier revision found the picker's own
 // read, `config list --json`, absent here, which left the specification
@@ -1154,6 +1181,10 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		// it prints the view the sweep stored -- and `--all` is every
 		// repository the installation's config lists.
 		"coordinator status --from-store --all --json",
+		// The launch (console v2 plan V2.5.1a, the `run.launch` operation):
+		// the console's one write and the one thing this table is a fence
+		// against, spelled as rule 11's exact argv and nothing else.
+		"run --task-file - --json --run-id <run id> --repo <owner/name> [--title=<T>] [--plan-task=<P>] --project <name> [--config <path>]",
 	}
 	rows := docTableAfter(t, path, doc, "| Allowed argv (exact, in this order) |")
 	got := map[string]bool{}
@@ -1236,17 +1267,17 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 		}
 		cmdPath := "fugaro " + strings.Join(words, " ")
 		allowed[cmdPath] = true
-		if !consoleReadPaths[cmdPath] {
+		if !consoleReadPaths[cmdPath] && !consoleLaunchPaths[cmdPath] {
 			t.Errorf("%s allows the console to spawn %q, but %q is not in consoleReadPaths (internal/cli/project.go): a command on the allow-list is a read, and a read must not write the remembered checkouts", path, argv, cmdPath)
 		}
 	}
-	// Fourteen commands: the twelve dashboard reads (logs has two argvs), the
+	// Fifteen commands: the twelve dashboard reads (logs has two argvs), the
 	// rail's `config list --json` (D13's amendment of 2026-10-20), the graph
-	// screen's `plan status --json` (GV2.1) and the project view's
+	// screen's `plan status --json` (GV2.1), the project view's
 	// `coordinator status --from-store --all --json` (Bitbucket credentials
-	// T1.2).
-	if len(allowed) != 14 {
-		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 14 (logs has two argvs)", path, argvs, len(allowed))
+	// T1.2) and the launch `fugaro run` (V2.5.1a).
+	if len(allowed) != 15 {
+		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 15 (logs has two argvs)", path, argvs, len(allowed))
 	}
 	// The other direction: the list carries §5.1's commands and nothing else,
 	// except the read the design names for the console and §5.1 has not grown
@@ -1260,6 +1291,14 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 		}
 	}
 }
+
+// consoleLaunchPaths is §5.1's allow-list written as an exemption rather
+// than as a hole: `fugaro run` is the console's one write (rule 11, D22), so
+// it is deliberately absent from consoleReadPaths -- a write is not a read
+// and must not be -- and a table that grew a second writer would have to
+// come back here and say so. The reason sits beside the exemption because
+// the exemption is the security claim: one write, named, and nothing else.
+var consoleLaunchPaths = map[string]bool{"fugaro run": true}
 
 // planPhaseRow returns the "What ships" cell of the project-centric plan's
 // phase table row whose Phase cell names phase (a substring of it), and the
@@ -5590,6 +5629,14 @@ func TestDocsDesktopConsoleContractStatesTheAccountAxis(t *testing.T) {
 // order), and each tag without omitempty is present. Mutations: an unknown key
 // added to the fixture; a required key dropped; a key moved; a number made a
 // string.
+//
+// The one key the fixture may *lack* is `leased_usd`, and the reason is the
+// fixture's own subject: its header says the recording is 0.8.6's, so a
+// required key a later release added cannot be in it, and this file is
+// deliberately the old document the console must still read -- updating it to
+// the current shape would delete what it exists to prove. Lack is the only
+// allowance: a fixture that *carried* `leased_usd` would still be walked
+// against the struct like every other key.
 func TestDocsDesktopConsoleNormalFixtureMatchesTheGoTypes(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(readDoc(t, "console/test/fixtures/normal.ndjson")), "\n")
 	if len(lines) < 2 {
@@ -5613,7 +5660,7 @@ func TestDocsDesktopConsoleNormalFixtureMatchesTheGoTypes(t *testing.T) {
 		if err := dec.Decode(&doc); err != nil {
 			t.Fatalf("record %d does not decode into watch.JSONDoc: %v", i+1, err)
 		}
-		checkJSONShape(t, fmt.Sprintf("record %d", i+1), rec.Document, reflect.TypeOf(watch.JSONDoc{}))
+		checkJSONShape(t, fmt.Sprintf("record %d", i+1), rec.Document, reflect.TypeOf(watch.JSONDoc{}), mayLackOldRecording)
 	}
 	if docs == 0 {
 		t.Fatal("normal.ndjson holds no document")
@@ -5642,9 +5689,14 @@ func orderedJSONKeys(t *testing.T, raw json.RawMessage) []string {
 	return keys
 }
 
+// mayLackOldRecording are the keys a document recorded before the release that
+// added them may leave out: see TestDocsDesktopConsoleNormalFixtureMatchesTheGoTypes.
+var mayLackOldRecording = map[string]bool{"leased_usd": true}
+
 // checkJSONShape walks one JSON value against a struct type: keys in struct
-// order, required keys present, recursing into nested structs and slices.
-func checkJSONShape(t *testing.T, where string, raw json.RawMessage, rt reflect.Type) {
+// order, required keys present (bar those in mayLack), recursing into nested
+// structs and slices.
+func checkJSONShape(t *testing.T, where string, raw json.RawMessage, rt reflect.Type, mayLack map[string]bool) {
 	t.Helper()
 	for rt.Kind() == reflect.Ptr {
 		if string(raw) == "null" {
@@ -5660,7 +5712,7 @@ func checkJSONShape(t *testing.T, where string, raw json.RawMessage, rt reflect.
 			return
 		}
 		for i, item := range items {
-			checkJSONShape(t, fmt.Sprintf("%s[%d]", where, i), item, rt.Elem())
+			checkJSONShape(t, fmt.Sprintf("%s[%d]", where, i), item, rt.Elem(), mayLack)
 		}
 	case reflect.Struct:
 		var members map[string]json.RawMessage
@@ -5682,7 +5734,7 @@ func checkJSONShape(t *testing.T, where string, raw json.RawMessage, rt reflect.
 		for _, f := range fields {
 			if _, ok := members[f.name]; ok {
 				want = append(want, f.name)
-			} else if f.required {
+			} else if f.required && !mayLack[f.name] {
 				t.Errorf("%s: required key %q is missing (internal/watch/json.go has it without omitempty)", where, f.name)
 			}
 		}
@@ -5691,7 +5743,7 @@ func checkJSONShape(t *testing.T, where string, raw json.RawMessage, rt reflect.
 		}
 		for _, f := range fields {
 			if v, ok := members[f.name]; ok {
-				checkJSONShape(t, where+"."+f.name, v, f.typ)
+				checkJSONShape(t, where+"."+f.name, v, f.typ, mayLack)
 			}
 		}
 	}
@@ -8393,4 +8445,303 @@ func consoleProductName(t *testing.T) string {
 		t.Fatal("console/package.json's build.productName is empty, and a packaged bundle with no product name has no bundle path for Check 59a to launch")
 	}
 	return pkg.Build.ProductName
+}
+
+// TestDocsDesktopConsoleDesignLaunchFenceIsWrittenDown pins §5.1 rule 11 — the
+// launch, the console's one write — and the never table's moved row, which is
+// the fence that rule moves.
+//
+// Rule 11 was added by the console v2 plan's V2.5.1 (2026-10-27) and amended the
+// same day by the owner's rulings and by an independent security review, and it
+// is the contract the code lands against (V2.5.1a). It is prose, so nothing else
+// holds it: the allow-list table and rule 5's count are deliberately NOT moved by
+// this design — they move with the code, in one commit, in V2.5.1a — and the
+// "never" table is the one table this rule does edit. The sentences below are
+// the claims that review found missing or untrue (the repository conversion, the
+// confirmation window, the recorded base branch, the working directory, the one
+// row allowed to write to a child, the format characters, the `=` forms, the
+// deadline, the rate limits and the replay rule), so this test is what keeps a
+// later rewrite from dropping one.
+//
+// The mutations it fails on: deleting any pinned sentence (each names itself);
+// re-wrapping one is not a mutation, because the rule is read as one run of
+// whitespace; carrying a `run` argv on the allow-list table other than rule
+// 11's, or a rule 5 count that disagrees with the code (the checks after the
+// table); and restoring a bare `run` to the never table, which would read as a
+// permission for the one argv this rule writes rather than for every other one.
+func TestDocsDesktopConsoleDesignLaunchFenceIsWrittenDown(t *testing.T) {
+	const path = "docs/design/desktop-console.md"
+	doc := readDoc(t, path)
+
+	start := strings.Index(doc, "\n11. **The launch is the console's one write")
+	if start < 0 {
+		t.Fatalf("%s has no §5.1 rule 11: the launch's fence is not written down", path)
+	}
+	end := strings.Index(doc[start:], "\n### 5.2 ")
+	if end < 0 {
+		t.Fatalf("%s never closes §5.1: no `### 5.2` heading follows rule 11", path)
+	}
+	rule := flattenDoc(doc[start : start+end])
+
+	// The one argv rule 11 writes, spelled once: the pins below and the
+	// allow-list check at the end of this test all speak of this same form,
+	// so a widened argv cannot pass by looking right in one place.
+	const rule11Argv = "run --task-file - --json --run-id <run id> --repo <owner/name> [--title=<T>] [--plan-task=<P>] --project <name> [--config <path>]"
+
+	for _, want := range []struct{ why, text string }{
+		{"the one exact argv, in its fixed order", rule11Argv},
+		{"a value that rides its own flag word cannot be read as a flag",
+			"a value after `=` is part of the flag's own word"},
+		{"the row and the code it needs land together",
+			"the operation, the preload method and the argv builder"},
+		{"a moved row is a plan and not a permission",
+			"the console spawns no `run` argv at all"},
+		{"the closed schema's five fields",
+			"`installation`, `repository`, `task`, `title` and `planTask`"},
+		{"the repository identity the records carry",
+			"`<provider>/<owner>/<name>`"},
+		{"the conversion to what --repo takes",
+			"drop the first `<provider>/` segment"},
+		{"the providers the console can open a pull request on",
+			"**`github` or `bitbucket`**"},
+		{"the example that shows the conversion",
+			"`github/owner/repo-a` becomes `owner/repo-a`"},
+		{"only the identity is read from a checkout row, never its path",
+			"Only the identity is read from those rows, never the path"},
+		{"the task text's bound, and why it is not the CLI's",
+			"at most 16 KiB of valid UTF-8 with no NUL byte"},
+		{"the task never reaches the argv",
+			"The task text goes to the child on stdin and never into the argv"},
+		{"one row is allowed to write to a child",
+			"the one row that gets `'pipe'` on stdin"},
+		{"every other row's stdin, and the type that pins it",
+			"the console never writes to a child"},
+		{"the test that holds the other rows",
+			"a test pins `'ignore'` for every other row of the spawn table"},
+		{"the confirmation is a window the main process owns",
+			"a modal window of its own"},
+		{"and it is not a native message box",
+			"`dialog.showMessageBox` is not used"},
+		{"the operator reads the whole task rather than a summary",
+			"the whole task text, displayed in full and scrollable"},
+		{"the fields the window shows, and nothing else",
+			"the installation, the repository, the ref, the title, the plan task, the run id"},
+		{"the argv the window shows",
+			"the exact argv field by field"},
+		{"cancelling is what a stray Enter does",
+			"**Cancel is the default button**"},
+		{"the renderer cannot reach the window",
+			"cannot answer for the operator"},
+		{"a run is cut from a branch the installation records",
+			"the installation's **recorded base branch**"},
+		{"the merged order, layer one",
+			"the working directory's checkout of the repository when its `fugaro.yaml` writes `git.base_branch`"},
+		{"the merged order, layers two to four",
+			"the local config's `repos.<r>.base_branch`, else the project's `base_branch`, else `main`"},
+		{"the refusal the CLI used to end on",
+			"The old refusal is gone"},
+		{"what the fallback means for a row that cannot pass --ref",
+			"with nothing recorded the CLI resolves `main` and says nothing"},
+		{"the field the console still cannot read",
+			"carried **no `base_branch`**"},
+		{"the layer a console launch cannot take its ref from",
+			"for this row it cannot be the source"},
+		{"the two layers it can both read and be cut from",
+			"the two layers a console launch can both read and be cut from"},
+		{"the setting that does not move this row",
+			"which an operator can set without moving this row"},
+		{"the read is a CLI change, not a console-only one",
+			"it was a CLI change rather than a console-only one"},
+		{"and a console-only slice could not build the rule",
+			"a console-only slice could not build this rule at all"},
+		{"what that change adds to the read",
+			"the installation's fields gained the project-level `base_branch`"},
+		{"and why it is not a new operation",
+			"a field on a read the console already has and not a new operation"},
+		{"no field of the schema names a run id",
+			"**No field of the schema names a run id**"},
+		{"the retry is safe only where the first launch wrote its claim",
+			"where the first launch got as far as writing that claim"},
+		{"a child killed before its claim leaves the container to start",
+			"a child killed before it wrote a claim leaves nothing for the retry to find"},
+		{"and a stale claim is taken over",
+			"a retry more than `ClaimTTL`'s ten minutes later finds a claim the CLI takes over as stale"},
+		{"the floor is a comparison, not the range",
+			"a version comparison and not membership in the console's supported range"},
+		{"and the range the console reads today is below it",
+			"**every CLI the console supported then was below the floor**"},
+		{"which is why this slice moves the range",
+			"moved the supported range to include `0.11`"},
+		{"the task is trimmed, so the window's bytes are the run's",
+			"the bytes the window counts and the operator confirms are the bytes the run keeps"},
+		{"and an empty task is refused before the window opens",
+			"A task that is empty once trimmed is refused on this side"},
+		{"what the window shows is what is spawned",
+			"**What the window shows is what is spawned.**"},
+		{"and it spawns the frozen object rather than rebuilding one",
+			"spawns **that frozen object verbatim**"},
+		{"an installation that moves under the window cancels it",
+			"closes the window as a cancel"},
+		{"the never table in the code, and the row it carries today",
+			"**In the console's code that table is `NEVER_REACHABLE`**"},
+		{"which V2.5.1a replaces with argv-shaped rows",
+			"with argv-shaped rows refusing every `run` argv but rule 11's form"},
+		{"and the class that test classifies `run` under moves",
+			"moves `run` out of `CLI_COMMANDS`' `mutating` class"},
+		{"and the allow-list's own argv list gains the row",
+			"adds rule 11's argv to `DESIGN_ARGV`"},
+		{"no other row of that table moves",
+			"**No other `NEVER_REACHABLE` row moves**"},
+		{"a title is not a `value` argument",
+			"argument kinds of their own"},
+		{"and the renderer alphabet is not widened for it",
+			"`ARGUMENT_RE` stays unchanged for every other field"},
+		{"the retry's ten minutes are the owner's to rule",
+			"**And one point is left open rather than ruled: (6) the held-id retry once the claim's ten minutes have passed.**"},
+		{"and the recommendation the design records",
+			"refuses the retry once `ClaimTTL`'s ten minutes are gone"},
+		{"which is where the retry offer points",
+			"how long that offer stands is open point 6"},
+		{"a repository with no record is refused, and the refusal is actionable",
+			"names the repository and what to set"},
+		{"the launch runs from the app's own directory, not the operator's checkout",
+			"always the app's own private, empty directory, never the operator's checkout"},
+		{"which is what keeps the checkout's branch out of the ref",
+			"the branch the working directory's checkout is on"},
+		{"format characters are refused wherever a value is read",
+			"Unicode format characters (`Cf`), the bidi overrides"},
+		{"the task is never shown raw",
+			"strips the format characters out of the displayed text"},
+		{"a launch is not a read, so it has its own deadline",
+			"`LAUNCH_TIMEOUT_MS` is not `READ_TIMEOUT_MS`"},
+		{"how a launch is stopped",
+			"`SIGTERM`, then `SIGKILL` after `SHUTDOWN_GRACE_MS`"},
+		{"a killed launch proves nothing and is not retried",
+			"the launch's outcome is unknown"},
+		{"a repeat of a launch in flight joins it rather than racing it",
+			"is attached to the launch in flight"},
+		{"a repeat of an answered launch is answered from the record",
+			"answered from the app's own record"},
+		{"who may replay a launch, and who may not",
+			"the window's own main-side `answer()` path"},
+		{"the killed launch's retry is the one repeat that spawns again",
+			"never a fresh window and a fresh id"},
+		{"the rate that keeps a click from becoming a queue of windows",
+			"windows are opened at most three times a minute per installation"},
+		{"the limit across the whole app",
+			"at most two launches in flight across the whole app"},
+		{"the cool-down the owner accepted",
+			"a ten-second cool-down"},
+		{"the WSL wrapper is what makes an `=`-form word safe there",
+			"quotes every word of the CLI's argv with `shellQuoteWord`"},
+		{"and the argv check takes the two prefixes on this row alone",
+			"accept exactly the `--title=` and `--plan-task=` prefixes, for the `run.launch` row alone"},
+		{"and the task still arrives there",
+			"on the same stdin the cell pipe carries"},
+		{"the spawn log records the launch and still no task text",
+			"records no task text"},
+		{"the surfaces the operator reaches it from",
+			"the Runs screen is the only place"},
+		{"a yes is refused until the window has settled",
+			"**A yes is refused until the window has settled, and the measure is the main process's own**"},
+		{"and the delay is measured where the events are, not in the page",
+			"with both events read **in the main process** and never by a timer in the page"},
+		{"which of the two events the delay runs from",
+			"**`CONFIRM_READY_DELAY_MS` (500 ms) after the window's own `show` or `focus`, whichever of the two came last**"},
+		{"a focus is not required to answer, and only extends the delay",
+			"**Focus is not required, and only ever extends the delay**"},
+		{"the quantity the delay is measured against is the double-click interval",
+			"**double-click interval** (`I`)"},
+		{"and the case it does not cover is recorded rather than claimed away",
+			"**That case is recorded rather than claimed away**"},
+		{"a re-focus starts the delay over, and Cancel does not wait for it",
+			"**Cancel takes no delay at all**"},
+		{"what re-chosen means",
+			"**Re-chosen means that same installation chosen again**"},
+		{"the dashboard a choose replaces, and the child that goes with it",
+			"**A choose closes the dashboard window as well**"},
+		{"the console with no dashboard, where no parent closes the child",
+			"**survives a switch to another installation**"},
+		{"what the next part must confirm on a real window",
+			"**V2.5.1c must confirm on a real window that closing the parent closes the child**"},
+		{"and the second platform behaviour it must confirm, whose failure mode is every launch refused",
+			"**and that this window's own `show` and `focus` arrive at all**"},
+		{"the replay record's cap, and the order it evicts in",
+			"**capped at `MAX_RECORDED_OUTCOMES` (256), oldest evicted first**"},
+		{"what an id whose record was evicted answers",
+			"**An evicted id stays issued and answers `undefined` without spawning**"},
+	} {
+		if !strings.Contains(rule, want.text) {
+			t.Errorf("%s §5.1 rule 11 no longer says %s:\n  want %q", path, want.why, want.text)
+		}
+	}
+
+	if strings.Contains(rule, "64 KiB") {
+		t.Errorf("%s §5.1 rule 11 still bounds the task at 64 KiB: the operator confirms by reading it, so the bound is 16 KiB", path)
+	}
+
+	if !strings.Contains(doc, "**The dashboard's surface is twenty-four operations**") {
+		t.Errorf("%s no longer says the surface is twenty-four operations: rule 5's count moved with the code when V2.5.1a landed, and the two cannot disagree", path)
+	}
+
+	var neverRows [][]string
+	for _, cells := range docTableAfter(t, path, doc, "| Never (the \"nothing else\" table) |") {
+		neverRows = append(neverRows, cells)
+	}
+	if len(neverRows) == 0 {
+		t.Fatalf("%s: no row follows the never table's header; update this test's marker", path)
+	}
+	// The row's first token is the form it refuses: a row that still LEADS with a
+	// bare `run` is the old row, and it reads as a permission for the one argv
+	// rule 11 writes. A bare `run` ANYWHERE ELSE in the table is the same defect
+	// one row down — the entry lived in the "every writer" row's list before
+	// rule 11 moved it, so deleting the moved row and putting the bare `run`
+	// back beside `cancel` and `sync` is the mutation, not only restoring the
+	// row this design replaced. The one row allowed to hold a bare `run` token
+	// is the moved row itself, which names the argv it excludes.
+	sawRetry := false
+	for _, cells := range neverRows {
+		leads := firstBacktick(cells[0])
+		switch leads {
+		case "run --retry":
+			sawRetry = true
+		case "run":
+			t.Errorf("%s's never table still leads a row with a bare `run`: rule 11 moved that row to `run --retry` and every other `run` argv", path)
+		}
+		if leads == "run --retry" {
+			continue
+		}
+		// The whole row and not a token walk: a row that lists an escaped "|"
+		// (the secret commands' row does) splits into several cells, and the
+		// backticks pair across that split rather than inside a cell, so a bare
+		// `run` appended after the escape is found by the literal spelling and
+		// missed by anything that has to pair delimiters. `run --retry` and
+		// `runs ls` both keep a character after `run`, so neither matches.
+		if strings.Contains(strings.Join(cells, "|"), "`run`") {
+			t.Errorf("%s's never table lists a bare `run` in the row that leads with %q: the bare entry belongs to no row but rule 11's, which spells the argv it excludes", path, leads)
+		}
+	}
+	if !sawRetry {
+		t.Errorf("%s's never table does not start a row at `run --retry`: rule 11 moved the `run` row, and this is the row it moved to", path)
+	}
+
+	// Rule 11's row is the allow-list's one `run` argv, and it landed with
+	// V2.5.1a in one commit with the operation. Exactly one row may lead with
+	// `run` and it must be that argv spelled as rule 11 writes it: any other
+	// `run` argv on the table is a second write nobody ruled on, and a `run`
+	// row that leads with anything else is the row the design replaced.
+	launches := 0
+	for _, cells := range docTableAfter(t, path, doc, "| Allowed argv (exact, in this order) |") {
+		argv := firstBacktick(cells[0])
+		if argv != "run" && !strings.HasPrefix(argv, "run ") {
+			continue
+		}
+		launches++
+		if argv != rule11Argv {
+			t.Errorf("%s's allow-list table carries %q: its one `run` row is rule 11's exact argv and nothing else", path, argv)
+		}
+	}
+	if launches != 1 {
+		t.Errorf("%s's allow-list table carries %d `run` argvs, want exactly 1 (rule 11's)", path, launches)
+	}
 }

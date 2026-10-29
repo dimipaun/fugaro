@@ -11,6 +11,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/lock"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
@@ -87,6 +88,10 @@ func SetMarkLockReleasing(t *testing.T, f func(l *lock.Lock, ctx context.Context
 // RecordWriteTimeout exposes recordWriteTimeout.
 const RecordWriteTimeout = recordWriteTimeout
 
+// PRAttempts exposes prAttempts: how many times one open of the pull request
+// tries before it gives up.
+const PRAttempts = prAttempts
+
 // MaxCredentialResumes exposes maxCredentialResumes.
 const MaxCredentialResumes = maxCredentialResumes
 
@@ -148,11 +153,30 @@ func (h *RunHandle) NoteExhausted(reset time.Time) {
 // gateway_service_internal_test.go).
 func (h *RunHandle) ServiceAnswer(a gateway.ServiceAnswer) { h.r.serviceAnswer(a) }
 
-func (h *RunHandle) HaltNow(hl runstore.Halt) bool      { return h.r.haltNow(hl) }
+func (h *RunHandle) HaltNow(hl runstore.Halt) bool { return h.r.haltNow(hl) }
+func (h *RunHandle) GovernanceHalt(ctx context.Context, reason runstore.HaltReason, detail string) bool {
+	return h.r.governanceHalt(ctx, reason, detail)
+}
+
 func (h *RunHandle) CancelHaltedStage(hl runstore.Halt) { h.r.cancelHaltedStage(hl) }
 func (h *RunHandle) MarkCancelled() bool                { return h.r.markCancelled() }
 func (h *RunHandle) Stage() string                      { return h.r.rec.Stage }
 func (h *RunHandle) IsCancelled() bool                  { return h.r.isCancelled() }
+
+// Halted reports whether a halt has been recorded yet, which marks the instant
+// a governance halt's own stop of the stage's checkpointer begins to wait.
+func (h *RunHandle) Halted() bool { return h.r.haltValue() != nil }
+
+// StageCkptStopRegistered reports whether the running stage's checkpointer stop
+// is registered: what a mid-stage halt reads before it stops the poll and waits
+// for it (stopStageCheckpointer). A test that cannot call the halt itself —
+// its own writes are only ordered when its caller is the run goroutine or one
+// it joins, which the panic path has neither of — probes the read with this.
+func (h *RunHandle) StageCkptStopRegistered() bool {
+	h.r.mu.Lock()
+	defer h.r.mu.Unlock()
+	return h.r.stageCkptStop != nil
+}
 
 // Secrets is the values the run's redactor knows at the moment the hook is
 // called, and Redact is that redactor: together they are how a test asserts
@@ -204,6 +228,11 @@ func DriveCheckpoints(t *testing.T) (tick func()) {
 
 // CheckpointersRunning is how many checkpoint goroutines are alive.
 func CheckpointersRunning() int32 { return checkpointersRunning.Load() }
+
+// DigestOpenAsks is the bound on the provider asks the digest step's walk of
+// the manifest may make (digestOpenBranches), for a test that seeds more
+// records than the bound.
+const DigestOpenAsks = digestOpenAsks
 
 // The checkpoint schedule's durations, for tests that move a fake clock.
 const (
@@ -308,4 +337,59 @@ func SetArtifactStagedSeam(t *testing.T, f func()) {
 	prev := artifactStagedSeam
 	artifactStagedSeam = f
 	t.Cleanup(func() { artifactStagedSeam = prev })
+}
+
+// DigestRecords runs the digest step's manifest read against store alone, so a
+// test can watch which objects one manifest makes it ask for.
+func DigestRecords(ctx context.Context, store *runstore.Store, ids []string) ([]runstore.Record, int, error) {
+	r := &run{d: Deps{Store: store}}
+	return r.digestRecords(ctx, ids)
+}
+
+// StageHook exposes the installed stage hook to the runner_test package.
+var StageHook = stageHook
+
+// SetStageHook is SetStage, so a test can exercise the refusals that keep a
+// tagged binary's enforcement from being replaced or halved (§5.5).
+var SetStageHook = SetStage
+
+// ResetStageHook puts the stage hook back to the core default and clears the
+// "already set" flag, before and after t: SetStage refuses a second call for
+// the life of the process, so a test that calls it would otherwise leave the
+// whole package hooked.
+func ResetStageHook(t *testing.T) {
+	t.Helper()
+	stageHooks, stageHooksSet = coreStageFuncs(), false
+	t.Cleanup(func() { stageHooks, stageHooksSet = coreStageFuncs(), false })
+}
+
+// StageBoundAsked is the untagged build's warning trigger, over the governance
+// blocks one set of layers carries: a test drives it with the state both
+// halves of the off-switch together make — a block in the file layer and no
+// governance resolved from it anywhere — where an end-to-end run can only
+// install one of the two halves at a time, the policy half's off-switch being
+// unimportable from this package's tests.
+func StageBoundAsked(layers []policy.Layer, stage string) bool { return stageBoundAsked(layers, stage) }
+
+// SetCore makes the stage hook the pair an untagged build has after the move
+// to ee/governance (E2.3): the governance block the run resolved is decoded
+// and then ignored — a stage gets no bound of its own and the ceiling that
+// fires leaves no halt. What the build then says about the block is not this
+// pair's to write: the run notes the blocks its layers carried and says the
+// line once, in core code, so it says it whether or not the policy half
+// resolved anything (D522, D523, noteIgnoredStageBound).
+//
+// It lives here rather than in production code because it is the pair that
+// switches enforcement off, and only a test may do that: a production seam
+// would be a way for a core caller to turn governance off in a tagged binary
+// (design §5.5).
+func SetCore(t *testing.T) {
+	t.Helper()
+	prev, wasSet := stageHooks, stageHooksSet
+	stageHooks = StageFuncs{
+		Timeout:  func(StageView) time.Duration { return 0 },
+		TimedOut: func(StageView) StageDecision { return StageDecision{} },
+	}
+	stageHooksSet = false
+	t.Cleanup(func() { stageHooks, stageHooksSet = prev, wasSet })
 }

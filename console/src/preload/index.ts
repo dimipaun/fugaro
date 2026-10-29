@@ -89,7 +89,7 @@ export const BRIDGE_VERSION = 1
  * nothing failing, because the runtime tests in `test/unit/ipc.test.ts` pin the
  * same sets against the table and the object is built from that table anyway.
  * `satisfies` checks each row's shape without widening anything, so a row that
- * is not a name and a method is still a compile error, and the twenty-three names
+ * is not a name and a method is still a compile error, and the twenty-four names
  * stay literal -- which is what makes `ExposedName`, `ExposedMethod` and
  * `ConsoleBridge` below the closed things their comments say they are.
  *
@@ -153,6 +153,10 @@ export const BRIDGE_VERSION = 1
  * this surface can reach that needs no credential of the host's, and its two
  * flags are words of `src/main/spawn.ts`'s row rather than arguments, which is
  * why the row declares none.
+ *
+ * **V2.5.1a added the twenty-fourth** (`run.launch` / `launchRun`, the console's
+ * one write, design section 5.1 rule 11) and left the other twenty-three exactly
+ * where they were. The twenty-third is above it in this list.
  */
 export const EXPOSED_OPERATIONS = Object.freeze([
   ['live.watch', 'subscribeLive'],
@@ -193,11 +197,20 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   // spawn.ts`'s row, not arguments a renderer sends -- the row here declares
   // none.
   ['coordinator.status', 'coordinatorStatus'],
+  // The launch, and the surface's **one write** (V2.5.1a, design section 5.1
+  // rule 11, D22). One row, like every other: the five fields are the
+  // operation's own closed schema. What this method *does* is ask the main
+  // process for a confirmation window: it cannot answer for the operator, and
+  // since V2.5.1a's part 2b-3b-1 the main process spawns on a yes from that
+  // window's own top frame and on nothing else (`createConfirmWindow`,
+  // `src/main/confirm.ts`), so no renderer reaches a `fugaro run` child through
+  // this row by itself.
+  ['run.launch', 'launchRun'],
 ] as const) satisfies readonly (readonly [string, string])[]
 
 /**
  * ExposedName is the closed union of the operation names this file exposes --
- * twenty-three string literals, not `string`. It is the type of the `operations` list
+ * twenty-four string literals, not `string`. It is the type of the `operations` list
  * a screen switches on, so the closure is what lets a screen be exhaustive.
  */
 export type ExposedName = (typeof EXPOSED_OPERATIONS)[number][0]
@@ -317,9 +330,9 @@ async function invokeOperation(
  *
  * The returned object is not cast into `ConsoleBridge`: it is checked against
  * it, like any other value, and that is the point of the accumulator's type. It
- * is `Record<ExposedMethod, ConsoleMethod>` -- twenty-three *named* properties,
+ * is `Record<ExposedMethod, ConsoleMethod>` -- twenty-four *named* properties,
  * because `ExposedMethod` is a union of literals -- so spreading it gives the
- * object literal those twenty-three properties as properties rather than as an index
+ * object literal those twenty-four properties as properties rather than as an index
  * signature. (Before that type was literal, this line needed `as ConsoleBridge`
  * to silence the compiler, which is what made the claim untested rather than
  * checked.) The loop is what actually writes them, and a loop is a thing the
@@ -348,7 +361,7 @@ export function createConsoleBridge(ipcRenderer: RendererLike): ConsoleBridge {
  * `exposeInMainWorld` is what keeps rule 5's promise concrete: the renderer gets
  * a copy of this object, in its own world, with `contextIsolation` in between.
  * It cannot reach the preload's scope, `ipcRenderer`, or Node -- only these
- * twenty-three methods.
+ * twenty-four methods.
  */
 export function exposeConsoleBridge(
   contextBridge: ContextBridgeLike,

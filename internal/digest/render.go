@@ -14,7 +14,23 @@ import (
 // (G3) -- the same digest gives byte-identical bytes -- and it renders what
 // Build put in d and nothing else, so a report carries no person and no text
 // a record wrote (G1).
+//
+// The one thing not of d's own fields is the tail a registered extra-section
+// hook returns (section 5.4): a build that registered none, which every core
+// build is, prints the report above and nothing more. The tail is appended
+// after the core report, so the size cap is measured over markdownCore alone
+// (capTo): the hook's bytes never count toward the cap, and the hook is called
+// once per measurement rather than once per dropped row.
 func Markdown(d Digest) []byte {
+	return append(markdownCore(d), sectionsMarkdown(d)...)
+}
+
+// markdownCore is the report without the hook's tail: what Build put in d, as
+// the report prints it. capTo measures the cap over this and not over Markdown,
+// so a registered section hook's output is outside the cap by construction: it
+// is appended after a report already trimmed to fit, and it is not rendered
+// again and again while rows are dropped.
+func markdownCore(d Digest) []byte {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Run digest: %s\n\n", d.Period.Key)
 	fmt.Fprintf(&b, "Runs of this repository that finished in %s (%s to %s): %d in all, %d shown, %d flagged. Billed %s, notional %s.\n\n",
@@ -24,17 +40,10 @@ func Markdown(d Digest) []byte {
 	if len(d.Runs) == 0 {
 		b.WriteString("No run of this repository finished in this period.\n\n")
 	} else {
-		b.WriteString("| run | status | pr | base | reviews | billed | notional | flags |\n")
-		b.WriteString("| --- | --- | --- | --- | --- | --- | --- | --- |\n")
-		for _, r := range d.Runs {
-			fmt.Fprintf(&b, "| `%s` | %s | %s | %s | %d | %s | %s | %s |\n",
-				r.ID, r.Status, pr(r.PR), yesNo(r.Base), r.Reviews,
-				report.USD(r.Billed), report.USD(r.Notional), flagCell(r.Flags))
-		}
-		b.WriteString("\n")
+		b.WriteString(RunsTable(d.Runs))
 	}
 	if d.Dropped > 0 {
-		fmt.Fprintf(&b, "Rows not shown: %d. The report is capped at %d bytes and the cheapest unflagged rows go first.\n\n",
+		fmt.Fprintf(&b, "Rows not shown: %d. The report is capped at %d bytes before extra sections, and the cheapest unflagged rows go first.\n\n",
 			d.Dropped, MaxBytes)
 	}
 
@@ -57,6 +66,24 @@ func Markdown(d Digest) []byte {
 	b.Write(block)
 	b.WriteString("\n```\n")
 	return []byte(b.String())
+}
+
+// RunsTable is the report's run table: its header, one row per run, and the
+// blank line after it. Every cell is a figure or a closed vocabulary, and the
+// first one is the run's own ID -- so a caller that must not print an ID (a
+// draft that leaves the repository) renumbers its copy before handing it here,
+// and the two renderings of one set of figures cannot drift apart.
+func RunsTable(runs []Run) string {
+	var b strings.Builder
+	b.WriteString("| run | status | pr | base | reviews | billed | notional | flags |\n")
+	b.WriteString("| --- | --- | --- | --- | --- | --- | --- | --- |\n")
+	for _, r := range runs {
+		fmt.Fprintf(&b, "| `%s` | %s | %s | %s | %d | %s | %s | %s |\n",
+			r.ID, r.Status, pr(r.PR), yesNo(r.Base), r.Reviews,
+			report.USD(r.Billed), report.USD(r.Notional), flagCell(r.Flags))
+	}
+	b.WriteString("\n")
+	return b.String()
 }
 
 // Summary is d's machine-readable block: the same figures the tables show,

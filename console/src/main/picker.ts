@@ -14,10 +14,13 @@
 //
 // The picker is a *separate window* (C9) and not a panel in the dashboard's
 // header, and the reason is the surface rather than the layout: the dashboard's
-// document is exposed to twenty-three operations -- the CLI reads, the handshake,
+// document is exposed to twenty-four operations -- the CLI reads, the handshake,
 // the link handover, `installation.current` and the rail's six -- and the
-// picker's job is to add an installation by checkout path. Two documents, two preloads, two channel prefixes, and a sender
-// gate narrowed to one document each (`isSenderOnDocument` in `src/main/ipc.ts`) --
+// picker's job is to add an installation by checkout path. Four documents,
+// three preloads, three channel prefixes, and a sender gate narrowed to one
+// document each (`isSenderOnDocument` in `src/main/ipc.ts`
+// for the dashboard's and the picker's, and the open confirmation window's own
+// `webContents` in `src/main/confirm.ts`) --
 // so a frame on the dashboard cannot reach `fugaro:installations/remove`, and a
 // frame on the picker cannot reach `runs.list`.
 //
@@ -56,6 +59,7 @@ import type {
   ValidationDeps,
 } from './installations'
 import { parseInstallationsDocument } from './installlist'
+import type { DiscoveredInstallation, DiscoveredRepository } from './installlist'
 import { TEMP_ROOTS, classifyInstallation, openProject, suggestedCheckouts } from './installationstate'
 import type { ConsoleFacts } from './installationstate'
 import {
@@ -227,6 +231,22 @@ export interface InstallationPickerDeps {
   /** onRemoved is the same seam for a removal that took the active installation
    * away: the console has none, and its dashboard must say so. */
   readonly onRemoved?: (id: string) => void
+  /**
+   * onRecordRemoved is the removal's other half, and it fires after **every**
+   * successful removal -- the active row's and any other's -- with the
+   * **project** those rows are keyed by.
+   *
+   * It exists beside `onRemoved` rather than inside it because the two answer
+   * different questions. `onRemoved` is about the dashboard: it fires only when
+   * the removal took the active installation away, and it hands over the record
+   * id the dashboard keys its own state by. A launch in flight is not about the
+   * active installation at all -- it names its own -- so a window open for a
+   * project whose record has just gone must close whether or not that row was
+   * the active one, and the launcher maps a **project** to the run id to close
+   * (`LaunchRunner.cancelFor`). Folding it into `onRemoved` would make the
+   * cancel fire for the wrong removals and hand it an id it cannot use.
+   */
+  readonly onRecordRemoved?: (project: string) => void
 }
 
 /** InstallationPicker is what the entry point holds. */
@@ -454,7 +474,7 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
    * that is not one are all answers, because every one of them is a screen.
    */
   const discover = async (): Promise<
-    | { readonly ok: true; readonly installations: readonly { name: string; gcpProject: string; region: string; checkouts: readonly string[] }[]; readonly warnings: readonly string[] }
+    | { readonly ok: true; readonly installations: readonly DiscoveredInstallation[]; readonly warnings: readonly string[] }
     | { readonly ok: false; readonly onboarding: InstallationsListReply['onboard']; readonly reason: string; readonly searched: readonly string[] }
   > => {
     const override = registry.active()?.binaryPath
@@ -488,7 +508,7 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
   const readInstallations = async (
     binaryPath: string,
   ): Promise<
-    | { readonly ok: true; readonly installations: readonly { name: string; gcpProject: string; region: string; checkouts: readonly string[] }[]; readonly warnings: readonly string[] }
+    | { readonly ok: true; readonly installations: readonly DiscoveredInstallation[]; readonly warnings: readonly string[] }
     | { readonly ok: false; readonly onboarding: InstallationsListReply['onboard']; readonly reason: string; readonly searched: readonly string[] }
   > => {
     const plan: SpawnPlan = planFor('installation.list', {}, {
@@ -557,8 +577,33 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
   const offeredCheckouts = (recorded: string | undefined, listed: readonly string[]): readonly string[] =>
     suggestedCheckouts(recorded, listed, tempDirectory(), deps.tempRoots ?? TEMP_ROOTS, realPathOf)
 
+  /**
+   * repositoryIdentities is one installation's recorded repository identities,
+   * in the order the CLI listed them and each one once: the CLI prints a row per
+   * *checkout*, so two checkouts of one repository are one repository to launch
+   * in.
+   *
+   * Nothing here is resolved, joined or looked up. The identity is the CLI's own
+   * `<provider>/<owner>/<name>` verbatim, which is the only form the launch
+   * accepts (`installlist.ts`, §6.8): the conversion to a clone URL is the
+   * launch's own, and a console that rewrote one here would be deciding what an
+   * operator is launching in.
+   */
+  const repositoryIdentities = (
+    repositories: readonly DiscoveredRepository[],
+  ): readonly string[] => {
+    const seen = new Set<string>()
+    const identities: string[] = []
+    for (const each of repositories) {
+      if (seen.has(each.repository)) continue
+      seen.add(each.repository)
+      identities.push(each.repository)
+    }
+    return Object.freeze(identities)
+  }
+
   const rowsOf = (
-    discovered: readonly { name: string; gcpProject: string; region: string; checkouts: readonly string[] }[],
+    discovered: readonly DiscoveredInstallation[],
     warnings: readonly string[],
     cliRefusal: string,
   ): readonly InstallationsListRow[] => {
@@ -594,6 +639,7 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
         mode: held?.mode ?? 'unknown',
         ...(held?.checkout === undefined ? {} : { checkout: held.checkout }),
         checkouts: offeredCheckouts(held?.checkout, installation.checkouts),
+        repositories: repositoryIdentities(installation.repositories),
         state: classifyInstallation(rowFacts, facts),
         open: false,
       }
@@ -612,6 +658,7 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
         mode: row.mode,
         ...(row.checkout === undefined ? {} : { checkout: row.checkout }),
         checkouts: offeredCheckouts(row.checkout, []),
+        repositories: repositoryIdentities([]),
         state: classifyInstallation(rowFacts, facts),
         open: false,
       })
@@ -950,11 +997,15 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
    * that tells the dashboard it has **no** installation, so it fires only when
    * the removal took the active one away -- firing it for a non-active row would
    * tell the dashboard it has nothing to drive while `active` still names an
-   * installation the operator can use. */
+   * installation the operator can use. `onRecordRemoved` is the removal's other
+   * reader and fires for every one that happened, with the project: a launch in
+   * flight names its own installation, so its window must close whichever row was
+   * active. */
   const removeInstallation = async (project: string): Promise<unknown> => {
     if (registry.entry(project) === null) return { ok: false, reason: 'no such installation' }
     const before = current()
     registry.remove(project)
+    deps.onRecordRemoved?.(project)
     const wasOpen = before.chosen && before.project === project
     if (wasOpen) deps.onRemoved?.(before.id)
     // A removal re-reads, so the answer the screen draws from and the session it
@@ -1140,6 +1191,7 @@ export function installInstallationPicker(options: {
   readonly fs?: InstallationFs
   readonly onChosen?: InstallationPickerDeps['onChosen']
   readonly onRemoved?: InstallationPickerDeps['onRemoved']
+  readonly onRecordRemoved?: InstallationPickerDeps['onRecordRemoved']
 }): InstallationPicker {
   const { electron } = options
   // **The home is this app's own environment's, and not `app.getPath('home')`.**
@@ -1202,6 +1254,7 @@ export function installInstallationPicker(options: {
     ...(options.fs === undefined ? {} : { fs: options.fs }),
     ...(options.onChosen === undefined ? {} : { onChosen: options.onChosen }),
     ...(options.onRemoved === undefined ? {} : { onRemoved: options.onRemoved }),
+    ...(options.onRecordRemoved === undefined ? {} : { onRecordRemoved: options.onRecordRemoved }),
   })
 }
 

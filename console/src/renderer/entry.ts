@@ -77,8 +77,9 @@
 
 import { putReading, putText, startConsole } from './app'
 import { ONBOARDING_COPY } from './installations'
+import { disabledWrite } from './writes'
 import type { CompatibilityBridge, MountLike, ScreenGate } from './app'
-import { readNumber, unavailable } from '../shared/availability'
+import { formatReading, measured, notional, readNumber, unavailable } from '../shared/availability'
 import type { Reading } from '../shared/availability'
 import { rigorIndex } from '../shared/rigor'
 import type { RigorView } from '../shared/rigor'
@@ -93,6 +94,15 @@ import { buildProjectsModel, renderProjects } from './screens/projects'
 import { buildRunModel, renderRun } from './screens/run'
 import { refusedState, renderUnavailable } from './screens/degraded'
 import {
+  launchBytes,
+  launchCheck,
+  launchCounter,
+  launchOutcomeOf,
+  renderLaunch,
+  renderLaunchOutcome,
+} from './screens/launch'
+import type { LaunchControl, LaunchFields, LaunchTyped, LaunchView } from './screens/launch'
+import {
   GRAPH_PINCH_STEP,
   GRAPH_REFRESH_MS,
   GRAPH_ZOOM_STEP,
@@ -103,7 +113,7 @@ import {
   tabOf,
 } from './screens/graph'
 import type { GraphScreen } from './screens/graph'
-import { hidesView } from '../shared/version'
+import { hidesView, launchSupported } from '../shared/version'
 import type { ReducedView, SkewElement, SkewFactory, SkewTheme } from '../shared/version'
 
 /**
@@ -404,6 +414,47 @@ export function railBridgeFrom(fugaro: unknown): RailBridge {
     revealInstallation: (args) => ask('revealInstallation', args),
     openInstallations: (args) => ask('openInstallations', args),
   }
+}
+
+/**
+ * LaunchBridge is the one **write** the dashboard makes: `run.launch`, the Live
+ * view's launch control (V2.5.1b). It is a bridge of its own rather than a tenth
+ * member of `ReadBridge`, because that interface is the reads a screen is drawn
+ * from and this one spends money -- a reader looking for what this console can
+ * *do* should not have to find it among the things it can look at.
+ *
+ * It is answered the way `readBridgeFrom` answers: a member that is missing, or
+ * that fails to answer at all, is `null` rather than a rejection -- and the
+ * launch form draws that as a reply it could not read, which is the state that
+ * leaves the operator with the fields they typed and no launch claimed.
+ */
+export interface LaunchBridge {
+  launchRun(args: Readonly<Record<string, unknown>>): Promise<unknown>
+}
+
+export function launchBridgeFrom(fugaro: unknown): LaunchBridge {
+  const ask = (name: string, args: Readonly<Record<string, unknown>>): Promise<unknown> => askMember(fugaro, name, args)
+  return { launchRun: (args) => ask('launchRun', args) }
+}
+
+/**
+ * valueOf is one form control's value, read through the node behind a drawn
+ * element: a screen's interfaces carry text and attributes and never an input's
+ * `value`, so this is the one place this file reads a value *as* a value rather
+ * than as text. A node that carries none -- a fake, or something that is not an
+ * input at all -- answers the empty string, which every check and the CLI both
+ * refuse.
+ */
+function valueOf(surface: DomSurface, element: SkewElement): string {
+  const node = surface.nodeOf(element) as unknown as { readonly value?: unknown }
+  return typeof node.value === 'string' ? node.value : ''
+}
+
+/** setValueOf is the other half: the launch form clears the task it launched, and
+ * a value is written the same way it is read -- on the node behind the element,
+ * because a drawing cannot carry one. */
+function setValueOf(surface: DomSurface, element: SkewElement, value: string): void {
+  ;(surface.nodeOf(element) as unknown as { value: string }).value = value
 }
 
 /** INSTALLATION_UNREADABLE is the console's sentence for an answer to
@@ -787,7 +838,6 @@ export function isMacPlatform(navigator: unknown): boolean {
 export const RAIL_CLASS = 'console-rail'
 export const RAIL_HEAD_CLASS = 'console-rail-head'
 export const RAIL_TITLE_CLASS = 'console-rail-title'
-export const RAIL_COLLAPSE_CLASS = 'console-rail-collapse'
 export const RAIL_LIST_CLASS = 'console-rail-list'
 export const RAIL_ROW_CLASS = 'console-rail-row'
 export const RAIL_NAMELINE_CLASS = 'console-rail-nameline'
@@ -802,10 +852,6 @@ export const RAIL_HINT_CLASS = 'console-rail-hint'
  * none; the `+` below it stays the way to add one. */
 export const RAIL_EMPTY_CLASS = 'console-rail-empty'
 
-/** RAIL_LIST_ID is what the collapse control's `aria-controls` names. It is an
- * `id` and not a hook: `aria-controls` takes an element's id, and no rule in the
- * stylesheet selects it -- the class above is what a rule may select. */
-export const RAIL_LIST_ID = 'console-rail-list'
 /** RAIL_TITLE_ID is the rail title's id, which names the rows' tablist
  * (`aria-labelledby`): a tablist with no accessible name is announced as a bare
  * list of tabs (review m5). */
@@ -819,16 +865,6 @@ export const RAIL_TITLE = 'Installations'
 export const RAIL_HINT = 'Switch with the shortcut keys 1 2 3'
 export const RAIL_EMPTY_TEXT = 'No installations yet'
 export const RAIL_ADD_LABEL = '+ Add installation'
-
-/** RAIL_COLLAPSE_LABEL and RAIL_EXPAND_LABEL are the collapse control's
- * accessible name in the two states it has. The name changes with the state, so
- * what the control *does* next is announced rather than drawn only (design
- * section 4.1); the glyph beside it is the drawn half and is never the only
- * one. */
-export const RAIL_COLLAPSE_LABEL = 'Collapse the installations rail'
-export const RAIL_EXPAND_LABEL = 'Expand the installations rail'
-export const RAIL_COLLAPSE_GLYPH = '‹'
-export const RAIL_EXPAND_GLYPH = '›'
 
 /** RailState is the rail's three words, and the glyph each is drawn beside. The
  * word is drawn **and** the glyph is drawn, never one instead of the other
@@ -858,7 +894,7 @@ export const RAIL_SPEND_UNREAD = 'no budget show document was read'
  * two halves and neither is the only one (design section 3.5): the glyph is what
  * an operator sees beside the name, and the accessible name is the row's own
  * sentence -- `railWarningName` below -- so the fact survives a screenshot that
- * loses the tone, a reader that never draws the glyph, and a collapsed rail. */
+ * loses the tone, and a reader that never draws the glyph. */
 export const RAIL_WARNING_GLYPH = '⚠'
 export const RAIL_WARNING_LABEL = 'warning'
 
@@ -937,6 +973,13 @@ export interface RailRow {
   readonly saved: boolean
   readonly checkout: string | null
   readonly checkouts: readonly string[]
+  /** `repositories` is what the installation records as its own, in the CLI's
+   * order and each one once: the `<provider>/<owner>/<name>` identity verbatim.
+   * It is what the launch control offers (V2.5.1b) and it is **not** `checkouts`
+   * -- a launch names a repository, not a directory -- so a row that carries no
+   * parseable list carries none rather than the paths, and the form then draws
+   * its own sentence. */
+  readonly repositories: readonly string[]
 }
 
 /**
@@ -995,6 +1038,15 @@ export function railRows(reply: unknown): readonly RailRow[] | null {
         saved: row['saved'] === true,
         checkout: typeof row['checkout'] === 'string' && row['checkout'] !== '' ? row['checkout'] : null,
         checkouts: stringsOf(row['checkouts']),
+        // Read like `checkouts` except for the one thing this field is not: an
+        // identity main matches against its own records, so it is kept **raw**.
+        // A list this field cannot be read from is an installation whose launch
+        // control has nothing to offer (the panel draws its own sentence), which
+        // is not a reason to drop a row the rail can draw in every other
+        // respect. The launch form draws each identity through `sanitizeRefusal`
+        // and keeps the raw string beside the drawn label -- a repository whose
+        // name is shaped like a credential must still launch.
+        repositories: rawStringsOf(row['repositories']),
       }),
     )
   }
@@ -1016,6 +1068,17 @@ function stringsOf(raw: unknown): readonly string[] {
   return Object.freeze(
     raw.filter((one): one is string => typeof one === 'string').map((one) => textOf(one, 'the CLI’s own line')),
   )
+}
+
+/** rawStringsOf is a list of strings with nothing done to them: the same filter
+ * `stringsOf` applies, and no sanitiser. It is for a list of *identities* --
+ * today the repository list a launch names, which main matches against the
+ * records it read from the CLI -- where a folded or redacted copy would be a
+ * value main refuses. The screen that draws one redacts the label it draws and
+ * keeps the raw string beside it (`screens/launch.ts`'s `options`). */
+function rawStringsOf(raw: unknown): readonly string[] {
+  if (!Array.isArray(raw)) return Object.freeze([])
+  return Object.freeze(raw.filter((one): one is string => typeof one === 'string'))
 }
 
 /**
@@ -1105,6 +1168,7 @@ export function drawRail(
   rows: readonly RailRow[],
   activate: (row: RailRow, byKeyboard: boolean) => void,
   openPicker: () => void,
+  onState: (shown: RailState) => void = () => undefined,
 ): RailView {
   const factory = surface.factory
   const rail = factory.create('aside')
@@ -1116,22 +1180,13 @@ export function drawRail(
   title.setAttribute('class', RAIL_TITLE_CLASS)
   title.textContent = RAIL_TITLE
   title.setAttribute('id', RAIL_TITLE_ID)
-  const collapse = factory.create('button')
-  collapse.setAttribute('class', RAIL_COLLAPSE_CLASS)
-  collapse.setAttribute('type', 'button')
-  collapse.setAttribute('aria-controls', RAIL_LIST_ID)
-  collapse.setAttribute('aria-expanded', 'true')
-  collapse.setAttribute('aria-label', RAIL_COLLAPSE_LABEL)
-  collapse.textContent = RAIL_COLLAPSE_GLYPH
   head.append(title)
-  head.append(collapse)
 
   // The list is a tablist in its own right (design sections 2.1 and 4.1): the
   // role is Task 6.5's, and it is the renderer's first `role=` -- the rows below
   // are its tabs.
   const list = factory.create('div')
   list.setAttribute('class', RAIL_LIST_CLASS)
-  list.setAttribute('id', RAIL_LIST_ID)
   list.setAttribute('role', 'tablist')
   list.setAttribute('aria-labelledby', RAIL_TITLE_ID)
 
@@ -1206,6 +1261,8 @@ export function drawRail(
       stateSpan.textContent = `${RAIL_STATE_GLYPHS[shown]} ${shown}`
       stateSpan.setAttribute('data-state', shown)
     }
+    const open = openIndex >= 0 ? drawn[openIndex] : undefined
+    onState(open !== undefined && open.row.readable ? word : 'idle')
   }
 
   /** rowElement draws one installation's row, with the two spans a setter
@@ -1304,20 +1361,6 @@ export function drawRail(
   rail.append(foot)
   rail.append(hint)
   setRows(rows)
-
-  // The collapse control is this task's, so its behaviour is too: it flips the
-  // rail's `data-collapsed`, which is the one rule the 216 px and 56 px widths
-  // are selected by, and it keeps `aria-expanded` and its own name in step with
-  // what it drew. Nothing else about the rail moves -- a collapsed rail is the
-  // same tree, drawn narrow.
-  let collapsed = false
-  surface.nodeOf(collapse).addEventListener('click', () => {
-    collapsed = !collapsed
-    rail.setAttribute('data-collapsed', collapsed ? 'true' : 'false')
-    collapse.setAttribute('aria-expanded', collapsed ? 'false' : 'true')
-    collapse.setAttribute('aria-label', collapsed ? RAIL_EXPAND_LABEL : RAIL_COLLAPSE_LABEL)
-    collapse.textContent = collapsed ? RAIL_EXPAND_GLYPH : RAIL_COLLAPSE_GLYPH
-  })
 
   return {
     root: rail,
@@ -1599,6 +1642,319 @@ export function drawIssue(
 }
 
 // ---------------------------------------------------------------------------
+// The shell: one header row and the page container (console redesign, step 1).
+// ---------------------------------------------------------------------------
+
+/** The shell's hooks. They are constants because a spec reads them, and each is
+ * a row of the styling design's §2.1 table, which is the licence a rule selects
+ * it under. */
+export const SHELL_HEADER_CLASS = 'console-header'
+export const SHELL_WORDMARK_CLASS = 'console-wordmark'
+export const SHELL_WORDMARK_NAME_CLASS = 'console-wordmark-name'
+export const SHELL_PAGE_CLASS = 'console-page'
+export const SWITCHER_CLASS = 'console-switcher'
+export const SWITCHER_BUTTON_CLASS = 'console-switcher-button'
+export const SWITCHER_DOT_CLASS = 'console-switcher-dot'
+export const SWITCHER_NAME_CLASS = 'console-switcher-name'
+export const SWITCHER_VERSION_CLASS = 'console-switcher-version'
+export const SWITCHER_MENU_CLASS = 'console-switcher-menu'
+export const SWITCHER_MENU_ID = 'console-switcher-menu'
+export const GAUGE_CLASS = 'console-gauge'
+export const GAUGE_LABEL_CLASS = 'console-gauge-label'
+export const GAUGE_NOTIONAL_CLASS = 'console-gauge-notional'
+export const GAUGE_BAR_CLASS = 'console-gauge-bar'
+export const GAUGE_TRACK_CLASS = 'console-gauge-track'
+export const GAUGE_FILL_CLASS = 'console-gauge-fill'
+export const GAUGE_CAP_CLASS = 'console-gauge-cap'
+export const HALT_CLASS = 'console-halt'
+
+export const WORDMARK_TEXT = 'fugaro'
+export const SWITCHER_TITLE = 'Switch installation'
+export const GAUGE_LABEL = 'GLOBAL'
+export const GAUGE_NAME = 'Global budget today'
+export const HALT_LABEL = 'Halt fleet'
+
+/** GAUGE_WIDTH and GAUGE_HEIGHT are the gauge's drawn size in CSS pixels, and
+ * its SVG's user units: the fill's width is an attribute in those units, because
+ * the console writes no inline style and a stylesheet cannot read a number out
+ * of an attribute. */
+export const GAUGE_WIDTH = 96
+export const GAUGE_HEIGHT = 6
+
+/** GAUGE_WITHHELD is the gauge's reason when the mode withholds caps: the same
+ * gate the Spend and Projects views ask, so a reduced console shows `n/a` here
+ * rather than figures from a CLI shape it does not know. */
+export const GAUGE_WITHHELD = 'this CLI version’s caps are not shown'
+export const GAUGE_UNREAD = 'no budget has been read yet'
+
+/** SwitcherLine is what the switcher's button draws: the installation's name
+ * and its CLI version and mode, from `installation.current`. */
+export interface SwitcherLine {
+  readonly name: string
+  readonly version: string
+}
+
+/** switcherLine reads the button's two texts out of `installation.current`,
+ * through the same sanitizer `drawInstallation` uses. */
+export function switcherLine(reply: unknown): SwitcherLine {
+  const answer = replyData(reply)
+  const value =
+    answer.ok && typeof answer.data === 'object' && answer.data !== null && !Array.isArray(answer.data)
+      ? (answer.data as Record<string, unknown>)
+      : null
+  if (value === null || value['chosen'] !== true) {
+    return { name: 'No installation', version: value === null ? 'not read' : 'none chosen' }
+  }
+  const version = value['cliVersion']
+  return {
+    name: textOf(value['project'], 'the installation’s project'),
+    version: `CLI ${typeof version === 'string' ? textOf(version, 'the installation’s version') : 'version not read'} · ${textOf(value['mode'], 'the installation’s mode')}`,
+  }
+}
+
+/** SwitcherView is the drawn switcher and the writes this file makes to it. */
+export interface SwitcherView {
+  readonly root: DomElement
+  /** setState writes the status dot: the open installation's rail word. */
+  setState(state: RailState): void
+  /** close folds the menu and, when asked, hands the focus back to the button. */
+  close(focusButton: boolean): void
+}
+
+/**
+ * drawSwitcher draws the installation switcher, which replaced the canvas's
+ * left rail (owner's ruling of 2026-10-28): a button naming the installation
+ * the console reads, and a menu holding what the rail held -- the installation
+ * line with the CLI's full path, then the rail's own tree. The menu is a
+ * disclosure: `aria-expanded` on the button, `hidden` on the menu, Escape and a
+ * click outside fold it. The shortcut keys still reach the rows when it is
+ * folded, because they are the document's.
+ */
+export function drawSwitcher(
+  surface: DomSurface,
+  document: Document,
+  line: SwitcherLine,
+  installation: SkewElement,
+  rail: DomElement,
+): SwitcherView {
+  const factory = surface.factory
+  const root = factory.create('div')
+  root.setAttribute('class', SWITCHER_CLASS)
+
+  const trigger = factory.create('button')
+  trigger.setAttribute('class', SWITCHER_BUTTON_CLASS)
+  trigger.setAttribute('type', 'button')
+  trigger.setAttribute('title', SWITCHER_TITLE)
+  trigger.setAttribute('aria-haspopup', 'true')
+  trigger.setAttribute('aria-expanded', 'false')
+  trigger.setAttribute('aria-controls', SWITCHER_MENU_ID)
+  const dot = factory.create('span')
+  dot.setAttribute('class', SWITCHER_DOT_CLASS)
+  dot.setAttribute('data-state', 'running')
+  dot.setAttribute('role', 'img')
+  dot.setAttribute('aria-label', 'running')
+  const name = factory.create('span')
+  name.setAttribute('class', SWITCHER_NAME_CLASS)
+  name.textContent = line.name
+  const version = factory.create('span')
+  version.setAttribute('class', SWITCHER_VERSION_CLASS)
+  version.textContent = line.version
+  trigger.append(dot)
+  trigger.append(name)
+  trigger.append(version)
+
+  const menu = factory.create('div')
+  menu.setAttribute('class', SWITCHER_MENU_CLASS)
+  menu.setAttribute('id', SWITCHER_MENU_ID)
+  menu.setAttribute('hidden', '')
+  menu.append(installation)
+  menu.append(rail)
+
+  root.append(trigger)
+  root.append(menu)
+
+  const close = (focusButton: boolean): void => {
+    menu.setAttribute('hidden', '')
+    trigger.setAttribute('aria-expanded', 'false')
+    if (focusButton) trigger.focus()
+  }
+  surface.nodeOf(trigger).addEventListener('click', () => {
+    if (trigger.getAttribute('aria-expanded') === 'true') {
+      close(false)
+      return
+    }
+    menu.removeAttribute('hidden')
+    trigger.setAttribute('aria-expanded', 'true')
+  })
+  keydownOn(surface.nodeOf(root), (event: KeyEventLike) => {
+    if (event.key !== 'Escape' || trigger.getAttribute('aria-expanded') !== 'true') return
+    event.preventDefault()
+    close(true)
+  })
+  const node = surface.nodeOf(root)
+  document.addEventListener('click', (event: Event) => {
+    if (trigger.getAttribute('aria-expanded') !== 'true') return
+    const target = event.target as Node | null
+    if (target !== null && typeof node.contains === 'function' && node.contains(target)) return
+    close(false)
+  })
+
+  return {
+    root,
+    setState: (state: RailState): void => {
+      dot.setAttribute('data-state', state)
+      dot.setAttribute('aria-label', state)
+    },
+    close,
+  }
+}
+
+/** GaugeFigures are the three numbers the fleet gauge draws: today's notional
+ * spend, the counted dollars held against the global cap, and the cap. */
+export interface GaugeFigures {
+  readonly notionalUsd: Reading
+  readonly countedUsd: Reading
+  readonly capUsd: Reading
+}
+
+/** gaugeFromBudget reads the gauge's figures out of a `budget show` document's
+ * `global` block: the read the Spend and Projects views make. */
+export function gaugeFromBudget(raw: unknown): GaugeFigures {
+  const document = typeof raw === 'object' && raw !== null && !Array.isArray(raw) ? (raw as Record<string, unknown>) : null
+  const global = document === null ? null : document['global']
+  const block = typeof global === 'object' && global !== null && !Array.isArray(global) ? (global as Record<string, unknown>) : null
+  const field = (name: string): Reading => readNumber(block === null ? undefined : block[name], `global.${name}`)
+  const notionalUsd = field('notional_usd')
+  return {
+    notionalUsd: notionalUsd.value === null ? notionalUsd : notional(notionalUsd.value),
+    countedUsd: field('counted_usd'),
+    capUsd: field('daily_cap_usd'),
+  }
+}
+
+/** GaugeView is the drawn gauge and its one writer. */
+export interface GaugeView {
+  readonly root: DomElement
+  set(figures: GaugeFigures): void
+}
+
+/**
+ * drawGauge draws the fleet gauge: the word, today's notional spend, a 96 x 6
+ * bar and the global cap.
+ *
+ * **The bar is the counted dollars against the cap and nothing else.** The
+ * redesign draws a hatched notional segment beside the leased fill; notional
+ * dollars count toward no cap, so putting them on the cap's axis would add
+ * notional to counted, which the redesign's own money grammar forbids. The
+ * notional figure is the text beside the bar. A cap or a count that is not a
+ * measurement draws an empty track, never a bar at zero.
+ */
+export function drawGauge(surface: DomSurface, withheld: boolean): GaugeView {
+  const factory = surface.factory
+  const root = factory.create('div')
+  root.setAttribute('class', GAUGE_CLASS)
+  root.setAttribute('role', 'group')
+  root.setAttribute('aria-label', GAUGE_NAME)
+  const label = factory.create('span')
+  label.setAttribute('class', GAUGE_LABEL_CLASS)
+  label.textContent = GAUGE_LABEL
+  const notionalSpan = factory.create('span')
+  notionalSpan.setAttribute('class', GAUGE_NOTIONAL_CLASS)
+  const bar = factory.createNS('svg')
+  bar.setAttribute('class', GAUGE_BAR_CLASS)
+  bar.setAttribute('width', String(GAUGE_WIDTH))
+  bar.setAttribute('height', String(GAUGE_HEIGHT))
+  bar.setAttribute('viewBox', `0 0 ${String(GAUGE_WIDTH)} ${String(GAUGE_HEIGHT)}`)
+  bar.setAttribute('aria-hidden', 'true')
+  const track = factory.createNS('rect')
+  track.setAttribute('class', GAUGE_TRACK_CLASS)
+  track.setAttribute('width', String(GAUGE_WIDTH))
+  track.setAttribute('height', String(GAUGE_HEIGHT))
+  track.setAttribute('rx', '3')
+  const fill = factory.createNS('rect')
+  fill.setAttribute('class', GAUGE_FILL_CLASS)
+  fill.setAttribute('width', '0')
+  fill.setAttribute('height', String(GAUGE_HEIGHT))
+  fill.setAttribute('rx', '3')
+  bar.append(track)
+  bar.append(fill)
+  const cap = factory.create('span')
+  cap.setAttribute('class', GAUGE_CAP_CLASS)
+  root.append(label)
+  root.append(notionalSpan)
+  root.append(bar)
+  root.append(cap)
+
+  const set = (figures: GaugeFigures): void => {
+    const shown: GaugeFigures = withheld
+      ? { notionalUsd: unavailable(GAUGE_WITHHELD), countedUsd: unavailable(GAUGE_WITHHELD), capUsd: unavailable(GAUGE_WITHHELD) }
+      : figures
+    notionalSpan.removeAttribute('title')
+    cap.removeAttribute('title')
+    putReading(notionalSpan, shown.notionalUsd, 'usd')
+    putReading(cap, shown.capUsd, 'usd')
+    const counted = shown.countedUsd.value
+    const limit = shown.capUsd.value
+    const share = counted !== null && limit !== null && limit > 0 ? Math.min(1, Math.max(0, counted / limit)) : 0
+    fill.setAttribute('width', String(Math.round(share * GAUGE_WIDTH * 100) / 100))
+    root.setAttribute(
+      'title',
+      counted !== null && limit !== null && limit > 0
+        ? `counted ${formatReading(shown.countedUsd, 'usd')} of the ${formatReading(shown.capUsd, 'usd')} daily cap (${formatReading(measured(share * 100), 'percent')})`
+        : GAUGE_UNREAD,
+    )
+  }
+  set({ notionalUsd: unavailable(GAUGE_UNREAD), countedUsd: unavailable(GAUGE_UNREAD), capUsd: unavailable(GAUGE_UNREAD) })
+  return { root, set }
+}
+
+/** drawWordmark draws the wordmark: the three staggered strokes and the name,
+ * as the control that goes to Live. It is a button for the reason the nav's
+ * tabs are: the renderer writes no `href`. `home` is the click, bound by the
+ * dashboard. */
+export function drawWordmark(surface: DomSurface, home: () => void): DomElement {
+  const factory = surface.factory
+  const link = factory.create('button')
+  link.setAttribute('class', SHELL_WORDMARK_CLASS)
+  link.setAttribute('type', 'button')
+  link.setAttribute('aria-label', 'fugaro: Live')
+  const mark = factory.createNS('svg')
+  mark.setAttribute('width', '24')
+  mark.setAttribute('height', '24')
+  mark.setAttribute('viewBox', '0 0 24 24')
+  mark.setAttribute('aria-hidden', 'true')
+  for (const d of ['M3 6 H15', 'M6 12 H18', 'M9 18 H21']) {
+    const stroke = factory.createNS('path')
+    stroke.setAttribute('d', d)
+    mark.append(stroke)
+  }
+  const name = factory.create('span')
+  name.setAttribute('class', SHELL_WORDMARK_NAME_CLASS)
+  name.textContent = WORDMARK_TEXT
+  link.append(mark)
+  link.append(name)
+  surface.nodeOf(link).addEventListener('click', () => {
+    home()
+  })
+  return link
+}
+
+/** drawHalt draws Halt fleet: designed, and not performed (`writes.ts`). */
+export function drawHalt(surface: DomSurface): DomElement {
+  const factory = surface.factory
+  const icon = factory.createNS('svg')
+  icon.setAttribute('width', '14')
+  icon.setAttribute('height', '14')
+  icon.setAttribute('viewBox', '0 0 14 14')
+  for (const d of ['M7 1.5 V6.5', 'M3.6 3.6 A4.8 4.8 0 1 0 10.4 3.6']) {
+    const stroke = factory.createNS('path')
+    stroke.setAttribute('d', d)
+    icon.append(stroke)
+  }
+  return disabledWrite(factory, HALT_CLASS, HALT_LABEL, icon)
+}
+
+// ---------------------------------------------------------------------------
 // The dashboard (desktop-console plan Task 3.4c).
 // ---------------------------------------------------------------------------
 
@@ -1806,26 +2162,53 @@ export async function bootDashboard(scope: DashboardScope): Promise<void> {
   const onboarding = railOnboarding(listed)
   // The rail is drawn before the dashboard for the DOM order, and a click on it
   // is answered by the dashboard's own views: `mountDashboard` binds `activate`.
-  const wiring: RailWiring = { activate: () => undefined }
+  const wiring: RailWiring = { activate: () => undefined, home: () => undefined }
+  // The switcher is drawn after the rail it holds, so the rail's first state
+  // word reaches it through this holder rather than through a view not yet made.
+  const status: { switcher: SwitcherView | null; word: RailState } = { switcher: null, word: 'running' }
   const rail = drawRail(
     surface,
     rows,
     (row, byKeyboard) => {
+      status.switcher?.close(false)
       wiring.activate(row, byKeyboard)
     },
     () => {
+      status.switcher?.close(false)
       void railBridge.openInstallations({})
     },
+    (shown) => {
+      status.word = shown
+      status.switcher?.setState(shown)
+    },
   )
-  surface.mount.append(rail.root)
-  surface.mount.append(drawInstallation(surface.factory, installation))
+  const header = surface.factory.create('header')
+  header.setAttribute('class', SHELL_HEADER_CLASS)
+  header.append(
+    drawWordmark(surface, () => {
+      wiring.home()
+    }),
+  )
+  const switcher = drawSwitcher(
+    surface,
+    scope.document,
+    switcherLine(installation),
+    drawInstallation(surface.factory, installation),
+    rail.root,
+  )
+  status.switcher = switcher
+  switcher.setState(status.word)
+  header.append(switcher.root)
+  surface.mount.append(header)
   await mountDashboard({
+    header,
     document: scope.document,
     surface,
     gate,
     bridge,
     rail,
     railBridge,
+    launchBridge: launchBridgeFrom(scope.fugaro),
     rows,
     onboarding,
     wiring,
@@ -1837,6 +2220,8 @@ export async function bootDashboard(scope: DashboardScope): Promise<void> {
  * click can show exist. */
 interface RailWiring {
   activate: (row: RailRow, byKeyboard: boolean) => void
+  /** home is the wordmark's click: the Live view. */
+  home: () => void
 }
 
 /**
@@ -1868,13 +2253,44 @@ export function currentRailRows(installation: unknown): readonly RailRow[] {
       saved: true,
       checkout: null,
       checkouts: Object.freeze([]),
+      // `installation.current` carries no repository list -- the CLI's list is
+      // the only read that does -- so a console whose list read failed offers no
+      // repository to launch in, and its launch control says so rather than
+      // guessing at one.
+      repositories: Object.freeze([]),
     }),
   ])
+}
+
+/**
+ * LaunchNow is the drawn launch control, the installation it was built for and
+ * whether a call is out.
+ *
+ * The control is **built once per offer of repositories and kept**, which is
+ * what makes a form survive the one-second Live poll: the poll replaces the
+ * panel, and a control rebuilt on every frame would be a form that emptied
+ * itself while the operator was typing. "The same offer" is the installation
+ * **and** the repository identities it records: a row's list can change while
+ * its project does not -- a checkout added or removed under the open
+ * installation, whose answer replaces the rail rows without dropping the Live
+ * screen -- and a kept control would then offer a list the installation no
+ * longer has, refusing the repository the operator picked from the CLI's own
+ * list. Rebuilding it is also the whole of "switching installation clears the
+ * form and any drawn outcome" (`sameOffer` and `launchNowOf` below).
+ */
+interface LaunchNow {
+  readonly project: string
+  readonly view: LaunchView
+  readonly control: LaunchControl
+  busy: boolean
 }
 
 /** DashboardDeps is what the dashboard half of `bootDashboard` needs, named so
  * that the wiring can be read -- and driven -- apart from the startup. */
 interface DashboardDeps {
+  /** header is the shell's header row: the wordmark and the switcher are in
+   * it, and the dashboard appends the navigation, the gauge and Halt fleet. */
+  readonly header: DomElement
   readonly document: Document
   readonly surface: DomSurface
   readonly gate: ScreenGate
@@ -1886,6 +2302,9 @@ interface DashboardDeps {
   /** railBridge, rows and wiring are the rail's own operations, the rows it was
    * first drawn with, and the click this function binds. */
   readonly railBridge: RailBridge
+  /** launchBridge is the Live view's one write (`run.launch`, V2.5.1b), the
+   * only operation of this console that spends money. */
+  readonly launchBridge: LaunchBridge
   readonly rows: readonly RailRow[]
   /** onboarding is the screen the list answer names for a machine with no
    * installation, or `null`. */
@@ -1905,7 +2324,7 @@ interface DashboardDeps {
  * figures in it rather than at an empty panel that fills in later.
  */
 async function mountDashboard(deps: DashboardDeps): Promise<void> {
-  const { document, surface, gate, bridge, rail, railBridge, wiring, navigator } = deps
+  const { document, surface, gate, bridge, rail, railBridge, launchBridge, wiring, navigator, header } = deps
   const factory = surface.factory
   const theme = CONSOLE_THEME
 
@@ -1951,6 +2370,9 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
   /** drawnViews is the navigation's buttons by view id, so `show` can mark the
    * current one without walking the tree again. */
   const buttons = new Map<string, DomElement>()
+  // The gauge is drawn with the header below; a read that lands before it is
+  // drawn has nowhere to go, and the first poll is after it.
+  let setGauge: (figures: GaugeFigures) => void = () => undefined
 
   /**
    * syncPolling is the one place the interval is started and stopped, so the two
@@ -2010,29 +2432,16 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
   const stale = (mine: number): boolean => mine !== generation
 
   /**
-   * markButtons is the navigation's one writer of its three markers (Task 6.5;
-   * design sections 2.1 and 4.3). A button carries the fact twice on purpose:
-   * `aria-current` is the navigation's own mark, which the code emitted before
-   * this task and the stylesheet already selects, and `aria-selected` is the
-   * same fact in the vocabulary a tablist is read with -- a tab that is not
-   * selected is not the tab that is showing.
-   *
-   * The `tabindex` is the roving one: **the current view's button is the
-   * navigation's single tab stop** and the others are out of the tab order, so a
-   * reader tabs into the nav once rather than three times and the arrows move
-   * within it. Run detail is a view with no button, and while it is up no
-   * offered view is current -- so the stop falls back to the first offered
-   * button rather than to none: a tablist with every tab at `-1` is a tablist the
-   * keyboard cannot enter at all, which is the one thing a roving `tabindex` may
-   * not do.
+   * markButtons marks the view on screen: `aria-current="page"` on its button
+   * and on no other. The buttons are ordinary tab stops (the redesign's tabs,
+   * 2026-10-28), so there is no roving `tabindex` to keep. Run detail and the
+   * issue view have no button, and while one is up no button is marked, which
+   * is the truth about the navigation.
    */
   const markButtons = (id: string): void => {
-    const first = buttons.keys().next()
-    const roving = buttons.has(id) || first.done === true ? id : first.value
     for (const [key, button] of buttons) {
-      button.setAttribute('aria-current', key === id ? 'true' : 'false')
-      button.setAttribute('aria-selected', key === id ? 'true' : 'false')
-      button.setAttribute('tabindex', tabStop(key === roving))
+      if (key === id) button.setAttribute('aria-current', 'page')
+      else button.removeAttribute('aria-current')
     }
   }
 
@@ -2063,8 +2472,10 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     if (id === 'live') {
       maybeRefreshRigor()
       // A console that opened on an issue has made no Live read yet.
-      if (live.drawn !== null) replace(live.drawn)
-      else void pollLive()
+      if (live.drawn !== null) {
+        replace(live.drawn)
+        placeLaunch()
+      } else void pollLive()
       return
     }
     if (id === 'graph') void showGraph()
@@ -2073,22 +2484,24 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     if (id === 'coordinator') void showCoordinator()
   }
 
-  // The navigation is a tab list in all but name, and Task 6.5 makes it one
-  // (design section 4.3): the role is on the nav, the buttons are its tabs, and
-  // the arrows and Home/End drive it below.
+  // The navigation is the redesign's five tabs, in the header after the
+  // switcher. The redesign draws them as links; they stay buttons because the
+  // renderer never writes an `href` (design section 2: a URL goes to
+  // `data-href`, and the fake document refuses the attribute outright), and a
+  // button is the native control for an in-page switch. A click is `show`, and
+  // the button's own Enter and Space are the same click.
   const nav = factory.create('nav')
   nav.setAttribute('class', VIEW_NAV_CLASS)
-  nav.setAttribute('role', 'tablist')
-  surface.mount.append(nav)
+  nav.setAttribute('aria-label', 'Console')
+  header.append(nav)
 
   for (const entry of VIEWS) {
-    // The gate is asked before the button exists: a view this mode withholds is
+    // The gate is asked before the link exists: a view this mode withholds is
     // not offered at all, and the read behind it is never made.
     if (entry.view !== null && hidesView(gate.compatibility, entry.view)) continue
     const button = factory.create('button')
     button.setAttribute('class', VIEW_BUTTON_CLASS)
     button.setAttribute('type', 'button')
-    button.setAttribute('role', 'tab')
     button.setAttribute('data-view', entry.id)
     button.textContent = entry.label
     nav.append(button)
@@ -2096,22 +2509,19 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     surface.nodeOf(button).addEventListener('click', () => {
       show(entry.id)
     })
-    // The navigation's keys (design section 4.3): Left and Right, Home and End,
-    // and each of them is `show` -- a nav button's selection *is* the view it
-    // puts on screen, so the arrows activate as they move and no second key is
-    // needed (the rail's rows, which select only themselves, need Enter for
-    // that). The focus follows the view, which is what keeps the ring on the
-    // button the reader is standing on.
-    keydownOn(surface.nodeOf(button), (event: KeyEventLike) => {
-      const order = [...buttons.keys()]
-      const target = tabTarget(event.key, order.indexOf(entry.id), order.length, 'x')
-      const wanted = target === null ? undefined : order[target]
-      if (wanted === undefined) return
-      event.preventDefault()
-      show(wanted)
-      buttons.get(wanted)?.focus()
-    })
   }
+  wiring.home = (): void => {
+    show('live')
+    buttons.get('live')?.focus()
+  }
+
+  // The gauge and Halt fleet close the header row. The gauge's figures are the
+  // global budget the console already reads: the Live frame's total on every
+  // poll, and `budget show`'s global block when Spend or Projects reads it.
+  const gauge = drawGauge(surface, hidesView(gate.compatibility, 'caps'))
+  setGauge = gauge.set
+  header.append(gauge.root)
+  header.append(drawHalt(surface))
 
   // The view on screen is marked from the first paint, not only after the first
   // click: `markButtons` writes these attributes on every switch, and a
@@ -2119,7 +2529,10 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
   // a console whose current view is unmarked and whose tab stop is nowhere.
   markButtons(currentView)
 
-  surface.mount.append(panel)
+  const page = factory.create('main')
+  page.setAttribute('class', SHELL_PAGE_CLASS)
+  page.append(panel)
+  surface.mount.append(page)
 
   // ---- Live -------------------------------------------------------------
 
@@ -2235,6 +2648,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     // (section 4.1). A read that was refused sets it above.
     rail.setState(feed.stale ? 'silent' : 'running')
     const model = buildLiveModel(decoded.value, history, feed, live.rigor)
+    setGauge({ notionalUsd: model.total.notionalUsd, countedUsd: model.total.countedUsd, capUsd: model.total.dailyCapUsd })
     // The kill banner is the `kill` view. It is asked for through the gate --
     // the one door -- with an empty drawing, because what a reduced console
     // withholds here is not a screen but one panel of the Live screen: the
@@ -2245,6 +2659,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     live.drawn = drawn
     replace(drawn)
     wireRuns(drawn, model)
+    placeLaunch()
   }
 
   /**
@@ -2733,7 +3148,10 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     // 4.1). It is filled before the staleness check below: the spend is a fact
     // about the installation rather than about the view the operator chose, so a
     // read that landed after they moved on still fills the rail.
-    if (capsReply.ok) rail.setSpend(railSpend(capsReply.data))
+    if (capsReply.ok) {
+      rail.setSpend(railSpend(capsReply.data))
+      setGauge(gaugeFromBudget(capsReply.data))
+    }
     if (stale(mine)) return
     if (capsReply.ok) caps = capsReply.data
 
@@ -2843,7 +3261,10 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     const budget = await read('budget.show', () => bridge.showBudget({}))
     // The Projects view makes the same budget read, and the rail's spend is that
     // read's too: one read serves the panel and the rail.
-    if (budget !== null) rail.setSpend(railSpend(budget))
+    if (budget !== null) {
+      rail.setSpend(railSpend(budget))
+      setGauge(gaugeFromBudget(budget))
+    }
     const runs = await read('runs.list', () => bridge.listRuns({}))
     // Both reads are in, and the operator may have moved on while they were.
     if (stale(mine)) return
@@ -2946,6 +3367,145 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    */
   let railNow: readonly RailRow[] = deps.rows
   let onboardNow: RailOnboarding | null = deps.onboarding
+
+  // ---- The launch control (V2.5.1b) --------------------------------------
+
+  let launchNow: LaunchNow | null = null
+
+  /** sameOffer is whether the control that is held was built for the repositories
+   * the open row offers now: the same installation, and the same identities in the
+   * same order. */
+  const sameOffer = (held: LaunchNow, open: RailRow): boolean =>
+    held.project === open.project &&
+    held.view.repositories.length === open.repositories.length &&
+    held.view.repositories.every((one, index) => one === open.repositories[index])
+
+  /** launchNowOf is the control for the installation the panel is about, built
+   * on first use and rebuilt when its repository list changes. `supported` is the
+   * handshake's answer about the CLI this console is driving (design section 5.1
+   * rule 11: below the floor there is no control at all, and no call is reachable
+   * from this file). */
+  const launchNowOf = (): LaunchNow | null => {
+    const open = railNow.find((row) => row.open)
+    if (open === undefined) return null
+    if (launchNow !== null && sameOffer(launchNow, open)) return launchNow
+    const view: LaunchView = {
+      installation: open.project,
+      repositories: open.repositories,
+      supported: launchSupported(gate.compatibility.cliVersion ?? ''),
+    }
+    const control = renderLaunch(factory, view)
+    launchNow = { project: open.project, view, control, busy: false }
+    wireLaunch(launchNow)
+    return launchNow
+  }
+
+  /** countNow writes the task's own byte count, which is the number main counts. */
+  const countNow = (fields: LaunchFields, text: string): void => {
+    fields.count.textContent = launchCounter(launchBytes(text))
+  }
+
+  /** busyNow is the in-flight state, written in one place: the submit is
+   * `disabled` and the form carries `aria-busy`, so a control that was pressed
+   * cannot be pressed again while the confirmation window is open in front of
+   * it. */
+  const busyNow = (held: LaunchNow, busy: boolean): void => {
+    const fields = held.control.fields
+    if (fields === null || held.control.form === null) return
+    ;(surface.nodeOf(fields.submit) as unknown as { disabled: boolean }).disabled = busy
+    held.control.form.setAttribute('aria-busy', busy ? 'true' : 'false')
+  }
+
+  /**
+   * sendLaunch asks the main process for the launch. It is the **only** call
+   * this file makes with a launch's fields, and the object it passes carries
+   * exactly the schema's five keys: the installation, the repository the select
+   * holds -- the identity the installation records, which is the option's own
+   * `value` and not the label drawn beside it -- the task, and the title and plan
+   * task when the operator typed one. Nothing here is a path, a flag, a ref or a
+   * run id -- main and its confirmation window own all four -- and `launchCheck`
+   * is a convenience in front of it rather than the boundary: main re-validates
+   * every field.
+   *
+   * The outcome is drawn in the region `renderLaunch` marked `aria-live`, and
+   * the task is cleared only when a launch happened: a refusal keeps the fields,
+   * because the operator's next move is to fix one of them.
+   */
+  const sendLaunch = async (held: LaunchNow): Promise<void> => {
+    const fields = held.control.fields
+    if (fields === null || held.busy) return
+    const typed: LaunchTyped = {
+      repository: valueOf(surface, fields.repository),
+      task: valueOf(surface, fields.task),
+      title: valueOf(surface, fields.title),
+      planTask: valueOf(surface, fields.planTask),
+    }
+    const complaint = launchCheck(typed, held.view.repositories)
+    fields.hint.textContent = complaint ?? ''
+    if (complaint !== null) return
+    const title = typed.title.trim()
+    const planTask = typed.planTask.trim()
+    held.busy = true
+    busyNow(held, true)
+    let reply: unknown = null
+    try {
+      reply = await launchBridge.launchRun({
+        installation: held.project,
+        repository: typed.repository,
+        task: typed.task,
+        ...(title === '' ? {} : { title }),
+        ...(planTask === '' ? {} : { planTask }),
+      })
+    } finally {
+      held.busy = false
+      busyNow(held, false)
+    }
+    // A launch that settled after the operator moved to another installation is
+    // an answer about a form that is gone: drawing it would be a sentence about
+    // one installation's launch under another's.
+    if (launchNow !== held) return
+    const read = launchOutcomeOf(reply)
+    surface.nodeOf(held.control.outcome).replaceChildren(surface.nodeOf(renderLaunchOutcome(factory, read)))
+    if (read.kind === 'launched') {
+      setValueOf(surface, fields.task, '')
+      countNow(fields, '')
+      fields.hint.textContent = ''
+    }
+  }
+
+  /** wireLaunch binds the form's own events: the button that reveals it, the
+   * counter that follows the task, and the submit. */
+  const wireLaunch = (held: LaunchNow): void => {
+    const { open, form, fields } = held.control
+    if (open !== null && form !== null) {
+      surface.nodeOf(open).addEventListener('click', () => {
+        surface.nodeOf(form).removeAttribute('hidden')
+        // The button says what it did: `aria-expanded` follows the form it
+        // controls, so the state is announced and not only drawn.
+        open.setAttribute('aria-expanded', 'true')
+      })
+    }
+    if (fields === null) return
+    surface.nodeOf(fields.task).addEventListener('input', () => {
+      countNow(fields, valueOf(surface, fields.task))
+    })
+    surface.nodeOf(fields.submit).addEventListener('click', () => {
+      void sendLaunch(held)
+    })
+  }
+
+  /**
+   * placeLaunch puts the control under the Live screen. It is called from the
+   * two places the Live view is drawn into the panel and from nowhere else, so
+   * "the launch control is on the Runs screen and on no other view" is the call
+   * sites rather than a condition every other screen would have to remember.
+   */
+  const placeLaunch = (): void => {
+    if (currentView !== 'live') return
+    const held = launchNowOf()
+    if (held === null) return
+    surface.nodeOf(panel).appendChild(surface.nodeOf(held.control.root))
+  }
 
   /** showOnboarding puts the first-run screen in the main area: no
    * installation, so nothing to read and no Live refusal in its place. */
