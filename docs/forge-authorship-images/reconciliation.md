@@ -28,14 +28,14 @@ The spec reads greenfield. It is not. Of its five parts:
   `allow_repos` with wildcards (`projectpolicy.MatchRepo`), `fugaro project repos add|rm|ls`, and
   `fugaro project sync`, which already expands the GitHub App's installed repositories. The repo
   pointer is the committed `fugaro.yaml`'s `gcp_project:`. The monorepo state branch conflicts with an
-  owner ruling (D14 of 2026-10-15: not orphan) (F19–F27).
+  owner ruling (D14 of 2026-10-15) and the design text beside it (not orphan) (F19–F27).
 - **Developer onboarding** assumes a backend that does not exist. Developers are **GCP IAM members**
   today (the `launchers`/`operators` lists, applied by Terraform), Firebase admits **only custom
   tokens** signed by Fugaro's signer, and the CLI talks straight to GCP. "No IAM per developer"
   needs a hosted launch path first. **Token pooling already exists** as the credentials service's
   Tier A cascade, so the terms question the spec raises applies to code on `main` today (F28–F38).
 
-The spec says "Open questions: none". This reconciliation finds **forty-six** that need the owner
+The spec says "Open questions: none". This reconciliation finds **forty-nine** that need the owner
 (§4), plus the ones only counsel or the owner can answer (§6).
 
 ## 2. Spec concept → what the repository already has
@@ -53,15 +53,15 @@ The spec says "Open questions: none". This reconciliation finds **forty-six** th
 | Signed commits | None | — | New |
 | Multi-repo images | One derived image per (repository, workflow), in the repository's own registry, source baked at a pinned commit | `images/derived/Dockerfile.tmpl`, `images/derived/cloudbuild.yaml`, `internal/backend/gcp/build.go` `BuildRequest`, `names.go` `ImageName` | Per repo only |
 | Fetch and fast-forward at start | The runner moves the baked checkout to the task's ref; `checkout: clone` workflows clone at start from the base image | `docs/checkout.md`, `internal/runner` | Exists |
-| BuildKit secret for the build's git token | `--mount=type=secret,id=git-credentials`, written by `fugaro image git-credential` | `images/derived/cloudbuild.yaml`, `internal/cli/gitcred.go` | Exists |
-| Content-hash tags, jobs pin digests | `candidate-$BUILD_ID` → smoke → `:latest` retag; jobs run `:latest` | `internal/infra/spec.go`; `internal/imagecheck/record.go` | Differs |
+| BuildKit secret for the build's git token | `--mount=type=secret,id=git-credentials`, written by `fugaro image git-credential` | `images/derived/Dockerfile.tmpl` (the mount), `images/derived/cloudbuild.yaml` (the credential step), `internal/cli/gitcred.go` | Exists |
+| Content-hash tags, jobs pin digests | `candidate-$BUILD_ID` → smoke → `:latest` retag; jobs run `:latest` | `images/derived/cloudbuild.yaml` (tags), `internal/infra/spec.go` (`:latest`), `internal/imagecheck/record.go` | Differs |
 | Project-level Dockerfiles | `.fugaro/<workflow>.Dockerfile` per repository workflow (`dockerfile:`) | `internal/config/config.go` (`Workflow.Dockerfile`), template header | Per repo only |
 | Repo allow list with wildcards | `allow_repos` in the published policy, `MatchRepo` segment wildcards | `internal/projectpolicy/match.go`, `config/policy/shared` | Exists |
 | Expand wildcards via the forge | `fugaro project sync` offers the GitHub App's installed repositories the allow-list does not admit | `internal/cli/project_enroll.go` | Exists (GitHub) |
 | `fugaro repo sync` | `fugaro project repos add|rm|ls`, `fugaro project sync` | `internal/cli/project_enroll.go` | Exists (other name) |
 | `fugaro.lock` | Nothing; nearest is the build record `builds/<slug>/<workflow>/image.json` | `internal/imagecheck/record.go` `Record` | New |
 | Repo marker | The committed `fugaro.yaml`'s `gcp_project:` already points a checkout at its project (shared config fetch) | `docs/plans/2026-10-06-shared-config.md`, `internal/localcfg/shared.go` | Exists |
-| Monorepo `.fugaro/` + `fugaro-state` orphan branch | `.fugaro/` holds recipes and Dockerfiles; the project backing folder is designed as `fugaro-project/` on branch `fugaro-project`, **not orphan** (D14, 2026-10-15), not built | `docs/design/project-centric.md` §8 | Ruled otherwise |
+| Monorepo `.fugaro/` + `fugaro-state` orphan branch | `.fugaro/` holds recipes and Dockerfiles; the project backing folder is designed as `fugaro-project/` on branch `fugaro-project`, (D14, 2026-10-15), **not orphan** (§8's design text), not built | `docs/design/project-centric.md` §8 | Ruled otherwise |
 | Developers in Firebase Auth, roles | Developers are IAM members via `launchers`/`operators`; RTDB rules admit custom tokens only; roles exist only in docs | `deploy/terraform/gcp/modules/firebase/iam.tf`, `internal/budget/rules/rules.go`, `internal/cli/init_firebase.go` `refusePublicSignUp`, `docs/mobile-auth/` | New, conflicts |
 | `fugaro user`, `join`, `token` | None. `fugaro secrets`, `fugaro creds`, `fugaro accounts` exist | `internal/cli/secrets.go`, `creds.go`, `accounts.go` | New |
 | Contributed Claude tokens, pool, failover | Named accounts `claude-oauth-token-<name>`; the cascade's Tier A pools subscription tokens with round robin and exhaustion marks | `docs/project-claude-accounts.md`, `internal/creds/select.go`, `internal/credsvc/cascade.go` | Exists |
@@ -129,8 +129,11 @@ knowable only if the stamp runs per stage (F2). Rigor is `Record.Rigor.Mode`. (D
 **F8, Gap.** The seat audit trail. The spec says the author doubles as a seat record. Seats are
 "anyone who launches jobs, by any means" (D433, 2026-10-27; `docs/licensing/subscription-terms.md`
 §5.1), and a seat moves at most once in any 30 days (§5.3, B14 of 2026-10-27). A self-declared author
-(F3) is no audit trail, and the commit carries it only when a run pushes. *Consequence:* seat
-counting reads launch records (`launch.json`), never commits; the author is a by-product (R2).
+(F3) is no audit trail, and the commit carries it only when a run pushes. Launch records are no
+better as they stand: `launch.json` is "untrusted" (`internal/runstore/launch.go`), writable by
+launchers and by the job, and `runs/` is deleted after `runs_days` (default 90, the bucket's
+lifecycle rule). *Consequence:* the author is not a seat record; how seats are counted stays in
+D433's domain (R2).
 
 ### Forge
 
@@ -213,7 +216,15 @@ the runner and the trust model, not a feature (D613).
 needs a read token for them (a GitHub installation token can name several repositories; a Bitbucket
 workspace or project token reaches them already, D461) and a clone step; it writes nothing new. It
 widens what one run's agent can read (and, with no sandbox, exfiltrate) to every context repository.
-(D613, D617)
+(D613, D617) **The service cannot read the task** (review round 2): it holds "no project role, no
+bucket" (`credentials.tf`), and `task.json` sits under the job's own writable prefix, so the context
+list the service trusts must come from a **launcher-minted claim** in the run identity, as D497a binds
+the run's branch, never from the task file or the caller's request.
+
+**F46, Gap (review round 2).** Squash merges. This repository squash-merges, and the squash commit
+on `main` is authored by the PR's opener (the App's bot), not by the branch's commit authors. Whether
+the launcher-as-author and the trailers survive into `main`'s blame on a squash merge is UNVERIFIED
+(U9); the spec's "shows up in blame" may hold only for merge commits and rebases. (D648)
 
 **F18, Rule.** The coordinator is advisory: "It never blocks or reorders merges"
 (`docs/coordinator/spec.md`), and "Fugaro never merges" (`docs/design/v1.md`), with one qualification:
@@ -293,7 +304,20 @@ recommends that no provider session reaches the database (D221, plan only). Goog
 
 **F30, Rule.** Roles viewer/operator/admin: D446 (2026-10-27) "a separate design first; enforced
 system-wide, the cloud included". The spec's command table is that design's output, not its
-substitute. Roles exist in docs only (`docs/mobile-auth/spec.md`).
+substitute. Launcher and operator exist in code as IAM lists (`internal/cli/roles.go`,
+`fugaro setup --launcher/--operator`); viewer, operator and admin as a role model exist in docs only
+(`docs/mobile-auth/spec.md`).
+
+**F44, Gap (review round 2).** A role claim minted by "Fugaro's signer" is forgeable by every
+launcher today: every launcher and operator holds the signer's `token_minter` role
+(`deploy/terraform/gcp/modules/firebase/iam.tf`, `local.people`). A role claim needs a minter the
+people being ranked cannot call. (D628, E0)
+
+**F45, Gap (review round 2).** Teammate onboarding already exists in two forms: a cloud command in a
+checkout whose `fugaro.yaml` names `gcp_project:` fetches the shared config with no setup, and
+`fugaro update --gcp-project` writes a new machine's config from the installation's outputs and names
+the roles and whom to ask (`internal/cli/init_new_machine.go`). `fugaro join` adds little beyond
+`fugaro update-skills` (E3 withdrawn).
 
 **F31, Gap.** "Console and CLI call the same backend API": there is no backend API; the CLI calls
 GCP and Firebase directly and the console spawns the CLI. (D627)
@@ -353,16 +377,16 @@ licence notices (D523). The go-to-market spec lists "SSO and roles" as `ee/`. Th
 proxy is MIT (its R4). Nothing rules on authorship, forge adapters, user management, token pooling
 or change sets (D637).
 
-## 4. Decisions (D600–D645), for the owner
+## 4. Decisions (D600–D648), for the owner
 
 Each row: the question, the recommendation and its reason, the alternative and its cost, and an
-**empty** answer cell. D640–D645 were added in review round 1. D646–D679 are reserved and unused.
+**empty** answer cell. D640–D645 were added in review round 1 and D646–D648 in round 2. D649–D679 are reserved and unused.
 
 | # | Question | Recommendation | Alternative and cost | Owner's answer |
 | --- | --- | --- | --- | --- |
 | **D600** | The first slice | **Slice A alone first** (authorship and trailers): small, MIT, no new trust boundary, useful on its own; everything else after its own go | Start with the forge layer or images: larger, and no part of them needs A | |
 | **D601** | Trailer names (F6) | **`Fugaro-Run:`** (the run ID), `Fugaro-Rigor:`, `Fugaro-Model:` | The spec's `Fugaro-Job:`: names the Cloud Run job, which is per repository, not per run, and confuses every doc that uses "job" | |
-| **D602** | What `Fugaro-Model:` holds (F6) | **The configured model of the stage that made the commit**, documented as the pin, not the served model; omitted for runner-only commits | Omit the trailer until the served model is recorded: loses the link the spec wants | |
+| **D602** | What `Fugaro-Model:` holds (F6) | **The configured model of the stage that made the commit**, documented as the pin, not the served model; omitted for runner-only commits and when the stage pins no model (`StageTiming.Model` is empty) | Omit the trailer until the served model is recorded: loses the link the spec wants | |
 | **D603** | Who stamps author and trailers (F1, F2) | **The runner, after every agent stage and before verification**: it rewrites the stage's unpushed commits (author, committer, trailers; drops any agent-written `Fugaro-*` trailer), and its own commits are made stamped; finalize refuses to push an unstamped commit | Environment only (today's mechanism with new values): an agent can override it silently. A `commit-msg` hook: `--no-verify` bypasses it | |
 | **D604** | Whose identity is the author (F3) | **The recorded launcher (`requested_by`) as a stated claim**, under D475 (launchers trusted); an authenticated identity replaces it when Slice E exists | Wait for a verified identity before shipping A: delays the smallest useful slice by the whole of E | |
 | **D605** | Author with no person (F4): CI, coordinator, follow-ups, bots | **The Fugaro identity, as today**, when `requested_by` is empty or not an email | Use a service-account address as author: noise in blame, and no person is accountable | |
@@ -374,9 +398,9 @@ Each row: the question, the recommendation and its reason, the alternative and i
 | **D611** | The forge interface (F9) | **Keep `gitprov.Provider`**; add only a CI-status read when change sets need it; minting stays in `TokenSource` and the service | Adopt the spec's five-method interface: renames working code for no capability | |
 | **D612** | Cloud-only forges (F13) | **Supported = cloud forges; D474's owner-allow-listed Bitbucket root stays accepted, unsupported** | Refuse allow-listed roots: reverses D474 | |
 | **D613** | Multi-repo model (F16, F17) | **Staged:** (1) read-only **context repositories** in a run; (2) **change sets as linked runs**, one run per writable repository, sharing a change-set ID; one run writing several repositories is **declined for now** | The spec's one run with several writable worktrees: redesigns task, run store, jobs, tokens, gateway claims, review, PR flow, digest and checkpoints | |
-| **D614** | "All PRs ready together" (F15) | **Runs of a change set keep their PR draft**; a change-set step flips all ready when every run's senior verdict is `ship` and its tests passed | Each PR flips on its own, linked only: simpler, loses the spec's guarantee | |
+| **D614** | "All PRs ready together" (F15) | **Runs of a change set keep their PR draft**; a change-set step flips all ready when every run's senior verdict is `ship` and its tests passed. A coordination aid for honest runs, not a security control (T5): each member's agent can write its record and flip its PR | Each PR flips on its own, linked only: simpler, loses the spec's guarantee | |
 | **D615** | Merge order enforcement (F10, F18) | **Advisory**: the order is written in each PR and shown by the coordinator; no blocking | A blocking status check: new App permission (Commit statuses or Checks write) every installation must accept, and reverses "never blocks or reorders merges" | |
-| **D616** | Where change sets live (licence) | **Linking and the draft hold in core (MIT); the change-set step that flips ready and orders merges under `ee/coordinator`** (D530) | All in core: puts coordinator behaviour outside `ee/`. All in `ee/`: untagged runs cannot even link PRs | |
+| **D616** | Where change sets live (licence) | **All of it under `ee/`** (amended in review round 2): the hold is useless without the settle step, and an untagged build stubs the coordinator (ee-reorg D522), so its change sets would stay draft for ever; an untagged CLI refuses `--change-set` like the other paid-command stubs | Linking and hold in core, settle in `ee/`: a core build's change sets never leave draft. All in core: puts coordinator behaviour outside `ee/`. The cost of the recommendation: an untagged build has no change sets at all, not even linked PRs | |
 | **D617** | Where the project's intent lives (F19, F20) | **The published policy** (`allow_repos`, `fugaro project repos`, `fugaro project sync`) as the intent; a generated lock stored in the runs bucket beside the build records | The spec's project Git repository with `fugaro.yaml` as intent and `fugaro.lock`: changes `fugaro.yaml`'s meaning, duplicates the policy, adds a repository every project must have | |
 | **D618** | Per-project images (spec) vs per-repository (today) | **Keep per-(repository, workflow) images**; a project image is designed later as an opt-in, after context repositories (D613 step 1) show a need | Replace per-repository images: migrates every installation, the registry layout, job definitions and `fugaro image refresh` | |
 | **D619** | Content-hash tags and digest pins (F22) | **Record and check the digest at launch (warn on mismatch)**; no pinning, since Cloud Run cannot vary the image per execution | Pin by updating the job definition per build: an infra apply per build | |
@@ -384,34 +408,38 @@ Each row: the question, the recommendation and its reason, the alternative and i
 | **D621** | Rebuild cadence (F24) | **Keep trigger-based rebuilds** (lockfiles, base, age); no blanket nightly rebuild; state that builds are outside the run budget | Nightly rebuild plus on main moving: Cloud Build cost per repository per night, unmetered | |
 | **D622** | The generator command (F26) | **Only on the operator's machine**, inside `fugaro project sync`; its output intersected with `allow_repos`, dropped entries warned | Run it in a cloud job: runs arbitrary code with installation credentials | |
 | **D623** | `fugaro repo sync` (F19) | **Extend `fugaro project sync`** (Bitbucket workspace listing, `--check`), no new command family | A new `fugaro repo` family: two commands for one allow-list | |
-| **D624** | Repo markers | **The committed `fugaro.yaml`'s `gcp_project:` is the marker** (exists; a marker-only file does not validate, U8); the require-marker setting is deferred | Build require-marker now: an extra fetch per repository on every sync | |
+| **D624** | Repo markers | **The committed `fugaro.yaml`'s `gcp_project:` is the marker** (exists; a marker-only file validates only with `git.provider` and a project layer that supplies workflows, U8); the require-marker setting is deferred | Build require-marker now: an extra fetch per repository on every sync | |
 | **D625** | Auto-add on sync | **Propose, then confirm** (today's `project sync`); a setup run for a failing repository only on an explicit flag | Fully automatic add, rebuild and setup run: spends budget and opens PRs unattended | |
 | **D626** | Monorepo state branch (F27) | **Keep D14**: `fugaro-project/` on branch `fugaro-project`, bootstrapped from the default branch (project-centric phase 6) | The spec's orphan `fugaro-state`: reverses an owner ruling | |
 | **D627** | Developer onboarding without IAM (F28, F31) | **Design first (D446)**; meanwhile `fugaro user` is a front for the existing `launchers`/`operators` lists (each change is an owner-run `fugaro update`) | Build Firebase Auth users and a hosted launch API now: the central orchestrator's scale, new trust boundary | |
-| **D628** | Sign-in shape (F29) | **Google sign-in exchanged for a custom token minted by Fugaro's signer**, role as a claim; public sign-up stays refused | Enable Firebase's Google provider directly: reverses `refusePublicSignUp` and mobile-auth D221's recommendation | |
+| **D628** | Sign-in shape (F29) | **Google sign-in exchanged for a custom token minted by a service the people being ranked cannot call** (today every launcher holds the signer's minter role, F44), role as a claim; public sign-up stays refused | Enable Firebase's Google provider directly: reverses `refusePublicSignUp` and mobile-auth D221's recommendation | |
 | **D629** | Suspension and seats (F32) | **A suspended person keeps the seat until the 30-day move rule allows moving it**; counsel words it | Suspended users free their seat at once: seat rotation by suspend/resume | |
 | **D630** | Seat licence on join (F33) | **No licence step in `fugaro join`** until the key-minting service ships (D523) | Issue keys now: needs the deferred `ee/` service | |
-| **D631** | Where contributed tokens live (F34) | **Bundle entries** (Q6's one secret, one grant), written through a new authenticated service route once E's identity exists; until then an operator stores a teammate's token with today's `fugaro secrets set` or `fugaro creds set`, as now | The spec's `user-token-` prefix with create rights: reverses Q6 and gives the service create rights in Secret Manager | |
+| **D631** | Where contributed tokens live (F34) | **Bundle entries**, written through a new authenticated service route once E's identity exists. That route **changes Q6's shape**: the service then needs a version-adder role on the bundle beside its accessor, and contributors' writes are a read-modify-write of the bundle that also holds admin entries; E0 designs both; until then an operator stores a teammate's token with today's `fugaro secrets set` or `fugaro creds set`, as now | The spec's `user-token-` prefix with create rights: reverses Q6 and gives the service create rights in Secret Manager | |
 | **D632** | Does `fugaro token add` run `claude setup-token` (F35) | **No**: the person runs it and pipes the token to stdin, as `secrets set` does | The CLI runs it and captures the output: output format unverified (U5), token in the CLI's memory and scrollback | |
 | **D633** | Token policy default (F36) | **Own** for personally contributed tokens, which needs a per-person binding that does not exist (F34: accounts are scoped by repository), so it is built from E0; pooling stays where it exists (Tier A) pending O2 | Pool by default: the terms question unresolved | |
 | **D634** | Reserve thresholds (F37) | **Not built until U6 is verified**; exhaustion marks remain the mechanism | Build on assumed headers: may read nothing, or the wrong thing | |
 | **D635** | Console Members tab (F38) | **Read-only list first**; every write waits for E's identity and a separate go | The spec's tab with writes: moves the console's fence past D22/D34 | |
 | **D636** | Mobile suspend (F38) | **Deferred until `fugaro user suspend` exists**; then a mailbox action with confirmation | Build now: an action with nothing behind it | |
-| **D637** | Licence placement (F39) | **MIT:** authorship, forge adapters (GitLab included), context repositories, linking, `fugaro user` over the IAM lists, token storage. **`ee/`:** change-set ordering and the ready-together step, SSO and domain or workspace invites, roles enforcement beyond the lists | Roles and user management in core: conflicts with go-to-market's `ee/` list | |
+| **D637** | Licence placement (F39) | **MIT:** authorship, forge adapters (GitLab included), context repositories, `fugaro user` over the IAM lists, token storage. **`ee/`:** change sets (D616), SSO and domain or workspace invites, roles enforcement beyond the lists | Roles and user management in core: conflicts with go-to-market's `ee/` list | |
 | **D638** | Workspace-level invites | **Wait for the workspaces spec**, not in the repository | Build project-by-project invites now and fold later: rework | |
 | **D639** | Spec's "Open questions: none" | **Replace with §6 of this file** | — | |
-| **D640** | Mid-stage checkpoint pushes (F2) | **Keep them**; the agent's environment carries the author and committer; the boundary stamp covers only the unpushed range, so a mid-stage-pushed commit may lack trailers; the docs say so | Turn mid-stage checkpoints off when stamping: loses the crash protection checkpoints exist for. Or force-push re-stamped history: breaks the checkpoint's fast-forward-only rule | |
+| **D640** | Mid-stage checkpoint pushes (F2) | **Keep them, with a read-only gate** (amended in review round 2): a mid-stage checkpoint pushes only up to the last commit whose author and committer are the run's expected ones, so an agent-set author never reaches the PR branch through the runner's own push; the boundary stamp covers the unpushed range; a mid-stage-pushed commit may lack trailers; the docs say so | Turn mid-stage checkpoints off when stamping: loses the crash protection checkpoints exist for. Or force-push re-stamped history: breaks the checkpoint's fast-forward-only rule | |
 | **D641** | The settle step needs PR write (F18) | **A separate, settle-only token** (`pull_requests: write`) minted for the settle step, beside the coordinator's read-only one; reverses Q10 C for this one act | Each member run's finalize flips its siblings: every run then needs write on other repositories | |
 | **D642** | Who may join a change set | **Membership fixed at creation**: one launch creates every member run, and each member's write-once task lists the others; a run not listed by all is ignored by the settle step | A free-form `--change-set ID` any launcher passes: anyone can join or stall someone else's set | |
 | **D643** | Self-approval (F41) | **Document it**; no code. Repositories that need two people use their forge's review rules | A runner-side refusal: Fugaro cannot see who approves | |
 | **D644** | An agent-written `Signed-off-by` (R1) | **Remove it** when stamping: an agent cannot make the DCO assertion; a DCO-gated repository then fails its check until a person signs off, which is the point | Keep it: an assertion no person made, in a person's name | |
 | **D645** | The committer identity (F40) | **The run's identity as `main` has it** (`Fugaro`, or the App's `[bot]` identity on GitHub if #1264 merges); the spec's "committer = the forge bot" is then met on GitHub | Hold this plan until #1264 settles: delays A for no gain | |
+| **D646** | A run commit whose author the agent set to someone else (a cherry-pick keeps its original author; `OwnCommits` over-counts when the checkout lacks an origin head) | **Re-author it to the launcher and keep the original as a `Fugaro-Original-Author:` trailer**: the launcher is accountable for what the run pushes, and the original is not lost | Keep the agent's author: an agent can attribute commits to any person. Drop the original: a cherry-pick loses its credit |  |
+| **D647** | Trailers by default (F6) | **On for every run commit** (no personal data: run ID, rigor, model pin); stated in the release notes' Highlights | Opt-in with the author: no link from commits to runs by default | |
+| **D648** | Squash merges (F46) | **Measure first** (Check 230 adds a squash merge) before any further work; if the launcher and trailers do not survive, the PR body carries them for the squash message | Assume they survive: the spec's "shows up in blame" may silently fail on squash-merging repositories | |
 
 **Resolutions** (one defensible answer each):
 
 - **R1.** `Signed-off-by` is never added automatically (F7). Whether one the agent writes is removed
   is D644.
-- **R2.** Seats are counted from launch records, never from commits (F8).
+- **R2.** The commit author is not a seat record (F8). This plan counts nothing; seat counting is
+  D433's and the subscriptions plan's.
 - **R3.** No new long-lived secret enters a job in any slice of this plan (F12).
 - **R4.** `allow_data_to` stays the per-credential boundary; `allow_repos` the membership boundary
   (F21).
@@ -426,10 +454,15 @@ Each row: the question, the recommendation and its reason, the alternative and i
   True only if the generator never writes the policy: D622 keeps it read-only and local.
 - **T4. "Coordinator enforces merge order" against the coordinator's advisory ruling and the `ee/`
   move.** D615, D616.
+- **T5. "All PRs ready together" against no sandbox (review round 2).** Every member's record and
+  PR can be written by that member's agent (SECURITY.md: runs of one repository share a service
+  account and its prefixes; the agent can read the job's token). The ready-together step is a
+  coordination aid for honest runs, as a single run's readiness is today, not a security control;
+  human review stays the gate (D614).
 
 ## 6. Open items for the owner
 
-- **O1. Every decision D600–D645** above: empty answer cells.
+- **O1. Every decision D600–D648** above: empty answer cells.
 - **O2. Anthropic's terms** for (a) the existing Tier A pooling and (b) contributed personal tokens
   used for other people's jobs: the owner's and counsel's (F36). Not a technical question.
 - **O3. Privacy:** whether launcher emails in commits need a notice or consent (F5): owner and
@@ -451,6 +484,9 @@ Each row: the question, the recommendation and its reason, the alternative and i
   ones. Do not build on it.
 - **U7.** Whether a GitHub App installation token naming several repositories keeps per-repository
   permission narrowing as needed for read-only context (Check 232).
-- **U8.** *Resolved in review round 1: no.* `schemas/fugaro.schema.json` requires `version` and
-  `project`, so a `gcp_project:`-only marker does not validate; the marker is `gcp_project:` inside a
-  full `fugaro.yaml` (D624).
+- **U8.** *Partly resolved in review rounds 1 and 2.* `schemas/fugaro.schema.json` requires only
+  `version` and `project`; `fugaro validate` on a `version`/`project`/`gcp_project` file reports only
+  `git.provider` missing where the project layer supplies workflows. So a near-marker validates with
+  `git.provider` added and a project layer; without a layer it has no workflow (D624).
+- **U9.** Whether GitHub's and Bitbucket's squash merge keep the branch commits' authors (for example
+  as `Co-authored-by:`) and their trailers in the squash message (Check 230's squash step, D648).
