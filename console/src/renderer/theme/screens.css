@@ -35,7 +35,7 @@
  * that paints a state paints it *beside* a word, a mark or a number the code
  * already emits: `KILLED by`, `HALTED`, `silent`, `lost`, `near deadline`,
  * `queued`, `stuck`, the em dash of a gap, `n/a` with its reason in `title`, the
- * `NOTIONAL~` / `est.` marks, `(partial)`, `degraded`, `polling`, and the cap's
+ * `~$` / `est.` marks, `(partial)`, `degraded`, `polling`, and the cap's
  * own percentage. A reader who sees no hue difference at all still reads every
  * state.
  *
@@ -219,7 +219,6 @@ li.run-log-line {
   border-bottom: var(--rule-width) solid var(--border);
 }
 
-div.live-total,
 ol.live-repos,
 ol.live-orphans,
 ol.live-runs,
@@ -409,15 +408,6 @@ p.live-note {
   color: var(--text-muted);
 }
 
-/* The total block: three figures read together, so they sit together (design
- * section 3.8's last bullet). */
-div.live-total {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--space-2xs) var(--space-sm);
-  align-items: baseline;
-}
-
 /* The burn window: one tick per sample, the tone saying whether the sample is
  * plottable, and the rate in each bar's `title`. */
 ol.live-burn {
@@ -513,7 +503,8 @@ span.live-run-contradiction {
 
 /* The kill banner, on both shapes the code emits it in: the repository block
  * carries `data-killed` itself and the banner is appended inside it (design
- * section 2.9), while `div.live-total` appends the banner and carries no
+ * section 2.9), while the fleet budget panel (`section.live-fleet`, the total
+ * block) appends the banner and carries no
  * attribute. `--halted` is a DELIBERATE STOP and not a failure, which is why it
  * is not `--error`. */
 div.live-kill,
@@ -764,7 +755,7 @@ span.spend-degraded[data-degraded='true'] {
 /* The three account charts. A point is a figure like any other: mono, tabular,
  * and the tone of the account whose column it reads -- measured, notional or
  * estimated (design section 2.9). The mark that carries the state is the
- * `NOTIONAL~` / `est.` prefix inside the number itself. */
+ * `~$` / `est.` prefix inside the number itself. */
 div.spend-account {
   margin-bottom: var(--space-sm);
 }
@@ -2250,7 +2241,6 @@ span.coordinator-unread-retry {
 
 @media (max-width: 48.75em) {
   /* Any three-column figure group becomes two. */
-  div.live-total,
   div.spend-totals,
   section.run-ledger {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2259,7 +2249,6 @@ span.coordinator-unread-retry {
 
 @media (max-width: 35em) {
   /* The ledger, the caps panel and the panels' source lines stack. */
-  div.live-total,
   div.spend-totals,
   section.run-ledger {
     grid-template-columns: minmax(0, 1fr);
@@ -2484,7 +2473,7 @@ span.coordinator-unread-retry {
   section.projects-panel,
   section.spend-caps,
   section.spend-people,
-  div.live-total,
+  section.live-fleet,
   ol.live-repos,
   ol.live-runs,
   ol.spend-rows,

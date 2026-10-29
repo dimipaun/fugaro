@@ -15,7 +15,7 @@
 // The five states are the contract's, and so are the spellings:
 //
 //   measured     the number               a counter the CLI read
-//   notional     NOTIONAL~ + the number   a subscription's list price: never
+//   notional     ~ + the number           a subscription's list price: never
 //                                         billed, never capped
 //   estimated    est. + the number        compute, an estimate by design
 //   unavailable  n/a                      the document says it is not known
@@ -58,11 +58,15 @@ export const AVAILABILITY_STATES: readonly AvailabilityState[] = Object.freeze([
 ])
 
 /**
- * NOTIONAL_MARK prefixes a subscription's list price on screen. It is the
- * contract's own spelling (section 1), and it is deliberately loud: a notional
- * dollar drawn as a billed one is a wrong number that looks right.
+ * NOTIONAL_MARK prefixes a subscription's list price on screen. The owner ruled
+ * the mark is `~` (2026-10-28), and it is part of the value, so the meaning
+ * survives without colour. A tilde also reads as prose's "approximately" -- the
+ * state this most resembles -- so a notional figure is told apart from an
+ * estimated one by ESTIMATED_MARK's `est.`, never by the tilde: `~$0.40` is a
+ * subscription's list price, `est. $0.40` is compute. Drawing a notional dollar
+ * as a billed one is a wrong number that looks right.
  */
-export const NOTIONAL_MARK = 'NOTIONAL~'
+export const NOTIONAL_MARK = '~'
 
 /**
  * ESTIMATED_MARK prefixes compute, which is an estimate by design
@@ -309,7 +313,7 @@ function formatValue(value: number, unit: Unit): string {
  * shows. Every state has a presentation and no state has two:
  *
  *   measured     $12.50
- *   notional     NOTIONAL~$3.25
+ *   notional     ~$3.25
  *   estimated    est. $0.40
  *   unavailable  n/a
  *   gap          an em dash

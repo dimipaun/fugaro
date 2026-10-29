@@ -59,6 +59,7 @@ import type {
   ValidationDeps,
 } from './installations'
 import { parseInstallationsDocument } from './installlist'
+import type { DiscoveredInstallation, DiscoveredRepository } from './installlist'
 import { TEMP_ROOTS, classifyInstallation, openProject, suggestedCheckouts } from './installationstate'
 import type { ConsoleFacts } from './installationstate'
 import {
@@ -473,7 +474,7 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
    * that is not one are all answers, because every one of them is a screen.
    */
   const discover = async (): Promise<
-    | { readonly ok: true; readonly installations: readonly { name: string; gcpProject: string; region: string; checkouts: readonly string[] }[]; readonly warnings: readonly string[] }
+    | { readonly ok: true; readonly installations: readonly DiscoveredInstallation[]; readonly warnings: readonly string[] }
     | { readonly ok: false; readonly onboarding: InstallationsListReply['onboard']; readonly reason: string; readonly searched: readonly string[] }
   > => {
     const override = registry.active()?.binaryPath
@@ -507,7 +508,7 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
   const readInstallations = async (
     binaryPath: string,
   ): Promise<
-    | { readonly ok: true; readonly installations: readonly { name: string; gcpProject: string; region: string; checkouts: readonly string[] }[]; readonly warnings: readonly string[] }
+    | { readonly ok: true; readonly installations: readonly DiscoveredInstallation[]; readonly warnings: readonly string[] }
     | { readonly ok: false; readonly onboarding: InstallationsListReply['onboard']; readonly reason: string; readonly searched: readonly string[] }
   > => {
     const plan: SpawnPlan = planFor('installation.list', {}, {
@@ -576,8 +577,33 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
   const offeredCheckouts = (recorded: string | undefined, listed: readonly string[]): readonly string[] =>
     suggestedCheckouts(recorded, listed, tempDirectory(), deps.tempRoots ?? TEMP_ROOTS, realPathOf)
 
+  /**
+   * repositoryIdentities is one installation's recorded repository identities,
+   * in the order the CLI listed them and each one once: the CLI prints a row per
+   * *checkout*, so two checkouts of one repository are one repository to launch
+   * in.
+   *
+   * Nothing here is resolved, joined or looked up. The identity is the CLI's own
+   * `<provider>/<owner>/<name>` verbatim, which is the only form the launch
+   * accepts (`installlist.ts`, §6.8): the conversion to a clone URL is the
+   * launch's own, and a console that rewrote one here would be deciding what an
+   * operator is launching in.
+   */
+  const repositoryIdentities = (
+    repositories: readonly DiscoveredRepository[],
+  ): readonly string[] => {
+    const seen = new Set<string>()
+    const identities: string[] = []
+    for (const each of repositories) {
+      if (seen.has(each.repository)) continue
+      seen.add(each.repository)
+      identities.push(each.repository)
+    }
+    return Object.freeze(identities)
+  }
+
   const rowsOf = (
-    discovered: readonly { name: string; gcpProject: string; region: string; checkouts: readonly string[] }[],
+    discovered: readonly DiscoveredInstallation[],
     warnings: readonly string[],
     cliRefusal: string,
   ): readonly InstallationsListRow[] => {
@@ -613,6 +639,7 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
         mode: held?.mode ?? 'unknown',
         ...(held?.checkout === undefined ? {} : { checkout: held.checkout }),
         checkouts: offeredCheckouts(held?.checkout, installation.checkouts),
+        repositories: repositoryIdentities(installation.repositories),
         state: classifyInstallation(rowFacts, facts),
         open: false,
       }
@@ -631,6 +658,7 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
         mode: row.mode,
         ...(row.checkout === undefined ? {} : { checkout: row.checkout }),
         checkouts: offeredCheckouts(row.checkout, []),
+        repositories: repositoryIdentities([]),
         state: classifyInstallation(rowFacts, facts),
         open: false,
       })

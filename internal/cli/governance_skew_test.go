@@ -401,6 +401,438 @@ func TestRunRefusesGovernanceOnACloneWorkflowsOlderBaseImage(t *testing.T) {
 	}
 }
 
+// TestGovernanceOnACoreImageWarns: the skew gate judges the job image's
+// release, and this is the other half — a job image new enough to decode
+// governance: whose runner is a core build reads the block and enforces
+// nothing in it, so the launch says so. A warning and never a refusal: a core
+// runner ignores the block (D522), so nothing about the launch breaks, and the
+// statement is about what the image does with the block, not about a licence
+// (D523). The judge is the job image's edition (R3), which the build record
+// carries next to the base_ref the skew gate already reads.
+func TestGovernanceOnACoreImageWarns(t *testing.T) {
+	f := newCloudFixture(t)
+	configSkewCheckout(t, f, configSkewHead+"governance: { review_ratio: 3 }\n"+configSkewWorkflow)
+	writeEditionBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", releaseTier, EditionCore)
+	_, errOut, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
+	if err != nil {
+		t.Fatalf("a core job image must be warned about, never refused: %v", err)
+	}
+	for _, want := range []string{
+		"the job image of acme/other workflow svc is a core build of fugaro",
+		"reads the governance: block and ignores it",
+		"fugaro image refresh --repo acme/other --workflow svc",
+	} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("stderr %q lacks %q", errOut, want)
+		}
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want the run launched", n)
+	}
+}
+
+// TestTaggedImageFromAnUntaggedLauncherDoesNotWarn: the edition a launch
+// judges is the JOB IMAGE's, never the launcher's (R3): governance is enforced
+// by the fugaro inside the job, so a core CLI built from source that launches
+// onto a tagged image has governance enforced and nothing to say about it. The
+// launcher in this test is the test binary, which is core.
+func TestTaggedImageFromAnUntaggedLauncherDoesNotWarn(t *testing.T) {
+	if Edition() != EditionCore {
+		t.Fatalf("this test's launcher is %q, so it cannot be the untagged one", Edition())
+	}
+	f := newCloudFixture(t)
+	configSkewCheckout(t, f, configSkewHead+"governance: { review_ratio: 3 }\n"+configSkewWorkflow)
+	writeEditionBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", releaseTier, EditionEE)
+	_, errOut, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
+	if err != nil {
+		t.Fatalf("a launch onto a tagged image must not be refused: %v", err)
+	}
+	if strings.Contains(errOut, "core build of fugaro") {
+		t.Errorf("stderr %q warns about an image whose runner enforces the block", errOut)
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want the run launched", n)
+	}
+}
+
+// TestGovernanceOnAnOldImageStillRefuses: the edition half is a warning and
+// never a substitute for the refusal. An image older than governanceSince dies
+// at bootstrap on the key, so it is refused whatever its record says about its
+// edition — and no warning is printed beside a refusal, since nothing was
+// launched and there is no run whose behaviour to describe.
+func TestGovernanceOnAnOldImageStillRefuses(t *testing.T) {
+	f := newCloudFixture(t)
+	older := "ghcr.io/dimipaun/fugaro-base:" + shiftRelease(t, governanceSince, -1)
+	configSkewCheckout(t, f, configSkewHead+"governance: { review_ratio: 3 }\n"+configSkewWorkflow)
+	writeEditionBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", older, EditionCore)
+	_, errOut, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro.yaml's governance: block of acme/other") {
+		t.Fatalf("err = %v, want the launch refused on the image that predates the key", err)
+	}
+	if strings.Contains(errOut, "core build of fugaro") {
+		t.Errorf("a refused launch warns about the image's edition: %q", errOut)
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none", n)
+	}
+}
+
+// TestTierOnACoreImageWarns: a task's tier is decoded and ignored by a core
+// runner exactly as the governance: block is (D522), so a --tier launch onto a
+// core image says so too — judged at the same call site, which is why run.go
+// needs no change (the tier's own release gate is untouched: this image is a
+// current release, so nothing refuses). A launch that asks for no tier on the
+// same image says nothing: the warning is about what the run asks for. Neither
+// does an image that gate refuses, which is the last two cases here.
+func TestTierOnACoreImageWarns(t *testing.T) {
+	f := newCloudFixture(t)
+	configSkewCheckout(t, f, configSkewHead+configSkewWorkflow)
+	writeEditionBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", releaseTier, EditionCore)
+	_, errOut, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "--tier", "small", "A task")
+	if err != nil {
+		t.Fatalf("a core job image must be warned about, never refused: %v", err)
+	}
+	for _, want := range []string{
+		"the job image of acme/other workflow svc is a core build of fugaro",
+		"reads the run's tier and ignores it",
+	} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("stderr %q lacks %q", errOut, want)
+		}
+	}
+
+	f2 := newCloudFixture(t)
+	configSkewCheckout(t, f2, configSkewHead+configSkewWorkflow)
+	writeEditionBuildRecord(t, f2, mustSlug("github", "acme/other"), "svc", releaseTier, EditionCore)
+	_, quiet, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(quiet, "core build of fugaro") {
+		t.Errorf("a launch that asks for no tier and writes no governance: block warns: %q", quiet)
+	}
+
+	// An image the gates refuse is not warned about: a warning describes what a
+	// run does with what it was given, and a refused launch has no run. The
+	// tier's own release gate is the one that fires here — this launch writes
+	// no governance: block, so the skew half above never runs — and a record
+	// that cannot say which base it was built from is refused by that gate too.
+	f3 := newCloudFixture(t)
+	configSkewCheckout(t, f3, configSkewHead+configSkewWorkflow)
+	older := "ghcr.io/dimipaun/fugaro-base:" + shiftRelease(t, governanceSince, -1)
+	writeEditionBuildRecord(t, f3, mustSlug("github", "acme/other"), "svc", older, EditionCore)
+	_, oldErr, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "--tier", "small", "A task")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "the run's own tier request (--tier) needs a job image") {
+		t.Fatalf("err = %v, want the tier's release gate to refuse an image older than the field", err)
+	}
+	if strings.Contains(oldErr, "core build of fugaro") {
+		t.Errorf("a refused launch warns about the image's edition: %q", oldErr)
+	}
+	writeEditionBuildRecord(t, f3, mustSlug("github", "acme/other"), "svc", "", EditionCore)
+	_, noBaseErr, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "--tier", "small", "A task")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "does not say which base image it was built from") {
+		t.Fatalf("err = %v, want a record that names no base refused", err)
+	}
+	if strings.Contains(noBaseErr, "core build of fugaro") {
+		t.Errorf("a record that names no base warns about the image's edition: %q", noBaseErr)
+	}
+	if n := len(f3.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none", n)
+	}
+}
+
+// TestCloneWorkflowOnACoreRecordDoesNotWarn: a checkout: clone workflow is
+// never built, so it has no build record of its own, and a record left under
+// its key by an earlier life as a base-kind workflow describes an image the
+// job does not run — the clone job runs the installation's base image itself.
+// Its edition is therefore unknown, and an unknown image warns about nothing
+// (design ee-boundary-moves §7); the tag lands in that base image's own build
+// (§8), not in this gate. validate reads no record for such a workflow either,
+// so the two commands agree about what they cannot see. The skew half of the
+// same gate still judges the base image by its ref, so a clone workflow that
+// writes governance: is not left unjudged.
+func TestCloneWorkflowOnACoreRecordDoesNotWarn(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	f.appendConfig(t, "base_images: {base: "+releaseTier+"}\n")
+	configSkewCheckout(t, f, configSkewHead+"governance: { review_ratio: 3 }\n"+
+		"workflows:\n  svc: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n")
+	writeEditionBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", releaseTier, EditionCore)
+	_, errOut, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
+	if err != nil {
+		t.Fatalf("a clone workflow writing governance: is judged by its base image, and that image is current: %v", err)
+	}
+	if strings.Contains(errOut, "core build of fugaro") {
+		t.Errorf("stderr %q warns about a record the clone job's image does not answer to", errOut)
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want the run launched", n)
+	}
+
+	_, valErr, err := execute(t, "validate")
+	if err != nil {
+		t.Fatalf("validate judges the same file: %v", err)
+	}
+	if strings.Contains(valErr, "core build of fugaro") {
+		t.Errorf("validate warned about a record no clone workflow's image answers to: %q", valErr)
+	}
+	if !strings.Contains(valErr, "needs fugaro "+governanceSince) {
+		t.Errorf("validate stderr %q lacks the skew half", valErr)
+	}
+}
+
+// TestCurrentReleaseImageWithNoEditionDoesNotWarn: the edition gate warns about
+// one record only — the one that says core. A record written without an edition
+// (one from before the field existed, or a hand-written one) is unknown, and an
+// unknown image is warned about nothing (design ee-boundary-moves §7, which is
+// what every --image-source mirror looks like too). The image is a current
+// release, so the skew half says nothing either: a run of this file onto it
+// carries no edition sentence on stderr, and validate's only stderr is the skew
+// statement about the file, which prints whether or not an image can be judged
+// — never an edition warning and never an unresolved note.
+func TestCurrentReleaseImageWithNoEditionDoesNotWarn(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	configSkewCheckout(t, f, configSkewHead+"governance: { review_ratio: 3 }\n"+configSkewWorkflow)
+	writeEditionBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", releaseTier, "")
+
+	_, errOut, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
+	if err != nil {
+		t.Fatalf("a launch onto a current-release image must not be refused: %v", err)
+	}
+	// The run prints the project and recipe it resolved; what it must not print
+	// is a word about the image's edition.
+	for _, unwanted := range []string{"core build of fugaro", "edition"} {
+		if strings.Contains(errOut, unwanted) {
+			t.Errorf("a run onto a record with no edition wrote %q to stderr, which says %q", errOut, unwanted)
+		}
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want the run launched", n)
+	}
+
+	_, valErr, err := execute(t, "validate")
+	if err != nil {
+		t.Fatalf("validate judged the same file: %v", err)
+	}
+	for _, unwanted := range []string{"core build of fugaro", "edition unresolved"} {
+		if strings.Contains(valErr, unwanted) {
+			t.Errorf("validate's stderr %q says %q about an image with no edition", valErr, unwanted)
+		}
+	}
+	if !strings.Contains(valErr, "needs fugaro "+governanceSince) {
+		t.Errorf("validate's stderr %q lacks the skew half, which is a statement about the file", valErr)
+	}
+}
+
+// TestValidateWarnsGovernanceOnACoreImage: validate holds no cloud env, so the
+// edition half reads the records online, through the road every other command
+// takes to an image from a checkout: the project config's client, the origin's
+// slug, one read of the workflow's record (design §7). The file is valid
+// whichever image it is built for, so this is a warning, and the skew half of
+// the same sentence still prints beside it.
+//
+// --offline makes no such read — the flag promises the command reads neither
+// the runs bucket nor the published policy — so the edition is unknown and
+// validate says so instead of passing a file whose block needs enforcing as
+// though it had looked; the skew half prints there too.
+func TestValidateWarnsGovernanceOnACoreImage(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	configSkewCheckout(t, f, configSkewHead+"governance: { review_ratio: 3 }\n"+configSkewWorkflow)
+	writeEditionBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", releaseTier, EditionCore)
+	_, errOut, err := execute(t, "validate")
+	if err != nil {
+		t.Fatalf("a file that writes governance: is valid: %v", err)
+	}
+	for _, want := range []string{
+		"core build of fugaro",
+		"reads the governance: block and ignores it",
+		"needs fugaro " + governanceSince,
+	} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("stderr %q lacks %q", errOut, want)
+		}
+	}
+
+	_, offErr, err := execute(t, "validate", "--offline")
+	if err != nil {
+		t.Fatalf("--offline judges the same file: %v", err)
+	}
+	if strings.Contains(offErr, "core build of fugaro") {
+		t.Errorf("--offline read a build record: %q", offErr)
+	}
+	for _, want := range []string{"unresolved", "--offline", "needs fugaro " + governanceSince} {
+		if !strings.Contains(offErr, want) {
+			t.Errorf("--offline stderr %q lacks %q", offErr, want)
+		}
+	}
+	// The offline note names its own fix, the way every online note names its
+	// (TestValidateNamesTheFixInAnEditionUnresolvedNote): the flag that would
+	// let the read happen is the whole of what the operator has to do.
+	if fix := "run validate without --offline to have the records read"; !strings.Contains(offErr, fix) {
+		t.Errorf("--offline stderr %q does not name the fix %q", offErr, fix)
+	}
+}
+
+// editionFixSelectConfig, editionFixCheckout, editionFixOriginSlug and
+// editionFixBucket are the fixes the four online edition-unresolved notes name
+// (editionUnresolved in validate.go), each in the words
+// plugin/skills/setup/reference/validation.md promises them in.
+const (
+	editionFixSelectConfig = "name the installation with --config or --project, or run fugaro setup to create this project's config"
+	editionFixCheckout     = "run validate in the repository's own checkout"
+	editionFixOriginSlug   = "run validate in the checkout whose origin names the repository"
+	editionFixBucket       = "check that this machine's credentials can read the installation's runs bucket"
+)
+
+// TestValidateNamesTheFixInAnEditionUnresolvedNote pins the promise
+// plugin/skills/setup/reference/validation.md makes for the online notes: a
+// note that says the job images' edition is unresolved names the fix that
+// would let the read happen, the way the --offline note names its flag. The
+// read fails at four points — no project config selected for the file's
+// project, a directory that is no checkout, an origin whose slug cannot be
+// resolved, a runs bucket that cannot be opened — and each has its own
+// sentence for the operator to follow, so a note that stopped at "unresolved"
+// would leave a file whose governance: block needs enforcing for a reason
+// nobody could act on.
+//
+// It is the note's own wording that is pinned, not just the state: the note is
+// the only thing this command can offer in each of these cases.
+func TestValidateNamesTheFixInAnEditionUnresolvedNote(t *testing.T) {
+	for _, tc := range []struct {
+		what string
+		run  func(t *testing.T) validateOutput
+		fix  string
+	}{
+		{
+			what: "no project config is selected for the file's project",
+			run: func(t *testing.T) validateOutput {
+				// validateGovernance isolates the project configs and judges a
+				// file outside its own project's config: nothing is selected,
+				// and the read cannot start.
+				doc, _ := validateGovernance(t, "governance: { review_ratio: 3 }\n")
+				return doc
+			},
+			fix: editionFixSelectConfig,
+		},
+		{
+			what: "the directory is no checkout",
+			run: func(t *testing.T) validateOutput {
+				editionProjectConfig(t, "", "")
+				t.Chdir(t.TempDir())
+				return validateEditionDoc(t, editionRepoFile(t, "aurora"))
+			},
+			fix: editionFixCheckout,
+		},
+		{
+			what: "the origin's slug cannot be resolved",
+			run: func(t *testing.T) validateOutput {
+				// The local config and the checkout disagree about the
+				// provider, which is the resolution failing with something to
+				// say rather than no checkout at all.
+				editionProjectConfig(t, "  acme/other: { provider: bitbucket, base_branch: main }\n", "")
+				return validateEditionDoc(t, editionCheckout(t, "acme/other", "github"))
+			},
+			fix: editionFixOriginSlug,
+		},
+		{
+			what: "the runs bucket cannot be opened",
+			run: func(t *testing.T) validateOutput {
+				editionProjectConfig(t, "  acme/other: { provider: github, base_branch: main }\n", "ftp://bucket")
+				return validateEditionDoc(t, editionCheckout(t, "acme/other", "github"))
+			},
+			fix: editionFixBucket,
+		},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			doc := tc.run(t)
+			note := editionNote(doc)
+			if note == "" {
+				t.Fatalf("no edition-unresolved note, and the read cannot have happened: %+v", doc.Notes)
+			}
+			if !strings.HasSuffix(note, "; "+tc.fix) {
+				t.Errorf("the note %q does not end in the fix %q", note, tc.fix)
+			}
+		})
+	}
+}
+
+// editionNote is the note's message, or "" when the command wrote none.
+func editionNote(doc validateOutput) string {
+	for _, n := range doc.Notes {
+		if n.Path == "governance" && strings.Contains(n.Message, "the job images' edition unresolved") {
+			return n.Message
+		}
+	}
+	return ""
+}
+
+// editionProjectConfig writes a project config for aurora into a config
+// directory of this test's own and selects it, so validate has a project to
+// read the job images' records through. repos is the config's repos: block and
+// bucket its bucket_url, either of which a case may write to make the read
+// fail later than the last.
+func editionProjectConfig(t *testing.T, repos, bucket string) {
+	t.Helper()
+	path := isolateProjects(t, t.TempDir())
+	cfg := "version: 1\nname: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: unused-bucket\n" +
+		"user: someone@example.com\nmax_parallel: 2\nendpoints: { no_auth: true }\n"
+	if bucket != "" {
+		cfg += "bucket_url: " + bucket + "\n"
+	}
+	if repos != "" {
+		cfg += "repos:\n" + repos
+	}
+	if err := os.WriteFile(path, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// editionRepoFile is a repository file that writes a governance: block — the
+// key that makes the edition of the job images worth reading — naming project,
+// in a directory of its own.
+func editionRepoFile(t *testing.T, project string) string {
+	t.Helper()
+	dir := t.TempDir()
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": "version: 1\nproject: " + project + "\n" +
+		"git: { provider: github, base_branch: main }\nagent: { auth: api-key }\n" +
+		"governance: { review_ratio: 3 }\n" +
+		"workflows:\n  svc: { commands: { build: sh build.sh, test: sh test.sh } }\n"})
+	return filepath.Join(dir, "fugaro.yaml")
+}
+
+// editionCheckout makes the working directory a checkout whose origin names
+// repo and whose file names github as the provider, and returns the file's
+// path. provider is what the checkout claims, so a local config that says
+// otherwise is the slug resolution failing.
+func editionCheckout(t *testing.T, repo, provider string) string {
+	t.Helper()
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:"+repo+".git")
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": "version: 1\nproject: aurora\n" +
+		"git: { provider: " + provider + ", base_branch: main }\nagent: { auth: api-key }\n" +
+		"governance: { review_ratio: 3 }\n" +
+		"workflows:\n  svc: { commands: { build: sh build.sh, test: sh test.sh } }\n"})
+	t.Chdir(dir)
+	return filepath.Join(dir, "fugaro.yaml")
+}
+
+// validateEditionDoc runs validate --json on path and decodes what it wrote.
+// A file that carries problems still writes the document, and a note is never
+// a problem, so the error is not the thing this reads.
+func validateEditionDoc(t *testing.T, path string) validateOutput {
+	t.Helper()
+	out, _, _ := execute(t, "validate", "--json", path)
+	var doc validateOutput
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("validate wrote %q: %v", out, err)
+	}
+	return doc
+}
+
 // TestRunDoesNotGateAFileThatWritesNoGovernance: the gate is the key's, so a
 // repository that writes none is never held to governanceSince.
 func TestRunDoesNotGateAFileThatWritesNoGovernance(t *testing.T) {

@@ -54,7 +54,7 @@ func TestDocsConsoleStylingDesignIsWritten(t *testing.T) {
 		"light-dark(",
 		"Never colour alone",
 		"KILLED by",
-		"NOTIONAL~",
+		"~$",
 		"(partial)",
 		"tabular-nums",
 		"forced-colors",

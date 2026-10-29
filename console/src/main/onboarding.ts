@@ -148,6 +148,19 @@ export interface InstallationsListRow {
   readonly mode: 'ok' | 'reduced' | 'refused' | 'unknown'
   readonly checkout?: string
   readonly checkouts: readonly string[]
+  /**
+   * **`repositories` is what this installation records as its own**, in the
+   * CLI's order and each one once: the `<provider>/<owner>/<name>` identity,
+   * verbatim, with no path, no base branch and no conversion attached.
+   *
+   * It is not `checkouts`, and the difference is the point for the one reader
+   * that needs it: the Live view's launch control offers these as the
+   * repositories a run may be launched in (V2.5.1b), and a launch names a
+   * repository rather than a directory. `[]` is a fact -- an installation whose
+   * config records none, or a row this console recorded and the CLI did not list
+   * -- and the form draws a sentence for it rather than an empty control.
+   */
+  readonly repositories: readonly string[]
   readonly state: InstallationState
   /**
    * `open` is true for the one row the console is **open on** (`openProject`,

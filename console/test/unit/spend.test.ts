@@ -2309,7 +2309,7 @@ describe('renderSpend', () => {
     expect(texts(tree, 'spend-peak')).toEqual(['$1.25', `${NOTIONAL_MARK}$0.40`, 'est. $0.12'])
     expect(texts(tree, 'spend-series').length).toBe(3)
     expect(
-      texts(tree, 'spend-account-title').map((title) => (title ?? '').includes('NOTIONAL~')),
+      texts(tree, 'spend-account-title').map((title) => (title ?? '').includes(NOTIONAL_MARK)),
     ).toEqual([false, true, false])
   })
 

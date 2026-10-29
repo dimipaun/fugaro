@@ -49,7 +49,7 @@ import { sanitizeRefusal, sanitizeText, TOKEN_PLACEHOLDER } from '../../src/shar
 import { decodeDocument } from '../../src/shared/schema'
 import type { CostView, DegradedDocument, LiveDocument } from '../../src/shared/schema'
 import { LIVE_BURN_MAX_SAMPLES, LIVE_STALE_AFTER_SECONDS, BurnHistory, buildLiveModel, renderLive } from '../../src/renderer/screens/live'
-import type { FeedHealth, LiveTheme, ScreenElement, ScreenFactory } from '../../src/renderer/screens/live'
+import type { FeedHealth, LiveFactory, LiveTheme, ScreenElement } from '../../src/renderer/screens/live'
 import {
   DEGRADED_THEMES,
   NO_CAPS_BECAUSE,
@@ -116,7 +116,10 @@ class FakeScreen implements ScreenElement {
   }
 }
 
-const factory: ScreenFactory = { create: (tag) => new FakeScreen(tag) }
+const factory: LiveFactory = {
+  create: (tag) => new FakeScreen(tag),
+  createNS: (tag) => new FakeScreen(tag),
+}
 
 /** walk visits every node of a tree, the root first. */
 function walk(node: ScreenElement): readonly FakeScreen[] {

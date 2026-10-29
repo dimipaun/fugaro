@@ -171,7 +171,7 @@ Three facts hold across every screen and are stated once:
 
 - **A number is never bare.** Every figure goes through `putReading` (`app.ts`), which
   calls `formatReading` (`console/src/shared/availability.ts`), so the marks are fixed console-wide:
-  `NOTIONAL~` prefix, `est.` prefix, `n/a` (`UNAVAILABLE_MARK`), `—` (`GAP_MARK`), and a
+  `~$` prefix, `est.` prefix, `n/a` (`UNAVAILABLE_MARK`), `—` (`GAP_MARK`), and a
   `≥` (`LOWER_BOUND_MARK`) in front of a sum that is a lower bound. An element carrying a
   reading with no value also carries its **reason in `title`** — the console's own
   sentence, never the value it refused.
@@ -292,7 +292,7 @@ section at all: not an inert one, and not one waiting for a provider.
 | Group | Class hooks |
 |---|---|
 | Header | `live-header`, `live-project`, `live-mode`, `live-day`, `live-connection`, `live-connection-age`, `live-connection-reason`, `live-note` |
-| Total | `live-total`, `live-counted`, `live-cap`, `live-percent`, `live-total-notional`, `live-total-percent` |
+| Total | `live-total` (the panel root, with `live-fleet`), `live-counted`, `live-cap`, `live-percent`, `live-total-notional`, `live-total-percent` (the cap bar, an `svg`), `live-fleet-wide` (the wide cell), `live-fleet-cap`, `live-fleet-cap-label`, `live-fleet-hero`, `live-fleet-hero-note`, `live-fleet-bar`, `live-fleet-track`, `live-fleet-segment` (one `rect` per account the bar draws, keyed by `data-account`), `live-fleet-legend`, `live-fleet-key`, `live-fleet-swatch` (one mark per account the bar draws — a row whose account it does not draw has none), `live-fleet-key-word`, `live-fleet-unread` (a value the document does not carry), `live-fleet-counted`, `live-fleet-sep`, `live-fleet-full`, `live-fleet-warn-icon`, `live-fleet-full-word`, `live-fleet-stats`, `live-fleet-stat`, `live-fleet-stat-label`, `live-fleet-burn`, `live-fleet-burn-unit`, `live-fleet-active`, `live-fleet-lost`, `live-fleet-queued`, `live-fleet-waiting` |
 | Repository | `live-repos`, `live-repo`, `live-repo-name`, `live-repo-counted`, `live-repo-cap`, `live-repo-percent`, `live-repo-notional`, `live-burn-rate`, `live-burn`, `live-burn-bar`, `live-burn-unit`, `live-runs`, `live-orphans` |
 | Run row | `live-run`, `live-run-id`, `live-run-title`, `live-run-mode`, `live-run-stage`, `live-run-round`, `live-run-verify`, `live-run-models`, `live-run-recipe`, `live-run-auth`, `live-run-spend`, `live-run-age`, `live-run-flag`, `live-run-contradiction`, `live-run-workflow`, `live-run-requester`, `live-run-started-by` |
 | Condition classes on a row | `live-run-queued`, `live-run-stuck` |
@@ -318,15 +318,16 @@ whose mode is the built-in default.
 |---|---|---|
 | `data-theme` | `light` \| `dark` | on the `section.live` root |
 | `data-received-at` | an ISO stamp, or `''` | the newest frame |
-| `data-fill` | `12.5%` or `n/a` — one decimal, and **nothing else** | a bar's fill, as text. `bar()` writes it from the **same percent reading** it writes `data-state` from (`live.ts`), and both call sites pass a *percent* figure — `repo.percent`, `total.percent` — which `schema.ts` reads through `readNumber`, whose only two states are `measured` and `unavailable`. So this attribute is never `≥ 12.5%` (no `lowerBound` reaches a percent reading), never `NOTIONAL~12.5%` or `est. 12.5%` (no percent reading is marked), and never the em dash; **a rule keyed on a marked form here would match nothing** |
+| `data-fill` | `12.5%` or `n/a` — one decimal, and **nothing else** | a repository cap bar's fill, as text. `bar()` writes it from the **same percent reading** it writes `data-state` from (`live.ts`), and its one call site passes a *percent* figure — `repo.percent` — which `schema.ts` reads through `readNumber`, whose only two states are `measured` and `unavailable`. **The fleet budget panel's cap bar is not this element**: it is the `svg` of §2.3's Total row, drawn from the cap's own shares, and it writes neither this attribute nor `data-state`. So this attribute is never `≥ 12.5%` (no `lowerBound` reaches a percent reading), never `~$12.5%` or `est. 12.5%` (no percent reading is marked), and never the em dash; **a rule keyed on a marked form here would match nothing** |
 | `data-height` | `12.5%` or `—` — and **never `n/a`** | each sparkline bar, **except the empty one**. The heights are the bar's own shapes, not the reading's: `sparkline()` builds every one as `measured(share)` or, for a sample that is not plottable, `gap(...)` (`live.ts` 472-490), and `spark()` draws those bars and copies each height's state — so a bar the console cannot fill draws the em dash and never the `n/a` a `data-fill` may carry. **The one-bar empty sparkline is drawn outside that loop** (`live.ts` 900-910): a line with no sample appends a single `li.live-burn-bar` carrying `data-state="gap"` and **no `data-height` at all** (909), so a rule keyed on `[data-height]` selects every bar of a drawn window and misses the bar of an empty one — the case the empty-sparkline rule of §2.3's state list is about |
-| `data-state` | **two vocabularies.** On a bar: the reading's availability, of which **three of the contract's five words reach this screen** — `measured`, `unavailable`, `gap`. Or, on the connection cell only, **the word that cell drew**: the CLI's connection state, or `n/a` when `putText` refused it | `bar()` writes it from a **percent** reading (`live.ts` 877-882), and both call sites pass one (`repo.percent`, `total.percent`), whose only two states are `measured` and `unavailable`; `spark()`'s bars write `measured` or `gap` — `gap` for a sample that is not plottable and for the one bar of an empty sparkline (896-925). **`notional` and `estimated` are in the attribute's vocabulary and never on this screen**: Live's notional figures go through `numberCell`, which writes the text and the `NOTIONAL~` mark and no state, so a rule for `[data-state='notional']` matches nothing here (the attribute is Spend's, §2.4). `header()` sets it on `span.live-connection` from the cell's own `textContent`, deliberately — an attribute echoing the raw value would put back on screen exactly what the refusal kept off it. **A `[data-state='…']` rule for a state colour must therefore name the words this screen draws — `measured`, `unavailable`, `gap` — and may not assume the connection cell carries one of them**; a rule that paints every `[data-state]` element would paint that cell for a value that is not a state |
+| `data-state` | **two vocabularies.** On a bar: the reading's availability, of which **three of the contract's five words reach this screen** — `measured`, `unavailable`, `gap`. Or, on the connection cell only, **the word that cell drew**: the CLI's connection state, or `n/a` when `putText` refused it | `bar()` writes it from a **percent** reading (`live.ts` 877-882), and its one call site passes one (`repo.percent`), whose only two states are `measured` and `unavailable`; **the fleet budget panel's cap bar carries no `data-state` at all** — it is an `svg` of `rect`s keyed by `data-account`, and the panel's own cap, headroom and counts carry the text and, where there is no number, the reason in `title`; `spark()`'s bars write `measured` or `gap` — `gap` for a sample that is not plottable and for the one bar of an empty sparkline (896-925). **`notional` and `estimated` are in the attribute's vocabulary and never on this screen**: Live's notional figures go through `numberCell`, which writes the text and the `~$` mark and no state, so a rule for `[data-state='notional']` matches nothing here (the attribute is Spend's, §2.4). `header()` sets it on `span.live-connection` from the cell's own `textContent`, deliberately — an attribute echoing the raw value would put back on screen exactly what the refusal kept off it. **A `[data-state='…']` rule for a state colour must therefore name the words this screen draws — `measured`, `unavailable`, `gap` — and may not assume the connection cell carries one of them**; a rule that paints every `[data-state]` element would paint that cell for a value that is not a state |
+| `data-account` | `counted` \| `spent` \| `leased` \| `headroom` | which money account a shape on the fleet budget panel draws. The **account is the attribute and not part of the class name**: every `rect.live-fleet-segment` and every `span.live-fleet-swatch` carries one class in common, and a rule reads the account off this attribute — the shape every other tone on this tree uses. `fleetAccounts` names them, so the value is one of the four words above and never a word from the document. **A swatch is drawn only for an account the bar draws**: a mark keys a fill, so the Leased row of the two-segment fallback (the bar paints no lease there) has none, and a rule may not read a row's mark as an account the bar drew |
 | `data-segments` | an integer as a string | how many pieces a sparkline broke into |
 | `data-tone` | `plain` \| `amber` \| `alarm` \| `queued` | row and flag severity |
 | `data-queued` | `true` \| `false` | |
 | `data-flag` | `silent` \| `lost` \| `near deadline` \| `over deadline` \| `stuck` \| `queued` \| `unknown health` \| `unknown deadline` | one `span.live-run-flag` per flag |
 | `data-contradiction` | `true` (present only) | health says quiet longer than the run is old |
-| `data-killed` | `true` \| `false` | **the repository block only** (`li.live-repo`, `true`/`false`), and `true` on the kill banner `div.live-kill`. **Not on `div.live-total`**: `total()` emits no `data-killed` and appends the banner instead, so a rule that colours the total block by this attribute selects nothing |
+| `data-killed` | `true` \| `false` | **the repository block only** (`li.live-repo`, `true`/`false`), and `true` on the kill banner `div.live-kill`. **Not on the total block** (`section.live-total.live-fleet`): `total()` emits no `data-killed` and appends the banner instead, so a rule that colours the total block by this attribute selects nothing |
 | `data-key` | a sanitized slug, or `''` | the repository |
 | `data-fast` | `true` \| `false` | burn faster than the cap allows |
 | `data-stale` | `true` (present only) | the stale banner |
@@ -340,7 +341,7 @@ above are the last ones read and the graphs break where the console stopped obse
 gap (`data-state="gap"`, the mark `—`); silent (`data-flag="silent"`, `data-tone="amber"`);
 lost (`data-flag="lost"`, `data-tone="alarm"`); near/over deadline (`data-flag`, amber and
 alarm); queued (the `live-run-queued` class, `data-queued="true"`, `data-tone="queued"`);
-stuck (`live-run-stuck`, `data-tone="alarm"`); notional (**the text mark `NOTIONAL~` alone** —
+stuck (`live-run-stuck`, `data-tone="alarm"`); notional (**the text mark `~$` alone** —
 Live's `data-state` comes from a `percent` reading, which is `measured` or `unavailable`, or
 from a sparkline bar's height, which is `measured` or `gap`, so this screen never writes
 `data-state="notional"`; the attribute is Spend's, §2.4); unavailable
@@ -348,8 +349,10 @@ from a sparkline bar's height, which is `measured` or `gap`, so this screen neve
 `title`); empty (a sparkline with no sample draws **one** bar whose reading is a `gap`).
 **There is no loading state**: the screen is drawn from a model, and the entry draws
 nothing until the handshake answers. **There is no cap-reached flag**: the cap is a
-`percent` reading and a bar's `data-fill`, and nothing else — colouring it at a threshold
-is a rule the stylesheet writes, not a state the code emits.
+`percent` reading and the repository bar's `data-fill`, and no attribute beside them —
+colouring it at a threshold is a rule the stylesheet writes, not a state the code emits.
+The fleet budget panel's own word for a cap at its limit is a sentence rather than a
+state: `p.live-fleet-full`, drawn when a measured headroom is 0.
 
 Time constants the stylesheet's threshold rules must agree with:
 `LIVE_STALE_AFTER_SECONDS = 45`, `LIVE_SILENT_AFTER_SECONDS = 60`,
@@ -591,14 +594,14 @@ carry `data-theme` from code — see [§3.6](#36-how-the-theme-is-chosen).
 
 | State | Screen(s) | How it is marked in the DOM |
 |---|---|---|
-| killed / halted | killed: Live (the repo block, and the banner the total block appends), Spend (the caps panel's banner), Projects (kill panel, banner). halted: Run (`div.run-halt`) | a banner element with `data-killed="true"` and the word `KILLED by` + who, when, why — or, on Run, `div.run-halt` with the word `HALTED` + who, when, why and **no attribute at all** (§2.6: that screen's `data-*` is `data-theme`, plus `data-href` on a log link). **The attribute is on the banner, and on Live's repository block itself** — `li.live-repo` carries `true`/`false` and the banner is appended into that same `li` (`live.ts`), so `.live-repo[data-killed="true"]` is a rule this design allows; the two blocks that only *append* a banner, `div.live-total` and `div.spend-caps`, carry none (§2.3, §2.4) |
+| killed / halted | killed: Live (the repo block, and the banner the total block appends), Spend (the caps panel's banner), Projects (kill panel, banner). halted: Run (`div.run-halt`) | a banner element with `data-killed="true"` and the word `KILLED by` + who, when, why — or, on Run, `div.run-halt` with the word `HALTED` + who, when, why and **no attribute at all** (§2.6: that screen's `data-*` is `data-theme`, plus `data-href` on a log link). **The attribute is on the banner, and on Live's repository block itself** — `li.live-repo` carries `true`/`false` and the banner is appended into that same `li` (`live.ts`), so `.live-repo[data-killed="true"]` is a rule this design allows; the two blocks that only *append* a banner, `section.live-total.live-fleet` and `div.spend-caps`, carry none (§2.3, §2.4) |
 | stale (console clock) | Live | `data-stale="true"` banner + the threshold sentence |
 | stale (document age) | Live | `data-stale-by-age="true"` on the connection cell |
 | silent / lost / near / over deadline | Live run rows | `span.live-run-flag` with `data-flag` and `data-tone` (`amber`/`alarm`) |
 | queued / stuck | Live run rows | the `live-run-queued` / `live-run-stuck` class + `data-queued` + `data-flag` |
 | gap | Live, Spend | `data-state="gap"`, the mark `—`, a reason in `title` |
-| unavailable | `data-state="unavailable"`: Live (**the cap bar**, `bar()`), Spend (a point), Projects (**the panel state**, beside `read` and `not-built`), degraded (the cap line). **Not the sparkline's bars**: their state is the bar's own height, `measured` or `gap` (`spark()`, `live.ts` 896-925), so `[data-state='unavailable']` selects no bar of a burn window. `data-available="false"`: Spend's caps panel. The text `n/a` with a reason in `title`: **every** screen | **Run writes no `data-state` at all** — its numbers go through `putReading`, which sets the text and, for a value with no number, the `title` reason, and nothing else (§2.6), so a `[data-state]` colour rule selects nothing on that screen |
-| notional / estimated | the text marks: Live, Spend, Projects, Run, degraded. The attribute `data-state`: **Spend alone** | `NOTIONAL~` / `est.` are `formatReading`'s marks, so they appear wherever a notional or estimated reading is drawn, on all five screens (Live's repository and total notional figures, §2.3; the subscription model and the estimated compute on Projects and Run, §2.5, §2.6; the degraded compute, §2.7). The **attribute** `data-state="notional"` / `"estimated"` is written by Spend alone, on `.spend-point` (and on the single point an account with nothing to draw appends), and it is the **account's** state, not the breakdown on the axis: `SPEND_ACCOUNTS` is three charts, and each of the three reads its own column into its own state — `model_micros` → `measured`, `notional_micros` → `notional`, `compute_micros` → `estimated` (`microsReading`, `spend.ts` 512-536) — with the point copying that reading's state into the attribute (`point()`, 1521). `data-dimension` is the switch's word for the x-axis (`day\|week\|month\|year\|repo\|model\|person\|mode`) and decides nothing here: the notional chart is notional whether the rows are days or repositories. Projects' `data-state` is its panel state, Live's comes from a `percent` reading, Run writes none, and the degraded cap is always `unavailable` |
+| unavailable | `data-state="unavailable"`: Live (**the repository's cap bar**, `bar()` — the fleet budget panel writes no state anywhere: its cap, headroom and counts carry the `n/a` and the reason in `title` instead), Spend (a point), Projects (**the panel state**, beside `read` and `not-built`), degraded (the cap line). **Not the sparkline's bars**: their state is the bar's own height, `measured` or `gap` (`spark()`, `live.ts` 896-925), so `[data-state='unavailable']` selects no bar of a burn window. `data-available="false"`: Spend's caps panel. The text `n/a` with a reason in `title`: **every** screen | **Run writes no `data-state` at all** — its numbers go through `putReading`, which sets the text and, for a value with no number, the `title` reason, and nothing else (§2.6), so a `[data-state]` colour rule selects nothing on that screen |
+| notional / estimated | the text marks: Live, Spend, Projects, Run, degraded. The attribute `data-state`: **Spend alone** | `~$` / `est.` are `formatReading`'s marks, so they appear wherever a notional or estimated reading is drawn, on all five screens (Live's repository and total notional figures, §2.3; the subscription model and the estimated compute on Projects and Run, §2.5, §2.6; the degraded compute, §2.7). The **attribute** `data-state="notional"` / `"estimated"` is written by Spend alone, on `.spend-point` (and on the single point an account with nothing to draw appends), and it is the **account's** state, not the breakdown on the axis: `SPEND_ACCOUNTS` is three charts, and each of the three reads its own column into its own state — `model_micros` → `measured`, `notional_micros` → `notional`, `compute_micros` → `estimated` (`microsReading`, `spend.ts` 512-536) — with the point copying that reading's state into the attribute (`point()`, 1521). `data-dimension` is the switch's word for the x-axis (`day\|week\|month\|year\|repo\|model\|person\|mode`) and decides nothing here: the notional chart is notional whether the rows are days or repositories. Projects' `data-state` is its panel state, Live's comes from a `percent` reading, Run writes none, and the degraded cap is always `unavailable` |
 | partial / hollow | Spend | `data-partial="true"` / `data-hollow="true"` + the `(partial)` marker |
 | unreadable | Spend | `data-unreadable="true"` on the row / `div.spend-totals` + the `no readable record` marker |
 | degraded | Spend | `span.spend-degraded` with `data-degraded="true"` |
@@ -608,7 +611,7 @@ carry `data-theme` from code — see [§3.6](#36-how-the-theme-is-chosen).
 | the rail's row states (§4.1) | chrome (the installation rail) | `span.console-rail-state` with the **word** `running` / `silent` / `idle` beside its glyph `●` / `▲` / `○`. **Not a state the code emits today** — the rail is the canvas's addition, and what a row reads is §4.1's open item — so whichever task draws the row draws the word with it: the word is what makes the tone redundant, and the collapsed rail keeps it in the row's accessible name |
 | not built | Projects (`policy`, `enrollment`) | `data-state="not-built"` + a `projects-because` sentence |
 | empty | picker (status line), Live (a `gap` bar, and `p.live-review-empty` with the review inbox's own sentence), Spend (a `gap` point, a caps note) | the console's own sentence, never an empty box. The inbox's sentence says "in this feed" on purpose: `ready[]` ships empty when the runs bucket could not be read as well as when nothing is waiting, and the CLI's own `queued_note` — drawn in the header as `p.live-note` — is what tells the two apart |
-| cap reached | **none — not a state in the code.** The cap is a `percent` reading and a bar's `data-fill` | the stylesheet may colour a threshold; the code emits no flag |
+| cap reached | **no attribute — not a state in the code.** The cap is a `percent` reading and the repository bar's `data-fill`; the fleet budget panel draws instead a sentence, `p.live-fleet-full` ("the cap is fully committed: new runs wait in the queue until a lease settles"), when a measured headroom is 0 | the stylesheet may colour a threshold; the code emits no flag — and a rule keyed on `p.live-fleet-full` may not read it as a state (§2.3) |
 | loading | **none — not a state in the code** | the entry draws nothing before the handshake answers |
 
 ### 2.10 Numbers, money and time — what the stylesheet must align
@@ -1179,10 +1182,10 @@ the code already emits**, and the stylesheet must never be the only carrier of a
 | queued / stuck | the flag text plus the all-caps row treatment |
 | gap | the mark `—` in the cell and a `title` |
 | unavailable | the mark `n/a` and a `title` |
-| notional / estimated | the `NOTIONAL~` / `est.` prefix **in the number itself** |
+| notional / estimated | the `~$` / `est.` prefix **in the number itself** |
 | partial | the `(partial)` marker text |
 | degraded / polling | the words `degraded` and `polling` |
-| cap near / over | the **number**: the percent reading, and the bar's `data-fill` |
+| cap near / over | the **number**: the percent reading and the repository bar's `data-fill`, and, on the fleet budget panel, the cap, the legend's figures and the full-cap banner's own sentence |
 | not-built | the panel's own sentence |
 | a run's rigor mode | the mode's own **word** — `POC`, `Startup`, `Pro`, `Critical`, `Hotfix` — in the chip on a Live row (§2.3), the MODE cell on Projects (§2.5) and the Rigor row on the run detail (§2.6). **This mark carries no colour at all**, and the row is here to say so: the five modes have no colour of their own in this tree, so the word is the whole of the mark and a rule must not paint the modes apart |
 
@@ -1987,7 +1990,7 @@ in `base.css` and the rows' and badges' is in `screens.css`.
 
 1. a **presence test** over this document's eleven section headings and its load-bearing
    strings — the status line, `SERVED_FILES`, "No inline style attribute", `Never colour
-   alone`, `KILLED by`, `NOTIONAL~`, `(partial)`, `tabular-nums`, `prefers-color-scheme`,
+   alone`, `KILLED by`, `~$`, `(partial)`, `tabular-nums`, `prefers-color-scheme`,
    `light-dark(`, `forced-colors`, "is already the directive a stylesheet needs",
    `mediaTypeFor`, `text/css; charset=utf-8`, `console.css`, `adoptedStyleSheets`,
    `Task 6.2`, "No D-number is allocated" — and over §2's vocabulary rows, failing when a
@@ -2571,9 +2574,9 @@ no task owns.*
    kill banner (draw one **without** a kill and one **with** `KILLED by <who> <when>
    "<reason>"`); under each, four run rows at 24 px with the columns §2.3 lists. Draw one
    row `silent` (amber flag word), one `lost` (alarm flag word), one `queued` (its own
-   treatment), and one run whose spend reads `NOTIONAL~`.
+   treatment), and one run whose spend reads `~$`.
 2. **Spend** — the header with the range picker and the breakdown switch; three chart
-   blocks (`billed model spend`, `NOTIONAL~ subscription list price`, `compute
+   blocks (`billed model spend`, `~$ subscription list price`, `compute
    (estimated)` — draw them as **separate**, never summed, per the design's own rule);
    the rows table with money, counts and run hours; the totals; and the caps panel with the
    global cap, the defaults and one per-repository override, each naming the **binding

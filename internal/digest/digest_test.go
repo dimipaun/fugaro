@@ -598,8 +598,13 @@ func TestDigestSizeCap(t *testing.T) {
 	if out := Markdown(got); len(out) > budget {
 		t.Errorf("capTo left the report at %d bytes, over its %d-byte budget", len(out), budget)
 	}
-	if out := string(Markdown(got)); !strings.Contains(out, fmt.Sprintf("Rows not shown: %d.", got.Dropped)) {
-		t.Errorf("the report does not say how many rows it left out:\n%s", out)
+	// How many it left out, and the rule the cap went by: the sentence says the
+	// cap is on the report's own bytes and that extra sections come after it,
+	// which is what a reader of a build that registered a section hook needs to
+	// know to read the file's size (capTo, design ee-boundary-moves §5.4).
+	wantNote := fmt.Sprintf("Rows not shown: %d. The report is capped at %d bytes before extra sections, and the cheapest unflagged rows go first.", got.Dropped, MaxBytes)
+	if out := string(Markdown(got)); !strings.Contains(out, wantNote) {
+		t.Errorf("the report does not carry the cap's rule %q:\n%s", wantNote, out)
 	}
 	shown := map[string]Run{}
 	for _, r := range got.Runs {

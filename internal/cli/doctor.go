@@ -408,6 +408,8 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	// below (inside the checkout) and the project-wide accessor one here.
 	projSM, projSecrets, projOK := doctorProjectSecrets(ctx, lc)
 	o.Checks = append(o.Checks, doctorProjectSecretAccessorChecks(ctx, lc, projSM, projSecrets)...)
+	o.Checks = append(o.Checks, doctorSecretReaderChecks(ctx, lc, projSM, crmSvc)...)
+	o.Checks = append(o.Checks, doctorCredentialsServiceDeployers(ctx, lc, crmSvc)...)
 	if c := projectAccountStoredCheck(lc, projSecrets, projOK); c != nil {
 		// Outside the checkout branch on purpose: an account job is the
 		// project's, not this repository's (the profile and the jobs it is

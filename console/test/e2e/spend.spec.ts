@@ -787,10 +787,10 @@ test.describe('the Spend screen', () => {
     // and a billed bar at heights that invite the comparison the design forbids.
     expect(drawn.titles).toEqual([
       'billed model spend',
-      'NOTIONAL~ subscription list price',
+      '~$ subscription list price',
       'compute (estimated)',
     ])
-    expect(drawn.peaks).toEqual(['$1.25', 'NOTIONAL~$0.40', 'est. $0.12'])
+    expect(drawn.peaks).toEqual(['$1.25', '~$0.40', 'est. $0.12'])
     // The billed chart is broken at the day with no document and whole either
     // side of it, and the notional chart is broken twice.
     expect(drawn.segments).toEqual(['2', '2', '1'])
@@ -801,7 +801,7 @@ test.describe('the Spend screen', () => {
     ])
     // The notional column of the rows is marked, so the window never shows a
     // subscription's list price as a billed dollar.
-    expect(drawn.notionalCells).toEqual(['NOTIONAL~$0.40', 'n/a', 'NOTIONAL~$0.10'])
+    expect(drawn.notionalCells).toEqual(['~$0.40', 'n/a', '~$0.10'])
     // No cell of the window is the sum of two accounts.
     expect(drawn.text).not.toContain('$1.65')
   })
@@ -967,10 +967,10 @@ test.describe('the Spend screen', () => {
     // $0.65 + $0.00) and never a sum this screen computed.
     expect(drawn.peopleMoney).toEqual(['$1.50', '$0.65', '$0.00', '$2.15'])
     expect(drawn.peopleNotional).toEqual([
-      `NOTIONAL~$0.40`,
-      `NOTIONAL~$0.00`,
-      `NOTIONAL~$0.00`,
-      `NOTIONAL~$0.40`,
+      `~$0.40`,
+      `~$0.00`,
+      `~$0.00`,
+      `~$0.40`,
     ])
     expect(drawn.peopleAverages).toEqual(['$0.50', '$0.65', 'n/a', '$0.54'])
     expect(drawn.peopleSamples).toEqual(['3', '1', '0', '4'])
