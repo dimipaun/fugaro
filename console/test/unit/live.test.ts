@@ -58,16 +58,28 @@ import {
   LIVE_SILENT_AFTER_SECONDS,
   LIVE_STALE_AFTER_SECONDS,
   LIVE_THEMES,
+  PIPELINE_SEGMENTS,
   buildLiveModel,
   contradiction,
   deadlineFlag,
   headroomOf,
   healthFlag,
+  pipelineOf,
   renderLive,
+  runStateOf,
   sparkline,
+  stageSegment,
   watchHealth,
 } from '../../src/renderer/screens/live'
-import type { LiveFactory, LiveModel, ScreenElement, ScreenFactory } from '../../src/renderer/screens/live'
+import type {
+  LiveFactory,
+  LiveModel,
+  LiveRunRow,
+  RunFlag,
+  ScreenElement,
+  ScreenFactory,
+} from '../../src/renderer/screens/live'
+import { WRITE_UNAVAILABLE } from '../../src/renderer/writes'
 import { SYNTHETIC_WHERE } from './synthetic'
 
 // ---------------------------------------------------------------------------
@@ -488,38 +500,74 @@ describe('the row model', () => {
     expect(queued.requestedBy).toBe('redacted@example.invalid')
   })
 
-  it('draws who started a run as the short form, and no cell for a run nobody is named on', () => {
-    // Owner request 2026-10-18: the Started-by column, on the Live row. The
-    // fixture predates `launched_by`, so the key is added to the frame as it
-    // arrived and read back through the decoder -- the row is built the way a
-    // 0.9.0 feed builds it, rather than around `schema.ts`.
+  it('draws the design’s seven columns, and the fields the table has no column for leave the row', () => {
+    // **Console redesign step 2b: the row is a table row now.** The design's
+    // runs table has RUN, TASK, PIPELINE, CODER / REVIEWER, COST, ELAPSED and
+    // STATUS, and the fields the flex row used to draw beside the title --
+    // who started the run, the requester, the recipe, the workflow, the verify
+    // word -- have no column. They stay in the **model** (`LiveRunRow`), so a
+    // later step that wants one has the document's value to draw; what this
+    // test holds is that no cell is drawn for them, which is the half a reader
+    // of the screen would otherwise have to guess.
     const frame = theLastFrame()
+    const dropped = [
+      'live-run-verify',
+      'live-run-recipe',
+      'live-run-workflow',
+      'live-run-requester',
+      'live-run-started-by',
+    ]
     const runs = frame.runs.map((run) =>
       run.run === QUEUED_RUN ? { ...run, launchedBy: 'dana.person+fugaro@example.com' } : run,
     )
     const tree = renderLive(factory, buildLiveModel({ ...frame, runs }, new BurnHistory()), 'light')
-    // The short form, exactly as `fugaro runs ls` writes it
-    // (`runview.LauncherShort`): the part before the address's `@`.
-    expect(texts(tree, 'live-run-started-by')).toEqual(['dana.person+fugaro'])
-    // The address the record named is in no cell of the screen: the cut is the
-    // column's, so no `@` -- and no domain -- reaches a cell.
-    for (const leaf of walk(tree)) {
-      expect(leaf.textContent ?? '').not.toContain('dana.person+fugaro@example.com')
+    for (const className of dropped) {
+      expect(all(tree, className), `${className} is drawn`).toHaveLength(0)
     }
-    // The run beside it keeps no launcher, and a row without one draws no cell
-    // at all: not an empty span, which would add a flex gap, and never another
-    // person's name (the request's "fail private").
-    const untouched = renderLive(factory, modelOf(frame), 'light')
-    expect(all(untouched, 'live-run-started-by')).toHaveLength(0)
-    // A launcher that shortens to nothing a cell can draw is that same empty
-    // cell, and not an empty span: `'  @example.com'` shortens to `'  '`, which
-    // the label class would trim to `''` and draw as a blank element with the
-    // row's `gap` around it (`launcher.ts`'s `blank`).
-    const blank = frame.runs.map((run) =>
-      run.run === QUEUED_RUN ? { ...run, launchedBy: '  @example.com' } : run,
-    )
-    const blanks = renderLive(factory, buildLiveModel({ ...frame, runs: blank }, new BurnHistory()), 'light')
-    expect(all(blanks, 'live-run-started-by')).toHaveLength(0)
+    // The model still carries them, so the columns are a drawing decision and
+    // not a hole in the decoder.
+    const model = buildLiveModel({ ...frame, runs }, new BurnHistory())
+    const row = model.repos[0]?.runs.find((one) => one.run === QUEUED_RUN)
+    if (row === undefined) throw new Error('no queued row')
+    expect(row.launchedBy).toBe('dana.person+fugaro@example.com')
+    expect(row.requestedBy).toBe('redacted@example.invalid')
+  })
+
+  it('draws one cell per column, in the design’s order, and the id cell is the door', () => {
+    // The row's shape, asserted cell by cell: `entry.ts`'s `wireRuns` reads the
+    // text of `.live-run-id` off the row it is bound to and opens Run detail
+    // with it, so the id has to be a cell of the row **and** carry the run's own
+    // drawn text. A row that drew the id somewhere else, or drew the raw wire
+    // value into an attribute, would leave the door matching nothing.
+    const tree = renderLive(factory, modelOf(theLastFrame()), 'light')
+    const rows = all(tree, 'live-run')
+    expect(rows.length).toBeGreaterThan(0)
+    for (const row of rows) {
+      expect(row.tag).toBe('tr')
+      expect(row.getAttribute('data-queued')).not.toBeNull()
+      const cells = row.childNodes().filter((child) => child.tag === 'td')
+      expect(cells).toHaveLength(7)
+      const id = one(row, 'live-run-id')
+      expect(id.tag).toBe('td')
+      expect(id.textContent).not.toBe('')
+      // The door reads this cell and nothing else on the row.
+      expect(all(row, 'live-run-id')).toHaveLength(1)
+      expect(texts(row, 'live-run-stage')).toHaveLength(1)
+      expect(texts(row, 'live-run-state')).toHaveLength(1)
+      expect(texts(row, 'live-run-spend')).toHaveLength(1)
+      expect(texts(row, 'live-run-age')).toHaveLength(1)
+    }
+    // The seven `td`s and the `th` row are the same columns: a heading with no
+    // cell under it is a column the reader looks for and does not find.
+    expect(texts(tree, 'live-table-head')).toEqual([
+      'RUN',
+      'TASK',
+      'PIPELINE',
+      'CODER / REVIEWER',
+      'COST',
+      'ELAPSED',
+      'STATUS',
+    ])
   })
 
   it('takes a run\'s rigor from the join by id, and draws no chip without one', () => {
@@ -619,13 +667,265 @@ describe('the row model', () => {
 })
 
 // ---------------------------------------------------------------------------
+// The pipeline bar, the run's own word, and the two write buttons the redesign
+// draws (console redesign, step 2b).
+// ---------------------------------------------------------------------------
+
+/** runnerSources is every Go file of `internal/runner` and `internal/watch`,
+ * joined, so a test can hold a stage name against the source that writes it
+ * rather than against a list this file keeps. */
+function runnerSources(): string {
+  const out: string[] = []
+  for (const name of ['runner', 'watch']) {
+    const where = path.join(REPO_ROOT, 'internal', name)
+    for (const entry of readdirSync(where)) {
+      if (entry.endsWith('.go')) out.push(readFileSync(path.join(where, entry), 'utf8'))
+    }
+  }
+  return out.join('\n')
+}
+
+/** aRow is one row of the fixture's last frame with the fields a test names
+ * changed. The pipeline and the chip read the recorded stage and the flags and
+ * nothing else, so a test that wants a run at another point of its pipeline
+ * edits the stage the CLI would have written rather than inventing a row. */
+function aRow(edit: Partial<LiveRunRow>): LiveRunRow {
+  const model = modelOf(theLastFrame())
+  const base = model.repos[0]?.runs[0] ?? model.orphans[0]
+  if (base === undefined) throw new Error('the fixture has no run row')
+  return { ...base, ...edit }
+}
+
+/** LOST is the flag `internal/watch` raises when a run's heartbeat is gone. */
+const LOST: RunFlag = { name: 'lost', because: 'no heartbeat for 3m', tone: 'alarm' }
+
+describe('the pipeline bar', () => {
+  it('draws the five segments in the order a run moves through them', () => {
+    expect(PIPELINE_SEGMENTS).toEqual(['queued', 'build', 'implement', 'review', 'done'])
+  })
+
+  it('maps the runner\'s own stage names onto the five segments, and only those names', () => {
+    // **The names are `internal/runner`'s, not this file's.** Each one is a
+    // string the runner writes onto the record (`r.rec.Stage = ...`, or
+    // `r.stage(ctx, name, ...)`'s callers), plus the `queued` the CLI's queued
+    // rows carry -- so a rename in the runner fails here rather than on a
+    // screen. The scan reads the Go sources; the assertions beside it are the
+    // mapping a reader wants to see in one place.
+    const sources = runnerSources()
+    for (const stage of [
+      'queued',
+      'provision',
+      'bootstrap',
+      'plan',
+      'implement',
+      'fix',
+      'review_first',
+      'check',
+      'review',
+      'finalize',
+      'writeback',
+      'render',
+      'digest',
+    ]) {
+      expect(sources.includes(`"${stage}"`), `no Go source writes "${stage}"`).toBe(true)
+    }
+
+    expect(stageSegment('queued')).toBe('queued')
+    expect(stageSegment('provision')).toBe('build')
+    expect(stageSegment('bootstrap')).toBe('build')
+    expect(stageSegment('plan')).toBe('build')
+    expect(stageSegment('implement')).toBe('implement')
+    expect(stageSegment('fix')).toBe('implement')
+    expect(stageSegment('review_first')).toBe('implement')
+    expect(stageSegment('check')).toBe('review')
+    expect(stageSegment('review')).toBe('review')
+    for (const stage of ['finalize', 'writeback', 'render', 'digest']) {
+      expect(stageSegment(stage), stage).toBe('done')
+    }
+  })
+
+  it('answers nothing for a stage this build has never heard of', () => {
+    // A stage string is the document's, and `STAGE_SEGMENTS` is a `Map` for
+    // exactly these words: on an object literal `constructor`, `toString` and
+    // the like answer with something *inherited* rather than with nothing, and
+    // an inherited answer would light a segment no stage named.
+    for (const stage of ['', 'kanban', 'constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+      expect(stageSegment(stage), stage).toBeNull()
+    }
+  })
+
+  it('draws what is behind the run past, its own segment current and what is ahead future', () => {
+    expect(pipelineOf(aRow({ stage: 'review', flags: [] }))).toEqual([
+      { stage: 'queued', mark: 'past' },
+      { stage: 'build', mark: 'past' },
+      { stage: 'implement', mark: 'past' },
+      { stage: 'review', mark: 'current' },
+      { stage: 'done', mark: 'future' },
+    ])
+    // The two ends are reachable: a run that has just been queued has nothing
+    // behind it, and one at its last stage has nothing ahead.
+    expect(pipelineOf(aRow({ stage: 'queued', flags: [] })).map((one) => one.mark)).toEqual([
+      'current',
+      'future',
+      'future',
+      'future',
+      'future',
+    ])
+    expect(pipelineOf(aRow({ stage: 'digest', flags: [] })).map((one) => one.mark)).toEqual([
+      'past',
+      'past',
+      'past',
+      'past',
+      'current',
+    ])
+  })
+
+  it('turns the current segment into the danger mark for a lost heartbeat, and moves nothing', () => {
+    // A lost run is still *at* the segment the CLI last recorded; what changed
+    // is that the console stopped hearing from it. A bar that backed the run up
+    // a segment, or cleared the ones behind it, would report a position the
+    // record does not carry.
+    expect(pipelineOf(aRow({ stage: 'implement', flags: [LOST] })).map((one) => one.mark)).toEqual([
+      'past',
+      'past',
+      'danger',
+      'future',
+      'future',
+    ])
+  })
+
+  it('lights no segment for an unknown stage, and still prints the stage under the bar', () => {
+    expect(pipelineOf(aRow({ stage: 'kanban' })).map((one) => one.mark)).toEqual([
+      'future',
+      'future',
+      'future',
+      'future',
+      'future',
+    ])
+    // The text line is what carries the meaning, so an unknown word reaches the
+    // reader even though the bar can say nothing about it.
+    const frame = theLastFrame()
+    const runs = frame.runs.map((run) => (run.run === OAUTH_RUN ? { ...run, stage: 'kanban' } : run))
+    const tree = renderLive(factory, buildLiveModel({ ...frame, runs }, new BurnHistory()), 'light')
+    expect(texts(tree, 'live-run-stage')).toContain('kanban')
+    const row = all(tree, 'live-run').find((one) => one.getAttribute('data-queued') === 'false')
+    if (row === undefined) throw new Error('no running row')
+    expect(
+      all(row, 'live-pipeline-segment').map((segment) => segment.getAttribute('data-mark')),
+    ).toEqual(['future', 'future', 'future', 'future', 'future'])
+  })
+
+  it('draws the segments as decoration and the stage, round and state as the text', () => {
+    const tree = renderLive(factory, modelOf(theLastFrame()), 'light')
+    for (const segments of all(tree, 'live-pipeline-segments')) {
+      expect(segments.tag).toBe('ol')
+      expect(segments.getAttribute('aria-hidden')).toBe('true')
+      expect(segments.childNodes()).toHaveLength(5)
+    }
+    // The words under the bar are the row's own three cells, so the meaning is
+    // never only the colour of a segment.
+    for (const row of all(tree, 'live-run')) {
+      expect(texts(row, 'live-run-stage')).toHaveLength(1)
+      expect(texts(row, 'live-run-round')).toHaveLength(1)
+      expect(texts(row, 'live-run-state')).toHaveLength(1)
+    }
+  })
+})
+
+describe('the run\'s word', () => {
+  it('is queued, lost, done or running, in that order of precedence', () => {
+    // A queued run has no stage to be lost at, and a lost heartbeat is the worse
+    // fact of the two remaining: the order is the whole of the rule.
+    expect(runStateOf(aRow({ queued: true, flags: [LOST] }))).toBe('queued')
+    expect(runStateOf(aRow({ stage: 'digest', flags: [LOST] }))).toBe('lost')
+    expect(runStateOf(aRow({ stage: 'finalize', flags: [] }))).toBe('done')
+    expect(runStateOf(aRow({ stage: 'implement', flags: [] }))).toBe('running')
+    // An unknown stage is not `done`: the console has no ground to say a
+    // finishing stage a word it does not know.
+    expect(runStateOf(aRow({ stage: 'kanban', flags: [] }))).toBe('running')
+  })
+
+  it('is drawn as a word every time, whatever the row\'s colour', () => {
+    const tree = renderLive(factory, modelOf(theLastFrame()), 'light')
+    const words = new Set(['queued', 'running', 'lost', 'done'])
+    for (const chip of all(tree, 'live-run-chip')) {
+      expect(words.has(chip.textContent ?? '')).toBe(true)
+    }
+  })
+
+  it('gives the lost chip its pip as decoration, and the word either way', () => {
+    const frame = theLastFrame()
+    const runs = frame.runs.map((run) => (run.run === OAUTH_RUN ? { ...run, health: 'lost' } : run))
+    const tree = renderLive(factory, buildLiveModel({ ...frame, runs }, new BurnHistory()), 'light')
+    const lost = all(tree, 'live-run').find((row) => row.classes.includes('live-run-lost'))
+    if (lost === undefined) throw new Error('the fixture has no lost run')
+    expect(texts(lost, 'live-run-state')).toEqual(['lost'])
+    const pip = one(lost, 'live-run-pip')
+    expect(pip.getAttribute('aria-hidden')).toBe('true')
+    // The pip says nothing the word does not: it is one character beside it.
+    expect(pip.textContent).toBe('●')
+  })
+})
+
+describe('the two write buttons the redesign draws', () => {
+  it('draws Halt project and Reap disabled, with the reason, and binds nothing to them', () => {
+    // **The console performs no write but launch-from-console.** Both controls
+    // go through `writes.ts`'s `disabledWrite`, which draws a real `button` a
+    // reader is told about and attaches no listener of any kind -- no IPC
+    // channel, no preload member, no spawn entry. The screen builds no listener
+    // either: `live.ts` is a pure drawing file, and the test below reads its
+    // source rather than trusting that.
+    const frame = theLastFrame()
+    const runs = frame.runs.map((run) => (run.run === OAUTH_RUN ? { ...run, health: 'lost' } : run))
+    const tree = renderLive(factory, buildLiveModel({ ...frame, runs }, new BurnHistory()), 'light')
+
+    const halt = one(tree, 'live-halt')
+    expect(halt.tag).toBe('button')
+    expect(halt.getAttribute('type')).toBe('button')
+    expect(halt.getAttribute('aria-disabled')).toBe('true')
+    expect(halt.getAttribute('title')).toBe(WRITE_UNAVAILABLE)
+    expect(halt.getAttribute('aria-label')).toBe(`Halt project: ${WRITE_UNAVAILABLE.toLowerCase()}`)
+    expect(halt.childNodes().map((one) => one.textContent)).toEqual(['Halt project'])
+
+    const reap = one(tree, 'live-reap')
+    expect(reap.tag).toBe('button')
+    expect(reap.getAttribute('aria-disabled')).toBe('true')
+    expect(reap.getAttribute('title')).toBe(WRITE_UNAVAILABLE)
+    expect(reap.getAttribute('aria-label')).toBe(`Reap: ${WRITE_UNAVAILABLE.toLowerCase()}`)
+    expect(reap.childNodes().map((one) => one.textContent)).toEqual(['Reap'])
+
+    // Both are drawn through `disabledWrite` and nothing else, so the attributes
+    // above are that function's and not a second drawing of the same control.
+    const source = readFileSync(path.join(SRC, 'renderer', 'screens', 'live.ts'), 'utf8')
+    expect(source.includes("disabledWrite(factory, 'live-halt', 'Halt project')")).toBe(true)
+    expect(source.includes("disabledWrite(factory, 'live-reap', 'Reap')")).toBe(true)
+    expect(source.includes('addEventListener')).toBe(false)
+  })
+})
+
+describe('the runs table\'s own scrolling box', () => {
+  it('scrolls the table sideways inside its box rather than widening the panel', () => {
+    // The table is seven columns wide with a floor (`min-width`), so at a narrow
+    // window the box scrolls and the panel it sits in does not. Both halves are
+    // asserted by name: a table given a floor with no scrolling ancestor is a
+    // table whose last column is off the screen with no way to reach it.
+    const css = readFileSync(path.join(SRC, 'renderer', 'theme', 'flight-deck.css'), 'utf8')
+    const box = /div\.live-runs\s*\{([^}]*)\}/.exec(css)
+    expect(box?.[1]).toContain('overflow-x: auto')
+    const table = /table\.live-table\s*\{([^}]*)\}/.exec(css)
+    expect(table?.[1]).toContain('min-width: 1080px')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // The fleet budget panel (console redesign, step 2a-2).
 // ---------------------------------------------------------------------------
 
 /**
  * fleetModel is the fixture's last frame with its `total` edited **on the wire
  * and read back through the decoder**, the way the `queued_note` case above
- * does it: `leased_usd` is a key the CLI does not write yet, and a panel
+ * does it: `leased_usd` is optional in `schema.ts` (a recording made before it
+ * shipped does not carry it), and a panel
  * asserted against a decoded object built by hand would be asserted against a
  * shape `schema.ts` never produces.
  */
@@ -759,9 +1059,9 @@ describe('the fleet budget panel', () => {
     expect(segmentOffsets(tree)).toEqual(['0', '80', '100'])
   })
 
-  it('draws two segments and says Leased is not measured while no CLI writes it', () => {
-    // `leased_usd` is approved but not emitted (2026-10-28), so every document
-    // today is this one. The split cannot be drawn, and the legend's Leased row
+  it('draws two segments and says Leased is not measured when the document lacks it', () => {
+    // `leased_usd` is optional on the wire, so a recording made before it
+    // shipped is this one. The split cannot be drawn, and the legend's Leased row
     // is where the console says so -- with the reading's own reason in its
     // title, which is what makes `n/a` an answer rather than a hole.
     const tree = renderLive(factory, fleetModel({ counted_usd: 50, spent_usd: undefined, leased_usd: undefined, daily_cap_usd: 100, percent: 50 }), 'light')
@@ -1101,7 +1401,10 @@ describe('the rows the fixture does not carry', () => {
     )
     const row = all(tree, 'live-run').find((one) => one.getAttribute('data-queued') === 'false')
     expect(row?.getAttribute('data-tone')).toBe('alarm')
-    expect(texts(tree, 'live-run-flag')).toEqual(expect.arrayContaining(['lost', 'near deadline']))
+    // The health flag is the chip's own word (`lost`), so it is not drawn beside
+    // it; the deadline flag, which is a different word, still is.
+    expect(texts(tree, 'live-run-flag')).toEqual(['near deadline'])
+    expect(all(tree, 'live-run-chip')[0]?.getAttribute('title')).toContain('180 s')
   })
 })
 
@@ -1184,11 +1487,36 @@ describe('the rendered screen', () => {
   })
 
   it('draws a flag as a word with its threshold in the title', () => {
-    const tree = renderLive(factory, modelOf(frameAt('2026-10-15T12:04:20Z')), 'light')
+    // A `silent` health is a flag whose word is not the chip's own (`running`),
+    // so it is drawn beside the chip rather than folded into it.
+    const frame = frameAt('2026-10-15T12:04:20Z')
+    const runs = frame.runs.map((run) => ({ ...run, health: 'silent' }))
+    const tree = renderLive(factory, buildLiveModel({ ...frame, runs }, new BurnHistory()), 'light')
     const flags = all(tree, 'live-run-flag')
-    expect(flags.map((flag) => flag.textContent)).toEqual(['lost'])
-    expect(flags[0]?.getAttribute('title')).toContain('180 s')
-    expect(flags[0]?.getAttribute('data-flag')).toBe('lost')
+    expect(flags.map((flag) => flag.textContent)).toEqual(['silent'])
+    expect(flags[0]?.getAttribute('title')).toContain('no heartbeat for over')
+    expect(flags[0]?.getAttribute('data-flag')).toBe('silent')
+    expect(flags[0]?.getAttribute('data-tone')).toBe('amber')
+  })
+
+  it('says a run\'s state once: a flag that is the chip\'s own word joins its title', () => {
+    // The bucket's `queued` and the health's `lost` are the two flags whose name
+    // *is* the state the chip spells. Drawn beside the chip they would repeat it,
+    // and the pipeline line above says it too, so the word is drawn once and the
+    // flag's reason moves onto the chip's `title`.
+    const tree = renderLive(factory, modelOf(frameAt('2026-10-15T12:04:20Z')), 'light')
+    const chips = all(tree, 'live-run-chip')
+    expect(chips.map((chip) => chip.textContent)).toContain('lost')
+    const lost = chips.find((chip) => chip.textContent === 'lost')
+    expect(lost?.getAttribute('title')).toContain('180 s')
+    expect(texts(tree, 'live-run-flag')).not.toContain('lost')
+
+    // The last frame is the one that carries a queued run (and a lost one).
+    const queued = renderLive(factory, modelOf(theLastFrame()), 'light')
+    const queuedChip = all(queued, 'live-run-chip').find((chip) => chip.textContent === 'queued')
+    expect(queuedChip).toBeDefined()
+    expect(queuedChip?.getAttribute('title')).toContain('runs bucket only')
+    expect(texts(queued, 'live-run-flag')).not.toContain('queued')
   })
 
   it('draws the notional mark on an OAuth run\'s spend', () => {
@@ -1238,13 +1566,20 @@ describe('the rendered screen', () => {
     // that reached for one fails here. What is left is the set below: the
     // class hooks the design's density rules need and `data-` readings a test
     // and the stylesheet read, the three accessibility attributes (which cannot
-    // make the window do anything), and -- **on a node the SVG namespace made,
-    // and only there** -- the presentation attributes the cap bar's geometry is
-    // built from. The namespace is what the fake records, not the tag: a `rect`
-    // made with `create` is an HTML element and is not held to this set.
+    // make the window do anything), `type` on a `button` (which is what
+    // `writes.ts`'s `disabledWrite` draws, and it can only *stop* a form
+    // submission), and -- **on a node the SVG namespace made, and only there**
+    // -- the presentation attributes the cap bar's geometry is built from. The
+    // namespace is what the fake records, not the tag: a `rect` made with
+    // `create` is an HTML element and is not held to this set.
     const MAXIMAL = new Set(['svg', 'rect'])
     const SVG_ATTRIBUTES = new Set(['viewBox', 'preserveAspectRatio', 'width', 'height', 'x', 'y', 'rx'])
-    const ACCESSIBILITY = new Set(['role', 'aria-label', 'aria-hidden'])
+    // `aria-disabled` joins the set with the redesign: the Halt project and
+    // Reap buttons are real `button`s a reader is told are not available. The
+    // attribute describes the element to assistive technology, it schedules no
+    // handler of its own, and a control that carried no text of its own would
+    // still be caught by the tests that click it and watch nothing happen.
+    const ACCESSIBILITY = new Set(['role', 'aria-label', 'aria-hidden', 'aria-disabled'])
     const tree = renderLive(factory, modelOf(theLastFrame()), 'light')
     // The panel draws at least one of each, or the widening above would be a
     // licence for attributes nothing sets.
@@ -1256,6 +1591,7 @@ describe('the rendered screen', () => {
             name === 'title' ||
             name.startsWith('data-') ||
             ACCESSIBILITY.has(name) ||
+            (name === 'type' && node.tag === 'button') ||
             (node.namespace === 'svg' && MAXIMAL.has(node.tag) && SVG_ATTRIBUTES.has(name)),
           `${node.tag}[${name}]`,
         ).toBe(true)

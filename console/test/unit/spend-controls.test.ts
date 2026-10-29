@@ -475,7 +475,7 @@ describe('the spend controls', () => {
     }
   })
 
-  it('never adds NOTIONAL~ to a real total, on the first read or after a re-read', async () => {
+  it('never adds ~$ to a real total, on the first read or after a re-read', async () => {
     const console = await wired()
     const first = await read(console, SPEND_DEFAULT_CONTROLS)
     const second = await read(console, { ...SPEND_DEFAULT_CONTROLS, since: '7d' })

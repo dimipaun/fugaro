@@ -148,6 +148,15 @@ describe('a value that is not a plain measurement', () => {
     expect(text).toContain('$3.25')
   })
 
+  it('never spells the notional state out in the text it writes', () => {
+    // The `~` is the whole mark: a screen that also wrote the state's name
+    // would put a word the reader has to decode beside a figure that carries
+    // its own meaning.
+    for (const value of [0, 3.25, -0.001, 1250]) {
+      expect(formatReading(notional(value), 'usd')).not.toContain('NOTIONAL')
+    }
+  })
+
   it('marks compute as the estimate it is', () => {
     // `JSONLine.ComputeEstimated` / `runstore.Cost.ComputeEstimated`: when
     // compute is not estimated, compute_usd is 0 and means "not estimated",
@@ -185,6 +194,7 @@ describe('formatting', () => {
     expect(formatReading(measured(25.08), 'percent')).toBe('25.1%')
     expect(formatReading(measured(1500), 'seconds')).toBe('1,500 s')
     expect(formatReading(measured(0.42), 'hours')).toBe('0.42 h')
+    expect(formatReading(measured(21), 'duration')).toBe('21s')
     expect(formatReading(measured(12), 'count')).toBe('12')
     expect(formatReading(measured(1234567), 'count')).toBe('1,234,567')
   })
@@ -215,8 +225,37 @@ describe('formatting', () => {
     expect(formatReading(measured(-1.5), 'usd')).toBe('-$1.50')
     // And a state's marker is not a sign: the marks go before the number, not
     // before the minus.
-    expect(formatReading(notional(-0.001), 'usd')).toBe('NOTIONAL~$0.00')
+    expect(formatReading(notional(-0.001), 'usd')).toBe('~$0.00')
     expect(formatReading(estimated(-0.001), 'usd')).toBe('est. $0.00')
+  })
+
+  it('draws a span of seconds the way a person says it, and never as a raw count', () => {
+    // `duration` is the unit a run's age is drawn in: the three scales are
+    // seconds, minutes-and-seconds and hours-and-minutes, and the scale changes
+    // at the unit rather than before it -- 59 s is still seconds and 3,599 s is
+    // still minutes. Nothing here is ever `<n> s`, which is the raw count the
+    // `seconds` unit draws and the two are not the same presentation.
+    expect(formatReading(measured(21), 'duration')).toBe('21s')
+    expect(formatReading(measured(59), 'duration')).toBe('59s')
+    expect(formatReading(measured(60), 'duration')).toBe('1m 00s')
+    expect(formatReading(measured(1761), 'duration')).toBe('29m 21s')
+    expect(formatReading(measured(3599), 'duration')).toBe('59m 59s')
+    expect(formatReading(measured(3600), 'duration')).toBe('1h 00m')
+    expect(formatReading(measured(3720), 'duration')).toBe('1h 02m')
+    expect(formatReading(measured(90061), 'duration')).toBe('25h 01m')
+    // The rounding is to the whole second, and a span that rounds away is the
+    // floor rather than a sign: an age below zero is not an age.
+    expect(formatReading(measured(20.4), 'duration')).toBe('20s')
+    expect(formatReading(measured(20.6), 'duration')).toBe('21s')
+    expect(formatReading(measured(0), 'duration')).toBe('0s')
+    expect(formatReading(measured(-0.4), 'duration')).toBe('0s')
+    expect(formatReading(measured(-12), 'duration')).toBe('0s')
+    // A value the document does not carry has no span either: the unit changes
+    // the number and never the state's own presentation.
+    expect(formatReading(unavailable('no runs[].age_seconds in this document'), 'duration')).toBe(
+      UNAVAILABLE_MARK,
+    )
+    expect(formatReading(gap('the series broke here'), 'duration')).toBe(GAP_MARK)
   })
 })
 

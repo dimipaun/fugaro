@@ -46,9 +46,8 @@ later becomes a real JSON key of a shape here, so the list cannot outlive its
 reason. **The list is empty today**: `leased_usd` (§2) left it when the CLI
 started writing the key, so it now stands on the structs like every other field
 — a console still reads it as optional, because an older CLI writes no such key.
-`compute_usd` (§3) is the one key still named ahead of the CLI that will write
-it, and it needs no guard entry: it is already a real key of `report --json`
-(§4).
+`compute_usd` (§3) never needed an entry: it was already a real key of
+`report --json` (§4), and `budget show --compute` writes it now.
 
 ## 1. The five availability states
 
@@ -69,7 +68,14 @@ The columns below say which field needs which state. The recurring shapes:
 - **`*float64` / `*int64` / `*string` with no `omitempty`** (the `usdPtr` and
   `jsonLine` conventions): a **null** on the wire means *unavailable*, and a
   present number means *measured*. `daily_cap_usd`, `percent`, `spent_usd`,
-  `age_seconds`, `notional_micros`, `compute_usd` are all this shape.
+  `age_seconds` and `notional_micros` are all this shape.
+- **`omitempty` on a number** is how a numeric key can be *absent* instead of
+  `null`, and an absent number is never *unavailable*: it means the CLI left the
+  key out on purpose. There are two, both in §3: `compute_usd`, absent unless
+  `budget show --compute` asked for it (the one flag-conditioned key, and a
+  figure the command cannot give is written `null`, never left out), and
+  `showRun`'s `round`, an int whose `0` a run in its first round omits. Every
+  other number here is always present, `null` when it is not known.
 - **`omitempty` on a string or a slice**: an **absent key** means *none* or
   *empty*, which is a fact rather than a gap.
 - **`bool` flags that say "I don't know"**: `JSONBurn.Known` is the one that
@@ -350,6 +356,15 @@ leased), `headroom_usd` `*float64` (**null = unavailable**),
 `kill` `*showKill` (null = not killed). All caps are **null = unavailable** and
 never `0`.
 
+**`spent_usd` is the billed figure, on `global` and on every row alike**: the
+money the gateway charged, under the counter it was counted in. A subscription's
+part is notional, so a cascade run's tier-A dollars are in `notional_usd` and
+only its charged part is here (§2's `auth`/`notional` state the same split for a
+live row, off the registry entry rather than the counters). **A Spend caps row
+reads `spent_usd` as billed and there is no `billed_usd`**: the key does not
+exist, is not planned, and a second name for the same counter would be a way for
+the two to drift apart.
+
 `showDefaults`: `repo_daily_cap_usd`, `repo_per_run_cap_usd`,
 both `*float64`.
 
@@ -358,25 +373,48 @@ both `*float64`.
 **`repo`, `default` or `none`**), `per_run_cap_usd` `*float64`,
 **`per_run_cap_source`** (string, no `omitempty` — `repo`, `default`, `global`
 or `none`; `perRunCapSource`), `counted_usd`, `spent_usd`,
-`notional_usd`, `leased_usd` float64 (no `omitempty`, as on `showGlobal` and
-floored the same way: the repository's own outstanding lease),
-`headroom_usd` `*float64`, `kill` `*showKill`,
+`notional_usd`, `compute_usd` (below), `leased_usd` float64 (no `omitempty`, as
+on `showGlobal` and floored the same way: the repository's own outstanding
+lease), `headroom_usd` `*float64`, `kill` `*showKill`,
 `running` `[]showRun`. **`per_run_cap_source` is the "binding scope named"
 the design's §6.2 Spend screen draws** — it is already in the document and
 needs no CLI change (§4.3's "not a gap" note).
 
-**`compute_usd` is approved on each `showRepo` and no CLI release writes it
-yet** (the owner approved it on 2026-10-28, with §2's `leased_usd`): a
-`*float64` of the repository's compute dollars, an **estimate** by design
+**`compute_usd` is written by `budget show --compute` and by nothing else**
+(the flag landed on 2026-10-29; the owner approved the key on 2026-10-28).
+It is the **only flag-conditioned key** in this document: without the flag the
+row carries **no such key at all**, so a command without it writes byte for
+byte what it always did — `internal/cli/computeFigure` is why the key can be
+absent and null and not one or the other, and `TestShowComputeIsOptIn` pins
+both halves. With the flag, the key is a `*float64` of the repository's
+compute dollars for the day: a **number** is the estimate
 (`runstore.Cost.ComputeUSD`, the same account §4 reports — and, like
-`leased_usd` now, already a real wire name, on `report --json`'s rows and on
-`runstore.Cost`). The console reads it as **optional** — an absent key or `null`
-is **unavailable** (`n/a`, never `0`), a number is **estimated** — and **no
-screen draws it yet**; the Spend redesign is the reader. It is the one key of
-this block not in `showRepo` today, and the row reader accepts it ahead of the
-struct. A value that is not a number is `n/a` and not a refusal, because this
-document's reader refuses nothing: §2 states why that is the same rule and not a
-second one.
+`leased_usd`, already a real wire name, on `report --json`'s rows and on
+`runstore.Cost`), and **null** is *unavailable* (`n/a`, never `0`): no run of
+the day recorded an estimate, the run records that did cannot be added up to a
+number (`internal/cli/repoCompute` leaves the row unknown rather than write a
+non-finite figure `json.Marshal` refuses), or the runs bucket could not be read
+— the last two append a warning saying so, and the command still succeeds. The
+console reads it as **optional** — an absent key, `null` and a non-number all
+read as unavailable, because this document's reader refuses nothing (§2 states
+why that is the same rule and not a second one).
+
+Three facts the number's reader has to know, all of them the CLI's own words
+in the command's long help. **(i) It is an estimate by design**, priced from
+each run's own price table, so a VM run's figure leaves the VM's boot disk and
+Cloud NAT out (design compute-backend.md §5.2, C17). **(ii) It is the day's
+finished runs only, attributed to the UTC day each run *started* on** — a run
+minted before midnight and started after it counts to the day it started, and a
+run still in flight has recorded no result yet — so **today's figure is always
+partial** and a screen must not draw it as a closed day. **(iii) The read is
+narrowed to the rows this document carries**: one listing of the bucket's
+repositories, then, for each repository shown, a listing of its runs minted
+since the previous day began and a record read for each of those — a run's
+start day is only known once its record is read, so the reader looks a day
+wider than the day it reports. That cost is why `--compute` is opt-in: the rail
+and the Projects screen call this same command and pay for no bucket read. The
+figure reaches a person too: with the flag the text view prints `compute:` per
+repository, `n/a` where the JSON says `null`.
 
 `showRun`: `slug`, `run`, `repo`°, `workflow`°, `title`°,
 `stage`°, `round` (**int**, `omitempty` — unlike `watch`'s string),
@@ -388,8 +426,8 @@ bool°. `°` = `omitempty`.
 `JSONKill`.
 
 **Flags, read off the cobra command** (`newBudgetShowCmd`): `--repo`, `--all`,
-`--json`, plus `addCloudFlags`' `--config`, `--project`, `--gcp-project`,
-`--region`.
+`--json`, `--compute`, plus `addCloudFlags`' `--config`, `--project`,
+`--gcp-project`, `--region`.
 
 ## 4. `fugaro report --json`
 
@@ -1762,6 +1800,70 @@ is stored), `--all` (every repository the local config lists, one view each),
 the console does not pass), `--json`, and the cloud flags `--project`,
 `--config`, `--gcp-project` and `--region`.
 
+### 6.14 `fugaro run --json` — the launch (design §5.1 rule 11)
+
+**Command:** `internal/cli/run.go` (`newRunCmd`), printed by `printLaunch` with
+`json.Encoder` and `SetIndent("", "  ")`: **one indented object**, the shape
+every command in the console's set prints (§9.2). **This is the one write in the
+whole console** — the operation `run.launch`, whose twenty-fourth row on the IPC
+allow-list V2.5.1a added (2026-10-28/29) — and the only document below that a
+launch produces rather than a read. The argv the console builds from the form's
+five fields, and the confirmation window the main process owns, are design §5.1
+rule 11's and are not repeated here; what this section settles is the shape of
+the answer those fields come back as.
+
+**Document:** `launchResult` —
+
+`project`, `run`, `repo`, `run_id`, `branch`, `ref`°, `execution`, `log_url`°,
+`status`, `pr`° (**int**), `previous_run`°, `recipe`°, `project_layer`°.
+`°` = `omitempty` (as in §3). `recipe` is `launchRecipe`: `name`, `source`.
+`project_layer` is `launchProjectLayer`: `sha256`, `generation`° (**int64** —
+which one layer the stored task actually carries, and never its text).
+
+**Four of the fields are the launch's own identity, and the fifth is a version
+of it the console built.** `project` is the Fugaro project the launch was cut
+for. `run` and `run_id` are the same run id under the CLI's two keys, and it is
+the id the console generated for that one confirmation window, not one the form
+could propose. `branch` is the branch the run's work goes on — a new run's, or,
+for a follow-up, the pull request's — and `ref`° is the ref a new run's branch
+is cut from, which its review measures the work against; `ref` is absent for a
+follow-up and a review run, whose review reads each pull request's own base. And
+**`repo` is the CLI's canonical `owner/name`**, not the `<provider>/<owner>/<name>`
+identity the installation's records carry: the conversion between the two is the
+console's own (`launchrules.launchRepoArgument`), and the main process checks
+this field against the value it asked for before the reply is believed.
+
+**`status` is `launched` or `already-launched` and nothing else.** The second is
+the CLI's own claim already holding this run id, and the design draws it as a
+**fact rather than as an error** (D23). `pr`° and `previous_run`° are a
+follow-up's pull request and the run it continues; `execution` is the execution
+the run is in; and `log_url`° is where the CLI prints the run's logs — **carried
+as text and never drawn as a link** (design §5.1 rule 2).
+
+**A launch that fails prints no document at all.** The CLI's refusals — an
+empty or oversized task, a title or a plan task past its cap, a budget
+pre-check, a claim already held, a credential it could not use — are returned as
+errors: `run` exits non-zero with the CLI's own sentence on stderr, which the
+console draws as text (`sanitizeRefusal`). So the reply this section documents is
+the *successful* launch's, and a screen that waited for a `status` field on the
+failure path would wait for a document no command prints. The one exception is
+inside the CLI, not on this surface: a batch launch prints a batch document once
+per attempt (`printBatch`), and the console never asks for one — the batch flag
+is on rule 11's excluded-flag list — so that shape is not this operation's.
+
+**The decoder is closed, and it is the contract's enforcer.** The main process
+reads this document with `decodeLaunchResult`
+(`console/src/main/launchrules.ts`): the keys must be exactly the ones above, the
+types are the ones the CLI writes, `status` must be one of the two words, and
+**an unknown key or a wrong type refuses the whole reply** rather than being
+ignored (rule 11). Every string is kept as text and bounded — nothing here is
+read as a sentence, a path or a link — and the renderer mirrors that decoder
+(`console/src/renderer/screens/launch.ts`'s `launchOutcomeOf`), so a reply with
+a key of its own draws the console's one "unreadable reply" sentence and never a
+partial set of facts. A replayed answer — a second click on the window's own
+button, or a re-sent call — is the app's own in-memory record of the first
+`launchResult` and reaches no child at all (design §5.1 rule 11).
+
 ## 7. The CLI gaps, settled against the code
 
 The console ships **without any of these** and must work, visibly degraded
@@ -1823,6 +1925,7 @@ and **not** off this document or the design:
 | **`plan graph`** | **no — it reads the graph artifact in the checkout, not a cloud** (`internal/cli/plan.go`, §6.9) |
 | `plan status` | yes (`newPlanStatusCmd`, §6.12) — a task's state is a *run's* state, so it reads the runs bucket too |
 | `coordinator status` | yes (`newCoordinatorStatusCmd`, §6.13) — with `--from-store` it is the one read here that asks nothing of the host (the stored view, through the caller's own credentials), and it is a cloud read all the same: the view lives in the project's database, so it carries `--project` and `--config` like the rest |
+| **`run`** | yes (`newRunCmd`, §6.14) — **the one row here that writes**: the launch (design §5.1 rule 11) is cut for a project like every cloud command, so it carries `--project` and `--config` too, and the task itself arrives on stdin rather than as a flag |
 
 So the console passes `--project <name>` (and `--config <path>` when the
 installation is not the ambient one) on **every spawn except the handshake**,
@@ -1835,13 +1938,17 @@ table against the live constructors.
 
 ## 9. What the console may do with all this
 
-1. **Every document in the console's set is read-only**, and the allow-list is
-   by exact argv (design §5.1 rule 6). Two commands this file describes are
-   writes, and neither is in the console's set: `fugaro cancel RUN --json`
-   (§6.3), which is on the design's "never" table and which no v1 console
-   spawns, and `fugaro accounts clear NAME` (§6.5a, credentials-service C1.21),
-   the operator's own write to the cascade's state. Nothing else here names a
-   write.
+1. **Every document in the console's set is read-only** — with **one exception,
+   the launch** (§6.14, design §5.1 rule 11), which is the console's single
+   write and whose confirmation window is the main process's own. The allow-list
+   is by exact argv (design §5.1 rule 6), and the write is on it: the
+   twenty-fourth operation is `run.launch` (V2.5.1a, 2026-10-28/29), and no other
+   argv that writes is reachable from a renderer. Two further commands this file
+   describes are writes, and **neither is in the console's set**: `fugaro cancel
+   RUN --json` (§6.3), which is on the design's "never" table and which no v1
+   console spawns, and `fugaro accounts clear NAME` (§6.5a, credentials-service
+   C1.21), the operator's own write to the cascade's state. Nothing else here
+   names a write.
 2. **Exactly two of the commands in the console's set are line-delimited:
    `watch --json` and `logs RUN
    --json`** (§2, §6.2 — the feed through

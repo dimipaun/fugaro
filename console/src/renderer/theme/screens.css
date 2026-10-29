@@ -35,7 +35,7 @@
  * that paints a state paints it *beside* a word, a mark or a number the code
  * already emits: `KILLED by`, `HALTED`, `silent`, `lost`, `near deadline`,
  * `queued`, `stuck`, the em dash of a gap, `n/a` with its reason in `title`, the
- * `NOTIONAL~` / `est.` marks, `(partial)`, `degraded`, `polling`, and the cap's
+ * `~$` / `est.` marks, `(partial)`, `degraded`, `polling`, and the cap's
  * own percentage. A reader who sees no hue difference at all still reads every
  * state.
  *
@@ -196,8 +196,6 @@ p.live-review-capped {
  * 4.2), so a narrow window costs a line and never a reading.
  */
 
-li.live-repo,
-li.live-run,
 li.live-review-row,
 li.spend-row,
 li.spend-point,
@@ -219,9 +217,6 @@ li.run-log-line {
   border-bottom: var(--rule-width) solid var(--border);
 }
 
-ol.live-repos,
-ol.live-orphans,
-ol.live-runs,
 ol.spend-rows,
 ol.spend-series,
 ol.spend-switch,
@@ -258,19 +253,10 @@ div.degraded-totals {
   border-radius: var(--radius-md);
 }
 
-/* A repository's block is the raised surface inside the panel, and its runs sit
- * on the panel's own ground, one step apart (design section 3.2's three
- * surfaces). */
-li.live-repo {
-  margin-bottom: var(--space-sm);
-  padding: var(--space-sm);
-  background: var(--surface-alt);
-  border-radius: var(--radius-sm);
-}
-
-li.live-run {
-  background: var(--surface);
-}
+/* A repository's block and its run rows are the redesign's panel and table now:
+ * the ground, the border and the row treatment live in `flight-deck.css` against
+ * `section.live-repo` and `tr.live-run` (console redesign, step 2b), so the two
+ * rules that painted a flex row here have nothing left to select. */
 
 /* ---- Identity: an id, a repository, a slug, a path, a timestamp ------------
  *
@@ -278,7 +264,6 @@ li.live-run {
  * (design section 3.7). Prose never is.
  */
 
-span.live-run-id,
 span.live-review-run-id,
 span.live-review-repo,
 span.live-review-number,
@@ -437,13 +422,6 @@ span.live-burn-unit {
   font-size: var(--font-size-xs);
 }
 
-ol.live-runs {
-  margin-top: var(--space-2xs);
-  padding: var(--space-2xs);
-  background: var(--surface);
-  border-radius: var(--radius-sm);
-}
-
 /* A run row's flags: the word is the mark and the tone is the second channel.
  * `--warn` is attention, `--error` is failed or lost (design section 3.2). */
 span.live-run-flag[data-tone='amber'] {
@@ -458,44 +436,20 @@ span.live-run-flag {
   font-size: var(--font-size-xs);
 }
 
-/* Queued and stuck carry the flag's word *and* the all-caps row treatment
- * (design section 3.5's table), so the tone is never the only carrier. */
-li.live-run-queued .live-run-flag,
-li.live-run-stuck .live-run-flag {
+/* Queued and stuck carry the flag's word *and* the all-caps flag treatment
+ * (design section 3.5's table), so the tone is never the only carrier. The row's
+ * own tone -- the accent and the error rule down its first cell -- is the
+ * redesign's, in `flight-deck.css` (console redesign, step 2b). */
+tr.live-run-queued .live-run-flag,
+tr.live-run-stuck .live-run-flag {
   text-transform: uppercase;
   letter-spacing: 0.08em;
 }
 
-/* The queued row's left border is a **rule**, so it takes `--accent`: section
- * 3.2's role cell gives that token the rules ("structure: rules, the focus ring,
- * a filled control, the cap bar below its threshold"), and the rail's selected
- * row draws its own 3 px left border in it (section 4.1). It is **not**
- * `--accent-ink`, whose cell is "the accent **as text** -- links, an accent
- * heading": that is the tone for text, and a border is not text. `queued` is not
- * one of the five state colours either, so the structural tone is the one the
- * design leaves for it, and `test/unit/theme-tokens.test.ts` holds
- * `--accent-ink` to text. */
-li.live-run-queued {
-  border-left: 3px solid var(--accent);
-}
-
-li.live-run-stuck {
-  border-left: 3px solid var(--error);
-}
-
-span.live-run-title {
-  font-size: var(--font-size-base);
-}
-
 span.live-run-stage,
 span.live-run-round,
-span.live-run-verify,
 span.live-run-models,
-span.live-run-recipe,
 span.live-run-auth,
-span.live-run-requester,
-span.live-run-started-by,
-span.live-run-workflow,
 span.live-run-contradiction {
   color: var(--text-muted);
   font-size: var(--font-size-xs);
@@ -532,7 +486,7 @@ span.run-halt-word {
   letter-spacing: 0.08em;
 }
 
-li.live-repo[data-killed='true'] {
+section.live-repo[data-killed='true'] {
   border-left: 3px solid var(--halted);
 }
 
@@ -755,7 +709,7 @@ span.spend-degraded[data-degraded='true'] {
 /* The three account charts. A point is a figure like any other: mono, tabular,
  * and the tone of the account whose column it reads -- measured, notional or
  * estimated (design section 2.9). The mark that carries the state is the
- * `NOTIONAL~` / `est.` prefix inside the number itself. */
+ * `~$` / `est.` prefix inside the number itself. */
 div.spend-account {
   margin-bottom: var(--space-sm);
 }
@@ -930,7 +884,7 @@ section.projects-panel[data-state='read'] {
  * **The row is marked by the banner it holds.** `data-killed` is the
  * **banner's** attribute and not the row's (§2.5's `data-*` line, and §3.5's
  * states table: "the attribute is on the banner, and on Live's repository
- * block itself" -- Live's `li.live-repo` carries it, Projects' row does not),
+ * block itself" -- Live's `section.live-repo` carries it, Projects' row does not),
  * so a rule spelling the row's own border `div.projects-kill-row[data-killed]`
  * selects nothing. `:has()` is the one selector that can see the banner inside,
  * and a row that *has* one is exactly a killed repository: the row without a
@@ -2231,7 +2185,6 @@ span.coordinator-unread-retry {
     max-width: 50%;
   }
 
-  li.live-run,
   li.spend-row,
   li.projects-job,
   li.run-log-line {
@@ -2283,11 +2236,12 @@ span.coordinator-unread-retry {
   section.projects,
   section.degraded,
   section.console-unavailable,
-  li.live-repo,
+  section.live-repo,
   li.projects-secret,
   li.projects-account,
-  li.live-run,
-  ol.live-runs,
+  tr.live-run,
+  div.live-runs,
+  table.live-table,
   li.spend-row,
   li.spend-point,
   li.projects-cap,
@@ -2308,8 +2262,8 @@ span.coordinator-unread-retry {
   div.projects-kill,
   div.run-halt,
   div.live-stale,
-  li.live-run-queued,
-  li.live-run-stuck,
+  tr.live-run-queued,
+  tr.live-run-stuck,
   span.run-stage-passed,
   span.run-stage-deadline,
   span.live-run-flag,
@@ -2350,16 +2304,11 @@ span.coordinator-unread-retry {
   span.unavailable-searched-lead,
   span.unavailable-operation,
   span.unavailable-searched-count,
-  span.live-run-title,
+  td.live-run-title,
   span.live-run-stage,
   span.live-run-round,
-  span.live-run-verify,
   span.live-run-models,
-  span.live-run-recipe,
   span.live-run-auth,
-  span.live-run-requester,
-  span.live-run-started-by,
-  span.live-run-workflow,
   span.live-run-contradiction,
   span.live-run-mode,
   span.projects-job-mode,
@@ -2474,8 +2423,8 @@ span.coordinator-unread-retry {
   section.spend-caps,
   section.spend-people,
   section.live-fleet,
-  ol.live-repos,
-  ol.live-runs,
+  section.live-repo,
+  div.live-runs,
   ol.spend-rows,
   ol.spend-series,
   section.run-ledger,
@@ -2490,8 +2439,7 @@ span.coordinator-unread-retry {
     border: var(--rule-width) solid CanvasText;
   }
 
-  li.live-repo,
-  li.live-run,
+  tr.live-run,
   li.spend-row,
   li.spend-point,
   li.spend-person,
@@ -2506,10 +2454,14 @@ span.coordinator-unread-retry {
   div.spend-kill,
   div.projects-kill,
   div.run-halt,
-  li.live-run-queued,
-  li.live-run-stuck,
+  /* The redesign moved the queued and stuck rules off the row and onto its
+   * first cell (`flight-deck.css`), so this arm names the cell that carries the
+   * border: a `tr` in a collapsed table paints no edge of its own, and a rule
+   * naming it here would keep nothing. */
+  tr.live-run-queued td:first-child,
+  tr.live-run-stuck td:first-child,
   div.live-stale,
-  li.live-repo[data-killed='true'],
+  section.live-repo[data-killed='true'],
   /* The rigor chips are boundaries and nothing else, so the boundary is what
    * has to survive the author's colours going away. */
   span.live-run-mode,

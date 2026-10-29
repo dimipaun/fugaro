@@ -44,7 +44,7 @@
 //
 // **The three accounts are never summed, and that is the shape of this file.**
 // `m9-budget-and-dashboard.md` section 10 and the design's section 6.2 are one
-// rule: model dollars, `NOTIONAL~` (a subscription's list price, never billed,
+// rule: model dollars, `~$` (a subscription's list price, never billed,
 // never capped) and compute (an estimate by design) are three accounts, and a
 // screen that adds them is drawing a number nobody can be billed for. So the
 // model carries them as **three readings** (`model`, `notional`, `compute`),
@@ -199,7 +199,7 @@ export type SpendDimension = (typeof SPEND_DIMENSIONS)[number]
 
 /**
  * SPEND_ACCOUNTS is the three accounts the design keeps apart, in the order the
- * screen draws them: the billed model dollars, the notional `NOTIONAL~` of a
+ * screen draws them: the billed model dollars, the notional `~$` of a
  * subscription, and compute (an estimate by design). It is a list rather than
  * three fields so that "there are exactly three charts" is a fact a test can
  * read off it.
@@ -459,9 +459,11 @@ export interface SpendCapRow {
   readonly notional: Reading
   /** compute is the repository's compute dollars, an **estimated** figure by
    * design (`runstore.Cost.ComputeUSD`). The owner approved `compute_usd` on
-   * each `showRepo` on 2026-10-28 and no CLI writes it yet, so this reads
-   * absent and `null` as `n/a` and draws nothing with it: the Spend redesign
-   * is the screen that will.
+   * each `showRepo` on 2026-10-28, and `budget show --compute` writes it since
+   * 2026-10-29 -- but this console's `budget.show` row passes no such flag
+   * (adding one is its own reviewed run), so the key still only arrives in a
+   * document a person hands this reader. It reads absent and `null` as `n/a`
+   * and draws nothing with it: the Spend redesign is the screen that will.
    *
    * A value that is not a number is `n/a` too, and not a refusal, because this
    * reader refuses no document at all -- the caps panel is the console's
@@ -576,7 +578,7 @@ export interface SpendPersonRow {
   /** `counted_usd`: the **model** dollars that count toward the caps */
   readonly counted: Reading
   /** `notional_usd`: the part of the model figure a subscription paid --
-   * `NOTIONAL~`, never summed with `counted` */
+   * `~$`, never summed with `counted` */
   readonly notional: Reading
   /** `counted_runs`: the sample `average` is over, published because an average
    * without its sample is a figure a reader cannot weigh */
@@ -1245,11 +1247,11 @@ export function dayRange(since: string | null, until: string | null): readonly s
 // ---------------------------------------------------------------------------
 
 /** ACCOUNT_TITLES are the three headings, in the console's own words. The
- * notional one carries the contract's own mark, because that is the word the
- * design uses for the account and the one a reader has to recognise on sight. */
+ * notional one carries the money mark, because the heading names the form the
+ * figures beneath it are drawn in. */
 const ACCOUNT_TITLES: Readonly<Record<SpendAccount, string>> = Object.freeze({
   model: 'billed model spend',
-  notional: 'NOTIONAL~ subscription list price',
+  notional: '~$ subscription list price',
   compute: 'compute (estimated)',
 })
 

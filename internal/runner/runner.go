@@ -326,12 +326,16 @@ type run struct {
 	serviceTiers gateway.ServiceTierSet
 	provider     gitprov.Provider
 	providerKind string
-	providerFrom string          // where providerKind came from, for mismatch errors
-	credURL      string          // scheme://host of an HTTPS origin; "" when git needs no token
-	auth         gitprov.GitAuth // current git credentials
-	authWarned   bool            // whether a mid-run refresh failure has already been logged
-	tail         *LogTail        // output of the first failed stage, for the draft PR
-	lock         *lock.Lock      // the branch lock, while held
+	providerFrom string // where providerKind came from, for mismatch errors
+	// identity is the author and committer this run's commits carry: nil
+	// until resolveCommitIdentity reads one from the provider (a GitHub
+	// App's bot account), and gitops.Identity for every run without one.
+	identity   map[string]string
+	credURL    string          // scheme://host of an HTTPS origin; "" when git needs no token
+	auth       gitprov.GitAuth // current git credentials
+	authWarned bool            // whether a mid-run refresh failure has already been logged
+	tail       *LogTail        // output of the first failed stage, for the draft PR
+	lock       *lock.Lock      // the branch lock, while held
 	// owned is whether this execution owns result.json: it created the
 	// first record, or found one naming itself. Until then the record is
 	// only ever created if absent, never overwritten (design §4.7).
@@ -977,7 +981,47 @@ func (r *run) openProvider(ctx context.Context, kind, from string) error {
 	if err := r.refreshGitAuth(ctx, bootstrapAuthMinValid); err != nil {
 		return fmt.Errorf("getting git credentials from the %s provider: %w", kind, err)
 	}
+	r.resolveCommitIdentity(ctx)
 	return nil
+}
+
+// resolveCommitIdentity sets the identity this run's commits carry, when the
+// provider names one. GitHub links a commit's author and committer to
+// accounts separately, by their own addresses, and a run sets both to that
+// account's own noreply identity (gitops.BotIdentity): without this every
+// run commit is authored by an address no account owns, so GitHub shows no
+// author for it and CLA Assistant cannot tell whose it is (docs/git-providers.md).
+//
+// A provider with no account of its own (Bitbucket's, and the file-backed
+// test provider) keeps gitops.Identity, and so does every failure here: the
+// read is one API call a run can live without, so it is logged once and the
+// run goes on rather than stopping over an identity.
+//
+// It runs in openProvider, which is called once per run and before the
+// checkout when the provider's kind is known from the flag or the origin URL
+// (bootstrap), and after it when fugaro.yaml names the provider. A checkout
+// already open gets the identity in its environment here, so both orders
+// commit as the same account.
+func (r *run) resolveCommitIdentity(ctx context.Context) {
+	reader, ok := r.provider.(gitprov.BotAccountReader)
+	if !ok {
+		return
+	}
+	account, err := reader.BotAccount(ctx)
+	identity := gitops.BotIdentity(account.ID, account.Login)
+	if err != nil || identity == nil {
+		reason := "the provider named no account"
+		if err != nil {
+			reason = r.redact(err.Error())
+		}
+		r.d.Log.Warn("this run's commits carry the default identity: the git provider's bot account could not be read",
+			"provider", r.providerKind, "reason", reason)
+		return
+	}
+	r.identity = identity
+	if r.repo != nil {
+		r.repo.Env = gitops.WithVars(r.repo.Env, identity)
+	}
 }
 
 // serviceTokens returns the installation's credentials service as the source
@@ -1251,7 +1295,7 @@ const bashTimeoutSlack = 2 * time.Minute
 // and never r.d.Remote read again here: the two must be the same string the
 // admission check and the credential URL were built from.
 func (r *run) openCheckout(ctx context.Context, remote string, cloneVars map[string]string) (*gitops.Repo, error) {
-	env := gitops.WithVars(gitops.IdentityEnv(), cloneVars)
+	env := gitops.WithVars(gitops.IdentityEnvFor(r.identity), cloneVars)
 	// A checkout already here (baked into the image, or left by an earlier
 	// run on the same container), or a baked job with none to open, is
 	// OpenOrClone's case: there is no clone to choose the shape of.
@@ -1803,7 +1847,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 		// that does not exist is worse than no variable at all.
 		set["FUGARO_INPUTS_DIR"] = filepath.Join(r.d.WorkDir, inputsDir)
 	}
-	for k, v := range gitops.Identity {
+	for k, v := range gitops.IdentityFor(r.identity) {
 		set[k] = v
 	}
 	if r.follow == nil && !r.review && !r.artifact {

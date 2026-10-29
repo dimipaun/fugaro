@@ -85,6 +85,23 @@ func TestEditionHasNoLdflagsRoute(t *testing.T) {
 		}
 	}
 
+	// The walk reads the files a -X could hide in, so a Makefile and a YAML
+	// file are among them: a plant proves the widening, since the real tree
+	// would pass even if the walk quietly narrowed back to Dockerfiles and
+	// shell scripts.
+	buildPlant := t.TempDir()
+	testutil.WriteFiles(t, buildPlant, map[string]string{
+		"Makefile":         "build:\n\tgo build ./cmd/fugaro\n",
+		"ci/build.yaml":    "steps:\n  - run: go build ./cmd/fugaro\n",
+		"build/Dockerfile": "FROM scratch\n",
+	})
+	walked := editionBuildFiles(t, buildPlant)
+	for _, want := range []string{"Makefile", filepath.Join("ci", "build.yaml"), filepath.Join("build", "Dockerfile")} {
+		if !slices.ContainsFunc(walked, func(p string) bool { return strings.HasSuffix(p, want) }) {
+			t.Errorf("the build-file walk missed %s: %v", want, walked)
+		}
+	}
+
 	// The planted violations: the routes this scan exists to catch, and the
 	// only ones a build could take. A string the marker reads is planted in a
 	// file that is not the marker's, which is the case one file's scan misses.
@@ -232,9 +249,11 @@ func ldflagsEditionTargets(src string) []string {
 
 // editionBuildFiles are the files that build a fugaro binary, and so the files
 // a -X for the edition could hide in: every Dockerfile and Cloud Build file in
-// the tree (the images are built by both), .goreleaser.yaml (the release), and
-// every shell script, which is the other place a build command can be written.
-// node_modules and .git hold no build of this module's binary.
+// the tree (the images are built by both), .goreleaser.yaml (the release),
+// every YAML file (a CI workflow or any other manifest may hold a build
+// command), every Makefile, and every shell script, which is the other place a
+// build command can be written. node_modules and .git hold no build of this
+// module's binary.
 func editionBuildFiles(t *testing.T, root string) []string {
 	t.Helper()
 	var out []string
@@ -252,7 +271,9 @@ func editionBuildFiles(t *testing.T, root string) []string {
 		name := d.Name()
 		switch {
 		case strings.HasPrefix(name, "Dockerfile"), strings.HasPrefix(name, "cloudbuild"),
-			strings.HasPrefix(name, ".goreleaser"), strings.HasSuffix(name, ".sh"):
+			strings.HasPrefix(name, ".goreleaser"), strings.HasSuffix(name, ".sh"),
+			strings.HasSuffix(name, ".yml"), strings.HasSuffix(name, ".yaml"),
+			name == "Makefile", name == "makefile", strings.HasSuffix(name, ".mk"):
 			out = append(out, path)
 		}
 		return nil

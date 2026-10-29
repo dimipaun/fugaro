@@ -354,7 +354,14 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		"the only Fugaro runtime identity with access to model credentials",
 		"not the only identity with access to Secret Manager",
 		"the build service account",
-		"Project Owners and Editors",
+		// Owners read every secret; an Editor does not read one of its own.
+		// roles/editor carries secretmanager.secrets.getIamPolicy and delete
+		// but not secretmanager.versions.access, so an Editor's read is a
+		// container grant like any other — and the wider claim would hide
+		// exactly those grants from the reader (the owner's ruling, 2026-10-29;
+		// docs/secrets-brokering/reconciliation.md F3).
+		"Project Owners bypass any secret-level policy",
+		"an Editor reads a secret only through a `secretAccessor` grant of its own",
 		// Q6's shape and its cost.
 		"One secret, one grant, one leak",
 		"a read of the bundle is every credential the service holds at once",

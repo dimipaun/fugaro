@@ -309,7 +309,7 @@ func SetLaunchDeclarer(d LaunchDeclarer) error
   builder and the console. Seen through a seam in E1.1 (`TestStubSaysWhyThroughASeam`, a test-only
   stub name) and for real in E2.1/E2.2 (`TestUntaggedPaidCommandSaysWhy`, G3).
 - `TestLateOrDuplicateRegistrationIsRefused`, `TestNoRegistrationLeavesTheRootUnchanged`,
-  `TestRegisteredCommandCannotReplaceCoreSubcommandsOrPersistentFlags`,
+  `TestRegistrationTakesNoCoreNameAliasOrRootFlag`, `TestRegistrationTakesNoEarlierRegistrationsName`,
   `TestLaunchWithoutADeclarerDeclaresNothing`.
 
 The declarer hook's `*Cloud` is the opaque handle of §10: the declarer reads the resolved config,
@@ -390,14 +390,27 @@ first wins, and the checkpoint report is the core plumbing that reads `runstore.
   []Section) error`, **core default: none**, so `Markdown` prints the digest it prints today
   (`TestDigestHasNoExtraSectionByDefault`). T8.3's per-tier calibration joins through it and an
   untagged digest omits it (D528).
+- **The size cap measures the core report, not the hook's sections.** D321's ~8 KiB
+  (`digest.MaxBytes`) bounds the report `Build` produces — the figure, the rows, the summary block —
+  because that is what the core owns and what its row selection trims to fit. `Markdown` is
+  `markdownCore` plus the hook's tail, so a registered section's bytes are appended **after** the
+  trim and never count toward the bound: a tagged digest may commit a file larger than 8 KiB by
+  however much its sections cost, and the core never drops a row to pay for them. The alternative —
+  measuring the rendered report — ran the hook once per dropped row and let one build's sections
+  change which runs another build's readers see, so it is the core report the cap is measured over
+  (`TestCapMeasuresTheCoreReportNotTheSectionHook`), and the report's own dropped-rows sentence says
+  so: *"The report is capped at N bytes before extra sections, and the cheapest unflagged rows go
+  first"* (`TestDigestSizeCap` pins the wording).
 
 ### 5.5 The rule the seams share
 
 - **Every seam is a package-level value whose default is the core implementation, and `ee/register`
   sets it once.** Each setter refuses a second call from anyone else, so nothing can quietly halve
   the enforcement a tagged binary registered. The edition is set the same way (§7).
-- **`ee/register` panics on any setter error, and only `ee/register` may call a `Set*`** (an
-  eeboundary or source-scan test pins it).
+- **`ee/register` panics on any setter error, and only `ee/register` may call a `Set*`**
+  (`internal/eeboundary/seam_test.go`'s `TestOnlyEERegisterSetsTheSeams` scans the module for
+  `SetLaunchDeclarer`, `RegisterCommand`, `SetSections`, `SetGovernance`, `SetStage` and
+  `SetEditionEE` outside `ee/register`'s non-test files, with a planted tree for the red step).
 - **A seam that switches behaviour *off* is test-only**: the `SetCore()`-style seams live in an
   `export_test.go` beside the hook, never in production code, so no core caller can turn governance
   off in a tagged binary. `export_test.go` is compiled only into that package's own tests.
@@ -490,10 +503,14 @@ image can be judged.
 
 **The one reader that has to acquire the read is `fugaro validate`, and it does so online only.**
 Every other edition warning is emitted where a `cloudEnv` is already in hand: `checkGovernanceImage`
-(`recipes_skew.go:1186`), `checkCloneGovernanceImage` (`:1197`) and `refuseGovernanceSkew` reach
-`checkImageSinceDev`'s `env.recordBucket(ctx)` read with the launch's own env, and `--tier`'s warning
+(`recipes_skew.go:1186`) and `refuseGovernanceSkew` reach `checkImageSinceDev`'s
+`env.recordBucket(ctx)` read with the launch's own env, and `--tier`'s warning
 goes through `governanceLaunchSources` (`:1236`) on that same env, which is why E1.3 needs no change
-in `run.go`. `internal/cli/validate.go` has no env — line 1669 calls `governanceImageWarnings(cfg)`
+in `run.go`. The checkout path's `checkCloneGovernanceImage` (`:1197`) has the skew half alone and no
+edition half: a `checkout: clone` workflow is never built, so it has no build record of its own and
+its job runs the installation's base image, whose edition no record carries (§8) — so it warns about
+nothing on the edition, the shipped decision E1.3's `TestCloneWorkflowOnACoreRecordDoesNotWarn`
+pins. `internal/cli/validate.go` has no env — line 1669 calls `governanceImageWarnings(cfg)`
 with the config alone — so E1.3 gives that function the image it judges, and validate takes the road
 every other command in this package takes to an image from a checkout: `openCloudFor(ctx, lc)`
 (`cloud.go:225`), `env.repoSlug` (`cloud.go:527`, the shape `budget.go:176`'s `repoSlugOf` wraps),
