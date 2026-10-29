@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See mobile/LICENSE.md for the terms.
 // The phone's paths, and the id rule that keeps them inside the mailbox
 // (mobile plan, Task P3.6; D113, P2.1's template).

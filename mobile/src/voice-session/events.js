@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See mobile/LICENSE.md for the terms.
 // The voice session's event contract, as the spec's §5 writes it (voice-session
 // plan, Task VS0.1; D205, D206, D213, F3, F9, P8).

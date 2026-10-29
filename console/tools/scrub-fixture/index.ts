@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The scrub's command line (see ./scrub.ts for what it replaces and why).
 //

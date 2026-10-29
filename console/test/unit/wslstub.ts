@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // A fake `wsl.exe`, for the tests that must observe what the Linux side
 // received (docs/console-windows/implementation-plan.md Part A, decision D11).

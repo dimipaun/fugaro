@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See mobile/LICENSE.md for the terms.
 // The contract's document rules (mobile plan, Task P3.2; json-contract §1,
 // §2, §10.8, §10.13 rules 1, 2 and 5).

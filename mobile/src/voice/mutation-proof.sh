@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+# SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 # See mobile/LICENSE.md for the terms.
 # Mutation-proves the voice screen's guards (mobile plan, Tasks P3.5 and P6.12).
 #

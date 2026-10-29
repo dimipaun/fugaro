@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See mobile/LICENSE.md for the terms.
 // The database, behind a port (mobile plan, Task P3.6; Global Constraint 10,
 // Voice D52's "fakes from task one").

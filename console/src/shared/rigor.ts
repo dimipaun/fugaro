@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The rigor block a run's record carries: the mode the run resolved, the layer
 // that decided it and the area rules that matched (docs/rigor-modes D22, D24,

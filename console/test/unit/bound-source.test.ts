@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The bound source: `forget` (desktop-console plan Task 3.4c step 1, wiring
 // 3.4b's deferred N1) and the build that is in flight when the console moves.

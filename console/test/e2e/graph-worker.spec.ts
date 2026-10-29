@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The layout worker in a real Electron process, under the console's unchanged
 // CSP (GV2.2 in `docs/console-dependency-graph/implementation-plan.md`).

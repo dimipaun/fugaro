@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See mobile/LICENSE.md for the terms.
 // The job list's field table, and the vocabulary the list is written in
 // (mobile plan, Task P3.3; D112's answer, tension (b1), resolved 2026-10-17).

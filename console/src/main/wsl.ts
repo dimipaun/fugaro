@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The WSL seam's own module (docs/console-windows/implementation-plan.md Part C,
 // T-C4; decisions D2(a) and D4(a)).

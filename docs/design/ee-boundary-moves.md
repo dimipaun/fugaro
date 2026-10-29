@@ -430,7 +430,7 @@ first wins, and the checkpoint report is the core plumbing that reads `runstore.
 | `governance:` in `fugaro.yaml` or the project layer | decoded, validated, **one warning in the run log**, ignored — it tightens nothing | decoded and effective | E1.2 `TestUntaggedRunnerIgnoresGovernanceWithAWarning` |
 | `tier`, `expected_scope` on a task | decoded, the same one warning, ignored | read | E1.2, E2.3 |
 | launch / `fugaro validate` / `--tier` warnings | judged by **the job image's edition**, never the launcher's — validate reads the record online only, and `--offline` leaves the edition unknown (§7) | same | E1.3 `TestGovernanceOnACoreImageWarns`, `TestTaggedImageFromAnUntaggedLauncherDoesNotWarn`, `TestValidateWarnsGovernanceOnACoreImage` |
-| `fugaro report`, `fugaro coordinator …` | core stub, non-zero exit with the Enterprise message (nothing can run, so warn-and-continue does not apply) | runs | E1.1 stub, E2.1/E2.2, G3 |
+| `fugaro report`, `fugaro coordinator …` | core stub, non-zero exit with the Subscription Edition message (nothing can run, so warn-and-continue does not apply) | runs | E1.1 stub, E2.1/E2.2, G3 |
 | the launch's declaration | nothing declared (D535) | declared | E2.1 |
 | `diagnose`, the digest, the console's run detail | unchanged: they read the record | unchanged | G6, D529 |
 | spend caps, the 80% warning, the kill switch, rigor's per-mode budgets | unchanged (D520) | unchanged | E2.3 `TestCapsUnchangedByTheTag`, G7 |
@@ -441,7 +441,7 @@ block* — and not a licensing warning. It exists because the alternative is sil
 user set, and because the same sentence is what the launcher-side edition warning says about the
 image. Launch-side warnings follow the job image because governance is enforced by the job's
 `fugaro`, not the launcher's (R3, F11). **The owner confirmed this reading on 2026-10-29 (O8):** the
-runner's run-log line and the paid-command stubs' Enterprise message appear only in untagged/core
+runner's run-log line and the paid-command stubs' Subscription Edition message appear only in untagged/core
 builds and carry no licence, key or payment wording, so neither is a licence notice under D523; this
 document lists no open confirmation for the gating model.
 
@@ -490,7 +490,7 @@ Three things make this the right carrier rather than an OCI label.
   binary's own edition.
 
 The OCI labels are still set — `images/base/Dockerfile:309` already writes
-`org.opencontainers.image.*`, and E1.4 adds the licence label naming MIT plus the enterprise
+`org.opencontainers.image.*`, and E1.4 adds the licence label naming MIT plus the Subscription Edition
 licence — they are simply not what the gate judges.
 
 **An image with no record, no `edition` field, or an empty one is *unknown*, and an unknown image
@@ -565,7 +565,7 @@ Three rules ride along:
 - **The tag lands only once the relabel has** (F16c, E3.2): `scripts/notices_test.go`'s
   `TestEETagNeedsTheLabels` refuses a release that sets the tag while a licence label says MIT, and
   E3.2 extends that gate to the image builds, which it does not see today. So base and history
-  labels name MIT plus the enterprise licence, and credentials' label names MIT.
+  labels name MIT plus the Subscription Edition licence, and credentials' label names MIT.
 - **The build context admits `ee/`**: the root `.dockerignore` lists `go.mod`, `go.sum`, `cmd/`,
   `internal/`, `images/` and `deploy/terraform/` today, so `COPY ee` would fail (F16b); E1.4 adds it
   and tests the context.

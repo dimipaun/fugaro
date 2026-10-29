@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The bundled document's origin: a registered, standard, secure `app://` scheme
 // (desktop-console plan Task 1.1; design section 5.1 rules 2 and 3).

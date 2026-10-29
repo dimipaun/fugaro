@@ -31,7 +31,7 @@ func Edition() string {
 	return EditionCore
 }
 
-// SetEditionEE marks this binary as the enterprise edition, for ee/register's
+// SetEditionEE marks this binary as the Subscription Edition, for ee/register's
 // init alone. It refuses a second call, so nothing can quietly halve the
 // enforcement a tagged binary registered (design §5.5).
 func SetEditionEE() error {

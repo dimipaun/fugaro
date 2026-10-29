@@ -280,7 +280,7 @@ func TestGoreleaserReleaseBuild(t *testing.T) {
 		tags := buildTagSet(t, cfg, []byte(workflow))
 		for _, tag := range slices.Sorted(maps.Keys(tags)) {
 			if tag != "ee" {
-				t.Errorf("the release build sets the build tag %q; only ee may be set, and then only with every licence label naming the enterprise licence (TestEETagNeedsTheLabels)", tag)
+				t.Errorf("the release build sets the build tag %q; only ee may be set, and then only with every licence label naming the Subscription Edition licence (TestEETagNeedsTheLabels)", tag)
 			}
 		}
 	})
@@ -383,18 +383,18 @@ func TestEETagNeedsTheLabels(t *testing.T) {
 		})
 	}
 
-	t.Run("a planted ee tag with every label naming the enterprise licence is accepted", func(t *testing.T) {
+	t.Run("a planted ee tag with every label naming the Subscription Edition licence is accepted", func(t *testing.T) {
 		for _, route := range eeTagRoutes {
-			root := plantRelease(t, enterpriseLabels, "homebrew_casks:\n  - license: "+enterpriseMarker+"\n"+route.config, route.workflow)
+			root := plantRelease(t, subscriptionLabels, "homebrew_casks:\n  - license: "+subscriptionMarker+"\n"+route.config, route.workflow)
 			if gaps := eeTagLabelGaps(t, root); len(gaps) > 0 {
-				t.Errorf("a tree whose every label names the enterprise licence reports gaps (%s): %v", route.name, gaps)
+				t.Errorf("a tree whose every label names the Subscription Edition licence reports gaps (%s): %v", route.name, gaps)
 			}
 		}
 	})
 }
 
 // eeTagLabelGaps is the coupling: when the tree's own release build sets the ee
-// tag, every licence label has to name the enterprise licence, and this reports
+// tag, every licence label has to name the Subscription Edition licence, and this reports
 // each one that does not. The tag set and the labels come from the same tree, so
 // the gate below cannot be dropped or unwired without a plant turning red.
 func eeTagLabelGaps(t *testing.T, root string) []string {
@@ -407,7 +407,7 @@ func eeTagLabelGaps(t *testing.T, root string) []string {
 	return eeLabelGaps(t, cfg, root)
 }
 
-// labelNames are the six labels the enterprise licence has to reach, one per
+// labelNames are the six labels the Subscription Edition licence has to reach, one per
 // place a reader learns what the binary is under.
 var labelNames = []string{
 	"the Homebrew cask",
@@ -418,12 +418,12 @@ var labelNames = []string{
 	"the community page's #licence section",
 }
 
-// enterpriseMarker is the SPDX expression every label names once the release
+// subscriptionMarker is the SPDX expression every label names once the release
 // build compiles ee/ in (R3, D303 as amended).
-const enterpriseMarker = "LicenseRef-Fugaro-Enterprise"
+const subscriptionMarker = "LicenseRef-Fugaro-Subscription"
 
 // labels is one tree's worth of licence labels; the two plants differ only in
-// whether they name the enterprise licence.
+// whether they name the Subscription Edition licence.
 type labels struct {
 	cask      string
 	plugin    string
@@ -442,13 +442,13 @@ var mitLabels = labels{
 	astroSect: "<section id=\"licence\">\nFugaro is released under the {licence} licence.\n",
 }
 
-var enterpriseLabels = labels{
-	cask:      enterpriseMarker,
-	plugin:    enterpriseMarker,
-	readme:    "## Licensing\n\nFugaro's core is under the MIT licence in [LICENSE](LICENSE); the released binary carries `ee/` code under " + enterpriseMarker + " ([ee/LICENSE](ee/LICENSE)).\n",
-	licensing: "# Licensing\n\n`ee/` is under " + enterpriseMarker + " in `ee/LICENSE`.\n",
+var subscriptionLabels = labels{
+	cask:      subscriptionMarker,
+	plugin:    subscriptionMarker,
+	readme:    "## Licensing\n\nFugaro's core is under the MIT licence in [LICENSE](LICENSE); the released binary carries `ee/` code under " + subscriptionMarker + " ([ee/LICENSE](ee/LICENSE)).\n",
+	licensing: "# Licensing\n\n`ee/` is under " + subscriptionMarker + " in `ee/LICENSE`.\n",
 	astroCard: "<a href=\"LICENSE\">Licence</a> the {licence} licence; the released binary carries code under `ee/LICENSE`",
-	astroSect: "<section id=\"licence\">\nThe binary carries code under " + enterpriseMarker + " (`ee/LICENSE`).\n",
+	astroSect: "<section id=\"licence\">\nThe binary carries code under " + subscriptionMarker + " (`ee/LICENSE`).\n",
 }
 
 // plantRelease writes a tree carrying the given labels beside the release build
@@ -491,8 +491,8 @@ func eeLabelGaps(t *testing.T, cfg goreleaserConfig, root string) []string {
 	if len(cfg.HomebrewCasks) > 0 {
 		cask = cfg.HomebrewCasks[0].License
 	}
-	if !strings.Contains(cask, enterpriseMarker) {
-		gaps = append(gaps, fmt.Sprintf("the Homebrew cask's license is %q and has to hold %s", cask, enterpriseMarker))
+	if !strings.Contains(cask, subscriptionMarker) {
+		gaps = append(gaps, fmt.Sprintf("the Homebrew cask's license is %q and has to hold %s", cask, subscriptionMarker))
 	}
 
 	manifest, err := os.ReadFile(filepath.Join(root, "plugin", ".claude-plugin", "plugin.json"))
@@ -504,17 +504,17 @@ func eeLabelGaps(t *testing.T, cfg goreleaserConfig, root string) []string {
 		}
 		if err := json.Unmarshal(manifest, &doc); err != nil {
 			gaps = append(gaps, fmt.Sprintf("the plugin manifest does not parse: %v", err))
-		} else if !strings.Contains(doc.License, enterpriseMarker) {
-			gaps = append(gaps, fmt.Sprintf("the plugin manifest's license is %q and has to hold %s", doc.License, enterpriseMarker))
+		} else if !strings.Contains(doc.License, subscriptionMarker) {
+			gaps = append(gaps, fmt.Sprintf("the plugin manifest's license is %q and has to hold %s", doc.License, subscriptionMarker))
 		}
 	}
 
-	if !namesEnterprise(readmeLicensingSection(t, root)) {
-		gaps = append(gaps, fmt.Sprintf("the README Licensing section has to hold %s or link ee/LICENSE", enterpriseMarker))
+	if !namesSubscription(readmeLicensingSection(t, root)) {
+		gaps = append(gaps, fmt.Sprintf("the README Licensing section has to hold %s or link ee/LICENSE", subscriptionMarker))
 	}
 
-	if !namesEnterprise(readTextIfAny(t, filepath.Join(root, "LICENSING.md"))) {
-		gaps = append(gaps, fmt.Sprintf("LICENSING.md has to hold %s or link ee/LICENSE", enterpriseMarker))
+	if !namesSubscription(readTextIfAny(t, filepath.Join(root, "LICENSING.md"))) {
+		gaps = append(gaps, fmt.Sprintf("LICENSING.md has to hold %s or link ee/LICENSE", subscriptionMarker))
 	}
 
 	astro := readTextIfAny(t, filepath.Join(root, "website", "src", "pages", "community.astro"))
@@ -522,20 +522,20 @@ func eeLabelGaps(t *testing.T, cfg goreleaserConfig, root string) []string {
 	if !ok {
 		gaps = append(gaps, "the community page has no #licence section")
 	} else {
-		if !namesEnterprise(card) {
-			gaps = append(gaps, fmt.Sprintf("the community page's licence card has to hold %s or link ee/LICENSE", enterpriseMarker))
+		if !namesSubscription(card) {
+			gaps = append(gaps, fmt.Sprintf("the community page's licence card has to hold %s or link ee/LICENSE", subscriptionMarker))
 		}
-		if !namesEnterprise(section) {
-			gaps = append(gaps, fmt.Sprintf("the community page's #licence section has to hold %s or link ee/LICENSE", enterpriseMarker))
+		if !namesSubscription(section) {
+			gaps = append(gaps, fmt.Sprintf("the community page's #licence section has to hold %s or link ee/LICENSE", subscriptionMarker))
 		}
 	}
 	return gaps
 }
 
-// namesEnterprise reports whether a label says which licence the binary's ee/
+// namesSubscription reports whether a label says which licence the binary's ee/
 // code is under: it either names the SPDX expression or links ee/LICENSE.
-func namesEnterprise(text string) bool {
-	return strings.Contains(text, enterpriseMarker) || strings.Contains(text, "ee/LICENSE")
+func namesSubscription(text string) bool {
+	return strings.Contains(text, subscriptionMarker) || strings.Contains(text, "ee/LICENSE")
 }
 
 func readmeLicensingSection(t *testing.T, root string) string {

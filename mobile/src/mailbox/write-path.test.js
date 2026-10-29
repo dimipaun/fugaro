@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See mobile/LICENSE.md for the terms.
 // The one-write-path rule, ENFORCED rather than observed
 // (mobile plan, Task P3.6; D113, D113b, D119, D125; and the review of PR #604,

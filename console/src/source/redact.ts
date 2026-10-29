@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The redactor: what a recording may carry into this repository (desktop-console
 // plan Task 1.4, SECURITY-SENSITIVE; design section 9.1).

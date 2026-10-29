@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The display layer (src/shared/sanitize.ts) and the recorder
 // (src/source/redact.ts) are held to agree, and the CLI-stderr door

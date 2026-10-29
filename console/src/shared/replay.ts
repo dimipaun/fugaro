@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The replay buffer: a bounded ring of what the console has been shown
 // (desktop-console plan Task 2.3; design section 9.2).

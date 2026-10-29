@@ -399,7 +399,7 @@ func TestStubIsReplacedOnlyByItsRegistration(t *testing.T) {
 	}
 	_, _, err = execute(t, "fugaro-test-other")
 	if err == nil || !strings.Contains(err.Error(), "part of Fugaro Subscription Edition") {
-		t.Errorf("a stub left alone by two registrations = %v, want the Enterprise message", err)
+		t.Errorf("a stub left alone by two registrations = %v, want the Subscription Edition message", err)
 	}
 }
 

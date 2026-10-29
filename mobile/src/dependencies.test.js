@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See mobile/LICENSE.md for the terms.
 // The manifest's dependencies, against the imports the app actually makes
 // (the task that declared the Expo SDK; D125, Global Constraint 10).

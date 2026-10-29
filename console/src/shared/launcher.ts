@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // Who started a run, as a screen draws it (owner request 2026-10-18: "a
 // 'Started by' column", wording from the 2026-10-22 watch spec; the wire field

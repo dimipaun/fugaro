@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LicenseRef-Fugaro-Enterprise
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The redactor's person pass against the fourth independent review (desktop-
 // console plan Task 1.4, SECURITY-SENSITIVE). At 8cd1950d the person pass ran
