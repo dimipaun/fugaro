@@ -28,10 +28,12 @@
 // Every value is a text node -- never a markup-parsing slot, never a link,
 // never an image -- and every refusal is main's own sentence as text: rule 11
 // draws the CLI's message verbatim, so a message that carries markup arrives as
-// characters rather than as an element. The two values a class cannot draw are
-// the launch's own recorded ones -- a repository identity and the `launchResult`
-// facts -- and they are written as the strings they are (`identity` and `fact`
-// below say why).
+// characters rather than as an element. The values that are a document's own go
+// through the console's sanitizer like every other one: `launchResult`'s fields
+// through `putText` with the field's own class (`fact` below), and the recorded
+// repository identities through `sanitizeRefusal` before they reach this file
+// (`entry.ts`'s `railRows` reads them with `stringsOf`), because that string is
+// also the one main matches against its own records.
 //
 // The three caps and the cancel sentence are mirrored rather than imported,
 // because a screen may not read a main-process value: `launch-form.test.ts`
@@ -40,7 +42,9 @@
 
 import { sanitizeRefusal } from '../../shared/sanitize'
 import { LAUNCH_CLI_FLOOR } from '../../shared/version'
+import { putText } from '../app'
 import type { ElementLike } from '../app'
+import type { TextClass } from '../../shared/sanitize'
 
 /**
  * LaunchElement is what this screen may draw into: `ElementLike`'s text slot and
@@ -139,6 +143,7 @@ export const LAUNCH_EMPTY_CLASS = 'launch-empty'
  * are constants rather than literals so a `for` and an `id` cannot be spelled
  * differently in two places. */
 export const LAUNCH_IDS = Object.freeze({
+  form: 'launch-form',
   repository: 'launch-repository',
   repositoryHelp: 'launch-repository-help',
   task: 'launch-task',
@@ -176,24 +181,30 @@ function literal(element: LaunchElement, text: string): LaunchElement {
 }
 
 /**
- * identity writes one repository identity the installation records --
- * `<provider>/<owner>/<name>` -- as a text node.
+ * options draws what the select offers: one `<option>` per recorded repository,
+ * in the installation's own order.
  *
- * It is deliberately not `putText`, and there are two reasons, both of them
- * about this one string. No class admits its shape: `repository` is `owner/name`
- * with exactly one slash, which is the CLI's `--repo` form and not the form the
- * records carry, so the class would draw `n/a` for every repository an operator
- * could launch on. And every class does something to a string on its way to a
- * screen -- folds it to one line, clips it at the display bound, redacts a run
- * it reads as a credential -- while this string is also **sent back**: main
- * matches it against its own records and refuses a launch for anything else
- * (`launchRepoArgument`, `src/main/launch.ts`), so a copy the console had
- * rewritten in any way would be a launch refused for the repository the operator
- * did pick. The confirmation window draws the same value the same way, as text
- * (`src/renderer/confirm.ts`), for the same reason.
+ * Each option carries **no `value` attribute**, so the select's value is the
+ * option's own drawn text rather than a second copy of the identity -- the string
+ * main receives is the string the operator read. The text is a sanitizer's own
+ * answer: `entry.ts`'s `railRows` reads the row's list through `stringsOf`, which
+ * puts every entry through `sanitizeRefusal` before it is stored, so control and
+ * invisible characters (a bidi override in a repository name, say) are gone
+ * before this file draws anything -- the same door the rail's `checkouts` come
+ * through. What that pass keeps, it keeps: an identity is a value main matches
+ * against its own records (`launchRepoArgument`, `src/main/launch.ts`), so a copy
+ * this console had folded, clipped or rewritten would be a launch refused for the
+ * repository the operator did pick.
  */
-function identity(element: LaunchElement, recorded: string): void {
-  element.textContent = recorded
+function options(
+  select: LaunchElement,
+  factory: LaunchFactory,
+  repositories: readonly string[],
+): void {
+  for (const recorded of repositories) {
+    const option = literal(make(factory, 'option'), recorded)
+    select.append(option)
+  }
 }
 
 function cell(
@@ -229,23 +240,24 @@ function field(
   parent: LaunchElement,
   factory: LaunchFactory,
   tag: string,
-  id: string,
+  controlId: string,
   className: string,
   label: string,
   described: readonly string[],
 ): LaunchElement {
   const labelElement = cell(parent, factory, 'label', LAUNCH_LABEL_CLASS)
-  labelElement.setAttribute('for', id)
+  labelElement.setAttribute('for', controlId)
   literal(labelElement, label)
   const control = cell(parent, factory, tag, className)
-  control.setAttribute('id', id)
+  control.setAttribute('id', controlId)
   control.setAttribute('aria-describedby', described.join(' '))
   return control
 }
 
 /** LaunchView is what the control is drawn for: the installation, the repository
- * identities it records (in the CLI's order, deduplicated by the main process),
- * and whether this console's CLI may be launched with at all. */
+ * identities it records (in the CLI's order, deduplicated by the main process,
+ * each one already through `sanitizeRefusal` in `entry.ts`'s `railRows`), and
+ * whether this console's CLI may be launched with at all. */
 export interface LaunchView {
   readonly installation: string
   readonly repositories: readonly string[]
@@ -267,8 +279,8 @@ export interface LaunchFields {
 /** LaunchControl is the whole control: the button, the sentence beside it, the
  * inline form, its fields and the region an outcome is drawn in. `open`, `form`
  * and `fields` are null where the thing itself does not exist -- no launch is
- * offered at all below the CLI floor, and the form has no fields when the
- * installation records no repository. */
+ * offered at all below the CLI floor, and none when the installation records no
+ * repository, because there would be nothing to send. */
 export interface LaunchControl {
   readonly root: LaunchElement
   readonly open: LaunchElement | null
@@ -280,18 +292,22 @@ export interface LaunchControl {
 /**
  * renderLaunch draws the whole control. The form is drawn hidden and the wiring
  * reveals it, because "Launch a run" is a button and a form that was already
- * open would be a button that did nothing.
+ * open would be a button that did nothing. The button carries `aria-expanded`
+ * and `aria-controls` for the form it un-hides, so the control it opens is
+ * related to it rather than merely next to it, and the sentence that explains
+ * the button is drawn **before** the form: read in order, the button, why
+ * pressing it opens a window, then the fields.
  *
  * The repository is a `<select>` and never a text field: the identities it
- * offers are the installation's own recorded ones, and an option carries no
- * `value` attribute, so the select's value is the option's own drawn text rather
- * than a second, unsanitised copy of the identity -- the string main receives is
- * the string the operator read.
+ * offers are the installation's own recorded ones and nothing else (see
+ * `options`).
  *
- * With no repository to offer the form holds a sentence and **no submit at
- * all** rather than a disabled one: it would have nothing to send, and the
- * sentence beside the button would be a promise nothing keeps, so it is not
- * drawn either.
+ * With no repository to offer there is no button and no form at all, and the
+ * one sentence says so in the place the control would be: an installation that
+ * records no repository has nothing to launch on, so a button here would be a
+ * button that opens an empty form. Below the CLI floor it is the same shape with
+ * the floor's own sentence -- and in both cases nothing on this screen reaches
+ * `launchRun`, because there is nothing to send.
  */
 export function renderLaunch(factory: LaunchFactory, view: LaunchView): LaunchControl {
   const root = make(factory, 'section', LAUNCH_CLASS)
@@ -304,20 +320,23 @@ export function renderLaunch(factory: LaunchFactory, view: LaunchView): LaunchCo
     return { root, open: null, form: null, fields: null, outcome }
   }
 
-  const open = cell(root, factory, 'button', LAUNCH_OPEN_CLASS)
-  open.setAttribute('type', 'button')
-  literal(open, LAUNCH_OPEN_WORD)
-
-  const form = cell(root, factory, 'div', LAUNCH_FORM_CLASS)
-  form.setAttribute('hidden', '')
-
   if (view.repositories.length === 0) {
-    literal(cell(form, factory, 'p', LAUNCH_EMPTY_CLASS), LAUNCH_NO_REPOSITORY)
+    literal(cell(root, factory, 'p', LAUNCH_EMPTY_CLASS), LAUNCH_NO_REPOSITORY)
     root.append(outcome)
-    return { root, open, form, fields: null, outcome }
+    return { root, open: null, form: null, fields: null, outcome }
   }
 
+  const open = cell(root, factory, 'button', LAUNCH_OPEN_CLASS)
+  open.setAttribute('type', 'button')
+  open.setAttribute('aria-expanded', 'false')
+  open.setAttribute('aria-controls', LAUNCH_IDS.form)
+  literal(open, LAUNCH_OPEN_WORD)
+
   literal(cell(root, factory, 'p', LAUNCH_HELP_CLASS), LAUNCH_OPENS_WINDOW)
+
+  const form = cell(root, factory, 'div', LAUNCH_FORM_CLASS)
+  form.setAttribute('id', LAUNCH_IDS.form)
+  form.setAttribute('hidden', '')
 
   const repository = field(
     form,
@@ -328,11 +347,7 @@ export function renderLaunch(factory: LaunchFactory, view: LaunchView): LaunchCo
     'Repository',
     [LAUNCH_IDS.repositoryHelp, LAUNCH_IDS.hint],
   )
-  for (const each of view.repositories) {
-    const option = make(factory, 'option')
-    identity(option, each)
-    repository.append(option)
-  }
+  options(repository, factory, view.repositories)
   help(form, factory, LAUNCH_IDS.repositoryHelp, 'one of the repositories this installation records')
 
   field(form, factory, 'textarea', LAUNCH_IDS.task, LAUNCH_TASK_CLASS, 'Task', [
@@ -659,26 +674,36 @@ export function refusalText(raw: string): string {
 
 /**
  * fact is one label-and-value line of a launch's outcome: the label this file's
- * own words, the value the CLI's own, in a `dt`/`dd` pair so the two are lines
- * of their own rather than one run of text.
+ * own words, the value through `putText`, in a `dt`/`dd` pair so the two are
+ * lines of their own rather than one run of text.
  *
- * The value is written as text and not through a class, because a `launchResult`
- * is a document of the CLI's own values rather than free text: `decodeLaunchResult`
- * keeps every string as text and bounded, reads none of them as a sentence, a
- * path or a link (`src/main/launchrules.ts`), and rule 11 draws `run`, `repo`,
- * `branch` and the execution "as the CLI's own values". A validating class here
- * would draw `n/a` over a run that really did launch -- `execution` is the only
- * one of the four whose value is even in a class's shape -- and the operator
- * would be told a launch they just made has no id.
+ * The value is a document's string -- `launchResult`'s own fields -- so it goes
+ * through a class like every other document string this console draws, and the
+ * class is the field's own: `runId` for the run, `repository` for the `owner/name`
+ * main checked, `branch`, `slug` for the execution and `url` for the CLI's
+ * `log_url` (drawn as text and never as a link: rule 11 carries the URL, and a
+ * link would be one more door out of the console for a string that came from a
+ * run). Writing it raw would be the one place a run's own text reached a screen
+ * unfiltered -- `decodeLaunchResult` bounds a string and type-checks it, and
+ * strips no control or format character, so a branch name carrying a bidi
+ * override would be drawn as it arrived. A value a class will not admit is drawn
+ * as the console's unavailable mark rather than as nothing, which is the
+ * treatment `graph.ts` gives a value its class refuses.
  */
-function fact(parent: LaunchElement, factory: LaunchFactory, label: string, value: string): void {
-  literal(cell(parent, factory, 'dt', LAUNCH_FACT_LABEL_CLASS), label)
-  literal(cell(parent, factory, 'dd', LAUNCH_FACT_VALUE_CLASS), value)
+function fact(
+  parent: LaunchElement,
+  factory: LaunchFactory,
+  name: string,
+  value: string,
+  kind: TextClass,
+): void {
+  literal(cell(parent, factory, 'dt', LAUNCH_FACT_LABEL_CLASS), name)
+  putText(cell(parent, factory, 'dd', LAUNCH_FACT_VALUE_CLASS), value, kind, `the launch result's ${name}`)
 }
 
 /** line is one sentence of an outcome, appended to the region's body. */
-function line(parent: LaunchElement, factory: LaunchFactory, text: string): LaunchElement {
-  return literal(cell(parent, factory, 'p', LAUNCH_OUTCOME_LINE_CLASS), text)
+function line(parent: LaunchElement, factory: LaunchFactory, sentence: string): LaunchElement {
+  return literal(cell(parent, factory, 'p', LAUNCH_OUTCOME_LINE_CLASS), sentence)
 }
 
 /**
@@ -717,11 +742,11 @@ export function renderLaunchOutcome(factory: LaunchFactory, read: LaunchOutcomeR
     read.result.status === 'already-launched' ? LAUNCH_ALREADY_WORD : LAUNCH_LAUNCHED_WORD,
   )
   const facts = cell(root, factory, 'dl', LAUNCH_FACTS_CLASS)
-  fact(facts, factory, 'run', read.result.run)
-  fact(facts, factory, 'repository', read.result.repo)
-  fact(facts, factory, 'branch', read.result.branch)
-  fact(facts, factory, 'execution', read.result.execution)
-  if (read.result.logUrl !== '') fact(facts, factory, 'log', read.result.logUrl)
+  fact(facts, factory, 'run', read.result.run, 'runId')
+  fact(facts, factory, 'repository', read.result.repo, 'repository')
+  fact(facts, factory, 'branch', read.result.branch, 'branch')
+  fact(facts, factory, 'execution', read.result.execution, 'slug')
+  if (read.result.logUrl !== '') fact(facts, factory, 'log', read.result.logUrl, 'url')
   if (read.replayed) line(root, factory, LAUNCH_REPLAYED_WORD)
   return root
 }

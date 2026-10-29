@@ -46,18 +46,22 @@ import {
   MAX_LAUNCH_TITLE_RUNES,
 } from '../../src/main/launchrules'
 import { bootDashboard } from '../../src/renderer/entry'
+import { ISSUE_CHECKOUT_LABEL, RAIL_NAME_CLASS, RAIL_ROW_CLASS } from '../../src/renderer/entry'
 import {
   LAUNCH_ALREADY_WORD,
+  LAUNCH_CLASS,
   LAUNCH_COUNT_CLASS,
   LAUNCH_DECLINED_REASON,
   LAUNCH_DECLINED_WORD,
   LAUNCH_EMPTY_CLASS,
   LAUNCH_FLOOR_CLASS,
   LAUNCH_FORM_CLASS,
+  LAUNCH_HELP_CLASS,
   LAUNCH_LAUNCHED_WORD,
   LAUNCH_LABEL_CLASS,
   LAUNCH_NEEDS_CLI,
   LAUNCH_OPEN_CLASS,
+  LAUNCH_OPENS_WINDOW,
   LAUNCH_OUTCOME_CLASS,
   LAUNCH_OUTCOME_UNKNOWN_WORD,
   LAUNCH_PLAN_TASK_CLASS,
@@ -122,8 +126,13 @@ const OPEN_REPOSITORIES: readonly string[] = Object.freeze([
 ])
 
 /** openRow is one `installation.list` row as the main process answers it: the
- * fields the rail reads, and the identities a launch may name. */
-function openRow(repositories: readonly string[] = OPEN_REPOSITORIES): Record<string, unknown> {
+ * fields the rail reads, and the identities a launch may name. `extra` is a
+ * case's own overrides -- the open row that carries an issue, so the rail's
+ * actions are reachable from it. */
+function openRow(
+  repositories: readonly string[] = OPEN_REPOSITORIES,
+  extra: Record<string, unknown> = {},
+): Record<string, unknown> {
   return {
     project: 'orbit',
     open: true,
@@ -132,6 +141,7 @@ function openRow(repositories: readonly string[] = OPEN_REPOSITORIES): Record<st
     checkouts: [],
     repositories,
     state: { issue: 'none', readable: true, sentence: '', command: '', details: [] },
+    ...extra,
   }
 }
 
@@ -144,6 +154,7 @@ function fakeBridge(
   options: {
     readonly compatibility?: Record<string, unknown>
     readonly rows?: readonly Record<string, unknown>[]
+    readonly rail?: Readonly<Record<string, AReply>>
     readonly launch?: AReply
   } = {},
 ): { readonly bridge: Record<string, unknown>; readonly calls: ACall[] } {
@@ -205,6 +216,14 @@ function fakeBridge(
     return options.launch === undefined
       ? { ok: false, reason: 'the console did not launch in this case' }
       : options.launch(args)
+  }
+  // The rail's own actions, for the cases that make the main process answer with
+  // a fresh row list.
+  for (const [name, answer] of Object.entries(options.rail ?? {})) {
+    bridge[name] = (args: unknown): unknown => {
+      calls.push({ name, args })
+      return answer(args)
+    }
   }
   return { bridge, calls }
 }
@@ -295,6 +314,21 @@ async function show(root: FakeNode, view: string): Promise<void> {
   await flush()
 }
 
+/** rowNamed is the rail's own row for one installation: the row whose name is
+ * this project. */
+function rowNamed(root: FakeNode, project: string): FakeNode {
+  const row = all(root, RAIL_ROW_CLASS).find((node) => all(node, RAIL_NAME_CLASS)[0]?.textContent === project)
+  if (row === undefined) throw new Error(`the rail drew no row for ${project}`)
+  return row
+}
+
+/** buttonLabelled is the one button that reads this text. */
+function buttonLabelled(root: FakeNode, label: string): FakeNode {
+  const button = everyNode(root).find((node) => node.tagName === 'BUTTON' && node.textContent === label)
+  if (button === undefined) throw new Error(`no button reads ${label}`)
+  return button
+}
+
 /** launchCalls is every `launchRun` the bridge recorded, by its argument. */
 function launchCalls(calls: readonly ACall[]): readonly unknown[] {
   return calls.filter((call) => call.name === 'launchRun').map((call) => call.args)
@@ -331,7 +365,7 @@ function aResult(overrides: Record<string, unknown> = {}): Record<string, unknow
   return {
     project: 'orbit',
     run: '20261029-120000-abcd',
-    repo: 'github/owner/repo-a',
+    repo: 'owner/repo-a',
     runId: '20261029-120000-abcd',
     branch: 'main',
     ref: 'main',
@@ -420,10 +454,14 @@ describe('the launch control', () => {
     expect(args['planTask']).toBe('../x')
   })
 
-  it('offers no repository, and no submit, when the installation records none', async () => {
+  it('offers no control at all when the installation records no repository', async () => {
     const { document, calls } = await boot({ rows: [openRow([])] })
-    await openForm(document.body)
 
+    // Nothing to launch on, so there is no button: a control here would open an
+    // empty form. The sentence takes its place, and it is drawn where the
+    // control would be rather than hidden behind a press.
+    expect(all(document.body, LAUNCH_OPEN_CLASS)).toEqual([])
+    expect(all(document.body, LAUNCH_FORM_CLASS)).toEqual([])
     expect(textOf(one(document.body, LAUNCH_EMPTY_CLASS))).toContain('records no repository')
     expect(all(document.body, LAUNCH_SUBMIT_CLASS)).toEqual([])
     expect(launchCalls(calls)).toEqual([])
@@ -500,7 +538,7 @@ describe('the launch control', () => {
         want: [
           LAUNCH_LAUNCHED_WORD,
           '20261029-120000-abcd',
-          'github/owner/repo-a',
+          'owner/repo-a',
           'main',
           'cloud-run',
           'https://logs.example.invalid/run/20261029-120000-abcd',
@@ -618,6 +656,85 @@ describe('the launch control', () => {
     }
     expect(textOf(one(document.body, LAUNCH_SUBMIT_CLASS))).not.toBe('')
     expect(one(document.body, LAUNCH_OUTCOME_CLASS).getAttribute('aria-live')).toBe('polite')
+  })
+
+  it('relates the button to the form it opens, and explains it before the form', async () => {
+    const { document } = await boot()
+    const open = one(document.body, LAUNCH_OPEN_CLASS)
+    const form = one(document.body, LAUNCH_FORM_CLASS)
+
+    expect(open.getAttribute('aria-expanded')).toBe('false')
+    expect(open.getAttribute('aria-controls')).toBe(form.getAttribute('id'))
+    expect(form.getAttribute('id')).toBeTruthy()
+    // Read in order: the button, the sentence saying what pressing it does, then
+    // the fields -- not the sentence after the form it is about.
+    const root = one(document.body, LAUNCH_CLASS)
+    expect(root.children[0]?.getAttribute('class')).toBe(LAUNCH_OPEN_CLASS)
+    expect(root.children[1]?.getAttribute('class')).toBe(LAUNCH_HELP_CLASS)
+    expect(textOf(root.children[1] as FakeNode)).toBe(LAUNCH_OPENS_WINDOW)
+
+    open.click()
+    await flush()
+    expect(one(document.body, LAUNCH_OPEN_CLASS).getAttribute('aria-expanded')).toBe('true')
+  })
+
+  it('draws a launch result’s own strings through a class, so no control character reaches a fact', async () => {
+    // A `launchResult` is a document like any other: `decodeLaunchResult` bounds
+    // its strings and type-checks them, and strips no format or control
+    // character, so a branch name carrying a bidi override would otherwise be
+    // drawn as it arrived.
+    const { document } = await boot({
+      launch: () => launched({ result: aResult({ branch: 'ma‮in', repo: 'owner/repo\u0007a' }) }),
+    })
+    await openForm(document.body)
+    set(document.body, LAUNCH_TASK_CLASS, 'a task')
+    await submit(document.body)
+
+    const drawn = textOf(one(document.body, LAUNCH_OUTCOME_CLASS))
+    // What the class keeps, it keeps: the letters of the branch are drawn.
+    expect(drawn).toContain('main')
+    for (const node of everyNode(document.body)) {
+      expect(node.textContent ?? '', 'a control or format character reached the outcome').not.toMatch(
+        /[‪-‮\u0007]/u,
+      )
+    }
+  })
+
+  it('offers what the installation records now after a rail answer, with the installation unchanged', async () => {
+    const open = openRow(OPEN_REPOSITORIES, {
+      checkouts: ['/home/operator/src/orbit'],
+      state: {
+        issue: 'config',
+        readable: true,
+        sentence: 'the console could not read this project',
+        command: '',
+        details: [],
+      },
+    })
+    const after = openRow([...OPEN_REPOSITORIES, 'github/owner/repo-c'], {
+      checkouts: ['/home/operator/src/orbit'],
+    })
+    const { document, calls } = await boot({
+      rows: [open],
+      rail: { setInstallationCheckout: () => ({ ok: true, data: { rows: [after], warnings: [] } }) },
+    })
+
+    // A rail answer replaces the row list while the open installation stays the
+    // open one: the control that is kept for that installation must not keep the
+    // repository list it was built with, or the select would offer the list the
+    // CLI no longer records and refuse the repository the operator picked.
+    rowNamed(document.body, 'orbit').click()
+    await flush()
+    buttonLabelled(document.body, `${ISSUE_CHECKOUT_LABEL}: /home/operator/src/orbit`).click()
+    await flush()
+    expect(calls.filter((call) => call.name === 'setInstallationCheckout')).toHaveLength(1)
+
+    await show(document.body, 'live')
+    await openForm(document.body)
+    expect(one(document.body, LAUNCH_REPOSITORY_CLASS).children.map((child) => child.textContent)).toEqual([
+      ...OPEN_REPOSITORIES,
+      'github/owner/repo-c',
+    ])
   })
 
   it('counts the task’s bytes as they are typed, against the cap', async () => {

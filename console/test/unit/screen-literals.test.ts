@@ -212,6 +212,35 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
         'the parameter of the `numberCell` helper itself; every call site passes one of this file\'s own count words (`COORDINATOR_RECORDS_WORD`, `COORDINATOR_IN_FLIGHT_COUNT_WORD`, `COORDINATOR_COLLISIONS_WORD`), so no document string reaches the sink',
     },
   },
+  // The launch control (V2.5.1b) is the one screen that writes a string it was
+  // also handed by a document -- the repository identities main recorded -- and
+  // the entries below say where each of its arguments came from.
+  'launch.ts': {
+    recorded: {
+      within: 'options',
+      reason:
+        'an entry of `view.repositories`, which `entry.ts`\'s `railRows` read through `sanitizeRefusal` (`stringsOf`) before it reached this screen -- so this is **a sanitizer\'s own answer**, the one document-shaped string a drawer may write (the `graph.ts` `drawInto` entry is the same case). It is the option\'s own text, so the string main receives is the string the operator read, and main matches it against its own records (`launchRepoArgument`, `src/main/launch.ts`), which is why nothing here folds or rewrites it',
+    },
+    text: {
+      within: 'help',
+      reason:
+        'the parameter of the `help` helper itself; every call site passes one of this file\'s own constants, or a line this file composed from them (`launchCounter(0)`, the two optional-field lines)',
+    },
+    label: {
+      within: 'field',
+      reason: 'the parameter of the `field` helper itself; every call site passes a string literal naming the control',
+    },
+    name: {
+      within: 'fact',
+      reason:
+        'the parameter of the `fact` helper itself; every call site passes a string literal naming a `launchResult` field -- the value beside it goes through `putText` with that field\'s own class',
+    },
+    sentence: {
+      within: 'line',
+      reason:
+        'the parameter of the `line` helper itself; every call site passes one of this file\'s own constants, or `refusalText(...)`, which is `sanitizeRefusal`\'s own answer for a sentence main or the CLI wrote',
+    },
+  },
 })
 
 /** blankComments replaces every comment with spaces, keeping strings and line
@@ -464,6 +493,17 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
   'coordinator.ts': {
     "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
     theme: { within: 'renderCoordinator', reason: 'a `CoordinatorTheme`, the closed theme tuple' },
+  },
+  'launch.ts': {
+    "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
+    id: { within: 'help', reason: 'the parameter of the `help` helper itself; every call site passes a `LAUNCH_IDS` member or this file\'s own `launch-form` id' },
+    controlId: { within: 'field', reason: 'the parameter of the `field` helper itself; every call site passes a `LAUNCH_IDS` member' },
+    "described.join(' ')": { within: 'field', reason: 'the `LAUNCH_IDS` members a control is described by; every call site passes an array of them' },
+    'LAUNCH_IDS.form': {
+      within: 'renderLaunch',
+      reason:
+        '`LAUNCH_IDS.form`, the id this file gives the form: the button\'s `aria-controls` and the form\'s own `id` are the one string, so the control and the thing it opens are related in the DOM rather than merely adjacent',
+    },
   },
 })
 
@@ -840,11 +880,12 @@ const RENDERER_FILES: readonly string[] = Object.freeze(
 const SHARED_DRAWER = '../../shared/version.ts'
 
 describe('a screen writes only its own vocabulary through literal', () => {
-  it('reads the seven screens', () => {
+  it('reads the eight screens', () => {
     expect([...SCREEN_FILES]).toEqual([
       'coordinator.ts',
       'degraded.ts',
       'graph.ts',
+      'launch.ts',
       'live.ts',
       'projects.ts',
       'run.ts',
@@ -1050,6 +1091,7 @@ describe('no module under src/renderer writes an inline style', () => {
       'screens/coordinator.ts',
       'screens/degraded.ts',
       'screens/graph.ts',
+      'screens/launch.ts',
       'screens/live.ts',
       'screens/projects.ts',
       'screens/run.ts',

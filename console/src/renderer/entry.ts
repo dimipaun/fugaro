@@ -1052,11 +1052,13 @@ export function railRows(reply: unknown): readonly RailRow[] | null {
         saved: row['saved'] === true,
         checkout: typeof row['checkout'] === 'string' && row['checkout'] !== '' ? row['checkout'] : null,
         checkouts: stringsOf(row['checkouts']),
-        // Read like `checkouts` and not with the row's own refusal: a list this
-        // field cannot be read from is an installation whose launch control
-        // offers nothing (the form draws its own sentence), which is not a
-        // reason to drop a row the rail can draw in every other respect.
-        repositories: identitiesOf(row['repositories']),
+        // Read like `checkouts` and through the same pass: a list this field
+        // cannot be read from is an installation whose launch control has nothing
+        // to offer (the panel draws its own sentence), which is not a reason to
+        // drop a row the rail can draw in every other respect. The identities are
+        // a document's strings, so they go through `sanitizeRefusal` before a
+        // screen draws one.
+        repositories: stringsOf(row['repositories']),
       }),
     )
   }
@@ -1078,26 +1080,6 @@ function stringsOf(raw: unknown): readonly string[] {
   return Object.freeze(
     raw.filter((one): one is string => typeof one === 'string').map((one) => textOf(one, 'the CLI’s own line')),
   )
-}
-
-/**
- * identitiesOf is a row's recorded repositories as the launch form must hold
- * them: the strings exactly as the main process wrote them, in their order,
- * blanks dropped.
- *
- * It is **not** `stringsOf`, and the difference is the whole point of the field.
- * A repository identity is passed back to main, which matches it against the
- * installation's own records and refuses a launch for anything else
- * (`launchRepoArgument`, `src/main/launch.ts`) -- so a copy the console had
- * folded to one line or clipped at the display bound would be a launch refused
- * for the repository the operator did pick. That is also why the form draws
- * these as text rather than through a class
- * (`src/renderer/screens/launch.ts`'s `identity`), and why `checkout` beside it
- * is read this way too.
- */
-function identitiesOf(raw: unknown): readonly string[] {
-  if (!Array.isArray(raw)) return Object.freeze([])
-  return Object.freeze(raw.filter((one): one is string => typeof one === 'string' && one !== ''))
 }
 
 /**
@@ -3065,24 +3047,37 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * LaunchNow is the drawn launch control, the installation it was built for and
    * whether a call is out.
    *
-   * The control is **built once per installation and kept**, which is what makes
-   * a form survive the one-second Live poll: the poll replaces the panel, and a
-   * control rebuilt on every frame would be a form that emptied itself while the
-   * operator was typing. It is rebuilt when the open installation changes --
-   * `answered` drops the Live screen for that, and this is dropped with it -- and
-   * rebuilding it is the whole of "switching installation clears the form and any
-   * drawn outcome".
+   * The control is **built once per offer of repositories and kept**, which is
+   * what makes a form survive the one-second Live poll: the poll replaces the
+   * panel, and a control rebuilt on every frame would be a form that emptied
+   * itself while the operator was typing. "The same offer" is the installation
+   * **and** the repository identities it records: a row's list can change while
+   * its project does not -- a checkout added or removed under the open
+   * installation, whose answer replaces the rail rows without dropping the Live
+   * screen -- and a kept control would then offer a list the installation no
+   * longer has, refusing the repository the operator picked from the CLI's own
+   * list. Rebuilding it is also the whole of "switching installation clears the
+   * form and any drawn outcome".
    */
   let launchNow: LaunchNow | null = null
 
+  /** sameOffer is whether the control that is held was built for the repositories
+   * the open row offers now: the same installation, and the same identities in the
+   * same order. */
+  const sameOffer = (held: LaunchNow, open: RailRow): boolean =>
+    held.project === open.project &&
+    held.view.repositories.length === open.repositories.length &&
+    held.view.repositories.every((one, index) => one === open.repositories[index])
+
   /** launchNowOf is the control for the installation the panel is about, built
-   * on first use. `supported` is the handshake's answer about the CLI this
-   * console is driving (design section 5.1 rule 11: below the floor there is no
-   * control at all, and no call is reachable from this file). */
+   * on first use and rebuilt when its repository list changes. `supported` is the
+   * handshake's answer about the CLI this console is driving (design section 5.1
+   * rule 11: below the floor there is no control at all, and no call is reachable
+   * from this file). */
   const launchNowOf = (): LaunchNow | null => {
     const open = railNow.find((row) => row.open)
     if (open === undefined) return null
-    if (launchNow !== null && launchNow.project === open.project) return launchNow
+    if (launchNow !== null && sameOffer(launchNow, open)) return launchNow
     const view: LaunchView = {
       installation: open.project,
       repositories: open.repositories,
@@ -3172,6 +3167,9 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     if (open !== null && form !== null) {
       surface.nodeOf(open).addEventListener('click', () => {
         surface.nodeOf(form).removeAttribute('hidden')
+        // The button says what it did: `aria-expanded` follows the form it
+        // controls, so the state is announced and not only drawn.
+        open.setAttribute('aria-expanded', 'true')
       })
     }
     if (fields === null) return
