@@ -539,28 +539,39 @@ whole answer is the run detail's Rigor row (§2.6).
 
 ### 2.6 Run detail — `console/src/renderer/screens/run.ts`
 
-Reached from a `live-run` row. Regions in tree order: header → ledger → spend by stage →
-tolerated by the mode → stages → pull request → logs → diagnosis → replay → warnings.
+Reached from a `live-run` row. The header, its status strip and its halt banner sit above
+the two columns: the main column (stages → spend by stage → tolerated by the mode →
+diagnosis → logs → replay) beside the aside (ledger → pull request), with the warnings
+after both.
 
 | Group | Class hooks |
 |---|---|
-| Header | `run-header`, `run-id`, `run-repo`, `run-workflow`, `run-status`, `run-outcome`, `run-stage`, `run-branch`, `run-requested-by`, `run-started-by`, `run-flags`, `run-settled`, `run-stale`, `run-follow-up`, `run-halt`, `run-halt-word`, `run-halt-reason`, `run-halt-scope`, `run-halt-at`, `run-halt-detail`, `run-rigor`, `run-rigor-word`, `run-rigor-mode`, `run-rigor-from-word`, `run-rigor-from`, `run-rigor-area`, `run-rigor-area-name`, `run-rigor-area-mode` |
+| Breadcrumb | `run-crumb`, `run-crumb-live`, `run-crumb-sep`, `run-crumb-repo`, `run-crumb-run` |
+| Header | `run-header`, `run-head`, `run-id`, `run-retry`, `run-meta`, `run-meta-field`, `run-meta-label`, `run-meta-value`, `run-meta-absent`, `run-repo`, `run-workflow`, `run-recipe`, `run-branch`, `run-account`, `run-requested-by`, `run-started-by`, `run-rigor`, `run-rigor-word`, `run-rigor-mode`, `run-rigor-from-word`, `run-rigor-from`, `run-rigor-area`, `run-rigor-area-name`, `run-rigor-area-mode` |
+| Status strip | `run-strip`, `run-strip-cell`, `run-strip-label`, `run-strip-value`, `run-status`, `run-outcome`, `run-stage`, `run-flags`, `run-settled`, `run-flags-state`, `run-stale`, `run-follow-up` |
+| Halt banner | `run-halt`, `run-halt-word`, `run-halt-reason`, `run-halt-where`, `run-halt-scope-word`, `run-halt-scope`, `run-halt-sep`, `run-halt-at-word`, `run-halt-at`, `run-halt-detail` |
+| Layout | `run-layout`, `run-main`, `run-aside` |
 | Ledger | `run-ledger`, `run-ledger-model`, `run-ledger-model-value`, `run-ledger-compute`, `run-ledger-compute-value`, `run-ledger-total`, `run-ledger-total-value`, `run-number`, `run-panel-title` |
 | Spend by stage | `run-spend-stages`, `run-spend-stage-list`, `run-spend-stage`, `run-spend-stage-name`, `run-spend-stage-duration`, `run-spend-stage-calls`, `run-spend-stage-agents`, `run-spend-stage-usd`, `run-spend-stage-notional`, `run-spend-stages-more`, `run-spend-stage-more` |
 | Tolerated by the mode | `run-tolerated`, `run-tolerated-total`, `run-tolerated-count`, `run-tolerated-list`, `run-tolerated-finding`, `run-tolerated-title`, `run-tolerated-label`, `run-tolerated-mode`, `run-tolerated-likelihood`, `run-tolerated-impact`, `run-tolerated-fix-cost`, `run-tolerated-class`, `run-tolerated-more`, `run-tolerated-dropped`, `run-tolerated-absent` |
-| Stages | `run-stages`, `run-stage-list`, `run-stage`, `run-stage-name`, `run-stage-passed`, `run-stage-tests`, `run-stage-failures`, `run-stage-duration`, `run-stage-spend`, `run-stage-deadline` |
+| Stages | `run-stages`, `run-stage-list`, `run-stage`, `run-stage-icon`, `run-stage-dot`, `run-stage-check`, `run-stage-cross`, `run-stage-name`, `run-stage-body`, `run-stage-passed`, `run-stage-bar`, `run-stage-track`, `run-stage-fill`, `run-stage-fill-failed`, `run-stage-count`, `run-stage-tests`, `run-stage-tests-word`, `run-stage-failures`, `run-stage-failures-word`, `run-stage-meta`, `run-stage-duration`, `run-stage-spend`, `run-stage-deadline` |
 | Pull request | `run-pr`, `run-pr-repo`, `run-pr-number`, `run-pr-sep`, `run-pr-url`, `run-pr-reason` |
 | Logs | `run-logs`, `run-log-list`, `run-log-line`, `run-log-time`, `run-log-severity`, `run-log-stage`, `run-log-message`, `run-log-note`, `run-log-dropped`, `run-log-of`, `run-log-total`, `run-log-refused`, `run-log-refused-count`, `run-log-link`, `run-log-link-note`, `run-log-tail`, `run-log-tail-line` |
-| Diagnosis | `run-diagnosis`, `run-failed`, `run-failed-word`, `run-failed-test`, `run-flaky`, `run-flaky-word`, `run-flaky-test`, `run-finding`, `run-finding-severity`, `run-finding-file`, `run-finding-summary`, `run-agent-message`, `run-agent-word`, `run-agent-text`, `run-report-path`, `run-report-word`, `run-report-value`, `run-comments-word`, `run-comments-path`, `run-comments-value`, `run-draft-note`, `run-follow-up-word`, `run-follow-up-pr`, `run-follow-up-comments-word`, `run-follow-up-comments`, `run-follow-up-session`, `run-reported`, `run-reported-usd`, `run-charged-word`, `run-charge-usd`, `run-reported-warning`, `run-pin-warning`, `run-route`, `run-route-name`, `run-route-usd`, `run-model`, `run-model-name`, `run-model-usd` |
+| Diagnosis | `run-diagnosis`, `run-failed`, `run-failed-word`, `run-failed-test`, `run-flaky`, `run-flaky-word`, `run-flaky-test`, `run-finding`, `run-finding-severity`, `run-finding-file`, `run-finding-summary`, `run-agent-message`, `run-agent-icon`, `run-agent-stroke`, `run-agent-said`, `run-agent-word`, `run-agent-text`, `run-report-path`, `run-report-word`, `run-report-value`, `run-comments-word`, `run-comments-path`, `run-comments-value`, `run-draft-note`, `run-follow-up-word`, `run-follow-up-pr`, `run-follow-up-comments-word`, `run-follow-up-comments`, `run-follow-up-session`, `run-reported`, `run-reported-usd`, `run-charged-word`, `run-charge-usd`, `run-reported-warning`, `run-pin-warning`, `run-route`, `run-route-name`, `run-route-usd`, `run-model`, `run-model-name`, `run-model-usd` |
 | Replay | `run-replay`, `run-replay-records`, `run-replay-count`, `run-replay-window-word`, `run-replay-window`, `run-replay-span`, `run-replay-from`, `run-replay-to`, `run-replay-scrubbed`, `run-replay-at`, `run-replay-note` |
 | Warnings | `run-warning` |
 
-`data-*`: `data-theme`, and `data-href` on a log link (written by `putLink`, never the
-navigating attribute).
+`data-*`: `data-theme`, `data-tone` on the status strip's `span.run-outcome`
+(`success`/`failure`, written by the screen and never by a reader of the row), and
+`data-href` on a log link (written by `putLink`, never the navigating attribute).
 
 States: terminal / still running / settled / stale draft / follow-up (header flags, as
-text); halted (`div.run-halt`, the word `HALTED`); stage passed/failed (`run-stage-passed`
-with `passed`/`failed`); deadline ok/near/over (`run-stage-deadline`), or `n/a` when the
+text); halted (`div.run-halt`, the word `HALTED`); the outcome's tone (`span.run-outcome`
+with `data-tone`, the word `ready`/`reviewed`/`failed` drawn either way and the tone only
+ever beside it); stage passed/failed (`run-stage-passed`
+with `passed`/`failed`, and the stage's decorative icon, which is `path.run-stage-check`,
+`path.run-stage-cross` or `rect.run-stage-dot` -- `aria-hidden` and never the only
+channel); deadline ok/near/over (`run-stage-deadline`), or `n/a` when the
 document has no deadline; a verify record's spend always `n/a` (no verify record carries
 one: the run's spend by stage is the spend-by-stage panel's, or the cell names the missing
 `stages` key when the document carries none); a stage's calls or sub-agents `n/a` with the

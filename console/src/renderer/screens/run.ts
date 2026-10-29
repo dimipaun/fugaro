@@ -1702,7 +1702,7 @@ function logsPanel(factory: ScreenFactory, model: RunLogs): ScreenElement {
 
 /** diagnosePanel is the rest of `diagnose`: everything else the document says
  * about why the run is where it is. */
-function diagnosePanel(factory: ScreenFactory, model: RunModel): ScreenElement {
+function diagnosePanel(factory: RunFactory, model: RunModel): ScreenElement {
   const element = make(factory, 'section', 'run-diagnosis')
   literal(cell(element, factory, 'h2', 'run-panel-title'), 'diagnosis')
   const diagnosis = model.diagnosis
@@ -1837,8 +1837,8 @@ export function renderRun(factory: RunFactory, model: RunModel, theme: RunTheme)
     main.append(toleratedPanel(factory, model.tolerated))
   }
   main.append(diagnosePanel(factory, model))
-  main.append(logsPanel(factory, model))
-  main.append(replayPanel(factory, model))
+  main.append(logsPanel(factory, model.logs))
+  main.append(replayPanel(factory, model.replay))
   const aside = cell(layout, factory, 'aside', 'run-aside')
   aside.append(ledgerPanel(factory, model.ledger))
   aside.append(pullRequestPanel(factory, model.pullRequest))
