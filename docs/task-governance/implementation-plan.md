@@ -7,9 +7,9 @@ This plan builds [spec.md](spec.md) (task governance, 2026-10-22) and
 amended by [reconciliation.md](reconciliation.md)**, whose decisions D320–D333 the owner answered on
 2026-10-26. **Partly implemented, and what remains is born in `ee/`.**
 
-On `main` (2026-10-29): T1.1–T1.4, T2.1–T2.3, T3.1–T3.6, T4.1–T4.3, T5.1, T5.2, T6.1, T6.2, T7.1,
-T7.6 and T8.1 (both halves: T8.1a's tier vocabulary and task fields, T8.1b's `fugaro run --tier`).
-T4.4 is authorised and not started.
+On `main` (2026-10-29), task by task: T1.1, T1.2, T1.3, T1.4, T2.1, T2.2, T2.3, T3.1, T3.2, T3.3,
+T3.5, T3.6, T4.1, T4.2, T4.3, T5.1, T5.2, T6.1, T6.2, T7.1, T7.6, T8.1a (the tier vocabulary and
+the task fields) and T8.1b (`fugaro run --tier`). **T3.4 and T4.4 are not started.**
 
 **The cut-off (D527, 2026-10-29): the in-flight governance work finishes in `internal/` and moves
 once; the rest is born in `ee/governance`.** `ee-reorg` D527 puts the cut-off at the first move pull
@@ -642,7 +642,8 @@ routine launches it: `fugaro run --recipe run-digest "periodic run review"` (R8)
 - **Files.**
   - **In `ee/governance`:** `ee/governance/runner.go` (map the new gateway halts; after one, stop the
     agent and run the dedicated checkpoint stage that fills `done`/`next`/`hard_instructions`; the
-    review-scope stop), `ee/governance/runner_test.go`.
+    review-scope stop), `ee/governance/runner_test.go`, and `ee/register/governance.go` (the
+    `SetStage` call that installs them).
   - **In the core, unchanged:** `internal/runner/diffbase.go` keeps recording the comparison
     (`readReviewScope`) — a non-empty `review_scope.outside` before review is the fact `ee/`'s stop
     reads, and a not-applicable scope (T5.2) never halts. `internal/runner/governance_hook.go`'s
@@ -824,7 +825,7 @@ dependencies.
 | `ee/governance/gateway.go` (new) | T7.2 (L2), T8.2 (L5) |
 | `ee/governance/runner.go` (new) | T7.3 (L4), T8.2 (L5) |
 | `ee/governance/calibrate.go` (new) | T8.3 (L5) |
-| `ee/register/governance.go` (new) | T7.2 (L2: the gateway hook's limits), T8.2 (L5), T8.3 (L5) |
+| `ee/register/governance.go` (new) | T7.2 (L2: the gateway hook's limits), T7.3 (L4: the stage hook's `Timeout`/`TimedOut`), T8.3 (L5, the digest section) |
 | `internal/cli/runs.go` | T2.3 (L3) |
 | `internal/cli/runs_digest.go` (new) | T2.3 (L3), T4.2 (L5) |
 | `internal/cli/runs_digest_submit.go` (new) | T4.2 (L5) |
