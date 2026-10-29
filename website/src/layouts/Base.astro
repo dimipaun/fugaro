@@ -615,12 +615,12 @@ const marketing =
     )}
 
     <main id="main">
-      {/* The variant's own picture, when it has one (G2.2): `/crew`'s cat imagery is the owner's
-          file and lands here, and a variant that names no image renders nothing in the slot —
-          today all four, so the page is complete without the media the owner has not produced
-          (F14, G2.5). The slot is inside `main` and ahead of the page's own sections, so the
-          image is the first thing a reader meets and the hero's words follow it; nothing is
-          drawn around an empty slot. */}
+      {/* The variant's own media, when it has one (G2.2, G2.3): the campaign's video or
+          `/crew`'s cat imagery is the owner's file and lands here, and a variant that names
+          neither renders nothing in the slot — today all four, so the page is complete without
+          the media the owner has not produced (F14, G2.5). The slot is inside `main` and ahead
+          of the page's own sections, so the media is the first thing a reader meets and the
+          hero's words follow it; nothing is drawn around an empty slot. */}
       <slot name="media" />
       <slot />
     </main>

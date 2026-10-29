@@ -79,6 +79,7 @@ import {
   walk,
 } from './lib/html.mjs'
 import { copyRepository } from './lib/build.mjs'
+import { loadLanding } from '../src/lib/landing.mjs'
 
 // ---- the facts of the gate ---------------------------------------------------------------
 
@@ -93,6 +94,23 @@ const PRIVACY_PATH = '/privacy/'
 // The site's one script file (D183), which is the gate itself since W3.2 moved the banner's
 // controller and the gated loader out of the markup and into it.
 const SITE_SCRIPT = '/scripts/site.js'
+// The campaign pages' own consent (G2.3, D401): its key, its three origins — read from
+// `site.yaml`, which is where the loader reads them too — and the page the cases below run on.
+// The three are in the order `firebase.json`'s `script-src` lists them, which is the order
+// site.yaml writes them in.
+export const MARKETING_CONSENT_KEY = 'fugaro:marketing-consent'
+const CAMPAIGN = siteFacts().marketing
+const CAMPAIGN_ORIGINS = [CAMPAIGN.metaOrigin, CAMPAIGN.linkedinOrigin, CAMPAIGN.calendlyOrigin]
+// The four campaign pages `website/data/landing.yaml` writes, and the one the cases below use.
+// The path is the browser's own spelling — the pages are directories, so a visitor is at
+// `/save/` — which is also the spelling the gate's path check has to read.
+const CAMPAIGN_PAGE = 'save/index.html'
+const CAMPAIGN_PATH = '/save/'
+// The two vendor ids the owner has not supplied. `site.yaml` ships them empty — the loader
+// switched off — so the cases that watch the pixel and the insight tag load plant plainly fake
+// values into the built page's banner rather than relying on a configuration that is not there.
+const META_ID = 'TESTMETA0001'
+const LINKEDIN_ID = 'TESTPARTNER'
 // The consent banner's early decision (the owner's ruling of 2026-10-23, the redesign's Step 3:
 // JavaScript allowed, same-origin only; the banner must not cover the first screen's content).
 // A page that renders the banner loads it after the site's one script; it is a first-party file
@@ -195,6 +213,15 @@ const SUBDOMAIN_LOCATION = Object.freeze({
   pathname: '/docs/',
   search: '?token=leaked-query',
   hash: '#leaked-fragment',
+})
+
+// A campaign page, at the address a browser serves it from, carrying the same query string and
+// fragment the other location does: the gate reports a vendor the page's path and nothing else,
+// so a case that reads what it queued catches a query that leaked through the same way.
+const CAMPAIGN_LOCATION = Object.freeze({
+  ...PAGE_LOCATION,
+  href: `https://site.example${CAMPAIGN_PATH}?token=leaked-query#leaked-fragment`,
+  pathname: CAMPAIGN_PATH,
 })
 
 /** The host a location names, which is where a cookie with no `Domain` attribute lives. */
@@ -1214,7 +1241,159 @@ test('accepting and withdrawing again on the same page deletes what the second g
   assertForgotten(page, 'after a renewed grant')
 })
 
-// ---- 4. the banner is accessible, keyboard-operable, and traps nothing -------------------
+// ---- 3b. the campaign's own consent, and the three loads behind it (G2.3, D401) ----------
+//
+// The second question the banner asks on the four campaign pages, and the three vendors it
+// covers. The plan's promise is the same shape as D93's: **no request to a vendor before that
+// purpose is granted, and none anywhere but the page the loader was built for** — including
+// after an analytics-only consent, which is the state a visitor who accepted on the homepage
+// arrives in. The withdrawal is the third case, because a second purpose is a second answer.
+
+/** The requests a page made to the campaign's three, in the order it made them. */
+function campaignRequests(page) {
+  return page.requests.filter((url) => CAMPAIGN_ORIGINS.some((origin) => String(url).startsWith(origin)))
+}
+
+/**
+ * A built campaign page with the two vendor ids planted in its banner, because `site.yaml`
+ * ships them empty and an empty id is the loader switched off. Nothing else about the page
+ * changes: the origins, the booking link and the path are the ones the build wrote.
+ */
+function withVendorIds(html) {
+  const planted = html
+    .replace('data-meta-pixel-id ', `data-meta-pixel-id="${META_ID}" `)
+    .replace('data-linkedin-partner-id ', `data-linkedin-partner-id="${LINKEDIN_ID}" `)
+  assert.ok(planted.includes(`data-meta-pixel-id="${META_ID}"`), 'the fixture did not plant the pixel id in the banner, so no case below could watch the pixel load')
+  assert.ok(planted.includes(`data-linkedin-partner-id="${LINKEDIN_ID}"`), 'the fixture did not plant the partner id in the banner, so no case below could watch the insight tag load')
+  return planted
+}
+
+/** The campaign page the cases below run, with both vendor ids in place. */
+const CAMPAIGN_HTML = withVendorIds(pageOf(SHIPPED, CAMPAIGN_PAGE))
+
+test('no page asks any of the three vendors anything before the marketing consent is granted', () => {
+  // A first visit to a campaign page: the banner is offered and nothing of the three is
+  // fetched, though the page carries all three addresses in its own banner.
+  const first = runPage(CAMPAIGN_HTML, { location: CAMPAIGN_LOCATION })
+  assert.deepEqual(campaignRequests(first), [], 'a campaign page fetched a vendor before the visitor answered the campaign question')
+  assert.ok(first.byId.get('calendly-embed').hidden, 'the booking frame is in the page before the visitor granted the marketing consent')
+  assert.equal(first.banner.hidden, false, 'the campaign page does not offer the banner on a first visit')
+
+  // A visitor who granted analytics on an earlier page: the campaign question is still open,
+  // the banner asks it again, and the three are still asked nothing — accepting analytics is
+  // not accepting the campaign (F17).
+  const analyticsOnly = runPage(CAMPAIGN_HTML, { location: CAMPAIGN_LOCATION, storage: { [CONSENT_KEY]: 'granted' } })
+  assert.deepEqual(campaignRequests(analyticsOnly), [], 'an analytics-only consent loaded a campaign vendor')
+  assert.equal(analyticsOnly.analyticsRequests().length, 1, 'the page did not load the analytics script the visitor had already accepted')
+  assert.equal(analyticsOnly.banner.hidden, false, 'a visitor who has answered only the site\'s question is not asked the campaign one')
+
+  // A page that is not a campaign page at all: same script, no configuration, so nothing of
+  // the three can load there even after a grant (the origins are not in it).
+  const elsewhere = runPage(pageOf(SHIPPED, 'index.html'), { storage: { [CONSENT_KEY]: 'granted', [MARKETING_CONSENT_KEY]: 'granted' } })
+  assert.deepEqual(campaignRequests(elsewhere), [], 'a non-campaign page loaded a campaign vendor')
+})
+
+test('the marketing grant loads the three vendors on the page they were built for, and nowhere else', () => {
+  const page = runPage(CAMPAIGN_HTML, { location: CAMPAIGN_LOCATION })
+  page.click('granted')
+
+  assert.deepEqual(
+    campaignRequests(page),
+    [
+      `${CAMPAIGN.metaOrigin}/en_US/fbevents.js`,
+      `${CAMPAIGN.linkedinOrigin}/li.lms-analytics/insight.min.js`,
+      `${CAMPAIGN.calendlyOrigin}/assets/external/widget.js`,
+    ],
+    'the campaign grant did not load exactly the pixel, the insight tag and the booking widget, in that order, from the origins the banner carries',
+  )
+  assert.equal(page.store[MARKETING_CONSENT_KEY], 'granted', 'the campaign decision was not stored under its own key')
+  assert.equal(page.store[CONSENT_KEY], 'granted', 'the press that answered the campaign question did not answer the site\'s, on a page where both were open')
+
+  // The vendors are told the page without its query and without its fragment (F22), and the
+  // pixel is told nothing else: `init`, then one `PageView`.
+  const page_location = `https://site.example${CAMPAIGN_PATH}`
+  const fbq = (page.window.fbq.queue ?? []).map((entry) => Array.from(entry))
+  assert.deepEqual(
+    fbq.map((call) => call.slice(0, 2).map(String)),
+    [['init', META_ID], ['track', 'PageView']],
+    `the pixel was handed ${JSON.stringify(fbq.map((c) => String(c[0])))}: its id once and one page view is what the campaign asks for`,
+  )
+  assert.deepEqual(fbq[1][2], { page_location }, 'the pixel was handed an address other than the page\'s path')
+  assert.deepEqual(
+    (page.window.lintrk.q ?? []).map((entry) => Array.from(entry)),
+    [['track', { page_location }]],
+    'the insight tag was handed an address other than the page\'s path',
+  )
+  assert.ok(!/leaked/.test(JSON.stringify([fbq, page.window.lintrk.q])), `a vendor was handed the page's query string or fragment: ${JSON.stringify([fbq, page.window.lintrk.q])}`)
+
+  // And the embed: the container the calls-to-action section emits hidden is unhidden with the
+  // booking address on it, which is what Calendly's own script builds the frame from.
+  const embed = page.byId.get('calendly-embed')
+  assert.equal(embed.hidden, false, 'the booking frame stayed hidden after the visitor accepted')
+  assert.equal(
+    embed.attrs.get('data-url'),
+    loadLanding().calendlyURL,
+    'the booking frame was handed something other than the booking link website/data/landing.yaml writes',
+  )
+
+  // The path check: the same page, served from another path of the site, loads nothing —
+  // a bar copied onto a page it was not built for is a bar with no vendors behind it (F18).
+  const stale = runPage(CAMPAIGN_HTML, { location: PAGE_LOCATION, storage: { [MARKETING_CONSENT_KEY]: 'granted' } })
+  assert.deepEqual(campaignRequests(stale), [], 'a campaign page served from another path loaded the three vendors')
+
+  // And the gate is the same one that `origins.mjs` holds to a contract: no URL is typed in
+  // the script, so the request above can only come from the banner's own configuration.
+  const script = readFileSync(path.join(DIST, SITE_SCRIPT.replace(/^\//, '')), 'utf8')
+  for (const origin of CAMPAIGN_ORIGINS) {
+    assert.ok(!script.includes(new URL(origin).host), `${SITE_SCRIPT} names ${new URL(origin).host}: the three reach the loader through the campaign page's own banner`)
+  }
+})
+
+test('an empty vendor id is a loader that does not load, which is the state the site ships in', () => {
+  // No planted ids: the page the site actually serves. The booking widget has no id to need,
+  // so it loads; the pixel and the insight tag are configured but switched off, which is what
+  // the empty `site.yaml` values mean until the owner supplies them (R3).
+  assert.equal(CAMPAIGN.metaPixelID, '', 'site.yaml names a pixel id, so this case is no longer the shipped state')
+  assert.equal(CAMPAIGN.linkedinPartnerID, '', 'site.yaml names a partner id, so this case is no longer the shipped state')
+
+  const page = runPage(pageOf(SHIPPED, CAMPAIGN_PAGE), { location: CAMPAIGN_LOCATION })
+  page.click('granted')
+  assert.deepEqual(
+    campaignRequests(page),
+    [`${CAMPAIGN.calendlyOrigin}/assets/external/widget.js`],
+    'with both ids empty the page still asked a vendor for something other than the booking widget',
+  )
+})
+
+test('withdrawing the marketing consent stops the three and deletes the cookies the pixel set', () => {
+  const page = runPage(CAMPAIGN_HTML, {
+    location: CAMPAIGN_LOCATION,
+    storage: { [CONSENT_KEY]: 'granted', [MARKETING_CONSENT_KEY]: 'granted' },
+    cookies: ['_fbp=fb.1.111.222; path=/', '_fbc=fb.1.333.444; path=/', '_gate=1; path=/'],
+  })
+  assert.equal(campaignRequests(page).length, 3, 'the stored campaign grant did not load the three vendors, so the withdrawal below would prove nothing')
+  assert.ok(page.held().includes('_fbp'), 'the cookie double did not hold the pixel\'s cookie')
+
+  page.click('denied')
+  assert.equal(page.store[MARKETING_CONSENT_KEY], 'denied', 'withdrawing did not overwrite the stored campaign grant')
+  assert.equal(page.store[CONSENT_KEY], 'granted', 'a press about the campaign rewrote the site\'s answer, which the visitor gave on another page')
+  assert.deepEqual(
+    (page.window.fbq.queue ?? []).map((entry) => Array.from(entry)).filter((call) => call[0] === 'consent'),
+    [['consent', 'revoke']],
+    'withdrawing did not tell the pixel to stop',
+  )
+  const left = page.held()
+  for (const name of ['_fbp', '_fbc']) {
+    assert.ok(!left.includes(name), `${name} survived the withdrawal, so the pixel's first-party cookie is still in the browser`)
+  }
+  assert.ok(left.includes('_gate'), 'the withdrawal deleted a cookie that is not the pixel\'s')
+
+  // The next page view asks the three nothing: the decision is stored, and it is a refusal.
+  const next = runPage(CAMPAIGN_HTML, { location: CAMPAIGN_LOCATION, storage: page.store })
+  assert.deepEqual(campaignRequests(next), [], 'the withdrawn consent still loaded a vendor on the next page view')
+})
+
+
 
 test('the banner is labelled, its two choices are equal, and it is reachable by keyboard before the content', () => {
   for (const page of SHIPPED) {
@@ -1484,21 +1663,21 @@ test('the claims the privacy page makes about the site are held to the artifact'
 
 // ---- the policy the artifact is served with ---------------------------------------------
 
-test("the deployed policy admits exactly the one origin the gate loads from, and the site's one script is its own file", () => {
+test("the deployed policy admits exactly the origins the gate loads from, and the site's one script is its own file", () => {
   const firebase = JSON.parse(readFileSync(path.join(REPO, 'firebase.json'), 'utf8'))
   const headers = firebase.hosting.headers.flatMap((entry) => entry.headers)
   const csp = headers.find((header) => header.key.toLowerCase() === 'content-security-policy')
   assert.ok(csp, 'firebase.json carries no Content-Security-Policy header')
 
   // `origins.mjs` reads the whole policy against the contract Google's documentation states.
-  // What this file adds is the cross-check the gate needs: the policy admits exactly the one
-  // origin the gate loads from, so the request the visitor consents to is the request the
-  // browser is allowed to make. A policy narrower than the gate blocks analytics for a
-  // consenting visitor; a wider one admits a request nothing consented to.
+  // What this file adds is the cross-check the gate needs: the policy admits exactly the
+  // origins the gate loads from — Google's, and the campaign's three (G2.3, D401). A policy
+  // narrower than the gate blocks a load that was consented to; a wider one admits a request
+  // nothing consented to.
   assert.deepEqual(
     remoteScriptSources(csp.value),
-    [ANALYTICS_ORIGIN],
-    "firebase.json's script-src does not admit exactly the one origin the gate loads from",
+    [ANALYTICS_ORIGIN, ...CAMPAIGN_ORIGINS],
+    'firebase.json\'s script-src does not admit exactly the origins the gate loads from',
   )
   assert.ok(!/script-src[^;]*'unsafe-inline'/.test(csp.value), "firebase.json's script-src carries 'unsafe-inline'")
   for (const page of SHIPPED) {

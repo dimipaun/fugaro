@@ -156,13 +156,39 @@ const repo = site.facts.repository
           </div>
 
           <div class="card privacy-card">
+            <h3>The campaign pages</h3>
+            <p>
+              Four of this site's pages — <code>/save</code>, <code>/control</code>,
+              <code>/scale</code> and <code>/crew</code> — are where the ads land, and the banner
+              on them asks a second question of its own: whether <strong>Meta's pixel</strong>,
+              <strong>LinkedIn's insight tag</strong> and <strong>Calendly's booking widget</strong>
+              may load. The answer is kept in this browser under
+              <code>fugaro:marketing-consent</code>, apart from the analytics answer, and until you
+              accept it none of the three is asked anything, on any page.
+            </p>
+            <p>
+              With that consent, Meta and LinkedIn are told the page's address — its path, without
+              any query — and set identifiers of their own in this browser, among them
+              <code>_fbp</code> and <code>_fbc</code>. Calendly's booking widget is drawn on the
+              page, and Calendly sets its own cookies.
+            </p>
+            <p>
+              Declining, or withdrawing here, stops the three on the next page and deletes Meta's
+              cookies from this browser. A script already running on the page you are reading keeps
+              running until you reload, and a cookie a vendor set on its own domain is the vendor's
+              to remove.
+            </p>
+          </div>
+
+          <div class="card privacy-card">
             <h3>What this site does not do</h3>
             <ul>
               <li>It sets no cookie of its own.</li>
               <li>It has no account, form or comment box.</li>
               <li>
-                It loads nothing from another origin except Google's script, and only after you
-                accept.
+                It loads nothing from another origin except Google's script — and, on the four
+                campaign pages above, the three vendors the second question covers — and only
+                after the consent that governs each.
               </li>
               <li>
                 It keeps no log of its own. The host's request logs are the host's, and this

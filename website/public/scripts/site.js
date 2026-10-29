@@ -895,6 +895,16 @@
     return String(address || '').split(/[?#]/)[0]
   }
 
+  // The same path, whichever way it was written: the banner carries the variant's path as
+  // `website/data/landing.yaml` writes it (`/save`) and the browser reports what it was served
+  // (`/save/`, because the site's pages are directories), so the two are the same page and the
+  // comparison has to say so. It is the comparison's spelling only — the address reported to a
+  // vendor keeps the browser's own, so it is the address the visitor is looking at.
+  function route(path) {
+    var written = bare(path)
+    return written.length > 1 ? written.replace(/\/+$/, '') : written
+  }
+
   // ---- the cookies a consented third party leaves, and the withdrawal that removes them ----
   //
   // Stopping the sends is only half of a withdrawal (the owner's ruling of 2026-10-18): the
@@ -1069,7 +1079,7 @@
     if (!key) return
     var built = banner.getAttribute(MARKETING_PATH_ATTR)
     var here = bare(window.location && window.location.pathname)
-    if (!built || here !== bare(built)) return
+    if (!built || route(here) !== route(built)) return
 
     // The page as the site reports it: its origin and its path, with no query string and no
     // fragment — the campaign parameters a visitor arrived through are the referrer's, not

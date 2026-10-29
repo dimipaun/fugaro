@@ -43,6 +43,13 @@ const { calendlyURL, repository } = Astro.props
       <a class="campaign-calls-secondary" href={repository} rel="noopener">Install free</a>
     </li>
   </ul>
+  {/* The booking widget's place, empty and hidden until the visitor grants the marketing
+      consent: `site.js` writes the booking address onto this element and unhides it, and
+      Calendly's script — fetched after that grant and never before — fills it. It carries the
+      vendor's own class because that class is how its script finds the container, and it is
+      drawn before the grant as nothing at all: the plain link above is the booking's first form,
+      and a visitor who declines never sees a frame (D401, F17). */}
+  <div class="campaign-calls-embed calendly-inline-widget" id="calendly-embed" hidden></div>
 </section>
 
 <style>
@@ -111,6 +118,20 @@ const { calendlyURL, repository } = Astro.props
     .campaign-calls-secondary:hover {
       color: var(--accent-on-dark);
     }
+  }
+
+  /* The booking widget's frame, once the visitor's grant has put it in the page. Calendly's
+     widget needs a height it can lay a month of days out in — its own snippet writes 700px — and
+     without one the frame collapses to nothing and a consenting visitor sees the two buttons and
+     a blank strip. The height is on the class rather than inline on the element, and the
+     element's `hidden` still wins while it is hidden because nothing here sets `display`. */
+  .campaign-calls-embed {
+    margin-top: var(--space-lg);
+    min-height: 700px;
+  }
+
+  .campaign-calls-embed[hidden] {
+    display: none;
   }
 
   @media (max-width: 30rem) {
