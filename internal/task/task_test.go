@@ -469,6 +469,37 @@ func TestOAuthTokenValidate(t *testing.T) {
 	}
 }
 
+// TestSpecRefusesReservedAccountName: oauth_token may not name the account
+// the credentials bundle reserves for the platform's own git credential
+// (config.ReservedClaudeAccountName), the same rule config.Validate applies
+// to fugaro.yaml's agent.oauth_token and the schemas to both. The name passes
+// the shape rules beside it, so the reservation is the only thing refusing it,
+// and the refusal is worded with the one sentence the config surfaces answer
+// that name with — never the name itself, which is untrusted text printed to
+// a terminal.
+func TestSpecRefusesReservedAccountName(t *testing.T) {
+	ok := Spec{Version: 1, RunID: "20261009-101010-abcd", Repo: "acme/app", Ref: "main", Task: "x"}
+	ok.OAuthToken = "acme-personal"
+	if err := ok.Validate(); err != nil {
+		t.Fatalf("a named account was refused: %v", err)
+	}
+	if !config.ClaudeAccountNameRE.MatchString(config.BitbucketSecret) || len(config.BitbucketSecret) > config.MaxClaudeAccountNameLen {
+		t.Fatalf("%s is refused by a shape check, so this test proves nothing about the reservation", config.BitbucketSecret)
+	}
+	s := ok
+	s.OAuthToken = config.BitbucketSecret
+	err := s.Validate()
+	if err == nil {
+		t.Fatalf("oauth_token: %s was accepted: the reserved name is one the run must refuse", config.BitbucketSecret)
+	}
+	if want := config.ValidClaudeAccountRef(config.BitbucketSecret); !strings.Contains(err.Error(), want) {
+		t.Errorf("the refusal does not carry the one reserved-name sentence (%q): %v", want, err)
+	}
+	if strings.Contains(err.Error(), config.BitbucketSecret) {
+		t.Errorf("the refusal echoes the name it refuses: %v", err)
+	}
+}
+
 func TestMarshalRoundTrip(t *testing.T) {
 	data, _ := os.ReadFile("../../testdata/task/valid/new.json")
 	s, err := Parse(data)

@@ -430,10 +430,10 @@ type Agent struct {
 	// "" is the repository's default account, the existing claude-oauth-token
 	// secret (docs/design/named-oauth-tokens.md). fugaro run --token wins
 	// over it. A name must still be allowed for this repository
-	// (AllowedClaudeAccounts), checked at launch, not here: Validate only
-	// checks the name's own shape. Repo and override scope only (Scopes):
-	// neither the project layer nor a profile may set it (design §3 T2).
-	// Binaries before 0.6.5 refuse this key (fugaro.yaml's strict decoder).
+	// (AllowedClaudeAccounts), checked at launch, not here: Validate checks
+	// the name's shape, and refuses the reserved name. Repo and override scope
+	// only (Scopes): neither the project layer nor a profile may set it
+	// (design §3 T2). A binary before 0.6.5 refuses the key (strict decoder).
 	OAuthToken string `yaml:"oauth_token,omitempty" json:"OAuthToken,omitempty"`
 	// Compression names the context-compression proxy this workflow's model
 	// calls route through: "" (off, the default) or "headroom"
