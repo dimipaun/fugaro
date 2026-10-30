@@ -195,8 +195,13 @@ name. With --check-github-app, in your own terminal, it also asks GitHub whether
 each GitHub App the config records is installed on its repository with the
 permissions Fugaro's runs ask for: that is the one thing that reads a secret's
 value (the App's private key, with your own credentials, held in memory only to
-sign, never printed), and it is refused in a coding agent's session. Otherwise
-it never prints a secret's value and never creates, enables or
+sign, never printed), and it is refused in a coding agent's session. With
+--check-bitbucket-token, in your own terminal, it also reads the credentials
+service's bundle to see that it holds a Bitbucket token and asks Bitbucket
+whether it still accepts it, one GET /repositories/<repo> per proxied
+repository: that too reads a secret's value (with your own credentials, in
+memory only, never printed) and is refused in a coding agent's session.
+Otherwise it never prints a secret's value and never creates, enables or
 changes anything.
 
 Inside a checkout whose project publishes a project layer (fugaro config

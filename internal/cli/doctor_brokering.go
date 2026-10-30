@@ -615,5 +615,3 @@ func proxiedBitbucketRepos(lc *localcfg.Config) []string {
 	}
 	return out
 }
-
-// doctorBitbucketAPIURL is gone: the root is bitbucketAPIURL.

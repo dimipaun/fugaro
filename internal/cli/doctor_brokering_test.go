@@ -2,13 +2,20 @@ package cli
 
 import (
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -39,6 +46,44 @@ type brokeringRig struct {
 
 func newBrokeringRig(t *testing.T) *brokeringRig {
 	t.Helper()
+	r := newBrokeringCheckout(t, true)
+	addLocalLines(t, r.doctorRig, brokeringConfig)
+	// The token the proxy forwards is stored (project-wide, which is where an
+	// entry with allow_data_to puts it): without a version anywhere, doctor is
+	// red for a reason that has nothing to do with this rig's checks.
+	putProjectSecret(t, r.sm, "aurora", config.BitbucketSecret, []byte("bundle-token-value"))
+	return r
+}
+
+// newBrokeringDirectRig is the same checkout and installation with no proxy
+// at all: no project_secrets entry admits workspace-a/repo-a, so its jobs hold
+// their own Bitbucket token, which is the state bitbucket-direct reports as
+// information.
+func newBrokeringDirectRig(t *testing.T) *brokeringRig {
+	t.Helper()
+	r := newBrokeringCheckout(t, true)
+	addLocalLines(t, r.doctorRig, "repos:\n  workspace-a/repo-a: { provider: bitbucket, workflows: [app] }\n")
+	putProjectSecret(t, r.sm, "aurora", config.BitbucketSecret, []byte("bundle-token-value"))
+	return r
+}
+
+// newBrokeringUnoptedRig is the same checkout on an installation that never
+// opted in: no credentials_service block, so the checks that read the service
+// have nothing to say.
+func newBrokeringUnoptedRig(t *testing.T) *brokeringRig {
+	t.Helper()
+	r := newBrokeringCheckout(t, false)
+	addLocalLines(t, r.doctorRig, brokeringConfig)
+	putProjectSecret(t, r.sm, "aurora", config.BitbucketSecret, []byte("bundle-token-value"))
+	return r
+}
+
+// newBrokeringCheckout is the part the three rigs share: a checkout of
+// workspace-a/repo-a whose local config names the Cloud Run services fake
+// beside the jobs one, so a service's policy can be read, and — when
+// withService — the credentials_service block the opt-in writes.
+func newBrokeringCheckout(t *testing.T, withService bool) *brokeringRig {
+	t.Helper()
 	r := &brokeringRig{doctorRig: newDoctorRig(t), svcs: gcpfake.NewRunServices(t)}
 	dir := checkoutWith(t, map[string]string{"fugaro.yaml": brokeringBitbucketYAML})
 	testutil.Git(t, dir, "remote", "set-url", "origin", "https://bitbucket.org/workspace-a/repo-a.git")
@@ -47,12 +92,9 @@ func newBrokeringRig(t *testing.T) *brokeringRig {
 		t.Fatal(err)
 	}
 	r.cfg = cfg
-	addLocalLines(t, r.doctorRig, "credentials_service: { url: https://fugaro-credentials-abc-uc.a.run.app }\n")
-	addLocalLines(t, r.doctorRig, brokeringConfig)
-	// The token the proxy forwards is stored (project-wide, which is where an
-	// entry with allow_data_to puts it): without a version anywhere, doctor is
-	// red for a reason that has nothing to do with this rig's checks.
-	putProjectSecret(t, r.sm, "aurora", config.BitbucketSecret, []byte("bundle-token-value"))
+	if withService {
+		addLocalLines(t, r.doctorRig, "credentials_service: { url: https://fugaro-credentials-abc-uc.a.run.app }\n")
+	}
 	return r
 }
 
@@ -134,5 +176,572 @@ func TestDoctorBrokeringMountedTokenOnFlippedInstallation(t *testing.T) {
 	}
 	if !strings.Contains(c.Problem, job) {
 		t.Fatalf("the warning does not name the job that still mounts it: %q", c.Problem)
+	}
+}
+
+// brokeringJobAccount is the account the workflow module grants
+// roles/run.invoker to on the credentials service: the job's own
+// (modules/workflow/sa.tf), named the way infra.CredentialsJobAccounts and
+// gcp.ServiceAccountID derive it.
+func brokeringJobAccount(workflow string) string {
+	slug := mustSlug("bitbucket", "workspace-a/repo-a")
+	return "serviceAccount:" + gcp.ServiceAccountID(slug, workflow) + "@proj-1234.iam.gserviceaccount.com"
+}
+
+// brokeringBundleDoc is the bundle document the credentials service holds, in
+// its own `name: value` format: the Bitbucket token beside one model
+// credential, so a test that looks for a leak has two values to look for.
+func brokeringBundleDoc(t *testing.T, token string) string {
+	t.Helper()
+	return config.BitbucketSecret + ": " + token + "\n" + config.AnthropicSecret + ": " + credsValue(t, "model") + "\n"
+}
+
+// putBundle writes the bundle document into the rig's Secret Manager, as
+// `fugaro creds set` does, and lets the fake hand the value back: its access
+// call fails the test until a test allows it, which is what keeps every other
+// read in these tests from touching a value by accident.
+func (r *brokeringRig) putBundle(t *testing.T, doc string) string {
+	t.Helper()
+	id := credsvc.BundleSecretID("aurora")
+	r.sm.Seed(id, map[string]string{gcp.LabelManaged: gcp.ManagedValue}, []byte(doc))
+	r.sm.AllowAccess()
+	return id
+}
+
+// bitbucketFake stands in for Bitbucket's own API. The token check makes one
+// call per proxied repository — GET /repositories/<workspace>/<slug> — and
+// nothing else, which the returned counter pins.
+func bitbucketFake(t *testing.T, status int) (*httptest.Server, *atomic.Int64) {
+	t.Helper()
+	var calls atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if status != http.StatusOK {
+			http.Error(w, `{"error":{"message":"refused"}}`, status)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"is_private":true}`)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &calls
+}
+
+// useBitbucketRoot points the token check at root for one test. The root is a
+// package variable and never whatever an environment variable names: a run's
+// root is the published policy's to choose, and a check that reads a credential
+// with the operator's own identity asks the forge the token was issued for.
+func useBitbucketRoot(t *testing.T, root string, client *http.Client) {
+	t.Helper()
+	oldURL, oldHTTP := bitbucketAPIURL, bitbucketAPIClient
+	bitbucketAPIURL, bitbucketAPIClient = root, client
+	t.Cleanup(func() { bitbucketAPIURL, bitbucketAPIClient = oldURL, oldHTTP })
+}
+
+// pinDoctorNow makes the age checks measure against now for one test.
+func pinDoctorNow(t *testing.T, now func() time.Time) {
+	t.Helper()
+	old := doctorNow
+	doctorNow = now
+	t.Cleanup(func() { doctorNow = old })
+}
+
+// TestDoctorBrokeringCredentialsServiceDeployed: the check reads the service's
+// own policy, and it is a warning in both failing directions — a service the
+// installation opted into that is not there, and a service no job account may
+// invoke. Neither fails doctor without --strict: an installation mid-opt-in is
+// a legitimate state.
+func TestDoctorBrokeringCredentialsServiceDeployed(t *testing.T) {
+	t.Run("deployed with the grant", func(t *testing.T) {
+		r := newBrokeringRig(t)
+		r.svcs.AddService(infra.CredentialsServiceName)
+		r.svcs.SetServicePolicy(infra.CredentialsServiceName, gcpfake.Binding{Role: "roles/run.invoker", Members: []string{brokeringJobAccount("app")}})
+
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("doctor: %v", err)
+		}
+		cs := checksByID(o, "credentials-service-deployed")
+		if len(cs) != 1 || !cs[0].OK {
+			t.Fatalf("credentials-service-deployed = %+v, want one ok check", cs)
+		}
+	})
+
+	t.Run("no service", func(t *testing.T) {
+		r := newBrokeringRig(t)
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("a warning must not fail doctor without --strict: %v", err)
+		}
+		cs := checksByID(o, "credentials-service-deployed")
+		if len(cs) != 1 || cs[0].OK || cs[0].Severity != "warning" {
+			t.Fatalf("credentials-service-deployed = %+v, want one warning", cs)
+		}
+		if !strings.Contains(cs[0].Problem, infra.CredentialsServiceName) || !strings.Contains(cs[0].Problem, "proj-1234") {
+			t.Errorf("the warning does not name the service and the project: %q", cs[0].Problem)
+		}
+		if !strings.Contains(cs[0].Fix, "--provision-credentials") {
+			t.Errorf("the fix does not name the opt-in: %q", cs[0].Fix)
+		}
+	})
+
+	t.Run("deployed without the grant", func(t *testing.T) {
+		r := newBrokeringRig(t)
+		r.svcs.AddService(infra.CredentialsServiceName)
+
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("a warning must not fail doctor without --strict: %v", err)
+		}
+		cs := checksByID(o, "credentials-service-deployed")
+		if len(cs) != 1 || cs[0].OK || cs[0].Severity != "warning" {
+			t.Fatalf("credentials-service-deployed = %+v, want one warning", cs)
+		}
+		if !strings.Contains(cs[0].Problem, "workspace-a/repo-a") || !strings.Contains(cs[0].Problem, "roles/run.invoker") {
+			t.Errorf("the warning does not name the repository and the role: %q", cs[0].Problem)
+		}
+		if !strings.Contains(cs[0].Fix, "update --repo") {
+			t.Errorf("the fix does not name the command that grants it: %q", cs[0].Fix)
+		}
+	})
+
+	t.Run("not opted in", func(t *testing.T) {
+		r := newBrokeringUnoptedRig(t)
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("doctor: %v", err)
+		}
+		if cs := checksByID(o, "credentials-service-deployed"); len(cs) != 0 {
+			t.Errorf("an installation with no credentials_service block got %+v", cs)
+		}
+	})
+}
+
+// TestDoctorBrokeringBundleBitbucketToken: the bundle's own check, and the
+// flag that gates it. Without --check-bitbucket-token the document is never
+// read — the flag is what `creds ls` is refused for in an agent's session — and
+// with it a bundle that holds no token is a warning exactly because a proxied
+// repository is waiting for one.
+func TestDoctorBrokeringBundleBitbucketToken(t *testing.T) {
+	t.Run("held", func(t *testing.T) {
+		r := newBrokeringRig(t)
+		r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
+		srv, calls := bitbucketFake(t, http.StatusOK)
+		useBitbucketRoot(t, srv.URL, srv.Client())
+
+		o, err := r.doctor(t, "--check-bitbucket-token")
+		if err != nil {
+			t.Fatalf("doctor: %v", err)
+		}
+		cs := checksByID(o, "bundle-bitbucket-token")
+		if len(cs) != 1 || !cs[0].OK {
+			t.Fatalf("bundle-bitbucket-token = %+v, want one ok check", cs)
+		}
+		vs := checksByID(o, "bitbucket-token-valid")
+		if len(vs) != 1 || !vs[0].OK {
+			t.Fatalf("bitbucket-token-valid = %+v, want one ok check", vs)
+		}
+		if calls.Load() != 1 {
+			t.Errorf("Bitbucket was asked %d time(s), want one GET per proxied repository", calls.Load())
+		}
+	})
+
+	t.Run("holds none", func(t *testing.T) {
+		r := newBrokeringRig(t)
+		r.putBundle(t, config.AnthropicSecret+": "+credsValue(t, "model")+"\n")
+
+		o, err := r.doctor(t, "--check-bitbucket-token")
+		if err != nil {
+			t.Fatalf("a warning must not fail doctor without --strict: %v", err)
+		}
+		cs := checksByID(o, "bundle-bitbucket-token")
+		if len(cs) != 1 || cs[0].OK || cs[0].Severity != "warning" {
+			t.Fatalf("bundle-bitbucket-token = %+v, want one warning", cs)
+		}
+		if !strings.Contains(cs[0].Problem, config.BitbucketSecret) || !strings.Contains(cs[0].Problem, "proxy: true") {
+			t.Errorf("the warning does not name the credential and the proxy: %q", cs[0].Problem)
+		}
+		if !strings.Contains(cs[0].Fix, "creds set "+config.BitbucketSecret) {
+			t.Errorf("the fix does not name the command that stores it: %q", cs[0].Fix)
+		}
+		if vs := checksByID(o, "bitbucket-token-valid"); len(vs) != 0 {
+			t.Errorf("Bitbucket was asked with no token to ask with: %+v", vs)
+		}
+	})
+
+	t.Run("never read without the flag", func(t *testing.T) {
+		r := newBrokeringRig(t)
+		bundle := r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
+
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("doctor: %v", err)
+		}
+		if cs := checksByID(o, "bundle-bitbucket-token"); len(cs) != 0 {
+			t.Errorf("the bundle was read without --check-bitbucket-token: %+v", cs)
+		}
+		if vs := checksByID(o, "bitbucket-token-valid"); len(vs) != 0 {
+			t.Errorf("Bitbucket was asked without --check-bitbucket-token: %+v", vs)
+		}
+		for _, id := range r.sm.Accessed() {
+			if id == bundle {
+				t.Errorf("the bundle's value was read without --check-bitbucket-token")
+			}
+		}
+	})
+}
+
+// TestDoctorBrokeringBitbucketTokenValid: what Bitbucket's own answer is worth.
+// A token it refuses (401, 403, 404) is a warning — every run of that
+// repository fails at its first git call — while a Bitbucket that cannot be
+// reached at all is information: the check reports what it could not ask
+// rather than blaming a token nobody asked about.
+func TestDoctorBrokeringBitbucketTokenValid(t *testing.T) {
+	t.Run("refused", func(t *testing.T) {
+		r := newBrokeringRig(t)
+		r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
+		srv, calls := bitbucketFake(t, http.StatusUnauthorized)
+		useBitbucketRoot(t, srv.URL, srv.Client())
+
+		o, err := r.doctor(t, "--check-bitbucket-token")
+		if err != nil {
+			t.Fatalf("a warning must not fail doctor without --strict: %v", err)
+		}
+		vs := checksByID(o, "bitbucket-token-valid")
+		if len(vs) != 1 || vs[0].OK || vs[0].Severity != "warning" {
+			t.Fatalf("bitbucket-token-valid = %+v, want one warning", vs)
+		}
+		if !strings.Contains(vs[0].Problem, "workspace-a/repo-a") {
+			t.Errorf("the warning does not name the repository: %q", vs[0].Problem)
+		}
+		if !strings.Contains(vs[0].Fix, "creds set "+config.BitbucketSecret) {
+			t.Errorf("the fix does not name the command that replaces it: %q", vs[0].Fix)
+		}
+		if calls.Load() != 1 {
+			t.Errorf("Bitbucket was asked %d time(s), want one GET per proxied repository", calls.Load())
+		}
+	})
+
+	t.Run("unreachable", func(t *testing.T) {
+		r := newBrokeringRig(t)
+		r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
+		// A closed port: the call is not made at all, which is not Bitbucket
+		// answering about the token.
+		useBitbucketRoot(t, "http://127.0.0.1:1", nil)
+
+		o, err := r.doctor(t, "--check-bitbucket-token")
+		if err != nil {
+			t.Fatalf("doctor: %v", err)
+		}
+		vs := checksByID(o, "bitbucket-token-valid")
+		if len(vs) != 1 || vs[0].OK || vs[0].Severity != "info" {
+			t.Fatalf("bitbucket-token-valid = %+v, want one informational line", vs)
+		}
+		if !strings.Contains(vs[0].Problem, "could not be asked") {
+			t.Errorf("the line does not say the question was not asked: %q", vs[0].Problem)
+		}
+	})
+}
+
+// TestDoctorBrokeringBitbucketDirect: the repository's own side of the flip.
+// Before it — no project_secrets entry admits the repository, or the release
+// that fills the flip list has not shipped — a job mounting bitbucket-token is
+// the state the installation is in, and the line is information. Only after
+// the flip is that same mount a job applied before it.
+func TestDoctorBrokeringBitbucketDirect(t *testing.T) {
+	t.Run("not proxied", func(t *testing.T) {
+		r := newBrokeringDirectRig(t)
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("doctor: %v", err)
+		}
+		cs := checksByID(o, "bitbucket-direct")
+		if len(cs) != 1 || cs[0].OK || cs[0].Severity != "info" {
+			t.Fatalf("bitbucket-direct = %+v, want one informational line", cs)
+		}
+		if !strings.Contains(cs[0].Problem, "not proxied") || !strings.Contains(cs[0].Problem, config.BitbucketSecret) {
+			t.Errorf("the line does not say what the repository holds: %q", cs[0].Problem)
+		}
+		if !strings.Contains(cs[0].Fix, "proxy: true") || !strings.Contains(cs[0].Fix, "update --repo") {
+			t.Errorf("the fix does not name the opt-in and the re-apply: %q", cs[0].Fix)
+		}
+	})
+
+	t.Run("proxied, before the flip", func(t *testing.T) {
+		r := newBrokeringRig(t)
+		r.jobMountingBitbucketToken(t)
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("doctor: %v", err)
+		}
+		cs := checksByID(o, "bitbucket-direct")
+		if len(cs) != 1 || cs[0].OK || cs[0].Severity != "info" {
+			t.Fatalf("bitbucket-direct = %+v, want one informational line", cs)
+		}
+		if !strings.Contains(cs[0].Problem, "flip list has not shipped") {
+			t.Errorf("the line does not say the flip has not shipped: %q", cs[0].Problem)
+		}
+	})
+
+	t.Run("proxied and flipped, no mount", func(t *testing.T) {
+		flipProxiedGitList(t, config.BitbucketSecret)
+		r := newBrokeringRig(t)
+		r.jobMountingBitbucketToken(t)
+
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("doctor: %v", err)
+		}
+		// The deployed job mounts the token, so this rig is the warning case
+		// above; here the point is only that the check reads the jobs at all
+		// once the flip is on. A rig with no job is the ok case, and the job's
+		// own name is not in it.
+		cs := checksByID(o, "bitbucket-direct")
+		if len(cs) != 1 || cs[0].Severity != "warning" {
+			t.Fatalf("bitbucket-direct = %+v, want one warning", cs)
+		}
+	})
+
+	t.Run("not a Bitbucket repository", func(t *testing.T) {
+		r := newSecretReadersRig(t)
+		r.withCredentialsService(t)
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("doctor: %v", err)
+		}
+		if cs := checksByID(o, "bitbucket-direct"); len(cs) != 0 {
+			t.Errorf("a GitHub repository got %+v", cs)
+		}
+	})
+}
+
+// TestDoctorBrokeringSecretRotationAge: the operator's own record, and nothing
+// else. With neither secret_rotation_days nor secret_expires recorded there is
+// no age to measure against and doctor adds no Secret Manager call at all —
+// which matters, since the version listing is one call per container. Both
+// halves are warnings, never failures: an old credential still works.
+func TestDoctorBrokeringSecretRotationAge(t *testing.T) {
+	t.Run("nothing recorded", func(t *testing.T) {
+		r := newBrokeringRig(t)
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("doctor: %v", err)
+		}
+		if cs := checksByID(o, "secret-rotation-age"); len(cs) != 0 {
+			t.Errorf("an installation that recorded no rotation period got %+v", cs)
+		}
+		// Doctor lists versions for other reasons, so the call this check does
+		// not make is measured against the same run with a period recorded:
+		// exactly one more list, the container's own.
+		with := newBrokeringRig(t)
+		addLocalLines(t, with.doctorRig, "secret_rotation_days: 30\n")
+		if _, err := with.doctor(t); err != nil {
+			t.Fatalf("doctor: %v", err)
+		}
+		if extra := with.sm.VersionsListCalls() - r.sm.VersionsListCalls(); extra != 1 {
+			t.Errorf("recording a rotation period added %d version list(s), want exactly the one the age is read from", extra)
+		}
+	})
+
+	t.Run("inside the period", func(t *testing.T) {
+		r := newBrokeringRig(t)
+		addLocalLines(t, r.doctorRig, "secret_rotation_days: 30\n")
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("doctor: %v", err)
+		}
+		if cs := checksByID(o, "secret-rotation-age"); len(cs) != 0 {
+			t.Errorf("a credential stored today is reported as overdue: %+v", cs)
+		}
+	})
+
+	t.Run("overdue", func(t *testing.T) {
+		r := newBrokeringRig(t)
+		addLocalLines(t, r.doctorRig, "secret_rotation_days: 30\n")
+		// The fake gives every version the container's own creation time, so
+		// the age is measured by moving the clock rather than the version.
+		pinDoctorNow(t, func() time.Time { return time.Now().Add(100 * 24 * time.Hour) })
+
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("a warning must not fail doctor without --strict: %v", err)
+		}
+		cs := checksByID(o, "secret-rotation-age")
+		if len(cs) != 1 || cs[0].OK || cs[0].Severity != "warning" {
+			t.Fatalf("secret-rotation-age = %+v, want one warning", cs)
+		}
+		if !strings.Contains(cs[0].Problem, config.BitbucketSecret) || !strings.Contains(cs[0].Problem, "30-day rotation period") {
+			t.Errorf("the warning does not name the secret and the period: %q", cs[0].Problem)
+		}
+		if !strings.Contains(cs[0].Problem, "old") || !strings.Contains(cs[0].Fix, "creds set") {
+			t.Errorf("the warning does not give the age and the way to rotate: %+v", cs[0])
+		}
+	})
+
+	t.Run("near expiry", func(t *testing.T) {
+		r := newBrokeringRig(t)
+		addLocalLines(t, r.doctorRig, "secret_expires:\n  "+config.BitbucketSecret+": \"2026-11-05\"\n")
+		pinDoctorNow(t, func() time.Time { return time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC) })
+
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("a warning must not fail doctor without --strict: %v", err)
+		}
+		cs := checksByID(o, "secret-rotation-age")
+		if len(cs) != 1 || cs[0].OK || cs[0].Severity != "warning" {
+			t.Fatalf("secret-rotation-age = %+v, want one warning", cs)
+		}
+		if !strings.Contains(cs[0].Problem, "expires on 2026-11-05") || !strings.Contains(cs[0].Problem, "in 5 days") {
+			t.Errorf("the warning does not say when it expires: %q", cs[0].Problem)
+		}
+	})
+
+	t.Run("expired", func(t *testing.T) {
+		r := newBrokeringRig(t)
+		addLocalLines(t, r.doctorRig, "secret_expires:\n  "+config.BitbucketSecret+": \"2026-10-01\"\n")
+		pinDoctorNow(t, func() time.Time { return time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC) })
+
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("a warning must not fail doctor without --strict: %v", err)
+		}
+		cs := checksByID(o, "secret-rotation-age")
+		if len(cs) != 1 || cs[0].OK || cs[0].Severity != "warning" {
+			t.Fatalf("secret-rotation-age = %+v, want one warning", cs)
+		}
+		if !strings.Contains(cs[0].Problem, "expired on 2026-10-01") || !strings.Contains(cs[0].Problem, "29 days ago") {
+			t.Errorf("the warning does not say how long ago it expired: %q", cs[0].Problem)
+		}
+	})
+}
+
+// TestDoctorBrokeringModelKeyInAgent: the reading an owner asked for — which
+// model credential a workflow's agent holds in its own environment. It is
+// information, never a failure (running without the budget is a legitimate
+// choice), and it is silent whenever something holds the credential away from
+// the agent: the budget gateway for an api-key run, or the credentials service.
+func TestDoctorBrokeringModelKeyInAgent(t *testing.T) {
+	newRig := func(t *testing.T, auth string, withService bool) *doctorRig {
+		t.Helper()
+		r := newDoctorRig(t)
+		yaml := strings.Replace(cliMinimalYAML, "workflows:", "agent: { auth: "+auth+" }\nworkflows:", 1)
+		dir := checkoutWith(t, map[string]string{"fugaro.yaml": yaml})
+		testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/app.git")
+		if withService {
+			addLocalLines(t, r, "credentials_service: { url: https://fugaro-credentials-abc-uc.a.run.app }\n")
+		}
+		return r
+	}
+	check := func(t *testing.T, r *doctorRig) []doctorCheck {
+		t.Helper()
+		out, _, _ := execute(t, "doctor", "--json")
+		var o doctorOutput
+		if err := json.Unmarshal([]byte(out), &o); err != nil {
+			t.Fatalf("json: %v\n%s", err, out)
+		}
+		return checksByID(o, "model-key-in-agent")
+	}
+
+	t.Run("api-key, no service", func(t *testing.T) {
+		cs := check(t, newRig(t, "api-key", false))
+		if len(cs) != 1 || cs[0].OK || cs[0].Severity != "info" {
+			t.Fatalf("model-key-in-agent = %+v, want one informational line", cs)
+		}
+		if !strings.Contains(cs[0].Problem, config.ReservedSecrets[config.AnthropicSecret]) || !strings.Contains(cs[0].Problem, "budget.mode is off") {
+			t.Errorf("the line does not name the variable and why it is there: %q", cs[0].Problem)
+		}
+	})
+
+	t.Run("oauth, no service", func(t *testing.T) {
+		cs := check(t, newRig(t, "oauth", false))
+		if len(cs) != 1 || cs[0].OK || cs[0].Severity != "info" {
+			t.Fatalf("model-key-in-agent = %+v, want one informational line", cs)
+		}
+		if !strings.Contains(cs[0].Problem, config.ReservedSecrets[config.ClaudeOAuthToken]) {
+			t.Errorf("the line does not name the variable: %q", cs[0].Problem)
+		}
+	})
+
+	t.Run("the credentials service holds it", func(t *testing.T) {
+		if cs := check(t, newRig(t, "api-key", true)); len(cs) != 0 {
+			t.Errorf("an installation that brokers its credentials got %+v", cs)
+		}
+	})
+
+	t.Run("vertex carries none", func(t *testing.T) {
+		if cs := check(t, newRig(t, "vertex", false)); len(cs) != 0 {
+			t.Errorf("an installation whose agent holds no key of its own got %+v", cs)
+		}
+	})
+}
+
+// TestDoctorBitbucketTokenNeverPrinted is the rule the whole flag is built
+// around: the bundle's value is used in memory and appears nowhere — not in
+// the printed output, not in --json, not in an error string. Both of the
+// document's values are looked for, and the check is run in the state that
+// prints most: the token accepted, refused, and the run refused before it read.
+func TestDoctorBitbucketTokenNeverPrinted(t *testing.T) {
+	token := credsValue(t, "token")
+	model := credsValue(t, "model")
+	for _, tc := range []struct {
+		name   string
+		status int
+		flag   bool
+	}{
+		{"accepted", http.StatusOK, true},
+		{"refused", http.StatusUnauthorized, true},
+		{"without the flag", http.StatusOK, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newBrokeringRig(t)
+			r.putBundle(t, brokeringBundleDoc(t, token))
+			srv, _ := bitbucketFake(t, tc.status)
+			useBitbucketRoot(t, srv.URL, srv.Client())
+
+			args := []string{"doctor", "--json"}
+			plainArgs := []string{"doctor"}
+			if tc.flag {
+				args = append(args, "--check-bitbucket-token")
+				plainArgs = append(plainArgs, "--check-bitbucket-token")
+			}
+			out, errOut, _ := execute(t, args...)
+			plain, plainErr, _ := execute(t, plainArgs...)
+			for what, got := range map[string]string{
+				"the json output":    out,
+				"the json error":     errOut,
+				"the printed output": plain,
+				"the printed error":  plainErr,
+			} {
+				for _, value := range []string{token, model} {
+					if strings.Contains(got, value) {
+						t.Errorf("%s carries a credential's value:\n%s", what, got)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestDoctorCheckBitbucketTokenRefusedInAgentSession: the flag reads a value
+// with the operator's own credentials, so it is refused under a coding agent's
+// marker before anything is read — the same refusal `creds ls` carries, and
+// for the same reason.
+func TestDoctorCheckBitbucketTokenRefusedInAgentSession(t *testing.T) {
+	for _, marker := range agentMarkers {
+		t.Run(marker, func(t *testing.T) {
+			r := newBrokeringRig(t)
+			bundle := r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
+			t.Setenv(marker, "1")
+
+			_, _, err := execute(t, "doctor", "--check-bitbucket-token", "--json")
+			if err == nil || !strings.Contains(err.Error(), "refused in a coding agent's session") || ExitCode(err) != ExitUserError {
+				t.Fatalf("doctor --check-bitbucket-token under %s: %v", marker, err)
+			}
+			for _, id := range r.sm.Accessed() {
+				if id == bundle {
+					t.Error("the bundle was read before the refusal")
+				}
+			}
+		})
 	}
 }
