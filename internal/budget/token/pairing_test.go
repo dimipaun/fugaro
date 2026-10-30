@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -85,6 +86,69 @@ func TestPairingTokenShape(t *testing.T) {
 		}
 		if time.Duration(exp-iat)*time.Second < timeout {
 			t.Fatalf("timeout %s: exp - iat = %ds, shorter than the wait", timeout, exp-iat)
+		}
+	}
+}
+
+// The exp is exactly the wait plus the exchange's slack under the ceiling, not
+// merely some value between the wait and five minutes: a token minted for
+// D165's whole five minutes whatever the wait would outlive a 30s pairing by
+// four minutes (§7.1 step 3).
+func TestPairingTokenLifetimeIsSizedToTheWait(t *testing.T) {
+	for timeout, want := range map[time.Duration]time.Duration{
+		30 * time.Second:               60 * time.Second,
+		2 * time.Minute:                2*time.Minute + 30*time.Second,
+		4*time.Minute + 30*time.Second: 5 * time.Minute,
+		10 * time.Minute:               5 * time.Minute,
+	} {
+		if got := token.PairingLifetime(timeout); got != want {
+			t.Errorf("PairingLifetime(%s) = %s, want %s", timeout, got, want)
+		}
+		tok, _, err := token.MintPairing(context.Background(), pairingSigner{email: signerEmail}, timeout, t0)
+		if err != nil {
+			t.Fatalf("timeout %s: %v", timeout, err)
+		}
+		got := pairingPayload(t, tok)
+		if span := time.Duration(pairingNumber(t, got, "exp")-pairingNumber(t, got, "iat")) * time.Second; span != want {
+			t.Errorf("timeout %s: exp - iat = %s, want %s", timeout, span, want)
+		}
+	}
+}
+
+// renamingSigner hands back a token whose uid or pu it rewrote, which
+// MintPairing's read-back must refuse rather than return.
+type renamingSigner struct {
+	email string
+	claim string
+}
+
+func (s renamingSigner) Email() string { return s.email }
+
+func (s renamingSigner) SignJWT(_ context.Context, payload []byte) (string, error) {
+	var m map[string]any
+	if err := json.Unmarshal(payload, &m); err != nil {
+		return "", err
+	}
+	if s.claim == "uid" {
+		m["uid"] = "p~another"
+	} else {
+		m["claims"] = map[string]any{"pu": "p~another"}
+	}
+	body, err := json.Marshal(m)
+	if err != nil {
+		return "", err
+	}
+	return "h." + base64.RawURLEncoding.EncodeToString(body) + ".s", nil
+}
+
+func TestPairingTokenRefusesSignerThatRenamesUID(t *testing.T) {
+	for _, claim := range []string{"uid", "pu"} {
+		tok, uid, err := token.MintPairing(context.Background(), renamingSigner{email: signerEmail, claim: claim}, 2*time.Minute, t0)
+		if !errors.Is(err, token.ErrTokenMismatch) {
+			t.Errorf("a signer that rewrote %s: err = %v, want ErrTokenMismatch", claim, err)
+		}
+		if tok != "" || uid != "" {
+			t.Errorf("a signer that rewrote %s: MintPairing returned a token or a uid alongside its refusal", claim)
 		}
 	}
 }

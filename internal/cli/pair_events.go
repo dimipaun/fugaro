@@ -33,7 +33,7 @@ const pairQRVersion = 1
 const (
 	pairEventQR      = "qr"      // the QR's payload, the pairing uid, its expiry
 	pairEventWaiting = "waiting" // the command now waits for the phone's key
-	pairEventCode    = "code"    // the fingerprint to compare, read as a key
+	pairEventCode    = "code"    // the phone's key arrived: type the code it shows
 	pairEventDone    = "done"    // §4.5's document: what was written
 	pairEventRefused = "refused" // a stable code and a fixable reason
 )
@@ -75,9 +75,9 @@ type pairEvent struct {
 	ExpiresAt string `json:"expires_at,omitempty"`
 	// waiting: how long the command waits for the phone's key.
 	TimeoutMS int64 `json:"timeout_ms,omitempty"`
-	// code: the fingerprint the CLI derived from the key it read, which is
-	// the same value the operator sees on the phone and is not a secret.
-	KeyFingerprint string `json:"key_fingerprint,omitempty"`
+	// code carries no field of its own, and never the fingerprint: the operator
+	// reads the code off the phone, and a console that saw it here could type
+	// it back without anyone looking at the phone (M3).
 	// done: §4.5's document.
 	Document *pairDocument `json:"document,omitempty"`
 	// refused: the code an operator or a console acts on, and the reason.

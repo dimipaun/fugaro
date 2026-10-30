@@ -240,8 +240,8 @@ func pairTimeoutRefusal(timeout time.Duration) string {
 // pairInheritedRole is the role a paired device inherits (plan §4.1, decision
 // 13): the pairing user's own, read from the installation's lists. Launchers
 // and operators both map to the device word operator, and the lists hold no
-// viewer and no admin — so a viewer device and an admin device are both
-// reached only by lowering with --role.
+// viewer and no admin — so a viewer device is reached only by lowering with
+// --role, and no device is admin until the roles design places an admin.
 func pairInheritedRole(lc *localcfg.Config, me string) (mobileauth.Role, bool) {
 	member := meMember(me)
 	if operatorMember(member, lc.Terraform.Operators) || launcherMember(member, lc.Terraform.Launchers) {

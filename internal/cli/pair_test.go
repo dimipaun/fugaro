@@ -505,7 +505,7 @@ func TestPairJSONEventsGolden(t *testing.T) {
 	}
 	got := pairEventLines(t, out)
 	got = append(got,
-		pairEncoded(t, pairEvent{Event: pairEventCode, UID: uid, KeyFingerprint: "K7QM-3X2B"}),
+		pairEncoded(t, pairEvent{Event: pairEventCode, UID: uid}),
 		pairEncoded(t, pairEvent{Event: pairEventDone, UID: uid, Document: pairGoldenDoc()}),
 	)
 	refused, _, err := pairRun(t, "--json", "--role", "admin")
