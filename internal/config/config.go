@@ -47,7 +47,16 @@ type Config struct {
 	// Rigor the pointer is what keeps an absent block out of the resolved
 	// config's hash, which SHA256 takes over this struct.
 	Governance *Governance `yaml:"governance,omitempty" json:"governance,omitempty"`
-	Followup   Followup    `yaml:"followup"`
+	// AB is the repository's A/B opt-out (docs/model-ab-testing, D556): a
+	// file that writes no ab: block sets nothing, and one that writes it may
+	// carry ab.rate: 0 alone — the block is otherwise the project layer's,
+	// because a repository author could name a challenger model and send
+	// that repository's code to a provider the owner opened only to others
+	// (D556, F18). Validate is where a file that writes more is refused. The
+	// pointer is what keeps an absent block out of the resolved config's
+	// hash, as Governance's does.
+	AB       *AB      `yaml:"ab,omitempty" json:"ab,omitempty"`
+	Followup Followup `yaml:"followup"`
 	// Rigor is the repository's rigor mode and its named area rules
 	// (docs/rigor-modes/spec.md, reconciliation D20): how much cost a run
 	// accepts to reduce risk. A file that writes no rigor: block sets none —

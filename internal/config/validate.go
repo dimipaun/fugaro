@@ -177,6 +177,12 @@ func Validate(c *Config) []Problem {
 		ps = append(ps, validateRigor("rigor", c.Rigor.Default, c.Rigor.Areas)...)
 	}
 	ps = append(ps, validateGovernance("governance", c.Governance)...)
+	// A repository's ab: block may only opt out of sampling (D556, D557):
+	// every other key of it is the project layer's, and a repository that
+	// names a challenger could send its code to a provider the owner opened
+	// only to others. The rules are the same ones `fugaro config publish`
+	// holds the layer's block to, stated once in ab.go.
+	ps = append(ps, validateRepoAB(c.AB)...)
 	if len(c.Workflows) == 0 {
 		add("workflows", "must define at least one workflow")
 	}

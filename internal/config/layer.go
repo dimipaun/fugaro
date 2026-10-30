@@ -74,6 +74,16 @@ type ProjectLayer struct {
 	// loosen Fugaro's own defaults (policy.Governance.WithDefaults).
 	Governance *Governance `yaml:"governance"`
 
+	// AB is the project's model A/B block (docs/model-ab-testing, D550). A
+	// top-level key on purpose, like Governance and for the same reason: the
+	// defaults: overlay is replace-not-tighten (resolve.go), so an ab: under
+	// defaults: would let a repository's own block replace the owner's
+	// choices instead of only tightening them. Read here, the two meet only
+	// in the merge (internal/policy), which takes the lower rate and nothing
+	// else of the block from the repository: a repository may only opt out
+	// (D556).
+	AB *AB `yaml:"ab"`
+
 	// Raw is the exact text, SHA256 its hex sha256.
 	Raw    []byte `yaml:"-"`
 	SHA256 string `yaml:"-"`
@@ -189,7 +199,7 @@ func LayerSum(data []byte) string {
 	return hex.EncodeToString(s[:])
 }
 
-var layerTopKeys = []string{"version", "project", "gcp_project", "defaults", "profiles", "default_profile", "claude_models", "governance"}
+var layerTopKeys = []string{"version", "project", "gcp_project", "defaults", "profiles", "default_profile", "claude_models", "governance", "ab"}
 
 // layerReserved are keys a later release defines; this one refuses them
 // with a message saying so.
@@ -607,6 +617,7 @@ func validateLayer(l *ProjectLayer, a LayerAnchor) []Problem {
 	}
 	ps = append(ps, validateRigor("defaults.rigor", d.Rigor.Default, d.Rigor.Areas)...)
 	ps = append(ps, validateGovernance("governance", l.Governance)...)
+	ps = append(ps, validateAB("ab", l.AB)...)
 	for _, p := range validateAgentModels(Agent{Model: ag.Model, Models: ag.Models}) {
 		p.Path = "defaults." + p.Path
 		ps = append(ps, p)

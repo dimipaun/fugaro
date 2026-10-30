@@ -496,3 +496,51 @@ func TestPerDayMergeNeverLoosens(t *testing.T) {
 		t.Fatalf("%+v", e)
 	}
 }
+
+// TestABMergeTightenOnly pins D556/D557's rule for the one ab: key the merge
+// speaks: the project layer sets the sampling rate and a repository may only
+// lower it, to 0, which never samples that repository. A layer that writes a
+// higher rate is dropped and recorded, as a looser cap is; a layer that
+// writes no rate at all passes the earlier layers through, which is a nil
+// rate and not a 0 one, because 0 is the opt-out and not "unset". Nothing
+// else of ab is a policy.Layer field, so no other key of the block can reach
+// the merge from any layer.
+func TestABMergeTightenOnly(t *testing.T) {
+	rate := func(v float64) *float64 { return &v }
+	if e := Merge(Layer{}); e.ABRate != nil || e.Sources[KeyABRate] != "" {
+		t.Errorf("a layer with no ab rate = %v (source %q), want unset", e.ABRate, e.Sources[KeyABRate])
+	}
+	e := Merge(Layer{ABRate: rate(0.05)})
+	if e.ABRate == nil || *e.ABRate != 0.05 || e.Sources[KeyABRate] != SourceCeiling {
+		t.Errorf("the ceiling alone = %v (source %q), want 0.05 from the ceiling", e.ABRate, e.Sources[KeyABRate])
+	}
+	// The repository's opt-out is the tighter value, and it is the branch's.
+	e = Merge(Layer{ABRate: rate(0.05)}, Layer{ABRate: rate(0)})
+	if e.ABRate == nil || *e.ABRate != 0 || e.Sources[KeyABRate] != SourceDefaultBranch || len(e.Ignored) != 0 {
+		t.Errorf("a repository's 0 = %v (source %q, ignored %v), want 0 from the layer that opted out and nothing ignored", e.ABRate, e.Sources[KeyABRate], e.Ignored)
+	}
+	// A repository cannot raise it: its layer is the default branch's, the
+	// project's is the ceiling.
+	e = Merge(Layer{ABRate: rate(0.05)}, Layer{ABRate: rate(0.1)})
+	if e.ABRate == nil || *e.ABRate != 0.05 || len(e.Ignored) != 1 {
+		t.Fatalf("a repository's 0.1 = %v (ignored %v), want the ceiling's 0.05 and one ignored value", e.ABRate, e.Ignored)
+	}
+	if ig := e.Ignored[0]; ig.Key != KeyABRate || ig.Value != "0.1" || ig.Effective != "0.05" || ig.Source != SourceCeiling {
+		t.Errorf("Ignored = %+v, want ab.rate 0.1 dropped for the ceiling's 0.05", ig)
+	}
+	// A layer in between that writes no rate is not an opt-out.
+	e = Merge(Layer{ABRate: rate(0.05)}, Layer{}, Layer{ABRate: rate(0)})
+	if e.ABRate == nil || *e.ABRate != 0 || e.Sources[KeyABRate] != SourceBranch {
+		t.Errorf("a silent default branch = %v (source %q), want the branch's 0", e.ABRate, e.Sources[KeyABRate])
+	}
+	// Once a layer has opted out, a later layer cannot raise it back: the
+	// comparison is with the running effective value.
+	e = Merge(Layer{ABRate: rate(0.05)}, Layer{ABRate: rate(0)}, Layer{ABRate: rate(0.07)})
+	if e.ABRate == nil || *e.ABRate != 0 || len(e.Ignored) != 1 || e.Ignored[0].Source != SourceDefaultBranch {
+		t.Errorf("0 then 0.07 = %v (ignored %v), want 0 from the layer that opted out and the 0.07 dropped", e.ABRate, e.Ignored)
+	}
+	// Equal rates are not ignored, as for every other key.
+	if e := Merge(Layer{ABRate: rate(0.05)}, Layer{ABRate: rate(0.05)}); len(e.Ignored) != 0 {
+		t.Errorf("two equal rates = %v, want nothing ignored", e.Ignored)
+	}
+}
