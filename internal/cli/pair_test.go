@@ -305,11 +305,10 @@ func pairPair(t *testing.T, f *pairFixture, code string, args ...string) (string
 }
 
 // pairNoSideEffect holds a refused pairing to M3's rule: no device node, no
-// delivery, no device token, and the phone's own request node exactly where
-// the phone left it. The delivery and the keychain item are T3's and this
-// build holds no writer for either, so what a test can hold is that nothing
-// the pairing would have produced exists — and that the one signJwt call is
-// the pairing token's, not a device token's.
+// delivery, no device token, no keychain item, and the phone's own request
+// node exactly where the phone left it. Everything past the typed code is
+// behind the comparison, so a refusal before it must leave none of it — and
+// the one signJwt call is the pairing token's, not a device token's.
 func (f *pairFixture) pairNoSideEffect(t *testing.T, uid string) {
 	t.Helper()
 	if v := f.db.Value("config/admin/devices"); v != nil {
@@ -317,6 +316,9 @@ func (f *pairFixture) pairNoSideEffect(t *testing.T, uid string) {
 	}
 	if v := f.db.Value("pairing/" + uid + "/delivery"); v != nil {
 		t.Fatalf("a refused pairing wrote a delivery: %v", v)
+	}
+	if len(f.keys.Keys) != 0 {
+		t.Fatalf("a refused pairing wrote the keychain: %v", f.keys.Keys)
 	}
 	if v := f.db.Value("pairing/" + uid + "/request"); v == nil {
 		t.Fatalf("a refused pairing deleted the phone's own request node: the CLI writes nothing and deletes nothing before the code matches")
@@ -568,20 +570,34 @@ func TestPairRefusalCodesNameTheCase(t *testing.T) {
 	}
 }
 
+// pairTTYReader is a terminal that fails the test when it is read. The two
+// seams below are different failures and both are needed: stdinIsTerminal is
+// the question "is this a terminal", which a --json pairing that asked it
+// would hang on, and this is the read itself, which catches the path that
+// reaches for the terminal without asking — the one that would sit on a
+// prompt nobody can see. The code step's reader is stdin in --json and
+// pairTerminal's otherwise, so pointing pairTerminal here is what makes the
+// test able to fail.
+type pairTTYReader struct{ t *testing.T }
+
+func (r pairTTYReader) Read([]byte) (int, error) {
+	r.t.Errorf("--json read the terminal")
+	return 0, io.EOF
+}
+
 // TestPairJSONNeverReadsTTY holds --json to the rule the console depends on:
 // the mode asks no terminal anything and writes no prompt — the code it needs
 // comes down the stdin line the caller handed it, both for the code step and
-// for the key that precedes it. stdinIsTerminal is a seam the rest of the CLI
-// asks; a --json pairing that asked it would be a pairing that could hang on a
-// terminal nobody is looking at.
+// for the key that precedes it.
 func TestPairJSONNeverReadsTTY(t *testing.T) {
 	f := newPairFixture(t, pairMe)
-	prev := stdinIsTerminal
+	prev, prevTerminal := stdinIsTerminal, pairTerminal
 	stdinIsTerminal = func(io.Reader) bool {
 		t.Fatal("--json opened the terminal")
 		return false
 	}
-	t.Cleanup(func() { stdinIsTerminal = prev })
+	pairTerminal = func(*cobra.Command) io.Reader { return pairTTYReader{t} }
+	t.Cleanup(func() { stdinIsTerminal, pairTerminal = prev, prevTerminal })
 	out, _, err := pairPair(t, f, token.Fingerprint(pairKeyBytes), "--json")
 	if err != nil {
 		t.Fatal(err)
