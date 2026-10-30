@@ -59,6 +59,7 @@ CI runs on pushes to `main` only, not on PRs (`.github/workflows/ci.yml`; see CO
 - **No secret-shaped literals** in tests, docs, logs or fixtures.
 - **Never merge `main` into a branch with a cloud follow-up run** if `main` changed `.github/workflows/`: the run's push is refused and its work is lost. Merge locally first.
 - **Steps that must run after a deploy** (a backfill, a config or secret change, a rollout order) go in the release notes' `### For operators` section in the same PR (`docs/releases/README.md`); without an entry the release ships and nobody runs the step.
+- **A field never changes meaning.** For any wire or JSON shape a reader outside the same binary consumes (CLI `--json` output, the run record, task, policy and config formats; the console, mobile app, history and plugin read them): adding a field is fine, removing or retyping one bumps that format's version, and a field whose meaning must change gets a new name. The console accepts any newer CLI on this contract, so a reused name would draw a wrong figure with no error.
 - **Comments explain why, never what.** No TODO comments, no section-header comments, and no comment that restates a name.
 - **Search before you write a helper.** After parallel runs create several files, do a final pass to remove duplicates.
 - **A fix round for review findings adds no functionality.** It makes only changes that keep the existing behavior. A finding that needs a new behavior or a product decision is reported, not fixed.

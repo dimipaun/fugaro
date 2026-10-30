@@ -24,6 +24,10 @@ const (
 	secretReadersDoc       = "docs/secrets-brokering/secret-readers.md"
 	secretsBrokeringPlan   = "docs/secrets-brokering/implementation-plan.md"
 	secretsBrokeringReadme = "docs/secrets-brokering/README.md"
+	// release0140OperatorsDoc is the 0.14.0 operator-steps draft (task B1.13
+	// part one), which the 0.14.0 release PR copies into that release's
+	// "### For operators" section.
+	release0140OperatorsDoc = "docs/secrets-brokering/release-0.14.0-operators.md"
 )
 
 // secretReaderColumns is the audit table's header, exactly: B0.2 parses these
@@ -193,6 +197,141 @@ func TestDocsSecretsBrokeringReadmeStatus(t *testing.T) {
 	if !strings.Contains(status, want) {
 		t.Errorf("%s no longer says %q: the owner's answers of that date are what every slice in this directory is approved against", secretsBrokeringReadme, want)
 	}
+}
+
+// secretsBrokeringLevelsHeader is the plan's own Levels table, the one place the
+// release a task ships in is written down. The tests below read it rather than
+// writing a release number down a second time, so the plan and the docs cannot
+// drift apart -- which is how the owner's 2026-10-30 move, the Bitbucket proxy
+// chain leaving 0.14.0 for 0.15.0, reached the docs without reaching the plan.
+var secretsBrokeringLevelsHeader = []string{"Release", "Level", "Tasks (concurrent)"}
+
+// secretsBrokeringProxyChain is the chain the owner moved: the service's route
+// (B1.5), the runner's forwarder and proxy mode (B1.6, B1.7), doctor's checks
+// (B1.9), the docs (B1.10) and the two live checks written (B1.11). The draft
+// and the README name the release the plan's Levels table gives this group, and
+// that release is not the one whose pieces ship inert.
+var secretsBrokeringProxyChain = []string{"B1.5", "B1.6", "B1.7", "B1.9", "B1.10", "B1.11"}
+
+// secretsBrokeringInertPieces are the S1 tasks that stay in the release before
+// the chain: policy v4 with the block and the `proxy` switch (BW-T2.1, BW-T2.3),
+// the API-root pin (BW-T2.8), the bundle's Bitbucket token (B1.2), the proxy's
+// parser and rules (B1.3, B1.4) and the flip list, still empty (B1.8). None of
+// them proxies a run on its own.
+var secretsBrokeringInertPieces = []string{"BW-T2.1", "BW-T2.3", "BW-T2.8", "B1.2", "B1.3", "B1.4", "B1.8"}
+
+// secretsBrokeringTaskReleases reads the plan's Levels table into task ID ->
+// release. A task split across two releases ("B1.13 part one") is keyed with its
+// part, because the two parts are two releases.
+func secretsBrokeringTaskReleases(t *testing.T) map[string]string {
+	t.Helper()
+	rows, _ := docTable(t, readDoc(t, secretsBrokeringPlan), secretsBrokeringPlan, secretsBrokeringLevelsHeader)
+	if len(rows) == 0 {
+		t.Fatalf("%s's Levels table has no rows: this test reads every task's release from it", secretsBrokeringPlan)
+	}
+	releases := map[string]string{}
+	for _, r := range rows {
+		if len(r.cells) != len(secretsBrokeringLevelsHeader) {
+			t.Fatalf("%s:%d: the Levels row has %d cells, want %d", secretsBrokeringPlan, r.line, len(r.cells), len(secretsBrokeringLevelsHeader))
+		}
+		for _, task := range strings.Split(r.cells[2], ",") {
+			fields := strings.Fields(strings.Trim(task, "* "))
+			if len(fields) == 0 {
+				continue
+			}
+			id := fields[0]
+			if len(fields) > 2 && fields[1] == "part" {
+				id = fields[0] + " part " + fields[2]
+			}
+			releases[id] = r.cells[0]
+		}
+	}
+	return releases
+}
+
+// secretsBrokeringReleaseFor is the one release every task in tasks ships in,
+// out of the plan's Levels table, or "" when the group is empty. It fails when
+// the table gives a task no release, or splits the group across releases: either
+// way the docs have no single release to be held to.
+func secretsBrokeringReleaseFor(t *testing.T, tasks []string) string {
+	t.Helper()
+	releases := secretsBrokeringTaskReleases(t)
+	var found string
+	for _, task := range tasks {
+		release, ok := releases[task]
+		if !ok {
+			t.Fatalf("%s's Levels table gives no release for %s: this test reads the release the docs must name from it", secretsBrokeringPlan, task)
+		}
+		if found == "" {
+			found = release
+			continue
+		}
+		if release != found {
+			t.Errorf("%s's Levels table splits this group across releases: %s ships in %q, the earlier entries in %q", secretsBrokeringPlan, task, release, found)
+		}
+	}
+	return found
+}
+
+// TestDocsSecretsBrokeringOperatorSteps: the draft an operator reads for the
+// release whose pieces are inert says only what that release ships. The owner
+// moved the Bitbucket proxy chain to the next release on 2026-10-30, so the
+// release whose pieces ship first keeps a Bitbucket run's
+// job holding its own token and `proxy: true` changing nothing a run does, and
+// the draft has to say so: an operator who reads the proxy steps as this
+// release's keeps waiting for a behaviour that is not here. The releases are
+// read out of the plan's own Levels table, so a draft that moves without the
+// plan -- or the plan without the draft -- fails here.
+func TestDocsSecretsBrokeringOperatorSteps(t *testing.T) {
+	proxyRelease := secretsBrokeringReleaseFor(t, secretsBrokeringProxyChain)
+	piecesRelease := secretsBrokeringReleaseFor(t, secretsBrokeringInertPieces)
+	if proxyRelease == piecesRelease {
+		t.Errorf("%s ships the proxy chain and the inert pieces in one release %q: the chain is the release after the pieces, and this test reads the split from that", secretsBrokeringPlan, proxyRelease)
+	}
+	draft := flattenDoc(readDoc(t, release0140OperatorsDoc))
+	for _, want := range []string{
+		// The step every installation owes, which the move does not touch.
+		"policy v4 lockstep",
+		"Bitbucket brokering (the proxy) arrives in " + proxyRelease,
+		"In " + piecesRelease + " a Bitbucket run's job still holds its own token",
+		"`proxy: true` in the published block changes nothing such a run does",
+	} {
+		if !strings.Contains(draft, want) {
+			t.Errorf("%s does not say %q", release0140OperatorsDoc, want)
+		}
+	}
+}
+
+// TestDocsSecretsBrokeringReadmeReleaseTable: the README's release table is
+// where a reader learns which release ships what, and its row for the release
+// the inert pieces ship in promised the Bitbucket proxy. The chain moved on
+// 2026-10-30, so that row names what its release actually ships and the chain's
+// own row names the proxy. Both rows, and the plan's own Slices row, are held to
+// the releases the plan's Levels table gives the two groups.
+func TestDocsSecretsBrokeringReadmeReleaseTable(t *testing.T) {
+	proxyRelease := secretsBrokeringReleaseFor(t, secretsBrokeringProxyChain)
+	piecesRelease := secretsBrokeringReleaseFor(t, secretsBrokeringInertPieces)
+	readme := flattenDoc(readDoc(t, secretsBrokeringReadme))
+	for _, want := range []string{
+		"| **" + piecesRelease + "** | **S1, data and inert pieces only:**",
+		"the Bitbucket proxy itself arrives in " + proxyRelease + ", so no proxied run",
+		"| **" + proxyRelease + "** | The Bitbucket proxy for per-repository jobs of opted-in installations",
+	} {
+		if !strings.Contains(readme, want) {
+			t.Errorf("%s does not say %q", secretsBrokeringReadme, want)
+		}
+	}
+	rows, _ := docTable(t, readDoc(t, secretsBrokeringPlan), secretsBrokeringPlan, secretsBrokeringSlicesHeader)
+	for _, r := range rows {
+		if len(r.cells) == 0 || strings.Trim(r.cells[0], "* ") != "S1" {
+			continue
+		}
+		if row := strings.Join(r.cells, " | "); !strings.Contains(row, proxyRelease) {
+			t.Errorf("%s:%d: the S1 row does not name %q, the release the Levels table gives the proxy chain: the plan's own Slices table is the third place the release is read", secretsBrokeringPlan, r.line, proxyRelease)
+		}
+		return
+	}
+	t.Errorf("%s's Slices table has no S1 row: this test holds it to the proxy chain's release", secretsBrokeringPlan)
 }
 
 // TestDocsCheck190IsRegistered: Check 190 — this work's one owner-run check, and

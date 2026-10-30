@@ -294,21 +294,16 @@ describe('the stored project view’s decoder (T1.2)', () => {
     expect(decodes({ repos: [explicit] }).repos[0]?.stale).toBeNull()
   })
 
-  it('refuses an unknown field, so a key this console does not read is a failing read', () => {
-    // The strict decoding every document of this console is held to: a key no
-    // struct of the read writes is refused by name rather than ignored, because
-    // a document that gained a field is a CLI whose shape this build does not
-    // know.
-    const rogue = { repos: [{ ...STORED, colour: 'red' }] }
-    const result = decodeCoordinatorStatus(rogue)
-    expect(result.ok).toBe(false)
-    if (!result.ok) {
-      expect(result.skew.refusal.name).toBe('unknown-key')
-      expect(result.skew.refusal.field).toBe('repos[0].colour')
-    }
-    // The same at the document's own level, and a document that is not an object
-    // at all is refused before anything is read from it.
-    expect(decodeCoordinatorStatus({ repos: [STORED], download: 'https://example.invalid/x' }).ok).toBe(false)
+  it('ignores an unknown field, so a newer CLI’s addition is not a failing read', () => {
+    // The owner's ruling of 2026-10-30: a key no struct of the read writes yet
+    // is a field a newer CLI added, and it is ignored -- the document decodes to
+    // what it would without it -- while a document that is not an object at
+    // all is still refused before anything is read from it.
+    const plain = decodeCoordinatorStatus({ repos: [STORED] })
+    const rogue = decodeCoordinatorStatus({ repos: [{ ...STORED, colour: 'red' }] })
+    expect(plain.ok).toBe(true)
+    expect(rogue).toEqual(plain)
+    expect(decodeCoordinatorStatus({ repos: [STORED], download: 'https://example.invalid/x' })).toEqual(plain)
     expect(decodeCoordinatorStatus([]).ok).toBe(false)
   })
 
@@ -318,7 +313,7 @@ describe('the stored project view’s decoder (T1.2)', () => {
     // view over a live feed.
     const other = decodeCoordinatorStatus({ conn: { state: 'ok' }, runs: [] })
     expect(other.ok).toBe(false)
-    if (!other.ok) expect(other.skew.refusal.name).toBe('unknown-key')
+    if (!other.ok) expect(other.skew.refusal.name).toBe('missing')
   })
 })
 

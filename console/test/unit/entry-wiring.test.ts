@@ -305,11 +305,12 @@ describe('the dashboard the entry mounts', () => {
   })
 
   it('draws the unavailable state, and no figure, for a live.watch reply it cannot decode', async () => {
-    // A document the schema refuses: it carries a key this console does not
-    // read. The console's answer is the refusal screen with the schema's own
-    // sentence -- never a dashboard of zeros, which is what a screen handed an
-    // unread document would draw.
-    const unknown = { ...(syntheticDocuments()[0] as Record<string, unknown>), mystery: 1 }
+    // A document the schema refuses: a field it reads arrives retyped, which is
+    // a format change and not an addition (a key it does not know is ignored).
+    // The console's answer is the refusal screen with the schema's own sentence
+    // naming the read and the field -- never a dashboard of zeros, which is what
+    // a screen handed an unread document would draw.
+    const unknown = { ...(syntheticDocuments()[0] as Record<string, unknown>), now: 1 }
     const decoded = decodeSnapshot(unknown, 'live.watch')
     expect(decoded.ok, 'the planted document must be one the schema refuses').toBe(false)
     const because = decoded.ok ? '' : decoded.skew.because

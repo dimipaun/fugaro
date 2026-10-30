@@ -598,7 +598,7 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 		// that can still refuse this launch, so a refused launch leaves
 		// nothing in the bucket under a run id that never gets a task. A
 		// launch with no --attach does nothing here at all.
-		agentRecipe, kind, clone := "", "", false
+		agentRecipe, kind, clone, shared := "", "", false, false
 		// mode is the same answer for baseBranchSkew, and nil where clone is
 		// false for the other gates because nothing was read: a launch for
 		// another repository from a checkout that is not its own reads no
@@ -610,6 +610,7 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			if w, ok := co.Workflows[spec.Workflow]; ok {
 				kind = w.BaseKind()
 				clone = w.Checkout == config.CheckoutClone
+				shared = w.Checkout == config.CheckoutShared
 				m := clone
 				mode = &m
 			}
@@ -808,6 +809,17 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			// and nothing here can stop a launch D619 ruled may not be
 			// pinned.
 			warnImageDigestDrift(ctx, env, slug, spec, warn)
+		}
+		// A checkout: shared workflow's job runs a shared dependency-layer
+		// image, not a per-repository one: it is judged on the image the lock
+		// says its job is on (checkSharedImageSince), in neither branch above —
+		// the clone branch's judge is the local config's base image, which is
+		// not what built the shared one, and the other branch's is a build
+		// record a repository that adopted a sibling's image never wrote.
+		if shared {
+			if err := checkSharedImageSince(ctx, env, slug, spec, sharedSince, warn); err != nil {
+				return launchResult{}, err
+			}
 		}
 		if spec.Mode == recipe.ModeArtifact {
 			// The mode: artifact gate: a task carrying mode is refused

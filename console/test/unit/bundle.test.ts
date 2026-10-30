@@ -610,7 +610,7 @@ describe('the bundle in a document', () => {
     expect(root, 'the reduced banner was not mounted').toBeDefined()
     expect(root?.attributes.get('class')).toBe('console-skew')
     expect(root?.attributes.get('data-mode')).toBe('reduced')
-    expect(root?.attributes.get('data-skew')).toBe('newer')
+    expect(root?.attributes.get('data-skew')).toBe('irregular')
     const hidden = everyNode(root as FakeNode)
       .map((node) => node.attributes.get('data-hidden'))
       .filter((view): view is string => view !== undefined)

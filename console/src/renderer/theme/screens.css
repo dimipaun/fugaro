@@ -633,26 +633,20 @@ li.spend-chart-key[data-partial='true'] {
   color: var(--warn);
 }
 
-/* The caps panel: the binding scope, then the limits, then the per-repository
- * overrides. A cap the console could not read draws `n/a` and says so in one
- * sentence -- never `$0.00` (design section 6.3). */
-span.spend-scope,
-span.spend-cap-word {
+/* The caps panel is the redesign's now (console redesign, step 4b-2): its
+ * figures, its bar and the tone of a repository at its cap live in
+ * `flight-deck.css` against `section.spend-caps`, so `span.spend-cap-word`,
+ * `div.spend-cap-limit[data-limit='max_reserve']` and the per-repository
+ * hairline have nothing left to select here. What is left is the panel's one
+ * sentence: a cap the console could not read draws `n/a` and says so -- never
+ * `$0.00` (design section 6.3). */
+span.spend-scope {
   color: var(--text-muted);
   font-size: var(--font-size-xs);
 }
 
 section.spend-caps[data-available='false'] {
   color: var(--text-muted);
-}
-
-div.spend-cap-limit[data-limit='max_reserve'] {
-  border-left: 3px solid var(--accent);
-  padding-left: var(--space-xs);
-}
-
-li.spend-cap-repo[data-key] {
-  border-bottom: var(--rule-width) solid var(--border);
 }
 
 /* ---- Projects -------------------------------------------------------------

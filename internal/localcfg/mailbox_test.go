@@ -1,8 +1,13 @@
 package localcfg
 
 import (
+	"context"
+	"encoding/base64"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/dimipaun/fugaro/internal/budget/token"
 )
 
 // The mailbox block, which is T2's and T3's footprint in this package (mobile
@@ -10,12 +15,16 @@ import (
 // pairing, validated, and its layered merge. The key itself is never here (M5,
 // D113b) — the config holds the item's name, and the name is not a secret.
 
-// pairUIDs are two pairings' uids: the device uid `fugaro pair` writes, and a
-// pairing session's. Both are the shape a mailbox entry may be keyed by.
+// pairUIDA and pairUIDB are two paired devices' uids, which is what a mailbox
+// entry is keyed by: `fugaro pair` writes one per phone and prints it as the key
+// to record. pairUIDP is a pairing session's, admitted as well (a config written
+// while a session is open holds one) and looked up by nothing. The two shapes
+// differ — a device's uid is 16 random bytes behind m~, a session's is 32 behind
+// p~ — so a uid of one shape is not a uid of the other.
 const (
 	pairUIDA = "m~AAECAwQFBgcICQoLDA0ODw"
 	pairUIDB = "m~EBESExQVFhcYGRobHB0eHw"
-	pairUIDP = "p~AAECAwQFBgcICQoLDA0ODw"
+	pairUIDP = "p~AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
 )
 
 func mailboxBlock(entries ...string) string {
@@ -63,6 +72,104 @@ func TestKeychainItemWrongShapeRefused(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), c.want) {
 				t.Errorf("err = %v, want ~%q", err, c.want)
+			}
+		})
+	}
+}
+
+// uidSigner is a token.Signer that signs nothing: it wraps the claim set it is
+// handed in a JWT-shaped string, which is all MintPairing's and MintDevice's own
+// re-parse of what their signer returned reads.
+type uidSigner struct{ email string }
+
+func (s uidSigner) Email() string { return s.email }
+
+func (s uidSigner) SignJWT(_ context.Context, payload []byte) (string, error) {
+	return "h." + base64.RawURLEncoding.EncodeToString(payload) + ".s", nil
+}
+
+// uidItem is the item name decision 9 derives from a uid: the project's name,
+// one separator and the uid's body. It is the name `fugaro pair` writes into the
+// keychain for the device and tells the operator to record, and the shape
+// keychain.ParseItem holds it to.
+func uidItem(uid string) string { return "aurora-" + uid[2:] }
+
+// TestMailboxKeyedByARealPairingUIDLoads: the block's key is a uid the
+// installation's own minters draw — the device's `m~` uid that `fugaro pair`
+// prints as `mailbox.keychain_item[<device uid>]`, and the session's `p~` uid
+// this block also admits — so a config the operator writes from that output is
+// only usable if such a uid loads in it. This test is also the one place this
+// package's uid shape is tied to the token package's: the pattern here is a
+// deliberate second copy (the token package mints uids, this one only recognises
+// them), and a copy that drifts refuses every uid of the shape it got wrong —
+// silently, because a refused uid looks to every other reader exactly like the
+// one the operator pasted. The two uids are minted rather than written out, so
+// the lengths asserted below are the token package's and not this file's.
+func TestMailboxKeyedByARealPairingUIDLoads(t *testing.T) {
+	ctx := context.Background()
+	signer := uidSigner{email: "operator@example.invalid"}
+	_, pairingUID, err := token.MintPairing(ctx, signer, time.Minute, time.Unix(0, 0))
+	if err != nil {
+		t.Fatalf("minting a pairing uid: %v", err)
+	}
+	device, err := token.MintDevice(ctx, signer, time.Unix(0, 0))
+	if err != nil {
+		t.Fatalf("minting a device uid: %v", err)
+	}
+	// The two uids are two different shapes: a pairing session's is 43 unpadded
+	// base64url characters behind p~ (32 random bytes) and a device's is 22
+	// behind m~ (16). A block that admits one length for both admits neither
+	// minted uid.
+	if len(pairingUID) != len("p~")+43 || !strings.HasPrefix(pairingUID, "p~") {
+		t.Errorf("token.MintPairing's uid = %q, want p~ and 43 characters", pairingUID)
+	}
+	if len(device.UID) != len("m~")+22 || !strings.HasPrefix(device.UID, "m~") {
+		t.Errorf("token.MintDevice's uid = %q, want m~ and 22 characters", device.UID)
+	}
+	lc, err := Parse([]byte(sample + mailboxBlock(
+		entry(pairingUID, uidItem(pairingUID)),
+		entry(device.UID, uidItem(device.UID)),
+	)))
+	if err != nil {
+		t.Fatalf("a block keyed by a minted pairing uid and a minted device uid: %v", err)
+	}
+	for uid, want := range map[string]string{pairingUID: uidItem(pairingUID), device.UID: uidItem(device.UID)} {
+		if got := lc.Mailbox.KeychainItem[uid]; got != want {
+			t.Errorf("mailbox.keychain_item[%q] = %q, want %q", uid, got, want)
+		}
+	}
+}
+
+// TestMailboxRefusesAMalformedUID: the key is what `pair revoke` matches a
+// device against and what the consumer looks a pairing's item up by, so a key
+// that is not a uid is refused by name rather than kept as a line nothing would
+// ever look up — and every way of writing one wrong is refused, including the
+// other shape's length and the one prefix that is neither p~ nor m~ (a run's,
+// r~, is the identity the pairing rules exist to keep out).
+func TestMailboxRefusesAMalformedUID(t *testing.T) {
+	body22, body43 := strings.Repeat("A", 22), strings.Repeat("A", 43)
+	cases := []struct{ name, uid string }{
+		{"a run's own uid", "r~" + body43},
+		{"no prefix", body43},
+		{"a prefix that is neither p~ nor m~", "q~" + body22},
+		{"a pairing uid at the device length", "p~" + body22},
+		{"a device uid at the pairing length", "m~" + body43},
+		{"a pairing uid one character short", "p~" + body43[:42]},
+		{"a pairing uid one character long", "p~" + body43 + "A"},
+		{"a device uid one character short", "m~" + body22[:21]},
+		{"a device uid one character long", "m~" + body22 + "A"},
+		{"a character outside base64url", "m~" + body22[:21] + "+"},
+		{"a base64 padding character", "p~" + body43[:42] + "="},
+		{"an empty body", "p~"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := Parse([]byte(sample + mailboxBlock(entry(c.uid, uidItem(c.uid)))))
+			if err == nil {
+				t.Fatalf("mailbox.keychain_item accepted %q as a pairing's uid", c.uid)
+			}
+			if !strings.Contains(err.Error(), "is not a pairing's uid") {
+				t.Errorf("refusal %q does not say the key is not a pairing's uid", err)
 			}
 		})
 	}

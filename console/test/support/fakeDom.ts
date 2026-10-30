@@ -370,14 +370,15 @@ export function anOkCompatibility(): Record<string, unknown> {
   }
 }
 
-/** aReducedCompatibility is the answer for a CLI newer than this console reads:
- * reduced, with all three views withheld (`hidesView` is `hidden.includes`, and
- * `compatibilityFrom` refuses a mode whose hidden list disagrees with it). */
+/** aReducedCompatibility is the answer for a CLI line this console cannot
+ * place as a release: reduced, with all three views withheld (`hidesView` is
+ * `hidden.includes`, and `compatibilityFrom` refuses a mode whose hidden list
+ * disagrees with it). */
 export function aReducedCompatibility(): Record<string, unknown> {
   return {
     mode: 'reduced',
-    skew: 'newer',
-    cliVersion: '9.9.9',
+    skew: 'irregular',
+    cliVersion: '9.9.9-rc.1',
     consoleVersion: CLI_VERSION_BUILT_AGAINST,
     supported: [...SUPPORTED_CLI_MINORS],
     floor: CLI_HARD_FLOOR_VERSION,

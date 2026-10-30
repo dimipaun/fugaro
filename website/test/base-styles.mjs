@@ -3008,3 +3008,478 @@ test('the campaign left-edge refusal fires on the two in force at once, and pass
     `a page whose bands carry no gutter inside \`main\`'s own has the one left edge too:\n  ${campaignLeftEdgeFailures(unguttered, page).join('\n  ')}`,
   )
 })
+
+// ---- the campaign pages' own design pass (the owner's feedback of 2026-10-30) ---------------
+//
+// The four campaign pages are one template and one mode of the layout, and the owner read them
+// on the live preview at 1440, 768 and 390 px. Three of the five findings are arithmetic a
+// browser shows and no browser is needed to check:
+//
+//   1. **The headline was set for a band, not for a column.** `.display-xl` is
+//      `clamp(44px, 7.2vw, 104px)` — 104 px at 1440 — and the campaign hero put it in a copy
+//      column beside the picture, so the longest headline (48 characters) wrapped to five lines
+//      at 768, where the two-column hero starts and the copy column is at its narrowest. The
+//      headline now takes the whole width of the band and is capped, and the case below reads
+//      the two lines at each of the three widths the owner measured at, with the site's own
+//      advance table (`textWidth`) and the band's own content box. The second case reads the
+//      other end of the same rule: the cap alone would let the headline shrink under the type
+//      around it, so the headline is held above the page's every other heading and above the
+//      body's larger step at each width.
+//   2. **The page was 1.8 screens with bands of nothing between the sections.** The gaps the
+//      owner asked for are 120–240 px on a desktop, and no single band may pad more than half a
+//      screen of nothing: both are read below, out of the cascade, because a band's own padding
+//      and the band above it are two declarations in two files.
+//   3. **The motion has to be the reader's choice.** Every transition and animation the
+//      campaign's own classes declare is inside a `prefers-reduced-motion: no-preference`
+//      query, so a reader who asked their system for less motion is served the page without the
+//      movement rather than with it neutralised, and the layout's universal `reduce` rule is
+//      still there underneath. The sections' entrance rides `site.js`'s own `[data-reveal-block]`
+//      — which holds nothing back when the script does not run — and the hero's is the first
+//      frame (`@starting-style`), so nothing on the page is ever hidden by a script that failed.
+//      Two of the readings are about that entrance being the campaign's own: the block that
+//      staggers the hero's parts, and the row of a step, which the script marks along with the
+//      heading and the line inside it and which must therefore not travel with them.
+//
+// What is deliberately not read here: whether the result *looks* right. That is the owner's
+// eye on the preview (G2.5), and the readings below are the part of it a machine can hold.
+
+/** The three widths the owner read the live preview at (the feedback of 2026-10-30). */
+const CAMPAIGN_WIDTHS = [390, 768, 1440]
+
+/** The four built campaign pages: the ones that render the campaign's hero. */
+function campaignPages() {
+  return builtPages().filter(({ html }) =>
+    [...walk(parse(html))].some((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes('campaign-hero')),
+  )
+}
+
+/** The bands of one built campaign page, in the order a reader meets them. */
+function campaignBands(html) {
+  return [...walk(parse(html))]
+    .map((el) => ({ el, classes: (el.attrs.get('class') ?? '').split(/\s+/).filter(Boolean) }))
+    .filter(({ classes }) => classes.some((name) => CAMPAIGN_BLOCKS.includes(name)))
+    .map(({ el, classes }) => ({ el, klass: classes.find((name) => CAMPAIGN_BLOCKS.includes(name)) }))
+}
+
+/**
+ * A CSS length as pixels at a viewport width: a palette or type token, a `rem`/`px` length, a
+ * `vw` length, or a `clamp()` of three of those — the three shapes the display scale and the
+ * campaign's headline are written in. A shape this reader does not know is `NaN`, which the
+ * cases below refuse rather than compare: a size nothing could measure is a size nothing held
+ * to two lines.
+ */
+function lengthAtWidth(value, tokens, width) {
+  const text = (value ?? '').trim()
+  const clamp = /^clamp\(([\s\S]+)\)$/.exec(text)
+  if (clamp !== null) {
+    const parts = splitTop(clamp[1], ',')
+    if (parts.length !== 3) return NaN
+    const [floor, preferred, ceiling] = parts.map((part) => lengthAtWidth(part, tokens, width))
+    if ([floor, preferred, ceiling].some((px) => Number.isNaN(px))) return NaN
+    return Math.min(Math.max(floor, preferred), ceiling)
+  }
+  const vw = /^([\d.]+)vw$/.exec(text)
+  if (vw !== null) return (Number(vw[1]) / 100) * width
+  return toPx(text, tokens)
+}
+
+/**
+ * How many lines a headline takes in a column, by the site's own advance table: the words are
+ * placed first-fit, which is the algorithm a browser's line breaker is, and a word wider than
+ * the column takes a line of its own rather than being broken. First-fit is optimal in the
+ * number of lines, so this is the count a browser would show and not an average of one.
+ */
+function headlineLines(headline, columnPx, fontPx) {
+  const space = textWidth(' ', fontPx)
+  let lines = 1
+  let used = 0
+  for (const word of headline.split(/\s+/).filter(Boolean)) {
+    const wordPx = textWidth(word, fontPx)
+    if (used === 0) used = wordPx
+    else if (used + space + wordPx <= columnPx) used += space + wordPx
+    else {
+      lines += 1
+      used = wordPx
+    }
+  }
+  return lines
+}
+
+/**
+ * The headline's own rule, as `{ size, column }` at a viewport width: the font size in force on
+ * `.campaign-hero-headline`, and the column it is printed in — the band's content box, less the
+ * cap the rule declares when that cap is the narrower of the two. `null` when a value cannot be
+ * read, which the caller refuses.
+ */
+function headlineColumn(css, width) {
+  const rules = allRules(css)
+  const tokens = lengthTokens(css)
+  const mine = rules.filter((rule) => appliesAt(width)(rule) && /\.campaign-hero-headline(?![\w-])/.test(rule.selector))
+  const last = (property) =>
+    mine
+      .map((rule) => declarations(rule)[property])
+      .filter((value) => value !== undefined)
+      .pop()
+  const size = lengthAtWidth(last('font-size'), tokens, width)
+  if (!Number.isFinite(size)) return null
+  const cap = last('max-width')
+  const capPx = cap === undefined || cap.trim() === 'none' ? Infinity : capPixels(cap, tokenText(css), tokens, size)
+  if (Number.isNaN(capPx)) return null
+  // The band's content box: the page's one gutter on each side, and `main` gives a campaign page
+  // neither a gutter nor a ceiling of its own (`campaignLeftEdgeFailures` above reads that pair).
+  const gutter = gutterPx(css, 'var(--frame-gutter)', width, width, tokens)
+  if (!Number.isFinite(gutter)) return null
+  return { size, column: Math.min(width - 2 * gutter, capPx) }
+}
+
+/**
+ * The rules that set a band's own box, for one class and one viewport width. A rule that merely
+ * *names* the class is not one of them, and the two that name one without being it are both in
+ * the built stylesheet: `main:has(> .campaign-hero) { padding: 0 }` sets `main`'s padding, and
+ * `.campaign-steps [data-reveal] { … }` sets a descendant's. A reader that took either for the
+ * band's own would report a band padding nothing declares — the `main` rule above lands after
+ * the component's in the built stylesheet, so the hero's 112 px would come out as 0.
+ */
+function bandRules(css, klass, width) {
+  const targets = (selector) =>
+    selector
+      .split(',')
+      .map((part) => part.replace(/\[data-astro-cid-[^\]]*\]/g, '').trim())
+      .some((part) => new RegExp(`\\.${klass}(?![\\w-])(?=[\\[:.]|$)`).test(part))
+  return allRules(css).filter((rule) => appliesAt(width)(rule) && targets(rule.selector))
+}
+
+/**
+ * A band's block padding at a viewport width, as `[start, end]` in pixels: the `padding-block`
+ * shorthand, the block components of a `padding` shorthand, or the two longhands — whichever the
+ * cascade puts last, which is how a browser reads them. `null` when nothing declares one.
+ */
+function blockPadding(css, klass, width) {
+  const tokens = lengthTokens(css)
+  let out = null
+  for (const rule of bandRules(css, klass, width)) {
+    const decls = declarations(rule)
+    if (decls['padding-block'] !== undefined) {
+      const parts = shorthandParts(decls['padding-block'])
+      out = [toPx(parts[0], tokens), toPx(parts[1] ?? parts[0], tokens)]
+    }
+    if (decls.padding !== undefined) {
+      const parts = shorthandParts(decls.padding)
+      out = [toPx(parts[0], tokens), toPx(parts.length >= 3 ? parts[2] : parts[0], tokens)]
+    }
+    if (decls['padding-block-start'] !== undefined) out = [toPx(decls['padding-block-start'], tokens), out === null ? NaN : out[1]]
+    if (decls['padding-block-end'] !== undefined) out = [out === null ? NaN : out[0], toPx(decls['padding-block-end'], tokens)]
+  }
+  return out
+}
+
+const CAMPAIGN_REDUCE = /prefers-reduced-motion\s*:\s*reduce/i
+const CAMPAIGN_NO_PREFERENCE = /prefers-reduced-motion\s*:\s*no-preference/i
+
+/**
+ * The font size in force on the elements a selector pattern names, at a viewport width: the last
+ * `font-size` the cascade declares on a rule whose selector matches, read by the same length
+ * reader the headline's own rule is. `null` when nothing declares one or the value is a shape
+ * nothing can measure.
+ */
+function declaredFontSize(css, pattern, width) {
+  const tokens = lengthTokens(css)
+  const declared = allRules(css)
+    .filter((rule) => appliesAt(width)(rule) && pattern.test(rule.selector))
+    .map((rule) => declarations(rule)['font-size'])
+    .filter((value) => value !== undefined)
+  const size = lengthAtWidth(declared.pop(), tokens, width)
+  return Number.isFinite(size) ? size : null
+}
+
+/**
+ * A selector's specificity as `[ids, classes, types]` — the tuple the cascade compares in that
+ * order — for the shapes the campaign's own styles are written in: classes, attributes, one
+ * element name, descendant combinators and Astro's scope attribute on the last compound.
+ * `:not(…)` counts what is inside it, which is where a bare `[data-revealed]` lives, and a
+ * pseudo-class counts as a class. The campaign's travel and the rule that neutralises it are the
+ * two selectors this reads; a selector it cannot place is not compared by `outranks` at all.
+ */
+function specificity(selector) {
+  const count = (text) => [
+    (text.match(/#[\w-]+/g) ?? []).length,
+    (text.match(/\.[\w-]+/g) ?? []).length + (text.match(/\[[^\]]*\]/g) ?? []).length + (text.match(/:(?!not\b)[\w-]+/g) ?? []).length,
+    (
+      text
+        .replace(/\[[^\]]*\]/g, ' ')
+        .replace(/\.[\w-]+/g, ' ')
+        .replace(/::?[\w-]+(\([^)]*\))?/g, ' ')
+        .match(/[a-z][\w-]*/gi) ?? []
+    ).length,
+  ]
+  return selector
+    .split(',')
+    .map((part) => {
+      const inner = [...part.matchAll(/:not\(([^)]*)\)/g)].map((match) => match[1]).join(' ')
+      const outer = part.replace(/:not\([^)]*\)/g, ' ')
+      const [a, b] = [count(outer), count(inner)]
+      return [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
+    })
+    .reduce((best, next) => (outranks(next, best) ? next : best))
+}
+
+/** Whether one specificity tuple beats another, which is what decides a rule that ties on origin. */
+function outranks(a, b) {
+  if (a[0] !== b[0]) return a[0] > b[0]
+  if (a[1] !== b[1]) return a[1] > b[1]
+  return a[2] > b[2]
+}
+
+test('the campaign hero\'s headline is at most two lines at 390, 768 and 1440 px', () => {
+  const pages = campaignPages()
+  assert.equal(pages.length, 4, `the build produced ${pages.length} campaign page(s) — ${pages.map(({ rel }) => rel).join(', ') || '(none)'} — and the spec's four paths are four (G2.2)`)
+
+  for (const { rel, html } of pages) {
+    const css = pageCss(html)
+    const headline = textOf([...walk(parse(html))].find((el) => el.name === 'h1')).trim()
+    assert.ok(headline !== '', `${rel} carries no headline text to measure`)
+    for (const width of CAMPAIGN_WIDTHS) {
+      const read = headlineColumn(css, width)
+      assert.ok(
+        read !== null,
+        `at ${width} px the campaign headline's rule cannot be read: its size is \`${(allRules(css).filter((rule) => appliesAt(width)(rule) && /\.campaign-hero-headline(?![\w-])/.test(rule.selector)).map((rule) => declarations(rule)['font-size']).filter(Boolean).pop()) ?? '(nothing declared)'}\`, and a size or a column this check cannot turn into pixels is one nothing held to two lines (the owner's feedback of 2026-10-30)`,
+      )
+      const { size, column } = read
+      const lines = headlineLines(headline, column, size)
+      assert.ok(
+        lines <= 2,
+        `${rel}'s headline ${JSON.stringify(headline)} takes ${lines} lines at ${width} px: it is set at ${Math.round(size * 10) / 10} px in a column of ${Math.round(column)} px, and the owner asked for two lines at every width — the measure is the band's and the size is capped rather than left at \`display-xl\`'s 7.2 vw (the owner's feedback of 2026-10-30)`,
+      )
+    }
+  }
+})
+
+test('the campaign page\'s headline is the largest type on the page at 390, 768 and 1440 px', () => {
+  const pages = campaignPages()
+  assert.equal(pages.length, 4, `the build produced ${pages.length} campaign page(s), and the headline's lead is read on the spec's four (G2.2)`)
+
+  // The type the headline has to lead, by the class each is written on. The hero's button is not
+  // one of them: a control's label is not display type, and a 56 px target with a 20 px label is
+  // the shape the site's own button is.
+  const OTHERS = [
+    ['the supporting line under it', /\.campaign-hero-line(?![\w-])/],
+    ['the steps section\'s heading', /\.campaign-steps-title(?![\w-])/],
+    ['a step\'s name', /\.campaign-step-name(?![\w-])/],
+    ['the closing band\'s heading', /\.campaign-calls-title(?![\w-])/],
+  ]
+
+  for (const { rel, html } of pages) {
+    const css = pageCss(html)
+    const tokens = lengthTokens(css)
+    const floor = toPx('var(--font-size-lg)', tokens)
+    for (const width of CAMPAIGN_WIDTHS) {
+      const read = headlineColumn(css, width)
+      assert.ok(read !== null, `${rel}'s headline rule cannot be read at ${width} px, so nothing holds it above the page's other type (the owner's feedback of 2026-10-30)`)
+      const size = Math.round(read.size * 10) / 10
+      assert.ok(
+        read.size >= floor,
+        `${rel}'s headline is ${size} px at ${width} px, under the body's larger step (${floor} px): the owner's two-line rule caps the size, and the floor under the cap is what keeps the page's \`h1\` from becoming its smallest type — the cap alone says nothing about how small the headline may get (the owner's feedback of 2026-10-30)`,
+      )
+      for (const [what, pattern] of OTHERS) {
+        const other = declaredFontSize(css, pattern, width)
+        assert.ok(
+          other !== null,
+          `${rel} declares no \`font-size\` for ${what}, so nothing holds the headline above it at ${width} px`,
+        )
+        assert.ok(
+          read.size > other,
+          `${rel}'s headline is ${size} px at ${width} px and ${what} is ${Math.round(other * 10) / 10} px: the page's \`h1\` is the largest type on the page at every width the owner measured at. The two-line rule alone does not give that — at 390 px a 48-character headline is two lines only up to 22.7 px, and \`.display-lg\`'s 32 px floor would put every section heading above it — so the campaign's own section type scales under the headline's slope (4.4 vw and 3.6 vw under 5.5 vw) rather than at the display scale's fixed floor (the owner's feedback of 2026-10-30)`,
+        )
+      }
+    }
+  }
+})
+
+test('the campaign steps\' travel does not reach the row it holds', () => {
+  const pages = campaignPages()
+  assert.equal(pages.length, 4, `the build produced ${pages.length} campaign page(s), and the steps' travel is read on the spec's four (G2.2)`)
+
+  for (const { rel, html } of pages) {
+    const css = pageCss(html)
+    const rules = cssRules(css)
+    const inNoPreference = (rule) => rule.conditions.some((condition) => CAMPAIGN_NO_PREFERENCE.test(condition))
+
+    const travel = rules.find(
+      (rule) => inNoPreference(rule) && /\.campaign-steps(?![\w-])/.test(rule.selector) && /translateY\(\s*[\d.]+px\s*\)/.test(rule.body),
+    )
+    assert.ok(
+      travel,
+      `${rel} carries no travel rule for \`.campaign-steps\` inside a \`prefers-reduced-motion: no-preference\` block: the section's parts rise into place, and the owner asked for 16–32 px of it (the owner's feedback of 2026-10-30)`,
+    )
+    const travelPx = Number(/translateY\(\s*([\d.]+)px\s*\)/.exec(travel.body)[1])
+    assert.ok(
+      travelPx >= 16 && travelPx <= 32,
+      `${rel}'s steps travel ${travelPx} px: the owner asked for 16–32 px (the owner's feedback of 2026-10-30)`,
+    )
+
+    // The row is what `site.js` marks `data-reveal` along with the heading and the line inside
+    // it, so a travel rule that reaches the row moves the same text twice. The neutraliser is
+    // read, and then the cascade is: order alone is not enough, because the travel rule names a
+    // descendant of the band and the neutraliser names the row itself.
+    const neutral = rules.find(
+      (rule) =>
+        inNoPreference(rule) &&
+        /\.campaign-step(?![\w-])/.test(rule.selector) &&
+        /(^|;|\s)transform:\s*none/.test(rule.body) &&
+        /(^|;|\s)opacity:\s*1/.test(rule.body),
+    )
+    assert.ok(
+      neutral,
+      `${rel} carries no neutralising rule for \`.campaign-step\` inside a \`no-preference\` block: \`site.js\` marks the row \`data-reveal\` along with the \`h3\` and the \`p\` inside it, so a row that travels with its own parts is a 48 px rise — twice the 16–32 px the owner asked for (the owner's feedback of 2026-10-30)`,
+    )
+    assert.ok(
+      outranks(specificity(neutral.selector), specificity(travel.selector)),
+      `${rel}'s row neutraliser "${neutral.selector}" (${specificity(neutral.selector).join(',')}) does not outrank the travel rule "${travel.selector}" (${specificity(travel.selector).join(',')}): the row travels anyway and its text rises twice, which is what the first cut of this section did — a comment that says the row is neutralised is not the cascade saying it (the owner's feedback of 2026-10-30)`,
+    )
+  }
+})
+
+test('the campaign page\'s bands are spaced, and no band is a screen of nothing', () => {
+  const SCREEN = 900
+  const pages = campaignPages()
+  assert.equal(pages.length, 4, `the build produced ${pages.length} campaign page(s), and the spacing below is read on the spec's four (G2.2)`)
+
+  for (const { rel, html } of pages) {
+    const css = pageCss(html)
+    const bands = campaignBands(html)
+    assert.ok(bands.length >= 2, `${rel} draws ${bands.length} campaign band(s), so there is no pair of sections to measure a gap between`)
+    const pads = bands.map(({ klass }) => ({ klass, pad: blockPadding(css, klass, 1440) }))
+    for (const { klass, pad } of pads) {
+      assert.ok(
+        pad !== null && pad.every((px) => Number.isFinite(px)),
+        `the \`.${klass}\` band's block padding at 1440 px cannot be read out of its stylesheet, and a padding nothing measured is a gap nothing held to a range`,
+      )
+      for (const px of pad) {
+        assert.ok(
+          px <= SCREEN / 2,
+          `the \`.${klass}\` band pads ${px} px above or below its content at 1440 px: half of the 900 px screen the owner measured at is the most a band may spend on nothing, or the page reads as bands of empty ground with sections between them (the owner's feedback of 2026-10-30)`,
+        )
+      }
+    }
+    for (let i = 1; i < pads.length; i += 1) {
+      const gap = pads[i - 1].pad[1] + pads[i].pad[0]
+      assert.ok(
+        gap >= 120 && gap <= 240,
+        `at 1440 px the gap between \`.${pads[i - 1].klass}\` and \`.${pads[i].klass}\` is ${gap} px: the owner asked for 120–240 px between the sections, which is the room the page reads as sections at and not as one block (the owner's feedback of 2026-10-30)`,
+      )
+    }
+  }
+})
+
+test('the campaign page\'s motion is the reader\'s choice, and nothing is hidden without a script', () => {
+  const pages = campaignPages()
+  assert.equal(pages.length, 4, `the build produced ${pages.length} campaign page(s), and the motion below is read on the spec's four (G2.2)`)
+
+  for (const { rel, html } of pages) {
+    const css = pageCss(html)
+    const rules = cssRules(css)
+    const moving = rules.filter(
+      (rule) =>
+        rule.selector &&
+        /\.campaign-[a-z-]/.test(rule.selector) &&
+        cssDeclarations(rule.body).some(
+          ([property, value]) =>
+            ((property === 'transition' || property === 'transition-duration') && !/^(none|0s|0ms)\b/.test(value)) ||
+            ((property === 'animation' || property === 'animation-name') && !/^none\b/.test(value)),
+        ),
+    )
+    assert.ok(
+      moving.length > 0,
+      `${rel} declares no transition and no animation on any campaign class: the buttons answer a hover, a press and a focus, and the sections rise into place — none of that is written down (the owner's feedback of 2026-10-30)`,
+    )
+    for (const rule of moving) {
+      assert.ok(
+        rule.conditions.some((condition) => CAMPAIGN_NO_PREFERENCE.test(condition)),
+        `${rel}: "${rule.selector}" declares motion outside a \`prefers-reduced-motion: no-preference\` block: a reader who asked their system for less motion is owed the same page without the movement, and the campaign's own motion is gated on that answer rather than left for a rule elsewhere to neutralise (D105, the owner's feedback of 2026-10-30)`,
+      )
+    }
+
+    // The layout's own fallback, which is what the reader who asked for less motion gets.
+    const universal = rules.filter(
+      (rule) =>
+        rule.selector &&
+        rule.conditions.some((condition) => CAMPAIGN_REDUCE.test(condition)) &&
+        rule.selector.split(',').some((part) => part.trim() === '*'),
+    )
+    for (const property of ['transition-duration', 'animation-duration', 'animation-iteration-count']) {
+      assert.ok(
+        universal.some((rule) => cssDeclarations(rule.body).some(([name]) => name === property)),
+        `${rel} carries no universal \`prefers-reduced-motion: reduce\` rule setting ${property}: the campaign's motion is gated, and the page's own fallback for everything else is the layout's (D105)`,
+      )
+    }
+
+    // The entrance itself, twice over: the sections ride the site's own script, which holds a
+    // part back only from JavaScript and only while it is below the fold, and the hero's is the
+    // first frame the browser draws, which no script and no scroll is needed for.
+    for (const klass of ['campaign-steps', 'campaign-calls']) {
+      const band = [...walk(parse(html))].find((el) => (el.attrs.get('class') ?? '').split(/\s+/).includes(klass))
+      assert.ok(band, `${rel} renders no \`.${klass}\` band to read an entrance off`)
+      assert.ok(
+        band.attrs.has('data-reveal-block'),
+        `${rel}'s \`.${klass}\` band carries no \`data-reveal-block\`: the entrance is \`site.js\`'s own, and it marks a part of the block \`data-reveal\` only when the script runs and the part is below the first screen — with no script the section is simply there (the owner's feedback of 2026-10-30)`,
+      )
+    }
+    // The hero's own entrance, and not the layout's: `base.css` carries an `@starting-style` for
+    // every inner page's `h1`, so a case that looked only for the at-rule inside a
+    // `no-preference` block would pass with the campaign hero's own entrance deleted. The block
+    // below is the one that names the campaign's parts, and the travel is read out of that.
+    const starting = rules.filter(
+      (rule) =>
+        rule.selector === '@starting-style' &&
+        rule.conditions.some((condition) => CAMPAIGN_NO_PREFERENCE.test(condition)) &&
+        /\.campaign-hero-(line|action|art)(?![\w-])/.test(rule.body),
+    )
+    assert.ok(
+      starting.length > 0,
+      `${rel} carries no \`@starting-style\` block of its own inside a \`prefers-reduced-motion: no-preference\` block: the layout's is every inner page's \`h1\`, so the hero's stagger — the sentence 100 ms after the headline, the button 200 ms after that, the picture 300 ms after that — is written in the campaign's styles or it is nowhere (the owner's feedback of 2026-10-30)`,
+    )
+    for (const klass of ['campaign-hero-line', 'campaign-hero-action', 'campaign-hero-art']) {
+      assert.ok(
+        starting.some((rule) => rule.body.includes(`.${klass}`)),
+        `${rel}'s campaign \`@starting-style\` blocks name no \`.${klass}\`: the hero's parts stagger in, and a part that is not in a block is a part that is simply there on the first frame (the owner's feedback of 2026-10-30)`,
+      )
+    }
+    const rising = starting.flatMap((rule) => [...rule.body.matchAll(/translateY\((-?[\d.]+)px\)/g)].map((m) => Number(m[1])))
+    assert.ok(rising.length > 0, `${rel}'s \`@starting-style\` block moves nothing: the entrance rises from somewhere, and the owner asked for 16–32 px of it (the owner's feedback of 2026-10-30)`)
+    for (const px of rising) {
+      assert.ok(
+        px >= 16 && px <= 32,
+        `${rel}'s hero entrance rises ${px} px: the owner asked for 16–32 px, which is enough to be seen as an entrance and short enough not to be a journey (the owner's feedback of 2026-10-30)`,
+      )
+    }
+
+    // The feedback on the controls, which is the third half of the finding: a hover, a press and
+    // a focus. The first two are the campaign's own — the hero's button and the closing band's
+    // three answer both — and the third is the site's ring, with one addition: the closing band
+    // is a field of the accent, and the site's ring is the accent, so on that band the campaign
+    // names the ring's colour rather than leaving a ring nothing can see.
+    const button = /\.campaign-(hero-button|calls-primary|calls-secondary)/
+    for (const [state, pattern] of [
+      ['hover', /:hover/],
+      ['press', /:active/],
+    ]) {
+      assert.ok(
+        rules.some((rule) => button.test(rule.selector) && pattern.test(rule.selector)),
+        `${rel} writes no ${state} rule for a campaign button: the owner asked the buttons to answer a hover and a press, and a control that does not is one a reader cannot tell they are on (the owner's feedback of 2026-10-30)`,
+      )
+    }
+    assert.ok(
+      rules.some((rule) => rule.selector.includes(':focus-visible') && /(^|;|\s)outline\s*:/.test(rule.body)),
+      `${rel} carries no \`:focus-visible\` rule with an outline: every link on the page keeps the site's focus ring, and the campaign's buttons are links`,
+    )
+    assert.ok(
+      rules.some(
+        (rule) =>
+          /\.campaign-calls/.test(rule.selector) &&
+          rule.selector.includes(':focus-visible') &&
+          /outline-color:\s*var\(--[a-z-]+\)/.test(rule.body),
+      ),
+      `${rel} draws the focus ring on the closing band's buttons in the site's own colour: that band is a field of the accent and the site's ring is the accent, so a ring in it is a ring a reader cannot see (the owner's feedback of 2026-10-30)`,
+    )
+  }
+})

@@ -6,17 +6,23 @@
 // The console is a client of an interface it does not own: every figure it draws
 // arrives as a `--json` document from a `fugaro` binary the operator installed,
 // and that binary is on the operator's own release train. So the console
-// carries **a supported range of CLI minors** -- the one it was built and tested
-// against, the previous one, and the newest the launch half was written against
+// carries **a set of CLI minors whose documents it has read**
 // (`SUPPORTED_CLI_MINORS` below is the set itself, and is the one place the
-// members are named) -- reads `fugaro version` at startup, and places what it
-// read in three ways (design section 6.3, D7):
+// members are named), reads `fugaro version` at startup, and places what it read
+// in these ways (design section 6.3, D7, and the owner's ruling of 2026-10-30):
 //
-//   * **inside the range** -- it proceeds, and draws nothing about versions at
-//     all;
-//   * **outside the range, above the floor** -- it proceeds in a **reduced
-//     mode**: a banner naming both versions, and the views whose figures it
-//     cannot vouch for are not drawn (`hidesView` below);
+//   * **inside the set, or any plain release above its newest member** -- it
+//     proceeds, and draws nothing about versions at all. A CLI newer than this
+//     console is the ordinary case of an older console: the CLI's compatibility
+//     rule is that its JSON only grows (a field is added, never re-meant; a
+//     field whose meaning changes gets a new name), so the decoders ignore a
+//     key they do not know and draw what they do. A read that still fails to
+//     decode -- a field removed or retyped -- is refused on its own screen with
+//     the decoder's sentence (`shared/schema.ts`), not by this handshake;
+//   * **below the set and at or above the floor, or a line that is not a plain
+//     release number** -- it proceeds in a **reduced mode**: a banner naming
+//     both versions, and the views whose figures it cannot vouch for are not
+//     drawn (`hidesView` below);
 //   * **below a hard floor** -- it refuses, because "a dashboard that
 //     misreports spend because it read a shape it did not understand is worse
 //     than one that says it cannot read it" (D7). `src/main/window.ts` is where
@@ -68,11 +74,14 @@ import { sanitizeText } from './sanitize'
 
 /**
  * CLI_VERSION_BUILT_AGAINST is the `fugaro` version this console was **built
- * and tested against** (design section 7.1). It is the release train whose
- * documents `console/docs/json-contract.md` was read from: `docs/releases/`
- * holds `v0.8.1` as the highest release at the time of writing, and
- * `.goreleaser.yaml` builds `Version` from the tag, so a released binary prints
- * exactly this line.
+ * and tested against** (design section 7.1): the newest CLI release whose
+ * documents the console's decoders were re-read against. It is `0.13.0`
+ * because the console's struct pins (`schema.test.ts`, `spend.test.ts`,
+ * `live.test.ts` and `report-dimensions.test.ts`, which read the Go sources by
+ * path) pass against the `v0.13.0` tree unchanged, and no file those pins or
+ * the console's other decoders read differs between `v0.13.0` and the tree this
+ * console is built from. `.goreleaser.yaml` builds `Version` from the tag, so a
+ * released binary prints exactly this line.
  *
  * It is a constant rather than an environment lookup on purpose: the console's
  * compatibility claim is a property of *this build* -- the shapes its decoder
@@ -80,34 +89,40 @@ import { sanitizeText } from './sanitize'
  * the machine instead of about the code. The task that bumps it is the task
  * that re-reads the contract.
  */
-export const CLI_VERSION_BUILT_AGAINST = '0.8.1'
+export const CLI_VERSION_BUILT_AGAINST = '0.13.0'
 
 /**
- * SUPPORTED_CLI_MINORS is the supported range, stated as minors rather than as
- * versions because that is the granularity of the promise -- the patch levels of
- * a minor are not a compatibility axis (the JSON contract is), and a console
- * that refused `0.8.2` because it was built against `0.8.1` would refuse every
- * patch release.
+ * SUPPORTED_CLI_MINORS is the set of minors whose documents this console has
+ * read, stated as minors rather than as versions because that is the
+ * granularity of the promise -- the patch levels of a minor are not a
+ * compatibility axis (the JSON contract is), and a console that refused `0.8.2`
+ * because it was built against `0.8.1` would refuse every patch release.
  *
- * The design's sentence for it is "the minor it was built against, plus the
- * previous one" (design section 7.1), and **the range is no longer only that**:
- * `0.11` is V2.5.1a's own addition, and the design names it as the newest CLI
- * minor the launch half of this console was written against -- the shape of the
- * reply it decodes (`internal/cli/run.go`'s `launchResult`) and the plan task
- * its graph joins on, which 0.11.2 is the first release to carry. The range is
- * therefore a *set*, and the gap it now has (0.9, 0.10, 0.12) is honest: those
- * releases are drawn in the reduced mode.
+ * `0.7` and `0.8` are the design's original pair ("the minor it was built
+ * against, plus the previous one", design section 7.1); `0.11` is V2.5.1a's
+ * addition, the newest minor the launch half was written against (0.11.2 is the
+ * first release to carry `--plan-task`); `0.12` and `0.13` were re-read on
+ * 2026-10-30: the console's struct pins pass against both release trees, and
+ * where `v0.12.1` writes less than `v0.13.0` (`leased_usd`, `compute_usd`, the
+ * `digest` stage, the report's `--by mode`) the console already reads the key
+ * as optional or the word as one an older CLI does not write. The gap (0.9,
+ * 0.10) is honest: those releases are drawn in the reduced mode.
  *
- * It is deliberately **not** `LAUNCH_CLI_FLOOR`'s minor: the range says which
- * CLI the console draws its full dashboard for, the floor says which CLI one
+ * **The set is not a ceiling** (the owner's ruling of 2026-10-30): a plain
+ * release above its newest member answers `ok` as well (`classifyCliVersion`),
+ * because the CLI's documents only grow and the decoders ignore a key they do
+ * not know. The set's newest member is therefore the line between "a CLI older
+ * than this console", which is reduced, and "a CLI this console reads"; and
+ * `version.test.ts` holds that the newest released CLI minor
+ * (`docs/release-streams.yaml`) answers `ok`, so a release cannot leave the
+ * console behind without a red test.
+ *
+ * It is deliberately **not** `LAUNCH_CLI_FLOOR`'s minor: the set says which CLI
+ * the console draws its full dashboard for, the floor says which CLI one
  * operation may be started on, and they are asked separately (`launchSupported`
- * and `classifyCliVersion`) because a launch needs one read, not a dashboard. A
- * CLI at or above the floor but above this range is drawn with the version
- * banner and its spend views held back -- rule 11 asks the floor question and
- * never range membership -- and a later release widens the range to the minors
- * whose documents have been re-read.
+ * and `classifyCliVersion`) because a launch needs one read, not a dashboard.
  */
-export const SUPPORTED_CLI_MINORS: readonly string[] = Object.freeze(['0.7', '0.8', '0.11'])
+export const SUPPORTED_CLI_MINORS: readonly string[] = Object.freeze(['0.7', '0.8', '0.11', '0.12', '0.13'])
 
 /**
  * LAUNCH_CLI_FLOOR is the oldest CLI the launch operation may be offered to,
@@ -151,12 +166,9 @@ export const LAUNCH_CLI_FLOOR = '0.11.2'
  * A line below the floor answers `false` however close: `0.11.1` is inside the
  * supported minor `0.11` and carries no `--plan-task`.
  *
- * It is deliberately not a membership test, and the two questions disagree on
- * the same line in both directions: `0.11` is a member of
+ * It is deliberately not a membership test: `0.11` is a member of
  * `SUPPORTED_CLI_MINORS` while `0.11.0` and `0.11.1` are below this floor, and
- * the members `0.7` and `0.8` are below it as well. A CLI that reaches the floor
- * but sits outside the range is drawn by this console's release with its version
- * banner, which is a banner and not a refusal.
+ * the members `0.7` and `0.8` are below it as well.
  */
 export function launchSupported(version: string): boolean {
   return meetsCliFloor(version, LAUNCH_CLI_FLOOR)
@@ -166,11 +178,9 @@ export function launchSupported(version: string): boolean {
  * BUDGET_COMPUTE_CLI_FLOOR is the oldest CLI the Spend screen's caps read may
  * ask for a repository's compute dollars, by passing `budget show --compute`.
  *
- * The flag is newer than the operation: it landed on the CLI's main on
- * 2026-10-29 (`internal/cli/budget.go`'s `newBudgetShowCmd`; the PR that added
- * `compute_usd` to each `showRepo`), and **no released CLI carries it yet** --
- * `v0.12.1` is the newest tag and answers the flag with an unknown-flag error.
- * `0.13.0` is the release that ships it.
+ * The flag is newer than the operation: `0.13.0` is the release that ships it
+ * (`internal/cli/budget.go`'s `newBudgetShowCmd`, and `compute_usd` on each
+ * `showRepo`); `v0.12.1` answers the flag with an unknown-flag error.
  *
  * It is a patch-level floor rather than a range membership for the reason
  * `LAUNCH_CLI_FLOOR` is: `0.12.1` passes that floor and is below this one, so
@@ -189,19 +199,14 @@ export const BUDGET_COMPUTE_CLI_FLOOR = '0.13.0'
  * `budget show --compute`, by comparing it against `BUDGET_COMPUTE_CLI_FLOOR`
  * at the patch level.
  *
- * **No caller asks it yet, and no reachable console state could pass the flag
- * today -- both are deliberate, and they are two different facts.** The caller
- * is `showBudget({})` in `src/renderer/entry.ts`, so no spawn passes
- * `--compute` until that call is flipped behind this predicate. But flipping it
- * is not enough on its own: the caps read is withheld in every compatibility
- * mode that is not `ok` (`REDUCED_VIEW_OPERATIONS.caps`, `src/main/ipc.ts`),
- * and `ok` is exact-minor membership of `SUPPORTED_CLI_MINORS` -- `0.7`, `0.8`
- * and `0.11`, every member of which is below this floor. So the range has to
- * widen to the minor that carries the flag before any spawn may ask for the
- * figure, and the predicate is named now, covered by `version.test.ts` at,
- * below and above the floor, so that the run which widens the range and the run
- * which flips the caller ask one rule between them rather than each writing its
- * own comparison.
+ * **No caller asks it yet.** The caller is `showBudget({})` in
+ * `src/renderer/entry.ts`, so no spawn passes `--compute` until that call is
+ * flipped behind this predicate. The caps read is withheld in every
+ * compatibility mode that is not `ok` (`REDUCED_VIEW_OPERATIONS.caps`,
+ * `src/main/ipc.ts`), and a CLI at this floor now answers `ok`, so flipping the
+ * caller is the one step left; the predicate is covered by `version.test.ts`
+ * at, below and above the floor so that the run which flips it asks this rule
+ * rather than writing its own comparison.
  */
 export function budgetComputeSupported(version: string): boolean {
   return meetsCliFloor(version, BUDGET_COMPUTE_CLI_FLOOR)
@@ -236,9 +241,10 @@ function meetsCliFloor(version: string, floorLine: string): boolean {
 /**
  * CLI_HARD_FLOOR_VERSION is the version below which the console refuses (D7).
  * It is one minor below the oldest supported one, which is the smallest floor
- * the design's table can have: everything inside `SUPPORTED_CLI_MINORS` is
- * supported, everything between the floor and it is the degraded band, and
- * everything below the floor is the refusal. `version.test.ts` holds that
+ * the design's table can have: everything inside `SUPPORTED_CLI_MINORS` (and
+ * every plain release above it) is supported, everything between the floor and
+ * the set that is not a member is the degraded band, and everything below the
+ * floor is the refusal. `version.test.ts` holds that
  * relationship -- a floor that drifted into the range, or a range that grew
  * past the floor, fails a named test.
  */
@@ -375,17 +381,22 @@ export function parseCliVersion(text: string): CliVersionParse {
 // ---------------------------------------------------------------------------
 
 /**
- * CliSkewName is *why* the compatibility is what it is. Six names, one per way
- * the console can place a version line, and each is a closed value so a screen
- * or a test can branch on it without matching prose.
+ * CliSkewName is *why* the compatibility is what it is. Seven names, one per
+ * way the console can place a version line, and each is a closed value so a
+ * screen or a test can branch on it without matching prose.
  */
 export type CliSkewName =
-  /** inside the supported range: the console proceeds and draws no banner */
+  /** a member of the supported set: the console proceeds and draws no banner */
   | 'supported'
-  /** newer than the newest supported minor: a banner, and the spend views held back */
+  /** a plain release newer than the newest member: the console is the older
+   * one, and proceeds exactly as for a member (the owner's ruling of 2026-10-30) */
   | 'newer'
-  /** older than the range but at or above the floor: the same, the other way */
+  /** older than the newest member, not one, and at or above the floor: a
+   * banner, and the spend views held back */
   | 'older'
+  /** a line at or above the floor that is not a plain release number -- a
+   * prerelease or build tail, a leading zero, a missing patch: the same */
+  | 'irregular'
   /** below the floor: the console refuses to draw a dashboard */
   | 'below-floor'
   /** a line the console understands and cannot place (`dev`) */
@@ -455,6 +466,18 @@ export function compareMinors(a: string, b: string): number {
   return leftMinor < rightMinor ? -1 : 1
 }
 
+/**
+ * PLAIN_RELEASE_RE is the only shape a line may have to answer `ok`: an
+ * optional `v` and exactly `major.minor.patch`, each a number with no leading
+ * zero, and no tail of any kind. It is narrower than `VERSION_LINE_RE` on
+ * purpose. A released binary prints exactly this (`.goreleaser.yaml`'s
+ * `{{ .Version }}`), and an open-ended `ok` -- every release above the set --
+ * must not also open to `0.14.0-evil`, `0.14.0+x` or `00.14.0`, which
+ * `parseCliVersion` reads (it keeps the console's two version doors in step
+ * with `spawn.ts`) but no release prints.
+ */
+const PLAIN_RELEASE_RE = /^v?(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/
+
 /** minorOf is a version string's `major.minor`, which is the range's own unit. */
 function minorOf(version: string): string {
   const parsed = parseCliVersion(version)
@@ -488,21 +511,30 @@ export function classifyCliVersion(text: string): CliCompatibility {
     return compatibility('reduced', 'unplaceable', parsed.version.raw, [...REDUCED_VIEWS])
   }
   const { raw } = parsed.version
-  const built = minorOf(CLI_VERSION_BUILT_AGAINST)
   const floor = minorOf(CLI_HARD_FLOOR_VERSION)
   const inRange = minorOf(raw)
   // The comparison is on `major.minor` pairs, which is the range's own unit: the
   // patch level is not an axis of the JSON contract, and a console that placed
   // `0.8.2` differently from `0.8.1` would refuse every patch release.
-  // The range is a *set of minors*, not a comparison against one: the previous
-  // minor is supported exactly as the built one is, and a console that reduced a
-  // CLI it promised to support would be the range constant lying.
-  if (SUPPORTED_CLI_MINORS.includes(inRange)) return compatibility('ok', 'supported', raw, [])
   if (compareMinors(inRange, floor) < 0) {
     return compatibility('refused', 'below-floor', raw, [...REDUCED_VIEWS])
   }
-  const newer = compareMinors(inRange, built) > 0
-  return compatibility('reduced', newer ? 'newer' : 'older', raw, [...REDUCED_VIEWS])
+  // Every `ok` below is open to a plain release only: the answer above the set
+  // is open-ended, so the shape of the line is the whole of what keeps a
+  // prerelease, a build tail or a zero-padded number from riding it.
+  if (!PLAIN_RELEASE_RE.test(raw)) return compatibility('reduced', 'irregular', raw, [...REDUCED_VIEWS])
+  // The set is a *set of minors*, not a comparison against one: the previous
+  // minor is supported exactly as the built one is, and a console that reduced a
+  // CLI it promised to support would be the set constant lying.
+  if (SUPPORTED_CLI_MINORS.includes(inRange)) return compatibility('ok', 'supported', raw, [])
+  if (compareMinors(inRange, newestSupportedMinor()) > 0) return compatibility('ok', 'newer', raw, [])
+  return compatibility('reduced', 'older', raw, [...REDUCED_VIEWS])
+}
+
+/** newestSupportedMinor is the set's highest member, by `compareMinors` rather
+ * than by position, so the order the set is written in is not a rule. */
+function newestSupportedMinor(): string {
+  return SUPPORTED_CLI_MINORS.reduce((newest, minor) => (compareMinors(minor, newest) > 0 ? minor : newest))
 }
 
 /**
@@ -603,7 +635,7 @@ export const SKEW_HEADLINES: Readonly<Record<CliCompatibilityMode, string>> = Ob
  * versions are in question -- which is the design's own requirement that the
  * banner name both versions.
  */
-const RANGE_PHRASE = `this console was built against ${CLI_VERSION_BUILT_AGAINST} and reads ${SUPPORTED_CLI_MINORS.join(', ')}`
+const RANGE_PHRASE = `this console was built against ${CLI_VERSION_BUILT_AGAINST} and reads ${SUPPORTED_CLI_MINORS.join(', ')} and every later release`
 
 export function skewSentence(compatibility: CliCompatibility): string {
   switch (compatibility.skew) {
@@ -611,14 +643,21 @@ export function skewSentence(compatibility: CliCompatibility): string {
       return `this fugaro is one of the versions ${RANGE_PHRASE}`
     case 'newer':
       return (
-        `the fugaro this console is driving is newer than any version ${RANGE_PHRASE}. It is running in a ` +
-        'reduced mode and will not draw a figure it cannot vouch for; update the console to read this fugaro'
+        `this console is older than the fugaro it is driving: ${RANGE_PHRASE}. It shows what it can read: a ` +
+        'field this fugaro added is ignored, and a screen whose read no longer decodes says so on that screen; ' +
+        'update the console to see what this fugaro added'
       )
     case 'older':
       return (
-        `the fugaro this console is driving is older than any version ${RANGE_PHRASE}; upgrade it with ` +
+        `the fugaro this console is driving is older than the versions ${RANGE_PHRASE}; upgrade it with ` +
         `${CONSOLE_CLI_UPGRADE_COMMAND}. It is running in a reduced mode and will not draw a figure it cannot ` +
         'vouch for'
+      )
+    case 'irregular':
+      return (
+        `the fugaro this console is driving reports a version that is not a plain release number, so it cannot ` +
+        `be placed: ${RANGE_PHRASE}. It is running in a reduced mode and will not draw a figure it cannot ` +
+        'vouch for; a released fugaro prints its version as major.minor.patch'
       )
     case 'below-floor':
       return (

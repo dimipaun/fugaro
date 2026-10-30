@@ -6,6 +6,9 @@
 > metrics, the enterprise must-haves, and the engineering rows of the action table. Pricing, outbound,
 > content and partner material, and the named design partners, are left out. Each block
 > below is a contiguous run of the original lines, unedited; the headings and this note are the excerpt's own.
+> The landing pages' section below is the plan's intent as the owner wrote it on 2026-10-26; what the
+> four pages render today, and where that reading departs from this text, is `reconciliation.md`'s
+> D409 and D410, which win over this file.
 
 ## Licensing context and action items (engineering rows)
 

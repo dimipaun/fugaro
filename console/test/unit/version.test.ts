@@ -32,6 +32,9 @@
 //     dropped where it was read, and there is nothing left in the model for a
 //     screen to draw.
 
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+
 import { describe, expect, it } from 'vitest'
 
 import { parseVersionLine } from '../../src/main/spawn'
@@ -78,6 +81,15 @@ import { githubToken } from '../support/fakeSecrets'
  * ever changes what it prints, this test is where the console finds out.
  */
 const CAPTURED_RELEASE_OUTPUT = '0.8.1\n'
+
+/**
+ * CAPTURED_0_12_1_OUTPUT and CAPTURED_0_13_0_OUTPUT are what the `v0.12.1` and
+ * `v0.13.0` binaries print, captured on 2026-10-30 from builds of those tags
+ * with the release ldflags: the two releases the owner found this console
+ * reducing, which the set now names.
+ */
+const CAPTURED_0_12_1_OUTPUT = '0.12.1\n'
+const CAPTURED_0_13_0_OUTPUT = '0.13.0\n'
 
 /** CAPTURED_DEV_OUTPUT is what a binary built without those ldflags prints:
  * `var Version = "dev"` in `internal/cli/root.go`, unchanged by the build. This
@@ -267,24 +279,46 @@ describe('parseCliVersion', () => {
 // ---------------------------------------------------------------------------
 
 describe('the supported range', () => {
-  it('holds the minor the console was built against, the previous one, and the launch floor’s', () => {
+  it('holds the minors whose documents were read, the built one the newest', () => {
     const built = parseCliVersion(CLI_VERSION_BUILT_AGAINST)
     if (!built.ok || built.version.kind !== 'release') throw new Error(CLI_VERSION_BUILT_AGAINST)
     const previous = `${String(built.version.major)}.${String(built.version.minor - 1)}`
     const builtMinor = `${String(built.version.major)}.${String(built.version.minor)}`
-    const launchMinor = '0.11'
-    // The set is exactly these three: the design's promise (the built minor and
-    // the one before it) and V2.5.1a's addition, whose reason is written on the
-    // constant -- 0.11 is the newest CLI minor the launch half was written
-    // against. A fourth minor, or a member dropped, fails here.
-    expect(SUPPORTED_CLI_MINORS).toEqual(expect.arrayContaining([previous, builtMinor]))
-    expect(SUPPORTED_CLI_MINORS).toEqual([previous, builtMinor, launchMinor])
-    // The range reaches exactly the launch floor's minor, and stops there: the
-    // range says which CLI the console draws its dashboard for, the floor which
-    // CLI one operation may be started on, and a launch reads the floor alone
-    // (launchSupported, below). The floor is a *patch* inside that minor, so the
-    // comparison that matters is the one the floor's own tests make.
-    expect(launchMinor).toBe(LAUNCH_CLI_FLOOR.split('.').slice(0, 2).join('.'))
+    // The design's original pair, V2.5.1a's launch minor, and the two re-read on
+    // 2026-10-30 (0.12 and 0.13, the built minor). A member dropped or a minor
+    // added without its re-read fails here.
+    expect(SUPPORTED_CLI_MINORS).toEqual(['0.7', '0.8', '0.11', previous, builtMinor])
+    expect(CLI_VERSION_BUILT_AGAINST).toBe('0.13.0')
+    // The built minor is the newest member: it is the line above which a CLI is
+    // newer than this console, and a member above it would be a promise about
+    // documents the console was not built against.
+    for (const minor of SUPPORTED_CLI_MINORS) {
+      expect(compareMinors(minor, builtMinor), minor).toBeLessThanOrEqual(0)
+    }
+    // The launch floor's minor is a member; the floor itself is a *patch*
+    // inside it, so the comparison that matters is the one its own tests make.
+    expect(SUPPORTED_CLI_MINORS).toContain(LAUNCH_CLI_FLOOR.split('.').slice(0, 2).join('.'))
+  })
+
+  it('answers ok for the newest released CLI, so a release cannot leave the console behind', () => {
+    // The release checklist's guard (2026-10-30): the console read 0.12.x and
+    // 0.13.0 in the reduced mode for weeks because nothing failed when the CLI
+    // shipped past the set. `docs/release-streams.yaml`'s CLI `current` is the
+    // last *released* CLI (`next` is only a name the next minor will take, so a
+    // planned release is never read here). If this fails, the next console
+    // release re-reads that minor's documents and adds it to
+    // SUPPORTED_CLI_MINORS (src/shared/version.ts).
+    const streams = readFileSync(join(__dirname, '..', '..', '..', 'docs', 'release-streams.yaml'), 'utf8')
+    const cli = /- name: cli\n(?:[ \t]+[^\n]*\n)*?[ \t]+current: "([^"]+)"/.exec(streams)
+    const released = cli?.[1]
+    if (released === undefined) throw new Error('docs/release-streams.yaml has no CLI `current` line')
+    expect(released, 'the CLI stream is at a release').toMatch(/^\d+\.\d+\.\d+$/)
+    const answer = classifyCliVersion(`${released}\n`)
+    expect(
+      answer.mode,
+      `the released CLI ${released} must answer ok: add its minor to SUPPORTED_CLI_MINORS once its documents are re-read`,
+    ).toBe('ok')
+    expect(answer.skew, `the released CLI ${released} is not one of the minors this console has read`).toBe('supported')
   })
 
   it('is a release version the console can read, like the floor below it', () => {
@@ -356,11 +390,12 @@ describe('launchSupported', () => {
     expect(launchSupported('0.11.0')).toBe(false)
     expect(classifyCliVersion('0.10.0').mode).toBe('reduced')
     expect(launchSupported('0.10.0')).toBe(false)
-    // The other direction: a CLI above the floor but outside the range is drawn
-    // by this console with its version banner, and a banner is not a refusal.
-    expect(SUPPORTED_CLI_MINORS).not.toContain('0.12')
-    expect(classifyCliVersion('0.12.1').mode).toBe('reduced')
-    expect(launchSupported('0.12.1')).toBe(true)
+    // The other direction: a line above the floor that the handshake reduces --
+    // a build tail is the same release to the floor, and not a plain release
+    // number to the handshake -- is still a launch, and a banner is not a
+    // refusal.
+    expect(classifyCliVersion('0.12.1+build.7').mode).toBe('reduced')
+    expect(launchSupported('0.12.1+build.7')).toBe(true)
   })
 
   it('refuses a line it cannot place, rather than assuming the newest', () => {
@@ -418,7 +453,7 @@ describe('budgetComputeSupported', () => {
     // question is the floor's and never the range's: 0.12 is outside the
     // supported range and above the launch floor, and it is still below this
     // one.
-    expect(SUPPORTED_CLI_MINORS).not.toContain('0.13')
+    expect(classifyCliVersion('0.12.1').mode).toBe('ok')
     expect(launchSupported('0.12.1')).toBe(true)
     expect(budgetComputeSupported('0.12.1')).toBe(false)
     expect(budgetComputeSupported(LAUNCH_CLI_FLOOR)).toBe(false)
@@ -470,7 +505,7 @@ describe('classifyCliVersion', () => {
     // The built minor -- the version the console was built and tested against --
     // including the patch levels around the captured one, because the patch
     // level is not an axis of the JSON contract.
-    for (const line of [CAPTURED_RELEASE_OUTPUT, 'v0.8.1', '0.8.0', '0.8.99', '0.8.1-rc.1']) {
+    for (const line of [CAPTURED_RELEASE_OUTPUT, 'v0.8.1', '0.8.0', '0.8.99']) {
       const compatibility = classifyCliVersion(line)
       expect(placed(line), line).toMatch(/^ok\/supported\//)
       expect(compatibility.hidden, line).toEqual([])
@@ -486,18 +521,70 @@ describe('classifyCliVersion', () => {
     }
   })
 
-  it('proceeds in a reduced mode one minor above the ceiling', () => {
-    const compatibility = classifyCliVersion('0.9.0')
-    expect(compatibility.mode).toBe('reduced')
-    expect(compatibility.skew).toBe('newer')
-    expect(compatibility.cliVersion).toBe('0.9.0')
-    expect(compatibility.hidden).toEqual([...REDUCED_VIEWS])
+  it('reads the two releases the owner found reduced, as members', () => {
+    for (const line of [CAPTURED_0_12_1_OUTPUT, CAPTURED_0_13_0_OUTPUT, '0.12.0', '0.13.9']) {
+      const compatibility = classifyCliVersion(line)
+      expect(placed(line), line).toMatch(/^ok\/supported\//)
+      expect(compatibility.hidden, line).toEqual([])
+      for (const view of REDUCED_VIEWS) expect(hidesView(compatibility, view), `${line} ${view}`).toBe(false)
+    }
   })
 
-  it('treats any higher minor or major as newer, however far above', () => {
-    for (const line of ['0.10.0', '0.99.0', '1.0.0', '2.3.4']) {
-      expect(placed(line), line).toMatch(/^reduced\/newer\//)
+  it('answers ok for every plain release above the newest member, however far above', () => {
+    // The owner's ruling of 2026-10-30: a CLI newer than the console is read
+    // with the fields the console knows, and a read that no longer decodes is
+    // refused on its own screen. `0.130.0` is minor 130, not 0.13 with a
+    // trailing zero, and is placed as such.
+    for (const line of ['0.14.0', 'v0.14.0', '0.14.3', '0.99.0', '0.130.0', '1.0.0', '2.3.4']) {
+      const compatibility = classifyCliVersion(line)
+      expect(placed(line), line).toBe(`ok/newer/${line}`)
+      expect(compatibility.hidden, line).toEqual([])
     }
+  })
+
+  it('reduces the gap below the newest member, as an older CLI', () => {
+    // 0.9 and 0.10 were never re-read: older than the console, above the floor.
+    for (const line of ['0.9.0', '0.10.0', '0.10.7', '0.6.5']) {
+      const compatibility = classifyCliVersion(line)
+      expect(placed(line), line).toMatch(/^reduced\/older\//)
+      expect(compatibility.hidden, line).toEqual([...REDUCED_VIEWS])
+    }
+  })
+
+  it('opens ok to a plain release number only: a hostile line does not ride the open end', () => {
+    // Every line here parses (it is a version to `spawn.ts`'s resolver too) and
+    // none is a number a release prints, so none may answer `ok` -- not above
+    // the set, where the answer is open-ended, and not inside a member minor
+    // either.
+    const irregular = [
+      '0.13.0-evil',
+      '0.13.0+x',
+      '0.13.0-rc.1',
+      '0.14.0-rc.1',
+      '0.14.0+build.7',
+      '1.0.0-0',
+      '00.13.0',
+      '0.013.0',
+      '0.14.00',
+      '0.13',
+      '0.14',
+      '0.14.0.1',
+      'v0.14.0-3-gabc1234',
+    ]
+    for (const line of irregular) {
+      const compatibility = classifyCliVersion(line)
+      expect(placed(line), line).toBe(`reduced/irregular/${line}`)
+      expect(compatibility.hidden, line).toEqual([...REDUCED_VIEWS])
+    }
+    // Whitespace: the newline `Fprintln` writes and blank lines around it are
+    // the same line (`parseCliVersion`), and whitespace inside it is not a
+    // version at all.
+    expect(placed(' 0.14.0\t\n')).toBe('ok/newer/0.14.0')
+    for (const line of ['0. 14.0', '0.14 .0', '0.14.0 evil', 'O.14.0', '0.x.0', '\u00a00.14.0\u200b']) {
+      expect(placed(line), JSON.stringify(line)).toMatch(/^refused\/unreadable\//)
+    }
+    // And below the floor a tail does not soften the refusal.
+    expect(placed('0.5.0-rc.1')).toBe('refused/below-floor/0.5.0-rc.1')
   })
 
   it('reduces, rather than refuses, between the floor and the range', () => {
@@ -589,23 +676,15 @@ describe('classifyCliVersion', () => {
     expect(compareMinors('0.9', '0.8')).toBeGreaterThan(0)
     expect(compareMinors('1.0', '0.9')).toBeGreaterThan(0)
     expect(compareMinors('0.9', '1.0')).toBeLessThan(0)
-    // Every supported minor is >= the hard floor, with one named exception: the
-    // launch floor's own minor, which is above the CLI the console was built
-    // against because the operation cannot be offered to anything the range
-    // holds otherwise. It is one named minor and not a slack bound -- a member
-    // that drifted above the built one for any other reason fails here, and the
-    // range and the floor still cannot meet.
+    // Every supported minor is >= the hard floor, so the set and the floor
+    // cannot meet.
     for (const minor of SUPPORTED_CLI_MINORS) {
       expect(compareMinors(minor, CLI_HARD_FLOOR_VERSION), minor).toBeGreaterThanOrEqual(0)
     }
-    // Exactly one member is above the minor the console was built against, and
-    // it is V2.5.1a's addition -- the launch floor's own minor, which the range
-    // now reaches so that a CLI the floor admits is drawn by this console rather
-    // than held back for a reason the range does not state.
+    // No member is above the minor the console was built against: that minor
+    // is where "newer than this console" starts.
     const aboveBuilt = SUPPORTED_CLI_MINORS.filter((minor) => compareMinors(minor, CLI_VERSION_BUILT_AGAINST) > 0)
-    expect(aboveBuilt).toEqual(['0.11'])
-    expect(LAUNCH_CLI_FLOOR).toMatch(/^0\.11\./)
-    expect(aboveBuilt).toEqual([LAUNCH_CLI_FLOOR.split('.').slice(0, 2).join('.')])
+    expect(aboveBuilt).toEqual([])
   })
 })
 
@@ -635,7 +714,7 @@ describe('skewSentence', () => {
     // way to keep that true for a mode someone adds later is to hold all of them
     // to it.
     const sentences = [
-      ...['0.7.0', '0.9.0', '0.5.0', CAPTURED_DEV_OUTPUT, CAPTURED_RELEASE_OUTPUT].map((line) =>
+      ...['0.7.0', '0.9.0', '0.14.0', '0.14.0-rc.1', '0.5.0', CAPTURED_DEV_OUTPUT, CAPTURED_RELEASE_OUTPUT].map((line) =>
         skewSentence(classifyCliVersion(line)),
       ),
       skewSentence(unreadableCompatibility('the binary did not answer')),
@@ -648,7 +727,11 @@ describe('skewSentence', () => {
     // The two modes that mean "upgrade something" name what to upgrade -- for an
     // old CLI the CLI, and for a new one the console (there is no command for
     // that: the console is not installed by brew).
-    expect(skewSentence(classifyCliVersion('0.9.0'))).toContain('update the console')
+    expect(skewSentence(classifyCliVersion('0.14.0'))).toContain('update the console')
+    expect(skewSentence(classifyCliVersion('0.14.0'))).toContain('older than the fugaro it is driving')
+    expect(skewSentence(classifyCliVersion('0.14.0'))).not.toContain(CONSOLE_CLI_UPGRADE_COMMAND)
+    expect(skewSentence(classifyCliVersion('0.9.0'))).toContain(CONSOLE_CLI_UPGRADE_COMMAND)
+    expect(skewSentence(classifyCliVersion('0.14.0-rc.1'))).toContain('not a plain release number')
     expect(skewSentence(classifyCliVersion('0.5.0'))).toContain(CONSOLE_CLI_UPGRADE_COMMAND)
     expect(skewSentence(classifyCliVersion(CLI_HARD_FLOOR_VERSION))).toContain(CONSOLE_CLI_UPGRADE_COMMAND)
     expect(skewSentence(classifyCliVersion('0.5.0'))).toContain(CLI_HARD_FLOOR_VERSION)
@@ -679,7 +762,7 @@ describe('renderVersionSkew', () => {
     const root = renderVersionSkew(factory, compatibility, 'light')
     expect(root.getAttribute('class')).toBe('console-skew')
     expect(root.getAttribute('data-mode')).toBe('reduced')
-    expect(root.getAttribute('data-skew')).toBe('newer')
+    expect(root.getAttribute('data-skew')).toBe('older')
     expect(root.getAttribute('data-theme')).toBe('light')
     expect(one(root, 'skew-headline').textContent).toBe(SKEW_HEADLINES.reduced)
     expect(one(root, 'skew-sentence').textContent).toBe(skewSentence(compatibility))
