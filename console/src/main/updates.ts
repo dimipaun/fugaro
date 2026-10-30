@@ -58,15 +58,24 @@ const RUNNING_VERSION_RE = /^v?(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9
 
 const CONSOLE_TAG_PREFIX = 'console-v'
 
-/** MAX_LISTING_BYTES bounds the listing. It is exported because the bound has
- * to be the caller's too: this module can only refuse an oversized body once it
- * holds it, and the read that reads it is the injected `fetchReleases`, so the
- * adapter must stop reading at this length rather than buffer a body GitHub (or
- * anything in the path) can make arbitrarily long. GitHub answers a page of up
- * to thirty release objects, which is tens of KB, so this is generous for the
- * shape and still a bound; the CLI's own 64 KiB is for one release object from
+/** MAX_LISTING_BYTES bounds the listing, and it is sized against the page the
+ * URL above asks for rather than against a page in general: `per_page=100` makes
+ * a page up to a hundred release objects, each carrying its whole release-notes
+ * body and its asset list, where the thirty-object page the bound was first
+ * written for was about three and a half times smaller. Four MiB is the same
+ * allowance the original one MiB made -- roughly forty KB a release, against a
+ * real page of tens of KB -- and the coupling is asserted in `updates.test.ts`,
+ * because a bound below a page GitHub will really answer is a check that fails
+ * on every tick and offers no release ever again, which is exactly the failure
+ * `per_page=100` exists to avoid.
+ *
+ * It is exported because the bound has to be the caller's too: this module can
+ * only refuse an oversized body once it holds it, and the read that reads it is
+ * the injected `fetchReleases`, so the adapter must stop reading at this length
+ * rather than buffer a body GitHub (or anything in the path) can make
+ * arbitrarily long. The CLI's own 64 KiB is for one release object from
  * `/releases/latest`, not a page. */
-export const MAX_LISTING_BYTES = 1 << 20
+export const MAX_LISTING_BYTES = 4 << 20
 
 /** LISTING_HEADERS is the whole of what a check sends, and it is fixed: design
  * section 7.4 allows the update check as the app's only outbound request and
@@ -214,14 +223,24 @@ export function createUpdateController(deps: UpdatePolicyDeps): UpdateController
   let restartDeferred = false
   /** installable says whether the bytes on disk are a release this policy chose:
    * set by a finished download whose version is the tag the feed was pointed at,
-   * cleared by one whose version is not (`onDownloaded`), and left alone by the
-   * switch. It is what the switch's return trip reads -- a download the policy
-   * has already refused is not made installable by turning the feature back on. */
+   * and cleared by every download it refuses -- one whose version is not that
+   * tag, and one that finishes under a closed gate, whose bytes are the ones on
+   * disk whatever the earlier download was. It is what the switch's return trip
+   * reads: a download the policy has refused is not made installable by turning
+   * the feature back on. */
   let installable = false
   /** switchedOff says a closed gate turned `autoInstallOnAppQuit` off, so the
    * next `start()` -- which only runs under an open gate -- knows to re-arm it
    * rather than leaving the client configured for a feature that is on. */
   let switchedOff = false
+  /** live is whether a check has been asked for and not yet stopped. It is here
+   * because the download event carries no generation: `stop()` abandons a check
+   * in flight by moving `generation` on, but a download that began before the
+   * app started quitting still arrives afterwards, and acting on it would open
+   * the restart notice -- or install the update -- while the process is on its
+   * way out. `checkNow()` arms it as well as `start()`, because the controller
+   * can be driven by `checkNow` alone. */
+  let live = false
 
   /** allowed is the gate, read fresh every time it matters: the switch or the
    * local opt-out can change between two ticks, and a check that started under
@@ -260,15 +279,19 @@ export function createUpdateController(deps: UpdatePolicyDeps): UpdateController
    * after the gate closed prompts nobody: `restartRequested` would refuse the
    * prompt's own button. */
   const onDownloaded = (payload: unknown): void => {
+    // The app said stop: the bytes are on disk and stay there, but nothing about
+    // a process on its way out prompts a user or replaces the app.
+    if (!live) return
     if (!allowed()) {
       // A download that finishes under a closed gate is not installed on quit
       // either, and this is the same rule `tick` holds from the other side: the
       // gate can close between the check that pointed the feed and the download
       // it started, and the tick that would notice is up to six hours away. The
-      // bytes are refused here and the refusal is remembered, so the switch
-      // coming back on re-arms the install only for a download this policy
-      // accepted.
+      // refusal is remembered twice over -- install-on-quit goes off, and this
+      // download stops counting as one the policy accepted, because these are
+      // the bytes now on disk.
       switchedOff = true
+      installable = false
       deps.updater.autoInstallOnAppQuit = false
       return
     }
@@ -305,9 +328,13 @@ export function createUpdateController(deps: UpdatePolicyDeps): UpdateController
     deps.updater.autoInstallOnAppQuit = true
     deps.updater.allowDowngrade = false
     deps.updater.allowPrerelease = false
-    // A plain object rather than a frozen one: electron-updater's own
-    // `addAuthHeader` writes to `requestHeaders`, and a frozen table throws
-    // inside the library the first time it does.
+    // Empty, and a plain object rather than a frozen one. Nothing in 6.8.10
+    // writes into this table -- `addAuthHeader` reassigns the field and
+    // `computeFinalHeaders` builds the object it hands out -- so a frozen `{}`
+    // would not throw today, and freezing buys nothing an empty table does not
+    // already say. It is left writable so that a version that does write in
+    // place changes a header instead of throwing inside the library on every
+    // check, which would read as an update client that never completes.
     deps.updater.requestHeaders = {}
     deps.updater.on('update-downloaded', onDownloaded)
     deps.updater.on('error', () => {
@@ -317,6 +344,7 @@ export function createUpdateController(deps: UpdatePolicyDeps): UpdateController
 
   const checkNow = async (): Promise<void> => {
     if (!allowed()) return
+    live = true
     configure()
     generation += 1
     const at = generation
@@ -380,6 +408,7 @@ export function createUpdateController(deps: UpdatePolicyDeps): UpdateController
       await checkNow()
     },
     stop: () => {
+      live = false
       generation += 1
       clearTimer()
     },
@@ -393,7 +422,10 @@ export function createUpdateController(deps: UpdatePolicyDeps): UpdateController
       deps.updater.quitAndInstall()
     },
     launchFlowIdle: () => {
-      if (!allowed() || !deps.isLaunchFlowIdle()) return
+      // A flow that goes idle while the app is quitting delivers nothing: the
+      // deferrals this holds are a prompt and an install, and both are for a
+      // console that is still running.
+      if (!live || !allowed() || !deps.isLaunchFlowIdle()) return
       const version = readyDeferred
       readyDeferred = null
       if (version !== null) deps.onReadyToRestart(version)

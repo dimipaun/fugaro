@@ -17,6 +17,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  MAX_LISTING_BYTES,
   RELEASES_URL,
   UPDATE_INTERVAL_MS,
   createUpdateController,
@@ -537,6 +538,18 @@ describe('the listing is one page, and all of it', () => {
     // exactly the part of a URL an edit removes without anything else noticing.
     expect(RELEASES_URL).toBe('https://api.github.com/repos/dimipaun/fugaro/releases?per_page=100')
   })
+
+  it('bounds the listing above the page it asks for, whatever the page size becomes', () => {
+    // The bound and the page size are one decision: the read stops at
+    // `MAX_LISTING_BYTES`, so a bound below a page GitHub will really answer is
+    // a check that fails on every tick and never offers a release again. Twenty
+    // KB is a generous release object -- a few KB of notes and an asset list --
+    // and a page is up to `per_page` of them, so the bound has to clear that
+    // with room to spare.
+    const perPage = Number(new URL(RELEASES_URL).searchParams.get('per_page'))
+    expect(perPage).toBe(100)
+    expect(MAX_LISTING_BYTES).toBeGreaterThanOrEqual(perPage * 20 * 1024)
+  })
 })
 
 describe('the request carries no identifier', () => {
@@ -585,10 +598,11 @@ describe('the request carries no identifier', () => {
   })
 
   it('gives the updater an empty, writable header table', async () => {
-    // Empty, and deliberately not frozen: electron-updater's own
-    // `addAuthHeader` writes into `requestHeaders` on every request, and a
-    // frozen table throws inside the library the first time it does -- a
-    // failure that would surface as an update check that never completes.
+    // Empty, and deliberately not frozen. Nothing in 6.8.10 writes into this
+    // table -- `addAuthHeader` reassigns the field, `computeFinalHeaders` builds
+    // the object it hands out -- so a frozen one would not throw today; what the
+    // writable table is for is a later version that does write in place, which
+    // would otherwise throw inside the library on every check.
     const { controller, updater } = harness()
     await controller.start()
     expect(updater.requestHeaders).toEqual({})
@@ -804,6 +818,22 @@ describe('the off switch after a download began', () => {
     expect(updater.autoInstallOnAppQuit).toBe(false)
   })
 
+  it('does not install on quit again for a download refused after an accepted one', async () => {
+    // The bytes on disk are the last download's, so accepting one earlier does
+    // not make a later refused one installable: the switch coming back on
+    // re-arms the install for what is on disk, and what is on disk was refused.
+    const { controller, updater, setSwitch } = harness()
+    await controller.start()
+    updater.emit('update-downloaded', { version: '0.120.0' })
+    expect(updater.autoInstallOnAppQuit).toBe(true)
+    setSwitch(false)
+    updater.emit('update-downloaded', { version: '0.121.0' })
+    expect(updater.autoInstallOnAppQuit).toBe(false)
+    setSwitch(true)
+    await controller.start()
+    expect(updater.autoInstallOnAppQuit).toBe(false)
+  })
+
   it('installs on quit again for a download the policy did accept', async () => {
     const { controller, updater, setSwitch, timers } = harness()
     await controller.start()
@@ -816,6 +846,35 @@ describe('the off switch after a download began', () => {
     setSwitch(true)
     await controller.start()
     expect(updater.autoInstallOnAppQuit).toBe(true)
+  })
+})
+
+describe('after stop(), nothing the client reports is acted on', () => {
+  it('prompts nobody, and writes nothing to the client, for a download that lands while the app is quitting', async () => {
+    // `stop()` is called from `before-quit`, and a download that began before it
+    // can finish after it: the notice would open over a quitting app, and the
+    // install-on-quit would be re-armed on the way out. The client is left
+    // exactly as `configure()` left it, because after `stop()` this policy has
+    // no business writing to it at all.
+    const { controller, updater, ready } = harness()
+    await controller.start()
+    controller.stop()
+    updater.emit('update-downloaded', { version: '0.120.0' })
+    expect(ready).toEqual([])
+    expect(updater.autoInstallOnAppQuit).toBe(true)
+  })
+
+  it('delivers no deferral when a launch goes idle while the app is quitting', async () => {
+    const { controller, updater, ready, setIdle } = harness()
+    setIdle(false)
+    await controller.start()
+    updater.emit('update-downloaded', { version: '0.120.0' })
+    controller.restartRequested()
+    controller.stop()
+    setIdle(true)
+    controller.launchFlowIdle()
+    expect(ready).toEqual([])
+    expect(updater.quits).toBe(0)
   })
 })
 
@@ -848,7 +907,10 @@ describe('a failure is one line and a retry', () => {
 
   it('swallows a body that is not JSON, and one too long to accept', async () => {
     const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    for (const body of ['not json at all', `${'9'.repeat(2 << 20)}`]) {
+    // Both bodies are derived from the bound rather than written out: a literal
+    // that stops being over the bound turns this test into one about a body the
+    // policy accepts.
+    for (const body of ['not json at all', '9'.repeat(MAX_LISTING_BYTES + 1)]) {
       const { controller, updater } = harness({ fetchReleases: () => Promise.resolve(body) })
       await controller.start()
       await settle()
