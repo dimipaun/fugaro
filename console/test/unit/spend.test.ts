@@ -72,8 +72,10 @@ import {
   renderSpend,
   scopeOf,
 } from '../../src/renderer/screens/spend'
+import { drawnRows } from '../support/spend'
 import type {
   SpendAccount,
+  SpendBar,
   SpendFactory,
   SpendModel,
   SpendPeople,
@@ -782,9 +784,20 @@ function pointFor(series: ReturnType<typeof seriesOf>, key: string) {
   return found
 }
 
+/** barFor is one account's bar for one key of the chart, asserted to be there.
+ * The key's group holds a bar per account even where none is drawn -- a value
+ * the document does not carry is a bar whose share is a gap -- so this is also
+ * how a test says what the drawing had to leave out. */
+function barFor(model: SpendModel, key: string, account: SpendAccount): SpendBar {
+  const group = [...model.chart.groups, ...model.chart.outside].find((one) => one.key === key)
+  const found = group?.bars.find((bar) => bar.account === account)
+  if (found === undefined) throw new Error(`no ${account} bar for ${key}`)
+  return found
+}
+
 /** rowFor is one row by its key. */
 function rowFor(model: SpendModel, key: string): SpendRow {
-  const found = model.rows.find((row) => row.key === key)
+  const found = drawnRows(model).find((row) => row.key === key)
   if (found === undefined) throw new Error(`no row ${key}`)
   return found
 }
@@ -969,11 +982,13 @@ describe('the three accounts', () => {
     // The mutation again, from the other side: the billed series at that day is
     // the billed figure, which is not this.
     expect(pointFor(seriesOf(model, 'model'), '2026-10-12').reading.value).not.toBe(first.reading.value)
-    // And the notional series' axis top is notional too: three accounts, three
-    // axes, never one shared scale.
-    expect(notional.peak.state).toBe('notional')
-    expect(seriesOf(model, 'model').peak.state).toBe('measured')
-    expect(seriesOf(model, 'compute').peak.state).toBe('estimated')
+    // And the chart's one axis top is the largest value any account draws, in
+    // that account's own state: the fixture's largest is the 12th's billed
+    // $1.25, which is a figure the document carries and never the same day's
+    // notional $0.40 added to it.
+    expect(model.chart.axis.state).toBe('measured')
+    expect(model.chart.axis.value).toBe(1_250_000 / DOLLARS)
+    expect(model.chart.axis.value).not.toBe(summed(1_250_000, 400_000))
   })
 
   it('draws the document\'s own totals line, it does not add the rows up', () => {
@@ -997,9 +1012,9 @@ describe('the three accounts', () => {
     const second = pointFor(seriesOf(model, 'notional'), '2026-10-13')
     expect(second.reading.state).toBe('unavailable')
     expect(second.reading.value).toBeNull()
-    // The height of a point with no figure is a gap, never a zero-height bar:
-    // a bar of no width reads as "this day spent nothing".
-    expect(second.height.state).toBe('gap')
+    // The share of a bar with no figure is a gap, never a zero-height bar: a
+    // bar of no height reads as "this day spent nothing".
+    expect(barFor(model, '2026-10-13', 'notional').share.state).toBe('gap')
 
     const compute = pointFor(seriesOf(model, 'compute'), '2026-10-13')
     expect(compute.reading.state).toBe('unavailable')
@@ -1062,19 +1077,22 @@ describe('a day the history does not hold', () => {
     const missing = pointFor(billed, '2026-10-14')
     expect(missing.reading.state).toBe('gap')
     expect(missing.reading.value).toBeNull()
-    expect(missing.height.state).toBe('gap')
     expect(missing.reading.because).toContain('no document')
-    // A line drawn through the missing day would assert, in ink, a measurement
-    // nobody made: 12-13 and 15 are two segments.
-    expect(billed.segments).toBe(2)
+    // A bar drawn through the missing day would assert, in ink, a measurement
+    // nobody made: every account's bar there is a gap, and the drawing leaves
+    // all three out in favour of the day's one hatched column.
+    for (const account of SPEND_ACCOUNTS) {
+      expect(barFor(model, '2026-10-14', account).share.state).toBe('gap')
+    }
   })
 
   it('breaks every account\'s series, and says so in the console\'s own words', () => {
     const model = modelOf()
-    // Notional: the 13th is `n/a` and the 14th is a gap, so the 12th and the
-    // 15th are two segments.
-    expect(seriesOf(model, 'notional').segments).toBe(2)
-    expect(seriesOf(model, 'compute').segments).toBe(1)
+    // The 13th's notional and compute values are `n/a` and the 14th is a gap,
+    // so neither account has a bar on either day.
+    expect(barFor(model, '2026-10-13', 'notional').share.value).toBeNull()
+    expect(barFor(model, '2026-10-13', 'compute').share.value).toBeNull()
+    expect(barFor(model, '2026-10-14', 'compute').share.state).toBe('gap')
     expect(model.notes.join(' ')).toContain('a gap, not a zero')
   })
 
@@ -1096,7 +1114,7 @@ describe('a day the history does not hold', () => {
 
   it('says nothing about gaps when every day of the range has a row', () => {
     // The other side of the boundary: a range whose days are all in the history
-    // is one unbroken line and no legend. A console that drew the legend
+    // is no gap and no legend. A console that drew the legend
     // whenever the rows were fewer than the days -- rather than whenever a day
     // was actually missing -- would explain a gap it did not draw.
     const fourth = { ...DAY_ROWS[0], key: '2026-10-14', start: '2026-10-14', end: '2026-10-14' }
@@ -1109,7 +1127,6 @@ describe('a day the history does not hold', () => {
       '2026-10-14',
       '2026-10-15',
     ])
-    expect(billed.segments).toBe(1)
     expect(billed.points.every((point) => point.reading.state === 'measured')).toBe(true)
   })
 
@@ -1138,7 +1155,7 @@ describe('a day the history does not hold', () => {
       const model = modelOf({ ...DAY_REPORT, rows: [before, ...DAY_ROWS, after] })
       expect(model.notes.some((note) => note.startsWith('2 ') && note.includes(OUTSIDE_NOTE))).toBe(true)
       expect(model.notes.join(' ')).not.toContain('2026-10-01')
-      expect(model.rows.map((row) => row.key)).toContain('2026-10-01')
+      expect(drawnRows(model).map((row) => row.key)).toContain('2026-10-01')
       const quiet = modelOf()
       expect(quiet.notes.join(' ')).not.toContain(OUTSIDE_NOTE)
     })
@@ -1167,7 +1184,6 @@ describe('a day the history does not hold', () => {
     const billed = seriesOf(model, 'model')
     expect(billed.points.map((point) => point.key)).toEqual(['claude-sonnet-5', 'claude-opus-5'])
     expect(billed.points.every((point) => point.reading.state === 'measured')).toBe(true)
-    expect(billed.segments).toBe(1)
   })
 })
 
@@ -1179,10 +1195,12 @@ describe('the person breakdown', () => {
   it('is off by default: the rows are in the document and the screen draws none of them', () => {
     const model = buildSpendModel(PERSON_REPORT, BUDGET)
     expect(model.persons).toEqual({ enabled: false, withheld: true })
-    expect(model.rows).toEqual([])
+    expect(drawnRows(model)).toEqual([])
+    // No figure at all, on the one axis the chart would have drawn: a scale of
+    // nothing is `n/a` with the console's reason, never a `$0.00`.
+    expect(model.chart.axis.value).toBeNull()
     for (const series of model.series) {
       expect(series.points).toEqual([])
-      expect(series.peak.value).toBeNull()
       expect(series.empty).toContain('person breakdown is off')
     }
     // One sentence, and it is the reason: a view that is off without a note is
@@ -1212,7 +1230,7 @@ describe('the person breakdown', () => {
   it('shows the rows when it is asked to, and draws an address as the console\'s marker', () => {
     const model = buildSpendModel(PERSON_REPORT, BUDGET, { persons: true })
     expect(model.persons).toEqual({ enabled: true, withheld: false })
-    expect(model.rows.map((row) => row.key)).toEqual(['ada@example.com', 'unknown'])
+    expect(drawnRows(model).map((row) => row.key)).toEqual(['ada@example.com', 'unknown'])
     expect(model.notes).toEqual([])
 
     const tree = renderSpend(factory, model, 'light')
@@ -1241,7 +1259,7 @@ describe('the by-mode breakdown', () => {
     expect(model.dimensionKnown).toBe(true)
     expect(model.dimension).toBe('mode')
     expect(model.notes).toEqual([])
-    expect(model.rows.map((row) => row.key)).toEqual(['pro', 'none'])
+    expect(drawnRows(model).map((row) => row.key)).toEqual(['pro', 'none'])
     // The switch offers every word, and `mode` is the one the document asked for.
     expect(model.switches.map((one) => one.dimension)).toEqual([...SPEND_DIMENSIONS])
     expect(model.switches.find((one) => one.dimension === 'mode')).toMatchObject({
@@ -1294,7 +1312,7 @@ describe('the by-mode breakdown', () => {
     expect(model.notes).toEqual([])
     // Both rows survive the read: the unreadable one is a row of the document,
     // and dropping it would hide the run the CLI counted.
-    expect(model.rows.map((row) => row.key)).toEqual(['pro', 'none'])
+    expect(drawnRows(model).map((row) => row.key)).toEqual(['pro', 'none'])
 
     const none = rowFor(model, 'none')
     expect(none.unreadable).toBe(true)
@@ -1362,7 +1380,7 @@ describe('the by-mode breakdown', () => {
     // saying why, under rows that all carried one, and the false title "the
     // document has no model_micros" for a key that is present and null.
     const model = buildSpendModel(MODE_ALL_UNREADABLE_REPORT, BUDGET)
-    expect(model.rows.map((row) => row.key)).toEqual(['none'])
+    expect(drawnRows(model).map((row) => row.key)).toEqual(['none'])
     expect(rowFor(model, 'none').unreadable).toBe(true)
     expect(model.totals.unreadable).toBe(true)
     // The total counted both runs and measured nothing.
@@ -1399,7 +1417,7 @@ describe('the by-mode breakdown', () => {
     const model = buildSpendModel(report, BUDGET)
     expect(model.dimensionKnown).toBe(true)
     expect(model.notes).toEqual([])
-    expect(model.rows.map((row) => row.key)).toEqual(['pro', 'none'])
+    expect(drawnRows(model).map((row) => row.key)).toEqual(['pro', 'none'])
     expect(rowFor(model, 'pro').model.value).toBe(1.5)
     // The unknown key does not disturb the unreadable read either.
     expect(rowFor(model, 'none').unreadable).toBe(true)
@@ -2552,7 +2570,7 @@ describe('renderSpend', () => {
     expect(texts(row, 'spend-partial')).toEqual([PARTIAL_MARKER])
   })
 
-  it('draws the six headings and one row per period, the gap day included', () => {
+  it('draws the eight headings and one row per period, the gap day included', () => {
     const tree = renderSpend(factory, modelOf(), 'light')
     const head = one(tree, 'spend-table-head')
     expect(texts(head, 'spend-th')).toEqual([
@@ -2562,6 +2580,8 @@ describe('renderSpend', () => {
       'compute (estimated)',
       'runs',
       'runtime',
+      'tokens in',
+      'tokens out',
     ])
     expect(all(tree, 'spend-row').map((row) => row.getAttribute('data-key'))).toEqual([
       '2026-10-12',
@@ -2571,6 +2591,61 @@ describe('renderSpend', () => {
     ])
     expect(texts(rowDrawn(tree, '2026-10-13'), 'spend-runs')).toEqual(['1'])
     expect(texts(rowDrawn(tree, '2026-10-13'), 'spend-run-hours')).toEqual([UNAVAILABLE_MARK])
+  })
+
+  it('gives every row the table\'s own width, the gap day\'s one cell included', () => {
+    // A row with fewer columns than the headings would put the figures after it
+    // under the wrong word, and the gap row is the one that could: its money is
+    // **one** cell across the money columns. What is asserted is the width the
+    // headings add up to and the one span that makes the gap row add up to it
+    // -- a span of two or of four would leave the row a column short or over.
+    const tree = renderSpend(factory, modelOf(), 'light')
+    const headings = texts(one(tree, 'spend-table-head'), 'spend-th')
+    const cells = (row: FakeScreen): readonly FakeScreen[] =>
+      row.childNodes().filter((child) => child.tag === 'td')
+    const width = (row: FakeScreen): number =>
+      cells(row).reduce((sum, cell) => sum + Number(cell.getAttribute('colspan') ?? '1'), 0)
+    for (const row of all(tree, 'spend-row')) {
+      expect(width(row), `the row for ${row.getAttribute('data-key') ?? ''}`).toBe(headings.length)
+    }
+    // The gap's own span, exactly: the three money columns, and the counts that
+    // follow it are cells like any other row's.
+    const gap = rowDrawn(tree, '2026-10-14')
+    expect(cells(gap).map((cell) => cell.getAttribute('colspan'))).toEqual([null, '3', null, null, null, null])
+    // `spend-num` is the shared numeric class every figure cell carries, so
+    // what is asserted here is the column hook under it.
+    const hooks = (cell: FakeScreen): readonly string[] =>
+      cell.classes.filter((name) => name !== 'spend-num')
+    expect(cells(gap).map(hooks)).toEqual([
+      ['spend-key'],
+      ['spend-gap-cell'],
+      ['spend-runs'],
+      ['spend-run-hours'],
+      ['spend-tokens-in'],
+      ['spend-tokens-out'],
+    ])
+  })
+
+  it('draws the two token columns, and n/a with the console\'s reason for a document that tracks none', () => {
+    // The token counts are the rest of what a period's record carries, and the
+    // table draws the columns for every row: a breakdown the document does not
+    // track is `n/a` with the reason behind it, because a blank cell reads as a
+    // zero and "this report does not count tokens" is not "this model used
+    // none". The 12th's row of the day report tracks none at all.
+    const model = buildSpendModel(MODEL_REPORT, BUDGET)
+    const tree = renderSpend(factory, model, 'light')
+    const tracked = rowDrawn(tree, 'claude-sonnet-5')
+    expect(texts(tracked, 'spend-tokens-in')).toEqual(['120,000'])
+    expect(texts(tracked, 'spend-tokens-out')).toEqual(['8,000'])
+    const untracked = rowDrawn(tree, 'claude-opus-5')
+    expect(texts(untracked, 'spend-tokens-in')).toEqual([UNAVAILABLE_MARK])
+    expect(texts(untracked, 'spend-tokens-out')).toEqual([UNAVAILABLE_MARK])
+    expect(one(untracked, 'spend-tokens-in').getAttribute('title')).toBe('the document does not track tokens for this period')
+    // And a day the history does not hold draws the em dash every other count
+    // of that row draws, not a second sentence about tokens.
+    const gap = rowDrawn(renderSpend(factory, modelOf(), 'light'), '2026-10-14')
+    expect(texts(gap, 'spend-tokens-in')).toEqual([GAP_MARK])
+    expect(texts(gap, 'spend-tokens-out')).toEqual([GAP_MARK])
   })
 
   it('draws no bar for an n/a account, and writes its n/a at the bar\'s own foot', () => {

@@ -50,6 +50,7 @@ import {
   renderSpend,
   spendArguments,
 } from '../../src/renderer/screens/spend'
+import { drawnRows } from '../support/spend'
 import type {
   PeopleReader,
   ScreenElement,
@@ -466,9 +467,13 @@ describe('the spend controls', () => {
       '2026-10-09',
       '2026-10-10',
     ])
-    // The four missing days break the line in two, and no point of them is a
-    // figure.
-    expect(billed?.segments).toBe(2)
+    // The four missing days draw no bar at all, and no point of them is a
+    // figure: the group the chart draws there is a gap.
+    for (const day of ['2026-10-07', '2026-10-08', '2026-10-09', '2026-10-10']) {
+      const group = outcome.model.chart.groups.find((one) => one.key === day)
+      expect(group?.gap).toBe(true)
+      expect(group?.bars.every((bar) => bar.share.value === null)).toBe(true)
+    }
     for (const point of billed?.points ?? []) {
       if (point.reading.state !== 'gap') continue
       expect(point.reading.value).toBeNull()
@@ -514,7 +519,7 @@ describe('the spend controls', () => {
     expect(off.args['by']).toBe('day')
     expect(off.model.persons).toEqual({ enabled: false, withheld: false })
     // No row of the screen is a person, and no address is anywhere on it.
-    expect(off.model.rows.map((row) => row.key)).not.toContain('ada@example.com')
+    expect(drawnRows(off.model).map((row) => row.key)).not.toContain('ada@example.com')
     expect(reportSpawns(console.logPath).map((line) => flagsOf(line.argv)['--by'])).toEqual(['day'])
     expect(JSON.stringify(reportSpawns(console.logPath))).not.toContain('person')
 
@@ -524,7 +529,7 @@ describe('the spend controls', () => {
     const on = await read(console, personView(SPEND_DEFAULT_CONTROLS, true))
     expect(on.args).toEqual({ by: 'person', since: '30d' })
     expect(on.model.persons).toEqual({ enabled: true, withheld: false })
-    expect(on.model.rows.map((row) => row.key)).toEqual(['ada@example.com', 'unknown'])
+    expect(drawnRows(on.model).map((row) => row.key)).toEqual(['ada@example.com', 'unknown'])
 
     const [, second] = reportSpawns(console.logPath)
     const [first] = reportSpawns(console.logPath)
@@ -650,7 +655,7 @@ describe('the spend controls', () => {
       const outcome = await readWith(console, controls)
       // The report is the screen's subject: its figures are drawn, and the
       // by-person panel is the one that has no document.
-      expect(outcome.model.rows.length, value).toBeGreaterThan(0)
+      expect(drawnRows(outcome.model).length, value).toBeGreaterThan(0)
       expect(outcome.model.people?.available, value).toBe(false)
       const reason = outcome.model.people?.reason ?? ''
       expect(reason.length, value).toBeGreaterThan(0)

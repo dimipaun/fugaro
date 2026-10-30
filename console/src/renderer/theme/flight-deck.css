@@ -1987,6 +1987,28 @@ rect.spend-bar[data-account='compute'] {
   vector-effect: non-scaling-stroke;
 }
 
+/* A day with no final document yet is drawn **hollow** (design section 6.1 rule
+ * 1: "a partial day is hollow"), so today's bar is never a final day's bar at a
+ * glance: the ground shows through it and the account's own edge is what is left.
+ * The notional hatch goes with the fill -- a hollow mark is one outline, not an
+ * outline with a texture in it -- and compute is drawn hollow already, so the
+ * shared rule is the whole of its treatment and the dash that says `estimated`
+ * stays. What says `partial` for every account, in words rather than in tone, is
+ * the `(partial)` marker on the group's own key below the bars. */
+rect.spend-bar[data-hollow='true'] {
+  fill: none;
+}
+
+rect.spend-bar[data-account='model'][data-hollow='true'] {
+  stroke: var(--billed);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+rect.spend-bar[data-account='notional'][data-hollow='true'] {
+  mask-image: none;
+}
+
 /* A day the history does not hold is one hatched column and the words `no
  * record`: a bar of no height would read as a measurement of zero, and a gap is
  * not a zero. */
@@ -2110,7 +2132,9 @@ td.spend-model,
 td.spend-notional,
 td.spend-compute,
 td.spend-runs,
-td.spend-run-hours {
+td.spend-run-hours,
+td.spend-tokens-in,
+td.spend-tokens-out {
   text-align: right;
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;

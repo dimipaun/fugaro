@@ -8,11 +8,11 @@
 // section 5.1 rule 6's thirteenth argv).
 //
 // The file has two halves, separated the way Task 2.1's Live screen separates
-// them: `buildSpendModel` turns the documents into rows, three series, a caps
-// panel and the by-person view, and touches no element at all, and `renderSpend`
-// walks that model through Task 2.0's writers. The part with the arithmetic in
-// it is testable in plain Node, which is where a wrong dollar figure is cheapest
-// to catch.
+// them: `buildSpendModel` turns the documents into rows, the three series behind
+// the one grouped chart, a caps panel and the by-person view, and touches no
+// element at all, and `renderSpend` walks that model through Task 2.0's writers.
+// The part with the arithmetic in it is testable in plain Node, which is where a
+// wrong dollar figure is cheapest to catch.
 //
 // **Why this file reads its own two documents.** `schema.ts` (Task 2.0) admits
 // the *feed*'s two shapes and refuses everything else, which is exactly right
@@ -48,11 +48,11 @@
 // never capped) and compute (an estimate by design) are three accounts, and a
 // screen that adds them is drawing a number nobody can be billed for. So the
 // model carries them as **three readings** (`model`, `notional`, `compute`),
-// each in its own availability state, and as **three series with three axes**
-// -- `SPEND_ACCOUNTS` is that list, the document's own `totals` line is read the
-// same way rather than recomputed, and there is no function here that adds one
-// account to another. `spend.test.ts` holds it: a mutation that sums them fails
-// a named test rather than a review.
+// each in its own availability state, and as **three series of bars grouped side
+// by side on one axis** -- `SPEND_ACCOUNTS` is that list, the document's own
+// `totals` line is read the same way rather than recomputed, and there is no
+// function here that adds one account to another. `spend.test.ts` holds it: a
+// mutation that sums them fails a named test rather than a review.
 //
 // **A partial day is hollow; a day the history does not hold is a gap.** The
 // document's `partial` is the design's `(partial)` marker -- the day has no
@@ -153,10 +153,9 @@ import {
   notional,
   plottable,
   readNumber,
-  seriesSegments,
   unavailable,
 } from '../../shared/availability'
-import type { Reading, Sample } from '../../shared/availability'
+import type { Reading } from '../../shared/availability'
 import type { KillView } from '../../shared/schema'
 import { sanitizeRefusal } from '../../shared/sanitize'
 import type { TextClass } from '../../shared/sanitize'
@@ -375,29 +374,22 @@ export interface SpendPoint {
   readonly key: string
   /** the account's value at this point */
   readonly reading: Reading
-  /** the height the bar is drawn at, as a share of the series' own peak */
-  readonly height: Reading
   readonly partial: boolean
   readonly hollow: boolean
 }
 
 /**
- * SpendSeries is one account's chart: the points, how many segments a line is
- * drawn in (a point that is not plottable **breaks** the series --
- * `seriesSegments`), the account's own peak as the axis top, and the console's
- * sentence for a series with nothing in it.
- *
- * The peak is per account and never shared: a notional bar scaled against the
- * billed model's peak would be a comparison the design's first rule forbids, and
- * three accounts on three axes is the same statement as three readings.
+ * SpendSeries is one account's series: the points, and the console's sentence
+ * for a series with nothing in it. It is one of the **three** the chart groups
+ * by key, and it carries no scale of its own -- the bars are drawn against
+ * `SpendChart.axis`, the one axis the three accounts share, because three
+ * accounts on three scales would be three charts pretending to be one.
  */
 export interface SpendSeries {
   readonly account: SpendAccount
   /** the console's own heading for the account */
   readonly title: string
   readonly points: readonly SpendPoint[]
-  readonly segments: number
-  readonly peak: Reading
   /** why there is nothing to draw, or `null` when there is */
   readonly empty: string | null
 }
@@ -448,7 +440,9 @@ export interface SpendGroup {
 }
 
 /** GAP_CELL_SPAN is how many columns the gap row's one cell covers: the three
- * money columns, whose figures there is no document to carry. */
+ * money columns, whose figures there is no document to carry. The counts that
+ * follow them -- the runs, the runtime and the two token columns -- are drawn as
+ * the em dash every other gap figure of that row is. */
 const GAP_CELL_SPAN = String(SPEND_ACCOUNTS.length)
 
 /**
@@ -779,7 +773,6 @@ export interface SpendModel {
   readonly dimension: SpendDimension | null
   readonly dimensionKnown: boolean
   readonly switches: readonly SpendSwitchEntry[]
-  readonly rows: readonly SpendRow[]
   readonly series: readonly SpendSeries[]
   readonly chart: SpendChart
   readonly totals: SpendTotals
@@ -1380,31 +1373,35 @@ function plotted(row: SpendRow, account: SpendAccount): Plotted {
  * names no figure, because the fact it states is the console's: it has no
  * document for this day -- the day is outside the window `report` read, or it
  * was never written -- which is a different thing from a day that spent
- * nothing. It is the reading's reason, and `pointAt` carries the same sentence
- * into the point's height, because the height of a gap is the same fact.
+ * nothing. It is the reading's reason, and `barOf` carries the same sentence
+ * into the bar's share, because the height of a gap is the same fact.
  */
 const NO_DOCUMENT_DAY =
   'the history holds no document for this day: it is outside the retained window, or it was never written'
 
+/** NO_TOKENS_REASON is the console's sentence for a period whose document tracks
+ * no tokens at all: the token breakdown is `omitempty` on the wire, so the
+ * object is absent rather than zeroed, and `n/a` with this sentence is what says
+ * so. It is not the sentence a period with no document gets: a period the
+ * history does not hold is a gap. */
+const NO_TOKENS_REASON = 'the document does not track tokens for this period'
+
 /** dayGap is one day inside the range that the history does not hold, as a
  * value for the series: the reading is a **gap** in both senses the screen
- * draws -- the em dash where a figure would be, and the break in the line --
- * and `pointAt` gives it that state again as its height. */
+ * draws -- the em dash where a figure would be, and the hatched column the
+ * chart stands in the day's place -- and `barOf` gives it that state again as
+ * the bar's share. */
 function dayGap(day: string): Plotted {
   return { at: day, key: day, reading: gap(NO_DOCUMENT_DAY), partial: false }
 }
 
-/** pointAt is one value once the axis has a top: the reading, whether the row
- * it came from is partial, and its height as a share of the series' own peak. */
-function pointAt(value: Plotted, peak: number): SpendPoint {
+/** pointAt is one value as a point of its account's series: the reading and
+ * whether the row it came from is partial. A point carries **no height**: the
+ * bars are sized against the chart's one shared axis (`barOf`), because the
+ * height of a bar is a fact about the chart rather than about the account. */
+function pointAt(value: Plotted): SpendPoint {
   const { at, key, reading, partial } = value
-  if (reading.value === null) {
-    // A point that is not plottable is a gap: the mark, no height, and the
-    // reason travels with it so the tooltip says which fact it is.
-    return { at, key, reading, height: gap(reading.because), partial, hollow: partial }
-  }
-  const share = peak === 0 ? 0 : (reading.value / peak) * 100
-  return { at, key, reading, height: measured(share), partial, hollow: partial }
+  return { at, key, reading, partial, hollow: partial }
 }
 
 /**
@@ -1443,34 +1440,23 @@ export function buildSeries(
     // position IS the date, so a row before `since` appended after the last day
     // would sit right of `until`, and a row placed by its date would stretch
     // the axis past the range the document says it covers. The row is not
-    // hidden -- it stays in the list below and `buildSpendModel` says how many
-    // the chart left out (`outsideRange`).
+    // hidden -- it stays in the table below and `buildSpendModel` says how many
+    // the chart left out (they are `SpendChart.outside`).
   }
 
-  const measuredValues: number[] = []
-  for (const value of values) {
-    if (plottable(value.reading) && value.reading.value !== null) measuredValues.push(value.reading.value)
-  }
-  const peakValue = measuredValues.length === 0 ? 0 : Math.max(...measuredValues)
-  const points = values.map((value) => pointAt(value, peakValue))
-  const peak =
-    measuredValues.length === 0
-      ? unavailable('this account has no value in the range the document covers')
-      : withAccountState(peakValue, account)
-  const samples: Sample[] = points.map((point) => ({ at: point.at, reading: point.reading }))
+  const points = values.map((value) => pointAt(value))
   return {
     account,
     title: ACCOUNT_TITLES[account],
     points,
-    segments: seriesSegments(samples).length,
-    peak,
     empty: points.length === 0 ? 'the document holds no row for this account' : null,
   }
 }
 
-/** withAccountState is `peakValue` in the account's own state, so the axis top
- * of the notional chart is notional and the one of the compute chart is
- * estimated -- three accounts, three axes, never one shared scale. */
+/** withAccountState is a bar height or an axis top in the state of the account
+ * it was drawn for, so the axis top drawn by a notional figure is notional and
+ * the one drawn by an estimate is estimated -- one shared scale, and the state
+ * of the account that set it. */
 function withAccountState(value: number, account: SpendAccount): Reading {
   switch (account) {
     case 'model':
@@ -1504,7 +1490,8 @@ function chartAxis(series: readonly SpendSeries[]): Reading {
 
 /** barOf is one value as a bar on the chart's shared axis. A value the document
  * does not carry draws no bar: its share is a gap carrying the value's own
- * reason, which is the rule `pointAt` follows for a height. */
+ * reason, which is what the drawing reads to leave the bar out and write the
+ * value's `n/a` at its foot. */
 function barOf(
   value: { readonly key: string; readonly reading: Reading; readonly partial: boolean },
   account: SpendAccount,
@@ -1731,10 +1718,10 @@ export function keyClass(dimension: SpendDimension | null, key: string): TextCla
  * buildSpendModel is the two documents as the screen's data.
  *
  * The order of the work is the order of the design's sentences: the range and
- * the breakdown, then the rows, then the three series (never one), then the
- * totals the document itself reports, then the caps panel with the binding
- * scope named, and the person view decided last -- because it is the one thing
- * that removes rows from everything above it.
+ * the breakdown, then the rows, then the three series the one grouped chart
+ * draws (never one), then the totals the document itself reports, then the caps
+ * panel with the binding scope named, and the person view decided last --
+ * because it is the one thing that removes rows from everything above it.
  */
 export function buildSpendModel(
   report: JSONDoc,
@@ -1764,7 +1751,7 @@ export function buildSpendModel(
   if (!rowsReadable) {
     notes.push('the document carries no rows array, so this screen has no figures to draw')
   } else if (hasGapDay(drawn, days)) {
-    // The legend for the gap points: a reader who sees a broken line is owed
+    // The legend for the chart's gap columns: a reader who sees one is owed
     // the sentence that says what a missing day means. It is drawn when a day
     // the range covers has no row -- not merely when there are fewer rows than
     // days, because a row outside the range is a row, not a gap.
@@ -1772,7 +1759,7 @@ export function buildSpendModel(
   }
   const stray = chart.outside.length
   if (stray > 0) {
-    notes.push(`${stray} row(s) outside the range the document covers are listed below and not drawn in the charts: a day axis places a point by its date`)
+    notes.push(`${stray} row(s) outside the range the document covers are listed below and not drawn in the chart: a day axis places a bar by its date`)
   }
   if (dimension === null) {
     notes.push('the document groups by a breakdown this console does not know, so the switch below cannot say which of its eight words it is')
@@ -1792,7 +1779,6 @@ export function buildSpendModel(
       current: entry === dimension,
       note: entry === 'person' && !personsEnabled ? PERSON_OFF_NOTE : null,
     })),
-    rows: drawn,
     series,
     chart,
     totals: totalsOf(report['totals']),
@@ -1828,8 +1814,6 @@ function withheldSeries(account: SpendAccount): SpendSeries {
     account,
     title: ACCOUNT_TITLES[account],
     points: [],
-    segments: 0,
-    peak: unavailable(PERSON_OFF_NOTE),
     empty: PERSON_OFF_NOTE,
   }
 }
@@ -2709,10 +2693,23 @@ function moneyCells(parent: ScreenElement, factory: ScreenFactory, group: SpendG
   numberCell(parent, factory, 'td', readingOf(group, 'compute'), 'usd', 'spend-compute')
 }
 
+/** tokenReading is one of a period's two token counts. A day the history does
+ * not hold draws the em dash its runs and runtime draw; a document that tracks
+ * no tokens at all (`TokensTracked`; `tokens` is `omitempty` on the wire, so the
+ * object is absent entirely) draws `n/a` with the console's own reason, because
+ * "this document does not count tokens" and "this period used none" are two
+ * different facts and a blank cell would read as the second. */
+function tokenReading(group: SpendGroup, which: 'in' | 'out'): Reading {
+  const tokens = group.row?.tokens ?? null
+  if (group.row === null) return gap(NO_DOCUMENT_DAY)
+  if (tokens === null) return unavailable(NO_TOKENS_REASON)
+  return which === 'in' ? tokens.in : tokens.out
+}
+
 /** periodRow draws one period of the table: its key (with the one `(partial)`
- * and the unreadable marker the design asks for), the three accounts, the runs
- * and the runtime -- or one cell across the money columns for a day the history
- * does not hold. */
+ * and the unreadable marker the design asks for), the three accounts, the runs,
+ * the runtime and the two token counts -- or one cell across the money columns
+ * for a day the history does not hold. */
 function periodRow(factory: ScreenFactory, model: SpendModel, group: SpendGroup): ScreenElement {
   const element = make(factory, 'tr', 'spend-row')
   element.setAttribute('data-gap', group.gap ? 'true' : 'false')
@@ -2732,6 +2729,8 @@ function periodRow(factory: ScreenFactory, model: SpendModel, group: SpendGroup)
   }
   numberCell(element, factory, 'td', group.row?.runs ?? gap(NO_DOCUMENT_DAY), 'count', 'spend-runs')
   numberCell(element, factory, 'td', group.row?.runHours ?? gap(NO_DOCUMENT_DAY), 'hours', 'spend-run-hours')
+  numberCell(element, factory, 'td', tokenReading(group, 'in'), 'count', 'spend-tokens-in')
+  numberCell(element, factory, 'td', tokenReading(group, 'out'), 'count', 'spend-tokens-out')
   return element
 }
 
@@ -2740,8 +2739,11 @@ function periodRow(factory: ScreenFactory, model: SpendModel, group: SpendGroup)
  * then the rows the range does not cover -- the chart leaves those out and the
  * note above says how many there are.
  *
- * The runs columns are not money and are never summed with it; a figure the
- * document does not carry is the reading's own `n/a`, never a `$0.00`.
+ * The runs, runtime and token columns are not money and are never summed with
+ * it; a figure the document does not carry is the reading's own `n/a`, never a
+ * `$0.00`. The token counts are drawn even when a document tracks none, because
+ * a table's columns are its rows' shape: the cell says `n/a` with the console's
+ * reason rather than leaving a hole a reader would take for a zero.
  */
 function spendTable(factory: ScreenFactory, model: SpendModel): ScreenElement {
   const element = make(factory, 'table', 'spend-table')
@@ -2753,6 +2755,8 @@ function spendTable(factory: ScreenFactory, model: SpendModel): ScreenElement {
   literal(cell(headRow, factory, 'th', 'spend-th'), 'compute (estimated)')
   literal(cell(headRow, factory, 'th', 'spend-th'), 'runs')
   literal(cell(headRow, factory, 'th', 'spend-th'), 'runtime')
+  literal(cell(headRow, factory, 'th', 'spend-th'), 'tokens in')
+  literal(cell(headRow, factory, 'th', 'spend-th'), 'tokens out')
   const body = cell(element, factory, 'tbody', 'spend-table-body')
   for (const group of model.chart.groups) body.append(periodRow(factory, model, group))
   for (const group of model.chart.outside) body.append(periodRow(factory, model, group))

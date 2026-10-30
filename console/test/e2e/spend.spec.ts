@@ -805,8 +805,10 @@ test.describe('the Spend screen', () => {
     // 12th's billed $1.25 -- so every bar is a share of one scale and no axis
     // and no bar is ever the sum of two accounts.
     expect(drawn.axisTops).toEqual(['$1.25'])
-    // The three accounts of the 12th, then the notional bar of the 15th, then
-    // its billed bar: each at its own value's share of $1.25.
+    // One `g` per account, so the bars arrive a whole account at a time: the
+    // model's for the 12th, the 13th and the 15th, then the notional's for the
+    // 12th and the 15th, then compute's for the 12th -- each at its own value's
+    // share of $1.25, and the 14th absent from all three because it is a gap.
     expect(drawn.barHeights).toEqual(['100.0%', '72.0%', '24.0%', '32.0%', '8.0%', '9.6%'])
     // The day with no document draws **one** hatched column, and the table says
     // so in its own words: a gap is a gap and never three zeros.

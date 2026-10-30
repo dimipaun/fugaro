@@ -416,7 +416,7 @@ warnings → the caps panel.
 | Controls | `spend-controls`, `spend-knob`, `spend-picker`, `spend-item`, `spend-window`, `spend-switch`, `spend-dim`, `spend-dim-unknown`, `spend-persons`, `spend-persons-word`, `spend-persons-state`, `spend-persons-note` |
 | Totals | `spend-totals`, `spend-total`, `spend-totals-word`, `spend-total-model`, `spend-total-notional`, `spend-total-compute`, `spend-total-runs`, `spend-total-run-hours`, `spend-totals-note`, `spend-totals-partial`, `spend-totals-rule` |
 | Chart | `spend-chart`, `spend-axis`, `spend-axis-word`, `spend-axis-top`, `spend-chart-svg`, `spend-gridline`, `spend-axis-line`, `spend-series`, `spend-bar`, `spend-gaps`, `spend-gap-column`, `spend-chart-keys`, `spend-chart-key`, `spend-chart-gap`, `spend-chart-na`, `spend-legend`, `spend-legend-key`, `spend-swatch`, `spend-legend-word`, `spend-legend-empty` |
-| Table | `spend-table`, `spend-table-head`, `spend-table-row`, `spend-th`, `spend-table-body`, `spend-row`, `spend-key`, `spend-gap-cell`, `spend-model`, `spend-notional`, `spend-compute`, `spend-runs`, `spend-run-hours`, `spend-partial`, `spend-unreadable`, `spend-num` |
+| Table | `spend-table`, `spend-table-head`, `spend-table-row`, `spend-th`, `spend-table-body`, `spend-row`, `spend-key`, `spend-gap-cell`, `spend-model`, `spend-notional`, `spend-compute`, `spend-runs`, `spend-run-hours`, `spend-tokens-in`, `spend-tokens-out`, `spend-partial`, `spend-unreadable`, `spend-num` |
 | Caps | `spend-caps`, `spend-caps-project`, `spend-caps-day`, `spend-caps-mode`, `spend-scope`, `spend-cap-limit`, `spend-cap-word`, `spend-cap-reserve`, `spend-cap-global`, `spend-cap-counted`, `spend-cap-daily`, `spend-cap-per-run`, `spend-cap-notional`, `spend-cap-compute`, `spend-cap-headroom`, `spend-cap-defaults`, `spend-cap-repos`, `spend-cap-repo`, `spend-cap-repo-name`, `spend-cap-spent`, `spend-kill`, `spend-kill-word`, `spend-kill-by`, `spend-kill-at`, `spend-kill-reason` |
 | Notes | `spend-note`, `spend-warning` |
 | By person | `spend-people`, `spend-people-title`, `spend-people-view`, `spend-people-you`, `spend-people-operator`, `spend-people-since`, `spend-people-until`, `spend-people-bound`, `spend-people-max-runs`, `spend-people-reason`, `spend-people-note`, `spend-people-rows`, `spend-people-totals`, `spend-people-unlaunched-word`, `spend-people-unlaunched`, `spend-person`, `spend-person-user`, `spend-person-total`, `spend-person-currency`, `spend-person-runs`, `spend-person-succeeded`, `spend-person-failed`, `spend-person-halted`, `spend-person-infra`, `spend-person-other`, `spend-person-no-record`, `spend-person-counted`, `spend-person-notional`, `spend-person-counted-runs`, `spend-person-average`, `spend-person-note` |
@@ -428,10 +428,15 @@ warnings → the caps panel.
 the **`button.spend-window` and `button.spend-dim`** that were pressed, and
 `data-enabled` on the `button.spend-persons` and on a `span.spend-dim` this console
 may not use; `data-state`
-(`measured|notional|estimated|unavailable|gap`), `data-height`, `data-account`
+(`measured|notional|estimated`), `data-height`, `data-account`
 (`model|notional|compute`) on the **chart's bars** (`rect.spend-bar`, keyed by the
-`g.spend-series` they hang in) and on the legend's `span.spend-swatch` — a `tr.spend-row`
-and a `li.spend-chart-key` carry **none of those three**, so a `[data-state]` or
+`g.spend-series` they hang in) and on the legend's `span.spend-swatch` — a drawn bar
+only ever carries one of those three states, because a value the document does not
+carry draws no bar at all (`unavailable` and `gap` are the states of a *value*, and a
+`[data-state='unavailable']` or `[data-state='gap']` rule on `rect.spend-bar` selects
+nothing; the `n/a` of such a value is a label at the bar's foot, `span.spend-chart-na`)
+— a `tr.spend-row` and a `li.spend-chart-key` carry **none of those three**, so a
+`[data-state]` or
 `[data-height]` rule is a rule about the chart;
 `data-partial`, `data-hollow`, `data-unreadable`, `data-key` on **both** the chart's
 `li.spend-chart-key` and the table's `tr.spend-row` (`data-partial` also on
@@ -470,7 +475,9 @@ reading in the table, a label in `ol.spend-chart-keys` or a word in `ul.spend-le
 
 States: killed (the kill banner, `data-killed="true"`); partial/hollow
 (`data-partial="true"` / `data-hollow="true"` on the key, the row and the bar, plus the
-`(partial)` marker text in `span.spend-partial`); unreadable (`data-unreadable="true"` on a
+`(partial)` marker text in `span.spend-partial` — the bar itself is drawn **hollow**, the
+ground showing through it and its own account's edge left, so today's bar is never a final
+day's bar at a glance and never a gap either); unreadable (`data-unreadable="true"` on a
 `tr.spend-row` or on `div.spend-totals` plus the marker text `no readable record` in
 `span.spend-unreadable`;
 the money cells are `n/a`, never `$0.00`, and the row keeps its `runs` — a by-mode row is
