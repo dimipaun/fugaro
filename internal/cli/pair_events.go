@@ -62,6 +62,7 @@ const (
 	pairRefusedRequestKey         = "request_key_invalid"
 	pairRefusedCodeMissing        = "code_not_typed"
 	pairRefusedCodeMismatch       = "fingerprint_mismatch"
+	pairRefusedInterrupted        = "interrupted" // the operator stopped the command
 )
 
 // pairEvent is one line of the stream. Every event carries the version, its

@@ -95,7 +95,7 @@ func newPairCmd() *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.StringVar(&o.name, "name", "", "the device's name, for pair ls and the device node's own field")
-	f.StringVar(&o.email, "email", "", "the administered email for the device (default: your own verified address); it must be an address this installation may administer")
+	f.StringVar(&o.email, "email", "", "the administered email for the device (default, and normally the value: your own verified address, which is the only address this command may administer)")
 	f.StringVar(&o.role, "role", "", "the device's role: viewer, operator or admin (default: your own role, inherited; --role may only lower it)")
 	f.DurationVar(&o.timeout, "timeout", pairDefaultTimeout, "how long to wait for the phone's key and the typed code (refused above "+pairMaxTimeout.String()+")")
 	f.BoolVar(&o.asJSON, "json", false, "stream the pairing as newline-delimited JSON events on stdout")
@@ -183,7 +183,12 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 	// refused rather than repaired.
 	own, err := authenticatedUser(ctx, lc)
 	if err != nil {
-		return pairRefuse(ev, o, pairRefusedEmail, err)
+		// The check reads the address from the identity endpoint, so it can
+		// fail remote as well as by answering "not verified": §4.6 puts an
+		// endpoint that could not be reached in the exit-2 row, and an
+		// operator told their address is unverified when the network was the
+		// answer would go and fix the wrong thing.
+		return pairRefuse(ev, o, pairRefusalCode(err, pairRefusedEmail), err)
 	}
 	email := strings.TrimSpace(o.email)
 	if email == "" {
@@ -247,11 +252,14 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 
 	var request pairRequestNode
 	if request, err = pairWaitForKey(waitCtx, lc, db, uid, o.timeout); err != nil {
-		code := pairRefusedNoKey
-		if !errors.Is(err, errPairNoKey) {
-			code = pairRefusalCode(err, pairRefusedUnreachable)
+		switch {
+		case errors.Is(err, errPairNoKey):
+			return pairRefuse(ev, o, pairRefusedNoKey, err)
+		case errors.Is(err, errPairInterrupted):
+			return pairRefuse(ev, o, pairRefusedInterrupted, err)
+		default:
+			return pairRefuse(ev, o, pairRefusalCode(err, pairRefusedUnreachable), err)
 		}
-		return pairRefuse(ev, o, code, err)
 	}
 	// The fingerprint comes from the bytes the phone's key decodes to, never
 	// from the text the phone spelled them with (M3, §2 (e)): the rules admit
@@ -273,6 +281,9 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 	}
 	typed, err := pairReadCode(waitCtx, cmd.InOrStdin())
 	if err != nil {
+		if errors.Is(err, errPairInterrupted) {
+			return pairRefuse(ev, o, pairRefusedInterrupted, err)
+		}
 		return pairRefuse(ev, o, pairRefusedCodeMissing, err)
 	}
 	if !token.CompareFingerprint(typed, fingerprint) {
@@ -352,6 +363,12 @@ const pairStateCompleted = "completed"
 // carry different wire codes.
 var errPairNoKey = errors.New("pairing: the phone wrote no key")
 
+// errPairInterrupted is the operator's own ending: cmd/fugaro/main.go cancels
+// the root context on the first signal and the wait stops where it stood. It
+// is not the phone's failure and not an outage, and a console told either
+// would send its operator to fix something nobody did.
+var errPairInterrupted = errors.New("pairing: interrupted")
+
 // pairWaitForKey waits for the phone's request node (§7.1 step 4). The node is
 // read with database admin, because the template denies every client token the
 // read, and the loop re-reads rather than subscribing: the wait is bounded by
@@ -365,18 +382,36 @@ func pairWaitForKey(ctx context.Context, lc *localcfg.Config, db *rtdb.Client, u
 	for {
 		var request pairRequestNode
 		found, err := db.Get(ctx, path, &request)
-		if err != nil {
+		switch {
+		case err != nil && ctx.Err() != nil:
+			// The deadline this wait was given can cancel a read already in
+			// flight, and the client answers with the context's error; dbErr
+			// reads that as an outage, which would tell a console the phone's
+			// silence was the database's (exit 2, the one path the phone
+			// never scanning takes).
+			return pairRequestNode{}, pairWaitEnded(ctx, path, lc, timeout)
+		case err != nil:
 			return pairRequestNode{}, dbErr(lc, err, false)
-		}
-		if found && request.Key != "" {
+		case found && request.Key != "":
 			return request, nil
 		}
 		select {
 		case <-ctx.Done():
-			return pairRequestNode{}, fmt.Errorf("%w at %s within %s: nothing was written to %s, and the pairing token the phone was given dies with the wait; run fugaro pair again", errPairNoKey, path, timeout, lc.Name)
+			return pairRequestNode{}, pairWaitEnded(ctx, path, lc, timeout)
 		case <-tick.C:
 		}
 	}
+}
+
+// pairWaitEnded is the wait ending on its own terms rather than the phone's:
+// ctx's deadline is the --timeout running out, and any other cancellation is
+// the operator's interrupt. WithTimeout keeps the two apart, so the reason
+// says which one it was.
+func pairWaitEnded(ctx context.Context, path string, lc *localcfg.Config, timeout time.Duration) error {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return fmt.Errorf("%w at %s within %s: nothing was written to %s, and the pairing token the phone was given dies with the wait; run fugaro pair again", errPairNoKey, path, timeout, lc.Name)
+	}
+	return fmt.Errorf("%w while waiting for the phone's key at %s, so this pairing was abandoned by the operator rather than refused by it; run fugaro pair again", errPairInterrupted, path)
 }
 
 // errPairNoCode is the read's own failure: no line arrived before the wait ran
@@ -403,6 +438,11 @@ func pairReadCode(ctx context.Context, in io.Reader) (string, error) {
 	}()
 	select {
 	case <-ctx.Done():
+		// The same two endings the wait has: the deadline is an operator who
+		// walked away from the prompt, an interrupt is one who stopped it.
+		if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return "", fmt.Errorf("%w while the code the phone shows was being typed, so this pairing was abandoned by the operator rather than refused by it; run fugaro pair again", errPairInterrupted)
+		}
 		return "", fmt.Errorf("%w: the code the phone shows is read as one line on stdin, and no line arrived before the wait ran out", errPairNoCode)
 	case got := <-read:
 		if got.err != nil && !errors.Is(got.err, io.EOF) {

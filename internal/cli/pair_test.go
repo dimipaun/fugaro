@@ -106,6 +106,14 @@ func pairRun(t *testing.T, args ...string) (string, string, error) {
 // the command reads for step 5 (empty for a test that refuses before it).
 func pairRunIn(t *testing.T, stdin string, args ...string) (string, string, error) {
 	t.Helper()
+	return pairRunCtx(t, context.Background(), stdin, args...)
+}
+
+// pairRunCtx is pairRunIn under a caller's context, which is the only way a
+// test can be the operator who interrupts: the command's context is the one
+// main.go cancels on a signal.
+func pairRunCtx(t *testing.T, ctx context.Context, stdin string, args ...string) (string, string, error) {
+	t.Helper()
 	root := &cobra.Command{Use: "fugaro", SilenceUsage: true, SilenceErrors: true}
 	root.AddCommand(newPairCmd())
 	var out, errOut bytes.Buffer
@@ -113,7 +121,7 @@ func pairRunIn(t *testing.T, stdin string, args ...string) (string, string, erro
 	root.SetErr(&errOut)
 	root.SetIn(strings.NewReader(stdin))
 	root.SetArgs(append([]string{"pair"}, args...))
-	err := root.Execute()
+	err := root.ExecuteContext(ctx)
 	return out.String(), errOut.String(), err
 }
 
@@ -500,6 +508,226 @@ func (pairDownTransport) RoundTrip(*http.Request) (*http.Response, error) {
 	return nil, errors.New("the database is unreachable")
 }
 
+// TestPairWaitEndingsAreToldApart holds the two ways the wait can end on its
+// own to the events they are: the --timeout running out under a read already
+// in flight, which is the path the phone never scanning takes and the one
+// exit 1 the console documents, and the operator's own interrupt, which is
+// neither the phone's failure nor an outage. Both used to be reported as a
+// database that could not be reached (exit 2), and the interrupt as the
+// phone's silence.
+func TestPairWaitEndingsAreToldApart(t *testing.T) {
+	cases := []struct {
+		name      string
+		timeout   string
+		interrupt bool
+		code      string
+		reason    string
+	}{
+		{
+			name:    "the deadline cancels the read in flight",
+			timeout: "40ms",
+			code:    pairRefusedNoKey,
+			reason:  "nothing was written",
+		},
+		{
+			name:      "the operator interrupts the wait",
+			timeout:   "5s",
+			interrupt: true,
+			code:      pairRefusedInterrupted,
+			reason:    "abandoned by the operator",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newPairFixture(t, pairMe)
+			// The request node is held unanswered, so the read that is in
+			// flight is the one the wait's own ending cancels.
+			uid := pairFixedRand(t)
+			stamped, release := f.db.HoldNext("pairing/" + uid + "/request")
+			defer release()
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			type result struct {
+				out string
+				err error
+			}
+			done := make(chan result, 1)
+			go func() {
+				out, _, err := pairRunCtx(t, ctx, "", "--json", "--timeout", tc.timeout)
+				done <- result{out, err}
+			}()
+			select {
+			case <-stamped:
+			case <-time.After(30 * time.Second):
+				t.Fatal("the wait never reached the phone's request node")
+			}
+			if tc.interrupt {
+				cancel()
+			}
+			var got result
+			select {
+			case got = <-done:
+			case <-time.After(30 * time.Second):
+				t.Fatal("the command never returned")
+			}
+			if got.err == nil || ExitCode(got.err) != ExitUserError {
+				t.Fatalf("err = %v, want exit 1", got.err)
+			}
+			events := pairLines(t, got.out)
+			if len(events) != 3 || events[2].Event != pairEventRefused || events[2].Code != tc.code {
+				t.Fatalf("events = %v, want one refused with code %q", events, tc.code)
+			}
+			if !strings.Contains(events[2].Reason, tc.reason) {
+				t.Fatalf("the refusal does not say %q: %q", tc.reason, events[2].Reason)
+			}
+			// The phone wrote nothing here, so this is pairNoSideEffect's
+			// rule without its request-node half: no device node, no
+			// delivery, and the one signJwt call is the pairing token's.
+			if v := f.db.Value("config/admin/devices"); v != nil {
+				t.Fatalf("a refused pairing wrote the device allowlist: %v", v)
+			}
+			if v := f.db.Value("pairing/" + uid + "/delivery"); v != nil {
+				t.Fatalf("a refused pairing wrote a delivery: %v", v)
+			}
+			if n := len(f.iam.SignCalls()); n != 1 {
+				t.Fatalf("a refused pairing called signJwt %d times, want the pairing token's one call and no device token", n)
+			}
+		})
+	}
+}
+
+// TestPairInterruptWhileTypingIsNotThePhone: the typed code's wait is the same
+// --timeout, and an operator who stops it there is stopping it there — not a
+// code that was never typed.
+func TestPairInterruptWhileTypingIsNotThePhone(t *testing.T) {
+	f := newPairFixture(t, pairMe)
+	uid := pairFixedRand(t)
+	f.pairSeedRequest(uid, pairKey)
+
+	typing := &pairTyping{asked: make(chan struct{}), release: make(chan struct{})}
+	defer close(typing.release)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	root := &cobra.Command{Use: "fugaro", SilenceUsage: true, SilenceErrors: true}
+	root.AddCommand(newPairCmd())
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetIn(typing)
+	root.SetArgs([]string{"pair", "--json", "--timeout", "5s"})
+	done := make(chan error, 1)
+	go func() { done <- root.ExecuteContext(ctx) }()
+
+	// The phone's key is seeded, so the command reaches the code step at
+	// once and the read it is waiting on is the operator's; the interrupt
+	// arrives while that read is unanswered.
+	select {
+	case <-typing.asked:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the command never asked for the typed code")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil || ExitCode(err) != ExitUserError {
+			t.Fatalf("err = %v, want exit 1", err)
+		}
+		events := pairLines(t, out.String())
+		if len(events) != 4 || events[3].Code != pairRefusedInterrupted {
+			t.Fatalf("events = %v, want the code event and then %q", events, pairRefusedInterrupted)
+		}
+		if strings.Contains(events[3].Reason, "no line arrived") {
+			t.Fatalf("an interrupt was reported as a code that never arrived: %q", events[3].Reason)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the command never returned")
+	}
+	if v := f.db.Value("config/admin/devices"); v != nil {
+		t.Fatalf("an interrupted pairing wrote the device allowlist: %v", v)
+	}
+}
+
+// pairTyping is the operator at the prompt: a reader that reports when the
+// command asks it for the code and then answers nothing until it is released,
+// so the interrupt lands while that read is in flight rather than at a sleep
+// the test guessed at.
+type pairTyping struct {
+	asked   chan struct{}
+	release chan struct{}
+}
+
+func (p *pairTyping) Read([]byte) (int, error) {
+	select {
+	case <-p.asked:
+	default:
+		close(p.asked)
+	}
+	<-p.release
+	return 0, io.EOF
+}
+
+// TestPairUnreachableIdentityIsNotUnverifiedEmail: the email check reads from
+// the identity endpoint, so it can fail remote as well as by answering "not
+// verified" — and §4.6 puts the two in different exit rows. Reporting an
+// outage as an unverified address sends the operator to fix an address that
+// was never the problem.
+func TestPairUnreachableIdentityIsNotUnverifiedEmail(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		code string
+		exit int
+	}{
+		{name: "an endpoint that cannot be reached", err: remote(errors.New("the identity endpoint is unreachable")), code: pairRefusedUnreachable, exit: ExitRemoteError},
+		{name: "an address that is not verified", err: errors.New("the email person-1@example.com is not verified"), code: pairRefusedEmail, exit: ExitUserError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			newPairFixture(t, pairMe)
+			authenticatedUser = func(context.Context, *localcfg.Config) (string, error) { return "", tc.err }
+			out, _, err := pairRun(t, "--json")
+			if err == nil || ExitCode(err) != tc.exit {
+				t.Fatalf("err = %v, want exit %d", err, tc.exit)
+			}
+			events := pairLines(t, out)
+			if len(events) != 1 || events[0].Event != pairEventRefused || events[0].Code != tc.code {
+				t.Fatalf("events = %v, want one refused with code %q", events, tc.code)
+			}
+		})
+	}
+}
+
+// TestPairDeviceWriteDeniedRefused is the other half of the database-admin
+// refusal: the read the probe performs succeeds and the write the pairing
+// needs is the one the rules deny, which is the case an installation with
+// read access but no admin reaches. The device token is already minted by
+// then, so what the test can hold is that the refusal names the role and that
+// no node exists for the token to open.
+func TestPairDeviceWriteDeniedRefused(t *testing.T) {
+	f := newPairFixture(t, pairMe)
+	uid := pairFixedRand(t)
+	f.pairSeedRequest(uid, pairKey)
+	f.db.DenyNext(1)
+
+	out, _, err := pairRunIn(t, token.Fingerprint(pairKeyBytes), "--json")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want exit 1", err)
+	}
+	if !strings.Contains(err.Error(), "roles/firebasedatabase.admin") {
+		t.Fatalf("refusal = %q, want the missing role named", err)
+	}
+	events := pairLines(t, out)
+	if len(events) != 4 || events[3].Event != pairEventRefused || events[3].Code != pairRefusedDatabaseAdmin {
+		t.Fatalf("events = %v, want the refusal after the code event with code %q", events, pairRefusedDatabaseAdmin)
+	}
+	if v := f.db.Value("config/admin/devices"); v != nil {
+		t.Fatalf("a write the rules denied left a device node: %v", v)
+	}
+	if v := f.db.Value("pairing/" + uid + "/delivery"); v != nil {
+		t.Fatalf("a refused pairing wrote a delivery: %v", v)
+	}
+}
+
 // pairLines decodes a --json stream into the events it carries, strictly: an
 // unknown field is a failure, not something to ignore.
 func pairLines(t *testing.T, out string) []pairEvent {
@@ -665,28 +893,15 @@ func TestNoNodeBeforeTheCodeMatches(t *testing.T) {
 	uid := pairFixedRand(t)
 	f.pairSeedRequest(uid, pairKey)
 
-	_, _, err := pairRunIn(t, pairWrongCode(t), "--json")
-	if err == nil || ExitCode(err) != ExitUserError {
-		t.Fatalf("err = %v, want exit 1", err)
-	}
-	if v := f.db.Value("config/admin/devices"); v != nil {
-		t.Fatalf("the device node was written before the typed code matched: %v", v)
-	}
-	f.pairNoSideEffect(t, uid)
-}
-
-func TestPairWrongCodeWritesNothing(t *testing.T) {
-	f := newPairFixture(t, pairMe)
-	uid := pairFixedRand(t)
-	f.pairSeedRequest(uid, pairKey)
-
 	out, _, err := pairRunIn(t, pairWrongCode(t), "--json")
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v, want exit 1", err)
 	}
-	events := pairLines(t, out)
-	if len(events) != 4 || events[3].Event != pairEventRefused || events[3].Code != pairRefusedCodeMismatch {
+	if events := pairLines(t, out); len(events) != 4 || events[3].Event != pairEventRefused || events[3].Code != pairRefusedCodeMismatch {
 		t.Fatalf("events = %v, want the code event and then one refused with %q", events, pairRefusedCodeMismatch)
+	}
+	if v := f.db.Value("config/admin/devices"); v != nil {
+		t.Fatalf("the device node was written before the typed code matched: %v", v)
 	}
 	f.pairNoSideEffect(t, uid)
 }
