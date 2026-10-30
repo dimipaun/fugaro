@@ -1222,6 +1222,9 @@ func resolveAttemptPlan(ctx context.Context, env *cloudEnv, o *runOptions, total
 	if _, err := task.CanonicalRepo(repo); err != nil {
 		return nil, userErr("--repo: %v", err)
 	}
+	if err := refuseSharedCheckout(ctx, repo); err != nil {
+		return nil, err
+	}
 	checkout := checkoutOf(ctx, repo)
 	slug, err := env.repoSlug(repo, checkout)
 	if err != nil {
@@ -1500,6 +1503,9 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 	}
 	if _, err := task.CanonicalRepo(repo); err != nil {
 		return "", nil, userErr("--repo: %v", err)
+	}
+	if err := refuseSharedCheckout(ctx, repo); err != nil {
+		return "", nil, err
 	}
 	checkout := checkoutOf(ctx, repo)
 	slug, err := env.repoSlug(repo, checkout)

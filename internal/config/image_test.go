@@ -207,19 +207,59 @@ const sharedYAML = webYAML + `    checkout: shared
       skip_build_scripts: true
 `
 
+// sharedShipped turns the 0.15.0 launch gate on for the duration of one test
+// and restores it: validation refuses every checkout: shared today
+// (TestValidateRefusesCheckoutSharedUntil0150), so the rules the release that
+// ships shared images will apply are reachable only behind the flag. The
+// release that flips sharedCheckoutShipped makes these tests run it open.
+func sharedShipped(t *testing.T) {
+	t.Helper()
+	was := sharedCheckoutShipped
+	sharedCheckoutShipped = true
+	t.Cleanup(func() { sharedCheckoutShipped = was })
+}
+
 // TestValidateCheckoutSharedAllowsDependencyKeys (design
 // forge-authorship-images/shared-images.md §6, route A): checkout: shared
 // runs a shared dependency-layer image — one image per resolved dependency
 // set, holding no repository's source — and clones the repository's own
 // source at launch, so the keys that describe that layer are exactly the
-// ones it accepts.
+// ones it accepts. Behind sharedShipped, because the kind is refused until
+// 0.15.0 ships the images it would run.
 func TestValidateCheckoutSharedAllowsDependencyKeys(t *testing.T) {
+	sharedShipped(t)
 	cfg, problems := Parse([]byte(sharedYAML))
 	if len(problems) > 0 {
 		t.Fatalf("unexpected problems: %v", problems)
 	}
 	if cfg.Workflows["web"].Checkout != CheckoutShared {
 		t.Fatalf("checkout = %q, want %q", cfg.Workflows["web"].Checkout, CheckoutShared)
+	}
+}
+
+// TestValidateRefusesCheckoutSharedUntil0150: nothing in 0.14.0 builds or
+// refreshes a shared dependency-layer image, so a repository that declares
+// checkout: shared would get a job that cannot run. Validation refuses the
+// key where the repository typed it, names the release that lifts the
+// refusal, and names the two kinds that work today — including for a
+// workflow that also declares the dependency-layer keys, which are the ones
+// only this kind accepts and so the ones a reader reaches for first.
+func TestValidateRefusesCheckoutSharedUntil0150(t *testing.T) {
+	for _, tc := range []struct{ name, yaml string }{
+		{"bare", webYAML + "    checkout: shared\n"},
+		{"with the dependency-layer keys", sharedYAML},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, problems := Parse([]byte(tc.yaml))
+			if !hasProblem(problems, "workflows.web.checkout", "shared images arrive in 0.15.0", 0) {
+				t.Fatalf("problems = %v, want a refusal at workflows.web.checkout naming 0.15.0", problems)
+			}
+			for _, want := range []string{"checkout: baked", "checkout: clone"} {
+				if p := problems[0]; !strings.Contains(p.Message, want) {
+					t.Errorf("the refusal %q does not name %q", p.Message, want)
+				}
+			}
+		})
 	}
 }
 
@@ -231,8 +271,9 @@ func TestValidateCheckoutSharedAllowsDependencyKeys(t *testing.T) {
 // builds a per-repository image at all. Each refusal names its key (the
 // problem's path) and the reason, in one sentence, and names checkout:
 // baked as the way out — which is how a workflow gets a per-repository
-// step at all.
+// step at all. Behind sharedShipped for the same reason as the test above.
 func TestValidateCheckoutSharedRefusesSetup(t *testing.T) {
+	sharedShipped(t)
 	const msg = "checkout: shared runs an image shared by every repository on the same dependency set, which holds no repository's own content; use checkout: baked to build a per-repository image"
 	for _, tc := range []struct{ name, extra, path string }{
 		{"image.setup", "    image: { setup: [\"npx playwright install --with-deps chromium\"] }\n", "workflows.web.image.setup"},

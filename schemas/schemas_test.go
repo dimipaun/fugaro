@@ -3663,11 +3663,14 @@ func TestSchemaCoversImageKeyFiles(t *testing.T) {
 // runs a shared dependency-layer image and clones the source at launch, so
 // the schema accepts the dependency-layer keys and refuses the two that
 // would put this repository's own content into an image every repository on
-// the same dependency set runs. The schema and config.Parse have to agree
-// in both directions on the same text: a schema that blessed a setup: the
-// validator then refuses would send an editor's user away with a fugaro.yaml
-// that fails at validate, and the reverse is the schema corpus gap this
-// closes.
+// the same dependency set runs. The schema and config.Parse agree on which
+// of those two is refused, and disagree on purpose about the kind itself:
+// the kind stays in the schema's enum — an editor's user still gets the
+// shape it will have — while validation refuses checkout: shared until
+// 0.15.0 ships the image it would run (config/image.go's
+// sharedCheckoutShipped, whose rules internal/config/image_test.go pins
+// behind the flag). Nothing here reads a shared workflow's key rules out of
+// config.Parse: those live in internal/config.
 func TestSchemaCoversCheckoutShared(t *testing.T) {
 	sch := compile(t, "fugaro.schema.json")
 	const base = "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  app: { checkout: shared, commands: { build: make, test: make } }\n"
@@ -3697,16 +3700,22 @@ func TestSchemaCoversCheckoutShared(t *testing.T) {
 		t.Errorf("fugaro.schema.json's checkout enum = %v, want the Go constants %v", got, want)
 	}
 
-	// The dependency layer's keys: accepted by both, under checkout: shared.
+	// The dependency layer's keys: the schema accepts them under checkout:
+	// shared, and config.Parse refuses the kind where the repository typed
+	// it, naming the release that lifts the refusal.
 	body := strings.Replace(base, "commands:", `image: { apt: [libvips-dev], tools: { node: "24.19.0" }, key_files: [patches], skip_build_scripts: true }, commands:`, 1)
 	if err := sch.Validate(yamlInstance(t, []byte(body))); err != nil {
 		t.Errorf("the schema rejects checkout: shared with the dependency-layer keys: %v", err)
 	}
-	if _, ps := config.Parse([]byte(body)); len(ps) > 0 {
-		t.Errorf("config.Parse rejects checkout: shared with the dependency-layer keys: %v", ps)
+	if _, ps := config.Parse([]byte(body)); len(ps) != 1 || ps[0].Path != "workflows.app.checkout" || !strings.Contains(ps[0].Message, "0.15.0") {
+		t.Errorf("config.Parse problems = %v, want exactly one refusal at workflows.app.checkout naming 0.15.0", ps)
 	}
 
-	// The per-repository keys: refused by both, and by the reason alone.
+	// The per-repository keys: the schema refuses both — a schema that
+	// blessed a setup: validation refuses would send an editor's user away
+	// with a fugaro.yaml that fails at validate — and config.Parse refuses
+	// the kind before it reaches either key, so both halves still say this
+	// declaration is not one to ship.
 	for _, tc := range []struct{ name, extra, path string }{
 		{"image.setup", `image: { setup: ["make deps"] }, `, "workflows.app.image.setup"},
 		{"dockerfile", "dockerfile: .fugaro/app.Dockerfile, ", "workflows.app.dockerfile"},
@@ -3718,20 +3727,35 @@ func TestSchemaCoversCheckoutShared(t *testing.T) {
 			if schemaErr == nil {
 				t.Errorf("the schema accepts %s under checkout: shared", tc.path)
 			}
-			if len(ps) != 1 || ps[0].Path != tc.path {
-				t.Errorf("config.Parse problems = %v, want exactly one at %s", ps, tc.path)
+			if len(ps) != 1 || ps[0].Path != "workflows.app.checkout" || !strings.Contains(ps[0].Message, "0.15.0") {
+				t.Errorf("config.Parse problems = %v, want exactly one refusal at workflows.app.checkout naming 0.15.0", ps)
 			}
 		})
+	}
+}
+
+// TestSchemaDescribesCheckoutSharedAsNotYetShipped: the enum keeps shared,
+// so an editor still completes the key, and the description has to say why
+// validation refuses it — a user who types it is owed the release that
+// lifts the refusal, not just the refusal.
+func TestSchemaDescribesCheckoutSharedAsNotYetShipped(t *testing.T) {
+	desc := schemaDescriptionAt(t, "fugaro.schema.json", "$defs", "workflow", "properties", "checkout")
+	for _, want := range []string{"0.15.0", "refuses checkout: shared"} {
+		if !strings.Contains(desc, want) {
+			t.Errorf("fugaro.schema.json's checkout description does not say %q: %q", want, desc)
+		}
 	}
 }
 
 // TestProjectLayerSchemaCoversCheckoutShared: the same third kind in the
 // other layer. One validateCheckout serves both (config.ParseProjectLayer's
 // validateProfile calls it), so the project layer's profile schema has to
-// accept the same three values and refuse the same key under shared — left
-// alone it refused checkout: shared in a profile while the Go validator
-// accepted it, and no corpus file caught the disagreement the test above
-// pins for fugaro.schema.json.
+// accept the same three values and refuse the one per-repository key under
+// shared — left alone it refused checkout: shared in a profile while the Go
+// validator accepted it, and no corpus file caught the disagreement the
+// test above pins for fugaro.schema.json. As there, validation refuses the
+// kind itself until 0.15.0, so what config.ParseProjectLayer is asked for
+// here is that refusal.
 func TestProjectLayerSchemaCoversCheckoutShared(t *testing.T) {
 	sch := compile(t, "project-layer.schema.json")
 	data, err := os.ReadFile("project-layer.schema.json")
@@ -3760,27 +3784,29 @@ func TestProjectLayerSchemaCoversCheckoutShared(t *testing.T) {
 	a := config.LayerAnchor{Project: "aurora", GCPProject: "proj-1234"}
 	const base = "version: 1\nproject: aurora\ngcp_project: proj-1234\nprofiles:\n  p:\n    checkout: shared\n    commands: { build: make, test: make }\n"
 
-	// The dependency layer's keys a profile may carry: accepted by both, the
-	// same shape testdata/project-layer/valid/checkout-shared-profile.yaml
-	// carries through the corpus.
+	// The dependency layer's keys a profile may carry: the schema accepts
+	// them, the same shape
+	// testdata/project-layer/valid/checkout-shared-profile.yaml carries
+	// through the corpus (which internal/config runs with the flag open).
 	withKeys := strings.Replace(base, "    commands:", "    image: { apt: [libvips-dev], tools: { node: \"24.19.0\" }, skip_build_scripts: true }\n    commands:", 1)
 	if err := sch.Validate(yamlInstance(t, []byte(withKeys))); err != nil {
 		t.Errorf("the schema rejects a checkout: shared profile with the dependency-layer keys: %v", err)
 	}
-	if _, ps := config.ParseProjectLayer([]byte(withKeys), a); len(ps) > 0 {
-		t.Errorf("config.ParseProjectLayer rejects a checkout: shared profile with the dependency-layer keys: %v", ps)
+	if _, ps := config.ParseProjectLayer([]byte(withKeys), a); len(ps) != 1 || ps[0].Path != "profiles.p.checkout" || !strings.Contains(ps[0].Message, "0.15.0") {
+		t.Errorf("config.ParseProjectLayer problems = %v, want exactly one refusal at profiles.p.checkout naming 0.15.0", ps)
 	}
 
 	// image.setup is the one per-repository key a profile can carry
-	// (dockerfile and image.key_files are repo-only): refused by both, and by
-	// the reason alone, the mirror of fugaro.schema.json's rule.
+	// (dockerfile and image.key_files are repo-only): refused by the schema,
+	// and by config.ParseProjectLayer through the refusal of the kind — the
+	// mirror of fugaro.schema.json's rule.
 	withSetup := strings.Replace(base, "    commands:", "    image: { setup: [\"./scripts/warm.sh\"] }\n    commands:", 1)
 	schemaErr := sch.Validate(yamlInstance(t, []byte(withSetup)))
 	_, ps := config.ParseProjectLayer([]byte(withSetup), a)
 	if schemaErr == nil {
 		t.Error("the schema accepts image.setup under a profile's checkout: shared")
 	}
-	if len(ps) != 1 || ps[0].Path != "profiles.p.image.setup" || !strings.Contains(ps[0].Message, "holds no repository's own content") {
-		t.Errorf("config.ParseProjectLayer problems = %v, want exactly one at profiles.p.image.setup", ps)
+	if len(ps) != 1 || ps[0].Path != "profiles.p.checkout" || !strings.Contains(ps[0].Message, "0.15.0") {
+		t.Errorf("config.ParseProjectLayer problems = %v, want exactly one refusal at profiles.p.checkout naming 0.15.0", ps)
 	}
 }

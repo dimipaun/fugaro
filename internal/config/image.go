@@ -216,6 +216,32 @@ func validateKeyFiles(p string, files []string, add func(path, format string, ar
 	}
 }
 
+// SharedCheckoutSince is the first fugaro release that builds and refreshes a
+// shared dependency-layer image: the release validateCheckout refuses
+// checkout: shared until. It is a different fact from internal/cli's
+// sharedSince, which names the release whose *runner* clones for a shared job
+// (0.14.0): the runner half landed first, and the image such a job runs does
+// not exist before this release.
+const SharedCheckoutSince = "0.15.0"
+
+// sharedCheckoutShipped is false until the release that actually builds and
+// refreshes a shared dependency-layer image is tagged: nothing before it
+// does, so a repository that declares checkout: shared gets a job that
+// cannot run. Everything else the kind needs is already here — the
+// CheckoutShared value, its key rules in validateCheckout, the schema's enum
+// value, PlanWorkflowJob's acceptance of FUGARO_CHECKOUT=shared and the
+// sharedSince launch gate — so the release that ships shared images flips
+// this one value and nothing else, the way cloneShipped and catalogShipped
+// (internal/cli/recipes_skew.go) were flipped.
+var sharedCheckoutShipped = false
+
+// SharedCheckoutRefusal is the problem validateCheckout reports for
+// checkout: shared while sharedCheckoutShipped is false. It is exported so a
+// launch, which reads the checkout's fugaro.yaml leniently, can find it among
+// that file's problems and refuse with this sentence rather than with
+// whatever later step trips over the config it could not use.
+const SharedCheckoutRefusal = "shared images arrive in " + SharedCheckoutSince + ": no release builds or refreshes a shared dependency-layer image yet, so a shared workflow's job could not run; use checkout: baked to build a per-repository image, or checkout: clone to run the base image and clone the source at launch"
+
 // validateCheckout checks a workflow's checkout: (design generic-tool.md §2,
 // G3). clone runs the installation's base image directly, with no build, so
 // a key that only a build can honor is refused, naming checkout: baked.
@@ -224,6 +250,10 @@ func validateKeyFiles(p string, files []string, add func(path, format string, ar
 // route A), so it accepts exactly the keys that describe that layer — and
 // refuses the ones that would put this repository's own content into an
 // image every repository on the same dependency set runs (§1, §12).
+//
+// shared is refused outright while sharedCheckoutShipped is false: naming
+// the kinds that work today is more use to a repository than a job that
+// would fail at launch for want of an image nobody builds yet.
 //
 // image.setup is the design's own open question and this is where it is
 // taken: §2.2 and §4 have the shared layer installed by whichever
@@ -246,6 +276,10 @@ func validateCheckout(p string, w Workflow) []Problem {
 		// accepts, and internal/config/layer_test.go pins the "must be baked
 		// or clone" prefix of the same message for a profile's checkout:.
 		add(p+".checkout", "must be baked or clone or shared; shared runs a shared dependency-layer image and clones the source at launch")
+		return ps
+	}
+	if w.Checkout == CheckoutShared && !sharedCheckoutShipped {
+		add(p+".checkout", SharedCheckoutRefusal)
 		return ps
 	}
 	// A base: alongside clone or shared needs no refusal of its own here:
