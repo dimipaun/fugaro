@@ -19,6 +19,7 @@ require (
 	golang.org/x/text v0.42.0 // the artifact-name collision rule normalizes and FULL folds with it
 	google.golang.org/api v0.299.0
 	gopkg.in/yaml.v3 v3.0.1
+	rsc.io/qr v0.2.0
 )
 
 require (
@@ -82,5 +83,4 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260921155816-b14227669459 // indirect
 	google.golang.org/grpc v1.84.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
-	rsc.io/qr v0.2.0 // indirect
 )

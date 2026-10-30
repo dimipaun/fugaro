@@ -42,6 +42,7 @@ Subcommands:
 - `fugaro image` -- Build and inspect a workflow's derived container image
 - `fugaro logs` -- Print a run's logs from Cloud Logging
 - `fugaro managed` -- Act on a managed project (a project created by fugaro with the coding agent's refusal removed)
+- `fugaro pair` -- Pair a phone with this installation
 - `fugaro plan` -- Read a plan's graph artifact
 - `fugaro project` -- The project's policy, its allow-list and the repositories enrolled
 - `fugaro reaper` -- Sweep the Batch jobs and VMs a run has leaked
@@ -2081,6 +2082,138 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for flag |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro pair`
+
+Pair a phone with this installation
+
+Pair a phone with this installation: the operator shows a QR code, the
+phone scans it, writes its public key and shows a code derived from that
+key, and the operator types the code back to bind the two.
+
+Pairing is an admin act, and it needs both of the installation's two role
+sets: the signer account's fugaroTokenMinter role to mint the pairing
+token and the device token, and roles/firebasedatabase.admin to write the
+device node and the delivery node.
+
+Pairing is discovery, not identity: scanning the code tells the phone which
+project and database to connect to and grants it no access by itself.
+
+The code carries no key. The final credentials — the device token, the
+per-pairing MAC key and the configuration the app stores — go to the phone
+encrypted to the key it generated, and the MAC key never leaves this
+laptop's OS keychain in clear, is never printed, and is not in the code.
+
+The typed code is the binding: nothing is written to the project before the
+code the operator types matches the key the phone wrote, so a refused
+pairing leaves the project exactly as it was.
+
+Its own state is the local config: the project, its database URL and
+Identity Toolkit API key, and the signer account. --json streams the
+pairing as one JSON object per line on stdout for a console to read.
+
+Usage: `fugaro pair`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--email` | string | "" | no | the administered email for the device (default, and normally the value: your own verified address, which is the only address this command may administer) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for pair |
+| `--json` | bool | `false` | no | stream the pairing as newline-delimited JSON events on stdout |
+| `--name` | string | "" | no | the device's name, for pair ls and the device node's own field |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--role` | string | "" | no | the device's role: viewer, operator or admin (default: your own role, inherited; --role may only lower it) |
+| `--timeout` | duration | `2m0s` | no | how long to wait for the phone's key and the typed code (refused above 4m30s) |
+
+Subcommands:
+
+- `fugaro pair ls` -- List the devices paired with this installation
+- `fugaro pair revoke` -- Revoke a paired device
+
+## `fugaro pair ls`
+
+List the devices paired with this installation
+
+List the devices paired with this installation: one row per device node
+under config/admin/devices, with the uid (a key, and therefore printable),
+the name, the administered email, the role and the pairing time.
+
+It reads with roles/firebasedatabase.admin, and it prints no token, no key
+and no keychain item's value: the node holds none of them, and the item's
+name is not in the node either, so there is nothing else to print.
+
+It does not report whether a device's Auth user still exists. The Auth user
+is not in the database, so database admin does not reach it, and the node's
+existence is the whole of what the rules read (D166): an orphaned Auth user
+whose node is gone is the history sweep's business and is invisible to the
+rules by construction.
+
+Its own state is the local config, as it is for the rest of the command.
+
+Usage: `fugaro pair ls`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for ls |
+| `--json` | bool | `false` | no | print the pairings as one JSON event on stdout |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro pair revoke`
+
+Revoke a paired device
+
+Revoke a paired device: the phone is off this installation's allowlist from
+its next request on.
+
+The order is the command (M4): the device node under config/admin/devices
+goes first, because the node's existence is what the rules read and its
+deletion revokes at once, without waiting for an ID token to expire; then
+this laptop's OS keychain item for that pairing's MAC key; then the
+pairing's own node, if an abandoned session left one.
+
+It does not delete the device's Auth user. No role a Terraform grant gives
+an operator can delete one (the history job's account is the only holder of
+roles/firebaseauth.admin), and the device node's deletion is what makes the
+orphan the history sweep's to remove — which is why this command names the
+sweep rather than pretending the account is gone.
+
+Exactly one of --uid and --name selects the device, and a --name that
+matches more than one node is refused with their uids rather than revoked
+ambiguously.
+
+Its own state is the local config, as it is for the rest of the command.
+
+Usage: `fugaro pair revoke (--uid UID | --name NAME)`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for revoke |
+| `--json` | bool | `false` | no | print the revocation as one JSON event on stdout |
+| `--name` | string | "" | no | the name of the device to revoke; it must match exactly one device |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--uid` | string | "" | no | the uid of the device to revoke (m~…), which is the node's key |
 
 Subcommands:
 
