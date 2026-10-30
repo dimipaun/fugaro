@@ -13,7 +13,7 @@ Three things it deliberately does **not** claim:
   Answering D113c (which fixed the *shape* — a new `fugaro` command — and the *name* —
   `fugaro mailbox`) approves no task.
 - **Phase 6 is approved, and most of its modules are merged — this plan is written against what
-  landed.** The owner approved all of Phase 6 on 2026-10-18. **Merged on `main` today — five of its
+  landed.** The owner approved all of Phase 6 on 2026-10-18. **Merged on `main` today — six of its
   tasks, each with the module that proves it:** **P6.1** (`shared/command/index.js` — the command
   grammar),
   **P6.2** (`shared/confirm/index.js`, with the confirmation machine's rules, its `vectors.json` and
@@ -21,17 +21,17 @@ Three things it deliberately does **not** claim:
   kind and on the heartbeat, `agent`, `kind`, `options`, `reply_to`, the action record,
   `canonicalBytes`, and `shared/mailbox-schema/vectors.json`), **P6.4** (rules generation 3 — the
   same fields in the template, the `kind` / parent-kind / MAC-shape macros, and
-  `config/admin/devices/$uid`, which `USER` now requires) and **P6.5** (`shared/prompts` — the
-  queue, `PROMPT_TTL_MS`, the interrupt table). **Partly built:** **P6.6** (`fugaro pair`) — its
-  command's surface and its one-shot pairing token are in the tree (`internal/cli/pair.go`,
-  `internal/budget/token/pairing.go`, the pairing CLI plan's T1a, landed 2026-10-29), while the
-  device token, the wait for the phone's key and the sweep rule are not. **Approved and not built:**
+  `config/admin/devices/$uid`, which `USER` now requires), **P6.5** (`shared/prompts` — the
+  queue, `PROMPT_TTL_MS`, the interrupt table) and **P6.6** (`internal/cli/pair.go` and
+  `internal/budget/sweep.go` — the pairing command with the wait that binds the phone's key and the
+  delivery that seals the configuration to it, and the `m~…` rule in the history sweeper's
+  `deleteUsers`). **Approved and not built:**
   **P6.7** (the
   consumer's enforcement of the D128 amendment — this command's inbound gate, the action record,
   the ledger and the expiry), **P6.12** (the phone's spoken confirmation, which consumes the merged
   confirmation machine) and **P6.13** (the sweeper's rule for stored prompts). So the MAC **can** be
-  computed today and the **key cannot**: no pairing exists until the wait and the delivery above
-  land, and the surface that landed on 2026-10-29 is not one yet. What that means for
+  computed today and the **key can** too: the pairing command's wait and its delivery landed with the
+  pairing CLI plan's T2b and T3, so a phone that has paired holds a per-pairing MAC key. What that means for
   this command's startup is §8.3's first row, and §8.4 says **which half of the MAC work is
   P4.1's and which is P6.7's**. A module existing and a task being *built* are not the same claim,
   and this bullet is held to the tree by the pin (`TestMailboxPlanPhaseSixStatusIsTrue`).
