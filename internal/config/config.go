@@ -596,10 +596,18 @@ type Workflow struct {
 	Inputs Inputs `yaml:"inputs"`
 }
 
-// Checkout values of a workflow (design generic-tool.md §2, G3).
+// Checkout values of a workflow (design generic-tool.md §2, G3;
+// checkout: shared is design forge-authorship-images/shared-images.md §6,
+// route A).
 const (
 	CheckoutBaked = "baked"
 	CheckoutClone = "clone"
+	// CheckoutShared runs a shared dependency-layer image — one image per
+	// resolved dependency set, holding no repository's source — and clones
+	// the repository's own source at launch. The kind exists because such
+	// a job must be clone-shaped while still declaring the
+	// dependency-layer keys a build honors, which checkout: clone refuses.
+	CheckoutShared = "shared"
 )
 
 // BaseKind is the base kind w builds on: always BaseKind, the one Fugaro

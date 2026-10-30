@@ -3657,3 +3657,70 @@ func TestSchemaCoversImageKeyFiles(t *testing.T) {
 		}
 	}
 }
+
+// TestSchemaCoversCheckoutShared: checkout: shared is a third kind
+// (design forge-authorship-images/shared-images.md §6, route A) whose job
+// runs a shared dependency-layer image and clones the source at launch, so
+// the schema accepts the dependency-layer keys and refuses the two that
+// would put this repository's own content into an image every repository on
+// the same dependency set runs. The schema and config.Parse have to agree
+// in both directions on the same text: a schema that blessed a setup: the
+// validator then refuses would send an editor's user away with a fugaro.yaml
+// that fails at validate, and the reverse is the schema corpus gap this
+// closes.
+func TestSchemaCoversCheckoutShared(t *testing.T) {
+	sch := compile(t, "fugaro.schema.json")
+	const base = "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  app: { checkout: shared, commands: { build: make, test: make } }\n"
+
+	// The enum is the Go constants, so a fourth kind cannot land in one
+	// place only.
+	var doc struct {
+		Defs map[string]json.RawMessage `json:"$defs"`
+	}
+	data, err := os.ReadFile("fugaro.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var def struct {
+		Properties map[string]struct {
+			Enum []string `json:"enum"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(doc.Defs["workflow"], &def); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{config.CheckoutBaked, config.CheckoutClone, config.CheckoutShared}
+	if got := def.Properties["checkout"].Enum; !slices.Equal(got, want) {
+		t.Errorf("fugaro.schema.json's checkout enum = %v, want the Go constants %v", got, want)
+	}
+
+	// The dependency layer's keys: accepted by both, under checkout: shared.
+	body := strings.Replace(base, "commands:", `image: { apt: [libvips-dev], tools: { node: "24.19.0" }, key_files: [patches], skip_build_scripts: true }, commands:`, 1)
+	if err := sch.Validate(yamlInstance(t, []byte(body))); err != nil {
+		t.Errorf("the schema rejects checkout: shared with the dependency-layer keys: %v", err)
+	}
+	if _, ps := config.Parse([]byte(body)); len(ps) > 0 {
+		t.Errorf("config.Parse rejects checkout: shared with the dependency-layer keys: %v", ps)
+	}
+
+	// The per-repository keys: refused by both, and by the reason alone.
+	for _, tc := range []struct{ name, extra, path string }{
+		{"image.setup", `image: { setup: ["make deps"] }, `, "workflows.app.image.setup"},
+		{"dockerfile", "dockerfile: .fugaro/app.Dockerfile, ", "workflows.app.dockerfile"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := strings.Replace(base, "commands:", tc.extra+"commands:", 1)
+			schemaErr := sch.Validate(yamlInstance(t, []byte(body)))
+			_, ps := config.Parse([]byte(body))
+			if schemaErr == nil {
+				t.Errorf("the schema accepts %s under checkout: shared", tc.path)
+			}
+			if len(ps) != 1 || ps[0].Path != tc.path {
+				t.Errorf("config.Parse problems = %v, want exactly one at %s", ps, tc.path)
+			}
+		})
+	}
+}
