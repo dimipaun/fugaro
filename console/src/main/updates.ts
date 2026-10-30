@@ -106,20 +106,20 @@ export interface UpdaterPort {
   on(event: 'update-downloaded' | 'error', listener: (...args: unknown[]) => void): unknown
 }
 
-/** UpdatePolicyDeps is everything the policy is allowed to reach. The three
- * opt-outs Task 4.4 names are all here as questions rather than as facts, and
- * each is asked afresh when it matters: `switchOn` is the app's own visible
- * toggle (design D5), `localUpdateCheckOn` is the local `update_check: false`
- * read by the caller -- this module may not read the config, design section 5.1
- * rule 7 -- and the environment is read directly. `isLaunchFlowIdle` is the
- * launch flow's answer about itself. */
+/** UpdatePolicyDeps is everything the policy is allowed to reach. The two
+ * opt-outs are here as questions rather than as facts, and each is asked afresh
+ * when it matters: `switchOn` is the app's own visible toggle (design D5), and
+ * `FUGARO_NO_UPDATE_CHECK` is read off the environment. The CLI's
+ * `update_check: false` is deliberately not one of them: design section 5.1
+ * rule 7 keeps the console out of the CLI's config, and the auto-update plan's
+ * D769 leaves that setting to the CLI. `isLaunchFlowIdle` is the launch flow's
+ * answer about itself. */
 export interface UpdatePolicyDeps {
   readonly platform: string
   readonly isPackaged: boolean
   readonly env: Readonly<Record<string, string | undefined>>
   readonly currentVersion: string
   readonly switchOn: () => boolean
-  readonly localUpdateCheckOn: () => boolean
   readonly timer: IntervalTimers
   readonly fetchReleases: FetchReleases
   readonly isLaunchFlowIdle: () => boolean
@@ -214,7 +214,6 @@ export function createUpdateController(deps: UpdatePolicyDeps): UpdateController
     deps.isPackaged &&
     (deps.env['CI'] ?? '') === '' &&
     deps.env['FUGARO_NO_UPDATE_CHECK'] !== '1' &&
-    deps.localUpdateCheckOn() &&
     deps.switchOn()
 
   const clearTimer = (): void => {
@@ -240,8 +239,11 @@ export function createUpdateController(deps: UpdatePolicyDeps): UpdateController
 
   /** onDownloaded hands the ready version to the app, unless a launch is in
    * flight: an update is not installed while a launch writes the run's record,
-   * so the prompt waits and the download does not. */
+   * so the prompt waits and the download does not. A download that finishes
+   * after the gate closed prompts nobody: `restartRequested` would refuse the
+   * prompt's own button. */
   const onDownloaded = (payload: unknown): void => {
+    if (!allowed()) return
     const version = downloadedVersion(payload)
     if (version === null) return
     expected.delete(version)
@@ -336,7 +338,7 @@ export function createUpdateController(deps: UpdatePolicyDeps): UpdateController
       deps.updater.quitAndInstall()
     },
     launchFlowIdle: () => {
-      if (!allowed()) return
+      if (!allowed() || !deps.isLaunchFlowIdle()) return
       const version = readyDeferred
       readyDeferred = null
       if (version !== null) deps.onReadyToRestart(version)

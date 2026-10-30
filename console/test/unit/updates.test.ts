@@ -123,30 +123,40 @@ function updaterFake(): UpdaterFake {
 interface TimersFake {
   readonly delays: readonly number[]
   readonly live: boolean
+  readonly armed: number
   readonly setInterval: UpdatePolicyDeps['timer']['setInterval']
   readonly clearInterval: UpdatePolicyDeps['timer']['clearInterval']
   fire(): void
 }
 
+/** timersFake keeps every armed handle, so an interval the policy forgot to
+ * clear stays visible as a second live handle rather than being overwritten. */
 function timersFake(): TimersFake {
   const delays: number[] = []
-  let handler: (() => void) | null = null
+  const handlers = new Map<number, () => void>()
+  let next = 0
   const timers = {
     get delays() {
       return delays
     },
     get live() {
-      return handler !== null
+      return handlers.size > 0
     },
-    setInterval: (next: () => void, ms: number) => {
+    get armed() {
+      return handlers.size
+    },
+    setInterval: (handler: () => void, ms: number) => {
       delays.push(ms)
-      handler = next
-      return 1 as unknown as ReturnType<typeof setInterval>
+      next += 1
+      handlers.set(next, handler)
+      return next as unknown as ReturnType<typeof setInterval>
     },
-    clearInterval: () => {
-      handler = null
+    clearInterval: (handle: unknown) => {
+      handlers.delete(handle as number)
     },
-    fire: () => handler?.(),
+    fire: () => {
+      for (const handler of [...handlers.values()]) handler()
+    },
   }
   return timers as unknown as TimersFake
 }
@@ -183,7 +193,6 @@ function harness(
     env: {},
     currentVersion: RUNNING,
     switchOn: () => on,
-    localUpdateCheckOn: () => true,
     timer: { setInterval: timers.setInterval, clearInterval: timers.clearInterval },
     fetchReleases: fetchFake.fetchReleases,
     isLaunchFlowIdle: () => idle,
@@ -281,17 +290,6 @@ describe('the gate: nothing at all until every condition holds', () => {
     expect(timers.live).toBe(false)
   })
 
-  it('does nothing while the local update_check is off', async () => {
-    const { controller, fetches, updater, timers } = harness({ localUpdateCheckOn: () => false })
-    await controller.start()
-    await settle()
-    expect(fetches).toHaveLength(0)
-    expect(updater.checks).toBe(0)
-    expect(updater.events).toEqual([])
-    expect(timers.delays).toEqual([])
-    expect(timers.live).toBe(false)
-  })
-
   it('checks on an empty CI and on any FUGARO_NO_UPDATE_CHECK that is not 1', async () => {
     const { controller, fetches, timers } = harness({ env: { CI: '', FUGARO_NO_UPDATE_CHECK: '0' } })
     await controller.start()
@@ -329,6 +327,14 @@ describe('the cadence: one check at start, then every six hours', () => {
     await settle()
     expect(fetches).toHaveLength(1)
     expect(timers.delays).toEqual([UPDATE_INTERVAL_MS])
+  })
+
+  it('keeps one timer armed however many times start() runs', async () => {
+    const { controller, timers } = harness()
+    await controller.start()
+    await controller.start()
+    await settle()
+    expect(timers.armed).toBe(1)
   })
 
   it('checks again on each six-hour tick', async () => {
@@ -707,6 +713,33 @@ describe('never during a launch', () => {
     timers.fire()
     await settle()
     expect(ready).toEqual([])
+    expect(updater.quits).toBe(0)
+  })
+
+  it('delivers nothing on a launchFlowIdle() the flow itself contradicts', async () => {
+    const { controller, updater, ready, setIdle } = harness()
+    setIdle(false)
+    await controller.start()
+    updater.emit('update-downloaded', { version: '0.120.0' })
+    controller.restartRequested()
+    controller.launchFlowIdle()
+    expect(ready).toEqual([])
+    expect(updater.quits).toBe(0)
+    setIdle(true)
+    controller.launchFlowIdle()
+    expect(ready).toEqual(['0.120.0'])
+    expect(updater.quits).toBe(1)
+  })
+})
+
+describe('the off switch after a download began', () => {
+  it('prompts nobody for a download that finishes after the switch went off', async () => {
+    const { controller, updater, ready, setSwitch } = harness()
+    await controller.start()
+    setSwitch(false)
+    updater.emit('update-downloaded', { version: '0.120.0' })
+    expect(ready).toEqual([])
+    controller.restartRequested()
     expect(updater.quits).toBe(0)
   })
 })
