@@ -1,0 +1,660 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See console/LICENSE.md for the terms.
+// The update policy, rule by rule (desktop-console plan Task 4.4, auto-update
+// slice U1; design section 7.4, D760 to D764).
+//
+// A signed update replaces the app that holds the console's launch write path,
+// so every rule this module holds is a test rather than a sentence: the gate,
+// the cadence, the stable-only feed, the two-URL allow-list, the refusal to
+// downgrade, the header set that carries no identifier, and the rule that
+// nothing installs while a launch is in flight. Each `it` below names the rule
+// it holds, and the fakes record what actually crossed the boundary -- the URLs,
+// the headers, the updater calls -- so a rule that stops being enforced is a
+// failure here rather than a note in a document.
+
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+import {
+  RELEASES_URL,
+  UPDATE_INTERVAL_MS,
+  createUpdateController,
+  feedUrlFor,
+  newestStableConsoleRelease,
+} from '../../src/main/updates'
+import type { UpdatePolicyDeps, UpdaterPort } from '../../src/main/updates'
+
+const RUNNING = '0.116.0'
+const FEED = 'https://github.com/dimipaun/fugaro/releases/download/console-v0.120.0/'
+
+/** listing is GitHub's answer for the release endpoint: one JSON body, built
+ * here from the records a test names, so what the policy reads is legible in the
+ * test rather than encoded in a fixture. */
+function listing(releases: readonly unknown[]): string {
+  return JSON.stringify(releases)
+}
+
+/** release is one entry of that listing, with the two booleans GitHub always
+ * sends and a tag; a test overrides whichever field it is about. */
+function release(tag: unknown, overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return { tag_name: tag, draft: false, prerelease: false, name: tag, id: 1, ...overrides }
+}
+
+/** FetchCall is one request the policy made, as the fake saw it. */
+interface FetchCall {
+  readonly url: string
+  readonly headers: Readonly<Record<string, string>>
+}
+
+/** listingFake is the injected `fetchReleases`: it records every call and
+ * answers with the bodies the test gave it, in order. */
+function listingFake(bodies: readonly string[]): {
+  readonly calls: readonly FetchCall[]
+  readonly fetchReleases: UpdatePolicyDeps['fetchReleases']
+} {
+  const calls: FetchCall[] = []
+  let index = 0
+  return {
+    calls,
+    fetchReleases: (url, headers) => {
+      calls.push({ url, headers })
+      const body = bodies[Math.min(index, bodies.length - 1)] ?? ''
+      index += 1
+      return Promise.resolve(body)
+    },
+  }
+}
+
+/** UpdaterFake is the injected updater. It starts in the state a pass-through
+ * adapter would hand over *before* the policy configures it -- downloads off,
+ * downgrades and pre-releases allowed, an identifying header -- so a test that
+ * asserts the configured values is asserting the policy actually wrote them. */
+interface UpdaterFake extends UpdaterPort {
+  readonly feedUrls: readonly string[]
+  readonly checks: number
+  readonly quits: number
+  readonly events: readonly string[]
+  emit(event: 'update-downloaded' | 'error', payload?: unknown): void
+}
+
+function updaterFake(): UpdaterFake {
+  const feedUrls: string[] = []
+  const events: string[] = []
+  const listeners = new Map<string, ((...args: unknown[]) => void)[]>()
+  let checks = 0
+  let quits = 0
+  const updater = {
+    autoDownload: false,
+    autoInstallOnAppQuit: false,
+    allowDowngrade: true,
+    allowPrerelease: true,
+    requestHeaders: { 'X-Machine-Id': 'machine-1' } as Record<string, string>,
+    setFeedURL(options: { provider: 'generic'; url: string }): void {
+      feedUrls.push(options.url)
+    },
+    checkForUpdates(): Promise<unknown> {
+      checks += 1
+      return Promise.resolve(null)
+    },
+    quitAndInstall(): void {
+      quits += 1
+    },
+    on(event: string, listener: (...args: unknown[]) => void): unknown {
+      events.push(event)
+      const existing = listeners.get(event) ?? []
+      existing.push(listener)
+      listeners.set(event, existing)
+      return updater
+    },
+    emit(event: 'update-downloaded' | 'error', payload?: unknown): void {
+      for (const listener of listeners.get(event) ?? []) listener(payload)
+    },
+  }
+  Object.defineProperty(updater, 'feedUrls', { get: () => feedUrls })
+  Object.defineProperty(updater, 'checks', { get: () => checks })
+  Object.defineProperty(updater, 'quits', { get: () => quits })
+  Object.defineProperty(updater, 'events', { get: () => events })
+  return updater as unknown as UpdaterFake
+}
+
+/** TimersFake is the injected timer. Nothing here reaches the wall clock: a
+ * test moves six hours by calling `fire()`. */
+interface TimersFake {
+  readonly delays: readonly number[]
+  readonly live: boolean
+  readonly setInterval: UpdatePolicyDeps['timer']['setInterval']
+  readonly clearInterval: UpdatePolicyDeps['timer']['clearInterval']
+  fire(): void
+}
+
+function timersFake(): TimersFake {
+  const delays: number[] = []
+  let handler: (() => void) | null = null
+  const timers = {
+    get delays() {
+      return delays
+    },
+    get live() {
+      return handler !== null
+    },
+    setInterval: (next: () => void, ms: number) => {
+      delays.push(ms)
+      handler = next
+      return 1 as unknown as ReturnType<typeof setInterval>
+    },
+    clearInterval: () => {
+      handler = null
+    },
+    fire: () => handler?.(),
+  }
+  return timers as unknown as TimersFake
+}
+
+/** Harness is one controller and everything it could reach. */
+interface Harness {
+  readonly updater: UpdaterFake
+  readonly timers: TimersFake
+  readonly fetches: readonly FetchCall[]
+  readonly ready: readonly string[]
+  readonly setSwitch: (on: boolean) => void
+  readonly setIdle: (idle: boolean) => void
+  readonly controller: ReturnType<typeof createUpdateController>
+}
+
+/** harness builds that controller for the newest stable release, with every dep
+ * at the value the gate admits; `overrides` is how a test states the one dep it
+ * is about (a platform that is not darwin, a busy launch flow, a hostile body).
+ * A test that replaces `fetchReleases` keeps the fake's own recording by
+ * reaching for `fetchFake` instead of writing its own. */
+function harness(
+  overrides: Partial<UpdatePolicyDeps> = {},
+  bodies: readonly string[] = [listing([release('console-v0.120.0')])],
+): Harness {
+  const updater = updaterFake()
+  const timers = timersFake()
+  const fetchFake = listingFake(bodies)
+  const ready: string[] = []
+  let on = true
+  let idle = true
+  const deps: UpdatePolicyDeps = {
+    platform: 'darwin',
+    isPackaged: true,
+    env: {},
+    currentVersion: RUNNING,
+    switchOn: () => on,
+    timer: { setInterval: timers.setInterval, clearInterval: timers.clearInterval },
+    fetchReleases: fetchFake.fetchReleases,
+    isLaunchFlowIdle: () => idle,
+    onReadyToRestart: (version) => {
+      ready.push(version)
+    },
+    updater,
+    ...overrides,
+  }
+  return {
+    updater,
+    timers,
+    fetches: fetchFake.calls,
+    ready,
+    setSwitch: (next) => {
+      on = next
+    },
+    setIdle: (next) => {
+      idle = next
+    },
+    controller: createUpdateController(deps),
+  }
+}
+
+/** settle lets the check's promises run: the policy's work is asynchronous all
+ * the way down, so an assertion made before this would read the state of a check
+ * that has not finished. */
+function settle(): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, 0)
+  })
+}
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
+
+describe('the gate: nothing at all until every condition holds', () => {
+  const closed: readonly { readonly why: string; readonly overrides: Partial<UpdatePolicyDeps> }[] = [
+    { why: 'the platform is linux', overrides: { platform: 'linux' } },
+    { why: 'the platform is win32', overrides: { platform: 'win32' } },
+    { why: 'the build is not packaged', overrides: { isPackaged: false } },
+    { why: 'CI is set', overrides: { env: { CI: 'true' } } },
+    { why: 'the check is switched off in the environment', overrides: { env: { FUGARO_NO_UPDATE_CHECK: '1' } } },
+  ]
+
+  for (const { why, overrides } of closed) {
+    it(`does nothing when ${why}`, async () => {
+      const { controller, fetches, updater, timers } = harness(overrides)
+      await controller.start()
+      await settle()
+      expect(fetches).toHaveLength(0)
+      expect(updater.checks).toBe(0)
+      expect(updater.feedUrls).toEqual([])
+      expect(updater.events).toEqual([])
+      expect(updater.autoDownload).toBe(false)
+      expect(updater.autoInstallOnAppQuit).toBe(false)
+      expect(updater.allowDowngrade).toBe(true)
+      expect(updater.allowPrerelease).toBe(true)
+      expect(updater.requestHeaders).toEqual({ 'X-Machine-Id': 'machine-1' })
+      expect(timers.delays).toEqual([])
+      expect(timers.live).toBe(false)
+    })
+  }
+
+  it('does nothing while the switch is off', async () => {
+    const { controller, fetches, updater, timers } = harness({ switchOn: () => false })
+    await controller.start()
+    await settle()
+    expect(fetches).toHaveLength(0)
+    expect(updater.checks).toBe(0)
+    expect(timers.delays).toEqual([])
+    expect(timers.live).toBe(false)
+  })
+
+  it('checks on an empty CI and on any FUGARO_NO_UPDATE_CHECK that is not 1', async () => {
+    const { controller, fetches, timers } = harness({ env: { CI: '', FUGARO_NO_UPDATE_CHECK: '0' } })
+    await controller.start()
+    await settle()
+    expect(fetches).toHaveLength(1)
+    expect(timers.delays).toEqual([UPDATE_INTERVAL_MS])
+  })
+
+  it('rearms when the switch goes on after start', async () => {
+    const { controller, fetches, setSwitch } = harness()
+    setSwitch(false)
+    await controller.start()
+    await settle()
+    expect(fetches).toHaveLength(0)
+    setSwitch(true)
+    await controller.start()
+    await settle()
+    expect(fetches).toHaveLength(1)
+  })
+})
+
+describe('the cadence: one check at start, then every six hours', () => {
+  it('checks once at start and asks the timer for six hours', async () => {
+    const { controller, fetches, timers } = harness()
+    await controller.start()
+    expect(fetches).toHaveLength(1)
+    expect(timers.delays).toEqual([UPDATE_INTERVAL_MS])
+    expect(UPDATE_INTERVAL_MS).toBe(6 * 60 * 60 * 1000)
+  })
+
+  it('does not check again before six hours have passed', async () => {
+    const { controller, fetches } = harness()
+    await controller.start()
+    await settle()
+    expect(fetches).toHaveLength(1)
+  })
+
+  it('checks again on each six-hour tick', async () => {
+    const { controller, fetches, timers } = harness()
+    await controller.start()
+    timers.fire()
+    await settle()
+    expect(fetches).toHaveLength(2)
+    timers.fire()
+    await settle()
+    expect(fetches).toHaveLength(3)
+  })
+
+  it('stops the timer at once on stop()', async () => {
+    const { controller, fetches, timers } = harness()
+    await controller.start()
+    controller.stop()
+    expect(timers.live).toBe(false)
+    timers.fire()
+    await settle()
+    expect(fetches).toHaveLength(1)
+  })
+
+  it('clears the timer at once when the switch goes off', async () => {
+    const { controller, fetches, timers, setSwitch } = harness()
+    await controller.start()
+    setSwitch(false)
+    timers.fire()
+    await settle()
+    expect(timers.live).toBe(false)
+    expect(fetches).toHaveLength(1)
+  })
+})
+
+describe('the stable-only feed', () => {
+  const dropped: readonly { readonly why: string; readonly entry: unknown }[] = [
+    { why: 'a draft', entry: release('console-v9.9.9', { draft: true }) },
+    { why: 'a pre-release', entry: release('console-v9.9.9', { prerelease: true }) },
+    { why: 'a CLI tag', entry: release('v0.20.0') },
+    { why: 'a two-component console tag', entry: release('console-v1.2') },
+    { why: 'a leading zero', entry: release('console-v01.2.3') },
+    { why: 'a pre-release suffix', entry: release('console-v1.2.3-rc.1') },
+    { why: 'a build suffix', entry: release('console-v1.2.3+build.4') },
+    { why: 'a nine-digit-plus component', entry: release('console-v1.2.1234567890') },
+    { why: 'a non-string tag', entry: release(1234) },
+    { why: 'a missing tag', entry: { draft: false, prerelease: false } },
+    { why: 'a missing draft field', entry: { tag_name: 'console-v9.9.9', prerelease: false } },
+    { why: 'a missing prerelease field', entry: { tag_name: 'console-v9.9.9', draft: false } },
+    { why: 'a draft field that is not the boolean false', entry: release('console-v9.9.9', { draft: 'false' }) },
+    { why: 'a null entry', entry: null },
+    { why: 'a string entry', entry: 'console-v9.9.9' },
+    { why: 'a downgrade', entry: release('console-v0.100.0') },
+    { why: 'the running version itself', entry: release('console-v0.116.0') },
+  ]
+
+  for (const { why, entry } of dropped) {
+    it(`drops ${why}`, () => {
+      expect(newestStableConsoleRelease(JSON.parse(listing([entry])) as unknown, RUNNING)).toBeNull()
+    })
+  }
+
+  it('picks the newest by number, not by string', () => {
+    const body = listing([
+      release('console-v0.99.0'),
+      release('console-v0.120.0'),
+      release('console-v0.9.0'),
+      release('console-v0.116.1'),
+    ])
+    expect(newestStableConsoleRelease(JSON.parse(body) as unknown, RUNNING)).toBe('console-v0.120.0')
+  })
+
+  it('ignores the order the releases arrive in', () => {
+    const body = listing([release('console-v0.120.0'), release('console-v0.121.0'), release('console-v0.119.0')])
+    expect(newestStableConsoleRelease(JSON.parse(body) as unknown, RUNNING)).toBe('console-v0.121.0')
+  })
+
+  it('answers with nothing when the listing is not a list, or the running version is not one', () => {
+    const newer = listing([release('console-v0.120.0')])
+    expect(newestStableConsoleRelease({}, RUNNING)).toBeNull()
+    expect(newestStableConsoleRelease(null, RUNNING)).toBeNull()
+    expect(newestStableConsoleRelease('console-v9.9.9', RUNNING)).toBeNull()
+    expect(newestStableConsoleRelease(JSON.parse(listing([null])) as unknown, RUNNING)).toBeNull()
+    for (const running of ['dev', '0.116', 'v0.116', '0.116.0-rc.1', '', '0.116.0.1']) {
+      expect(newestStableConsoleRelease(JSON.parse(newer) as unknown, running)).toBeNull()
+    }
+  })
+
+  it('accepts a running version carrying the CLI tag prefix', () => {
+    const body = listing([release('console-v0.120.0')])
+    expect(newestStableConsoleRelease(JSON.parse(body) as unknown, `v${RUNNING}`)).toBe('console-v0.120.0')
+  })
+})
+
+describe('no downgrade: a candidate at or below the running version is refused', () => {
+  for (const candidate of ['console-v0.115.0', 'console-v0.116.0', 'console-v0.0.0']) {
+    it(`sets no feed and asks for no update for ${candidate}`, async () => {
+      const { controller, updater, fetches } = harness({}, [listing([release(candidate)])])
+      await controller.start()
+      await settle()
+      expect(fetches).toHaveLength(1)
+      expect(updater.feedUrls).toEqual([])
+      expect(updater.checks).toBe(0)
+    })
+  }
+
+  it('sets the feed and asks the updater once there is something newer', async () => {
+    const { controller, updater } = harness()
+    await controller.start()
+    expect(updater.feedUrls).toEqual([FEED])
+    expect(updater.checks).toBe(1)
+  })
+})
+
+describe('the two URLs the console may ever build', () => {
+  const refused: readonly { readonly why: string; readonly input: unknown }[] = [
+    { why: 'the CLI tag shape', input: 'v0.20.0' },
+    { why: 'a bare version', input: '1.2.3' },
+    { why: 'a two-component tag', input: 'console-v1.2' },
+    { why: 'a leading zero', input: 'console-v01.2.3' },
+    { why: 'a pre-release suffix', input: 'console-v1.2.3-rc.1' },
+    { why: 'a build suffix', input: 'console-v1.2.3+b4' },
+    { why: 'a path traversal', input: 'console-v1.2.3/../../evil' },
+    { why: 'an encoded separator', input: 'console-v1.2.3%2F..' },
+    { why: 'an encoded dot run', input: 'console-v1%2e2%2e3' },
+    { why: 'a query', input: 'console-v1.2.3?x=1' },
+    { why: 'a fragment', input: 'console-v1.2.3#x' },
+    { why: 'a backslash', input: 'console-v1.2.3\\..' },
+    { why: 'another host', input: 'https://example.invalid/console-v1.2.3' },
+    { why: 'a leading slash', input: '/console-v1.2.3' },
+    { why: 'an empty tag', input: '' },
+    { why: 'a trailing space', input: 'console-v1.2.3 ' },
+    { why: 'an uppercase prefix', input: 'Console-v1.2.3' },
+    { why: 'a newline', input: 'console-v1.2.3\n' },
+    { why: 'a non-string', input: 42 },
+    { why: 'a component past nine digits', input: `console-v1.2.${'9'.repeat(10)}` },
+  ]
+
+  for (const { why, input } of refused) {
+    it(`refuses ${why}`, () => {
+      expect(() => feedUrlFor(input as string)).toThrow()
+    })
+  }
+
+  it('builds exactly the feed URL for a tag that passed the filter', () => {
+    expect(feedUrlFor('console-v1.2.3')).toBe('https://github.com/dimipaun/fugaro/releases/download/console-v1.2.3/')
+  })
+
+  it('sends nothing but the listing URL and that feed URL, whatever the listing says', async () => {
+    const { controller, updater, fetches } = harness({}, [
+      listing([
+        release('v9.9.9'),
+        release('console-v9.9.9', { prerelease: true }),
+        release('console-v0.120.0'),
+        release('console-v0.900.0', { draft: true }),
+        release('https://example.invalid/console-v0.999.0'),
+        release('http://github.com/dimipaun/fugaro/releases/download/console-v0.998.0/'),
+      ]),
+    ])
+    await controller.start()
+    await settle()
+    expect(fetches.map((call) => call.url)).toEqual([RELEASES_URL])
+    expect(updater.feedUrls).toEqual([FEED])
+    expect(updater.feedUrls[0]?.startsWith('https://github.com/')).toBe(true)
+  })
+})
+
+describe('the request carries no identifier', () => {
+  it('sends exactly two fixed headers on the listing request', async () => {
+    const { controller, fetches } = harness()
+    await controller.start()
+    expect(fetches).toHaveLength(1)
+    expect(fetches[0]?.headers).toEqual({
+      Accept: 'application/vnd.github+json',
+      'User-Agent': 'fugaro-console',
+    })
+  })
+
+  it('sends the same two headers on every check, and no others', async () => {
+    const { controller, fetches, timers } = harness()
+    await controller.start()
+    timers.fire()
+    await settle()
+    expect(fetches).toHaveLength(2)
+    for (const call of fetches) {
+      expect(Object.keys(call.headers).toSorted()).toEqual(['Accept', 'User-Agent'])
+      expect(call.headers['User-Agent']).toBe('fugaro-console')
+    }
+  })
+
+  it('names no version, platform, machine, user or installation in what it sends', async () => {
+    const { controller, fetches, updater } = harness({ currentVersion: '0.120.0' }, [
+      listing([release('console-v0.121.0')]),
+    ])
+    await controller.start()
+    await settle()
+    expect(updater.feedUrls).toEqual(['https://github.com/dimipaun/fugaro/releases/download/console-v0.121.0/'])
+    const sent = JSON.stringify({ urls: fetches.map((call) => call.url), headers: fetches[0]?.headers })
+    for (const absent of ['0.120.0', '0.121.0', 'darwin', 'machine', 'person', 'console-v']) {
+      expect(sent).not.toContain(absent)
+    }
+  })
+
+  it('gives the updater an empty, frozen header table', async () => {
+    const { controller, updater } = harness()
+    await controller.start()
+    expect(updater.requestHeaders).toEqual({})
+    expect(Object.isFrozen(updater.requestHeaders)).toBe(true)
+  })
+})
+
+describe('the install: configured on, and only the user restarts', () => {
+  it('configures the updater as the rules require', async () => {
+    const { controller, updater } = harness()
+    await controller.start()
+    expect(updater.autoDownload).toBe(true)
+    expect(updater.autoInstallOnAppQuit).toBe(true)
+    expect(updater.allowDowngrade).toBe(false)
+    expect(updater.allowPrerelease).toBe(false)
+    expect(updater.requestHeaders).toEqual({})
+    expect(updater.events.toSorted()).toEqual(['error', 'update-downloaded'])
+  })
+
+  it('tells the app a download is ready, and does not restart on its own', async () => {
+    const { controller, updater, ready } = harness()
+    await controller.start()
+    updater.emit('update-downloaded', { version: '0.120.0' })
+    expect(ready).toEqual(['0.120.0'])
+    expect(updater.quits).toBe(0)
+  })
+
+  it('reports each finished download once, however many checks ran before it', async () => {
+    const { controller, updater, ready, timers } = harness()
+    await controller.start()
+    timers.fire()
+    await settle()
+    updater.emit('update-downloaded', { version: '0.120.0' })
+    expect(ready).toEqual(['0.120.0'])
+  })
+
+  it('leaves install-on-quit on, so quitting is what installs without asking', async () => {
+    const { controller, updater } = harness()
+    await controller.start()
+    expect(updater.autoInstallOnAppQuit).toBe(true)
+    expect(updater.quits).toBe(0)
+  })
+
+  it('installs when the user asks, and not before', async () => {
+    const { controller, updater, ready } = harness()
+    await controller.start()
+    updater.emit('update-downloaded', { version: '0.120.0' })
+    expect(ready).toEqual(['0.120.0'])
+    expect(updater.quits).toBe(0)
+    controller.restartRequested()
+    expect(updater.quits).toBe(1)
+  })
+})
+
+describe('never during a launch', () => {
+  it('does not prompt while a launch is in flight, and prompts once it is idle', async () => {
+    const { controller, updater, ready, setIdle } = harness()
+    setIdle(false)
+    await controller.start()
+    updater.emit('update-downloaded', { version: '0.120.0' })
+    expect(ready).toEqual([])
+    expect(updater.quits).toBe(0)
+    setIdle(true)
+    controller.launchFlowIdle()
+    expect(ready).toEqual(['0.120.0'])
+    controller.launchFlowIdle()
+    expect(ready).toEqual(['0.120.0'])
+  })
+
+  it('does not restart while a launch is in flight, and restarts once it is idle', async () => {
+    const { controller, updater, setIdle } = harness()
+    setIdle(false)
+    await controller.start()
+    updater.emit('update-downloaded', { version: '0.120.0' })
+    controller.restartRequested()
+    expect(updater.quits).toBe(0)
+    setIdle(true)
+    controller.launchFlowIdle()
+    expect(updater.quits).toBe(1)
+    controller.launchFlowIdle()
+    expect(updater.quits).toBe(1)
+  })
+
+  it('restarts at once when the flow was already idle', async () => {
+    const { controller, updater } = harness()
+    await controller.start()
+    controller.restartRequested()
+    expect(updater.quits).toBe(1)
+  })
+
+  it('delivers both deferrals when the flow goes idle', async () => {
+    const { controller, updater, ready, setIdle } = harness()
+    setIdle(false)
+    await controller.start()
+    updater.emit('update-downloaded', { version: '0.120.0' })
+    controller.restartRequested()
+    setIdle(true)
+    controller.launchFlowIdle()
+    expect(ready).toEqual(['0.120.0'])
+    expect(updater.quits).toBe(1)
+  })
+
+  it('stays deferred however many checks pass while the flow is busy', async () => {
+    const { controller, updater, ready, timers, setIdle } = harness()
+    setIdle(false)
+    await controller.start()
+    updater.emit('update-downloaded', { version: '0.120.0' })
+    controller.restartRequested()
+    timers.fire()
+    await settle()
+    expect(ready).toEqual([])
+    expect(updater.quits).toBe(0)
+  })
+})
+
+describe('a failure is one line and a retry', () => {
+  it('swallows a listing failure, names no host and no query, and checks again on the next tick', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    let first = true
+    const { controller, updater, timers } = harness({
+      fetchReleases: (url: string, headers: Readonly<Record<string, string>>) => {
+        if (!first) return Promise.resolve(listing([release('console-v0.120.0')]))
+        first = false
+        expect(url).toBe(RELEASES_URL)
+        expect(headers['User-Agent']).toBe('fugaro-console')
+        return Promise.reject(new Error('connect ECONNREFUSED https://example.invalid/x?token=abc'))
+      },
+    })
+    await controller.start()
+    await settle()
+    expect(logged).toHaveBeenCalledTimes(1)
+    expect(logged.mock.calls[0]).toHaveLength(1)
+    const text = String(logged.mock.calls[0]?.[0])
+    for (const absent of ['example.invalid', 'token', 'ECONNREFUSED', 'abc']) {
+      expect(text).not.toContain(absent)
+    }
+    expect(text).not.toContain('\n')
+    timers.fire()
+    await settle()
+    expect(updater.feedUrls).toEqual([FEED])
+  })
+
+  it('swallows a body that is not JSON, and one too long to accept', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    for (const body of ['not json at all', `${'9'.repeat(2 << 20)}`]) {
+      const { controller, updater } = harness({ fetchReleases: () => Promise.resolve(body) })
+      await controller.start()
+      await settle()
+      expect(updater.feedUrls).toEqual([])
+      expect(updater.checks).toBe(0)
+      expect(logged).toHaveBeenCalledTimes(1)
+      logged.mockClear()
+    }
+  })
+
+  it('swallows a failure the updater reports, and keeps the timer armed', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const { controller, updater, timers } = harness()
+    await controller.start()
+    updater.emit('error', new Error('the download failed'))
+    expect(logged).toHaveBeenCalledTimes(1)
+    expect(timers.live).toBe(true)
+  })
+})
