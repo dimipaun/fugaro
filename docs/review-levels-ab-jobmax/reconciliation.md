@@ -1,0 +1,207 @@
+# Review levels, A/B for every slot, job max, crash reports, console graph and gauges: reconciliation
+
+**DRAFT. Status: plan only; nothing is implemented; no task approved.** The decisions D680–D697
+are not answered yet. Answering a decision does not approve a task.
+
+**Checked against** `origin/main` at `24fe1de60` (`images: copy in the credentials service's image
+leg (C1.14) (#1346)`) and the 11 PRs open on 2026-10-30, on **2026-10-30**. The repository has no
+`graphify-out/`, so every claim was found with `git grep` and then read in place. Paths and
+symbols are cited without line numbers. Findings are **F1–F44**, classed **Wrong** (the spec
+contradicts the code), **Exists** (already there, perhaps under another name), **Gap** (the code
+forces a case the spec does not cover), **Rule** (conflicts with a rules file, an owner ruling or a
+`docs/` page) and **Open** (a question the spec raises itself).
+
+The spec says its six sections are independent. In the code they mostly are, with three
+exceptions: section 2's reviewer slots need section 1's levels, section 6's gauges and section 5's
+graph both edit the console stylesheets that the in-flight Papaya redesign is editing, and section
+4 changes promises that the website, the Terms and two earlier owner rulings make.
+
+## 1. Headline: spec concept → what the repository already has
+
+| Spec concept | What exists | Class |
+| --- | --- | --- |
+| Review level 1 (inner loop, the coder's model) | the recipe step `first_line`: a review by the coder's model in a fresh session, followed by a fix; it never decides readiness (`docs/recipes.md` §1, `recipe.StepFirstLine`, `config.Agent.FirstLineReview`) | Exists (F2) |
+| Review level 2 (senior) | the recipe step `review`, required in every recipe, exactly once and last (`recipe.StepReview`, `runstore.TierSenior`) | Exists (F2) |
+| Review level 3 (adversarial or security) | nothing. Proposed earlier as `adversarial-security` in the in-job review spec's `review_plan` (answered, unbuilt) | Gap (F3, F8) |
+| Bounce back to the inner loop | `review: { bounce: first_line }` (`recipe.Step.Bounce`; `runstore.ReviewSummary.Bounce`); the `standard` recipe is the spec's L1 + L2 loop | Exists (F2) |
+| Per-level caps with a project-level default | `agent.first_line_rounds` (1–3, default 1), `agent.review_rounds` (1–10, default 2), both settable in the project layer (`config.LayerAgent`) | Exists, different numbers (F4) |
+| Defaults by rigor level | rigor modes are built (`internal/rigor`); `rigor.RoundCeiling` lowers review rounds per mode; "a recipe may read the level" is approved (LD9) and unbuilt (LV6.1) | Exists in part (F5, F9) |
+| Per-job settings from the orchestrator | `task.Overrides` (review rounds, budget, one model, timeout); the in-job review spec's `review_plan` task field (Q1, answered 2026-10-19, unbuilt) | Exists in part (F8, F10) |
+| Effort per level | nothing; provider routes force thinking off | Gap (F6) |
+| A/B testing "not implemented" | A1.1 (#1310), A1.2 (#1316) and A2.1 (#1337) are on `main` | Wrong (F15) |
+| Job max, planning for parallel work | the `parallelism` skill with the plan graph format, `fugaro plan graph` and `fugaro plan status` | Exists in part (F21) |
+| `/jobmax` | no plugin commands at all; skills only | Gap (F22) |
+| Mobile Crashlytics | P7.1a on `main` (#1326), always on by D255, with a scan that refuses the opt-out call | Rule (F27) |
+| Console and CLI crash reports | none; the console's D5 says no telemetry of any kind | Rule (F29) |
+| `elk.direction: DOWN`, `viewBox`, `width: 100%; height: auto` | all three already built | Exists (F36) |
+| Spend-rate gauge, sparklines, cap bars | a fleet gauge, per-repository cap bars and burn sparklines, drawn as plain SVG with no chart library | Exists in part (F40) |
+
+## 2. Findings
+
+### 2.1 Review levels (spec section 1)
+
+**F1 — Wrong (the premise).** The spec says the dogfooding recipe uses DeepSeek "for both the inner-loop code review and the senior reviewer". This repository's `fugaro.yaml` pins `agent.models.coder` and `agent.models.reviewer` to the same DeepSeek model, and with `first_line_review` unset (`auto`), `config.Agent.FirstLineOn` returns false because a provider serves both roles. So the run has **one** in-loop review, by the coder's own model. The senior review is **outside** the loop, done by the owner's local agents (`docs/dogfooding.md`: "keep the real review **outside** the loop"; README §4). *Consequence:* the waste is a model reviewing its own work, not paying twice. A guardrail that compares only L2 with L1 does not catch this case, because L1 is absent here (D681).
+
+**F2 — Exists.** Level 1 is `first_line` (by the coder's model, a fresh session, `max_rounds` 1–3, never decides readiness). Level 2 is `review`. The spec's bounce flow for two levels is `review: { bounce: first_line }`: a senior rejection runs the fix, then another `first_line` loop, then the next senior round, and the last round never bounces (`docs/recipes.md` §1). `result.json` records each review's `tier` (`first`/`senior`) and `bounce` (`runstore.ReviewSummary`). The catalog's `standard` recipe is already the spec's L1 + L2 loop. *Consequence:* sections 1's L1 and L2 are a renaming plus per-job settings, not a new loop. Whether to rename the keys is D680.
+
+**F3 — Gap.** No step kind exists for level 3. `recipe.StepKind` is a closed set (`check`, `first_line`, `review`, `digest`, `plan`, `render`). `review` must appear exactly once and last, and `bounce` may only target `first_line` (`docs/recipes.md` §8: "no general jumps between steps"). *Consequence:* L3 is a new step kind. It needs new ordering rules (after `review`), a new readiness rule (F13), a new `bounce` target and the `newKeys` image gate, and it changes the recipe format, which is strictly parsed and refused by older binaries (`docs/recipes.md` §9).
+
+**F4 — Exists, different numbers.** `config.DefaultFirstLineRounds` = 1, `config.MaxFirstLineRounds` = 3, `config.DefaultReviewRounds` = 2, `agent.review_rounds` is 1–10. The project layer's `defaults.agent.first_line_rounds` and `defaults.agent.review_rounds` (`config.LayerAgent`) already set them per project, a recipe's `max_rounds` overrides them, and `task.Overrides.ReviewRounds` overrides the review step for one task. Every loop already has a limit. The spec's L1 default of 3 is today's **maximum**, not its default. Its L2 default of 2 matches. *Consequence:* only L3's cap is new. Raising L1's default changes the worst-case bound for every repository (F12, D686).
+
+**F5 — Exists.** `rigor.RoundCeiling` lowers a run's review rounds by mode (POC 1, Startup 2, Pro 3, Critical 10), clamped to at least 2 while the rigor-modes question O3 is open (`internal/rigor/rounds.go`, `minRoundCeiling`). *Consequence:* per-rigor defaults for levels must use this ceiling, not a second table, and the ceiling needs a row or a rule for L3.
+
+**F6 — Gap.** Nothing in `internal/config`, `internal/task` or `internal/agent` sets a reasoning effort. On a provider route, `agent.ProviderRouteVars` sets `MAX_THINKING_TOKENS=0`, which removes the `thinking` field because the gateway refuses what it would add (`context_management`, `internal/gateway/forward.go`). *Consequence:* "effort" can only mean something for a Claude model, and how Claude Code takes an effort setting per stage is UNVERIFIED (U1). See D685.
+
+**F7 — Rule.** `docs/recipes.md` §1: "`review` is required in every recipe … A recipe cannot produce a ready pull request without a senior review". `runner.Decide` reads the last senior review, and a `first_line` review "never decides readiness". The spec's "POC uses level 1 only" and "`none` to skip a level" (applied to L2) break this rule. *Consequence:* either L1 decides readiness when L2 is `none`, or such a run always ends as a draft (D683).
+
+**F8 — Exists under another name (answered, unbuilt).** `docs/in-job-review/spec.md` §4 proposed a per-task **`review_plan`**: a list of reviews, each with `type` (`general`, `adversarial-security`), `model`, `effort` and `max_rounds`, plus named presets. The owner answered all its questions on 2026-10-19: **Q1**, a `review_plan` field in `task.Spec` and a `--review-plan` flag with a version gate; **Q4**, serial reviews first; **Q9**, wait for the credentials service before running an Opus review in a job. No plan is written, and `git grep review_plan -- '*.go'` finds nothing. *Consequence:* section 1 is the newer version of that proposal. Building both would give two carriers for one thing (D684). Q9's premise may have moved: README §4 now documents a Claude reviewer next to a provider coder under `auth: api-key` (U5).
+
+**F9 — Exists (approved, unbuilt).** Rigor levels LD9 (answered 2026-10-22: "a recipe may branch on the level") is task LV6.1 in `docs/rigor-modes/levels-implementation-plan.md`. It may vary only models and the reviewer, never the cap, and nothing in `internal/recipe` reads a rigor level today. *Consequence:* the spec's "defaults by rigor level" is LV6.1 with levels as its subject. The plan should fold LV6.1 in rather than build two level-conditioned mechanisms.
+
+**F10 — Gap.** `task.Overrides` holds `review_rounds`, `max_budget_usd`, `model` and `total_timeout`, and nothing per level. `task.Parse` rejects unknown fields, so each new field needs a `…Since` constant and the build-record check in `internal/cli/recipes_skew.go` (in-job review R5). *Consequence:* per-job level settings are one new task field with a version gate, and launchers must not set it before the job image understands it.
+
+**F11 — Gap (the guardrail).** "Same model" has to be defined. Model pins are exact IDs (`agent.models.*`). `roles: { reviewer: coder }` (the `solo` and `lint-fix` recipes) makes the reviewer the coder's model on purpose. *Consequence:* refusing L2 = L1 by exact ID is safe. Refusing L2 = coder would refuse `solo`, `lint-fix` and this repository's own `fugaro.yaml`. Comparing model families (`deepseek/…` against `deepseek/…`) can reuse the family rule from the A/B work's D553. See D681.
+
+**F12 — Gap (worst-case bound).** `recipe.StageBound` is the stage ceiling that `fugaro budget preview` and `config` defaults use: `implement + 2·f + n·(2 + 2·f)` with a bounce, where `f` is the L1 rounds and `n` the L2 rounds. Today's `standard` at the defaults (f = 1, n = 2) bounds a run at **11** model stages. The spec's defaults without L3 (f = 3, n = 2) give **23**. With L3 at 2 rounds bouncing to L1, adding `n₃·(2 + 2·f)`, they give **39**. Keeping f = 1 with L3 gives **19**. The per-run cap (`budget.per_run_usd`) stays the hard stop. The stage count matters for the stage and total timeouts (this repository: 150 min a stage, 3 h total) and for `budget preview`. *Consequence:* `StageBound` must learn L3, and the defaults decide which of 19, 23 or 39 the preview shows (D686).
+
+**F13 — Gap (L3 bounce skips L2).** Under the spec's rule, after an L3 rejection the fix and the L1 loop run, then L3 again, with no new L2 round. L2's last `ship` then refers to an older head. `runner.Decide` reads one senior review, and the rigor-modes findings policy reads "the last senior review" (`runner.findingsPolicyOf`). *Consequence:* readiness needs a rule for two outer levels, and the run record should show which head each level last approved (D687).
+
+**F14 — Gap.** Per-stage caps exist for three classes only: `implement`, `review` and `fix` (`policy.StageBudget`, `StageTokens`, `StageTimeout`; governance stage timeouts). *Consequence:* an L3 stage counts as `review` unless the owner wants a separate class. The recommendation is to count it as `review`, which needs no new config key.
+
+### 2.2 A/B for all four slots (spec section 2)
+
+**F15 — Wrong.** The spec says the A/B plan "has not been implemented". On `main`: **A1.1**, the task's and record's `ab` block (`task.AB`, #1310); **A1.2**, the project layer's `ab:` keys (`config.AB`, #1316, inert until `ee/ab`); and **A2.1**, a challenger arm publishes nothing and both arms upload their patch (#1337). A2.2 to A6.2 are not built (`docs/model-ab-testing/implementation-plan.md`). *Consequence:* section 2 amends a plan that is a third built. The `ab` block's wire format is fixed and decoded strictly, so adding a slot to it is a wire change.
+
+**F16 — Rule.** D555 (answered 2026-10-29): "The coder model only; the reviewer, recipe, mode, tier and caps are the same", so that review findings stay comparable. The spec's "change one thing per job" generalises D555, and the spec's reviewer slots revise it. *Consequence:* D555 is amended for reviewer slots, not reversed. The plan must say that a coder-slot pair still holds every reviewer fixed.
+
+**F17 — Gap.** `task.AB.Challenger` is documented as "the coder model the challenger arm runs", and the block has no slot field. *Consequence:* a slot field (`coder`, `l1`, `l2`, `l3`) is one more closed-decoder field with a skew gate. Adding it before A3.3 (the pair launch) means only one wire change instead of two.
+
+**F18 — Gap.** A finding has no identity: `runner.Finding` is `severity`, three scores, `class`, `file` and `summary`. Deciding that "level 2 found an issue the tested level-1 reviewer missed", or that a finding was a false alarm, means matching free text across reviews, which takes judgement. Level 3 has no level above it. *Consequence:* reviewer measurement depends on the A/B plan's slice A5, the blind judge (D552, D553), or on another adjudicator. It cannot ship with the hard-signals-only first slice (D551).
+
+**F19 — Gap.** In a two-run pair the coder is not deterministic, so each arm's code differs and the higher level reviews different code in each arm. A reviewer comparison on the **same input** is possible by replaying the tested review on the champion's recorded patch: A2.1 already uploads each arm's patch under `runs/<slug>/<run-id>/ab/patch.diff`, and `review-only` already runs a review with no coding. *Consequence:* a reviewer-slot pair can be one review stage instead of a whole second run. It is cheaper and isolates the variable (D688).
+
+**F20 — Exists.** D561 (lexicographic hard signals), D563 (paired statistics, `stats.MinRuns`), D560 (no per-person breakdown) and D570 (`fugaro ab`, a new dedicated command in `ee/`) already fix how results are scored and shown. Reports "per slot and per model and effort" are one more grouping key in `fugaro ab`. *Consequence:* no new report surface. D550's line holds: the slot field and the shadow review mechanism are MIT, and the sampler, scoring and report are `ee/`.
+
+### 2.3 Job max and `/jobmax` (spec section 3)
+
+**F21 — Exists, and it answers the spec's open item.** The earlier plan to make the skills favour parallel chunks **was built**: desktop console v2, task V2.8.1, landed 2026-10-23 (`docs/plans/2026-10-15-desktop-console-v2.md`, `docs/design/desktop-console-v2.md` F31, F32 and D36). `plugin/skills/parallelism/SKILL.md` covers going wide or staying narrow, "one owner for each file", "settle shared decisions (names, an interface, a schema) first", the plan's `*.graph.json` (nodes, `needs` edges with reasons, footprints, stream), `fugaro plan graph`, `max_parallel`, `fugaro budget show`, and batch consent. `fugaro plan status` (`internal/cli/plan_status.go`) joins a plan's graph to its runs. F32 records that "cut dependencies with small contracts" is already how this repository plans, by hand. Three things the spec asks for are **not** in the skill: the term "job max", "stubs and fakes so neither side waits", and "make the graph as wide and shallow as possible". *Consequence:* section 3 extends `parallelism` and does not need a new planning skill.
+
+**F22 — Gap.** The plugin ships skills only (`plugin/skills/{parallelism,routing,setup,upgrade,working}`), with no `commands/` directory. `plugin/` tests check every command and flag a skill names against the CLI, and `plugin/skills_lint_test.go` enforces size and frontmatter rules. *Consequence:* `/jobmax` is either a new user-invocable skill (`/fugaro:jobmax`) or a CLI command. Either way it is tested by the plugin's checks (D689).
+
+**F23 — Rule.** The `parallelism` skill says: "Tell the user the number of runs and the worst-case cost before launching a batch, and get their yes for the whole batch", and for ordered work, "launch the first, have the user merge it, and launch the next". The spec's "launches as many as the caps allow" and "launches each job as soon as its dependencies are done" do not ask. *Consequence:* `/jobmax` either keeps the one consent per batch or changes the skill's rule (D690).
+
+**F24 — Gap.** "Done" is not defined. A dependency's run can be finished with a ready PR that is not merged. `gitprov` has no merge call (rigor-modes reconciliation), and a dependent launched from the base branch before the merge builds without the dependency's code. *Consequence:* either done means merged (and the user merges), or dependents run stacked on the dependency's branch with `--ref` (`parallelism`'s long-lived-branch section), which makes them conflict when the dependency changes in review (D690).
+
+**F25 — Exists, adjacent.** `ee/coordinator` (P0–P5 built on the `coordinator` branch) and `docs/central-orchestrator/` (D1–D26 open) are where a cloud-side launcher that follows a graph would live. *Consequence:* a `/jobmax` that waits for dependencies would be a long-running loop in the user's agent session. Version one should be a one-shot command the user runs again (D690). The cloud scheduler stays the coordinator's.
+
+**F26 — Rule.** The spec says "the implementation-planning skill". Fugaro ships no such skill: `parallelism` owns fan-out (design F31, D36: one place for the advice so it does not drift). *Consequence:* the "wide and shallow, contracts first, stubs and fakes, schedule from the graph" guidance goes into `parallelism`.
+
+### 2.4 Crash reports (spec section 4)
+
+**F27 — Rule.** Mobile: D253 and **D255** (answered 2026-10-19) make Crashlytics **and Firebase Analytics always on, with no switch**. The telemetry plan's §7.4 scan **refuses any `setCrashlyticsCollectionEnabled(` or `setAnalyticsCollectionEnabled(` call** in the app (`docs/plans/2026-10-19-mobile-telemetry.md`; `docs/mobile/implementation-plan.md` P7.2 and P7.3). P7.1a is on `main` (#1326: the three `@react-native-firebase` packages, `mobile/firebase.json`), and P7.1b is open as #1332, editing `mobile/app.config.js`. *Consequence:* the spec's mechanism is exactly the call that the planned scan forbids. The spec supersedes D255, and P7.2/P7.3 and their scan must be amended before they are built (D691).
+
+**F28 — Rule.** "Nothing else is sent home" conflicts with **Firebase Analytics** in the app (D253, approved, its packages on `main`). The website's Google Analytics (`website/src/pages/privacy.astro`, `site.facts.analytics.enabled`, behind a consent banner) belongs to the site, not to the product. *Consequence:* the owner either drops Analytics from the app or narrows the sentence (D691).
+
+**F29 — Rule.** Console: `docs/design/desktop-console.md` **D5** (accepted) says "no telemetry of any kind". The website's console download page promises "No telemetry, no crash reporting, no analytics" (`website/content/downloads.json`, property `no-telemetry`, pinned by `website/test/console.mjs`), and README.md says the console has "no telemetry of its own". *Consequence:* D5 is superseded, and the website property, its test and README change in the same PR as the console code. That is a docs-tested change (`npm run check` in `website/`).
+
+**F30 — Rule, and the spec matches the Terms' own open note.** The Subscription Terms §7.3 (`docs/licensing/subscription-terms.md`, published as `website/content/subscription-terms.md`) reads: "The Software may send crash reports and basic diagnostic data to the Licensor, and the Customer may not disable this reporting." The file's own note 5 says the console and app send none today and that the earlier draft promised opt-in. The Terms govern "the Software" (the console, the mobile app, `ee/`, the coordinator), not the MIT Core. *Consequence:* the rewording is the owner's and counsel's job. A draft is in §4 below. This work does not edit the Terms.
+
+**F31 — Gap (the licence boundary and the job).** The CLI is the MIT Core, and the released binaries are built with the `ee` tag (`LICENSING.md`). The job runs the same binary: the base image's `CMD ["fugaro", "exec"]` (`images/base/Dockerfile`). *Consequence:* a crash reporter in the core would ship in MIT builds that have no agreement behind them, and unless it is excluded it would also send from jobs inside the customer's cloud. That is a new outbound destination from the customer's project, and the README says the CLI's console has "no telemetry of its own" (D692).
+
+**F32 — Gap (where the switch lives and when it is known).** "The project config" is a different thing for each client. The CLI reads `~/.config/fugaro/projects/<project>.yaml` (`internal/localcfg`) and the published project layer. The console reads only what a `fugaro` command prints (the CLI is its only data source, console design F33), so the switch reaches it as a CLI document field or a new allow-listed argv, which `.claude/rules/console.md` marks security-sensitive. The mobile app reads the customer's own Firebase plus its pairing-delivered configuration (D232/D259 as amended 2026-10-29), and the Fugaro-operated telemetry project knows nothing about the customer's project. A crash before the setting is read cannot follow it. *Consequence:* the default-on path needs a rule for the window before the setting is known (D694).
+
+**F33 — Gap (privacy of the payload).** Turning off breadcrumbs, local variables and default PII, and stripping user names from paths, is not enough. A Go panic value, an Electron error message or a JS exception string can contain repository names, branch names, task text, URLs or a credential (`internal/agent/redact.go` is best-effort by its own comment). *Consequence:* "only stack traces" holds only if the message is dropped entirely and each frame is reduced to function, module-relative file and line. The transport still shows the sender's IP address to the receiving service (U8). See D694.
+
+**F34 — Rule (new dependencies).** CLAUDE.md: "add no new framework or dependency without asking". The console has **no runtime dependencies**: `console/package.json` lists only devDependencies, `elkjs` among them, and new dependencies are exact-pinned and audited (`docs/licensing/dependency-audit.md`, `THIRD_PARTY_NOTICES.md`). Sentry for Electron and for Go would both be new, and so is a processor that receives Licensor-side data. *Consequence:* D692 and D693 are owner decisions, not implementation details.
+
+**F35 — Open (the spec's own).** Is an opt-out, rather than opt-in, acceptable for EU users when reports contain no personal data? Stated neutrally: this is for the owner and counsel to confirm. Whether an IP address seen in transit, or a stack trace, counts as personal data is part of that question (U8). Listed under open items (O1).
+
+### 2.5 Console dependency graph layout (spec section 5)
+
+**F36 — Exists.** `console/src/renderer/graph/layout.ts` `LAYOUT_OPTIONS` already sets `'elk.algorithm': 'layered'` and `'elk.direction': 'DOWN'`. `svg.graph-canvas` already has `width: 100%; height: auto` and a `viewBox` (`console/src/renderer/theme/screens.css`; `graph.ts` `viewBoxOf`), plus zoom, pinch and fit. *Consequence:* the spec's first two changes are built. What remains is wrapping, the minimum node size and the wide-level fallback.
+
+**F37 — Gap.** With width-fit scaling, a wide graph becomes **small** rather than scrolling. Two-way scrolling would come from zooming in, or from a console build older than `main` (`console-v0.114.0` is the last release; `docs/release-streams.yaml`). *Consequence:* which build and which screen the owner saw is UNVERIFIED (U6). It decides whether there is a scrolling bug or only the "tiny nodes" problem the spec's own "wide levels" paragraph describes.
+
+**F38 — Gap.** ELK's layered wrapping folds the layer axis to approach `elk.aspectRatio`. With `DOWN`, folding a tall graph toward a wide panel moves layers **sideways**, which works against "fits the width, scrolls vertically" (U7). Also, the graph sent to ELK is flat: `LayoutGraph` has one `children` list and no compound nodes (header comment in `layout.ts`). Node size is fixed (`GRAPH_NODE_WIDTH`/`GRAPH_NODE_HEIGHT`, which are part of `structureHash`). *Consequence:* a collapsible cluster is a new compound structure and cache key, not an option flag. A minimum node size is a scale floor computed from the fixed node width (D695).
+
+**F39 — Gap.** The graph is drawn as **columns per release stream** (`model.columns`, `structureHash`), so its width also comes from the number of streams, not only from a level's width. *Consequence:* the minimum-size test must look at the whole picture's width, not one level's.
+
+### 2.6 Console live gauges (spec section 6)
+
+**F40 — Exists, hand-drawn.** The Live screen has a per-repository **cap bar** and **burn sparkline** (`live.ts` `sparkline`, `BurnHistory`, `burnReading`), a header **fleet gauge** (`div.console-gauge`, `svg.console-gauge-bar`) and the fleet budget panel's stat cells (`fleetStats`, including the fleet's burn rate). The burn rate comes from the CLI, in dollars per minute. The Spend screen draws its charts as SVG. All of it uses the styling tokens and `data-*` hooks pinned in `docs/design/console-styling.md`. *Consequence:* the spec's three elements are a new gauge shape and two longer or extra series on existing drawing code.
+
+**F41 — Rule.** The sparkline window is 5 minutes, `LIVE_BURN_WINDOW_SECONDS`, which must equal `internal/watch/state.go` `BurnWindow`, and `console/test/unit/live.test.ts` asserts that the two cannot drift. *Consequence:* "the last hour" cannot widen that window. It is a second history, kept by the console only while it is open, or a CLI feed change (D697).
+
+**F42 — Gap.** A rate gauge's "red zone approaching the spend cap" mixes units: the caps are amounts per run and per UTC day, and the gauge shows dollars per hour. The concurrent-jobs cap (`max_parallel`) is not in any console document (`git grep max_parallel -- console/` finds nothing). The iterations cap is per run, not per fleet. *Consequence:* the red zone needs a rule, `max_parallel` needs a CLI field, and an "iterations" bar belongs on the Run screen (D697).
+
+**F43 — Rule.** ECharts would be the console's first runtime chart dependency (F34). Its rendering sits outside the styling tokens and the `data-*` hooks, and screenshot goldens are re-recorded only by the owner (`.claude/rules/console.md`). *Consequence:* D696.
+
+**F44 — Gap (file conflicts with work in flight).** The console's Papaya release (0.115.0, `docs/release-streams.yaml`) is the Flight Deck redesign, and open PR #1325 (step 4b-1) edits `console/src/renderer/theme/flight-deck.css` and `screens.css`. The Go side has open PRs on the files this work's Go tasks touch: #1345 edits `internal/config/config.go`, `internal/task/task.go` and `schemas/{fugaro,task}.schema.json`; #1344 edits `internal/runner/runner.go`; #1332 edits `mobile/app.config.js`. *Consequence:* sections 5 and 6 follow the Papaya steps that touch the same stylesheets, and the plan's shared-files table must order the level and slot tasks after those PRs land. This is a sequencing fact, not a decision.
+
+## 3. Decisions (D680–D697), DRAFT, unanswered
+
+Each row gives the question, the recommendation and its reason, the alternative and what it costs,
+and an empty cell for the owner's answer. Findings with one defensible answer are resolved in §3.1,
+not asked.
+
+| # | Question | Recommendation (why) | Alternative (cost) | Owner's answer |
+| --- | --- | --- | --- | --- |
+| **D680** | Names: keep `first_line`/`review` and add one step, or rename everything to levels? (F2, F3) | **Keep the recipe keys and record tiers; add one step kind for L3 (working name `adversarial`, tier `adversarial`); docs, `fugaro` output and the skills call them "review level 1/2/3".** Today's format and records stay valid. | Rename to `level_1/2/3` throughout: touches the recipe format, `result.schema.json`, `runstore` tiers, the console, every catalog recipe and the docs tests, for no change in behaviour | |
+| **D681** | Guardrail: reject or warn? (F1, F11) | **Refuse (in `fugaro validate` and at launch) when L1 and L2 both run on the same exact model ID; warn when L2 is the coder's model or the same vendor family as L1 (the D553 family rule).** This catches the spec's case without breaking `solo`/`lint-fix`. | Refuse L2 = coder as well: catches this repository's own setup (F1), but refuses `solo`, `lint-fix` and today's `fugaro.yaml`. Warn only: the waste stays possible with no hard stop | |
+| **D682** | Where per-level settings (model, effort, `none`, focus) live, and who may turn a level off? | **Precedence: built-in per-rigor defaults < project layer `defaults` < repository `fugaro.yaml` < the task (the orchestrator's per-job value). Plus a project-policy floor, merged tighten-only in `internal/policy`: the owner may require a minimum set of levels per rigor mode, and a lower layer's `none` below that floor is refused.** Models stay bounded by `allowed_models` as today. | No floor: any repository or launcher can turn off senior review per job, which the readiness rule (F7) exists to prevent | |
+| **D683** | POC is "L1 only", and `none` for L2: how is readiness decided? (F7) | **When L2 is `none`, the highest level that ran decides readiness (L1's verdict through the mode's findings policy); `docs/recipes.md`'s "no ready PR without a senior review" becomes "without the run's highest review level".** POC stays useful. | Keep the rule: a run with L2 = `none` always ends as a draft PR, so POC never produces a ready PR | |
+| **D684** | Per-job carrier: this spec, or in-job review's `review_plan` (Q1)? (F8, F10) | **One task field for levels (e.g. `review_levels`) with a version gate; it supersedes in-job review §4's `review_plan`: presets become the per-rigor defaults, and `type` becomes the level plus focus text. Q4 (serial) carries over; Q9 is re-checked (U5).** One carrier, one gate. | Build both: two task fields describing the same reviews, two gates, and two places that disagree | |
+| **D685** | Effort per level (F6) | **Accept `effort` only for a Claude model, using Claude Code's own values; refuse it for a provider model, with the reason (provider routes run with thinking off).** Nothing is silently ignored. | Accept it for every model and ignore it for providers: a setting that looks applied and is not | |
+| **D686** | Default caps: L1 3, L2 2, L3 2 (spec) vs today's L1 default 1? (F4, F12) | **Take the spec's L2 = 2 and L3 = 2; keep L1's default at 1 and its maximum at 3, raised per rigor mode only where the owner says so.** Worst case with L3 is 19 stages instead of 39, and an unconfigured repository keeps today's bound of 11. | The spec's L1 = 3 everywhere: every `standard` run's bound goes from 11 to 23 stages, and to 39 with L3 | |
+| **D687** | After an L3 bounce, L2 is skipped (spec). What decides readiness? (F13) | **As the spec says, skip L2. A run is ready when every enabled outer level's last verdict is `ship`; the record keeps the head each level last approved, so the PR body shows that L2 approved an earlier head.** | Re-run L2 after an L3 fix: one more L2 round per L3 bounce, but every verdict is on the final head | |
+| **D688** | Reviewer-slot A/B: how is a pair run and measured? (F16–F19) | **A reviewer pair is a shadow replay: the challenger reviewer reviews the champion's recorded patch at the same level, with no push. The A5 blind judge matches the two finding sets and flags false alarms. Add `slot` to the `ab` block before A3.3; reviewer slots ship after A5. D555 is amended: a coder pair still holds every reviewer fixed.** Same input, one review stage per pair. | A full second run per reviewer pair: double the cost, different code in each arm, and "missed" cannot be attributed | |
+| **D689** | Where "job max" is defined, and what `/jobmax` is (F21, F22, F26) | **Define job max in `parallelism`, with a one-line pointer in `working`; add contracts first, stubs and fakes, and "wide and shallow" there. `/jobmax` is a new user-invocable plugin skill that reads `fugaro plan graph --json` and `fugaro plan status --json` and launches the ready nodes with `fugaro run --batch --run-id`.** No new CLI command; the plugin checks cover it. | A `fugaro jobmax` CLI command: a new command, reference entry and console allow-list surface for what is an agent's procedure | |
+| **D690** | Consent, "done", and waiting (F23–F25) | **Each `/jobmax` asks once, listing the runs and the worst-case cost (keeping the skill's rule). "Done" means merged into the base. No waiting loop: running `/jobmax` again launches whatever has become ready.** It never builds on unmerged code. | Fully automatic within caps, with stacked `--ref` dependents and a waiting loop: faster, but launches spend without a yes, dependents rebase when a PR changes in review, and an agent session that waits on runs can stall | |
+| **D691** | Scope of "crash reports on by default, opt-out; nothing else" (F27–F29) | **Confirm that it supersedes D255 (mobile, always on) and console D5 (no telemetry), and that "nothing else" drops Firebase Analytics from the app (D253).** P7.2/P7.3 and the §7.4 scan are amended before they are built. | Keep Analytics: the spec's sentence is false, and the Terms, privacy page and store forms must name analytics too | |
+| **D692** | Crash reports from the CLI? (F31, F34) | **None from the CLI in v1: the console and the mobile app only. The job (`fugaro exec`) never sends.** The MIT Core keeps "nothing sent home", and no Go dependency is added. | Sentry in `ee/`-tagged CLI builds, with the job excluded: a new Go dependency, a rule that must be enforced in the runner, and MIT users never covered | |
+| **D693** | The console's reporter: Sentry, and which processor? (F34) | **The owner approves or declines `@sentry/electron` (exact pin, dependency audit, notices) sending to a Licensor-operated Sentry project; data location and processor terms are the owner's and counsel's.** It is the spec's own choice. | Electron's built-in `crashReporter` to an endpoint the Licensor runs: no new dependency, but a service to operate, and native minidumps contain process memory | |
+| **D694** | Where the switch is read, the window before it is known, and the payload (F32, F33) | **Console: from a field the CLI prints (no new argv). Mobile: from the pairing-delivered configuration. Until the setting is read, nothing is sent (Crashlytics holds reports on the device; the console discards them). A report is the exception type plus frames (function, module-relative file, line); the message is dropped. A scrubber test covers both clients.** | Send from the first launch and honour the switch afterwards: reports leave before an opted-out user's setting is known | |
+| **D695** | Graph: wrapping, and what happens when levels are wide (F36–F39) | **Do not enable `elk.layered.wrapping` with `DOWN` (it widens the graph). Set a minimum scale from the fixed node width; below it, that graph scrolls horizontally inside its panel. Clusters come later.** No new compound structure. | Collapsible clusters now: compound nodes in a flat layout, a new cache key, new goldens | |
+| **D696** | ECharts for the gauges? (F40, F43) | **No: draw the gauge as SVG next to the existing sparkline, bar and fleet gauge, with the styling tokens and `data-*` hooks.** The console keeps zero runtime dependencies. | ECharts: a runtime dependency of roughly a megabyte, theming outside the tokens, an audit, and owner-only golden re-records | |
+| **D697** | Gauge semantics (F41, F42) | **Red zone: the rate at which the day's remaining headroom runs out before the UTC day ends. One-hour sparklines are a second history kept by the console while open (the 5-minute burn window stays). `max_parallel` becomes a CLI document field. The iterations bar goes to the Run screen.** | A fixed $/h threshold the owner sets: simpler, but not tied to the cap the spec names | |
+
+### 3.1 Resolutions (one defensible answer)
+
+- **R1.** L3 counts as the `review` stage class for per-stage budgets, tokens and timeouts (F14). No new config key.
+- **R2.** Per-rigor level defaults extend `rigor.RoundCeiling` and LV6.1 (F5, F9). There is no second table.
+- **R3.** Sections 5 and 6 come after the Papaya Flight Deck steps that edit `flight-deck.css` and `screens.css` (F44).
+- **R4.** The Go tasks that edit `internal/config/config.go`, `internal/task/task.go`, `schemas/` and `internal/runner/runner.go` are ordered after #1345 and #1344 land (F44). The mobile task waits for #1332.
+- **R5.** The open item in spec section 3 is answered by F21: the plan was built (V2.8.1, 2026-10-23), in part.
+
+## 4. Open tensions and open items for the owner
+
+**O1 (the spec's own).** A legal check that opt-out is acceptable for EU users when reports contain no personal data. Stated neutrally, this is the owner's and counsel's to confirm (F35, U8).
+
+**O2. Draft wording for Terms §7.3**, for the owner and counsel only. This work does not edit the Terms:
+
+> 7.3 **Crash reports.** By default, the Software sends crash reports to the Licensor when it
+> fails. A crash report contains only the type of the fault and the program locations where it
+> occurred (a stack trace). It contains no Customer Data and none of the Customer's code, prompts,
+> repository names, file paths or credentials. The Customer may turn crash reports off in the
+> project configuration (`telemetry.crash_reports: false`), after which the Software sends none.
+> The Licensor uses crash reports only to find and fix faults in the Software.
+
+Compared with today's text, it drops "basic diagnostic data" (the spec says stack traces only) and
+"may not disable". The Licensor's processor (D693) may also need naming. Whether the sender's IP
+address in transit makes the report personal data is for counsel (U8). The privacy page, the store
+forms (D257) and the console download page (F29) change with it.
+
+**O3. Tension between section 4 and two earlier rulings.** D255 (mobile, always on) and console D5 (no telemetry) are the owner's earlier answers. D691 asks the owner to confirm that this spec supersedes both, rather than leaving the reconciliation to choose.
+
+## 5. UNVERIFIED
+
+| # | Claim | Why it matters |
+| --- | --- | --- |
+| U1 | How Claude Code takes a reasoning-effort setting for one stage (flag, environment or settings key) in the pinned base image's version | D685's mechanism |
+| U2 | That `@react-native-firebase/crashlytics` 27.1.0 with automatic collection off keeps reports on the device until `setCrashlyticsCollectionEnabled(true)`, and lets them be deleted | D694's "nothing is sent before the setting is read" for mobile |
+| U3 | `@sentry/electron`'s current switches for breadcrumbs, local variables and default PII, and whether the message can be dropped before sending | D693, D694 |
+| U4 | Whether the A5 blind judge can match two finding sets reliably enough for a per-reviewer miss rate | D688 |
+| U5 | Whether in-job review Q9's gate (wait for the credentials service before a Claude reviewer runs in a job) still binds, now that README §4 documents a Claude reviewer next to a provider coder under `auth: api-key` | D684, and L2 = Claude with L1 = DeepSeek |
+| U6 | Which console build and screen showed scrolling in both directions | F37: a bug, or only the tiny-nodes problem |
+| U7 | How elkjs 0.11.0's layered wrapping behaves with `elk.direction: DOWN` and an `elk.aspectRatio` from the panel | D695 |
+| U8 | Whether a stack-trace-only report plus the sender's IP address in transit counts as personal data under the GDPR | O1, O2 (for counsel) |
