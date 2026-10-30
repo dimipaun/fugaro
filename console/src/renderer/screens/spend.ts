@@ -439,9 +439,17 @@ export interface SpendGroup {
   /** the history holds no document for this key */
   readonly gap: boolean
   readonly partial: boolean
+  /** the document's row is not final yet: hollow in the chart, tagged in the table */
+  readonly hollow: boolean
+  /** the document said it could not read the row's own record */
+  readonly unreadable: boolean
   readonly row: SpendRow | null
   readonly bars: readonly SpendBar[]
 }
+
+/** GAP_CELL_SPAN is how many columns the gap row's one cell covers: the three
+ * money columns, whose figures there is no document to carry. */
+const GAP_CELL_SPAN = String(SPEND_ACCOUNTS.length)
 
 /**
  * SpendChart is the one chart the screen draws: a shared axis, one group per
@@ -1537,6 +1545,8 @@ function groupOf(series: readonly SpendSeries[], rows: readonly SpendRow[], axis
       // row (`outside`), not a gap.
       gap: row === null,
       partial: row === null ? bars.some((bar) => bar.partial) : row.partial,
+      hollow: row?.hollow ?? false,
+      unreadable: row?.unreadable ?? false,
       row,
       bars,
     })
@@ -1569,6 +1579,8 @@ export function buildChart(
         key: row.key,
         gap: false,
         partial: row.partial,
+        hollow: row.hollow,
+        unreadable: row.unreadable,
         row,
         bars: SPEND_ACCOUNTS.map((account) => barOf(plotted(row, account), account, axis.value)),
       })
@@ -2390,12 +2402,12 @@ function barRect(factory: SpendFactory, bar: SpendBar, shape: BarShape, key: str
 /** gapColumn is the one column a day the history does not hold draws: the full
  * height of the plot, hatched. It is one column and not three bars of no height,
  * because a bar of no height reads as a measurement of zero. */
-function gapColumn(factory: SpendFactory, shape: BarShape, key: string): ScreenElement {
+function gapColumn(factory: SpendFactory, column: BarShape, key: string): ScreenElement {
   const element = makeNS(factory, 'rect', 'spend-gap-column')
-  element.setAttribute('x', shape.x)
-  element.setAttribute('y', shape.y)
-  element.setAttribute('width', shape.width)
-  element.setAttribute('height', shape.height)
+  element.setAttribute('x', column.x)
+  element.setAttribute('y', column.y)
+  element.setAttribute('width', column.width)
+  element.setAttribute('height', column.height)
   element.setAttribute('data-key', key)
   return element
 }
@@ -2438,12 +2450,12 @@ function chartKey(parent: ScreenElement, factory: ScreenFactory, model: SpendMod
   if (group.gap) {
     literal(cell(element, factory, 'span', 'spend-chart-gap'), GAP_COLUMN_WORD)
   } else {
-    for (const bar of group.bars) {
-      if (bar.reading.value !== null) continue
+    for (const missing of group.bars) {
+      if (missing.reading.value !== null) continue
       // A value the document does not carry draws no bar, and its `n/a` is
       // written here, at the bar's own foot.
-      const none = numberCell(element, factory, 'span', bar.reading, 'usd', 'spend-chart-na')
-      none.setAttribute('data-account', bar.account)
+      const none = numberCell(element, factory, 'span', missing.reading, 'usd', 'spend-chart-na')
+      none.setAttribute('data-account', missing.account)
     }
   }
   if (group.partial) literal(cell(element, factory, 'span', 'spend-partial'), PARTIAL_MARKER)
@@ -2630,7 +2642,8 @@ function personKnob(parent: ScreenElement, factory: ScreenFactory, model: SpendM
   literal(cell(element, factory, 'span', 'spend-persons-word'), PERSON_SWITCH_WORD)
   literal(cell(element, factory, 'span', 'spend-persons-state'), on ? 'on' : 'off')
   const note = cell(parent, factory, 'p', 'spend-persons-note')
-  literal(note, on ? PERSON_ON_NOTE : PERSON_OFF_NOTE)
+  if (on) literal(note, PERSON_ON_NOTE)
+  else literal(note, PERSON_OFF_NOTE)
 }
 
 /**
@@ -2704,15 +2717,15 @@ function periodRow(factory: ScreenFactory, model: SpendModel, group: SpendGroup)
   const element = make(factory, 'tr', 'spend-row')
   element.setAttribute('data-gap', group.gap ? 'true' : 'false')
   element.setAttribute('data-partial', group.partial ? 'true' : 'false')
-  element.setAttribute('data-hollow', (group.row?.hollow ?? false) ? 'true' : 'false')
-  element.setAttribute('data-unreadable', group.row?.unreadable === true ? 'true' : 'false')
+  element.setAttribute('data-hollow', group.hollow ? 'true' : 'false')
+  element.setAttribute('data-unreadable', group.unreadable ? 'true' : 'false')
   const keyed = textCell(element, factory, 'td', group.key, keyClass(model.dimension, group.key), 'rows[].key', 'spend-key')
   element.setAttribute('data-key', drawnKey(keyed))
   if (group.partial) literal(cell(keyed, factory, 'span', 'spend-partial'), PARTIAL_MARKER)
-  if (group.row?.unreadable === true) literal(cell(keyed, factory, 'span', 'spend-unreadable'), UNREADABLE_MARKER)
+  if (group.unreadable) literal(cell(keyed, factory, 'span', 'spend-unreadable'), UNREADABLE_MARKER)
   if (group.gap) {
     const across = cell(element, factory, 'td', 'spend-gap-cell')
-    across.setAttribute('colspan', String(SPEND_ACCOUNTS.length))
+    across.setAttribute('colspan', GAP_CELL_SPAN)
     literal(across, TABLE_GAP_SENTENCE)
   } else {
     moneyCells(element, factory, group)

@@ -53,9 +53,9 @@ import {
 import type {
   PeopleReader,
   ScreenElement,
-  ScreenFactory,
   SpendControls,
   SpendDimension,
+  SpendFactory,
   SpendReader,
 } from '../../src/renderer/screens/spend'
 import { installStub } from './stub'
@@ -962,7 +962,7 @@ class FakeScreen implements ScreenElement {
   }
 }
 
-const factory: ScreenFactory = {
+const factory: SpendFactory = {
   create: (tag) => new FakeScreen(tag),
   createNS: (tag) => new FakeScreen(tag),
 }

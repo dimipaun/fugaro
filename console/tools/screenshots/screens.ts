@@ -65,12 +65,12 @@ export const RUN_SCREEN: OneScreen = Object.freeze({
   alt: 'The run-detail screen for run 20261020-103045-aa01 (acme/platform-core): its stage ledger, its build, test and lint verification, three findings and the tail of its log.',
 })
 
-/** SPEND_SCREEN is the spend view. `.spend-point` is a point of the report's
- * curve: the caps panel draws from the budget read and the curve from the report
- * read, so waiting for a point is waiting for the second of the two. */
+/** SPEND_SCREEN is the spend view. `.spend-chart-svg` is the report's own chart:
+ * the caps panel draws from the budget read and the chart from the report read,
+ * so waiting for the chart is waiting for the second of the two. */
 export const SPEND_SCREEN: OneScreen = Object.freeze({
   file: 'console-spend.png',
-  drawn: '.spend-point',
+  drawn: '.spend-chart-svg',
   drawnBy: 'src/renderer/screens/spend.ts',
   alt: 'The Spend screen for a fictional acme-platform installation: thirty days of daily spend, the account totals, and the per-repository and default daily and per-run caps.',
 })
