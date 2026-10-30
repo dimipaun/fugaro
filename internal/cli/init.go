@@ -39,6 +39,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/mirror"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/preflight"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -3203,6 +3204,23 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	}
 	r.res.Outputs = &outs
 	in.Installation = outs
+	// The published node, read through the operator's own credentials. It is
+	// the one source of whether this repository is proxied (G15), so it is
+	// what the spec's bitbucket_proxied fact is read from, and what a local
+	// project_secrets entry that disagrees with it is refused against
+	// (internal/infra's resolveBitbucketProxied). Read here because
+	// internal/infra holds no client that could read it and Repo is a pure
+	// function of its Inputs.
+	//
+	// It is the same read planRepo makes for Readiness's D11 gate, and it is
+	// memoized, so this moves that read earlier rather than adding one. A
+	// read that FAILS is left to planRepo, which stops the run on the same
+	// error: this side passes nothing then, and passing nothing is the one
+	// answer that judges no entry — never an empty node, which would read a
+	// node the operator cannot reach as "nothing is proxied" and refuse their
+	// entry over it.
+	p, found, err := r.policy.read(ctx, lc)
+	in.Policy = repoPolicyInput(lc, p, found, err)
 	if err := checkRepoProject(cfg.Project, outs.ProjectName); err != nil {
 		return err
 	}
@@ -3596,6 +3614,24 @@ func checkoutURL(ctx context.Context, root string) (string, error) {
 		return "", userErr("origin %s has no https form to clone from", gcp.RedactURL(u))
 	}
 	return u, nil
+}
+
+// repoPolicyInput is infra.Inputs.Policy from the memoized node read: nil when
+// no node was read — the read failed, or the config names no database address
+// for projectPolicyRead to read (which answers not-found then, the same as a
+// project that published nothing) — and an empty node when the read succeeded
+// and the project has published no policy. Only the second refuses a local
+// entry that proxies a repository the node does not admit: an operator whose
+// config has lost budget.rtdb_url has read no node, and the node they cannot
+// reach must not be taken for one that proxies nothing.
+func repoPolicyInput(lc *localcfg.Config, p *projectpolicy.Policy, found bool, err error) *projectpolicy.Policy {
+	switch {
+	case err != nil, lc.Budget == nil || lc.Budget.RTDBURL == "":
+		return nil
+	case !found:
+		return &projectpolicy.Policy{}
+	}
+	return p
 }
 
 // installationOutputs reads the installation root's outputs from its
