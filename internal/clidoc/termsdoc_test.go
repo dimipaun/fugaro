@@ -54,7 +54,7 @@ func TestWebsiteTermsPageOnlyCutsText(t *testing.T) {
 			}
 		}
 	}
-	for _, kept := range []string{"DSSD Software", "bear interest at 12% per year", "US$100.", "# Part G. Legal terms for every plan", "## 34. Governing law, venue and language", termsStatus} {
+	for _, kept := range []string{"DSSD SOFTWARE INC", "bear interest at 12% per year", "US$100.", "# Part G. Legal terms for every plan", "## 34. Governing law, venue and language", termsStatus} {
 		if !strings.Contains(string(page), kept) {
 			t.Errorf("%s lost %q", termsPage, kept)
 		}

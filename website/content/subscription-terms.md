@@ -9,7 +9,7 @@ Approved by counsel. Dated 2026-10-28.
 
 ## 1. Parties and acceptance
 
-1.1 These Terms are an agreement between **DSSD Software**, a corporation incorporated
+1.1 These Terms are an agreement between **DSSD SOFTWARE INC**, a corporation incorporated
 under the laws of Ontario, of 1621 Maple Ridge Dr., Mississauga, Ontario, L4W 3R6, Canada (the **"Licensor"**), and the business that
 accepts them (the **"Customer"**).
 
@@ -293,7 +293,7 @@ use that information only to provide the Subscription, License Keys, support and
 eligibility for a Free Plan and enforce the limit of one free seat per legal person, to contact
 the Customer and its Users about the Customer's License Key, and to comply with its legal
 obligations. The Licensor shall handle all of the information it collects and processes in
-accordance with its privacy notice at **https://fugaro.dev** and applicable law.
+accordance with its privacy notice at **https://fugaro.dev/privacy** and applicable law.
 
 ## 8. Support and updates
 
