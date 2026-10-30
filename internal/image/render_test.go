@@ -837,6 +837,25 @@ func TestRenderPutsKeyFilesBeforeSource(t *testing.T) {
 	if strings.Contains(s, "'src/app.js'") {
 		t.Errorf("the key-file layer checks out a file the dependency install does not read:\n%s", s)
 	}
+	// A Yarn Berry checkout: .yarnrc.yml is what detection read to decide the
+	// cache mode, and it is checked out with the key files, as package.json is
+	// with every Node warm-up (npm ci refuses a lock file with no package.json
+	// beside it, and the install that reads it runs above the source layer).
+	berry := t.TempDir()
+	testutil.WriteFiles(t, berry, map[string]string{
+		"package.json": `{"name":"app","packageManager":"yarn@4.5.0"}`,
+		"yarn.lock":    "# yarn lockfile v1\n",
+		".yarnrc.yml":  "enableGlobalCache: true\n",
+	})
+	got, _, err = Dockerfile(berry, cfg, "web", "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"'package.json'", "'.yarnrc.yml'", "'yarn.lock'"} {
+		if !strings.Contains(string(got), want) {
+			t.Errorf("the key-file layer does not check out %s:\n%s", want, got)
+		}
+	}
 }
 
 // TestRenderSetupStaysAfterSource: an image.setup step may read any file of
