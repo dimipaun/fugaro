@@ -31,8 +31,8 @@
       "properties": {
         "provider": { "enum": ["github", "bitbucket"] },
         "author": {
-          "enum": ["", "fugaro", "launcher"],
-          "description": "Who a run's commits are authored by: launcher (the person who launched it, as a stated claim — D604) or fugaro (the run's own identity, which is what the empty value and the absent key both mean, today's behaviour — D606). The repository's own opt-in: the project layer and a profile cannot set it. It selects a behaviour and mints no identity; the launcher fills the address from its own local identity and writes it into the run's task (A2b), so a launch against a runner that does not read the field is refused at launch rather than run with the key silently ignored."
+          "enum": ["", null, "fugaro", "launcher"],
+          "description": "Who a run's commits are authored by: launcher (the person who launched it, as a stated claim — D604) or fugaro (the run's own identity, today's behaviour — D606). The empty value, an explicit null and the absent key all mean fugaro, and the enum carries all four spells for that reason, as budget.mode's does; config.Parse accepts each of them. It is the repository's own opt-in: a repo-only key, which the project layer and a profile may not set. It selects a behaviour and mints no identity — the launcher fills the address from its own local identity and writes it into the run's task (internal/task's Spec.Author) — and until that launcher change ships nothing fills or reads the key, so a runner that predates the task field refuses the whole task at its own strict decode rather than at a launching gate."
         },
         "base_branch": {
           "type": "string",

@@ -336,16 +336,21 @@ type Git struct {
 	// person who launched it as a stated claim (D604), or GitAuthorFugaro,
 	// the run's own identity — the same as the key being absent, which is
 	// what every repository has today (D606). It is the repository's own
-	// opt-in and no other layer sets it: the project layer and a profile
-	// cannot (config.Scopes has no row for it), so a repository decides for
-	// itself whose name goes into its history.
+	// opt-in and no other layer sets it: Scopes gives it InRepo alone, so a
+	// project layer or a profile that writes it is refused for being out of
+	// scope, and a repository decides for itself whose name goes into its
+	// history.
 	//
 	// It selects a behaviour and mints no identity: the launcher fills the
 	// address from its own local identity and writes it into the task
-	// (internal/task's Spec.Author, A2b), which a runner before A3 does not
-	// read. The launcher gates a launch against such a runner rather than let
-	// the key be silently ignored, the way it gates rigor: (A2b).
-	Author string `yaml:"author"`
+	// (internal/task's Spec.Author), and nothing fills or reads the key yet.
+	//
+	// The json tag is what keeps an absent key out of the resolved config's
+	// hash, as Rigor's and Governance's are: SHA256 marshals this struct
+	// (resolve.go), so a string with no json name would write author: "" into
+	// every repository's config and move the hash — and so the derived image —
+	// of a file that did not change.
+	Author string `yaml:"author,omitempty" json:"author,omitempty"`
 }
 
 // PRSettings are applied to every pull request Fugaro opens.

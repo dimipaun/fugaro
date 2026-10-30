@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -96,5 +97,42 @@ workflows:
 		if !strings.Contains(got, want) {
 			t.Errorf("the git.author refusal does not name %q: %q", want, got)
 		}
+	}
+}
+
+// TestGitAuthorAbsentKeepsTheConfigHash: git.author's absence is the common
+// case, so the resolved config of a file that does not write the key has to
+// encode without it. SHA256 marshals the resolved struct (resolve.go) and is
+// what decides whether a repository's derived image is rebuilt, so a new key
+// written as "" would move the hash — and so the image — of every repository
+// on an upgrade that changed no file. That is the property Rigor's and
+// Governance's own json tags exist for, and it is the one place the key's
+// encoding is observable.
+func TestGitAuthorAbsentKeepsTheConfigHash(t *testing.T) {
+	const base = `
+version: 1
+project: aurora
+git: { provider: github }
+workflows:
+  app: { commands: { build: sh build.sh, test: sh test.sh } }
+`
+	const gitKey = "git: { provider: github }"
+	plain, ps := Parse([]byte(base))
+	if len(ps) > 0 {
+		t.Fatalf("a file with no git.author was refused: %v", ps)
+	}
+	data, err := json.Marshal(plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), `"author"`) {
+		t.Errorf("an absent git.author is written into the resolved config's JSON, moving every repository's hash: %s", data)
+	}
+	opted, ps := Parse([]byte(strings.Replace(base, gitKey, "git: { provider: github, author: launcher }", 1)))
+	if len(ps) > 0 {
+		t.Fatalf("git.author: launcher was refused: %v", ps)
+	}
+	if opted.SHA256() == plain.SHA256() {
+		t.Error("a file that opts in resolves to the same hash as one that does not")
 	}
 }

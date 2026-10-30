@@ -3312,6 +3312,38 @@ func TestSchemaCoversSpecAuthor(t *testing.T) {
 	if got := author.Properties["email"].MaxLength; got != task.MaxAuthorEmailLen {
 		t.Errorf("author.email maxLength = %d, want task.MaxAuthorEmailLen %d", got, task.MaxAuthorEmailLen)
 	}
+	// The patterns are the schema's copy of AuthorProblem's own two rules, held
+	// against the Go check over a corpus rather than compared as strings: the
+	// Go rule is a loop over the fields (which is what lets it say which rule
+	// was broken), not an expression, so the two are compared by what they
+	// answer. Every case below is inside both caps, which maxLength carries
+	// above, so the pattern is the only rule in question.
+	nameRE := regexp.MustCompile(author.Properties["name"].Pattern)
+	emailRE := regexp.MustCompile(author.Properties["email"].Pattern)
+	for _, tc := range []struct {
+		name string
+		p    task.Person
+	}{
+		{"a plain pair", task.Person{Name: "person-1", Email: "person-1@example.invalid"}},
+		{"a space inside the name", task.Person{Name: "person one", Email: "person.one@example.invalid"}},
+		{"a name outside ASCII", task.Person{Name: "Jörg", Email: "jorg@example.invalid"}},
+		{"the name and the address at both caps", task.Person{Name: strings.Repeat("a", task.MaxAuthorNameLen), Email: strings.Repeat("a", task.MaxAuthorEmailLen-6) + "@b.co"}},
+		{"a blank name", task.Person{Name: "  ", Email: "person-1@example.invalid"}},
+		{"a name of one tab", task.Person{Name: "\t", Email: "person-1@example.invalid"}},
+		{"a newline in the name", task.Person{Name: "person-1\nperson-2", Email: "person-1@example.invalid"}},
+		{"an angle bracket in the name", task.Person{Name: "person-1 <person-2>", Email: "person-1@example.invalid"}},
+		{"a control character in the email", task.Person{Name: "person-1", Email: "person\x1b-1@example.invalid"}},
+		{"an email with no @", task.Person{Name: "person-1", Email: "person-1.example.invalid"}},
+		{"an email with two @", task.Person{Name: "person-1", Email: "person-1@example.invalid@x"}},
+		{"an email with an empty local part", task.Person{Name: "person-1", Email: "@example.invalid"}},
+		{"an email with an empty domain", task.Person{Name: "person-1", Email: "person-1@"}},
+	} {
+		byPattern := nameRE.MatchString(tc.p.Name) && emailRE.MatchString(tc.p.Email)
+		byGoRule := task.AuthorProblem(tc.p) == ""
+		if byPattern != byGoRule {
+			t.Errorf("%s: schema pattern accepts = %v, task.AuthorProblem accepts = %v (%s)", tc.name, byPattern, byGoRule, task.AuthorProblem(tc.p))
+		}
+	}
 
 	sch := compile(t, "task.schema.json")
 	// Both readers see the same document: the schema validates the JSON, and
@@ -3404,7 +3436,9 @@ func TestSchemaCoversGitAuthor(t *testing.T) {
 	}
 	var git struct {
 		Properties map[string]struct {
-			Enum []string `json:"enum"`
+			// []any, not []string: a JSON null in an enum of strings decodes
+			// into "" and would hide the null this test exists to check.
+			Enum []any `json:"enum"`
 		} `json:"properties"`
 	}
 	if err := json.Unmarshal(raw, &git); err != nil {
@@ -3414,8 +3448,8 @@ func TestSchemaCoversGitAuthor(t *testing.T) {
 	if !ok {
 		t.Fatal("fugaro.schema.json has no git.author property: a repository that opts in writes a file this schema rejects (additionalProperties: false)")
 	}
-	if want := append([]string{""}, config.GitAuthors...); !slices.Equal(got.Enum, want) {
-		t.Errorf("git.author enum = %v, want %v (config.GitAuthors, with the empty value)", got.Enum, want)
+	if want := []any{"", nil, config.GitAuthorFugaro, config.GitAuthorLauncher}; !slices.Equal(got.Enum, want) {
+		t.Errorf("git.author enum = %v, want %v (config.GitAuthors, with the empty value and an explicit null — the spells budget.mode's enum carries)", got.Enum, want)
 	}
 
 	sch := compile(t, "fugaro.schema.json")
@@ -3432,6 +3466,10 @@ func TestSchemaCoversGitAuthor(t *testing.T) {
 		{"fugaro", "author: fugaro", true},
 		{"launcher", "author: launcher", true},
 		{"the empty value", `author: ""`, true},
+		// The two null spells YAML invites and config.Parse reads as the
+		// empty value: an empty scalar after the colon, and an explicit null.
+		{"the empty scalar", "author:", true},
+		{"an explicit null", "author: null", true},
 		{"a near miss", "author: Fugaro", false},
 		{"a value that is not one of the two", "author: them", false},
 	} {

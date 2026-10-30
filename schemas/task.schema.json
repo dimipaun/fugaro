@@ -42,7 +42,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["name", "email"],
-      "description": "Who the launch says its commits are authored by (D604): the person who launched the run, from the repository's git.author: launcher opt-in (A2b), written into the agent's git environment as GIT_AUTHOR_NAME and GIT_AUTHOR_EMAIL (A3). Absent for every launch that names nobody, which is the common case: the run's own identity authors its commits, as it did before this field. It is a claim, not a proof, and the runner enforces nothing beyond its shape (task.AuthorProblem). Needs a 0.14.0 runner, which is why a launch that sets it is gated at launch (internal/cli/recipes_skew.go's authorSince): task.Parse decodes with DisallowUnknownFields, so an older runner refuses the whole spec rather than running the task without the author.",
+      "description": "Who the launch says its commits are authored by (D604): the person who launched the run, from the repository's git.author: launcher opt-in, written into the agent's git environment as GIT_AUTHOR_NAME and GIT_AUTHOR_EMAIL. Absent for every launch that names nobody, which is the common case and every launch today: nothing fills the field yet, and the run's own identity authors its commits, as it did before this field. It is a claim, not a proof, and the runner enforces nothing beyond its shape (task.AuthorProblem). A task that carries one needs a runner that reads the field: task.Parse decodes with DisallowUnknownFields, so an older runner refuses the whole spec rather than running the task without the author — which is why the launcher's own skew gate lands with the change that fills the field, not before it.",
       "properties": {
         "name": {
           "type": "string",

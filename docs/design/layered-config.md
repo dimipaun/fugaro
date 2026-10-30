@@ -118,6 +118,7 @@ The table is `config.Scopes` in code; `docs/project-layer.md` prints it, and a d
 | `git.base_branch` | | | yes | | a project-wide branch would let a bucket writer point image builds at an unreviewed branch (the shared config refuses `repos.<r>.base_branch` and the project's top-level `base_branch` for the same reason; the latter is published to the policy node instead) |
 | `git.pr.labels`, `early_draft`, `checkpoints` | yes | | yes | | |
 | `git.pr.reviewers` | | | yes | | reviewers are people of one repository |
+| `git.author` | | | yes | | it is the repository's own opt-in: the launcher's own identity authors its commits, a choice a repository makes for itself (D604, D606) |
 | `agent.auth`, `models.*`, `first_line_review`, `first_line_rounds` | yes | | yes | | |
 | `agent.model`, `review_rounds`, `max_budget_usd`, `recipe` | yes | | yes | yes | |
 | `agent.oauth_token` | | | yes | yes | it names a credential identity that only the repository's own, PR-reviewed `fugaro.yaml` may choose among names the local config (never the project layer) allow-lists ([named-oauth-tokens.md](named-oauth-tokens.md)) |
