@@ -60,7 +60,7 @@ resource "google_storage_bucket_iam_member" "job_tokens" {
 locals {
   # D145: the credentials the credentials service holds once an installation
   # opts in, and which the job's own account therefore keeps no accessor on.
-  # There are two families, and they are identified differently:
+  # There are three families, and they are identified differently:
   #
   #   * the MODEL credentials, by the VARIABLE each one is mounted as. The
   #     three names are internal/config's (ReservedSecrets' Claude OAuth token
@@ -83,7 +83,9 @@ locals {
   #     G15).
   #
   # TestServiceHeldSecretsMatchTheCredentialsService pins these four literals
-  # and both expressions below to Go.
+  # and both expressions below to Go, and
+  # TestProxiedGitSecretNamesMatchTheModule pins the proxied list, the local it
+  # feeds and the third clause both expressions carry.
   model_secret_env_names  = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]
   model_secret_env_prefix = "FUGARO_PROVIDER_KEY_"
 

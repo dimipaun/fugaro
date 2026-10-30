@@ -1855,8 +1855,10 @@ run "credentials_service_on_build_keeps_the_app_key" {
   }
 }
 
-# The Bitbucket token's flip list, with the repository the published node
-# admits as proxied (B1.8, D500, G9). The list is EMPTY on this branch — the
+# The Bitbucket token's flip list, with the per-repository fact true — the
+# meaning of the input is the published node's block (G15), and nothing
+# derives it into a tfvars yet (B1.8b is that task, in internal/infra). The
+# list is EMPTY on this branch — the
 # flip is B1.13 part two, after the owner's go on Check 191 — so nothing moves
 # for a proxied repository either: the job keeps its accessor on
 # bitbucket-token and the container keeps the mount its runner reads the token
@@ -1930,7 +1932,11 @@ run "proxied_bitbucket_keeps_its_token_with_the_empty_list" {
 # EMPTY on this branch the two runs cannot tell the input's clause apart from
 # its absence — nothing is dropped either way — so the clause itself is pinned
 # where it is written, by TestProxiedGitSecretNamesMatchTheModule in
-# deploy/terraform, which reads the module source.
+# deploy/terraform, which reads the module source, and WHAT a filled list does
+# is planned and evaluated by that package's
+# TestFilledProxiedListDropsMountAndAccessor and
+# TestFilledProxiedListKeepsNonProxiedRepositories
+# (deploy/terraform/proxied_git_test.go, under `-tags terraform`).
 run "non_proxied_bitbucket_keeps_its_token" {
   command = plan
 

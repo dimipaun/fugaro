@@ -607,10 +607,19 @@ func IsServiceHeldSecretEnv(env, name string) bool {
 // in ServiceHeldSecretNames are held for every job of an opted-in
 // installation. So a name here drops only a job whose repository the fact
 // names, and every other Bitbucket repository — of an installation that opted
-// in or not — keeps mounting its token and reading it (G9). The fact itself is
-// per repository and never a config value: it is derived from the published
-// node (internal/infra's RepoSpec), which is why nothing here takes an
+// in or not — keeps mounting its token and reading it (G9). The fact is per
+// repository and never a config value, which is why nothing here takes an
 // argument.
+//
+// **The fact has no producer yet**, so this list is inert twice over on this
+// branch: it is empty, and the input it is read beside (modules/workflow's
+// bitbucket_proxied, from the repo root's own repo object) has nothing that
+// can make it true — internal/infra's RepoSpec does not carry it, so no tfvars
+// fugaro update writes sets it and every repository plans with false, and the
+// G15 refusal of a local project_secrets entry that disagrees with the node's
+// block is not written either. The derivation and that refusal are B1.8b's
+// (internal/infra's spec.go, tfvars.go and readiness.go), from the published
+// node, which is the one source of whether a repository is proxied.
 //
 // Terraform cannot ask Go, so the same names are a literal in
 // modules/workflow/sa.tf's proxied_git_secret_names, held to this list by
