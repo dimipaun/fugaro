@@ -7526,11 +7526,17 @@ func TestDocsConsoleReleaseFeedIsStagedAndPinned(t *testing.T) {
 			t.Errorf("%s does not carry %q: the release job writes the update feed beside the zip from the bytes it just verified, sums it, uploads it with the other assets, and publish refuses a release that would ship without it", path, want)
 		}
 	}
-	if strings.Contains(text, "blockmap") {
-		t.Errorf("%s carries a `blockmap`: D765 writes the six fields electron-updater needs from a full download and nothing else, and the differential download D772 leaves open is off by default", path)
+	wf := consoleReleaseShape(t, path, text)
+	for _, job := range wf.Jobs {
+		for _, step := range job.Steps {
+			for _, line := range consoleRunLines(step.Run) {
+				if strings.Contains(line, "blockmap") {
+					t.Errorf("%s's %q step runs %q: D765 writes the six fields electron-updater needs from a full download and nothing else, and the differential download D772 leaves open is off by default", path, step.Name, line)
+				}
+			}
+		}
 	}
 
-	wf := consoleReleaseShape(t, path, text)
 	release, ok := wf.Jobs["release"]
 	if !ok {
 		t.Fatalf("%s has no release job: there is nowhere for the feed to be written", path)
@@ -7559,7 +7565,7 @@ func TestDocsConsoleReleaseFeedIsStagedAndPinned(t *testing.T) {
 	if consoleLineIndex(slines, `if [ ! -s latest-mac.yml ]; then`, false) < 0 {
 		t.Errorf("%s's %q step does not require exactly one non-empty latest-mac.yml: a macOS artifact with no feed is a console release that can never update itself, and the check that refuses it belongs with the sums check it has to pass anyway", path, consoleReleaseMacosSumsStep)
 	}
-	if consoleLineIndex(slines, `grep -qF "  latest-mac.yml" console-sha256sums.txt`, false) < 0 {
+	if consoleLineIndex(slines, `grep -qF "  latest-mac.yml" console-sha256sums.txt`, true) < 0 {
 		t.Errorf("%s's %q step does not check the feed against console-sha256sums.txt: the signature over that file is what vouches for the feed, so a feed the sums file does not list is a manifest nothing signs", path, consoleReleaseMacosSumsStep)
 	}
 	_, publish := consoleStepNamed(t, pub, "publish", consoleReleasePublishStep)
@@ -7590,11 +7596,15 @@ func TestDocsConsoleReleaseFeedIsStagedAndPinned(t *testing.T) {
 	if got, want := consoleOtherwiseIdentical(t, text), consoleOtherwiseIdentical(t, base); got != want {
 		t.Errorf("%s and %s differ outside the feed: the action pins, the trigger, the permissions, every job's environment and every `secrets.` reference have to be identical, because this change adds a manifest and touches nothing that decides who may run it or what it may read.\nfeed:\n%s\n%s:\n%s", consoleReleaseFeedWorkflowPath, basePath, got, basePath, want)
 	}
+	// The diff is additions, plus the one line the feed joins the release's
+	// asset list on. Anything else that went missing is a line of the pipeline
+	// this change had no business rewriting.
 	for _, line := range consoleLinesDropped(base, text) {
 		trimmed := strings.TrimSpace(line)
-		if trimmed != "" && !strings.HasPrefix(trimmed, "#") {
-			t.Errorf("%s drops %q, which %s carries: the feed change adds a step's worth of shell and a paragraph of header, and takes no line of the pipeline away", consoleReleaseFeedWorkflowPath, trimmed, basePath)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.Contains(text, trimmed+` "$FEED"`) {
+			continue
 		}
+		t.Errorf("%s drops %q, which %s carries: the feed change adds a step's worth of shell, a paragraph of header, and `\"$FEED\"` on the release's asset list -- it rewrites nothing else", consoleReleaseFeedWorkflowPath, trimmed, basePath)
 	}
 }
 
