@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -173,6 +174,53 @@ func TestUserAddWritesLauncher(t *testing.T) {
 	r.noCloudWrites(t)
 }
 
+// TestUserAddWritesOperator: the operator branch of the write, which is the
+// same code path as the launcher's with the other list behind it — and the one
+// that decides who may settle the installation, so it is exercised on its own.
+func TestUserAddWritesOperator(t *testing.T) {
+	r := userRigFor(t, []string{"user:person-1@example.com"}, []string{"user:person-1@example.com"})
+	out, _, err := userCommand(t, "add", "user:person-2@example.com", "--role", "operator")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	launchers, operators := r.lists(t)
+	if strings.Join(operators, ",") != "user:person-1@example.com,user:person-2@example.com" {
+		t.Errorf("operators = %v, want both members", operators)
+	}
+	if strings.Join(launchers, ",") != "user:person-1@example.com" {
+		t.Errorf("the launchers list was changed: %v", launchers)
+	}
+	if !strings.Contains(out, "now an operator") {
+		t.Errorf("the command does not say what it did:\n%s", out)
+	}
+	r.terraformReadsOnly(t)
+	r.noCloudWrites(t)
+}
+
+// TestUserAddDoesNotPersistRegion: --region addresses this invocation, and the
+// config this command writes is the one on disk — the selection's copy has the
+// flag applied to it (selectProject → announce → localcfg.Config.Override), so
+// a document marshalled from that copy would make an ephemeral --region the
+// installation's own region, which the next fugaro update applies to every
+// resource of the project.
+func TestUserAddDoesNotPersistRegion(t *testing.T) {
+	r := userRigFor(t, nil, nil)
+	out, _, err := userCommand(t, "add", "user:person-1@example.com", "--role", "launcher", "--region", "europe-west1")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	lc, err := localcfg.Parse(r.configNow(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lc.Region != "us-east5" {
+		t.Errorf("the written config's region is %q, want the file's own us-east5: an ephemeral --region became the installation's region on disk", lc.Region)
+	}
+	if got := strings.Join(lc.Terraform.Launchers, ","); got != "user:person-1@example.com" {
+		t.Errorf("the add did not write the list it was for: %q", got)
+	}
+}
+
 // TestUserAddRequiresRole: --role has no default. Adding a person to the wrong
 // list is a grant, and no default can be the right one for both.
 func TestUserAddRequiresRole(t *testing.T) {
@@ -248,31 +296,48 @@ func TestUserAddRefusesDomain(t *testing.T) {
 // disagrees with them is refused, whichever of the two lists it is.
 func TestUserRefusesStaleLocalList(t *testing.T) {
 	for _, tc := range []struct {
-		name     string
-		local    []string
-		remote   []string
-		wantList string
+		name                             string
+		localL, localO, remoteL, remoteO []string
+		wantList                         string
 	}{
 		{
-			name: "a member this machine has never seen", local: []string{"user:person-1@example.com"},
-			remote:   []string{"user:person-1@example.com", "user:person-2@example.com"},
+			name:   "a member this machine has never seen",
+			localL: []string{"user:person-1@example.com"}, localO: []string{"user:person-1@example.com"},
+			remoteL: []string{"user:person-1@example.com", "user:person-2@example.com"},
+			remoteO: []string{"user:person-1@example.com"},
+			// Only the launchers differ, so only they may be named.
 			wantList: "launchers",
 		},
 		{
-			name: "a stale list here and only operators differ", local: []string{"user:person-1@example.com"},
-			remote:   []string{},
+			name:   "the installation lists no launcher at all",
+			localL: []string{"user:person-1@example.com"}, localO: []string{"user:person-1@example.com"},
+			remoteL: nil, remoteO: []string{"user:person-1@example.com"},
 			wantList: "launchers",
+		},
+		{
+			name:   "only the operators differ",
+			localL: []string{"user:person-1@example.com"}, localO: []string{"user:person-1@example.com"},
+			remoteL:  []string{"user:person-1@example.com"},
+			remoteO:  []string{"user:person-1@example.com", "user:person-2@example.com"},
+			wantList: "operators",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r := userRigFor(t, tc.local, tc.local)
-			r.installationSets(t, tc.remote, tc.remote)
+			r := userRigFor(t, tc.localL, tc.localO)
+			r.installationSets(t, tc.remoteL, tc.remoteO)
 			out, _, err := userCommand(t, "add", "user:person-3@example.com", "--role", "launcher")
 			if err == nil {
 				t.Fatalf("a stale list was edited:\n%s", out)
 			}
 			if !strings.Contains(err.Error(), tc.wantList) {
 				t.Errorf("the refusal does not name the %s list: %v", tc.wantList, err)
+			}
+			other := "launchers"
+			if tc.wantList == "launchers" {
+				other = "operators"
+			}
+			if strings.Contains(err.Error(), other) {
+				t.Errorf("the refusal names the %s list although only the %s differs: %v", other, tc.wantList, err)
 			}
 			if !strings.Contains(err.Error(), "fugaro update") {
 				t.Errorf("the refusal does not name the command that settles it: %v", err)
@@ -341,6 +406,60 @@ func TestUserRmRemoves(t *testing.T) {
 	}
 	absent.unchanged(t)
 	absent.noCloudWrites(t)
+}
+
+// TestUserRmRemovesOperator: a removal from the operators list, the other half
+// of the pair TestUserAddWritesOperator covers.
+func TestUserRmRemovesOperator(t *testing.T) {
+	r := userRigFor(t,
+		[]string{"user:person-1@example.com"},
+		[]string{"user:person-1@example.com", "user:person-2@example.com"})
+	out, _, err := userCommand(t, "rm", "user:person-2@example.com", "--role", "operator")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	launchers, operators := r.lists(t)
+	if strings.Join(operators, ",") != "user:person-1@example.com" {
+		t.Errorf("operators = %v, want the first member alone", operators)
+	}
+	if strings.Join(launchers, ",") != "user:person-1@example.com" {
+		t.Errorf("the launchers list was changed: %v", launchers)
+	}
+	if !strings.Contains(out, "no longer an operator") {
+		t.Errorf("the command does not say what it did:\n%s", out)
+	}
+	r.terraformReadsOnly(t)
+	r.noCloudWrites(t)
+}
+
+// TestUserRmRefusesTheLastOperator: an installation with no operator at all
+// has nobody this machine can be told to settle it — an update, an add, a
+// budget — and the next fugaro update would apply the empty list over the one
+// the installation holds, dropping every operator binding. A project Owner can
+// restore it from outside, so this is a refusal with what to do first in it
+// rather than a break-glass. The launchers list may be emptied: a run nobody
+// can start is not the same as an installation nobody can put right here.
+func TestUserRmRefusesTheLastOperator(t *testing.T) {
+	r := userRigFor(t, []string{"user:person-1@example.com"}, []string{"user:person-1@example.com"})
+	out, _, err := userCommand(t, "rm", "user:person-1@example.com", "--role", "operator")
+	if err == nil {
+		t.Fatalf("the last operator was removed:\n%s", out)
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
+	}
+	if !strings.Contains(err.Error(), "no operator") || !strings.Contains(err.Error(), "nothing was written") {
+		t.Errorf("the refusal does not say what it would leave and that nothing was written: %v", err)
+	}
+	r.unchanged(t)
+
+	l := userRigFor(t, []string{"user:person-1@example.com"}, []string{"user:person-1@example.com"})
+	if out, _, err := userCommand(t, "rm", "user:person-1@example.com", "--role", "launcher"); err != nil {
+		t.Errorf("the last launcher was not removable: %v\n%s", err, out)
+	}
+	if launchers, _ := l.lists(t); len(launchers) != 0 {
+		t.Errorf("launchers = %v, want none", launchers)
+	}
 }
 
 // TestUserLsListsBoth: the listing is this machine's own config, both lists,
@@ -455,6 +574,20 @@ func TestUserInviteHasNoSecret(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("the invite does not hold %q:\n%s", want, out)
 		}
+	}
+}
+
+// TestUserInstallLineMatchesREADME: the invite hands a person the command that
+// installs fugaro, and the README hands a person the same one. Nothing else
+// ties the two copies together (reconciliation item 21 counts them as a drift
+// risk), so this does.
+func TestUserInstallLineMatchesREADME(t *testing.T) {
+	readme, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(readme), userInstallLine) {
+		t.Errorf("README.md does not carry the invite's install line %q: the invite is a person's first instruction and the README is where they check it", userInstallLine)
 	}
 }
 

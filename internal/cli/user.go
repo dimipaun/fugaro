@@ -110,11 +110,16 @@ func newUserLsCmd() *cobra.Command {
 		Short: "List the installation's launchers and operators",
 		Long: `List the members of ` + userListSource + `, as they are written there now.
 
-It is this machine's own copy of the two lists, read from its project config
-and nowhere else: it opens no bucket, runs no Terraform and needs no
-credentials. What the installation itself holds can differ — a change another
-operator applied, or one made here and not yet applied by a fugaro update —
-and only the outputs would tell, which is the read add and rm make.`,
+It is this machine's own copy of the two lists: no member is fetched from the
+cloud and none is granted, and no Terraform runs. What the installation itself
+holds can differ — a change another operator applied, or one made here and not
+yet applied by a fugaro update — and only the outputs would tell, which is the
+read add and rm make.
+
+A machine with no project config of its own is refused rather than answered
+with two empty lists: the lists are not in the shared config, and selection's
+fallback to it is a fetch of the runs bucket that only this machine's own file
+would have made unnecessary.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			sel, lc, err := selectProject(cmd.Context(), o)
@@ -146,10 +151,9 @@ func newUserRmCmd() *cobra.Command {
 func newUserEditCmd(use, short string, add bool) *cobra.Command {
 	var o cloudOptions
 	var role string
-	cmd := &cobra.Command{
-		Use:   use,
-		Short: short,
-		Long: `Change one member of one of the installation's two IAM lists: ` + userListSource + `.
+	// The two share every sentence but one: the invite is add's alone, and a
+	// paragraph of rm's own would be a claim about the other subcommand.
+	long := `Change one member of one of the installation's two IAM lists: ` + userListSource + `.
 
 The member is added to, or removed from, the list --role names, and the other
 list is left exactly as it is. --role is required and has no default: adding
@@ -161,14 +165,22 @@ refuse when they disagree with this machine's config, because this machine's
 lists are what the next fugaro update applies: a config that predates a member
 another operator added would revoke that member. The refusal names the list
 that differs and the command that settles it (fugaro update).
-
-add prints an invite naming the project, the install line and the fact that
-the repository's fugaro.yaml names the project, to paste wherever the person
-will read it: no email is sent.
-
+`
+	if add {
+		long += `
+It prints an invite naming the project, the install line and the fact that the
+repository's fugaro.yaml names the project, to paste wherever the person will
+read it: no email is sent.
+`
+	}
+	long += `
 Run it in your own terminal, with your own credentials. A coding agent's
-session is refused.`,
-		Args: cobra.ExactArgs(1),
+session is refused.`
+	cmd := &cobra.Command{
+		Use:   use,
+		Short: short,
+		Long:  long,
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return userEdit(cmd, o, role, args[0], add)
 		},
@@ -311,41 +323,74 @@ func userEdit(cmd *cobra.Command, o cloudOptions, role, member string, add bool)
 	if err != nil {
 		return userErr("reading the project config: %v", err)
 	}
+	// The config as its own file writes it, not the selection's copy: the
+	// selection has this invocation's --region applied to it (selectProject →
+	// announce → localcfg.Config.Override), so a document marshalled from it
+	// would make an ephemeral --region the installation's own region on disk,
+	// and the next fugaro update would apply it to every resource of the
+	// project — a change to far more than the two lists this command is for.
+	// --gcp-project needs no such care: Override refuses one that is not the
+	// config's own. (restore.go's planConfig writes from the file for the same
+	// reason.)
+	onDisk, err := localcfg.Parse(old)
+	if err != nil {
+		return userErr("the project config %s: %v", safetext.Field(sel.Path), err)
+	}
 	outs, err := userOutputs(ctx, cmd, lc)
 	if err != nil {
 		return err
 	}
-	if err := userFresh(lc, outs); err != nil {
+	if err := userFresh(onDisk, outs); err != nil {
 		return err
 	}
 	w := cmd.OutOrStdout()
-	if r.holds(who, lc) == add {
+	if r.holds(who, onDisk) == add {
 		// Nothing to do, and nothing is written: adding a member the list
 		// already holds must not reorder or duplicate it, and removing one it
 		// does not hold must not touch the file at all. The next fugaro
 		// update applies the list as it is.
-		fmt.Fprintf(w, "%s is %s a %s of %s; nothing was written\n", safetext.Field(who), userAlready(add), string(r), safetext.Field(lc.Name))
+		fmt.Fprintf(w, "%s is %s %s of %s; nothing was written\n", safetext.Field(who), userAlready(add), r.phrase(), safetext.Field(lc.Name))
 		return nil
 	}
-	next := *lc
-	list := slices.Clone(r.members(lc))
+	next := *onDisk
+	list := slices.Clone(r.members(onDisk))
 	if add {
 		list = append(list, who)
 	} else {
 		list = slices.DeleteFunc(list, func(m string) bool { return m == who })
+	}
+	// The last operator is refused: the operators list is who can be told to
+	// settle an installation — run its update, add a member, read its budget —
+	// and a machine's next fugaro update would apply an empty one, dropping
+	// the operator bindings of everyone who was on it. A project Owner can put
+	// that right from outside, which is why this is a refusal and not a
+	// break-glass (the launchers list may be emptied: an installation with no
+	// launcher cannot start a run, which its operator can put right here).
+	if !add && r == userOperatorRole && len(list) == 0 {
+		return userErr("removing %s would leave %s with no operator at all: it is the only member of this machine's terraform.operators, and the next fugaro update would apply an empty list and drop every operator binding, so the people it lists would have to be restored by a project Owner from outside. Add the operator who is to take over first, then remove %s: nothing was written",
+			safetext.Field(who), safetext.Field(onDisk.Name), safetext.Field(who))
 	}
 	r.set(&next, list)
 	if err := userSave(w, sel.Path, old, &next); err != nil {
 		return err
 	}
 	if !add {
-		fmt.Fprintf(w, "%s is no longer a %s of %s; the change takes effect on the operator's next fugaro update: nothing was applied here, and no email is sent\n", safetext.Field(who), string(r), safetext.Field(lc.Name))
+		fmt.Fprintf(w, "%s is no longer %s of %s; the change takes effect on the operator's next fugaro update: nothing was applied here, and no email is sent\n", safetext.Field(who), r.phrase(), safetext.Field(lc.Name))
 		return nil
 	}
-	fmt.Fprintf(w, "%s is now a %s of %s\n", safetext.Field(who), string(r), safetext.Field(lc.Name))
+	fmt.Fprintf(w, "%s is now %s of %s\n", safetext.Field(who), r.phrase(), safetext.Field(lc.Name))
 	userInvite(w, who, lc)
 	fmt.Fprintf(w, "the change takes effect on the operator's next fugaro update: nothing was applied here, and no email is sent\n")
 	return nil
+}
+
+// phrase is this role with its article, because the sentences this command
+// prints name it: "a operator" is not one of them.
+func (r userRole) phrase() string {
+	if r == userOperatorRole {
+		return "an operator"
+	}
+	return "a launcher"
 }
 
 // userAlready is the word the two do-nothing answers share.
