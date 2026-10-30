@@ -202,6 +202,103 @@ func TestSweepPairingUserMaxAgeIsTheSessionPlusASweep(t *testing.T) {
 	}
 }
 
+// TestSweepPairingReadFailureKeepsOtherDeletions: the pairing tree and the
+// device allowlist are read for the m~ and p~ rules, and a read that fails says
+// nothing about the r~ users, whose rule is the registry and the clock alone.
+// The failure is reported and the rest of the pass goes on: a sweep that
+// stopped at the first unreadable tree would leave the run users of every later
+// interval behind for as long as that tree stayed unreadable.
+func TestSweepPairingReadFailureKeepsOtherDeletions(t *testing.T) {
+	e := newSweepEnv(t)
+	e.user(budgetUID(runA), 72*time.Hour)
+	e.user(pairUID, 2*time.Hour) // an orphaned session, kept while its tree is unreadable
+	e.db.DenyRead("pairing")
+
+	rep, err := e.sw.Sweep(context.Background())
+	if err == nil {
+		t.Fatal("a pairing tree that could not be read was swallowed")
+	}
+	if got := e.users(); !reflect.DeepEqual(got, []string{pairUID}) {
+		t.Fatalf("users left = %v, want the run user gone and the pairing user kept", got)
+	}
+	if rep.UsersDeleted != 1 {
+		t.Fatalf("report = %+v, want the run user counted as deleted", rep)
+	}
+}
+
+// TestSweepDeviceReadFailureKeepsEveryDevice: an allowlist that could not be
+// read is not an empty one. Read as empty, it would make every paired phone's
+// m~ user an orphan and unpair them all in one pass, so the m~ family is left
+// alone for that interval while the r~ users still go.
+func TestSweepDeviceReadFailureKeepsEveryDevice(t *testing.T) {
+	e := newSweepEnv(t)
+	e.deviceNode(devUID)
+	e.user(devUID, 30*24*time.Hour)
+	e.user(budgetUID(runA), 72*time.Hour)
+	e.db.DenyRead(budget.DeviceRoot)
+
+	rep, err := e.sw.Sweep(context.Background())
+	if err == nil {
+		t.Fatal("a device allowlist that could not be read was swallowed")
+	}
+	if got := e.users(); !reflect.DeepEqual(got, []string{devUID}) {
+		t.Fatalf("users left = %v, want the run user gone and the paired device kept", got)
+	}
+	if rep.UsersDeleted != 1 {
+		t.Fatalf("report = %+v, want the run user counted as deleted", rep)
+	}
+}
+
+// TestSweepNeverCreatesAPairingNode: the node goes by a PATCH of a null at its
+// path, and the sweep names only nodes it has read in the tree — a null at a
+// path that does not exist must not bring a node into being. `fugaro pair`
+// deletes the node on success (§7.1 step 9), so a p~ user with no node under it
+// is the ordinary case and not an exotic one, and a pass that wrote an empty
+// node there would leave the next reader a session to reason about.
+func TestSweepNeverCreatesAPairingNode(t *testing.T) {
+	// The ordinary case: `fugaro pair` deleted the node on success, so the p~
+	// user the sweep finds has none under it.
+	e := newSweepEnv(t)
+	e.user(pairUID, 2*time.Hour)
+	rep := e.sweep()
+	if got := e.users(); len(got) != 0 {
+		t.Fatalf("users left = %v, want the orphaned pairing user deleted", got)
+	}
+	if v := e.db.Value("pairing"); v != nil {
+		t.Fatalf("the sweep brought a pairing node into being: %v", v)
+	}
+	if rep.PairingNodesDeleted != 0 {
+		t.Fatalf("report = %+v, want no node counted as deleted", rep)
+	}
+	sweepNamedNoPairingNode(t, e)
+
+	// And the case where the tree could not be read at all: the sweep knows of
+	// no node, so it names none and leaves the user to the next interval — the
+	// one place a pass that continued anyway would write a node it never read.
+	u := newSweepEnv(t)
+	u.user(pairUID, 2*time.Hour)
+	u.db.DenyRead("pairing")
+	if _, err := u.sw.Sweep(context.Background()); err == nil {
+		t.Fatal("a pairing tree that could not be read was swallowed")
+	}
+	if v := u.db.Value("pairing"); v != nil {
+		t.Fatalf("a tree that could not be read produced a pairing node: %v", v)
+	}
+	sweepNamedNoPairingNode(t, u)
+}
+
+// sweepNamedNoPairingNode asserts no write of the pass names a pairing node:
+// the sweep deletes one by patching a null at its path, and a path it has not
+// read is a node it cannot know exists.
+func sweepNamedNoPairingNode(t *testing.T, e *sweepEnv) {
+	t.Helper()
+	for _, r := range e.db.Requests() {
+		if r.Method == http.MethodPatch && strings.Contains(r.Path, "/pairing") {
+			t.Fatalf("the sweep patched %s, a node it never read", r.Path)
+		}
+	}
+}
+
 // TestSweepPairingNodeFailureStopsTheUser is the ordering inside the pass: a
 // pairing node that could not be deleted stops the p~ user of this pass rather
 // than deleting a user whose payload node would outlive it. The next interval

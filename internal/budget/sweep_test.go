@@ -360,8 +360,8 @@ func TestSweepNeverWritesConfig(t *testing.T) {
 	}
 	for _, p := range written {
 		top, _, _ := strings.Cut(p, "/")
-		if top != "agents" && top != "runs" && top != "outcomes" {
-			t.Errorf("the sweeper wrote %q; it may write only agents, runs and outcomes", p)
+		if top != "agents" && top != "runs" && top != "outcomes" && top != "pairing" {
+			t.Errorf("the sweeper wrote %q; its delete set is a registry entry, a ledger, an outcome and a pairing node of a user it deletes — nothing under config, and nothing of another family", p)
 		}
 	}
 	if !reflect.DeepEqual(before, e.db.Value("config")) || !reflect.DeepEqual(markBefore, e.db.Value("fugaro")) {
