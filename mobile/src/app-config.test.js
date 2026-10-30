@@ -35,6 +35,7 @@
 // build resolves and no test here reads -- is `src/app-config.icons.test.js`'s.
 
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -265,4 +266,103 @@ test('a resolved config declares that the app uses only exempt encryption', () =
     false,
     'the declaration lives in app.config.js, not in the static config',
   );
+});
+
+// --- the Firebase config plugin, and the two native files (P7.1a) ------------
+//
+// The app gains Firebase (the mobile plan's Phase 7): `@react-native-firebase/app`
+// puts the SDK in the app, `analytics` and `crashlytics` are the two products it
+// carries, and the native config file that names the Firebase project is the
+// **owner's** -- registered in the console, delivered to the build as an EAS file
+// environment variable, and never committed (D259, §4.3). Two things follow, and
+// both are checkable from the tree alone:
+//
+//   * **the two paths are ignored.** `mobile/google-services.json` (Android) and
+//     `mobile/GoogleService-Info.plist` (iOS) are where the console's own output
+//     goes and where the plugin looks for them, so they are the two paths a
+//     later `git add -A` would commit. `mobile/.gitignore` names them; this test
+//     reads that through `git check-ignore` rather than by reading the file, so
+//     it asserts the rule git actually applies -- and proves the question can
+//     answer "no" with a path that is not ignored.
+//   * **the resolved config wires the plugin.** `app.config.js` is the one file
+//     the three packages' config plugins are registered in, and a resolution is
+//     what a build reads. What the plugin *options* mean -- the ad-ID switches,
+//     the iOS variant -- is the build-time walk's (§7.4, P7.1b); what is pinned
+//     here is that the entries exist, in both modes, once each, and that the
+//     plugins `app.json` already lists survive.
+
+/** The two native config files, by the names the Firebase console writes. */
+const NATIVE_CONFIG_FILES = Object.freeze(['google-services.json', 'GoogleService-Info.plist']);
+
+/** The three packages, in the order the config registers them. */
+const FIREBASE_PACKAGES = Object.freeze([
+  '@react-native-firebase/app',
+  '@react-native-firebase/analytics',
+  '@react-native-firebase/crashlytics',
+]);
+
+/** The plugin's name, whether the entry is a bare string or a `[name, options]` pair. */
+function pluginName(entry) {
+  return Array.isArray(entry) ? entry[0] : entry;
+}
+
+/** The repository root, asked of git rather than walked up to. */
+function repositoryRoot() {
+  return execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
+}
+
+/** Is `path` (from the repository root) matched by an ignore rule? */
+function ignoredByGit(path, root) {
+  try {
+    execFileSync('git', ['check-ignore', '-q', '--', path], { cwd: root, stdio: 'pipe' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+test('the two native Firebase config files are untracked and ignored', () => {
+  const root = repositoryRoot();
+  // The control: the predicate below answers "no" for a file that is in the tree
+  // and not ignored. Without it, an `ignoredByGit` that always returned true
+  // would satisfy the assertions under it.
+  assert.equal(ignoredByGit('mobile/app.json', root), false, 'the control: a tracked file is not ignored');
+
+  for (const name of NATIVE_CONFIG_FILES) {
+    const path = join('mobile', name);
+    // Not tracked. `--error-unmatch` is the question "is this path in the index",
+    // asked of git: an untracked file is what a checkout without the owner's
+    // console output looks like, and a tracked one is the failure this rule is
+    // about (a committed project id, a committed api key).
+    assert.throws(
+      () => execFileSync('git', ['ls-files', '--error-unmatch', '--', path], { cwd: root, stdio: 'pipe' }),
+      `${path} is tracked: the native config file is the owner's, and it is never committed`,
+    );
+    // ... and ignored, so the next `git add -A` does not pick it up either.
+    assert.equal(ignoredByGit(path, root), true, `${path} is not matched by mobile/.gitignore`);
+  }
+});
+
+test('a resolved config registers the three @react-native-firebase plugins', () => {
+  const SAMPLE = 'com.example.sample';
+  const staticPlugins = (CONFIG.expo.plugins ?? []).map(pluginName);
+  for (const [what, env] of [
+    ['a build', { EAS_BUILD: 'true', [ID_VARIABLES.ios]: SAMPLE, [ID_VARIABLES.android]: SAMPLE }],
+    ['a dev/lint run', {}],
+  ]) {
+    const { plugins } = resolveConfig(CONFIG.expo, env);
+    const names = plugins.map(pluginName);
+    for (const pkg of FIREBASE_PACKAGES) {
+      assert.equal(names.includes(pkg), true, `${what} does not register ${pkg}`);
+    }
+    // ... once each: `withPlugins` runs a plugin twice for two entries, and the
+    // second run is a second application of the same prebuild edit.
+    assert.equal(new Set(names).size, names.length, `${what} registers a plugin twice`);
+    // ... and the plugins `app.json` already lists are still there: this file
+    // appends, and an append that replaced the list would drop the app's own
+    // secure-store and splash configuration.
+    for (const name of staticPlugins) {
+      assert.equal(names.includes(name), true, `${what} dropped the ${name} plugin app.json lists`);
+    }
+  }
 });
