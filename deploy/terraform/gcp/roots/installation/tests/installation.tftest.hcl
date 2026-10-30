@@ -185,6 +185,48 @@ run "registries_are_marked" {
   }
 }
 
+# The shared image registry: one repository per installation, holding every
+# repository's shared images (design
+# docs/forge-authorship-images/shared-images.md §2.6). It is named by Go
+# (gcp.SharedRegistryRepoID, guarded against this literal by
+# TestSharedRegistryRepoIDMatchesTheModule), and nobody is granted on it here:
+# each repository root grants its own build account writer and its own job
+# accounts reader, so this module holds no member that would widen it to every
+# repository at once.
+run "shared_registry" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  assert {
+    condition = (google_artifact_registry_repository.shared.repository_id == "fugaro-shared-images-0829826e4aa4" &&
+      google_artifact_registry_repository.shared.format == "DOCKER" &&
+      google_artifact_registry_repository.shared.location == "us-east5" &&
+    google_artifact_registry_repository.shared.project == "proj-1234")
+    error_message = "the shared image registry must be a Docker registry in the installation's region, under the name gcp.SharedRegistryRepoID derives"
+  }
+  assert {
+    condition     = google_artifact_registry_repository.shared.labels == tomap({ fugaro = "managed" })
+    error_message = "the shared registry must carry fugaro=managed"
+  }
+  assert {
+    condition = alltrue([for p in google_artifact_registry_repository.shared.cleanup_policies :
+      p.action == "KEEP" || (length(p.condition) == 1 && (one(p.condition).tag_state == "UNTAGGED" ||
+    one(p.condition).tag_prefixes == tolist(["candidate-"])))])
+    error_message = "the shared registry's only delete rules must be for untagged and candidate- versions, as a repository's own registry's are"
+  }
+  assert {
+    condition     = length(google_artifact_registry_repository.shared.cleanup_policies) == 4
+    error_message = "the shared registry must keep every version tagged latest and the 3 newest, and delete untagged and candidate- versions"
+  }
+  assert {
+    condition     = output.shared_registry == "fugaro-shared-images-0829826e4aa4"
+    error_message = "the shared registry's ID must be an output: every repository root grants its build and job accounts on it"
+  }
+}
+
 run "legacy_only_when_adopting" {
   command = plan
 

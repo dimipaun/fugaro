@@ -157,11 +157,17 @@ type Inputs struct {
 type InstallationOutputs struct {
 	// ProjectName is the Fugaro project's name; empty in the outputs of an
 	// installation applied before M9a.
-	ProjectName             string   `json:"project_name"`
-	RunsBucket              string   `json:"runs_bucket"`
-	RegistryHost            string   `json:"registry_host"`
-	BaseRegistry            string   `json:"base_registry"`
-	GhcrRegistry            string   `json:"ghcr_registry"`
+	ProjectName  string `json:"project_name"`
+	RunsBucket   string `json:"runs_bucket"`
+	RegistryHost string `json:"registry_host"`
+	BaseRegistry string `json:"base_registry"`
+	GhcrRegistry string `json:"ghcr_registry"`
+	// SharedRegistry is the installation's one shared image registry: the
+	// Artifact Registry repository every repository's shared images live in
+	// (design docs/forge-authorship-images/shared-images.md §2.6). Empty in
+	// the outputs of an installation applied before it existed, which
+	// withDefaults fills with the name Go gives a new one.
+	SharedRegistry          string   `json:"shared_registry"`
 	LegacyRegistry          string   `json:"legacy_registry"`
 	SchedulerServiceAccount string   `json:"scheduler_service_account"`
 	RoleIDs                 RoleIDs  `json:"role_ids"`
@@ -343,6 +349,7 @@ type RepoInstallation struct {
 	RegistryHost            string      `json:"registry_host"`
 	BaseRegistry            string      `json:"base_registry"`
 	GhcrRegistry            string      `json:"ghcr_registry"`
+	SharedRegistry          string      `json:"shared_registry"`
 	SchedulerServiceAccount string      `json:"scheduler_service_account"`
 	RoleIDs                 RepoRoleIDs `json:"role_ids"`
 	Launchers               []string    `json:"launchers"`
@@ -684,6 +691,7 @@ func withDefaults(o InstallationOutputs, lc *localcfg.Config, bucket string) Ins
 	def(&o.RunsBucket, bucket)
 	def(&o.BaseRegistry, BaseRegistry)
 	def(&o.GhcrRegistry, GhcrRegistry)
+	def(&o.SharedRegistry, gcp.SharedRegistryRepoID())
 	def(&o.SchedulerServiceAccount, serviceAccountEmail(SchedulerServiceAccountID, lc.GCPProject))
 	def(&o.RoleIDs.Launcher, role(RoleLauncher))
 	def(&o.RoleIDs.JobRunner, role(RoleJobRunner))
@@ -1125,6 +1133,7 @@ func Repo(in Inputs) (RepoSpec, error) {
 			RegistryHost:            c.registryHost,
 			BaseRegistry:            c.inst.BaseRegistry,
 			GhcrRegistry:            c.inst.GhcrRegistry,
+			SharedRegistry:          c.inst.SharedRegistry,
 			SchedulerServiceAccount: c.inst.SchedulerServiceAccount,
 			RoleIDs:                 RepoRoleIDs{JobRunner: c.inst.RoleIDs.JobRunner, BuildSubmitter: c.inst.RoleIDs.BuildSubmitter, TagMover: c.inst.RoleIDs.TagMover},
 			Launchers:               c.inst.Launchers,
