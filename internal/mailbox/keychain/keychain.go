@@ -28,13 +28,15 @@
 // print the key on their standard output. A storing program takes the key on
 // its standard input instead.
 //
-// **No program's own words are ever echoed.** Its standard error is kept in the
-// same bounded buffer as its standard output and is read by exactly one caller:
-// the darwin storing side, whose `security -i` answers 0 for a command it could
-// not carry out, so its output is where the failure is. What that reading
-// produces is one of this package's own fixed sentences, never a byte of the
-// tool's text — a failing tool's complaint could echo what it was asked for,
-// and what it was asked for is the key.
+// **No program's own words are echoed unredacted.** Its standard error is kept
+// in the same bounded buffer as its standard output and is read by exactly one
+// caller: the darwin storing side, whose `security -i` answers 0 for a command
+// it could not carry out, so its output is where the failure is. What that
+// reading produces is one of this package's own fixed sentences; the one
+// exception is a line it does not recognise, which is quoted with every run of
+// key-alphabet characters long enough to be a key replaced by Redacted, so the
+// next surprise from the real tool is diagnosable from the operator's terminal
+// while a key the tool echoed is not.
 package keychain
 
 import (
@@ -226,9 +228,11 @@ type writer struct {
 	del      func(Item) (args []string, stdin []byte, err error)
 	notFound int
 	// verdict reads what the program printed for a failure it did not report in
-	// its exit status. It is nil where the exit status is the whole answer,
+	// its exit status; deleting says which of the two runs printed it, because
+	// the tool's successful delete prints a confirmation and its successful
+	// store prints nothing. It is nil where the exit status is the whole answer,
 	// which is every platform but darwin.
-	verdict func(stdout, stderr []byte) outputVerdict
+	verdict func(stdout, stderr []byte, deleting bool) outputVerdict
 }
 
 // outputVerdict is what a storing program's own output says about the command
@@ -236,8 +240,10 @@ type writer struct {
 // could not carry out: without it a refused store would read as a successful
 // one, and `fugaro pair` would deliver a key that is not in the keychain.
 //
-// why is always one of this package's own sentences and never the tool's text,
-// which could echo what it was given — and what it was given is the key.
+// why is one of this package's own sentences, followed — for a line it does not
+// recognise — by that line with every key-length run of the key's alphabet
+// redacted (securityShown), since the tool's text could echo what it was given
+// and what it was given is the key.
 type outputVerdict struct {
 	why string
 	// missing is the one failure Delete does not treat as one: the item is
@@ -310,19 +316,22 @@ func (s *commandStore) Put(ctx context.Context, item Item, key Key) error {
 	case code != 0:
 		return backendErr(fmt.Sprintf("%s exited %d storing the key at %q", s.writer.program, code, item.Name()))
 	}
-	if v := s.writer.read(stdout, stderr); v.why != "" {
-		return backendErr(fmt.Sprintf("%s did not store the key at %q: %s", s.writer.program, item.Name(), v.why))
+	if v := s.writer.read(stdout, stderr, false); v.why != "" {
+		// The verdict already redacts every key-length run; this also covers a
+		// key shorter than that, which securityWord does not refuse.
+		why := strings.ReplaceAll(v.why, string(key.Bytes()), Redacted)
+		return backendErr(fmt.Sprintf("%s did not store the key at %q: %s", s.writer.program, item.Name(), why))
 	}
 	return nil
 }
 
 // read is the writer's own reading of what its program printed, and nothing on
 // a platform whose exit status is the whole answer.
-func (w *writer) read(stdout, stderr []byte) outputVerdict {
+func (w *writer) read(stdout, stderr []byte, deleting bool) outputVerdict {
 	if w.verdict == nil {
 		return outputVerdict{}
 	}
-	return w.verdict(stdout, stderr)
+	return w.verdict(stdout, stderr, deleting)
 }
 
 // Delete removes the item through the platform's storing program. The item's
@@ -344,7 +353,7 @@ func (s *commandStore) Delete(ctx context.Context, item Item) error {
 	case code != 0 && code != s.writer.notFound:
 		return backendErr(fmt.Sprintf("%s exited %d deleting the key at %q", s.writer.program, code, item.Name()))
 	}
-	if v := s.writer.read(stdout, stderr); v.why != "" && !v.missing {
+	if v := s.writer.read(stdout, stderr, true); v.why != "" && !v.missing {
 		return backendErr(fmt.Sprintf("%s did not delete the key at %q: %s", s.writer.program, item.Name(), v.why))
 	}
 	return nil
@@ -446,9 +455,10 @@ func readerFor(goos string) (reader, error) {
 // answers 0 for a command it could not carry out, so the exit status alone
 // would read a refused store as a successful one and `fugaro pair` would
 // deliver a key that is not in the keychain. The writer therefore reads what
-// the tool printed and maps it to ErrBackend, in this package's own sentence:
-// what the tool says is never repeated, because it could echo the command line
-// it was given, and that line carries the key.
+// the tool printed and maps it to ErrBackend, in this package's own sentence;
+// a line it cannot place is quoted only through securityShown, which redacts
+// every key-length run first, because the tool could echo the command line it
+// was given, and that line carries the key.
 func writerFor(goos string) (*writer, string) {
 	switch goos {
 	case "linux":
@@ -567,41 +577,73 @@ func isControl(r rune) bool { return r < 0x20 || r == 0x7f }
 // The tool answers 0 for a command it could not carry out, so its output is
 // where a failure is, and the failure this function must never produce is a
 // silent success: a store that did not happen, reported as one, is a key
-// `fugaro pair` delivers and the keychain does not hold. **A successful add or
-// delete prints nothing at all**, so every non-blank line on either stream is a
-// failure — including a line the tool prefixed with something of its own, which
-// is why the message is looked for anywhere in the line rather than at its
-// start: a prompt or an echo of the command before the message would otherwise
-// read as a successful store. A line this package does not recognise is a
-// failure too, which is what securityUnknownWhy is for; what a failure is
-// *called* is always one of the sentences below and never the tool's text,
-// which can carry the command line it was given — and that line carries the
-// key.
+// `fugaro pair` delivers and the keychain does not hold.
 //
-// The assumption is worth stating, since nothing here can test it: a line this
-// function cannot place — a bare prompt, an echo of the command on a line of
-// its own — is read as a failure, because there is no way from here to tell it
-// from a message this package has never seen, and a store that did not happen
-// must not read as one that did. If the real tool ever writes such a line on a
-// successful run, this refuses every store: `fugaro pair` stops and says so
-// rather than delivering a key that may not be there. That is the direction to
-// fail in, and the owner's live test on a real Mac is what settles it.
-func securityVerdict(stdout, stderr []byte) outputVerdict {
+// **A successful add prints nothing at all; a successful delete prints exactly
+// one confirmation**, securityDeletedLine, and on some macOS versions the
+// attribute dump of the item it removed before it (securityItemEchoREs). Those
+// are the only lines a success may carry, and only on a delete; the dump is
+// accepted only together with the confirmation, and is discarded, never copied
+// anywhere. Every other non-blank line on either stream is a failure — including
+// a line the tool prefixed with something of its own, which is why a failure is
+// looked for anywhere in the line rather than at its start: a prompt or an echo
+// of the command before the message would otherwise read as a success.
+//
+// The precedence is the fail-closed one. A failure this package recognises,
+// anywhere, wins; then a line it does not recognise; then the item already
+// being gone, which is the one failure that is not one for Delete; and only a
+// run with none of those succeeds. A line nothing here can place — a bare
+// prompt, an echo of the command — is read as a failure, because there is no
+// way from here to tell it from a message this package has never seen, and a
+// store that did not happen must not read as one that did. That failure quotes
+// the line through securityShown, so the owner's live test on a real Mac, which
+// is what settles the tool's real output, says what it saw.
+func securityVerdict(stdout, stderr []byte, deleting bool) outputVerdict {
+	var missing, deleted, echoed bool
+	unknown := ""
 	for _, stream := range [][]byte{stdout, stderr} {
 		for _, line := range strings.Split(string(stream), "\n") {
 			line = strings.TrimSpace(line)
 			if line == "" {
 				continue
 			}
-			for _, shape := range securityFailureShapes {
-				if strings.Contains(line, shape.text) {
-					return outputVerdict{why: shape.why, missing: shape.missing}
+			if shape, ok := securityFailure(line); ok {
+				if !shape.missing {
+					return outputVerdict{why: shape.why}
 				}
+				missing = true
+				continue
 			}
-			return outputVerdict{why: securityUnknownWhy}
+			switch {
+			case deleting && line == securityDeletedLine:
+				deleted = true
+			case deleting && securityItemEcho(line):
+				echoed = true
+			case unknown == "":
+				unknown = line
+			}
 		}
 	}
+	switch {
+	case unknown != "":
+		return outputVerdict{why: securityUnknownWhy + ": " + securityShown(unknown)}
+	case missing:
+		return outputVerdict{why: securityMissingWhy, missing: true}
+	case echoed && !deleted:
+		return outputVerdict{why: "the security tool described an item without saying that it deleted it"}
+	}
 	return outputVerdict{}
+}
+
+// securityFailure is the shape line carries, if it is one of the failures the
+// tool prints.
+func securityFailure(line string) (securityShape, bool) {
+	for _, shape := range securityFailureShapes {
+		if strings.Contains(line, shape.text) {
+			return shape, true
+		}
+	}
+	return securityShape{}, false
 }
 
 // securityUnknownWhy is the sentence for a failure line this package does not
@@ -610,18 +652,80 @@ func securityVerdict(stdout, stderr []byte) outputVerdict {
 // silently did nothing.
 const securityUnknownWhy = "the security tool reported a failure it did not describe"
 
+// securityMissingWhy is the sentence for the item already being gone.
+const securityMissingWhy = "the keychain holds no such item"
+
+// securityDeletedLine is the whole line `security delete-generic-password`
+// prints when it removed the item. It is matched exactly, never as a substring,
+// so that no failure message that happens to contain it reads as a success.
+const securityDeletedLine = "password has been deleted."
+
+// securityItemEchoREs are the lines of the attribute dump the tool prints of
+// the item a delete removed: the keychain's path, the record's version and
+// class, the "attributes:" header, and one line per attribute, named either by
+// its four-character code or by its numeric tag. The dump never carries the
+// password — a delete does not read it — and it is only ever discarded.
+var securityItemEchoREs = []*regexp.Regexp{
+	regexp.MustCompile(`^keychain: ".*"$`),
+	regexp.MustCompile(`^version: [0-9]+$`),
+	regexp.MustCompile(`^class: \S+$`),
+	regexp.MustCompile(`^attributes:$`),
+	regexp.MustCompile(`^(0x[0-9A-Fa-f]{8} |"[A-Za-z0-9 ]{4}")<[A-Za-z0-9]+>=`),
+}
+
+// securityItemEcho reports whether line is a line of the deleted item's dump.
+func securityItemEcho(line string) bool {
+	for _, re := range securityItemEchoREs {
+		if re.MatchString(line) {
+			return true
+		}
+	}
+	return false
+}
+
+// securityKeyRunRE is a run of the pairing key's alphabet long enough to be a
+// key: a pairing key is 43 such characters, and nothing shorter than 20 carries
+// enough of one to matter.
+var securityKeyRunRE = regexp.MustCompile(`[A-Za-z0-9_-]{20,}`)
+
+// securityShownMax bounds how much of an unrecognised line an error quotes.
+const securityShownMax = 160
+
+// securityShown is an unrecognised line of the tool's output as an error may
+// quote it: every key-length run of the key's alphabet replaced by Redacted
+// first, so that truncating afterwards can never leave part of one, then cut to
+// securityShownMax bytes on a character boundary and quoted, so a control
+// character the tool printed cannot reach the terminal.
+func securityShown(line string) string {
+	shown := securityKeyRunRE.ReplaceAllString(line, Redacted)
+	if len(shown) > securityShownMax {
+		cut := securityShownMax
+		for cut > 0 && !utf8.RuneStart(shown[cut]) {
+			cut--
+		}
+		shown = shown[:cut] + "..."
+	}
+	return fmt.Sprintf("%q", shown)
+}
+
+// securityShape is one failure the tool prints: the text it is recognised by,
+// this package's sentence for it, and whether it is the item already being gone.
+type securityShape struct {
+	text    string
+	why     string
+	missing bool
+}
+
 // securityFailureShapes are the failures the tool prints, matched on the part
 // of the message that says which one it is. The messages are the framework's
 // (SecKeychain…), and the part matched is the sentence after the error's own
 // name, which is what changes between macOS versions.
-var securityFailureShapes = []struct {
-	text    string
-	why     string
-	missing bool
-}{
+var securityFailureShapes = []securityShape{
 	// The one failure that is not one for Delete: the item is already gone,
-	// which is the state the caller asked for.
-	{"could not be found", "the keychain holds no such item", true},
+	// which is the state the caller asked for. It is the item-not-found
+	// sentence only; a keychain that could not be found is a failure.
+	{"The specified item could not be found in the keychain.", securityMissingWhy, true},
+	{"The specified keychain could not be found.", "the keychain the security tool was asked to use could not be found", false},
 	{"already exists", "an item is already stored there and could not be replaced", false},
 	{"User interaction is not allowed", "the keychain is locked and this session cannot ask for it to be unlocked", false},
 	{"passphrase you entered is not correct", "the keychain is locked and the passphrase was not accepted", false},
