@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 	// rsc.io/qr is the one module this work adds to go.mod, and the owner
 	// approved it by name with T4's brief. renderPairQR's comment records it.
 	"rsc.io/qr"
@@ -809,16 +810,27 @@ func pairDatabaseAdminProbe(ctx context.Context, db *rtdb.Client, lc *localcfg.C
 // narrow terminal would wrap — and a wrapped QR code is not a QR code.
 const pairQRQuiet = 2
 
-// pairQRMaxColumns is the widest drawing this command prints. The terminal it
-// is normally run in is 80 columns, and a drawing wider than the terminal
-// wraps — and a wrapped QR code is not a QR code (pairQRQuiet). The payload is
-// a bootstrap configuration and a JWT, so it is over a kilobyte and its code is
-// over a hundred columns wide, which is wider than that terminal: what
-// renderPairQR writes then is the payload line, which is what this command
-// printed before it could draw at all, and the width the code would need, so an
-// operator who widens the terminal gets the drawing and one who does not can
-// still carry the payload to a console.
+// pairQRMaxColumns is the width a drawing is held to when stdout is not a
+// terminal whose width can be asked, because 80 is what a terminal is by
+// default. A drawing wider than the terminal wraps, and a wrapped QR code is
+// not a QR code (pairQRQuiet). The payload is a bootstrap configuration and a
+// JWT, so it is over a kilobyte and its code is over a hundred columns wide:
+// held to the real terminal's width (pairTerminalColumns), a terminal widened
+// for it gets the drawing, and a narrower one gets the payload line and the
+// width the code needs, so the operator can widen it or carry the payload.
 const pairQRMaxColumns = 80
+
+// pairTerminalColumns is the width the QR drawing is held to: stdout's own
+// when it is a terminal, pairQRMaxColumns otherwise. A variable so a test can
+// stand in for a wide terminal.
+var pairTerminalColumns = func(w io.Writer) int {
+	if f, ok := w.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
+		if cols, _, err := term.GetSize(int(f.Fd())); err == nil && cols > 0 {
+			return cols
+		}
+	}
+	return pairQRMaxColumns
+}
 
 // renderPairQR draws the payload as the QR the phone scans (§4.1, §4.4): the
 // code the operator's screen shows, from rsc.io/qr's encoder, so what is on
@@ -848,8 +860,8 @@ func renderPairQR(w io.Writer, payload string) error {
 	if err != nil {
 		return userErr("encoding the QR code: %v", err)
 	}
-	if columns := code.Size + 2*pairQRQuiet; columns > pairQRMaxColumns {
-		return writePairQRPayload(w, payload, columns)
+	if columns, width := code.Size+2*pairQRQuiet, pairTerminalColumns(w); columns > width {
+		return writePairQRPayload(w, payload, columns, width)
 	}
 	size := code.Size + 2*pairQRQuiet
 	var b strings.Builder
@@ -880,10 +892,10 @@ func renderPairQR(w io.Writer, payload string) error {
 // operator can widen the terminal rather than read a wrapped code. The line is
 // what --json's qr event carries too, so a console can draw the code where
 // there is room for it.
-func writePairQRPayload(w io.Writer, payload string, columns int) error {
-	_, err := fmt.Fprintf(w, "the pairing payload's QR code is %d columns wide, past the %d this is held to, "+
+func writePairQRPayload(w io.Writer, payload string, columns, width int) error {
+	_, err := fmt.Fprintf(w, "the pairing payload's QR code is %d columns wide, past the terminal's %d, "+
 		"and a wrapped QR code is not a QR code: widen the terminal to %d columns to scan the code, "+
-		"or carry this payload line, which --json's qr event carries too\n", columns, pairQRMaxColumns, columns)
+		"or carry this payload line, which --json's qr event carries too\n", columns, width, columns)
 	if err != nil {
 		return userErr("writing the QR payload: %v", err)
 	}

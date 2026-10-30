@@ -2241,6 +2241,53 @@ func TestPairQRTooWidePrintsThePayload(t *testing.T) {
 	}
 }
 
+// TestPairQRWideTerminalDrawsTheRealPayload is the other side of the width
+// gate: a payload the size of a real one is drawn, module for module, in a
+// terminal wide enough for it, so the gate is the terminal's width and not a
+// constant that no real payload fits under.
+func TestPairQRWideTerminalDrawsTheRealPayload(t *testing.T) {
+	payload := `{"v":1,"project":"aurora","gcp_project":"proj-1234",` +
+		`"database_url":"https://aurora-default-rtdb.europe-west1.firebasedatabase.app",` +
+		`"api_key":"` + pairAPIKey + `","uid":"p~AAAA","expires_at":"2026-10-29T12:02:00Z",` +
+		`"token":"eyJhbGciOiJSUzI1NiJ9.` + strings.Repeat("B", 400) + `.` + strings.Repeat("A", 342) + `"}`
+	code, err := qr.Encode(payload, qr.L)
+	if err != nil {
+		t.Fatal(err)
+	}
+	columns := code.Size + 2*pairQRQuiet
+	if columns <= pairQRMaxColumns {
+		t.Fatalf("this payload's code is %d columns, inside the default %d: it is not the case this test is about", columns, pairQRMaxColumns)
+	}
+	prev := pairTerminalColumns
+	pairTerminalColumns = func(io.Writer) int { return columns }
+	t.Cleanup(func() { pairTerminalColumns = prev })
+
+	var buf bytes.Buffer
+	if err := renderPairQR(&buf, payload); err != nil {
+		t.Fatal(err)
+	}
+	got, err := pairReadQR(buf.String(), pairQRQuiet, code.Size)
+	if err != nil {
+		t.Fatalf("a terminal %d columns wide did not get the drawing: %v\n%s", columns, err, buf.String())
+	}
+	for y := range code.Size {
+		for x := range code.Size {
+			if got.Black(x, y) != code.Black(x, y) {
+				t.Fatalf("module (%d,%d) is drawn %v, the encoder's code has %v", x, y, got.Black(x, y), code.Black(x, y))
+			}
+		}
+	}
+
+	pairTerminalColumns = func(io.Writer) int { return columns - 1 }
+	buf.Reset()
+	if err := renderPairQR(&buf, payload); err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsAny(buf.String(), "█▀▄") {
+		t.Fatalf("a terminal one column narrower than the code got the drawing:\n%s", buf.String())
+	}
+}
+
 // TestPairQRJSONDrawsNothing is §4.5's third rule for the QR: under --json the
 // payload goes in the qr event and the terminal drawing is not written at all,
 // so a console reading stdout is not also handed a screenful of blocks.
