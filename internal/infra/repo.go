@@ -219,6 +219,11 @@ func NeedsBuild(ctx context.Context, c *Clients, spec RepoSpec, versions map[str
 	var out []string
 	for _, key := range slices.Sorted(maps.Keys(spec.Workflows)) {
 		ws := spec.Workflows[key]
+		// The skip is clone's alone: it runs the installation's base image
+		// and builds nothing. A checkout: shared workflow does have an image
+		// to build — a dependency-layer one, shared with every repository on
+		// the same key (design forge-authorship-images/shared-images.md §6)
+		// — so it is reported here like any other.
 		if key != ws.Name || ws.Checkout == config.CheckoutClone {
 			continue
 		}

@@ -2,6 +2,7 @@ package infra
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -670,6 +671,118 @@ func TestSpecCloneSetsRemoteEnv(t *testing.T) {
 	}
 	if _, ok := rs.Workflows["api"].Env[RemoteEnv]; ok {
 		t.Errorf("api (baked) carries %s = %q, want no such key", RemoteEnv, rs.Workflows["api"].Env[RemoteEnv])
+	}
+}
+
+// sharedYAML is cloneYAML with web on checkout: shared (design
+// forge-authorship-images/shared-images.md §6, route A): a job that runs a
+// shared dependency-layer image and clones the repository's own source at
+// launch. It declares the dependency-layer keys — the ones checkout: clone
+// refuses and this kind exists to accept.
+const sharedYAML = `version: 1
+project: aurora
+git: { provider: github, base_branch: main }
+agent: { auth: vertex }
+workflows:
+  web:
+    checkout: shared
+    image: { apt: [libvips-dev], tools: { node: "24.19.0" }, key_files: [patches] }
+    commands: { build: npm run build, test: npm test }
+  api:
+    commands: { build: ./gradlew assemble, test: ./gradlew test }
+`
+
+// sharedInputs is a GitHub repository with one checkout: shared workflow
+// (web) and one ordinarily-built workflow (api).
+func sharedInputs(t *testing.T) Inputs {
+	t.Helper()
+	in := cloneInputs(t)
+	in.Cfg = parseCfg(t, []byte(sharedYAML))
+	return in
+}
+
+// TestSpecSharedWorkflowCarriesCloneMarkers (design
+// forge-authorship-images/shared-images.md §1, §6): a shared job's image
+// holds the dependency layer alone, so the run has to clone the source
+// itself — the job says so in FUGARO_CHECKOUT, whose value is the
+// workflow's own kind, and names where from in FUGARO_REMOTE. One writer
+// writes both, the same code that writes them for a clone job, and a baked
+// sibling's job carries neither: that is the whole of the job's clone
+// shape, and the refresh that moves a shared repository's job onto the
+// shared digest has nothing else to write.
+//
+// Mutation (run, restore): drop config.CheckoutShared from the writer's
+// condition in workflow() — this test then fails: web's env has no
+// FUGARO_CHECKOUT and no FUGARO_REMOTE.
+func TestSpecSharedWorkflowCarriesCloneMarkers(t *testing.T) {
+	rs, err := Repo(sharedInputs(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := rs.Workflows["web"]
+	if ws.Checkout != config.CheckoutShared {
+		t.Fatalf("web's Checkout = %q, want %q", ws.Checkout, config.CheckoutShared)
+	}
+	if got := ws.Env[CheckoutEnv]; got != config.CheckoutShared {
+		t.Errorf("web's %s = %q, want %q: a shared job's image holds no source, so the run clones", CheckoutEnv, got, config.CheckoutShared)
+	}
+	if got := ws.Env[RemoteEnv]; got != "https://github.com/acme/webapp.git" {
+		t.Errorf("web's %s = %q, want the repository's clone URL", RemoteEnv, got)
+	}
+	for _, env := range []string{CheckoutEnv, RemoteEnv} {
+		if _, ok := rs.Workflows["api"].Env[env]; ok {
+			t.Errorf("api (baked) carries %s = %q, want no such key", env, rs.Workflows["api"].Env[env])
+		}
+	}
+}
+
+// TestSpecSharedRemoteIsCredentialFree (design
+// forge-authorship-images/shared-images.md §6, review mandate): the remote a
+// shared job clones from is the repository's own https, credential-free
+// clone URL — never a token-bearing one — because it is written by the same
+// repoURL-checked value a clone job's is, and a URL carrying credentials is
+// refused outright, before any job spec exists. A shared workflow is the
+// case this matters most for: nothing else in its job names a repository,
+// so the remote is the one thing that decides whose source the run gets.
+func TestSpecSharedRemoteIsCredentialFree(t *testing.T) {
+	in := sharedInputs(t)
+	in.RepoURL = "https://person-1:token-shaped@github.com/acme/webapp.git"
+	if _, err := Repo(in); err == nil {
+		t.Fatal("Repo accepted a clone URL carrying credentials for a checkout: shared workflow")
+	}
+
+	rs, err := Repo(sharedInputs(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote := rs.Workflows["web"].Env[RemoteEnv]
+	if !strings.HasPrefix(remote, "https://") {
+		t.Errorf("web's %s = %q, want an https URL", RemoteEnv, remote)
+	}
+	if strings.Contains(remote, "@") || strings.Contains(remote, "person-1") {
+		t.Errorf("web's %s = %q, want the repository's own URL with no credential in it", RemoteEnv, remote)
+	}
+}
+
+// TestNeedsBuildForSharedCheckout: a checkout: shared workflow does need a
+// build — the dependency-layer image its job runs, shared with every
+// repository on the same key (design
+// forge-authorship-images/shared-images.md §6) — so NeedsBuild reports it,
+// where the clone workflow beside it is skipped. Before this run a shared
+// workflow did not parse at all, so the case had no answer; a refactor of
+// the skip guard to `Checkout != config.CheckoutBaked` would answer it
+// wrongly and silently.
+func TestNeedsBuildForSharedCheckout(t *testing.T) {
+	ctx := context.Background()
+	f := newCloud(t)
+	rs, err := Repo(sharedInputs(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.gcs.AddBucket(rs.Installation.RunsBucket, testProjectNumber, managed)
+	got, err := NeedsBuild(ctx, f.c, rs, map[string]bool{"github-app-key": true})
+	if err != nil || !slices.Equal(got, []string{"api", "web"}) {
+		t.Fatalf("got %q, %v, want both api and web: a shared workflow needs its dependency-layer image built", got, err)
 	}
 }
 

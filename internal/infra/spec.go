@@ -64,19 +64,24 @@ const (
 	RTDBURLEnv        = runner.RTDBURLEnv
 	FirebaseAPIKeyEnv = runner.FirebaseAPIKeyEnv
 	BudgetGraceEnv    = runner.BudgetGraceEnv
-	// CheckoutEnv, set to config.CheckoutClone on a checkout: clone
-	// workflow's job (never on a baked one, whose spec stays exactly what
-	// it was before clone existed), tells the runner's bootstrap to make a
-	// blobless clone at start instead of moving a baked-in one, and to
-	// install the checkout's mise tools (design generic-tool.md §2, G4;
-	// plan Task 17). The runner reads it, so the constant lives there
-	// (runner.CheckoutEnv), the same way the budget variables do.
+	// CheckoutEnv, set to the workflow's own config.Checkout value on a
+	// checkout: clone or checkout: shared workflow's job (never on a baked
+	// one, whose spec stays exactly what it was before clone existed), tells
+	// the runner's bootstrap to make a blobless clone at start instead of
+	// moving a baked-in one, and to install the checkout's mise tools
+	// (design generic-tool.md §2, G4; plan Task 17). A shared job needs it
+	// for the same reason a clone job does: its image holds the dependency
+	// layer alone, so the source can only come from the clone (design
+	// forge-authorship-images/shared-images.md §1, §6). The runner reads it,
+	// so the constant lives there (runner.CheckoutEnv), the same way the
+	// budget variables do.
 	CheckoutEnv = runner.CheckoutEnv
 	// RemoteEnv, set to the repository's credential-free clone URL on a
-	// checkout: clone workflow's job (and on no other): the job's image
-	// carries no checkout, so fugaro exec clones one from this URL — its
-	// --remote flag defaults to it (runner.RemoteEnv). Without it the
-	// clone job would have no remote to clone at all (review C1).
+	// checkout: clone or checkout: shared workflow's job (and on no other):
+	// the job's image carries no checkout, so fugaro exec clones one from
+	// this URL — its --remote flag defaults to it (runner.RemoteEnv).
+	// Without it the clone job would have no remote to clone at all (review
+	// C1).
 	RemoteEnv = runner.RemoteEnv
 )
 
@@ -281,9 +286,12 @@ type WorkflowSpec struct {
 	// LegacyImage is the M4 image path in the local config's legacy
 	// registry, untagged as M4 printed it; empty without one.
 	LegacyImage string `json:"-"`
-	// Checkout is the workflow's config.Checkout (baked or clone): clone
-	// runs the installation's base image directly (Image is base_images.base,
-	// not a derived image), with no per-repository build or daily check.
+	// Checkout is the workflow's config.Checkout (baked, clone or shared):
+	// clone runs the installation's base image directly (Image is
+	// base_images.base, not a derived image), with no per-repository build
+	// or daily check; shared runs a shared dependency-layer image and
+	// clones the repository's own source at launch (design
+	// forge-authorship-images/shared-images.md §6, route A).
 	Checkout string `json:"-"`
 }
 
@@ -909,7 +917,10 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 	// generic-tool.md §2, G3): there is no per-repository derived image, so
 	// the job's image is base_images.base, not a :latest tag in the
 	// repository's own registry. Every token variant of the workflow runs
-	// the same image.
+	// the same image. A checkout: shared workflow keeps the derived tag:
+	// the image its job runs is a shared dependency-layer digest from the
+	// lock, which only the operator's machine writes onto the job (design
+	// forge-authorship-images/shared-images.md §6), and no spec can know it.
 	image := gcp.ImageName(c.registryPath(), slug, name) + ":latest"
 	if w.Checkout == config.CheckoutClone {
 		image = lc.BaseImage(config.BaseKind)
@@ -945,8 +956,13 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 	if lc.Registry != "" {
 		ws.LegacyImage = gcp.ImageName(lc.Registry, slug, name)
 	}
-	if w.Checkout == config.CheckoutClone {
-		ws.Env[CheckoutEnv] = config.CheckoutClone
+	// One writer for the job's clone shape: a job whose image holds no
+	// repository's source — clone, which runs the installation's base image,
+	// and shared, which runs the dependency layer alone — carries the two
+	// markers the run needs to fetch the source itself, and the value is the
+	// workflow's own kind, which is what the runner switches on.
+	if w.Checkout == config.CheckoutClone || w.Checkout == config.CheckoutShared {
+		ws.Env[CheckoutEnv] = w.Checkout
 		// Where the run clones from: the repository's own URL, which
 		// c.repoURL already checked is https, credential-free and this
 		// repository's (see repoURL).
