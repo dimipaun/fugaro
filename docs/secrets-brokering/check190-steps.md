@@ -16,7 +16,11 @@ clock and what its Restore deletes. Read those before you start. This file is th
   installation: the script refuses to run against anything else. Never `belong`, never another
   project.
 - A **sandbox** Bitbucket repository you may push a throwaway branch to, and its access token on your
-  clipboard. The token is used for one run, is read by `gcloud` out of the file below rather than from
+  clipboard: a **repository access token** (Repository settings > Access tokens, scopes
+  `repository:read` and `repository:write`; a project or workspace access token works too). The proxy
+  authenticates to Bitbucket as `x-token-auth`, which takes nothing else: an Atlassian API token
+  (`ATATT…`) or an app password (`ATBB…`) is refused by the script before anything is created. The
+  token is used for one run, is read by `gcloud` out of the file below rather than from
   a command line, is mounted into the throwaway service as a file rather than as an environment
   variable, and is printed nowhere — not in the block, not in a log, not in an error.
 - `bash`, `mktemp`, `gcloud`, `git`, `curl`, `awk` and `fugaro` on PATH, `gcloud` authenticated as
@@ -28,7 +32,8 @@ clock and what its Restore deletes. Read those before you start. This file is th
   build account (`fugaro-b-*`) `roles/storage.objectViewer` on that bucket and
   `roles/artifactregistry.writer` on that registry, nothing project-wide. The installation's own
   `gs://fugaro-dev_cloudbuild` is not touched. You do not need to read Cloud Logging: the check reads
-  the build's status, not its log.
+  the build's status, not its log. If you can (an Owner can), a failed git row also carries the
+  proxy's own log lines; if you cannot, the row says "none read" and carries everything else.
 - **Around two hours at the terminal.** The cold-start wait is 35 minutes of it and the slow push is
   held open for an hour; one build and one idle Cloud Run instance are billed to the project while it
   runs.
@@ -106,6 +111,22 @@ worth knowing by name:
   the container did not start. The token's volume is mounted at the directory `/chk190`, so the
   proxy's binary lives at `/usr/local/bin/chk190`: a volume over the entrypoint is a container that
   never starts. The Restore deletes the service with everything else.
+- **The counters cannot be read** (`aborted` before `clone-full`) — `GET /chk190/stats` was answered
+  with something other than the proxy's own counters, and the stop names the HTTP status: `401` is the
+  front end not accepting the identity token `gcloud auth print-identity-token` minted for the account
+  gcloud is using, `403` is that account lacking `roles/run.invoker` on the service. No git request was
+  sent.
+- **A clone or a push fails** (`clone-full`, `clone-blobless`, `push-small`, `push-big-http1`, and
+  `cold-start` when the first request after the idle wait fails). git says `could not read Username
+  … terminal prompts disabled` for **every** 401, whoever sent it, so the row carries more than git's
+  words: the request lines and the status git saw with the `WWW-Authenticate`, `X-Chk190-Upstream`
+  and `Server` headers (every `Authorization` and `Cookie` value redacted, never a body), a reading of
+  who refused, and the proxy's own last log lines. The proxy marks every answer it forwards with
+  `X-Chk190-Upstream`, so a 401 or 403 **with** the mark and a `Basic realm="Bitbucket.org HTTP"`
+  challenge is Bitbucket refusing the token (not an access token of this repository, expired,
+  revoked, or without `repository:write` for a push), and one **without** it was given by the
+  Cloud Run front end before the proxy saw the request (the identity token). The Restore runs as
+  usual.
 
 ## What is left behind
 

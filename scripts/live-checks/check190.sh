@@ -70,7 +70,7 @@
 #
 # CHECK190_DRY_RUN, CHECK190_REPO, CHECK190_TOKEN_FILE, CHECK190_CURL_SECONDS,
 # CHECK190_IDLE_SECONDS, CHECK190_SLOW_SECONDS, CHECK190_BIG_MIB,
-# CHECK190_GRANT_SECONDS, CHECK190_BUILD_WAIT_SECONDS and CHECK190_BUILD_SA exist for this script's own test: they shorten waits and
+# CHECK190_GRANT_SECONDS, CHECK190_BUILD_WAIT_SECONDS, CHECK190_LOG_WAIT_SECONDS and CHECK190_BUILD_SA exist for this script's own test: they shorten waits and
 # sizes, and none of them can point the check at another project, another
 # region or another service. CHECK190_REPO and CHECK190_TOKEN_FILE are the two
 # inputs the check cannot invent (the sandbox repository and the token file the
@@ -122,6 +122,9 @@ SLOW_SECONDS=${CHECK190_SLOW_SECONDS:-3660}
 BIG_MIB=${CHECK190_BIG_MIB:-33}
 GRANT_SECONDS=${CHECK190_GRANT_SECONDS:-60}
 BUILD_WAIT_SECONDS=${CHECK190_BUILD_WAIT_SECONDS:-1800}
+# How long a failed git row waits for the proxy's own log lines to reach Cloud
+# Logging before it reads them: ingestion lags the request by seconds.
+LOG_WAIT_SECONDS=${CHECK190_LOG_WAIT_SECONDS:-20}
 BUILD_SA=${CHECK190_BUILD_SA:-}
 REPO=${CHECK190_REPO:-}
 TOKEN_FILE=${CHECK190_TOKEN_FILE:-}
@@ -258,11 +261,15 @@ remove_scratch() {
 
 # redact: what a git or gcloud message may carry back into the block. The block
 # is pasted into a pull request, so a credential-shaped run of characters goes,
-# whatever it is: a scheme with a value after it, or any name=value whose name
-# says token or secret.
+# whatever it is: the value of any Authorization, Proxy-Authorization, Cookie or
+# Set-Cookie header, a scheme with a credential-long value after it, or any
+# name=value whose name says token or secret. A challenge (`Basic realm="..."`,
+# `Bearer error="invalid_token"`) is shorter than any credential and stays: it
+# is what tells a refusal by Bitbucket from one by the front end.
 redact() {
   sed -E \
-    -e 's/(Bearer|Basic|x-token-auth)[[:space:]]+[A-Za-z0-9._~+/=-]+/<redacted>/g' \
+    -e 's/([Aa]uthorization|[Cc]ookie)[[:space:]]*:[^|]*/\1: <redacted> /g' \
+    -e 's/(Bearer|Basic|x-token-auth)[[:space:]]+[A-Za-z0-9._~+/=-]{12,}/<redacted>/g' \
     -e 's/[A-Za-z0-9_]*(token|Token|TOKEN|secret|Secret|SECRET)[A-Za-z0-9_]*=[^[:space:]]+/<redacted>/g'
 }
 
@@ -276,6 +283,89 @@ git_error_excerpt() {
     return 0
   }
   tail -n 2 "$f" | tr -d '\r' | tr '\n' ' ' | redact | cut -c1-400
+}
+
+# run_git_traced NAME DIR ARGS...: run_git, with git's own HTTP trace written to
+# $SCRATCH/NAME.curl — request lines and headers only (GIT_TRACE_CURL_NO_DATA),
+# with git's own redaction of the credential headers on (GIT_TRACE_REDACT). A
+# git failure says "could not read Username" for every 401 whoever sent it, so
+# the trace is the only place the status and the challenge are. The file is in
+# the 0700 scratch directory, is made 0600 before git writes to it, and is read
+# by http_excerpt and http_reading only, which redact again.
+run_git_traced() {
+  local name=$1
+  shift
+  (umask 077 && : >"$SCRATCH/$name.curl") || return 1
+  GIT_TRACE_CURL="$SCRATCH/$name.curl" GIT_TRACE_CURL_NO_DATA=1 GIT_TRACE_REDACT=1 run_git "$@"
+}
+
+# http_excerpt NAME: the last exchanges git traced for the step NAME — each
+# request line, the status it was answered with and the three response headers
+# that say who answered (WWW-Authenticate, the proxy's own X-Chk190-Upstream and
+# Server) — redacted, newest last. No body and no request header but the
+# request line is ever read.
+http_excerpt() {
+  local f="$SCRATCH/$1.curl"
+  [ -s "$f" ] || {
+    printf 'no HTTP exchange was traced'
+    return 0
+  }
+  sed -n -E \
+    -e 's/^.*=> Send header: ((GET|POST) .*)$/\1/p' \
+    -e 's/^.*<= Recv header: (HTTP\/.*|[Ww][Ww][Ww]-[Aa]uthenticate:.*|[Xx]-[Cc]hk190-[Uu]pstream:.*|[Ss]erver:.*)$/\1/p' "$f" \
+    | tr -d '\r' | tail -n 12 | tr '\n' '|' | sed -e 's/|$//' -e 's/|/ | /g' | redact | cut -c1-700 || true
+}
+
+# http_reading NAME: who refused, read off the last final answer git traced.
+# The proxy marks every answer it forwards with X-Chk190-Upstream, so a 401 or
+# 403 that carries the mark is Bitbucket's and one without it is the front
+# end's own, given before the proxy saw the request.
+http_reading() {
+  local f="$SCRATCH/$1.curl"
+  [ -s "$f" ] || {
+    printf 'git saw no HTTP answer at all (a connection or TLS failure, or git never reached the network)'
+    return 0
+  }
+  tr -d '\r' <"$f" | awk '
+    /<= Recv header: HTTP\// {
+      c = $0; sub(/.*<= Recv header: HTTP\/[^ ]* /, "", c); sub(/ .*/, "", c)
+      if (c !~ /^1/) { code = c; marked = 0 }
+      next
+    }
+    tolower($0) ~ /<= recv header: x-chk190-upstream:/ { if (code != "") marked = 1 }
+    END {
+      if (code == "") { print "git saw no HTTP answer at all (a connection or TLS failure)"; exit }
+      if ((code == "401" || code == "403") && marked) {
+        printf "Bitbucket refused the proxy%ss credential (the %s carries X-Chk190-Upstream, so the proxy forwarded it): the token is not an access token of this repository, has expired or been revoked, or lacks the repository scope\n", "\047", code; exit
+      }
+      if (code == "401" || code == "403") {
+        printf "the Cloud Run front end refused the request before the proxy saw it (the %s carries no X-Chk190-Upstream): the identity token was missing, expired or not accepted, or your account lacks roles/run.invoker on the service\n", code; exit
+      }
+      if (marked) { printf "the last answer, %s, came from Bitbucket through the proxy\n", code; exit }
+      printf "the last answer, %s, came from the front end or the proxy itself, not from Bitbucket (no X-Chk190-Upstream)\n", code
+    }' || true
+}
+
+# proxy_log_excerpt: the proxy's own last lines (one per request: method,
+# status, sizes; and one per refusal by Bitbucket: path and challenge scheme),
+# newest first, redacted. Best effort: an account that cannot read Cloud
+# Logging gets "none read", and the row says so rather than failing on it.
+proxy_log_excerpt() {
+  if [ "$LOG_WAIT_SECONDS" -gt 0 ]; then sleep_bg "$LOG_WAIT_SECONDS"; fi
+  gcloud logging read \
+    "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"${SVC}\" AND textPayload:\"chk190\"" \
+    --project="${P:?}" --freshness=15m --limit=8 --format='value(textPayload)' 2>/dev/null \
+    | grep -v '^$' | tr -d '\r' | tr '\n' '|' | sed -e 's/|$//' -e 's/|/ | /g' | redact | cut -c1-700 || true
+}
+
+# git_failure_detail NAME: everything a failed git row carries — git's own last
+# words, the HTTP exchange it saw, who refused, and the proxy's own log.
+git_failure_detail() {
+  local logs
+  logs=$(proxy_log_excerpt)
+  printf '%s. HTTP as git saw it (newest last): %s. Reading: %s. Proxy log (newest first): %s' \
+    "$(git_error_excerpt "$1")" "$(http_excerpt "$1")" "$(http_reading "$1")" \
+    "${logs:-none read (your account may not read Cloud Logging, or the lines had not arrived yet)}"
 }
 
 # The Restore: everything this run created, deleted in the one order that works
@@ -474,7 +564,21 @@ guard_inputs() {
   if [ ! -s "$TOKEN_FILE" ]; then
     stop "the token file named by CHECK190_TOKEN_FILE is empty, so there is no token to hand the proxy. Nothing was created"
   fi
-  fact "token-file" PASS "mode 0600, non-empty, read from CHECK190_TOKEN_FILE (the path is not printed, and the value is in no log line, no argument and no block)"
+  # The proxy authenticates to Bitbucket as x-token-auth, which is the username
+  # of a repository, project or workspace ACCESS token and of nothing else. An
+  # Atlassian API token or an app password in its place is answered 401 on the
+  # clone, after the build and the deploy, and git reports that 401 as "could
+  # not read Username". Their prefixes say which they are; only the prefix is
+  # read, and it is not printed.
+  local kind=""
+  case "$(head -c 5 "$TOKEN_FILE")" in
+  ATATT) kind="an Atlassian API token" ;;
+  ATBB*) kind="a Bitbucket app password" ;;
+  esac
+  if [ -n "$kind" ]; then
+    stop "the token file named by CHECK190_TOKEN_FILE holds ${kind}, and the proxy authenticates to Bitbucket as x-token-auth, which takes a repository, project or workspace access token only: git would be answered 401 on the first clone. Create an access token on the sandbox repository (Repository settings > Access tokens, scopes repository:read and repository:write), write it to the file the same way and run again. Nothing was created"
+  fi
+  fact "token-file" PASS "mode 0600, non-empty, not an API token or an app password by its prefix, read from CHECK190_TOKEN_FILE (the path is not printed, and the value is in no log line, no argument and no block)"
 }
 
 # guard_deploy_is_iam_only: the deploy line is the one place a throwaway service
@@ -646,15 +750,28 @@ branch_refs() {
 # is what the clone and push rows are measured in. The proxy logs one line per
 # request and serves the aggregate at /chk190/stats; both carry counts and sizes
 # only, never a header and never a body.
+#
+# Only a body of the proxy's own shape counts: an error page from the front end
+# is not empty, and read as counters it would make every delta 0.
 fetch_stats() {
-  curl -sS --max-time "$CURL_SECONDS" --config "$AUTH_CONF" "https://${HOST}/chk190/stats" 2>/dev/null
+  local body
+  body=$(curl -sS --max-time "$CURL_SECONDS" --config "$AUTH_CONF" "https://${HOST}/chk190/stats" 2>/dev/null || true)
+  case "$body" in requests=*) printf '%s' "$body" ;; esac
+}
+
+# stats_status: the HTTP status GET /chk190/stats is answered with, for the stop
+# that says why the counters could not be read.
+stats_status() {
+  curl -sS -o /dev/null -w '%{http_code}' --max-time "$CURL_SECONDS" --config "$AUTH_CONF" "https://${HOST}/chk190/stats" 2>/dev/null || true
 }
 
 # fetch_health: the instance that answered and when its process started. This is
 # the check's own service answering about itself — no upstream traffic, no token
 # and no body of the owner's repository is involved.
 fetch_health() {
-  curl -sS --max-time "$CURL_SECONDS" --config "$AUTH_CONF" "https://${HOST}/chk190/health" 2>/dev/null
+  local body
+  body=$(curl -sS --max-time "$CURL_SECONDS" --config "$AUTH_CONF" "https://${HOST}/chk190/health" 2>/dev/null || true)
+  case "$body" in start=*) printf '%s' "$body" ;; esac
 }
 
 field_of() { # field_of TEXT NAME: the value of NAME= in TEXT, or nothing
@@ -737,7 +854,7 @@ deploy_conditions() {
   fi
   # The revision's own startup lines (the container's stderr), newest first: the
   # condition says the container did not start, its log says why. The proxy
-  # logs counts and sizes only, and the lines are redacted anyway.
+  # logs counts, sizes and refusals only, and the lines are redacted anyway.
   local logs=""
   if [ -n "$rev" ]; then
     logs=$(gcloud logging read \
@@ -980,11 +1097,15 @@ step_clone() {
   mint_idt || stop "no identity token can be minted here, so no request can be authorised"
   local before after t0 t1
   before=$(fetch_stats)
-  [ -n "$before" ] || stop "the proxy's own counters cannot be read (GET /chk190/stats answered nothing), so a clone's request count and bytes could not be measured. The service IS this check's; this run's Restore deletes it"
+  if [ -z "$before" ]; then
+    local code
+    code=$(stats_status)
+    stop "the proxy's own counters cannot be read: GET /chk190/stats answered HTTP ${code:-nothing} with a freshly minted identity token, so a clone's request count and bytes could not be measured and no git request was sent. A 401 is the front end not accepting the identity token ('gcloud auth print-identity-token' for the account gcloud is using); a 403 is that account lacking roles/run.invoker on ${SVC}; 000 is no answer at all. The service IS this check's; this run's Restore deletes it"
+  fi
   t0=$(date +%s)
-  if ! run_git "$SCRATCH" clone --quiet "$(git_url)" "$SCRATCH/full" 2>"$SCRATCH/clone-full.err"; then
-    fact "clone-full" FAIL "a full clone through the proxy failed: $(git_error_excerpt clone-full)"
-    stop "the full clone failed, so the proxy does not serve a fetch end to end: the block's clone-full row carries what git said. Nothing else ran"
+  if ! run_git_traced clone-full "$SCRATCH" clone --quiet "$(git_url)" "$SCRATCH/full" 2>"$SCRATCH/clone-full.err"; then
+    fact "clone-full" FAIL "a full clone through the proxy failed: $(git_failure_detail clone-full)"
+    stop "the full clone failed, so the proxy does not serve a fetch end to end: the block's clone-full row carries what git said, the HTTP status and headers it saw, who refused, and the proxy's own log. Nothing else ran"
   fi
   t1=$(date +%s)
   after=$(fetch_stats)
@@ -992,8 +1113,8 @@ step_clone() {
 
   before=$(fetch_stats)
   t0=$(date +%s)
-  if ! run_git "$SCRATCH" clone --quiet --filter=blob:none "$(git_url)" "$SCRATCH/blobless" 2>"$SCRATCH/clone-blobless.err"; then
-    fact "clone-blobless" FAIL "a blobless clone through the proxy failed: $(git_error_excerpt clone-blobless)"
+  if ! run_git_traced clone-blobless "$SCRATCH" clone --quiet --filter=blob:none "$(git_url)" "$SCRATCH/blobless" 2>"$SCRATCH/clone-blobless.err"; then
+    fact "clone-blobless" FAIL "a blobless clone through the proxy failed: $(git_failure_detail clone-blobless)"
     stop "the blobless clone failed. The full clone's row is in the block"
   fi
   t1=$(date +%s)
@@ -1015,10 +1136,10 @@ step_push_small() {
   # The record that a branch of this check's is on the sandbox repository: it is
   # written before the push, so a push that fails half way is still cleaned up.
   : >"$PUSHED"
-  if run_git "$dir" push --quiet origin "$(branch_name)" 2>"$SCRATCH/push-small.err"; then
+  if run_git_traced push-small "$dir" push --quiet origin "$(branch_name)" 2>"$SCRATCH/push-small.err"; then
     fact "push-small" PASS "a small push of branch chk190/${NAME} through the proxy succeeded"
   else
-    fact "push-small" FAIL "a small push through the proxy failed: $(git_error_excerpt push-small)"
+    fact "push-small" FAIL "a small push through the proxy failed: $(git_failure_detail push-small)"
     stop "the small push failed, so the proxy does not serve a push at all: nothing about the large push could be measured. The branch is deleted by this run's Restore"
   fi
 }
@@ -1039,7 +1160,7 @@ step_push_big() {
   t0=$(date +%s)
   # HTTP/1.1 on purpose: the question is whether Cloud Run's front end accepts a
   # chunked body above 32 MiB on it, and HTTP/2 would answer a different one.
-  run_git "$dir" -c http.version=HTTP/1.1 push --quiet origin "$(branch_name)" 2>"$SCRATCH/push-big.err" || rc=$?
+  run_git_traced push-big "$dir" -c http.version=HTTP/1.1 push --quiet origin "$(branch_name)" 2>"$SCRATCH/push-big.err" || rc=$?
   t1=$(date +%s)
   after=$(fetch_stats)
   local answer
@@ -1048,6 +1169,7 @@ step_push_big() {
     # The gate B0.5 names: with this row PASS, S1 is built on HTTP/1.1.
     fact "push-big-http1" PASS "a ${BIG_MIB} MiB pack pushed on HTTP/1.1 in $((t1 - t0)) s; the proxy received $(stats_delta "$before" "$after"). The front end accepted a chunked body above 32 MiB, so the proxy path stays HTTP/1.1"
   else
+    answer=$(git_failure_detail push-big)
     fact "push-big-http1" FAIL "a ${BIG_MIB} MiB pack on HTTP/1.1 was refused after $((t1 - t0)) s; git exited ${rc} and said: ${answer}. The proxy received $(stats_delta "$before" "$after") — if the bytes it received are far below ${BIG_MIB} MiB, the front end refused the body before the container saw it. This is the gate: S1 must serve h2c end to end (B1.0, B1.5) before the proxy is built on HTTP/1.1"
   fi
 }
@@ -1068,11 +1190,21 @@ step_cold_start() {
   [ -n "$before_h" ] || stop "the proxy's health cannot be read (GET /chk190/health answered nothing), so a cold start could not be told from a warm answer. The service IS this check's; this run's Restore deletes it"
   owner "idle wait: ${IDLE_SECONDS} s — the instance has to be reclaimed before the next request can be a cold start"
   sleep_bg "$IDLE_SECONDS"
+  # Minted again after the wait: the one minted before it lasts an hour, the
+  # wait can be set longer than that, and a refused request is not a cold start.
+  # Minting talks to Google's token endpoint, not to the service, so it does
+  # not wake the instance.
+  mint_idt || stop "no identity token can be minted here after the idle wait, so the cold-start probe cannot be authorised"
   # The first request after idle is a GIT request, because that is the cold start
   # the design pays for (U8): the service is the first hop of every fetch and push.
+  local ls_rc=0
   t0=$(date +%s)
-  run_git "$SCRATCH" ls-remote --heads "$(git_url)" >"$SCRATCH/lsremote.out" 2>"$SCRATCH/lsremote.err" || true
+  run_git_traced lsremote "$SCRATCH" ls-remote --heads "$(git_url)" >"$SCRATCH/lsremote.out" 2>"$SCRATCH/lsremote.err" || ls_rc=$?
   t1=$(date +%s)
+  if [ "$ls_rc" != 0 ]; then
+    fact "cold-start" FAIL "the first git request after ${IDLE_SECONDS} s idle failed after $((t1 - t0)) s, so its time is no cold-start figure: $(git_failure_detail lsremote)"
+    return 0
+  fi
   after_h=$(fetch_health)
   [ -n "$after_h" ] || stop "the proxy's health cannot be read after the idle wait"
   local s1 s2
@@ -1102,11 +1234,14 @@ step_slow_push() {
   # http.lowSpeedTime is this side's own cap, set beyond the stall so the front
   # end's answer is what ends the request when the front end cuts it: without it
   # a run that the front end never cuts would hang for ever.
-  run_git "$dir" -c http.version=HTTP/1.1 -c http.lowSpeedLimit=1 -c "http.lowSpeedTime=$((SLOW_SECONDS + 120))" \
+  run_git_traced push-slow "$dir" -c http.version=HTTP/1.1 -c http.lowSpeedLimit=1 -c "http.lowSpeedTime=$((SLOW_SECONDS + 120))" \
     push --quiet "$url" "HEAD:refs/heads/$(branch_name)-slow" 2>"$SCRATCH/push-slow.err" || rc=$?
   t1=$(date +%s)
   local took=$((t1 - t0)) answer
-  answer=$(git_error_excerpt push-slow)
+  # The status and who sent it are the row's point: a 504 from the front end
+  # (no X-Chk190-Upstream) is the limit, a 401 is a refusal that only looks
+  # like one.
+  answer="$(git_error_excerpt push-slow); HTTP: $(http_excerpt push-slow); $(http_reading push-slow)"
   if [ "$rc" = 0 ]; then
     fact "timeout-3600" FAIL "a receive-pack held open for ${SLOW_SECONDS} s COMPLETED in ${took} s, so the front end did not end the request: the 3600 s timeout the proxy's design assumes is not enforced on this path"
   elif [ "$took" -ge 3400 ] && [ "$took" -le 3720 ]; then
@@ -1131,6 +1266,7 @@ print_plan() {
   say "  [network] gcloud builds describe <build id> --project=${P}, every 10 s until the build ends (its status, not its log: no Cloud Logging read is needed)"
   say "  [network, writes] gcloud run deploy ${SVC} ${DEPLOY_FLAGS[*]}"
   say "  [network, a failed deploy only] gcloud run services describe ${SVC}, gcloud run revisions describe <its latest revision> and gcloud logging read of that revision's lines (reads, for the deploy row)"
+  say "  [network, a failed git step only] gcloud logging read of ${SVC}'s own chk190 lines, after a ${LOG_WAIT_SECONDS} s wait for them to arrive (a read, for that step's row; best effort)"
   say "  [network] the probes: identity-token requests with curl to the service's own /chk190/stats and /chk190/health, and git clone (full and blobless), git push (small and above ${BIG_MIB} MiB on HTTP/1.1) and the slow push, all through the proxy to bitbucket.org"
   say "  [network, writes] one branch on $(repo_name): chk190/${NAME}, and its -slow sibling if that push ever completes"
   say "and its Restore (also from the exit trap) would run:"
