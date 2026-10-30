@@ -14,10 +14,13 @@
  *
  * The decisions this file makes, and why:
  *
- *   - **Two choices, equally offered.** Both are native `<button type="button">` elements
- *     with the same class, the same size and the same treatment. There is no "reject all"
- *     buried in a settings page and no pre-ticked box: accepting and declining are one press
- *     each, and neither is the one the layout nudges a visitor towards.
+ *   - **Two choices, equally offered.** Both are native `<button type="button">` elements,
+ *     and the consent rules make them a pair of equals: one shared rule gives them the same
+ *     box — the same height, the same padding, the same type, one column each of the pair's
+ *     grid, both always drawn — and only the fill and the label's colour tell the primary
+ *     ("Accept all") from the secondary ("Decline"). There is no "reject all" buried in a
+ *     settings page and no pre-ticked box: accepting and declining are one press each, and
+ *     neither is the one the layout nudges a visitor towards by being easier to reach.
  *   - **Dismissal is a refusal.** Escape hides the banner and records `denied`, and a
  *     visitor who navigates away without choosing loads nothing either — the default when
  *     nobody chooses is that nothing is measured, because the gate needs a stored `granted`
@@ -39,16 +42,16 @@
  *     decision's key as well as the site's (`marketingKey`), so the refusal it offers takes
  *     back both answers — a campaign decision is made on a campaign page, where the bar is
  *     gone once it has been answered, and this is the page a visitor comes to to undo one.
- *   - **One question, worded for everything the site may load.** The bar asks about
- *     measurement as a whole — cookies, Google Analytics 4, and the pixel, the insight tag and
- *     the booking widget the campaign pages carry — in one sentence on every page, rather than
- *     in four questions a reader has to go looking for. Nothing in it promises that a vendor is
- *     running: the ids come from `site.yaml`, a loader with no id fetches nothing, and the
- *     wording says each of them sets identifiers once it loads rather than that it loads. The
- *     site's own pages add that the campaign question is asked on the campaign pages; the
- *     privacy page's bar, the one that carries the campaign key without the campaign
- *     configuration, adds what that makes true of its own refusal — it takes the campaign
- *     answer back, and never gives one.
+ *   - **One question, in two sentences.** The bar asks about measurement as a whole — cookies
+ *     and identifiers, Google Analytics 4, and the marketing trackers and the booking widget
+ *     the campaign pages carry — in the same two sentences on every page, rather than in four
+ *     questions a reader has to go looking for. Nothing in it promises that a vendor is
+ *     running: the pixel's and the insight tag's ids come from `site.yaml` and ship empty, a
+ *     loader with no id fetches nothing, and a tracker with no id is therefore not named — the
+ *     owner's feedback of 2026-10-30 — so the bar names the tool the site does load and
+ *     describes the rest as a class. What a bar's own refusal covers is the statement's to say,
+ *     not the bar's: on the privacy page, where the campaign key is carried without the
+ *     campaign configuration, declining takes the campaign answer back and never gives one.
  *
  * The markup is emitted hidden and `site.js` reveals it: a browser that runs no script shows
  * no control it cannot honour, and loads nothing.
@@ -128,22 +131,14 @@ import { CONSENT_KEY } from '../lib/consent-key.mjs'
   <div class="consent-banner__body">
     <div class="consent-banner__inner">
       <p class="consent-banner__text">
-        {marketing ? (
-          <>
-            This campaign page measures visits with cookies and third-party scripts: <strong>Google Analytics</strong> everywhere, and, on the four campaign pages, <strong>Meta's pixel</strong>, <strong>LinkedIn's insight tag</strong> and <strong>Calendly's booking widget</strong>. Each one of them sets identifiers in your browser once it loads, and none of them loads until you accept. <a href="/privacy/">What this site measures</a>
-          </>
-        ) : (
-          <>
-            This site measures visits with cookies and third-party scripts: <strong>Google Analytics</strong> on every page, and, on the four campaign pages, <strong>Meta's pixel</strong>, <strong>LinkedIn's insight tag</strong> and <strong>Calendly's booking widget</strong>. Each one of them sets identifiers in your browser once it loads, and none of them loads until you accept. The four campaign pages ask their own question about those three{marketingKey ? ', and declining here takes that answer back' : ''}. <a href="/privacy/">What this site measures</a>
-          </>
-        )}
+        This site measures visits with cookies and identifiers: <strong>Google Analytics</strong> on every page, and marketing trackers and <strong>Calendly</strong>'s booking widget on the four campaign pages. Nothing loads until you accept. <a href="/privacy/">What this site measures</a>
       </p>
       <div class="consent-banner__choices">
-        <button type="button" class="consent-banner__button" data-consent="granted">
-          Accept measurement
+        <button type="button" class="consent-banner__button consent-banner__button--accept" data-consent="granted">
+          Accept all
         </button>
-        <button type="button" class="consent-banner__button" data-consent="denied">
-          Decline measurement
+        <button type="button" class="consent-banner__button consent-banner__button--decline" data-consent="denied">
+          Decline
         </button>
       </div>
       <p class="consent-banner__status" id="consent-banner-status" role="status" hidden>
@@ -232,26 +227,51 @@ import { CONSENT_KEY } from '../lib/consent-key.mjs'
     line-height: var(--leading-snug);
   }
 
+  /* The pair is a two-column grid, so the two choices are the same size whatever their labels
+     say — a consent rule rather than a preference — and it grows into the whole row when the
+     bar wraps at phone width, where each choice is half of it. `flex: 1 1 14rem` is the
+     basis that wraps: beside the text there is room for a 14 rem pair, and on a phone the pair
+     takes the line of its own that the wrap gives it. */
   .consent-banner__choices {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: var(--space-2xs);
+    flex: 1 1 14rem;
+    max-width: 22rem;
   }
 
-  /* The two choices are the same control, so neither is easier to press than the other: a
-     filled shape one tone step above the bar, with no outline. */
+  /* The two choices are one control drawn twice: this rule is the whole box — the height the
+     owner's brief measures every control against, the padding, the type, no outline — and the
+     two fills below change nothing about it, so neither choice is easier to press than the
+     other however the pair is drawn. */
   .consent-banner__button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     min-height: 44px;
-    padding: var(--space-3xs) var(--space-md);
+    padding: var(--space-3xs) var(--space-sm);
     border: 0;
     border-radius: var(--radius-sm);
-    background: var(--surface);
-    color: var(--accent-on-dark);
     font: inherit;
     font-size: var(--font-size-sm);
     font-weight: var(--weight-semibold);
+    white-space: nowrap;
     cursor: pointer;
     transition: background-color var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
+  }
+
+  /* The primary: the accent as the fill and the ground as the label, the pair the site's own
+     buttons use (`Hero.astro`'s `.hero-cta`, and `base.css`'s skip link). */
+  .consent-banner__button--accept {
+    background: var(--accent);
+    color: var(--ground);
+  }
+
+  /* The secondary: the shape the bar's choices were, a tone step above the bar. It is the same
+     box as the primary and a step quieter, which is the whole of the difference between them. */
+  .consent-banner__button--decline {
+    background: var(--surface);
+    color: var(--accent-on-dark);
   }
 
   .consent-banner__button:active {
@@ -259,7 +279,11 @@ import { CONSENT_KEY } from '../lib/consent-key.mjs'
   }
 
   @media (hover: hover) and (pointer: fine) {
-    .consent-banner__button:hover {
+    .consent-banner__button--accept:hover {
+      background: var(--accent-on-dark);
+    }
+
+    .consent-banner__button--decline:hover {
       background: var(--border);
       color: var(--text);
     }

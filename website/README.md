@@ -1150,7 +1150,7 @@ added or removed without this sentence moving fails there:
     **The page's words go 492 → 868** — the boards' own labels, which are what a level says — and
     **D188's number moves with them, 600 → 900**: 900 is the smallest round ceiling above the
     page, and the next page down that D188 governs is the homepage at 563 words (Getting Started
-    is 309; the privacy statement, at 1213, is the page the words-per-page ceiling itself is
+    is 309; the privacy statement, at 1069, is the page the words-per-page ceiling itself is
     derived from, so D188's own number does not measure it). The
     levels' words are no longer a data file: `website/data/zoom-levels.yaml` is gone and the
     boards are the source of truth — `src/lib/zoom-boards.mjs` reads each board's visible strings
@@ -1296,7 +1296,7 @@ added or removed without this sentence moving fails there:
     The ceiling is a ceiling, not a floor — a page with no lead region is a page D188's
     definition does not describe, and this gate says nothing about how much a page's first
     section should say.
-  - **Words per page:** 1517 words. Every word a reader sees inside `main` — command blocks
+  - **Words per page:** 1337 words. Every word a reader sees inside `main` — command blocks
     and code spans included, since the ceiling is a claim about the page rather than about
     its prose — counted by `budget.mjs`'s own reader, which reads a page the way
     `test/lib/html.mjs`'s `textOf` does (a script or style body is not text, an image's
@@ -1317,12 +1317,14 @@ added or removed without this sentence moving fails there:
     **The number is no longer D188's own, and it is derived rather than picked.** The
     privacy statement is the page the App Store and Play listings link as a privacy policy,
     so it carries the software as well as the site and is the one page that is not the
-    site's pitch; the number is that page's own count on the gates' own build — **1213
-    words** — plus 25 %, rounded up, which is **1517**. The count moved three times since
+    site's pitch; the number is that page's own count on the gates' own build — **1069
+    words** — plus 25 %, rounded up, which is **1337**. The count moved four times since
     G2.3: the campaign section took the page 988 → 1030, the owner's ruling of 2026-10-29 on
     the banner's wording — one question, worded for everything the site may load, with the
-    refusal's reach stated in the consent card — took it 1030 → 1144, and G2.4's sentence
-    naming the campaign pages' three key events took it 1144 → 1213. `budget.mjs`'s
+    refusal's reach stated in the consent card — took it 1030 → 1144, G2.4's sentence
+    naming the campaign pages' three key events took it 1144 → 1213, and the owner's feedback
+    of 2026-10-30, which cut the banner to two sentences and the statement's website part to
+    what a reader has to be told, took it 1213 → 1069. `budget.mjs`'s
     `wordsCeilingFailures` holds the derivation to the built page the way the same file
     holds the byte budgets to theirs, so a sentence added there re-derives this line in the
     commit that adds it. **The raise is that page's and nobody else's**: every other page of

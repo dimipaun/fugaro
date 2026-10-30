@@ -69,16 +69,20 @@ import {
   REPO,
   SITE,
   builtPages,
+  cssDeclarations,
+  cssRules,
   filesUnder,
   find,
   findAll,
   parse,
+  servedFile,
   siteFacts,
   textOf,
   tokenize,
   walk,
 } from './lib/html.mjs'
 import { copyRepository } from './lib/build.mjs'
+import { controlTargetFailures } from './lib/controls.mjs'
 import { loadLanding } from '../src/lib/landing.mjs'
 
 // ---- the facts of the gate ---------------------------------------------------------------
@@ -1555,6 +1559,25 @@ test('a bar that carries the campaign key without the question grants nothing wi
 
 
 
+/**
+ * The CSS a built page ships: its own `<style>` blocks and the first-party stylesheets it links.
+ * The case below reads the consent pair's own rules out of it, rather than trusting a class list
+ * kept here, so a modifier that started changing a size would fail that case.
+ */
+function pageCSS(page) {
+  const out = []
+  for (const el of walk(parse(page.html))) {
+    if (el.name === 'style') out.push(el.raw ?? '')
+    if (el.name === 'link' && /(^|\s)stylesheet(\s|$)/i.test(el.attrs.get('rel') ?? '')) {
+      const href = el.attrs.get('href') ?? ''
+      if (/^[a-z]+:|^\/\//i.test(href)) continue
+      const served = servedFile(DIST, new URL(href, 'https://x/').pathname)
+      if (served) out.push(readFileSync(path.join(DIST, served), 'utf8'))
+    }
+  }
+  return out.join('\n')
+}
+
 test('the banner is labelled, its two choices are equal, and it is reachable by keyboard before the content', () => {
   for (const page of SHIPPED) {
     const doc = parse(page.html)
@@ -1586,13 +1609,16 @@ test('the banner is labelled, its two choices are equal, and it is reachable by 
       assert.ok(text.length > 0, `${page.rel}: a consent choice has no accessible name`)
     }
 
-    // Equal prominence, mechanically: the same element, the same class list, the same
-    // size — nothing marks one of the two as the one to press.
-    assert.equal(
-      controls[0].attrs.get('class'),
-      controls[1].attrs.get('class'),
-      `${page.rel}: the two consent choices are styled differently, so one of them is easier to press than the other`,
-    )
+    // Equal prominence, mechanically. Both choices are drawn by one shared class, and the
+    // stylesheet below is read to hold the two modifiers that tell the primary from the
+    // secondary to paint and nothing else: a modifier that also changed a height, a padding or
+    // a type size would make one of the two the easier one to press, which is the rule.
+    for (const control of controls) {
+      assert.ok(
+        (control.attrs.get('class') ?? '').split(/\s+/).includes('consent-banner__button'),
+        `${page.rel}: a consent choice does not carry the pair's shared class, so nothing gives the two the same box`,
+      )
+    }
     assert.match(textOf(controls[0]).trim(), /accept/i, `${page.rel}: the accepting choice does not say what it accepts`)
     assert.match(textOf(controls[1]).trim(), /decline/i, `${page.rel}: the refusing choice is not named as a refusal`)
 
@@ -1609,50 +1635,106 @@ test('the banner is labelled, its two choices are equal, and it is reachable by 
     const main = order.findIndex((t) => t.name === 'main')
     assert.ok(skip >= 0 && at > skip && main > at, `${page.rel}: the banner is not between the skip link and <main>, so the tab order reaches the page content first`)
   }
+
+  // And the pair's own rules, read once: one unconditional rule draws the box both choices
+  // share — the target height and the padding — and the two modifiers that tell the primary
+  // from the secondary set paint and nothing else. That is the whole of the difference the
+  // owner asked for (the feedback of 2026-10-30: a clean pair, the accept primary and the
+  // decline secondary, both the same size and both always drawn). The box is looked for by
+  // what it declares, not by a class name alone: `:active` and the hover rules are the pair's
+  // too, and a rule that only scales or repaints on a press is not the box.
+  const page = SHIPPED.find((p) => p.html.includes('consent-banner__button'))
+  assert.ok(page, 'no built page carries the consent pair for its rules to be read from')
+  const css = pageCSS(page)
+  const pair = cssRules(css).filter(
+    (rule) => typeof rule.selector === 'string' && rule.selector.includes('.consent-banner__button'),
+  )
+  const box = pair.filter(
+    (rule) =>
+      rule.conditions.length === 0 &&
+      !rule.selector.includes('--') &&
+      cssDeclarations(rule.body).some(([property]) => property === 'min-height') &&
+      cssDeclarations(rule.body).some(([property]) => property === 'padding'),
+  )
+  assert.ok(
+    box.length > 0,
+    `${page.rel}: no rule in force at every width declares both the target height and the padding of the consent pair, so nothing gives the two choices the same box — and no other gate measures the banner's buttons against the target size`,
+  )
+  // The target size itself, read by the same reading the hero's and the caps page's controls
+  // are held to (`lib/controls.mjs`), because this is the only place it is measured at all.
+  assert.deepEqual(
+    controlTargetFailures(css, [['consent-banner__button', "the consent pair's choices"]]),
+    [],
+    `${page.rel}: a consent choice is not the 44 px target the owner's brief measures every control against`,
+  )
+  const PAINT = new Set(['background', 'background-color', 'color', 'border-color', 'box-shadow'])
+  for (const rule of pair.filter((one) => one.selector.includes('.consent-banner__button--'))) {
+    for (const [property] of cssDeclarations(rule.body)) {
+      assert.ok(
+        PAINT.has(property),
+        `${page.rel}: the rule "${rule.selector}" changes ${property}, so the two consent choices are not the same box — the pair may differ in how it is filled and in nothing else, or one of them is the easier one to press`,
+      )
+    }
+  }
 })
 
-test('the banner asks one question about everything the site may load, and no vendor is said to be running', () => {
+test('the banner asks one question about everything the site may load, and names no vendor that is not loaded', () => {
   // The owner's ruling of 2026-10-29, on the finding that the privacy page's bar writes a
   // refusal into `fugaro:marketing-consent` while its words asked about analytics alone: the bar
-  // is worded for measurement as a whole — cookies, Google Analytics, and the pixel, the insight
-  // tag and the booking widget the campaign pages carry — on every page. And the three are named
-  // as things a choice admits, never as things that are running: `site.yaml` ships both ids
-  // empty (R3) and a loader with no id fetches nothing, so "this page measures with Meta" would
-  // be a sentence the artifact does not keep.
+  // is worded for measurement as a whole — cookies, Google Analytics, and the marketing trackers
+  // and the booking widget the campaign pages carry — on every page. The owner's feedback of
+  // 2026-10-30 cut it to two sentences, and left this rule standing: a vendor is NAMED only while
+  // the site is configured to load it, and the rest are described as the class they are.
+  // `site.yaml` ships both vendor ids empty (R3) and a loader with no id fetches nothing, so
+  // naming them would be a sentence the artifact does not keep. The pair is read in both
+  // directions, so supplying an id brings the name back with it.
+  const facts = siteFacts()
+  const campaignVendors = [
+    ['Meta', facts.marketing.metaPixelID],
+    ['LinkedIn', facts.marketing.linkedinPartnerID],
+    ['Calendly', loadLanding().calendlyURL],
+  ]
   for (const page of SHIPPED) {
     const banner = findAll(parse(page.html), (el) => el.attrs.get('id') === 'consent-banner')[0]
     assert.ok(banner, `${page.rel} carries no banner for the wording below to be read from`)
     const text = textOf(banner)
-    for (const named of ['cookies', 'Google Analytics', 'Meta', 'LinkedIn', 'Calendly']) {
+    for (const named of ['cookies', 'Google Analytics']) {
       assert.ok(
         text.includes(named),
         `${page.rel}: the banner does not name ${named}, so a choice made in it does not cover everything the site may load (the owner's ruling of 2026-10-29)`,
       )
     }
+    assert.match(text, /marketing trackers/i, `${page.rel}: the banner no longer describes the campaign pages' measurement, so a choice in it does not cover what those pages load`)
+    for (const [vendor, configured] of campaignVendors) {
+      const names = text.includes(vendor)
+      assert.equal(
+        names,
+        configured.length > 0,
+        configured.length > 0
+          ? `${page.rel}: the banner does not name ${vendor}, which the site is configured to load, so a choice made in it does not cover everything the site may load`
+          : `${page.rel}: the banner names ${vendor}, and nothing in this repository supplies the value that would load it: a loader with no id fetches nothing, and the wording has to stay true while that is so (the owner's feedback of 2026-10-30)`,
+      )
+    }
     assert.match(text, /until you accept/i, `${page.rel}: the banner does not say the load waits for the choice`)
-    assert.match(
-      text,
-      /once it loads/i,
-      `${page.rel}: the banner's sentence about what the vendors set is not conditional: with site.yaml's ids empty none of the three loads, and the wording has to stay true while that is so`,
-    )
   }
 
   // The bar the finding was about. The privacy page is the one page whose bar carries the
   // campaign decision's key without the campaign's configuration (`Base.astro`), so a refusal
   // there writes the campaign answer down as a refusal — taking back a grant given on a campaign
-  // page — and its accept is the analytics question alone. The bar says the first, and the
-  // statement beside it says the second, because a reader who pressed "accept measurement" on
-  // the page that names all four vendors must not be left thinking they agreed to all four.
-  const privacy = pageOf(SHIPPED, 'privacy/index.html')
+  // page — and its accept is the analytics question alone. The bar's two sentences are the same
+  // on every page since the owner's feedback of 2026-10-30, so both claims are made by the
+  // statement beside it, which the bar links: a reader who pressed "Accept all" on the page that
+  // states the campaign question must not be left thinking they agreed to it.
+  const privacy = textOf(parse(pageOf(SHIPPED, 'privacy/index.html')))
   assert.match(
-    textOf(findAll(parse(privacy), (el) => el.attrs.get('id') === 'consent-banner')[0]),
-    /declining here takes that answer back/i,
-    'the privacy page\'s banner does not say what its refusal covers: that bar carries the campaign decision\'s key and writes it down as a refusal, and the wording has to say so',
+    privacy,
+    /takes the campaign answer back/i,
+    'the privacy statement no longer says what the bar\'s refusal covers: that bar carries the campaign decision\'s key and writes it down as a refusal, and the wording has to say so',
   )
   assert.match(
-    textOf(parse(privacy)),
+    privacy,
     /leaves the campaign question where it stands/i,
-    'the privacy statement no longer says its banner\'s accept is the analytics question alone, so a reader who accepted there could think the three vendors were agreed to',
+    'the privacy statement no longer says the bar\'s accept is the analytics question alone, so a reader who accepted there could think the campaign trackers were agreed to',
   )
 })
 
@@ -1851,17 +1933,35 @@ test("the privacy defaults the page states are the ones the site's script makes"
   )
 })
 
-test('the privacy statement names the campaign pages\' three vendors, as the script and the landing data have them', () => {
+test('the privacy statement names the campaign vendors the site is configured to load, and no others', () => {
   // The page is the claim and this file is the fact (W3.2), and G2.3 adds three claims to it:
-  // which three vendors the four campaign pages may load, which pages those are, and what
-  // withdrawing deletes. Each is held to the artifact that makes it true rather than to a list
-  // kept here, so a vendor, a page or a cookie that moves takes the sentence with it.
+  // which vendors the four campaign pages may load, which pages those are, and what withdrawing
+  // deletes. Each is held to the artifact that makes it true rather than to a list kept here, so
+  // a vendor, a page or a cookie that moves takes the sentence with it — including the two
+  // vendors the owner has not supplied an id for, which the page describes without naming (the
+  // owner's feedback of 2026-10-30).
   const text = textOf(parse(pageOf(SHIPPED, 'privacy/index.html')))
   const script = readFileSync(path.join(DIST, SITE_SCRIPT.replace(/^\//, '')), 'utf8')
 
-  for (const vendor of ['Meta', 'LinkedIn', 'Calendly']) {
-    assert.match(text, new RegExp(vendor), `the privacy page does not name ${vendor}, one of the three the campaign pages load (G2.3, D401)`)
+  const facts = siteFacts()
+  // A vendor is named only where the site is configured to load it (the owner's feedback of
+  // 2026-10-30), and both directions are held: the ids `site.yaml` ships empty name nothing, and
+  // a value supplied there is a name the page owes. The ones that are not named are still
+  // covered as a class, which is what the campaign question asks about.
+  for (const [vendor, configured] of [
+    ['Meta', facts.marketing.metaPixelID],
+    ['LinkedIn', facts.marketing.linkedinPartnerID],
+    ['Calendly', loadLanding().calendlyURL],
+  ]) {
+    assert.equal(
+      text.includes(vendor),
+      configured.length > 0,
+      configured.length > 0
+        ? `the privacy page does not name ${vendor}, which the campaign pages are configured to load (G2.3, D401)`
+        : `the privacy page names ${vendor} while nothing supplies the value that would load it: a vendor with no id is not loaded, and the page may not say it is (the owner's feedback of 2026-10-30)`,
+    )
   }
+  assert.match(text, /marketing trackers/i, 'the privacy page describes the campaign pages\' measurement as nothing at all, so a reader cannot tell what their question covers')
   for (const variant of loadLanding().variants) {
     assert.ok(text.includes(variant.path), `the privacy page does not name ${variant.path}, one of the four campaign pages the second question is asked on, so a reader cannot tell where it applies`)
   }
