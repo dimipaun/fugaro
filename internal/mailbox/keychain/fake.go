@@ -19,11 +19,11 @@ import (
 type Fake struct {
 	// Keys is the keychain's contents: item name → what the item holds.
 	Keys map[string]string
-	// Backend, when non-nil, is what every lookup answers instead of reading
-	// Keys: the keychain that could not be read at all (§4.4's exit-2 row).
-	// Set it to ErrBackend — or to an error wrapping it — for that row;
-	// anything else is a backend failing in its own way, and is returned as
-	// it is.
+	// Backend, when non-nil, is what every operation answers instead of
+	// reading or writing Keys: the keychain that could not be read at all
+	// (§4.4's exit-2 row), or one that could not be written. Set it to
+	// ErrBackend — or to an error wrapping it — for that row; anything else is
+	// a backend failing in its own way, and is returned as it is.
 	Backend error
 
 	mu      sync.Mutex
@@ -49,6 +49,35 @@ func (f *Fake) Key(_ context.Context, item Item) (Key, error) {
 		return Key{}, noKey(item, why)
 	}
 	return key, nil
+}
+
+// Put stores key at item, as the platform's storing program would: the value is
+// the key's own bytes, which is what Key reads back through keyFrom. A nil Keys
+// map is created rather than panicking, so a test can hand a bare Fake to the
+// command and read what it wrote afterwards.
+func (f *Fake) Put(_ context.Context, item Item, key Key) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.Backend != nil {
+		return f.Backend
+	}
+	if f.Keys == nil {
+		f.Keys = map[string]string{}
+	}
+	f.Keys[item.Name()] = string(key.Bytes())
+	return nil
+}
+
+// Delete removes item. An item that is not there is not an error, as it is not
+// for the real stores.
+func (f *Fake) Delete(_ context.Context, item Item) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.Backend != nil {
+		return f.Backend
+	}
+	delete(f.Keys, item.Name())
+	return nil
 }
 
 // Lookups is the item names this Fake was asked for, in order, as a copy. It is

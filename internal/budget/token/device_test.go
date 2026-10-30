@@ -197,6 +197,27 @@ func TestDecodeDeviceKeyRefusesOtherSpellings(t *testing.T) {
 	}
 }
 
+// TestDecodeDeviceKeyRefusesTopBitSet: X25519's canonical encoding clears the
+// top bit of the last byte, and crypto/ecdh masks the bit away rather than
+// refusing it — so a key with it set would decode here, be hashed into a code
+// the operator types, and be refused only by SealDelivery, after the device
+// node had been written. The refusal belongs where the reply is read: a phone
+// that sends one is a phone whose own priv.PublicKey().Bytes() is not what it
+// wrote, and nothing this build could seal to it would ever open.
+func TestDecodeDeviceKeyRefusesTopBitSet(t *testing.T) {
+	raw := bytes.Repeat([]byte{0x01}, token.DeviceKeySize)
+	raw[token.DeviceKeySize-1] = 0x81
+	if _, err := token.DecodeDeviceKey(base64.RawURLEncoding.EncodeToString(raw)); !errors.Is(err, token.ErrDeviceKey) {
+		t.Fatalf("DecodeDeviceKey of a key whose top bit is set = %v, want ErrDeviceKey", err)
+	}
+	// And the same bytes with the bit clear are the key, so the refusal is the
+	// bit and not the byte.
+	raw[token.DeviceKeySize-1] = 0x01
+	if _, err := token.DecodeDeviceKey(base64.RawURLEncoding.EncodeToString(raw)); err != nil {
+		t.Fatalf("DecodeDeviceKey of the same key with the bit clear = %v, want the key", err)
+	}
+}
+
 // deviceSigner is a Signer that does not sign: it renders the claim set as a
 // compact JWT with a placeholder signature, which is enough for the minter's
 // own read-back (parseJWT verifies nothing — Google does that at sign-in).

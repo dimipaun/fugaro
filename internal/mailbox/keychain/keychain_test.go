@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -316,7 +318,7 @@ func TestCommandStoreClassifiesEveryExit(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			s := &commandStore{reader: r, run: func(context.Context, string, ...string) ([]byte, int, error) {
+			s := &commandStore{reader: r, run: func(context.Context, string, io.Reader, ...string) ([]byte, int, error) {
 				return []byte(c.out), c.code, c.err
 			}}
 			key, err := s.Key(context.Background(), item)
@@ -373,7 +375,7 @@ func TestTheItemNameAppearsInTheDiagnostic(t *testing.T) {
 		{name: "an unreadable keychain", store: &Fake{Backend: ErrBackend}, names: "the OS keychain"},
 		{
 			name:  "a program that could not be run",
-			store: &commandStore{reader: r, run: func(context.Context, string, ...string) ([]byte, int, error) { return nil, -1, errMissing }},
+			store: &commandStore{reader: r, run: func(context.Context, string, io.Reader, ...string) ([]byte, int, error) { return nil, -1, errMissing }},
 			names: r.program,
 		},
 	}
@@ -425,11 +427,11 @@ func TestTheProgramsComplaintIsNeverEchoed(t *testing.T) {
 		reader: reader{program: os.Args[0], args: func(Item) []string {
 			return []string{"-test.run=^TestTheProgramsComplaintIsNeverEchoed$"}
 		}, notFound: 44},
-		run: func(ctx context.Context, name string, args ...string) ([]byte, int, error) {
+		run: func(ctx context.Context, name string, stdin io.Reader, args ...string) ([]byte, int, error) {
 			// The helper needs its variable set; runProcgroup is what the
 			// real Store uses, so this test drives that, not a stand-in.
 			t.Setenv(env, "1")
-			return runProcgroup(ctx, name, args...)
+			return runProcgroup(ctx, name, stdin, args...)
 		},
 	}
 	key, err := s.Key(context.Background(), item)
@@ -498,5 +500,113 @@ func TestTheFakeAnswersLikeAKeychain(t *testing.T) {
 	}
 	if got := f.Lookups(); len(got) != 2 {
 		t.Errorf("Lookups() = %v, want two lookups", got)
+	}
+}
+
+// TestPutAndDeleteAreTheStoringHalf drives the write path through the same
+// seam the read path is driven through: the program's argv, and the key on
+// standard input rather than in an argument. What the storing argv is worth
+// pinning is that the key is in none of it (M11) and that the item's name is
+// (M5: the name is not a secret and the value is).
+func TestPutAndDeleteAreTheStoringHalf(t *testing.T) {
+	item, err := ParseItem("fugaro-mailbox-aurora", "aurora")
+	if err != nil {
+		t.Fatalf("ParseItem: %v", err)
+	}
+	w, why := writerFor("linux")
+	if w == nil {
+		t.Fatalf("linux has no storing program: %s", why)
+	}
+	var gotStdin []byte
+	var gotArgs []string
+	code := 0
+	s := &commandStore{writer: w, run: func(_ context.Context, name string, stdin io.Reader, args ...string) ([]byte, int, error) {
+		gotArgs = append([]string{name}, args...)
+		if stdin != nil {
+			gotStdin, _ = io.ReadAll(stdin)
+		}
+		return nil, code, nil
+	}}
+	if err := s.Put(context.Background(), item, NewKey([]byte(testKey))); err != nil {
+		t.Fatalf("Put = %v", err)
+	}
+	if string(gotStdin) != testKey {
+		t.Errorf("the storing program read %q on stdin, want the key", gotStdin)
+	}
+	for _, arg := range gotArgs {
+		if strings.Contains(arg, testKey) {
+			t.Errorf("the key is an argv element: %v", gotArgs)
+		}
+	}
+	if !slices.Contains(gotArgs, item.Name()) {
+		t.Errorf("the storing argv does not name the item: %v", gotArgs)
+	}
+
+	// A storing program that failed is ErrBackend, and it never echoes what it
+	// was asked for.
+	code = 2
+	err = s.Put(context.Background(), item, NewKey([]byte(testKey)))
+	if !errors.Is(err, ErrBackend) {
+		t.Fatalf("a failed store = %v, want ErrBackend", err)
+	}
+	if strings.Contains(err.Error(), testKey) {
+		t.Errorf("the failure carries the key: %v", err)
+	}
+
+	// An item that is not there is the state Delete asked for, so the program's
+	// own "no such item" status is not an error; another status is.
+	code = w.notFound
+	if err := s.Delete(context.Background(), item); err != nil {
+		t.Errorf("deleting an item that is not there = %v, want nil", err)
+	}
+	code = 3
+	if err := s.Delete(context.Background(), item); !errors.Is(err, ErrBackend) {
+		t.Errorf("a failed delete = %v, want ErrBackend", err)
+	}
+
+	// A platform with no storing program answers ErrBackend naming it, and
+	// never stores a key somewhere else.
+	none := &commandStore{noStore: "this platform has no storing program"}
+	if err := none.Put(context.Background(), item, NewKey([]byte(testKey))); !errors.Is(err, ErrBackend) {
+		t.Errorf("a store with no writer = %v, want ErrBackend", err)
+	}
+	if err := none.Delete(context.Background(), item); !errors.Is(err, ErrBackend) {
+		t.Errorf("a delete with no writer = %v, want ErrBackend", err)
+	}
+}
+
+// TestTheFakeStoresWhatTheRealOneWould: a test that pairs through the Fake must
+// not pass on a value the operator's keychain would refuse to read back, so the
+// fake's Put and the real read agree on the shape.
+func TestTheFakeStoresWhatTheRealOneWould(t *testing.T) {
+	item, err := ParseItem("fugaro-mailbox-aurora", "aurora")
+	if err != nil {
+		t.Fatalf("ParseItem: %v", err)
+	}
+	ctx := context.Background()
+	f := &Fake{}
+	if err := f.Put(ctx, item, NewKey([]byte(testKey))); err != nil {
+		t.Fatalf("Put = %v", err)
+	}
+	key, err := f.Key(ctx, item)
+	if err != nil {
+		t.Fatalf("Key = %v", err)
+	}
+	if got := string(key.Bytes()); got != testKey {
+		t.Errorf("Key = %q, want %q", got, testKey)
+	}
+	if err := f.Delete(ctx, item); err != nil {
+		t.Fatalf("Delete = %v", err)
+	}
+	if _, err := f.Key(ctx, item); !errors.Is(err, ErrNoKey) {
+		t.Errorf("Key after Delete = %v, want ErrNoKey", err)
+	}
+	// A broken backend refuses the writes too, and writes nothing.
+	f = &Fake{Backend: ErrBackend}
+	if err := f.Put(ctx, item, NewKey([]byte(testKey))); !errors.Is(err, ErrBackend) {
+		t.Errorf("Put on a broken backend = %v, want ErrBackend", err)
+	}
+	if len(f.Keys) != 0 {
+		t.Errorf("a broken backend stored %v", f.Keys)
 	}
 }
