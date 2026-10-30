@@ -703,7 +703,11 @@ type Image struct {
 	// install time (patch-package, a vendored toolchain) declares them here;
 	// validateImage refuses anything that could leave the repository or
 	// match more than the path it names.
-	KeyFiles []string `yaml:"key_files"`
+	//
+	// The json tag keeps an absent key out of the resolved config's hash, as
+	// Author's does: without it every repository's hash would gain
+	// "KeyFiles":null and move.
+	KeyFiles []string `yaml:"key_files" json:"key_files,omitempty"`
 }
 
 // IsZero reports whether the image block sets nothing.
