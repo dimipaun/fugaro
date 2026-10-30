@@ -3219,16 +3219,8 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// answer that judges no entry — never an empty node, which would read a
 	// node the operator cannot reach as "nothing is proxied" and refuse their
 	// entry over it.
-	if p, found, err := r.policy.read(ctx, lc); err == nil {
-		if !found {
-			// Read, and the project has published no policy: an empty node
-			// admits nothing, which is the different answer from "not read" —
-			// it is what refuses an entry that proxies a repository the
-			// project has published no policy for.
-			p = &projectpolicy.Policy{}
-		}
-		in.Policy = p
-	}
+	p, found, err := r.policy.read(ctx, lc)
+	in.Policy = repoPolicyInput(lc, p, found, err)
 	if err := checkRepoProject(cfg.Project, outs.ProjectName); err != nil {
 		return err
 	}
@@ -3622,6 +3614,24 @@ func checkoutURL(ctx context.Context, root string) (string, error) {
 		return "", userErr("origin %s has no https form to clone from", gcp.RedactURL(u))
 	}
 	return u, nil
+}
+
+// repoPolicyInput is infra.Inputs.Policy from the memoized node read: nil when
+// no node was read — the read failed, or the config names no database address
+// for projectPolicyRead to read (which answers not-found then, the same as a
+// project that published nothing) — and an empty node when the read succeeded
+// and the project has published no policy. Only the second refuses a local
+// entry that proxies a repository the node does not admit: an operator whose
+// config has lost budget.rtdb_url has read no node, and the node they cannot
+// reach must not be taken for one that proxies nothing.
+func repoPolicyInput(lc *localcfg.Config, p *projectpolicy.Policy, found bool, err error) *projectpolicy.Policy {
+	switch {
+	case err != nil, lc.Budget == nil || lc.Budget.RTDBURL == "":
+		return nil
+	case !found:
+		return &projectpolicy.Policy{}
+	}
+	return p
 }
 
 // installationOutputs reads the installation root's outputs from its

@@ -18,6 +18,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -1177,5 +1178,32 @@ func TestLaunchNotesAZeroCapInObserve(t *testing.T) {
 	}
 	if !launchedAny(f) {
 		t.Fatal("observe must still launch")
+	}
+}
+
+// TestProxiedRepoPolicyInput: update --repo hands infra.Repo the node it read,
+// an empty node when it read that the project published none, and nil when it
+// read nothing — a failed read, or a config with no database address, where
+// projectPolicyRead also answers not-found. Only the empty node judges the
+// operator's project_secrets entry, so the no-address case must stay nil.
+func TestProxiedRepoPolicyInput(t *testing.T) {
+	withDB := &localcfg.Config{Budget: &localcfg.Budget{RTDBURL: "http://127.0.0.1:1"}}
+	node := &projectpolicy.Policy{BitbucketToken: &projectpolicy.BitbucketToken{Proxy: true}}
+	if got := repoPolicyInput(withDB, node, true, nil); got != node {
+		t.Errorf("a node read = %v, want the node", got)
+	}
+	if got := repoPolicyInput(withDB, nil, false, nil); got == nil || got.BitbucketToken != nil {
+		t.Errorf("no node published = %v, want an empty node", got)
+	}
+	if got := repoPolicyInput(withDB, nil, false, errors.New("unreachable")); got != nil {
+		t.Errorf("a failed read = %v, want nil", got)
+	}
+	for name, lc := range map[string]*localcfg.Config{
+		"no budget block":     {},
+		"no database address": {Budget: &localcfg.Budget{}},
+	} {
+		if got := repoPolicyInput(lc, nil, false, nil); got != nil {
+			t.Errorf("%s = %v, want nil: no node was read", name, got)
+		}
 	}
 }
