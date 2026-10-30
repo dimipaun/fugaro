@@ -1836,11 +1836,18 @@ func (r *run) bootstrap(ctx context.Context) error {
 		// These checks judged the challenger as this run's coder
 		// (applyChallenger), so a model this repository may not run is the
 		// arm's own refusal and is recorded as one (D556) rather than as
-		// infrastructure that failed. A halt is not a refusal: a cap the run
-		// has reached stops a shadow exactly as it stops any other run.
+		// infrastructure that failed. That class is the only one: everything
+		// else these checks can fail over — a Vertex budget, a settings
+		// directory, a price table — fails a challenger exactly as it fails a
+		// run carrying no arm, and is left to end the run infra_error
+		// (armModelRefusal classifies it). A halt is not a refusal either: a
+		// cap the run has reached stops a shadow exactly as it stops any
+		// other run.
 		var halted *HaltError
-		if r.shadow && !errors.As(err, &halted) {
-			return r.refuseArm(err.Error())
+		if !errors.As(err, &halted) {
+			if refusal := r.armModelRefusal(err); refusal != nil {
+				return r.refuseArm(err.Error())
+			}
 		}
 		return err
 	}
