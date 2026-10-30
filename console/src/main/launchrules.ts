@@ -656,25 +656,6 @@ export interface LaunchResult {
   readonly projectLayer: LaunchProjectLayer | null
 }
 
-/** LAUNCH_RESULT_KEYS is every key `launchResult` marshals: the seven always
- * present, and the six `omitempty` ones. A key outside this set is a reply from
- * a CLI this decoder does not know, and the whole reply is refused. */
-const LAUNCH_RESULT_KEYS: readonly string[] = Object.freeze([
-  'project',
-  'run',
-  'repo',
-  'run_id',
-  'branch',
-  'ref',
-  'execution',
-  'log_url',
-  'status',
-  'pr',
-  'previous_run',
-  'recipe',
-  'project_layer',
-])
-
 const LAUNCH_RESULT_REQUIRED_STRINGS: readonly string[] = Object.freeze([
   'project',
   'run',
@@ -685,11 +666,16 @@ const LAUNCH_RESULT_REQUIRED_STRINGS: readonly string[] = Object.freeze([
 ])
 
 /**
- * decodeLaunchResult reads `fugaro run --json`'s reply, closed: the keys are the
- * ones above, the types are the ones the CLI writes, `status` is one of the two
- * words, and **any unknown key refuses the whole reply** rather than being
- * ignored (rule 11). Every string is kept as text and bounded; nothing here is
- * read as a sentence, a path or a link.
+ * decodeLaunchResult reads `fugaro run --json`'s reply (`launchResult`,
+ * `internal/cli/run.go`): the types are the ones the CLI writes, the required
+ * strings are there, and `status` is one of the two words. **A key it does not
+ * know is ignored** (the owner's ruling of 2026-10-30, which replaced rule 11's
+ * "refuses the whole reply"): the CLI's JSON only grows and never re-means a
+ * field, and this reply arrives *after* the spend -- refusing it over a column a
+ * newer CLI added would tell the operator a launch that happened did not. The
+ * value below is built from the named keys alone, so an unknown key reaches no
+ * screen. Every string is kept as text and bounded; nothing here is read as a
+ * sentence, a path or a link.
  */
 export function decodeLaunchResult(text: string): LaunchValue<LaunchResult> {
   let value: unknown
@@ -699,11 +685,6 @@ export function decodeLaunchResult(text: string): LaunchValue<LaunchResult> {
     return { ok: false, reason: 'the CLI’s launch reply is not JSON' }
   }
   if (!isRecord(value)) return { ok: false, reason: 'the CLI’s launch reply is not a JSON object' }
-  for (const key of Object.keys(value)) {
-    if (!LAUNCH_RESULT_KEYS.includes(key)) {
-      return { ok: false, reason: `the CLI’s launch reply carries a field this console does not know: ${JSON.stringify(key)}` }
-    }
-  }
   const status = value['status']
   if (status !== 'launched' && status !== 'already-launched') {
     return { ok: false, reason: 'the CLI’s launch reply does not say whether the run launched' }
@@ -768,9 +749,6 @@ function resultCount(value: Record<string, unknown>, key: string): number | null
 function resultRecipe(field: unknown): LaunchRecipe | null | undefined {
   if (field === undefined || field === null) return null
   if (!isRecord(field)) return undefined
-  for (const key of Object.keys(field)) {
-    if (key !== 'name' && key !== 'source') return undefined
-  }
   const name = boundedText(field['name'])
   const source = boundedText(field['source'])
   if (name === null || source === null) return undefined
@@ -783,9 +761,6 @@ function resultRecipe(field: unknown): LaunchRecipe | null | undefined {
 function resultProjectLayer(field: unknown): LaunchProjectLayer | null | undefined {
   if (field === undefined || field === null) return null
   if (!isRecord(field)) return undefined
-  for (const key of Object.keys(field)) {
-    if (key !== 'sha256' && key !== 'generation') return undefined
-  }
   const sha256 = boundedText(field['sha256'])
   if (sha256 === null) return undefined
   const generation = resultCount(field, 'generation')

@@ -30,11 +30,21 @@ console spawns (design D1, `FugaroSource`). Where a screen would need a field
 no command emits, the answer is a CLI PR, not a console reader — §7 lists the
 seven gaps the design records, each settled against the code here.
 
+**Compatibility rule** (owner, 2026-10-30). This contract only grows. Adding a
+field is compatible, and a console older than the CLI ignores a key it does not
+know. Removing a field or changing its type is a format change and bumps the
+document's format version. **A field never changes meaning: if its semantics
+must change, it is renamed**, so a new meaning always arrives under a new name
+that an older reader ignores rather than misreads. The console's decoders rely
+on this rule (`console/src/shared/schema.ts`), and it is what lets a console
+answer `ok` for a CLI newer than it (`console/src/shared/version.ts`).
+
 **One bounded exception, named in full** (owner, 2026-10-28). Where a release
 has been *decided* and its wire keys are known, the console accepts a key
 **ahead of the CLI that writes it** — not because a command emits it, but so
-that the day a command starts to, the console's closed decoders do not refuse
-every document whole as `unknown-key`. A key may be named this way only if:
+that the day a command starts to, the console reads it rather than ignoring it
+(before 2026-10-30 its decoders refused every such document whole as
+`unknown-key`). A key may be named this way only if:
 (i) it is named in its shape's own field table or paragraph in this document;
 (ii) it is read as **optional** — absent is `n/a`, never `0` — and drawn by no
 screen until the release that writes it; and (iii) it is listed in
@@ -209,8 +219,8 @@ document handles a shape it cannot read**, which is the whole of the rule:
     document by the field's wire path (`total.leased_usd`, `repos[0].leased_usd`).
     That is deliberate: a value of a shape the decoder does not expect — or a
     negative one, which no money field of this contract can hold — is a document
-    that decoder does not understand, not one it merely has not learned to read —
-    the same judgement `closed` makes about an unknown key *name*;
+    that decoder does not understand, not one it merely has not learned to read
+    (an unknown key *name*, by contrast, is ignored: the compatibility rule above);
   * `budget show`'s caps reader is the console's **tolerant** reader: it refuses
     no document at all, and draws `n/a` for every number it cannot read (§3).
     So a `compute_usd` that is not a number is `n/a` there — not a second rule,
