@@ -110,6 +110,8 @@ func TestParseSharedRefusals(t *testing.T) {
 		{"terraform section", func(s string) string { return s + "terraform:\n    state_bucket: x\n" }, "terraform"},
 		{"empty terraform section", func(s string) string { return s + "terraform: {}\n" }, "terraform"},
 		{"user key", func(s string) string { return s + "user: a@b.example\n" }, "user"},
+		{"commit_name key", func(s string) string { return s + "commit_name: Person One\n" }, "commit_name"},
+		{"commit_email key", func(s string) string { return s + "commit_email: 1+person-1@users.noreply.github.com\n" }, "commit_email"},
 		{"endpoints section", func(s string) string { return s + "endpoints:\n    no_auth: true\n" }, "endpoints"},
 		{"bucket url", func(s string) string { return s + "bucket_url: gs://elsewhere\n" }, "bucket_url"},
 		{"legacy registry", func(s string) string { return s + "registry: us-east5-docker.pkg.dev/evil-proj/r\n" }, "registry"},
