@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 )
 
@@ -29,7 +30,7 @@ const (
 // command's, and no rule reads one).
 func (e *sweepEnv) deviceNode(uid string) {
 	e.t.Helper()
-	e.db.Set("config/admin/devices/"+uid, map[string]any{
+	e.db.Set(budget.DeviceRoot+"/"+uid, map[string]any{
 		"name": "phone-a", "email": "person-1@example.com", "role": "operator", "at": "2026-10-02T11:00:00Z",
 	})
 }
@@ -108,7 +109,7 @@ func TestSweepKeepsDeviceUserWithNode(t *testing.T) {
 	if got := e.users(); !reflect.DeepEqual(got, []string{devUID}) {
 		t.Fatalf("users left = %v, want the paired device kept", got)
 	}
-	if !e.has("config/admin/devices/" + devUID) {
+	if !e.has(budget.DeviceRoot + "/" + devUID) {
 		t.Fatal("the device node was deleted")
 	}
 	if rep.UsersDeleted != 0 {
@@ -168,7 +169,7 @@ func TestSweepTouchesNothingElse(t *testing.T) {
 	if e.has("pairing/" + pairUID) {
 		t.Fatal("the abandoned pairing's node survived")
 	}
-	if !e.has("pairing/"+pairUID2) || !e.has("config/admin/devices/"+devUID) {
+	if !e.has("pairing/"+pairUID2) || !e.has(budget.DeviceRoot+"/"+devUID) {
 		t.Fatal("a kept pairing's node or a paired device's node was deleted")
 	}
 	if !reflect.DeepEqual(before["mailbox"], e.db.Value("mailbox")) || !reflect.DeepEqual(before["caps"], e.db.Value("config/caps")) {
@@ -212,5 +213,21 @@ func TestSweepPairingNodeFailureStopsTheUser(t *testing.T) {
 	}
 	if got := e.users(); !reflect.DeepEqual(got, []string{pairUID}) {
 		t.Fatalf("users left = %v, want the pairing user kept until its node goes", got)
+	}
+}
+
+// TestSweepDeviceRootMatchesTheRules pins the duplicated constant to the one
+// the rules generator names. The duplication is forced by the import cycle
+// through rules' own in-package tests, so this test is the only thing holding
+// the two together — and a sweep reading a path the rules do not serve would
+// believe every device user is an orphan.
+func TestSweepDeviceRootMatchesTheRules(t *testing.T) {
+	if budget.DeviceRoot != rules.PathDevices {
+		t.Fatalf("budget.DeviceRoot = %q, rules.PathDevices = %q", budget.DeviceRoot, rules.PathDevices)
+	}
+	// The string itself, not just the agreement: two constants moved together
+	// would still pass the comparison above while moving the allowlist.
+	if budget.DeviceRoot != "config/admin/devices" {
+		t.Fatalf("budget.DeviceRoot = %q, want config/admin/devices (D166)", budget.DeviceRoot)
 	}
 }

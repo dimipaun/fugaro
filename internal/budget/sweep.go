@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend"
-	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
@@ -75,6 +74,14 @@ const (
 	// (token.MintPairing).
 	devicePrefix  = "m~"
 	pairingPrefix = "p~"
+	// DeviceRoot is the device allowlist of D166: the node whose existence is
+	// what the rules read, and the one `fugaro pair revoke` deletes. It must
+	// equal rules.PathDevices (internal/budget/rules/rules.go). This package
+	// can't import that one: rules' own in-package tests import
+	// internal/budget, so the import would cycle. The constant is duplicated
+	// for that reason, and TestSweepDeviceRootMatchesTheRules (package
+	// budget_test, which can import both) pins the two together.
+	DeviceRoot = "config/admin/devices"
 	// pairingRoot is the pairing session's own node, beside the run trees
 	// (internal/cli's pairPath writes and deletes it). The sweep deletes one
 	// child of it, and only when it deletes the p~ user that child belongs to:
@@ -470,7 +477,7 @@ func (s *Sweeper) deleteUsers(ctx context.Context, now time.Time, maxAge time.Du
 // decode is still an entry, and only the uid is read.
 func (s *Sweeper) deviceNodes(ctx context.Context) (map[string]bool, error) {
 	var tree map[string]json.RawMessage
-	if _, err := s.DB.Get(ctx, rules.PathDevices, &tree); err != nil {
+	if _, err := s.DB.Get(ctx, DeviceRoot, &tree); err != nil {
 		return nil, fmt.Errorf("reading the device allowlist: %w", err)
 	}
 	out := make(map[string]bool, len(tree))
