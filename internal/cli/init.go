@@ -3539,9 +3539,12 @@ func (r *initRun) gateGovernance(o *initOptions, repo string, lc *localcfg.Confi
 
 // gateGitAuthor is fugaro update --repo's gate for gitAuthorSince:
 // refuseGitAuthorSkew, with gateRigor's escapes and for its reason. The
-// repository's key is read as the resolved config holds it, which is the only
-// place it can be: config.Scopes gives git.author InRepo alone, so the value a
-// layer wrote would have been refused for being out of scope long before this.
+// repository's half is the key being written (RepoGitAuthorSet) rather than the
+// value it holds: a runner older than gitAuthorSince refuses git.author
+// whatever it says, so git.author: fugaro and an explicit null are deployed by
+// a value test and die at bootstrap. And it is only ever the repository's half:
+// config.Scopes gives git.author InRepo alone, so a layer that wrote it was
+// refused for being out of scope long before this.
 func (r *initRun) gateGitAuthor(o *initOptions, repo string, lc *localcfg.Config, cfg *config.Config) error {
 	if o.forget || o.planOnly || cfg == nil {
 		return nil
@@ -3550,7 +3553,7 @@ func (r *initRun) gateGitAuthor(o *initOptions, repo string, lc *localcfg.Config
 	if o.printVars {
 		w = r.cmd.ErrOrStderr()
 	}
-	return refuseGitAuthorSkew(repo, cfg.Git.Author, lc.BaseImage(config.BaseKind), w)
+	return refuseGitAuthorSkew(repo, cfg.RepoGitAuthorSet, lc.BaseImage(config.BaseKind), w)
 }
 
 // checkVertexBudget refuses a repository whose fugaro.yaml authenticates

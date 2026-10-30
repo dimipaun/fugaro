@@ -1,13 +1,18 @@
 package cli
 
 import (
+	"bytes"
+	"encoding/json"
+	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // releaseAuthor and releaseBeforeAuthor are the two job images the tests here
@@ -218,18 +223,243 @@ func TestRunAuthorOmittedForReviewRun(t *testing.T) {
 // launched to die at bootstrap on a key its runner's KnownFields decoder
 // refuses — and rather than quietly ignored, which would drop the opt-in the
 // repository asked for.
+//
+// Every value of the key is judged, because the decoder that refuses it reads
+// the key alone: git.author: fugaro is the key absent to this release's config
+// and git.author: with nothing after it is fugaro again once decoded, while
+// both are lines an older runner refuses exactly like launcher. A gate that
+// judged the value would launch those to die at bootstrap on a run already paid
+// for.
 func TestRunAuthorGitAuthorKeyGatedForOlderRunner(t *testing.T) {
+	for _, c := range []struct{ name, author string }{
+		{"launcher", config.GitAuthorLauncher},
+		{"fugaro", config.GitAuthorFugaro},
+		{"an explicit null", ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newCloudFixture(t)
+			writeBuildRecord(t, f, appSlug, "web", releaseBeforeAuthor)
+			baseBranchCheckout(t, "acme/app", authorYAML(c.author), "main")
+			_, _, err := execute(t, "run", "--run-id", "20261030-100000-abcd", "A task")
+			for _, want := range []string{"git.author", "the git.author key", "fugaro " + gitAuthorSince + " or later", "release 0.13.0", "fugaro image refresh"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("err = %v, want it to name %q", err, want)
+				}
+			}
+			if n := len(f.run.Executions()); n != 0 {
+				t.Fatalf("%d executions, want none", n)
+			}
+		})
+	}
+}
+
+// TestRunRefusesGitAuthorOnACloneWorkflowsOlderBaseImage: a checkout: clone
+// workflow has no build record to judge (it runs the installation's base image
+// as it is), so the same gate is judged against base_images.base itself and
+// names the fix that image has: fugaro update --base base, not an image refresh
+// of a workflow that is never built.
+func TestRunRefusesGitAuthorOnACloneWorkflowsOlderBaseImage(t *testing.T) {
 	f := newCloudFixture(t)
-	writeBuildRecord(t, f, appSlug, "web", releaseBeforeAuthor)
-	baseBranchCheckout(t, "acme/app", authorYAML(config.GitAuthorLauncher), "main")
+	older := "ghcr.io/dimipaun/fugaro-base:" + shiftRelease(t, gitAuthorSince, -1)
+	f.appendConfig(t, "base_images: {base: "+older+"}\n")
+	configSkewCheckout(t, f, authorCloneHead)
 	_, _, err := execute(t, "run", "--run-id", "20261030-100000-abcd", "A task")
-	for _, want := range []string{"git.author", "the git.author key", "fugaro " + gitAuthorSince + " or later", "release 0.13.0", "fugaro image refresh"} {
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want the launch refused", err)
+	}
+	for _, want := range []string{"fugaro.yaml's git.author of acme/other", "Run fugaro update --base base", older} {
 		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("err = %v, want it to name %q", err, want)
+			t.Errorf("%v lacks %q", err, want)
 		}
 	}
 	if n := len(f.run.Executions()); n != 0 {
 		t.Fatalf("%d executions, want none", n)
+	}
+}
+
+// authorCloneHead is configSkewHead's file with the git.author key written
+// beside it, for a workflow that is never built: the clone gate's own case.
+const authorCloneHead = "version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop, author: launcher }\nagent: { auth: api-key }\n" +
+	"workflows:\n  svc: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n"
+
+// TestAuthorSkewDropsForACloneWorkflowsBaseImage: authorSkew's clone branch,
+// which judges the installation's base image rather than a build record — the
+// clone job runs that image itself — and drops the field unless that image is
+// *shown* to read it. A base image older than authorSince, and one no judge can
+// place at all (a development build), both drop it with the warning that names
+// the image and the fix; one at the release keeps what the launch resolved.
+// Called directly with the local config alone: the clone branch reads nothing
+// else.
+func TestAuthorSkewDropsForACloneWorkflowsBaseImage(t *testing.T) {
+	for _, c := range []struct {
+		name, base string
+		kept       bool
+	}{
+		{"the release", releaseAuthor, true},
+		{"the release before it", releaseBeforeAuthor, false},
+		{"a development build", devAuthorBase, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var warn bytes.Buffer
+			spec := &task.Spec{Repo: "acme/other", Workflow: "svc", Author: &task.Person{Name: "someone", Email: "someone@example.com"}}
+			env := &cloudEnv{lc: &localcfg.Config{BaseImages: map[string]string{"base": c.base}}}
+			clone := true
+			authorSkew(t.Context(), env, "slug", spec, &clone, &warn)
+			if kept := spec.Author != nil; kept != c.kept {
+				t.Fatalf("author = %+v, want kept = %v for a clone workflow on %s", spec.Author, c.kept, c.base)
+			}
+			if !c.kept && !strings.Contains(warn.String(), "not known to run fugaro "+authorSince) {
+				t.Errorf("warn = %q, want the drop to say which field it dropped", warn.String())
+			}
+			if c.kept && warn.Len() != 0 {
+				t.Errorf("warn = %q, want none for an image that reads the field", warn.String())
+			}
+		})
+	}
+}
+
+// TestUpdateRepoRefusesGitAuthorOnOlderBaseImage is gitAuthorSince's gate at
+// fugaro update --repo, the same shape as rigorSince's
+// (TestUpdateRepoRefusesRigorOnOlderBaseImage): the key is decoded strictly by
+// every release, so a runner older than the release that reads it dies at
+// bootstrap on it, and update --repo refuses to deploy a job that would. The
+// boundary is the constant's own: one release below is refused, the constant
+// and one above pass, a base that is not a release only warns, and no base at
+// all passes.
+//
+// The repository's half is the key being written (RepoGitAuthorSet), not the
+// value it holds: git.author: fugaro is the key absent to this release and an
+// explicit null decodes to fugaro too, while both are the same line to an older
+// runner's decoder — a value test deploys a job that dies at bootstrap on a
+// line the operator did write.
+func TestUpdateRepoRefusesGitAuthorOnOlderBaseImage(t *testing.T) {
+	below, above := shiftRelease(t, gitAuthorSince, -1), shiftRelease(t, gitAuthorSince, 1)
+	older := "ghcr.io/dimipaun/fugaro-base:" + below
+	lc := func(ref string) *localcfg.Config {
+		if ref == "" {
+			return &localcfg.Config{}
+		}
+		return &localcfg.Config{BaseImages: map[string]string{"base": ref}}
+	}
+	var out, errOut bytes.Buffer
+	cmd := NewRootCmd()
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	r := &initRun{o: &initOptions{}, cmd: cmd, w: &out}
+
+	written := []*config.Config{
+		{Git: config.Git{Author: config.GitAuthorLauncher}, RepoGitAuthorSet: true},
+		{Git: config.Git{Author: config.GitAuthorFugaro}, RepoGitAuthorSet: true},
+		{RepoGitAuthorSet: true},
+	}
+	for _, cfg := range written {
+		err := r.gateGitAuthor(r.o, "acme/app", lc(older), cfg)
+		if err == nil || ExitCode(err) != ExitUserError {
+			t.Fatalf("%+v: err = %v, want refused", cfg.Git.Author, err)
+		}
+		for _, want := range []string{
+			"fugaro " + gitAuthorSince + " or later",
+			older + ", release " + below,
+			"fugaro update --base base",
+			"fugaro.yaml's git.author of acme/app",
+		} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%+v: %v lacks %q", cfg.Git.Author, err, want)
+			}
+		}
+		if errOut.Len() != 0 {
+			t.Errorf("stderr = %q, want none (refused, not warned)", errOut.String())
+		}
+	}
+
+	for _, ref := range []string{"ghcr.io/dimipaun/fugaro-base:" + gitAuthorSince, "ghcr.io/dimipaun/fugaro-base:" + above, ""} {
+		var warn bytes.Buffer
+		if err := refuseGitAuthorSkew("acme/app", true, ref, &warn); err != nil || warn.Len() != 0 {
+			t.Errorf("%q: err = %v, warn = %q, want neither", ref, err, warn.String())
+		}
+	}
+	var warn bytes.Buffer
+	if err := refuseGitAuthorSkew("acme/app", true, devAuthorBase, &warn); err != nil {
+		t.Errorf("dev base: err = %v, want a warning only", err)
+	}
+	if !strings.Contains(warn.String(), "not a release base image") || !strings.Contains(warn.String(), "is not checked") {
+		t.Errorf("dev base: warn = %q", warn.String())
+	}
+
+	// A configuration that writes no git.author asks nothing of the image:
+	// the value alone, without the key, is every repository that never wrote
+	// it, and the explicit fugaro a file may spell instead.
+	for _, cfg := range []*config.Config{nil, {}, {Git: config.Git{Author: config.GitAuthorLauncher}}, {Git: config.Git{Author: config.GitAuthorFugaro}}} {
+		if err := r.gateGitAuthor(r.o, "acme/app", lc(older), cfg); err != nil {
+			t.Errorf("%+v: err = %v, want none", cfg, err)
+		}
+	}
+
+	// --forget and --plan-only deploy nothing, so neither is refused;
+	// --print-vars is judged like a deploy and writes nothing to stdout.
+	for _, o := range []*initOptions{{planOnly: true}, {forget: true}} {
+		if err := (&initRun{o: o, cmd: cmd, w: &out}).gateGitAuthor(o, "acme/app", lc(older), written[0]); err != nil {
+			t.Errorf("%+v: err = %v, want none", o, err)
+		}
+	}
+	out.Reset()
+	pv := &initOptions{printVars: true}
+	if err := (&initRun{o: pv, cmd: cmd, w: io.Discard}).gateGitAuthor(pv, "acme/app", lc(older), written[0]); err == nil {
+		t.Fatal("--print-vars: want refused")
+	}
+	if out.Len() != 0 {
+		t.Errorf("--print-vars wrote to stdout: %q", out.String())
+	}
+}
+
+// validateAuthor runs fugaro validate on a repository file whose git: block is
+// gitBlock, in a directory that is no checkout and has no project config: the
+// file's own key is all this judges. It is validateRigor's shape for a key that
+// lives under git:.
+func validateAuthor(t *testing.T, gitBlock string) (validateOutput, error) {
+	t.Helper()
+	isolateProjects(t, t.TempDir())
+	dir := t.TempDir()
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": "version: 1\nproject: example\n" + gitBlock +
+		"agent: { auth: api-key }\nworkflows:\n  app: { commands: { build: go build ./..., test: go test ./... } }\n"})
+	out, _, err := execute(t, "validate", "--json", filepath.Join(dir, "fugaro.yaml"))
+	var doc validateOutput
+	if jerr := json.Unmarshal([]byte(out), &doc); jerr != nil {
+		t.Fatalf("output %q: %v", out, jerr)
+	}
+	return doc, err
+}
+
+// TestValidateWarnsThatGitAuthorNeedsEveryJobImage: the file is valid — the
+// skew is the installation's, not the file's — so validate warns rather than
+// refusing, the shape rigorImageWarnings has, and names both ways to move an
+// image (the installation's base, and a workflow's own). Every value counts,
+// since it is the key an older runner refuses, and a file that writes none is
+// warned about nothing.
+func TestValidateWarnsThatGitAuthorNeedsEveryJobImage(t *testing.T) {
+	for _, gitBlock := range []string{
+		"git: { provider: github, base_branch: main, author: launcher }\n",
+		"git: { provider: github, base_branch: main, author: fugaro }\n",
+		"git: { provider: github, base_branch: main, author: }\n",
+	} {
+		doc, err := validateAuthor(t, gitBlock)
+		if err != nil {
+			t.Fatalf("%q: err = %v, want a valid file", gitBlock, err)
+		}
+		if !has(doc.Warnings, "git.author", "needs fugaro "+gitAuthorSince) {
+			t.Errorf("%q: warnings = %+v, want the git.author warning", gitBlock, doc.Warnings)
+		}
+		for _, want := range []string{"fugaro update --base base", "fugaro image refresh"} {
+			if !has(doc.Warnings, "git.author", want) {
+				t.Errorf("%q: the warning does not name %q: %+v", gitBlock, want, doc.Warnings)
+			}
+		}
+		if has(doc.Problems, "git.author", "") {
+			t.Errorf("%q: the key was refused, and the file is valid: %+v", gitBlock, doc.Problems)
+		}
+	}
+	if doc, err := validateAuthor(t, "git: { provider: github, base_branch: main }\n"); err != nil || has(doc.Warnings, "git.author", "") {
+		t.Errorf("a file that writes no git.author was warned about: %+v, %v", doc.Warnings, err)
 	}
 }
 

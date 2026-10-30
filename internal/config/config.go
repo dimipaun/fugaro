@@ -95,6 +95,15 @@ type Config struct {
 	// refuses the key alone. Like the fields above it is never part of the
 	// file or of SHA256.
 	RepoGovernanceSet bool `yaml:"-" json:"-"`
+	// RepoGitAuthorSet is whether the repository's own file wrote the
+	// git.author key at all, at any value: the question RepoRigorSet answers
+	// for rigor:, and Git.Author cannot answer it — the key written empty
+	// (`git.author:`) decodes to the same GitAuthorFugaro as the key being
+	// absent, and the key written `fugaro` decodes to the same value as that
+	// key absent too, while a runner older than gitAuthorSince refuses the key
+	// itself. Like the fields above it is never part of the file or of
+	// SHA256.
+	RepoGitAuthorSet bool `yaml:"-" json:"-"`
 }
 
 // Rigor is fugaro.yaml's rigor: block and the project layer's defaults.rigor
@@ -343,7 +352,9 @@ type Git struct {
 	//
 	// It selects a behaviour and mints no identity: the launcher fills the
 	// address from its own local identity and writes it into the task
-	// (internal/task's Spec.Author), and nothing fills or reads the key yet.
+	// (internal/task's Spec.Author), which is what a fugaro at the release
+	// that reads this key does with it (fugaro.yaml's git.author is gated on
+	// gitAuthorSince, and the field on authorSince, in internal/cli).
 	//
 	// The json tag is what keeps an absent key out of the resolved config's
 	// hash, as Rigor's and Governance's are: SHA256 marshals this struct

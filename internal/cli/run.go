@@ -3070,10 +3070,11 @@ func noteLine(note string) string {
 
 // authorGates is the launch's half of the authorship gates, run where
 // finishLaunch knows the workflow's kind and checkout mode and before the task
-// is written: the key a repository opted in with (gitAuthorSince) is judged
+// is written: the git.author key, whatever it says (gitAuthorSince), is judged
 // first and refuses the launch, the field this launch would write (authorSince)
 // is dropped rather than refused, and only then is the author resolved from
-// this machine's local config.
+// this machine's local config — for a file that opted in by spelling the key
+// launcher.
 //
 // clone is the workflow's checkout mode, nil where the launch could not read
 // it: the key gate then takes the derived-image judge, as checkRigorImage and
@@ -3090,17 +3091,21 @@ func noteLine(note string) string {
 // not write the key keeps the run's own identity, as every repository does
 // today, whether or not the launcher has an identity to offer.
 func authorGates(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, clone *bool, warn io.Writer) error {
-	opted := gitAuthorLauncher(launchFileConfig(ctx, env, spec))
-	if opted {
+	// The file is read once and both questions are asked of it here: the key
+	// (which images may run it) and the value (whether a run records an
+	// author). Each read may run git, so a launch that opted in reads it once,
+	// as checkRigorImage resolves its answer once for its own gate.
+	cfg := launchFileConfig(ctx, env, spec)
+	if gitAuthorSet(cfg) {
 		if clone != nil && *clone {
-			if err := checkCloneGitAuthorImage(ctx, env, spec, warn); err != nil {
+			if err := checkCloneGitAuthorImage(ctx, env, spec, cfg, warn); err != nil {
 				return err
 			}
-		} else if err := checkGitAuthorImage(ctx, env, slug, spec, kind, warn); err != nil {
+		} else if err := checkGitAuthorImage(ctx, env, slug, spec, kind, cfg, warn); err != nil {
 			return err
 		}
 	}
-	if !opted || spec.ReviewPRs != nil || spec.Mode == recipe.ModeArtifact {
+	if !gitAuthorLauncher(cfg) || spec.ReviewPRs != nil || spec.Mode == recipe.ModeArtifact {
 		return nil
 	}
 	author, err := launchAuthor(ctx, env.lc, spec.RequestedBy)

@@ -1448,12 +1448,19 @@ func catalogSwitchSkew(repo string, names []string, ref string, shipped bool, wa
 // gitAuthorSince gate, for a workflow whose job image is a derived one and for
 // a checkout: clone workflow respectively: the pair every other config-key
 // image gate has (checkRigorImage and checkCloneRigorImage), judged on the key
-// the configuration the run will read writes (gitAuthorLauncher). The refusal
-// names the fix that kind of image has — fugaro image refresh for a built
-// image, fugaro update --base base for the installation's own — and the way
-// out the file's author has, from gitAuthorSubject.
-func checkGitAuthorImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, warn io.Writer) error {
-	if !gitAuthorLauncher(launchFileConfig(ctx, env, spec)) {
+// the configuration the run will read writes (gitAuthorSet, which authorGates
+// resolves once for both gates). The refusal names the fix that kind of image
+// has — fugaro image refresh for a built image, fugaro update --base base for
+// the installation's own — and the way out the file's author has, from
+// gitAuthorSubject.
+//
+// The judge is the key being written and not the value it holds: the file is
+// decoded with KnownFields, so a runner older than gitAuthorSince refuses
+// git.author whatever it says — git.author: fugaro and an explicit null are
+// lines its decoder refuses exactly like git.author: launcher — and judging
+// the value would launch those to die at bootstrap on a run already paid for.
+func checkGitAuthorImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, cfg *config.Config, warn io.Writer) error {
+	if !gitAuthorSet(cfg) {
 		return nil
 	}
 	subject, alt := gitAuthorSubject(spec.Repo)
@@ -1462,20 +1469,29 @@ func checkGitAuthorImage(ctx context.Context, env *cloudEnv, slug string, spec *
 
 // checkCloneGitAuthorImage is checkGitAuthorImage for a checkout: clone
 // workflow: see checkCloneImageSince.
-func checkCloneGitAuthorImage(ctx context.Context, env *cloudEnv, spec *task.Spec, warn io.Writer) error {
-	if !gitAuthorLauncher(launchFileConfig(ctx, env, spec)) {
+func checkCloneGitAuthorImage(ctx context.Context, env *cloudEnv, spec *task.Spec, cfg *config.Config, warn io.Writer) error {
+	if !gitAuthorSet(cfg) {
 		return nil
 	}
 	subject, alt := gitAuthorSubject(spec.Repo)
 	return checkCloneImageSince(env.lc, spec, gitAuthorSince, subject, "the git.author key", "; or "+alt, warn)
 }
 
-// gitAuthorLauncher reports whether the configuration the run will read opted
-// in to the launcher's identity. Like rigorLaunchSources it is the file the run
-// checks out and not the launcher's working tree (launchFileConfig), so a
-// launch whose file cannot be read here — one for another repository from a
+// gitAuthorSet reports whether the configuration the run will read writes the
+// git.author key at all, at any value: the question the gitAuthorSince gates
+// ask, and RepoGitAuthorSet's reason. Like rigorLaunchSources it is the file
+// the run checks out and not the launcher's working tree (launchFileConfig), so
+// a launch whose file cannot be read here — one for another repository from a
 // checkout that is not its own — is gated on nothing, and its bootstrap, which
 // reads the file this launcher could not, is what meets the key then.
+func gitAuthorSet(cfg *config.Config) bool {
+	return cfg != nil && cfg.RepoGitAuthorSet
+}
+
+// gitAuthorLauncher reports whether the configuration opted in to the
+// launcher's identity — the *value* question, which decides whether a run
+// records an author at all (D606), where gitAuthorSet's key question decides
+// which images may run the file.
 func gitAuthorLauncher(cfg *config.Config) bool {
 	return cfg != nil && cfg.Git.Author == config.GitAuthorLauncher
 }
@@ -1488,14 +1504,35 @@ func gitAuthorSubject(repo string) (subject, alt string) {
 		"remove the git.author key from fugaro.yaml to run under the run's own identity until every job image is current"
 }
 
+// gitAuthorImageWarnings warns, once, that a configuration which writes the
+// git.author key needs every job image on gitAuthorSince. It is validate's half
+// of checkGitAuthorImage, and a warning rather than a Problem for
+// rigorImageWarnings' reason: the file is valid, and what has to move is the
+// installation (the base image, or a workflow's derived one), which is why both
+// ways to move an image are named. Unlike rigor: and governance: there is no
+// project layer's half to name — config.Scopes gives git.author InRepo alone —
+// so the sentence is the repository's own.
+func gitAuthorImageWarnings(c *config.Config) []config.Problem {
+	if !gitAuthorSet(c) {
+		return nil
+	}
+	return []config.Problem{{Path: "git.author", Message: "this file's git.author needs fugaro " + gitAuthorSince + " or later in the job image that runs it, and in the CLI of everyone who reads this file: an older runner decodes the file strictly and refuses the run at bootstrap. Run fugaro update --base base in your own terminal window to move the installation's base image, and fugaro image refresh for a workflow's own derived image"}}
+}
+
 // refuseGitAuthorSkew refuses fugaro update --repo, before any cloud effect,
-// when the repository's fugaro.yaml sets git.author: launcher and the
+// when the repository's fugaro.yaml writes the git.author key and the
 // installation's base image predates gitAuthorSince — a runner built from it
 // decodes the file with KnownFields and refuses the run at bootstrap on a key
 // it does not know. The states of ref are read as refuseRigorSkew reads them:
 // no base image passes, one that is not a release only warns.
-func refuseGitAuthorSkew(repo, author, ref string, warn io.Writer) error {
-	if author != config.GitAuthorLauncher {
+//
+// fromRepo is the key being written (RepoGitAuthorSet) and not the value it
+// holds, the distinction gateRigor draws for rigor:: git.author: fugaro, an
+// explicit null and git.author: launcher are the same line to an older runner's
+// decoder, so judging the value would deploy a job that dies at bootstrap on a
+// line the operator did write.
+func refuseGitAuthorSkew(repo string, fromRepo bool, ref string, warn io.Writer) error {
+	if !fromRepo {
 		return nil
 	}
 	subject, alt := gitAuthorSubject(repo)
