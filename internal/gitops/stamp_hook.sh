@@ -104,8 +104,8 @@ fugaro_stamp() {
 		'' | *[!0-9]*) fugaro_config_count=0 ;;
 		esac
 		fugaro_config_i=0
-		# The pairs a count numbers, one by one: a pair git never reads is
-		# still a pair, and the count itself is read before it goes.
+		# Belt and braces: git reads a pair only through the count the
+		# next line takes out.
 		while [ "$fugaro_config_i" -lt "$fugaro_config_count" ]; do
 			unset "GIT_CONFIG_KEY_$fugaro_config_i" "GIT_CONFIG_VALUE_$fugaro_config_i"
 			fugaro_config_i=$((fugaro_config_i + 1))
