@@ -12,7 +12,7 @@ const SharedMaxBytes = 64 << 10
 
 // Shared is the installation-wide, non-secret part of the config, the part
 // that is published to the runs bucket. It drops what is owner-only
-// (terraform:), personal (user:, endpoints:), derived (bucket_url, the
+// (terraform:), personal (user:, commit_name:, commit_email:, endpoints:), derived (bucket_url, the
 // legacy registry), deprecated (build.service_account) or local-only:
 // providers:, whose base_url is where a key and a repository's code are
 // sent, routing:, which is that same decision from the other side — the Claude
@@ -60,6 +60,13 @@ func (c *Config) Shared() *Config {
 	s := *c
 	s.Terraform = Terraform{}
 	s.User = ""
+	// commit_name and commit_email are personal for the reason user: is
+	// (D604, D606): they are the identity one machine's launches sign commits
+	// with, and a launcher who could write them into the runs bucket would be
+	// choosing whose name every teammate's commits carry — and, for
+	// commit_email, whose forge account the history links to (D649).
+	s.CommitName = ""
+	s.CommitEmail = ""
 	s.Endpoints = Endpoints{}
 	s.Bucket = ""
 	s.Registry = ""

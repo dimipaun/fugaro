@@ -111,6 +111,7 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 		repo.RepoRigor = repo.Rigor
 		repo.RepoRigorSet = setsRigor(tree)
 		repo.RepoGovernanceSet = setsGovernance(tree)
+		repo.RepoGitAuthorSet = setsGitAuthor(tree)
 		res := &Resolution{Sources: map[string]string{}}
 		markLeaves(tree, "", SourceRepo, res.Sources)
 		res.ConfigSHA256 = repo.SHA256()
@@ -156,6 +157,7 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 	c.RepoRigor = repo.Rigor
 	c.RepoRigorSet = setsRigor(tree)
 	c.RepoGovernanceSet = setsGovernance(tree)
+	c.RepoGitAuthorSet = setsGitAuthor(tree)
 	applyDefaults(&c)
 	if ps := Validate(&c); len(ps) > 0 {
 		return nil, nil, annotate(ps, res, profileOf)
@@ -341,6 +343,22 @@ func setsRigor(tree map[string]any) bool {
 // answer becomes Config.RepoGovernanceSet.
 func setsGovernance(tree map[string]any) bool {
 	_, ok := tree["governance"]
+	return ok
+}
+
+// setsGitAuthor is setsRigor for the git.author key: whether the repository's
+// text writes git.author, at any value. It reads the tree and not the resolved
+// value for the same reason — git.author is a value rather than a block, so an
+// explicit null decodes to GitAuthorFugaro and is indistinguishable from the
+// key being absent — and the gate needs the key, because a runner older than
+// gitAuthorSince decodes the file with KnownFields and refuses git.author
+// whatever it says. Its answer becomes Config.RepoGitAuthorSet.
+func setsGitAuthor(tree map[string]any) bool {
+	git, ok := tree["git"].(map[string]any)
+	if !ok {
+		return false
+	}
+	_, ok = git["author"]
 	return ok
 }
 
