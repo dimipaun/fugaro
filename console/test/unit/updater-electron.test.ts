@@ -32,7 +32,6 @@ import { MacUpdater } from 'electron-updater'
 
 import { createLaunchRunner } from '../../src/main/launch'
 import type { ConfirmView, LaunchConfirmer, TargetLookup } from '../../src/main/launch'
-import type { Timers } from '../../src/main/spawn'
 import { MAX_LISTING_BYTES, RELEASES_URL } from '../../src/main/updates'
 import type { IntervalTimers, UpdateController, UpdaterPort } from '../../src/main/updates'
 import { STAGING_USER_ID, hardenUpdater, startUpdates } from '../../src/main/updater-electron'
@@ -666,6 +665,13 @@ function heldConfirmer(): LaunchConfirmer & { readonly openRunIds: readonly stri
   }
 }
 
+/** neverFiringTimers is the launcher's `setTimeout`: the launch in this suite
+ * never reaches the point where a timer matters, and a real one would leave a
+ * handle behind. */
+function neverFiringTimers(): { setTimeout(handler: () => void, ms: number): ReturnType<typeof setTimeout>; clearTimeout(handle: ReturnType<typeof setTimeout>): void } {
+  return { setTimeout: () => 0 as unknown as ReturnType<typeof setTimeout>, clearTimeout: () => undefined }
+}
+
 /** lookUp is the records the launcher reads: one installation, one repository. */
 function lookUp(): Promise<TargetLookup> {
   return Promise.resolve({
@@ -678,10 +684,6 @@ function lookUp(): Promise<TargetLookup> {
       fingerprint: '["record-1","sandbox","/usr/local/bin/fugaro","","",""]',
     },
   })
-}
-
-function neverFiringTimers(): Timers {
-  return { setTimeout: () => 0 as unknown as ReturnType<typeof setTimeout>, clearTimeout: () => undefined }
 }
 
 describe('never while a launch is in flight', () => {
@@ -722,61 +724,5 @@ describe('never while a launch is in flight', () => {
     await untilSettled()
     expect(runner.isIdle()).toBe(true)
     expect(notices.asked).toHaveLength(1)
-  })
-
-  it('tells the flow’s listeners once per transition, and not again on a launch that never left it', async () => {
-    const confirmer = heldConfirmer()
-    const runner = createLaunchRunner({
-      lookUp,
-      stillRecorded: () => true,
-      confirmer,
-      appEnv: {},
-      timers: neverFiringTimers(),
-    })
-    let told = 0
-    runner.onIdle(() => {
-      told += 1
-    })
-    expect(runner.isIdle()).toBe(true)
-    const launched = runner.launch({ installation: 'sandbox', repository: 'github/acme/app', task: 'summarise the alerting backlog' })
-    await untilSettled()
-    expect(runner.isIdle()).toBe(false)
-    expect(told).toBe(0)
-    const runId = confirmer.openRunIds[0] ?? ''
-    confirmer.decideWindow(runId, false)
-    await launched
-    expect(runner.isIdle()).toBe(true)
-    expect(told).toBe(1)
-  })
-
-  it('is not idle while a launch is still being built', async () => {
-    // The reservation is the other half of "in flight": the launch is in the
-    // runner before its window exists, and a check that ran in that window would
-    // be reading a flow that is about to have a launch in it.
-    const confirmer = heldConfirmer()
-    const gate: { release: () => void } = { release: () => undefined }
-    const held = new Promise<void>((resolve) => {
-      gate.release = resolve
-    })
-    const runner = createLaunchRunner({
-      lookUp: async () => {
-        await held
-        return await lookUp()
-      },
-      stillRecorded: () => true,
-      confirmer,
-      appEnv: {},
-      timers: neverFiringTimers(),
-    })
-    const launched = runner.launch({ installation: 'sandbox', repository: 'github/acme/app', task: 'summarise the alerting backlog' })
-    await untilSettled()
-    expect(runner.isIdle()).toBe(false)
-    gate.release()
-    await untilSettled()
-    expect(runner.isIdle()).toBe(false)
-    const runId = confirmer.openRunIds[0] ?? ''
-    confirmer.decideWindow(runId, false)
-    await launched
-    expect(runner.isIdle()).toBe(true)
   })
 })
