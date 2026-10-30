@@ -1107,9 +1107,8 @@ func newPairRevokeCmd() *cobra.Command {
 			"sweep rather than pretending the account is gone.\n" +
 			"\n" +
 			"Exactly one of --uid and --name selects the device, and a --name that\n" +
-			"matches more than one node is refused rather than revoked ambiguously: the\n" +
-			"refusal says how many it matched, and `fugaro pair ls` prints the uids to\n" +
-			"pick one from.\n" +
+			"matches more than one node is refused with their uids rather than revoked\n" +
+			"ambiguously.\n" +
 			"\n" +
 			"Its own state is the local config, as it is for the rest of the command.",
 		Args: cobra.NoArgs,
