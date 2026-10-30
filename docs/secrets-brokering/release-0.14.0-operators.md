@@ -21,8 +21,9 @@ Bitbucket brokering (the proxy) arrives in 0.15.0: the owner moved that chain th
    and a 0.13.0-or-older CLI refuses a launch against a version-4 node. A job image built from
    0.13.0 or older is not caught at launch: the run starts and its runner halts at bootstrap with
    "refresh the runner image". Refresh each repository's image: `fugaro image refresh` in the
-   checkout of each onboarded repository (or `fugaro image build --repo <owner/name> --workflow
-   <name>`).
+   checkout of each onboarded repository (or `fugaro update --base base`). `fugaro image build`
+   alone is not enough: it builds on the base image the local config already pins, whose runner is
+   still the older release's.
 3. **Republish the project policy, per installation**, in your own terminal outside any repository
    checkout. The order is the lockstep, because `fugaro project policy publish` refuses to
    overwrite a node written in another version:
