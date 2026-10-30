@@ -101,13 +101,17 @@ const { calendlyURL, repository, whatsappURL } = Astro.props
     margin: 0;
     max-width: var(--measure);
     color: var(--ground);
+    font-size: clamp(var(--font-size-lg), 4.4vw, var(--font-size-3xl));
   }
 
+  /* The sentence under it is the body's size on a phone and the body's larger step where the
+     viewport has room, the same pair the steps section sets: it is body copy under a heading,
+     and it stays under the heading at every width. */
   .campaign-calls-line {
     margin: var(--space-sm) 0 0;
     max-width: var(--measure);
     color: var(--ground);
-    font-size: var(--font-size-lg);
+    font-size: clamp(var(--font-size-base), 1.9vw, var(--font-size-lg));
     line-height: var(--leading-snug);
   }
 

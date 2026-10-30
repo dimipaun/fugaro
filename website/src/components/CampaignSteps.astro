@@ -64,9 +64,16 @@
     background: var(--panel);
   }
 
+  /* The section's own size, scaled with the viewport and always under the hero's headline: the
+     headline runs at 5.5 vw and stops at `--font-size-4xl`, so 4.4 vw under `--font-size-3xl`
+     is a step below it at every width — 20 px under a 21.4 px headline on a phone, 44 px under
+     56 px at 1440. `--font-size-lg` is the floor, so the heading never falls to the body's size
+     on a narrow viewport. The `.display-lg` class still carries the family, the weight and the
+     tracking; this rule is the size, and `base-styles.mjs` reads the pair. */
   .campaign-steps-title {
     margin: 0;
     max-width: var(--measure);
+    font-size: clamp(var(--font-size-lg), 4.4vw, var(--font-size-3xl));
   }
 
   .campaign-steps-list {
@@ -77,30 +84,25 @@
     list-style: none;
   }
 
-  /* The step's name is a section's own size, not a card's: at `--font-size-2xl` the three of
-     them are what a reader's eye takes in first, and the line under each is set at the body's
-     larger step beside it. */
+  /* The step's name is a heading, not a card's title: it scales with the viewport too, on the
+     slope below the section's heading (3.6 vw under 4.4 vw, `--font-size-2xl` under
+     `--font-size-3xl` where the two stop, and the same `--font-size-lg` floor on a phone), so at
+     1440 the three names are 32 px and the eye takes them in before the lines beside them. */
   .campaign-step-name {
     margin: 0;
-    font-size: var(--font-size-2xl);
+    font-size: clamp(var(--font-size-lg), 3.6vw, var(--font-size-2xl));
     line-height: var(--leading-snug);
   }
 
+  /* The line under a name is the body's size on a phone and the body's larger step once the
+     viewport has room for it, and it stays under the name at every width: it is the pair that
+     makes a step a heading and a line rather than two paragraphs. */
   .campaign-step-line {
     margin: var(--space-sm) 0 0;
     max-width: var(--measure);
     color: var(--text-muted);
-    font-size: var(--font-size-lg);
+    font-size: clamp(var(--font-size-base), 1.9vw, var(--font-size-lg));
     line-height: var(--leading-snug);
-  }
-
-  /* The script holds back both the step and its two parts, and the parts are inside the row: two
-     24 px transforms on the same text is a 48 px rise, past the 16–32 px the owner asked for, so
-     the row — which is the box the parts move in — is not one of the parts that move. The
-     neutralised row is still the observer's target, so the step's own parts are what enter. */
-  .campaign-step[data-reveal] {
-    opacity: 1;
-    transform: none;
   }
 
   @media (max-width: 30rem) {
@@ -144,6 +146,22 @@
   @media screen and (prefers-reduced-motion: no-preference) {
     .campaign-steps [data-reveal]:not([data-revealed]) {
       transform: translateY(24px);
+    }
+
+    /* The row is not one of the parts that move. `site.js` marks the `li` `data-reveal` along
+       with the `h3` and the `p` inside it, so the travel rule above reaches the row too — and a
+       row that translates with its own parts inside it doubles the rise to 48 px, past the
+       16–32 px the owner asked for. The row is therefore neutralised: it is still the observer's
+       target and still the box its parts move in, and only the parts enter. The rule sits *after*
+       the travel rule and outranks it — `.campaign-steps .campaign-step[data-reveal]:not(…)` is
+       one class more specific than `.campaign-steps [data-reveal]:not(…)` — because order alone
+       would leave the more specific travel rule winning, which is what the first cut of this
+       did; `base-styles.mjs` now reads the two selectors' specificity rather than trusting the
+       comment. `opacity: 1` is half of it: `base.css` hides every unrevealed part, and the row
+       holding the parts must not be the thing that is hidden. */
+    .campaign-steps .campaign-step[data-reveal]:not([data-revealed]) {
+      opacity: 1;
+      transform: none;
     }
   }
 </style>

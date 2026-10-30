@@ -96,22 +96,39 @@ const { headline, supportingLine, tone, calendlyURL, art } = Astro.props
 
   /* The headline takes the band, and its size is capped. The two are one rule and the arithmetic
      is `base-styles.mjs`'s: at 390 px the band's content box is 358 px and the longest headline
-     is 48 characters, which is two lines at 20 px and three at the 44 px `.display-xl` floors
-     at. 5.2 vw is that size written as the viewport's, and `--font-size-4xl` is the ceiling a
-     wide viewport stops at — 56 px at 1440, where the band is 1168 px wide. The floor is
-     `--font-size-base`, so a viewport narrower than 390 px keeps the headline on the page
-     rather than overflowing it. */
+     is 48 characters, which is two lines up to 22.7 px and three at the 44 px `.display-xl`
+     floors at. 5.5 vw is under that ceiling at every width — the ceiling *rises* as a share of
+     the viewport (22.7/390, 45.8/768) because the gutter is a smaller part of a wider page — and
+     `--font-size-4xl` is the ceiling a wide viewport stops at: 56 px at 1440, where the band is
+     1168 px wide (the wide breakpoint's gutter is `max(24px, (1440px − 1216px)/2 + 24px)`, 136
+     px, and `base.css` redefines `--frame-gutter` with `--space-md` from 48 rem for exactly
+     that). The floor is `--font-size-lg` rather than the body's step, so the page's `h1` never
+     falls below the type around it, and `base-styles.mjs` holds both ends: the line count at
+     the three widths and the headline's lead over every other heading on the page.
+
+     The 5.5 vw is the largest slope the two-line rule allows at 390 px. That is the whole
+     tension of this rule and it is worth naming: a 48-character headline on two lines in 358 px
+     is a ~21 px headline, so on a phone the `h1` is *smaller* than a section heading would be at
+     `.display-lg`'s 32 px floor. The page answers it by scaling its own section type with the
+     viewport too (`CampaignSteps.astro`, `CampaignCalls.astro`, both under this slope), so the
+     `h1` is the largest type on the page at all three measured widths rather than only from
+     615 px up. The alternative — a 32 px phone `h1` — is three lines for three of the four
+     headlines, which is the wrap the owner asked to be rid of. */
   .campaign-hero-headline {
     margin: 0;
     max-width: none;
-    font-size: clamp(var(--font-size-base), 5.2vw, var(--font-size-4xl));
+    font-size: clamp(var(--font-size-lg), 5.5vw, var(--font-size-4xl));
   }
 
+  /* The sentence under the headline is the body's size on a phone and the body's larger step
+     from the wide breakpoint: at 390 px a 21 px headline over a 20 px sentence is not a
+     headline and its lead, and the pair is one of the things the case in `base-styles.mjs`
+     reads. */
   .campaign-hero-line {
     margin: 0;
     max-width: var(--measure);
     color: var(--text-muted);
-    font-size: var(--font-size-lg);
+    font-size: var(--font-size-base);
     line-height: var(--leading-snug);
   }
 
@@ -213,6 +230,13 @@ const { headline, supportingLine, tone, calendlyURL, art } = Astro.props
        rendered: a variant with media of its own is the same hero with one column painted. */
     .campaign-hero-copy {
       grid-column: 1;
+    }
+
+    /* The sentence takes the body's larger step here, where the headline is 42 px and up: it is
+       the pair the case in `base-styles.mjs` reads, and the headline's lead over it only widens
+       with the viewport. */
+    .campaign-hero-line {
+      font-size: var(--font-size-lg);
     }
   }
 </style>
