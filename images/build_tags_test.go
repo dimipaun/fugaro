@@ -22,9 +22,17 @@ var eeBuildImages = []string{"base", "history"}
 // carries no ee/ code and its licence label stays MIT and true.
 var coreImages = []string{"credentials"}
 
-// runImages is every image a run starts on the installation's behalf; the
-// key-material scan below reads all three.
-var runImages = append(slices.Clone(eeBuildImages), coreImages...)
+// publishedImages is the three images a release publishes -- the job image,
+// the history job's image and the credentials service's image. The
+// credentials image is a service, not one a run starts, and the distinction
+// matters here: the key-material scan reads all three, because each is a
+// published artifact whose config and layers anyone can pull (D525).
+var publishedImages = append(slices.Clone(eeBuildImages), coreImages...)
+
+// subscriptionMarker is the SPDX id of ee/ (R3); the licence label of an image
+// that compiles that code has to name it, and an image that does not must not
+// (F16c, D524).
+const subscriptionMarker = "LicenseRef-Fugaro-Subscription"
 
 func readDockerfile(t *testing.T, name string) string {
 	t.Helper()
@@ -123,7 +131,7 @@ func TestBuildTagScanCatchesPlants(t *testing.T) {
 	// that refuses everything cannot pass the plants below.
 	t.Run("the real bodies are accepted", func(t *testing.T) {
 		bodies := map[string]string{}
-		for _, name := range runImages {
+		for _, name := range publishedImages {
 			bodies[name] = readDockerfile(t, name)
 		}
 		if gaps := scan(t, bodies); len(gaps) > 0 {
@@ -149,14 +157,34 @@ func TestBuildTagScanCatchesPlants(t *testing.T) {
 	})
 
 	t.Run("a tag set through ENV GOFLAGS", func(t *testing.T) {
-		for _, name := range runImages {
+		for _, name := range publishedImages {
 			body := insertBefore(t, readDockerfile(t, name), buildRun, "ENV GOFLAGS=-tags=ee\n")
 			refused(t, "a "+name+" image setting the tag through ENV GOFLAGS", scan(t, map[string]string{name: body}), "GOFLAGS")
 		}
 	})
 
+	t.Run("a tagged build that is not the fugaro one", func(t *testing.T) {
+		body := insertBefore(t, untag(t, readDockerfile(t, "base")), buildRun, "RUN go build -tags ee ./cmd/helper\n")
+		refused(t, "an image whose only tagged build is a helper's", scan(t, map[string]string{"base": body}), "without the ee tag")
+	})
+
+	t.Run("a credentials image with no licences label", func(t *testing.T) {
+		body := replaceOnce(t, readDockerfile(t, "credentials"), `LABEL org.opencontainers.image.licenses="MIT"`+"\n", "")
+		refused(t, "a credentials image with no licences label", scan(t, map[string]string{"credentials": body}), "name MIT")
+	})
+
+	t.Run("a credentials image claiming the Subscription licence", func(t *testing.T) {
+		body := replaceOnce(t, readDockerfile(t, "credentials"), `licenses="MIT"`, `licenses="MIT AND `+subscriptionMarker+`"`)
+		refused(t, "a core-only image labelled with the Subscription licence", scan(t, map[string]string{"credentials": body}), subscriptionMarker)
+	})
+
+	t.Run("a tagged image labelled MIT alone", func(t *testing.T) {
+		body := replaceOnce(t, readDockerfile(t, "base"), `licenses="MIT AND `+subscriptionMarker+`"`, `licenses="MIT"`)
+		refused(t, "a tagged image whose label says MIT alone", scan(t, map[string]string{"base": body}), subscriptionMarker)
+	})
+
 	t.Run("a tag supplied by an ARG", func(t *testing.T) {
-		for _, name := range runImages {
+		for _, name := range publishedImages {
 			body := readDockerfile(t, name)
 			if slices.Contains(eeBuildImages, name) {
 				body = untag(t, body)
@@ -168,33 +196,82 @@ func TestBuildTagScanCatchesPlants(t *testing.T) {
 	})
 }
 
-// TestRunImagesCarryNoKey: no key and no secret ever enters a run image (R6,
-// G9). Under T27 (b) a job needs no key at all, and when enforcement ships the
-// entitlement travels in the task as a claim; a COPY or an ARG naming one is
-// how it would come back.
+// TestRunImagesCarryNoKey: no key and no secret ever enters one of the three
+// published images (R6, G9). Under T27 (b) a job needs no key at all, and when
+// enforcement ships the entitlement travels in the task as a claim; a COPY or
+// an ARG naming one is how it would come back.
 func TestRunImagesCarryNoKey(t *testing.T) {
-	named := regexp.MustCompile(`(?i)(^|[^a-z])(key|secret|token|password|passwd|credential)s?([^a-z]|$)`)
-	for _, name := range runImages {
+	for _, name := range publishedImages {
 		t.Run(name, func(t *testing.T) {
-			for _, d := range dockerfileDirectives(readDockerfile(t, name)) {
-				fields := strings.Fields(d)
-				switch fields[0] {
-				case "ARG":
-					for _, w := range fields[1:] {
-						if named.MatchString(w) {
-							t.Errorf("ARG %s reads key material into the image", w)
-						}
-					}
-				case "COPY":
-					for _, w := range copySources(fields) {
-						if named.MatchString(w) {
-							t.Errorf("COPY %s puts key material in the image", w)
-						}
-					}
-				}
+			for _, gap := range dockerfileKeyGaps(name, readDockerfile(t, name)) {
+				t.Error(gap)
 			}
 		})
 	}
+}
+
+// TestRunImagesCarryNoKeyScanCatchesPlants is the plant the key scan owes, as
+// TestBuildTagScanCatchesPlants is the tag scan's: a regex that matched nothing
+// and a copySources that dropped its sources both look exactly like three clean
+// Dockerfiles.
+func TestRunImagesCarryNoKeyScanCatchesPlants(t *testing.T) {
+	buildRun := "RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \\\n"
+	insertBefore := func(t *testing.T, body, anchor, insert string) string {
+		t.Helper()
+		i := strings.Index(body, anchor)
+		if i < 0 {
+			t.Fatalf("the Dockerfile has no %q to plant against", strings.TrimSpace(anchor))
+		}
+		return body[:i] + insert + body[i:]
+	}
+	scan := func(t *testing.T, name, body string) []string {
+		t.Helper()
+		root := t.TempDir()
+		dir := filepath.Join(root, "images", name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return imageKeyGaps(t, root)
+	}
+	refused := func(t *testing.T, what, name, body, want string) {
+		t.Helper()
+		gaps := scan(t, name, body)
+		if len(gaps) == 0 {
+			t.Fatalf("%s reports no gap: key material would be baked into a published image", what)
+		}
+		if !strings.Contains(strings.Join(gaps, "\n"), want) {
+			t.Errorf("%s reports %v, and no gap names %q", what, gaps, want)
+		}
+	}
+
+	t.Run("the real bodies are accepted", func(t *testing.T) {
+		root := t.TempDir()
+		for _, name := range publishedImages {
+			dir := filepath.Join(root, "images", name)
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte(readDockerfile(t, name)), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if gaps := imageKeyGaps(t, root); len(gaps) > 0 {
+			t.Errorf("the tree's own Dockerfiles report gaps: %v", gaps)
+		}
+	})
+
+	t.Run("an ARG naming a key", func(t *testing.T) {
+		body := insertBefore(t, readDockerfile(t, "base"), buildRun, "ARG FUGARO_LICENSE_KEY\n")
+		refused(t, "an image with an ARG naming a key", "base", body, "FUGARO_LICENSE_KEY")
+	})
+
+	t.Run("a COPY of a credential-shaped path", func(t *testing.T) {
+		body := insertBefore(t, readDockerfile(t, "credentials"), buildRun, "COPY ./model-credentials /run/model-credentials\n")
+		refused(t, "an image copying a credential-shaped path", "credentials", body, "model-credentials")
+	})
 }
 
 // TestBuildContextAdmitsEE: the build context is the whole repository filtered
@@ -290,13 +367,22 @@ type tagUse struct {
 	hidden    []string
 }
 
+// isFugaroBuild reports whether a directive is the go build that produces the
+// binary the image runs. `-o /out/fugaro ./cmd/fugaro` is that command; a tag
+// on any other go build in the same Dockerfile compiles ee/ code into
+// something the image does not run while its own fugaro stays core, which is
+// the state D524 forbids.
+func isFugaroBuild(d string) bool {
+	return strings.Contains(d, "go build") && strings.Contains(d, "./cmd/fugaro")
+}
+
 // readTagUse is the one reader both the scan and its plants go through, so a
 // spelling cannot be refused in one and accepted in the other.
 func readTagUse(directives []string) tagUse {
 	var use tagUse
 	for _, d := range directives {
 		fields := strings.Fields(d)
-		isBuild := strings.Contains(d, "go build")
+		isBuild := isFugaroBuild(d)
 		for i := 0; i < len(fields); i++ {
 			f := fields[i]
 			var value string
@@ -338,11 +424,32 @@ func copiesEE(directives []string) bool {
 	return false
 }
 
+// dockerfileLicenceLabel reads an image's OCI licences label, in either the
+// quoted or the bare form a LABEL may write.
+var licenceLabel = regexp.MustCompile(`org\.opencontainers\.image\.licenses=(?:"([^"]*)"|(\S+))`)
+
+func dockerfileLicenceLabel(body string) string {
+	joined := strings.ReplaceAll(body, "\\\n", " ")
+	match := licenceLabel.FindStringSubmatch(joined)
+	if match == nil {
+		return ""
+	}
+	if match[1] != "" {
+		return match[1]
+	}
+	return match[2]
+}
+
 // dockerfileBuildTagGaps is the scan: D524's rule for one image, read off the
-// image's own name rather than off a tag the Dockerfile happens to carry.
+// image's own name rather than off a tag the Dockerfile happens to carry. Both
+// halves of the rule are gated: the images that compile ee/ have to say so in
+// their licences label, and the one that does not must not -- a core-only
+// published image labelled with the Subscription licence is a false claim, and
+// a tagged one labelled MIT is the failure F16c exists to stop.
 func dockerfileBuildTagGaps(name, body string) []string {
 	directives := dockerfileDirectives(body)
 	use := readTagUse(directives)
+	label := dockerfileLicenceLabel(body)
 	var gaps []string
 	switch {
 	case slices.Contains(eeBuildImages, name):
@@ -352,12 +459,21 @@ func dockerfileBuildTagGaps(name, body string) []string {
 		if !copiesEE(directives) {
 			gaps = append(gaps, fmt.Sprintf("images/%s/Dockerfile builds the tagged binary without copying ee/ into the context (F16b), so the tag compiles nothing", name))
 		}
+		if !strings.Contains(label, subscriptionMarker) {
+			gaps = append(gaps, fmt.Sprintf("images/%s/Dockerfile builds the tagged binary and its org.opencontainers.image.licenses label is %q, which has to hold %s (F16c)", name, label, subscriptionMarker))
+		}
 	case slices.Contains(coreImages, name):
 		if use.literalEE {
 			gaps = append(gaps, fmt.Sprintf("images/%s/Dockerfile builds fugaro with the ee tag; D524 keeps this image core, with no ee/ code and an MIT licence label", name))
 		}
 		if copiesEE(directives) {
 			gaps = append(gaps, fmt.Sprintf("images/%s/Dockerfile copies ee/ into the image, which D524 keeps core", name))
+		}
+		if !strings.Contains(label, "MIT") {
+			gaps = append(gaps, fmt.Sprintf("images/%s/Dockerfile's org.opencontainers.image.licenses label is %q: this image carries no ee/ code, so that label has to name MIT (D524)", name, label))
+		}
+		if strings.Contains(label, subscriptionMarker) {
+			gaps = append(gaps, fmt.Sprintf("images/%s/Dockerfile's org.opencontainers.image.licenses label names %s on an image that carries no ee/ code: a published image would make a licence claim that is not true (D524)", name, subscriptionMarker))
 		}
 	default:
 		gaps = append(gaps, fmt.Sprintf("images/%s/Dockerfile is in neither the tagged set %v nor the core set %v: D524 decides which images carry the ee build", name, eeBuildImages, coreImages))
@@ -368,17 +484,68 @@ func dockerfileBuildTagGaps(name, body string) []string {
 	return gaps
 }
 
-// imageBuildTagGaps runs the scan over every images/*/Dockerfile of the tree at
-// root. The list comes from the tree, so an image added later is judged too.
-func imageBuildTagGaps(t *testing.T, root string) []string {
+// keyNamed matches a COPY source or an ARG name that reads key material into
+// the image (R6, G9). Under T27 (b) a job needs no key at all: a name of this
+// shape is how one would come back.
+var keyNamed = regexp.MustCompile(`(?i)(^|[^a-z])(key|secret|token|password|passwd|credential)s?([^a-z]|$)`)
+
+// dockerfileKeyGaps reports every COPY source and ARG that names key material
+// in one image's Dockerfile.
+func dockerfileKeyGaps(name, body string) []string {
+	var gaps []string
+	for _, d := range dockerfileDirectives(body) {
+		fields := strings.Fields(d)
+		switch fields[0] {
+		case "ARG":
+			for _, w := range fields[1:] {
+				if keyNamed.MatchString(w) {
+					gaps = append(gaps, fmt.Sprintf("images/%s/Dockerfile reads key material into the image with `ARG %s` (R6, G9)", name, w))
+				}
+			}
+		case "COPY":
+			for _, w := range copySources(fields) {
+				if keyNamed.MatchString(w) {
+					gaps = append(gaps, fmt.Sprintf("images/%s/Dockerfile puts key material in the image by copying %s (R6, G9)", name, w))
+				}
+			}
+		}
+	}
+	return gaps
+}
+
+// imageKeyGaps runs the key scan over every images/*/Dockerfile of the tree at
+// root, the way the plants are judged.
+func imageKeyGaps(t *testing.T, root string) []string {
+	t.Helper()
+	var gaps []string
+	for _, path := range imageDockerfiles(t, root) {
+		name := filepath.Base(filepath.Dir(path))
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		gaps = append(gaps, dockerfileKeyGaps(name, string(body))...)
+	}
+	return gaps
+}
+
+// imageDockerfiles is every images/*/Dockerfile under root, sorted.
+func imageDockerfiles(t *testing.T, root string) []string {
 	t.Helper()
 	paths, err := filepath.Glob(filepath.Join(root, "images", "*", "Dockerfile"))
 	if err != nil {
 		t.Fatalf("globbing the image Dockerfiles under %s: %v", root, err)
 	}
 	slices.Sort(paths)
+	return paths
+}
+
+// imageBuildTagGaps runs the scan over every images/*/Dockerfile of the tree at
+// root. The list comes from the tree, so an image added later is judged too.
+func imageBuildTagGaps(t *testing.T, root string) []string {
+	t.Helper()
 	var gaps []string
-	for _, path := range paths {
+	for _, path := range imageDockerfiles(t, root) {
 		name := filepath.Base(filepath.Dir(path))
 		body, err := os.ReadFile(path)
 		if err != nil {

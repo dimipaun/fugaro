@@ -123,7 +123,7 @@ with a memory↔CPU ratio rule (`internal/backend/gcp/limits.go:25,36-46`;
 render on today's substrate gets at most 8 vCPU and 32 GiB.**
 
 **The tools situation.** The base image installs **mise**
-(`images/base/Dockerfile:39-41` pins `MISE_VERSION`, `:154-168` installs it to
+(`images/base/Dockerfile:43-45` pins `MISE_VERSION`, `:171-181` installs it to
 `/usr/local/bin/mise`), and a repository declares runtimes either in its own
 `mise.toml` or in `image.tools` (`docs/base-image.md:36-47`). **ffmpeg is
 nowhere in this repository** — a case-insensitive grep for `ffmpeg` over the
@@ -1644,7 +1644,7 @@ line read for it — the plan's Review Focus repeats the important ones):
 | V9 | Cloud Run jobs take 1, 2, 4, 6 or 8 vCPU and at most 32Gi | `internal/backend/gcp/limits.go:25,36-46`, `limits_test.go:11,23` |
 | V10 | The caps count model dollars; compute is an estimate, reported and never capped; `compute_usd`/`compute_estimated` exist and are rolled into history | `docs/design/m9-spec-v3-reconciliation.md:10`, `docs/design/m9-budget-and-dashboard.md:798`, `internal/budget/evaluate.go:190-204`, `internal/runner/cost.go:62-64`, `internal/runstore/cost.go:12-18`, `internal/budget/rollup.go:296-303` |
 | V11 | `fugaro budget preview` has no compute notion | `internal/cli/budget_preview.go:26-28,489-538,697-731` |
-| V12 | mise is in the base image; ffmpeg is nowhere in the repository; `image.apt`, `image.setup`, `dockerfile:` and `image.tools`/`mise.toml` are the four ways to add a tool | `images/base/Dockerfile:39-41,154-168`, `images/derived/Dockerfile.tmpl:26-33`, `internal/image/render.go:92-117`, `docs/base-image.md:36-47,63` |
+| V12 | mise is in the base image; ffmpeg is nowhere in the repository; `image.apt`, `image.setup`, `dockerfile:` and `image.tools`/`mise.toml` are the four ways to add a tool | `images/base/Dockerfile:43-45,171-181`, `images/derived/Dockerfile.tmpl:26-33`, `internal/image/render.go:92-117`, `docs/base-image.md:36-47,63` |
 | V13 | No artifact/attachment/output concept in `generic-tool.md`, `recipes.md` or `v1.md` — except that v1's 15 hits are Artifact Registry (the GCP service) but one is `ARTIFACTORY_TOKEN` (`v1.md:542`, a JFrog token) — and none in the schemas or the CLI | grep over the tree, `schemas/recipe.schema.json`, `schemas/result.schema.json`, `internal/cli` |
 | V14 | No signed URL and no `signBlob` grant anywhere; only `iam.serviceAccounts.signJwt` for the budget identity | grep over `internal/` and `cmd/`, `deploy/terraform/gcp/modules/firebase/iam.tf:23` |
 | V15 | `result.json`'s schema is `additionalProperties: false` and is validated **only by tests**, never at read time; readers use the Go struct | `schemas/result.schema.json`, `schemas/schemas_test.go:23`, `internal/runstore/runstore.go:532` |

@@ -516,7 +516,7 @@ Three things make this the right carrier rather than an OCI label.
   `TemplateSalt: gcp.TemplateSalt(Version)`, and `Edition` is written on the next line, from the
   binary's own edition.
 
-The OCI labels are still set — `images/base/Dockerfile:309` already writes
+The OCI labels are still set — `images/base/Dockerfile:313` already writes
 `org.opencontainers.image.*`, and E1.4 adds the licence label naming MIT plus the Subscription Edition
 licence — they are simply not what the gate judges.
 
@@ -567,7 +567,7 @@ consequences worth stating here rather than discovering in E1.3:
   build succeeds and the edition stays what the compiled files make it; and a tagged build has no
   `core` string to write into either.
 - The contrast is the point. `Version` *is* a package-level string
-  (`internal/cli/root.go:15`, `var Version = "dev"`), and `images/base/Dockerfile:34` sets it with
+  (`internal/cli/root.go:15`, `var Version = "dev"`), and `images/base/Dockerfile:38` sets it with
   `-X` on purpose. The edition deliberately does not live there: if it did, a build flag could raise
   a core image to `ee` and silence the warning, or — worse — lower a tagged image to `core` and make
   the binary with the code in it deny having it.
