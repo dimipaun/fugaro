@@ -70,6 +70,23 @@ func TestRunAuthorFromLocalConfig(t *testing.T) {
 	}
 }
 
+// TestRunAuthorOmittedWithoutOptIn: git.author is the repository's own decision
+// (D606), so a repository that does not write the key records no author even
+// though the launcher has an identity to offer — the default every repository
+// has today, and the reason `default` in this file's git: block is read rather
+// than the launcher's identity alone.
+func TestRunAuthorOmittedWithoutOptIn(t *testing.T) {
+	f := newCloudFixture(t)
+	writeBuildRecord(t, f, appSlug, "web", releaseAuthor)
+	baseBranchCheckout(t, "acme/app", authorYAML(config.GitAuthorFugaro), "main")
+	if _, _, err := execute(t, "run", "--run-id", "20261030-100000-abcd", "A task"); err != nil {
+		t.Fatal(err)
+	}
+	if spec := readSpec(t, f, "20261030-100000-abcd"); spec.Author != nil {
+		t.Fatalf("author = %+v, want none: the repository did not opt in", spec.Author)
+	}
+}
+
 // TestRunAuthorCommitEmailOverridesMe: the local config's commit_email is the
 // address a run's commits are authored as, with commit_name as the name, for
 // the person who keeps their real address out of a repository's history

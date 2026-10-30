@@ -3084,15 +3084,23 @@ func noteLine(note string) string {
 // claim about commits that are never made (D605). That is the two shapes
 // budgetBranch reads as "pushes nothing" — a review run carries review_prs
 // rather than a mode, and only an artifact recipe writes mode.
+//
+// Nothing is recorded without the opt-in: git.author is the repository's own
+// decision whose name goes into its history (D606), and a repository that did
+// not write the key keeps the run's own identity, as every repository does
+// today, whether or not the launcher has an identity to offer.
 func authorGates(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, clone *bool, warn io.Writer) error {
-	if clone != nil && *clone {
-		if err := checkCloneGitAuthorImage(ctx, env, spec, warn); err != nil {
+	opted := gitAuthorLauncher(launchFileConfig(ctx, env, spec))
+	if opted {
+		if clone != nil && *clone {
+			if err := checkCloneGitAuthorImage(ctx, env, spec, warn); err != nil {
+				return err
+			}
+		} else if err := checkGitAuthorImage(ctx, env, slug, spec, kind, warn); err != nil {
 			return err
 		}
-	} else if err := checkGitAuthorImage(ctx, env, slug, spec, kind, warn); err != nil {
-		return err
 	}
-	if spec.ReviewPRs != nil || spec.Mode == recipe.ModeArtifact {
+	if !opted || spec.ReviewPRs != nil || spec.Mode == recipe.ModeArtifact {
 		return nil
 	}
 	author, err := launchAuthor(ctx, env.lc, spec.RequestedBy)
