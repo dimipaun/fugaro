@@ -1445,6 +1445,15 @@ func (rs RepoSpec) Addresses() []string {
 	for _, member := range operators {
 		add(root + "google_artifact_registry_repository_iam_member.operator_images[" + q(member) + "]")
 	}
+	// The installation's shared image registry (design
+	// docs/forge-authorship-images/shared-images.md §2.6, §11): this
+	// repository's build account writes it, and each of its job accounts
+	// reads it. Both grants are declared without a gate, so they are
+	// addresses of every repository root.
+	add(root + "google_artifact_registry_repository_iam_member.build_shared")
+	for _, key := range slices.Sorted(maps.Keys(rs.Workflows)) {
+		add(root + "google_artifact_registry_repository_iam_member.job_shared[" + q(key) + "]")
+	}
 	// modules/repo/build.tf
 	add(root + "google_service_account.build")
 	for _, logical := range rs.BuildSecrets {
