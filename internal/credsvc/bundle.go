@@ -459,16 +459,20 @@ func CredentialKey(key string) (name string, kind Kind, tier creds.Tier, ok bool
 		// credential by name — one name, two credentials, and the audit line
 		// no longer says which.
 		//
-		// The refusal is this package's own and only the bundle's: the config
-		// side reserves config.DefaultClaudeAccount and nothing else
-		// (config.ValidateClaudeAccounts, config.ValidClaudeAccountRef), so an
-		// account named bitbucket-token is still configurable and still
-		// admittable by a policy. What this refuses is writing that account's
-		// KEY into the bundle — the bundle is the one document where the two
-		// names would collide — and a document that already holds one is
-		// refused whole rather than read under a name that means two things.
-		// Teaching the config side the same reservation is a change of its
-		// own, and it is not made here.
+		// The config side refuses this one name too, and it is the only account
+		// name it reserves: config.ValidateClaudeAccounts and
+		// config.ValidClaudeAccountRef (config.reservedClaudeAccountName) share
+		// this refusal, the published schema pins the same single spelling
+		// (creds-bundle.schema.json's `not`, which this resolution and
+		// TestBundleSchemaMatchesTheLoader hold together), and an account named
+		// after any other credential stays a legal account name here — the App
+		// key's and the paid key's own names among them (Bundle.byName). What
+		// this keeps is the bundle's own guard, defence in depth rather than
+		// the only refusal: the bundle is the one document where the two names
+		// collide, `fugaro creds set` is not the only hand that can write it,
+		// and a document that already holds such a key — written before the
+		// config rule, or by hand — is refused whole rather than read under a
+		// name that means two things.
 		if account == config.BitbucketSecret {
 			return "", "", "", false
 		}
