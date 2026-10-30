@@ -1184,13 +1184,17 @@ func (r *run) writeStampHooks(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("making a directory for the run's commit hooks: %w", err)
 	}
-	runnerRoot, err := os.MkdirTemp("", "fugaro-stamp-")
-	if err != nil {
-		return fmt.Errorf("making a directory for the runner's commit hooks: %w", err)
-	}
 	r.stampHooks = filepath.Join(agentRoot, "agent")
 	if err := gitops.WriteStampHooks(r.stampHooks, chain); err != nil {
 		return fmt.Errorf("writing the run's commit hooks: %w", err)
+	}
+	// The second root is made once the first is written, and not beside it:
+	// each root is named by the field removeStampHooks reads, so a failure
+	// between the two would otherwise leave a directory nothing removes —
+	// the one thing this pair of calls is here to prevent.
+	runnerRoot, err := os.MkdirTemp("", "fugaro-stamp-")
+	if err != nil {
+		return fmt.Errorf("making a directory for the runner's commit hooks: %w", err)
 	}
 	r.runnerHooks = filepath.Join(runnerRoot, "runner")
 	if err := gitops.WriteStampHooksNoChain(r.runnerHooks); err != nil {
@@ -1217,11 +1221,22 @@ func (r *run) writeStampHooks(ctx context.Context) error {
 // and those never reach bootstrap's writeStampHooks to have a directory to
 // remove.
 func (r *run) removeStampHooks() {
+	temp := filepath.Clean(os.TempDir())
 	for _, dir := range []string{r.stampHooks, r.runnerHooks} {
 		if dir == "" {
 			continue
 		}
-		if err := os.RemoveAll(filepath.Dir(dir)); err != nil {
+		// The root MkdirTemp made and nothing else: this removes the parent
+		// of the directory it is given, so a hook directory anywhere but
+		// directly under the temporary directory — a repository's own hooks,
+		// if the two fields ever named one — is refused rather than having
+		// its parent taken with it.
+		root := filepath.Dir(dir)
+		if filepath.Dir(root) != temp {
+			r.d.Log.Warn("refusing to remove a commit hook directory that is not the run's own", "dir", dir)
+			continue
+		}
+		if err := os.RemoveAll(root); err != nil {
 			r.d.Log.Warn("removing the run's commit hook directory failed", "dir", dir, "err", err)
 		}
 	}

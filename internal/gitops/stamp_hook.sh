@@ -81,19 +81,20 @@ fugaro_stamp() {
 	# trailer.<token>.cmd and trailer.<token>.command are commands git runs,
 	# and the repository's own configuration is a file a run's agent can
 	# write (constraint 8). With no GIT_DIR, no GIT_WORK_TREE and no
-	# repository above "/", the file git reads is the machine's own.
+	# repository above "/", no repository is read at all.
 	case "$fugaro_message" in
 	/*) fugaro_message_abs=$fugaro_message ;;
 	*) fugaro_message_abs=$PWD/$fugaro_message ;;
 	esac
 	(
 		unset GIT_DIR GIT_WORK_TREE
-		# No configuration of the machine's either, and no configuration an
-		# environment carries: this git is the child of the agent's own
-		# commit, so every variable below is one the agent set for it, and a
-		# trailer.<token>.command written in the user's own file or in the
-		# pairs of GIT_CONFIG_COUNT is a command the stamp would run. The
-		# rules the stamp states on the command line are the only ones left.
+		# And no configuration of the machine's or of an environment either:
+		# this git is the child of the agent's own commit, so every one of
+		# the variables below is one the agent set for the git that ran this
+		# hook, and a trailer.<token>.command written in the user's own file
+		# or in the pairs of GIT_CONFIG_COUNT is a command the stamp would
+		# run. The rules the stamp states on the command line are the only
+		# ones left for this call.
 		GIT_CONFIG_GLOBAL=/dev/null
 		GIT_CONFIG_NOSYSTEM=1
 		export GIT_CONFIG_GLOBAL GIT_CONFIG_NOSYSTEM
@@ -127,6 +128,13 @@ fi
 # which is the repository's own configuration or git's default of
 # $GIT_DIR/hooks. A repository that configured no core.hooksPath still has its
 # hooks run, which naming nothing at all would not do (constraint 2).
+#
+# Read with the machine's and the caller's configuration in place, unlike the
+# trailer step above: a global core.hooksPath is a legitimate way to configure
+# a repository's hooks, and dropping it here would stop a repository's own
+# hooks running (constraint 2). What it costs is that a global or environment
+# core.hooksPath an agent wrote decides the directory this execs — its own code
+# in its own commit, with nothing of the runner's behind it.
 if [ "$fugaro_chain_later" = 1 ]; then
 	fugaro_chain=$(unset GIT_CONFIG_COUNT; git rev-parse --git-path hooks) || fugaro_chain=''
 fi

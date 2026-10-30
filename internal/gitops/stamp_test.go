@@ -792,11 +792,13 @@ func TestRunnerOwnCommitsRunNoRepositoryHook(t *testing.T) {
 }
 
 // TestInterpretTrailersIgnoresRepositoryTrailerCommand: the stamp reads its
-// trailers from the environment and writes them with the machine's git
-// configuration alone. trailer.<token>.command and trailer.<token>.command are
-// commands git runs and whose output replaces the trailer's value, and
-// .git/config is a file the run's agent can write: a stamp that ran inside the
-// checkout would let the agent decide what the run's trailers say.
+// trailers from the environment and writes them under the rules it states on
+// its own command line, with no configuration of any other file behind them.
+// trailer.<token>.command and trailer.<token>.cmd are commands git runs and
+// whose output replaces the trailer's value, and .git/config is a file the
+// run's agent can write: a stamp that ran inside the checkout would let the
+// agent decide what the run's trailers say. The machine's own file and the
+// environment are the other two sources, and three tests below hold those.
 //
 // Mutation (run interpret-trailers without unsetting GIT_DIR and cd-ing out of
 // the repository): the planted command runs and blanks the value.
@@ -894,7 +896,11 @@ func TestInterpretTrailersIgnoresGlobalTrailerCommand(t *testing.T) {
 	script, marker := trailerCommandScript(t)
 	home := t.TempDir()
 	testutil.WriteFiles(t, home, map[string]string{".gitconfig": trailerCommandConfig(script)})
-	msg := commitStampIsolated(t, dir, append(stampCommitEnv(home), stampEnv...), "subject")
+	// GIT_CONFIG_NOSYSTEM here keeps the machine's own file out of a test
+	// about the user's: a host whose /etc/gitconfig planted the same trailer
+	// command would fail this for a reason the change is not about.
+	env := stampCommitEnv(home, "GIT_CONFIG_NOSYSTEM=1")
+	msg := commitStampIsolated(t, dir, append(env, stampEnv...), "subject")
 	if _, err := os.Stat(marker); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("the user's git config's trailer command ran: %v", err)
 	}
@@ -951,7 +957,10 @@ func TestInterpretTrailersIgnoresEnvironmentConfig(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			dir, hooks, _ := newStampRepo(t, runStamp(), "")
 			script, marker := trailerCommandScript(t)
-			env := append(stampCommitEnv(t.TempDir()), vars(script)...)
+			// GIT_CONFIG_NOSYSTEM for the same reason as the user's-file
+			// test: the machine's own file is neither the vector here nor
+			// this test's to depend on.
+			env := append(stampCommitEnv(t.TempDir(), "GIT_CONFIG_NOSYSTEM=1"), vars(script)...)
 			env = StampEnv(runStamp(), hooks, env)
 			msg := commitStampIsolated(t, dir, env, "subject")
 			if _, err := os.Stat(marker); !errors.Is(err, fs.ErrNotExist) {
