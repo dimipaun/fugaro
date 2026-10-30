@@ -135,6 +135,11 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
     },
     'series.title': '`ACCOUNT_TITLES[account]`, the console\'s headings',
     'scope.name': '`scopeOf` maps the wire word through `SCOPES` and draws `UNKNOWN_SCOPE_NAME` for a word it does not know',
+    word: {
+      within: 'capFigure',
+      reason:
+        'the caps panel\'s own word for what a figure is (`CAPS_BILLED_WORD` and its neighbours, this file\'s constants: the panel draws no column headers, so every figure carries one), and the caller passes those constants and nothing else',
+    },
     note: 'model.notes holds only the console\'s own sentences (`buildSpendModel`), the one interpolation being a count the console computed',
     'series.empty': "the console's own sentence for an account with no point to draw, written by `buildSeries`/`withheldSeries` -- or `null`, the branch that draws no cell at all",
   },
@@ -556,6 +561,11 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
     'shape.y': { within: 'barRect', reason: "a bar's own box, in the chart's drawing units: `barShape` computes it from the bar's share of the shared axis and `chartUnits` rounds it" },
     'shape.width': { within: 'barRect', reason: "a bar's own box, in the chart's drawing units: `barShape` computes it from the bar's share of the shared axis and `chartUnits` rounds it" },
     'shape.height': { within: 'barRect', reason: "a bar's own box, in the chart's drawing units: `barShape` computes it from the bar's share of the shared axis and `chartUnits` rounds it" },
+    'capsBarUnits(counted / cap)': {
+      within: 'capsBar',
+      reason:
+        "the caps panel's daily-cap bar: `counted_usd` over `daily_cap_usd`, as a length on the bar's own hundred-unit box, clamped to the box -- geometry this console computed from two figures the document carries, and nothing a document can spell",
+    },
     'column.x': { within: 'gapColumn', reason: "the gap column's own box, in the chart's drawing units: the full height of the plot, computed the same way a bar's is" },
     'column.y': { within: 'gapColumn', reason: "the gap column's own box, in the chart's drawing units: the full height of the plot, computed the same way a bar's is" },
     'column.width': { within: 'gapColumn', reason: "the gap column's own box, in the chart's drawing units: the full height of the plot, computed the same way a bar's is" },

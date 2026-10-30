@@ -792,11 +792,13 @@ func TestRunnerOwnCommitsRunNoRepositoryHook(t *testing.T) {
 }
 
 // TestInterpretTrailersIgnoresRepositoryTrailerCommand: the stamp reads its
-// trailers from the environment and writes them with the machine's git
-// configuration alone. trailer.<token>.command and trailer.<token>.command are
-// commands git runs and whose output replaces the trailer's value, and
-// .git/config is a file the run's agent can write: a stamp that ran inside the
-// checkout would let the agent decide what the run's trailers say.
+// trailers from the environment and writes them under the rules it states on
+// its own command line, with no configuration of any other file behind them.
+// trailer.<token>.command and trailer.<token>.cmd are commands git runs and
+// whose output replaces the trailer's value, and .git/config is a file the
+// run's agent can write: a stamp that ran inside the checkout would let the
+// agent decide what the run's trailers say. The machine's own file and the
+// environment are the other two sources, and three tests below hold those.
 //
 // Mutation (run interpret-trailers without unsetting GIT_DIR and cd-ing out of
 // the repository): the planted command runs and blanks the value.
@@ -811,5 +813,162 @@ func TestInterpretTrailersIgnoresRepositoryTrailerCommand(t *testing.T) {
 	}
 	if got := trailersOf(msg)["fugaro-run"]; !slices.Equal(got, []string{"run-1"}) {
 		t.Errorf("fugaro-run = %v, want [run-1]: the repository's configuration decided the trailer", got)
+	}
+}
+
+// trailerCommandScript writes the command a planted trailer configuration
+// names: one that leaves a marker where a test can see it and answers the
+// trailer with a value of its own, which is what trailer.<token>.command does
+// to a stamp that reads it.
+func trailerCommandScript(t *testing.T) (script, marker string) {
+	t.Helper()
+	dir := t.TempDir()
+	marker = filepath.Join(dir, "ran")
+	testutil.WriteFiles(t, dir, map[string]string{
+		"trailer-command": "#!/bin/sh\nprintf '%s\\n' ran >> " + shellword.Quote(marker) + "\nprintf '%s\\n' blanked\n",
+	})
+	return filepath.Join(dir, "trailer-command"), marker
+}
+
+// trailerCommandConfig is a git configuration file whose Fugaro-Run trailer is
+// the output of a command: the two keys the stamp must never be steered by,
+// stated as a file so a global and a system configuration can hold the same
+// thing.
+func trailerCommandConfig(script string) string {
+	return "[trailer \"fugaro-run\"]\n\tcommand = " + script + "\n"
+}
+
+// stampCommitEnv is the whole environment a stamped commit is made under in
+// the tests that plant a global or a system git configuration. Nothing of this
+// process's own reaches git — testutil.IsolateGit's GIT_CONFIG_GLOBAL=/dev/null
+// and GIT_CONFIG_NOSYSTEM=1 among it — because a test asking which
+// configuration the stamp reads has to say what git's environment is, and the
+// test process's own would answer for the machine before the stamp could.
+func stampCommitEnv(home string, extra ...string) []string {
+	env := []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + home,
+		"XDG_CONFIG_HOME=" + filepath.Join(home, "xdg"),
+		"GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.invalid",
+		"GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@example.invalid",
+	}
+	return append(env, extra...)
+}
+
+// stampGitIsolated runs git in dir with env as its whole environment, where
+// stampGit appends env to this process's.
+func stampGitIsolated(t *testing.T, dir string, env []string, args ...string) (string, error) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = dir
+	cmd.Env = env
+	cmd.WaitDelay = 5 * time.Second
+	var out bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &out
+	err := cmd.Run()
+	return out.String(), err
+}
+
+// commitStampIsolated is commitStamp over stampGitIsolated.
+func commitStampIsolated(t *testing.T, dir string, env []string, msg string, extra ...string) string {
+	t.Helper()
+	args := append([]string{"commit", "--allow-empty", "--quiet"}, extra...)
+	if out, err := stampGitIsolated(t, dir, env, append(args, "-m", msg)...); err != nil {
+		t.Fatalf("git commit: %v\n%s", err, out)
+	}
+	return testutil.Git(t, dir, "log", "-1", "--format=%B")
+}
+
+// TestInterpretTrailersIgnoresGlobalTrailerCommand: the trailer step reads the
+// user's own git configuration no more than it reads the repository's.
+// trailer.<token>.command is a command git runs and whose output becomes the
+// trailer's value, and ~/.gitconfig is a file the run's user writes — the
+// run's agent is that user, which is SECURITY.md's "What one run's agent can
+// reach" — so a stamp that read it would let the agent decide what the run's
+// trailers say.
+//
+// Mutation (run interpret-trailers without GIT_CONFIG_GLOBAL=/dev/null): the
+// planted command runs and blanks the value.
+func TestInterpretTrailersIgnoresGlobalTrailerCommand(t *testing.T) {
+	dir, _, stampEnv := newStampRepo(t, runStamp(), "")
+	script, marker := trailerCommandScript(t)
+	home := t.TempDir()
+	testutil.WriteFiles(t, home, map[string]string{".gitconfig": trailerCommandConfig(script)})
+	// GIT_CONFIG_NOSYSTEM here keeps the machine's own file out of a test
+	// about the user's: a host whose /etc/gitconfig planted the same trailer
+	// command would fail this for a reason the change is not about.
+	env := stampCommitEnv(home, "GIT_CONFIG_NOSYSTEM=1")
+	msg := commitStampIsolated(t, dir, append(env, stampEnv...), "subject")
+	if _, err := os.Stat(marker); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the user's git config's trailer command ran: %v", err)
+	}
+	if got := trailersOf(msg)["fugaro-run"]; !slices.Equal(got, []string{"run-1"}) {
+		t.Errorf("fugaro-run = %v, want [run-1]: the user's configuration decided the trailer", got)
+	}
+}
+
+// TestInterpretTrailersIgnoresSystemConfig: the same for the system
+// configuration, which git reads from wherever GIT_CONFIG_SYSTEM names — a
+// file the run's user can write, since an environment variable of the git
+// call is theirs to set, and /etc/gitconfig besides on a machine that lets
+// them write it. GIT_CONFIG_NOSYSTEM is what makes git read no system file at
+// all; unsetting GIT_CONFIG_SYSTEM only puts the machine's own back.
+//
+// Mutation (run interpret-trailers with the caller's GIT_CONFIG_SYSTEM in
+// place): the planted command runs and blanks the value.
+func TestInterpretTrailersIgnoresSystemConfig(t *testing.T) {
+	dir, _, stampEnv := newStampRepo(t, runStamp(), "")
+	script, marker := trailerCommandScript(t)
+	system := filepath.Join(t.TempDir(), "system-gitconfig")
+	if err := os.WriteFile(system, []byte(trailerCommandConfig(script)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env := append(stampCommitEnv(t.TempDir()), "GIT_CONFIG_SYSTEM="+system)
+	msg := commitStampIsolated(t, dir, append(env, stampEnv...), "subject")
+	if _, err := os.Stat(marker); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the system git config's trailer command ran: %v", err)
+	}
+	if got := trailersOf(msg)["fugaro-run"]; !slices.Equal(got, []string{"run-1"}) {
+		t.Errorf("fugaro-run = %v, want [run-1]: the system configuration decided the trailer", got)
+	}
+}
+
+// TestInterpretTrailersIgnoresEnvironmentConfig: configuration an environment
+// carries is configuration too, and the environment of a commit's hook is the
+// environment of the git the agent ran — an agent that sets GIT_CONFIG_COUNT
+// and its pairs, or GIT_CONFIG_PARAMETERS, on its own `git commit` sets them
+// for the trailer step that commit runs under. The global and system files are
+// not the only ways into it.
+//
+// Mutation (leave the caller's environment configuration in the hook's
+// subshell): the planted command runs and blanks the value.
+func TestInterpretTrailersIgnoresEnvironmentConfig(t *testing.T) {
+	cases := map[string]func(script string) []string{
+		"count": func(script string) []string {
+			return []string{"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=trailer.fugaro-run.command", "GIT_CONFIG_VALUE_0=" + script}
+		},
+		"parameters": func(script string) []string {
+			return []string{"GIT_CONFIG_PARAMETERS='trailer.fugaro-run.command=" + script + "'"}
+		},
+	}
+	for name, vars := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir, hooks, _ := newStampRepo(t, runStamp(), "")
+			script, marker := trailerCommandScript(t)
+			// GIT_CONFIG_NOSYSTEM for the same reason as the user's-file
+			// test: the machine's own file is neither the vector here nor
+			// this test's to depend on.
+			env := append(stampCommitEnv(t.TempDir(), "GIT_CONFIG_NOSYSTEM=1"), vars(script)...)
+			env = StampEnv(runStamp(), hooks, env)
+			msg := commitStampIsolated(t, dir, env, "subject")
+			if _, err := os.Stat(marker); !errors.Is(err, fs.ErrNotExist) {
+				t.Errorf("the environment's trailer command ran: %v", err)
+			}
+			if got := trailersOf(msg)["fugaro-run"]; !slices.Equal(got, []string{"run-1"}) {
+				t.Errorf("fugaro-run = %v, want [run-1]: the environment configuration decided the trailer", got)
+			}
+		})
 	}
 }

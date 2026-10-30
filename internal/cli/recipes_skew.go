@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
@@ -67,6 +68,26 @@ const cloneSince = "0.7.5"
 // later release that had to un-ship it would be a different decision, made
 // in its own PR with the check's failure as its evidence.
 const cloneShipped = true
+
+// sharedSince is the first fugaro release whose runner clones for a
+// checkout: shared job (design forge-authorship-images/shared-images.md §6,
+// route A; config.CheckoutShared). Such a job runs a shared
+// dependency-layer image, which holds no repository's source (§12), so its
+// runner has to clone the source at launch exactly as a checkout: clone
+// job's does — FUGARO_CHECKOUT=shared is the mark, and a runner that does
+// not read it starts on an empty work directory with nothing to run.
+// checkSharedImageSince below gates a launch on it: a shared image built
+// from a release older than this one is refused, with the two commands that
+// fix it, while one built from a base with no release tag (a dev or
+// hand-pushed image) only warns, the way every other *Since constant here
+// is judged. Unlike cloneSince it carries no shipped flag: refusing every
+// image that predates the release is exactly the direction this gate wants,
+// and a runner that does not clone for shared cannot run such a job at all.
+//
+// It names 0.14.0, the release this slice ships in, which is not tagged
+// yet: the release that tags it holds this number to the tag it cuts, as it
+// does for planTaskSince's 0.11.2 and digestSince's 0.13.0.
+const sharedSince = "0.14.0"
 
 // policySince is the first fugaro release whose launcher and runner read the
 // project's policy (the release phase 1 of the project-centric model ships
@@ -885,6 +906,91 @@ func checkCloneImageSince(lc *localcfg.Config, spec *task.Spec, since, subject, 
 		return refuse(fmt.Sprintf("is %s, release %s", pluginwire.Printable(ref), rel))
 	}
 	return nil
+}
+
+// checkSharedImageSince refuses a launch of a checkout: shared workflow
+// whose job runs a shared dependency-layer image built from a base older
+// than since: a runner before that release does not clone for shared, and
+// the image it would run holds no source (design
+// forge-authorship-images/shared-images.md §6, §12). Two remedies, in the
+// order they work: the installation's base image moves to a current release
+// (fugaro update --base base), and the repository's own refresh then builds
+// and places the shared image the new key needs (fugaro image refresh) —
+// the base is one of the key's inputs (§2.1), so a newer base is a new key
+// and so a new image.
+//
+// The judge is the lock (§3.1), which names per image the repositories on
+// it and each one's job: it is what tells the launcher which image this
+// workflow's job points at without computing the key, which only the
+// operator's machine does (§2.5, D622). A repository the lock holds no
+// entry for is not judged: it has not migrated yet (§10), so its job is
+// still on a per-(repository, workflow) image whose runner this gate has
+// nothing to say about.
+func checkSharedImageSince(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, since string, warn io.Writer) error {
+	const subject, knows = "this checkout: shared workflow", "how to clone for a shared image (FUGARO_CHECKOUT)"
+	refuse := func(why string) error {
+		return userErr("%s needs a job image whose runner knows %s (fugaro %s or later), but the shared image of %s workflow %s %s. "+
+			"Run fugaro update --base base in your own terminal window to move the installation's base image to a current release, then fugaro image refresh --repo %s --workflow %s in its checkout to build the shared image the repository's new dependency key needs and place it on this job",
+			subject, knows, since, spec.Repo, spec.Workflow, why, spec.Repo, spec.Workflow)
+	}
+	b, err := env.recordBucket(ctx)
+	if err != nil {
+		return remote(err)
+	}
+	// ReadStrict, not Read: Read folds an HTTP 403 into ErrNotExist, and an
+	// absent lock means "this repository has not migrated", which this gate
+	// permits — so a read the launcher is not allowed to make would disable
+	// the gate silently rather than fail it. The launcher holds read on the
+	// runs bucket, so a 403 here means no access, and it is a remote error
+	// like any other (imagecheck/lock.go's LockWriter has the same reasoning
+	// for the lock's write).
+	data, _, err := b.ReadStrict(ctx, imagecheck.LockKey)
+	switch {
+	case errors.Is(err, blobx.ErrNotExist):
+		return nil
+	case err != nil:
+		return remote(fmt.Errorf("reading the image lock for %s workflow %s: %w", spec.Repo, spec.Workflow, err))
+	}
+	lock, err := imagecheck.ParseLock(data)
+	if err != nil {
+		// The lock is decoded strictly so that a reader which does not know
+		// the object stops and says so (§3.2); a launch is such a reader, and
+		// judging nothing would launch onto the wrong binary.
+		return refuse("cannot be judged (" + oneLineCLI(err.Error()) + ")")
+	}
+	// The job a launch starts, not the workflow: a named Claude account gets
+	// its own job (jobWorkflow), and the lock records the job names that
+	// exist, so matching on the bare workflow would miss every one of them.
+	variant, ok := jobWorkflow(spec.Workflow, spec.OAuthToken)
+	if !ok {
+		return nil
+	}
+	img, ok := sharedImageOf(lock, spec.Repo, gcp.JobName(slug, variant))
+	if !ok {
+		return nil
+	}
+	ref := pluginwire.Printable(img.BaseRef)
+	switch rel, ok := releaseOf(img.BaseRef); {
+	case !ok:
+		fmt.Fprintf(warn, "warning: the shared image of %s workflow %s was built from %s, which is not a release base image; whether its runner knows %s is not checked\n",
+			spec.Repo, spec.Workflow, ref, knows)
+	case imagePredates(rel, since):
+		return refuse(fmt.Sprintf("was built from base image %s, release %s", ref, rel))
+	}
+	return nil
+}
+
+// sharedImageOf is the lock's image that repository's job points at, and
+// whether the lock holds one: the entry naming both, since a repository may
+// be on one shared image per workflow.
+func sharedImageOf(lock *imagecheck.Lock, repo, job string) (imagecheck.LockedImage, bool) {
+	for _, key := range slices.Sorted(maps.Keys(lock.Images)) {
+		img := lock.Images[key]
+		if img.Jobs[repo] == job && slices.Contains(img.Repositories, repo) {
+			return img, true
+		}
+	}
+	return imagecheck.LockedImage{}, false
 }
 
 // checkCloneRecipeImage is checkRecipeImage for a checkout: clone workflow

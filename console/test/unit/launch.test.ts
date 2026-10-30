@@ -1616,13 +1616,16 @@ describe('the reply', () => {
     expect(repoOutcome.reason).toContain('acme/elsewhere')
   })
 
-  it('refuses a reply carrying a key this console does not know', async () => {
+  it('reads a reply carrying a key this console does not know, and ignores the key', async () => {
+    // The reply arrives after the spend: a field a newer CLI added must not
+    // turn a launch that happened into a refusal (the owner's ruling of
+    // 2026-10-30).
     const outcome = await runner({
       confirmer: answeringConfirmer(true),
       spawner: completingSpawner({ overrides: { surprise: 'yes' } }),
     }).launch(request())
-    expect(outcome.ok).toBe(false)
-    expect(outcome.reason).toContain('surprise')
+    expect(outcome.ok).toBe(true)
+    expect(outcome.reason).not.toContain('surprise')
   })
 
   it('reports a child killed by a signal as unknown, and never as an exit status', async () => {
