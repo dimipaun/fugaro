@@ -561,8 +561,19 @@ func resolve(in Inputs) (*repoCtx, error) {
 // An entry that is not there is not a disagreement: the node is then the only
 // answer, and it is the answer this fact takes. Neither is an entry judged
 // while the opt-in is off, or when no node was read.
+//
+// Nor is a GitHub repository's, and the provider check below is what says so.
+// The node's allow_repos is bitbucket-qualified by construction
+// (projectpolicy.validBitbucketTokenBlock refuses any other provider, and
+// MatchRepo compares segment against segment), so this repository can never be
+// admitted by it and the fact is false whatever the node says. The local
+// entry, on the other hand, holds bare owner/name slugs, so a GitHub
+// repository whose name matches one of them would read as proxied and be
+// refused over a Bitbucket credential it does not use — a GitHub repository's
+// git credential is the App key, and project_secrets.bitbucket-token is not
+// it.
 func (c *repoCtx) resolveBitbucketProxied() error {
-	if c.inst.CredentialsService == nil || c.in.Policy == nil {
+	if c.provider != gitprov.KindBitbucket || c.inst.CredentialsService == nil || c.in.Policy == nil {
 		return nil
 	}
 	canonical, err := projectpolicy.Canonical(c.provider, c.in.Repo)

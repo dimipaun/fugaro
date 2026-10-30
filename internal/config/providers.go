@@ -611,15 +611,16 @@ func IsServiceHeldSecretEnv(env, name string) bool {
 // repository and never a config value, which is why nothing here takes an
 // argument.
 //
-// **The fact has no producer yet**, so this list is inert twice over on this
-// branch: it is empty, and the input it is read beside (modules/workflow's
-// bitbucket_proxied, from the repo root's own repo object) has nothing that
-// can make it true — internal/infra's RepoSpec does not carry it, so no tfvars
-// fugaro update writes sets it and every repository plans with false, and the
-// G15 refusal of a local project_secrets entry that disagrees with the node's
-// block is not written either. The derivation and that refusal are B1.8b's
-// (internal/infra's spec.go, tfvars.go and readiness.go), from the published
-// node, which is the one source of whether a repository is proxied.
+// The fact has a producer (B1.8b): internal/infra derives
+// RepoSpec.BitbucketProxied from the published node — the one `fugaro update
+// --repo` reads through the operator's own credentials and hands to infra.Repo
+// as Inputs.Policy — the tfvars carry it as the repo object's own
+// bitbucket_proxied, and the same derivation refuses a local project_secrets
+// entry that disagrees with the node for this repository (G15). So this list
+// is inert once over on this branch and not twice: it is EMPTY, and that is
+// the only thing left that stops the drop. The fact itself is false for every
+// repository until the node admits it with `proxy: true` and the installation
+// has opted in, so the drop is gated twice even after this list is filled.
 //
 // Terraform cannot ask Go, so the same names are a literal in
 // modules/workflow/sa.tf's proxied_git_secret_names, held to this list by

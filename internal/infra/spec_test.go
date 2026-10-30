@@ -3094,3 +3094,53 @@ func TestFilledProxiedListKeepsNonProxiedRepositories(t *testing.T) {
 		}
 	}
 }
+
+// TestNilPolicyJudgesNoEntry pins the contract Inputs.Policy's own comment
+// states, and the branch it protects: a caller that read no node at all
+// (fugaro image, fugaro doctor, --print-vars) must not refuse a local entry
+// over a document it never saw, while a caller that read one — even a project
+// that has published no policy, which the CLI passes as an empty node —
+// judges the entry against it. The two are one nil away from each other, and
+// the wrong one is a refusal an operator cannot act on.
+func TestNilPolicyJudgesNoEntry(t *testing.T) {
+	spec, err := Repo(proxiedSandboxInputs(t, proxiedLocalEntry, nil))
+	if err != nil {
+		t.Errorf("Repo with no node read = %v, want no error: a caller that read no node judges no entry, and the entry here disagrees with the node the project may have published", err)
+	} else if spec.BitbucketProxied {
+		t.Errorf("BitbucketProxied = true with no node read, want false: nothing was read to make it true")
+	}
+
+	// The same inputs with a node that was read and carries no block: the
+	// entry's proxy: true has nothing to agree with, and is refused.
+	if _, err := Repo(proxiedSandboxInputs(t, proxiedLocalEntry, &projectpolicy.Policy{})); err == nil {
+		t.Error("Repo with an empty node that was read = no error, want a refusal: \"read, and the project published no block\" is a different answer from \"not read\", and it is what judges this entry")
+	}
+}
+
+// TestGitHubRepositoryIsNeverJudgedAgainstTheBitbucketEntry: the fact and the
+// refusal are the Bitbucket token's, so a GitHub repository is neither proxied
+// nor refused, whatever its name matches in the local entry. The entry holds
+// bare owner/name slugs, so a GitHub repository called the same as one of them
+// would otherwise be refused over a credential it does not use — its git
+// credential is the App key (D145).
+func TestGitHubRepositoryIsNeverJudgedAgainstTheBitbucketEntry(t *testing.T) {
+	in := webappInputs(t)
+	in.Installation.CredentialsService = credentialsService()
+	in.LC.ProjectSecrets = map[string]config.ProjectSecret{
+		config.BitbucketSecret: {AllowDataTo: []string{"acme/webapp"}, Proxy: true},
+	}
+	// The node admits the same owner/name, and only as a bitbucket repository:
+	// MatchRepo compares the provider segment, so this never admits a GitHub
+	// repository and the fact is false for one whatever the entry says.
+	in.Policy = publishedNode(t, true, "acme/webapp")
+	spec, err := Repo(in)
+	if err != nil {
+		t.Fatalf("Repo for a GitHub repository with a proxying project_secrets.%s entry = %v, want no error: the Bitbucket token is not this repository's credential, and its entry is not judged against one", config.BitbucketSecret, err)
+	}
+	if spec.BitbucketProxied {
+		t.Error("BitbucketProxied = true for a GitHub repository, want false: the node's block admits bitbucket repositories only")
+	}
+	if _, present := repoBitbucketProxied(t, spec); present {
+		t.Error("the tfvars carry repo.bitbucket_proxied for a GitHub repository, want the key omitted")
+	}
+}

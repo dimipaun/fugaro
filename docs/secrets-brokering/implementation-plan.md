@@ -462,10 +462,13 @@ plan; this table says what happens to each task, and the levels below include th
   `roots/repo/tests/repo.tftest.hcl` (the mirror guard), and
   `.claude/rules/credentials-service.md`. **B1.8b** is the Go side, this run: `internal/infra/spec.go`
   (`Inputs.Policy`, `RepoSpec.BitbucketProxied`, `resolveBitbucketProxied` and its refusal,
-  `mountsServiceHeldSecret`'s proxied clause), `internal/infra/readiness.go` (the drop loop) and
-  `internal/infra/spec_test.go`. `internal/infra/tfvars.go` needed no change: `repoVars.Repo` is the
-  whole `RepoSpec`, so the fact travels as B1.8a's input, and the golden plans do not move
-  (`bitbucket_proxied` is `omitempty` and the module's default is false).
+  `mountsServiceHeldSecret`'s proxied clause), `internal/infra/readiness.go` (the drop loop),
+  `internal/infra/spec_test.go`, `internal/cli/init.go` (the read of the published node, handed in as
+  `Inputs.Policy`, in the same memoized read Readiness's D11 gate makes) and `internal/config/providers.go`
+  (the comment on `ProxiedGitSecretNames`, whose "the fact has no producer yet" is no longer true).
+  `internal/infra/tfvars.go` needed no change: `repoVars.Repo` is the whole `RepoSpec`, so the fact
+  travels as B1.8a's input, and the golden plans do not move (`bitbucket_proxied` is `omitempty` and
+  the module's default is false).
 - **Behaviour:** with the list empty nothing changes. Filled, only a repository whose
   `bitbucket_proxied` is true loses its job's accessor on and mount of `bitbucket-token`; every other
   Bitbucket repository, opted-in installation or not, keeps both (G9); the build account keeps its own
