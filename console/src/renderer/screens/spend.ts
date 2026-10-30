@@ -3085,10 +3085,8 @@ export function renderSpend(
   const controlsRow = cell(root, factory, 'div', 'spend-controls')
   controlsRow.append(picker(factory, controls))
   controlsRow.append(tabs(factory, model))
-  const peopleRow = cell(root, factory, 'div', 'spend-people')
+  const peopleRow = cell(controlsRow, factory, 'div', 'spend-knob')
   personKnob(peopleRow, factory, model)
-  controlsRow.append(peopleRow)
-  root.append(controlsRow)
 
   root.append(totalsLine(factory, model))
   root.append(chart(factory, model))

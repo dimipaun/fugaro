@@ -727,6 +727,15 @@ describe('the spend controls', () => {
     const off = renderSpend(factory, buildSpendModel(WEEK_DOCUMENT, null), 'light', SPEND_DEFAULT_CONTROLS)
     expect(texts(off, 'spend-window')).toEqual(['7d', '30d', '90d', '12w'])
     expect(marked(off, 'spend-window')).toEqual(['30d'])
+    // Every window is a real button, and `aria-pressed` is the state a reader
+    // who cannot see the pressed style is told.
+    expect(all(off, 'spend-window').map((one) => one.tag)).toEqual(['button', 'button', 'button', 'button'])
+    expect(all(off, 'spend-window').map((one) => one.getAttribute('aria-pressed'))).toEqual([
+      'false',
+      'true',
+      'false',
+      'false',
+    ])
     const pickerOff = only(off, 'spend-picker')
     expect(pickerOff.getAttribute('data-day')).toBe('false')
     // The end of the range is the CLI's own today unless the operator set one,
@@ -746,9 +755,41 @@ describe('the spend controls', () => {
       { ...SPEND_DEFAULT_CONTROLS, since: '2026-10-05', until: '2026-10-11' },
     )
     expect(marked(day, 'spend-window')).toEqual([])
+    expect(all(day, 'spend-window').map((one) => one.getAttribute('aria-pressed'))).toEqual([
+      'false',
+      'false',
+      'false',
+      'false',
+    ])
     const pickerDay = only(day, 'spend-picker')
     expect(pickerDay.getAttribute('data-day')).toBe('true')
     expect(pickerDay.getAttribute('data-until')).toBe('set')
+  })
+
+  it('draws every control as a real button that carries its own hook and its pressed state', () => {
+    // The wiring in `entry.ts` reads the hook off the element that was clicked
+    // -- the window's own word, the breakdown's `data-dimension`, the knob's
+    // `data-enabled` -- so the hook has to be *on* the button and not on a
+    // wrapper around it. `aria-pressed` is the same state said in the one way a
+    // reader who cannot see the pressed style can hear it.
+    const tree = renderSpend(factory, buildSpendModel(WEEK_DOCUMENT, null), 'light', SPEND_DEFAULT_CONTROLS)
+    for (const hook of ['spend-window', 'spend-dim', 'spend-persons']) {
+      for (const one of all(tree, hook)) {
+        const enabled = one.getAttribute('data-enabled')
+        if (enabled === 'false' && hook !== 'spend-persons') continue
+        expect(one.tag, `${hook}: ${one.textContent ?? ''}`).toBe('button')
+        expect(one.getAttribute('type'), `${hook} type`).toBe('button')
+        expect(['true', 'false'], `${hook} aria-pressed`).toContain(one.getAttribute('aria-pressed'))
+      }
+    }
+    // The one word this console may not show is not a button at all: a control
+    // that cannot be pressed is not drawn as one.
+    const disabled = all(tree, 'spend-dim').filter((one) => one.getAttribute('data-enabled') === 'false')
+    expect(disabled.map((one) => one.tag)).toEqual(['span'])
+    expect(disabled.map((one) => one.textContent)).toEqual(['person'])
+    // The window's own word is the whole of its text, which is what the wiring
+    // reads back.
+    expect(all(tree, 'spend-window').map((one) => one.textContent)).toEqual(['7d', '30d', '90d', '12w'])
   })
 
   it('says the same true thing everywhere about the person knob: off by default, this session only, not remembered', async () => {
@@ -784,6 +825,8 @@ describe('the spend controls', () => {
     // at all, not even as a key this console redacted after drawing it.
     const off = renderSpend(factory, buildSpendModel(PERSON_DOCUMENT, null), 'light', SPEND_DEFAULT_CONTROLS)
     expect(only(off, 'spend-persons').getAttribute('data-enabled')).toBe('false')
+    expect(only(off, 'spend-persons').tag).toBe('button')
+    expect(only(off, 'spend-persons').getAttribute('aria-pressed')).toBe('false')
     expect(texts(off, 'spend-persons-state')).toEqual(['off'])
     expect(texts(off, 'spend-persons-note')[0]).toContain('person breakdown is off')
     expect(all(off, 'spend-row')).toEqual([])
@@ -799,6 +842,7 @@ describe('the spend controls', () => {
       personView(SPEND_DEFAULT_CONTROLS, true),
     )
     expect(only(on, 'spend-persons').getAttribute('data-enabled')).toBe('true')
+    expect(only(on, 'spend-persons').getAttribute('aria-pressed')).toBe('true')
     expect(texts(on, 'spend-persons-state')).toEqual(['on'])
     expect(texts(on, 'spend-persons-note')[0]).toContain('is on for this session')
     expect(all(on, 'spend-row')).toHaveLength(2)
@@ -918,7 +962,10 @@ class FakeScreen implements ScreenElement {
   }
 }
 
-const factory: ScreenFactory = { create: (tag) => new FakeScreen(tag) }
+const factory: ScreenFactory = {
+  create: (tag) => new FakeScreen(tag),
+  createNS: (tag) => new FakeScreen(tag),
+}
 
 /** walk is the whole tree under `node`, in draw order, the root last. */
 function walk(node: ScreenElement): readonly FakeScreen[] {
@@ -964,3 +1011,5 @@ function drawnText(node: ScreenElement): string {
     .map((one) => one.textContent ?? '')
     .join('\n')
 }
+
+

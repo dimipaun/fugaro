@@ -74,6 +74,7 @@ import {
 } from '../../src/renderer/screens/spend'
 import type {
   SpendAccount,
+  SpendFactory,
   SpendModel,
   SpendPeople,
   SpendRow,
@@ -1077,17 +1078,20 @@ describe('a day the history does not hold', () => {
     expect(model.notes.join(' ')).toContain('a gap, not a zero')
   })
 
-  it('breaks every chart on the day the history does not hold, in the drawn tree', () => {
-    // The three charts share a key space and each of them has a point for the
-    // missing day: `spend.spec.ts` reads exactly this list back out of the
-    // window (three gaps, one per account), and the container this task was
-    // written in cannot launch Electron, so the fact is held here as well.
+  it('breaks the chart on the day the history does not hold, in the drawn tree', () => {
+    // The chart holds one group per day of the range and the missing day is one
+    // hatched column of its own: `spend.spec.ts` reads the same list back out of
+    // the window, and the fact is held here as well.
     const tree = renderSpend(factory, modelOf(), 'light')
-    expect(
-      all(tree, 'spend-point')
-        .filter((point) => point.getAttribute('data-state') === 'gap')
-        .map((point) => point.getAttribute('data-key')),
-    ).toEqual(['2026-10-14', '2026-10-14', '2026-10-14'])
+    expect(all(tree, 'spend-gap-column').map((column) => column.getAttribute('data-key'))).toEqual([
+      '2026-10-14',
+    ])
+    expect(all(tree, 'spend-chart-key').map((key) => key.getAttribute('data-gap'))).toEqual([
+      'false',
+      'false',
+      'true',
+      'false',
+    ])
   })
 
   it('says nothing about gaps when every day of the range has a row', () => {
@@ -1252,7 +1256,9 @@ describe('the by-mode breakdown', () => {
     // does -- so `none` is its own row and not the switch's unknown word.
     expect(keyClass('mode', 'pro')).toBe('label')
     expect(keyClass('mode', 'none')).toBe('label')
-    expect(texts(tree, 'spend-key')).toEqual(['pro', 'none'])
+    // Each key is drawn twice: once under the chart's group and once in the
+    // table's row.
+    expect(texts(tree, 'spend-key')).toEqual(['pro', 'none', 'pro', 'none'])
     expect(all(tree, 'spend-dim-unknown')).toEqual([])
     expect(drawn(tree)).not.toContain('an unknown breakdown')
   })
@@ -2241,6 +2247,8 @@ describe('a report row', () => {
     expect(texts(tree, 'spend-notional')[0]).toBe(`${NOTIONAL_MARK}$0.40`)
     expect(texts(tree, 'spend-compute')[0]).toBe('est. $0.12')
     expect(texts(tree, 'spend-run-hours')[0]).toBe('1.50 h')
+    // The three money cells are `td`s of the table's row, one account each.
+    expect(rowDrawn(tree, '2026-10-12').attributes.get('data-key')).toBe('2026-10-12')
     // Not one cell of the row is the sum of two accounts.
     expect(texts(tree, 'spend-model')[0]).not.toBe('$1.65')
     // The whole notional column, top to bottom: a figure or `n/a`, and never an
@@ -2280,7 +2288,12 @@ class FakeScreen implements ScreenElement {
     'action',
   ])
 
-  constructor(readonly tag: string) {}
+  constructor(
+    readonly tag: string,
+    /** the namespace the element was made in: `svg` for the chart's geometry,
+     * which the DOM makes with a different call from the rest. */
+    readonly namespace: string = 'html',
+  ) {}
 
   setAttribute(name: string, value: string): void {
     const lowered = name.toLowerCase()
@@ -2312,7 +2325,10 @@ class FakeScreen implements ScreenElement {
 }
 
 /** factory makes fresh fakes, in the shape the renderer is handed. */
-const factory: ScreenFactory = { create: (tag) => new FakeScreen(tag) }
+const factory: SpendFactory = {
+  create: (tag) => new FakeScreen(tag),
+  createNS: (tag) => new FakeScreen(tag, 'svg'),
+}
 
 /** walk visits every node of a tree, the root first. */
 function walk(node: ScreenElement): readonly FakeScreen[] {
@@ -2358,15 +2374,40 @@ function texts(node: ScreenElement, className: string): readonly (string | null)
   return all(node, className).map((leaf) => leaf.textContent)
 }
 
-/** pointDrawn is one drawn point of one account's chart, by its key: the three
- * charts share a key space, so a point is only ever a point *of* an account. */
-function pointDrawn(node: ScreenElement, account: SpendAccount, key: string): FakeScreen {
-  const block = all(node, 'spend-account').find((one) => one.getAttribute('data-account') === account)
-  if (block === undefined) throw new Error(`no ${account} chart`)
-  const found = all(block, 'spend-point').filter((point) => point.getAttribute('data-key') === key)
-  expect(found, `expected one ${account} point for ${key}`).toHaveLength(1)
+/** barDrawn is one drawn bar, by the account it draws and the key it belongs
+ * to: the three accounts are three bars of one group, so a bar is only ever a
+ * bar *of* an account and a key. */
+function barDrawn(node: ScreenElement, account: SpendAccount, key: string): FakeScreen {
+  const found = all(node, 'spend-bar').filter(
+    (bar) => bar.getAttribute('data-account') === account && bar.getAttribute('data-key') === key,
+  )
+  expect(found, `expected one ${account} bar for ${key}`).toHaveLength(1)
   const first = found[0]
-  if (first === undefined) throw new Error(`no ${account} point ${key}`)
+  if (first === undefined) throw new Error(`no ${account} bar for ${key}`)
+  return first
+}
+
+/** barsOf is every drawn bar of one key, in the order they were drawn. */
+function barsOf(node: ScreenElement, key: string): readonly FakeScreen[] {
+  return all(node, 'spend-bar').filter((bar) => bar.getAttribute('data-key') === key)
+}
+
+/** chartKeyOf is the chart's own label for one key, which is where a gap, an
+ * `n/a` account and the `(partial)` mark are written. */
+function chartKeyOf(node: ScreenElement, key: string): FakeScreen {
+  const found = all(node, 'spend-chart-key').filter((one) => one.getAttribute('data-key') === key)
+  expect(found, `expected one chart label for ${key}`).toHaveLength(1)
+  const first = found[0]
+  if (first === undefined) throw new Error(`no chart label for ${key}`)
+  return first
+}
+
+/** rowDrawn is the table's row for one key. */
+function rowDrawn(node: ScreenElement, key: string): FakeScreen {
+  const found = all(node, 'spend-row').filter((row) => row.getAttribute('data-key') === key)
+  expect(found, `expected one row for ${key}`).toHaveLength(1)
+  const first = found[0]
+  if (first === undefined) throw new Error(`no row for ${key}`)
   return first
 }
 
@@ -2379,63 +2420,256 @@ describe('renderSpend', () => {
     }
   })
 
-  it('draws the three accounts as three charts, each with its own axis top', () => {
-    // Three accounts, three charts: a shared axis would put a notional bar and
-    // a billed bar at heights that invite a comparison the design forbids.
+  it('draws one grouped chart on one shared axis, and never a chart per account', () => {
+    // One chart: the three accounts are three bars of one key, side by side on
+    // one axis, and the axis top is the largest value any of them draws -- the
+    // billed 1.25 of the 12th. The notional bar is its own share of that same
+    // axis (0.40 of 1.25), so the two are read against one scale and never
+    // against a total.
     const tree = renderSpend(factory, modelOf(), 'light')
-    const accounts = all(tree, 'spend-account')
-    expect(accounts.map((account) => account.getAttribute('data-account'))).toEqual([
-      'model',
+    expect(all(tree, 'spend-chart')).toHaveLength(1)
+    expect(all(tree, 'spend-account')).toEqual([])
+    expect(texts(tree, 'spend-axis-top')).toEqual(['$1.25'])
+    expect(texts(tree, 'spend-legend-word')).toEqual([
+      'billed model spend',
+      '~$ subscription list price',
+      'compute (estimated)',
+    ])
+    expect(barsOf(tree, '2026-10-12')).toHaveLength(3)
+    expect(barDrawn(tree, 'model', '2026-10-12').getAttribute('data-height')).toBe('100.0%')
+    expect(barDrawn(tree, 'notional', '2026-10-12').getAttribute('data-height')).toBe('32.0%')
+    expect(barDrawn(tree, 'compute', '2026-10-12').getAttribute('data-height')).toBe('9.6%')
+  })
+
+  it('never draws billed + notional as a figure, a bar or an axis', () => {
+    // The rule the design's money grammar turns on: the two accounts are
+    // different kinds of money and are never added. Billed 1.25 and notional
+    // 0.40 are on the same day of this document, so a screen that summed them
+    // would draw $1.65 -- as the day's figure, as the day's bar or as the axis
+    // top -- and this is the test that fails when it does.
+    const tree = renderSpend(factory, modelOf(), 'light')
+    expect(drawn(tree)).not.toContain('$1.65')
+    expect(texts(tree, 'spend-axis-top')).toEqual(['$1.25'])
+    expect(barDrawn(tree, 'model', '2026-10-12').getAttribute('data-height')).toBe('100.0%')
+    expect(barDrawn(tree, 'notional', '2026-10-12').getAttribute('data-height')).toBe('32.0%')
+    const row = rowDrawn(tree, '2026-10-12')
+    expect(texts(row, 'spend-model')).toEqual(['$1.25'])
+    expect(texts(row, 'spend-notional')).toEqual([`${NOTIONAL_MARK}$0.40`])
+  })
+
+  it('draws a key\'s bars as siblings on the axis, never stacked on one another', () => {
+    // Grouped, never stacked: each bar's foot is the axis, so its height is its
+    // own account's share of the axis top. Stacked, the notional bar would
+    // start where the billed one ends.
+    const tree = renderSpend(factory, modelOf(), 'light')
+    const bars = barsOf(tree, '2026-10-12')
+    expect(bars.map((bar) => bar.getAttribute('data-account'))).toEqual(['model', 'notional', 'compute'])
+    for (const bar of bars) {
+      const height = Number.parseFloat(bar.getAttribute('height') ?? '')
+      const foot = Number.parseFloat(bar.getAttribute('y') ?? '') + height
+      expect(foot).toBeCloseTo(100, 5)
+    }
+    const xs = bars.map((bar) => Number.parseFloat(bar.getAttribute('x') ?? ''))
+    expect(xs[0]).toBeLessThan(xs[1] ?? 0)
+    expect(xs[1]).toBeLessThan(xs[2] ?? 0)
+  })
+
+  it('draws the gridlines as shares of the one axis, and labels only its top', () => {
+    const tree = renderSpend(factory, modelOf(), 'light')
+    expect(all(tree, 'spend-gridline')).toHaveLength(4)
+    expect(all(tree, 'spend-gridline').map((line) => line.getAttribute('y1'))).toEqual(['75', '50', '25', '0'])
+    expect(all(tree, 'spend-axis-line')).toHaveLength(1)
+    expect(texts(tree, 'spend-axis-word')).toEqual(['axis'])
+    // The axis top is the one figure: a label on every line would be four
+    // numbers saying three times what the top already says.
+    expect(texts(tree, 'spend-axis-top')).toEqual(['$1.25'])
+  })
+
+  it('draws the chart as geometry: one aria-hidden svg in the drawing\'s own units', () => {
+    const tree = renderSpend(factory, modelOf(), 'light')
+    const svg = one(tree, 'spend-chart-svg')
+    expect(svg.tag).toBe('svg')
+    expect(svg.namespace).toBe('svg')
+    expect(svg.getAttribute('viewBox')).toBe('0 0 100 100')
+    expect(svg.getAttribute('preserveAspectRatio')).toBe('none')
+    expect(svg.getAttribute('aria-hidden')).toBe('true')
+    // Every value the chart draws is text beside it -- the key labels, the
+    // legend and the table -- so a reader told the svg is decoration loses no
+    // figure and no word.
+    expect(drawn(one(tree, 'spend-chart'))).toContain('$1.25')
+    expect(texts(one(tree, 'spend-chart'), 'spend-chart-key')).toHaveLength(4)
+  })
+
+  it('draws an axis of n/a, and no gridlines, when no account has a value to draw', () => {
+    const model = buildSpendModel({ ...MODEL_REPORT, rows: [] }, BUDGET)
+    const tree = renderSpend(factory, model, 'light')
+    expect(texts(tree, 'spend-axis-top')).toEqual([UNAVAILABLE_MARK])
+    // No scale, so no gridlines: a scale of nothing is not a measurement.
+    expect(all(tree, 'spend-gridline')).toEqual([])
+    // And no row and no bar invents a zero for an account the document does
+    // not carry: every money cell of the empty range says `n/a`.
+    expect(drawn(one(tree, 'spend-table'))).not.toContain('$0.00')
+    expect(texts(tree, 'spend-model')).toEqual([])
+  })
+
+  it('draws a gap as one hatched column and the table\'s own sentence, never a zero', () => {
+    const tree = renderSpend(factory, modelOf(), 'light')
+    const column = one(tree, 'spend-gap-column')
+    expect(column.getAttribute('data-key')).toBe('2026-10-14')
+    expect(Number.parseFloat(column.getAttribute('height') ?? '')).toBeCloseTo(100, 5)
+    expect(texts(tree, 'spend-chart-gap')).toEqual(['no record'])
+    // No account draws a bar for that day: a bar of no height reads as a
+    // measurement of zero, and there is no document at all behind the column.
+    expect(barsOf(tree, '2026-10-14')).toEqual([])
+    const row = rowDrawn(tree, '2026-10-14')
+    expect(row.getAttribute('data-gap')).toBe('true')
+    expect(texts(row, 'spend-gap-cell')).toEqual(['No record for this day. A gap, not a zero.'])
+    expect(texts(row, 'spend-model')).toEqual([])
+    expect(drawn(row)).not.toContain('$0.00')
+    // The runs the day does not cover are the console's gap mark, and the money
+    // columns are not there at all: three `n/a`s would read as three
+    // measurements, and there is no document behind the row.
+    expect(texts(row, 'spend-runs')).toEqual([GAP_MARK])
+    expect(texts(row, 'spend-run-hours')).toEqual([GAP_MARK])
+  })
+
+  it('tags a partial day in the chart and in the table, and keeps its figure', () => {
+    const tree = renderSpend(factory, modelOf(), 'light')
+    const bar = barDrawn(tree, 'model', '2026-10-15')
+    expect(bar.getAttribute('data-partial')).toBe('true')
+    expect(bar.getAttribute('data-hollow')).toBe('true')
+    // The height is a real one, and it is a share of the chart's own axis: 0.30
+    // of 1.25. Hollow is not empty.
+    expect(bar.getAttribute('data-height')).toBe('24.0%')
+    expect(barDrawn(tree, 'model', '2026-10-12').getAttribute('data-hollow')).toBe('false')
+    const key = chartKeyOf(tree, '2026-10-15')
+    expect(key.getAttribute('data-partial')).toBe('true')
+    expect(texts(key, 'spend-partial')).toEqual([PARTIAL_MARKER])
+    expect(chartKeyOf(tree, '2026-10-12').getAttribute('data-partial')).toBe('false')
+    const row = rowDrawn(tree, '2026-10-15')
+    expect(row.getAttribute('data-partial')).toBe('true')
+    expect(row.getAttribute('data-hollow')).toBe('true')
+    expect(texts(row, 'spend-partial')).toEqual([PARTIAL_MARKER])
+  })
+
+  it('draws the six headings and one row per period, the gap day included', () => {
+    const tree = renderSpend(factory, modelOf(), 'light')
+    const head = one(tree, 'spend-table-head')
+    expect(texts(head, 'spend-th')).toEqual([
+      'key',
+      'billed model',
+      'notional (list price)',
+      'compute (estimated)',
+      'runs',
+      'runtime',
+    ])
+    expect(all(tree, 'spend-row').map((row) => row.getAttribute('data-key'))).toEqual([
+      '2026-10-12',
+      '2026-10-13',
+      '2026-10-14',
+      '2026-10-15',
+    ])
+    expect(texts(rowDrawn(tree, '2026-10-13'), 'spend-runs')).toEqual(['1'])
+    expect(texts(rowDrawn(tree, '2026-10-13'), 'spend-run-hours')).toEqual([UNAVAILABLE_MARK])
+  })
+
+  it('draws no bar for an n/a account, and writes its n/a at the bar\'s own foot', () => {
+    // The 13th carries no notional and no compute: two of the group's three
+    // bars are absent -- not zero-height -- and each missing one says `n/a`.
+    const tree = renderSpend(factory, modelOf(), 'light')
+    expect(barsOf(tree, '2026-10-13').map((bar) => bar.getAttribute('data-account'))).toEqual(['model'])
+    const key = chartKeyOf(tree, '2026-10-13')
+    expect(all(key, 'spend-chart-na').map((none) => none.getAttribute('data-account'))).toEqual([
       'notional',
       'compute',
     ])
-    expect(texts(tree, 'spend-peak')).toEqual(['$1.25', `${NOTIONAL_MARK}$0.40`, 'est. $0.12'])
-    expect(texts(tree, 'spend-series').length).toBe(3)
-    expect(
-      texts(tree, 'spend-account-title').map((title) => (title ?? '').includes(NOTIONAL_MARK)),
-    ).toEqual([false, true, false])
+    expect(texts(key, 'spend-chart-na')).toEqual([UNAVAILABLE_MARK, UNAVAILABLE_MARK])
+    expect(drawn(key)).not.toContain('$0.00')
   })
 
-  it('draws a gap as the mark, and never as a zero-height measured bar', () => {
+  it('draws the four totals cells and the line that says the money is not added', () => {
     const tree = renderSpend(factory, modelOf(), 'light')
-    const point = pointDrawn(tree, 'model', '2026-10-14')
-    expect(point.getAttribute('data-state')).toBe('gap')
-    expect(point.getAttribute('data-height')).toBe(GAP_MARK)
-    expect(drawn(point)).toContain(GAP_MARK)
-    expect(drawn(point)).not.toContain('$0.00')
-  })
-
-  it('marks a partial point hollow and writes the marker beside it', () => {
-    const tree = renderSpend(factory, modelOf(), 'light')
-    const point = pointDrawn(tree, 'model', '2026-10-15')
-    expect(point.getAttribute('data-partial')).toBe('true')
-    expect(point.getAttribute('data-hollow')).toBe('true')
-    // The height is a real one, and it is a share of this account's own peak:
-    // 0.30 of 1.25.
-    expect(point.getAttribute('data-height')).toBe('24.0%')
-    expect(texts(point, 'spend-partial')).toEqual([PARTIAL_MARKER])
-    expect(pointDrawn(tree, 'model', '2026-10-12').getAttribute('data-hollow')).toBe('false')
-  })
-
-  it('carries the broken line in the markup: one segment count per chart', () => {
-    const tree = renderSpend(factory, modelOf(), 'light')
-    expect(texts(tree, 'spend-series').length).toBe(3)
-    expect(all(tree, 'spend-series').map((series) => series.getAttribute('data-segments'))).toEqual([
-      '2',
-      '2',
-      '1',
+    const totals = one(tree, 'spend-totals')
+    expect(texts(totals, 'spend-totals-word')).toEqual([
+      'billed model',
+      'notional (list price)',
+      'compute (estimated)',
+      'runs · runtime',
     ])
+    expect(texts(totals, 'spend-total-model')).toEqual(['$2.45'])
+    expect(texts(totals, 'spend-total-notional')).toEqual([`${NOTIONAL_MARK}$0.50`])
+    expect(texts(totals, 'spend-total-compute')).toEqual(['est. $0.12'])
+    expect(texts(totals, 'spend-total-runs')).toEqual(['4'])
+    expect(texts(totals, 'spend-total-run-hours')).toEqual(['1.50 h'])
+    expect(totals.getAttribute('data-partial')).toBe('true')
+    expect(texts(totals, 'spend-totals-partial')).toEqual(['Today is partial.'])
+    expect(texts(totals, 'spend-totals-rule')).toEqual([
+      'Billed and notional are different kinds of money, so they are never added together.',
+    ])
+    // Four cells, and not a fifth that added two of them.
+    expect(drawn(totals)).not.toContain('$2.95')
+  })
+
+  it('says nothing about a partial range when the document says the range is final', () => {
+    // "Today is partial." is a fact about this range, not a permanent label: a
+    // final range draws the rule and not the partial sentence.
+    const tree = renderSpend(factory, buildSpendModel(MODEL_REPORT, BUDGET), 'light')
+    const totals = one(tree, 'spend-totals')
+    expect(totals.getAttribute('data-partial')).toBe('false')
+    expect(texts(totals, 'spend-totals-partial')).toEqual([])
+    expect(texts(totals, 'spend-totals-rule')).toHaveLength(1)
+  })
+
+  it('lists the rows the range does not cover in the table, and draws none of them', () => {
+    const before = { ...DAY_ROWS[0], key: '2026-10-01', start: '2026-10-01', end: '2026-10-01' }
+    const model = modelOf({ ...DAY_REPORT, rows: [before, ...DAY_ROWS] })
+    const tree = renderSpend(factory, model, 'light')
+    expect(all(tree, 'spend-chart-key').map((key) => key.getAttribute('data-key'))).toEqual([
+      '2026-10-12',
+      '2026-10-13',
+      '2026-10-14',
+      '2026-10-15',
+    ])
+    expect(barsOf(tree, '2026-10-01')).toEqual([])
+    const row = rowDrawn(tree, '2026-10-01')
+    expect(row.getAttribute('data-gap')).toBe('false')
+    expect(texts(row, 'spend-model')).toEqual(['$1.25'])
   })
 
   it('writes every cell as text and sets no attribute that could act', () => {
     // The fake throws on the navigating attribute, `src`, `srcdoc`, `style`,
     // `formaction`, `action` and every `on*` handler, so what is left is
     // exactly the set below: the class hooks a stylesheet keys off, the title
-    // an explanation goes in, and `data-` readings.
+    // an explanation goes in, `data-` readings, the two ARIA states a segmented
+    // control and a chart have to carry, and the geometry of the chart (its own
+    // box and the four lengths of a bar) plus the span of the gap row's cell.
+    const allowed = new Set([
+      'class',
+      'title',
+      'type',
+      'aria-pressed',
+      'aria-hidden',
+      'viewBox',
+      'preserveAspectRatio',
+      'height',
+      'x',
+      'y',
+      'width',
+      'colspan',
+      'x1',
+      'x2',
+      'y1',
+      'y2',
+    ])
     const tree = renderSpend(factory, modelOf(), 'light')
     for (const node of walk(tree)) {
       for (const name of node.attributes.keys()) {
-        expect(name === 'class' || name === 'title' || name.startsWith('data-'), `${node.tag}[${name}]`).toBe(true)
+        expect(name.startsWith('data-') || allowed.has(name), `${node.tag}[${name}]`).toBe(true)
+      }
+      // Nothing here can be clicked into a navigation, load a resource, or run
+      // a handler: the screen draws figures and offers no destination.
+      for (const forbidden of ['style', 'href', 'src', 'onclick', 'oninput']) {
+        expect(node.attributes.has(forbidden), `${node.tag}[${forbidden}]`).toBe(false)
       }
     }
   })
@@ -2457,9 +2691,10 @@ describe('renderSpend', () => {
       rows: [{ ...MODEL_ROWS[0], key: 'claude\nsonnet' }],
     }
     const tree = renderSpend(factory, buildSpendModel(report, BUDGET), 'light')
-    const key = one(tree, 'spend-key')
-    expect(key.textContent).toBe(UNAVAILABLE_MARK)
+    // The chart's label and the table's cell are the same drawn key, twice.
+    expect(all(tree, 'spend-key').map((key) => key.textContent)).toEqual([UNAVAILABLE_MARK, UNAVAILABLE_MARK])
     expect(one(tree, 'spend-row').getAttribute('data-key')).toBe(UNAVAILABLE_MARK)
+    expect(chartKeyOf(tree, UNAVAILABLE_MARK).getAttribute('data-key')).toBe(UNAVAILABLE_MARK)
     expect(drawn(tree)).not.toContain('claude\nsonnet')
   })
 
