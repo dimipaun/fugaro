@@ -5,11 +5,21 @@
  *
  * **What it draws.** One picture, read left to right: a task, the short-lived cloud job it
  * starts, and the pull request the job ends in — the product's own promise, drawn rather than
- * written. The job is drawn as a cloud with a live spinner inside it and a dashed lifetime
- * ring around it, so the middle of the picture is a thing that is starting up and will not be
- * there afterwards; the dashed route either side of it is the work going in and the pull
- * request coming out, and the third card on the right is that pull request, drawn as a merge
- * into a base branch and marked with the palette's one "this finished" colour.
+ * written. The task is a filled card with a prompt mark and two lines of a request nobody has
+ * run yet; the job is a cloud of filled shapes with a live spinner cut into it in the ground's
+ * colour, so the middle of the picture is a thing that is starting up and will not be there
+ * afterwards; the dashed route either side of it is the work going in and the pull request
+ * coming out; and the third card is that pull request, filled in the palette's one "this
+ * finished" colour with a branch merging into a base drawn in the ground on it.
+ *
+ * **It is flat, and it is framed by nothing** (the owner's feedback of 2026-10-30, finding 2).
+ * What the live preview showed was a small box: a 1 px border around a panel, thin line art
+ * inside it and about a tenth of the screen spent on the one thing the page is about. The
+ * panel and its border are gone — every shape here is inset from the viewBox, and
+ * `website/test/landing-pages.mjs` reads that — and the drawing is filled shapes at weight
+ * rather than outlines at 3 px: the cloud, the two cards and the moon are fills, the strokes
+ * that are left are 6 px and up, and there is no gradient, no filter, no glow and no shadow
+ * anywhere in it, at rest or otherwise.
  *
  * **It is drawn, not fetched.** Everything is inline SVG in this file's own markup: no raster
  * file, no icon set, no font, no filter and no `<use>` pointing anywhere else, so the picture
@@ -43,21 +53,24 @@
  * The `<svg>` is `role="img"` with an `aria-label` beside it, because the picture is the page's
  * own argument rather than decoration: a reader who is not shown it is told what it says, once.
  *
- * **The motion is four quiet loops, and CSS only.** The spinner turns, the cloud floats, the
- * route's dashes drift and the trail dies away — no script, no scroll tie, nothing that moves a
- * reader's eye off the headline. Three of the four animate a property the browser composites
- * (`transform` and `opacity`) and only the route's dashes repaint, deliberately and once: the
- * drawing is on four pages and its loops run for as long as a tab is open, so the count that
- * paints is one. `Base.astro`'s one reduced-motion rule neutralises all four for a visitor who
- * asked their system for less motion (D105), which is why they need no
- * `@media (prefers-reduced-motion)` block of their own; `website/test/a11y.mjs` is the gate that
- * keeps that true.
+ * **The motion is a drift and a spinner, and it is the reader's choice.** The cloud drifts on
+ * an 11 s loop — the "slow subtle drift" the owner asked for, which is a thing that breathes
+ * rather than a thing that moves — and the spinner turns; both are `transform` only, which the
+ * browser hands to the compositor, and both are inside a `prefers-reduced-motion: no-preference`
+ * block, so a reader who asked their system for less motion is served the picture still rather
+ * than with a stopped animation. The picture also rises into place on the first frame the
+ * browser draws (`@starting-style`, 300 ms after the headline and 100 ms after the button), CSS
+ * only, so nothing about it depends on a script having run. `Base.astro`'s universal reduce rule
+ * is the second half of that pair, and `website/test/a11y.mjs` is the gate that keeps both true.
  *
  * **Where it lands, and what takes its place.** The picture is the hero's own and sits inside
- * `CampaignHero.astro`, under the headline and the sentence on a phone and beside them from the
- * wide breakpoint. It is not a variant's media: `[variant].astro` renders the file a variant
- * names — its video or its image — in the layout's `media` slot at the top of the page, and a
- * variant that has one does not render this drawing at all (F14, G2.5).
+ * `CampaignHero.astro`, under the words and the booking action on a phone and beside them from
+ * the wide breakpoint, in the wider of the hero's two columns — the owner's finding 2 asked for
+ * the picture to be the dominant thing on the first screen, and the headline across the top of
+ * the band is what leaves it the room to be one. It is not a variant's media: `[variant].astro`
+ * renders the file a variant names — its video or its image — in the layout's `media` slot at
+ * the top of the page, and a variant that has one does not render this drawing at all (F14,
+ * G2.5).
  */
 interface Props {
   /** The variant's tone (`savings`, `control`, `scale`, `playful`), from `landing.yaml`. */
@@ -78,91 +91,78 @@ const ALT = 'An illustration: a task starts a short-lived cloud job, and the job
 <svg
   class="campaign-hero-art"
   data-tone={tone}
-  viewBox="0 0 480 320"
+  viewBox="0 0 480 330"
   role="img"
   aria-label={ALT}
   preserveAspectRatio="xMidYMid meet"
 >
-  {/* The panel the drawing sits on: one step above the ground and below the cards, so the
-      picture reads as a thing laid on the page rather than as the page itself. Everything below
-      is placed inside it with a margin on each side, and the middle band — the ring, the cloud
-      and the routes — is the widest thing in the drawing, so the three cards and the job read
-      as one line a reader's eye travels along left to right. */}
-  <rect class="art-panel" x="1" y="1" width="478" height="318" rx="18" />
+  {/* The task, on the left: a filled card with a prompt mark and two lines of a request nobody
+      has run yet. It is the only shape the drawing leaves in the surface tone, so the two ends
+      of the line — the thing that goes in and the thing that comes out — are the two cards. */}
+  <rect class="art-card" x="8" y="120" width="136" height="180" rx="20" />
+  <path class="art-prompt" d="M34 178 l16 16 -16 16" />
+  <path class="art-bar" d="M66 194 h50" />
+  <path class="art-bar" d="M34 240 h96" />
 
-  {/* The task, on the left: a prompt mark and three lines of a request nobody has run yet. */}
-  <rect class="art-card" x="26" y="140" width="122" height="104" rx="14" />
-  <path class="art-mark" d="M44 156 l12 12 -12 12" />
-  <path class="art-line" d="M68 168 h50" />
-  <path class="art-line" d="M44 194 h86" />
-  <path class="art-line" d="M44 220 h62" />
+  {/* The route in: the task is handed to the job, which is the dashed line arriving at it. */}
+  <path class="art-route" d="M150 210 h22" />
+  <path class="art-arrow" d="M164 202 l10 8 -10 8" />
 
-  {/* The route in: the task is handed to the job, which is the dashed line arriving at it. The
-      dashes stop at the ring, because what the line arrives at is the job's own lifetime. */}
-  <path class="art-route" d="M152 192 h24" />
-  <path class="art-arrow" d="M172 186 l8 6 -8 6" />
-
-  {/* The job itself: a cloud that is starting up — a spinner inside it, a dashed lifetime ring
-      around it that keeps well clear of the cloud, a trail of dots behind it — and two particles
-      it throws off as it comes up, outside the ring so they read as coming off it. */}
-  <circle class="art-ring" cx="242" cy="192" r="56" />
+  {/* The job itself: one cloud of filled shapes — three circles on a rounded base, which is a
+      cloud drawn at weight rather than an outline — with the spinner cut into it in the ground's
+      colour. The spinner is a ring drawn three quarters empty: nothing about it is a picture of
+      progress, so it is deliberately not a bar a reader could read a percentage off. */}
   <g class="art-cloud">
-    <path class="art-cloud-shape" d="M208 206 A15 15 0 0 1 208 176 A19 19 0 0 1 242 168 A18 18 0 0 1 274 182 A13 13 0 0 1 274 206 Z" />
-    <circle class="art-spin" cx="242" cy="190" r="9" />
+    <circle class="art-cloud-part" cx="206" cy="230" r="34" />
+    <circle class="art-cloud-part" cx="244" cy="202" r="46" />
+    <circle class="art-cloud-part" cx="284" cy="232" r="30" />
+    <rect class="art-cloud-part" x="172" y="230" width="136" height="34" rx="17" />
+    <circle class="art-spin" cx="244" cy="216" r="22" />
   </g>
-  <g class="art-trail">
-    <circle class="art-dot" cx="206" cy="160" r="3" />
-    <circle class="art-dot" cx="196" cy="180" r="2.2" />
-    <circle class="art-dot" cx="212" cy="226" r="2.6" />
-  </g>
-  <path class="art-spark" d="M176 117 v11 M170.5 122.5 h11" />
-  <path class="art-spark" d="M306 259 v9 M301.5 263.5 h9" />
 
   {/* The tone's own motif, in the band the drawing leaves free above the job. */}
   <g class="art-motif" data-motif={tone}>
     {tone === 'savings' && (
       <>
         {/* A tenth of the price: the percent mark, drawn as its two dots and its slash. */}
-        <circle class="art-motif-line" cx="228" cy="98" r="5.5" />
-        <circle class="art-motif-line" cx="254" cy="74" r="5.5" />
-        <path class="art-motif-line" d="M222 106 l40 -44" />
+        <circle class="art-motif-line" cx="222" cy="58" r="9" />
+        <circle class="art-motif-line" cx="258" cy="96" r="9" />
+        <path class="art-motif-line" d="M214 106 l52 -56" />
       </>
     )}
     {tone === 'control' && (
       <>
         {/* One policy over every run: a shield, and the check inside it. */}
-        <path class="art-motif-line" d="M242 62 l18 8 v15 c0 11 -8 19 -18 24 -10 -5 -18 -13 -18 -24 V70 z" />
-        <path class="art-motif-line" d="M234 89 l6 7 12 -15" />
+        <path class="art-motif-line" d="M240 32 l30 12 v24 c0 18 -13 33 -30 41 -17 -8 -30 -23 -30 -41 V44 z" />
+        <path class="art-motif-line" d="M226 68 l10 12 20 -26" />
       </>
     )}
     {tone === 'scale' && (
       <>
         {/* Many runs at once: the same line, three lanes deep. */}
-        <path class="art-lane art-lane-1" d="M212 68 h60" />
-        <path class="art-lane art-lane-2" d="M204 82 h76" />
-        <path class="art-lane art-lane-3" d="M212 96 h60" />
+        <path class="art-lane art-lane-1" d="M204 54 h72" />
+        <path class="art-lane art-lane-2" d="M194 76 h92" />
+        <path class="art-lane art-lane-3" d="M204 98 h72" />
       </>
     )}
     {tone === 'playful' && (
       <>
         {/* Somewhere else while it works: two sleeping marks over the cloud, and the moon. */}
-        <path class="art-motif-line art-nap" d="M222 68 h20 l-20 16 h20" />
-        <path class="art-motif-thin art-nap" d="M250 94 h13 l-13 11 h13" />
-        <path class="art-motif-line art-moon" d="M284 62 a13 13 0 1 0 11 21 a10 10 0 1 1 -11 -21 z" />
+        <path class="art-motif-line art-nap" d="M216 50 h28 l-28 22 h28" />
+        <path class="art-motif-thin art-nap" d="M252 92 h15 l-15 12 h15" />
+        <path class="art-moon" d="M288 38 a16 16 0 1 0 14 26 a12 12 0 1 1 -14 -26 z" />
       </>
     )}
   </g>
 
-  {/* The route out, and the pull request it arrives at: merged into the base branch, marked
-      with the palette's "this finished" colour. */}
-  <path class="art-route" d="M302 192 h24" />
-  <path class="art-arrow" d="M318 186 l8 6 -8 6" />
-  <rect class="art-pr" x="334" y="140" width="120" height="104" rx="14" />
-  <circle class="art-pr-node" cx="358" cy="192" r="8" />
-  <path class="art-pr-merge" d="M370 192 h26" />
-  <path class="art-arrow" d="M390 186 l7 6 -7 6" />
-  <path class="art-pr-base" d="M418 174 v36" />
-  <path class="art-check" d="M422 156 l4 5 9 -11" />
+  {/* The route out, and the pull request it arrives at: a branch merged into a base, drawn in
+      the ground's colour on the palette's one "this finished" fill. */}
+  <path class="art-route" d="M312 210 h22" />
+  <path class="art-arrow" d="M326 202 l10 8 -10 8" />
+  <rect class="art-pr" x="336" y="120" width="136" height="180" rx="20" />
+  <path class="art-pr-merge" d="M398 210 h50" />
+  <path class="art-pr-base" d="M448 152 v116" />
+  <circle class="art-pr-node" cx="398" cy="210" r="17" />
 </svg>
 
 <style>
@@ -177,141 +177,111 @@ const ALT = 'An illustration: a task starts a short-lived cloud job, and the job
     height: auto;
   }
 
-  .art-panel {
-    fill: var(--panel);
-    stroke: var(--border);
-    stroke-width: 2;
-  }
-
-  .art-card,
-  .art-pr {
+  /* The three bodies of the drawing: the task and the pull request are cards, and the job is a
+     cloud. All three are fills with no stroke at all, which is what makes the picture flat. */
+  .art-card {
     fill: var(--surface);
-    stroke: var(--border);
-    stroke-width: 2;
   }
 
-  /* The pull request's card is the one thing on the page drawn in the "this finished" colour:
-     the run ends there, and the palette has one colour that means it. */
   .art-pr {
-    stroke: var(--ok);
+    fill: var(--ok);
   }
 
-  .art-mark,
+  .art-cloud-part {
+    fill: var(--art-accent);
+  }
+
+  /* The strokes that are left are the marks drawn on the bodies, at weight: the prompt mark and
+     the request's lines on the task, the routes, the arrows and the motif. */
+  .art-prompt,
   .art-route,
   .art-arrow,
-  .art-cloud-shape,
-  .art-ring,
-  .art-spin,
   .art-motif-line,
-  .art-spark {
+  .art-motif-thin,
+  .art-lane {
     fill: none;
     stroke: var(--art-accent);
     stroke-linecap: round;
     stroke-linejoin: round;
   }
 
-  .art-mark {
-    stroke-width: 6;
+  .art-prompt {
+    stroke-width: 12;
   }
 
-  .art-line {
+  .art-bar {
     fill: none;
     stroke: var(--text-muted);
-    stroke-width: 6;
+    stroke-width: 12;
     stroke-linecap: round;
-    opacity: 0.45;
+    opacity: 0.55;
   }
 
   /* The route, in and out: a dashed line a reader reads as work travelling rather than as a
-     border, and the arrowhead at the end of each one. */
+     border, and the arrowhead at the end of each one. It is static — the drift and the spinner
+     are the drawing's motion — so the picture keeps exactly the two loops the owner asked for. */
   .art-route {
-    stroke-width: 3;
-    stroke-dasharray: 8 8;
-    animation: art-flow 6s linear infinite;
+    stroke-width: 6;
+    stroke-dasharray: 14 12;
   }
 
   .art-arrow {
-    stroke-width: 3;
+    stroke-width: 6;
   }
 
-  .art-ring {
-    stroke-width: 2;
-    stroke-dasharray: 6 12;
-    opacity: 0.4;
-  }
-
-  .art-cloud-shape {
-    /* The cloud is filled with its own accent at a low opacity, which is what makes it a body
-       rather than an outline without adding a colour the palette does not carry. */
-    fill: var(--art-accent);
-    fill-opacity: 0.16;
-    stroke-width: 3;
-  }
-
-  .art-cloud {
-    animation: art-float 7s ease-in-out infinite;
-  }
-
-  /* The spinner: a ring drawn three quarters empty, turning. Nothing about it is a picture of
-     progress — the job is starting up — so it is deliberately not a bar a reader could read a
-     percentage off. It turns by `transform`, which the browser can hand to the compositor, and
-     not by `stroke-dashoffset`, which repaints the shape every frame: the drawing keeps exactly
-     one property that paints (the route's dashes) rather than two, because the picture is on
-     every campaign page and turns for as long as the tab is open. `transform-box: fill-box` is
-     what makes `center` the circle's own centre rather than the viewBox's origin. */
+  /* The spinner, cut into the cloud in the ground's colour: a fill of the cloud with a ring
+     taken out of it. `transform-box: fill-box` is what makes `center` the circle's own centre
+     rather than the viewBox's origin, and it turns by `transform`, which the browser can hand to
+     the compositor, and not by `stroke-dashoffset`, which repaints the shape every frame. */
   .art-spin {
-    stroke-width: 3;
-    stroke-dasharray: 15 42;
+    fill: none;
+    stroke: var(--ground);
+    stroke-width: 10;
+    stroke-dasharray: 104 34;
     transform-box: fill-box;
     transform-origin: center;
-    animation: art-spin 2.4s linear infinite;
   }
 
-  .art-dot {
-    fill: var(--art-accent);
-    opacity: 0.45;
-    animation: art-fade 5s ease-in-out infinite;
+  /* The pull request's merge, in the ground's colour on the "this finished" fill: the base
+     branch the one thick stroke in the drawing, which is what makes it read as the line
+     everything else lands on. */
+  .art-pr-merge,
+  .art-pr-base {
+    fill: none;
+    stroke: var(--ground);
+    stroke-linecap: round;
+    stroke-linejoin: round;
   }
 
-  .art-dot:nth-child(2) {
-    animation-delay: 1.1s;
+  .art-pr-merge {
+    stroke-width: 14;
   }
 
-  .art-dot:nth-child(3) {
-    animation-delay: 2.2s;
+  .art-pr-base {
+    stroke-width: 16;
   }
 
-  /* The particles the job throws off as it comes up: two small crosses, faint enough to be
-     texture rather than a second subject. */
-  .art-spark {
-    stroke-width: 2;
-    opacity: 0.5;
+  .art-pr-node {
+    fill: var(--ground);
   }
 
   .art-motif-line {
-    stroke-width: 3.5;
+    stroke-width: 10;
   }
 
   .art-motif-thin {
-    fill: none;
-    stroke: var(--art-accent);
-    stroke-width: 2.5;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-    opacity: 0.75;
+    stroke-width: 7;
   }
 
+  /* The moon is the drawing's other fill: a crescent, drawn rather than outlined. */
   .art-moon {
-    stroke-width: 3;
+    fill: var(--art-accent);
   }
 
   /* The lanes of `/scale`'s motif: the same line three times, the far one faintest, so the
      picture reads as many of one thing rather than as a stack of rules. */
   .art-lane {
-    fill: none;
-    stroke: var(--art-accent);
-    stroke-width: 3;
-    stroke-linecap: round;
+    stroke-width: 10;
   }
 
   .art-lane-2 {
@@ -320,23 +290,6 @@ const ALT = 'An illustration: a task starts a short-lived cloud job, and the job
 
   .art-lane-3 {
     opacity: 0.35;
-  }
-
-  .art-pr-node,
-  .art-pr-merge,
-  .art-pr-base,
-  .art-check {
-    fill: none;
-    stroke: var(--ok);
-    stroke-width: 3;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-  }
-
-  /* The base branch the pull request merges into: the one thick stroke in the drawing, which
-     is what makes it read as the line everything else lands on. */
-  .art-pr-base {
-    stroke-width: 6;
   }
 
   /* One accent per tone (spec §6). Three of the four are colours the palette gives a role to;
@@ -358,41 +311,68 @@ const ALT = 'An illustration: a task starts a short-lived cloud job, and the job
     --art-accent: var(--ok);
   }
 
-  /* `/crew` is the one the spec asks to be lighter: thicker, rounder strokes on the marks that
-     are not the cloud, so the playful register is in the drawing rather than in a colour. */
+  /* `/crew` is the one the spec asks to be lighter: thicker, rounder marks, so the playful
+     register is in the drawing rather than in a colour. */
   .campaign-hero-art[data-tone='playful'] .art-motif-line,
-  .campaign-hero-art[data-tone='playful'] .art-spark {
-    stroke-width: 4.5;
+  .campaign-hero-art[data-tone='playful'] .art-motif-thin,
+  .campaign-hero-art[data-tone='playful'] .art-prompt {
+    stroke-width: 13;
   }
 
-  /* The phone's own block: the drawing is smaller than the column and centred, so the headline
-     and the sentence under it keep the top of the page and the picture follows them (the
-     owner's feedback of 2026-10-30). The picture is read at 375 px more than at any other
-     width, and it is the block that gives way. */
+  /* The phone's own block: the drawing is the widest thing the column holds and centred, so the
+     headline, the sentence and the booking link keep the top of the page and the picture follows
+     them (the owner's feedback of 2026-10-30, finding 2). */
   @media (max-width: 30rem) {
     .campaign-hero-art {
-      max-width: 20rem;
+      max-width: 24rem;
       margin-inline: auto;
     }
   }
 
-  /* The wide viewport's: the picture sits on the hero's outer edge, in the column the layout
-     gives it, rather than floating in the middle of it. */
-  @media (min-width: 48rem) {
+  /* The wide viewport's: the picture sits on the hero's outer edge, in the wider of the two
+     columns the hero gives it, rather than floating in the middle of it. */
+  @media (min-width: 60rem) {
     .campaign-hero-art {
       margin-inline-start: auto;
     }
   }
 
-  /* The work travelling towards the pull request: the offset is the dash pattern's own length
-     and not a duration, so the loop lands where it started and nothing jumps. `.art-route` is
-     `stroke-dasharray: 8 8`, one period of 16, and two periods take the dashes exactly where the
-     second one began. This is the drawing's one animation of a property that paints rather than
-     composites — it is kept because a static dashed line says "route" and a moving one says
-     "work is on it", and it is one short path on each side of the job. */
-  @keyframes art-flow {
-    to {
-      stroke-dashoffset: -32;
+  /* The motion, and the reader's answer to it. Both loops are inside `no-preference`, so a
+     reader who asked their system for less motion gets the picture still — not a picture with a
+     stopped animation in it — and the entrance is the first frame the browser draws, which is
+     CSS only: a page with no script, or a browser without `@starting-style`, shows the drawing
+     as it is. 300 ms is the last step of the hero's stagger, after the headline, the sentence
+     and the button. */
+  @media (prefers-reduced-motion: no-preference) {
+    .art-cloud {
+      animation: art-drift 11s ease-in-out infinite;
+    }
+
+    .art-spin {
+      animation: art-spin 3.2s linear infinite;
+    }
+
+    .campaign-hero-art {
+      transition:
+        opacity var(--duration-entrance) var(--ease-out),
+        transform var(--duration-entrance) var(--ease-out);
+      transition-delay: 300ms;
+    }
+
+    @starting-style {
+      .campaign-hero-art {
+        opacity: 0;
+        transform: translateY(18px);
+      }
+    }
+  }
+
+  /* The drift: seven units of travel over eleven seconds, which is a thing that breathes rather
+     than a thing that moves, and it ends where it started so a stopped animation is the drawing
+     at rest rather than one tilted by where it stopped (D105). */
+  @keyframes art-drift {
+    50% {
+      transform: translateY(-7px);
     }
   }
 
@@ -400,20 +380,6 @@ const ALT = 'An illustration: a task starts a short-lived cloud job, and the job
   @keyframes art-spin {
     to {
       transform: rotate(360deg);
-    }
-  }
-
-  /* The float's end state is where it started, so a visitor who asked for less motion gets the
-     drawing still rather than one tilted by a stopped animation (D105). */
-  @keyframes art-float {
-    50% {
-      transform: translateY(-4px);
-    }
-  }
-
-  @keyframes art-fade {
-    50% {
-      opacity: 0.85;
     }
   }
 </style>

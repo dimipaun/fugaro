@@ -494,13 +494,19 @@ test('the campaign parameters reach the booking link and no other address on the
 
   const doc = parse(withFrame(builtPage()))
   const links = (label) => findAll(doc, (el) => el.name === 'a' && textOf(el).trim() === label)
+  // The booking link is on the page twice: the hero's, which is the first screen's action, and
+  // the closing band's (the owner's feedback of 2026-10-30). Both are the file's one link and
+  // neither may carry a campaign parameter — the hero's is the one a visitor meets first, so a
+  // parameter that leaked into either would reach the booking from the top of the page.
   const demo = links(DEMO_LABEL)
-  assert.equal(demo.length, 1, `the campaign page carries ${demo.length} "${DEMO_LABEL}" links`)
-  assert.equal(
-    demo[0].attrs.get('href'),
-    LANDING.calendlyURL,
-    `the plain booking link is ${JSON.stringify(demo[0].attrs.get('href'))}: it is the link landing.yaml writes, with no query of its own, and it is what a visitor who declined the marketing consent keeps (F22)`,
-  )
+  assert.equal(demo.length, 2, `the campaign page carries ${demo.length} "${DEMO_LABEL}" links`)
+  for (const link of demo) {
+    assert.equal(
+      link.attrs.get('href'),
+      LANDING.calendlyURL,
+      `a plain booking link is ${JSON.stringify(link.attrs.get('href'))}: it is the link landing.yaml writes, with no query of its own, and it is what a visitor who declined the marketing consent keeps (F22)`,
+    )
+  }
   const chat = links(CHAT_LABEL)
   assert.equal(chat.length, 1, `the campaign page carries ${chat.length} "${CHAT_LABEL}" links: the spec's third call to action is the WhatsApp chat, and the pre-fill message names the page the visitor came from`)
   assert.equal(

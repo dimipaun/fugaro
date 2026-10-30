@@ -1107,8 +1107,9 @@ func newPairRevokeCmd() *cobra.Command {
 			"sweep rather than pretending the account is gone.\n" +
 			"\n" +
 			"Exactly one of --uid and --name selects the device, and a --name that\n" +
-			"matches more than one node is refused with their uids rather than revoked\n" +
-			"ambiguously.\n" +
+			"matches more than one node is refused rather than revoked ambiguously: the\n" +
+			"refusal says how many it matched, and `fugaro pair ls` prints the uids to\n" +
+			"pick one from.\n" +
 			"\n" +
 			"Its own state is the local config, as it is for the rest of the command.",
 		Args: cobra.NoArgs,
@@ -1192,7 +1193,7 @@ func runPairRevoke(cmd *cobra.Command, o *pairRevokeOptions) error {
 		}})
 	}
 	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "revoked %s", device.UID)
+	fmt.Fprintf(out, "revoked %s", pairCell(device.UID))
 	if device.Name != "" {
 		fmt.Fprintf(out, " (%s)", pairCell(device.Name))
 	}
@@ -1206,8 +1207,9 @@ func runPairRevoke(cmd *cobra.Command, o *pairRevokeOptions) error {
 // own key, so it either is a device or is not one. A name is not unique: the
 // node's children are unconstrained and two hands may have paired two phones
 // under one name, and a revoke that picked one of them would revoke a device
-// the operator did not mean. It is refused with the uids instead, which is what
-// makes `pair ls` the step before it.
+// the operator did not mean. It is refused by class and count instead — echoing
+// neither the typed selector nor the node's uids — which is what makes
+// `pair ls` the step before it.
 func pairSelectDevice(rows []pairDeviceRow, o *pairRevokeOptions, lc *localcfg.Config) (pairDeviceRow, string, error) {
 	if o.uid != "" {
 		for _, r := range rows {
@@ -1231,13 +1233,13 @@ func pairSelectDevice(rows []pairDeviceRow, o *pairRevokeOptions, lc *localcfg.C
 		return pairDeviceRow{}, pairRefusedNoPairing,
 			fmt.Errorf("no device paired with %s is named %q: --name matches the device node's own name field exactly, and `fugaro pair ls` prints the names %s holds", lc.Name, o.name, lc.Name)
 	default:
-		uids := make([]string, 0, len(named))
-		for _, r := range named {
-			uids = append(uids, r.UID)
-		}
-		sort.Strings(uids)
+		// The typed selector is not echoed and neither are the uids: --name's
+		// value is the operator's own input and the uids come out of a node
+		// nobody constrained, and this sentence is printed where `pair ls`'s
+		// own, sanitised listing is the place to read them. The refusal names
+		// itself and how many pairings it matched, and nothing else.
 		return pairDeviceRow{}, pairRefusedTwoPairings,
-			fmt.Errorf("%d devices are named %q (%s): revoke needs one, so name it by uid with --uid %s", len(named), o.name, strings.Join(uids, ", "), uids[0])
+			fmt.Errorf("revoke matched %d devices by name: revoke needs one, so name it by uid with --uid, which `fugaro pair ls` prints", len(named))
 	}
 }
 

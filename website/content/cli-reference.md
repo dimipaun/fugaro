@@ -2207,8 +2207,9 @@ orphan the history sweep's to remove — which is why this command names the
 sweep rather than pretending the account is gone.
 
 Exactly one of --uid and --name selects the device, and a --name that
-matches more than one node is refused with their uids rather than revoked
-ambiguously.
+matches more than one node is refused rather than revoked ambiguously: the
+refusal says how many it matched, and `fugaro pair ls` prints the uids to
+pick one from.
 
 Its own state is the local config, as it is for the rest of the command.
 
