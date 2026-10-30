@@ -8,7 +8,7 @@ where they differ. Base: `origin/main` at `e9dacf54b`, 2026-10-26.
 **Status: plan only. Nothing is implemented, and NO TASK IS APPROVED.** Each task needs the owner's
 explicit go; answering a decision approved none of them.
 
-The owner's answers of 2026-10-26 that shape it:
+The owner's answers that shape it — D400-D408 of 2026-10-26, and D409 of 2026-10-30:
 
 - **D406** (the notice's timing): moot; a new licence lands as `ee/LICENSE.md`. **D407:** the notice goes in with it. **D408:** a Team seat buys the `ee/` licence for the marked files, enforced by the licence key, plus support.
 - **D400** (not the recommendation): the console, mobile app, coordinator and orchestrators stay where
@@ -18,6 +18,9 @@ The owner's answers of 2026-10-26 that shape it:
   consent (F17), and only on `/save`, `/control`, `/scale` and `/crew` by the loader's path check; the CSP
   widens site-wide because it is one header (F18, O2).
 - **D402** SSO and audit logs are gates this plan tracks and does not build.
+- **D409** (not the recommendation): while a variant's figure is the sentinel `unmeasured`, the
+  campaign page renders no proof band at all — no figure, no notice about one and no placeholder
+  (F6). Spec §6's section 2 is absent from all four pages until a measured figure is published.
 - **D403** the business sections live in the owner's private `fugaro-business` repository; no task here
   writes to it.
 - **D404** the plan gates on "launch-ready", on whatever release the owner cuts.
@@ -43,7 +46,7 @@ The owner's answers of 2026-10-26 that shape it:
 - Numbers: decisions **D400-D429** and checks **160-169** are this work's block, taken above the highest
   decision written (D367) and reserved (up to D389 by the Bitbucket credentials plan) under `docs/` on
   `main` and in open PRs, and above the highest check reserved (154).
-  D400-D408 are written and answered; D409-D429 and checks 163-169 are reserved and unused.
+  D400-D409 are written and answered; D410-D429 and checks 163-169 are reserved and unused.
 
 ## Global constraints and review focus
 

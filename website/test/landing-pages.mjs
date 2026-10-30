@@ -20,7 +20,9 @@
 //      be — the band's whole job is to be the one place a measurement appears, and a figure
 //      typed into it would be the claim F6 refuses (G2.1's guard reads the file; this reads the
 //      built page). The other half is a case below: a variant whose figure the measurement backs
-//      does render the band, with the figure and the entry it was drawn from.
+//      does render the band, with the figure and the entry it was drawn from. That the section
+//      is absent rather than empty is the owner's answer of 2026-10-30, recorded as D409, and
+//      with it the four pages omit spec §6's section 2 on purpose.
 //   4. **A visitor who declines marketing consent still has a working way to book and a way to
 //      chat.** The booking call to action is a plain `<a href>` to the file's Calendly link and
 //      the chat one is the `wa.me` link the file's WhatsApp number and the variant's own
@@ -41,8 +43,9 @@
 //      name for a reader who is not shown it, and no text inside the drawing, because a picture
 //      made of words is a second paragraph the page's word ceiling would have to count. The
 //      drawing is the page's own and not a variant's media: a variant that names a video or an
-//      image still takes the media slot at the top of the page instead (the owner's feedback of
-//      2026-10-30; F14, G2.5).
+//      image still takes the media slot at the top of the page instead, and renders no drawing
+//      (D409's row records the owner's feedback of 2026-10-30, which asked for the picture as
+//      well as the band's absence; F14, G2.5).
 //
 // **Red step** (the plan's own, recorded here as the plan requires — the line this file printed
 // before the template existed): the first case below failed with
@@ -447,6 +450,17 @@ test('a variant that names a video renders it in the hero, and one whose file is
     ['main', 'video', 'h1'],
     `the /save page draws ${JSON.stringify(order.slice(0, 3))}; the video is the campaign's own and sits at the top of the hero, above the headline (F14)`,
   )
+  // The drawing stands down for the variant that brought its own media: the owner's file is
+  // what the top of that page is for, and two pictures of the same campaign would be one too
+  // many (D409's row, F14). Asserted here because `art` is the one behaviour no shipped page
+  // can read — every variant in website/data/landing.yaml names neither a video nor an image,
+  // so only this copy, where one does, reaches the prop's false half.
+  const saveArt = findAll(parse(save.html), (el) => el.name === 'svg' && (el.attrs.get('class') ?? '').split(/\s+/).includes('campaign-hero-art'))
+  assert.equal(
+    saveArt.length,
+    0,
+    `/save renders ${saveArt.length} hero illustration(s) although its variant names a video: a variant with media of its own takes the media slot and the hero draws nothing beside it (F14, G2.5)`,
+  )
 
   // The variant whose file the owner has not produced: no player, and the page is otherwise
   // whole — its own headline, its own calls to action.
@@ -460,6 +474,14 @@ test('a variant that names a video renders it in the hero, and one whose file is
   const headline = findAll(parse(crew.html), 'h1').map((el) => textOf(el).trim())
   assert.deepEqual(headline, [LANDING.variants.find((one) => one.name === 'crew').headline], '/crew lost its headline along with the missing video, so the page is not complete without the file')
   assert.equal(findAll(parse(crew.html), (el) => el.name === 'a' && textOf(el).trim() === 'Book a demo').length, 1, '/crew lost its booking link along with the missing video')
+  // And the drawing is there: `/crew` names a video the repository does not carry, so the
+  // variant has no media and the hero draws the campaign's picture — the same fallback the four
+  // shipped pages take today, reached here by a variant that did name a file (F14, G2.5).
+  assert.equal(
+    findAll(parse(crew.html), (el) => el.name === 'svg' && (el.attrs.get('class') ?? '').split(/\s+/).includes('campaign-hero-art')).length,
+    1,
+    "/crew's hero draws no illustration although the video it names is not served: a variant whose media the build does not hold renders the page complete, with the campaign's picture in the hero rather than a hole (F14, G2.5)",
+  )
 })
 
 // ---- 6. the campaign chrome: no menu, a minimal footer, and a responsive mode -------------
@@ -649,12 +671,27 @@ test('the hero\'s picture sits under the words on a phone, and every tone paints
         `${rel} declares .campaign-hero-art with ${what} written nowhere: the drawing is read on a phone and on a desktop, and each width's rule is written down rather than inherited (the owner's feedback of 2026-10-30)`,
       )
     }
+    // The width rules each say which side of the breakpoint they are on, and at least one of
+    // them lays the hero out in more than one column: the filter above is vacuous on a hero that
+    // never declares one, so the drawing would be asserted beside the copy by nothing at all.
+    // The properties a two-column hero could be written with are all admitted — the point is
+    // that the hero becomes two columns somewhere, not that it does it with a grid.
+    const TWO_COLUMNS = /grid-template-columns\s*:\s*[^;]*\S|flex-direction\s*:\s*row|columns\s*:\s*[2-9]/
     for (const rule of rules.filter((r) => r.selector.includes('.campaign-hero') && /grid-template-columns/.test(r.body))) {
       assert.ok(
         (rule.conditions ?? []).length > 0,
         `${rel} places the picture beside the copy at every width: the hero is one column until a breakpoint says otherwise, so a phone is never asked to read a headline and a drawing side by side (the owner's feedback of 2026-10-30)`,
       )
     }
+    assert.ok(
+      rules.some(
+        (rule) =>
+          rule.selector.includes('.campaign-hero') &&
+          (rule.conditions ?? []).some((condition) => /min-width\s*:|width\s*>=/.test(condition)) &&
+          TWO_COLUMNS.test(rule.body),
+      ),
+      `${rel} never lays its hero out in more than one column: the drawing sits beside the copy on a wide viewport rather than under it at every width, and the rule that does it is the wide viewport's own (the owner's feedback of 2026-10-30)`,
+    )
 
     // One accent per tone, and the four are not one colour under four names.
     const accents = TONES.map((tone) => {

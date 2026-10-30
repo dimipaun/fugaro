@@ -43,10 +43,13 @@
  * The `<svg>` is `role="img"` with an `aria-label` beside it, because the picture is the page's
  * own argument rather than decoration: a reader who is not shown it is told what it says, once.
  *
- * **The motion is three quiet loops, and CSS only.** The spinner turns, the cloud floats, the
+ * **The motion is four quiet loops, and CSS only.** The spinner turns, the cloud floats, the
  * route's dashes drift and the trail dies away — no script, no scroll tie, nothing that moves a
- * reader's eye off the headline. `Base.astro`'s one reduced-motion rule neutralises all four for
- * a visitor who asked their system for less motion (D105), which is why they need no
+ * reader's eye off the headline. Three of the four animate a property the browser composites
+ * (`transform` and `opacity`) and only the route's dashes repaint, deliberately and once: the
+ * drawing is on four pages and its loops run for as long as a tab is open, so the count that
+ * paints is one. `Base.astro`'s one reduced-motion rule neutralises all four for a visitor who
+ * asked their system for less motion (D105), which is why they need no
  * `@media (prefers-reduced-motion)` block of their own; `website/test/a11y.mjs` is the gate that
  * keeps that true.
  *
@@ -251,10 +254,16 @@ const ALT = 'An illustration: a task starts a short-lived cloud job, and the job
 
   /* The spinner: a ring drawn three quarters empty, turning. Nothing about it is a picture of
      progress — the job is starting up — so it is deliberately not a bar a reader could read a
-     percentage off. */
+     percentage off. It turns by `transform`, which the browser can hand to the compositor, and
+     not by `stroke-dashoffset`, which repaints the shape every frame: the drawing keeps exactly
+     one property that paints (the route's dashes) rather than two, because the picture is on
+     every campaign page and turns for as long as the tab is open. `transform-box: fill-box` is
+     what makes `center` the circle's own centre rather than the viewBox's origin. */
   .art-spin {
     stroke-width: 3;
     stroke-dasharray: 15 42;
+    transform-box: fill-box;
+    transform-origin: center;
     animation: art-spin 2.4s linear infinite;
   }
 
@@ -375,18 +384,22 @@ const ALT = 'An illustration: a task starts a short-lived cloud job, and the job
     }
   }
 
-  /* The work travelling towards the pull request, and the far end of the route. The dashes and
-     the ring are the drawing's own lengths rather than a duration: one period of the dash
-     pattern, so the loop lands where it started and nothing jumps. */
+  /* The work travelling towards the pull request: the offset is the dash pattern's own length
+     and not a duration, so the loop lands where it started and nothing jumps. `.art-route` is
+     `stroke-dasharray: 8 8`, one period of 16, and two periods take the dashes exactly where the
+     second one began. This is the drawing's one animation of a property that paints rather than
+     composites — it is kept because a static dashed line says "route" and a moving one says
+     "work is on it", and it is one short path on each side of the job. */
   @keyframes art-flow {
     to {
       stroke-dashoffset: -32;
     }
   }
 
+  /* A full turn: the transform `art-spin` is applied to, which the compositor can own. */
   @keyframes art-spin {
     to {
-      stroke-dashoffset: -57;
+      transform: rotate(360deg);
     }
   }
 
