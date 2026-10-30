@@ -424,12 +424,12 @@ function drawnPairs(): ReadonlySet<string> {
  * nothing emits": a rule may name a class the code draws and an attribute §2
  * lists, and still select nothing, because **the attribute is on a different
  * element** -- `span.spend-partial[data-partial='true']` is that shape, and the
- * design's own §2.4 puts `data-partial` on the point, the row and the totals
- * line rather than on the marker span inside them.
+ * design's own §2.4 puts `data-partial` on the chart's key, the row and the
+ * totals line rather than on the marker span inside them.
  *
  * The reading is a walk in source order, because the code reuses its names: a
- * screen's `element` is an `li.spend-point` in `point()` and an `li.spend-row`
- * in `rowLine()`, so each `const name = <emitter>` rebinds, a
+ * screen's `element` is a `section.spend-caps` in `capsPanel()` and a
+ * `div.spend-chart` in `chart()`, so each `const name = <emitter>` rebinds, a
  * `setAttribute('class', …)` on the name adds to its classes, and an attribute
  * write on the name is recorded against every class it then carries.
  *

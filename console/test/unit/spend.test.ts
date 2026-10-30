@@ -1900,15 +1900,128 @@ describe('the caps panel', () => {
     const row = all(tree, 'spend-cap-repo')[1]
     if (row === undefined) throw new Error('no second repository row')
     // The `acme/docs` row: its daily cap is `null` with `daily_cap_source:
-    // "none"` (`internal/cli/budget.go`'s `capSource`), and its headroom is
-    // `null` too because there is no cap to measure against. Both are `n/a`.
+    // "none"` (`internal/cli/budget.go`'s `capSource`), so the cap is `n/a` with
+    // the reader's reason and the scope word says no cap is set at that scope.
     expect(texts(row, 'spend-cap-daily')).toEqual([UNAVAILABLE_MARK])
-    expect(texts(row, 'spend-cap-headroom')).toEqual([UNAVAILABLE_MARK])
+    expect(one(row, 'spend-cap-daily').getAttribute('title')).toBe('the document has no repos[].daily_cap_usd')
+    expect(texts(row, 'spend-scope')).toEqual(['no cap is set at this scope', 'the repository default'])
     // The zeros that *are* there are the document's own measured zeros --
     // `counted_usd` and `notional_usd` are plain numbers on the wire, and a
     // repository that counted nothing today counted zero.
     expect(texts(row, 'spend-cap-counted')).toEqual(['$0.00'])
     expect(texts(row, 'spend-cap-notional')).toEqual([`${NOTIONAL_MARK}$0.00`])
+  })
+
+  it('heads the panel and draws every figure of the global row under its own word', () => {
+    // The panel is a list of labelled figures, not a table: no column header
+    // carries `billed` or `headroom`, so each figure carries its own word, and a
+    // reader never meets a run of numbers that says nothing about which account
+    // each one belongs to.
+    const tree = renderSpend(factory, modelOf(), 'light')
+    expect(texts(tree, 'spend-caps-title')).toEqual(['Caps today'])
+    const global = one(tree, 'spend-cap-global')
+    expect(figureWords(global)).toEqual([
+      'daily cap',
+      'per-run cap',
+      'counted',
+      'billed',
+      'notional',
+      'headroom',
+    ])
+    // Each word is beside its own figure: `budget show`'s six global values, in
+    // the CLI's own meaning (`internal/cli/budget.go`'s `showGlobal`).
+    expect(texts(capFigureOf(global, 'spend-cap-daily'), 'spend-cap-daily')).toEqual(['$25.00'])
+    expect(texts(capFigureOf(global, 'spend-cap-per-run'), 'spend-cap-per-run')).toEqual(['$25.00'])
+    expect(texts(capFigureOf(global, 'spend-cap-counted'), 'spend-cap-counted')).toEqual(['$12.50'])
+    expect(texts(capFigureOf(global, 'spend-cap-spent'), 'spend-cap-spent')).toEqual(['$10.00'])
+    expect(texts(capFigureOf(global, 'spend-cap-notional'), 'spend-cap-notional')).toEqual([
+      `${NOTIONAL_MARK}$4.20`,
+    ])
+    expect(texts(capFigureOf(global, 'spend-cap-headroom'), 'spend-cap-headroom')).toEqual(['$12.50'])
+  })
+
+  it('draws the bar at the counted share of the daily cap, and never at a sum (MUTATION)', () => {
+    // `counted_usd` is the figure the daily cap is enforced against
+    // (`budget.Counters.Counted`, `internal/budget/model.go`: the money reserved
+    // by runs and not yet released, a ceiling on spend), so it is the figure the
+    // bar draws. The design's "billed + compute" is its assumption #2 and not a
+    // figure the document holds: the renderer adds nothing, and billed, notional
+    // and compute are three accounts.
+    //
+    // Mutation: feed the fill `spent + compute` -- the sum the design's sentence
+    // invites -- instead of `counted`, and this test fails. The widget counted
+    // $3.00 of a $5.00 cap (60 units of the bar's hundred), while its billed
+    // $2.00 plus the $0.75 compute the document prices is $2.75 (55 units).
+    const priced = buildSpendModel(DAY_REPORT, {
+      ...BUDGET,
+      repos: [{ ...THE_REPOS[0], compute_usd: 0.75 }],
+    })
+    const row = firstRepoRow(renderSpend(factory, priced, 'light'))
+    expect(one(row, 'spend-cap-bar-fill').getAttribute('width')).toBe('60')
+    expect(one(row, 'spend-cap-bar-track').getAttribute('width')).toBe('100')
+    // Decorative geometry: the two figures it stands for are text beside it.
+    expect(one(row, 'spend-cap-bar-svg').getAttribute('aria-hidden')).toBe('true')
+    expect(texts(row, 'spend-cap-counted')).toEqual(['$3.00'])
+    expect(texts(capFigureOf(row, 'spend-cap-daily'), 'spend-cap-daily')).toEqual(['$5.00'])
+    // A repository past its cap draws a full bar rather than a share larger
+    // than the cap, and says so in words.
+    const over = buildSpendModel(DAY_REPORT, {
+      ...BUDGET,
+      repos: [{ ...THE_REPOS[0], counted_usd: 9, headroom_usd: 0 }, ...THE_REPOS.slice(1)],
+    })
+    expect(one(firstRepoRow(renderSpend(factory, over, 'light')), 'spend-cap-bar-fill').getAttribute('width')).toBe(
+      '100',
+    )
+  })
+
+  it('says "at cap" in words, amber beside the bar and never colour alone', () => {
+    // A cap reached is a fact the panel may colour only because it also says it
+    // (design section 3.5): the word is drawn either where the document's own
+    // measured headroom has run out -- the CLI measures it under the
+    // repository's cap *and* the project's -- or where the counted dollars are
+    // at or past the cap the row carries.
+    const reached = buildSpendModel(DAY_REPORT, {
+      ...BUDGET,
+      repos: [
+        { ...THE_REPOS[0], counted_usd: 3, daily_cap_usd: 3, headroom_usd: 0 },
+        { ...THE_REPOS[1], counted_usd: 1, daily_cap_usd: 5, headroom_usd: 0 },
+        ...THE_REPOS.slice(2),
+      ],
+    })
+    const tree = renderSpend(factory, reached, 'light')
+    const rows = all(tree, 'spend-cap-repo')
+    expect(rows.map((row) => row.getAttribute('data-at-cap'))).toEqual(['true', 'true', 'false'])
+    expect(texts(rows[0] ?? tree, 'spend-cap-at-cap')).toEqual(['at cap'])
+    expect(texts(rows[1] ?? tree, 'spend-cap-at-cap')).toEqual(['at cap'])
+    // The repository under its cap draws neither the word nor the tone.
+    expect(texts(rows[2] ?? tree, 'spend-cap-at-cap')).toEqual([])
+    // An unavailable headroom is not a zero: the `acme/docs` row above carries
+    // no cap at all and is not drawn as a repository at its limit.
+    expect(all(tree, 'spend-cap-at-cap').length).toBe(2)
+  })
+
+  it('draws no bar for a repository with no daily cap, and no sum in its place', () => {
+    const row = all(renderSpend(factory, modelOf(), 'light'), 'spend-cap-repo')[1]
+    if (row === undefined) throw new Error('no second repository row')
+    // A bar of no length would read as a measurement of zero, so a cap the
+    // document does not carry draws no geometry at all -- and the counted
+    // dollars beside it are still the document's own measured zero.
+    expect(all(row, 'spend-cap-bar-svg')).toEqual([])
+    expect(all(row, 'spend-cap-bar-fill')).toEqual([])
+    expect(one(row, 'spend-cap-bar')).toBeDefined()
+    expect(texts(row, 'spend-cap-counted')).toEqual(['$0.00'])
+    expect(row.getAttribute('data-at-cap')).toBe('false')
+  })
+
+  it('sets no attribute on the caps panel that could act', () => {
+    // The caps panel draws geometry and figures and offers no destination: no
+    // node carries a style, a destination, a resource or a handler.
+    const tree = one(renderSpend(factory, modelOf(), 'light'), 'spend-caps')
+    for (const node of walk(tree)) {
+      for (const forbidden of ['style', 'href', 'src', 'onclick', 'oninput']) {
+        expect(node.attributes.has(forbidden), `${node.tag}[${forbidden}]`).toBe(false)
+      }
+    }
   })
 
   it('reads `compute_usd` off a cap row as an estimate, and n/a where there is none', () => {
@@ -2375,6 +2488,23 @@ function one(node: ScreenElement, className: string): FakeScreen {
 function firstRepoRow(tree: ScreenElement): FakeScreen {
   const first = all(tree, 'spend-cap-repo')[0]
   if (first === undefined) throw new Error('no repository row')
+  return first
+}
+
+/** figureWords is the word every labelled figure of a caps block carries, in
+ * document order: the panel draws no column headers, so this is how a test says
+ * which figure is which. */
+function figureWords(node: ScreenElement): readonly string[] {
+  return all(node, 'spend-cap-figure').map((figure) => figure.childNodes()[0]?.textContent ?? '')
+}
+
+/** capFigureOf is the labelled figure whose number cell carries `className`,
+ * which is how a test says a figure is under the word it was drawn with. */
+function capFigureOf(node: ScreenElement, className: string): FakeScreen {
+  const found = all(node, 'spend-cap-figure').filter((figure) => all(figure, className).length > 0)
+  expect(found, `expected one figure for .${className}`).toHaveLength(1)
+  const first = found[0]
+  if (first === undefined) throw new Error(`no figure for .${className}`)
   return first
 }
 

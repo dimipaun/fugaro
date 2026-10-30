@@ -2151,3 +2151,111 @@ td.spend-compute {
 td.spend-gap-cell {
   color: var(--text-3);
 }
+
+/* ---- Caps today (console redesign, step 4b-2) -----------------------------
+ *
+ * The panel is a list of **labelled figures** rather than a table: no column
+ * header carries `billed`, `counted` or `headroom`, so every figure is drawn as
+ * the word for what it is beside the number itself, and a reader never meets a
+ * run of dollars that says nothing about which account each one belongs to.
+ * **The renderer adds nothing**: billed, notional and compute are three accounts
+ * drawn apart, and the daily-cap bar draws the CLI's own `counted_usd` against
+ * `daily_cap_usd` -- never a sum.
+ *
+ * A repository at its cap is painted amber **and says so**: `span.spend-cap-at-cap`
+ * carries the words, so the tone is never the only carrier of the fact (the
+ * styling design's section 3.5).
+ * ------------------------------------------------------------------------- */
+
+section.spend-caps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+h2.spend-caps-title {
+  margin: 0;
+  font-size: var(--text-label);
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+/* The mode is a chip: the one setting the whole panel is read under, on its own
+ * raised track rather than in the flow of the figures. */
+span.spend-caps-mode {
+  align-self: flex-start;
+  padding: var(--space-3xs) var(--space-sm);
+  background: var(--surface-sunken);
+  border: var(--rule-width) solid var(--line-subtle);
+  border-radius: var(--radius-pill);
+  color: var(--text-2);
+}
+
+/* The three blocks of figures -- the project's largest lease, the repository
+ * defaults and the global row -- are one wrapped line each, so a narrow window
+ * costs a line and never a figure (section 4.2). */
+div.spend-cap-limit,
+div.spend-cap-defaults,
+div.spend-cap-global {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-md);
+}
+
+/* The largest single lease keeps its own edge: it is a limit on one lease, not a
+ * cap, and the moved border is what says it sits outside the block whose word is
+ * `global`. */
+div.spend-cap-limit[data-limit='max_reserve'] {
+  border-left: 3px solid var(--accent);
+  padding-left: var(--space-xs);
+}
+
+div.spend-cap-figure {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3xs);
+}
+
+span.spend-cap-word {
+  color: var(--text-3);
+  font-size: var(--font-size-xs);
+}
+
+/* The daily-cap bar: a track that is the cap and a fill that is the counted
+ * dollars, in the chart's own hundred-unit box, stretched to this window by
+ * `preserveAspectRatio="none"`. */
+div.spend-cap-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-sm);
+}
+
+svg.spend-cap-bar-svg {
+  width: 8rem;
+  height: 0.5rem;
+  align-self: center;
+}
+
+rect.spend-cap-bar-track {
+  fill: var(--surface-sunken);
+  stroke: var(--line-subtle);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+rect.spend-cap-bar-fill {
+  fill: var(--accent);
+}
+
+li.spend-cap-repo[data-at-cap='true'] rect.spend-cap-bar-fill {
+  fill: var(--warn);
+}
+
+span.spend-cap-at-cap {
+  color: var(--warn-text);
+  font-size: var(--font-size-xs);
+}
