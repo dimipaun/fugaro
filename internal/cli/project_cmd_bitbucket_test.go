@@ -220,6 +220,27 @@ func TestPolicyPublishNeverDropsTheBitbucketBlockSilently(t *testing.T) {
 	}
 }
 
+// TestPolicyPublishRefusesABitbucketAPIRootTheNodeWouldRefuse: the local key is
+// copied into the node and held to the node's own rule there — one rule, in
+// projectpolicy, applied by the decode the publish runs before it writes
+// anything (D474). So a root the node refuses is a publish that changed
+// nothing, and the operator reads which entry it was.
+func TestPolicyPublishRefusesABitbucketAPIRootTheNodeWouldRefuse(t *testing.T) {
+	f := newProjectFixture(t, "bitbucket_api_roots: [http://api.bitbucket.example/2.0]\n")
+	_, _, err := execute(t, "project", "policy", "publish")
+	if err == nil {
+		t.Fatal("publishing an http API root was allowed: the runner sends the Bitbucket token to this root")
+	}
+	for _, want := range []string{"bitbucket_api_roots[0]", "http://api.bitbucket.example/2.0", "https"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if f.db.Value(projectpolicy.PathShared()) != nil {
+		t.Error("a node was written anyway")
+	}
+}
+
 // publishNodeBytes is the published node as the document it is, for the
 // assertions that are about a key's presence rather than a decoded value.
 func publishNodeBytes(t *testing.T, f *projectFixture) []byte {
