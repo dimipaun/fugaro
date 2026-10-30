@@ -15,12 +15,29 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
-// userCommand runs the user command tree on its own. `fugaro user` is not
-// registered yet (E1a leaves the registration to E1b, after the pairing
-// wiring), so execute — which runs the root tree — cannot reach it.
+// userCommand runs the user command tree on its own, so a case here drives one
+// command's own flags and output without the root's persistent hooks (the
+// plugin staleness line, the update check). That the root reaches the command
+// is TestUserIsRegisteredOnTheRoot's to say, not this harness's.
 func userCommand(t *testing.T, args ...string) (string, string, error) {
 	t.Helper()
 	return userCommandOn(t, newUserCmd(), args...)
+}
+
+// TestUserIsRegisteredOnTheRoot: `fugaro user` is wired into the released tree
+// (root.go). Every other case here calls newUserCmd() directly, so nothing else
+// in this file would notice the command falling out of the root.
+func TestUserIsRegisteredOnTheRoot(t *testing.T) {
+	cmd, _, err := NewRootCmd().Find([]string{"user", "add"})
+	if err != nil {
+		t.Fatalf("fugaro user add does not resolve on the root tree: %v", err)
+	}
+	if cmd == nil || cmd.CommandPath() != "fugaro user add" {
+		t.Fatalf("the root tree resolves fugaro user add to %v, want fugaro user add", cmd)
+	}
+	if parent := cmd.Parent(); parent == nil || parent.Name() != "user" || parent.Hidden {
+		t.Errorf("fugaro user add's parent is %v, want the visible fugaro user command", parent)
+	}
 }
 
 // userCommandOn is userCommand on a command tree the caller built.

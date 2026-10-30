@@ -57,6 +57,7 @@ Subcommands:
 - `fugaro update` -- Re-converge the installation, or a checkout's repository, after a CLI upgrade
 - `fugaro update-skills` -- Pin the Fugaro plugin in the repository's .claude/settings.json to this release
 - `fugaro upgrade` -- Bring checkouts up to this fugaro: pin the plugin, install or update it in Claude Code, refresh the repository's images
+- `fugaro user` -- List, add and remove the installation's launchers and operators
 - `fugaro validate` -- Check a fugaro.yaml against the schema and the repository
 - `fugaro verify` -- Run and record this repository's build, test or lint command (inside a Fugaro run)
 - `fugaro version` -- Print the fugaro version
@@ -4030,6 +4031,157 @@ Flags:
 | `--repo` | string | "" | no | owner/name of the repository; it must be the checkout's origin (one PATH only) |
 | `--workflow` | stringArray | `[]` | no | a workflow to refresh (repeatable; default: every workflow in fugaro.yaml; one PATH only) |
 | `--yes` | bool | `false` | no | confirm every step of the cloud step without asking (the base copy, the check-job update and each billable build, with no cap), and without a terminal; never in a coding agent's session |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro user`
+
+List, add and remove the installation's launchers and operators
+
+List the installation's launchers and operators, and add a person to one of
+the two lists or remove them from it.
+
+The two lists are terraform.launchers and terraform.operators in this machine's own project config. They are what the operator's next
+fugaro update applies to the installation, so a change made here takes effect
+then, and nothing is applied by this command: no IAM grant is written, no
+repository is touched and no invitation is sent.
+
+A member is one person, written as user:<email>. Only user: members are
+written here: domain:, group:, serviceAccount:, allUsers,
+allAuthenticatedUsers and wildcards are refused (reconciliation F42 — the
+launcher and operator roles carry the token signer's own role, so a domain:
+member would grant a whole domain the right to mint a launcher's identity).
+fugaro setup --launcher/--operator remains the door for a whole list, group
+members included.
+
+add and rm read the installation's own outputs first and refuse when they
+disagree with this machine's config: a list written here replaces the
+installation's on the next fugaro update, so a config that has not seen the
+members another operator added would drop them.
+
+Usage: `fugaro user`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for user |
+
+Subcommands:
+
+- `fugaro user add` -- Add a person to the installation's launchers or operators
+- `fugaro user ls` -- List the installation's launchers and operators
+- `fugaro user rm` -- Remove a person from the installation's launchers or operators
+
+## `fugaro user add`
+
+Add a person to the installation's launchers or operators
+
+Change one member of one of the installation's two IAM lists: terraform.launchers and terraform.operators in this machine's own project config.
+
+The member is added to, or removed from, the list --role names, and the other
+list is left exactly as it is. --role is required and has no default: adding
+someone to the wrong list is a grant, and a default would decide that for the
+person typing.
+
+Both subcommands read the installation's own outputs before they write and
+refuse when they disagree with this machine's config, because this machine's
+lists are what the next fugaro update applies: a config that predates a member
+another operator added would revoke that member. The refusal names the list
+that differs and the command that settles it (fugaro update).
+
+It prints an invite naming the project, the install line and the fact that the
+repository's fugaro.yaml names the project, to paste wherever the person will
+read it: no email is sent.
+
+Run it in your own terminal, with your own credentials. A coding agent's
+session is refused.
+
+Usage: `fugaro user add MEMBER`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for add |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--role` | string | "" | no | which list to change: launcher or operator (required) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro user ls`
+
+List the installation's launchers and operators
+
+List the members of terraform.launchers and terraform.operators in this machine's own project config, as they are written there now.
+
+It is this machine's own copy of the two lists: no member is fetched from the
+cloud and none is granted, and no Terraform runs. What the installation itself
+holds can differ — a change another operator applied, or one made here and not
+yet applied by a fugaro update — and only the outputs would tell, which is the
+read add and rm make.
+
+A machine with no project config of its own is refused rather than answered
+with two empty lists: the lists are not in the shared config, and selection's
+fallback to it is a fetch of the runs bucket that only this machine's own file
+would have made unnecessary.
+
+Usage: `fugaro user ls`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for ls |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro user rm`
+
+Remove a person from the installation's launchers or operators
+
+Change one member of one of the installation's two IAM lists: terraform.launchers and terraform.operators in this machine's own project config.
+
+The member is added to, or removed from, the list --role names, and the other
+list is left exactly as it is. --role is required and has no default: adding
+someone to the wrong list is a grant, and a default would decide that for the
+person typing.
+
+Both subcommands read the installation's own outputs before they write and
+refuse when they disagree with this machine's config, because this machine's
+lists are what the next fugaro update applies: a config that predates a member
+another operator added would revoke that member. The refusal names the list
+that differs and the command that settles it (fugaro update).
+
+Run it in your own terminal, with your own credentials. A coding agent's
+session is refused.
+
+Usage: `fugaro user rm MEMBER`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for rm |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--role` | string | "" | no | which list to change: launcher or operator (required) |
 
 Subcommands:
 
