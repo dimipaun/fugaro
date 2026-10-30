@@ -197,7 +197,10 @@ export function createUpdateController(deps: UpdatePolicyDeps): UpdateController
 
   /** onDownloaded hands the ready version to the app, unless a launch is in
    * flight: replacing the app mid-launch is the one thing D763 forbids, and the
-   * prompt is what has to wait, not the download. */
+   * prompt is what has to wait, not the download. The version is the one this
+   * policy asked the feed for, not the one the event carries: what the client
+   * says it downloaded is the client's word, and the console already knows which
+   * release it pointed the feed at. */
   const onDownloaded = (): void => {
     const version = downloading
     if (version === null) return
