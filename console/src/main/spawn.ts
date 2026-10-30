@@ -346,9 +346,10 @@ export function locationsFor(platform: string = process.platform): PlatformLocat
  * with `process.env` anywhere in this file, and that is the property
  * `test/unit/spawn.test.ts` diffs the child's own report against.
  *
- * **It is the whole list on both routes, and the WSL route adds exactly two keys
- * to the environment `wsl.exe` is handed (`WSLENV_KEY` and `WSL_UTF8_VAR`, see
- * `childEnvironment`).** Neither is a variable the distribution receives:
+ * **It is the whole list on both routes, and the WSL route adds `WSLENV_KEY` to
+ * the environment `wsl.exe` is handed always and `WSL_UTF8_VAR` only when the
+ * spawn asked for UTF-8 (`wslUtf8`, see `childEnvironment`).** Neither is a
+ * variable the distribution receives:
  * `WSLENV_KEY` is `wsl.exe`'s own share list, and the console states it empty
  * rather than leaving it out, so "no Windows variable is shared with the
  * distribution" is a sentence this console wrote rather than a default it

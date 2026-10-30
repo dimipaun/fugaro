@@ -424,21 +424,33 @@ describe('budgetComputeSupported', () => {
     expect(budgetComputeSupported(LAUNCH_CLI_FLOOR)).toBe(false)
   })
 
-  it('is asked over a range whose every member is below the floor, so no reachable state passes the flag yet', () => {
-    // The predicate is named before its caller, and the caller alone is not
-    // enough: the Spend screen's caps read is withheld in every mode that is
-    // not `ok` (`REDUCED_VIEW_OPERATIONS.caps`, `src/main/ipc.ts`), and `ok` is
-    // exact-minor membership of this range -- so a CLI at or above the floor is
-    // a CLI whose caps read is withheld. Widening the range to the minor that
-    // carries the flag is the other half of the change, and this test fails the
-    // day it lands without the floor being reconsidered in the same commit.
-    for (const minor of SUPPORTED_CLI_MINORS) {
-      expect(budgetComputeSupported(`${minor}.0`), minor).toBe(false)
-      expect(budgetComputeSupported(`${minor}.9`), minor).toBe(false)
+  it('is asked of the floor itself, whose own minor the range reaches later', () => {
+    // The minors this walks are the floor's, not `SUPPORTED_CLI_MINORS`: the
+    // range is widened to the minor that carries the flag by the same change
+    // that flips the Spend screen's read, so a case asserting over the range
+    // would go red on that commit for a reason that is not this comparison's.
+    // What the predicate promises is a patch comparison against the floor, and
+    // every patch of every minor below it is a refusal however close.
+    const [floorMajor = '0', floorMinorText = '0'] = BUDGET_COMPUTE_CLI_FLOOR.split('.')
+    const floorMinor = Number(floorMinorText)
+    expect(floorMinor).toBeGreaterThan(0)
+    for (let minor = 0; minor < floorMinor; minor += 1) {
+      for (const patch of [0, 1, 9]) {
+        const line = `${floorMajor}.${String(minor)}.${String(patch)}`
+        expect(budgetComputeSupported(line), line).toBe(false)
+      }
     }
-    const above = classifyCliVersion(BUDGET_COMPUTE_CLI_FLOOR)
-    expect(above.mode).toBe('reduced')
-    expect(hidesView(above, 'caps')).toBe(true)
+    // The other half is the range's, and it is the reason the predicate is not
+    // enough on its own: `ok` is exact-minor membership, and the caps read is
+    // withheld in every mode that is not `ok` (`REDUCED_VIEW_OPERATIONS.caps`,
+    // `src/main/ipc.ts`) -- so a CLI at the floor is drawn in the reduced mode
+    // with its caps read withheld while the floor's minor is outside the range,
+    // and the flag being passable and the figure being askable land together
+    // only when the range widens to that minor.
+    const atFloor = classifyCliVersion(BUDGET_COMPUTE_CLI_FLOOR)
+    const inRange = SUPPORTED_CLI_MINORS.includes(`${floorMajor}.${String(floorMinor)}`)
+    expect(atFloor.mode).toBe(inRange ? 'ok' : 'reduced')
+    expect(hidesView(atFloor, 'caps')).toBe(!inRange)
   })
 })
 
