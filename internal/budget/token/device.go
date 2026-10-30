@@ -55,6 +55,18 @@ func DecodeDeviceKey(s string) ([]byte, error) {
 	if err != nil || len(key) != DeviceKeySize {
 		return nil, fmt.Errorf("%w: it must be one unpadded base64url string of %d characters decoding to %d bytes", ErrDeviceKey, deviceKeyEncoding.EncodedLen(DeviceKeySize), DeviceKeySize)
 	}
+	// X25519's canonical encoding has the top bit of the last byte clear, and
+	// crypto/ecdh masks that bit away rather than refusing it — so a key with it
+	// set combines to the same secret, and SealDelivery refuses it for exactly
+	// that reason: sealing would bind bytes the phone's own
+	// priv.PublicKey().Bytes() never spells, which is an AAD the phone cannot
+	// reproduce and an envelope it could never open. Refused here, at the
+	// decode, so a request node carrying one fails where the reply is read and
+	// before the operator is asked to type anything — not at the delivery, after
+	// the device node has been written.
+	if key[DeviceKeySize-1]&0x80 != 0 {
+		return nil, fmt.Errorf("%w: the key ends %#x, whose top bit is X25519's discarded one, so this is not the canonical spelling of the key the phone holds", ErrDeviceKey, key[DeviceKeySize-1])
+	}
 	return key, nil
 }
 

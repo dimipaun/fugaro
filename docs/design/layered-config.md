@@ -128,7 +128,7 @@ The table is `config.Scopes` in code; `docs/project-layer.md` prints it, and a d
 | `workflows.*.base`, `checkout`, `image.{node,apt,setup,skip_build_scripts,tools}`, `commands.*`, `cache`, `resources.*`, `timeouts.{stage,verify,render,finalize_reserve}`, `rebuild.*`, `inputs.*` | | yes | yes | | |
 | `workflows.*.timeouts.total` | | yes | yes | yes | |
 | `workflows.*.image.jdk` | | | yes | | refused on every base, as today |
-| `workflows.*.dockerfile` | | | yes | | it names a file in the repository |
+| `workflows.*.dockerfile`, `image.key_files` | | | yes | | they name files in the repository |
 | `workflows.*.secrets` | | | yes | | secrets belong to one repository's Secret Manager entries |
 | `followup.trusted`, `followup.allow_public` | | | yes | | they decide whose comments steer a run with the repository's credentials |
 | `rigor.default`, `rigor.areas` | yes | | yes | | the mode is a default and not a floor, so either layer may set it and a narrower layer may lower a wider one (D21); the two `areas` lists are a union, not a replacement, so a repository's own rules never switch off the project's (D20c) |

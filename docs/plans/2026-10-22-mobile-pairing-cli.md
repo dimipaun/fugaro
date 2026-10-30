@@ -593,6 +593,7 @@ One object per act, always with `project`:
   "pairing": { "uid": "p~…", "state": "completed", "expires_at": "…" },
   "request": { "key_fingerprint": "K7QM-3X2B", "at": "…" },
   "device": { "uid": "m~…", "name": "…", "email": "…", "role": "admin" },
+  "keychain_item": "aurora-BBBBBBBBBBBBBBBBBBBBBB",
   "wrote": ["config/admin/devices/m~…", "pairing/p~…/delivery"],
   "refused": [],
   "warnings": []
@@ -613,7 +614,13 @@ key do appear on stdout in it. That is the exception this section's "a token nev
 said out loud rather than assumed: the payload is the code's own content, the operator's screen
 shows it anyway, the token is one-shot and dead in five minutes, and the API key is the restricted
 web key the app's config already carries — while the MAC key, the device token, the keychain item
-and the typed code stay out of every event, `qr` included.)*
+and the typed code stay out of every event, `qr` included. **Amended 2026-10-30 (T3b):**
+`keychain_item` is a field of the document, and it carries the item's **name** and never its value.
+The two rules above can both hold — "the item's value never does" is a rule about the value only if
+the name may appear — and the field is what the operator records in the local config and what a
+console screen shows: nothing else tells them what `mailbox.keychain_item` should say (§6), since
+nothing writes that file. The item's name is derived (decision 9) and is not a secret (M5), so the
+`done` document is where it belongs.)*
 
 ### 4.6 Exit codes
 
@@ -740,6 +747,30 @@ store the device token and the MAC key **in secure storage only** (P3.1's rule) 
 configuration from the payload, not the scan (D199). The code is derived per pairing and never
 stored.
 
+**"Read" means a listener attached at sign-in, and the reason is §7.1 step 9.**
+*(Amended 2026-10-30, T3b.)* The CLI's wait ends when the **operator** types the code; the delivery
+is written in that instant and the whole `pairing/$uid` subtree is deleted in the next one, because
+the payload must not sit readable for the hour the `p~` ID token lives (§7.3.3, decision 2). The
+phone is not in that instant and cannot be: it signs in as soon as it has written its request — it
+holds the pairing token from the QR and needs nothing from the CLI to exchange it — and then has no
+signal for when the code will be typed. A one-shot `get` issued *after* sign-in therefore races a
+window microseconds wide and loses it. What the contract requires is a **listener on
+`pairing/$uid` (a `value` observer) attached as soon as the token is exchanged**, holding the
+delivery out of the first snapshot that carries one: Firebase dispatches the write and the later
+delete as two events, so a client that is watching receives the payload, and a client that asks
+afterwards is told the session is over. A read that arrives late is **not** a reason to re-pair
+without an operator: the phone says the pairing expired and shows the code path again.
+
+**What this costs, stated rather than smoothed over:** the delivery's lifetime is the delete's
+latency, so a phone that is offline, backgrounded or whose listener fails to attach at that moment
+gets nothing and must be paired again. The alternative — the CLI waiting for a receipt before it
+deletes — needs a node the phone may **write**, and the merged rules give the pairing uid exactly
+two children: `request`, write-once by the pairing token, and `delivery`, which is `.write: false`
+(§2 (a) 4, M14). Adding an ack node is a rules change and a second wire contract, so it is a
+decision for the owner and a task of its own, not something this plan can assume: until then the
+listener above is the contract P6.8 implements, and the sweep's own rule (decision 1) is what
+clears a session nobody completed.
+
 ### 7.3 The three orderings that are load-bearing
 
 1. **Node before token** (M4). A delivered token with no device node is a phone that fails `USER`
@@ -749,6 +780,10 @@ stored.
 3. **Delivery before the pairing node's deletion** (step 8 before step 9), and **the deletion before
    the CLI exits**. Deleting the subtree first would make a delivered token unusable; leaving it
    behind keeps the payload readable for the life of the `p~` ID token.
+   *(Amended 2026-10-30, T3b: this ordering is what makes §7.2's "read" a listener rather than a
+   fetch. The deletion follows the write immediately, so the only reliable way for the phone to see
+   the payload is to be watching for it — and that is the phone's half of the ordering, not the
+   CLI's, which is why §7.2 states it as part of its contract rather than here.)*
 
 ---
 
@@ -1334,6 +1369,20 @@ plan diverges from the mobile plan's task text**, and they are the ones that hol
     **ANSWERED 2026-10-29 (owner): one keychain item PER PAIRING (amended).** Widen the
     `mailbox.keychain_item` config block in `internal/localcfg` and add it to T3's files (§15, §16):
     a per-pairing key lets `revoke` revoke exactly one phone.
+    **Amended 2026-10-30 (T3b): the name, and its arithmetic.** T3b derives the name as
+    `<project>-<uid without its m~ prefix>` — the project's name, one separator, and the uid's
+    22-character body — and it is **the whole of the name** because the ceiling is
+    `keychain.ParseItem`'s 64 characters, the uid's body is 22 of them, and a project name may be 40
+    (1–40 of `[a-z0-9-]`). A fixed prefix of any length — the obvious `fugaro-mailbox-` — is
+    therefore a name that cannot be built for the longest project names the local config accepts,
+    and a pairing that cannot name its item is one that cannot store a key at all. The two
+    constraints pull in opposite directions and the ceiling wins: the project's name
+    must be in the name (M5's `ParseItem` rule, so a config cannot name another project's item) and
+    the uid's body must be in it (so `revoke` finds the item from the uid, this decision's own
+    requirement), which leaves exactly one
+    character of slack. **Cost:** the name is less obviously ours in a keychain UI. **The
+    alternative** — a shorter uid body — is a change to the uid's shape (§2 (e)) for the sake of a
+    label.
 10. **Does this plan ship a pin?**
     **Recommended: no.** The owner's ruling for this change is **docs only, no code**, and a pin is a
     Go test. **Cost, stated plainly:** nothing reads this document, so its citations, its §8.4
@@ -1422,6 +1471,17 @@ plan diverges from the mobile plan's task text**, and they are the ones that hol
    is `token.Lifetime` and the ID-token persistence is UNVERIFIED U2 of the mobile reconciliation —
    so decision 1's age is derived from a documented behaviour, and a real project is what would
    confirm it.
+9. **The OS keychain's storing side exists on Linux only, so `fugaro pair` cannot complete on
+   macOS.** *(Added 2026-10-30, T3b.)* The merged P4.1 reader has a `security` row and a
+   `secret-tool` row; the writer T3b adds has a `secret-tool` row alone, because M11 keeps the key
+   out of every argv and `secret-tool store` reads it from standard input. macOS's `security` does
+   have argv-safe forms — `add-generic-password -w` with no value prompts on the terminal, and
+   `security -i` reads whole commands from standard input — but neither is a path this container can
+   exercise, so T3b refuses the write there with `ErrBackend` and says so (the sentence names
+   `-w <value>`'s argv and the two forms it cannot test) rather than guessing at one. **The
+   consequence is not small and is not hidden:** the platform this CLI is most likely to run on is
+   the one where pairing stops at the keychain step. A darwin writer, tested on a darwin runner, is
+   a task of its own and is **not** in this plan's §15.
 
 ---
 

@@ -12,9 +12,12 @@ import (
 	"github.com/bmatcuk/doublestar/v4"
 )
 
-// Dir is a Tree over a plain directory, for tests that need no git
-// repository. Its blob IDs are computed the way git computes them for a
-// SHA-1 repository from the file's bytes, with no filters applied.
+// Dir is a Tree over a plain directory: the checkout the renderer stands
+// in, and the tests that need no git repository. Production reads the
+// build's own side as a git tree (Open, Clone) where it has one; the
+// renderer runs before any of that and only needs the paths its key files
+// have, not git's blob IDs, which Dir computes the way git computes them
+// for a SHA-1 repository from the file's bytes, with no filters applied.
 type Dir struct{ Root string }
 
 func (d Dir) file(path string) (string, error) {

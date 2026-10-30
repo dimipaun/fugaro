@@ -239,21 +239,40 @@ type Config struct {
 }
 
 // Mailbox is the mailbox block: what the mailbox consumer needs from the
-// operator's own machine.
+// operator's own machine, one entry per pairing.
 type Mailbox struct {
-	// KeychainItem is the OS keychain item the pairing key lives at (M5,
-	// D113b). It is configuration and it is not a secret — it may be printed,
-	// and the diagnostic a missing key produces names it — but its shape is
-	// fixed, because it becomes an argv element of a keychain program: at most
-	// 64 characters of A-Z, a-z, 0-9, '.', '_' and '-', carrying this project's
-	// name, so a config file cannot name an arbitrary keychain query and two
-	// projects on one machine cannot be made to read each other's key.
+	// KeychainItem names the OS keychain item each pairing's MAC key lives at
+	// (M5, D113b, decision 9): the key is one per pairing, so the item is one
+	// per pairing, and this map is keyed by the uid that names the pairing.
 	//
+	// The key is the uid `fugaro pair` wrote for the phone — `m~…`, which is
+	// what `pair ls` prints and `pair revoke` names — so that a revoke deletes
+	// exactly one phone's item, and a pairing session's `p~…` is accepted too,
+	// because a session is what a partially written config would hold. Both
+	// halves are the shape a uid has (§2 (e), 128 random bits in unpadded
+	// base64url), and a key that is not one is refused rather than kept as a
+	// name nothing will ever look up.
+	//
+	// The value is the item's name: configuration, and not a secret — it may
+	// be printed, and the diagnostic a missing key produces names it — but its
+	// shape is fixed, because it becomes an argv element of a keychain program:
+	// at most 64 characters of A-Z, a-z, 0-9, '.', '_' and '-', carrying this
+	// project's name, so a config file cannot name an arbitrary keychain query
+	// and two projects on one machine cannot be made to read each other's key.
 	// The shape is keychain.ParseItem's, not a second copy of the rule:
 	// validate refuses a name that package refuses, with that package's
 	// sentence.
-	KeychainItem string `yaml:"keychain_item,omitempty"`
+	KeychainItem map[string]string `yaml:"keychain_item,omitempty"`
 }
+
+// pairUIDRE is the shape of the uid a mailbox entry may be keyed by: a pairing
+// session's `p~` or a paired device's `m~`, followed by the 22 unpadded
+// base64url characters 128 random bits spell (token.PairingPrefix and
+// token's deviceUIDBytes). It is this file's copy of that shape and not the
+// token package's function, because the token package mints uids and this one
+// only recognises them; a key that is not a uid is a line an operator can fix,
+// and every uid this installation mints matches.
+var pairUIDRE = regexp.MustCompile(`^[mp]~[A-Za-z0-9_-]{22}$`)
 
 // CredentialsService is the credentials service block: the installation's own
 // Cloud Run service, as the launcher needs it (docs/credentials-service,
@@ -1027,6 +1046,27 @@ func legacyBaseImageKey(kind string) string {
 // configs, whose project: was the GCP project.
 const oldProjectKey = "local config: `project:` is now `gcp_project:`, and the file lives at projects/<name>.yaml with name: <name>; see docs/design/m9-budget-and-dashboard.md §13.1"
 
+// oldMailboxKeychainItem refuses the shape decision 9 replaced: one item name
+// for the project, where the block now holds one per pairing. It is read off
+// the raw document for the reason oldProjectKey is: decoded into the map the
+// field is now, a scalar is yaml's own type error, which says nothing about
+// what to do — and there is no shim to write, because a single name names no
+// pairing and which phone's key it held is exactly what it does not say
+// (pre-1.0, no compatibility).
+func oldMailboxKeychainItem(mailbox *yaml.Node) string {
+	if mailbox.Kind != yaml.MappingNode {
+		return ""
+	}
+	for i := 0; i+1 < len(mailbox.Content); i += 2 {
+		k, v := mailbox.Content[i], mailbox.Content[i+1]
+		if k.Value != "keychain_item" || v.Kind == yaml.MappingNode || v.Tag == "!!null" {
+			continue
+		}
+		return fmt.Sprintf("local config: `mailbox.keychain_item: %s` is now one item per pairing — a mapping of the uid `fugaro pair` wrote (m~…) to the OS keychain item's name; run `fugaro pair` and record the item name it prints, and delete that line", v.Value)
+	}
+	return ""
+}
+
 // Parse decodes the config strictly, applies defaults and validates it.
 func Parse(data []byte) (*Config, error) {
 	var top map[string]yaml.Node
@@ -1036,6 +1076,11 @@ func Parse(data []byte) (*Config, error) {
 		}
 		if n, ok := top["base_image"]; ok {
 			return nil, errors.New(oldBaseImageKey(n.Value))
+		}
+		if n, ok := top["mailbox"]; ok {
+			if msg := oldMailboxKeychainItem(&n); msg != "" {
+				return nil, errors.New(msg)
+			}
 		}
 	}
 	var c Config
@@ -1230,14 +1275,26 @@ func (c *Config) validate() error {
 			bad("watch.burn_alert_usd_per_hour: %v (a finite dollar amount, 0 or more)", err)
 		}
 	}
-	// The mailbox block's one field is a keychain item name, and the rule is
-	// keychain.ParseItem's: this file is the one place the name is written, and
-	// the package that turns it into an argv is the one that says what shape it
-	// may have. A name refused here is refused before `fugaro mailbox` can read
-	// a key, which is the run-level refusal §8's row 1 names.
+	// The mailbox block's one field is a keychain item name per pairing, and
+	// the rule for the name is keychain.ParseItem's: this file is the one place
+	// the name is written, and the package that turns it into an argv is the
+	// one that says what shape it may have. A name refused here is refused
+	// before `fugaro mailbox` can read a key, which is the run-level refusal
+	// §8's row 1 names. A block with no entry is refused for the same reason a
+	// block with no name was: it is a mailbox that can read nothing, and the
+	// operator wrote it.
 	if m := c.Mailbox; m != nil {
-		if _, err := keychain.ParseItem(m.KeychainItem, c.Name); err != nil {
-			bad("mailbox.keychain_item: %v", err)
+		if len(m.KeychainItem) == 0 {
+			bad("mailbox.keychain_item: the block names no pairing's item, so `fugaro mailbox` would have no key to read; run `fugaro pair` and record the item name it prints")
+		}
+		for _, uid := range slices.Sorted(maps.Keys(m.KeychainItem)) {
+			if !pairUIDRE.MatchString(uid) {
+				bad("mailbox.keychain_item.%s: the key is not a pairing's uid (%q or %q followed by 22 unpadded base64url characters), so no pairing would ever look this item up", uid, "p~", "m~")
+				continue
+			}
+			if _, err := keychain.ParseItem(m.KeychainItem[uid], c.Name); err != nil {
+				bad("mailbox.keychain_item.%s: %v", uid, err)
+			}
 		}
 	}
 	// The credentials service block is the installation's own URL, and its

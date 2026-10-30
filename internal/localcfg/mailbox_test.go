@@ -5,45 +5,58 @@ import (
 	"testing"
 )
 
-// The mailbox block, which is T2's whole footprint in this package (mobile
-// P4.1, plan §12 and §13): one field, the keychain item's name, validated, and
-// its layered merge. The key itself is never here (M5, D113b) — the config
-// holds the item's name, and the name is not a secret.
+// The mailbox block, which is T2's and T3's footprint in this package (mobile
+// P4.1 and P6.6, plan §12, §13 and decision 9): one keychain item name per
+// pairing, validated, and its layered merge. The key itself is never here (M5,
+// D113b) — the config holds the item's name, and the name is not a secret.
 
-// TestParseRefusesAKeychainItemNameOfTheWrongShape is M5's fixed shape, one
-// row per way an operator can write it wrong. The name becomes an argv element
-// of `security` or `secret-tool`, and the project's own name must be in it, so
-// a config file cannot name an arbitrary keychain query nor read another
-// project's key. The rule is keychain.ParseItem's; this file is the one place
-// it is applied to a config, and the refusal names the key the operator wrote.
-func TestParseRefusesAKeychainItemNameOfTheWrongShape(t *testing.T) {
-	block := func(item string) string { return "mailbox:\n  keychain_item: " + item + "\n" }
+// pairUIDs are two pairings' uids: the device uid `fugaro pair` writes, and a
+// pairing session's. Both are the shape a mailbox entry may be keyed by.
+const (
+	pairUIDA = "m~AAECAwQFBgcICQoLDA0ODw"
+	pairUIDB = "m~EBESExQVFhcYGRobHB0eHw"
+	pairUIDP = "p~AAECAwQFBgcICQoLDA0ODw"
+)
+
+func mailboxBlock(entries ...string) string {
+	return "mailbox:\n  keychain_item:\n" + strings.Join(entries, "")
+}
+
+func entry(uid, item string) string { return "    " + uid + ": " + item + "\n" }
+
+// TestKeychainItemWrongShapeRefused is M5's fixed shape, one row per way an
+// operator can write it wrong, for the name and for the uid it is filed under.
+// The name becomes an argv element of `security` or `secret-tool`, and the
+// project's own name must be in it, so a config file cannot name an arbitrary
+// keychain query nor read another project's key; the uid is what `pair revoke`
+// matches a device against, so a key that is not one is a line nothing would
+// ever look up. The rule for the name is keychain.ParseItem's; this file is the
+// one place it is applied to a config, and the refusal names the entry the
+// operator wrote.
+func TestKeychainItemWrongShapeRefused(t *testing.T) {
 	cases := []struct {
-		name string
-		item string
-		want string
+		name  string
+		block string
+		want  string
 	}{
-		{name: "empty", item: `""`, want: "the item name is empty"},
-		{name: "no keychain_item at all", item: "", want: "the item name is empty"},
-		{name: "longer than 64 characters", item: strings.Repeat("a", 65), want: "longer than 64"},
-		{name: "a space", item: `"fugaro aurora"`, want: "is not a name"},
-		{name: "a path separator", item: `"fugaro/aurora"`, want: "is not a name"},
-		{name: "a quote", item: `"fugaro'aurora"`, want: "is not a name"},
-		{name: "a command substitution", item: `"fugaro$(id)aurora"`, want: "is not a name"},
-		{name: "a leading dash", item: `"-aurora"`, want: "begins with '-'"},
-		{name: "another project's name", item: `"fugaro-mailbox-borealis"`, want: "does not contain the project's name"},
+		{name: "a block with no entry", block: "mailbox: {}\n", want: "names no pairing's item"},
+		{name: "an empty map", block: mailboxBlock(), want: "names no pairing's item"},
+		{name: "a key that is not a uid", block: mailboxBlock(entry("phone-a", "fugaro-mailbox-aurora")), want: "is not a pairing's uid"},
+		{name: "a uid one character short", block: mailboxBlock(entry(pairUIDA[:len(pairUIDA)-1], "fugaro-mailbox-aurora")), want: "is not a pairing's uid"},
+		{name: "an empty name", block: mailboxBlock(entry(pairUIDA, `""`)), want: "the item name is empty"},
+		{name: "a name longer than 64 characters", block: mailboxBlock(entry(pairUIDA, strings.Repeat("a", 65))), want: "longer than 64"},
+		{name: "a name with a space", block: mailboxBlock(entry(pairUIDA, `"fugaro aurora"`)), want: "is not a name"},
+		{name: "a name with a path separator", block: mailboxBlock(entry(pairUIDA, `"fugaro/aurora"`)), want: "is not a name"},
+		{name: "a name with a quote", block: mailboxBlock(entry(pairUIDA, `"fugaro'aurora"`)), want: "is not a name"},
+		{name: "a name with a command substitution", block: mailboxBlock(entry(pairUIDA, `"fugaro$(id)aurora"`)), want: "is not a name"},
+		{name: "a name beginning with a dash", block: mailboxBlock(entry(pairUIDA, `"-aurora"`)), want: "begins with '-'"},
+		{name: "another project's name", block: mailboxBlock(entry(pairUIDA, `"fugaro-mailbox-borealis"`)), want: "does not contain the project's name"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			extra := ""
-			if c.item != "" {
-				extra = block(c.item)
-			} else {
-				extra = "mailbox: {}\n"
-			}
-			_, err := Parse([]byte(sample + extra))
+			_, err := Parse([]byte(sample + c.block))
 			if err == nil {
-				t.Fatalf("the config parsed with %s", extra)
+				t.Fatalf("the config parsed with %s", c.block)
 			}
 			if !strings.Contains(err.Error(), "mailbox.keychain_item") {
 				t.Errorf("the refusal does not name the key the operator wrote: %v", err)
@@ -53,23 +66,150 @@ func TestParseRefusesAKeychainItemNameOfTheWrongShape(t *testing.T) {
 			}
 		})
 	}
-	// And the shape M5 allows, including every character of the alphabet and
-	// exactly the bound, parses and round-trips.
-	for _, item := range []string{"fugaro-mailbox-aurora", "aurora.A_z-0", "aurora" + strings.Repeat("b", 58)} {
-		lc, err := Parse([]byte(sample + block(item)))
-		if err != nil {
-			t.Fatalf("Parse(%q): %v", item, err)
+}
+
+// TestKeychainItemOldSingleShapeRefused: decision 9 widened the block from one
+// item name to one per pairing, and a config written before it holds a scalar
+// there. There is no shim (pre-1.0): a single name names no pairing, so the
+// operator is told to re-run `fugaro pair` and record the item it prints rather
+// than left with yaml's own type error.
+func TestKeychainItemOldSingleShapeRefused(t *testing.T) {
+	for _, block := range []string{
+		"mailbox:\n  keychain_item: fugaro-mailbox-aurora\n",
+		"mailbox:\n  keychain_item: \"fugaro-mailbox-aurora\"\n",
+	} {
+		_, err := Parse([]byte(sample + block))
+		if err == nil {
+			t.Fatalf("the old single-name shape parsed: %s", block)
 		}
-		if lc.Mailbox == nil || lc.Mailbox.KeychainItem != item {
-			t.Fatalf("mailbox = %+v, want the item %q", lc.Mailbox, item)
+		for _, want := range []string{"fugaro pair", "one item per pairing", "fugaro-mailbox-aurora"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("refusal %q does not name %q", err, want)
+			}
 		}
-		out, err := lc.Marshal()
-		if err != nil {
-			t.Fatal(err)
+	}
+	// A block that holds no keychain_item at all is not the old shape: it is a
+	// block with nothing in it, refused by validate for its own reason.
+	if _, err := Parse([]byte(sample + "mailbox: {}\n")); err == nil || strings.Contains(err.Error(), "fugaro pair and record") {
+		t.Errorf("an empty mailbox block = %v, want validate's own refusal", err)
+	}
+}
+
+// TestKeychainItemPerPairingRoundTripsAndMerges is decision 9's shape and the
+// merge rule this block needs (§13): two pairings hold two items, the entries
+// survive a round trip, Shared() carries them, MergeShared takes the published
+// entries when the publishing machine has none — otherwise a launcher whose own
+// config has no mailbox: block erases the names another machine recorded,
+// silently, in the only place the installation's copy lives — and it unions
+// them when the machine has some, because with one item per pairing the names
+// in the block are several machines' pairings and not one machine's.
+//
+// Two mutations, both verified, run and restored. Deleting the whole merge
+// (`if published.Mailbox != nil || out.Mailbox != nil { … }`) fails the first
+// assertion, on a nil block; taking the published pointer instead of the union
+// (`if out.Mailbox == nil { out.Mailbox = published.Mailbox }`, which is what
+// this block did before decision 9's per-pairing names) fails the
+// other-machine assertion below, and no other test fails for either.
+func TestKeychainItemPerPairingRoundTripsAndMerges(t *testing.T) {
+	block := mailboxBlock(
+		entry(pairUIDA, "fugaro-mailbox-aurora-one"),
+		entry(pairUIDB, "fugaro-mailbox-aurora-two"),
+	)
+	lc, err := Parse([]byte(sample + block))
+	if err != nil {
+		t.Fatalf("two pairings' items: %v", err)
+	}
+	want := map[string]string{
+		pairUIDA: "fugaro-mailbox-aurora-one",
+		pairUIDB: "fugaro-mailbox-aurora-two",
+	}
+	if lc.Mailbox == nil || len(lc.Mailbox.KeychainItem) != 2 {
+		t.Fatalf("mailbox = %+v, want both pairings' items", lc.Mailbox)
+	}
+	for uid, item := range want {
+		if got := lc.Mailbox.KeychainItem[uid]; got != item {
+			t.Errorf("mailbox.keychain_item[%s] = %q, want %q", uid, got, item)
 		}
-		if !strings.Contains(string(out), "keychain_item: "+item) {
-			t.Errorf("the item name did not survive a round trip:\n%s", out)
+	}
+	out, err := lc.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{
+		"    " + pairUIDA + ": fugaro-mailbox-aurora-one",
+		"    " + pairUIDB + ": fugaro-mailbox-aurora-two",
+	} {
+		if !strings.Contains(string(out), line) {
+			t.Errorf("the item did not survive a round trip (%q missing):\n%s", line, out)
 		}
+	}
+
+	// The published copy is the names and never a key, and a pairing session's
+	// uid is a key of the map like a device's.
+	session, err := Parse([]byte(sample + mailboxBlock(entry(pairUIDP, "fugaro-mailbox-aurora-three"))))
+	if err != nil {
+		t.Fatalf("a pairing session's uid: %v", err)
+	}
+	if got := session.Mailbox.KeychainItem[pairUIDP]; got != "fugaro-mailbox-aurora-three" {
+		t.Errorf("a p~ keyed entry = %q, want it kept", got)
+	}
+
+	existing := sharedBase(t, block)
+	local := sharedBase(t, "")
+	if s := existing.Shared(); s.Mailbox == nil || len(s.Mailbox.KeychainItem) != 2 {
+		t.Fatalf("Shared() dropped the mailbox block: %+v", s.Mailbox)
+	}
+	got := MergeShared(existing, local)
+	if got.Mailbox == nil || len(got.Mailbox.KeychainItem) != 2 {
+		t.Fatalf("a publish from a machine with no mailbox: block dropped the published one: %+v", got.Mailbox)
+	}
+	out, err = got.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "fugaro-mailbox-aurora-one") {
+		t.Errorf("the merged file carries no item name:\n%s", out)
+	}
+	// The local block does not replace the published one: its entries are
+	// unioned, the way repos and base_images are, because decision 9 made the
+	// block one item per pairing and the pairings in it are several machines'
+	// — a laptop that paired its own phone would otherwise publish a file that
+	// names its phone and forgets every other machine's. Where one uid is on
+	// both sides the local name wins: the operator who wrote their own item
+	// names is the one who knows where their keys are.
+	local = sharedBase(t, mailboxBlock(entry(pairUIDA, "fugaro-mailbox-aurora-local")))
+	got = MergeShared(existing, local)
+	if got.Mailbox == nil {
+		t.Fatalf("a local block was dropped")
+	}
+	if got.Mailbox.KeychainItem[pairUIDA] != "fugaro-mailbox-aurora-local" {
+		t.Errorf("the local item name must win the clash: %+v", got.Mailbox)
+	}
+	if got.Mailbox.KeychainItem[pairUIDB] != "fugaro-mailbox-aurora-two" {
+		t.Errorf("the other machine's pairing was erased by this one's: %+v", got.Mailbox)
+	}
+	// Unioned into a new block and a new map: the two inputs still hold what
+	// they held, which is what lets a caller publish from either.
+	if existing.Mailbox.KeychainItem[pairUIDA] != "fugaro-mailbox-aurora-one" || len(local.Mailbox.KeychainItem) != 1 {
+		t.Errorf("MergeShared modified an input's mailbox block: %+v %+v", existing.Mailbox, local.Mailbox)
+	}
+	// And the union is what a publish writes, so the next machine reads both.
+	out, err = got.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{"fugaro-mailbox-aurora-local", "fugaro-mailbox-aurora-two"} {
+		if !strings.Contains(string(out), line) {
+			t.Errorf("the merged file dropped %q:\n%s", line, out)
+		}
+	}
+	// A published object with none leaves the local one alone.
+	if got := MergeShared(sharedBase(t, ""), local); got.Mailbox == nil || got.Mailbox.KeychainItem[pairUIDA] != "fugaro-mailbox-aurora-local" {
+		t.Errorf("a published object with no mailbox block dropped the local one: %+v", got.Mailbox)
+	}
+	// Neither side having one writes no mailbox: key at all.
+	if got := MergeShared(sharedBase(t, ""), sharedBase(t, "")); got.Mailbox != nil {
+		t.Errorf("two configs with no mailbox block merged into %+v", got.Mailbox)
 	}
 }
 
@@ -77,7 +217,7 @@ func TestParseRefusesAKeychainItemNameOfTheWrongShape(t *testing.T) {
 // mailbox is configured (plan §8's run-level row), so the *config* must be able
 // to carry none — a project that never pairs is not a broken project. The nil
 // block is the state T5 refuses on, and it must be distinguishable from a
-// block with a name in it.
+// block with an entry in it.
 func TestMailboxBlockIsOptional(t *testing.T) {
 	lc, err := Parse([]byte(sample))
 	if err != nil {
@@ -85,57 +225,5 @@ func TestMailboxBlockIsOptional(t *testing.T) {
 	}
 	if lc.Mailbox != nil {
 		t.Errorf("mailbox = %+v, want nil", lc.Mailbox)
-	}
-}
-
-// TestTheKeychainItemNameIsPublishedAndMerged is the merge rule the plan names
-// for this block (§13): the item name is the installation's, like batch: and
-// watch:, so Shared() carries it and MergeShared takes the published one when
-// the publishing machine has none — otherwise a launcher whose own config has
-// no mailbox: block erases the name another machine recorded, silently, in the
-// only place the installation's copy lives.
-//
-// Mutation (verified, run and restored): delete `if out.Mailbox == nil {
-// out.Mailbox = published.Mailbox }` from MergeShared: the first assertion
-// fails on a nil block, and no other test does.
-func TestTheKeychainItemNameIsPublishedAndMerged(t *testing.T) {
-	block := "mailbox:\n  keychain_item: fugaro-mailbox-aurora\n"
-	existing := sharedBase(t, block)
-	local := sharedBase(t, "")
-
-	// Published: what MergeShared merges from is what readers get.
-	if s := existing.Shared(); s.Mailbox == nil || s.Mailbox.KeychainItem != "fugaro-mailbox-aurora" {
-		t.Fatalf("Shared() dropped the mailbox block: %+v", s.Mailbox)
-	}
-	got := MergeShared(existing, local)
-	if got.Mailbox == nil || got.Mailbox.KeychainItem != "fugaro-mailbox-aurora" {
-		t.Fatalf("a publish from a machine with no mailbox: block dropped the published one: %+v", got.Mailbox)
-	}
-	out, err := got.Marshal()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(out), "keychain_item: fugaro-mailbox-aurora") {
-		t.Errorf("the merged file carries no item name:\n%s", out)
-	}
-	// The local block wins when there is one: a pointer field takes the local
-	// value, and the operator who wrote their own item name is the one who
-	// knows where their key is.
-	local = sharedBase(t, "mailbox:\n  keychain_item: fugaro-mailbox-aurora-local\n")
-	if got := MergeShared(existing, local); got.Mailbox == nil || got.Mailbox.KeychainItem != "fugaro-mailbox-aurora-local" {
-		t.Errorf("the local item name must win: %+v", got.Mailbox)
-	}
-	// A published object with none leaves the local one alone.
-	if got := MergeShared(sharedBase(t, ""), local); got.Mailbox == nil || got.Mailbox.KeychainItem != "fugaro-mailbox-aurora-local" {
-		t.Errorf("a published object with no mailbox block dropped the local one: %+v", got.Mailbox)
-	}
-	// Neither side having one writes no mailbox: key at all.
-	if got := MergeShared(sharedBase(t, ""), sharedBase(t, "")); got.Mailbox != nil {
-		t.Errorf("two configs with no mailbox block merged into %+v", got.Mailbox)
-	}
-	// The published name is the name and never a key: it is what the operator
-	// checks their own keychain with, and M5 prints it.
-	if !strings.Contains(string(out), "fugaro-mailbox-aurora") {
-		t.Errorf("the published file does not carry the item name:\n%s", out)
 	}
 }

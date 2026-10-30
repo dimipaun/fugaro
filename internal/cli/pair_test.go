@@ -3,10 +3,17 @@ package cli
 import (
 	"bytes"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/ecdh"
+	"crypto/hkdf"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -20,10 +27,12 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/mailbox/keychain"
 )
 
 // The pairing fixture: a project config whose budget backend is the RTDB fake,
@@ -33,6 +42,10 @@ type pairFixture struct {
 	db  *gcpfake.RTDB
 	iam *gcpfake.IAMCredentials
 	dir string
+	// keys is the OS keychain, as a Fake: M5's rule is that no test in this
+	// repository touches a real keychain, so the command's pairKeychain seam is
+	// pointed here and a test reads what the pairing stored.
+	keys *keychain.Fake
 }
 
 const (
@@ -52,7 +65,7 @@ var pairT0 = time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)
 // is missing something.
 func newPairFixture(t *testing.T, me string, edit ...func(*string, *pairFixture)) *pairFixture {
 	t.Helper()
-	f := &pairFixture{db: gcpfake.NewRTDB(t), iam: gcpfake.NewIAMCredentials(t), dir: t.TempDir()}
+	f := &pairFixture{db: gcpfake.NewRTDB(t), iam: gcpfake.NewIAMCredentials(t), dir: t.TempDir(), keys: &keychain.Fake{}}
 	f.iam.AddSigner(pairSigner)
 	runs := filepath.Join(f.dir, "runs")
 	if err := os.MkdirAll(runs, 0o755); err != nil {
@@ -85,10 +98,11 @@ func newPairFixture(t *testing.T, me string, edit ...func(*string, *pairFixture)
 		t.Fatal(err)
 	}
 
-	prevNow, prevUser := pairNow, authenticatedUser
+	prevNow, prevUser, prevKeys := pairNow, authenticatedUser, pairKeychain
 	pairNow = func() time.Time { return pairT0 }
 	authenticatedUser = func(context.Context, *localcfg.Config) (string, error) { return me, nil }
-	t.Cleanup(func() { pairNow, authenticatedUser = prevNow, prevUser })
+	pairKeychain = func() keychain.Store { return f.keys }
+	t.Cleanup(func() { pairNow, authenticatedUser, pairKeychain = prevNow, prevUser, prevKeys })
 	return f
 }
 
@@ -132,15 +146,30 @@ func (f *pairFixture) pairWriteState() []any {
 	return []any{f.db.Value("config/admin/devices"), f.db.Value("pairing")}
 }
 
-// pairKeyBytes is the phone's X25519 public key every fixture's request node
-// carries: 32 fixed bytes, so the fingerprint, the request node and the golden
-// stream are one value. pairKey is that key in the one spelling §2 (e) pins.
-var pairKeyBytes = func() []byte {
-	key := make([]byte, 32)
-	for i := range key {
-		key[i] = byte(i)
+// pairPhoneSeed is the phone's X25519 private key, and the one value every
+// other value in this file is derived from. It is a real key pair and not 32
+// arbitrary bytes because the delivery is sealed *to* this key (§8): the only
+// way a test can hold the command to "the phone can open it and nobody else
+// can" is to open it as the phone does, with crypto/ecdh over the private half
+// the phone never sends.
+var pairPhoneSeed = func() []byte {
+	seed := make([]byte, 32)
+	for i := range seed {
+		seed[i] = byte(i + 1)
 	}
-	return key
+	return seed
+}()
+
+// pairKeyBytes is the phone's public key every fixture's request node carries,
+// derived from that seed as the phone derives it, so the fingerprint, the
+// request node, the delivery's AAD and the golden stream are one value. pairKey
+// is that key in the one spelling §2 (e) pins.
+var pairKeyBytes = func() []byte {
+	priv, err := ecdh.X25519().NewPrivateKey(pairPhoneSeed)
+	if err != nil {
+		panic("the fixture's phone key is not a usable X25519 private key: " + err.Error())
+	}
+	return priv.PublicKey().Bytes()
 }()
 
 var pairKey = base64.RawURLEncoding.EncodeToString(pairKeyBytes)
@@ -151,6 +180,118 @@ var pairKey = base64.RawURLEncoding.EncodeToString(pairKeyBytes)
 // spelling another writer would use.
 func (f *pairFixture) pairSeedRequest(uid, key string) {
 	f.db.Set("pairing/"+uid+"/request", map[string]any{"key": key, "at": pairT0.UnixMilli()})
+}
+
+// pairSealedDelivery is the envelope the command wrote at uid's delivery child,
+// taken from the fake's own record of the requests rather than from the node:
+// §7.1 step 9 deletes the whole pairing subtree before the command returns,
+// which is the point of the step, so a test reads the delivery where it was
+// sent. The node's shape is checked here too — the version byte outside the
+// envelope is the one the phone refuses a foreign build's payload on.
+func (f *pairFixture) pairSealedDelivery(t *testing.T, uid string) []byte {
+	t.Helper()
+	want := "/" + pairPath(uid) + ".json"
+	for _, r := range f.db.Requests() {
+		if r.Method != http.MethodPatch || r.Path != want {
+			continue
+		}
+		var patch map[string]json.RawMessage
+		if err := json.Unmarshal(r.Body, &patch); err != nil {
+			t.Fatalf("the patch to %s does not decode: %v", want, err)
+		}
+		raw, ok := patch["delivery"]
+		if !ok {
+			continue
+		}
+		var node struct {
+			V      int    `json:"v"`
+			Sealed string `json:"sealed"`
+		}
+		if err := json.Unmarshal(raw, &node); err != nil {
+			t.Fatalf("the delivery node does not decode: %v", err)
+		}
+		if node.V != 1 {
+			t.Fatalf("the delivery node's version is %d, want 1", node.V)
+		}
+		sealed, err := base64.RawURLEncoding.DecodeString(node.Sealed)
+		if err != nil {
+			t.Fatalf("the delivery node's sealed value is not unpadded base64url: %v", err)
+		}
+		return sealed
+	}
+	t.Fatalf("nothing was written at %s", want)
+	return nil
+}
+
+// pairOpenDelivery is the phone's half of §8's envelope, written out here
+// rather than called: the token package's own opener is an internal test
+// export and is not reachable from this package, and a test that asked the
+// command's own package to open what the command sealed would not be testing
+// that *the phone* can. Every byte below is §8's — the layout, the HKDF info
+// string, the AAD's four parts in their order — and the seed is the phone's
+// private key, which the phone never sends.
+func pairOpenDelivery(t *testing.T, uid string, envelope []byte) []byte {
+	t.Helper()
+	plain, err := pairOpenWith(pairPhoneSeed, uid, envelope)
+	if err != nil {
+		t.Fatalf("the phone could not open the delivery sealed for it: %v", err)
+	}
+	return plain
+}
+
+// pairOpenWith is pairOpenDelivery with the phone's private key and the uid
+// named: the two things §8 binds the envelope to, so a test can hold the
+// command to both by trying the other key and the other uid.
+func pairOpenWith(seed []byte, uid string, envelope []byte) ([]byte, error) {
+	if len(envelope) < 1+token.DeviceKeySize+12+16 {
+		return nil, fmt.Errorf("the delivery is %d bytes, shorter than an envelope", len(envelope))
+	}
+	if envelope[0] != token.DeliveryEnvelopeVersion {
+		return nil, fmt.Errorf("the envelope's first byte is %#x, want %#x", envelope[0], token.DeliveryEnvelopeVersion)
+	}
+	priv, err := ecdh.X25519().NewPrivateKey(seed)
+	if err != nil {
+		return nil, err
+	}
+	ephemeral, err := ecdh.X25519().NewPublicKey(envelope[1 : 1+token.DeviceKeySize])
+	if err != nil {
+		return nil, err
+	}
+	shared, err := priv.ECDH(ephemeral)
+	if err != nil {
+		return nil, err
+	}
+	key, err := hkdf.Key(sha256.New, shared, nil, "fugaro-pairing-v1", 32)
+	if err != nil {
+		return nil, err
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	g, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	aad := append([]byte("pairing/"+uid), 0)
+	aad = append(aad, priv.PublicKey().Bytes()...)
+	aad = append(aad, 0, envelope[0])
+	body := envelope[1+token.DeviceKeySize:]
+	return g.Open(nil, body[:12], body[12:], aad)
+}
+
+// pairStoredKey is the one key the fixture's keychain holds, with the item name
+// it is filed under: M5's rule is one item per pairing, so a completed pairing
+// leaves exactly one.
+func (f *pairFixture) pairStoredKey(t *testing.T) (string, string) {
+	t.Helper()
+	if len(f.keys.Keys) != 1 {
+		t.Fatalf("the keychain holds %d items, want the one this pairing wrote: %v", len(f.keys.Keys), f.keys.Keys)
+	}
+	for name, value := range f.keys.Keys {
+		return name, value
+	}
+	return "", ""
 }
 
 // pairPair is one whole pairing of the happy path: the phone's request node is
@@ -164,11 +305,10 @@ func pairPair(t *testing.T, f *pairFixture, code string, args ...string) (string
 }
 
 // pairNoSideEffect holds a refused pairing to M3's rule: no device node, no
-// delivery, no device token, and the phone's own request node exactly where
-// the phone left it. The delivery and the keychain item are T3's and this
-// build holds no writer for either, so what a test can hold is that nothing
-// the pairing would have produced exists — and that the one signJwt call is
-// the pairing token's, not a device token's.
+// delivery, no device token, no keychain item, and the phone's own request
+// node exactly where the phone left it. Everything past the typed code is
+// behind the comparison, so a refusal before it must leave none of it — and
+// the one signJwt call is the pairing token's, not a device token's.
 func (f *pairFixture) pairNoSideEffect(t *testing.T, uid string) {
 	t.Helper()
 	if v := f.db.Value("config/admin/devices"); v != nil {
@@ -176,6 +316,9 @@ func (f *pairFixture) pairNoSideEffect(t *testing.T, uid string) {
 	}
 	if v := f.db.Value("pairing/" + uid + "/delivery"); v != nil {
 		t.Fatalf("a refused pairing wrote a delivery: %v", v)
+	}
+	if len(f.keys.Keys) != 0 {
+		t.Fatalf("a refused pairing wrote the keychain: %v", f.keys.Keys)
 	}
 	if v := f.db.Value("pairing/" + uid + "/request"); v == nil {
 		t.Fatalf("a refused pairing deleted the phone's own request node: the CLI writes nothing and deletes nothing before the code matches")
@@ -427,20 +570,34 @@ func TestPairRefusalCodesNameTheCase(t *testing.T) {
 	}
 }
 
+// pairTTYReader is a terminal that fails the test when it is read. The two
+// seams below are different failures and both are needed: stdinIsTerminal is
+// the question "is this a terminal", which a --json pairing that asked it
+// would hang on, and this is the read itself, which catches the path that
+// reaches for the terminal without asking — the one that would sit on a
+// prompt nobody can see. The code step's reader is stdin in --json and
+// pairTerminal's otherwise, so pointing pairTerminal here is what makes the
+// test able to fail.
+type pairTTYReader struct{ t *testing.T }
+
+func (r pairTTYReader) Read([]byte) (int, error) {
+	r.t.Errorf("--json read the terminal")
+	return 0, io.EOF
+}
+
 // TestPairJSONNeverReadsTTY holds --json to the rule the console depends on:
 // the mode asks no terminal anything and writes no prompt — the code it needs
 // comes down the stdin line the caller handed it, both for the code step and
-// for the key that precedes it. stdinIsTerminal is a seam the rest of the CLI
-// asks; a --json pairing that asked it would be a pairing that could hang on a
-// terminal nobody is looking at.
+// for the key that precedes it.
 func TestPairJSONNeverReadsTTY(t *testing.T) {
 	f := newPairFixture(t, pairMe)
-	prev := stdinIsTerminal
+	prev, prevTerminal := stdinIsTerminal, pairTerminal
 	stdinIsTerminal = func(io.Reader) bool {
 		t.Fatal("--json opened the terminal")
 		return false
 	}
-	t.Cleanup(func() { stdinIsTerminal = prev })
+	pairTerminal = func(*cobra.Command) io.Reader { return pairTTYReader{t} }
+	t.Cleanup(func() { stdinIsTerminal, pairTerminal = prev, prevTerminal })
 	out, _, err := pairPair(t, f, token.Fingerprint(pairKeyBytes), "--json")
 	if err != nil {
 		t.Fatal(err)
@@ -807,10 +964,21 @@ var pairDeviceUIDRE = regexp.MustCompile(`m~[A-Za-z0-9_-]{22}`)
 
 const pairDeviceUIDMarker = "m~" + "BBBBBBBBBBBBBBBBBBBBBB"
 
-// pairNoUID replaces that one drawn value, in the stream and in the golden
+// pairItemNameRE finds the keychain item name the done document carries. The
+// name is derived from the device uid, so it is drawn from crypto/rand too and
+// is normalised the same way: the 22 characters after the project are the uid's
+// own, and the marker keeps the golden readable. The project comes first and
+// there is no other word in the name — pairItemName's own comment carries the
+// arithmetic (a project name may be 40 characters and ParseItem's ceiling is
+// 64) — so the pattern is the project, one dash, and the uid's body.
+var pairItemNameRE = regexp.MustCompile(`aurora-[A-Za-z0-9_-]{22}`)
+
+const pairItemNameMarker = "aurora-" + "BBBBBBBBBBBBBBBBBBBBBB"
+
+// pairNoUID replaces those drawn values, in the stream and in the golden
 // alike, exactly as pairNoSignature replaces the fake's signature bytes.
 func pairNoUID(line string) string {
-	return pairDeviceUIDRE.ReplaceAllString(line, pairDeviceUIDMarker)
+	return pairItemNameRE.ReplaceAllString(pairDeviceUIDRE.ReplaceAllString(line, pairDeviceUIDMarker), pairItemNameMarker)
 }
 
 // TestPairJSONEventsGolden pins the whole event set: the QR, the wait, the code
@@ -829,6 +997,10 @@ func TestPairJSONEventsGolden(t *testing.T) {
 	}
 	got := pairEventLines(t, out)
 
+	// The completed pairing deleted the pairing node (step 9), so the second
+	// run has no request to read: the phone's key goes back where the phone put
+	// it, which is what makes this a mismatch and not a wait that runs out.
+	f.pairSeedRequest(uid, pairKey)
 	refused, _, err := pairRunIn(t, "K7QM-3X2Y", "--json", "--name", "phone-a")
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("the mismatch run: err = %v, want exit 1", err)
@@ -1233,5 +1405,427 @@ func TestPairJSONEventsDecodeStrictly(t *testing.T) {
 		if !slices.Contains(names, name) {
 			t.Fatalf("the golden does not carry a %s event: %v", name, names)
 		}
+	}
+}
+
+// pairStrangerSeed is a second X25519 private key: a phone that was not the one
+// whose key the request node holds, which is the half §8's envelope is bound to
+// and the half a test must hold it to.
+var pairStrangerSeed = func() []byte {
+	seed := make([]byte, 32)
+	for i := range seed {
+		seed[i] = byte(i + 64)
+	}
+	return seed
+}()
+
+// pairStrangerUID is a second pairing uid, in the shape MintPairing mints: the
+// other half of §8 — the AAD's first part, so an envelope opened under the
+// wrong uid is refused even by the phone that could open it.
+const pairStrangerUID = "p~AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+
+// pairDeviceUID reads the one device node the pairing wrote and returns its
+// uid, which is the key M4 matches the token's mu claim against and the name
+// the keychain item is derived from.
+func (f *pairFixture) pairDeviceUID(t *testing.T) string {
+	t.Helper()
+	allowlist, ok := f.db.Value("config/admin/devices").(map[string]any)
+	if !ok || len(allowlist) != 1 {
+		t.Fatalf("the allowlist is %v, want exactly the one device a completed pairing writes", f.db.Value("config/admin/devices"))
+	}
+	for uid := range allowlist {
+		return uid
+	}
+	return ""
+}
+
+// TestPairDeliversSealedConfigurationThenDeletesTheNode is §7.1 steps 8 and 9
+// together, which is the whole of T3b: what the phone stores, and what the
+// laptop kept. The delivery is read back out of the fake's own record of the
+// requests, because step 9 deletes the node it was written at before the
+// command returns — so this test is also the one that says the ordering held:
+// a deletion that ran before the write would leave the record of the write in
+// the requests and no delivery anywhere, and a deletion that never ran would
+// leave the node.
+func TestPairDeliversSealedConfigurationThenDeletesTheNode(t *testing.T) {
+	f := newPairFixture(t, pairMe)
+	uid := pairFixedRand(t)
+	f.pairSeedRequest(uid, pairKey)
+
+	out, _, err := pairRunIn(t, token.Fingerprint(pairKeyBytes), "--json", "--name", "phone-a", "--email", pairMe)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if v := f.db.Value(pairPath(uid)); v != nil {
+		t.Fatalf("the pairing node is still there after a completed pairing: %v", v)
+	}
+	if v := f.db.Value("pairing"); v != nil {
+		t.Fatalf("the pairing tree is still there after a completed pairing: %v", v)
+	}
+	deviceUID := f.pairDeviceUID(t)
+
+	payload := pairOpenDelivery(t, uid, f.pairSealedDelivery(t, uid))
+	var got struct {
+		Config token.DeliveryConfig `json:"config"`
+		Device struct {
+			UID   string `json:"uid"`
+			Token string `json:"token"`
+		} `json:"device"`
+		MACKey string `json:"mac_key"`
+	}
+	if err := json.Unmarshal(payload, &got); err != nil {
+		t.Fatalf("the payload the phone decodes does not: %v", err)
+	}
+	// D199: the delivery's configuration is the one the QR carried, field for
+	// field, because P6.8 refuses a payload that disagrees with the scan.
+	want := token.DeliveryConfig{Project: "aurora", GCPProject: "proj-1234", DatabaseURL: f.db.URL, APIKey: pairAPIKey}
+	if got.Config != want {
+		t.Fatalf("the delivery's configuration is %+v, want the QR's %+v", got.Config, want)
+	}
+	if got.Device.UID != deviceUID {
+		t.Fatalf("the delivery names device %s, the allowlist holds %s", got.Device.UID, deviceUID)
+	}
+	// The token is the one M4 minted for this node: its own claims carry the
+	// uid, and a delivery carrying another device's token would be a phone
+	// admitted as someone else.
+	parts := strings.Split(got.Device.Token, ".")
+	if len(parts) != 3 {
+		t.Fatalf("the delivered token is not a JWT: %q", got.Device.Token)
+	}
+	claims, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		t.Fatalf("the delivered token's claims are not base64url: %v", err)
+	}
+	if !strings.Contains(string(claims), deviceUID) {
+		t.Fatalf("the delivered token's claims do not name %s: %s", deviceUID, claims)
+	}
+
+	// M5 and decision 9: one item for this pairing, named after the device, and
+	// holding the very key the phone was given — one value at both ends, which
+	// is what the sealed payload above is checked against.
+	name, value := f.pairStoredKey(t)
+	if want := pairItemName("aurora", deviceUID); name != want {
+		t.Fatalf("the MAC key is at %s, want %s", name, want)
+	}
+	if value != got.MACKey {
+		t.Fatalf("the keychain holds a different key from the one delivered to the phone")
+	}
+	if n := len(value); n != 43 {
+		t.Fatalf("the stored key is %d characters, want EncodeKey's 43", n)
+	}
+
+	events := pairLines(t, out)
+	done := events[len(events)-1]
+	if done.Event != pairEventDone || done.Document == nil {
+		t.Fatalf("the stream ends with %v, want the done document", done)
+	}
+	if done.Document.KeychainItem != name {
+		t.Fatalf("the document names item %q, want %q", done.Document.KeychainItem, name)
+	}
+	if want := []string{rules.PathDevices + "/" + deviceUID, pairPathDelivery(uid)}; !slices.Equal(done.Document.Wrote, want) {
+		t.Fatalf("the document's wrote is %v, want %v", done.Document.Wrote, want)
+	}
+}
+
+// TestPairItemNameFitsTheKeychain is the arithmetic behind the name's shape, at
+// both ends of what a local config accepts. The ceiling is keychain.ParseItem's
+// 64 characters, the body of the uid `fugaro pair` draws is 22 of them, and a
+// project name is 1 to 40 (localcfg's own rule) — so the longest name a project
+// can produce is 63 characters, and one fixed word in the name would put the
+// longest project names past the ceiling: ParseItem would refuse it, the
+// command would refuse the pairing as keychain_write_failed, and no keychain
+// would ever have been asked anything (pair.go's own refusal says so). The
+// rules that meet here are the config's name rule and this command's
+// derivation, so the boundary belongs in this command's tests and not only in
+// the keychain package's.
+func TestPairItemNameFitsTheKeychain(t *testing.T) {
+	body := strings.Repeat("B", 22)
+	deviceUID := "m~" + body
+	for _, project := range []string{"a", strings.Repeat("a", 40)} {
+		name := pairItemName(project, deviceUID)
+		if len(name) > keychain.ItemMax {
+			t.Fatalf("a %d-character project makes a %d-character item name, past ParseItem's %d", len(project), len(name), keychain.ItemMax)
+		}
+		if _, err := keychain.ParseItem(name, project); err != nil {
+			t.Fatalf("the name for a %d-character project is not one a key can be stored under: %v", len(project), err)
+		}
+		// Decision 9: `revoke` is given the device uid and nothing else, so the
+		// name has to carry the uid's body, and it has to carry the project's
+		// name, which is what keeps one project out of another's item (M5).
+		if !strings.HasSuffix(name, body) || !strings.Contains(name, project) {
+			t.Fatalf("the name %q is not derived from the project and the uid the pairing minted", name)
+		}
+	}
+}
+
+// TestPairDeliveryOpensOnlyWithThePhoneKey holds §8's two bindings: the ECDH
+// key agreement and the AAD. The phone's own key opens it; a second key does
+// not; and the phone's own key under another uid does not, which is what makes
+// a delivery moved to a node another pairing owns unreadable rather than
+// merely misplaced.
+func TestPairDeliveryOpensOnlyWithThePhoneKey(t *testing.T) {
+	f := newPairFixture(t, pairMe)
+	uid := pairFixedRand(t)
+	f.pairSeedRequest(uid, pairKey)
+
+	if _, _, err := pairRunIn(t, token.Fingerprint(pairKeyBytes), "--json", "--name", "phone-a"); err != nil {
+		t.Fatal(err)
+	}
+	sealed := f.pairSealedDelivery(t, uid)
+	if len(pairOpenDelivery(t, uid, sealed)) == 0 {
+		t.Fatal("the phone opened an empty payload")
+	}
+
+	if _, err := pairOpenWith(pairStrangerSeed, uid, sealed); err == nil {
+		t.Fatal("a key that is not the phone's opened the delivery: the envelope is not sealed to the key that wrote the request")
+	}
+	if _, err := pairOpenWith(pairPhoneSeed, pairStrangerUID, sealed); err == nil {
+		t.Fatal("the delivery opened under another pairing's uid: the AAD does not bind the node the payload was written at")
+	}
+
+	// The envelope's own first byte is outside the AAD by design (the AAD
+	// carries the version, not the byte), so a test that never moved it would
+	// not notice a seal that wrote a version the phone does not read.
+	flipped := slices.Clone(sealed)
+	flipped[0] = token.DeliveryEnvelopeVersion + 1
+	if _, err := pairOpenWith(pairPhoneSeed, uid, flipped); err == nil {
+		t.Fatal("the delivery opened after its version byte was changed")
+	}
+}
+
+// TestPairMACKeyNeverPrinted is M5, over every output this command has: the
+// two secret values — the MAC key the keychain holds and the device token the
+// delivery carries — appear in stdout, in stderr (which is where the CLI's
+// logger writes), in every event of a --json stream, and in the golden the
+// stream is pinned by. The item's *name* is expected in the stream and is
+// checked for: the name is what the operator records, and the rule that
+// matters is that the value never joins it.
+func TestPairMACKeyNeverPrinted(t *testing.T) {
+	for _, mode := range []struct {
+		name string
+		args []string
+	}{
+		{"interactive", nil},
+		{"json", []string{"--json"}},
+	} {
+		t.Run(mode.name, func(t *testing.T) {
+			f := newPairFixture(t, pairMe)
+			uid := pairFixedRand(t)
+			f.pairSeedRequest(uid, pairKey)
+
+			args := append([]string{token.Fingerprint(pairKeyBytes), "--name", "phone-a"}, mode.args...)
+			out, errOut, err := pairRunIn(t, args[0], args[1:]...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			item, value := f.pairStoredKey(t)
+			raw, err := base64.RawURLEncoding.DecodeString(value)
+			if err != nil {
+				t.Fatalf("the stored key is not the spelling the delivery carries: %v", err)
+			}
+			token64 := pairDeliveredToken(t, f, uid)
+
+			secret := map[string]string{
+				"the stored MAC key":         value,
+				"the MAC key's raw bytes":    string(raw),
+				"the MAC key in hex":         hex.EncodeToString(raw),
+				"the delivered device token": token64,
+			}
+			for _, where := range []struct{ what, text string }{
+				{"stdout", out},
+				{"stderr", errOut},
+			} {
+				for what, s := range secret {
+					if strings.Contains(where.text, s) {
+						t.Fatalf("%s carries %s:\n%s", where.what, what, where.text)
+					}
+				}
+			}
+			// The name is the one thing about the item that may be printed, so
+			// a stream that printed nothing of it would be a stream a console
+			// cannot act on: this asserts the item is named where it must be,
+			// which is what makes the absences above about the value.
+			if !strings.Contains(out, item) {
+				t.Fatalf("the command does not name the keychain item it wrote:\n%s", out)
+			}
+			for what, s := range secret {
+				if strings.Contains(out, s) {
+					t.Fatalf("stdout carries %s", what)
+				}
+			}
+		})
+	}
+
+	// The golden is a fixture in the repository, and the reviewer's question is
+	// whether a secret can reach one: the MAC key is drawn from crypto/rand by
+	// a reader this suite does not pin, so nothing in the stream depends on its
+	// bytes — and this is that, checked rather than assumed.
+	golden, err := os.ReadFile(filepath.Join("testdata", "pair-events.golden.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, absent := range []string{"mac_key", "sealed", "keychain_item\":\"\""} {
+		if strings.Contains(string(golden), absent) {
+			t.Fatalf("the golden carries %q: %s", absent, golden)
+		}
+	}
+}
+
+// pairDeliveredToken opens the delivery the pairing wrote and returns the
+// device token out of it: the other secret M5 covers, which leaves through the
+// sealed payload and no other way.
+func pairDeliveredToken(t *testing.T, f *pairFixture, uid string) string {
+	t.Helper()
+	var got struct {
+		Device struct {
+			Token string `json:"token"`
+		} `json:"device"`
+	}
+	if err := json.Unmarshal(pairOpenDelivery(t, uid, f.pairSealedDelivery(t, uid)), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Device.Token == "" {
+		t.Fatal("the delivery carries no device token")
+	}
+	return got.Device.Token
+}
+
+// TestPairKeychainFailureDeliversNothing is the first undo (M5): a keychain
+// that cannot hold the key means this pairing has no key, so nothing is
+// delivered to the phone and the device node written a moment earlier comes
+// back off the allowlist.
+func TestPairKeychainFailureDeliversNothing(t *testing.T) {
+	f := newPairFixture(t, pairMe)
+	uid := pairFixedRand(t)
+	f.pairSeedRequest(uid, pairKey)
+	f.keys.Backend = keychain.ErrBackend
+
+	out, _, err := pairRunIn(t, token.Fingerprint(pairKeyBytes), "--json", "--name", "phone-a")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want exit 1", err)
+	}
+	events := pairLines(t, out)
+	if last := events[len(events)-1]; last.Event != pairEventRefused || last.Code != pairRefusedKeychain {
+		t.Fatalf("events = %v, want one refused with %q", events, pairRefusedKeychain)
+	}
+	if v := f.db.Value("config/admin/devices"); v != nil {
+		t.Fatalf("a keychain that could not be written left a device on the allowlist: %v", v)
+	}
+	f.pairNoDelivery(t, uid)
+	if len(f.keys.Keys) != 0 {
+		t.Fatalf("the keychain holds %v, want nothing", f.keys.Keys)
+	}
+	// The pairing is not over: the phone's own request node is where the phone
+	// left it, and the pairing token it holds is untouched, so the operator can
+	// fix the keychain and scan again while the wait lasts.
+	if v := f.db.Value(pairPathRequest(uid)); v == nil {
+		t.Fatal("the refusal deleted the phone's own request node")
+	}
+}
+
+// TestPairDeliveryFailureRemovesTheItem is the second undo, and it is the whole
+// of it: the key is in the keychain and the delivery cannot be written, so the
+// item goes again — a key at an item nothing will ever read is a key that
+// outlives the pairing — and the device node goes with it, because a node with
+// no delivery behind it is a device that fails USER on every request while it
+// sits on the allowlist (pairRemoveDeviceNode's own reason, and the same state
+// a keychain failure must not leave either).
+func TestPairDeliveryFailureRemovesTheItem(t *testing.T) {
+	f := newPairFixture(t, pairMe)
+	uid := pairFixedRand(t)
+	f.pairSeedRequest(uid, pairKey)
+	f.db.Deny(pairPathDelivery(uid))
+
+	out, _, err := pairRunIn(t, token.Fingerprint(pairKeyBytes), "--json", "--name", "phone-a")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want exit 1", err)
+	}
+	if events := pairLines(t, out); events[len(events)-1].Event != pairEventRefused {
+		t.Fatalf("events = %v, want one refused", events)
+	}
+	f.pairNoDelivery(t, uid)
+	if len(f.keys.Keys) != 0 {
+		t.Fatalf("the keychain holds %v, want the item removed again", f.keys.Keys)
+	}
+	if v := f.db.Value("config/admin/devices"); v != nil {
+		t.Fatalf("a delivery that could not be written left a device on the allowlist: %v", v)
+	}
+	// The pairing is not over: the phone's request node and the token it holds
+	// are untouched, so the operator can fix what refused the write and scan
+	// again while the wait lasts.
+	if v := f.db.Value(pairPathRequest(uid)); v == nil {
+		t.Fatal("the refusal deleted the phone's own request node")
+	}
+}
+
+// pairNoDelivery asserts nothing reached the phone: the delivery node holds no
+// sealed payload, whether the write was refused by the rules or never
+// attempted. Both undos also take the device node back and each caller asserts
+// that; this is the half they share.
+func (f *pairFixture) pairNoDelivery(t *testing.T, uid string) {
+	t.Helper()
+	if v := f.db.Value(pairPathDelivery(uid)); v != nil {
+		t.Fatalf("a pairing that was refused wrote a delivery: %v", v)
+	}
+}
+
+// TestPairAcceptsUppercaseEmail is T2b's leftover: the provider an address of
+// this shape belongs to resolves the local part case-insensitively, so an
+// operator who capitalised a letter of their own address typed their own
+// address. The comparison is between canonical forms and refusing this one
+// would send them to change an account rather than a keystroke.
+func TestPairAcceptsUppercaseEmail(t *testing.T) {
+	f := newPairFixture(t, pairMe)
+	uid := pairFixedRand(t)
+	f.pairSeedRequest(uid, pairKey)
+
+	out, _, err := pairRunIn(t, token.Fingerprint(pairKeyBytes), "--json", "--name", "phone-a", "--email", "Person-1@Example.COM")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `"email":"person-1@example.com"`) {
+		t.Fatalf("the device node's email is not the operator's own canonical address:\n%s", out)
+	}
+	allowlist, _ := f.db.Value("config/admin/devices").(map[string]any)
+	for _, child := range allowlist {
+		node, _ := child.(map[string]any)
+		if node["email"] != pairMe {
+			t.Fatalf("the device node's email is %v, want %s", node["email"], pairMe)
+		}
+	}
+
+	// An address that is not the operator's is still refused after the fold:
+	// folding is not a way to pair a device under an address nobody proved.
+	// The refusal comes before the wait, so this second run costs no clock.
+	if _, _, err := pairRunIn(t, token.Fingerprint(pairKeyBytes), "--json", "--email", "PERSON-2@example.com"); err == nil {
+		t.Fatal("an address that is not the operator's own was accepted because it folded")
+	}
+}
+
+// TestPairNonNumericAtIsMalformedNotOutage is T2b's other leftover: the rules
+// validate `at` as an integer count of epoch-milliseconds, so a reply carrying
+// anything else there was not written by the phone this command pairs — and it
+// is a refusal of the reply, not of the database. §4.6 puts a database that
+// could not be reached in the exit-2 row, and an operator sent after an outage
+// for a reply nobody can read would be sent to fix the wrong thing.
+func TestPairNonNumericAtIsMalformedNotOutage(t *testing.T) {
+	for _, at := range []any{"1761742800000", 1.5, true, nil} {
+		t.Run(fmt.Sprint(at), func(t *testing.T) {
+			f := newPairFixture(t, pairMe)
+			uid := pairFixedRand(t)
+			f.db.Set(pairPathRequest(uid), map[string]any{"key": pairKey, "at": at})
+
+			out, _, err := pairRunIn(t, token.Fingerprint(pairKeyBytes), "--json", "--name", "phone-a")
+			if err == nil || ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v, want exit 1: a malformed reply is not an outage", err)
+			}
+			events := pairLines(t, out)
+			last := events[len(events)-1]
+			if last.Event != pairEventRefused || last.Code != pairRefusedRequestMalformed {
+				t.Fatalf("events = %v, want one refused with %q and not %q", events, pairRefusedRequestMalformed, pairRefusedUnreachable)
+			}
+			f.pairNoSideEffect(t, uid)
+		})
 	}
 }

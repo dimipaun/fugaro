@@ -60,8 +60,11 @@ const (
 	pairRefusedUnreachable        = "database_unreachable"
 	pairRefusedNoKey              = "no_key_before_timeout"
 	pairRefusedRequestKey         = "request_key_invalid"
+	pairRefusedRequestMalformed   = "request_malformed"
 	pairRefusedCodeMissing        = "code_not_typed"
 	pairRefusedCodeMismatch       = "fingerprint_mismatch"
+	pairRefusedKeychain           = "keychain_write_failed"
+	pairRefusedDelivery           = "delivery_write_failed"
 	pairRefusedInterrupted        = "interrupted" // the operator stopped the command
 )
 
@@ -95,14 +98,21 @@ type pairEvent struct {
 // is the done event's payload and nothing else: the same fields, so a console
 // that reads §4.5 reads the event.
 type pairDocument struct {
-	Project  string      `json:"project"`
-	At       string      `json:"at"`
-	Pairing  pairPairing `json:"pairing"`
-	Request  pairRequest `json:"request"`
-	Device   pairDevice  `json:"device"`
-	Wrote    []string    `json:"wrote"`
-	Refused  []string    `json:"refused"`
-	Warnings []string    `json:"warnings"`
+	Project string      `json:"project"`
+	At      string      `json:"at"`
+	Pairing pairPairing `json:"pairing"`
+	Request pairRequest `json:"request"`
+	Device  pairDevice  `json:"device"`
+	// keychain_item is the OS keychain item the pairing's MAC key was stored
+	// at, and it is the name and never the value: §4.5's own rule is that the
+	// item's value never appears, which is a rule that has to be about the
+	// value because the name is what the operator records in the local
+	// config's mailbox block (§6) — and a console driving this command has no
+	// other way to tell them which name to record.
+	KeychainItem string   `json:"keychain_item"`
+	Wrote        []string `json:"wrote"`
+	Refused      []string `json:"refused"`
+	Warnings     []string `json:"warnings"`
 }
 
 type pairPairing struct {

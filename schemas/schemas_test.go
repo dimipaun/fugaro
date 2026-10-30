@@ -3496,3 +3496,164 @@ func TestSchemaCoversGitAuthor(t *testing.T) {
 		}
 	}
 }
+
+// TestSchemaCoversImageKeyFiles: fugaro.schema.json carries image.key_files,
+// with the bounds internal/config enforces, and the two agree — the schema is
+// what an editor reads, config.Parse is what a build refuses — over the corpus
+// below: the paths that escape the repository, the ones that are patterns
+// rather than paths, the ones that are not clean, and the caps.
+func TestSchemaCoversImageKeyFiles(t *testing.T) {
+	data, err := os.ReadFile("fugaro.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+		Defs       map[string]json.RawMessage `json:"$defs"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var workflows struct {
+		AdditionalProperties json.RawMessage `json:"additionalProperties"`
+	}
+	if err := json.Unmarshal(doc.Properties["workflows"], &workflows); err != nil {
+		t.Fatal(err)
+	}
+	// The workflow schema is a $ref, so image: sits in $defs, not inline.
+	var ref struct {
+		Ref string `json:"$ref"`
+	}
+	if err := json.Unmarshal(workflows.AdditionalProperties, &ref); err != nil {
+		t.Fatal(err)
+	}
+	defName, ok := strings.CutPrefix(ref.Ref, "#/$defs/")
+	if !ok {
+		t.Fatalf("workflows.additionalProperties = %s, want a $ref into $defs", workflows.AdditionalProperties)
+	}
+	var def struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal(doc.Defs[defName], &def); err != nil {
+		t.Fatal(err)
+	}
+	var image struct {
+		Properties map[string]struct {
+			Type        string `json:"type"`
+			MaxItems    int    `json:"maxItems"`
+			UniqueItems bool   `json:"uniqueItems"`
+			Items       struct {
+				Type      string `json:"type"`
+				MaxLength int    `json:"maxLength"`
+				Pattern   string `json:"pattern"`
+			} `json:"items"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(def.Properties["image"], &image); err != nil {
+		t.Fatal(err)
+	}
+	got, hasKey := image.Properties["key_files"]
+	if !hasKey {
+		t.Fatal("fugaro.schema.json has no image.key_files property: a repository that writes one gets a schema error (additionalProperties: false)")
+	}
+	if got.Type != "array" || got.Items.Type != "string" || got.MaxItems != 32 || !got.UniqueItems || got.Items.MaxLength != 200 || got.Items.Pattern == "" {
+		t.Errorf("image.key_files = %+v, want an array of at most 32 unique strings of at most 200 characters matching a pattern (maxImageKeyFiles, maxImageKeyFilePath)", got)
+	}
+
+	sch := compile(t, "fugaro.schema.json")
+	const (
+		base = "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  app: { commands: { build: make, test: make } }\n"
+		head = "commands: { build: make, test: make }"
+	)
+	caps := func(n int) string {
+		out := make([]string, n)
+		for i := range out {
+			out[i] = strconv.Quote(strings.Replace("patches/00.patch", "00", string(rune('a'+i%26))+string(rune('a'+i/26)), 1))
+		}
+		return strings.Join(out, ", ")
+	}
+	for _, tc := range []struct {
+		name    string
+		entries string // the YAML flow sequence, or "" for no image block
+		ok      bool
+	}{
+		{"the key absent", "", true},
+		{"one directory", strconv.Quote("patches"), true},
+		{"a file and a directory", strconv.Quote(".yarn/patches/left-pad.patch") + ", " + strconv.Quote("vendor"), true},
+		{"a space", strconv.Quote("vendor/my tool"), true},
+		{"a non-ASCII path", strconv.Quote(strings.Repeat("é", 150)), true},
+		{"at the length cap", strconv.Quote(strings.Repeat("a", 200)), true},
+		{"at the cap", caps(32), true},
+		{"an absolute path", strconv.Quote("/etc/passwd"), false},
+		{"a parent segment", strconv.Quote("../outside"), false},
+		{"a parent segment in the middle", strconv.Quote("a/../../etc/passwd"), false},
+		{"a bare parent", strconv.Quote(".."), false},
+		{".git", strconv.Quote(".git/config"), false},
+		{"the repository root", strconv.Quote("."), false},
+		{"a trailing slash", strconv.Quote("patches/"), false},
+		{"a doubled slash", strconv.Quote("a//b"), false},
+		{"a dot segment", strconv.Quote("./patches"), false},
+		{"a star", strconv.Quote("*.patch"), false},
+		{"a doublestar", strconv.Quote("**/*.patch"), false},
+		{"a question mark", strconv.Quote("patch?"), false},
+		{"a character class", strconv.Quote("p[abc]"), false},
+		{"a brace group", strconv.Quote("p{a,b}"), false},
+		{"a backslash", strconv.Quote(`a\b`), false},
+		{"a control character", strconv.Quote("a\x1bb"), false},
+		{"empty", strconv.Quote(""), false},
+		{"a duplicate", strconv.Quote("patches") + ", " + strconv.Quote("patches"), false},
+		{"over the cap", caps(33), false},
+		{"over the length cap", strconv.Quote(strings.Repeat("a", 201)), false},
+	} {
+		body := base
+		if tc.entries != "" {
+			body = strings.Replace(base, head, "image: { key_files: ["+tc.entries+"] }, "+head, 1)
+		}
+		schemaErr := sch.Validate(yamlInstance(t, []byte(body)))
+		_, ps := config.Parse([]byte(body))
+		if tc.ok {
+			if schemaErr != nil {
+				t.Errorf("%s: schema rejects it: %v", tc.name, schemaErr)
+			}
+			if len(ps) > 0 {
+				t.Errorf("%s: config.Parse rejects it: %v", tc.name, ps)
+			}
+			continue
+		}
+		if schemaErr == nil {
+			t.Errorf("%s: schema accepts it", tc.name)
+		}
+		if len(ps) == 0 {
+			t.Errorf("%s: config.Parse accepts it", tc.name)
+		}
+	}
+
+	// checkout: clone builds no image at all, so a clone workflow refuses
+	// key_files, exactly as config.Parse does: the schema's clone branch
+	// cannot leave the key out, or an editor would bless a fugaro.yaml the
+	// run then refuses.
+	for _, entries := range []string{"", strconv.Quote("patches")} {
+		body := strings.Replace(base, "  app: {", "  app: { checkout: clone,", 1)
+		if entries != "" {
+			body = strings.Replace(body, head, "image: { key_files: ["+entries+"] }, "+head, 1)
+		}
+		schemaErr := sch.Validate(yamlInstance(t, []byte(body)))
+		_, ps := config.Parse([]byte(body))
+		switch {
+		case entries == "":
+			if schemaErr != nil {
+				t.Errorf("a clone workflow with no key files: schema rejects it: %v", schemaErr)
+			}
+			if len(ps) > 0 {
+				t.Errorf("a clone workflow with no key files: config.Parse rejects it: %v", ps)
+			}
+		default:
+			if schemaErr == nil {
+				t.Error("the schema accepts image.key_files under checkout: clone, which config.Parse refuses")
+			}
+			if len(ps) == 0 {
+				t.Error("config.Parse accepts image.key_files under checkout: clone")
+			}
+		}
+	}
+}

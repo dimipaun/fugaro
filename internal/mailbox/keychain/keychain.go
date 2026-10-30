@@ -9,11 +9,13 @@
 // written to disk, never passed in argv and never logged — including in the
 // error paths, where the message names the item and never the value.
 //
-// **Who puts the key there is P6.6**, which is approved and not built. Until it
-// runs the item is absent, and an absent item is not a bug here: it is M4's
-// first row, the availability check the command refuses to start on (§8.3).
-// The tests use a Fake; no test in this repository touches a real keychain, and
-// no agent reads one (M5).
+// **Who puts the key there is P6.6**, `fugaro pair`'s delivery: Put writes one
+// item per pairing, and Delete removes one when a delivery could not be written
+// or when `pair revoke` revokes that phone. Until a pairing has run the item is
+// absent, and an absent item is not a bug here: it is M4's first row, the
+// availability check the command refuses to start on (§8.3). The tests use a
+// Fake; no test in this repository touches a real keychain, and no agent reads
+// one (M5).
 //
 // **The key never leaves through a printer.** Key's every fmt verb, its JSON
 // and its GoString answer Redacted, so the one shape of leak this package could
@@ -146,8 +148,8 @@ var (
 	// ErrNoKey: there is no key at the item — it is absent, empty, or holds a
 	// value that is not a key.
 	ErrNoKey = errors.New("keychain: no key at the item")
-	// ErrBackend: the OS keychain could not be read.
-	ErrBackend = errors.New("keychain: the OS keychain could not be read")
+	// ErrBackend: the OS keychain could not be used — read, or written.
+	ErrBackend = errors.New("keychain: the OS keychain could not be used")
 )
 
 // noKey is ErrNoKey with the item named and the reason told apart: M5 allows
@@ -162,21 +164,30 @@ func noKey(item Item, why string) error {
 // the program and its exit status. Never a byte of either stream.
 func backendErr(why string) error { return fmt.Errorf("%w: %s", ErrBackend, why) }
 
-// Store is an OS keychain, as this package needs one: it answers one item's
-// key. It is an interface so that the tests — and the command tests T5 writes —
-// hold a Fake instead of a real keychain, which no test in this repository
-// touches (M5).
+// Store is an OS keychain, as this repository needs one: it answers one item's
+// key, and it is what the pairing writes that key through. It is an interface
+// so that the tests — and the command tests T5 writes — hold a Fake instead of
+// a real keychain, which no test in this repository touches (M5).
 type Store interface {
 	// Key reads item's key. It returns an error wrapping ErrNoKey when there
 	// is no key at the item and one wrapping ErrBackend when the keychain
 	// itself could not be read; neither error ever carries the key.
 	Key(ctx context.Context, item Item) (Key, error)
+	// Put stores key at item, replacing whatever was there. It is the write
+	// `fugaro pair` makes once per pairing (§7.1 step 6, M5): the item is one
+	// per pairing, and the value is what Key would read back.
+	Put(ctx context.Context, item Item, key Key) error
+	// Delete removes item. An item that is not there is not an error: absence
+	// is the state the caller asked for, and both callers reach it that way —
+	// the rollback of a delivery that could not be written, and `pair revoke`.
+	Delete(ctx context.Context, item Item) error
 }
 
-// run is how a reader runs: one argv, no shell — the shape of
+// run is how a keychain program runs: one argv, no shell — the shape of
 // internal/procgroup.Run, which is what the real one is (M11: nothing this
-// command runs goes through a shell).
-type run func(ctx context.Context, name string, args ...string) (stdout []byte, code int, err error)
+// command runs goes through a shell). stdin is where a *storing* program reads
+// the key, so that the key is in no argv.
+type run func(ctx context.Context, name string, stdin io.Reader, args ...string) (stdout []byte, code int, err error)
 
 // reader is one platform's keychain program: what to run, the argv it takes,
 // and the exit code that means "there is no such item".
@@ -189,16 +200,32 @@ type reader struct {
 	notFound int
 }
 
-// commandStore is the Store every platform's reader becomes.
+// writer is one platform's storing side: the program, the argv that stores an
+// item and the argv that removes one, and the exit code the removing argv
+// answers when the item is already gone — which is not a failure.
+type writer struct {
+	program  string
+	put      func(Item) []string
+	del      func(Item) []string
+	notFound int
+}
+
+// commandStore is the Store every platform's reader and writer become.
 type commandStore struct {
 	reader reader
-	run    run
+	// writer is this platform's storing side, or nil where it has none. The
+	// two halves are separate programs and a platform can have one without the
+	// other: macOS reads a key through `security` and has no way to store one
+	// that does not put the key in an argv (M11), which is what noStore says.
+	writer  *writer
+	noStore string
+	run     run
 }
 
 // Key reads the item through the platform's program and turns what it printed
 // into a key.
 func (s *commandStore) Key(ctx context.Context, item Item) (Key, error) {
-	stdout, code, err := s.run(ctx, s.reader.program, s.reader.args(item)...)
+	stdout, code, err := s.run(ctx, s.reader.program, nil, s.reader.args(item)...)
 	switch {
 	case err != nil:
 		// The program could not be started, or the context ended it. Its own
@@ -214,6 +241,47 @@ func (s *commandStore) Key(ctx context.Context, item Item) (Key, error) {
 		return Key{}, noKey(item, why)
 	}
 	return key, nil
+}
+
+// Put stores the key through the platform's storing program, which reads it
+// from standard input: the key is in no argv and in no environment, so nothing
+// this package runs is a way for another process to read it out of `ps` or out
+// of the process table (M11).
+//
+// Nothing it prints is echoed, for the reason the read side says: a failing
+// tool's complaint could carry what it was asked for, and what it was asked for
+// is the key. The exit status and the program are what is safe to say.
+func (s *commandStore) Put(ctx context.Context, item Item, key Key) error {
+	if s.writer == nil {
+		return backendErr(s.noStore)
+	}
+	_, code, err := s.run(ctx, s.writer.program, bytes.NewReader(key.Bytes()), s.writer.put(item)...)
+	switch {
+	case err != nil:
+		return backendErr(fmt.Sprintf("%s could not be run: %v", s.writer.program, err))
+	case code != 0:
+		return backendErr(fmt.Sprintf("%s exited %d storing the key at %q", s.writer.program, code, item.Name()))
+	}
+	return nil
+}
+
+// Delete removes the item through the platform's storing program. The item's
+// absence is not an error: `secret-tool clear` answers 1 for an item that is
+// not there, and a caller removing a key it is not sure it wrote — the rollback
+// of a delivery that could not be written — asked for exactly that state.
+func (s *commandStore) Delete(ctx context.Context, item Item) error {
+	if s.writer == nil {
+		return backendErr(s.noStore)
+	}
+	_, code, err := s.run(ctx, s.writer.program, nil, s.writer.del(item)...)
+	switch {
+	case err != nil:
+		return backendErr(fmt.Sprintf("%s could not be run: %v", s.writer.program, err))
+	case code == 0 || code == s.writer.notFound:
+		return nil
+	default:
+		return backendErr(fmt.Sprintf("%s exited %d deleting the key at %q", s.writer.program, code, item.Name()))
+	}
 }
 
 // keyFrom turns what a keychain program printed into a key, or says why the
@@ -284,17 +352,65 @@ func readerFor(goos string) (reader, error) {
 	}
 }
 
+// writerFor is the platform's storing program, and the sentence that says why
+// there is none. goos is a parameter for readerFor's reason: every platform's
+// argv is testable from one checkout.
+//
+// **The key reaches the storing program on standard input, never as an argv
+// element**, and `secret-tool store` is the only path this build has that does
+// that (M11). macOS is the gap, and the reason is narrower than "the storing
+// program takes the secret as an argv": `security add-generic-password -w
+// <value>` does take it there, but `-w` with no value prompts on the terminal
+// instead, and `security -i` reads whole commands — password and all — from
+// standard input. Neither is a path this build can stand behind. The prompt
+// needs a terminal and a person to type a 32-byte key into, and `-i`'s command
+// language (its quoting, its update and delete forms, whether it ever falls
+// back to the terminal) is not something a test on this runner can exercise,
+// so a darwin writer written against it would be argv and exit handling no
+// test has ever run — the reason the read side leaves Windows alone. What that
+// costs is not hidden: `fugaro pair` cannot complete on macOS, which is the
+// platform this CLI is most likely to run on, and the operator gets ErrBackend
+// there rather than a key stored in the open. A darwin writer is its own task.
+func writerFor(goos string) (*writer, string) {
+	switch goos {
+	case "linux":
+		return &writer{
+			program: "secret-tool",
+			// libsecret's store takes attribute pairs and reads the secret
+			// from standard input; the label is what a person sees in the
+			// keyring UI, and the item's name is not a secret.
+			put: func(i Item) []string { return []string{"store", "--label", i.Name(), "service", i.Name()} },
+			del: func(i Item) []string { return []string{"clear", "service", i.Name()} },
+			// secret-tool answers 1 both for "no such item" and for its own
+			// failures; a clear that failed and an item that was already gone
+			// leave the same state behind, which is what the caller asked for.
+			notFound: 1,
+		}, ""
+	case "darwin":
+		// `security`'s storing side has two forms that keep the key out of an
+		// argv — the prompted -w and -i's commands on standard input — and
+		// neither is a form a test on this runner can exercise, so this build
+		// does not guess at one.
+		return nil, "this build cannot store a pairing key in the darwin keychain: `add-generic-password -w <value>` puts the key in an argv, where every process on the machine reads it out of `ps`, and the two forms that do not — -w with no value, which prompts on the terminal, and `security -i`, which reads commands from standard input — are forms no test in this repository can run (M11)"
+	default:
+		return nil, fmt.Sprintf("this build cannot store a pairing key in the %s keychain: it has no storing path that keeps the key out of an argv, and no argv of this package carries a key (M11)", goos)
+	}
+}
+
 // System is the keychain of the machine this process runs on.
 //
 // A platform this build has no reader for is a Store whose every lookup is
 // ErrBackend naming the platform: the command's answer is then the exit-2 row
-// (§4.4), which is what an unopenable backend gets, and never a zero key.
+// (§4.4), which is what an unopenable backend gets, and never a zero key. A
+// platform this build has a reader for but no writer keeps its reads and
+// answers the writes with the sentence writerFor gives.
 func System() Store {
 	r, err := readerFor(runtime.GOOS)
 	if err != nil {
 		return noBackend{why: err}
 	}
-	return &commandStore{reader: r, run: runProcgroup}
+	w, noStore := writerFor(runtime.GOOS)
+	return &commandStore{reader: r, writer: w, noStore: noStore, run: runProcgroup}
 }
 
 // noBackend is System's Store on a platform with no reader.
@@ -304,16 +420,20 @@ func (n noBackend) Key(context.Context, Item) (Key, error) {
 	return Key{}, backendErr(n.why.Error())
 }
 
+func (n noBackend) Put(context.Context, Item, Key) error { return backendErr(n.why.Error()) }
+
+func (n noBackend) Delete(context.Context, Item) error { return backendErr(n.why.Error()) }
+
 // runProcgroup is how a real reader runs its program: in a process group of its
 // own, with a deadline the caller sets on the whole group (internal/procgroup,
 // the discipline internal/watch/prstate.go's ask uses). The program's standard
 // output is capped and kept — it is the key, and it goes into a Key and nowhere
 // else — and its standard error is discarded rather than read, because a
 // failing tool's complaint is not worth the risk of it echoing what it was
-// asked for.
-func runProcgroup(ctx context.Context, name string, args ...string) ([]byte, int, error) {
+// asked for. stdin is the storing side's, and is nil for a read.
+func runProcgroup(ctx context.Context, name string, stdin io.Reader, args ...string) ([]byte, int, error) {
 	var out boundedBuffer
-	code, err := procgroup.Run(ctx, procgroup.Cmd{Name: name, Args: args, Stdout: &out})
+	code, err := procgroup.Run(ctx, procgroup.Cmd{Name: name, Args: args, Stdin: stdin, Stdout: &out})
 	return out.Bytes(), code, err
 }
 

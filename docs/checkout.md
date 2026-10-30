@@ -30,7 +30,7 @@ Choose `clone` when the repository needs no system package and no service, and h
 
 A clone job has no build at all, and a run has no root, so Fugaro cannot install a system package at start-up. `fugaro validate` (and the same checks when a run reads your `fugaro.yaml`) refuses these keys under `checkout: clone`, each message naming `checkout: baked` as the way out:
 
-- `image.apt`, `image.tools`, `image.setup`, `image.skip_build_scripts`
+- `image.apt`, `image.tools`, `image.setup`, `image.skip_build_scripts`, `image.key_files`
 - `dockerfile:`
 
 Move the workflow back to `baked` if it needs any of them.
