@@ -4,7 +4,10 @@ import (
 	"math"
 	"math/rand"
 	"reflect"
+	"slices"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/rigor"
 )
 
 func TestMergePerRunMin(t *testing.T) {
@@ -160,6 +163,47 @@ func TestAllowedIgnoredPartialAndDisjoint(t *testing.T) {
 	e = Merge(Layer{AllowedModels: []string{"a", "b"}}, Layer{AllowedModels: []string{"b"}}, Layer{AllowedModels: []string{"b"}})
 	if len(e.Ignored) != 0 {
 		t.Fatalf("%+v", e.Ignored)
+	}
+}
+
+// TestReviewFloorMergesTightenOnly is D722's G1: the owner's review-level
+// floor is a union over the layers, so a layer below it can only ever add a
+// level to a rigor mode. The layers under the floor are the ones a launcher
+// writes — the project layer and the task (docs/design/bucket-iam.md §10 L1,
+// L2) — and the whole point of the floor is that neither can take a level
+// away: a merge that let a lower layer's shorter list replace the owner's
+// would be the launcher choosing how much review it gets.
+func TestReviewFloorMergesTightenOnly(t *testing.T) {
+	owner := Layer{ReviewFloor: map[rigor.Mode][]Level{
+		rigor.Pro:      {LevelL2},
+		rigor.Critical: {LevelL2, LevelL3},
+	}}
+	// A layer that asks for more review than the owner requires, and one that
+	// names no floor at all — the shape every launcher-written layer has.
+	more := Layer{ReviewFloor: map[rigor.Mode][]Level{rigor.Pro: {LevelL1, LevelL3}}}
+	none := Layer{}
+	e := Merge(owner, more, none)
+
+	if got, want := e.ReviewFloor(rigor.Pro), []Level{LevelL1, LevelL2, LevelL3}; !slices.Equal(got, want) {
+		t.Errorf("ReviewFloor(pro) = %v, want %v: a lower layer may add a level, never remove one", got, want)
+	}
+	if got, want := e.ReviewFloor(rigor.Critical), []Level{LevelL2, LevelL3}; !slices.Equal(got, want) {
+		t.Errorf("ReviewFloor(critical) = %v, want %v: a mode no later layer names keeps the owner's floor", got, want)
+	}
+	if got := e.ReviewFloor(rigor.Startup); got != nil {
+		t.Errorf("ReviewFloor(startup) = %v, want nil: no layer set a floor for that mode", got)
+	}
+	// A layer that repeats a level the owner already required adds nothing.
+	e = Merge(owner, Layer{ReviewFloor: map[rigor.Mode][]Level{rigor.Critical: {LevelL3, LevelL3}}})
+	if got, want := e.ReviewFloor(rigor.Critical), []Level{LevelL2, LevelL3}; !slices.Equal(got, want) {
+		t.Errorf("ReviewFloor(critical) = %v, want %v: the union holds a level once", got, want)
+	}
+	// The layers' own maps are not modified by the merge.
+	if got := owner.ReviewFloor[rigor.Pro]; !slices.Equal(got, []Level{LevelL2}) {
+		t.Errorf("the owner's layer was modified: ReviewFloor(pro) = %v", got)
+	}
+	if got := more.ReviewFloor[rigor.Pro]; !slices.Equal(got, []Level{LevelL1, LevelL3}) {
+		t.Errorf("a later layer was modified: ReviewFloor(pro) = %v", got)
 	}
 }
 

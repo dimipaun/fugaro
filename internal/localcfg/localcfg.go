@@ -32,6 +32,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/mirror"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
@@ -250,8 +251,24 @@ type Config struct {
 	// node, which is where the runner reads it, while the value itself never
 	// travels in the shared config a launcher can write (Shared drops it,
 	// like each repo's).
-	BaseBranch string          `yaml:"base_branch,omitempty"`
-	Repos      map[string]Repo `yaml:"repos"`
+	BaseBranch string `yaml:"base_branch,omitempty"`
+	// ReviewFloor is the owner's review-level floor (D722, G1): per rigor
+	// mode, the levels a run of that mode must run, whatever a lower layer
+	// asks for. It travels the way BaseBranch does, and the reason is the
+	// same one: `fugaro project policy publish` copies it into the policy
+	// node, which only the owner writes and the runner fails closed on, and
+	// the value itself never enters the shared config a launcher can write
+	// (Shared drops it, and the publisher refuses the key). A floor a
+	// launcher could write — in the published shared config, in the project
+	// layer or in the task (docs/design/bucket-iam.md §10 L1, L2) — would be
+	// that launcher deciding how much review it gets, which is the one thing
+	// the floor exists to prevent.
+	//
+	// A mode that is not one of rigor's, a level outside l1/l2/l3, and a
+	// repeated level are refused at load (validate), never dropped: a
+	// misspelt floor is a run that reviews less than the owner asked for.
+	ReviewFloor map[string][]string `yaml:"review_floor,omitempty"`
+	Repos       map[string]Repo     `yaml:"repos"`
 	// notes are warnings added after parsing (AddWarning), such as a
 	// published shared config's dropped legacy base_images entries.
 	notes []string
@@ -1165,6 +1182,72 @@ func profileNames(profiles map[string]config.JobProfile) []string {
 	return names
 }
 
+// ReviewFloorPolicy is the owner's floor in the policy package's vocabulary:
+// the form `fugaro project policy publish` writes into the node, and nil when
+// the file sets no floor (so the published node carries no member at all). It
+// is the one rule for the key — validate calls it too — so the file the
+// operator writes and the node the runner reads cannot disagree about what a
+// written floor means.
+//
+// A name outside either vocabulary is an error rather than a value dropped:
+// the floor is a minimum, so a level lost on the way to the node would be a
+// run reviewing less than the file says, which is the direction this key must
+// never move.
+func (c *Config) ReviewFloorPolicy() (map[rigor.Mode][]policy.Level, error) {
+	var errs []error
+	bad := func(f string, a ...any) { errs = append(errs, fmt.Errorf("review_floor."+f, a...)) }
+	out := make(map[rigor.Mode][]policy.Level, len(c.ReviewFloor))
+	for _, mode := range slices.Sorted(maps.Keys(c.ReviewFloor)) {
+		m, ok := rigor.Parse(mode)
+		if !ok {
+			bad("%s: %q is not a rigor mode (%s)", mode, mode, vocabulary(rigor.Modes))
+			continue
+		}
+		names := c.ReviewFloor[mode]
+		if len(names) == 0 {
+			bad("%s: a floor with no level in it says nothing; remove the mode to leave it unfloored, or name the levels that must run", mode)
+			continue
+		}
+		levels, seen := make([]policy.Level, 0, len(names)), map[policy.Level]bool{}
+		for _, name := range names {
+			l, ok := policy.ParseLevel(name)
+			switch {
+			case !ok:
+				bad("%s: %q is not a review level (%s)", mode, name, vocabulary(policy.Levels))
+				continue
+			case seen[l]:
+				bad("%s: %q is listed twice", mode, name)
+				continue
+			}
+			seen[l] = true
+			levels = append(levels, l)
+		}
+		if len(levels) > 0 {
+			out[m] = levels
+		}
+	}
+	if len(errs) > 0 {
+		return nil, errors.Join(errs...)
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
+}
+
+// vocabulary is a closed vocabulary as an error prints it, read off the list
+// itself rather than written out again: the floor's refusals name the whole
+// set (rigor.Modes, policy.Levels), so a name this file refuses is a name the
+// operator can see is not in it, and a vocabulary that grows cannot leave the
+// sentence behind.
+func vocabulary[T ~string](names []T) string {
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		out = append(out, string(n))
+	}
+	return strings.Join(out, ", ")
+}
+
 func (c *Config) validate() error {
 	var errs []error
 	bad := func(f string, a ...any) { errs = append(errs, fmt.Errorf("local config: "+f, a...)) }
@@ -1401,6 +1484,16 @@ func (c *Config) validate() error {
 	}
 	if c.BaseBranch != "" && !config.ValidBranchName(c.BaseBranch) {
 		bad("base_branch %q is not a plain git branch name (the project's default base branch)", c.BaseBranch)
+	}
+	// The floor is a closed vocabulary twice over — the modes rigor names and
+	// the three levels — and this file is where it is written. Its one rule is
+	// ReviewFloorPolicy's, called here so that the load and the publish cannot
+	// disagree about what a written floor means; a name it refuses is a run
+	// that would review less than the owner asked for, and nothing downstream
+	// can tell a misspelt mode from one the owner meant to leave alone
+	// (projectpolicy.Decode holds the node to the same vocabulary).
+	if _, err := c.ReviewFloorPolicy(); err != nil {
+		bad("%v", err)
 	}
 	for repo, r := range c.Repos {
 		if !repoRE.MatchString(repo) {

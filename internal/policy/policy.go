@@ -27,8 +27,10 @@
 package policy
 
 import (
+	"slices"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/tier"
 )
 
@@ -312,6 +314,35 @@ func (g Governance) DefaultGovernanceKeys() map[string]bool {
 	return out
 }
 
+// Level is one review level's name as the owner's floor spells it (D722):
+// l1, l2 or l3, the levels of docs/review-levels-ab-jobmax/spec.md.
+type Level string
+
+// The three levels, shallowest first. The names are the ones a configuration
+// and the policy node write; nothing else may name a level.
+const (
+	LevelL1 Level = "l1"
+	LevelL2 Level = "l2"
+	LevelL3 Level = "l3"
+)
+
+// Levels is the whole vocabulary. It is closed: a name outside it is refused
+// where it is written (the owner's project config, the policy node), never
+// matched as an unknown level at resolution time.
+var Levels = []Level{LevelL1, LevelL2, LevelL3}
+
+// KnownLevel reports whether l is one of Levels. The zero Level is not.
+func KnownLevel(l Level) bool { return slices.Contains(Levels, l) }
+
+// ParseLevel is the level a written value names; ok is false for a name
+// outside the vocabulary. It is the only way a written value becomes a Level,
+// so a near miss ("L2", "l3 ") is a load error rather than a level that
+// silently never binds.
+func ParseLevel(s string) (Level, bool) {
+	l := Level(s)
+	return l, KnownLevel(l)
+}
+
 // Layer is one source of policy. The zero value of every field means "unset".
 type Layer struct {
 	Mode      string  // "" = unset
@@ -339,7 +370,30 @@ type Layer struct {
 	// Governance is this layer's governance limits; the zero value sets
 	// none, which is what leaves the ceiling's own alone (see Governance).
 	Governance Governance
+	// ReviewFloor is this layer's floor: per rigor mode, the review levels a
+	// run of that mode must run whatever a lower layer asks for (D722, G1).
+	// nil, or a mode missing from it, is "this layer sets no floor".
+	//
+	// The owner's floor is the only one there is, and it reaches a run the way
+	// the rest of his policy does: read from the owner-only policy node and
+	// put on the ceiling layer (internal/runner's policyCeiling). It is not a
+	// key of fugaro.yaml, of the project layer or of the task, because all
+	// three are written by the launcher (docs/design/bucket-iam.md §10 L1, L2)
+	// — a floor there would be the launcher deciding how much review it gets.
+	// It is merged as a union (see Merge), so a lower layer that writes one
+	// can add a level and never remove one; the merge is what makes that
+	// direction a property of this package rather than of its callers.
+	ReviewFloor map[rigor.Mode][]Level
 }
+
+// ReviewFloor is the levels the owner requires a run of mode to run, in the
+// vocabulary's order (Levels), and nil when no layer set a floor for it. It
+// is how a consumer asks — L3.1's resolver is the first — so that the merged
+// floor is read through one lookup rather than by ranging the map.
+//
+// The method shadows Layer.ReviewFloor, the field the merge fills: the whole
+// map is e.Layer.ReviewFloor, and a mode's levels are asked for here.
+func (e Effective) ReviewFloor(mode rigor.Mode) []Level { return e.Layer.ReviewFloor[mode] }
 
 // Effective is the merged policy plus where each key came from.
 type Effective struct {

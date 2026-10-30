@@ -748,6 +748,17 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 	if err != nil {
 		return nil, false, userErr("%v", err)
 	}
+	// The review-level floor is copied rather than derived, and it is held to
+	// the same rule the loader applies (localcfg's ReviewFloorPolicy, which is
+	// also what validate calls), so a floor the operator's file spells wrong
+	// cannot reach the node half-read: the floor is a minimum, and a level
+	// lost on the way to the node is a run reviewing less than the owner asked
+	// for. A project that sets none publishes no member at all, so its node is
+	// byte for byte what it was before the key existed.
+	floor, err := lc.ReviewFloorPolicy()
+	if err != nil {
+		return nil, false, userErr("%v", err)
+	}
 	pol := &projectpolicy.Policy{
 		Version:           projectpolicy.Version,
 		Budget:            projectpolicy.Budget{Mode: lc.Budget.Mode, PerRunUSD: lc.Budget.PerRunUSD, AllowedModels: lc.Budget.AllowedModels, MaxRunTokens: lc.Budget.MaxRunTokens},
@@ -759,6 +770,7 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		Accounts:          accounts,
 		BitbucketToken:    token,
 		BitbucketAPIRoots: lc.BitbucketAPIRoots,
+		ReviewFloor:       floor,
 	}
 	switch {
 	case !silent:
