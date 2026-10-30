@@ -446,6 +446,8 @@ func TestDarwinWriterReadsTheFailureSecurityHidesInItsOutput(t *testing.T) {
 		{name: "a session that cannot be asked to unlock it", says: `security: SecKeychainItemCopyContent: User interaction is not allowed.`},
 		{name: "a command the tool does not know", says: `security: unknown command "add-generic-passwords".  Type "help" for a list of commands.`},
 		{name: "a failure the tool did not describe", says: `security: SecKeychainItemCreateFromContent: something this package has never seen.`},
+		{name: "a store that returned a status", says: `add-generic-password: returned -25308`},
+		{name: "a store answered with a delete's item-not-found status", says: `delete-generic-password: returned -25300`},
 		{name: "an exit status that does fail", code: 2},
 	}
 	for _, c := range cases {
@@ -530,6 +532,27 @@ func TestSecurityVerdictReadsEveryShapeTheToolPrints(t *testing.T) {
 		{name: "the item is not there, on a delete", stderr: `security: SecKeychainSearchCopyNext: The specified item could not be found in the keychain.`, deleting: true, why: "no such item", missing: true},
 		{name: "the keychain itself is not there", stderr: `security: SecKeychainSearchCopyNext: The specified keychain could not be found.`, deleting: true, why: "keychain the security tool was asked to use could not be found"},
 		{name: "something else that could not be found", stderr: `security: SecKeychainItemDelete: The specified attribute could not be found.`, deleting: true, why: "did not describe"},
+
+		// What `security -i` prints for a failed command: the command's name and
+		// the framework's status, nothing else. The item being gone is the
+		// delete's own errSecItemNotFound, on a delete, as the whole line; every
+		// other status, command or position is a failure that names the status.
+		{name: "the delete returned item-not-found", stdout: `delete-generic-password: returned -25300`, deleting: true, why: "no such item", missing: true},
+		{name: "the delete returned item-not-found, in CRLF on stderr", stderr: "delete-generic-password: returned -25300\r\n", deleting: true, why: "no such item", missing: true},
+		{name: "a store answered with the delete's item-not-found", stdout: `delete-generic-password: returned -25300`, why: "-25300"},
+		{name: "another command returned item-not-found on a delete", stdout: `find-generic-password: returned -25300`, deleting: true, why: "-25300"},
+		{name: "a command name that is the delete's with more", stdout: `delete-generic-passwords: returned -25300`, deleting: true, why: "-25300"},
+		{name: "item-not-found behind a prompt", stdout: `security> delete-generic-password: returned -25300`, deleting: true, why: "did not describe"},
+		{name: "item-not-found with more after it", stdout: `delete-generic-password: returned -25300 again`, deleting: true, why: "did not describe"},
+		{name: "a status that only begins like item-not-found", stdout: `delete-generic-password: returned -253001`, deleting: true, why: "-253001"},
+		{name: "the delete failed authentication", stdout: `delete-generic-password: returned -25293`, deleting: true, why: "-25293 (errSecAuthFailed"},
+		{name: "the delete may not ask to unlock", stdout: `delete-generic-password: returned -25308`, deleting: true, why: "-25308 (errSecInteractionNotAllowed"},
+		{name: "the user cancelled the delete", stdout: `delete-generic-password: returned -128`, deleting: true, why: "-128 (errSecUserCanceled"},
+		{name: "the delete may not change the owner", stdout: `delete-generic-password: returned -25244`, deleting: true, why: "-25244 (errSecInvalidOwnerEdit"},
+		{name: "the delete returned a status nobody named", stdout: `delete-generic-password: returned -1`, deleting: true, why: "status -1: \"delete-generic-password: returned -1\""},
+		{name: "the store returned a status", stdout: `add-generic-password: returned -25299`, why: "-25299 (errSecDuplicateItem"},
+		{name: "item-not-found next to another status", stdout: "delete-generic-password: returned -25300\ndelete-generic-password: returned -25308", deleting: true, why: "-25308"},
+		{name: "item-not-found next to the confirmation", stdout: "delete-generic-password: returned -25300\n" + securityDeleted, deleting: true, why: "no such item", missing: true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -574,6 +597,11 @@ func TestDarwinWriterDeletesOnlyWhatIsGone(t *testing.T) {
 		{name: "the tool says the keychain is locked", says: `security: SecKeychainUnlock: The user name or passphrase you entered is not correct.`, wantErr: true},
 		{name: "the tool does not know the command", says: `security: unknown command "delete-generic-passwords".  Type "help" for a list of commands.`, wantErr: true},
 		{name: "the tool exits with a failure", code: 2, wantErr: true},
+		{name: "the tool returns errSecItemNotFound for the delete", says: `delete-generic-password: returned -25300`},
+		{name: "the tool returns errSecAuthFailed for the delete", says: `delete-generic-password: returned -25293`, wantErr: true},
+		{name: "the tool returns errSecInteractionNotAllowed for the delete", says: `delete-generic-password: returned -25308`, wantErr: true},
+		{name: "the tool returns errSecUserCanceled for the delete", says: `delete-generic-password: returned -128`, wantErr: true},
+		{name: "the tool returns errSecInvalidOwnerEdit for the delete", says: `delete-generic-password: returned -25244`, wantErr: true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -634,11 +662,17 @@ func TestSecurityUnknownLineIsShownRedacted(t *testing.T) {
 		want string
 		not  []string
 	}{
-		{name: "a message", line: `security: SecKeychainItemDelete: something new.`, want: `"security: [REDACTED]: something new."`},
+		{name: "a message", line: `security: SecKeychainItemDelete: something new.`, want: `"security: SecKeychainItemDelete: something new."`},
+		{name: "a command name is kept", line: `delete-generic-password: returned -25300`, want: `"delete-generic-password: returned -25300"`},
 		{name: "an echoed command line", line: `add-generic-password -U -s "fugaro-mailbox-aurora" -w ` + testKey, want: `-w [REDACTED]"`, not: []string{testKey, testKey[:19], testKey[len(testKey)-19:]}},
 		{name: "a short word is kept", line: `version: 512 class genp`, want: `"version: 512 class genp"`},
 		{name: "a run one short of the threshold is kept", line: strings.Repeat("a", 19), want: strings.Repeat("a", 19)},
-		{name: "a run at the threshold is redacted", line: "x " + strings.Repeat("a", 20) + " y", want: `"x [REDACTED] y"`},
+		{name: "a run with a digit at the threshold is redacted", line: "x " + strings.Repeat("a", 19) + "1 y", want: `"x [REDACTED] y"`},
+		{name: "a run with an underscore at the threshold is redacted", line: "x " + strings.Repeat("a", 19) + "_ y", want: `"x [REDACTED] y"`},
+		{name: "a run of letters at the threshold is kept", line: "x " + strings.Repeat("a", 20) + " y", want: `"x ` + strings.Repeat("a", 20) + ` y"`},
+		{name: "a run of letters one short of a key's floor is kept", line: "x " + strings.Repeat("a", securityKeyRunLong-1) + " y", want: strings.Repeat("a", securityKeyRunLong-1)},
+		{name: "a run of letters as long as a key's floor is redacted", line: "x " + strings.Repeat("a-", securityKeyRunLong/2) + " y", want: `"x [REDACTED] y"`},
+		{name: "a key of letters and hyphens alone is redacted", line: "-w " + strings.Repeat("AbC-", 10) + "xyz", want: `"-w [REDACTED]"`},
 		{name: "a control character is escaped", line: "bell\a", want: `"bell\a"`},
 		{name: "a long line is cut", line: strings.Repeat("word ", 100), want: `..."`},
 	}
@@ -659,7 +693,7 @@ func TestSecurityUnknownLineIsShownRedacted(t *testing.T) {
 		})
 	}
 	v := securityVerdict([]byte("security: SecKeychainItemDelete: something new.\n"), nil, true)
-	if !strings.Contains(v.why, securityUnknownWhy) || !strings.Contains(v.why, "something new.") {
+	if !strings.Contains(v.why, securityUnknownWhy) || !strings.Contains(v.why, "SecKeychainItemDelete: something new.") {
 		t.Errorf("the unknown-line verdict = %q, want the sentence and the line", v.why)
 	}
 }
