@@ -53,10 +53,15 @@ const (
 	pairRefusedInvalidRole        = "invalid_role"
 	pairRefusedRoleAbove          = "role_above_caller"
 	pairRefusedUnplaced           = "caller_unplaced"
+	pairRefusedIdentity           = "caller_identity_unknown"
 	pairRefusedEmail              = "email_unverified"
 	pairRefusedMinter             = "minter_role_missing"
 	pairRefusedDatabaseAdmin      = "database_admin_missing"
 	pairRefusedUnreachable        = "database_unreachable"
+	pairRefusedNoKey              = "no_key_before_timeout"
+	pairRefusedRequestKey         = "request_key_invalid"
+	pairRefusedCodeMissing        = "code_not_typed"
+	pairRefusedCodeMismatch       = "fingerprint_mismatch"
 )
 
 // pairEvent is one line of the stream. Every event carries the version, its
