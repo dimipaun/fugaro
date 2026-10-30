@@ -26,7 +26,50 @@ import (
 	"github.com/dimipaun/fugaro/internal/plan"
 )
 
-const parallelismSkillPath = "skills/parallelism/SKILL.md"
+const (
+	parallelismSkillPath = "skills/parallelism/SKILL.md"
+	workingSkillPath     = "skills/working/SKILL.md"
+)
+
+// TestWorkingSkillPointsAtJobMax: the working skill's decide-first list is
+// where a planner looks before launching anything, so the job max pointer there
+// is the only thing that carries the definition to an agent that never opens
+// the parallelism skill. routing's own pointer is pinned the same way
+// (TestLaunchPointsAtRoutingSkill); without this one an edit could drop the
+// pointer and leave every other test green.
+func TestWorkingSkillPointsAtJobMax(t *testing.T) {
+	skill, err := os.ReadFile(workingSkillPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "the `parallelism` skill, which defines job max"; !strings.Contains(string(skill), want) {
+		t.Errorf("%s never says %q", workingSkillPath, want)
+	}
+}
+
+// TestParallelismSkillJobMaxExceptionNeedsTheOptIn: the one-yes-per-batch rule
+// is what a launch spends money under, so the single exception the skill
+// carries must name both its conditions — the owner's opt-in, and dependencies
+// merged rather than merely finished. "Ready" is not that: the plan's own
+// `ready` state counts an unknown merge state as done, which a launch on the
+// strength of it would read as merged code that is not there (D730).
+func TestParallelismSkillJobMaxExceptionNeedsTheOptIn(t *testing.T) {
+	skill, err := os.ReadFile(parallelismSkillPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(skill)
+	for _, want := range []string{
+		"The only exception is `/jobmax`",
+		"the tasks whose dependencies are all merged",
+		"turned on the project's opt-in",
+		"with the opt-in off, this rule stands",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("%s does not say %q, so the exception reads as an unconditional one", parallelismSkillPath, want)
+		}
+	}
+}
 
 // TestParallelismSkillGraphExampleIsReadable: the document the skill shows a
 // planner is a document this build reads, and it exercises the fields the
