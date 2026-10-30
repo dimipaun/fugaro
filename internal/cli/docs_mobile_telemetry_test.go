@@ -283,9 +283,10 @@ func TestTelemetryPlanGateIsPassedAndTheTwoDocumentsAgree(t *testing.T) {
 //
 // The rule is the plan's own (§4.3, part 2): P7.1's JS test "fails if the file
 // is tracked by git, and fails if it is not ignored". This test holds the
-// tracked half, because that is the half this repository can hold today: the
-// ignore half is P7.1's to add (`mobile/.gitignore` carries no entry for either
-// path yet, and the plan says so). Reading mere *existence* instead - which
+// tracked half only, because in Go the ignored half would be a second reading
+// of the same tree: P7.1a added the two lines to `mobile/.gitignore`, and
+// `mobile/src/app-config.test.js` is where the `git check-ignore` half lives,
+// beside the prebuild fixture it needs. Reading mere *existence* instead - which
 // this test did first - is stricter than the rule and false-fails the workflow
 // the plan mandates: D260 and P7.1's `npx expo prebuild` writes a local
 // `mobile/android/app/google-services.json` from the EAS file secret, and a
