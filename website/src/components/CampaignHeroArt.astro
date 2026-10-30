@@ -64,9 +64,11 @@ interface Props {
 const { tone } = Astro.props
 
 // What the picture is, for a reader who is not shown it. It says what the drawing says and
-// nothing the page does not promise: one task, one short-lived job, one pull request. "Job" and
-// not "worker": a run's unit of work is a job, and the other word is retired from the site's
-// copy (`website/test/wording.mjs`).
+// nothing the page does not promise: one task, one short-lived job, one pull request. The label
+// calls that middle thing a job, which is what the site's own copy calls a run's unit of work
+// (changes spec 2026-10-18, item 2) — and the retired word for it is nowhere in this file,
+// comments included, because the gate that keeps it out reads the sources and not only the
+// pages (`website/test/wording.mjs`).
 const ALT = 'An illustration: a task starts a short-lived cloud job, and the job ends in a pull request.'
 ---
 
@@ -79,80 +81,85 @@ const ALT = 'An illustration: a task starts a short-lived cloud job, and the job
   preserveAspectRatio="xMidYMid meet"
 >
   {/* The panel the drawing sits on: one step above the ground and below the cards, so the
-      picture reads as a thing laid on the page rather than as the page itself. */}
+      picture reads as a thing laid on the page rather than as the page itself. Everything below
+      is placed inside it with a margin on each side, and the middle band — the ring, the cloud
+      and the routes — is the widest thing in the drawing, so the three cards and the job read
+      as one line a reader's eye travels along left to right. */}
   <rect class="art-panel" x="1" y="1" width="478" height="318" rx="18" />
 
   {/* The task, on the left: a prompt mark and three lines of a request nobody has run yet. */}
-  <rect class="art-card" x="26" y="84" width="122" height="104" rx="14" />
-  <path class="art-mark" d="M44 104 l12 12 -12 12" />
-  <path class="art-line" d="M68 116 h50" />
-  <path class="art-line" d="M44 146 h86" />
-  <path class="art-line" d="M44 164 h60" />
+  <rect class="art-card" x="26" y="140" width="122" height="104" rx="14" />
+  <path class="art-mark" d="M44 156 l12 12 -12 12" />
+  <path class="art-line" d="M68 168 h50" />
+  <path class="art-line" d="M44 194 h86" />
+  <path class="art-line" d="M44 220 h62" />
 
-  {/* The route in: the task is handed to the job, which is the dashed line arriving at it. */}
-  <path class="art-route" d="M152 136 h34" />
-  <path class="art-arrow" d="M180 130 l7 6 -7 6" />
+  {/* The route in: the task is handed to the job, which is the dashed line arriving at it. The
+      dashes stop at the ring, because what the line arrives at is the job's own lifetime. */}
+  <path class="art-route" d="M152 192 h24" />
+  <path class="art-arrow" d="M172 186 l8 6 -8 6" />
 
   {/* The job itself: a cloud that is starting up — a spinner inside it, a dashed lifetime ring
-      around it, a trail of dots behind it — and the particles it throws off as it comes up. */}
-  <circle class="art-ring" cx="242" cy="136" r="44" />
+      around it that keeps well clear of the cloud, a trail of dots behind it — and two particles
+      it throws off as it comes up, outside the ring so they read as coming off it. */}
+  <circle class="art-ring" cx="242" cy="192" r="56" />
   <g class="art-cloud">
-    <path class="art-cloud-shape" d="M208 150 A15 15 0 0 1 208 120 A19 19 0 0 1 242 112 A17 17 0 0 1 274 126 A13 13 0 0 1 274 150 Z" />
-    <circle class="art-spin" cx="242" cy="134" r="9" />
+    <path class="art-cloud-shape" d="M208 206 A15 15 0 0 1 208 176 A19 19 0 0 1 242 168 A18 18 0 0 1 274 182 A13 13 0 0 1 274 206 Z" />
+    <circle class="art-spin" cx="242" cy="190" r="9" />
   </g>
   <g class="art-trail">
-    <circle class="art-dot" cx="196" cy="106" r="3" />
-    <circle class="art-dot" cx="185" cy="124" r="2.2" />
-    <circle class="art-dot" cx="194" cy="152" r="2.6" />
+    <circle class="art-dot" cx="206" cy="160" r="3" />
+    <circle class="art-dot" cx="196" cy="180" r="2.2" />
+    <circle class="art-dot" cx="212" cy="226" r="2.6" />
   </g>
-  <path class="art-spark" d="M206 100 v11 M200.5 105.5 h11" />
-  <path class="art-spark" d="M285 158 v9 M280.5 162.5 h9" />
+  <path class="art-spark" d="M176 117 v11 M170.5 122.5 h11" />
+  <path class="art-spark" d="M306 259 v9 M301.5 263.5 h9" />
 
-  {/* The tone's own motif, in the one place every variant leaves free. */}
+  {/* The tone's own motif, in the band the drawing leaves free above the job. */}
   <g class="art-motif" data-motif={tone}>
     {tone === 'savings' && (
       <>
         {/* A tenth of the price: the percent mark, drawn as its two dots and its slash. */}
-        <circle class="art-motif-line" cx="230" cy="68" r="5.5" />
-        <circle class="art-motif-line" cx="256" cy="92" r="5.5" />
-        <path class="art-motif-line" d="M262 58 l-38 42" />
+        <circle class="art-motif-line" cx="228" cy="98" r="5.5" />
+        <circle class="art-motif-line" cx="254" cy="74" r="5.5" />
+        <path class="art-motif-line" d="M222 106 l40 -44" />
       </>
     )}
     {tone === 'control' && (
       <>
         {/* One policy over every run: a shield, and the check inside it. */}
-        <path class="art-motif-line" d="M242 50 l18 8 v15 c0 11 -8 19 -18 24 -10 -5 -18 -13 -18 -24 V58 z" />
-        <path class="art-motif-line" d="M234 77 l6 7 12 -15" />
+        <path class="art-motif-line" d="M242 62 l18 8 v15 c0 11 -8 19 -18 24 -10 -5 -18 -13 -18 -24 V70 z" />
+        <path class="art-motif-line" d="M234 89 l6 7 12 -15" />
       </>
     )}
     {tone === 'scale' && (
       <>
         {/* Many runs at once: the same line, three lanes deep. */}
-        <path class="art-lane art-lane-1" d="M212 56 h60" />
-        <path class="art-lane art-lane-2" d="M204 70 h76" />
-        <path class="art-lane art-lane-3" d="M212 84 h60" />
+        <path class="art-lane art-lane-1" d="M212 68 h60" />
+        <path class="art-lane art-lane-2" d="M204 82 h76" />
+        <path class="art-lane art-lane-3" d="M212 96 h60" />
       </>
     )}
     {tone === 'playful' && (
       <>
         {/* Somewhere else while it works: two sleeping marks over the cloud, and the moon. */}
-        <path class="art-motif-line art-nap" d="M222 56 h20 l-20 16 h20" />
-        <path class="art-motif-thin art-nap" d="M250 80 h13 l-13 11 h13" />
-        <path class="art-motif-line art-moon" d="M284 50 a13 13 0 1 0 11 21 a10 10 0 1 1 -11 -21 z" />
+        <path class="art-motif-line art-nap" d="M222 68 h20 l-20 16 h20" />
+        <path class="art-motif-thin art-nap" d="M250 94 h13 l-13 11 h13" />
+        <path class="art-motif-line art-moon" d="M284 62 a13 13 0 1 0 11 21 a10 10 0 1 1 -11 -21 z" />
       </>
     )}
   </g>
 
   {/* The route out, and the pull request it arrives at: merged into the base branch, marked
       with the palette's "this finished" colour. */}
-  <path class="art-route" d="M290 136 h36" />
-  <path class="art-arrow" d="M320 130 l7 6 -7 6" />
-  <rect class="art-pr" x="334" y="84" width="120" height="104" rx="14" />
-  <circle class="art-pr-node" cx="358" cy="136" r="8" />
-  <path class="art-pr-merge" d="M370 136 h26" />
-  <path class="art-arrow" d="M390 130 l7 6 -7 6" />
-  <path class="art-pr-base" d="M418 118 v36" />
-  <path class="art-check" d="M422 100 l4 5 9 -11" />
+  <path class="art-route" d="M302 192 h24" />
+  <path class="art-arrow" d="M318 186 l8 6 -8 6" />
+  <rect class="art-pr" x="334" y="140" width="120" height="104" rx="14" />
+  <circle class="art-pr-node" cx="358" cy="192" r="8" />
+  <path class="art-pr-merge" d="M370 192 h26" />
+  <path class="art-arrow" d="M390 186 l7 6 -7 6" />
+  <path class="art-pr-base" d="M418 174 v36" />
+  <path class="art-check" d="M422 156 l4 5 9 -11" />
 </svg>
 
 <style>
