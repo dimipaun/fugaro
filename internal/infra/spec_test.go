@@ -20,6 +20,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -2727,4 +2728,369 @@ func missingFrom(want, got []string) []string {
 		}
 	}
 	return out
+}
+
+// --- The Bitbucket proxied fact (B1.8b, D500, G9, G15)
+
+// bitbucketTokenEnv is the variable a Bitbucket repository's job mounts its
+// git credential as (providers.EnvBitbucketToken), spelled the way the M4
+// capture's own assertions spell it.
+const bitbucketTokenEnv = "FUGARO_BITBUCKET_TOKEN"
+
+// proxiedGitListFilled is the flip's own state (B1.13 part two) in one line:
+// config.ProxiedGitSecretNames names the Bitbucket token, and every drop
+// written for it turns on at once — readiness.go's mount drop, Addresses()'s
+// mirror, and modules/workflow/sa.tf's accessor and mount rules, which hold
+// their literals to that list. It is a package var, so a test can put the tree
+// in the state that release will, and put it back.
+func proxiedGitListFilled(t *testing.T) {
+	t.Helper()
+	config.ProxiedGitSecretNames = []string{config.BitbucketSecret}
+	t.Cleanup(func() { config.ProxiedGitSecretNames = []string{} })
+}
+
+// proxiedLocalEntry is the operator's half of the flip in their own config:
+// the project_secrets entry that allow-lists the sandbox's repository for the
+// project's Bitbucket token and asks for the credentials service to forward
+// it (D493).
+const proxiedLocalEntry = "project_secrets:\n  bitbucket-token:\n    allow_data_to: [\"acme/sandbox\"]\n    proxy: true\n"
+
+// publishedNode is a published policy node whose bitbucket_token block admits
+// repos with proxy: proxy — the one source of whether a repository is proxied
+// (G15). The repositories are given as owner/name and qualified the way
+// `fugaro project policy publish` qualifies them, so a test names the same
+// repository the node does.
+func publishedNode(t *testing.T, proxy bool, repos ...string) *projectpolicy.Policy {
+	t.Helper()
+	allow := make([]string, 0, len(repos))
+	for _, r := range repos {
+		c, err := projectpolicy.Canonical("bitbucket", r)
+		if err != nil {
+			t.Fatalf("projectpolicy.Canonical(bitbucket, %q) = %v", r, err)
+		}
+		allow = append(allow, c)
+	}
+	return &projectpolicy.Policy{BitbucketToken: &projectpolicy.BitbucketToken{AllowRepos: allow, Proxy: proxy}}
+}
+
+// proxiedSandboxInputs is the sandbox fixture — acme/sandbox on Bitbucket —
+// with the installation opted in to the credentials service and the node the
+// caller read. extraLC is the operator's local config, appended to the M5
+// additions.
+func proxiedSandboxInputs(t *testing.T, extraLC string, node *projectpolicy.Policy) Inputs {
+	t.Helper()
+	in := sandboxInputs(t, m5Additions+extraLC)
+	in.Installation.CredentialsService = credentialsService()
+	in.Policy = node
+	return in
+}
+
+// repoBitbucketProxied is the fact as the plan sees it: the repo object's
+// bitbucket_proxied attribute in the tfvars the repository root plans from.
+// present is false when the key is not there at all, which is what the
+// module's optional(bool, false) reads as false — so a caller asserting the
+// fact's absence asserts this, not a false in the JSON.
+func repoBitbucketProxied(t *testing.T, spec RepoSpec) (value, present bool) {
+	t.Helper()
+	data, err := RepoVars(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Repo map[string]json.RawMessage `json:"repo"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	raw, present := doc.Repo["bitbucket_proxied"]
+	if !present {
+		return false, false
+	}
+	if err := json.Unmarshal(raw, &value); err != nil {
+		t.Fatalf("repo.bitbucket_proxied = %s: %v", raw, err)
+	}
+	return value, true
+}
+
+// bitbucketTokenAccessor is the address of the job's own secretAccessor on the
+// repository's Bitbucket token, which the flip takes away from a proxied
+// repository's job and from no other (G9). It is the Go mirror of the
+// module's job_secret_names entry for that mount.
+const bitbucketTokenAccessor = `module.repo.module.workflow["web"].google_secret_manager_secret_iam_member.job["bitbucket-token"]`
+
+// TestProxiedFactFromThePublishedNode: the per-repository fact comes from the
+// published node's bitbucket_token block and from nothing else (G15) — true
+// for a repository the node admits with proxy: true, through an exact entry or
+// through a pattern, and false for one it does not admit, for a node that
+// carries no block and for a caller that read no node at all.
+func TestProxiedFactFromThePublishedNode(t *testing.T) {
+	spec, err := Repo(proxiedSandboxInputs(t, proxiedLocalEntry, publishedNode(t, true, "acme/sandbox")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !spec.BitbucketProxied {
+		t.Errorf("BitbucketProxied = false for a repository the published node admits with proxy: true and an opted-in installation, want true: the node is the one source of the fact (G15)")
+	}
+	if got, present := repoBitbucketProxied(t, spec); !present || !got {
+		t.Errorf("the tfvars' repo.bitbucket_proxied = %v (key present: %v), want true: the module reads the fact from the repo object (modules/repo/workflows.tf)", got, present)
+	}
+
+	// The node's own matcher decides admission, so one entry serves a whole
+	// workspace (dc73's segment wildcards, D464).
+	wildcard := &projectpolicy.Policy{BitbucketToken: &projectpolicy.BitbucketToken{AllowRepos: []string{"bitbucket/acme/*"}, Proxy: true}}
+	if rs, err := Repo(proxiedSandboxInputs(t, proxiedLocalEntry, wildcard)); err != nil {
+		t.Errorf("Repo with a node whose allow_repos admits this repository through a pattern: %v", err)
+	} else if !rs.BitbucketProxied {
+		t.Errorf("BitbucketProxied = false for a node admitting bitbucket/acme/*, want true: the fact is read with the node's own matcher (projectpolicy.MatchRepo)")
+	}
+
+	for name, node := range map[string]*projectpolicy.Policy{
+		"a node admitting another workspace's repository": publishedNode(t, true, "workspace-b/other"),
+		"a node with no bitbucket_token block":            {},
+		"no node read":                                    nil,
+	} {
+		rs, err := Repo(proxiedSandboxInputs(t, "", node))
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+			continue
+		}
+		if rs.BitbucketProxied {
+			t.Errorf("%s: BitbucketProxied = true, want false: only the node's bitbucket_token block, and only for a repository it admits, makes a repository proxied (G15)", name)
+		}
+		if _, present := repoBitbucketProxied(t, rs); present {
+			t.Errorf("%s: the tfvars carry repo.bitbucket_proxied, want the key omitted: the fact is false, and the module's own default is false, so nothing may move for it", name)
+		}
+	}
+}
+
+// TestProxiedFactFalseWithoutOptIn: the installation has not opted in to the
+// credentials service, so nothing is proxied whatever the node admits and
+// whatever the operator's local entry says (G9). The local entry is not judged
+// either: with no service there is no forwarder for it to be about, and every
+// repository keeps mounting and reading its token exactly as it did.
+func TestProxiedFactFalseWithoutOptIn(t *testing.T) {
+	in := sandboxInputs(t, m5Additions+proxiedLocalEntry)
+	in.Policy = publishedNode(t, true, "acme/sandbox")
+	spec, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.BitbucketProxied {
+		t.Errorf("BitbucketProxied = true with the installation's credentials service off, want false: the flip needs both halves, and the opt-in is one of them (D147, G9)")
+	}
+	if _, present := repoBitbucketProxied(t, spec); present {
+		t.Errorf("the tfvars carry repo.bitbucket_proxied with the opt-in off, want the key omitted: no plan of an installation without the service may move for the flip (G9)")
+	}
+	if ws := spec.Workflows["web"]; ws.SecretEnv[bitbucketTokenEnv] != config.BitbucketSecret {
+		t.Errorf("workflow web mounts %v with the opt-in off, want %s -> %s kept", ws.SecretEnv, bitbucketTokenEnv, config.BitbucketSecret)
+	}
+
+	// The entry disagrees with the node here, and it is not refused: without
+	// the opt-in the proxy switch is not in effect, so there is nothing to
+	// reconcile.
+	disagreeing := sandboxInputs(t, m5Additions+proxiedLocalEntry)
+	disagreeing.Policy = publishedNode(t, true, "workspace-b/other")
+	if _, err := Repo(disagreeing); err != nil {
+		t.Errorf("Repo with the opt-in off and a local entry the node does not agree with = %v, want no error: with no credentials service nothing is proxied, so no entry is judged (G9)", err)
+	}
+}
+
+// TestProxiedFactFalseWhenProxyFalse: the node carries the block and admits
+// the repository, and the installation opted in — but the block's proxy is
+// off, which is the operator's per-installation switch (D493), so the job
+// keeps the token and the runner reads it as it always has.
+func TestProxiedFactFalseWhenProxyFalse(t *testing.T) {
+	spec, err := Repo(proxiedSandboxInputs(t, "", publishedNode(t, false, "acme/sandbox")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.BitbucketProxied {
+		t.Errorf("BitbucketProxied = true for a node whose proxy is false, want false: the block admits the repository and forwards nothing (D493, G3)")
+	}
+	if _, present := repoBitbucketProxied(t, spec); present {
+		t.Errorf("the tfvars carry repo.bitbucket_proxied for a node with proxy off, want the key omitted")
+	}
+}
+
+// TestLocalEntryDisagreeingWithNodeRefused: the node is the one source of
+// whether a repository is proxied (G15), so a local project_secrets entry that
+// answers differently for this repository — it proxies one the node does not
+// admit, or it stopped proxying one the node admits — is refused, with both
+// fixes named: publish the entry, or correct it. An entry that agrees, and no
+// entry at all, are not refusals: the first is the state the node was
+// published from, and the second says nothing for the node to disagree with.
+func TestLocalEntryDisagreeingWithNodeRefused(t *testing.T) {
+	for name, tc := range map[string]struct {
+		node *projectpolicy.Policy
+	}{
+		"the entry proxies a repository the node does not admit": {publishedNode(t, true, "workspace-b/other")},
+		"the entry proxies a repository the node's block does not carry": {
+			&projectpolicy.Policy{},
+		},
+		"the entry proxies a repository the node's proxy is off for": {publishedNode(t, false, "acme/sandbox")},
+	} {
+		_, err := Repo(proxiedSandboxInputs(t, proxiedLocalEntry, tc.node))
+		if err == nil {
+			t.Errorf("%s: Repo = no error, want a refusal: the node is the one source of whether a repository is proxied (G15)", name)
+			continue
+		}
+		var ue *UserError
+		if !errors.As(err, &ue) {
+			t.Errorf("%s: Repo = %v (%T), want a user error the operator can act on", name, err, err)
+		}
+		for _, want := range []string{"project_secrets.bitbucket-token", "fugaro project policy publish", "acme/sandbox"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%s: the refusal %q does not name %q: it has to say which entry, which repository and the command that publishes the entry", name, err, want)
+			}
+		}
+	}
+
+	// The other direction: the node admits this repository and the entry does
+	// not, so the next publish from this config would take the repository's
+	// proxy away from a node the installation's runs already read.
+	notProxied := "project_secrets:\n  bitbucket-token:\n    allow_data_to: [\"acme/sandbox\"]\n"
+	_, err := Repo(proxiedSandboxInputs(t, notProxied, publishedNode(t, true, "acme/sandbox")))
+	if err == nil {
+		t.Error("Repo = no error for a node that admits this repository with proxy: true and a local entry that does not proxy it, want a refusal")
+	} else if !strings.Contains(err.Error(), "fugaro project policy publish") {
+		t.Errorf("the refusal %q names no fix: it has to say to publish the config the entry is in, or to correct the entry", err)
+	}
+
+	// No entry is not a disagreeing entry: the node decides, and the fact is
+	// true — a machine that never wrote the entry reads the node's answer.
+	spec, err := Repo(proxiedSandboxInputs(t, "", publishedNode(t, true, "acme/sandbox")))
+	if err != nil {
+		t.Fatalf("Repo with no project_secrets entry = %v, want the node's answer", err)
+	}
+	if !spec.BitbucketProxied {
+		t.Error("BitbucketProxied = false with no local entry and a node admitting this repository with proxy: true, want true: the node is the one source, and an absent entry disagrees with nothing (G15)")
+	}
+}
+
+// TestEmptyProxiedListChangesNothing is this branch's state, and the state the
+// whole flip is inert in: config.ProxiedGitSecretNames is empty, so a proxied
+// repository's job keeps the accessor on and the mount of its Bitbucket token
+// — and the fact itself is already in the tfvars, which is what B1.13 part two
+// fills the list against.
+func TestEmptyProxiedListChangesNothing(t *testing.T) {
+	if len(config.ProxiedGitSecretNames) != 0 {
+		t.Fatalf("config.ProxiedGitSecretNames = %v: this test pins the inert state the flip ships in until B1.13 part two", config.ProxiedGitSecretNames)
+	}
+	spec, err := Repo(proxiedSandboxInputs(t, proxiedLocalEntry, publishedNode(t, true, "acme/sandbox")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, present := repoBitbucketProxied(t, spec); !present || !got {
+		t.Fatalf("the tfvars' repo.bitbucket_proxied = %v (key present: %v), want true: the fact is what the flip reads, and the assertions below would pass vacuously without it", got, present)
+	}
+	f := newCloud(t)
+	ready, _, _ := readinessOf(t, f, spec)
+	for _, s := range []struct {
+		what string
+		spec RepoSpec
+	}{{"the spec Repo built", spec}, {"the spec Readiness resolved", ready}} {
+		ws := s.spec.Workflows["web"]
+		if ws.SecretEnv[bitbucketTokenEnv] != config.BitbucketSecret {
+			t.Errorf("%s mounts %v, want %s -> %s kept: with the list empty no job gives the token up, whatever the node admits", s.what, ws.SecretEnv, bitbucketTokenEnv, config.BitbucketSecret)
+		}
+		if ws.SecretIDs[config.BitbucketSecret] == "" {
+			t.Errorf("%s names no secret for %s: the mount that stays still points at the container", s.what, config.BitbucketSecret)
+		}
+		if got := ws.Env[runner.SecretEnvsVar]; !strings.Contains(got, bitbucketTokenEnv) {
+			t.Errorf("%s's %s = %q, want %s among the variables: the redactor masks exactly what the job mounts", s.what, runner.SecretEnvsVar, got, bitbucketTokenEnv)
+		}
+		if !slices.Contains(s.spec.Addresses(), bitbucketTokenAccessor) {
+			t.Errorf("%s produces no %s, want the job's own accessor kept: the flip's accessor half is the list too", s.what, bitbucketTokenAccessor)
+		}
+	}
+}
+
+// TestFilledProxiedListDropsMountAndAccessor is B1.13 part two's red step, run
+// against the state that release puts the tree in rather than against this
+// branch's: with config.ProxiedGitSecretNames naming the Bitbucket token, a
+// proxied repository's job gives up the mount, the secret id and the redaction
+// entry, and the plan gives up the account's accessor on it — together, always,
+// because a container that still mounted a secret its account cannot resolve is
+// a job Cloud Run refuses to create. The check job keeps its own: it runs as
+// the build account, which clones with the token until S4 (D148, F3).
+func TestFilledProxiedListDropsMountAndAccessor(t *testing.T) {
+	proxiedGitListFilled(t)
+	spec, err := Repo(proxiedSandboxInputs(t, proxiedLocalEntry, publishedNode(t, true, "acme/sandbox")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !spec.BitbucketProxied {
+		t.Fatal("BitbucketProxied = false for a repository the node admits with proxy: true: the assertions below would pass vacuously")
+	}
+	// The fixture's own premise: before Readiness the job mounts the token.
+	if got := spec.Workflows["web"].SecretEnv[bitbucketTokenEnv]; got != config.BitbucketSecret {
+		t.Fatalf("the spec's web job mounts %s -> %q, want %s: the fixture must carry the mount the drop takes away", bitbucketTokenEnv, got, config.BitbucketSecret)
+	}
+	f := newCloud(t)
+	ready, _, _ := readinessOf(t, f, spec)
+	ws := ready.Workflows["web"]
+	if _, mounted := ws.SecretEnv[bitbucketTokenEnv]; mounted {
+		t.Errorf("a proxied repository's job still mounts %s -> %q: the service holds the token for it, so the account keeps no accessor and the mount goes with it (D500, D502)", bitbucketTokenEnv, ws.SecretEnv[bitbucketTokenEnv])
+	}
+	if id, named := ws.SecretIDs[config.BitbucketSecret]; named {
+		t.Errorf("a proxied repository's job still names the token's secret %q, want none: it has no mount of it left to point at", id)
+	}
+	if got := ws.Env[runner.SecretEnvsVar]; strings.Contains(got, bitbucketTokenEnv) {
+		t.Errorf("a proxied repository's job's %s = %q, want the variables that are left: the redactor masks exactly what the job mounts", runner.SecretEnvsVar, got)
+	}
+	if slices.Contains(ready.Addresses(), bitbucketTokenAccessor) {
+		t.Errorf("the plan still produces %s, want it gone: the job's account reads no token, so it needs no accessor on one (D500, G1)", bitbucketTokenAccessor)
+	}
+	// The container and the build account's own read stay: only the job's
+	// mount and accessor go.
+	if ready.Secrets[config.BitbucketSecret] == "" {
+		t.Error("the token's container left rs.Secrets: the build account clones with it and its versions are the operator's to store (D148, F3)")
+	}
+	if ready.Check == nil {
+		t.Fatal("the fixture deploys no check job: the assertion below would pass vacuously")
+	}
+	if got := ready.Check.SecretEnv[bitbucketTokenEnv]; got != config.BitbucketSecret {
+		t.Errorf("the check job's SecretEnv = %v, want %s -> %s kept: it runs as the build account, which keeps its accessor (D148, F3)", ready.Check.SecretEnv, bitbucketTokenEnv, config.BitbucketSecret)
+	}
+}
+
+// TestFilledProxiedListKeepsNonProxiedRepositories: with the list filled, a
+// Bitbucket repository the node does not admit — and every repository of an
+// installation that did not opt in — keeps its accessor and its mount (G9).
+// The list alone is not the flip: the per-repository fact is the other half.
+func TestFilledProxiedListKeepsNonProxiedRepositories(t *testing.T) {
+	proxiedGitListFilled(t)
+	for name, in := range map[string]Inputs{
+		"a repository the node does not admit": proxiedSandboxInputs(t, "", publishedNode(t, true, "workspace-b/other")),
+		"an installation that did not opt in": func() Inputs {
+			notOptedIn := sandboxInputs(t, m5Additions+proxiedLocalEntry)
+			notOptedIn.Policy = publishedNode(t, true, "acme/sandbox")
+			return notOptedIn
+		}(),
+	} {
+		spec, err := Repo(in)
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+			continue
+		}
+		if spec.BitbucketProxied {
+			t.Errorf("%s: BitbucketProxied = true, want false", name)
+			continue
+		}
+		if got := spec.Workflows["web"].SecretEnv[bitbucketTokenEnv]; got != config.BitbucketSecret {
+			t.Errorf("%s: the job mounts %s -> %q, want %s: every Bitbucket repository keeps mounting its token (G9)", name, bitbucketTokenEnv, got, config.BitbucketSecret)
+			continue
+		}
+		if !slices.Contains(spec.Addresses(), bitbucketTokenAccessor) {
+			t.Errorf("%s: the plan produces no %s, want the account's accessor kept: nothing but a proxied repository gives it up (G9)", name, bitbucketTokenAccessor)
+		}
+		f := newCloud(t)
+		ready, _, _ := readinessOf(t, f, spec)
+		if got := ready.Workflows["web"].SecretEnv[bitbucketTokenEnv]; got != config.BitbucketSecret {
+			t.Errorf("%s: the resolved spec's job mounts %s -> %q, want %s: the drop is the proxied repository's alone", name, bitbucketTokenEnv, got, config.BitbucketSecret)
+		}
+		if !slices.Contains(ready.Addresses(), bitbucketTokenAccessor) {
+			t.Errorf("%s: the resolved plan produces no %s, want it kept", name, bitbucketTokenAccessor)
+		}
+	}
 }

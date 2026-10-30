@@ -24,6 +24,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/repourl"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -134,6 +135,21 @@ type Inputs struct {
 	// Installation are the installation root's outputs. Fields left empty
 	// take the values Go gives a new installation.
 	Installation InstallationOutputs
+	// Policy is the published policy node, as the caller read it
+	// (internal/cli's policyReadOnce, over budget.rtdb_url): whether a
+	// repository is proxied has ONE source, this node's bitbucket_token
+	// block (G15), and RepoSpec.BitbucketProxied is read from it and from
+	// nothing else.
+	//
+	// nil means the caller read no node at all: then nothing is proxied and
+	// no local project_secrets entry is judged against a document this
+	// caller never saw — a command that does not read the node (fugaro
+	// image, fugaro doctor, --print-vars) must not refuse one over it. A
+	// caller that DID read the node passes what it read, and an empty Policy
+	// when the project has published none: "read, and the node admits
+	// nothing" is a different answer from "not read", and only the first one
+	// refuses a local entry that proxies a repository the node does not.
+	Policy *projectpolicy.Policy
 }
 
 // InstallationOutputs are the installation root's outputs, as `terraform
@@ -358,6 +374,24 @@ type RepoSpec struct {
 	BuildBucketCondition Condition               `json:"build_bucket_condition"`
 	Check                *CheckSpec              `json:"check"`
 	Workflows            map[string]WorkflowSpec `json:"workflows"`
+	// BitbucketProxied is the per-repository fact of the flip (D500, D502):
+	// this repository's git credential is one the credentials service
+	// brokers for it, so each of its jobs gives up the accessor on and the
+	// mount of every name in config.ProxiedGitSecretNames (Readiness drops
+	// the mount, modules/workflow/sa.tf the accessor), while every other
+	// Bitbucket repository — of an installation that opted in or not —
+	// keeps both (G9). It is true only when the installation has opted in to
+	// the service AND the published node admits this repository with
+	// proxy: true (G15, proxiedRepository), and it is written into the
+	// tfvars' repo object as the workflow module's bitbucket_proxied input.
+	//
+	// It is omitted when false, which is what every tfvars written before
+	// the input existed means: the module declares bitbucket_proxied
+	// optional and false (roots/repo and modules/repo's own repo object), so
+	// a plan cannot tell an omitted fact from a false one, and no golden
+	// plan moves for a repository nobody proxied.
+	BitbucketProxied bool `json:"bitbucket_proxied,omitempty"`
+
 	// ProjectSecretCandidates are the logical names this repository may use
 	// project-wide, mapped to the secret ID they would resolve to
 	// (gcp.ProjectSecretID). Candidate data only: being here says nothing
@@ -400,6 +434,10 @@ type repoCtx struct {
 	gitSecret    string
 	gitUser      string
 	inst         InstallationOutputs // with defaults filled in
+	// bitbucketProxied is the per-repository fact of the flip, decided once
+	// for the repository by resolveBitbucketProxied: RepoSpec.BitbucketProxied
+	// is this, and nothing else reads it.
+	bitbucketProxied bool
 }
 
 var appIDRE = regexp.MustCompile(`^[0-9]{1,20}$`)
@@ -482,7 +520,81 @@ func resolve(in Inputs) (*repoCtx, error) {
 	default:
 		return nil, userErr("git.provider %q is not bitbucket or github", c.provider)
 	}
+	if err := c.resolveBitbucketProxied(); err != nil {
+		return nil, err
+	}
 	return c, nil
+}
+
+// resolveBitbucketProxied decides the per-repository fact of the flip
+// (RepoSpec.BitbucketProxied) and refuses a local project_secrets entry that
+// answers differently for this repository.
+//
+// The fact has two halves and it needs both. The installation must have opted
+// in to the credentials service (D146, D147): with it off nothing changes,
+// whatever the node admits and whatever the operator's entry says (G9). And
+// the published node must admit this repository with proxy: true — the node is
+// the ONE source of that half (G15), because it is the document the
+// credentials service itself reads when a job asks it for the token (G3), so
+// the fact this spec is built from and the admission a run is granted come
+// from the same place and cannot disagree.
+//
+// The node is read through the operator's credentials by the caller
+// (internal/cli's policyReadOnce, over budget.rtdb_url) and handed in as
+// Inputs.Policy: internal/infra holds no client that could read it, and Repo
+// is a pure function of its Inputs. nil Policy therefore means the caller read
+// no node — fugaro image, fugaro doctor, --print-vars — and then nothing is
+// proxied and no entry is judged against a document this caller never saw. An
+// empty Policy is the different answer "read, and the project has published
+// no block", which proxies nothing either but does judge an entry that says
+// otherwise.
+//
+// The refusal is the flip's one place where the two documents can disagree,
+// and it is worth a refusal rather than a precedence rule: the entry is what
+// `fugaro project policy publish` derives the node's block from, so a local
+// entry that proxies a repository the node does not (or stopped proxying one
+// it does) means the next publish from this config would move the fact under a
+// running installation — the runs would read one answer and the next update
+// another. Both fixes are named, because both are legitimate: publish the
+// config the entry is in, or correct the entry to say what the node says.
+//
+// An entry that is not there is not a disagreement: the node is then the only
+// answer, and it is the answer this fact takes. Neither is an entry judged
+// while the opt-in is off, or when no node was read.
+func (c *repoCtx) resolveBitbucketProxied() error {
+	if c.inst.CredentialsService == nil || c.in.Policy == nil {
+		return nil
+	}
+	canonical, err := projectpolicy.Canonical(c.provider, c.in.Repo)
+	if err != nil {
+		// Unreachable: resolve has already put the same pair through
+		// task.Slug, which validates the provider kind and the repository with
+		// these very functions.
+		return userErr("%v", err)
+	}
+	var nodeProxies bool
+	if b := c.in.Policy.BitbucketToken; b != nil {
+		nodeProxies = b.Proxy && projectpolicy.AdmitRepo(b.AllowRepos, canonical)
+	}
+	c.bitbucketProxied = nodeProxies
+
+	entry, hasEntry := c.lc.ProjectSecrets[config.BitbucketSecret]
+	if !hasEntry {
+		return nil
+	}
+	if localProxies := entry.Proxy && entry.AllowsData(c.in.Repo); localProxies == nodeProxies {
+		return nil
+	}
+	return userErr("the local config's project_secrets.%s entry and the project's published policy disagree about %s: the entry %s, and the published policy node %s. Whether a repository's git credential is brokered comes from the published node alone, because that node is what the credentials service reads when the repository's job asks it for the token — so make the two agree: publish this config with 'fugaro project policy publish', which derives the node's bitbucket_token block from this entry, or correct the entry so that it says what the node says", config.BitbucketSecret, c.in.Repo, proxySaid(entry.Proxy && entry.AllowsData(c.in.Repo), "admits it with proxy: true", "does not proxy it"), proxySaid(nodeProxies, "admits it with proxy: true", "does not proxy it"))
+}
+
+// proxySaid words one half of resolveBitbucketProxied's refusal: whether the
+// document said the repository is proxied.
+func proxySaid(proxied bool, yes, no string) string {
+	if proxied {
+		return yes
+	}
+	return no
 }
 
 // localRepo is the local config's entry for repo, matched as fugaro run
@@ -1010,6 +1122,8 @@ func Repo(in Inputs) (RepoSpec, error) {
 			Operators:               c.inst.Operators,
 			CredentialsService:      repoCredentialsService(c.inst.CredentialsService),
 		},
+		BitbucketProxied: c.bitbucketProxied,
+
 		GitHubAppID:              c.appID,
 		RepoURL:                  c.repoURL,
 		BaseBranch:               c.baseBranch,
@@ -1359,7 +1473,7 @@ func (rs RepoSpec) Addresses() []string {
 			// that survives a retirement. The App key's half is inert until
 			// config.ServiceHeldSecretNames names it (C2.2's release, review
 			// finding F1).
-			if rs.Installation.CredentialsService != nil && mountsServiceHeldSecret(ws, logical) {
+			if rs.Installation.CredentialsService != nil && mountsServiceHeldSecret(ws, logical, rs.BitbucketProxied) {
 				continue
 			}
 			add(p + "google_secret_manager_secret_iam_member.job[" + q(logical) + "]")
@@ -1392,6 +1506,15 @@ func (rs RepoSpec) Addresses() []string {
 // C2.2's release (review finding F1), so this answers false for it today and
 // the job keeps the accessor it needs to read the key.
 //
+// proxied is the repository's own fact (RepoSpec.BitbucketProxied), and it is
+// the second way a mount comes to be held: a name config.ProxiedGitSecretNames
+// lists is the credentials service's for a repository the published node
+// admits with proxy: true (B1.8, D500), and for that repository alone — the
+// same name in another repository's spec, proxied false, keeps its accessor
+// (G9). It is a parameter rather than a read of the spec so that this function
+// stays the one statement of the module's rule, and so that the rule is
+// visible where it is called.
+//
 // It is the same question modules/workflow/sa.tf's job_secret_names asks, one
 // mount at a time, and it is written the same way — a name survives if ANY
 // entry that mounts it is not one the service holds — so the mirror
@@ -1399,14 +1522,17 @@ func (rs RepoSpec) Addresses() []string {
 // the spec produces. One secret mounted under two variables, one of them a
 // credential the service holds, is a shape config already refuses
 // (ReservedSecrets, ProviderBySecret), and this answers the same way either
-// way.
-func mountsServiceHeldSecret(ws WorkflowSpec, name string) bool {
+// way. The proxied clause is the module's is_proxied_git, folded in: it reads
+// the logical name and the repository's fact and never the variable, so it is
+// the same answer for every entry naming the name.
+func mountsServiceHeldSecret(ws WorkflowSpec, name string, proxied bool) bool {
+	proxiedGit := proxied && slices.Contains(config.ProxiedGitSecretNames, name)
 	held := false
 	for env, logical := range ws.SecretEnv {
 		if logical != name {
 			continue
 		}
-		if !config.IsServiceHeldSecretEnv(env, name) {
+		if !config.IsServiceHeldSecretEnv(env, name) && !proxiedGit {
 			return false
 		}
 		held = true
