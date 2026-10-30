@@ -1,12 +1,85 @@
 // SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
-// RED STEP STUB -- not the module this slice ships. It exists only so the
-// launch-flow test and the no-identifier test fail for the reasons this task
-// exists, before the policy is written.
+// The update policy (desktop-console plan Task 4.4, auto-update slice U1; design
+// section 7.4 and D760 to D764).
+//
+// A signed update replaces the process that owns the console's launch write
+// path, so this module is a trust boundary rather than a convenience: it decides
+// which platforms may check at all, which releases are eligible, which two URLs
+// may ever be built, what a request may carry, and that nothing installs while a
+// launch is in flight. It reaches none of that on its own -- the listing arrives
+// through an injected `fetchReleases`, six hours pass on an injected timer and
+// the client is an injected `UpdaterPort` that U3 fills with electron-updater --
+// which is what makes every rule here testable without a network, a clock or a
+// shipped update.
 
+/** UPDATE_INTERVAL_MS is the cadence D761 fixes: one check at start, then one
+ * every six hours for as long as the console runs. */
 export const UPDATE_INTERVAL_MS = 6 * 60 * 60 * 1000
+
+/** RELEASES_URL is the release listing of this repository. It is the console's
+ * own repository because the console releases on its own tag; the listing is
+ * read rather than `/releases/latest` because the newest release is often a CLI
+ * one, which the filter below has to be able to skip past. */
 export const RELEASES_URL = 'https://api.github.com/repos/dimipaun/fugaro/releases'
 
+/** FEED_PREFIX is the whole of the feed URL but its tag, and the only host an
+ * update may ever be downloaded from: a feed URL the policy did not build is a
+ * feed URL nobody checked. */
+const FEED_PREFIX = 'https://github.com/dimipaun/fugaro/releases/download/'
+
+/** CONSOLE_TAG_RE is a console release tag, and nothing else: the tag alone
+ * decides what may be appended to `FEED_PREFIX`, so it is a shape that cannot
+ * carry a second path segment, a percent-escape, a query or a fragment. Its
+ * version rule is `internal/updatecheck`'s -- no leading zero, at most nine
+ * digits per component -- narrowed to the console's own prefix. */
+const CONSOLE_TAG_RE = /^console-v(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})$/
+
+/** RUNNING_VERSION_RE is the running app's version. It tolerates the CLI's
+ * `v` prefix because the version string may come from a tag, and tolerates
+ * nothing else: a pre-release or a dev version is not something to compare a
+ * release against. */
+const RUNNING_VERSION_RE = /^v?(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})$/
+
+const CONSOLE_TAG_PREFIX = 'console-v'
+
+/** MAX_LISTING_BYTES bounds the listing before it is parsed. GitHub answers a
+ * page of up to thirty release objects, which is tens of KB, so this is generous
+ * for the shape and still a bound: a body past it is refused unread rather than
+ * buffered and parsed. */
+const MAX_LISTING_BYTES = 1 << 20
+
+/** LISTING_HEADERS is the whole of what a check sends, and it is fixed (design
+ * section 7.4): GitHub asks for a `User-Agent`, and an update request is not a
+ * place to answer with a version, a machine, a user or an installation name. */
+const LISTING_HEADERS: Readonly<Record<string, string>> = Object.freeze({
+  Accept: 'application/vnd.github+json',
+  'User-Agent': 'fugaro-console',
+})
+
+/** The three failure lines are constants rather than built from the failure
+ * they report: a fetch error carries the URL it asked for, an updater error can
+ * carry a response body, and neither belongs in a log the user may paste. What
+ * is useful is that a check failed and that the next one will try again. */
+const LISTING_FAILED = 'fugaro console: the release listing could not be read; the next check will try again'
+const CLIENT_FAILED = 'fugaro console: the update client refused the check; the next check will try again'
+const TAG_REFUSED = 'the update feed URL is refused: that tag is not a console release tag'
+
+/** IntervalTimers is `setInterval`/`clearInterval`, injected so the six-hour
+ * cadence is a test's to move rather than a wall clock's. */
+export interface IntervalTimers {
+  setInterval(handler: () => void, ms: number): ReturnType<typeof setInterval>
+  clearInterval(handle: ReturnType<typeof setInterval>): void
+}
+
+/** FetchReleases is the one network call this module makes, as an argument.
+ * The body arrives as text so that the bound on it is this module's own: a
+ * parsed value would already have been buffered and parsed by the injection. */
+export type FetchReleases = (url: string, headers: Readonly<Record<string, string>>) => Promise<string>
+
+/** UpdaterPort is the subset of electron-updater's `AppUpdater` the policy
+ * uses, under electron-updater's own member names, so that U3's adapter is a
+ * pass-through and this module never imports the package. */
 export interface UpdaterPort {
   setFeedURL(options: { provider: 'generic'; url: string }): void
   checkForUpdates(): Promise<unknown>
@@ -19,81 +92,201 @@ export interface UpdaterPort {
   on(event: 'update-downloaded' | 'error', listener: (...args: unknown[]) => void): unknown
 }
 
+/** UpdatePolicyDeps is everything the policy is allowed to reach. `switchOn` is
+ * the user's auto-update switch and `isLaunchFlowIdle` is U3's answer about the
+ * launch flow, both read at the moment they matter rather than captured. */
 export interface UpdatePolicyDeps {
   readonly platform: string
   readonly isPackaged: boolean
   readonly env: Readonly<Record<string, string | undefined>>
   readonly currentVersion: string
   readonly switchOn: () => boolean
-  readonly timer: {
-    setInterval(handler: () => void, ms: number): ReturnType<typeof setInterval>
-    clearInterval(handle: ReturnType<typeof setInterval>): void
-  }
-  readonly fetchReleases: (url: string, headers: Readonly<Record<string, string>>) => Promise<string>
+  readonly timer: IntervalTimers
+  readonly fetchReleases: FetchReleases
   readonly isLaunchFlowIdle: () => boolean
   readonly onReadyToRestart: (version: string) => void
   readonly updater: UpdaterPort
 }
 
+export interface UpdateController {
+  start(): Promise<void>
+  stop(): void
+  checkNow(): Promise<void>
+  restartRequested(): void
+  launchFlowIdle(): void
+}
+
+/** Version is a parsed release version, compared as three numbers and never as
+ * text: `0.120.0` is above `0.99.0`, which a string comparison gets wrong. */
+type Version = readonly [number, number, number]
+
+function parseVersion(pattern: RegExp, text: string): Version | null {
+  const parts = pattern.exec(text)
+  if (parts === null) return null
+  return [Number(parts[1]), Number(parts[2]), Number(parts[3])]
+}
+
+function above(candidate: Version, running: Version): boolean {
+  if (candidate[0] !== running[0]) return candidate[0] > running[0]
+  if (candidate[1] !== running[1]) return candidate[1] > running[1]
+  return candidate[2] > running[2]
+}
+
+/** stableConsoleTag is the tag of a release that may be offered, or null: a
+ * draft or a pre-release is out on its flag, and a tag of any other shape is out
+ * on its text. Everything is read off an untrusted body, so each field is
+ * checked by name rather than assumed to be there. */
+function stableConsoleTag(entry: unknown): string | null {
+  if (entry === null || typeof entry !== 'object') return null
+  const release = entry as Record<string, unknown>
+  if (release['draft'] !== false || release['prerelease'] !== false) return null
+  const tag = release['tag_name']
+  return typeof tag === 'string' ? tag : null
+}
+
+/** newestStableConsoleRelease is the newest release the console may move to, as
+ * a tag, or null when there is none: D760 keeps drafts, pre-releases, CLI tags
+ * and malformed tags out, and nothing at or below `current` is a release to move
+ * to at all (a downgrade is not offered, and neither is a reinstall of what is
+ * already running). */
 export function newestStableConsoleRelease(releases: unknown, current: string): string | null {
-  void releases
-  void current
-  return 'console-v0.120.0'
+  const running = parseVersion(RUNNING_VERSION_RE, current)
+  if (running === null || !Array.isArray(releases)) return null
+  let newest: { readonly tag: string; readonly version: Version } | null = null
+  for (const entry of releases) {
+    const tag = stableConsoleTag(entry)
+    if (tag === null) continue
+    const version = parseVersion(CONSOLE_TAG_RE, tag)
+    if (version === null || !above(version, running)) continue
+    if (newest === null || above(version, newest.version)) newest = { tag, version }
+  }
+  return newest === null ? null : newest.tag
 }
 
+/** feedUrlFor is the second and last URL this console may build (D764): the
+ * tag has to be a console release tag, so another host, another scheme, another
+ * repository, a path that steps up a level and an encoded separator cannot even
+ * be written down. A tag that fails is a throw rather than a repair, because
+ * there is nothing safe to guess at. */
 export function feedUrlFor(tag: string): string {
-  return `https://github.com/dimipaun/fugaro/releases/download/${tag}/`
+  if (typeof tag !== 'string' || !CONSOLE_TAG_RE.test(tag)) throw new Error(TAG_REFUSED)
+  return `${FEED_PREFIX}${tag}/`
 }
 
-export function createUpdateController(deps: UpdatePolicyDeps): {
-  start: () => Promise<void>
-  stop: () => void
-  checkNow: () => Promise<void>
-  restartRequested: () => void
-  launchFlowIdle: () => void
-} {
+export function createUpdateController(deps: UpdatePolicyDeps): UpdateController {
   let handle: ReturnType<typeof setInterval> | null = null
-  const headers = {
-    Accept: 'application/vnd.github+json',
-    'User-Agent': `fugaro-console/${deps.currentVersion} (machine-1)`,
-    'X-Machine-Id': 'machine-1',
+  let configured = false
+  let downloading: string | null = null
+  let readyDeferred: string | null = null
+  let restartDeferred = false
+
+  /** allowed is the gate of rule 1, read fresh every time: the switch can be
+   * turned off between two ticks, and a check that started under an open gate
+   * must not finish its work under a closed one. */
+  const allowed = (): boolean =>
+    deps.platform === 'darwin' &&
+    deps.isPackaged &&
+    (deps.env['CI'] ?? '') === '' &&
+    deps.env['FUGARO_NO_UPDATE_CHECK'] !== '1' &&
+    deps.switchOn()
+
+  const clearTimer = (): void => {
+    if (handle !== null) deps.timer.clearInterval(handle)
+    handle = null
   }
-  const check = async (): Promise<void> => {
-    const body = await deps.fetchReleases(RELEASES_URL, headers)
-    const parsed = JSON.parse(body) as unknown
-    const tag = newestStableConsoleRelease(parsed, deps.currentVersion)
+
+  /** onDownloaded hands the ready version to the app, unless a launch is in
+   * flight: replacing the app mid-launch is the one thing D763 forbids, and the
+   * prompt is what has to wait, not the download. */
+  const onDownloaded = (): void => {
+    const version = downloading
+    if (version === null) return
+    if (!deps.isLaunchFlowIdle()) {
+      readyDeferred = version
+      return
+    }
+    deps.onReadyToRestart(version)
+  }
+
+  const configure = (): void => {
+    if (configured) return
+    configured = true
+    deps.updater.autoDownload = true
+    deps.updater.autoInstallOnAppQuit = true
+    deps.updater.allowDowngrade = false
+    deps.updater.allowPrerelease = false
+    deps.updater.requestHeaders = Object.freeze<Record<string, string>>({})
+    deps.updater.on('update-downloaded', onDownloaded)
+    deps.updater.on('error', () => {
+      console.error(CLIENT_FAILED)
+    })
+  }
+
+  const checkNow = async (): Promise<void> => {
+    if (!allowed()) return
+    let body: string
+    try {
+      body = await deps.fetchReleases(RELEASES_URL, LISTING_HEADERS)
+    } catch {
+      console.error(LISTING_FAILED)
+      return
+    }
+    if (Buffer.byteLength(body, 'utf8') > MAX_LISTING_BYTES) {
+      console.error(LISTING_FAILED)
+      return
+    }
+    let releases: unknown
+    try {
+      releases = JSON.parse(body) as unknown
+    } catch {
+      console.error(LISTING_FAILED)
+      return
+    }
+    const tag = newestStableConsoleRelease(releases, deps.currentVersion)
     if (tag === null) return
-    deps.updater.setFeedURL({ provider: 'generic', url: feedUrlFor(tag) })
-    await deps.updater.checkForUpdates()
+    downloading = tag.slice(CONSOLE_TAG_PREFIX.length)
+    try {
+      deps.updater.setFeedURL({ provider: 'generic', url: feedUrlFor(tag) })
+      await deps.updater.checkForUpdates()
+    } catch {
+      console.error(CLIENT_FAILED)
+    }
   }
+
+  const tick = (): void => {
+    if (!allowed()) {
+      clearTimer()
+      return
+    }
+    void checkNow()
+  }
+
   return {
     start: async () => {
-      deps.updater.autoDownload = true
-      deps.updater.autoInstallOnAppQuit = true
-      deps.updater.allowDowngrade = false
-      deps.updater.allowPrerelease = false
-      deps.updater.requestHeaders = headers
-      deps.updater.on('update-downloaded', (payload) => {
-        const version = (payload as { version?: string }).version ?? '0.0.0'
-        deps.onReadyToRestart(version)
-        deps.updater.quitAndInstall()
-      })
-      deps.updater.on('error', (error) => {
-        console.error('update failed', error)
-      })
-      await check()
-      handle = deps.timer.setInterval(() => {
-        void check()
-      }, UPDATE_INTERVAL_MS)
+      if (!allowed()) return
+      clearTimer()
+      configure()
+      handle = deps.timer.setInterval(tick, UPDATE_INTERVAL_MS)
+      await checkNow()
     },
-    stop: () => {
-      if (handle !== null) deps.timer.clearInterval(handle)
-      handle = null
-    },
-    checkNow: check,
+    stop: clearTimer,
+    checkNow,
     restartRequested: () => {
+      if (!allowed()) return
+      if (!deps.isLaunchFlowIdle()) {
+        restartDeferred = true
+        return
+      }
       deps.updater.quitAndInstall()
     },
-    launchFlowIdle: () => undefined,
+    launchFlowIdle: () => {
+      if (!allowed()) return
+      const version = readyDeferred
+      readyDeferred = null
+      if (version !== null) deps.onReadyToRestart(version)
+      if (!restartDeferred) return
+      restartDeferred = false
+      deps.updater.quitAndInstall()
+    },
   }
 }
