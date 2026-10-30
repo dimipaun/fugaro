@@ -13,7 +13,6 @@ import (
 	"log/slog"
 	"maps"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -37,7 +36,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/gitprov"
-	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
 	"github.com/dimipaun/fugaro/internal/gitprov/github"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/headroomproc"
@@ -998,6 +996,10 @@ func (r *run) redactAll(ss []string) []string {
 // run's one policy read (projectPolicy, memoized and already made by
 // admissionCheck): a node the run cannot read stops it there, and no node, or
 // a node with no roots, admits only the default.
+//
+// The comparison and the refusal are providers': the coordinator's own read asks
+// the same question of the same variable and must not answer differently
+// (providers.BitbucketAPIRootAllowed).
 func (r *run) checkBitbucketAPIRoot(ctx context.Context) error {
 	if r.d.Local {
 		return nil
@@ -1006,52 +1008,24 @@ func (r *run) checkBitbucketAPIRoot(ctx context.Context) error {
 	if root == "" {
 		return nil
 	}
-	canonical := canonicalAPIRoot(root)
-	if canonical != "" && canonical == canonicalAPIRoot(bitbucket.DefaultBaseURL) {
+	// Bitbucket's own API is answered before the policy is read: it is allowed
+	// whatever the node says, and a run that kept working on it while the node
+	// was unreadable must keep working.
+	if providers.BitbucketDefaultAPIRoot(root) {
 		return nil
 	}
 	p, found, err := r.projectPolicy(ctx)
 	if err != nil {
 		return err
 	}
+	var allowed []string
 	if found && p != nil {
-		for _, allowed := range p.BitbucketAPIRoots {
-			if c := canonicalAPIRoot(allowed); c != "" && c == canonical {
-				return nil
-			}
-		}
+		allowed = p.BitbucketAPIRoots
 	}
-	where := "a root with no host"
-	if u := parseAPIRoot(root); u != nil && u.Host != "" {
-		where = "the host " + strconv.Quote(u.Host)
-	}
-	return fmt.Errorf("%s names %s, which is neither Bitbucket's own API (%s) nor a root this project's published policy allows: a cloud run sends its Bitbucket token to no other root. The owner allows the root by listing it in bitbucket_api_roots and running 'fugaro project policy publish'; until then, unset %s so the run uses Bitbucket's own API",
-		providers.EnvBitbucketAPIURL, where, bitbucket.DefaultBaseURL, providers.EnvBitbucketAPIURL)
-}
-
-// canonicalAPIRoot is how a Bitbucket API root is compared: scheme and host
-// case-folded and one trailing "/" trimmed, the normalization the node's own
-// validator uses (projectpolicy.validBitbucketAPIRoots). It is an equality,
-// never a prefix test -- a root that merely begins with an allowed one
-// (https://api.bitbucket.org.evil.example/2.0) is another host and is refused.
-// A value with no scheme or host canonicalizes to "" and matches nothing.
-func canonicalAPIRoot(raw string) string {
-	u := parseAPIRoot(raw)
-	if u == nil {
-		return ""
-	}
-	return strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host) + strings.TrimSuffix(u.Path, "/")
-}
-
-// parseAPIRoot parses raw, nil when it is not a URL: a value's host is read
-// for the refusal's message and its parts compared by canonicalAPIRoot, and
-// neither is done on a string that is not a URL.
-func parseAPIRoot(raw string) *url.URL {
-	u, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || u.Scheme == "" || u.Host == "" {
+	if providers.BitbucketAPIRootAllowed(root, allowed) {
 		return nil
 	}
-	return u
+	return providers.BitbucketAPIRootRefusal(root, "a cloud run", "the run")
 }
 
 // openProvider opens the provider of kind, which from names the source of

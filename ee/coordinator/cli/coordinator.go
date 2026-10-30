@@ -31,6 +31,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov/github"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
@@ -395,7 +396,7 @@ func runCoordinatorSweep(ctx context.Context, cmd *cobra.Command, getenv func(st
 	var tokens *coordinatorTokens
 	if test != nil && test.reader != nil {
 		reader = test.reader
-	} else if reader, tokens, err = coordinatorReader(warn); err != nil {
+	} else if reader, tokens, err = coordinatorReader(ctx, coordinatorDatabase(db), warn); err != nil {
 		return err
 	}
 	// The tick holds each repository's token for as long as it reads and no
@@ -660,7 +661,7 @@ func runCoordinatorStatus(cmd *cobra.Command, o *coordinatorOptions) error {
 	if err != nil {
 		return err
 	}
-	reader, tokens, err := coordinatorReader(warn)
+	reader, tokens, err := coordinatorReader(ctx, env.BudgetDB, warn)
 	if err != nil {
 		return err
 	}
@@ -844,7 +845,18 @@ func coordinatorRun(in runview.Input) coordinator.Run {
 // revokes when the command is done (coordinatorTokens). It is returned rather
 // than deferred here because "the command is done" is the caller's fact and not
 // the reader's: the reader has no end of its own.
-func coordinatorReader(warn io.Writer) (coordinator.Reader, *coordinatorTokens, error) {
+//
+// openDB is where the Bitbucket API-root check reads the published policy, and
+// the check runs here, before the opener is built: the opener is the run's own
+// (providers.FromEnv through fcli.OpenProvider), which honours
+// FUGARO_BITBUCKET_API_URL whatever it names, so a project-wide read that
+// skipped the check would send a Bitbucket token to the host a launcher of the
+// job pointed it at. Every read of the project comes through this function, so
+// the refusal is one place and no later caller can miss it.
+func coordinatorReader(ctx context.Context, openDB coordinatorPolicyDB, warn io.Writer) (coordinator.Reader, *coordinatorTokens, error) {
+	if err := coordinatorRefuseBitbucketAPIRoot(ctx, openDB); err != nil {
+		return nil, nil, err
+	}
 	open, err := openCoordinatorProvider(os.Environ(), func(s string) { fmt.Fprintln(warn, safetext.MultiLine(s)) })
 	if err != nil {
 		return nil, nil, fcli.UserErr("%v", err)
@@ -855,6 +867,91 @@ func coordinatorReader(warn io.Writer) (coordinator.Reader, *coordinatorTokens, 
 	// nothing here reads one to find that out.
 	tokens := &coordinatorTokens{}
 	return &coordinator.Project{Mint: tokens.mint, Open: open, Redact: agent.Redact}, tokens, nil
+}
+
+// coordinatorPolicyDB opens the project's own database, for the one thing the
+// read asks a database: the published policy's bitbucket_api_roots. It is a
+// function and not a client because the database is opened only when the
+// environment names a Bitbucket API root at all — every invocation but an
+// installation that overrides the root reads no node and opens no client — and a
+// nil one names no database, under which a root the environment names is
+// refused: a list this read cannot get to allows nothing.
+type coordinatorPolicyDB func(context.Context) (*rtdb.Client, error)
+
+// coordinatorDatabase is that opener for a command that already holds the
+// project's database: the sweep builds its own and checks it against the
+// project marker before it reads anything, and a job has no local config to open
+// one from.
+func coordinatorDatabase(db *rtdb.Client) coordinatorPolicyDB {
+	return func(context.Context) (*rtdb.Client, error) { return db, nil }
+}
+
+// coordinatorRefuseBitbucketAPIRoot refuses a Bitbucket API root
+// (FUGARO_BITBUCKET_API_URL) that is neither Bitbucket's own API nor a root the
+// project's published policy allows (D474; the runner's rule of T2.8, held here
+// because the coordinator opens its providers with the same tool a run does).
+// The variable is launcher-writable on a job, which is what makes it worth
+// refusing rather than honouring: the coordinator's read may not be pointed at a
+// host of a launcher's own.
+//
+// The comparison and the sentence are providers' (BitbucketAPIRootAllowed,
+// BitbucketAPIRootRefusal), so this read and a run cannot answer differently,
+// and an installation that has published no policy admits Bitbucket's own API
+// alone.
+func coordinatorRefuseBitbucketAPIRoot(ctx context.Context, openDB coordinatorPolicyDB) error {
+	root := os.Getenv(providers.EnvBitbucketAPIURL)
+	if root == "" || providers.BitbucketDefaultAPIRoot(root) {
+		return nil
+	}
+	allowed, err := coordinatorBitbucketAPIRoots(ctx, openDB)
+	if err != nil {
+		return err
+	}
+	if providers.BitbucketAPIRootAllowed(root, allowed) {
+		return nil
+	}
+	return fcli.UserErr("%v", providers.BitbucketAPIRootRefusal(root, "the coordinator", "the coordinator"))
+}
+
+// coordinatorBitbucketAPIRoots is the project's published allow-list, read
+// through projectpolicy.Read the way every other reader of that node reads it:
+// the rules marker decides whether a policy exists here at all, and a node that
+// is there and cannot be read or decoded is a refusal and never an empty list
+// (a read failure that came back as "no roots" would quietly drop the project
+// to the default root, which is the state the operator listed their way out of).
+func coordinatorBitbucketAPIRoots(ctx context.Context, openDB coordinatorPolicyDB) ([]string, error) {
+	if openDB == nil {
+		return nil, nil
+	}
+	db, err := openDB(ctx)
+	if err != nil {
+		return nil, err
+	}
+	p, found, err := projectpolicy.Read(ctx, db)
+	if err != nil {
+		return nil, coordinatorPolicyErr(err)
+	}
+	if !found || p == nil {
+		return nil, nil
+	}
+	return p.BitbucketAPIRoots, nil
+}
+
+// coordinatorPolicyErr classifies a failed read of the policy node. A node the
+// database handed over and this Fugaro cannot read — a marker that is not a
+// generation, a document that does not decode, a version this binary does not
+// understand — is the project's own published data, and the operator's to fix
+// (the core's own classification, policyReadErr); a database that refused the
+// read is the rules' doing and the operator's too. Everything else, an outage
+// and an address that does not answer among them, is the host's.
+func coordinatorPolicyErr(err error) error {
+	var ve *projectpolicy.VersionError
+	var me *projectpolicy.MarkerError
+	switch {
+	case errors.As(err, &ve), errors.As(err, &me), errors.Is(err, rtdb.ErrPermission):
+		return fcli.UserErr("%v", err)
+	}
+	return fcli.RemoteErr(err)
 }
 
 // coordinatorTokens remembers the installation tokens one status run minted, so
