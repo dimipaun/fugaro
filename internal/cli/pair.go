@@ -8,16 +8,20 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
+	"rsc.io/qr"
 
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/mailbox/keychain"
 	"github.com/dimipaun/fugaro/internal/mobileauth"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
@@ -114,6 +118,7 @@ func newPairCmd() *cobra.Command {
 	f.DurationVar(&o.timeout, "timeout", pairDefaultTimeout, "how long to wait for the phone's key and the typed code (refused above "+pairMaxTimeout.String()+")")
 	f.BoolVar(&o.asJSON, "json", false, "stream the pairing as newline-delimited JSON events on stdout")
 	addCloudFlags(cmd, &o.cloudOptions)
+	cmd.AddCommand(newPairLsCmd(), newPairRevokeCmd())
 	return cmd
 }
 
@@ -791,17 +796,54 @@ func pairDatabaseAdminProbe(ctx context.Context, db *rtdb.Client, lc *localcfg.C
 	return nil
 }
 
-// renderPairQR draws the payload as the QR the phone scans. The module tree
-// carries no QR encoder and go.mod may not gain one before the owner approves
-// it, so this build prints the payload — the code's own contents, so a person
-// or a console can still carry it — and says the drawing is missing, rather
-// than showing something that is not a QR code.
+// pairQRQuiet is the quiet zone around the drawing, in modules. The code's own
+// spec asks for four; two are what a terminal needs, because the screen's
+// background is already around the code and every extra module is a column a
+// narrow terminal would wrap — and a wrapped QR code is not a QR code.
+const pairQRQuiet = 2
+
+// renderPairQR draws the payload as the QR the phone scans (§4.1, §4.4): the
+// code the operator's screen shows, from rsc.io/qr's encoder, so what is on
+// the screen is the code and not a description of it.
+//
+// It is drawn as half blocks — one text row carries two module rows, with
+// U+2580, U+2584 and U+2588 for the two, the top and the bottom one — because
+// a terminal cell is about twice as tall as it is wide, so one module per cell
+// would draw a code stretched to half its width. A block is a dark module and a
+// space is a light one, which is the ordinary dark-on-light QR: on the dark
+// background a terminal usually has, that is a light-on-dark code, and every
+// phone camera of the last decade reads either.
+//
+// The level is L, the least redundant: the payload carries a JWT and a
+// configuration, so it is over a kilobyte, and a lower level is a smaller
+// version — fewer modules, a narrower drawing and a code easier to scan off a
+// screen. Nothing here is a screenshot a test compares: what a test holds this
+// to is the encoder's own module grid, which is what a phone reads.
 func renderPairQR(w io.Writer, payload string) error {
-	if _, err := fmt.Fprintln(w, payload); err != nil {
-		return userErr("writing the QR payload: %v", err)
+	code, err := qr.Encode(payload, qr.L)
+	if err != nil {
+		return userErr("encoding the QR code: %v", err)
 	}
-	if _, err := fmt.Fprintln(w, "(the QR image is not drawn in this build; the payload line above is what it would carry)"); err != nil {
-		return userErr("writing the QR payload: %v", err)
+	size := code.Size + 2*pairQRQuiet
+	var b strings.Builder
+	for y := -pairQRQuiet; y < size-pairQRQuiet; y += 2 {
+		b.Reset()
+		for x := -pairQRQuiet; x < size-pairQRQuiet; x++ {
+			top, bottom := code.Black(x, y), code.Black(x, y+1)
+			switch {
+			case top && bottom:
+				b.WriteString("█")
+			case top:
+				b.WriteString("▀")
+			case bottom:
+				b.WriteString("▄")
+			default:
+				b.WriteString(" ")
+			}
+		}
+		if _, err := fmt.Fprintln(w, b.String()); err != nil {
+			return userErr("writing the QR code: %v", err)
+		}
 	}
 	return nil
 }
@@ -810,13 +852,321 @@ func renderPairQR(w io.Writer, payload string) error {
 // event first, so the stream says what happened before the exit code does, and
 // either way it exits with §4.6's class for that refusal.
 func pairRefuse(ev *pairEventWriter, o *pairOptions, code string, err error) error {
+	return pairRefuseIn(ev, o.asJSON, code, err)
+}
+
+func pairRefuseIn(ev *pairEventWriter, asJSON bool, code string, err error) error {
 	reason := oneLine(err.Error())
-	if o.asJSON {
+	if asJSON {
 		if err := ev.emit(pairEvent{Event: pairEventRefused, Code: code, Reason: reason}); err != nil {
 			return err
 		}
 	}
 	return &ExitError{Code: ExitCode(err), Err: errors.New(reason)}
+}
+
+// pairOpen is what the three subcommands share before they act: the project is
+// selected, the budget backend is reached, the database is this project's and
+// the credential holds database admin on it — the role every one of them reads
+// or writes the device node with, and the one §4.6 refuses separately from the
+// minter's. The device node is the whole of what the rules admit a device by
+// (D166), so a command that could not read it must say so rather than report
+// that no device is paired.
+func pairOpen(cmd *cobra.Command, o cloudOptions, ev *pairEventWriter, asJSON bool, local string) (*localcfg.Config, *rtdb.Client, error) {
+	ctx := cmd.Context()
+	if err := refuseHTTP2Debug(os.Getenv); err != nil {
+		return nil, nil, pairRefuseIn(ev, asJSON, pairRefusedEnv, err)
+	}
+	_, lc, err := selectProject(ctx, o)
+	if err != nil {
+		return nil, nil, pairRefuseIn(ev, asJSON, pairRefusalCode(err, pairRefusedProject), err)
+	}
+	ev.project = lc.Name
+	lc, db, err := budgetDBFor(ctx, lc)
+	if err != nil {
+		return nil, nil, pairRefuseIn(ev, asJSON, pairRefusalCode(err, pairRefusedBudget), err)
+	}
+	if err := checkDBProject(ctx, db, lc); err != nil {
+		return nil, nil, pairRefuseIn(ev, asJSON, pairRefusalCode(err, pairRefusedMismatch), err)
+	}
+	if err := pairDatabaseAdminProbe(ctx, db, lc); err != nil {
+		return nil, nil, pairRefuseIn(ev, asJSON, pairRefusalCode(err, local), err)
+	}
+	return lc, db, nil
+}
+
+type pairLsOptions struct {
+	cloudOptions
+	asJSON bool
+}
+
+func newPairLsCmd() *cobra.Command {
+	o := &pairLsOptions{}
+	cmd := &cobra.Command{
+		Use:   "ls",
+		Short: "List the devices paired with this installation",
+		Long: "List the devices paired with this installation: one row per device node\n" +
+			"under config/admin/devices, with the uid (a key, and therefore printable),\n" +
+			"the name, the administered email, the role and the pairing time.\n" +
+			"\n" +
+			"It reads with roles/firebasedatabase.admin, and it prints no token, no key\n" +
+			"and no keychain item's value: the node holds none of them, and the item's\n" +
+			"name is not in the node either, so there is nothing else to print.\n" +
+			"\n" +
+			"It does not report whether a device's Auth user still exists. The Auth user\n" +
+			"is not in the database, so database admin does not reach it, and the node's\n" +
+			"existence is the whole of what the rules read (D166): an orphaned Auth user\n" +
+			"whose node is gone is the history sweep's business and is invisible to the\n" +
+			"rules by construction.\n" +
+			"\n" +
+			"Its own state is the local config, as it is for the rest of the command.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error { return runPairLs(cmd, o) },
+	}
+	f := cmd.Flags()
+	f.BoolVar(&o.asJSON, "json", false, "print the pairings as one JSON event on stdout")
+	addCloudFlags(cmd, &o.cloudOptions)
+	return cmd
+}
+
+func runPairLs(cmd *cobra.Command, o *pairLsOptions) error {
+	ev := &pairEventWriter{w: cmd.OutOrStdout(), now: pairNow}
+	lc, db, err := pairOpen(cmd, o.cloudOptions, ev, o.asJSON, pairRefusedDatabaseAdmin)
+	if err != nil {
+		return err
+	}
+	rows, err := pairListDevices(cmd.Context(), lc, db)
+	if err != nil {
+		return pairRefuseIn(ev, o.asJSON, pairRefusalCode(err, pairRefusedUnreachable), err)
+	}
+	if o.asJSON {
+		return ev.emit(pairEvent{Event: pairEventListed, List: &pairListDocument{
+			Project: lc.Name, At: pairNow().UTC().Format(time.RFC3339),
+			Devices: rows, Warnings: []string{},
+		}})
+	}
+	out := cmd.OutOrStdout()
+	if len(rows) == 0 {
+		_, err := fmt.Fprintf(out, "no device is paired with %s\n", lc.Name)
+		return err
+	}
+	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	if _, err := fmt.Fprintln(tw, "DEVICE\tNAME\tEMAIL\tROLE\tPAIRED"); err != nil {
+		return err
+	}
+	for _, r := range rows {
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
+			pairCell(r.UID), pairCell(r.Name), pairCell(r.Email), pairCell(r.Role), pairCell(r.At)); err != nil {
+			return err
+		}
+	}
+	return tw.Flush()
+}
+
+// pairCell is a node's field as a table cell. Nothing here assumes the node
+// holds what `fugaro pair` writes: its children are unconstrained (the
+// deployed document declares no `.validate` and no `$other` under
+// config/admin/devices), so a hand-written entry may hold anything, and a
+// control character or a tab in one would otherwise escape the cell or open
+// the next column.
+func pairCell(s string) string {
+	return strings.ReplaceAll(pluginwire.Printable(strings.TrimSpace(s)), "\t", `\u0009`)
+}
+
+// pairListDevices reads the device allowlist: one row per child, sorted by uid
+// so two listings of one database are one listing. A child whose fields cannot
+// be read is its uid alone — §4.2's rule for a node with no readable children,
+// which an older or a hand-written entry may be.
+func pairListDevices(ctx context.Context, lc *localcfg.Config, db *rtdb.Client) ([]pairDeviceRow, error) {
+	var tree map[string]json.RawMessage
+	if _, err := db.Get(ctx, rules.PathDevices, &tree); err != nil {
+		return nil, dbErr(lc, err, false)
+	}
+	rows := make([]pairDeviceRow, 0, len(tree))
+	for uid, raw := range tree {
+		rows = append(rows, pairDeviceRowFrom(uid, raw))
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].UID < rows[j].UID })
+	return rows, nil
+}
+
+// pairDeviceRowFrom reads one device node's fields one at a time, and leaves a
+// field empty rather than refusing the row: a node whose `at` is a number and
+// whose name is fine is still a device an operator must see, and a listing that
+// dropped it would hide a phone that is on the allowlist.
+func pairDeviceRowFrom(uid string, raw json.RawMessage) pairDeviceRow {
+	row := pairDeviceRow{UID: uid}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return row
+	}
+	get := func(k string, v *string) { _ = json.Unmarshal(m[k], v) }
+	get("name", &row.Name)
+	get("email", &row.Email)
+	get("role", &row.Role)
+	get("at", &row.At)
+	return row
+}
+
+type pairRevokeOptions struct {
+	cloudOptions
+	uid, name string
+	asJSON    bool
+}
+
+func newPairRevokeCmd() *cobra.Command {
+	o := &pairRevokeOptions{}
+	cmd := &cobra.Command{
+		Use:   "revoke (--uid UID | --name NAME)",
+		Short: "Revoke a paired device",
+		Long: "Revoke a paired device: the phone is off this installation's allowlist from\n" +
+			"its next request on.\n" +
+			"\n" +
+			"The order is the command (M4): the device node under config/admin/devices\n" +
+			"goes first, because the node's existence is what the rules read and its\n" +
+			"deletion revokes at once, without waiting for an ID token to expire; then\n" +
+			"this laptop's OS keychain item for that pairing's MAC key; then the\n" +
+			"pairing's own node, if an abandoned session left one.\n" +
+			"\n" +
+			"It does not delete the device's Auth user. No role a Terraform grant gives\n" +
+			"an operator can delete one (the history job's account is the only holder of\n" +
+			"roles/firebaseauth.admin), and the device node's deletion is what makes the\n" +
+			"orphan the history sweep's to remove — which is why this command names the\n" +
+			"sweep rather than pretending the account is gone.\n" +
+			"\n" +
+			"Exactly one of --uid and --name selects the device, and a --name that\n" +
+			"matches more than one node is refused with their uids rather than revoked\n" +
+			"ambiguously.\n" +
+			"\n" +
+			"Its own state is the local config, as it is for the rest of the command.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error { return runPairRevoke(cmd, o) },
+	}
+	f := cmd.Flags()
+	f.StringVar(&o.uid, "uid", "", "the uid of the device to revoke (m~…), which is the node's key")
+	f.StringVar(&o.name, "name", "", "the name of the device to revoke; it must match exactly one device")
+	f.BoolVar(&o.asJSON, "json", false, "print the revocation as one JSON event on stdout")
+	addCloudFlags(cmd, &o.cloudOptions)
+	return cmd
+}
+
+func runPairRevoke(cmd *cobra.Command, o *pairRevokeOptions) error {
+	ctx := cmd.Context()
+	ev := &pairEventWriter{w: cmd.OutOrStdout(), now: pairNow}
+	switch {
+	case o.uid == "" && o.name == "":
+		return pairRefuseIn(ev, o.asJSON, pairRefusedNoSelector,
+			errors.New("revoke needs the device to revoke: --uid with its uid, or --name with a name that matches exactly one device; `fugaro pair ls` prints both"))
+	case o.uid != "" && o.name != "":
+		return pairRefuseIn(ev, o.asJSON, pairRefusedTwoSelectors,
+			fmt.Errorf("revoke was given --uid %s and --name %s: a device is revoked by one of them, and two selectors could name two devices, so revoke refuses rather than guess which was meant", o.uid, o.name))
+	}
+	lc, db, err := pairOpen(cmd, o.cloudOptions, ev, o.asJSON, pairRefusedDatabaseAdmin)
+	if err != nil {
+		return err
+	}
+	rows, err := pairListDevices(ctx, lc, db)
+	if err != nil {
+		return pairRefuseIn(ev, o.asJSON, pairRefusalCode(err, pairRefusedUnreachable), err)
+	}
+	device, code, err := pairSelectDevice(rows, o, lc)
+	if err != nil {
+		return pairRefuseIn(ev, o.asJSON, code, err)
+	}
+
+	// M4, and the order is the command: the node first. It is what the rules
+	// read in userClaim, so deleting it revokes at once — every family USER
+	// reaches is refused from the next request on — while the keychain item and
+	// the pairing node are this laptop's and the session's, not the phone's.
+	if err := db.Patch(ctx, rules.PathDevices, map[string]any{device.UID: nil}); err != nil {
+		if errors.Is(err, rtdb.ErrPermission) {
+			return pairRefuseIn(ev, o.asJSON, pairRefusedDatabaseAdmin,
+				fmt.Errorf("the deletion of the device node %s was refused: revoking a device deletes it with roles/firebasedatabase.admin, which this credential does not hold on project %s's Firebase project (its owners and editors hold it, and terraform.budget_admins): %w",
+					rules.PathDevices+"/"+device.UID, lc.Name, err))
+		}
+		return pairRefuseIn(ev, o.asJSON, pairRefusalCode(err, pairRefusedUnreachable), dbErr(lc, err, true))
+	}
+	wrote := []string{rules.PathDevices + "/" + device.UID}
+
+	item, err := keychain.ParseItem(pairItemName(lc.Name, device.UID), lc.Name)
+	if err != nil {
+		return pairRefuseIn(ev, o.asJSON, pairRefusedKeychain,
+			fmt.Errorf("the device is off the allowlist, but the keychain item this pairing's MAC key lives at (%s) is not a name a key is stored under: %v; the item's name carries the project's own name (M5), so it is not derivable here and must be deleted by hand", pairItemName(lc.Name, device.UID), err))
+	}
+	if err := pairKeychain().Delete(ctx, item); err != nil {
+		return pairRefuseIn(ev, o.asJSON, pairRefusedKeychainDelete,
+			fmt.Errorf("the device node %s is deleted and the phone is off the allowlist, but this laptop's MAC key for the pairing could not be removed from the OS keychain at %s: %w; the key is still there and must be deleted by hand", wrote[0], item.Name(), err))
+	}
+
+	// The pairing session's own node is the third thing §4.3 names, and it is
+	// deliberately not deleted here: its key is the p~ uid MintPairing drew,
+	// and nothing on this laptop records it — the device node holds the name,
+	// the administered email, the role and the pairing time and no pairing uid
+	// (M13), and the local config holds the keychain item's name, not the
+	// session's. So a revoke by device cannot name the node it would delete,
+	// and it is the sweep's: it deletes pairing/<uid> when it deletes the p~
+	// user the node belongs to (decision 2, internal/budget/sweep.go). The
+	// command says so rather than reporting a node it did not touch.
+
+	if o.asJSON {
+		return ev.emit(pairEvent{Event: pairEventRevoked, Revoke: &pairRevokeDocument{
+			Project:      lc.Name,
+			At:           pairNow().UTC().Format(time.RFC3339),
+			Device:       pairDevice{UID: device.UID, Name: device.Name, Email: device.Email, Role: device.Role},
+			KeychainItem: item.Name(),
+			Wrote:        wrote,
+			Refused:      []string{},
+			Warnings:     []string{},
+		}})
+	}
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "revoked %s", device.UID)
+	if device.Name != "" {
+		fmt.Fprintf(out, " (%s)", device.Name)
+	}
+	fmt.Fprintf(out, ": deleted %s, so the phone is off %s's allowlist from its next request on\n", wrote[0], lc.Name)
+	fmt.Fprintf(out, "deleted this laptop's OS keychain item %s\n", item.Name())
+	fmt.Fprintf(out, "the %s Auth user is not deleted here — no role a Terraform grant gives an operator can delete one — and the history sweep removes it now that its device node is gone; an abandoned pairing node, if this pairing left one, is what the same sweep removes with it\n", device.UID)
+	return nil
+}
+
+// pairSelectDevice resolves the one device a revoke names. --uid is the node's
+// own key, so it either is a device or is not one. A name is not unique: the
+// node's children are unconstrained and two hands may have paired two phones
+// under one name, and a revoke that picked one of them would revoke a device
+// the operator did not mean. It is refused with the uids instead, which is what
+// makes `pair ls` the step before it.
+func pairSelectDevice(rows []pairDeviceRow, o *pairRevokeOptions, lc *localcfg.Config) (pairDeviceRow, string, error) {
+	if o.uid != "" {
+		for _, r := range rows {
+			if r.UID == o.uid {
+				return r, "", nil
+			}
+		}
+		return pairDeviceRow{}, pairRefusedNoPairing,
+			fmt.Errorf("no device node %s/%s exists: the uid is the node's key, and `fugaro pair ls` prints the uids %s holds", rules.PathDevices, o.uid, lc.Name)
+	}
+	var named []pairDeviceRow
+	for _, r := range rows {
+		if r.Name == o.name {
+			named = append(named, r)
+		}
+	}
+	switch len(named) {
+	case 1:
+		return named[0], "", nil
+	case 0:
+		return pairDeviceRow{}, pairRefusedNoPairing,
+			fmt.Errorf("no device paired with %s is named %q: --name matches the device node's own name field exactly, and `fugaro pair ls` prints the names %s holds", lc.Name, o.name, lc.Name)
+	default:
+		uids := make([]string, 0, len(named))
+		for _, r := range named {
+			uids = append(uids, r.UID)
+		}
+		sort.Strings(uids)
+		return pairDeviceRow{}, pairRefusedTwoPairings,
+			fmt.Errorf("%d devices are named %q (%s): revoke needs one, so name it by uid with --uid %s", len(named), o.name, strings.Join(uids, ", "), uids[0])
+	}
 }
 
 // pairRefusalCode is the wire code for a refusal at a call site that can fail

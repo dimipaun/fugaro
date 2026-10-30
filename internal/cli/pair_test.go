@@ -15,9 +15,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -25,7 +27,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/santhosh-tekuri/jsonschema/v6"
 	"github.com/spf13/cobra"
+	"rsc.io/qr"
 
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/budget/token"
@@ -1827,5 +1831,523 @@ func TestPairNonNumericAtIsMalformedNotOutage(t *testing.T) {
 			}
 			f.pairNoSideEffect(t, uid)
 		})
+	}
+}
+
+// ------------------------------------------------------- pair ls and revoke
+
+const (
+	pairDevA = "m~BBBBBBBBBBBBBBBBBBBBBB"
+	pairDevB = "m~CCCCCCCCCCCCCCCCCCCCCC"
+	pairDevC = "m~DDDDDDDDDDDDDDDDDDDDDD"
+	// pairDevBare is a node with no readable child: an older or a hand-written
+	// entry, which §4.2 prints as its uid alone.
+	pairDevBare = "m~FFFFFFFFFFFFFFFFFFFFFF"
+)
+
+// pairSeedDevice writes a device node as a completed pairing leaves it. The
+// fields are M13's four and nothing else: a node holding a token or a key would
+// be the bug these commands must never produce.
+func (f *pairFixture) pairSeedDevice(uid, name string) {
+	f.db.Set(rules.PathDevices+"/"+uid, map[string]any{
+		"name": name, "email": pairMe, "role": "operator", "at": pairT0.UTC().Format(time.RFC3339),
+	})
+}
+
+// pairSeedItem stores a MAC key at the item this pairing wrote, and returns the
+// item's name and its value: what `pair revoke` must delete beside the node,
+// and what `pair ls` must never print.
+func (f *pairFixture) pairSeedItem(t *testing.T, uid string) (string, string) {
+	t.Helper()
+	name := pairItemName("aurora", uid)
+	item, err := keychain.ParseItem(name, "aurora")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := token.NewMACKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	value := token.EncodeKey(key)
+	if err := f.keys.Put(context.Background(), item, keychain.NewKey([]byte(value))); err != nil {
+		t.Fatal(err)
+	}
+	return name, value
+}
+
+// pairKeychainSpy is the keychain with the moment of its Delete recorded. M4's
+// order is the assertion, and it is not "the item was deleted" but "the item was
+// deleted when the device node was already gone": the two are different
+// databases, so the test has to read the first while the second is happening.
+type pairKeychainSpy struct {
+	keychain.Store
+	onDelete func()
+}
+
+func (s *pairKeychainSpy) Delete(ctx context.Context, item keychain.Item) error {
+	if s.onDelete != nil {
+		s.onDelete()
+	}
+	return s.Store.Delete(ctx, item)
+}
+
+// TestRevokeDeletesTheNodeFirst is M4: the device node is deleted before the
+// keychain item. The node is what the rules read (D166), so its deletion is the
+// revocation, and the order is what a revoke that fails between the two steps
+// leaves behind — a phone off the allowlist rather than a phone on it with no
+// operator left holding its key. The mutation this test was written against
+// deletes the item first, and it is a real difference, not a cosmetic one.
+func TestRevokeDeletesTheNodeFirst(t *testing.T) {
+	f := newPairFixture(t, pairMe)
+	f.pairSeedDevice(pairDevA, "phone-a")
+	itemName, _ := f.pairSeedItem(t, pairDevA)
+
+	nodeWasThere := false
+	seen := false
+	prev := pairKeychain
+	pairKeychain = func() keychain.Store {
+		return &pairKeychainSpy{Store: f.keys, onDelete: func() {
+			seen = true
+			nodeWasThere = f.db.Value(rules.PathDevices+"/"+pairDevA) != nil
+		}}
+	}
+	t.Cleanup(func() { pairKeychain = prev })
+
+	out, _, err := pairRun(t, "revoke", "--uid", pairDevA)
+	if err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	if !seen {
+		t.Fatal("the keychain item was never deleted")
+	}
+	if nodeWasThere {
+		t.Fatal("the keychain item was deleted while the device node was still there: revoke deletes the node first (M4), so a failure between the two steps leaves a phone off the allowlist rather than one that is on it with no key left to sign with")
+	}
+	if v := f.db.Value(rules.PathDevices + "/" + pairDevA); v != nil {
+		t.Fatalf("the device node survived the revoke: %v", v)
+	}
+	if _, ok := f.keys.Keys[itemName]; ok {
+		t.Fatal("the keychain item survived the revoke")
+	}
+	if !strings.Contains(out, itemName) {
+		t.Fatalf("the output does not name the item it deleted:\n%s", out)
+	}
+}
+
+// TestRevokeNeverDeletesTheAuthUser is decision 1: no role a Terraform grant
+// gives an operator can delete an Auth user (the history job's account is the
+// only holder of roles/firebaseauth.admin), so this command does not try. What
+// it does instead is say so and name the sweep, which is what removes the
+// orphan — and what it did delete is the node and the item, which is the whole
+// of what it may touch.
+func TestRevokeNeverDeletesTheAuthUser(t *testing.T) {
+	jsonFixture := newPairFixture(t, pairMe)
+	jsonFixture.pairSeedDevice(pairDevA, "phone-a")
+	jsonFixture.pairSeedItem(t, pairDevA)
+
+	out, _, err := pairRun(t, "revoke", "--uid", pairDevA, "--json")
+	if err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	events := pairLines(t, out)
+	if len(events) != 1 || events[0].Event != pairEventRevoked {
+		t.Fatalf("events = %v, want one %s", events, pairEventRevoked)
+	}
+	doc := events[0].Revoke
+	if doc == nil {
+		t.Fatalf("the %s event carries no document: %v", pairEventRevoked, events[0])
+	}
+	if want := []string{rules.PathDevices + "/" + pairDevA}; !slices.Equal(doc.Wrote, want) {
+		t.Fatalf("wrote = %v, want the device node alone: the Auth user is not this command's to delete", doc.Wrote)
+	}
+	if len(doc.Warnings) != 0 || len(doc.Refused) != 0 {
+		t.Fatalf("document = %+v, want no warnings and no refusals", doc)
+	}
+
+	textFixture := newPairFixture(t, pairMe)
+	textFixture.pairSeedDevice(pairDevA, "phone-a")
+	textFixture.pairSeedItem(t, pairDevA)
+	text, _, err := pairRun(t, "revoke", "--uid", pairDevA)
+	if err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	if !strings.Contains(text, "Auth user is not deleted") || !strings.Contains(text, "sweep") {
+		t.Fatalf("the text output does not say the Auth user survives and that the sweep removes it:\n%s", text)
+	}
+}
+
+// TestRevokeRefusesNothingOrTwo is §4.3's last sentence: a revoke that names
+// nothing, or that names two devices, is refused rather than performed
+// ambiguously — and a refusal leaves the allowlist and the keychain exactly
+// where they were.
+func TestRevokeRefusesNothingOrTwo(t *testing.T) {
+	seed := func(t *testing.T) *pairFixture {
+		f := newPairFixture(t, pairMe)
+		f.pairSeedDevice(pairDevA, "phone-a")
+		f.pairSeedDevice(pairDevB, "phone-a")
+		f.pairSeedDevice(pairDevC, "phone-b")
+		f.pairSeedItem(t, pairDevA)
+		f.pairSeedItem(t, pairDevB)
+		f.pairSeedItem(t, pairDevC)
+		return f
+	}
+	for _, tc := range []struct {
+		name string
+		args []string
+		code string
+	}{
+		{"nothing named", []string{"revoke"}, pairRefusedNoSelector},
+		{"both selectors", []string{"revoke", "--uid", pairDevA, "--name", "phone-b"}, pairRefusedTwoSelectors},
+		{"a uid that is no node", []string{"revoke", "--uid", "m~EEEEEEEEEEEEEEEEEEEEEE"}, pairRefusedNoPairing},
+		{"a name that is no device", []string{"revoke", "--name", "phone-c"}, pairRefusedNoPairing},
+		{"a name two devices share", []string{"revoke", "--name", "phone-a"}, pairRefusedTwoPairings},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := seed(t)
+			before := f.db.Value(rules.PathDevices)
+			items := map[string]string{}
+			maps.Copy(items, f.keys.Keys)
+
+			out, _, err := pairRun(t, append(tc.args, "--json")...)
+			if err == nil || ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v, want exit 1", err)
+			}
+			events := pairLines(t, out)
+			last := events[len(events)-1]
+			if last.Event != pairEventRefused || last.Code != tc.code {
+				t.Fatalf("events = %v, want one refused with %q", events, tc.code)
+			}
+			if !reflect.DeepEqual(before, f.db.Value(rules.PathDevices)) {
+				t.Fatal("a refused revoke changed the device allowlist")
+			}
+			if !reflect.DeepEqual(items, f.keys.Keys) {
+				t.Fatal("a refused revoke touched the keychain")
+			}
+		})
+	}
+
+	// The shared name is refused with both uids, because the operator's next
+	// step is to pick one of them.
+	f := seed(t)
+	_, _, err := pairRun(t, "revoke", "--name", "phone-a")
+	if err == nil {
+		t.Fatal("a name two devices share was revoked")
+	}
+	for _, uid := range []string{pairDevA, pairDevB} {
+		if !strings.Contains(err.Error(), uid) {
+			t.Fatalf("the refusal %q does not name %s", err, uid)
+		}
+	}
+
+	// And the same fixture revokes the unambiguous one, by name.
+	if _, _, err := pairRun(t, "revoke", "--name", "phone-b"); err != nil {
+		t.Fatalf("revoke --name phone-b: %v", err)
+	}
+	if f.db.Value(rules.PathDevices+"/"+pairDevC) != nil {
+		t.Fatal("revoke --name did not delete the one device it matched")
+	}
+}
+
+// TestPairLsPrintsNoSecretAndNoAuthColumn is §4.2 read as a prohibition, which
+// is how the operator's contract is written: no token, no key, no keychain
+// item's value, and no column saying whether the Auth user still exists
+// (decision 11 — database admin cannot reach the Auth user at all). The
+// item's *name* is not printed either, because it is not in the node and `ls`
+// prints what the node holds.
+func TestPairLsPrintsNoSecretAndNoAuthColumn(t *testing.T) {
+	f := newPairFixture(t, pairMe)
+	f.pairSeedDevice(pairDevA, "phone-a")
+	itemName, itemValue := f.pairSeedItem(t, pairDevA)
+	f.db.Set(rules.PathDevices+"/"+pairDevBare, "not-a-node")
+
+	out, _, err := pairRun(t, "ls")
+	if err != nil {
+		t.Fatalf("ls: %v", err)
+	}
+	at := pairT0.UTC().Format(time.RFC3339)
+	for _, want := range []string{pairDevA, "phone-a", pairMe, "operator", at, pairDevBare} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("ls does not print %q:\n%s", want, out)
+		}
+	}
+	for _, bad := range []struct{ what, s string }{
+		{"the keychain item's name", itemName},
+		{"the keychain item's value", itemValue},
+		{"an Auth-user column", "AUTH"},
+		{"a token", "eyJ"},
+	} {
+		if strings.Contains(out, bad.s) {
+			t.Fatalf("ls printed %s (%q):\n%s", bad.what, bad.s, out)
+		}
+	}
+	header, _, _ := strings.Cut(strings.TrimSpace(out), "\n")
+	if got, want := strings.Fields(header), []string{"DEVICE", "NAME", "EMAIL", "ROLE", "PAIRED"}; !slices.Equal(got, want) {
+		t.Fatalf("the header is %v, want %v: a column added here is a column the contract has to name", got, want)
+	}
+}
+
+// TestPairLsJSON is §4.2 under --json: the same rows, as §4.5's document for
+// the act, with warnings present and empty — and the same prohibition, since a
+// console reads this and must not be handed a key.
+func TestPairLsJSON(t *testing.T) {
+	f := newPairFixture(t, pairMe)
+	f.pairSeedDevice(pairDevA, "phone-a")
+	_, itemValue := f.pairSeedItem(t, pairDevA)
+	f.pairSeedDevice(pairDevB, "phone-b")
+
+	out, _, err := pairRun(t, "ls", "--json")
+	if err != nil {
+		t.Fatalf("ls --json: %v", err)
+	}
+	events := pairLines(t, out)
+	if len(events) != 1 || events[0].Event != pairEventListed {
+		t.Fatalf("events = %v, want one %s", events, pairEventListed)
+	}
+	list := events[0].List
+	if list == nil || list.Project != "aurora" || list.At == "" {
+		t.Fatalf("the document is %+v, want the project and the time", list)
+	}
+	if list.Warnings == nil || len(list.Warnings) != 0 {
+		t.Fatalf("warnings = %v, want present and empty", list.Warnings)
+	}
+	at := pairT0.UTC().Format(time.RFC3339)
+	want := []pairDeviceRow{
+		{UID: pairDevA, Name: "phone-a", Email: pairMe, Role: "operator", At: at},
+		{UID: pairDevB, Name: "phone-b", Email: pairMe, Role: "operator", At: at},
+	}
+	if !reflect.DeepEqual(list.Devices, want) {
+		t.Fatalf("devices = %+v, want %+v", list.Devices, want)
+	}
+	if strings.Contains(out, itemValue) {
+		t.Fatalf("the stream carries the keychain item's value:\n%s", out)
+	}
+}
+
+// TestPairQRDrawsAScannableCode holds the drawing to the encoder, not to a
+// screenshot: the text renderPairQR writes is read back into a module grid and
+// compared with the grid rsc.io/qr encodes the payload to, which is the thing a
+// phone reads. A renderer that transposed the code, dropped a row or drew the
+// inverse would pass a test that only looked for block characters.
+func TestPairQRDrawsAScannableCode(t *testing.T) {
+	const payload = `{"v":1,"project":"aurora","uid":"p~AAAA","token":"eyJhbGciOiJIUzI1NiJ9.e30.x"}`
+	var buf bytes.Buffer
+	if err := renderPairQR(&buf, payload); err != nil {
+		t.Fatal(err)
+	}
+	code, err := qr.Encode(payload, qr.L)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := pairReadQR(buf.String(), pairQRQuiet, code.Size)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for y := range code.Size {
+		for x := range code.Size {
+			if got.Black(x, y) != code.Black(x, y) {
+				t.Fatalf("module (%d,%d) is drawn %v, the encoder's code has %v", x, y, got.Black(x, y), code.Black(x, y))
+			}
+		}
+	}
+	// The negative control: a different payload encodes to a different grid, so
+	// the comparison above is not one a constant drawing could pass.
+	other, err := qr.Encode(payload+" ", qr.L)
+	if err != nil {
+		t.Fatal(err)
+	}
+	same := other.Size == code.Size
+	for y := 0; same && y < code.Size; y++ {
+		for x := 0; x < code.Size; x++ {
+			if other.Black(x, y) != code.Black(x, y) {
+				same = false
+				break
+			}
+		}
+	}
+	if same {
+		t.Fatal("two payloads encode to one grid: the comparison above would pass for any drawing of that size")
+	}
+}
+
+// TestPairQRJSONDrawsNothing is §4.5's third rule for the QR: under --json the
+// payload goes in the qr event and the terminal drawing is not written at all,
+// so a console reading stdout is not also handed a screenful of blocks.
+func TestPairQRJSONDrawsNothing(t *testing.T) {
+	f := newPairFixture(t, pairMe)
+	uid := pairFixedRand(t)
+	f.pairSeedRequest(uid, pairKey)
+
+	out, _, err := pairRunIn(t, token.Fingerprint(pairKeyBytes), "--json", "--name", "phone-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsAny(out, "█▀▄") {
+		t.Fatalf("--json drew the QR in the terminal:\n%s", out)
+	}
+	events := pairLines(t, out)
+	if events[0].Event != pairEventQR || events[0].Payload == "" {
+		t.Fatalf("the first event is %+v, want the payload in a qr event", events[0])
+	}
+}
+
+// pairReadQR reads renderPairQR's half blocks back into a module grid of n
+// modules on a side: U+2588 is two dark modules, U+2580 and U+2584 the top and
+// the bottom one, and a space two light ones. It is the inverse of the
+// renderer, written out here rather than shared with it, because a reader that
+// reused the renderer's own code would agree with it about a transposed row. It
+// refuses what the renderer must not write: a cell that is not one of the four
+// half blocks, a row of the wrong width, and a dark module outside the code's
+// own square, which is what the quiet zone's light modules are for.
+func pairReadQR(drawn string, quiet, n int) (pairModuleGrid, error) {
+	rows := strings.Split(strings.TrimSuffix(drawn, "\n"), "\n")
+	if len(rows) == 0 {
+		return pairModuleGrid{}, errors.New("the drawing is empty")
+	}
+	width := n + 2*quiet
+	for i, r := range rows {
+		if len([]rune(r)) != width {
+			return pairModuleGrid{}, fmt.Errorf("row %d is %d cells wide, want %d (the code's %d modules and %d of quiet zone on each side)", i, len([]rune(r)), width, n, quiet)
+		}
+	}
+	// The renderer pairs module rows two at a time, so a code of an odd height
+	// draws one module row more than it needs and the last line's bottom half
+	// is quiet.
+	if h := len(rows)*2 - 2*quiet; h != n && h != n+1 {
+		return pairModuleGrid{}, fmt.Errorf("the drawing is %d modules tall, want the code's %d (or one more)", h, n)
+	}
+	grid := pairModuleGrid{Size: n}
+	dark := map[rune][2]bool{
+		'█': {true, true},
+		'▀': {true, false},
+		'▄': {false, true},
+		' ': {false, false},
+	}
+	for i, row := range rows {
+		for j, cell := range []rune(row) {
+			cellDark, ok := dark[cell]
+			if !ok {
+				return grid, fmt.Errorf("row %d cell %d is %q, not one of the four the renderer writes", i, j, cell)
+			}
+			for k, on := range cellDark {
+				if !on {
+					continue
+				}
+				x, y := j-quiet, i*2-quiet+k
+				if x < 0 || y < 0 || x >= n || y >= n {
+					return grid, fmt.Errorf("module (%d,%d) is dark, outside the code's %dx%d square: the quiet zone is light", x, y, n, n)
+				}
+				grid.set(x, y, true)
+			}
+		}
+	}
+	return grid, nil
+}
+
+// pairModuleGrid is a decoded drawing: the modules, with the quiet zone already
+// removed.
+type pairModuleGrid struct {
+	Size  int
+	drawn map[[2]int]bool
+}
+
+func (g *pairModuleGrid) set(x, y int, dark bool) {
+	if x < 0 || y < 0 || x >= g.Size || y >= g.Size {
+		return
+	}
+	if g.drawn == nil {
+		g.drawn = map[[2]int]bool{}
+	}
+	g.drawn[[2]int{x, y}] = dark
+}
+
+func (g pairModuleGrid) Black(x, y int) bool { return g.drawn[[2]int{x, y}] }
+
+// pairSchema compiles schemas/pair-event.schema.json, the way the schema
+// package's own tests do: under its own $id, so a $ref inside it resolves.
+func pairSchema(t *testing.T) *jsonschema.Schema {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "schemas", "pair-event.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := doc.(map[string]any)["$id"].(string)
+	if id == "" {
+		t.Fatal("the pair event schema has no $id")
+	}
+	c := jsonschema.NewCompiler()
+	if err := c.AddResource(id, doc); err != nil {
+		t.Fatal(err)
+	}
+	sch, err := c.Compile(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sch
+}
+
+// TestPairEventsMatchTheSchema holds the stream's schema to the stream. The
+// golden carries the five events a pairing session produces; the listing and
+// the revocation are produced here, so every event name the schema declares is
+// checked against a line the command actually wrote rather than against one
+// this test composed.
+func TestPairEventsMatchTheSchema(t *testing.T) {
+	sch := pairSchema(t)
+
+	f := newPairFixture(t, pairMe)
+	f.pairSeedDevice(pairDevA, "phone-a")
+	f.pairSeedItem(t, pairDevA)
+	listed, _, err := pairRun(t, "ls", "--json")
+	if err != nil {
+		t.Fatalf("ls --json: %v", err)
+	}
+	revoked, _, err := pairRun(t, "revoke", "--uid", pairDevA, "--json")
+	if err != nil {
+		t.Fatalf("revoke --json: %v", err)
+	}
+
+	golden, err := os.ReadFile(filepath.Join("testdata", "pair-events.golden.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := append(pairEventLines(t, string(golden)), pairEventLines(t, listed)...)
+	lines = append(lines, pairEventLines(t, revoked)...)
+
+	names := map[string]bool{}
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		v, err := jsonschema.UnmarshalJSON(strings.NewReader(line))
+		if err != nil {
+			t.Fatalf("event %q does not parse: %v", line, err)
+		}
+		if err := sch.Validate(v); err != nil {
+			t.Fatalf("event %q does not match schemas/pair-event.schema.json: %v", line, err)
+		}
+		var e pairEvent
+		if err := json.Unmarshal([]byte(line), &e); err != nil {
+			t.Fatal(err)
+		}
+		names[e.Event] = true
+	}
+	for _, want := range []string{pairEventQR, pairEventWaiting, pairEventCode, pairEventDone, pairEventRefused, pairEventListed, pairEventRevoked} {
+		if !names[want] {
+			t.Fatalf("no %s event was checked against the schema: %v", want, names)
+		}
+	}
+
+	// And the schema is strict about the field a console must never be handed:
+	// a document carrying a key is refused.
+	bad := `{"v":1,"event":"listed","at":"2026-10-29T12:00:00Z","project":"aurora","list":{"project":"aurora","at":"2026-10-29T12:00:00Z","devices":[{"uid":"m~B","name":"phone-a","email":"person-1@example.com","role":"operator","at":"2026-10-29T12:00:00Z","key":"AAAA"}],"warnings":[]}}`
+	v, err := jsonschema.UnmarshalJSON(strings.NewReader(bad))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(v); err == nil {
+		t.Fatal("the schema accepts a device row carrying a key: a console reads this stream and must never be handed one")
 	}
 }
