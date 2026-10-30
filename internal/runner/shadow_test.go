@@ -825,3 +825,31 @@ func TestShadowFollowupHaltWritesNoStatus(t *testing.T) {
 		t.Fatalf("a halted challenger follow-up called the provider: %v", got[before:])
 	}
 }
+
+// TestShadowReviewRunPostsNothing: a review run's whole output is the comment
+// it writes on the pull requests it reviews, so a task that is both a review
+// run and a challenger arm could keep its promise only by doing nothing. It
+// is refused at bootstrap, before the provider is opened, and the pull request
+// it names is never written to (D554).
+//
+// Mutation (drop the review-run refusal in readArm): the challenger posts its
+// verdict on PR 7 and this test fails.
+func TestShadowReviewRunPostsNothing(t *testing.T) {
+	spec := reviewTaskSpec("reviewonly", reviewOnlyYAML, 7)
+	spec.AB = armTask(challengerModel).AB
+	g, _ := armGWSpec(t, armCfg(t), "50", spec, armLayer)
+	pushReviewBranch(t, g.harness, "feature", func(dir string) {
+		testutil.WriteFiles(t, dir, map[string]string{"other.txt": "x\n"})
+	})
+	addPR(g.harness, 7, "feature", "")
+	rec, _ := g.run(t, review("changes", 1))
+	if got := publishes(g.harness); len(got) != 0 {
+		t.Fatalf("a challenger review run wrote to the forge: %v", got)
+	}
+	if c := g.harness.provider.State.PRs[0].Comments; len(c) != 0 {
+		t.Fatalf("a challenger review run commented on PR 7: %q", c)
+	}
+	if rec == nil || rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %+v, want the arm refused", rec)
+	}
+}

@@ -69,6 +69,11 @@ func (r *run) readArm() error {
 		if msg := config.CheckModelPattern(ab.Challenger); msg != "" {
 			return r.refuseArm(fmt.Sprintf("the task's ab.challenger %s", msg))
 		}
+		if len(r.spec.ReviewPRs) > 0 {
+			// A review run's output is the comment it posts on the pull
+			// requests it reviews, which no arm may write.
+			return r.refuseArm("a review run is never a challenger arm: its verdict is a comment on the pull requests it reviews, and a challenger publishes nothing (D554)")
+		}
 		r.shadow = true
 	}
 	block := *ab
@@ -135,6 +140,7 @@ func (r *run) applyChallenger(a *config.Agent) error {
 	case !slices.Contains(r.ab.Challengers, ch):
 		return r.refuseArm(fmt.Sprintf("the task's ab.challenger %q is not one of the project layer's ab.challengers: a challenger is the owner's to name, and never the repository's (D556)", ch))
 	}
+	r.championCoder = a.ModelFor(config.RoleCoder)
 	a.Models.Coder = ch
 	return nil
 }

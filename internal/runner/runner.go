@@ -369,6 +369,10 @@ type run struct {
 	// same reason as ignoredGovernanceSaid: it is about the build, so a run
 	// says it once.
 	abSaid bool
+	// championCoder is a challenger arm's champion coder model, the one the
+	// plan is derived from (applyChallenger); the routing switch rewrites it
+	// with the run's own pins (pinSlots). Empty for every other run.
+	championCoder string
 	// pr is the early draft pull request's state (prflow.go).
 	pr prFlow
 	// baseSHA is the base branch's commit as bootstrap fetched it (the
@@ -1649,9 +1653,6 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	ApplyRoles(&cfg.Agent, rcp)
 	r.cfg, r.wf, r.rec.Workflow, r.rec.BaseBranch = cfg, wf, name, cfg.Git.BaseBranch
-	// The arm-less agent, kept for the plan below and for nothing else: see
-	// the plan's derivation for why the challenger is not in it.
-	championAgent := r.cfg.Agent
 	// The arm's coder model, after the recipe's own role mapping and before
 	// anything reads a model: the routing switch and the pins resolvePolicy
 	// applies, the stage loop, the budget session and checkBudget's
@@ -1730,7 +1731,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 		// has. Its own stage list is read directly (artifactHasPlan), and
 		// the render is the runner's (artifact.go).
 		//
-		// The plan is derived from championAgent, never from the arm: the
+		// The plan is derived from the champion's coder, never the arm's: the
 		// arms share a shape (D555 keeps "the reviewer, recipe, mode, tier
 		// and caps" the same), and the first-line step is derived from the
 		// coder's own family — Agent.FirstLineOn asks whether the coder's
@@ -1738,8 +1739,14 @@ func (r *run) bootstrap(ctx context.Context) error {
 		// — so a challenger whose family is routed would otherwise gain a
 		// stage the champion never had. Two runs whose stage sets differ are
 		// not two runs that differ in the coder model, and their records,
-		// costs and review findings would not be comparable.
-		plan := planOf(rcp, derived, championAgent, r.modelProviders(), spec.Overrides.ReviewRounds, r.reachedRigor(), r.rigorCfg.Configured())
+		// costs and review findings would not be comparable. It is read after
+		// resolvePolicy, as every other run's is, so the switch has rewritten
+		// it like any pin.
+		planAgent := r.cfg.Agent
+		if r.shadow {
+			planAgent.Models.Coder = r.championCoder
+		}
+		plan := planOf(rcp, derived, planAgent, r.modelProviders(), spec.Overrides.ReviewRounds, r.reachedRigor(), r.rigorCfg.Configured())
 		if err := checkPlan(plan); err != nil {
 			return fmt.Errorf("recipe %s: %w", rrec.Name, err)
 		}
