@@ -53,7 +53,7 @@ func bitbucketProfile() config.JobProfile {
 func TestDeriveBitbucketTokenQualifiesTheSlugs(t *testing.T) {
 	profiles := map[string]Profile{DefaultProfileName: {bitbucketProfile()}}
 	secrets := map[string]config.ProjectSecret{
-		config.BitbucketSecret: {AllowDataTo: []string{"Workspace-A/Repo-A", "workspace-a/api-*", "Workspace-A/Repo-A"}},
+		config.BitbucketSecret: {AllowDataTo: []string{"Workspace-A/Repo-A", "workspace-a/api-*", "Workspace-A/API-*", "Workspace-A/Repo-A"}},
 	}
 	bn, err := DeriveBitbucketToken(profiles, secrets)
 	if err != nil {
@@ -62,6 +62,9 @@ func TestDeriveBitbucketTokenQualifiesTheSlugs(t *testing.T) {
 	if bn == nil {
 		t.Fatal("DeriveBitbucketToken returned no block for an entry that names repositories")
 	}
+	// A pattern's name segment is lower-cased the way its owner's is (the
+	// matcher compares segment against segment case-sensitively), so the two
+	// spellings of the wildcard entry above derive one entry, not two.
 	want := []string{"bitbucket/workspace-a/api-*", "bitbucket/workspace-a/repo-a"}
 	if !slices.Equal(bn.AllowRepos, want) {
 		t.Errorf("allow_repos = %v, want %v", bn.AllowRepos, want)
@@ -87,6 +90,25 @@ func TestDeriveBitbucketTokenQualifiesTheSlugs(t *testing.T) {
 		config.BitbucketSecret: {AllowDataTo: []string{"*/repo-a"}},
 	}); err == nil {
 		t.Error("a wildcard owner in the operator's entry produced a block")
+	}
+	// An entry the local config accepts and the node's own reader would refuse
+	// is refused here, so that publishing cannot write a policy this binary
+	// cannot read back: a pattern ending in ".git" (a canonical repository
+	// never does), and a segment longer than the node reads.
+	for _, slug := range []string{
+		"workspace-a/api-*.git",
+		"workspace-a/" + strings.Repeat("x", MaxPatternLen) + "*",
+	} {
+		_, err := DeriveBitbucketToken(profiles, map[string]config.ProjectSecret{
+			config.BitbucketSecret: {AllowDataTo: []string{slug}},
+		})
+		if err == nil {
+			t.Errorf("allow_data_to %q produced a block although the node refuses the entry it derives", slug)
+			continue
+		}
+		if !strings.Contains(err.Error(), "project_secrets.bitbucket-token.allow_data_to") {
+			t.Errorf("allow_data_to %q: the refusal does not name the operator's entry: %v", slug, err)
+		}
 	}
 }
 
@@ -212,6 +234,13 @@ func TestDecodeRefusesABroadBitbucketTokenPattern(t *testing.T) {
 		"bitbucket/*/*",
 		"bitbucket/*/repo-a",
 		"bitbucket/workspace-a/a*b*c*",
+		// A first segment that is not the provider this block belongs to is
+		// dead rather than fail-open (MatchRepo compares segment against
+		// segment, and every entry it is matched against is a bitbucket
+		// canonical), and a "*" there reads as "any provider's repositories":
+		// both are refused where the block is judged.
+		"*/workspace-a/*",
+		"github/workspace-a/repo-a",
 	} {
 		doc := `"bitbucket_token":{"allow_repos":["` + pattern + `"]}`
 		if _, err := decodeBitbucketNode(t, doc); err == nil {

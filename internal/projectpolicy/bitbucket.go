@@ -69,10 +69,19 @@ func SharedBitbucketProfile(p config.JobProfile) bool {
 // allow_repos entry is provider-qualified, because the reader has to decide a
 // repository of one provider. So an exact slug goes through Canonical, the one
 // function the matcher and the allow-list are built from, and a pattern cannot:
-// task.CanonicalRepo refuses "*", so a pattern is qualified directly — the
-// bitbucket prefix, the lower-cased literal owner (the owner is literal by
-// validation, and a canonical repository is lower-case) and the name segment
-// as written.
+// task.CanonicalRepo refuses "*", so a pattern is qualified here — the
+// bitbucket prefix and both segments lower-cased, because a canonical
+// repository is lower-case and MatchRepo compares segment against segment
+// case-sensitively, so an entry written "workspace-a/API-*" has to derive
+// "bitbucket/workspace-a/api-*" to admit what its author meant.
+//
+// Every derived entry is then held to ValidPattern, the rule the node's own
+// reader applies to it, because the two rules are not the same rule: config's
+// allow_data_to alphabet is case-folded (repoPatternSegmentRE) and admits a
+// ".git" suffix, and a segment longer than MaxPatternLen passes it too. An
+// entry ValidPattern refuses would be a node Decode refuses — every run of the
+// project halted by a registry entry `fugaro validate` accepted — so it is
+// refused here instead, where the message can name the operator's entry.
 //
 // The block is derived whether or not a profile mounts the token, and nil only
 // when there is nothing to derive it from: no project_secrets.bitbucket-token
@@ -81,9 +90,9 @@ func SharedBitbucketProfile(p config.JobProfile) bool {
 // two states that mean "this project's token reaches no repository" are the
 // two that publish no block (D493).
 //
-// It returns Canonical's errors for an exact slug and
-// ValidateProjectSecrets' for the list as a whole, so a config the CLI refuses
-// is refused here too rather than published.
+// It returns Canonical's and ValidPattern's errors for one entry and
+// ValidateProjectSecrets' for the list as a whole, so a config that would
+// publish a node this binary cannot read back is refused here instead.
 //
 // profiles is taken and not read, and that is the amendment rather than an
 // oversight: the block is derived whether or not a profile mounts the token,
@@ -103,14 +112,17 @@ func DeriveBitbucketToken(profiles map[string]Profile, secrets map[string]config
 	for _, slug := range entry.AllowDataTo {
 		var canonical string
 		if strings.Contains(slug, "*") {
-			owner, name, _ := strings.Cut(slug, "/")
-			canonical = "bitbucket/" + strings.ToLower(owner) + "/" + name
+			owner, name, _ := strings.Cut(strings.ToLower(slug), "/")
+			canonical = "bitbucket/" + owner + "/" + name
 		} else {
 			c, err := Canonical("bitbucket", slug)
 			if err != nil {
 				return nil, fmt.Errorf("projectpolicy: project_secrets.%s.allow_data_to holds %q, which is not a repository: %v — an entry here is a repository as owner/name", config.BitbucketSecret, slug, err)
 			}
 			canonical = c
+		}
+		if err := ValidPattern(canonical); err != nil {
+			return nil, fmt.Errorf("projectpolicy: project_secrets.%s.allow_data_to holds %q, which would publish the policy entry %q, and the node refuses that entry: %v — name the repositories this token reaches, as owner/name, in lower case", config.BitbucketSecret, slug, canonical, err)
 		}
 		if !slices.Contains(list, canonical) {
 			list = append(list, canonical)
@@ -153,8 +165,9 @@ func decodeBitbucketTokenBlock(raw json.RawMessage) (*BitbucketToken, error) {
 const maxBitbucketTokenStars = 2
 
 // validBitbucketTokenBlock holds the block to the rules of D464, whoever wrote
-// it: a written block names at least one repository, each well-formed, with a
-// literal owner segment and at most two wildcards.
+// it: a written block names at least one repository, each of them a bitbucket
+// repository, well-formed, with a literal owner segment and at most two
+// wildcards.
 //
 // The narrower rules are the point. MatchRepo would accept "*" and
 // "bitbucket/*/*" in an allow_repos list — a project's enrollment may be that
@@ -181,6 +194,16 @@ func validBitbucketTokenBlock(b *BitbucketToken) error {
 			return fmt.Errorf("%s: \"*\" is not accepted: %s reaches one owner's repositories, so name the workspace (\"bitbucket/workspace-a/*\") rather than every repository of every provider", at, config.BitbucketSecret)
 		}
 		segs := strings.Split(pattern, "/")
+		// ValidPattern admits "*" and every provider kind in the first segment;
+		// this block admits only the one provider it is the reach of. A
+		// "github/…" entry is dead here (MatchRepo compares segment against
+		// segment, and the entries it is matched against are bitbucket
+		// canonicals) and a "*" first segment reads as "this token may reach
+		// repositories of any provider", which is not what a Bitbucket
+		// installation's token does. Both are refused rather than left dead.
+		if segs[0] != "bitbucket" {
+			return fmt.Errorf("%s: %q does not name the bitbucket provider: every entry of this block is a bitbucket repository (\"bitbucket/workspace-a/repo-a\"), and MatchRepo compares the first segment, so neither another provider nor \"*\" would ever admit one", at, pattern)
+		}
 		if strings.Contains(segs[1], "*") {
 			return fmt.Errorf("%s: %q has a wildcard owner, and the owner segment must be literal: a wildcard owner would let this one credential reach every workspace, so name the workspace", at, pattern)
 		}

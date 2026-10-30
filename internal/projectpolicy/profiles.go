@@ -228,8 +228,14 @@ func providerOf(canonical string) string {
 // thing — the account's slug "is not a repository" — and the operator would
 // read a sentence about a repository instead of the field they left out. Both
 // callers say this one sentence.
+//
+// The parenthetical says the provider is not inferable rather than that
+// Bitbucket shares no project-wide credential, which was true before D473 and
+// is not true now: a Bitbucket profile is exactly the one that mounts the
+// project-wide bitbucket-token, and it still has to say so, because the
+// provider is part of the job's name and of the git credential the job holds.
 func providerRequired(at string) error {
-	return fmt.Errorf("%s.provider: a profile must name the provider it serves; there is no default (a Bitbucket profile never shares a project-wide credential)", at)
+	return fmt.Errorf("%s.provider: a profile must name the provider it serves; there is no default (a job serves one provider, and which one is part of the job's name and of the git credential it holds — a Bitbucket profile, which mounts the project-wide Bitbucket token, no less than any other)", at)
 }
 
 // validProfiles checks the profiles block of a node, entry by entry: the
@@ -404,8 +410,8 @@ func validBitbucketProfile(at string, pr Profile) error {
 			at, i, config.BitbucketSecret, pr.Provider)
 	}
 	if len(pr.AllowRepos) == 0 {
-		return fmt.Errorf("%s.secrets[%d]: a profile that mounts %s must write its own allow_repos: an absent list means the project's (%s.allow_repos is not written), which this token is not bounded by. Write the repositories this profile admits, exactly",
-			at, i, config.BitbucketSecret, at)
+		return fmt.Errorf("%s.secrets[%d]: a profile that mounts %s must write its own allow_repos: an absent list falls back to the project's own enrollment, and bitbucket_token.allow_repos — not the project's — is what this token is bounded by. Write the repositories this profile admits, exactly",
+			at, i, config.BitbucketSecret)
 	}
 	for j, pattern := range pr.AllowRepos {
 		if strings.Contains(pattern, "*") {
@@ -421,9 +427,12 @@ func validBitbucketProfile(at string, pr Profile) error {
 // token admits is one the bitbucket_token block admits, matched with MatchRepo
 // — the one matcher the runner, the launcher and the credentials service use.
 // A node that carries no block bounds no repository, so a profile mounting the
-// token is refused: the token's reach is the block's (publish derives it from
-// project_secrets.bitbucket-token.allow_data_to), never the project's
-// allow_repos, which is what makes this a refusal rather than a fallback.
+// token is refused: the token's reach is the block's, never the project's
+// allow_repos, which is what makes this a refusal rather than a fallback. The
+// block comes from project_secrets.bitbucket-token.allow_data_to in the
+// project's local config (DeriveBitbucketToken), and the publisher that derives
+// it is BW-T2.3's; a profile that mounts the token before that lands cannot
+// state its reach, and is refused rather than read as the project's width.
 //
 // The message names the profile, the repository and the block, and never a
 // value: there is none in either document, and the operator's remedy is to
@@ -437,7 +446,7 @@ func validBitbucketProfileRepos(profiles map[string]Profile, token *BitbucketTok
 		at := "projectpolicy: profiles." + name
 		for _, repo := range pr.AllowRepos {
 			if token == nil {
-				return fmt.Errorf("%s.allow_repos: the profile mounts %s, and this policy carries no bitbucket_token block: that block is what the token may reach (publish derives it from project_secrets.%s.allow_data_to in the project's local config), and the project's own allow_repos is not a list this credential is bounded by. Publish a policy that carries the block, or take the entry off the profile",
+				return fmt.Errorf("%s.allow_repos: the profile mounts %s, and this policy carries no bitbucket_token block: that block is the token's whole reach, and the project's own allow_repos is not a list this credential is bounded by — so a node without the block is one this profile cannot state its reach in. The block is derived from project_secrets.%s.allow_data_to in the project's local config; publish a policy that carries it, or take the entry off the profile until it does",
 					at, config.BitbucketSecret, config.BitbucketSecret)
 			}
 			if !AdmitRepo(token.AllowRepos, repo) {
