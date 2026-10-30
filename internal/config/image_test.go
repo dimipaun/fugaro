@@ -193,10 +193,65 @@ func TestCheckoutCloneAllowsEmptyBuildKeys(t *testing.T) {
 	}
 }
 
-// TestCheckoutInvalidValue pins that checkout: is an enum of baked and clone.
+// sharedYAML is webYAML with the dependency-layer keys a checkout: shared
+// workflow declares: the layer the shared image holds is the tools, the
+// packages, the key files and the warm-up (design
+// forge-authorship-images/shared-images.md §1, §12), and every one of them
+// is refused under checkout: clone, so this is the shape only the new kind
+// makes expressible.
+const sharedYAML = webYAML + `    checkout: shared
+    image:
+      apt: [libvips-dev]
+      tools: { node: "24.19.0" }
+      key_files: [patches]
+      skip_build_scripts: true
+`
+
+// TestValidateCheckoutSharedAllowsDependencyKeys (design
+// forge-authorship-images/shared-images.md §6, route A): checkout: shared
+// runs a shared dependency-layer image — one image per resolved dependency
+// set, holding no repository's source — and clones the repository's own
+// source at launch, so the keys that describe that layer are exactly the
+// ones it accepts.
+func TestValidateCheckoutSharedAllowsDependencyKeys(t *testing.T) {
+	cfg, problems := Parse([]byte(sharedYAML))
+	if len(problems) > 0 {
+		t.Fatalf("unexpected problems: %v", problems)
+	}
+	if cfg.Workflows["web"].Checkout != CheckoutShared {
+		t.Fatalf("checkout = %q, want %q", cfg.Workflows["web"].Checkout, CheckoutShared)
+	}
+}
+
+// TestValidateCheckoutSharedRefusesSetup (design
+// forge-authorship-images/shared-images.md §1, §2.2): a shared image is run
+// by every repository on the same dependency set, so a key that would put
+// this repository's own content into it is refused — image.setup, which
+// runs in the repository's checkout, and a workflow's own dockerfile, which
+// builds a per-repository image at all. Each refusal names its key (the
+// problem's path) and the reason, in one sentence, and names checkout:
+// baked as the way out — which is how a workflow gets a per-repository
+// step at all.
+func TestValidateCheckoutSharedRefusesSetup(t *testing.T) {
+	const msg = "checkout: shared runs an image shared by every repository on the same dependency set, which holds no repository's own content; use checkout: baked to build a per-repository image"
+	for _, tc := range []struct{ name, extra, path string }{
+		{"image.setup", "    image: { setup: [\"npx playwright install --with-deps chromium\"] }\n", "workflows.web.image.setup"},
+		{"dockerfile", "    dockerfile: .fugaro/web.Dockerfile\n", "workflows.web.dockerfile"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, problems := Parse([]byte(webYAML + "    checkout: shared\n" + tc.extra))
+			if !hasProblem(problems, tc.path, msg, 0) {
+				t.Errorf("problems = %v, want one at %s: %s", problems, tc.path, msg)
+			}
+		})
+	}
+}
+
+// TestCheckoutInvalidValue pins that checkout: is an enum of baked, clone
+// and shared.
 func TestCheckoutInvalidValue(t *testing.T) {
 	_, problems := Parse([]byte(webYAML + "    checkout: sometimes\n"))
-	if !hasProblem(problems, "workflows.web.checkout", "must be baked or clone", 0) {
+	if !hasProblem(problems, "workflows.web.checkout", "must be baked or clone or shared; shared runs a shared dependency-layer image", 0) {
 		t.Fatalf("problems = %v", problems)
 	}
 }

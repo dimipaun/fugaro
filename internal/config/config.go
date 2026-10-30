@@ -590,16 +590,34 @@ type Workflow struct {
 	// installation's own base image (fugaro-base) has been published — a
 	// separate, person-run step. Use checkout: baked for a workflow that
 	// needs a system package, a service or a Dockerfile.
+	//
+	// shared (design forge-authorship-images/shared-images.md §6, route A)
+	// is the third kind: the job runs a shared dependency-layer image — one
+	// image per resolved dependency set, holding no repository's source —
+	// and the run clones the repository's own source at launch, the way a
+	// clone run does, from the same two job variables. It accepts the keys
+	// that describe that layer (image.apt, image.tools, image.key_files,
+	// image.skip_build_scripts) and refuses the per-repository ones
+	// (image.setup, dockerfile), which is what it exists for: a clone
+	// workflow has no build to honor them with.
 	Checkout string `yaml:"checkout,omitempty"`
 	// Inputs caps what a launcher may attach to a run of this workflow
 	// (design artifact-runs.md §4). Binaries before 0.8.0 refuse the key.
 	Inputs Inputs `yaml:"inputs"`
 }
 
-// Checkout values of a workflow (design generic-tool.md §2, G3).
+// Checkout values of a workflow (design generic-tool.md §2, G3;
+// checkout: shared is design forge-authorship-images/shared-images.md §6,
+// route A).
 const (
 	CheckoutBaked = "baked"
 	CheckoutClone = "clone"
+	// CheckoutShared runs a shared dependency-layer image — one image per
+	// resolved dependency set, holding no repository's source — and clones
+	// the repository's own source at launch. The kind exists because such
+	// a job must be clone-shaped while still declaring the
+	// dependency-layer keys a build honors, which checkout: clone refuses.
+	CheckoutShared = "shared"
 )
 
 // BaseKind is the base kind w builds on: always BaseKind, the one Fugaro
