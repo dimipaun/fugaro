@@ -2,8 +2,11 @@
 
 ## Status
 
-**Plan only; nothing is implemented; no task is approved.** Each task needs the owner's explicit
-go. An answered decision is not a go.
+**Approved; nothing is implemented yet.** The owner approved every task on 2026-10-30, with these
+exceptions: T2.1 and T2.2 stay draft until the processor is named (O4); O1 and O2 are counsel's; T3.2
+(O6), the checks X1 and X2 write (270–273) and every OWNER-RUN part below are the owner's. The owner
+also named L5.2's model: `claude-opus-5-5` as this repository's level-2 reviewer. CLI work ships in
+0.15.0 and console work in console 0.116.0.
 
 This plan builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md). Where the
 two disagree, the reconciliation wins. The owner answered D720–D737 on 2026-10-30, every one as
@@ -73,17 +76,16 @@ the plan:
 
 ## In-flight work this plan waits for (file conflicts)
 
-Open PRs on 2026-10-30 against `main` at `c35da6943`. #1344, #1345, #1325, #1358, #1360, #1363 and #1365,
-named in earlier drafts, have merged.
+Open PRs on 2026-10-30 against `main` at `8c9819ea7`. #1362, #1367, #1369 and #1360, named in the first
+version of this table, have merged, and so has the console redesign's step 4b-2.
 
 | In flight | Files shared with this plan | Tasks that wait |
 | --- | --- | --- |
-| #1362 (forge A2b, run 50f1) | `internal/config/config.go`, `internal/cli/run.go`, `internal/cli/validate.go`, `internal/cli/recipes_skew.go`, `internal/localcfg/localcfg.go`, `internal/localcfg/shared.go`, `schemas/fugaro.schema.json` | L1.2, L1.3, L1.4, L2.1, L3.2, T1.1 |
-| #1367 (`internal/cli/root.go`, `plugin/skills/working/SKILL.md`, `website/content/cli-reference.md`) | `plugin/skills/working/SKILL.md`, `website/content/cli-reference.md` | J1.1, L1.2, L5.1 |
-| #1369 (runner stamping; the A/B A3 queue follows on the same file) | `internal/runner/runner.go` | L4.2, B1.2 |
-| #1332 (mobile P7.1b) | `mobile/app.config.js` | T3.1 |
+| #1332 (mobile P7.1b, draft) | `mobile/app.config.js`, `docs/plans/2026-10-19-mobile-telemetry.md`, `docs/mobile/implementation-plan.md` | T0.1, T3.1 |
+| #1392 (console auto-update U3, halted) and U4, U5 | `console/package.json`, `console/package-lock.json`, `console/src/main/index.ts`, `console/test/unit/pinning.test.ts`, `console/THIRD_PARTY_NOTICES.md` | T2.1 |
 | #620 (managed-projects checks) | `docs/gcp-live-checklist.md` | X1, X2 |
-| Console Papaya steps 4b-2 to 7 | `console/src/renderer/theme/flight-deck.css`, `screens.css`, `console/src/renderer/screens/live.ts`, `run.ts`, `docs/design/console-styling.md` | G1.1, V1.2, V1.3 |
+| The console redesign's steps 5 to 7 (console 0.116.0) | `console/src/renderer/theme/flight-deck.css`, `screens.css`, `console/src/renderer/screens/live.ts`, `run.ts`, `docs/design/console-styling.md` | G1.1, V1.2, V1.3 |
+| Any other run writing `internal/runner/runner.go` (one writer at a time across every plan) | `internal/runner/runner.go` | L4.2, B1.2 |
 
 ## Slices and tasks
 
@@ -131,17 +133,17 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 - **Interfaces:** produces `agent.levels.{l1,l2,l3}.{model, effort, none, focus}` in `fugaro.yaml` and in the project layer's `defaults.agent.levels`. Also produces `agent.adversarial_rounds` (1–10, default 2, `config.DefaultAdversarialRounds`). `first_line_rounds` stays default 1 and max 3; `review_rounds` stays default 2. How the keys relate: `agent.levels.l2.model`, when set, wins over `agent.models.reviewer`, and `agent.levels.l1.model` defaults to the coder's model. A recipe's `roles` mapping is applied first. `agent.levels.l1.none`, or an explicit `l1` entry, wins over `agent.first_line_review`, and with neither set, `first_line_review` decides as today. `focus` is bounded to 500 bytes at every layer, not only in the task.
 - **Tests:** `TestLevelsDecodeStrict`, `TestAdversarialRoundsDefaultAndBounds`, `TestLayerLevelsOverlay`.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/config ./schemas -run 'Levels|AdversarialRounds|Schema' -count=1`.
-- **Depends on:** #1362, #1360.
+- **Depends on:** L1.1. Each level's settings reuse `config.LevelSetting` and its closed `config.Efforts`, so this task cannot define them a second time.
 - **Red step:** `TestLevelsDecodeStrict` fails because `levels` is an unknown field.
 - **Commit:** `config: per-level review settings and agent.adversarial_rounds`.
 
 #### L1.4 The owner's level floor, owner-only and tighten-only (D722)
 
-- **Files:** `internal/localcfg/localcfg.go`, `internal/localcfg/localcfg_test.go`, `internal/projectpolicy/policy.go`, `internal/projectpolicy/policy_test.go`, `internal/cli/project_cmd.go` (the publish builds `projectpolicy.Policy` field by field), `internal/runner/policy.go` (the job reads the node at bootstrap), `internal/policy/policy.go` (the field on `Effective`), `internal/policy/merge.go`, `internal/policy/merge_test.go`.
+- **Files:** `internal/localcfg/localcfg.go`, `internal/localcfg/shared.go` and `internal/cli/sharedcfg.go` (the floor never enters the launcher-writable shared configuration: `Shared()` drops it and `sharedForbidden` names it), `internal/localcfg/localcfg_test.go`, `internal/projectpolicy/policy.go`, `internal/projectpolicy/policy_test.go`, `internal/cli/project_cmd.go` (the publish builds `projectpolicy.Policy` field by field), `internal/runner/policy.go` (the job reads the node at bootstrap), `internal/policy/policy.go` (the field on `Effective`), `internal/policy/merge.go`, `internal/policy/merge_test.go`.
 - **Interfaces:** produces `review_floor: {<mode>: [l1|l2|l3, …]}` in the owner's project config, published by `fugaro project policy publish` into the **owner-only policy node** (`internal/projectpolicy`). It is **not** a project-layer key: `docs/design/bucket-iam.md` §10 L2 says a launcher can embed any project-layer text in its own `task.json` and the runner trusts it, so a floor there could be dropped by the launcher it is meant to bind. The runner reads the node at bootstrap with its run token. `policy.Effective.ReviewFloor(mode)` merges as a union, so only tightening wins. A launcher with the owner's file applies it early (L3.2), and the job is authoritative. `projectpolicy.Decode` ignores unknown top-level keys, so a runner older than L4.2 would drop the floor silently. L1.2's gate on resolved levels refuses such an image whenever a floor is set. **No policy node:** `fugaro project policy publish` needs the installation's database and a `budget.mode`. An installation without them can publish no floor, so it runs on the rigor defaults alone, and `fugaro validate` warns when the owner's file sets a floor that cannot be published.
-- **Tests:** `TestReviewFloorMergesTightenOnly`, `TestReviewFloorPublishedToPolicyNode`, `TestReviewFloorNotInLayer`, `TestRunnerReadsReviewFloorFromNode`, `TestReviewFloorUnpublishableWarns`.
+- **Tests:** `TestReviewFloorMergesTightenOnly`, `TestReviewFloorPublishedToPolicyNode`, `TestReviewFloorNotInLayer`, `TestReviewFloorNotInShared`, `TestRunnerReadsReviewFloorFromNode`. `TestReviewFloorUnpublishableWarns` is L3.2's, because the warning is printed by `internal/cli/validate.go`.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/policy ./internal/localcfg ./internal/projectpolicy -run 'ReviewFloor' -count=1 && GOFLAGS=-p=2 go test ./internal/runner -run 'TestRunnerReadsReviewFloor' -count=1 -timeout 30m`.
-- **Depends on:** #1362 (the same `localcfg.go`).
+- **Depends on:** none.
 - **Red step:** the merge test fails because the key does not exist.
 - **Reviewer:** opus + mandatory independent review (a policy merge that could loosen, and an owner-only value).
 - **Commit:** `policy: the owner's review-level floor, owner-only and tighten-only`.
@@ -149,10 +151,10 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 #### L2.1 The level-3 recipe step (D720, D726)
 
 - **Files:** `internal/recipe/recipe.go`, `internal/recipe/stages.go`, `schemas/recipe.schema.json`, `internal/cli/recipes_skew.go`, `internal/cli/recipes_skew_test.go`, `docs/recipes.md`, `docs/design/recipes.md`, `internal/recipe/recipe_test.go`, `internal/recipe/stages_test.go`.
-- **Interfaces:** produces `recipe.StepAdversarial` (`adversarial: { max_rounds, bounce: first_line }`): at most once, after `review`, and `bounce` may target only `first_line`. `StageBound` adds `n₃·(2 + 2·f)` with a bounce. It also produces `recipe.UsesAdversarial` and `adversarialSince`, a case in `recipeSinceFor` the way `UsesDigest` has one. `recipe.Recipe.newKeys` (`internal/recipe/recipe.go`) is the 0.7.0 gate and would let a 0.13 image accept the launch and then refuse the step. `recipeSinceFor` returns the base gate when the task carries no catalog recipe (`r == nil`, a repository-sourced recipe), so the launcher reads the repository's recipe at the ref and applies `adversarialSince` to it too.
+- **Interfaces:** produces `recipe.StepAdversarial` (`adversarial: { max_rounds, bounce: first_line }`): at most once, after `review`, and `bounce` may target only `first_line`. `StageBound` adds `n₃·(2 + 2·f)` with a bounce, keeping its signature: `n₃` is the step's own `max_rounds`, whose default (`recipe.DefaultAdversarialRounds`, 2) is declared in `internal/recipe` because `internal/config` imports `recipe`, never the reverse. It also produces `recipe.UsesAdversarial` and `adversarialSince`, a case in `recipeSinceFor` the way `UsesDigest` has one. `recipe.Recipe.newKeys` (`internal/recipe/recipe.go`) is the 0.7.0 gate and would let a 0.13 image accept the launch and then refuse the step. `recipeSinceFor` returns the base gate when the task carries no catalog recipe (`r == nil`, a repository-sourced recipe), so the launcher reads the repository's recipe at the ref and applies `adversarialSince` to it too.
 - **Tests:** `TestAdversarialStepOrder`, `TestAdversarialBounceTarget`, `TestStageBoundWithAdversarial` (which pins 11 for today's `standard` at the defaults and 19 with L3 at f = 1, n = 2, n₃ = 2), `TestRecipesSkewRefusesAdversarialOnOldImage`, and `TestRecipesSkewRefusesRepositoryAdversarialOnOldImage`.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/recipe -count=1`, then `GOFLAGS=-p=2 go test ./internal/cli -run 'DocsRecipes|RecipesSkew' -count=1`.
-- **Depends on:** #1362 (the same `recipes_skew.go`).
+- **Depends on:** none.
 - **Red step:** a recipe with `adversarial:` is refused as an unknown step.
 - **Commit:** `recipe: the adversarial step (review level 3)`.
 
@@ -185,7 +187,7 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 
 - **Files:** `internal/cli/validate.go`, `internal/cli/run.go`, `internal/cli/validate_test.go`, `internal/cli/run_review_test.go`.
 - **Interfaces:** consumes L3.1 and L1.2. `validate` prints the warnings and refusals, and `--json` carries them. Launch refuses before writing the task, and hands the resolved levels to L1.2's version gate.
-- **Tests:** `TestValidateLevelsSameModel`, `TestRunRefusesLevelsBelowFloor`, `TestRunGatesResolvedLevelsOnImage`.
+- **Tests:** `TestValidateLevelsSameModel`, `TestRunRefusesLevelsBelowFloor`, `TestRunGatesResolvedLevelsOnImage`, and L1.4's `TestReviewFloorUnpublishableWarns`.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/cli -run 'ValidateLevels|RunRefusesLevels|RunGatesResolvedLevels' -count=1`.
 - **Depends on:** L3.1, L1.2, L5.2 (this repository's own `fugaro.yaml` must not be refused by the check this task ships).
 - **Red step:** validate passes a same-model configuration before the change.
@@ -231,8 +233,8 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 
 #### L4.5 A model per review level in routing
 
-- **Files:** `internal/runner/routing.go`, `internal/runner/routing_levels_test.go` (new).
-- **Interfaces:** consumes L3.1. Today a stage pins one of two role slots plus the background model (`pinSlot`). This task routes an L1 or L3 model that differs from the coder's and the reviewer's: the stage's pins, its provider route (`agent.ProviderRouteVars` when a provider claims the model), and the gateway's allowed set for the run, which must name every level's model.
+- **Files:** `internal/runner/routing.go`, `internal/runner/agentenv.go` (`stagePins` applies the provider route's variables), `internal/runner/gateway.go` (the run's allowed set), `internal/runner/routing_levels_test.go` (new).
+- **Interfaces:** consumes L3.1. Today a stage pins one of two role slots plus the background model (`pinSlots`). This task routes an L1 or L3 model that differs from the coder's and the reviewer's: the stage's pins, its provider route (`agent.ProviderRouteVars` when a provider claims the model), and the gateway's allowed set for the run, which must name every level's model.
 - **Tests:** `TestRoutingL1ModelDistinctFromCoder`, `TestRoutingL3ProviderModelGetsRouteVars`, `TestRoutingRefusesLevelModelOutsideAllowedModels`.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/runner -run 'TestRouting' -count=1 -timeout 30m`.
 - **First commit:** records U5: whether in-job review Q9's gate (a Claude reviewer in a job waits for the credentials service) still binds under `auth: api-key` with both keys, read from `internal/runner/routing.go` and `docs/multi-model.md`. If it binds, a Claude model at L2 or L3 is refused next to a provider coder until the credentials service lands, and `ResolveLevels` (L3.1) says so.
@@ -263,7 +265,7 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 #### L5.2 This repository's `fugaro.yaml` gets a different level-2 model (O11)
 
 - **Files:** `fugaro.yaml`, `docs/dogfooding.md` (its statement of this repository's setup).
-- **Interfaces:** `agent.models.reviewer` names a model other than the coder's `deepseek/deepseek-v4.1-flash`, so a `standard` launch here no longer resolves to L1 = L2 (D721). The comment above `agent:` and `docs/dogfooding.md`'s statement of this setup change with it.
+- **Interfaces:** `agent.models.reviewer` names a model other than the coder's `deepseek/deepseek-v4.1-flash` (the owner named `claude-opus-5-5` on 2026-10-30, so the senior review runs in the job), so a `standard` launch here no longer resolves to L1 = L2 (D721). The comment above `agent:` and `docs/dogfooding.md`'s statement of this setup change with it.
 - **OWNER-RUN part:** the owner names the model. If it needs a credential this repository's jobs do not mount yet (for example `anthropic-api-key` for a Claude reviewer), the owner stores it with `fugaro secrets set <name>` in their own terminal and runs `fugaro update --repo`. No agent performs either step.
 - **Tests and command:** `fugaro validate --json` in this checkout (no refusal), then `GOFLAGS=-p=2 go test ./internal/cli -run Docs -count=1` (`docs/dogfooding.md` is pinned).
 - **Depends on:** none. It must merge before L3.2.
@@ -366,7 +368,7 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 
 - **Files:** `docs/design/desktop-console.md` (D5 marked superseded by D731), `docs/plans/2026-10-19-mobile-telemetry.md` (D255 superseded; Analytics dropped; the §7.4 scan refuses `setAnalyticsCollectionEnabled(` and admits exactly one `setCrashlyticsCollectionEnabled(` call site), `docs/mobile/implementation-plan.md` (P7.2/P7.3 re-scoped), `internal/cli/docs_mobile_telemetry_test.go` (its pinned facts move with the text), `internal/cli/docs_no_crash_reporter_test.go` (new: G8, `TestGoModHasNoCrashReporter`, which needs no switch and so is not blocked on O9).
 - **Tests and command:** `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|GoModHasNoCrashReporter' -count=1 && (cd website && npm run check)`. `website/test/console.mjs` reads the D5 row.
-- **Depends on:** none.
+- **Depends on:** #1332 (the same two mobile documents).
 - **Red step:** the mobile telemetry docs test fails on the old "always on" pin until both move together.
 - **Commit:** `docs: crash reports are opt-out; the app drops Analytics (D731)`.
 
@@ -455,10 +457,10 @@ processor (O4). No agent edits the Terms.
 #### G1.1 Minimum scale and horizontal-scroll fallback
 
 - **Files:** `console/src/renderer/screens/graph.ts`, `console/src/renderer/theme/screens.css`, `console/test/unit/graph.test.ts`, `console/test/unit/layout-client.test.ts`, `docs/design/console-styling.md`.
-- **Interfaces:** `GRAPH_MIN_SCALE` (the node width at which a title stays legible). When the panel width divided by the picture's width falls below it, the canvas takes `width = picture width × GRAPH_MIN_SCALE` inside a wrapper that scrolls horizontally, and that graph only. `LAYOUT_OPTIONS` stays `layered` and `DOWN` with no wrapping key.
+- **Interfaces:** `GRAPH_MIN_SCALE` (the node width at which a title stays legible). When the panel width divided by the picture's width falls below it, the canvas takes `width = picture width × GRAPH_MIN_SCALE` inside a wrapper that scrolls horizontally, and that graph only. `LAYOUT_OPTIONS` (`console/src/renderer/graph/layout.ts`, unchanged) stays `layered` and `DOWN` with no wrapping key.
 - **Tests:** `graph: fits the width above the minimum scale`, `graph: scrolls horizontally below it`, `layout: no wrapping option`.
 - **Command:** `cd console && npm run typecheck && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 graph layout`, then `GOFLAGS=-p=2 go test ./internal/cli -run Docs -count=1` (the styling doc is pinned).
-- **Depends on:** Papaya steps 4b-2 to 7, the ones that edit `screens.css` and `console-styling.md`.
+- **Depends on:** the console redesign's steps 5 to 7 (console 0.116.0), the ones that edit `screens.css` and `console-styling.md`.
 - **Red step:** the minimum-scale test fails while the canvas always fits.
 - **OWNER-RUN part:** the graph goldens are re-recorded by the owner.
 - **Commit:** `console: the graph keeps a legible scale and scrolls sideways only when it must`.
@@ -485,7 +487,7 @@ processor (O4). No agent edits the Terms.
   - Every figure goes through `hidesView` and `formatReading`.
 - **Tests:** `live: red zone from headroom and hours left`, `live: hour history bounded`, `live: burn window still equals BurnWindow`, `live: concurrent bar against max_parallel`.
 - **Command:** `cd console && npm run typecheck && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 live`, then `GOFLAGS=-p=2 go test ./internal/cli -run Docs -count=1`.
-- **Depends on:** V1.1, G1.1 (the same `console-styling.md`), and Papaya steps 4b-2 to 7 (`live.ts`, `flight-deck.css`, `console-styling.md`).
+- **Depends on:** V1.1, G1.1 (the same `console-styling.md`), and the console redesign's steps 5 to 7 (`live.ts`, `flight-deck.css`, `console-styling.md`).
 - **Red step:** the red-zone test fails because no gauge exists.
 - **OWNER-RUN part:** the Live goldens.
 - **Commit:** `console: the spend-rate gauge, hour sparklines and cap bars`.
@@ -528,25 +530,26 @@ processor (O4). No agent edits the Terms.
 among a task's internal dependencies):
 
 - L0.1 → L1.1 → L4.3
-- L1.1, L2.1 [#1362, #1367] → L1.2
-- [#1362] → L1.3, L1.4, L2.1
+- L1.1, L2.1 → L1.2
+- L1.1 → L1.3
 - L1.1, L1.3, L1.4, L2.2 → L3.1
 - L3.1, L1.2, L5.2 → L3.2
 - L3.1 → L4.5
 - L1.1, L2.1, L3.1, L4.1, L4.3, L4.5 [#1369] → L4.2
 - L1.3, L2.1 → L4.4
-- L4.2, L3.2, J1.1, T1.1 [#1367] → L5.1
+- L4.2, L3.2, J1.1, T1.1 → L5.1
 - L1.1, L4.1, L1.2 → B1.1 [before A3.3]
 - B1.1 [A3.3] → B1.4
 - B1.1, L4.2 [A5.2] → B1.2
 - B1.2, B1.4 [A4.3, A5.4] → B1.3
-- L1.4 [#1362] → T1.1 → T1.2 → T1.3
+- L1.4 → T1.1 → T1.2 → T1.3
 - V1.1 → T1.2
 - T1.1, T1.2 → J1.3
 - J1.1, J1.3 → J1.2
+- [#1332] → T0.1
 - T0.1, T1.1 [#1332, app sign-in] → T3.1 → T3.2
 - T1.3, T0.1, T3.1 [O4] → T2.1 → T2.2
-- [Papaya 4b-2..7] → G1.1
+- [console redesign steps 5–7] → G1.1
 - V1.1, G1.1 → V1.2
 - L4.1, L4.2, G1.1, V1.2, T1.2, J1.3 → V1.3
 - L4.2, T2.1, T3.1 [#620] → X1
@@ -556,22 +559,24 @@ among a task's internal dependencies):
 
 | Level | Tasks |
 | --- | --- |
-| 0 | L0.1, L1.3, L1.4, L2.1, L2.2, L4.1, L5.2, J1.1, T0.1, G1.1, V1.1 |
-| 1 | L1.1, L4.4, T1.1, V1.2 |
-| 2 | L1.2, L3.1, L4.3, T1.2, T3.1 |
-| 3 | L3.2, L4.5, B1.1, J1.3, T1.3, T3.2 |
-| 4 | L4.2, B1.4, J1.2, T2.1 |
-| 5 | L5.1, B1.2, T2.2, V1.3, X1 |
-| 6 | B1.3, X2 |
+| 0 | L0.1, L1.4, L2.1, L2.2, L4.1, L5.2, J1.1, T0.1, G1.1, V1.1 |
+| 1 | L1.1, T1.1, V1.2 |
+| 2 | L1.2, L1.3, L4.3, T1.2, T3.1 |
+| 3 | L3.1, L4.4, B1.1, J1.3, T1.3, T3.2 |
+| 4 | L3.2, L4.5, B1.4, J1.2, T2.1 |
+| 5 | L4.2, T2.2 |
+| 6 | L5.1, B1.2, V1.3, X1 |
+| 7 | B1.3, X2 |
 
-**Critical path (inside this plan):** for the review levels, L0.1 → L1.1 → L3.1 → L4.5 → L4.2 → L5.1 / X1,
-six tasks. It starts at once, and also needs #1362 (for L1.3 and L1.4) and #1369 (L4.2). The longest chain
-overall is seven tasks, L0.1 → L1.1 → L3.1 → L4.5 → L4.2 → B1.2 → B1.3, and it also waits for the A/B plan's
+**Critical path (inside this plan):** for the review levels, L0.1 → L1.1 → L1.3 → L3.1 → L4.5 → L4.2 → L5.1 / X1,
+seven tasks. It starts at once; L4.2 also waits until no other run writes `internal/runner/runner.go`. The longest chain
+overall is eight tasks, L0.1 → L1.1 → L1.3 → L3.1 → L4.5 → L4.2 → B1.2 → B1.3, and it also waits for the A/B plan's
 A3.3 and A5.x. Slices G and V are off the critical path. The console's T2.1 waits on the processor's name (O4).
 
 **What must be sequential and why:**
 
 - L1.1 after L0.1: the closed effort set.
+- L1.3 after L1.1: the same `config.LevelSetting` type and closed effort set.
 - L3.1 after L1.1, L1.3, L1.4 and L2.2: it consumes the settings and the defaults, and applies the floor.
 - L3.2 after L5.2: this repository's own configuration must pass the check L3.2 ships.
 - L4.5 and L4.2 after L3.1: they consume the resolved levels, and L4.2 routes through L4.5.
@@ -589,22 +594,23 @@ pair of writers is joined by a dependency path):
 | `internal/runstore/runstore.go`, `schemas/result.schema.json` | L4.1 (0), B1.1 (3) |
 | `internal/cli/recipes_skew.go`, `internal/cli/recipes_skew_test.go` | L2.1 (0), L1.2 (2), B1.1 (3) |
 | `internal/localcfg/localcfg.go` | L1.4 (0), T1.1 (1), J1.3 (3) |
+| `internal/localcfg/shared.go`, `internal/cli/sharedcfg.go` | L1.4 (0), T1.1 (1) |
 | `internal/cli/project_cmd.go` | L1.4 (0), T1.1 (1), T1.2 (2), J1.3 (3) |
 | `internal/cli/project_enroll_test.go` | T1.2 (2), J1.3 (3) |
-| `internal/cli/run.go`, `internal/cli/run_review_test.go` | L1.2 (2), L3.2 (3) |
-| `internal/runner/runner.go` | L4.2 (4), B1.2 (5) |
-| `docs/recipes.md` | L2.1 (0), L5.1 (5) |
+| `internal/cli/run.go`, `internal/cli/run_review_test.go` | L1.2 (2), L3.2 (4) |
+| `internal/runner/runner.go` | L4.2 (5), B1.2 (6) |
+| `docs/recipes.md` | L2.1 (0), L5.1 (6) |
 | `plugin/skills/parallelism/SKILL.md` | J1.1 (0), J1.2 (4) |
-| `plugin/skills/working/SKILL.md` | J1.1 (0), L5.1 (5) |
-| `docs/gcp-live-checklist.md` | X1 (5), X2 (6) |
+| `plugin/skills/working/SKILL.md` | J1.1 (0), L5.1 (6) |
+| `docs/gcp-live-checklist.md` | X1 (6), X2 (7) |
 | `docs/design/desktop-console.md` | T0.1 (0), T1.3 (3), T2.1 (4), T2.2 (5) |
 | `docs/mobile/implementation-plan.md` | T0.1 (0), T3.2 (3) |
-| `console/docs/json-contract.md` | V1.1 (0), T1.2 (2), J1.3 (3), V1.3 (5) |
-| `console/src/shared/schema.ts` | V1.2 (1), V1.3 (5) |
-| `docs/design/console-styling.md` | G1.1 (0), V1.2 (1), V1.3 (5) |
-| `console/src/renderer/theme/screens.css` | G1.1 (0), V1.3 (5) |
+| `console/docs/json-contract.md` | V1.1 (0), T1.2 (2), J1.3 (3), V1.3 (6) |
+| `console/src/shared/schema.ts` | V1.2 (1), V1.3 (6) |
+| `docs/design/console-styling.md` | G1.1 (0), V1.2 (1), V1.3 (6) |
+| `console/src/renderer/theme/screens.css` | G1.1 (0), V1.3 (6) |
 | `website/src/pages/privacy.astro`, `website/test/privacy.mjs` | T3.1 (2), T2.1 (4) |
-| the CLI release's notes (`docs/releases/`) | L1.2 (2), L3.2 (3), L5.1 (5) |
+| the CLI release's notes (`docs/releases/`) | L1.2 (2), L3.2 (4), L5.1 (6) |
 
 Every other file in the plan has one writer.
 
@@ -623,4 +629,5 @@ Checks 274–289 stay reserved and unused.
 
 - **T2.1:** the console's release notes, `### For operators`, name the build-time DSN variable. The owner sets it as a build secret before the release build.
 - **T1.1:** the database rules gain the `settings` entry only when the operator runs `fugaro update`. Until then, the console and the apps read `null` and send nothing.
+- **Before the 0.15.0 tag:** `reviewLevelsSince` and `adversarialSince` name 0.15.0 only if L4.2 is in it. If L4.2 has not merged, both move to the next release before the tag, so no 0.15.0 image accepts a level it does not run.
 - **L1.2:** job images must be refreshed (`fugaro image refresh`) before any launcher sets `--review-levels`. The release's `### For operators` says so.
