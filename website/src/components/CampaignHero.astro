@@ -26,10 +26,11 @@
  * and 1440 px in `website/test/base-styles.mjs`, which is what keeps a later edit from putting
  * the fifth line back.
  *
- * **The hero's third element — the muted looping video — is not here.** A variant's `video` is
- * a path under `website/public/` that the owner produces, no variant names one yet, and the
- * layout's `media` slot is where a picture or a video lands when one does (spec §6, F14, G2.5).
- * The hero therefore renders complete without it rather than with a hole where a file would go.
+ * **The hero's muted looping video — the spec's third element — is not here.** A variant's
+ * `video` is a path under `website/public/` that the owner produces, no variant names one yet,
+ * and the layout's `media` slot is where a picture or a video lands when one does (spec §6, F14,
+ * G2.5). The hero therefore renders complete without it rather than with a hole where a file
+ * would go.
  *
  * **What the eye lands on is the campaign's own drawing.** The owner's feedback of 2026-10-30
  * asked the hero to hold a picture that carries the idea in one look rather than a third
@@ -42,9 +43,11 @@
  * suppressed outright while a variant names its own media, which then takes that slot instead
  * (F14, G2.5).
  *
- * **The tone rides on the section, not on a second stylesheet.** `data-tone` is the variant's
- * own word from the file (`playful` is `/crew`'s), and the campaign pages' own rules key their
- * accents off it, so the four pages are one template with one difference the data file states.
+ * **The tone rides on the section.** `data-tone` is the variant's own word from the file
+ * (`playful` is `/crew`'s), written on the band beside the section's name and the file it was
+ * read from; the drawing carries its own copy of it, which is what its accents and its four
+ * motifs are keyed off, so the four pages are one template with one difference the data file
+ * states and no page types a colour of its own.
  */
 import CampaignHeroArt from './CampaignHeroArt.astro'
 
