@@ -39,7 +39,7 @@ type RefUpdate struct {
 // for them.
 var (
 	ErrUpdateRequestTooLarge = errors.New("the update request is larger than the allowed size")
-	ErrPktLineMalformed      = errors.New("a pkt-line length is malformed")
+	ErrPktLineMalformed      = errors.New("a pkt-line length or an update command line is malformed")
 	ErrPktLineOutOfRange     = errors.New("a pkt-line length is out of range")
 	ErrUpdateRequestNoFlush  = errors.New("the update request does not end at a flush packet")
 	ErrObjectIDWidthMixed    = errors.New("the two object ids of one update are of different widths")

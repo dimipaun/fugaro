@@ -302,6 +302,12 @@ func TestReadUpdateRequestRefusals(t *testing.T) {
 			max:  4,
 			want: ErrUpdateRequestTooLarge,
 		},
+		{
+			name: "a flush packet that would end past the bound",
+			in:   pkt(oidA+" "+oidB+" refs/heads/main") + "0000",
+			max:  len(pkt(oidA+" "+oidB+" refs/heads/main")) + 3,
+			want: ErrUpdateRequestTooLarge,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
