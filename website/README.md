@@ -154,17 +154,22 @@ the campaign parameters a visitor arrived through, onto the booking address and 
 
 - **Three events, and only after the analytics grant.** `install_click` and `whatsapp_click`
   are presses of the two secondary calls to action, found by the ids the markup gives them;
-  `demo_booked` is the booking frame's own report, taken only from the frame Calendly's script
-  built inside this page's container, reporting from the origin the booking link names — another
-  origin, another window of the page, or a message no frame sent is dropped unread, and no field
+  `demo_booked` is the widget's own booking report, and it is taken only when the message *is*
+  that report — the widget posts several others over the same channel, its frame's height and a
+  viewed event type among them, so the origin and the sender alone would count a booking when
+  the widget was drawn — AND it comes from the frame Calendly's script built inside this page's
+  container AND from the origin the booking link names. Anything else is dropped unread —
+  another origin, another window of the page, another of the widget's messages — and no field
   of the message is forwarded. None of the three carries a parameter, and none is sent before
   the visitor has granted analytics or after a withdrawal; the count is the funnel, and the
   campaign's own attribution reaches GA4 through the owner's Calendly-to-GA4 integration rather
   than through this site (F22).
 - **The campaign parameters go onto the booking address and nowhere else.** The five `utm_*`
-  names the agenda's links carry, each value decoded and encoded again, a value longer than 100
-  characters dropped rather than truncated, and every other key dropped — into the embed's
-  address, which is the owner's link from `data/landing.yaml` with that query on it. They are
+  names the agenda's links carry, each value decoded and encoded again — a `+` in the visitor's
+  query read as the space a browser reads it as, and the `%20` this page writes read back the
+  same way — a value longer than 100 characters dropped rather than truncated, and every other
+  key dropped: into the embed's address, which is the owner's link from `data/landing.yaml` with
+  that query on it. They are
   not sent to GA4, not put into the chat message a visitor reads, and not added to the plain
   `Book a demo` anchor a visitor who declines the campaign consent keeps. A visitor with no
   campaign parameter gets the owner's link exactly as the file writes it.
@@ -1178,19 +1183,20 @@ added or removed without this sentence moving fails there:
     are, by the owner's ruling of 2026-10-20, and they carry the same drift: the script's figure
     was stated as 70,016 where the build was 70,008 and the page weight as 563,219 where the
     homepage's is 563,140 — the script's own figure is re-derived in the bullet below, with the
-    bytes G2.3 added to it. The drawings are the owner's to read, and that is **Check 112** in
-    `docs/gcp-live-checklist.md`.
+    bytes G2.3 and G2.4 added to it. The drawings are the owner's to read, and that is
+    **Check 112** in `docs/gcp-live-checklist.md`.
 
-  - **JavaScript per page:** 333,549 bytes. Three times 111,183: the one script the site ships,
-    `public/scripts/site.js` (88,946 bytes), plus 25 %. What the file carries is the copy
+  - **JavaScript per page:** 360,327 bytes. Three times 120,109: the one script the site ships,
+    `public/scripts/site.js` (96,087 bytes), plus 25 %. What the file carries is the copy
     control, the menu, the consent gate — the site's, and since G2.3 the campaign's own gate and
     the three loaders behind it — and **both of the site's sliders** — the console page's,
     which the feedback-B round above added, and the homepage's, which the feedback-A round above
-    it added. **G2.3's campaign gate is the last 12,012 bytes, and the script's figure is
-    re-derived with them**: the build the derivation names has moved 70,016 → 88,946, and the
-    ceiling with it, 262,560 → 333,549. The drift the rounds before it left in this figure — the
-    bullet above records the build as 70,008 against the 70,016 it stated — ends here, in the
-    commit that moved the bytes; the page weight keeps its own until a round re-derives it.
+    it added. **G2.4's key events and its pass-through are the last 7,141 bytes, and the script's
+    figure is re-derived with them**: the build the derivation names has moved 88,946 → 96,087,
+    and the ceiling with it, 333,549 → 360,327. The drift the rounds before it left in this
+    figure — the bullet above records the build as 70,008 against the 70,016 it stated — ends
+    here, in the commit that moved the bytes; the page weight keeps its own until a round
+    re-derives it.
     The console's half is the feedback-B round's, and it was the first JavaScript the site had
     gained since the menu (the owner's feedback of 2026-10-21): the bar the markup emits
     `hidden` — a Previous arrow, the count and a Next arrow — is revealed and driven here, the

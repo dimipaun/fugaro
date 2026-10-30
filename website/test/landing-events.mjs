@@ -13,12 +13,15 @@
 //      have carried. The queue they go into (`dataLayer`) does not exist before a grant, and
 //      the cases below watch it rather than the source: the two links are pressed and the
 //      booking frame reports on a page that has granted nothing, and the queue is still absent.
-//   2. **A booking report is taken from one sender only.** `demo_booked` is a message from
-//      Calendly's own widget, so it is accepted only from the frame that widget built inside
-//      this page's booking container AND from the origin the booking link names. Anything else
-//      that says `demo_booked` — another origin, another window of this page, a message the
-//      page never asked for — is dropped, and no field of the message is forwarded: the event
-//      is the funnel's count, and the vendor's payload is the visitor's (F22).
+//   2. **A booking is the widget's own booking report, from one sender only.** `demo_booked` is
+//      a message Calendly's inline widget posts when a booking is made, so it is accepted only
+//      when the message *is* that report — the widget posts several others over the same
+//      channel, its frame height and a viewed event type among them — AND it comes from the
+//      frame that widget built inside this page's booking container AND from the origin the
+//      booking link names. Anything else is dropped: another origin, another window of this
+//      page, a message the page never asked for, or one of the widget's own non-booking
+//      messages. No field of the message is forwarded either — the event is the funnel's count,
+//      and the vendor's payload is the visitor's (F22).
 //   3. **The campaign parameters go into the booking link and nowhere else.** They are
 //      allow-listed by key, capped in length and encoded (F22): not into the chat message,
 //      which the visitor would read and a vendor the privacy text does not name would receive;
@@ -59,6 +62,13 @@ import { CONSENT_KEY, MARKETING_CONSENT_KEY } from '../src/lib/consent-key.mjs'
 // the same loader the pages read them through, so a case that compares the booking address with
 // a literal of its own would be the second copy this repository refuses.
 const LANDING = loadLanding()
+
+// The message Calendly's inline widget posts when a booking is made, and the other messages the
+// same widget posts over the same channel: its frame's height, a viewed event type, a chosen
+// date. All of them come from the same origin and the same window, so a listener that read only
+// those two would count a booking when the widget was drawn.
+const BOOKING_REPORT = 'calendly.event_scheduled'
+const WIDGET_MESSAGES = ['calendly.page_height', 'calendly.event_type_viewed', 'calendly.date_and_time_selected', 'calendly.profile_page_viewed']
 
 // The campaign page the cases below run, and the path the browser serves it at: the pages are
 // directories, so a visitor is at `/save/`, and that is the spelling the loader's path check
@@ -168,19 +178,21 @@ function press(dom, id) {
 
 /**
  * The booking frame's own report, as Calendly's widget posts one: the frame the page embedded,
- * the origin the booking link names, and a payload of the vendor's own.
+ * the origin the booking link names, and the message that says a booking was made. The payload
+ * beside it is the vendor's own, and the default is the message the widget sends for a booking
+ * — a case that wants one of the widget's other messages hands it in.
  */
-function report(dom, data = {}) {
+function report(dom, data = { event: BOOKING_REPORT }) {
   dom.window.dispatchEvent({ type: 'message', origin: BOOKING_ORIGIN, source: frameWindow(dom), data })
 }
 
 /**
- * A message at the page's window that is NOT the booking frame's own: another origin, a sender
- * that is not the embedded frame, or a message that names no sender at all (which is what a
- * `null` source is in a browser).
+ * A message at the page's window that is NOT the booking frame's own booking report: another
+ * origin, a sender that is not the embedded frame, a message that names no sender at all (which
+ * is what a `null` source is in a browser), or one of the widget's own non-booking messages.
  */
-function foreignReport(dom, { origin = BOOKING_ORIGIN, source = {} } = {}) {
-  dom.window.dispatchEvent({ type: 'message', origin, source, data: {} })
+function foreignReport(dom, { origin = BOOKING_ORIGIN, source = {}, data = { event: BOOKING_REPORT } } = {}) {
+  dom.window.dispatchEvent({ type: 'message', origin, source, data })
 }
 
 // ---- 1. nothing before the grant ----------------------------------------------------------
@@ -294,6 +306,41 @@ test('a booking forwards no field of the message that reported it', () => {
   )
 })
 
+test('a booking is the widget\'s own booking report, and none of its other messages', () => {
+  const dom = run()
+
+  // The framing the listener reads is right — the embedded frame, at the booking link's origin
+  // — and the message is the widget's own too, but it is not the one that says a booking was
+  // made. The widget posts its frame's height before a visitor has done anything at all, and a
+  // viewed event type and a chosen date while they are still choosing, so a listener that took
+  // any message from the right frame would count a page render as the funnel's conversion.
+  for (const message of WIDGET_MESSAGES) {
+    report(dom, { event: message, payload: { height: 700 } })
+    assert.deepEqual(
+      sent(dom),
+      [],
+      `the widget's own ${message} was taken as a booking: ${JSON.stringify(sent(dom))}. Only the report that says a booking was made is the funnel's event, and the others arrive from the same frame, at the same origin, over the same channel`,
+    )
+  }
+
+  // A message with no payload, and one whose payload is not an object: neither is the report,
+  // and neither may throw the listener out of the page. `{}` is the message that names nothing.
+  for (const data of [{}, { event: '' }, null, 'calendly.event_scheduled', 42]) {
+    report(dom, data)
+    assert.deepEqual(sent(dom), [], `a message whose data is ${JSON.stringify(data)} was taken as a booking: ${JSON.stringify(sent(dom))}`)
+  }
+
+  // And a message that carries no `data` at all, dispatched by hand because the helper's
+  // default argument stands for the booking report itself.
+  dom.window.dispatchEvent({ type: 'message', origin: BOOKING_ORIGIN, source: frameWindow(dom), data: undefined })
+  assert.deepEqual(sent(dom), [], `a message with no data at all was taken as a booking: ${JSON.stringify(sent(dom))}`)
+
+  // And the booking itself, from the same frame, which is what the case above is the contrast
+  // to: the widget does report one, and it is counted.
+  report(dom)
+  assert.deepEqual(sent(dom), ['demo_booked'], `the widget's booking report sent ${JSON.stringify(sent(dom))}`)
+})
+
 // ---- 4. the campaign parameters, into the booking link and nowhere else --------------------
 
 test('the campaign parameters a visitor arrived through reach the booking address', () => {
@@ -349,6 +396,8 @@ test('a campaign parameter is allow-listed, capped and encoded before it reaches
 
   // A key that is not one of the agenda's five: dropped, whether it merely resembles one, is
   // spelled differently, or carries nothing.
+  // A key that is not one of the agenda's five: dropped, whether it merely resembles one, is
+  // spelled differently, or carries nothing.
   for (const search of ['?utm_evil=x', '?utm=x', '?UTM_SOURCE=y', '?utm_source=', '?utm_source']) {
     const dom = run({ search })
     assert.equal(
@@ -357,6 +406,75 @@ test('a campaign parameter is allow-listed, capped and encoded before it reaches
       `${JSON.stringify(search)} produced the booking address ${JSON.stringify(bookingAddress(dom))}: the page passes on the parameters it allow-lists by name and nothing else`,
     )
   }
+
+  // A value spelled the way a link spells a space: a browser's own query parser reads `+` as a
+  // space, so the page does too, and the campaign the visitor is attributed to is the one the
+  // link named. Passing the `+` through would put a campaign name nobody chose on the link.
+  const plus = run({ search: '?utm_source=newsletter+test' })
+  assert.equal(
+    bookingAddress(plus),
+    `${LANDING.calendlyURL}?utm_source=newsletter%20test`,
+    `?utm_source=newsletter+test produced the booking address ${JSON.stringify(bookingAddress(plus))}: a plus in a query is a space, and the page that re-encodes the value must read it the way the browser that served the link did`,
+  )
+})
+
+// ---- 5. after a withdrawal ------------------------------------------------------------------
+
+/**
+ * The privacy page with the two calls to action in it. The bar that withdraws the site's answer
+ * is the privacy page's — on a campaign page, a press about the campaign never rewrites the
+ * answer the visitor gave the site (G2.3) — and the links the key events are about are the
+ * campaign page's, so the case needs both under the one script that would really handle them.
+ * The links are the built campaign page's own markup, copied rather than typed.
+ */
+function withdrawingPage() {
+  const built = builtPage()
+  const list = /<ul[^>]*class="campaign-calls-list"[^>]*>[\s\S]*?<\/ul>/.exec(built)
+  assert.ok(list, 'the built campaign page carries no calls-to-action list to plant, so the links the key events are about could not be pressed after a withdrawal')
+  const embed = /<div[^>]*id="calendly-embed"[^>]*>\s*<\/div>/.exec(built)
+  assert.ok(embed, 'the built campaign page carries no booking container to plant, so the frame a booking is reported from would not exist')
+  const privacy = builtPage('privacy/index.html')
+  const planted = privacy.replace('</body>', `${list[0]}${embed[0]}</body>`)
+  assert.notEqual(planted, privacy, 'the built privacy page carries no </body> for the calls to action to be planted before, so the fixture would be the page unchanged')
+  return withFrame(planted)
+}
+
+test('a withdrawal stops the key events, and a stored refusal never starts them', () => {
+  // The visitor granted analytics on another page and takes the answer back from the banner
+  // that always offers the choice (W1.12's withdrawal). Every action a key event is about is
+  // taken after that press, and none of them may be sent: the grant is what the events wait
+  // for, and a withdrawal is the end of it. This is the half of the README's sentence that a
+  // change leaving the gate's flag set would break in silence — every other case here runs on
+  // a page whose answer is a grant.
+  const dom = run({ granted: false, storage: { [CONSENT_KEY]: 'granted' }, html: withdrawingPage() })
+  press(dom, INSTALL_ID)
+  assert.deepEqual(
+    sent(dom),
+    ['install_click'],
+    `a visitor whose stored answer is a grant sent ${JSON.stringify(sent(dom))} on the first press: an answer given on another page is an answer, and the events are sent from the first action`,
+  )
+
+  dom.choose('denied')
+  press(dom, INSTALL_ID)
+  press(dom, WHATSAPP_ID)
+  report(dom)
+  assert.deepEqual(
+    sent(dom),
+    ['install_click'],
+    `after withdrawing, the page sent ${JSON.stringify(sent(dom))}: a withdrawal stops the key events as well as the tag, and a visitor who has taken the answer back is not measured by the next press`,
+  )
+
+  // And the page a withdrawn answer leads to: the next campaign page the visitor reads asks
+  // Google for nothing, so the events have no queue to be sent into at all.
+  const next = run({ granted: false, storage: { [CONSENT_KEY]: 'denied' } })
+  press(next, INSTALL_ID)
+  press(next, WHATSAPP_ID)
+  report(next)
+  assert.equal(
+    next.window.dataLayer,
+    undefined,
+    `a campaign page served to a visitor whose stored answer is a refusal queued ${JSON.stringify(queued(next))}: a refusal is honoured on every page, because the key events are the analytics gate's own`,
+  )
 })
 
 test('the campaign parameters reach the booking link and no other address on the page', () => {

@@ -1131,7 +1131,11 @@
       if (UTM_KEYS.indexOf(key) === -1) continue
       var value
       try {
-        value = decodeURIComponent(pairs[i].slice(eq + 1))
+        // A `+` in a query is a space, which is how a browser's own parser reads one and how
+        // the `%20` this page writes is read back: a value that meant a literal plus arrives as
+        // `%2B` and is left alone. Reading it the other way would put a campaign name nobody
+        // chose — `newsletter+test` — on the booking link.
+        value = decodeURIComponent(pairs[i].slice(eq + 1).replace(/\+/g, ' '))
       } catch (err) {
         // A value the browser cannot decode is not a campaign name this page can pass on.
         continue
@@ -1282,6 +1286,15 @@
     press(INSTALL_ID, 'install_click')
     press(CHAT_ID, 'whatsapp_click')
 
+    // Which of the widget's messages is a booking. The frame reports several things over the
+    // same channel — its own height, a viewed event type, a chosen date — and every one of them
+    // arrives from the same origin and from the same window as the booking does, so the origin
+    // and the sender cannot tell them apart: a listener that took any of them would count a
+    // booking the moment the widget was drawn, and again on every date the visitor hovered.
+    // The name is read to recognise the message and for nothing else — no other field of it is
+    // looked at, and nothing in it goes anywhere (F22).
+    var BOOKED = 'calendly.event_scheduled'
+
     // The origin the frame reports from, read out of the booking link rather than typed here:
     // this file names no host, and the host it takes a booking report from is the one the
     // owner's link names — the same one the deployed policy's `frame-src` admits (G2.3). A
@@ -1296,6 +1309,7 @@
 
     window.addEventListener('message', function (event) {
       if (!event || event.origin !== origin) return
+      if (!event.data || event.data.event !== BOOKED) return
       var host = document.getElementById(EMBED_ID)
       var frame = host && host.querySelector ? host.querySelector('iframe') : null
       if (!frame || !frame.contentWindow || event.source !== frame.contentWindow) return
