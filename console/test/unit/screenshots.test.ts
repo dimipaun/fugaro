@@ -707,7 +707,7 @@ describe('the fixture CLI and the installation store it seeds', () => {
       expect(Object.keys(scenario.commands).sort()).toEqual([...Object.keys(FIXTURE_COMMANDS), 'doctor', 'version'].sort())
       // The version is the one the console was built against, so the handshake
       // lands inside the supported range and the Spend screen is offered.
-      expect((scenario.commands['version'] as { stdout: string }).stdout.trim()).toBe('0.8.1')
+      expect((scenario.commands['version'] as { stdout: string }).stdout.trim()).toBe(CLI_VERSION_BUILT_AGAINST)
       expect(installed.binary.length).toBeGreaterThan(0)
     } finally {
       rmSync(isolation.scratch, { recursive: true, force: true })
