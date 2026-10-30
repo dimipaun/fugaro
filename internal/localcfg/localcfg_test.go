@@ -1413,3 +1413,32 @@ func TestProjectBaseBranchValidated(t *testing.T) {
 		t.Errorf("no base_branch: %v, %q", err, c.BaseBranch)
 	}
 }
+
+// TestBitbucketAPIRootsParse: the owner's Bitbucket API-root allow-list is a
+// local config key (D474), and this file's decoder is strict — a key it does
+// not know refuses the whole document — so the list is unreadable until the
+// field exists. It is carried as it is written, and it is dropped from the
+// published shared config: the rule a root is held to is the node's
+// (projectpolicy.validBitbucketAPIRoots), applied where the node is built
+// (the publish calls projectpolicy.Decode through checkPolicyBytes), so there
+// is no second copy of it here to drift from that one.
+func TestBitbucketAPIRootsParse(t *testing.T) {
+	c, err := Parse([]byte(sample + "bitbucket_api_roots: [https://api.bitbucket.example/2.0]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"https://api.bitbucket.example/2.0"}; !slices.Equal(c.BitbucketAPIRoots, want) {
+		t.Errorf("BitbucketAPIRoots = %v, want %v", c.BitbucketAPIRoots, want)
+	}
+	if none, err := Parse([]byte(sample)); err != nil {
+		t.Fatal(err)
+	} else if none.BitbucketAPIRoots != nil {
+		t.Errorf("a config that lists no root carries %v", none.BitbucketAPIRoots)
+	}
+	if s := c.Shared(); s.BitbucketAPIRoots != nil {
+		t.Errorf("Shared() carries bitbucket_api_roots = %v, and it is published through the policy node instead", s.BitbucketAPIRoots)
+	}
+	if c.BitbucketAPIRoots == nil {
+		t.Error("Shared() cleared the receiver's own list")
+	}
+}

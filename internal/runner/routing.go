@@ -299,5 +299,13 @@ func (r *run) pinSlots() []pinSlot {
 		}
 	}
 	bg := pinSlot{get: func() string { return a.Models.Background }, set: func(m string) { a.Models.Background = m }}
-	return []pinSlot{slot(&a.Models.Coder, config.RoleCoder), slot(&a.Models.Reviewer, config.RoleReviewer), bg}
+	slots := []pinSlot{slot(&a.Models.Coder, config.RoleCoder), slot(&a.Models.Reviewer, config.RoleReviewer), bg}
+	if r.shadow {
+		// The champion's coder is pinned nowhere in a challenger arm, but the
+		// plan is derived from it (bootstrap): the switch rewrites it as it
+		// would have rewritten the champion's own pin, so both arms' plans
+		// answer FirstLineOn from the same routed ID.
+		slots = append(slots, pinSlot{get: func() string { return r.championCoder }, set: func(m string) { r.championCoder = m }})
+	}
+	return slots
 }

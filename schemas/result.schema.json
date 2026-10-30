@@ -508,11 +508,15 @@
     "patch_object": {
       "type": "string",
       "minLength": 1,
+      "pattern": "^runs/[^/]+/[^/]+/ab/patch\\.diff$",
       "description": "The key of the run's own tree diff under the runs bucket, runs/<repo-slug>/<run-id>/ab/patch.diff: the diff from the run's StartSHA to its final head, with no commit metadata in it, which both arms upload because the paired comparison reads the two diffs. Absent for a run that uploaded none — every run before this field existed, and one that died before finalize — so an absent key means there is no patch, never that the patch is empty."
     },
     "patch_truncated": {
       "type": "boolean",
       "description": "Set when the stored patch is shorter than the run's real diff, because the object is capped: the truncation is recorded as a fact rather than hidden, as changed_files.truncated is, so a reader can tell a short patch from a cut-off one."
     }
+  },
+  "dependentRequired": {
+    "patch_truncated": ["patch_object"]
   }
 }

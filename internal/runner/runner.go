@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"maps"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -36,6 +37,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
 	"github.com/dimipaun/fugaro/internal/gitprov/github"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/headroomproc"
@@ -354,6 +356,25 @@ type run struct {
 	reviewSession string
 	// follow is a follow-up's state; nil for a first run.
 	follow *followState
+	// shadow is whether this run is a challenger arm (shadow.go): its task
+	// carried ab.publish: none, so nothing of it reaches the developer —
+	// no push, no pull request, no comment, no git credential the agent
+	// could push with. It is set at bootstrap, before the provider is even
+	// opened, and never cleared.
+	shadow bool
+	// ab is the ab: block of the project layer this run read, nil when the
+	// layer has none (or none applied): the list a challenger must be a
+	// member of at bootstrap (applyChallenger), and what the one D522
+	// capability line is about (noteIgnoredAB).
+	ab *config.AB
+	// abSaid is whether that line has been written; guarded by mu, for the
+	// same reason as ignoredGovernanceSaid: it is about the build, so a run
+	// says it once.
+	abSaid bool
+	// championCoder is a challenger arm's champion coder model, the one the
+	// plan is derived from (applyChallenger); the routing switch rewrites it
+	// with the run's own pins (pinSlots). Empty for every other run.
+	championCoder string
 	// pr is the early draft pull request's state (prflow.go).
 	pr prFlow
 	// baseSHA is the base branch's commit as bootstrap fetched it (the
@@ -950,9 +971,82 @@ func (r *run) redactAll(ss []string) []string {
 	return out
 }
 
+// checkBitbucketAPIRoot refuses a cloud run whose Bitbucket API root
+// (FUGARO_BITBUCKET_API_URL) is neither Bitbucket's own API nor a root the
+// owner allow-listed in the published policy (D474, T2.8). It runs before the
+// provider opens, so a launcher who overrode the job's environment -- the
+// variable is launcher-writable -- cannot have the run send the token to a
+// host of their own. A local invocation keeps the override: it runs on the
+// developer's own credentials, not the job's (Deps.Local).
+//
+// The roots are the project's published bitbucket_api_roots, read through the
+// run's one policy read (projectPolicy, memoized and already made by
+// admissionCheck): a node the run cannot read stops it there, and no node, or
+// a node with no roots, admits only the default.
+func (r *run) checkBitbucketAPIRoot(ctx context.Context) error {
+	if r.d.Local {
+		return nil
+	}
+	root := envLookup(r.d.Env, providers.EnvBitbucketAPIURL)
+	if root == "" {
+		return nil
+	}
+	canonical := canonicalAPIRoot(root)
+	if canonical != "" && canonical == canonicalAPIRoot(bitbucket.DefaultBaseURL) {
+		return nil
+	}
+	p, found, err := r.projectPolicy(ctx)
+	if err != nil {
+		return err
+	}
+	if found && p != nil {
+		for _, allowed := range p.BitbucketAPIRoots {
+			if c := canonicalAPIRoot(allowed); c != "" && c == canonical {
+				return nil
+			}
+		}
+	}
+	where := "a root with no host"
+	if u := parseAPIRoot(root); u != nil && u.Host != "" {
+		where = "the host " + strconv.Quote(u.Host)
+	}
+	return fmt.Errorf("%s names %s, which is neither Bitbucket's own API (%s) nor a root this project's published policy allows: a cloud run sends its Bitbucket token to no other root. The owner allows the root by listing it in bitbucket_api_roots and running 'fugaro project policy publish'; until then, unset %s so the run uses Bitbucket's own API",
+		providers.EnvBitbucketAPIURL, where, bitbucket.DefaultBaseURL, providers.EnvBitbucketAPIURL)
+}
+
+// canonicalAPIRoot is how a Bitbucket API root is compared: scheme and host
+// case-folded and one trailing "/" trimmed, the normalization the node's own
+// validator uses (projectpolicy.validBitbucketAPIRoots). It is an equality,
+// never a prefix test -- a root that merely begins with an allowed one
+// (https://api.bitbucket.org.evil.example/2.0) is another host and is refused.
+// A value with no scheme or host canonicalizes to "" and matches nothing.
+func canonicalAPIRoot(raw string) string {
+	u := parseAPIRoot(raw)
+	if u == nil {
+		return ""
+	}
+	return strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host) + strings.TrimSuffix(u.Path, "/")
+}
+
+// parseAPIRoot parses raw, nil when it is not a URL: a value's host is read
+// for the refusal's message and its parts compared by canonicalAPIRoot, and
+// neither is done on a string that is not a URL.
+func parseAPIRoot(raw string) *url.URL {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return nil
+	}
+	return u
+}
+
 // openProvider opens the provider of kind, which from names the source of
 // (for error messages), and fetches its first git credentials.
 func (r *run) openProvider(ctx context.Context, kind, from string) error {
+	if kind == gitprov.KindBitbucket {
+		if err := r.checkBitbucketAPIRoot(ctx); err != nil {
+			return err
+		}
+	}
 	p, secrets, err := r.d.OpenProvider(ctx, kind, r.spec.Repo)
 	for _, s := range secrets {
 		r.addSecret(s)
@@ -979,6 +1073,13 @@ func (r *run) openProvider(ctx context.Context, kind, from string) error {
 	}
 	r.provider, r.providerKind, r.providerFrom = p, kind, from
 	if err := r.refreshGitAuth(ctx, bootstrapAuthMinValid); err != nil {
+		if errors.Is(err, errNoReadOnlyToken) {
+			// The arm's own boundary, not a provider that failed: the
+			// provider this repository runs on has no read-only credential
+			// to carry a challenger, so the run stops here, before the
+			// clone (shadow.go, mintGitAuth).
+			return r.refuseArm(err.Error())
+		}
 		return fmt.Errorf("getting git credentials from the %s provider: %w", kind, err)
 	}
 	r.resolveCommitIdentity(ctx)
@@ -1112,7 +1213,7 @@ func (r *run) runIDToken() string {
 // the caller decides how to handle the error (fail at open, warn and keep
 // the current ones mid-run).
 func (r *run) refreshGitAuth(ctx context.Context, minValid time.Duration) error {
-	auth, err := r.provider.GitAuth(ctx, minValid)
+	auth, err := r.mintGitAuth(ctx, minValid)
 	if err != nil {
 		return err
 	}
@@ -1134,8 +1235,11 @@ func (r *run) refreshGitAuth(ctx context.Context, minValid time.Duration) error 
 	// itself, and never pushes or opens anything on its behalf. Nor an
 	// artifact run's (design artifact-runs.md §3): its deliverable goes to
 	// the runs bucket, nothing is ever pushed, and the plan stage is the
-	// only agent stage there is.
-	if r.env != nil && r.follow == nil && !r.review && !r.artifact {
+	// only agent stage there is. Nor a challenger arm's (A2.1): the runner
+	// pushes nothing for it, and a credential in its environment would be
+	// the one thing this store could still hand a developer's repository
+	// through.
+	if r.env != nil && r.follow == nil && !r.review && !r.artifact && !r.shadow {
 		r.env = gitops.WithVars(r.env, vars)
 	}
 	return nil
@@ -1315,6 +1419,12 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	r.spec = spec
 	r.rec.RunID, r.rec.Repo = spec.RunID, spec.Repo
+	// The task's arm, before anything else the task's text can reach: an
+	// arm refuses the run further down the very path an unsampled run
+	// takes (shadow.go, readArm).
+	if err := r.readArm(); err != nil {
+		return err
+	}
 	// Read before the sync below moves the checkout off the baked commit.
 	r.rec.Image = r.imageInfo(ctx)
 
@@ -1618,6 +1728,14 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	ApplyRoles(&cfg.Agent, rcp)
 	r.cfg, r.wf, r.rec.Workflow, r.rec.BaseBranch = cfg, wf, name, cfg.Git.BaseBranch
+	// The arm's coder model, after the recipe's own role mapping and before
+	// anything reads a model: the routing switch and the pins resolvePolicy
+	// applies, the stage loop, the budget session and checkBudget's
+	// allow-list, price table and provider policy all judge the challenger
+	// as the coder this run runs (shadow.go, applyChallenger).
+	if err := r.applyChallenger(&r.cfg.Agent); err != nil {
+		return err
+	}
 	r.rec.FinalizeReserveS = wf.Timeouts.FinalizeReserve.Seconds()
 	dl := r.lockDeadline()
 	r.rec.Deadline = &dl
@@ -1687,7 +1805,23 @@ func (r *run) bootstrap(ctx context.Context) error {
 		// step, neither of which an artifact recipe's [plan], render shape
 		// has. Its own stage list is read directly (artifactHasPlan), and
 		// the render is the runner's (artifact.go).
-		plan := planOf(rcp, derived, cfg.Agent, r.modelProviders(), spec.Overrides.ReviewRounds, r.reachedRigor(), r.rigorCfg.Configured())
+		//
+		// The plan is derived from the champion's coder, never the arm's: the
+		// arms share a shape (D555 keeps "the reviewer, recipe, mode, tier
+		// and caps" the same), and the first-line step is derived from the
+		// coder's own family — Agent.FirstLineOn asks whether the coder's
+		// model is served by a route of this run's and the reviewer's is not
+		// — so a challenger whose family is routed would otherwise gain a
+		// stage the champion never had. Two runs whose stage sets differ are
+		// not two runs that differ in the coder model, and their records,
+		// costs and review findings would not be comparable. It is read after
+		// resolvePolicy, as every other run's is, so the switch has rewritten
+		// it like any pin.
+		planAgent := r.cfg.Agent
+		if r.shadow {
+			planAgent.Models.Coder = r.championCoder
+		}
+		plan := planOf(rcp, derived, planAgent, r.modelProviders(), spec.Overrides.ReviewRounds, r.reachedRigor(), r.rigorCfg.Configured())
 		if err := checkPlan(plan); err != nil {
 			return fmt.Errorf("recipe %s: %w", rrec.Name, err)
 		}
@@ -1699,6 +1833,15 @@ func (r *run) bootstrap(ctx context.Context) error {
 		return err
 	}
 	if err := r.checkBudget(); err != nil {
+		// These checks judged the challenger as this run's coder
+		// (applyChallenger), so a model this repository may not run is the
+		// arm's own refusal and is recorded as one (D556) rather than as
+		// infrastructure that failed. A halt is not a refusal: a cap the run
+		// has reached stops a shadow exactly as it stops any other run.
+		var halted *HaltError
+		if r.shadow && !errors.As(err, &halted) {
+			return r.refuseArm(err.Error())
+		}
 		return err
 	}
 	if err := r.haltedErr(); err != nil {
@@ -1850,7 +1993,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 	for k, v := range gitops.IdentityFor(r.identity) {
 		set[k] = v
 	}
-	if r.follow == nil && !r.review && !r.artifact {
+	if r.follow == nil && !r.review && !r.artifact && !r.shadow {
 		// A follow-up's agent gets no git credentials and no GH_TOKEN
 		// (design §6.1): the runner fetched the branch and pushes it, and
 		// the comments arrive in the prompt. A review run's agent gets
@@ -1858,7 +2001,10 @@ func (r *run) bootstrap(ctx context.Context) error {
 		// the checkout, and the runner never pushes or opens anything on
 		// its behalf. An artifact run's gets none for the same reason
 		// (design artifact-runs.md §3): no branch is pushed, and the
-		// deliverable is uploaded by the runner.
+		// deliverable is uploaded by the runner. A challenger arm's gets
+		// none because the arm pushes nothing at all (A2.1): the token in
+		// this environment would be one an agent could push with, which is
+		// exactly what no challenger may hold.
 		agentAuthVars, err := r.authVars()
 		if err != nil {
 			return fmt.Errorf("building git credentials: %w", err)
@@ -2011,6 +2157,15 @@ func (r *run) resolveConfig(data []byte) (*config.Config, error) {
 		if !out.Applied {
 			r.d.Log.Info("project layer not applied: fugaro.yaml does not name its project and gcp_project", "layer_project", out.Layer.Project, "layer_gcp_project", out.Layer.GCPProject)
 		}
+	}
+	if out.Layer != nil {
+		// The layer's ab: block, read here because this is where every path
+		// that resolves a configuration comes through (bootstrap's own read,
+		// and readBaseConfig's for a follow-up or a review run). What a
+		// challenger must be a member of (applyChallenger), and the one D522
+		// line a build with no A/B feature owes the person who wrote it.
+		r.ab = out.Layer.AB
+		r.noteIgnoredAB()
 	}
 	if len(out.Problems) > 0 {
 		return nil, fmt.Errorf("fugaro.yaml is invalid: %s", problemsText(out.Problems))
@@ -3019,7 +3174,20 @@ func (r *run) finalize(ctx context.Context) error {
 		// The check gate already ended the run (gate.go: endWithoutPR or
 		// failInfra), status, outcome and the stored report all theirs:
 		// there is nothing left to commit, push or open a pull request for.
+		//
+		// A challenger arm stands down here too, and before shadowFinalize:
+		// the gate ends both arms of a pair the same way, so the two records
+		// agree (D559). An arm finalized from a checkout no stage ran in
+		// would turn a clean gate's succeeded/none into "the agent made no
+		// commits" and mask the gate's own infra_error behind it.
 		return nil
+	}
+	if r.shadow {
+		// A challenger arm's finalize is its own (shadow.go,
+		// shadowFinalize): the same record it would otherwise carry, and
+		// nothing that reaches the developer — no push, no pull request, no
+		// comment, no filing.
+		return r.shadowFinalize(ctx)
 	}
 	// A report run's last word before anything is pushed: the files it commits
 	// under docs/fugaro-reviews/ are the runner's own, byte for byte
@@ -3109,6 +3277,12 @@ func (r *run) finalize(ctx context.Context) error {
 	records = r.redactRecords(records)
 	r.rec.HeadSHA, r.rec.Verify = sha, records
 	r.uploadVerifyRecords(ctx, records)
+	// Both arms' patch objects (A2.1): the run's own tree diff, from the
+	// commit it started at to the head it is about to push. sha is that head
+	// — the leftover commit, the run's own commits and the filing above are
+	// all behind it — so the champion's patch is the diff of the branch it
+	// publishes and the challenger's is the diff it holds back.
+	r.uploadPatch(ctx, sha)
 
 	pol := r.findingsPolicy()
 	ready, reason := Decide(records, decided, seniorReview(r.rec.Reviews), pol)

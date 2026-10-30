@@ -192,6 +192,12 @@ function domFactory() {
   }
   return {
     create: function (tag) { return wrap(document.createElement(tag)); },
+    // The chart is geometry: its svg, rect, line and g are built in the SVG
+    // namespace, which is the second half of the factory's own interface
+    // (SpendFactory.createNS), exactly as the window's real one is.
+    createNS: function (tag) {
+      return wrap(document.createElementNS('http://www.w3.org/2000/svg', tag));
+    },
     wrap: wrap,
   };
 }
@@ -273,7 +279,6 @@ return spend.readSpend(read, controls, ${JSON.stringify(BUDGET)}, readPeople).th
     asked: asked,
     askedPeople: askedPeople,
     args: outcome.args,
-    rows: outcome.model.rows.length,
   };
 });
 })()`
@@ -286,10 +291,16 @@ interface Screen {
   readonly accounts: readonly (string | null)[]
   /** the breakdown switch's own words, in the order it draws them */
   readonly dimensions: readonly string[]
-  readonly titles: readonly string[]
-  readonly peaks: readonly string[]
-  readonly segments: readonly (string | null)[]
+  /** the legend's three marks, in the order the chart draws its series */
+  readonly legendWords: readonly string[]
+  /** the one axis's top, the largest value any account draws */
+  readonly axisTops: readonly string[]
+  /** every bar's own share of that axis, in drawing order */
+  readonly barHeights: readonly (string | null)[]
+  /** the day each hatched gap column is about */
   readonly gaps: readonly string[]
+  /** the table's gap sentences, one per day the history does not hold */
+  readonly gapSentences: readonly string[]
   readonly scopes: readonly string[]
   readonly perRunScopes: readonly (string | null)[]
   readonly limitWords: readonly string[]
@@ -317,8 +328,8 @@ interface Screen {
   readonly peopleNotional: readonly string[]
   readonly peopleAverages: readonly string[]
   readonly peopleSamples: readonly string[]
-  readonly points: number
-  readonly seriesValues: readonly string[]
+  readonly bars: number
+  readonly chartNa: readonly string[]
   readonly text: string
 }
 
@@ -336,17 +347,16 @@ function screen(page: Page): Promise<Screen> {
       all(selector).map((one) => one.getAttribute(name))
     return {
       theme: scope.querySelector('.spend')?.getAttribute('data-theme') ?? null,
-      accounts: attributes('.spend-account', 'data-account'),
+      // The chart's three series, one `g` each, keyed by the account they draw.
+      accounts: attributes('.spend-series', 'data-account'),
       dimensions: texts('.spend-dim'),
-      titles: texts('.spend-account-title'),
-      peaks: texts('.spend-peak'),
-      segments: attributes('.spend-series', 'data-segments'),
-      // Every point of every chart that is a gap, by the day it is about: the
-      // three charts share a key space, and each of them breaks on the day the
-      // history does not hold.
-      gaps: all('.spend-point')
-        .filter((point) => point.getAttribute('data-state') === 'gap')
-        .map((point) => point.getAttribute('data-key') ?? ''),
+      legendWords: texts('.spend-legend-word'),
+      axisTops: texts('.spend-axis-top'),
+      barHeights: attributes('.spend-bar', 'data-height'),
+      // The one column a day the history does not hold draws, by that day: a
+      // gap is one hatched column and not three bars of no height.
+      gaps: all('.spend-gap-column').map((column) => column.getAttribute('data-key') ?? ''),
+      gapSentences: texts('.spend-gap-cell'),
       scopes: texts('.spend-scope'),
       perRunScopes: all('.spend-cap-repo').map(
         (row) => all('.spend-scope', row)[1]?.getAttribute('data-per-run-scope') ?? null,
@@ -382,13 +392,12 @@ function screen(page: Page): Promise<Screen> {
       peopleNotional: texts('.spend-people .spend-person-notional'),
       peopleAverages: texts('.spend-people .spend-person-average'),
       peopleSamples: texts('.spend-people .spend-person-counted-runs'),
-      points: all('.spend-account')
-        .find((block) => block.getAttribute('data-account') === 'model')
-        ?.querySelectorAll('.spend-point').length ?? 0,
-      // The charts' own readings, and only the charts': a gap is the em dash
-      // here, while a `$0.00` in the caps panel is a different statement about
-      // a different document.
-      seriesValues: texts('.spend-point-value'),
+      bars: all('.spend-bar').length,
+      // The chart's own readings, and only the chart's: an account the document
+      // does not carry draws no bar and writes its `n/a` at that bar's foot,
+      // while a `$0.00` in the caps panel is a different statement about a
+      // different document.
+      chartNa: texts('.spend-chart-na'),
       text: document.getElementById('spend-mount')?.textContent ?? '',
     }
   })
@@ -772,7 +781,7 @@ test.describe('the Spend screen', () => {
     return { asked: result.asked, askedPeople: result.askedPeople }
   }
 
-  test('renders the three accounts as three separate series', async () => {
+  test('renders the three accounts as one grouped chart on one shared axis', async () => {
     await mount(REPORT, BUDGET, 'light')
     const drawn = await screen(page)
 
@@ -783,22 +792,31 @@ test.describe('the Spend screen', () => {
     // breakdown the console's table did not carry would be refused on the wire
     // before the window ever asked for it.
     expect(drawn.dimensions).toContain('mode')
-    // Three charts, three axis tops: a shared scale would put a notional bar
-    // and a billed bar at heights that invite the comparison the design forbids.
-    expect(drawn.titles).toEqual([
+    // One chart, three marks, and the legend names each of them in words: the
+    // marks are a fill, a hatch and a dash, and none of the three is a colour
+    // alone.
+    expect(drawn.legendWords).toEqual([
       'billed model spend',
       '~$ subscription list price',
       'compute (estimated)',
     ])
-    expect(drawn.peaks).toEqual(['$1.25', '~$0.40', 'est. $0.12'])
-    // The billed chart is broken at the day with no document and whole either
-    // side of it, and the notional chart is broken twice.
-    expect(drawn.segments).toEqual(['2', '2', '1'])
-    expect(drawn.gaps).toEqual([
-      '2026-10-14',
-      '2026-10-14',
-      '2026-10-14',
-    ])
+    // **One axis, and its top is the largest value any account draws** -- the
+    // 12th's billed $1.25 -- so every bar is a share of one scale and no axis
+    // and no bar is ever the sum of two accounts.
+    expect(drawn.axisTops).toEqual(['$1.25'])
+    // One `g` per account, so the bars arrive a whole account at a time: the
+    // model's for the 12th, the 13th and the 15th, then the notional's for the
+    // 12th and the 15th, then compute's for the 12th -- each at its own value's
+    // share of $1.25, and the 14th absent from all three because it is a gap.
+    expect(drawn.barHeights).toEqual(['100.0%', '72.0%', '24.0%', '32.0%', '8.0%', '9.6%'])
+    // The day with no document draws **one** hatched column, and the table says
+    // so in its own words: a gap is a gap and never three zeros.
+    expect(drawn.gaps).toEqual(['2026-10-14'])
+    expect(drawn.gapSentences).toEqual(['No record for this day. A gap, not a zero.'])
+    // An account the document does not carry draws no bar and writes its `n/a`
+    // at that bar's own foot: the 13th has neither a notional nor a compute
+    // value, and the 15th has no compute.
+    expect(drawn.chartNa).toEqual(['n/a', 'n/a', 'n/a'])
     // The notional column of the rows is marked, so the window never shows a
     // subscription's list price as a billed dollar.
     expect(drawn.notionalCells).toEqual(['~$0.40', 'n/a', '~$0.10'])
@@ -874,8 +892,8 @@ test.describe('the Spend screen', () => {
     expect(before.windows).toEqual(['7d', '30d', '90d', '12w'])
     expect(before.currentWindows).toEqual(['30d'])
     expect(asked.asked).toEqual([{ by: 'day', since: '30d' }])
-    expect(before.points).toBe(4)
-    expect(before.gaps).toEqual(['2026-10-14', '2026-10-14', '2026-10-14'])
+    expect(before.bars).toBe(6)
+    expect(before.gaps).toEqual(['2026-10-14'])
 
     const moved = await mountWired({ ...SPEND_DEFAULT_CONTROLS, since: '7d' }, { '30d': REPORT, '7d': wide })
     const after = await screen(page)
@@ -883,18 +901,21 @@ test.describe('the Spend screen', () => {
     // One read, with the new window and nothing else changed.
     expect(moved.asked).toEqual([{ by: 'day', since: '7d' }])
     expect(after.currentWindows).toEqual(['7d'])
-    // Eleven days of which the history holds three: eight gaps per chart, and
-    // the widened range is the only thing that changed.
-    expect(after.points).toBe(11)
-    expect(after.gaps.filter((key) => key === '2026-10-05')).toHaveLength(3)
+    // Eleven days of which the history holds three: the eight days it does not
+    // hold are one hatched column and one table sentence each, and the widened
+    // range is the only thing that changed -- the bars the history does carry
+    // are the same six.
+    expect(after.bars).toBe(6)
+    expect(after.gaps).toHaveLength(8)
+    expect(after.gaps).toContain('2026-10-05')
+    expect(after.gapSentences).toHaveLength(8)
     // A day the history does not hold is a gap and never a zero, and the
-    // assertion is scoped to the charts on purpose: the caps panel is built
+    // assertion is scoped to the chart on purpose: the caps panel is built
     // from `BUDGET` and legitimately draws `$0.00` for a cap nothing has been
     // counted against (`spend.test.ts` asserts those cells), so the whole
     // mount's text would fail this for the wrong reason.
-    expect(after.seriesValues).toHaveLength(33)
-    expect(after.seriesValues.filter((value) => value === GAP_MARK)).toHaveLength(24)
-    expect(after.seriesValues).not.toContain('$0.00')
+    expect(after.chartNa).toEqual(['n/a', 'n/a', 'n/a'])
+    expect(after.chartNa).not.toContain('$0.00')
     expect(after.accounts).toEqual(['model', 'notional', 'compute'])
   })
 
@@ -1002,7 +1023,7 @@ test.describe('the Spend screen', () => {
     expect(drawn.peopleAvailable).toBe('false')
     expect(drawn.peopleReason).toBe('runs stats: you are not an operator of this project')
     expect(drawn.peopleRows).toBe(0)
-    expect(drawn.points).toBeGreaterThan(0)
+    expect(drawn.bars).toBeGreaterThan(0)
   })
 
   test('is painted from the design tokens, not from the browser defaults', async () => {
@@ -1075,7 +1096,7 @@ test.describe('the Spend screen', () => {
 
     const forced = await page.evaluate(() => {
       const scope: ParentNode = document.getElementById('spend-mount') ?? document.createDocumentFragment()
-      const row = scope.querySelector('li.spend-row') ?? scope.querySelector('li.spend-point')
+      const row = scope.querySelector('tr.spend-row')
       const computed = row === null ? null : getComputedStyle(row)
       const number = scope.querySelector('.spend-num')
       return {
@@ -1088,7 +1109,9 @@ test.describe('the Spend screen', () => {
     })
 
     expect(forced.words, 'a partial day lost its marker').toContain('(partial)')
-    expect(forced.words, 'the chart lost its gap mark').toContain('—')
+    // The table's runs cells of a day the history does not hold carry the mark
+    // and never a figure: a gap is a gap in every column.
+    expect(forced.words, 'the table lost its gap mark').toContain(GAP_MARK)
     expect(forced.words, 'a cap that cannot be read lost its mark').toContain('n/a')
     expect(forced.rowVisibility).toBe('visible')
     expect(forced.rowWidth, 'the figure row’s boundary collapsed under forced colors').not.toBe('0px')

@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/image-lock.schema.json",
+  "title": "Fugaro shared-image lock",
+  "description": "The installation's shared images, at builds/image-lock.json in the runs bucket (docs/forge-authorship-images/shared-images.md §3). It is the one source of every repository's image digest: each entry is one image, keyed by the normalised dependency set it was built from, and a repository's job is pointed at an entry's digest. Only the operator's machine writes it — `fugaro image refresh` after a successful build, `fugaro image prune` when it removes an entry — and it is decoded strictly (internal/imagecheck.ParseLock): an unknown field anywhere and a version other than 1 are refused, because every operator's machine writes this one object and every fugaro version in use reads it, so a reader that ignored a field it did not know would drop it for everyone on its next write.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "images"
+  ],
+  "properties": {
+    "version": {
+      "const": 1,
+      "description": "The lock's own version (imagecheck.LockVersion). A reader that meets a version it does not know stops and names it rather than rewriting the object."
+    },
+    "images": {
+      "type": "object",
+      "description": "The installation's images, keyed by the normalised dependency-set key (imagecheck.Key): the same key is the same dependency set, and so the same image.",
+      "additionalProperties": {
+        "$ref": "#/$defs/image"
+      }
+    }
+  },
+  "$defs": {
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "$comment": "No property is required here, and that is deliberate: §3.2's strictness is about fields and the version, not presence. TestLockSchemaAgreesWithTheDecoder (internal/imagecheck) holds this schema and the decoder to the same documents; the two differences it pins are that a version written as 1.0 or 1e0 is the number 1 to a schema that reads numbers by value and a type error to encoding/json, and that a null where an array or an object is expected is an absent field to encoding/json and refused here. The writer always writes every property — the Go type has no pointer fields — so a required list would only be met by documents the writer never produces.",
+      "properties": {
+        "key": {
+          "type": "string",
+          "description": "The image's normalised dependency-set key, the property of images it is stored under."
+        },
+        "image": {
+          "type": "string",
+          "description": "The image in the installation's shared registry repository, without a tag."
+        },
+        "digest": {
+          "type": "string",
+          "description": "The sha256:… the build promoted. An entry's digest is never overwritten in place: a changed dependency set is a changed key and so a new entry."
+        },
+        "base_ref": {
+          "type": "string",
+          "description": "The base the build ran FROM, as the build record's base_ref holds it."
+        },
+        "base_digest": {
+          "type": "string",
+          "description": "The sha256:… of the base the build ran FROM."
+        },
+        "packages": {
+          "type": "array",
+          "description": "This image's own resolved packages, as name@version. A reuse (§4) is decided from these: an entry holds a repository's set when every one of its packages is here at the same version, and the entry may hold more.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "tools": {
+          "type": "array",
+          "description": "This image's own toolchain pins, as tool@version. §4 does not superset them: an entry is reused only when its tools are identical.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "built_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the image was built. It breaks a tie between two entries with the same number of extra packages (§4)."
+        },
+        "build_id": {
+          "type": "string",
+          "description": "The build that made the image."
+        },
+        "repositories": {
+          "type": "array",
+          "description": "The repositories on this image.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "jobs": {
+          "type": "object",
+          "description": "The same set as repositories, each repository's job name as it was at update time.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "last_used_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The last time a refresh placed a repository on this image. §9's age is measured from it."
+        }
+      }
+    }
+  }
+}

@@ -2206,14 +2206,13 @@ tests it with the tools stubbed on PATH, and `go test ./scripts/` runs that test
 The deploy workflow is still W2.1's and **not a Fugaro run's to write**: W2.1 stages a
 workflow under `docs/pending-workflows/` for the owner to copy in, and the owner runs it to
 deploy to the Firebase project created for the website only (D91, D109) — a run may not
-change `.github/workflows/`. `docs/pending-workflows/` now holds two pending workflows,
-`docs/pending-workflows/images.yml` — the credentials service's image leg (credentials-service
-plan, task C1.14) — `docs/pending-workflows/console-windows.yml` — the console's Windows
+change `.github/workflows/`. `docs/pending-workflows/` now holds one pending workflow,
+`docs/pending-workflows/console-windows.yml` — the console's Windows
 installer pack, which runs at release time only rather than on a pull request, and is copied in
-only after the packer and the unit suite can pass on a Windows runner. None is this
-site's (the shared package's test job, `shared-tests.yml`, was copied in on 2026-10-22, the
+only after the packer and the unit suite can pass on a Windows runner. It is not this
+site's (the credentials service's image leg in `images.yml`, credentials-service plan task C1.14, was copied in on 2026-10-30, the shared package's test job, `shared-tests.yml`, was copied in on 2026-10-22, the
 mobile app's release workflow, `mobile-release.yml`, and the console's own release
-stream, `console-release-tag.yml`, were copied in on 2026-10-23, and all three are no longer
+stream, `console-release-tag.yml`, were copied in on 2026-10-23, and all four are no longer
 staged, and Dependabot's watch over the console's npm dependencies was copied over
 `.github/dependabot.yml` the same day): the website's two manual
 workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the

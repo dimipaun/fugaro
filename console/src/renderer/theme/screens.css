@@ -93,7 +93,6 @@ h1.unavailable-headline {
 
 /* A panel's title is the medium step, a table's header the small one
  * (design section 3.7). */
-h2.spend-account-title,
 h2.spend-people-title,
 h2.projects-title {
   font-size: var(--font-size-md);
@@ -192,8 +191,6 @@ p.live-review-capped {
  */
 
 li.live-review-row,
-li.spend-row,
-li.spend-point,
 li.spend-person,
 li.spend-cap-repo,
 li.projects-cap,
@@ -210,10 +207,6 @@ li.degraded-run {
   border-bottom: var(--rule-width) solid var(--border);
 }
 
-ol.spend-rows,
-ol.spend-series,
-ol.spend-switch,
-ol.spend-picker,
 ol.spend-cap-repos,
 ol.projects-cap-list,
 ol.projects-job-list,
@@ -222,8 +215,6 @@ ul.projects-enrolled-list,
 ul.projects-seen-list,
 ul.projects-account-list,
 ol.degraded-runs,
-div.spend-accounts,
-div.spend-totals,
 section.spend-caps,
 section.spend-people,
 section.projects-panel,
@@ -269,9 +260,8 @@ span.projects-accounts-repo,
 span.projects-cap-repo,
 span.projects-kill-repo,
 span.projects-job-model,
-span.spend-point-key,
 span.spend-key,
-span.spend-model,
+td.spend-model,
 span.spend-person-user,
 span.spend-cap-repo-name,
 span.degraded-run-id,
@@ -531,69 +521,18 @@ span.spend-since,
 span.spend-until,
 span.spend-weeks,
 span.spend-caps-project,
-span.spend-caps-day,
-span.spend-totals-word {
+span.spend-caps-day {
   color: var(--text-muted);
   font-size: var(--font-size-xs);
 }
 
-/* The range picker and the breakdown switch are control rows: the button that
- * carries `data-current='true'` is the chosen window or dimension, and the
- * marker is an attribute rather than a tone alone. */
-ol.spend-picker,
-ol.spend-switch {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-2xs);
-  padding: var(--space-2xs);
-  background: var(--surface);
-  border: var(--rule-width) solid var(--border);
-  border-radius: var(--radius-sm);
-}
-
-li.spend-window,
-li.spend-dim,
-li.spend-dim-unknown {
-  padding: var(--space-2xs) var(--space-xs);
-  border: var(--border-width) solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  color: var(--text-muted);
-}
-
-li.spend-window[data-current='true'],
-li.spend-dim[data-current='true'] {
-  color: var(--accent-ink);
-  font-weight: var(--weight-medium);
-  border-color: var(--accent);
-}
-
-/* A dimension word this console does not know is drawn as the word it was
- * (`data-dimension='unknown'`), and the switch says so above it. */
-li.spend-dim-unknown[data-dimension='unknown'] {
-  color: var(--warn);
-  border-left: 3px solid var(--warn);
-}
-
-/* The person view withheld: the knob is off, the state text says `off`, and the
- * sentence is the note's own text (design section 2.4). */
-div.spend-persons {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-sm);
-}
-
-div.spend-persons[data-enabled='false'] {
-  color: var(--text-muted);
-}
-
-/* The knob's own word -- `on` or `off`, and the word is the state (design
- * section 3.5). `data-enabled` is on the `div.spend-persons` and not on this
- * span, so the **tone** is the parent's rule above (which mutes the whole block
- * while the person view is withheld, §2.4's "person view withheld
- * (`div.spend-persons` with `data-enabled="false"`, the state text `off`")),
- * and this rule is the span's own type. */
+/* The range picker and the breakdown switch are the redesign's segmented
+ * controls now: the words are real buttons in a pill track, the chosen one on
+ * the raised ground, and the person view is a switch button beside them. Their
+ * boxes and their pressed treatment live in `flight-deck.css` against
+ * `ol.spend-picker`, `button.spend-window` and `button.spend-persons` (console
+ * redesign, step 4b-1); what is left here is the knob's own state word, which is
+ * the `span.spend-persons-word` group above and this span's type. */
 span.spend-persons-state {
   color: var(--text-muted);
   font-size: var(--font-size-xs);
@@ -661,68 +600,37 @@ span.spend-degraded[data-degraded='true'] {
   font-size: var(--font-size-xs);
 }
 
-/* The three account charts. A point is a figure like any other: mono, tabular,
- * and the tone of the account whose column it reads -- measured, notional or
- * estimated (design section 2.9). The mark that carries the state is the
- * `~$` / `est.` prefix inside the number itself. */
-div.spend-account {
-  margin-bottom: var(--space-sm);
-}
-
-ol.spend-series {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: var(--space-2xs);
-  padding: var(--space-2xs) 0;
-}
-
-li.spend-point {
-  flex-direction: column;
-  align-items: flex-end;
-  min-height: var(--row-height-compact);
-}
-
-li.spend-point[data-state='gap'] {
-  color: var(--stale);
-}
-
-li.spend-point[data-state='notional'],
-li.spend-point[data-state='estimated'] {
-  color: var(--text-muted);
-}
-
-span.spend-point-value {
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-}
-
+/* The three per-account charts, their series lists and their points are one
+ * grouped bar chart of drawn geometry now: `svg.spend-chart-svg` with
+ * `rect.spend-bar`, `rect.spend-gap-column`, `line.spend-gridline` and the
+ * legend's own `span.spend-swatch` are painted in `flight-deck.css` (console
+ * redesign, step 4b-1). A figure is still mono and tabular and still carries the
+ * state in its own mark -- `~$` for notional, `est.` for compute -- and that is
+ * `spend-num`'s rule, which the chart's and the table's readings both take. */
 /* `(partial)`, `hollow` and `no readable record` are Spend's own honesty
  * states, and each carries the marker text (design section 3.5; §2.4's states).
  * An unreadable row's money was never measured, so its `n/a` cells take the
  * same warning tone as a partial day rather than reading as a figure.
  *
  * **The attributes are on the row, not on the marker.** §2.4 puts
- * `data-partial` on the points, the rows and `div.spend-totals`, `data-hollow`
- * on the points and the rows, and `data-unreadable` on the rows and
- * `div.spend-totals`; `span.spend-partial` and `span.spend-unreadable` inside
- * them hold the marker text and carry no attribute at all, so a rule spelling
- * one `span.spend-unreadable[data-unreadable='true']` selects nothing -- the
- * tone has to be on the element that knows. */
-li.spend-point[data-partial='true'],
-li.spend-row[data-partial='true'],
+ * `data-partial` on the chart's keys and the table's rows and on
+ * `div.spend-totals`, `data-hollow` on the rows, and `data-unreadable` on the
+ * rows and `div.spend-totals`; `span.spend-partial` and `span.spend-unreadable`
+ * inside them hold the marker text and carry no attribute at all, so a rule
+ * spelling one `span.spend-unreadable[data-unreadable='true']` selects nothing --
+ * the tone has to be on the element that knows. */
+tr.spend-row[data-partial='true'],
 div.spend-totals[data-partial='true'],
-li.spend-point[data-hollow='true'],
-li.spend-row[data-hollow='true'],
-li.spend-row[data-unreadable='true'],
+tr.spend-row[data-hollow='true'],
+tr.spend-row[data-unreadable='true'],
 div.spend-totals[data-unreadable='true'] {
   color: var(--warn);
 }
 
-span.spend-peak {
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
+/* The chart's key row is where a partial day and its money are tagged in the
+ * drawing, so the key takes the same tone as the table's row. */
+li.spend-chart-key[data-partial='true'] {
+  color: var(--warn);
 }
 
 /* The caps panel: the binding scope, then the limits, then the per-repository
@@ -2106,7 +2014,7 @@ span.coordinator-unread-retry {
  * layout fit.** The widest tables therefore *wrap* rather than drop a column,
  * which is where this file departs from section 4.2's first row read as an
  * instruction to hide one: a dropped column is allowed only when its value is
- * repeated in a `title`, and the cells a Log, Jobs or `spend-rows` table would
+ * repeated in a `title`, and the cells a Log, Jobs or `spend-table` table would
  * drop -- tokens in and out, a job's model and compute -- carry a value with no
  * `title` behind it, because `putReading` writes one only for a reading with no
  * number. Hiding them would be the console lying about spend, which section 6.1
@@ -2120,7 +2028,6 @@ span.coordinator-unread-retry {
     max-width: 50%;
   }
 
-  li.spend-row,
   li.projects-job,
   li.run-log-line {
     gap: var(--space-2xs) var(--space-xs);
@@ -2175,8 +2082,7 @@ span.coordinator-unread-retry {
   tr.live-run,
   div.live-runs,
   table.live-table,
-  li.spend-row,
-  li.spend-point,
+  tr.spend-row,
   li.projects-cap,
   li.projects-job,
   li.degraded-run,
@@ -2314,8 +2220,6 @@ span.coordinator-unread-retry {
   span.projects-kill-repo,
   span.spend-persons-state,
   span.spend-persons-word,
-  span.spend-point-value,
-  span.spend-peak,
   p.live-note,
   p.spend-note,
   p.spend-warning,
@@ -2357,9 +2261,26 @@ span.coordinator-unread-retry {
   }
 
   div.live-bar[data-state='unavailable'],
-  li.live-burn-bar[data-state='gap'],
-  li.spend-point[data-state='gap'] {
+  li.live-burn-bar[data-state='gap'] {
     border-color: GrayText;
+  }
+
+  /* The chart is geometry: the system paints the fills and the strokes, and the
+   * three marks stay three shapes -- a fill, a fill with an edge, and a dash --
+   * because the dash is what still says a figure is an estimate once the
+   * author's tones are gone (design section 4.4). */
+  rect.spend-bar,
+  rect.spend-gap-column {
+    fill: CanvasText;
+  }
+
+  line.spend-gridline,
+  line.spend-axis-line {
+    stroke: CanvasText;
+  }
+
+  span.spend-swatch {
+    border-color: CanvasText;
   }
 
   li.live-burn-bar {
@@ -2379,8 +2300,8 @@ span.coordinator-unread-retry {
   section.live-fleet,
   section.live-repo,
   div.live-runs,
-  ol.spend-rows,
-  ol.spend-series,
+  table.spend-table,
+  div.spend-chart,
   section.run-ledger,
   section.run-stages,
   section.run-spend-stages,
@@ -2396,8 +2317,7 @@ span.coordinator-unread-retry {
   }
 
   tr.live-run,
-  li.spend-row,
-  li.spend-point,
+  tr.spend-row,
   li.spend-person,
   li.projects-cap,
   li.projects-job,

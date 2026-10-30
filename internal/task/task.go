@@ -312,6 +312,22 @@ type Spec struct {
 	// that has the field (A3.3) instead of letting the run fail at bootstrap
 	// after the task was written.
 	AB *AB `json:"ab,omitempty"`
+	// Author is who the launch says its commits are authored by (D604):
+	// the person who launched the run, filled by the launcher (A2b) and
+	// written into the agent's git environment as GIT_AUTHOR_NAME and
+	// GIT_AUTHOR_EMAIL (A3).
+	//
+	// Nil for every launch that names nobody — which is the common case and
+	// every spec written before this field: the launcher writes it only when
+	// the repository sets git.author: launcher and its own local identity is
+	// an address (A2b), and A3 then leaves the committer and the author as
+	// the run's own identity. A spec without it is byte-identical to what
+	// the release before this field wrote, so nothing is gated on it.
+	//
+	// It is a claim (D604) and this package enforces nothing beyond its
+	// shape (AuthorProblem): a launcher may write any address here, and git
+	// will write it into history.
+	Author *Person `json:"author,omitempty"`
 }
 
 // MaxDeclaredPaths bounds the paths one launch may declare (Spec.Paths,
@@ -665,6 +681,74 @@ type AB struct {
 	ChallengerSource ABChallengerSource `json:"challenger_source,omitempty"`
 }
 
+// MaxAuthorNameLen and MaxAuthorEmailLen bound the two fields of an author
+// (Spec.Author), in runes, which is what the task schema's maxLength counts
+// too: the name is a display string whose 100 runes are far past any real
+// name, and the address is capped at 254, RFC 5321's maximum path length —
+// the length a forge's API and git's own ident parsing both assume.
+const (
+	MaxAuthorNameLen  = 100
+	MaxAuthorEmailLen = 254
+)
+
+// Person is a name and an email address: the identity a commit is authored
+// by, as task.Spec.Author carries it and as A3's stamp environment writes it
+// into GIT_AUTHOR_NAME and GIT_AUTHOR_EMAIL.
+//
+// It is a claim, not a proof (D604): the launcher records itself here and
+// nothing in this package, or in git, verifies it. An authenticated identity
+// replaces it when the work that owns identities ships.
+//
+// Both fields are written whenever the block is present, with no omitempty:
+// an address git cannot read is not a field a reader may mistake for an
+// absent one, and Validate refuses either field being blank.
+type Person struct {
+	Name  string `json:"name"`
+	Email string `json:"email"`
+}
+
+// AuthorProblem reports what is wrong with p — "" when nothing is — for the
+// one place an author is taken in: Spec.Validate, reading a stored task back.
+// The rules are the rules of a commit's own two header fields and of nothing
+// else: each field is one line with no C0, DEL or C1 control character in it
+// (a newline in the name would forge the rest of the header block git writes
+// from these values), neither holds '<' or '>', which git prints as the
+// <name> <email> form of the address, and the email is one address — exactly
+// one '@' with a local part and a domain around it. Lengths are capped at the
+// constants above.
+func AuthorProblem(p Person) string {
+	for _, f := range []struct {
+		what  string
+		value string
+		max   int
+	}{
+		{"name", p.Name, MaxAuthorNameLen},
+		{"email", p.Email, MaxAuthorEmailLen},
+	} {
+		if strings.TrimSpace(f.value) == "" {
+			return f.what + " is required"
+		}
+		if n := utf8.RuneCountInString(f.value); n > f.max {
+			return fmt.Sprintf("%s is longer than %d characters (%d)", f.what, f.max, n)
+		}
+		for _, r := range f.value {
+			switch {
+			case r == '\n' || r == '\r' || r == 0x85 || r == 0x2028 || r == 0x2029:
+				return f.what + " must be one line, without a line break in it"
+			case r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f):
+				return fmt.Sprintf("%s holds a control character (U+%04X)", f.what, r)
+			case r == '<' || r == '>':
+				return f.what + " holds an angle bracket, which git prints as an address"
+			}
+		}
+	}
+	at := strings.IndexByte(p.Email, '@')
+	if at <= 0 || at != strings.LastIndexByte(p.Email, '@') || at == len(p.Email)-1 {
+		return "email must hold exactly one @, with a local part before it and a domain after it"
+	}
+	return ""
+}
+
 // Overrides are the only config values a single task may change.
 type Overrides struct {
 	ReviewRounds *int     `json:"review_rounds,omitempty"`
@@ -1001,6 +1085,15 @@ func (s *Spec) Validate() error {
 		// coder role alone.
 		if s.Overrides.Model != "" {
 			bad("task spec: ab and overrides.model don't go together: the challenger travels in ab, never as an override")
+		}
+	}
+	// The author's own shape (A2a), through the one list the launcher applies
+	// to the address it fills in (AuthorProblem): the two fields become git
+	// header values, so a hand-written task.json carrying a newline or an
+	// angle bracket in one is refused here rather than committed.
+	if s.Author != nil {
+		if p := AuthorProblem(*s.Author); p != "" {
+			bad("task spec: author %s", p)
 		}
 	}
 	o := s.Overrides

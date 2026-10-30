@@ -38,6 +38,26 @@
       "maxLength": 128,
       "description": "The plan task this run works on (fugaro run --plan-task; console dependency graph plan GV1.2, decision GD5): <plan>/<task>, the id the plan's own dependency graph spells a node with. Absent for every launch that named none, which is the common case and every spec written before the field. The shape here is task.PlanTaskProblem's, applied by the launcher on write and by task.Parse on read: two or more '/'-separated elements, each starting with a letter or a digit and otherwise letters, digits, '.', '_' and '-', at most 128 bytes. Two rules of that one the pattern cannot carry are that a '.' or '..' element and a control character are refused. It is a display-only join hint: nothing authorises, admits or budgets anything by it. Needs a 0.11.2 runner, which is why a launch that sets it is gated at launch (internal/cli/recipes_skew.go's planTaskSince): task.Parse decodes with DisallowUnknownFields, so an older runner refuses the whole spec rather than running the task without it."
     },
+    "author": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "email"],
+      "description": "Who the launch says its commits are authored by (D604): the person who launched the run, from the repository's git.author: launcher opt-in, written into the agent's git environment as GIT_AUTHOR_NAME and GIT_AUTHOR_EMAIL. Absent for every launch that names nobody, which is the common case and every launch today: nothing fills the field yet, and the run's own identity authors its commits, as it did before this field. It is a claim, not a proof, and the runner enforces nothing beyond its shape (task.AuthorProblem). A task that carries one needs a runner that reads the field: task.Parse decodes with DisallowUnknownFields, so an older runner refuses the whole spec rather than running the task without the author — which is why the launcher's own skew gate lands with the change that fills the field, not before it.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "maxLength": 100,
+          "pattern": "^[^<>\\x00-\\x1F\\x7F-\\x9F\\x{2028}\\x{2029}]*\\S[^<>\\x00-\\x1F\\x7F-\\x9F\\x{2028}\\x{2029}]*$",
+          "description": "The author's name, as git writes it into the commit header. At most task.MaxAuthorNameLen runes, one line, with no control character and no angle bracket: it becomes a git header value, and a newline in it would forge the rest of the header block."
+        },
+        "email": {
+          "type": "string",
+          "maxLength": 254,
+          "pattern": "^[^@<>\\x00-\\x1F\\x7F-\\x9F\\x{2028}\\x{2029}]+@[^@<>\\x00-\\x1F\\x7F-\\x9F\\x{2028}\\x{2029}]+$",
+          "description": "The author's address, as git writes it into the commit header and as a forge maps it to an account. At most task.MaxAuthorEmailLen runes (RFC 5321's maximum path length), one address: exactly one '@' with a local part before it and a domain after it, no control character and no angle bracket."
+        }
+      }
+    },
     "branch": { "type": "string", "pattern": "^fugaro/[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$" },
     "pr": { "type": "integer", "minimum": 1 },
     "previous_run": { "type": "string", "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$" },

@@ -177,7 +177,12 @@ type SharedAnchor struct {
 // here while Shared already dropped it, so a tampered document carrying one
 // decoded to a ProjectSecrets map the commands then read (code review of the
 // shared-config reader); it is refused by key below and again by value.
-var sharedForbidden = []string{"terraform", "user", "endpoints", "bucket_url", "registry", "providers", "routing", "claude_accounts", "project_secrets", "update_check"}
+//
+// bitbucket_api_roots is operator-only for project_secrets' reason, and
+// localcfg.Config.Shared nils it for the same one: it says which hosts a run
+// may send the project's Bitbucket token to (D474), so a writer of the runs
+// bucket publishing one would be choosing where a credential goes.
+var sharedForbidden = []string{"terraform", "user", "endpoints", "bucket_url", "registry", "providers", "routing", "claude_accounts", "project_secrets", "bitbucket_api_roots", "update_check"}
 
 // ParseShared validates a published shared config against its anchor and
 // returns it (docs/design/shared-config.md §5). Anyone holding objectAdmin
@@ -244,7 +249,7 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 		return bad("gcp_project", "%q is not %s", c.GCPProject, a.GCPProject)
 	case c.RunsBucket != a.Bucket || c.RunsBucketName() != a.Bucket:
 		return bad("runs_bucket", "%q is not the bucket it was read from, %s", c.RunsBucket, a.Bucket)
-	case c.User != "" || c.Bucket != "" || c.Registry != "" || c.Endpoints != (localcfg.Endpoints{}) || !reflect.ValueOf(c.Terraform).IsZero() || c.Providers != nil || c.Routing != nil || c.ClaudeAccounts != nil || c.ProjectSecrets != nil || c.UpdateCheck != nil:
+	case c.User != "" || c.Bucket != "" || c.Registry != "" || c.Endpoints != (localcfg.Endpoints{}) || !reflect.ValueOf(c.Terraform).IsZero() || c.Providers != nil || c.Routing != nil || c.ClaudeAccounts != nil || c.ProjectSecrets != nil || c.BitbucketAPIRoots != nil || c.UpdateCheck != nil:
 		return refuse("carries a section that is never published (%s)", strings.Join(sharedForbidden, ", "))
 	case c.RegistryHost != c.Region+"-docker.pkg.dev/"+a.GCPProject:
 		return bad("registry_host", "%q is not this project's registry, %s-docker.pkg.dev/%s", c.RegistryHost, c.Region, a.GCPProject)
