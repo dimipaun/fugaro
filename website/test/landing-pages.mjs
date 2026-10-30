@@ -636,10 +636,17 @@ test('the hero\'s picture sits under the words on a phone, and every tone paints
 
     const rules = cssRules(findAll(doc, (el) => el.name === 'style').map((el) => el.raw ?? '').join('\n'))
     const conditions = (selector) => rules.filter((rule) => rule.selector.includes(selector)).map((rule) => (rule.conditions ?? []).join(' and '))
-    for (const width of ['min-width', 'max-width']) {
+    // Both spellings of a width: the source writes `min-width: 48rem` and the build's minifier
+    // writes the range form, `(width>=48rem)`, so a reader that knows only the first would call
+    // a breakpoint that is there absent (the same pair `console.mjs` reads).
+    const WIDTHS = {
+      'a floor under the width': /min-width\s*:|width\s*>=/,
+      'a ceiling on the width': /max-width\s*:|width\s*<=/,
+    }
+    for (const [what, spelling] of Object.entries(WIDTHS)) {
       assert.ok(
-        conditions('.campaign-hero-art').some((condition) => condition.includes(width)),
-        `${rel} declares .campaign-hero-art with no ${width} breakpoint: the drawing is read on a phone and on a desktop, and each width's rule is written down rather than inherited (the owner's feedback of 2026-10-30)`,
+        conditions('.campaign-hero-art').some((condition) => spelling.test(condition)),
+        `${rel} declares .campaign-hero-art with ${what} written nowhere: the drawing is read on a phone and on a desktop, and each width's rule is written down rather than inherited (the owner's feedback of 2026-10-30)`,
       )
     }
     for (const rule of rules.filter((r) => r.selector.includes('.campaign-hero') && /grid-template-columns/.test(r.body))) {

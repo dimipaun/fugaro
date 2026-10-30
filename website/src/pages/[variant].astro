@@ -72,7 +72,15 @@ const { variant } = Astro.props
     </Fragment>
   )}
 
-  <CampaignHero headline={variant.headline} supportingLine={variant.supportingLine} tone={variant.tone} />
+  {/* The hero draws the campaign's picture only while the variant has no media of its own: the
+      slot above the headline is the variant's own file when there is one, and the drawing does
+      not compete with it (F14, G2.5). */}
+  <CampaignHero
+    headline={variant.headline}
+    supportingLine={variant.supportingLine}
+    tone={variant.tone}
+    art={variant.video === null && variant.image === null}
+  />
   <CampaignProof value={variant.proofNumber.value} source={variant.proofNumber.source} />
   <CampaignSteps />
   {/* Hidden while the file names no partner: the section is not rendered at all, so a campaign

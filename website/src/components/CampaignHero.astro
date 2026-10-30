@@ -14,10 +14,23 @@
  * layout's `media` slot is where a picture or a video lands when one does (spec §6, F14, G2.5).
  * The hero therefore renders complete without it rather than with a hole where a file would go.
  *
+ * **What the eye lands on is the campaign's own drawing.** The owner's feedback of 2026-10-30
+ * asked the hero to hold a picture that carries the idea in one look rather than a third
+ * paragraph saying it again, and `CampaignHeroArt.astro` is that picture: a task, the
+ * short-lived cloud job it starts and the pull request the job ends in, drawn inline and painted
+ * from the variant's tone. It is rendered here rather than in the layout's `media` slot because
+ * that slot sits *above* the headline — a variant's own video belongs there, and a phone's first
+ * screen holds the promise and the booking link rather than a picture — so the drawing follows
+ * the words on a narrow viewport and sits beside them from the wide breakpoint, and it is
+ * suppressed outright while a variant names its own media, which then takes that slot instead
+ * (F14, G2.5).
+ *
  * **The tone rides on the section, not on a second stylesheet.** `data-tone` is the variant's
  * own word from the file (`playful` is `/crew`'s), and the campaign pages' own rules key their
  * accents off it, so the four pages are one template with one difference the data file states.
  */
+import CampaignHeroArt from './CampaignHeroArt.astro'
+
 interface Props {
   /** The variant's headline, from `website/data/landing.yaml`: the page's one `h1`. */
   headline: string
@@ -25,14 +38,24 @@ interface Props {
   supportingLine: string
   /** The variant's tone (`savings`, `control`, `scale`, `playful`). */
   tone: string
+  /**
+   * Whether the hero draws the campaign's own picture. False while the variant names media of
+   * its own, which takes the layout's `media` slot at the top of the page instead.
+   */
+  art: boolean
 }
 
-const { headline, supportingLine, tone } = Astro.props
+const { headline, supportingLine, tone, art } = Astro.props
 ---
 
 <section class="campaign-hero" data-section="hero" data-tone={tone} data-source="website/data/landing.yaml">
-  <h1 class="campaign-hero-headline display-xl">{headline}</h1>
-  <p class="campaign-hero-line">{supportingLine}</p>
+  {/* The words first in the markup, so the reading order is the order a phone shows and a
+      screen reader hears: the promise, the sentence that backs it, and then the picture. */}
+  <div class="campaign-hero-copy">
+    <h1 class="campaign-hero-headline display-xl">{headline}</h1>
+    <p class="campaign-hero-line">{supportingLine}</p>
+  </div>
+  {art && <CampaignHeroArt tone={tone} />}
 </section>
 
 <style>
@@ -64,9 +87,24 @@ const { headline, supportingLine, tone } = Astro.props
     max-width: 26ch;
   }
 
+  /* The wide viewport is where the hero becomes two columns: the words on the reading start and
+     the drawing on the outer edge, level with each other. The two-column rule is inside the
+     breakpoint and nowhere else, so the phone's hero is the plain stack the markup's order
+     gives it — the headline, the sentence, the picture — and the picture can never be the
+     reason a reader has to scroll to the booking link (the owner's feedback of 2026-10-30). */
   @media (min-width: 48rem) {
     .campaign-hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 30rem);
+      align-items: center;
+      column-gap: var(--space-2xl);
       padding-block: var(--space-3xl) var(--space-2xl);
+    }
+
+    /* The copy keeps the first column and the drawing the second, whether or not a drawing is
+       rendered: a variant with media of its own is the same hero with one column painted. */
+    .campaign-hero-copy {
+      grid-column: 1;
     }
   }
 </style>
