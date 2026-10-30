@@ -125,6 +125,7 @@ const MODULES: readonly string[] = Object.freeze([
   'shared/sanitize.js',
   'shared/launcher.js',
   'shared/rigor.js',
+  'shared/notice.js',
   'shared/version.js',
   'renderer/app.js',
   'renderer/screens/projects.js',

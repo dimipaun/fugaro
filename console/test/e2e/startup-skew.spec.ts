@@ -53,6 +53,7 @@ import { APP_ENTRY_URL, REFUSAL_ENTRY_URL } from '../../src/main/protocol'
 import { CONSOLE_WINDOW_TITLE } from '../../src/main/window'
 import { CLI_VERSION_BUILT_AGAINST, SKEW_HEADLINES, classifyCliVersion } from '../../src/shared/version'
 import type { CliCompatibilityMode } from '../../src/shared/version'
+import { REDUCED_CHIP_LABEL } from '../../src/renderer/entry'
 import { installCliStub, resolveConsoleBinary } from '../support/cliStub'
 import type { CliStub } from '../support/cliStub'
 import { expectNoFirstRunPicker } from '../support/firstRun'
@@ -173,7 +174,7 @@ function windowTitles(app: ElectronApplication): Promise<string[]> {
  * text, the script it runs and the shapes a dashboard view would need. */
 function pageShape(
   page: Page,
-): Promise<{ url: string; text: string; entryScript: string | null; dataShapes: number }> {
+): Promise<{ url: string; text: string; entryScript: string | null; dataShapes: number; chip: string | null }> {
   return page.evaluate(() => ({
     url: window.location.href,
     text: document.body.innerText,
@@ -188,6 +189,9 @@ function pageShape(
     // document rather than on the renderer: there is nothing to draw a figure
     // into.
     dataShapes: document.querySelectorAll('ul, ol, table, canvas, svg').length,
+    // The reduced mode's standing statement, which is drawn for as long as the
+    // mode is and for no other mode at all (design section 2.14).
+    chip: document.querySelector('button.console-reduced-chip')?.textContent ?? null,
   }))
 }
 
@@ -231,6 +235,9 @@ test.describe('the startup handshake, in the real app', () => {
         expect(shape.text).toContain(REFUSAL_MARKER)
         expect(shape.entryScript, 'the refused window ran the dashboard’s entry').toBeNull()
         expect(shape.dataShapes).toBe(0)
+        // A refused console is the refusal document and no console at all: no
+        // dashboard, so nothing for a chip to stand in for.
+        expect(shape.chip, 'the refusal document drew a Reduced-mode chip').toBeNull()
       } else {
         expect(shape.url).toBe(APP_ENTRY_URL)
         expect(shape.entryScript).toBe(DASHBOARD_MARKER)
@@ -239,6 +246,11 @@ test.describe('the startup handshake, in the real app', () => {
         // dashboard that carried the refusal's sentence (or a marker that
         // matched nothing) fails here.
         expect(shape.text).not.toContain(REFUSAL_MARKER)
+        // And the chip belongs to the reduced mode alone: a console that reads
+        // what it is driving says nothing about versions (design section 2.14).
+        expect(shape.chip, `the ${mode} mode drew a Reduced-mode chip`).toBe(
+          mode === 'reduced' ? REDUCED_CHIP_LABEL : null,
+        )
       }
     } finally {
       await app.close()

@@ -203,6 +203,10 @@ function fact(parent: NoticeElement, factory: NoticeFactory, detail: NoticeDetai
  */
 export function renderNotice(factory: NoticeFactory, spec: NoticeSpec): DrawnNotice {
   const root = factory.create('section')
+  // One attribute, written twice, and the first write is the one the theme's
+  // selector scan can read: `test/unit/theme-selectors.test.ts` licenses a rule
+  // by reading the class a `factory.create` is stamped with, and a list it cannot
+  // evaluate would leave `section.notice` unlicensed while the card drew it.
   root.setAttribute('class', NOTICE_ROOT_CLASS)
   if (spec.classes.length > 0) {
     root.setAttribute('class', [NOTICE_ROOT_CLASS, ...spec.classes].join(' '))

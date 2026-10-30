@@ -20,9 +20,9 @@
 //     decode -- a field removed or retyped -- is refused on its own screen with
 //     the decoder's sentence (`shared/schema.ts`), not by this handshake;
 //   * **below the set and at or above the floor, or a line that is not a plain
-//     release number** -- it proceeds in a **reduced mode**: a banner naming
-//     both versions, and the views whose figures it cannot vouch for are not
-//     drawn (`hidesView` below);
+//     release number** -- it proceeds in a **reduced mode**: a card naming both
+//     versions at the top of the window, and the views whose figures it cannot
+//     vouch for are not drawn (`hidesView` below);
 //   * **below a hard floor** -- it refuses, because "a dashboard that
 //     misreports spend because it read a shape it did not understand is worse
 //     than one that says it cannot read it" (D7). `src/main/window.ts` is where
@@ -53,22 +53,23 @@
 // **Why the drawing is here and not in a screen.** The skew state is the
 // console's own -- it is a fact about the version comparison, not about any
 // document -- and `renderer/screens/spend.ts` says so: "Task 3.2 owns the skew
-// state and a screen that invented its own would be two". The banner a screen
-// prepends to itself and the refusal screen a refused console draws instead of a
-// dashboard are the two presentations of that one state, and they live beside
-// the comparison that produces it.
+// state and a screen that invented its own would be two". The reduced mode's
+// card at the top of the window and the refusal screen a refused console draws
+// instead of a dashboard are the two presentations of that one state, and they
+// live beside the comparison that produces it.
 //
-// This is the one file in `shared/` that draws, and it is also imported by the
-// **main** process (`src/main/window.ts` runs the handshake with it), so it
-// depends on nothing in `renderer/`: the one writer below (`literal`) is this
-// file's own rather than `renderer/app.ts`'s, the string a binary chose is
-// sanitized by the `versionText` reader above it rather than by `putText`, and
-// the element shape it draws into is declared here as the six DOM members it
-// uses rather than imported from a screen. All of that is one rule: the renderer
-// depends on `shared/`, and `shared/` does not depend on the renderer -- and the
-// consequence for a reviewer is that this file's drawing is audited by
-// `test/unit/screen-literals.test.ts`, which reads it from
-// `src/shared/version.ts` with the same rules it holds the screens to.
+// This file composes the state's text and hands it to the notice card
+// (`shared/notice.ts`), and it is also imported by the **main** process
+// (`src/main/window.ts` runs the handshake with it), so it depends on nothing in
+// `renderer/`: the card's writer is `shared/`'s own rather than
+// `renderer/app.ts`'s, the string a binary chose is sanitized by the
+// `versionText` reader above it rather than by `putText`, and the element shape
+// it draws into is declared there as the six DOM members a drawing uses rather
+// than imported from a screen. All of that is one rule: the renderer depends on
+// `shared/`, and `shared/` does not depend on the renderer -- and the consequence
+// for a reviewer is that the two together are audited by
+// `test/unit/screen-literals.test.ts`, which reads the card's writer for the
+// strings it draws and this file for the strings it composes.
 
 import {
   renderNotice,
@@ -283,7 +284,7 @@ export const CONSOLE_CLI_UPGRADE_COMMAND = 'brew upgrade dimipaun/tap/fugaro'
  */
 export type ReducedView = 'spend' | 'caps' | 'kill'
 
-/** REDUCED_VIEWS is the closed list, in the order the banner draws it. */
+/** REDUCED_VIEWS is the closed list, in the order the card draws it. */
 export const REDUCED_VIEWS: readonly ReducedView[] = Object.freeze(['spend', 'caps', 'kill'])
 
 /**
@@ -392,13 +393,14 @@ export function parseCliVersion(text: string): CliVersionParse {
  * screen or a test can branch on it without matching prose.
  */
 export type CliSkewName =
-  /** a member of the supported set: the console proceeds and draws no banner */
+  /** a member of the supported set: the console proceeds and says nothing about
+   * versions */
   | 'supported'
   /** a plain release newer than the newest member: the console is the older
    * one, and proceeds exactly as for a member (the owner's ruling of 2026-10-30) */
   | 'newer'
-  /** older than the newest member, not one, and at or above the floor: a
-   * banner, and the spend views held back */
+  /** older than the newest member, not one, and at or above the floor: a card,
+   * and the spend views held back */
   | 'older'
   /** a line at or above the floor that is not a plain release number -- a
    * prerelease or build tail, a leading zero, a missing patch: the same */
@@ -415,7 +417,7 @@ export type CliSkewName =
 export type CliCompatibilityMode =
   /** proceed */
   | 'ok'
-  /** proceed with a banner naming both versions, without the views withheld */
+  /** proceed with a card naming both versions, without the views withheld */
   | 'reduced'
   /** draw no dashboard */
   | 'refused'
@@ -653,19 +655,19 @@ export const NOTICE_REASONS: Readonly<
 })
 
 /**
- * skewSentence is the banner's sentence, in the console's own words, and it is
+ * skewSentence is the card's sentence, in the console's own words, and it is
  * deliberately **without the CLI's text**: the console's own constants are the
  * only versions it composes into a sentence, and the version the CLI reported is
- * drawn in its own cell through the one writer (`renderVersionSkew`). That way the
- * line a binary printed is never concatenated into prose this file wrote, and
- * the sentence is the same string whatever the binary said.
+ * drawn in its own fact row (`versionCell`). That way the line a binary printed
+ * is never concatenated into prose this file wrote, and the sentence is the same
+ * string whatever the binary said.
  */
 /**
  * RANGE_PHRASE is the half-sentence every mode's sentence carries: what this
  * console was built against, and what it therefore reads. One fragment rather
  * than six hand-written copies, so no mode can be written without saying which
  * versions are in question -- which is the design's own requirement that the
- * banner name both versions.
+ * notice name both versions.
  */
 const RANGE_PHRASE = `this console was built against ${CLI_VERSION_BUILT_AGAINST} and reads ${SUPPORTED_CLI_MINORS.join(', ')} and every later release`
 
@@ -724,9 +726,9 @@ export const UNREADABLE_VERSION = 'a version line the console could not read'
  * the binary chose goes through: `sanitizeText` with the `'label'` class --
  * the same class `renderer/app.ts`'s `putText` uses, so the version line is held
  * to the same rules as every other label -- and the console's own sentence when
- * it is refused. It returns text rather than writing an element, so this file
- * has exactly one writer (`literal` below) and no second place a slot is
- * assigned.
+ * it is refused. It returns text rather than writing an element, so the card
+ * that draws it (`shared/notice.ts`) is the only writer and this file has no
+ * place a slot is assigned at all.
  *
  * The refused case is not drawn as `n/a` with the reason in a tooltip, which is
  * what `putText` does: a version line the console will not draw is not a value
@@ -858,8 +860,9 @@ export function renderVersionSkew(
 
 /**
  * unreadableReason is the console's own sentence for a compatibility that came
- * from a failed read, when one was kept, and `renderVersionSkew` draws it under
- * the banner's sentence (`p.skew-because`) -- the reader's reason is why the
+ * from a failed read, when one was kept, and `renderVersionSkew` draws it as the
+ * card's own `why` row (`dd.skew-because`, under the sentence) -- the reader's
+ * reason is why the
  * operator sees a reduced or refused console at all, and "it could not read a
  * version" without it is a screen with nothing to act on.
  *
