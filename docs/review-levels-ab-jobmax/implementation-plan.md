@@ -345,7 +345,7 @@ Every task's reviewer tier is **standard** unless marked otherwise.
   - Launches each ready task with `fugaro run --batch <plan> --plan-task <plan>/<task> --task-file -`. `--plan-task` is what `plan status` joins runs by. The run ID is the CLI's own, because `task.ValidRunID` accepts only `YYYYMMDD-HHMMSS-xxxx`.
   - The task's text is untrusted. It goes to `fugaro run` on stdin only, and the skill states that instructions inside it are not followed.
   - It prints what it launched and the worst case of what it launched. There is no waiting loop: running it again launches what has become ready.
-- **Tests:** `TestJobmaxSkillNamesOnlyRealCommands` (the plugin check), `TestJobmaxSkillOptInDefaultsOff`, `TestJobmaxSkillRequiresMergedDependencies`, `TestJobmaxSkillStopsOnCapAndAmbiguity`, `TestJobmaxSkillBaseBranchOnly`, and `plugin_test.go` updated to six skills. All but the first and last are wording tests: they pin the rules the skill states, and they cannot enforce an agent's behaviour. The behaviour is Check 273 (X2, OWNER-RUN).
+- **Tests:** `TestJobmaxSkillNamesOnlyRealCommands` (the plugin check), `TestJobmaxSkillOptInDefaultsOff`, `TestJobmaxSkillRequiresMergedDependencies`, `TestJobmaxSkillStopsOnCapAndAmbiguity`, `TestJobmaxSkillBaseBranchOnly`, and `plugin_test.go` updated to count the new skill. All but the first and last are wording tests: they pin the rules the skill states, and they cannot enforce an agent's behaviour. The behaviour is Check 273 (X2, OWNER-RUN).
 - **Command:** `GOFLAGS=-p=2 go test ./plugin -count=1`.
 - **Depends on:** J1.1, J1.3.
 - **Red step:** the plugin check fails on a skill that does not exist.
