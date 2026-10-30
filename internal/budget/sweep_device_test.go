@@ -138,7 +138,7 @@ func TestSweepDeletesDeviceUserWithoutNode(t *testing.T) {
 // read and never written, and a user of another shape is not this sweeper's.
 func TestSweepTouchesNothingElse(t *testing.T) {
 	e := newSweepEnv(t)
-	e.deviceNode(devUID)     // a paired device: its user stays
+	e.deviceNode(devUID) // a paired device: its user stays
 	e.user(devUID, time.Hour)
 	e.user(devUID2, 2*time.Hour) // revoked: no node, so the user goes
 	e.pairingNode(pairUID)       // an abandoned session: user and node go
