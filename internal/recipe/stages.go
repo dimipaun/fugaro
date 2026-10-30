@@ -18,6 +18,14 @@ package recipe
 // (run-digest), so the review loop after it is all a run of it can record.
 // The loop's fix stays counted: whether the review of a report ever asks for
 // one is for that run to decide, and a bound errs high rather than low.
+//
+// An adversarial step (review level 3) adds n3*(2 + 2*f) when it bounces and
+// n3*2 when it does not: each of its n3 rounds is one adversarial review and
+// its fix, and a bounce inserts the same cheap first-line loop a bouncing
+// review round does. n3 is the step's own max_rounds, or
+// DefaultAdversarialRounds when it writes none. The step's own bound errs
+// high the same way: a round that ends the run early costs fewer stages, and
+// a recipe that writes no bounce still pays only n3*2.
 func StageBound(r *Recipe, f, n int) int {
 	if r.Mode == ModeReview || r.Mode == ModeArtifact {
 		return 1
@@ -27,6 +35,7 @@ func StageBound(r *Recipe, f, n int) int {
 		implement = 0
 	}
 	first, bounce, rounds := 0, false, n
+	adversarial, adversarialBounce := 0, false
 	for _, s := range r.Steps {
 		switch s.Kind {
 		case StepFirstLine:
@@ -39,13 +48,27 @@ func StageBound(r *Recipe, f, n int) int {
 			if s.MaxRounds > 0 {
 				rounds = s.MaxRounds
 			}
+		case StepAdversarial:
+			adversarial = DefaultAdversarialRounds
+			if s.MaxRounds > 0 {
+				adversarial = s.MaxRounds
+			}
+			adversarialBounce = s.Bounce
 		}
 	}
 	per := 2 // a senior review and its fix
 	if bounce {
 		per += 2 * first
 	}
-	return implement + 2*first + rounds*per
+	total := implement + 2*first + rounds*per
+	if adversarial > 0 {
+		per3 := 2 // an adversarial review and its fix
+		if adversarialBounce {
+			per3 += 2 * first
+		}
+		total += adversarial * per3
+	}
+	return total
 }
 
 // UsesV07 reports whether r uses a key added in 0.7.0 (the image gate). It

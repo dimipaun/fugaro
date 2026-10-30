@@ -142,7 +142,7 @@ func TestCheckCloneRecipeImageDigestSince(t *testing.T) {
 	lc := *env.lc
 	lc.BaseImages = map[string]string{"base": "ghcr.io/dimipaun/fugaro-base:0.12.0"}
 	var warn bytes.Buffer
-	err := checkCloneRecipeImage(&lc, spec, &warn)
+	err := checkCloneRecipeImage(context.Background(), &lc, spec, &warn)
 	if err == nil || !strings.Contains(err.Error(), "recipe run-digest needs a job image whose runner knows recipes (fugaro 0.13.0 or later)") ||
 		!strings.Contains(err.Error(), "release 0.12.0") || ExitCode(err) != ExitUserError {
 		t.Fatalf("0.12.0: warn = %q, err = %v", warn.String(), err)
@@ -152,7 +152,7 @@ func TestCheckCloneRecipeImageDigestSince(t *testing.T) {
 	}
 	lc.BaseImages["base"] = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c"
 	warn.Reset()
-	if err := checkCloneRecipeImage(&lc, spec, &warn); err != nil {
+	if err := checkCloneRecipeImage(context.Background(), &lc, spec, &warn); err != nil {
 		t.Fatalf("dev base: %v", err)
 	}
 	if !strings.Contains(warn.String(), "not a release base image") {
@@ -165,12 +165,152 @@ func TestCheckCloneRecipeImageDigestSince(t *testing.T) {
 	spec.DigestRuns = []string{"20261026-090000-1234"}
 	lc.BaseImages["base"] = "ghcr.io/dimipaun/fugaro-base:0.12.0"
 	warn.Reset()
-	if err := checkCloneRecipeImage(&lc, spec, &warn); err == nil || !strings.Contains(err.Error(), "fugaro 0.13.0 or later") {
+	if err := checkCloneRecipeImage(context.Background(), &lc, spec, &warn); err == nil || !strings.Contains(err.Error(), "fugaro 0.13.0 or later") {
 		t.Fatalf("repo recipe with a manifest: warn = %q, err = %v", warn.String(), err)
 	}
 	spec.DigestRuns = nil
-	if err := checkCloneRecipeImage(&lc, spec, &warn); err != nil {
+	if err := checkCloneRecipeImage(context.Background(), &lc, spec, &warn); err != nil {
 		t.Fatalf("repo recipe with no manifest: %v", err)
+	}
+}
+
+// TestRecipesSkewRefusesAdversarialOnOldImage: a recipe holding the
+// adversarial step (review level 3) needs a job image whose runner acts on
+// it, which is a release of its own (adversarialSince) and newer than every
+// other recipe construct — 0.13.0 knows the digest step and still has no
+// adversarial kind in its version 1 step list, so it refuses the whole recipe
+// at parse. The gate turns that bootstrap refusal into one at the launcher's
+// terminal, for a derived image (checkRecipeImage) and for a checkout: clone
+// workflow's base image (checkCloneRecipeImage) alike, since both judge the
+// recipe's own text. A base image that is not a release cannot be dated, so
+// it only warns, and the runner refuses the recipe there.
+func TestRecipesSkewRefusesAdversarialOnOldImage(t *testing.T) {
+	f := newCloudFixture(t)
+	env := fileEnv(t, f)
+	const text = "version: 1\nname: mine\nsteps:\n  - first_line: {}\n  - review: { bounce: first_line }\n  - adversarial: { max_rounds: 2, bounce: first_line }\n"
+	spec := &task.Spec{Version: 1, RunID: "20261007-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x",
+		Recipe: &task.Recipe{Name: "mine", Source: string(recipe.SourceProject), YAML: text}}
+	check := func(baseRef string) (string, error) {
+		var warn bytes.Buffer
+		writeBuildRecord(t, f, appSlug, "web", baseRef)
+		err := checkRecipeImage(context.Background(), env, appSlug, spec, "base", &warn)
+		return warn.String(), err
+	}
+	// The newest release that knows the digest step, and still has no
+	// adversarial one: the gate is 0.15.0, not 0.13.0.
+	for _, baseRef := range []string{"ghcr.io/dimipaun/fugaro-base:0.13.0", "ghcr.io/dimipaun/fugaro-base:0.14.0"} {
+		warn, err := check(baseRef)
+		if err == nil || !strings.Contains(err.Error(), "recipe mine needs a job image whose runner knows recipes (fugaro 0.15.0 or later)") || ExitCode(err) != ExitUserError {
+			t.Fatalf("%s: warn = %q, err = %v", baseRef, warn, err)
+		}
+		if warn != "" {
+			t.Errorf("%s: warning %q, want none", baseRef, warn)
+		}
+	}
+	warn, err := check("us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c")
+	if err != nil {
+		t.Fatalf("dev base: %v", err)
+	}
+	if !strings.Contains(warn, "not a release base image") {
+		t.Errorf("dev base: warning %q, want the not-a-release note", warn)
+	}
+	// The same recipe on a checkout: clone workflow, whose job has no derived
+	// image and so no build record: the gate raises checkCloneImageSince's
+	// threshold on base_images.base itself.
+	lc := *env.lc
+	lc.BaseImages = map[string]string{"base": "ghcr.io/dimipaun/fugaro-base:0.14.0"}
+	var cloneWarn bytes.Buffer
+	err = checkCloneRecipeImage(context.Background(), &lc, spec, &cloneWarn)
+	if err == nil || !strings.Contains(err.Error(), "recipe mine needs a job image whose runner knows recipes (fugaro 0.15.0 or later)") ||
+		!strings.Contains(err.Error(), "release 0.14.0") || ExitCode(err) != ExitUserError {
+		t.Fatalf("clone 0.14.0: warn = %q, err = %v", cloneWarn.String(), err)
+	}
+	lc.BaseImages["base"] = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c"
+	cloneWarn.Reset()
+	if err := checkCloneRecipeImage(context.Background(), &lc, spec, &cloneWarn); err != nil {
+		t.Fatalf("clone dev base: %v", err)
+	}
+	if !strings.Contains(cloneWarn.String(), "not a release base image") {
+		t.Errorf("clone dev base: warning %q, want the not-a-release note", cloneWarn.String())
+	}
+	// A recipe without the step is not raised to adversarialSince: the
+	// constructs it does carry decide, as before.
+	spec.Recipe.YAML = "version: 1\nname: mine\nsteps:\n  - first_line: {}\n  - review: { bounce: first_line }\n"
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.13.0")
+	if err := checkRecipeImage(context.Background(), env, appSlug, spec, "base", &bytes.Buffer{}); err != nil {
+		t.Fatalf("no adversarial step: %v", err)
+	}
+}
+
+// TestRecipesSkewRefusesRepositoryAdversarialOnOldImage: a repository recipe
+// carries its name alone in the task — the runner reads the file at the ref —
+// so what the launcher judges is its own read of that file, and the
+// adversarial step it carries is judged like an embedded one
+// (repoRecipeForGate, recipeSinceFor). Judged by the name alone the launch
+// would pass at 0.13.0 and the run would die at bootstrap, which is what this
+// closes; a repository recipe without the step keeps the release its own
+// constructs need.
+func TestRecipesSkewRefusesRepositoryAdversarialOnOldImage(t *testing.T) {
+	f := newCloudFixture(t)
+	env := fileEnv(t, f)
+	recipeCheckout(t, f, "", map[string]string{
+		".fugaro/recipes/mine.yaml":  "version: 1\nname: mine\nsteps:\n  - first_line: {}\n  - review: {}\n  - adversarial: {}\n",
+		".fugaro/recipes/plain.yaml": "version: 1\nname: plain\nsteps:\n  - first_line: {}\n  - review: { bounce: first_line }\n",
+	})
+	other := mustSlug("github", "acme/other")
+	spec := &task.Spec{Version: 1, RunID: "20261007-100000-abcd", Repo: "acme/other", Ref: "main", Workflow: "svc", Task: "x",
+		Recipe: &task.Recipe{Name: "mine", Source: string(recipe.SourceRepo)}}
+	writeBuildRecord(t, f, other, "svc", "ghcr.io/dimipaun/fugaro-base:0.14.0")
+	var warn bytes.Buffer
+	err := checkRecipeImage(context.Background(), env, other, spec, "base", &warn)
+	if err == nil || !strings.Contains(err.Error(), "recipe mine needs a job image whose runner knows recipes (fugaro 0.15.0 or later)") || ExitCode(err) != ExitUserError {
+		t.Fatalf("warn = %q, err = %v", warn.String(), err)
+	}
+	if warn.Len() > 0 {
+		t.Errorf("warning %q, want none on a release base image", warn.String())
+	}
+	lc := *env.lc
+	lc.BaseImages = map[string]string{"base": "ghcr.io/dimipaun/fugaro-base:0.14.0"}
+	var cloneWarn bytes.Buffer
+	if err := checkCloneRecipeImage(context.Background(), &lc, spec, &cloneWarn); err == nil || !strings.Contains(err.Error(), "fugaro 0.15.0 or later") {
+		t.Fatalf("clone: warn = %q, err = %v", cloneWarn.String(), err)
+	}
+	// The control: a repository recipe that carries no adversarial step is
+	// judged by the constructs it does carry, and 0.13.0 knows those.
+	spec.Recipe.Name = "plain"
+	writeBuildRecord(t, f, other, "svc", "ghcr.io/dimipaun/fugaro-base:0.13.0")
+	if err := checkRecipeImage(context.Background(), env, other, spec, "base", &bytes.Buffer{}); err != nil {
+		t.Fatalf("a repository recipe with no adversarial step: %v", err)
+	}
+	if err := checkCloneRecipeImage(context.Background(), &lc, spec, &bytes.Buffer{}); err != nil {
+		t.Fatalf("a repository recipe with no adversarial step, clone: %v", err)
+	}
+}
+
+// TestAdversarialSinceHasAReleaseBullet: adversarialSince names 0.15.0, which
+// is not tagged, so docs/release.md's Before-you-tag list is what holds the
+// constant to the release actually cut — the job every other *Since constant's
+// bullet does (TestSharedSinceHasAReleaseBullet). Nothing else ties the number
+// the gate accepts to the release L4.2 ships in, and a release that landed
+// level 3 elsewhere would otherwise keep refusing images that can run it.
+func TestAdversarialSinceHasAReleaseBullet(t *testing.T) {
+	var bullet string
+	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
+		if strings.HasPrefix(line, "- **Verify `adversarialSince`") {
+			bullet = line
+			break
+		}
+	}
+	if bullet == "" {
+		t.Fatal("docs/release.md's Before-you-tag list has no adversarialSince bullet: the checklist is where a release verifies the constant")
+	}
+	if !strings.Contains(bullet, "currently `\""+adversarialSince+"\"`") {
+		t.Errorf("docs/release.md's adversarialSince bullet does not carry the constant's release (%q)", adversarialSince)
+	}
+	for _, want := range []string{"adversarial", "not tagged yet"} {
+		if !strings.Contains(bullet, want) {
+			t.Errorf("docs/release.md's adversarialSince bullet does not say %q", want)
+		}
 	}
 }
 
@@ -316,7 +456,7 @@ func TestCheckCloneRecipeImage(t *testing.T) {
 	lc := *env.lc
 	lc.BaseImages = map[string]string{"base": "ghcr.io/dimipaun/fugaro-base:0.4.1"}
 	var warn bytes.Buffer
-	err := checkCloneRecipeImage(&lc, spec, &warn)
+	err := checkCloneRecipeImage(context.Background(), &lc, spec, &warn)
 	if err == nil {
 		t.Fatal("old base image: no error")
 	}
@@ -331,14 +471,14 @@ func TestCheckCloneRecipeImage(t *testing.T) {
 	// No recipe in the task, but the checkout sets agent.recipe: no "or
 	// launch with --recipe default" (a carried default is not a way out).
 	spec.Recipe = nil
-	err = checkCloneRecipeImage(&lc, spec, &bytes.Buffer{})
+	err = checkCloneRecipeImage(context.Background(), &lc, spec, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "fugaro.yaml's agent.recipe needs a job image") || strings.Contains(err.Error(), "--recipe default") {
 		t.Fatalf("agent.recipe: %v", err)
 	}
 	// A current release passes.
 	lc.BaseImages["base"] = "ghcr.io/dimipaun/fugaro-base:0.5.0"
 	spec.Recipe = &task.Recipe{Name: "mine", Source: "repo"}
-	if err := checkCloneRecipeImage(&lc, spec, &bytes.Buffer{}); err != nil {
+	if err := checkCloneRecipeImage(context.Background(), &lc, spec, &bytes.Buffer{}); err != nil {
 		t.Fatalf("current release: %v", err)
 	}
 }
@@ -399,20 +539,20 @@ func TestCloneRecipeV07NeedsA07Image(t *testing.T) {
 		Recipe: &task.Recipe{Name: "standard", Source: "catalog", SHA256: recipe.Sum(text), YAML: string(text)}}
 	lc := *env.lc
 	lc.BaseImages = map[string]string{"base": "ghcr.io/dimipaun/fugaro-base:0.6.2"}
-	err := checkCloneRecipeImage(&lc, spec, &bytes.Buffer{})
+	err := checkCloneRecipeImage(context.Background(), &lc, spec, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "recipe standard needs a job image whose runner knows recipes (fugaro 0.7.0 or later)") ||
 		!strings.Contains(err.Error(), "release 0.6.2") || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v", err)
 	}
 	lc.BaseImages["base"] = "ghcr.io/dimipaun/fugaro-base:0.7.0"
-	if err := checkCloneRecipeImage(&lc, spec, &bytes.Buffer{}); err != nil {
+	if err := checkCloneRecipeImage(context.Background(), &lc, spec, &bytes.Buffer{}); err != nil {
 		t.Fatalf("0.7.0 base: %v", err)
 	}
 	defText, _ := recipe.CatalogText("default")
 	defSpec := &task.Spec{Version: 1, RunID: "20261007-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x",
 		Recipe: &task.Recipe{Name: "default", Source: "catalog", SHA256: recipe.Sum(defText), YAML: string(defText)}}
 	lc.BaseImages["base"] = "ghcr.io/dimipaun/fugaro-base:0.5.0"
-	if err := checkCloneRecipeImage(&lc, defSpec, &bytes.Buffer{}); err != nil {
+	if err := checkCloneRecipeImage(context.Background(), &lc, defSpec, &bytes.Buffer{}); err != nil {
 		t.Fatalf("default on 0.5.0 base: %v", err)
 	}
 }

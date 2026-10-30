@@ -2,6 +2,55 @@ package recipe
 
 import "testing"
 
+// TestStageBoundWithAdversarial pins the two figures the plan quotes (F12,
+// D726): today's `standard` at the knobs' defaults bounds a run at 11 model
+// stages, and the same recipe with review level 3 added — adversarial with
+// two rounds bouncing to first_line, at f = 1 and n = 2 — bounds it at 19.
+// The step's term is n3*(2 + 2*f), so a round that bounces costs the
+// adversarial review, its fix and the cheap loop, and a step that writes no
+// bounce costs n3*2: the bound must never come in under either.
+func TestStageBoundWithAdversarial(t *testing.T) {
+	std, ps := Parse([]byte("version: 1\nname: s\nsteps:\n  - first_line: {}\n  - review: { bounce: first_line }\n"))
+	if len(ps) != 0 {
+		t.Fatalf("problems: %s", ProblemsText(ps))
+	}
+	if got := StageBound(std, 1, 2); got != 11 {
+		t.Fatalf("standard bound = %d, want 11", got)
+	}
+	for name, steps := range map[string]string{
+		"explicit rounds": "  - adversarial: { max_rounds: 2, bounce: first_line }\n",
+		"default rounds":  "  - adversarial: { bounce: first_line }\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			r, ps := Parse([]byte("version: 1\nname: s\nsteps:\n  - first_line: {}\n  - review: { bounce: first_line }\n" + steps))
+			if len(ps) != 0 {
+				t.Fatalf("problems: %s", ProblemsText(ps))
+			}
+			if got := StageBound(r, 1, 2); got != 19 {
+				t.Fatalf("bound = %d, want 19", got)
+			}
+		})
+	}
+	// No bounce: each of the n3 rounds is the adversarial review and its fix.
+	r, ps := Parse([]byte("version: 1\nname: s\nsteps:\n  - first_line: {}\n  - review: { bounce: first_line }\n  - adversarial: { max_rounds: 3 }\n"))
+	if len(ps) != 0 {
+		t.Fatalf("problems: %s", ProblemsText(ps))
+	}
+	if got := StageBound(r, 1, 2); got != 11+3*2 {
+		t.Fatalf("no-bounce bound = %d, want 17", got)
+	}
+	// The step's own max_rounds and the first-line step's own max_rounds both
+	// bind: f is the step's when it writes one, exactly as the review term
+	// reads it.
+	r, ps = Parse([]byte("version: 1\nname: s\nsteps:\n  - first_line: { max_rounds: 3 }\n  - review: { bounce: first_line }\n  - adversarial: { max_rounds: 2, bounce: first_line }\n"))
+	if len(ps) != 0 {
+		t.Fatalf("problems: %s", ProblemsText(ps))
+	}
+	if got := StageBound(r, 1, 2); got != 1+2*3+2*(2+2*3)+2*(2+2*3) {
+		t.Fatalf("bound = %d, want %d", got, 1+2*3+2*(2+2*3)+2*(2+2*3))
+	}
+}
+
 // TestStageBoundIsFinite: the bound the cost preview and the docs quote, for
 // every catalog recipe shape at the knobs' largest values.
 func TestStageBoundIsFinite(t *testing.T) {

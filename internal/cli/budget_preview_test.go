@@ -558,6 +558,62 @@ func TestBudgetPreviewDigestCountsNoImplementStage(t *testing.T) {
 	}
 }
 
+// TestBudgetPreviewAdversarialStages: the level-3 step is a review round of
+// its own, so a recipe holding it prices one more review and its fix, plus --
+// when the step bounces, as the senior review's does -- one more pair of cheap
+// stages. No catalog recipe carries the step, so the catalog-wide pin above
+// never reaches this arm; these shapes are its own. The mirror is the bound
+// where the step caps itself at the one round a typical run spends, which is
+// where that pin reads it too; the parser's default of two rounds is the
+// bound's and not the typical run's, exactly as review_rounds 2 is standard's.
+func TestBudgetPreviewAdversarialStages(t *testing.T) {
+	parse := func(t *testing.T, step string) *recipe.Recipe {
+		t.Helper()
+		rp, problems := recipe.Parse([]byte("version: 1\nname: level3\nsteps:\n  - first_line: {}\n  - review: { bounce: first_line }\n  - " + step + "\n"))
+		if len(problems) > 0 {
+			t.Fatalf("level3: %s", recipe.ProblemsText(problems))
+		}
+		return rp
+	}
+	// One round of each loop: without the step this is the catalog's standard
+	// (implement, two cheap stages, one review and its fix), so the counts
+	// below are what level 3 adds to it.
+	for name, tc := range map[string]struct {
+		step string
+		want map[string]int
+		// bound is StageBound(rp, 1, 1) here, and mirrors whether the typical
+		// count must be it: it must, where the step's own cap is the one
+		// round a typical run spends.
+		bound   int
+		mirrors bool
+	}{
+		"bouncing": {step: "adversarial: { max_rounds: 1, bounce: first_line }",
+			want: map[string]int{"implement": 1, "review_first": 3, "review": 2, "fix": 5}, bound: 11, mirrors: true},
+		"no bounce": {step: "adversarial: { max_rounds: 1 }",
+			want: map[string]int{"implement": 1, "review_first": 2, "review": 2, "fix": 4}, bound: 9, mirrors: true},
+		"the parser's default rounds": {step: "adversarial: { bounce: first_line }",
+			want: map[string]int{"implement": 1, "review_first": 3, "review": 2, "fix": 5}, bound: 15},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rp := parse(t, tc.step)
+			counts := previewTypicalCounts(rp, 1, 1)
+			if !maps.Equal(counts, tc.want) {
+				t.Errorf("counts = %v, want %v", counts, tc.want)
+			}
+			if bound := recipe.StageBound(rp, 1, 1); bound != tc.bound {
+				t.Errorf("StageBound(rp, 1, 1) = %d, want %d", bound, tc.bound)
+			}
+			sum := 0
+			for _, c := range counts {
+				sum += c
+			}
+			if tc.mirrors && sum != tc.bound {
+				t.Errorf("typical stages = %d, the bound = %d", sum, tc.bound)
+			}
+		})
+	}
+}
+
 // TestBudgetPreviewTypicalCountsHonourTheRoundKnobs: the typical run is one
 // round of each loop, but a knob at 0 leaves a loop out of the run
 // altogether, so its stages leave the count too rather than being counted at

@@ -640,7 +640,7 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 				return launchResult{}, err
 			}
 			if needsRecipeImage(spec, agentRecipe) {
-				if err := checkCloneRecipeImage(env.lc, spec, warn); err != nil {
+				if err := checkCloneRecipeImage(ctx, env.lc, spec, warn); err != nil {
 					return launchResult{}, err
 				}
 			}
@@ -2288,17 +2288,29 @@ func recipeForLaunch(ctx context.Context, cfg *config.Config, spec *task.Spec) *
 	}
 	data := []byte(spec.Recipe.YAML)
 	if len(data) == 0 {
-		// A repository recipe: task.json carries its name alone (the
-		// runner reads the file at the task's ref), so the launcher reads
-		// the same file from its own checkout of the repository.
-		if root == "" {
-			return nil
-		}
-		var found bool
-		var err error
-		if data, found, err = recipe.ReadRepoFile(root, spec.Recipe.Name); err != nil || !found {
-			return nil
-		}
+		return repoRecipeFrom(spec, root)
+	}
+	rcp, ps := recipe.Parse(data)
+	if len(ps) > 0 {
+		return nil
+	}
+	return rcp
+}
+
+// repoRecipeFrom is a repository recipe's own file: task.json carries its
+// name alone (the runner reads the file at the task's ref), so the launcher
+// reads the same file from its own checkout of the repository. nil when this
+// checkout is not the repository's, the file is not there, or it does not
+// parse — the runner's bootstrap is the backstop for all three, and the
+// image gates judge what it returns the same way they judge an embedded
+// recipe (repoRecipeForGate).
+func repoRecipeFrom(spec *task.Spec, root string) *recipe.Recipe {
+	if root == "" {
+		return nil
+	}
+	data, found, err := recipe.ReadRepoFile(root, spec.Recipe.Name)
+	if err != nil || !found {
+		return nil
 	}
 	rcp, ps := recipe.Parse(data)
 	if len(ps) > 0 {
