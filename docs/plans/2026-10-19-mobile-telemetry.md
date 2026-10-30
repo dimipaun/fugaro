@@ -66,9 +66,14 @@ date and the same condition.
   packages and `expo-build-properties` are now in `mobile/package.json`, `mobile/firebase.json`
   exists, and `mobile/app.config.js` registers the config plugins; the native config files are
   still absent from the tree, and are ignored by `mobile/.gitignore` so they stay absent.
-  **Still to come, in P7.1b**: the build-time guard (**D260**) and the ad-ID walk, this
-  document's file list and status lines, and `shared/telemetry-consent/` with
-  `mobile/src/telemetry/`.
+  **Amended again 2026-10-30 (Task P7.1b, the second half of P7.1)**: the
+  build-time guard for the native config files (**D260**) and the ad-ID walk
+  are in the tree, so **P7.1 is built** and this document's status lines say so;
+  the native config files themselves are still absent, and are ignored by
+  `mobile/.gitignore` so they stay absent. **Still to come, in P7.2–P7.5**:
+  `shared/telemetry-consent/` with `mobile/src/telemetry/`, the always-on
+  statement and the link, the closed event allow-list and the scan that holds
+  it, and the store labels and the website's privacy paragraph.
 - **It runs no live step and it holds no secret.** The Firebase project is created by the
   owner, the native config files are delivered by EAS from the owner's own secrets, and **no
   agent creates a Firebase project, runs `eas build`, `eas secret:create` or `eas submit`, or
@@ -345,11 +350,11 @@ ad-ID half is unaffected, and §7.4's build-time test holds both halves.
 |---|---|---|---|
 | Analytics collection, native | Android, `AndroidManifest.xml` `<meta-data>` | **`firebase_analytics_collection_enabled`** | `true` — **D255's always-on answer**: the build that carries the SDK collects |
 | Analytics collection, native | iOS, `Info.plist` | **`FIREBASE_ANALYTICS_COLLECTION_ENABLED`** | `true`, the same answer |
-| Crashlytics collection, native | Android, `AndroidManifest.xml` `<meta-data>` | **`firebase_crashlytics_collection_enabled`** | `true`, the same answer |
+| Crashlytics collection, native | Android — **not a manifest requirement, corrected 2026-10-30**: the Crashlytics library's own library manifest hardcodes `firebase_crashlytics_collection_enabled` to `false`, and RNFirebase's init provider turns collection on from `firebase.json` (the row below) | **`crashlytics_auto_collection_enabled`**, read from `firebase.json`; the manifest name is the library's and is not written by this app | `true`, the same answer — carried by `firebase.json`, not by an `AndroidManifest.xml` `<meta-data>` entry |
 | Crashlytics collection, native | iOS, `Info.plist` | **`FirebaseCrashlyticsCollectionEnabled`** | `true`, the same answer |
 | Advertising-id collection, native | Android, `AndroidManifest.xml` `<meta-data>` | **`google_analytics_adid_collection_enabled`** | `false` |
 | Ad-personalisation signals, native | Android, `AndroidManifest.xml` `<meta-data>` | **`google_analytics_default_allow_ad_personalization_signals`** | `false` |
-| Ad-ID support, linked at all | iOS, the Analytics pod `@react-native-firebase/analytics` makes CocoaPods link | **the Analytics variant with no ad-ID support** — the app links **no `AdSupport` framework** at all. **The pod/plugin option's exact name is to VERIFY** (§14, and the paragraph after this table) | ad-ID support **not linked** |
+| Ad-ID support, linked at all | iOS, the Analytics pod `@react-native-firebase/analytics` makes CocoaPods link | **`ios.withoutAdIdSupport`** — the Analytics config plugin's option, which writes `$RNFirebaseAnalyticsWithoutAdIdSupport = true` into the Podfile so the pod links `FirebaseAnalyticsCore` and **no `AdSupport` framework**. **RESOLVED 2026-10-30** against the pinned `27.1.0` source (`plugin/src/pluginConfig.ts`, `plugin/src/ios/podfile.ts`, `RNFBAnalytics.podspec`) | ad-ID support **not linked** |
 | Advertising-id permission, declared at all | Android, `AndroidManifest.xml` `<uses-permission>` | **`com.google.android.gms.permission.AD_ID`** — **removed** from the merged manifest at prebuild (`tools:node="remove"`) | absent (not declared) |
 | Analytics auto-collection, the React Native layer | `firebase.json` at the app root, under `react-native` | **`analytics_auto_collection_enabled`** | `true`, the same answer |
 | Crashlytics auto-collection, the React Native layer | `firebase.json` at the app root, under `react-native` | **`crashlytics_auto_collection_enabled`** | `true`, the same answer |
@@ -381,28 +386,29 @@ structural, three ways, and none of them is a sentence in a policy document:
    `com.google.android.gms.permission.AD_ID`, which is what the Play Console reads as an
    advertising-id app. P7.1 therefore **removes the permission at prebuild**
    (`<uses-permission android:name="com.google.android.gms.permission.AD_ID" tools:node="remove"/>`,
-   or the plugin's own option for it if the plugin has one — **VERIFY** which, per §14).
+   through Expo's own `android.blockedPermissions` — **RESOLVED 2026-10-30**: the pinned
+   `@react-native-firebase` config plugins have **no** option for it, so prebuild is the site
+   of the removal, per §14).
 3. **iOS, no ad-ID support linked at all.** The app links the Firebase Analytics variant that
    **does not support the advertising identifier**, so the `AdSupport` framework is not in the
-   binary and there is no id for a later misconfiguration to read. The exact pod or plugin option
-   that selects it — the `@react-native-firebase/analytics` podspec's variant, or the config
-   plugin's iOS option — is **to VERIFY against `@react-native-firebase`'s own documentation**,
-   and the plan says so rather than naming one from memory (§14). **How it is verified**, at
-   P7.1's first commit and before the first store build: read the pinned version's
-   `node_modules/@react-native-firebase/analytics` podspec and `node_modules/@react-native-firebase/app`
-   config-plugin source for the option, apply it, run `npx expo prebuild`, and then read the
-   generated `ios/Podfile.lock` for `FirebaseAnalytics` and for the **absence** of `AdSupport`
-   (and read the Android manifest for the absent `AD_ID` permission, point 2). If the SDK turns
-   out to offer no such option, the fallback is the pod the docs name for the ad-ID-free
-   variant, and if there is none, **the promise D255 keeps is not buildable as written** — the
-   advertising-identifier ban survives the owner's always-on answer and is not contingent on it
-   — which is a finding for the owner, not a sentence to soften here.
+   binary and there is no id for a later misconfiguration to read. The pod or plugin option
+   that selects it is **`ios.withoutAdIdSupport`**, the `@react-native-firebase/analytics`
+   config plugin's option — **RESOLVED 2026-10-30 against the pinned `27.1.0` source**
+   (`plugin/src/pluginConfig.ts:6`, `plugin/src/ios/podfile.ts:11`, `RNFBAnalytics.podspec:59-64`)
+   rather than from memory (§14), and P7.1a applies it. **How it is verified**, on a machine
+   that prebuilds: read the generated `ios/Podfile.lock` for `FirebaseAnalytics` and for the
+   **absence** of `AdSupport` (and read the Android manifest for the absent `AD_ID` permission,
+   point 2). No run of this repository prebuilds — the generated files are not committed — so
+   that read is the owner's, at the first store build.
 
 **The build-time test (§7.4's third test, P7.1).** A Node test in the app fails the build if
 **either** the generated native config **or** the plugin options enable ad-ID collection: the
-Android manifest must carry the two collection switches as `true`, the two ad switches as
-`false` and must not declare the `AD_ID` permission, and the iOS side must not link
-`AdSupport`. It is written the way the app's other
+two Android ad switches must be `false` in `mobile/firebase.json` (the library's build step
+turns them into manifest placeholders), the merged manifest must not declare the `AD_ID`
+permission, and the iOS side must not link `AdSupport` — **corrected 2026-10-30**: it does not
+assert a manifest value for Crashlytics collection, whose switch the library's own manifest
+hardcodes off and RNFirebase's init provider turns on from `firebase.json`. It is written the
+way the app's other
 fences are — with a **planted control**, a copy of the generated files with the switch flipped
 to `true`, so the rule is proved able to fail before the real files are judged. **On a machine
 with no prebuilt native project the test checks the plugin options and `mobile/firebase.json`
@@ -490,7 +496,8 @@ what is open is this plan's **stronger** sentence, that the app stores no such v
 value is written into this repository by that**: this section names the two values' *kinds*
 and never a value, and nothing here is a secret-shaped literal. **And no task is approved by
 it**: D259's acceptance is a ruling, not a green light — the gate was passed separately, on
-2026-10-22 — and the app still wires **no** Firebase SDK, because P7.1 is unbuilt.
+2026-10-22 — and the app **still carries no telemetry module**, because P7.2–P7.5 are unbuilt
+(**P7.1's wiring is built**, as of 2026-10-30).
 
 **The second fence, and the owner's ruling leaves it shut.** `SECRET_SHAPES` is not
 the only list D111's item count is written into. **`SECRET_ITEMS`** — `mobile/src/accounts/secret.js`,
@@ -761,12 +768,13 @@ shape the tree already uses (`mobile/src/mailbox/write-path.test.js`,
    the app carries no advertising identifier (§4.2, §8.3), so the app's own config test — which
    already walks `app.json` for a credential with a planted `AIza…` control — gains a third walk
    over the **generated native config and the plugin options**:
-   - `android/app/src/main/AndroidManifest.xml` must carry
-     `firebase_analytics_collection_enabled` and `firebase_crashlytics_collection_enabled` as
-     **`true`** — D255's answer, and the half that changed when it was given — and
-     `google_analytics_adid_collection_enabled` and
-     `google_analytics_default_allow_ad_personalization_signals` as **`false`**, and must
-     **not** declare `com.google.android.gms.permission.AD_ID`;
+   - the two Android ad switches `google_analytics_adid_collection_enabled` and
+     `google_analytics_default_allow_ad_personalization_signals` must be **`false`** in
+     `mobile/firebase.json` (the library reads them at build time and writes them as manifest
+     placeholders), and `android/app/src/main/AndroidManifest.xml` must **not** declare
+     `com.google.android.gms.permission.AD_ID` — **corrected 2026-10-30**: the walk does not
+     assert a manifest value for Crashlytics, whose collection the library's own manifest
+     hardcodes off and RNFirebase's init provider turns on from `firebase.json` (§4.2);
    - the iOS project must not link `AdSupport` (read from the generated `Podfile.lock`), and the
      plugin options that select the ad-ID-free Analytics variant must be present (§4.2's
      **VERIFY** item);

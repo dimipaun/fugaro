@@ -188,6 +188,22 @@ agent runs any of the commands below**: each needs the owner's Expo, Apple and
 Google accounts, and no Expo token, App Store Connect key or Play
 service-account key goes into an agent's session (D120, Global Constraint 9).
 
+**A development build, not Expo Go (D260).** The Firebase SDKs are native and
+the app reads its Firebase configuration from native config files, so **Expo Go
+cannot run this app** — every build below is a **development build** made by
+EAS, and `npx expo start` against Expo Go is not a way to run it. The two native
+files (`google-services.json` for Android, `GoogleService-Info.plist` for iOS)
+reach the build as **EAS file environment variables**: on the worker each
+variable's value is the path EAS wrote the file to, and the build's config
+resolves that path onto `ios.googleServicesFile` / `android.googleServicesFile`
+for the `@react-native-firebase` config plugin. **Neither file is ever
+committed** — `mobile/.gitignore` names both — so an EAS build whose environment
+carries no such file (or a path that names no file) **fails at config time, by
+design**: the failure names the platform, the variable `mobile/app.config.js`
+reads for it, and this section, and it is a stop rather than a build that ships
+a nameless Firebase app. The guard is `native-config-guard.js`, and
+`src/native-config-guard.test.js` is its test.
+
 **Prerequisites: run `npm install` in `mobile/` first; the SDK is Expo SDK 58.**
 The manifest declares the app's runtime packages (`expo` 58.x, `react-native`
 0.88, `react` 19.3, `expo-secure-store` 58.x and
