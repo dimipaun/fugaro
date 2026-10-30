@@ -5,7 +5,9 @@
 **Approved; nothing is implemented yet.** The owner approved every task on 2026-10-30, with these
 exceptions: T2.1 and T2.2 stay draft until the processor is named (O4); O1 and O2 are counsel's; T3.2
 (O6), the checks X1 and X2 write (270–273) and every OWNER-RUN part below are the owner's. The owner
-also named L5.2's model: `claude-opus-5-5` as this repository's level-2 reviewer. CLI work ships in
+also named L5.2's model: `deepseek/deepseek-v4-pro` through OpenRouter as this repository's level-2
+reviewer, with no new secret; a Claude reviewer on the owner's OAuth token waits for the per-stage
+credential setting ([design/mixed-credentials.md](../design/mixed-credentials.md) §5), a later chain. CLI work ships in
 0.15.0 and console work in console 0.116.0.
 
 This plan builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md). Where the
@@ -265,8 +267,8 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 #### L5.2 This repository's `fugaro.yaml` gets a different level-2 model (O11)
 
 - **Files:** `fugaro.yaml`, `docs/dogfooding.md` (its statement of this repository's setup).
-- **Interfaces:** `agent.models.reviewer` names a model other than the coder's `deepseek/deepseek-v4.1-flash` (the owner named `claude-opus-5-5` on 2026-10-30, so the senior review runs in the job), so a `standard` launch here no longer resolves to L1 = L2 (D721). The comment above `agent:` and `docs/dogfooding.md`'s statement of this setup change with it.
-- **OWNER-RUN part:** the owner names the model. If it needs a credential this repository's jobs do not mount yet (for example `anthropic-api-key` for a Claude reviewer), the owner stores it with `fugaro secrets set <name>` in their own terminal and runs `fugaro update --repo`. No agent performs either step.
+- **Interfaces:** `agent.models.reviewer` names a model other than the coder's `deepseek/deepseek-v4.1-flash` (the owner named `deepseek/deepseek-v4-pro` on 2026-10-30: same route, no new secret; D721 warns on the shared family and does not refuse), so a `standard` launch here no longer resolves to L1 = L2 (D721). The comment above `agent:` and `docs/dogfooding.md`'s statement of this setup change with it.
+- **OWNER-RUN part:** none. The owner named the model (2026-10-30); it is served by the route and key the coder already uses, so no credential is added.
 - **Tests and command:** `fugaro validate --json` in this checkout (no refusal), then `GOFLAGS=-p=2 go test ./internal/cli -run Docs -count=1` (`docs/dogfooding.md` is pinned).
 - **Depends on:** none. It must merge before L3.2.
 - **Red step:** none in this task. L3.2's `TestResolveLevelsRefusesFirstLineRecipeWithCoderEqualsReviewer` is the case this file would hit.
