@@ -134,12 +134,12 @@ const repo = site.facts.repository
             <p>
               The site's own code asks for one page view per page and no user id, with Google
               Signals and ads personalisation off. The four campaign pages are the one place it
-              asks for more: three events to the same property, under their own names —
-              <code>demo_booked</code> when a booking is made in Calendly's widget,
-              <code>install_click</code> on a press of <strong>Install free</strong> and
-              <code>whatsapp_click</code> on a press of the chat link — each carrying nothing but
-              its own name, so no campaign parameter and no field of Calendly's message reaches
-              Google. Google Analytics 4 anonymises your IP address by default.
+              asks for more: three events to the same property, under their own names. A booking
+              made in Calendly's widget is reported as <code>demo_booked</code>; a press of{' '}
+              <strong>Install free</strong> as <code>install_click</code>; a press of the chat
+              link as <code>whatsapp_click</code>. Each carries nothing but its own name, so no
+              campaign parameter and no field of Calendly's message reaches Google. Google
+              Analytics 4 anonymises your IP address by default.
             </p>
           </div>
 
