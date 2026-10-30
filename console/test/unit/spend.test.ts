@@ -2000,6 +2000,30 @@ describe('the caps panel', () => {
     expect(all(tree, 'spend-cap-at-cap').length).toBe(2)
   })
 
+  it('draws the headroom the "at cap" word is measured from, bar or no bar', () => {
+    // `headroom_usd` is the room the CLI finds left under whichever cap binds --
+    // the repository's own and the project-wide one, whichever is tighter
+    // (`internal/cli/budget.go`) -- so a repository the global cap is holding
+    // back is at its limit while its own counted dollars are still under its own
+    // cap, and a repository whose cap nobody set is at its limit with no bar at
+    // all. The row draws the headroom beside the word for exactly that reason: a
+    // state whose figure is off-screen is one the reader cannot check.
+    const held = buildSpendModel(DAY_REPORT, {
+      ...BUDGET,
+      repos: [{ ...THE_REPOS[1], counted_usd: 0, daily_cap_usd: null, headroom_usd: 0 }],
+    })
+    const row = firstRepoRow(renderSpend(factory, held, 'light'))
+    expect(row.getAttribute('data-at-cap')).toBe('true')
+    expect(texts(row, 'spend-cap-at-cap')).toEqual(['at cap'])
+    // The no-daily-cap case: no geometry to contradict the word, the cap `n/a`
+    // with its reason, and the measured zero that is the ground of the state
+    // drawn beside it.
+    expect(all(row, 'spend-cap-bar-fill')).toEqual([])
+    expect(all(row, 'spend-cap-bar-svg')).toEqual([])
+    expect(texts(capFigureOf(row, 'spend-cap-daily'), 'spend-cap-daily')).toEqual([UNAVAILABLE_MARK])
+    expect(texts(capFigureOf(row, 'spend-cap-headroom'), 'spend-cap-headroom')).toEqual(['$0.00'])
+  })
+
   it('draws no bar for a repository with no daily cap, and no sum in its place', () => {
     const row = all(renderSpend(factory, modelOf(), 'light'), 'spend-cap-repo')[1]
     if (row === undefined) throw new Error('no second repository row')

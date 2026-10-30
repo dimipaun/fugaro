@@ -488,12 +488,15 @@ plus the reading), the three money accounts among them: `billed` is the document
 and in no bar. A repository's **daily-cap bar** draws the CLI's own `counted_usd` against its
 `daily_cap_usd` (`counted / daily_cap_usd`, clamped to the bar's hundred-unit box and
 stretched to the window by `preserveAspectRatio="none"`, `aria-hidden` geometry as the chart
-is), with the counted dollars and the cap written as text beside it. That is the CLI's
+is), with the counted dollars, the cap and the row's `headroom` written as text beside it.
+That is the CLI's
 enforcement figure and not a sum the console made: `counted_usd` is what the installation has
 reserved and not released, a ceiling on spend, and what separates it from `spent_usd` is
 `leased_usd` — which is why no bar and no figure here is `billed + compute`, and why the
 renderer computes no sum of its own. A repository with no daily cap draws **no bar** and
-writes its cap `n/a` with its reason, never a zero-length bar and never a `$0.00`.
+writes its cap `n/a` with its reason, never a zero-length bar and never a `$0.00` — its
+`headroom` is still drawn, because that is the figure the `at cap` word is measured from
+(below).
 
 States: killed (the kill banner, `data-killed="true"`); partial/hollow
 (`data-partial="true"` / `data-hollow="true"` on the key, the row and the bar, plus the
@@ -519,9 +522,13 @@ unknown breakdown (`li.spend-dim-unknown` with `data-dimension="unknown"`, under
 `ol.spend-switch` whose own `data-known="false"` is what says the document used a word this
 console does not know);
 unknown cap scope (`data-scope-known="false"`, "a scope this console does not know");
-at cap (`data-at-cap="true"` on the `li.spend-cap-repo` **and** the word `at cap` in
-`span.spend-cap-at-cap` — the fill and the word go amber, and the word is what carries the
-fact, never the tone alone, §3.5);
+at cap (`data-at-cap="true"` on the **`li.spend-cap-repo`** itself, and the word `at cap` in
+`span.spend-cap-at-cap`, drawn beside the row's own `headroom` — the room the CLI finds left
+under **whichever** cap binds, the repository's own or the project-wide one, whichever is
+tighter — and beside the counted dollars and the cap when the repository has one of its own;
+so a repository the global cap is holding back, or one whose cap nobody set at all, still
+says it is at its limit, with no bar drawn for it. The word and, where there is a bar, the
+fill go amber, and the word is what carries the fact, never the tone alone, §3.5);
 by-person read refused or never made (`section.spend-people` with `data-available="false"`,
 the whole panel muted, the sentence drawn as the **text** of `p.spend-people-reason` — the
 CLI's own refusal, or the console's reason for having made no read); by-person panel private
@@ -530,8 +537,10 @@ read was resolved for, drawing the document's totals and **no row at all**); run
 never started (a count in no row and no total, drawn after the totals as
 `span.spend-people-unlaunched` beside the word `never started` in
 `span.spend-people-unlaunched-word`).
-**There is no loading state, no stale state and no halted state on this screen**, and no
-"cap reached" marker (as on Live).
+**There is no loading state, no stale state and no halted state on this screen.** The one
+cap-reached marker it draws is the caps panel's own word `at cap` (above), beside the
+figures it was measured from; nothing else on the screen carries one, and a rule may not
+read the tone alone as the state.
 
 Formatting: money is `usd` (2 decimals, grouping, sign before `$`), shares are `percent`
 (1 decimal, used only for `data-height`), time is `hours` (2 decimals + ` h`), counts are
@@ -837,7 +846,7 @@ carry `data-theme` from code — see [§3.6](#36-how-the-theme-is-chosen).
 | the rail's row states (§4.1) | chrome (the installation rail) | `span.console-rail-state` with the **word** `running` / `silent` / `idle` beside its glyph `●` / `▲` / `○`. **Not a state the code emits today** — the rail is the canvas's addition, and what a row reads is §4.1's open item — so whichever task draws the row draws the word with it: the word is what makes the tone redundant, and the collapsed rail keeps it in the row's accessible name |
 | not built | Projects (`policy`, `enrollment`) | `data-state="not-built"` + a `projects-because` sentence |
 | empty | picker (status line), Live (a `gap` bar, and `p.live-review-empty` with the review inbox's own sentence), Spend (a `gap` key and row, a caps note) | the console's own sentence, never an empty box. The inbox's sentence says "in this feed" on purpose: `ready[]` ships empty when the runs bucket could not be read as well as when nothing is waiting, and nothing in the document separates them — `queued_note` is absent both when the read succeeded and when it has not happened yet (§2.3) |
-| cap reached | **no attribute — not a state in the code.** The cap is a `percent` reading and the repository bar's `data-fill`; the fleet budget panel draws instead a sentence, `p.live-fleet-full` ("the cap is fully committed: new runs wait in the queue until a lease settles"), when a measured headroom is 0 | the stylesheet may colour a threshold; the code emits no flag — and a rule keyed on `p.live-fleet-full` may not read it as a state (§2.3) |
+| cap reached | Live: **no attribute — not a state in the code.** The cap is a `percent` reading and the repository bar's `data-fill`; the fleet budget panel draws instead a sentence, `p.live-fleet-full` ("the cap is fully committed: new runs wait in the queue until a lease settles"), when a measured headroom is 0. Spend: `data-at-cap` (`true`\|`false`) on the caps panel's `li.spend-cap-repo`, beside the word `at cap` (§2.4) | on Live the stylesheet may colour a threshold; the code emits no flag — and a rule keyed on `p.live-fleet-full` may not read it as a state (§2.3). Spend does emit one, and it is the **row's**, not the bar's: a row whose headroom ran out under the project's cap carries it with no bar drawn |
 | loading | **none — not a state in the code** | the entry draws nothing before the handshake answers |
 
 ### 2.10 Numbers, money and time — what the stylesheet must align
@@ -1414,7 +1423,7 @@ the code already emits**, and the stylesheet must never be the only carrier of a
 | notional / estimated | the `~$` / `est.` prefix **in the number itself** |
 | partial | the `(partial)` marker text |
 | degraded / polling | the words `degraded` and `polling` |
-| cap near / over | the **number**: the percent reading and the repository bar's `data-fill`, and, on the fleet budget panel, the cap, the legend's figures and the full-cap banner's own sentence. On Spend, the caps panel's **word** `at cap` in `span.spend-cap-at-cap`, drawn with the `counted` dollars and the `daily cap` it was measured from, beside the bar and never instead of them |
+| cap near / over | the **number**: the percent reading and the repository bar's `data-fill`, and, on the fleet budget panel, the cap, the legend's figures and the full-cap banner's own sentence. On Spend, the caps panel's **word** `at cap` in `span.spend-cap-at-cap`, drawn with the figures it was measured from — the row's `headroom`, and the `counted` dollars and the `daily cap` where the repository has a cap of its own — beside the bar and never instead of them |
 | not-built | the panel's own sentence |
 | a run's rigor mode | the mode's own **word** — `POC`, `Startup`, `Pro`, `Critical`, `Hotfix` — in the chip on a Live row (§2.3), the MODE cell on Projects (§2.5) and the Rigor row on the run detail (§2.6). **This mark carries no colour at all**, and the row is here to say so: the five modes have no colour of their own in this tree, so the word is the whole of the mark and a rule must not paint the modes apart |
 
@@ -1422,8 +1431,8 @@ The rules this makes binding on the stylesheet: (1) **a colour never replaces a 
 (2) a state colour is used on a **fill, a rule or a badge**, and the badge keeps its text;
 (3) the one state that was a colour-only reading — a cap bar past its threshold — is
 always drawn beside the numbers it is made of and, on Spend's caps panel, beside its own
-word: the percent reading on Live, and the counted dollars, the cap and the word `at cap` on
-Spend, so the colour is redundant by construction;
+word: the percent reading on Live, and the row's `headroom`, its counted dollars, its cap and
+the word `at cap` on Spend, so the colour is redundant by construction;
 (4) `--ok` is used for *measured and inside the cap* **and for the rail's `running` row** —
 the installation the console is reading now, whose word is drawn beside its dot (§4.1), so
 the tone is still a state and not decoration — and never decoratively, per §6.1 rule 3

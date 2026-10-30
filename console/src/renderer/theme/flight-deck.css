@@ -2213,6 +2213,13 @@ div.spend-cap-limit[data-limit='max_reserve'] {
   padding-left: var(--space-xs);
 }
 
+/* The kill banner is a band and not a figure: it is appended into the global
+ * block, whose own line is a wrapped row of figures now, and a band that hugged
+ * its own text would read as one more figure of that row. */
+div.spend-cap-global div.spend-kill {
+  flex-basis: 100%;
+}
+
 div.spend-cap-figure {
   display: flex;
   align-items: baseline;

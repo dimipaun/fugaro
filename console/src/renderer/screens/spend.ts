@@ -2872,12 +2872,15 @@ function capsBarUnits(share: number): string {
   return chartUnits(Math.min(1, share) * CAPS_BAR_UNITS)
 }
 
-/** capsAtCap is whether a repository's daily cap is reached: either the headroom
- * the document reports is a **measured** value of zero or less (the CLI measures
- * it under both the repository's own cap and the global one, so a repository the
+/** capsAtCap is whether a repository is at its limit: either the headroom the
+ * document reports is a **measured** value of zero or less (the CLI measures it
+ * under the repository's own cap and the project-wide one, so a repository the
  * project's cap is holding back is at its limit too), or the counted dollars are
- * at or past the cap the row carries. An unavailable headroom is not a zero: a
- * repository whose cap nobody set draws neither the word nor the tone. */
+ * at or past the cap the row carries. Both grounds are figures the row draws, so
+ * the word is never beside numbers that contradict it -- the first needs no cap
+ * of the repository's own and therefore no bar. An unavailable headroom is not a
+ * zero: a row the document reports no headroom for, under a cap its counted
+ * dollars have not reached, draws neither the word nor the tone. */
 function capsAtCap(row: SpendCapRow): boolean {
   if (row.headroom.value !== null && row.headroom.value <= 0) return true
   const cap = row.dailyCap.value
@@ -2889,6 +2892,13 @@ function capsAtCap(row: SpendCapRow): boolean {
  * against `daily_cap_usd`, as `aria-hidden` geometry -- the two figures it draws
  * are written as text beside it, and the words `at cap` are written when the cap
  * is reached, so the drawing loses no reader a fact.
+ *
+ * The row's `headroom` is written beside them too, because the word `at cap` is
+ * measured from it and not from the bar: the CLI reports the room left under
+ * whichever cap binds, the repository's own or the project-wide one, so a
+ * repository the global cap is holding back is at its limit with its counted
+ * dollars still **under** its own cap -- and, if nobody set that cap, with no bar
+ * at all. A state whose figure is off-screen is a state the reader cannot check.
  *
  * **The figure the bar draws is `counted_usd` and nothing else.** `counted_usd`
  * is what the daily cap is enforced against (`budget.Counters.Counted`: the
@@ -2923,6 +2933,7 @@ function capsBar(parent: ScreenElement, factory: SpendFactory, row: SpendCapRow,
   }
   capFigure(element, factory, CAPS_COUNTED_WORD, row.counted, 'spend-cap-counted')
   capScopeCell(element, factory, CAPS_DAILY_CAP_WORD, row.dailyCap, row.dailyScope, 'data-daily-scope', 'spend-cap-daily')
+  capFigure(element, factory, CAPS_HEADROOM_WORD, row.headroom, 'spend-cap-headroom')
   if (atCap) literal(cell(element, factory, 'span', 'spend-cap-at-cap'), CAPS_AT_CAP_WORD)
   return element
 }
