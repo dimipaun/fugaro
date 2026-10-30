@@ -176,12 +176,13 @@ var doctorLookPath = exec.LookPath
 
 func newDoctorCmd() *cobra.Command {
 	var (
-		cloud    cloudOptions
-		dir      string
-		plugin   bool
-		checkApp bool
-		strict   bool
-		asJSON   bool
+		cloud               cloudOptions
+		dir                 string
+		plugin              bool
+		checkApp            bool
+		checkBitbucketToken bool
+		strict              bool
+		asJSON              bool
 	)
 	cmd := &cobra.Command{
 		Use:   "doctor [--json] [--plugin] [--strict]",
@@ -217,23 +218,30 @@ fugaro setup as the fix, rather than guessing at a project.
 Exit 1 when a check fails, with the one-line fix to run.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runDoctor(cmd, cloud, dir, plugin, strict, asJSON, checkApp)
+			return runDoctor(cmd, cloud, dir, plugin, strict, asJSON, checkApp, checkBitbucketToken)
 		},
 	}
 	addCloudFlags(cmd, &cloud)
 	cmd.Flags().StringVar(&dir, "dir", ".", "a directory in the checkout, for the plugin wiring")
 	cmd.Flags().BoolVar(&plugin, "plugin", false, "check only the plugin's wiring (offline, no credentials)")
 	cmd.Flags().BoolVar(&checkApp, "check-github-app", false, "also check each recorded GitHub App is installed with the permissions runs ask for: reads the App's private key from Secret Manager with your own credentials, in memory only, for one signed token (refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it)")
+	cmd.Flags().BoolVar(&checkBitbucketToken, "check-bitbucket-token", false, "also check the credentials service's bundle holds a Bitbucket token and that Bitbucket still accepts it: reads the bundle with your own credentials, in memory only, for one GET /repositories/<repo> per proxied repository (refused in a coding agent's session)")
 	cmd.Flags().BoolVar(&strict, "strict", false, "fail on a stale, unpinned, foreign or unwired plugin (CI mode)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print machine-readable output")
 	return cmd
 }
 
-func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnly, strict, asJSON, checkApp bool) error {
+func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnly, strict, asJSON, checkApp, checkBitbucketToken bool) error {
 	ctx := cmd.Context()
-	// Before anything is read: the key is never read in a coding agent's session.
+	// Before anything is read: neither the App's key nor the bundle's Bitbucket
+	// token is read in a coding agent's session.
 	if checkApp {
 		if err := refuseAppKeyReadInAgent(os.Getenv); err != nil {
+			return err
+		}
+	}
+	if checkBitbucketToken {
+		if err := refuseBitbucketTokenReadInAgent(os.Getenv); err != nil {
 			return err
 		}
 	}
@@ -381,6 +389,11 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	}
 	o.Checks = append(o.Checks, doctorRunsBucketIAM(ctx, lc, crmSvc)...)
 	o.Checks = append(o.Checks, doctorLauncherReach(ctx, lc)...)
+	// The secrets-brokering checks that read the installation rather than this
+	// checkout (plan B1.9): the credentials service and its callers' invoker
+	// grants, the age of the stored credentials, and — behind
+	// --check-bitbucket-token, already refused above — what the bundle holds.
+	o.Checks = append(o.Checks, doctorCredentialsServiceDeployed(ctx, lc, crmSvc)...)
 	// The Batch backend's live checks (plan 2026-10-19-compute-backend.md Task
 	// 8 step 5, design §4.4). They return nothing for an installation with no
 	// batch block: the backend's own name is refused by internal/localcfg until
@@ -409,6 +422,10 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	projSM, projSecrets, projOK := doctorProjectSecrets(ctx, lc)
 	o.Checks = append(o.Checks, doctorProjectSecretAccessorChecks(ctx, lc, projSM, projSecrets)...)
 	o.Checks = append(o.Checks, doctorSecretManagerChecks(ctx, lc, projSM, crmSvc)...)
+	o.Checks = append(o.Checks, doctorSecretRotationAge(ctx, lc, projSecrets, projOK)...)
+	if checkBitbucketToken {
+		o.Checks = append(o.Checks, doctorBundleChecks(ctx, lc)...)
+	}
 	if c := projectAccountStoredCheck(lc, projSecrets, projOK); c != nil {
 		// Outside the checkout branch on purpose: an account job is the
 		// project's, not this repository's (the profile and the jobs it is
@@ -444,9 +461,13 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 						o.Checks = append(o.Checks, *c)
 					}
 					o.Checks = append(o.Checks, doctorSecretScopeChecks(facts, o.Secrets, projSecrets, projOK)...)
+					o.Checks = append(o.Checks, doctorBitbucketDirect(ctx, lc, repo, rf.Cfg.Git.Provider, facts)...)
 				}
 			}
 			if c := oauthTokenAllowedCheck(lc, repo, token, authOf(rf)); c != nil {
+				o.Checks = append(o.Checks, *c)
+			}
+			if c := doctorModelKeyInAgent(lc, rf); c != nil {
 				o.Checks = append(o.Checks, *c)
 			}
 		} else {
