@@ -128,7 +128,8 @@ func (r *run) noteIgnoredAB() {
 // cannot read the list cannot know the model is the owner's. The run's own
 // allow-list, price table and provider policy then judge the model the
 // ordinary way, as the coder the run is pinned to, because this runs before
-// checkBudget.
+// checkBudget — and a problem one of them reports about the coder pin is what
+// bootstrap reads as the arm's own refusal (modelRefusal, gateway.go).
 func (r *run) applyChallenger(a *config.Agent) error {
 	if !r.shadow {
 		return nil
@@ -163,47 +164,6 @@ func (r *run) refuseArm(reason string) error {
 	r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusFailed, runstore.OutcomeNone, reason
 	r.d.Log.Warn("the challenger arm was refused", "reason", reason)
 	return errors.New(reason)
-}
-
-// errArmModelRefused is the class of bootstrap failure that is a challenger
-// arm's own refusal rather than infrastructure: the run's policy refusing the
-// model the arm runs, which is a model this repository may not run (D556).
-// Nothing in the policy checks returns a type of its own for it — CheckAllowed
-// and CheckProviderPolicy report problems, and checkBudget joins them into a
-// plain error — so the class is decided by armModelRefusal below and never by
-// matching what a failing check's message happens to say.
-var errArmModelRefused = errors.New("the challenger's own model is refused")
-
-// armModelRefusal returns errArmModelRefused wrapping checkBudget's failure
-// when that failure belongs to the arm's own model, and nil when it does not.
-// Only a model this repository may not run is the arm's refusal (D556): an
-// infrastructure failure — a Vertex budget under enforce, a managed settings
-// directory the image cannot hold, a price table the run cannot build — ends a
-// challenger the way it ends any other run, as infra_error, and reporting it
-// as a refusal would hide a broken installation behind a decision the run
-// never made.
-//
-// The test is the champion's own shape: applyChallenger saved the coder this
-// run would have run without the arm (championCoder), and the same gate asked
-// again with that coder back in place can fail only over what the arm added.
-// A gate that fails either way failed over a condition both arms share; one
-// that passes without the arm failed over the arm's model alone. Asked this
-// way rather than by a second list of checks kept in step with checkBudget's,
-// a check added there is classified the day it is added.
-func (r *run) armModelRefusal(err error) error {
-	if !r.shadow || r.championCoder == "" {
-		// No arm, or an arm whose champion coder is unknown: nothing here may
-		// turn a failure into a refusal, so it stays what it was.
-		return nil
-	}
-	coder := r.cfg.Agent.Models.Coder
-	r.cfg.Agent.Models.Coder = r.championCoder
-	championGate := r.checkBudget()
-	r.cfg.Agent.Models.Coder = coder
-	if championGate != nil {
-		return nil
-	}
-	return fmt.Errorf("%w: %w", errArmModelRefused, err)
 }
 
 // mintGitAuth is the run's one git credential, minted for the life it must

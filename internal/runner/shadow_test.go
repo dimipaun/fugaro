@@ -479,7 +479,9 @@ func TestShadowChallengerCoderOnly(t *testing.T) {
 // TestShadowChallengerPolicyRechecked: a replayed or hand-edited task names
 // a challenger the run's own policy does not admit — the owner lists it, but
 // no route of this run serves it — and the run refuses it at bootstrap,
-// before any call and before the clone (D556).
+// before any call and before the clone (D556). The class it is recorded as is
+// the arm's own refusal, failed/none with the policy's reason, and never
+// infra_error, which would say the runner broke where the boundary held.
 func TestShadowChallengerPolicyRechecked(t *testing.T) {
 	g, _ := armGW(t, armCfg(t), "50", unroutedChallenger, armLayer)
 	pushes := countPushes(t, g.harness)
@@ -493,11 +495,9 @@ func TestShadowChallengerPolicyRechecked(t *testing.T) {
 	if !strings.Contains(rec.Reason, unroutedChallenger) {
 		t.Fatalf("the reason does not name the challenger: %q", rec.Reason)
 	}
-	if len(g.agent.calls) != 0 {
-		t.Fatalf("the agent ran %d stage(s) for a refused challenger", len(g.agent.calls))
-	}
-	if n := pushes(); n != 0 {
-		t.Fatalf("the remote accepted %d push(es) from a refused challenger", n)
+	if len(g.agent.calls) != 0 || pushes() != 0 || len(g.provider.State.PRs) != 0 {
+		t.Fatalf("a refused arm ran a stage or published: calls %d, pushes %d, PRs %d",
+			len(g.agent.calls), pushes(), len(g.provider.State.PRs))
 	}
 }
 
@@ -576,31 +576,43 @@ func TestShadowBudgetBackendFailureIsInfraError(t *testing.T) {
 	})
 }
 
-// TestShadowModelRefusalStaysArmRefusal is the other half (D556): a model this
-// repository may not run is the arm's own refusal and is recorded as one —
-// failed/none with the policy's reason, and never infra_error, which would say
-// the runner broke where the boundary held. The challenger is the owner's (the
-// layer lists it) and it is the run's own policy that refuses it: no route of
-// this run serves the model, so the same check that judges a run's own pins
-// refuses it (TestShadowChallengerPolicyRechecked owns that path; this is the
-// class it is recorded as).
-func TestShadowModelRefusalStaysArmRefusal(t *testing.T) {
-	g, _ := armGW(t, armCfg(t), "50", unroutedChallenger, armLayer)
-	pushes := countPushes(t, g.harness)
-	rec, err := g.run(t, implement("feature"), review("ship", 0))
-	if err == nil {
-		t.Fatal("a challenger the run's policy does not admit was run")
+// TestShadowModelRefusalIsCoderPinsAlone: only the coder pin is the arm's
+// (D555), so a model this repository may not run that is *not* the
+// challenger's — here the reviewer pin, which both arms carry — is not the
+// arm's own refusal (D556) and ends the run infra_error/none, exactly as it
+// ends a run carrying no arm. The challenger itself is fine (the owner lists
+// it and a route serves it), so nothing about the arm is what the policy
+// refuses; recording it as the arm's decision would hide a run the champion
+// could not have run either.
+func TestShadowModelRefusalIsCoderPinsAlone(t *testing.T) {
+	cfg := strings.Replace(armCfg(t), "reviewer: "+sonnet, "reviewer: "+unroutedChallenger, 1)
+	if cfg == armCfg(t) {
+		t.Fatal("the fixture does not pin a reviewer")
 	}
-	if rec == nil || rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
-		t.Fatalf("record = %+v, want the arm's refusal", rec)
-	}
-	if !strings.Contains(rec.Reason, unroutedChallenger) {
-		t.Fatalf("the reason does not name the challenger's model: %q", rec.Reason)
-	}
-	if len(g.agent.calls) != 0 || pushes() != 0 || len(g.provider.State.PRs) != 0 {
-		t.Fatalf("a refused arm ran a stage or published: calls %d, pushes %d, PRs %d",
-			len(g.agent.calls), pushes(), len(g.provider.State.PRs))
-	}
+	t.Run("challenger", func(t *testing.T) {
+		g, _ := armGW(t, cfg, "50", challengerModel, armLayer)
+		pushes := countPushes(t, g.harness)
+		rec, err := g.run(t)
+		if err == nil || rec == nil || rec.Status != runstore.StatusInfraError || rec.Outcome != runstore.OutcomeNone {
+			t.Fatalf("record = %+v, err = %v; want an infra_error with outcome none", rec, err)
+		}
+		if !strings.Contains(rec.Reason, unroutedChallenger) {
+			t.Fatalf("the reason does not name the refused pin: %q", rec.Reason)
+		}
+		if len(g.agent.calls) != 0 || pushes() != 0 {
+			t.Fatalf("a run that stopped at bootstrap ran a stage or pushed: calls %d, pushes %d", len(g.agent.calls), pushes())
+		}
+	})
+	t.Run("no arm", func(t *testing.T) {
+		g, _ := armGWSpec(t, cfg, "50", armTask(""), armLayer)
+		rec, err := g.run(t)
+		if err == nil || rec == nil || rec.Status != runstore.StatusInfraError || rec.Outcome != runstore.OutcomeNone {
+			t.Fatalf("record = %+v, err = %v; want the same infra_error a run with no arm gets", rec, err)
+		}
+		if !strings.Contains(rec.Reason, unroutedChallenger) {
+			t.Fatalf("the reason does not name the refused pin: %q", rec.Reason)
+		}
+	})
 }
 
 // TestShadowHaltStaysHalt: a halt is not a refusal, whatever arm the run

@@ -1834,20 +1834,18 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	if err := r.checkBudget(); err != nil {
 		// These checks judged the challenger as this run's coder
-		// (applyChallenger), so a model this repository may not run is the
-		// arm's own refusal and is recorded as one (D556) rather than as
-		// infrastructure that failed. That class is the only one: everything
-		// else these checks can fail over — a Vertex budget, a settings
-		// directory, a price table — fails a challenger exactly as it fails a
-		// run carrying no arm, and is left to end the run infra_error
-		// (armModelRefusal classifies it). A halt is not a refusal either: a
-		// cap the run has reached stops a shadow exactly as it stops any
-		// other run.
-		var halted *HaltError
-		if !errors.As(err, &halted) {
-			if refusal := r.armModelRefusal(err); refusal != nil {
-				return r.refuseArm(err.Error())
-			}
+		// (applyChallenger), so the policy refusing *that* pin is the arm's
+		// own refusal and is recorded as one (D556) rather than as
+		// infrastructure that failed. Only the coder pin is the arm's: the
+		// pins both arms share, and everything else these checks can fail
+		// over — a Vertex budget, a settings directory, a price table — fails
+		// a challenger exactly as it fails a run carrying no arm, and is left
+		// to end the run infra_error (modelRefusal, gateway.go). A halt is
+		// not a refusal either: a cap the run has reached stops a shadow
+		// exactly as it stops any other run.
+		var refused *modelRefusal
+		if r.shadow && errors.As(err, &refused) && refused.coderPin {
+			return r.refuseArm(err.Error())
 		}
 		return err
 	}
