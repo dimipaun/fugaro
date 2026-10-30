@@ -14,10 +14,17 @@
 // `gcloud run services describe`, and this is a real token. It is attached to
 // every forwarded request as Bitbucket's git credential (`x-token-auth` Basic)
 // and appears in no log line, no error and no response: this program logs
-// counts and sizes only.
+// counts and sizes, and for a refusal by Bitbucket its path and challenge
+// scheme, and nothing else.
 //
 // The caller's own Authorization header is dropped rather than forwarded: the
 // only credential on the wire to Bitbucket is this service's own.
+//
+// Every answer it forwards carries X-Chk190-Upstream with Bitbucket's status,
+// and a 401 or 403 from Bitbucket is logged with its path and challenge
+// scheme: git reports every 401 as "could not read Username", whoever sent it,
+// and the mark is what tells the check's row a refusal by Bitbucket from one
+// by Cloud Run's front end, which never reaches this program.
 //
 // It is standard library only, and it is a throwaway: the production proxy is
 // internal/credsvc's Bitbucket route, with the repository, the run branch and
@@ -38,8 +45,9 @@ import (
 )
 
 const (
-	healthPath = "/chk190/health"
-	statsPath  = "/chk190/stats"
+	healthPath   = "/chk190/health"
+	statsPath    = "/chk190/stats"
+	upstreamMark = "X-Chk190-Upstream"
 )
 
 var (
@@ -190,8 +198,15 @@ func serveProxy(w http.ResponseWriter, r *http.Request, client *http.Client, ups
 		http.Error(w, "chk190: bad upstream request", code)
 		return
 	}
+	// The wrapper hides the body's length from http.NewRequest, which would
+	// send every body chunked; a request git sent with a Content-Length goes on
+	// with it, and only git's own chunked push stays chunked.
+	req.ContentLength = r.ContentLength
+	if r.ContentLength == 0 {
+		req.Body = http.NoBody
+	}
 	for name, values := range r.Header {
-		if hopByHop(name) || strings.EqualFold(name, "Authorization") {
+		if hopByHop(name) || callerCredential(name) {
 			continue
 		}
 		for _, v := range values {
@@ -212,6 +227,10 @@ func serveProxy(w http.ResponseWriter, r *http.Request, client *http.Client, ups
 		return
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		log.Printf("chk190 upstream refused method=%s status=%d path=%s challenge=%s",
+			r.Method, resp.StatusCode, path, challengeScheme(resp.Header.Get("Www-Authenticate")))
+	}
 	for name, values := range resp.Header {
 		if hopByHop(name) {
 			continue
@@ -221,11 +240,34 @@ func serveProxy(w http.ResponseWriter, r *http.Request, client *http.Client, ups
 		}
 	}
 	code = resp.StatusCode
+	wout.Header().Set(upstreamMark, strconv.Itoa(code))
 	wout.WriteHeader(code)
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
 	}
 	_, _ = io.Copy(wout, resp.Body)
+}
+
+// callerCredential is a header that carries the caller's own identity token:
+// Authorization, and the header Cloud Run reads one from when Authorization is
+// the application's. Neither is Bitbucket's business.
+func callerCredential(name string) bool {
+	switch http.CanonicalHeaderKey(name) {
+	case "Authorization", "X-Serverless-Authorization":
+		return true
+	}
+	return false
+}
+
+// challengeScheme is the scheme of a WWW-Authenticate challenge and nothing
+// after it, so the log line says which kind of credential Bitbucket wanted
+// without copying anything else it said.
+func challengeScheme(v string) string {
+	scheme, _, _ := strings.Cut(strings.TrimSpace(v), " ")
+	if scheme == "" {
+		return "none"
+	}
+	return scheme
 }
 
 // hopByHop is the set a proxy must not copy in either direction.

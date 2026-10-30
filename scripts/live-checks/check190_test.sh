@@ -336,6 +336,13 @@ elif sub == ("run", "revisions", "describe"):
 elif sub == ("logging", "read"):
     if state_get("revfail") == "1" and 'revision_name="fugaro-chk190-00001-abc"' in positionals[2]:
         emit("chk190: the mounted token cannot be read from CHK190_TOKEN_FILE: read /chk190/token: is a directory")
+    elif 'service_name="fugaro-chk190"' in positionals[2] and os.environ.get("FAKE_GIT_MODE") == "clone-401-upstream":
+        # The proxy's own lines for the refused request, newest first. The
+        # second is a line no proxy of this check's writes, there so the test
+        # can see the excerpt redacts a credential whatever its source.
+        emit("chk190 method=GET status=401 in=0 out=0 ms=80",
+             "chk190 upstream refused method=GET status=401 path=/workspace-a/repo-a.git/info/refs challenge=Basic",
+             "debug Authorization: Basic FAKE-BASIC-VALUE")
 elif sub == ("run", "services", "get-iam-policy"):
     if mode == "public-invoker":
         emit('{"bindings": [{"role": "roles/run.invoker", "members": ["allUsers"]}]}')
@@ -439,8 +446,42 @@ def ref_of(name):
     return name
 
 
-if sub == "clone":
+def trace(*exchanges):
+    """What GIT_TRACE_CURL writes, one request and its response headers per
+    exchange. GIT_TRACE_REDACT is deliberately NOT honoured here: the check's
+    own excerpt must redact the credential headers itself, whatever git did."""
+    path = os.environ.get("GIT_TRACE_CURL", "")
+    if not path:
+        return
+    with open(path, "a") as fh:
+        for request, response in exchanges:
+            fh.write("12:00:00.000000 http.c:700              => Send header: %s\n" % request)
+            fh.write("12:00:00.000000 http.c:700              => Send header: Host: fugaro-chk190-fake.a.run.app\n")
+            fh.write("12:00:00.000000 http.c:700              => Send header: Authorization: Bearer FAKE-IDENTITY-TOKEN\n")
+            for line in response:
+                fh.write("12:00:00.000000 http.c:700              <= Recv header: %s\n" % line)
+
+
+INFO_REFS = "GET /workspace-a/repo-a.git/info/refs?service=git-upload-pack HTTP/1.1"
+
+if sub == "clone" and mode in ("clone-401-upstream", "clone-401-frontend"):
     forwarded()
+    if mode == "clone-401-upstream":
+        # Bitbucket's own refusal, forwarded by the proxy: a Basic challenge,
+        # and the proxy's own mark that the answer came from upstream.
+        trace((INFO_REFS, ["HTTP/1.1 401 Unauthorized", 'WWW-Authenticate: Basic realm="Bitbucket.org HTTP"',
+                           "Set-Cookie: bb_session=FAKE-COOKIE-VALUE; Path=/", "X-Chk190-Upstream: 401"]))
+    else:
+        # The front end's own refusal: the request never reached the proxy, so
+        # there is no mark of it.
+        trace((INFO_REFS, ["HTTP/1.1 401 Unauthorized", 'WWW-Authenticate: Bearer error="invalid_token"',
+                           "Server: Google Frontend"]))
+    sys.stderr.write("Cloning into '/tmp/full'...\n")
+    sys.stderr.write("fatal: could not read Username for 'https://fugaro-chk190-fake.a.run.app': terminal prompts disabled\n")
+    sys.exit(128)
+elif sub == "clone":
+    forwarded()
+    trace((INFO_REFS, ["HTTP/1.1 200 OK", "Content-Type: application/x-git-upload-pack-advertisement", "X-Chk190-Upstream: 200"]))
     if mode == "clone-fails":
         sys.stderr.write("fatal: unable to access the repository\n")
         sys.exit(128)
@@ -448,6 +489,17 @@ if sub == "clone":
     os.makedirs(os.path.join(dest, ".git"), exist_ok=True)
 elif sub == "ls-remote":
     forwarded()
+    lspath = os.path.join(STATE, "git.lsremotes")
+    lsn = (int(open(lspath).read().strip()) if os.path.exists(lspath) else 0) + 1
+    with open(lspath, "w") as fh:
+        fh.write(str(lsn))
+    if mode == "coldstart-ls-fails" and lsn == 1:
+        # The first git request after the idle wait, refused: the cold-start
+        # row used to time it anyway and report the figure as a cold start.
+        trace((INFO_REFS, ["HTTP/1.1 401 Unauthorized", 'WWW-Authenticate: Basic realm="Bitbucket.org HTTP"',
+                           "X-Chk190-Upstream: 401"]))
+        sys.stderr.write("fatal: could not read Username for 'https://fugaro-chk190-fake.a.run.app': terminal prompts disabled\n")
+        sys.exit(128)
     if mode == "ls-remote-fails":
         # What an expired identity token looks like: the Restore runs an hour
         # after the token in GIT_CONF was minted.
@@ -559,6 +611,10 @@ if not authed:
         status, body = 200, "start=1 instance=chk190-1\n"
     else:
         status, body = 401, ""
+elif mode == "idt-refused":
+    # The front end refusing the identity token itself: an error page, which
+    # is not empty, and which the counters must not be read out of.
+    status, body = 401, "<html><body>Unauthorized</body></html>"
 elif "/chk190/stats" in url:
     # The proxy counts the requests it forwards upstream, so the counters here
     # are the fake git's own forwarded requests and never this call itself.
@@ -599,7 +655,7 @@ run190() { # dir extra-env...
     FAKE_CURL_STATE="$dir/state" FAKE_GIT_STATE="$dir/state" \
     CHECK190_REPO=workspace-a/repo-a CHECK190_TOKEN_FILE="$dir/token" \
     CHECK190_IDLE_SECONDS=0 CHECK190_SLOW_SECONDS=3 CHECK190_BIG_MIB=1 \
-    CHECK190_CURL_SECONDS=3 CHECK190_GRANT_SECONDS=0 CHECK190_BUILD_WAIT_SECONDS=0 \
+    CHECK190_CURL_SECONDS=3 CHECK190_GRANT_SECONDS=0 CHECK190_BUILD_WAIT_SECONDS=0 CHECK190_LOG_WAIT_SECONDS=0 \
     ${1+"$@"} \
     bash "$script" >"$dir/out" 2>"$dir/err" || status=$?
   out=$(cat "$dir/out")
@@ -624,7 +680,7 @@ run_copy() { # dir script extra-env...
     FAKE_CURL_STATE="$dir/state" FAKE_GIT_STATE="$dir/state" \
     CHECK190_REPO=workspace-a/repo-a CHECK190_TOKEN_FILE="$dir/token" \
     CHECK190_IDLE_SECONDS=0 CHECK190_SLOW_SECONDS=3 CHECK190_BIG_MIB=1 \
-    CHECK190_CURL_SECONDS=3 CHECK190_GRANT_SECONDS=0 CHECK190_BUILD_WAIT_SECONDS=0 \
+    CHECK190_CURL_SECONDS=3 CHECK190_GRANT_SECONDS=0 CHECK190_BUILD_WAIT_SECONDS=0 CHECK190_LOG_WAIT_SECONDS=0 \
     ${1+"$@"} \
     bash "$copy" >"$dir/out" 2>"$dir/err" || status=$?
   out=$(cat "$dir/out")
@@ -1005,6 +1061,90 @@ test_a_bucket_left_behind_is_a_failure() {
   fi
 }
 
+# The owner's real run: the full clone failed with git's "could not read
+# Username ... terminal prompts disabled", which is git's answer to ANY 401 and
+# says neither who refused nor why. The row now carries the HTTP exchange git
+# saw (status and the headers that tell the two refusals apart, every
+# credential header redacted) and the proxy's own log lines.
+test_a_clone_refused_by_bitbucket_says_who_refused() {
+  local dir=$work/clone401up
+  prepare "$dir"
+  run190 "$dir" FAKE_GIT_MODE=clone-401-upstream
+  expect_status "$status" 1 "upstream 401: the verdict"
+  expect_contains "$out" "FACT clone-full: FAIL" "upstream 401: the row"
+  expect_contains "$out" "could not read Username" "upstream 401: git's own words"
+  expect_contains "$out" "HTTP/1.1 401 Unauthorized" "upstream 401: the status git saw"
+  expect_contains "$out" 'Basic realm="Bitbucket.org HTTP"' "upstream 401: the challenge"
+  expect_contains "$out" "X-Chk190-Upstream: 401" "upstream 401: the proxy's mark"
+  expect_contains "$out" "Bitbucket refused the proxy's credential" "upstream 401: the reading"
+  expect_contains "$out" "chk190 upstream refused method=GET status=401 path=/workspace-a/repo-a.git/info/refs challenge=Basic" "upstream 401: the proxy's own log line"
+  local all
+  all=$(cat "$dir/out" "$dir/err")
+  expect_absent "$all" "FAKE-IDENTITY-TOKEN" "upstream 401: the identity token in git's trace is redacted"
+  expect_absent "$all" "FAKE-COOKIE-VALUE" "upstream 401: a cookie in git's trace is redacted"
+  expect_absent "$all" "FAKE-BASIC-VALUE" "upstream 401: a credential in the proxy's log is redacted"
+  expect_absent "$all" "FAKE-BITBUCKET-TOKEN" "upstream 401: the sandbox token is nowhere"
+}
+
+test_a_clone_refused_by_the_front_end_says_who_refused() {
+  local dir=$work/clone401fe
+  prepare "$dir"
+  run190 "$dir" FAKE_GIT_MODE=clone-401-frontend
+  expect_status "$status" 1 "front-end 401: the verdict"
+  expect_contains "$out" "FACT clone-full: FAIL" "front-end 401: the row"
+  expect_contains "$out" 'Bearer error="invalid_token"' "front-end 401: the challenge"
+  expect_contains "$out" "the Cloud Run front end refused the request before the proxy saw it" "front-end 401: the reading"
+  expect_absent "$(cat "$dir/out" "$dir/err")" "FAKE-IDENTITY-TOKEN" "front-end 401: the identity token is redacted"
+}
+
+# The counters were read with `curl -sS` and taken as read when the body was
+# not empty, so the front end's own error page passed for them. A refused
+# identity token now stops the run with the HTTP status, before any git request.
+test_counters_the_front_end_refuses_stop_the_run_with_the_status() {
+  local dir=$work/idtrefused
+  prepare "$dir"
+  run190 "$dir" FAKE_CURL_MODE=idt-refused
+  expect_status "$status" 1 "refused counters: the verdict"
+  expect_contains "$out" "GET /chk190/stats answered HTTP 401" "refused counters: the status"
+  expect_absent "$(cat "$dir/logs/git.calls")" "clone" "refused counters: no git request was sent"
+}
+
+# x-token-auth is Bitbucket's username for a repository, project or workspace
+# ACCESS token only. An Atlassian API token or an app password pasted in its
+# place is refused by Bitbucket with a 401 on the clone, after the build and
+# the deploy; the prefix says which it is before anything is created.
+test_a_token_that_is_not_an_access_token_is_refused() {
+  local dir=$work/apitoken
+  prepare "$dir"
+  (umask 077 && printf 'ATATTxFAKE\n' >"$dir/token")
+  run190 "$dir"
+  expect_status "$status" 1 "API token: the verdict"
+  expect_contains "$err" "Atlassian API token" "API token: the stop names the kind"
+  expect_contains "$err" "access token" "API token: the stop names what to use"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "create" "API token: nothing created"
+  expect_absent "$(cat "$dir/out" "$dir/err")" "ATATTxFAKE" "API token: the token is not printed"
+
+  local dir2=$work/apppassword
+  prepare "$dir2"
+  (umask 077 && printf 'ATBBxFAKE\n' >"$dir2/token")
+  run190 "$dir2"
+  expect_status "$status" 1 "app password: the verdict"
+  expect_contains "$(cat "$dir2/err")" "app password" "app password: the stop names the kind"
+  expect_absent "$(cat "$dir2/logs/gcloud.calls")" "create" "app password: nothing created"
+}
+
+# The cold-start row timed the first git request after the idle wait and
+# ignored its exit, so a refused request was reported as a cold-start figure.
+test_a_refused_cold_start_request_is_a_failure() {
+  local dir=$work/coldls
+  prepare "$dir"
+  run190 "$dir" FAKE_GIT_MODE=coldstart-ls-fails
+  expect_status "$status" 1 "refused cold start: the verdict"
+  expect_contains "$out" "FACT cold-start: FAIL — the first git request after" "refused cold start: the row"
+  expect_contains "$out" "HTTP/1.1 401 Unauthorized" "refused cold start: the status git saw"
+  expect_absent "$out" "FACT cold-start: PASS" "refused cold start: not a figure"
+}
+
 # This check is the sandbox installation's and nobody else's: the project is
 # hard-coded, the doctor stop names it, and no executed command may ever name
 # another installation's project.
@@ -1064,6 +1204,11 @@ t test_a_deploy_that_fails_after_creating_the_service_says_why
 t test_a_bucket_left_behind_is_a_failure
 t test_restore_leftover
 t test_never_belong
+t test_a_clone_refused_by_bitbucket_says_who_refused
+t test_a_clone_refused_by_the_front_end_says_who_refused
+t test_counters_the_front_end_refuses_stop_the_run_with_the_status
+t test_a_token_that_is_not_an_access_token_is_refused
+t test_a_refused_cold_start_request_is_a_failure
 
 if [ "$failures" -ne 0 ]; then
   echo "check190_test.sh: $failures failure(s)" >&2
