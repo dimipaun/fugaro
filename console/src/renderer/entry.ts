@@ -113,8 +113,10 @@ import {
   tabOf,
 } from './screens/graph'
 import type { GraphScreen } from './screens/graph'
-import { hidesView, launchSupported } from '../shared/version'
+import { SKEW_HEADLINES, hidesView, launchSupported } from '../shared/version'
 import type { ReducedView, SkewElement, SkewFactory, SkewTheme } from '../shared/version'
+import { NOTICE_HIDE_DETAILS, NOTICE_SHOW_DETAILS } from '../shared/notice'
+import type { DrawnNotice } from '../shared/notice'
 
 /**
  * CONSOLE_THEME is the theme every drawing is made for. It is one word rather
@@ -1685,6 +1687,15 @@ export const GAUGE_HEIGHT = 6
  * gate the Spend and Projects views ask, so a reduced console shows `n/a` here
  * rather than figures from a CLI shape it does not know. */
 export const GAUGE_WITHHELD = 'this CLI version’s caps are not shown'
+
+/** The reduced-mode chip's hooks and its word. The chip is the header's
+ * statement that the console is driving a fugaro it reads only in part -- it
+ * stands in the header for as long as the mode does, so a dismissed notice is a
+ * card put away and never a fact hidden (§2.14). */
+export const REDUCED_CHIP_CLASS = 'console-reduced-chip'
+export const REDUCED_CHIP_REASON_CLASS = 'console-reduced-chip-reason'
+export const REDUCED_CHIP_REASON_ID = 'console-reduced-chip-reason'
+export const REDUCED_CHIP_LABEL = 'Reduced mode'
 export const GAUGE_UNREAD = 'no budget has been read yet'
 
 /** SwitcherLine is what the switcher's button draws: the installation's name
@@ -2140,6 +2151,74 @@ export interface DashboardScope {
  * and **stops**: no rail, no installation line, no navigation, no panel, and not
  * one read -- which is the whole of D7 from this side.
  */
+/**
+ * drawReducedChip draws the header's Reduced-mode chip and wires the notice it
+ * stands for. It is what is left on the document after the notice is put away,
+ * and it is what brings the notice back.
+ *
+ * The notice can be put away because a whole card at the top of the window is a
+ * lot of room to give a fact the operator has already read. What putting it away
+ * must not do is pretend the fact gone: a reduced console withholds spend, caps
+ * and the kill controls (`REDUCED_VIEWS`), and a window whose nav has no such
+ * button and no word about why is the state the design's §4.4 rule 1 refuses. So
+ * the chip carries the headline as its description and as its title, stays in
+ * the header for as long as the mode does, and hands the notice back -- and the
+ * keyboard with it, onto the card's own title.
+ *
+ * The state is the renderer's memory and nothing else: the dismissal is the
+ * notice root's `hidden` attribute, so nothing is written to storage and nothing
+ * is asked of the main process, and a reload is a fresh window that draws the
+ * notice again. Escape is deliberately not a way out -- the card is not a
+ * dialog, and the switcher's own Escape handling is its own.
+ */
+function drawReducedChip(surface: DomSurface, header: SkewElement, notice: DrawnNotice): void {
+  const chip = surface.factory.create('button')
+  chip.setAttribute('class', REDUCED_CHIP_CLASS)
+  chip.setAttribute('type', 'button')
+  chip.setAttribute('data-severity', 'warning')
+  chip.setAttribute('title', SKEW_HEADLINES.reduced)
+  chip.setAttribute('aria-describedby', REDUCED_CHIP_REASON_ID)
+  chip.textContent = REDUCED_CHIP_LABEL
+  header.append(chip)
+
+  // Visually hidden and not `aria-hidden`: the chip's visible word is two words
+  // long, and what the mode *is* -- the headline the dismissed card carried --
+  // is what a reader who only reaches the chip is owed.
+  const reason = surface.factory.create('span')
+  reason.setAttribute('class', REDUCED_CHIP_REASON_CLASS)
+  reason.setAttribute('id', REDUCED_CHIP_REASON_ID)
+  reason.textContent = SKEW_HEADLINES.reduced
+  header.append(reason)
+
+  const showNotice = (): void => {
+    notice.root.removeAttribute('hidden')
+    // A heading is not focusable without `tabindex="-1"`, which the card draws
+    // on its title for exactly this move.
+    ;(surface.nodeOf(notice.title) as unknown as { focus(): void }).focus()
+  }
+  surface.nodeOf(chip).addEventListener('click', showNotice)
+
+  const dismiss = notice.dismiss
+  if (dismiss !== null) {
+    surface.nodeOf(dismiss).addEventListener('click', () => {
+      // The card stays where it is and keeps its place in the document -- the
+      // body's first child -- and only its `hidden` attribute changes.
+      notice.root.setAttribute('hidden', '')
+      chip.focus()
+    })
+  }
+
+  const toggle = notice.toggle
+  if (toggle === null) return
+  surface.nodeOf(toggle).addEventListener('click', () => {
+    const open = toggle.getAttribute('aria-expanded') === 'true'
+    toggle.setAttribute('aria-expanded', open ? 'false' : 'true')
+    toggle.textContent = open ? NOTICE_SHOW_DETAILS : NOTICE_HIDE_DETAILS
+    if (open) notice.details.setAttribute('hidden', '')
+    else notice.details.removeAttribute('hidden')
+  })
+}
+
 export async function bootDashboard(scope: DashboardScope): Promise<void> {
   const surface = domSurface(scope.document)
   const gate = await startConsole({
@@ -2199,6 +2278,12 @@ export async function bootDashboard(scope: DashboardScope): Promise<void> {
   status.switcher = switcher
   switcher.setState(status.word)
   header.append(switcher.root)
+  // After the switcher and before the nav the dashboard draws into the same
+  // header: the chip belongs to the installation the window is about, and it is
+  // in the flow of the header rather than inside the switcher's own control.
+  if (gate.notice !== null && gate.compatibility.mode === 'reduced') {
+    drawReducedChip(surface, header, gate.notice)
+  }
   surface.mount.append(header)
   await mountDashboard({
     header,

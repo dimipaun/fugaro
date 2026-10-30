@@ -72,6 +72,7 @@ import { isMarkerText, safeUrl, sanitizeText } from '../shared/sanitize'
 import type { TextClass } from '../shared/sanitize'
 import { REDUCED_VIEWS, hidesView, renderVersionSkew, unreadableCompatibility } from '../shared/version'
 import type { CliCompatibility, ReducedView, SkewElement, SkewFactory, SkewTheme } from '../shared/version'
+import type { DrawnNotice } from '../shared/notice'
 
 /**
  * ElementLike is the whole of the DOM this file is allowed to touch: a text
@@ -227,6 +228,14 @@ export interface StartConsoleDeps {
 export interface ScreenGate {
   readonly compatibility: CliCompatibility
   /**
+   * notice is the skew notice `startConsole` drew, or `null` in the `ok` mode,
+   * where there is nothing to say about the CLI and no card to wire. It is what
+   * the entry takes the disclosure button, the dismiss button and the title from
+   * -- the drawing happens here because the handshake is read here, and the
+   * listeners are added there because `nodeOf` is there.
+   */
+  readonly notice: DrawnNotice | null
+  /**
    * drawScreen draws one view, or does not: `refused` when the console refused
    * (nothing is drawn, and the refusal screen is already on the document),
    * `withheld` when this mode withholds that view (the banner `startConsole`
@@ -328,14 +337,19 @@ export async function startConsole(deps: StartConsoleDeps): Promise<ScreenGate> 
     answer = null
   }
   const compatibility = compatibilityFrom(answer)
+  let notice: DrawnNotice | null = null
   if (compatibility.mode !== 'ok') {
     // One drawing for both non-`ok` modes, which is what `renderVersionSkew`
-    // is: the whole screen when the console refused, the banner a screen is
-    // mounted under when it is reduced.
-    deps.mount.append(renderVersionSkew(deps.factory, compatibility, deps.theme))
+    // is: the whole screen when the console refused, the card a screen is
+    // mounted under when it is reduced. It is mounted here and nothing else is:
+    // the card draws no listener of its own, so a refused document has no
+    // control in it at all.
+    notice = renderVersionSkew(deps.factory, compatibility, deps.theme)
+    deps.mount.append(notice.root)
   }
   return {
     compatibility,
+    notice,
     drawScreen(view: ReducedView, draw: () => void): 'drawn' | 'withheld' | 'refused' {
       if (compatibility.mode === 'refused') return 'refused'
       if (hidesView(compatibility, view)) return 'withheld'
