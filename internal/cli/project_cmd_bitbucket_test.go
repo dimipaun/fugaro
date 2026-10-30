@@ -173,19 +173,19 @@ func TestPolicyPublishAcceptsAnAllowListedBitbucketProfile(t *testing.T) {
 // silence: the publish already prints what it changes, so a removal is a "-"
 // line and a different list a "~" line, the way allow_repos is printed.
 func TestPolicyPublishNeverDropsTheBitbucketBlockSilently(t *testing.T) {
-	otherOperatorNode := func() *projectpolicy.Policy {
+	otherOperatorNode := func(proxy bool) *projectpolicy.Policy {
 		return &projectpolicy.Policy{
 			Version:           projectpolicy.Version,
 			Budget:            projectpolicy.Budget{Mode: "enforce", PerRunUSD: 5},
 			AllowRepos:        []string{"bitbucket/acme/other", "github/acme/app"},
-			BitbucketToken:    &projectpolicy.BitbucketToken{AllowRepos: []string{"bitbucket/workspace-a/repo-a"}},
+			BitbucketToken:    &projectpolicy.BitbucketToken{AllowRepos: []string{"bitbucket/workspace-a/repo-a"}, Proxy: proxy},
 			BitbucketAPIRoots: []string{"https://api.bitbucket.example/2.0"},
 		}
 	}
 
 	// Nothing in this machine's config derives either, so both go.
 	f := newProjectFixture(t, "")
-	put(t, f, otherOperatorNode())
+	put(t, f, otherOperatorNode(false))
 	out, _, err := execute(t, "project", "policy", "publish")
 	if err != nil {
 		t.Fatal(err)
@@ -206,7 +206,7 @@ func TestPolicyPublishNeverDropsTheBitbucketBlockSilently(t *testing.T) {
 	// And a config that derives a different list says so, rather than letting
 	// the reader believe the node still carries what it carried.
 	f = newProjectFixture(t, "project_secrets:\n  bitbucket-token: { allow_data_to: [workspace-a/repo-b] }\n")
-	put(t, f, otherOperatorNode())
+	put(t, f, otherOperatorNode(false))
 	out, _, err = execute(t, "project", "policy", "publish")
 	if err != nil {
 		t.Fatal(err)
@@ -217,6 +217,70 @@ func TestPolicyPublishNeverDropsTheBitbucketBlockSilently(t *testing.T) {
 	}
 	if got := publishedPolicy(t, f).BitbucketToken; got == nil || !slices.Equal(got.AllowRepos, []string{"bitbucket/workspace-a/repo-b"}) {
 		t.Errorf("bitbucket_token = %+v, want this config's own list", got)
+	}
+
+	// The switch is a value of the block like the list is, and it is the one
+	// that can flip on its own: the node was published forwarded, this machine
+	// does not set it, and the list is the same. The diff line is the only
+	// place the operator is told the token stopped being forwarded — so a
+	// proxyText that returned one sentence for both readings, or a block that
+	// stopped carrying the member, would have to fail here.
+	f = newProjectFixture(t, "project_secrets:\n  bitbucket-token: { allow_data_to: [workspace-a/repo-a] }\n")
+	put(t, f, otherOperatorNode(true))
+	out, _, err = execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const flipped = "~ bitbucket_token.proxy: on (the credentials service forwards this token) → off (the jobs that mount this token hold it)"
+	if !strings.Contains(out, flipped) {
+		t.Errorf("the publish turned the forwarder off without a line:\nwant %q in\n%s", flipped, out)
+	}
+	if got := publishedPolicy(t, f).BitbucketToken; got == nil || got.Proxy {
+		t.Errorf("bitbucket_token = %+v, want this config's switch: off", got)
+	}
+}
+
+// TestPolicyShowPrintsTheBitbucketBlock: `policy show` is the command an
+// operator audits the published node with, and these two blocks decide where
+// the project's one long-lived forge credential may go — the reach the runner
+// admits a run against (D473) and the switch that decides whether the job holds
+// the token at all (D493). They are printed from the diff's own lines, so the
+// audit and the publish cannot disagree; a project with no token prints
+// neither, under the credentials rule (an absent block is not a printed
+// "none").
+func TestPolicyShowPrintsTheBitbucketBlock(t *testing.T) {
+	newProjectFixture(t, "project_secrets:\n"+
+		"  bitbucket-token: { allow_data_to: [workspace-a/repo-a], proxy: true }\n"+
+		"bitbucket_api_roots: [https://api.bitbucket.example/2.0]\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := execute(t, "project", "policy", "show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"  bitbucket_token.allow_repos: bitbucket/workspace-a/repo-a",
+		"  bitbucket_token.proxy: on (the credentials service forwards this token)",
+		"  bitbucket_api_roots: https://api.bitbucket.example/2.0",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("policy show does not print %q:\n%s", want, out)
+		}
+	}
+
+	newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err = execute(t, "project", "policy", "show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"bitbucket_token", "bitbucket_api_roots"} {
+		if strings.Contains(out, key) {
+			t.Errorf("policy show prints %s for a policy that carries none:\n%s", key, out)
+		}
 	}
 }
 

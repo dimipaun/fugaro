@@ -1722,10 +1722,12 @@ func accountText(a projectpolicy.Account) string {
 }
 
 // bitbucketLines is the Bitbucket block and the API-root allow-list as lines,
-// for the diff. A policy that carries neither — which is every project without
-// a project_secrets.bitbucket-token entry — has no lines, so a publish that
-// has nothing to say about them says nothing: a "none" row would announce, on
-// every publish, two blocks that are not there.
+// for the diff and for `policy show` — one function for both, so the command an
+// operator audits the node with and the diff a publish prints cannot disagree
+// about what the node carries. A policy that carries neither — which is every
+// project without a project_secrets.bitbucket-token entry — has no lines, so a
+// publish that has nothing to say about them says nothing: a "none" row would
+// announce, on every publish, two blocks that are not there.
 func bitbucketLines(p *projectpolicy.Policy) map[string]string {
 	if p == nil {
 		return nil
@@ -2447,6 +2449,18 @@ func printPolicy(out io.Writer, p *projectpolicy.Policy) {
 	// member prints as no line.
 	if p.Credentials != nil {
 		fmt.Fprintf(out, "  credentials: %s\n", credentialsText(p.Credentials))
+	}
+	// The Bitbucket block and the API-root allow-list, on the credentials rule:
+	// a policy that carries neither prints neither. They are the same lines the
+	// publish diff prints (bitbucketLines), because they answer the question
+	// this command exists to answer for the project's one long-lived forge
+	// credential — which repositories it may reach (D473) and whether the
+	// credentials service holds it instead of the job (D493) — and a block the
+	// node carries that this command does not print is a setting nobody can
+	// audit.
+	lines := bitbucketLines(p)
+	for _, key := range slices.Sorted(maps.Keys(lines)) {
+		fmt.Fprintf(out, "  %s: %s\n", key, lines[key])
 	}
 	// One line per clone URL, under the canonical repository name the runner
 	// looks up (plan task 3.3 step 3). Like routing: this Fugaro reads the
