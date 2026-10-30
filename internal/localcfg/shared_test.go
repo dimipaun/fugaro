@@ -61,7 +61,8 @@ budget:
 watch:
   burn_alert_usd_per_hour: 2
 mailbox:
-  keychain_item: fugaro-mailbox-aurora
+  keychain_item:
+    m~AAECAwQFBgcICQoLDA0ODw: fugaro-mailbox-aurora
 credentials_service:
   url: https://fugaro-credentials-abcde-uc.a.run.app
 user: someone@example.com
