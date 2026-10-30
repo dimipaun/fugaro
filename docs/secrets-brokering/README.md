@@ -15,8 +15,9 @@ forward before the PR.
 | --- | --- |
 | **0.12.1** | Nothing of this work except one pointer sentence in docs/bitbucket-workspace-token's approved T1.1 |
 | **0.13.0** | **S0:** the secret-reader audit as a tested doc, the CI guard, doctor's Secret Manager sweep and deployer read, Check 190 (owner-run) |
-| **0.14.0** | **S1, data and inert pieces only:** policy version 4 with the `bitbucket_token` block and the `proxy` switch, the bundle's Bitbucket token, the git proxy's parser and rules, the flip list still empty, the API-root pin and `fugaro creds set bitbucket-token`; the Bitbucket proxy itself arrives in 0.15.0, so no proxied run. Check 191 (owner-run) on the released 0.14.0 |
-| **0.15.0** | The Bitbucket proxy for per-repository jobs of opted-in installations (B1.5–B1.7, B1.9, B1.10, B1.13), then the flip (the job gives up the token) and Check 192 (O7) |
+| **0.14.0** | **S1, data and inert pieces only:** policy version 4 with the `bitbucket_token` block and the `proxy` switch, the bundle's Bitbucket token, the git proxy's parser and rules, the flip list still empty, the API-root pin, `fugaro creds set bitbucket-token` and the operator draft (B1.13 part one); the Bitbucket proxy itself arrives in 0.15.0, so no proxied run |
+| **0.15.0** | The Bitbucket proxy for per-repository jobs of opted-in installations (B1.5–B1.7, B1.9, B1.10, B1.11) and Check 191 (owner-run) on the released 0.15.0 |
+| **after 0.15.0** | The flip (B1.13 part two, the job gives up the token) and Check 192 (O7) |
 | later | S2 model modes, S3 vault fetch, S4 builds, S5 shared jobs |
 
 | File | Role |
