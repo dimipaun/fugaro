@@ -14,6 +14,11 @@
 set -eu
 
 fugaro_chain='@FUGARO_CHAIN@'
+# Whether to look the repository's own hook directory up at the commit, which
+# only a caller that named none does: a caller that named a directory has it,
+# and a caller that asked for no chain at all must never run one. The two are
+# not the same thing, and an empty fugaro_chain is both.
+fugaro_chain_later='@FUGARO_CHAIN_LATER@'
 
 # A line that is one of the three trailers, as git matches a key: without
 # regard to case, with the whitespace git allows around it, and with the colon
@@ -72,7 +77,20 @@ fugaro_stamp() {
 		fugaro_kept=$(grep -v -i -E "$fugaro_pattern" "$fugaro_message") || fugaro_kept=''
 		printf '%s\n' "$fugaro_kept" > "$fugaro_message"
 	fi
-	git "$@" "$fugaro_message"
+	# interpret-trailers runs outside the repository, on an absolute path:
+	# trailer.<token>.cmd and trailer.<token>.command are commands git runs,
+	# and the repository's own configuration is a file a run's agent can
+	# write (constraint 8). With no GIT_DIR, no GIT_WORK_TREE and no
+	# repository above "/", the file git reads is the machine's own.
+	case "$fugaro_message" in
+	/*) fugaro_message_abs=$fugaro_message ;;
+	*) fugaro_message_abs=$PWD/$fugaro_message ;;
+	esac
+	(
+		unset GIT_DIR GIT_WORK_TREE
+		cd /
+		git "$@" "$fugaro_message_abs"
+	)
 }
 
 # git runs a hook in the root of the working tree (githooks(5)), so the
@@ -87,7 +105,7 @@ fi
 # which is the repository's own configuration or git's default of
 # $GIT_DIR/hooks. A repository that configured no core.hooksPath still has its
 # hooks run, which naming nothing at all would not do (constraint 2).
-if [ -z "$fugaro_chain" ]; then
+if [ "$fugaro_chain_later" = 1 ]; then
 	fugaro_chain=$(unset GIT_CONFIG_COUNT; git rev-parse --git-path hooks) || fugaro_chain=''
 fi
 
