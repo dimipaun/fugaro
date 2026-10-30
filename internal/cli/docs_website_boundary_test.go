@@ -954,8 +954,15 @@ func TestWebsiteConsoleReleaseFactsAreComplete(t *testing.T) {
 
 	// And the release's sums file covers nothing else: an asset the release carries
 	// and the site does not offer is a page a reader cannot get a download from,
-	// which is the other half of the same fact.
+	// which is the other half of the same fact. The one exception is the
+	// console's update feed: the release job sums latest-mac.yml into this file
+	// so the one cosign signature covers it, but electron-updater fetches it and
+	// no reader downloads it. Leaving its line in keeps the file byte for byte
+	// the signed one.
 	for name := range sums {
+		if name == consoleFeedFileName {
+			continue
+		}
 		found := false
 		for _, d := range downloads.Downloads {
 			if strings.ReplaceAll(d.File, "{version}", downloads.Release.Version) == name {

@@ -1832,7 +1832,12 @@ the site's console downloads follow the console's own release), so `release.vers
 artifacts, the same signing and notarisation, and the same derived URLs. **And on 2026-10-24 it
 moved again, to `console-v0.110.0`, which is the release the console's own stream published:**
 `release.version`, the four `sha256` values and the sums file moved as before, and the Linux pair
-came with them, so the section grew the block below.
+came with them, so the section grew the block below. **On 2026-10-30 it moved to
+`console-v0.115.0`**, the first release whose sums file also names the update feed,
+`latest-mac.yml`: the feed is summed so the one cosign signature covers it, but it is
+electron-updater's to fetch and not a download. The sums file is still copied byte for byte,
+and the two checks that every name in it is offered (`TestWebsiteConsoleReleaseFactsAreComplete`
+and `website/test/console.mjs`) pass over that one name.
 
 **The tag's prefix is checked in the build, not only in the gates.** `src/lib/console-downloads.mjs`
 reads `CONSOLE_TAG="<prefix>$VERSION"` out of `.github/workflows/console-release.yml` and refuses a
