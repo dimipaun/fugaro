@@ -4,32 +4,38 @@
  * G2.2; spec §6, section 5; reconciliation F17, F22, D401).
  *
  * **Two links and no form.** The spec's calls to action are a booking, an install and a chat,
- * and this section renders the first two: **Book a demo** as a plain `<a href>` to the Calendly
- * link `website/data/landing.yaml` writes, and **Install free** as a link to the repository
- * `website/data/site.yaml` names. The page asks a visitor for nothing — there is no waitlist and
- * no email field anywhere on a campaign page — which is why the plain link and not an embed is
- * the booking's first form here.
+ * and this section renders all three: **Book a demo** as a plain `<a href>` to the Calendly
+ * link `website/data/landing.yaml` writes, **Install free** as a link to the repository
+ * `website/data/site.yaml` names, and **Chat with the founder** as the `wa.me` link the loader
+ * derives from the file's WhatsApp number and the variant's own pre-fill message. The page asks
+ * a visitor for nothing — there is no waitlist and no email field anywhere on a campaign page —
+ * which is why the plain link and not an embed is the booking's first form here.
  *
  * **Why a plain link and not the embed.** G2.3 renders the Calendly embed inline behind the
- * marketing consent (D401), and G2.4 owns the `wa.me` link and the events both of them fire.
- * Neither is this task's, and both need this link to already exist: a visitor who declines the
- * marketing consent keeps a working way to book, and the plain link is the thing the consent
- * gate is measured against. So this component names no vendor asset, carries no `iframe`, and
- * passes no query of its own — the UTM parameters G2.4 passes through are added at the link
- * (F17, F22).
+ * marketing consent (D401), and G2.4 owns the two events these links fire. Both need this link
+ * to already exist: a visitor who declines the marketing consent keeps a working way to book,
+ * and the plain link is the thing the consent gate is measured against. So this component names
+ * no vendor asset, carries no `iframe`, and passes no query of its own — the UTM parameters
+ * G2.4 passes through go into the embed's address and onto neither of these links (F17, F22).
  *
- * **The two links are the file's, not this component's.** The booking URL is read from
- * `website/data/landing.yaml` and the repository from `website/data/site.yaml`, both passed in
- * by the page: a link typed here would be a second copy of a fact, and the copy that drifts.
+ * **The links are the files', not this component's.** The booking URL and the chat URL are read
+ * from `website/data/landing.yaml` and the repository from `website/data/site.yaml`, both passed
+ * in by the page: a link typed here would be a second copy of a fact, and the copy that drifts.
+ *
+ * **The two ids are the events' hook** (G2.4): `site.js` knows the two links by the ids the
+ * markup gives them, and presses them into GA4's `install_click` and `whatsapp_click` once the
+ * visitor has granted analytics. They are the only thing about this section a script reads.
  */
 interface Props {
   /** The owner's booking link, from `website/data/landing.yaml`. */
   calendlyURL: string
   /** The repository, from `website/data/site.yaml`. */
   repository: string
+  /** The variant's `wa.me` link, from `website/data/landing.yaml`. */
+  whatsappURL: string
 }
 
-const { calendlyURL, repository } = Astro.props
+const { calendlyURL, repository, whatsappURL } = Astro.props
 ---
 
 <section class="campaign-calls" data-section="calls-to-action">
@@ -40,7 +46,10 @@ const { calendlyURL, repository } = Astro.props
       <a class="campaign-calls-primary" href={calendlyURL}>Book a demo</a>
     </li>
     <li>
-      <a class="campaign-calls-secondary" href={repository} rel="noopener">Install free</a>
+      <a class="campaign-calls-secondary" id="campaign-install" href={repository} rel="noopener">Install free</a>
+    </li>
+    <li>
+      <a class="campaign-calls-secondary" id="campaign-whatsapp" href={whatsappURL} rel="noopener">Chat with the founder</a>
     </li>
   </ul>
   {/* The booking widget's place, empty and hidden until the visitor grants the marketing
