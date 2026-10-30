@@ -47,25 +47,33 @@ RUN apt-get update \
 USER fugaro
 
 WORKDIR /work/repo
+# The root mise config, the workflow's key files and the manifest the warm-up
+# was chosen from are all of the repository that the toolchains and the
+# dependency warm-up read, so they are the whole of this layer: the clone
+# keeps no worktree, and only those files are checked out, at the commit the
+# source layer below is reset to (design §7.2, D620). What sits above here is
+# the dependency install and no other file of the repository.
+#
+# Each path is checked out as the path it is, not as a pattern, so a name
+# holding a glob character is still the one file.
+#
 # A push to the branch after the render step must not change what is baked
-# in, so the checkout is reset to FUGARO_COMMIT, which is fetched by itself
-# when it is no longer on the branch. When it can't be fetched either, the
-# build fails, saying so.
+# in, so the commit is FUGARO_COMMIT, which is fetched by itself when it is
+# no longer on the branch. When it can't be fetched either, the build
+# fails, saying so.
 ARG FUGARO_COMMIT=""
 RUN --mount=type=bind,target=/src \
     --mount=type=secret,id=git-credentials,uid=1000,required=false \
     case "$FUGARO_COMMIT" in *[!0-9a-f]*) echo "FUGARO_COMMIT is not a commit ID" >&2; exit 1 ;; esac \
  && GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
       -c credential.helper='store --file=/run/secrets/git-credentials' \
-      clone --quiet --branch "$BASE_BRANCH" --single-branch -- "$REPO_URL" /work/repo \
- && if [ -n "$FUGARO_COMMIT" ]; then \
-      { git cat-file -e "$FUGARO_COMMIT^{commit}" 2>/dev/null \
-        || GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
-             -c credential.helper='store --file=/run/secrets/git-credentials' \
-             fetch --quiet origin "$FUGARO_COMMIT"; } \
-      && git reset --quiet --hard "$FUGARO_COMMIT" \
-      || { echo "commit $FUGARO_COMMIT is no longer reachable: the branch was force-pushed; re-run the build" >&2; exit 1; }; \
-    fi \
+      clone --quiet --no-checkout --branch "$BASE_BRANCH" --single-branch -- "$REPO_URL" /work/repo \
+ && commit="${FUGARO_COMMIT:-HEAD}" \
+ && { git cat-file -e "$commit^{commit}" 2>/dev/null \
+      || GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
+           -c credential.helper='store --file=/run/secrets/git-credentials' \
+           fetch --quiet origin "$commit" \
+      || { echo "commit $commit is no longer reachable: the branch was force-pushed; re-run the build" >&2; exit 1; }; } \
  && git remote set-url origin -- "$REPO_ORIGIN"
 
 # The runtimes: the repository's root mise config and image.tools, installed
@@ -77,6 +85,13 @@ RUN --mount=type=cache,id=fugaro-mise,target=/home/fugaro/.cache/mise,uid=1000,g
 
 # Dependency warm-up for yarn.lock.
 RUN --mount=type=secret,id=NPM_TOKEN,uid=1000,mode=0400,required=false if test -e /run/secrets/NPM_TOKEN; then NPM_TOKEN="$(cat /run/secrets/NPM_TOKEN)" || exit 1; export NPM_TOKEN; fi; yarn install --immutable
+
+# The source layer: the rest of the checkout, at the commit the key files
+# were taken from, on top of the dependency install (design §7.2, D620).
+# Nothing above reads a remote, since the clone holds the commit's objects,
+# and image.setup comes after this, because a setup step may read any file
+# of the repository.
+RUN git reset --quiet --hard "${FUGARO_COMMIT:-HEAD}"
 
 # Setup steps run as fugaro but may use sudo, for example for
 # playwright install --with-deps. The rule is removed below.
@@ -138,26 +153,41 @@ ARG REPO_ORIGIN=${REPO_URL}
 ARG BASE_BRANCH
 
 WORKDIR /work/repo
+# The root mise config, the workflow's key files and the manifest the warm-up
+# was chosen from are all of the repository that the toolchains and the
+# dependency warm-up read, so they are the whole of this layer: the clone
+# keeps no worktree, and only those files are checked out, at the commit the
+# source layer below is reset to (design §7.2, D620). What sits above here is
+# the dependency install and no other file of the repository.
+#
+# Each path is checked out as the path it is, not as a pattern, so a name
+# holding a glob character is still the one file.
+#
 # A push to the branch after the render step must not change what is baked
-# in, so the checkout is reset to FUGARO_COMMIT, which is fetched by itself
-# when it is no longer on the branch. When it can't be fetched either, the
-# build fails, saying so.
+# in, so the commit is FUGARO_COMMIT, which is fetched by itself when it is
+# no longer on the branch. When it can't be fetched either, the build
+# fails, saying so.
 ARG FUGARO_COMMIT=""
 RUN --mount=type=bind,target=/src \
     --mount=type=secret,id=git-credentials,uid=1000,required=false \
     case "$FUGARO_COMMIT" in *[!0-9a-f]*) echo "FUGARO_COMMIT is not a commit ID" >&2; exit 1 ;; esac \
  && GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
       -c credential.helper='store --file=/run/secrets/git-credentials' \
-      clone --quiet --branch "$BASE_BRANCH" --single-branch -- "$REPO_URL" /work/repo \
- && if [ -n "$FUGARO_COMMIT" ]; then \
-      { git cat-file -e "$FUGARO_COMMIT^{commit}" 2>/dev/null \
-        || GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
-             -c credential.helper='store --file=/run/secrets/git-credentials' \
-             fetch --quiet origin "$FUGARO_COMMIT"; } \
-      && git reset --quiet --hard "$FUGARO_COMMIT" \
-      || { echo "commit $FUGARO_COMMIT is no longer reachable: the branch was force-pushed; re-run the build" >&2; exit 1; }; \
-    fi \
+      clone --quiet --no-checkout --branch "$BASE_BRANCH" --single-branch -- "$REPO_URL" /work/repo \
+ && commit="${FUGARO_COMMIT:-HEAD}" \
+ && { git cat-file -e "$commit^{commit}" 2>/dev/null \
+      || GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
+           -c credential.helper='store --file=/run/secrets/git-credentials' \
+           fetch --quiet origin "$commit" \
+      || { echo "commit $commit is no longer reachable: the branch was force-pushed; re-run the build" >&2; exit 1; }; } \
  && git remote set-url origin -- "$REPO_ORIGIN"
+
+# The source layer: the rest of the checkout, at the commit the key files
+# were taken from, on top of the dependency install (design §7.2, D620).
+# Nothing above reads a remote, since the clone holds the commit's objects,
+# and image.setup comes after this, because a setup step may read any file
+# of the repository.
+RUN git reset --quiet --hard "${FUGARO_COMMIT:-HEAD}"
 
 USER root
 RUN rm -f /etc/sudoers.d/fugaro-build \
@@ -567,7 +597,9 @@ func TestTemplateWritesImageJSON(t *testing.T) {
 // read (FUGARO_COMMIT), so a push to the branch between the two clones
 // changes nothing, and a commit no longer on the branch is fetched by
 // itself. With no FUGARO_COMMIT (a local build) it keeps the branch's
-// head. The step is run here against a scratch repository.
+// head. The clone keeps no worktree, so the source layer's reset is what
+// materializes it, and both steps are run here, in order, against a scratch
+// repository.
 func TestTemplatePinsTheCommit(t *testing.T) {
 	rendered, err := Render(RenderInput{Workflow: "app", Base: "base", Version: "dev"})
 	if err != nil {
@@ -595,6 +627,14 @@ func TestTemplatePinsTheCommit(t *testing.T) {
 	if strings.Index(string(rendered), `ARG FUGARO_COMMIT=""`) > strings.Index(string(rendered), "RUN --mount=type=bind,target=/src") {
 		t.Fatal("FUGARO_COMMIT is declared after the clone step")
 	}
+	var sourceLine string
+	if i := strings.Index(string(rendered), sourceReset); i >= 0 {
+		sourceLine, _, _ = strings.Cut(string(rendered)[i:], "\n")
+		sourceLine = strings.TrimPrefix(sourceLine, "RUN ")
+	}
+	if !strings.Contains(sourceLine, "FUGARO_COMMIT") {
+		t.Fatalf("the source layer does not take the clone's commit: %q", sourceLine)
+	}
 	sh, err := exec.LookPath("sh")
 	if err != nil {
 		t.Skip("no sh")
@@ -621,7 +661,7 @@ func TestTemplatePinsTheCommit(t *testing.T) {
 	for _, c := range []struct{ pin, want, msg string }{{"", head, ""}, {first, first, ""}, {offBranch, offBranch, ""},
 		{"--upload-pack=touch x", "", "not a commit ID"}, {nowhere, "", "commit " + nowhere + " is no longer reachable: the branch was force-pushed; re-run the build"}} {
 		dir := t.TempDir()
-		cmd := exec.Command(sh, "-c", strings.ReplaceAll(strings.Join(step, "\n"), "/work/repo", dir))
+		cmd := exec.Command(sh, "-c", strings.ReplaceAll(strings.Join(step, "\n")+"\n"+sourceLine, "/work/repo", dir))
 		cmd.Dir = dir
 		cmd.Env = append(os.Environ(), "REPO_URL=file://"+src, "REPO_ORIGIN="+origin, "BASE_BRANCH=main", "FUGARO_COMMIT="+c.pin)
 		out, err := cmd.CombinedOutput()
@@ -746,5 +786,95 @@ func TestDockerfileOnTheBaseInstallsMiseForImageToolsAlone(t *testing.T) {
 	}
 	if !strings.Contains(string(got), "mise install") {
 		t.Errorf("image.tools alone (no mise config file) does not install mise tools:\n%s", got)
+	}
+}
+
+// keyFileCheckout is a checkout whose dependency install reads mise.toml,
+// package.json and package-lock.json, and whose src/ no step below the
+// source layer reads.
+func keyFileCheckout(t *testing.T) (string, *config.Config) {
+	t.Helper()
+	root := t.TempDir()
+	testutil.WriteFiles(t, root, map[string]string{
+		"mise.toml":         "[tools]\nnode = \"24\"\n",
+		"package.json":      `{"name":"app","private":true}`,
+		"package-lock.json": `{"name":"app","lockfileVersion":3}`,
+		"src/app.js":        "console.log(1)\n",
+	})
+	return root, parseConfig(t, renderYAML)
+}
+
+// sourceReset is the RUN that materializes the rest of the checkout.
+const sourceReset = `RUN git reset --quiet --hard "${FUGARO_COMMIT:-HEAD}"`
+
+// TestRenderPutsKeyFilesBeforeSource: mise install and the warm-up read the
+// root mise config, the workflow's key files and the manifest the warm-up was
+// chosen from, and nothing else of the repository, so those files are checked
+// out in a layer of their own, before the dependency install, and the full
+// source layer comes after it (D620).
+func TestRenderPutsKeyFilesBeforeSource(t *testing.T) {
+	root, cfg := keyFileCheckout(t)
+	got, _, err := Dockerfile(root, cfg, "web", "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(got)
+	clone := strings.Index(s, "clone --quiet --no-checkout")
+	keyFiles := strings.Index(s, `git checkout --quiet "$commit" -- ":(literal)$f"`)
+	mise := strings.Index(s, "mise install")
+	warmUp := strings.Index(s, "# Dependency warm-up for package-lock.json.")
+	source := strings.Index(s, sourceReset)
+	if clone < 0 || keyFiles < 0 || mise < 0 || warmUp < 0 || source < 0 ||
+		!(clone < keyFiles && keyFiles < mise && mise < warmUp && warmUp < source) {
+		t.Fatalf("the key files are not checked out before the dependency install, with the source after it (clone %d, key files %d, mise %d, warm-up %d, source %d):\n%s",
+			clone, keyFiles, mise, warmUp, source, s)
+	}
+	for _, want := range []string{"mise.toml", "package.json", "package-lock.json"} {
+		if !strings.Contains(s, "'"+want+"'") {
+			t.Errorf("the key-file layer does not check out %s:\n%s", want, s)
+		}
+	}
+	if strings.Contains(s, "'src/app.js'") {
+		t.Errorf("the key-file layer checks out a file the dependency install does not read:\n%s", s)
+	}
+}
+
+// TestRenderSetupStaysAfterSource: an image.setup step may read any file of
+// the repository, so it runs on the source layer, not on the key files.
+func TestRenderSetupStaysAfterSource(t *testing.T) {
+	root, _ := keyFileCheckout(t)
+	cfg := parseConfig(t, strings.Replace(renderYAML, "  web:\n", "  web:\n    image: { setup: [\"npm run prepare\"] }\n", 1))
+	got, _, err := Dockerfile(root, cfg, "web", "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(got)
+	source := strings.Index(s, sourceReset)
+	setup := strings.Index(s, "# image.setup steps.")
+	if source < 0 || setup < 0 || source > setup {
+		t.Fatalf("image.setup is not after the source layer (source %d, setup %d):\n%s", source, setup, s)
+	}
+}
+
+// TestRenderAddsNoSecretMount: the key-file layer and the source layer add
+// no secret mount, so a rendered Dockerfile mounts exactly the secrets it
+// mounted before them — the git credential on the clone and each workflow
+// secret on the steps that read it.
+func TestRenderAddsNoSecretMount(t *testing.T) {
+	got, err := Render(fullInput(config.NodePM{Name: "yarn", Berry: true, Lockfile: "yarn.lock", Install: "yarn install --immutable"}, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(got)
+	mounts := regexp.MustCompile(`--mount=type=secret,\S*`).FindAllString(s, -1)
+	if len(mounts) != 5 { // git-credentials, then NPM_TOKEN on the mise, warm-up and two setup steps
+		t.Fatalf("secret mounts = %q", mounts)
+	}
+	source := strings.Index(s, sourceReset)
+	if source < 0 {
+		t.Fatalf("no source layer:\n%s", s)
+	}
+	if line := s[source : strings.Index(s[source:], "\n")+source]; strings.Contains(line, "--mount") {
+		t.Errorf("the source layer mounts something: %q", line)
 	}
 }

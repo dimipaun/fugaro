@@ -4,15 +4,22 @@ package image
 
 import (
 	"bytes"
+	"crypto/sha1"
+	"encoding/hex"
 	"fmt"
+	"io/fs"
 	"maps"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"text/template"
 
+	"github.com/bmatcuk/doublestar/v4"
+
 	"github.com/dimipaun/fugaro/images"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/imagecheck"
 )
 
 // RenderInput is what the derived-image template is rendered from.
@@ -24,6 +31,13 @@ type RenderInput struct {
 	Mise     bool           // install the checkout's mise config and image.tools
 	Secrets  []string       // workflow secret variables, mounted into the warm-up and setup steps
 	Version  string         // fugaro version, for the header
+	// KeyFiles are the repository paths the dependency install reads — the
+	// root mise config, its lockfile, the workflow's key files
+	// (imagecheck.KeyFiles) and the manifest the warm-up was chosen from —
+	// which the key-file layer checks out at FUGARO_COMMIT, before the source
+	// layer. Dockerfile fills them in from the checkout; an empty list is a
+	// checkout with nothing to check out early.
+	KeyFiles []string
 }
 
 var derived = template.Must(template.New("Dockerfile").
@@ -44,7 +58,9 @@ func Render(in RenderInput) ([]byte, error) {
 		RenderInput
 		WarmUp, WarmUpFor, SecretMounts, SecretEnv string
 		ToolLines                                  []string
+		ShellKeyFiles                              string
 	}{RenderInput: in}
+	data.ShellKeyFiles = shellWords(in.KeyFiles)
 	if in.PM != nil {
 		data.WarmUp, data.WarmUpFor = in.PM.WarmUp(in.Image.SkipBuildScripts), in.PM.Lockfile
 	}
@@ -113,6 +129,90 @@ func Dockerfile(root string, cfg *config.Config, name, version string) (data []b
 		return nil, "", fmt.Errorf("workflows.%s: reading the mise config: %w", name, err)
 	}
 	in.Mise = len(files) > 0 || len(w.Image.Tools) > 0
+	in.KeyFiles = files
+	// mise reads its lockfile when the checkout has one, and it pins what
+	// mise installs: MiseConfigFiles leaves it out (it declares no tool, and
+	// the image config hash covers it separately), so it is added here.
+	if fi, err := os.Lstat(filepath.Join(root, config.MiseLockfile)); err == nil && fi.Mode().IsRegular() {
+		in.KeyFiles = append(in.KeyFiles, config.MiseLockfile)
+	}
+	// package.json is what the warm-up was chosen from and what every Node
+	// install reads: npm ci refuses a checkout whose lock file has no
+	// package.json beside it ("lock file's app@1.0.0 does not satisfy
+	// app@"), and pnpm and yarn read the dependency specs and the workspace
+	// list from it. The key files alone do not carry it (a Node workflow with
+	// no cache: is keyed by its lockfile only), so the install that reads it
+	// above the source layer would otherwise have nothing to read.
+	if in.PM != nil {
+		in.KeyFiles = append(in.KeyFiles, "package.json")
+	}
+	if in.PM != nil && in.PM.Name == "yarn" && in.PM.Berry {
+		// Yarn Berry reads .yarnrc.yml, and it decided the cache mode above.
+		in.KeyFiles = append(in.KeyFiles, ".yarnrc.yml")
+	}
+	keys, err := imagecheck.KeyFiles(cfg, name, checkoutTree{root})
+	if err != nil {
+		return nil, "", fmt.Errorf("workflows.%s: %w", name, err)
+	}
+	in.KeyFiles = append(in.KeyFiles, slices.Sorted(maps.Keys(keys))...)
+	slices.Sort(in.KeyFiles)
+	in.KeyFiles = slices.Compact(in.KeyFiles)
 	data, err = Render(in)
 	return data, "", err
+}
+
+// checkoutTree is the imagecheck.Tree of a plain checkout directory, as
+// KeyFiles is computed over for a rebuild. The build's own checkout is read
+// as a git tree (imagecheck.Open), but the render runs where it stands, and
+// its blob IDs are unused: only the paths are.
+type checkoutTree struct{ root string }
+
+func (c checkoutTree) file(path string) (string, error) {
+	if !fs.ValidPath(path) {
+		return "", fmt.Errorf("%s: %w", path, fs.ErrNotExist)
+	}
+	full := filepath.Join(c.root, filepath.FromSlash(path))
+	// A symlink is not a key file, as the cache's own key leaves it out.
+	fi, err := os.Lstat(full)
+	if err != nil {
+		return "", err
+	}
+	if !fi.Mode().IsRegular() {
+		return "", fmt.Errorf("%s is not a regular file: %w", path, fs.ErrNotExist)
+	}
+	return full, nil
+}
+
+func (c checkoutTree) BlobID(path string) (string, error) {
+	data, err := c.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	h := sha1.New()
+	fmt.Fprintf(h, "blob %d\x00", len(data))
+	h.Write(data)
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// Glob matches files only, and doesn't follow symlinks.
+func (c checkoutTree) Glob(pattern string) ([]string, error) {
+	return doublestar.Glob(os.DirFS(c.root), pattern, doublestar.WithFilesOnly(), doublestar.WithNoFollow())
+}
+
+func (c checkoutTree) ReadFile(path string) ([]byte, error) {
+	full, err := c.file(path)
+	if err != nil {
+		return nil, err
+	}
+	return os.ReadFile(full)
+}
+
+// shellWords renders each word as one single-quoted sh word, so a path with
+// a space or a quote reaches git as itself.
+func shellWords(words []string) string {
+	out := make([]string, len(words))
+	for i, w := range words {
+		out[i] = "'" + strings.ReplaceAll(w, "'", `'\''`) + "'"
+	}
+	return strings.Join(out, " ")
 }
