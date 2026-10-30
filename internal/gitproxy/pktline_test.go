@@ -28,6 +28,24 @@ func pkt(payload string) string {
 	return fmt.Sprintf("%04x", len(payload)+4) + payload
 }
 
+// upperPkt is pkt with the length prefix in upper-case hex. The parser accepts
+// either case - git's own clients write lower case, but the protocol is not
+// case-sensitive there and a receiver that refused upper case would refuse a
+// request git accepts - so this is an input to prove accepted, not refused.
+// The payloads it is given are sized so the header really does carry a letter:
+// a four-digit upper-case spelling of a length below 0x00A0 is the lower-case
+// bytes again, and the case would prove nothing.
+func upperPkt(payload string) string {
+	if len(payload) > maxPktLine-4 {
+		panic("test payload too long for one pkt-line")
+	}
+	h := fmt.Sprintf("%04X", len(payload)+4)
+	if !strings.ContainsAny(h, "ABCDEF") {
+		panic("test payload has no letter in its length prefix: " + h)
+	}
+	return h + payload
+}
+
 func TestReadUpdateRequest(t *testing.T) {
 	tests := []struct {
 		name string
@@ -94,6 +112,13 @@ func TestReadUpdateRequest(t *testing.T) {
 			want: []RefUpdate{
 				{Old: strings.Repeat("a", 64), New: strings.Repeat("b", 64), Ref: "refs/heads/main", HashLen: 64},
 			},
+		},
+		{
+			// The length prefix in upper-case hex, which git accepts and so
+			// does the parser (00A4 is 164 bytes, hence the long ref name).
+			name: "an upper-case hex length prefix",
+			in:   upperPkt(oidA+" "+oidB+" refs/heads/"+strings.Repeat("a", 67)) + "0000",
+			want: []RefUpdate{{Old: oidA, New: oidB, Ref: "refs/heads/" + strings.Repeat("a", 67), HashLen: 40}},
 		},
 		{
 			name: "the probe before a large push is an empty list",
@@ -499,6 +524,47 @@ func TestReadUpdateRequestErrorsNeverEchoInput(t *testing.T) {
 		if strings.Contains(err.Error(), canary) || strings.Contains(err.Error(), in) {
 			t.Errorf("error %q echoes the caller's bytes", err)
 		}
+	}
+}
+
+// TestReadUpdateRequestNeverReadsPastTheFlush: an update request ends at its
+// flush packet and what follows is the pack, so a byte past the flush is never
+// the parser's to read. A whole-request comparison cannot say this - it only
+// says the two agree - so the canary after the flush is held to three
+// assertions instead: it is never asked of the reader (the read stops exactly
+// at the flush), it is never returned as consumed, and it is still sitting in
+// the reader afterwards for the pack to be read from.
+func TestReadUpdateRequestNeverReadsPastTheFlush(t *testing.T) {
+	const canary = "canary-canary-canary"
+	for _, tc := range []struct {
+		name string
+		in   string
+	}{
+		{"the flush-only probe", "0000" + canary},
+		{"an update and then the pack", pkt(oidA+" "+oidB+" refs/heads/main") + "0000" + canary},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &countingReader{data: []byte(tc.in)}
+			cmds, consumed, err := ReadUpdateRequest(r, 1<<20)
+			if err != nil {
+				t.Fatalf("ReadUpdateRequest: %v", err)
+			}
+			if !strings.HasSuffix(string(consumed), "0000") {
+				t.Fatalf("consumed %q, want it to end at a flush packet", consumed)
+			}
+			if strings.Contains(string(consumed), canary) {
+				t.Errorf("consumed %q carries bytes from past the flush", consumed)
+			}
+			if r.requested != len(consumed) {
+				t.Errorf("asked the reader for %d bytes and consumed %d: the read did not stop at the flush", r.requested, len(consumed))
+			}
+			if rest := tc.in[r.off:]; rest != canary {
+				t.Errorf("the reader is holding %q, want the bytes past the flush %q", rest, canary)
+			}
+			if cmds != nil && len(cmds) == 0 {
+				t.Errorf("got an empty, non-nil update list %v", cmds)
+			}
+		})
 	}
 }
 
