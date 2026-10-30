@@ -306,6 +306,24 @@ resource "google_cloud_run_v2_service" "credentials" {
     containers {
       image = var.credentials_service.image
 
+      # The port the container listens on, and its name is the whole point of
+      # this block: Cloud Run reads that name, and `h2c` is what makes it speak
+      # HTTP/2 cleartext to the container end to end instead of HTTP/1.1. The
+      # owner's Check 190 (2026-10-30) is why it is here: a 33 MiB pack pushed
+      # over HTTP/1.1 was answered 413 Request Entity Too Large by the front end
+      # before the service saw four bytes of it, because the HTTP/1 path buffers
+      # a body that size, and nothing on this side of the front end changes that
+      # limit. The service's own server speaks both protocols on its one
+      # listener (internal/cli/credentials_serve.go), so this name turns the
+      # second one on for the hop that was cutting the push and leaves the
+      # HTTP/1.1 callers it has today working. 8080 is the number the process
+      # itself falls back to when Cloud Run's PORT is unset (servePort), and it
+      # is Cloud Run's own default.
+      ports {
+        name           = "h2c"
+        container_port = 8080
+      }
+
       resources {
         limits = {
           cpu    = "1"

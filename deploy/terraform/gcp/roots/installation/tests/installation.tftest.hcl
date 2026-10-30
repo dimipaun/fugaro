@@ -2437,6 +2437,20 @@ run "credentials_service_on" {
     google_cloud_run_v2_service.credentials[0].template[0].timeout == "3600s")
     error_message = "the service runs as its own account, on the image the variable carries, with the longest timeout Cloud Run allows for a streaming proxy"
   }
+  # The container's port is NAMED h2c, and the name is the whole of what makes
+  # Cloud Run speak HTTP/2 cleartext to the process end to end: an unnamed port
+  # is HTTP/1.1, which buffers a large body and answers 413 Request Entity Too
+  # Large before the service sees it — the owner's Check 190 lost a 33 MiB pack
+  # that way (B1.0). The number is the port the process itself falls back to
+  # when the platform's PORT is unset (internal/cli/credentials_serve.go's
+  # servePort) and Cloud Run's own default, so the name and the listener cannot
+  # point at different ports.
+  assert {
+    condition = (length(google_cloud_run_v2_service.credentials[0].template[0].containers[0].ports) == 1 &&
+      google_cloud_run_v2_service.credentials[0].template[0].containers[0].ports[0].name == "h2c" &&
+    google_cloud_run_v2_service.credentials[0].template[0].containers[0].ports[0].container_port == 8080)
+    error_message = "the container's port must be named h2c and be 8080: without the name the front end talks HTTP/1.1 to the service and a large git push is cut at 413 before the pack arrives"
+  }
   # The environment is the seven names C1.14's `fugaro credentials serve`
   # reads and internal/infra/tf's credentialsServiceEnv allows, and it is held
   # as an exact map: an eighth entry, a missing one, a name the process does
