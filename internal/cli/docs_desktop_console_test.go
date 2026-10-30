@@ -6386,6 +6386,13 @@ const (
 	// removes it: after that, the text it produced is the one that runs, and it
 	// is read from appliedConsoleReleasePath.
 	consoleReleaseLinuxWorkflowPath = "docs/pending-workflows/console-release-linux.yml"
+	// consoleReleaseFeedWorkflowPath is the staged replacement of
+	// consoleReleaseWorkflowPath with the console's update feed
+	// (electron-updater's latest-mac.yml) added. Its copy-in copies it over the
+	// staged console-release.yml and into .github/workflows/, then removes it:
+	// after that the text it produced is the one that runs, and it is read from
+	// appliedConsoleReleasePath.
+	consoleReleaseFeedWorkflowPath = "docs/pending-workflows/console-release-feed.yml"
 	// consoleLinuxJobName is the job's key AND its display name: a job name
 	// with an expression in it is a check name nobody can match, which is the
 	// reason console-tests.yml's own comment gives for its static `console`.
@@ -6459,6 +6466,22 @@ func consoleReplacementText(t *testing.T, staged, applied string) (string, strin
 		return readDoc(t, staged), staged
 	}
 	return readDoc(t, applied), applied
+}
+
+// consoleFeedText is the console signing workflow's text as this tree holds the
+// update feed change: the staged supersede file
+// (consoleReleaseFeedWorkflowPath) while it is staged, and console-release.yml
+// once the owner's copy-in has written it over that file and removed it. It
+// goes through consoleReleaseEffectiveText first, so the byte-identity clause
+// between the two copies of console-release.yml stays live in every state the
+// copy-in passes through.
+func consoleFeedText(t *testing.T) (string, string) {
+	t.Helper()
+	file, path := consoleReleaseEffectiveText(t)
+	if docExists(t, consoleReleaseFeedWorkflowPath) {
+		return readDoc(t, consoleReleaseFeedWorkflowPath), consoleReleaseFeedWorkflowPath
+	}
+	return file, path
 }
 
 // consoleReleaseEffectiveText is the console signing workflow's text as the
@@ -7356,6 +7379,221 @@ func TestConsoleReleaseLinuxStagedFileIsNotTheAppliedOne(t *testing.T) {
 	for _, want := range []string{"name: console-linux-assets", "console-linux-verification.txt", "cosign sign-blob --yes --bundle=console-sha256sums.txt.sigstore.json"} {
 		if !strings.Contains(string(applied), want) {
 			t.Errorf("%s no longer carries %q, and %s is gone: the copy-in's first command writes the replacement over this file, so an applied tree that lacks it has lost the Linux legs entirely", appliedConsoleReleasePath, want, consoleReleaseLinuxWorkflowPath)
+		}
+	}
+}
+
+// consoleFeedFileName is the update feed's own name: electron-updater's macOS
+// manifest, which the release job writes beside the .zip (D765 -- D764 records
+// why the packer cannot write it: `build.publish` is `null` in
+// console/package.json, so electron-builder publishes nothing).
+const consoleFeedFileName = "latest-mac.yml"
+
+// consoleFeedTemplate is the printf that writes the feed, character for
+// character: the six fields D765 names and nothing else -- no `blockmap`, which
+// D772 leaves open and which is therefore off by default. `url` and `path` are
+// the .zip's name **as GitHub stores it**, which is not the name the packer
+// gives it: the default macOS artifact name carries a space and GitHub renders
+// it as a dot, so a feed naming the packer's own spelling would point
+// electron-updater at an asset that does not exist.
+const consoleFeedTemplate = `printf 'version: %s\nfiles:\n  - url: %s\n    sha512: %s\n    size: %s\npath: %s\nsha512: %s\nreleaseDate: %s\n' "$VERSION" "$FEED_ASSET" "$ZIP_SHA512" "$ZIP_SIZE" "$FEED_ASSET" "$ZIP_SHA512" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$FEED"`
+
+// consoleFeedSumLine appends the feed's own SHA-256 to the job's sums file, so
+// the feed travels to `publish` -- and to the release -- under the merged
+// console-sha256sums.txt that cosign signs (D765: the feed is in the sums).
+const consoleFeedSumLine = `(cd "$(dirname "$FEED")" && shasum -a 256 "$(basename "$FEED")") >> "$SUMS"`
+
+// consoleReleaseMacosSumsStep is the publish job's check over the macOS leg's
+// artifact, which the feed joins: it refuses an artifact with no feed and a
+// feed that is not in the sums.
+const consoleReleaseMacosSumsStep = "The assets match the sums the release job recorded"
+
+// consoleSecretRefRE is one `secrets.NAME` reference anywhere in a workflow
+// file. The feed change adds none.
+var consoleSecretRefRE = regexp.MustCompile(`secrets\.[A-Za-z0-9_]+`)
+
+// consoleReleaseShape parses a workflow file text into the shape this family's
+// step readers use, naming the file it could not read rather than the one the
+// older readers remember.
+func consoleReleaseShape(t *testing.T, path, text string) consoleReleaseWorkflow {
+	t.Helper()
+	var wf consoleReleaseWorkflow
+	if err := yaml.Unmarshal([]byte(text), &wf); err != nil {
+		t.Fatalf("%s is not valid YAML: %v", path, err)
+	}
+	return wf
+}
+
+// consoleOtherwiseIdentical is the part of a console release workflow the feed
+// change must leave exactly as it is: every action pin, the trigger, the
+// permissions the workflow and each job hold, the environment each job takes,
+// the job set, and every secret the file names. It is compared between the
+// staged feed file and the console-release.yml it supersedes, so a change that
+// moved a pin, a permission, the signing job's protected environment or a
+// secret reference fails here rather than in the owner's copy-in.
+func consoleOtherwiseIdentical(t *testing.T, text string) string {
+	t.Helper()
+	var raw struct {
+		Permissions map[string]any            `yaml:"permissions"`
+		Jobs        map[string]map[string]any `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal([]byte(text), &raw); err != nil {
+		t.Fatalf("%s is not valid YAML: %v", consoleReleaseWorkflowPath, err)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "permissions=%v\n", raw.Permissions)
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if strings.Contains(line, "uses:") {
+			b.WriteString(trimmed + "\n")
+		}
+	}
+	b.WriteString(consoleTriggerBlock(t, text) + "\n")
+	names := make([]string, 0, len(raw.Jobs))
+	for name := range raw.Jobs {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		job := raw.Jobs[name]
+		fmt.Fprintf(&b, "job %s environment=%v permissions=%v\n", name, job["environment"], job["permissions"])
+	}
+	for _, ref := range consoleSecretRefRE.FindAllString(text, -1) {
+		b.WriteString(ref + "\n")
+	}
+	return b.String()
+}
+
+// consoleLinesDropped is the lines base carries and text does not, as a
+// multiset. The feed change adds; the only lines it may take away are the
+// comment lines of the file's own header, which gains a paragraph describing
+// it.
+func consoleLinesDropped(base, text string) []string {
+	remaining := map[string]int{}
+	for _, line := range strings.Split(text, "\n") {
+		remaining[line]++
+	}
+	var dropped []string
+	for _, line := range strings.Split(base, "\n") {
+		if remaining[line] > 0 {
+			remaining[line]--
+			continue
+		}
+		dropped = append(dropped, line)
+	}
+	return dropped
+}
+
+// TestDocsConsoleReleaseFeedIsStagedAndPinned holds the staged update feed to
+// what the console's auto-update needs and to nothing else (the owner's go of
+// 2026-10-30; D764, D765). The macOS `release` job writes `latest-mac.yml`
+// beside the .zip it has just verified, from the tag's version and the .zip's
+// own bytes, sums it into the job's console-sha256sums.txt and uploads it with
+// the other assets; `publish` requires it, checks it against the sums and
+// attaches it. Everything that makes this file safe to run -- the pins, the
+// trigger, the permissions, the protected environment the Apple secrets live
+// behind and every secret the file names -- is what runs today.
+//
+// It reads the feed text the way this family reads a supersede file: from
+// docs/pending-workflows/console-release-feed.yml while it is staged, and from
+// console-release.yml once the owner's copy-in has written it over that file
+// and removed it, so the same suite is green on both sides of the copy-in. The
+// mutation that proves the first half: the same test against a tree with no
+// feed file, where console-release.yml writes, sums and attaches no
+// latest-mac.yml at all.
+func TestDocsConsoleReleaseFeedIsStagedAndPinned(t *testing.T) {
+	text, path := consoleFeedText(t)
+
+	for _, want := range []string{
+		`FEED_ASSET="$(basename "$ZIP" | tr ' ' '.')"`,
+		`ZIP_SHA512="$(openssl dgst -sha512 -binary "$ZIP" | base64 | tr -d '\n')"`,
+		`ZIP_SIZE="$(stat -f%z "$ZIP")"`,
+		`FEED="$(dirname "$ZIP")/latest-mac.yml"`,
+		consoleFeedTemplate,
+		consoleFeedSumLine,
+		`record cat "$FEED"`,
+		`cp "$FEED" "$ASSETS/"`,
+		`-s latest-mac.yml`,
+		`grep -qF "  latest-mac.yml" console-sha256sums.txt`,
+		`FEED="latest-mac.yml"`,
+		`test -s "$FEED"`,
+		`"$FEED"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("%s does not carry %q: the release job writes the update feed beside the zip from the bytes it just verified, sums it, uploads it with the other assets, and publish refuses a release that would ship without it", path, want)
+		}
+	}
+	if strings.Contains(text, "blockmap") {
+		t.Errorf("%s carries a `blockmap`: D765 writes the six fields electron-updater needs from a full download and nothing else, and the differential download D772 leaves open is off by default", path)
+	}
+
+	wf := consoleReleaseShape(t, path, text)
+	release, ok := wf.Jobs["release"]
+	if !ok {
+		t.Fatalf("%s has no release job: there is nowhere for the feed to be written", path)
+	}
+	_, verify := consoleStepNamed(t, release, "release", consoleReleaseVerifyStep)
+	if verify.Env["VERSION"] != "${{ steps.tag.outputs.version }}" {
+		t.Errorf("%s's verification step VERSION = %q, want the tag step's output: the feed's `version` is the tag's X.Y.Z, the same one stamped on every pack, and a feed built from anything else offers an update to a version that was never released", path, verify.Env["VERSION"])
+	}
+	vlines := consoleRunLines(verify.Run)
+	zipVerified := consoleLineIndex(vlines, `record retry_apple_network xcrun stapler validate "$IN_ZIP"`, false)
+	feed := consoleLineIndex(vlines, consoleFeedTemplate, false)
+	summed := consoleLineIndex(vlines, consoleFeedSumLine, false)
+	if !(zipVerified >= 0 && zipVerified < feed && feed < summed) {
+		t.Errorf("%s writes the feed at %d, sums it at %d, and verifies the .zip's copy at %d: the feed describes the bytes of a .zip that has been verified, and its digest has to be in the sums file before that file is uploaded (%v)", path, feed, summed, zipVerified, vlines)
+	}
+	if consoleLineIndex(vlines, `cp "$FEED" "$ASSETS/"`, false) <= consoleLineIndex(vlines, `cp "$DMG" "$ZIP" "$RECORD" "$SUMS" "$ASSETS/"`, false) {
+		t.Errorf("%s copies the feed into the uploaded artifact before the artifacts it belongs beside: the artifact is what publish reads, and every file in the release is in it", path)
+	}
+
+	pub, ok := wf.Jobs["publish"]
+	if !ok {
+		t.Fatalf("%s has no publish job: the feed would be built and never published", path)
+	}
+	_, sumsStep := consoleStepNamed(t, pub, "publish", consoleReleaseMacosSumsStep)
+	slines := consoleRunLines(sumsStep.Run)
+	if consoleLineIndex(slines, `if [ ! -s latest-mac.yml ]; then`, false) < 0 {
+		t.Errorf("%s's %q step does not require exactly one non-empty latest-mac.yml: a macOS artifact with no feed is a console release that can never update itself, and the check that refuses it belongs with the sums check it has to pass anyway", path, consoleReleaseMacosSumsStep)
+	}
+	if consoleLineIndex(slines, `grep -qF "  latest-mac.yml" console-sha256sums.txt`, false) < 0 {
+		t.Errorf("%s's %q step does not check the feed against console-sha256sums.txt: the signature over that file is what vouches for the feed, so a feed the sums file does not list is a manifest nothing signs", path, consoleReleaseMacosSumsStep)
+	}
+	_, publish := consoleStepNamed(t, pub, "publish", consoleReleasePublishStep)
+	plines := consoleRunLines(publish.Run)
+	if consoleLineIndex(plines, `FEED="latest-mac.yml"`, false) < 0 || consoleLineIndex(plines, `test -s "$FEED"`, false) < 0 {
+		t.Errorf("%s's publish step does not read the feed with a non-empty check of its own: every other asset there is `test -s`'d before the release is created, and a release that ships an empty manifest is worse than one with none", path)
+	}
+	assets := -1
+	for i, line := range plines {
+		if strings.HasPrefix(line, `"$DMG" "$APP_ZIP"`) {
+			assets = i
+		}
+	}
+	if assets < 0 || !strings.Contains(plines[assets], `"$FEED"`) {
+		t.Errorf("%s's publish step does not attach the update feed with the rest of the release: the manifest is the one file electron-updater fetches directly, and an uploaded-but-unattached feed is a feed no client can see (%v)", path, plines)
+	}
+
+	// The both-states half: while the feed file is staged it has to be a change
+	// to the file it supersedes, and a change to nothing else.
+	if !docExists(t, consoleReleaseFeedWorkflowPath) {
+		return
+	}
+	base, basePath := consoleWorkflowText(t, consoleReleaseWorkflowPath, appliedConsoleReleasePath)
+	if text == base {
+		t.Errorf("%s is byte-identical to %s: then it is not a change, and its copy-in commands are instructions to do nothing", consoleReleaseFeedWorkflowPath, basePath)
+		return
+	}
+	if got, want := consoleOtherwiseIdentical(t, text), consoleOtherwiseIdentical(t, base); got != want {
+		t.Errorf("%s and %s differ outside the feed: the action pins, the trigger, the permissions, every job's environment and every `secrets.` reference have to be identical, because this change adds a manifest and touches nothing that decides who may run it or what it may read.\nfeed:\n%s\n%s:\n%s", consoleReleaseFeedWorkflowPath, basePath, got, basePath, want)
+	}
+	for _, line := range consoleLinesDropped(base, text) {
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" && !strings.HasPrefix(trimmed, "#") {
+			t.Errorf("%s drops %q, which %s carries: the feed change adds a step's worth of shell and a paragraph of header, and takes no line of the pipeline away", consoleReleaseFeedWorkflowPath, trimmed, basePath)
 		}
 	}
 }
