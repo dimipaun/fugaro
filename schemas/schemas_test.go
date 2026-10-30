@@ -3724,3 +3724,63 @@ func TestSchemaCoversCheckoutShared(t *testing.T) {
 		})
 	}
 }
+
+// TestProjectLayerSchemaCoversCheckoutShared: the same third kind in the
+// other layer. One validateCheckout serves both (config.ParseProjectLayer's
+// validateProfile calls it), so the project layer's profile schema has to
+// accept the same three values and refuse the same key under shared — left
+// alone it refused checkout: shared in a profile while the Go validator
+// accepted it, and no corpus file caught the disagreement the test above
+// pins for fugaro.schema.json.
+func TestProjectLayerSchemaCoversCheckoutShared(t *testing.T) {
+	sch := compile(t, "project-layer.schema.json")
+	data, err := os.ReadFile("project-layer.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Defs map[string]json.RawMessage `json:"$defs"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var def struct {
+		Properties map[string]struct {
+			Enum []string `json:"enum"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(doc.Defs["profile"], &def); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{config.CheckoutBaked, config.CheckoutClone, config.CheckoutShared}
+	if got := def.Properties["checkout"].Enum; !slices.Equal(got, want) {
+		t.Errorf("project-layer.schema.json's profile checkout enum = %v, want the Go constants %v", got, want)
+	}
+
+	a := config.LayerAnchor{Project: "aurora", GCPProject: "proj-1234"}
+	const base = "version: 1\nproject: aurora\ngcp_project: proj-1234\nprofiles:\n  p:\n    checkout: shared\n    commands: { build: make, test: make }\n"
+
+	// The dependency layer's keys a profile may carry: accepted by both, the
+	// same shape testdata/project-layer/valid/checkout-shared-profile.yaml
+	// carries through the corpus.
+	withKeys := strings.Replace(base, "    commands:", "    image: { apt: [libvips-dev], tools: { node: \"24.19.0\" }, skip_build_scripts: true }\n    commands:", 1)
+	if err := sch.Validate(yamlInstance(t, []byte(withKeys))); err != nil {
+		t.Errorf("the schema rejects a checkout: shared profile with the dependency-layer keys: %v", err)
+	}
+	if _, ps := config.ParseProjectLayer([]byte(withKeys), a); len(ps) > 0 {
+		t.Errorf("config.ParseProjectLayer rejects a checkout: shared profile with the dependency-layer keys: %v", ps)
+	}
+
+	// image.setup is the one per-repository key a profile can carry
+	// (dockerfile and image.key_files are repo-only): refused by both, and by
+	// the reason alone, the mirror of fugaro.schema.json's rule.
+	withSetup := strings.Replace(base, "    commands:", "    image: { setup: [\"./scripts/warm.sh\"] }\n    commands:", 1)
+	schemaErr := sch.Validate(yamlInstance(t, []byte(withSetup)))
+	_, ps := config.ParseProjectLayer([]byte(withSetup), a)
+	if schemaErr == nil {
+		t.Error("the schema accepts image.setup under a profile's checkout: shared")
+	}
+	if len(ps) != 1 || ps[0].Path != "profiles.p.image.setup" || !strings.Contains(ps[0].Message, "holds no repository's own content") {
+		t.Errorf("config.ParseProjectLayer problems = %v, want exactly one at profiles.p.image.setup", ps)
+	}
+}

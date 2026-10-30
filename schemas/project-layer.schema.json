@@ -209,12 +209,24 @@
               }
             }
           }
+        },
+        {
+          "if": { "required": ["checkout"], "properties": { "checkout": { "const": "shared" } } },
+          "then": {
+            "properties": {
+              "image": {
+                "properties": {
+                  "setup": { "maxItems": 0 }
+                }
+              }
+            }
+          }
         }
       ],
       "properties": {
         "description": { "type": "string", "maxLength": 200, "pattern": "^[^\\r\\n]*$" },
         "base": { "not": {}, "$comment": "not: {} forbids this key outright (matches nothing), including an explicit null: the removed-key tombstone idiom (6x across fugaro.schema.json and project-layer.schema.json: base, image.node and image.jdk), not dead code. It keeps the key documented in an editor's tooltip (see description) while still refusing any value. Do not delete when touching this key.", "description": "Removed in 0.7.0: delete it and declare runtimes in mise.toml (docs/base-image-migration.md)" },
-        "checkout": { "enum": ["baked", "clone"] },
+        "checkout": { "enum": ["baked", "clone", "shared"], "description": "The same three values as fugaro.schema.json's workflows.*.checkout: baked (default), clone, and shared, which runs a shared dependency-layer image and clones the source at launch, so a profile under it may carry image.apt, image.tools and image.skip_build_scripts but not image.setup." },
         "image": {
           "type": "object",
           "additionalProperties": false,
