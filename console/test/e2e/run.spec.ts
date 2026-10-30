@@ -565,12 +565,16 @@ test.describe('the Run detail screen', () => {
    * closing the one it replaces (`src/main/window.ts`), so a handle taken once
    * names a window that can be gone by the time a later case in this serial
    * describe reads through it -- which is `Target page, context or browser has
-   * been closed` on whichever case is reading when it goes. */
+   * been closed` on whichever case is reading when it goes.
+   *
+   * No window at all is a failure at once and in the console's own words --
+   * the sentence every neighbouring spec's mount answers with -- rather than a
+   * wait on a window that is not coming. */
   async function pageNow(): Promise<Page> {
     if (!page.isClosed()) return page
-    page =
-      app.windows().find((candidate) => !candidate.isClosed()) ??
-      (await app.waitForEvent('window', { predicate: (candidate: Page) => !candidate.isClosed() }))
+    const open = app.windows().find((candidate) => !candidate.isClosed())
+    if (open === undefined) throw new Error('the console has no window')
+    page = open
     await page.waitForLoadState('domcontentloaded')
     return page
   }
@@ -598,10 +602,6 @@ test.describe('the Run detail screen', () => {
       draw(diagnosis, logs, logLink, replay, scrubAt, theme),
     )) as { error?: string }
     expect(result.error).toBeUndefined()
-    // The window's own entry draws the real dashboard into this same document
-    // beside the mount, and a redraw of that is not this case's screen: wait
-    // for the tree this draw made before the case reads it.
-    await shown.locator(`${THE_MOUNT} .run`).waitFor({ state: 'attached' })
   }
 
   test('draws the ledger, the outcome and the halt', async () => {
@@ -846,7 +846,7 @@ test.describe('the Run detail screen', () => {
     // NOT a golden test, deliberately: `FUGARO_CONSOLE_GOLDENS=skip` does not skip
     // it. Nothing here reads a PNG, so an unstyled tree is red on its own account
     // rather than recorded as a fresh baseline nobody compared.
-    await expectGrounded(page, (theme) => mount(DIAGNOSIS, logLines(3), LOG_LINK, ARRIVALS, null, theme), {
+    await expectGrounded(await pageNow(), (theme) => mount(DIAGNOSIS, logLines(3), LOG_LINK, ARRIVALS, null, theme), {
       themes: RUN_THEMES,
       mount: THE_MOUNT,
       text: 'h1.run-id',

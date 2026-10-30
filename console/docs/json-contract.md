@@ -424,9 +424,10 @@ repository, `n/a` where the JSON says `null`. **The console's own `budget.show`
 row may pass it too — opt-in, on the Spend screen's caps read alone and only to
 a CLI at or above `BUDGET_COMPUTE_CLI_FLOOR` (`0.13.0`, the release that ships
 the flag; `budgetComputeSupported`, `console/src/shared/version.ts`), so an
-older CLI is read with the key absent and its cell drawn `n/a` rather than
-handed an argv it would refuse — while the rail and the Projects screen pass
-nothing.**
+older CLI is read with the key absent and handed no argv it would refuse: the
+Spend caps panel draws no compute cell at all for a document that carries no
+`compute_usd`, rather than a column of `n/a` — while the rail and the Projects
+screen pass nothing.**
 
 `showRun`: `slug`, `run`, `repo`°, `workflow`°, `title`°,
 `stage`°, `round` (**int**, `omitempty` — unlike `watch`'s string),
