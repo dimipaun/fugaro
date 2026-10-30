@@ -27,9 +27,9 @@ import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { UNAVAILABLE_MARK, measured, unavailable } from '../../src/shared/availability'
+import { UNAVAILABLE_MARK, estimated, measured, notional, unavailable } from '../../src/shared/availability'
 import { ADDRESS_PLACEHOLDER } from '../../src/shared/sanitize'
-import { renderRun } from '../../src/renderer/screens/run'
+import { buildRunModel, renderRun } from '../../src/renderer/screens/run'
 import type {
   RunFactory,
   RunModel,
@@ -182,7 +182,7 @@ const ROW: RunRow = Object.freeze({
 function model(over: Partial<RunModel> = {}, rowOver: Partial<RunRow> = {}): RunModel {
   return {
     row: { ...ROW, ...rowOver },
-    ledger: { model: measured(1), compute: measured(0.5), total: measured(1.5) },
+    ledger: { model: measured(1), compute: measured(0.5), total: measured(1.5), notional: unavailable(LEGACY_DOCUMENT) },
     spendStages: [],
     spendStagesDropped: measured(0),
     tolerated: null,
@@ -222,6 +222,7 @@ function model(over: Partial<RunModel> = {}, rowOver: Partial<RunRow> = {}): Run
       dropped: measured(0),
       from: null,
       to: null,
+      stamps: [],
       scrubbed: null,
       scrubbedBecause: null,
     },
@@ -534,6 +535,203 @@ describe('renderRun: the diagnosis chips', () => {
 })
 
 // ---------------------------------------------------------------------------
+// The ledger, the reconciliation and the two splits.
+// ---------------------------------------------------------------------------
+
+/** runFrame is a `diagnose RUN --json` document with one row, for the cases that
+ * read what the model derives from a record rather than a hand-built reading. */
+function runFrame(cost: Record<string, unknown>): Record<string, unknown> {
+  return { row: { run: TRACKED, run_id: TRACKED, repo: TRACKED_REPO, cost } }
+}
+
+/** ledgerTree builds the screen from a `runstore.Cost` block. */
+function ledgerTree(cost: Record<string, unknown>): ScreenElement {
+  return renderRun(factory, buildRunModel({ diagnosis: runFrame(cost), logs: [], logLink: null }), 'light')
+}
+
+describe('renderRun: the ledger', () => {
+  it('draws the billed total as the hero and never the plan\'s part added to it', () => {
+    // The one figure on this screen that must not move: `total_usd` is what the
+    // table billed, the model line is that figure's own billed part, and
+    // `model_notional_usd` is the plan's list price -- money nobody was charged.
+    // A hero of `total + notional` is a bill that does not exist.
+    const tree = ledgerTree({
+      model_usd: 1.25,
+      model_notional_usd: 0.4,
+      compute_usd: 0.5,
+      compute_estimated: true,
+      total_usd: 1.35,
+      model_basis: 'api-list',
+    })
+    expect(one(tree, 'run-ledger-total-value').textContent).toBe('$1.35')
+    expect(one(tree, 'run-ledger-model-value').textContent, 'the model line is the billed part of the whole figure').toBe('$0.85')
+    expect(one(tree, 'run-ledger-compute-value').textContent).toBe('est. $0.50')
+    expect(one(tree, 'run-ledger-notional-value').textContent, 'the plan\'s part is marked notional').toBe('~$0.40')
+    const text = drawn(tree)
+    expect(text, 'the billed dollars plus the plan\'s part, drawn nowhere').not.toContain('$1.75')
+    expect(text, 'the whole model figure, drawn as money nowhere').not.toContain('$1.25')
+    // And the plan's part is no segment of the bar: the bar is two shares of
+    // the billed total.
+    for (const segment of [...all(tree, 'run-ledger-billed'), ...all(tree, 'run-ledger-estimate')]) {
+      expect(Number(segment.getAttribute('width')), 'a bar segment is the plan\'s share').not.toBeCloseTo((0.4 / 1.35) * 100, 2)
+    }
+  })
+
+  it('draws the bar as the model and the compute as shares of the total', () => {
+    const ledger = { model: measured(1.5), compute: estimated(0.5), total: measured(2), notional: notional(0.25) }
+    const tree = renderRun(factory, model({ ledger }), 'light')
+    expect(one(tree, 'run-ledger-bar').getAttribute('aria-hidden'), 'the legend carries the values as text').toBe('true')
+    expect(all(tree, 'run-ledger-billed')[0]?.getAttribute('width')).toBe('75')
+    expect(all(tree, 'run-ledger-estimate')[0]?.getAttribute('width')).toBe('25')
+    expect(all(tree, 'run-ledger-estimate')[0]?.getAttribute('x'), 'the two segments tile the axis').toBe('75')
+  })
+
+  it('draws no bar when the compute is not estimated, and the legend still carries the value', () => {
+    // The bar is two shares of the total; with one of them unknown there is no
+    // second share to draw, and a bar of one segment would read as a run whose
+    // compute was free.
+    const ledger = { model: measured(1.5), compute: unavailable(LEGACY_DOCUMENT), total: measured(2), notional: unavailable(LEGACY_DOCUMENT) }
+    const tree = renderRun(factory, model({ ledger }), 'light')
+    expect(all(tree, 'run-ledger-bar')).toHaveLength(0)
+    expect(one(tree, 'run-ledger-model-value').textContent).toBe('$1.50')
+    expect(one(tree, 'run-ledger-compute-value').textContent).toBe(UNAVAILABLE_MARK)
+  })
+
+  it('draws the plan\'s part once: a record whose whole figure is the plan\'s draws it on the model line', () => {
+    // A subscription run written after C1.16 carries the part as its whole
+    // figure; one written before carries no key at all. Both draw the figure
+    // once, under the notional mark, and neither draws a second notional line.
+    for (const cost of [
+      { model_usd: 3.2, model_notional_usd: 3.2, compute_usd: 0, compute_estimated: true, total_usd: 0, model_basis: 'api-list' },
+      { model_usd: 3.2, compute_usd: 0, compute_estimated: true, total_usd: 0, model_basis: 'subscription' },
+    ]) {
+      const tree = ledgerTree(cost)
+      expect(one(tree, 'run-ledger-model-value').textContent).toBe('~$3.20')
+      expect(all(tree, 'run-ledger-notional'), 'the same dollars in two lines').toHaveLength(0)
+      expect(drawn(tree).split('~$3.20'), 'the plan\'s figure, drawn exactly once').toHaveLength(2)
+    }
+  })
+
+  it('draws a notional line only when the model line is billed money', () => {
+    const tree = ledgerTree({
+      model_usd: 3.2,
+      model_notional_usd: 2,
+      compute_usd: 0.5,
+      compute_estimated: true,
+      total_usd: 1.7,
+      model_basis: 'api-list',
+    })
+    expect(one(tree, 'run-ledger-model-value').textContent).toBe('$1.20')
+    expect(one(tree, 'run-ledger-notional-value').textContent).toBe('~$2.00')
+  })
+
+  it('draws the reported/charged pair, and the difference only when both were measured', () => {
+    const measured_ = { ...model().diagnosis, reportedUsd: measured(1.2), chargeUsd: measured(1.25) }
+    const tree = renderRun(factory, model({ diagnosis: measured_ }), 'light')
+    expect(one(tree, 'run-reported-usd').textContent).toBe('$1.20')
+    expect(one(tree, 'run-charge-usd').textContent).toBe('$1.25')
+    expect(one(tree, 'run-recon-diff-value').textContent, 'the table charged, less what the providers reported').toBe('$0.05')
+    expect(one(tree, 'run-recon-diff').classes).toContain('run-recon-diff-warn')
+
+    const absent = { ...model().diagnosis, reportedUsd: unavailable(LEGACY_DOCUMENT), chargeUsd: measured(1.25) }
+    const missing = renderRun(factory, model({ diagnosis: absent }), 'light')
+    expect(one(missing, 'run-reported-usd').textContent).toBe(UNAVAILABLE_MARK)
+    const difference = one(missing, 'run-recon-diff-value')
+    expect(difference.textContent).toBe(UNAVAILABLE_MARK)
+    expect(difference.getAttribute('title'), 'the reason, not a subtraction from a zero nobody wrote').toContain('no provider reported')
+    expect(one(missing, 'run-recon-diff').classes).not.toContain('run-recon-diff-warn')
+  })
+
+  it('keeps the difference out of the warn tone when the two accounts agree', () => {
+    const diagnosis = { ...model().diagnosis, reportedUsd: measured(1.2), chargeUsd: measured(1.2) }
+    const tree = renderRun(factory, model({ diagnosis }), 'light')
+    expect(one(tree, 'run-recon-diff-value').textContent).toBe('$0.00')
+    expect(one(tree, 'run-recon-diff').classes).not.toContain('run-recon-diff-warn')
+  })
+
+  it('draws the two splits as the document wrote them, and never adds them up', () => {
+    const diagnosis = {
+      ...model().diagnosis,
+      byRoute: [{ name: 'anthropic-api', usd: measured(0.9) }],
+      byModel: [{ name: 'claude-sonnet-5', usd: measured(1.25) }],
+    }
+    const tree = renderRun(factory, model({ diagnosis }), 'light')
+    expect(texts(tree, 'run-route-name')).toEqual(['anthropic-api'])
+    expect(texts(tree, 'run-route-usd')).toEqual(['$0.90'])
+    expect(texts(tree, 'run-model-name')).toEqual(['claude-sonnet-5'])
+    expect(texts(tree, 'run-model-usd')).toEqual(['$1.25'])
+    expect(all(tree, 'run-split')).toHaveLength(2)
+    expect(all(tree, 'run-split-absent')).toHaveLength(0)
+    // The two splits are different scopes of the same run and no document sums
+    // them: a total here would be a figure the console invented.
+    expect(drawn(tree), 'the two splits, added up').not.toContain('$2.15')
+  })
+
+  it('draws an absent split as the mark with its reason, one line each', () => {
+    const tree = renderRun(factory, model(), 'light')
+    expect(texts(tree, 'run-route-name')).toEqual([])
+    const absent = all(tree, 'run-split-absent')
+    expect(absent).toHaveLength(2)
+    for (const line of absent) expect(line.textContent).toBe(UNAVAILABLE_MARK)
+    expect(absent[0]?.getAttribute('title')).toContain('route_by')
+    expect(absent[1]?.getAttribute('title')).toContain('model_by')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The replay scrubber.
+// ---------------------------------------------------------------------------
+
+/** replayTree builds the screen from a list of arrival stamps and a scrub. */
+function replayTree(stamps: readonly string[], scrubAt: string | null): ScreenElement {
+  const arrivals = stamps.map((receivedAt) => ({ receivedAt, document: { project: 'example-project' }, notices: [] }))
+  return renderRun(factory, buildRunModel({ diagnosis: runFrame({}), logs: [], logLink: null, replay: arrivals, scrubAt }), 'light')
+}
+
+describe('renderRun: the replay scrubber', () => {
+  const STAMPS = ['2026-10-15T12:00:00Z', '2026-10-15T12:04:00Z', '2026-10-15T12:10:00Z']
+
+  it('places one tick per record at its own share of the window', () => {
+    const tree = replayTree(STAMPS, null)
+    const ticks = all(tree, 'run-replay-tick')
+    expect(ticks, 'one tick per record that arrived').toHaveLength(3)
+    expect(ticks.map((tick) => tick.getAttribute('x1'))).toEqual(['0', '40', '100'])
+    expect(one(tree, 'run-replay-track').getAttribute('aria-hidden')).toBe('true')
+    expect(one(tree, 'run-replay-from').textContent).toBe(STAMPS[0])
+    expect(one(tree, 'run-replay-to').textContent).toBe(STAMPS[2])
+    expect(one(tree, 'run-replay-mid').textContent).toBe('2026-10-15T12:05:00.000Z')
+    // With nothing scrubbed the whole window is what is shown, so every tick is
+    // in the live tone and there is no playhead to be past.
+    expect(all(tree, 'run-replay-tick-past')).toHaveLength(0)
+    expect(all(tree, 'run-replay-playhead')).toHaveLength(0)
+    expect(all(tree, 'run-replay-fill'), 'no playhead, no fill').toHaveLength(0)
+    expect(one(tree, 'run-replay-scrubbed').textContent).toContain('whole window')
+  })
+
+  it('draws the playhead at the moment scrubbed to, and the ticks past it in the past tone', () => {
+    const tree = replayTree(STAMPS, '2026-10-15T12:05:00Z')
+    const playhead = all(tree, 'run-replay-playhead')
+    expect(playhead).toHaveLength(1)
+    expect(playhead[0]?.getAttribute('x1')).toBe('40')
+    expect(all(tree, 'run-replay-fill')[0]?.getAttribute('width'), 'the fill runs from the window start to the playhead').toBe('40')
+    expect(all(tree, 'run-replay-tick')).toHaveLength(3)
+    expect(all(tree, 'run-replay-tick-past'), 'the ticks after the playhead').toHaveLength(1)
+    expect(one(tree, 'run-replay-at').textContent, 'the newest frame at or before the moment').toBe('2026-10-15T12:04:00Z')
+  })
+
+  it('draws no positions for a ring with fewer than two distinct stamps, and says so', () => {
+    const tree = replayTree(['2026-10-15T12:00:00Z'], null)
+    expect(all(tree, 'run-replay-tick')).toHaveLength(0)
+    expect(all(tree, 'run-replay-playhead')).toHaveLength(0)
+    const note = one(tree, 'run-replay-no-span').textContent ?? ''
+    expect(note).toContain('no span')
+    // The track itself is still drawn: it is the window's own axis, and a
+    // reader still needs to see that there is one.
+    expect(all(tree, 'run-replay-track')).toHaveLength(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // The two columns.
 // ---------------------------------------------------------------------------
 
@@ -590,7 +788,7 @@ describe('renderRun: what the screen is allowed to set', () => {
     // made with `create` is an HTML element and is not held to this set. The
     // geometry, the stroke, the fill and the joins are the one thing a
     // stylesheet cannot carry, and they are all `flight-deck.css`'s.
-    const MAXIMAL = new Set(['svg', 'rect', 'path'])
+    const MAXIMAL = new Set(['svg', 'rect', 'path', 'line'])
     const SVG_ATTRIBUTES = new Set([
       'viewBox',
       'preserveAspectRatio',
@@ -598,13 +796,34 @@ describe('renderRun: what the screen is allowed to set', () => {
       'height',
       'x',
       'y',
+      'x1',
+      'x2',
+      'y1',
+      'y2',
       'rx',
       'd',
     ])
     const ACCESSIBILITY = new Set(['role', 'aria-label', 'aria-hidden', 'aria-disabled'])
     const tree = renderRun(
       factory,
-      model({ stages: [stage({ passed: false })], diagnosis: { ...model().diagnosis, agentMessage: 'timed out' } }),
+      model({
+        stages: [stage({ passed: false })],
+        diagnosis: { ...model().diagnosis, agentMessage: 'timed out' },
+        // The ledger's bar and the scrubber's track are the screen's two other
+        // SVG drawings; without them the widening below would be a licence for
+        // attributes nothing on this tree sets.
+        ledger: { model: measured(1), compute: estimated(0.5), total: measured(1.5), notional: notional(0.25) },
+        replay: {
+          records: measured(2),
+          windowSeconds: measured(900),
+          dropped: measured(0),
+          from: '2026-10-15T12:00:00Z',
+          to: '2026-10-15T12:10:00Z',
+          stamps: ['2026-10-15T12:00:00Z', '2026-10-15T12:10:00Z'],
+          scrubbed: null,
+          scrubbedBecause: null,
+        },
+      }),
       'light',
     )
     // The panel draws at least one SVG node, or the widening above would be a
@@ -621,6 +840,35 @@ describe('renderRun: what the screen is allowed to set', () => {
             (node.namespace === 'svg' && MAXIMAL.has(node.tag) && SVG_ATTRIBUTES.has(name)),
           `${node.tag}[${name}]`,
         ).toBe(true)
+      }
+    }
+  })
+
+  it('draws no control in the ledger, the pull request or the replay panel', () => {
+    // The three panels 3b draws are read-only: the pull request is text with no
+    // link (`link` is typed `null`), the ledger has no Copy button (the console
+    // has no clipboard without a `src/main` change), and the scrubber's
+    // previous/next controls are not drawn because no ring reaches this screen.
+    // A `button` here would be a control that does nothing.
+    const tree = renderRun(
+      factory,
+      model({
+        replay: {
+          records: measured(3),
+          windowSeconds: measured(900),
+          dropped: measured(0),
+          from: '2026-10-15T12:00:00Z',
+          to: '2026-10-15T12:10:00Z',
+          stamps: ['2026-10-15T12:00:00Z', '2026-10-15T12:04:00Z', '2026-10-15T12:10:00Z'],
+          scrubbed: null,
+          scrubbedBecause: null,
+        },
+      }),
+      'light',
+    )
+    for (const panel of ['run-ledger', 'run-pr', 'run-replay', 'run-diagnosis']) {
+      for (const node of walk(one(tree, panel))) {
+        expect(node.tag, `${panel} draws a control`).not.toBe('button')
       }
     }
   })

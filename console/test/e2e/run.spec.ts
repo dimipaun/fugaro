@@ -813,10 +813,12 @@ test.describe('the Run detail screen', () => {
     expect(drawn.failedTests).toEqual(['TestSpend'])
     // The two splits `diagnose` produces, which are what a per-stage spend
     // would have been read from: they are the document's own account, drawn as
-    // they came.
+    // they came. Since step 3b they are drawn in the ledger, under the
+    // reconciliation, rather than in the diagnosis -- so the same two splits are
+    // read off the same hooks from their new place in the screen.
     expect(drawn.routes).toEqual(['anthropic-api'])
     expect(drawn.text).toContain('claude-sonnet-5')
-    expect(drawn.text).toContain('the providers reported:')
+    expect(drawn.text).toContain('Providers reported')
   })
 
   test('draws the replay buffer: its bound, its span and the moment scrubbed to', async () => {
