@@ -15,10 +15,12 @@ import (
 // pairing, validated, and its layered merge. The key itself is never here (M5,
 // D113b) — the config holds the item's name, and the name is not a secret.
 
-// pairUIDs are two pairings' uids: the device uids `fugaro pair` writes, and a
-// pairing session's. Both are the shape a mailbox entry may be keyed by, and the
-// two shapes differ — a device's uid is 16 random bytes behind m~, a pairing
-// session's is 32 behind p~ — so a uid of one shape is not a uid of the other.
+// pairUIDA and pairUIDB are two paired devices' uids, which is what a mailbox
+// entry is keyed by: `fugaro pair` writes one per phone and prints it as the key
+// to record. pairUIDP is a pairing session's, admitted as well (a config written
+// while a session is open holds one) and looked up by nothing. The two shapes
+// differ — a device's uid is 16 random bytes behind m~, a session's is 32 behind
+// p~ — so a uid of one shape is not a uid of the other.
 const (
 	pairUIDA = "m~AAECAwQFBgcICQoLDA0ODw"
 	pairUIDB = "m~EBESExQVFhcYGRobHB0eHw"
@@ -86,19 +88,23 @@ func (s uidSigner) SignJWT(_ context.Context, payload []byte) (string, error) {
 	return "h." + base64.RawURLEncoding.EncodeToString(payload) + ".s", nil
 }
 
-// uidItem is the item name decision 9 derives for a uid: the project's name, one
-// separator and the uid's body, which is what `fugaro pair` prints and what the
-// operator records.
+// uidItem is the item name decision 9 derives from a uid: the project's name,
+// one separator and the uid's body. It is the name `fugaro pair` writes into the
+// keychain for the device and tells the operator to record, and the shape
+// keychain.ParseItem holds it to.
 func uidItem(uid string) string { return "aurora-" + uid[2:] }
 
-// TestMailboxKeyedByARealPairingUIDLoads: the mailbox block is keyed by the uids
-// the installation's own minters draw, and a config the operator writes from
-// `fugaro pair`'s output is only usable if those load in it. This test is also
-// the one place this package's uid shape is tied to the token package's: the
-// pattern here is a deliberate second copy (the token package mints uids, this
-// one only recognises them), and a copy that drifts refuses every uid of the
-// shape it got wrong — silently, because a refused uid looks to every other
-// reader exactly like the one the operator pasted.
+// TestMailboxKeyedByARealPairingUIDLoads: the block's key is a uid the
+// installation's own minters draw — the device's `m~` uid that `fugaro pair`
+// prints as `mailbox.keychain_item[<device uid>]`, and the session's `p~` uid
+// this block also admits — so a config the operator writes from that output is
+// only usable if such a uid loads in it. This test is also the one place this
+// package's uid shape is tied to the token package's: the pattern here is a
+// deliberate second copy (the token package mints uids, this one only recognises
+// them), and a copy that drifts refuses every uid of the shape it got wrong —
+// silently, because a refused uid looks to every other reader exactly like the
+// one the operator pasted. The two uids are minted rather than written out, so
+// the lengths asserted below are the token package's and not this file's.
 func TestMailboxKeyedByARealPairingUIDLoads(t *testing.T) {
 	ctx := context.Background()
 	signer := uidSigner{email: "operator@example.invalid"}

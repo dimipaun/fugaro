@@ -1114,10 +1114,13 @@ a different public key are each refused (three mutations, one per AAD part); the
 no output, no log line, no `--json` document and no fixture; the payload carries D199's
 configuration; `go.mod` gains **no module** (`crypto/ecdh` and `crypto/hkdf` only); the pairing node
 is deleted after the delivery is written; the widened block parses, round-trips and merges with
-**two** pairings holding two items, refuses an item name of the wrong shape, and a project that
-holds the old single name is **refused**: the entry's key is not a pairing's uid, so the operator is
-told to run `fugaro pair` and record the item name it prints rather than being migrated by
-re-running init (no compatibility shim, pre-1.0); the consumer reads each pairing's own item.
+**two** pairings holding two items, refuses an item name of the wrong shape and a key that is not a
+pairing's uid (a device's `m~` uid at 22 unpadded base64url characters, a pairing session's `p~` at
+43), and a project that holds the old single name is **refused** by the block's own check — the
+scalar there is no longer a mapping, so `mailbox.keychain_item` is now one item per pairing, and the
+operator is told to run `fugaro pair` and record the item name it prints — rather than being
+migrated by re-running init (no compatibility shim, pre-1.0); the consumer reads each pairing's own
+item.
 **Red step.** Drop the uid from the AAD and watch `TestEnvelopeBindsThePairingUID` fail.
 **Reviewer tier.** SECURITY-SENSITIVE — independent opus review. What a reviewer must confirm: that
 the envelope is claimed as **a capability, not a boundary** (§8), and that the key is never printed.
