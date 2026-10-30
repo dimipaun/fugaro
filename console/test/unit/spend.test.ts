@@ -2602,7 +2602,7 @@ describe('renderSpend', () => {
     const tree = renderSpend(factory, modelOf(), 'light')
     const headings = texts(one(tree, 'spend-table-head'), 'spend-th')
     const cells = (row: FakeScreen): readonly FakeScreen[] =>
-      row.childNodes().filter((child) => child.tag === 'td')
+      (row.childNodes() as readonly FakeScreen[]).filter((child) => child.tag === 'td')
     const width = (row: FakeScreen): number =>
       cells(row).reduce((sum, cell) => sum + Number(cell.getAttribute('colspan') ?? '1'), 0)
     for (const row of all(tree, 'spend-row')) {
