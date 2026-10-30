@@ -27,10 +27,14 @@ COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY cmd ./cmd
 COPY internal ./internal
+# Governance runs in the job's own fugaro (design ee-boundary-moves section
+# 8), so this image's binary is the mixed-licence one: the ee tag compiles
+# ee/ in, and this image's licences label below says which licences that is.
+COPY ee ./ee
 COPY images ./images
 COPY deploy/terraform ./deploy/terraform
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -tags ee -trimpath \
       -ldflags "-s -w -X github.com/dimipaun/fugaro/internal/cli.Version=${FUGARO_VERSION} -X github.com/dimipaun/fugaro/internal/cli.Commit=${FUGARO_COMMIT}" \
       -o /out/fugaro ./cmd/fugaro
 
@@ -307,7 +311,8 @@ RUN --mount=type=bind,source=images/base/fetch.sh,target=/tmp/fetch.sh \
     case "$v" in "${CLAUDE_CODE_VERSION} "*) ;; *) echo "base: claude --version reports '$v', not the pinned ${CLAUDE_CODE_VERSION}" >&2; exit 1 ;; esac; \
     printf '\n# mise (design base-image.md section 4)\neval "$(mise activate bash)"\n' >> "$HOME/.bashrc"
 LABEL org.opencontainers.image.source=https://github.com/dimipaun/fugaro \
-      org.opencontainers.image.description="Fugaro base image"
+      org.opencontainers.image.description="Fugaro base image" \
+      org.opencontainers.image.licenses="MIT AND LicenseRef-Fugaro-Subscription"
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["fugaro", "exec"]
 COPY --from=fugaro /out/fugaro /usr/local/bin/fugaro
