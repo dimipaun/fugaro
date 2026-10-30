@@ -65,6 +65,12 @@ func (c *Config) Shared() *Config {
 	s.Routing = nil
 	s.ClaudeAccounts = nil
 	s.ProjectSecrets = nil
+	// BitbucketAPIRoots is the owner's policy as well, and it travels the same
+	// way ProjectSecrets does: `fugaro project policy publish` copies it into
+	// the policy node, which the runner reads and fails closed on. A launcher
+	// who could write this key into the runs bucket's shared file would be
+	// choosing where a run sends the Bitbucket token.
+	s.BitbucketAPIRoots = nil
 	// Profiles are the owner's policy, published through `fugaro project
 	// policy publish` into the policy node — not through the shared config a
 	// launcher can write (the node is what the runner reads and fails closed

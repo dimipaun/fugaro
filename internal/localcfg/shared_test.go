@@ -537,6 +537,36 @@ func TestMergeSharedNeverCarriesProjectSecrets(t *testing.T) {
 	}
 }
 
+// TestMergeSharedNeverCarriesBitbucketAPIRoots: the API-root allow-list is the
+// owner's policy about where a run may send the project's Bitbucket token
+// (D474), and it travels the way project_secrets does — through the policy
+// node, which the runner reads and fails closed on, never through the runs
+// bucket's shared file, which any launcher with objectAdmin can write. Neither
+// the local nor a published config's list reaches the output.
+func TestMergeSharedNeverCarriesBitbucketAPIRoots(t *testing.T) {
+	block := "bitbucket_api_roots: [https://api.bitbucket.example/2.0]\n"
+	existing := sharedBase(t, block)
+	local := sharedBase(t, "bitbucket_api_roots: [https://bucket-source.example/2.0]\n")
+	if len(existing.BitbucketAPIRoots) != 1 || len(local.BitbucketAPIRoots) != 1 {
+		t.Fatalf("fixtures: %v %v", existing.BitbucketAPIRoots, local.BitbucketAPIRoots)
+	}
+	for name, got := range map[string]*Config{"shared": local.Shared(), "merged": MergeShared(existing, local), "nil published": MergeShared(nil, local), "published only": MergeShared(existing, sharedBase(t, ""))} {
+		if got.BitbucketAPIRoots != nil {
+			t.Errorf("%s: bitbucket_api_roots = %v", name, got.BitbucketAPIRoots)
+		}
+		out, err := got.Marshal()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if strings.Contains(string(out), "bitbucket_api_roots") {
+			t.Errorf("%s: output carries bitbucket_api_roots:\n%s", name, out)
+		}
+	}
+	if len(local.BitbucketAPIRoots) != 1 {
+		t.Error("Shared/MergeShared cleared the local list")
+	}
+}
+
 // TestMergeSharedNeverCarriesProfiles: profiles are the owner's policy — the
 // job shapes, secret mounts and admission lists of the project's shared jobs —
 // and they travel through the policy node, which the runner reads and fails
