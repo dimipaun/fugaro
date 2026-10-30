@@ -17,10 +17,19 @@
 //      nothing behind it: it judges no figure's truth, wording or roundness, so a figure that
 //      names a measured entry at or above the minimum is read as the file wrote it (there is a
 //      case for exactly that below).
-//   2. **The media is self-hosted.** A variant's video and the `/crew` imagery are paths under
-//      `website/`, never a YouTube or Vimeo URL: an embedded player would be a fourth third
-//      party the consent work never admitted. The pages build without the files, because the
-//      owner supplies them when they exist (F14, F20, D107, G2.5).
+//   2. **The media is self-hosted, and the hero's screen is one the site already carries.** A
+//      variant's video and the `/crew` imagery are paths under `website/`, never a YouTube or
+//      Vimeo URL: an embedded player would be a fourth third party the consent work never
+//      admitted. The pages build without the files, because the owner supplies them when they
+//      exist (F14, F20, D107, G2.5). The hero's picture is the other way round: a variant's
+//      `screenshot` is the *name* of one of the console's own captures under
+//      `website/public/screenshots/`, and it has to be a row of
+//      `website/data/console-screens.yaml` — the file that carries that picture's alt text, its
+//      caption and its own pixel size, and that the console page and the homepage's slider render
+//      their slides from. So no campaign page adds a picture, a re-encoded copy or an origin, and
+//      the hero reads the screen's alt text and its size out of the data file rather than
+//      carrying a second copy of either: a name no row carries is refused by name, with the rows
+//      that exist in the message (the owner's instruction of 2026-10-30, D190).
 //   3. **The data file is the only place a variant's copy is written** — its path, headline,
 //      supporting line, tone and WhatsApp pre-fill message — and the loader refuses a key, a
 //      path or a message the site's own rules do not know: an unknown key is a fact nothing
@@ -62,6 +71,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 
 import { LANDING_FILE, loadLanding, parseLanding, readLandingFile } from '../src/lib/landing.mjs'
+import { loadConsoleScreens } from '../src/content.ts'
 import { SITE } from './lib/html.mjs'
 
 // ---- the spec's four campaigns, and the shipped file --------------------------------------
@@ -163,15 +173,25 @@ function document({ variants = DEFAULT_VARIANTS, change = () => ({}), append = n
 }
 
 /**
- * The facts a document is read with: the site's own two halves for this rule — `min_runs`
- * (website/data/site.yaml, D97, as `loadSiteFacts()` returns it) and the entries
- * `loadTypicalCosts(min_runs)` returns for website/data/typical-costs.yaml. The ids are that
+ * The facts a document is read with: the site's own three halves for these rules — `min_runs`
+ * (website/data/site.yaml, D97, as `loadSiteFacts()` returns it), the entries
+ * `loadTypicalCosts(minRuns)` returns for website/data/typical-costs.yaml, and the rows
+ * `loadConsoleScreens()` returns for website/data/console-screens.yaml. The ids are that
  * file's own three rows (`task`, `follow_up`, `review`), with their own samples, plus one row
  * below the minimum: the state that file refuses for itself, kept here so the loader's own
  * reading of the threshold is watched failing too.
  */
 const FACTS = {
   facts: { minRuns: 20 },
+  // The console's screens as `loadConsoleScreens()` returns them: one row per capture, with the
+  // site path composed from the file's name and the row's own alt text, caption and pixels. Two
+  // rows are enough for the rule below — the fixtures name one of them and are refused when they
+  // name anything else — and the strings are plainly stand-ins rather than the shipped screens'
+  // own sentences, which `website/test/console-screens.mjs` holds to the files they describe.
+  screens: [
+    { file: 'console-spend.webp', src: '/screenshots/console-spend.webp', alt: 'The Spend screen of a test installation.', caption: 'Spend', width: 1920, height: 1200 },
+    { file: 'console-run.webp', src: '/screenshots/console-run.webp', alt: 'The run detail screen of a test installation.', caption: 'One run', width: 1920, height: 1200 },
+  ],
   typicalCosts: {
     jobs: [
       { id: 'task', name: 'A first task run', runs: 396, medianUSD: 0.36, middleHalfUSD: null, nineInTenUnderUSD: 1.27, worstUSD: 5.24 },
@@ -339,6 +359,68 @@ test('a self-hosted media path is accepted and an external URL is refused', () =
 
   const escaping = refusal({ change: only('/crew', { video: '/../../etc/passwd' }) })
   assert.match(escaping, /self-hosted/, `the video "/../../etc/passwd" was accepted: a same-origin path under website/ is what a variant's media may name — the message was ${JSON.stringify(escaping)}`)
+})
+
+// ---- the hero's screen ---------------------------------------------------------------------
+
+test('a variant screenshots the console\'s own capture, named, and a name no row carries is refused', () => {
+  const landing = read({ change: only('/save', { screenshot: 'console-spend.webp' }) })
+
+  assert.equal(
+    landing.variants[0].screenshot,
+    FACTS.screens[0],
+    'a variant naming a row of website/data/console-screens.yaml was not read as that row: the hero\'s picture is the console screen the variant names, and the loader hands the page the data file\'s own row — its `src`, its alt text, its caption and its pixel size — so the page writes none of the four itself (the owner\'s instruction of 2026-10-30, D190)',
+  )
+  assert.equal(landing.variants[1].screenshot, null, 'a variant naming no screenshot was given another variant\'s screen: a variant with no screen renders the campaign\'s own drawing in the hero instead, which is what the null is for (F14, G2.5)')
+
+  // The refusal: a file name the console's own data file carries no row for. This is the case the
+  // instruction asks for first — the hero's picture is one of the four captures the site already
+  // serves, never a new file a campaign brings with it.
+  const unknown = refusal({ change: only('/save', { screenshot: 'console-savings.webp' }) })
+  assert.match(unknown, /console-savings\.webp/, `a screenshot naming a file that website/data/console-screens.yaml carries no row for was accepted: the hero renders the row's own alt text and caption, and a name with no row is a picture nothing describes (the owner's instruction of 2026-10-30) — the message was ${JSON.stringify(unknown)}`)
+  assert.match(unknown, /console-spend\.webp/, `the refusal does not name the screens the console\'s data file does carry, so the editor is not told what a variant may name — the message was ${JSON.stringify(unknown)}`)
+
+  // A path, a URL or a traversal is not a name: the site path is composed from the file's name,
+  // so a value that carries one is a second origin or a second spelling of the same file.
+  for (const [value, why] of [
+    ['/screenshots/console-spend.webp', 'a path'],
+    ['https://example.com/console-spend.webp', 'a URL'],
+    ['../screenshots/console-spend.webp', 'a traversal'],
+  ]) {
+    const message = refusal({ change: only('/save', { screenshot: value }) })
+    assert.match(message, /NAME/, `a screenshot written as ${why} (${JSON.stringify(value)}) was accepted: the value is the file\'s name under website/public/screenshots/, and the site path is composed from the row it names (D190) — the message was ${JSON.stringify(message)}`)
+  }
+})
+
+test('every variant in the shipped file shows the console screen its claim is proved by', () => {
+  const landing = loadLanding()
+  const rows = loadConsoleScreens().screens
+  // The screen per variant, as the instruction of 2026-10-30 fixes them: the Spend screen where
+  // the claim is what a run is priced at, the run detail where it is the review policy's ledger,
+  // verification and findings, and the Live screen where the same console runs many at once.
+  const expected = {
+    save: 'console-spend.webp',
+    control: 'console-run.webp',
+    scale: 'console-live.webp',
+    crew: 'console-live.webp',
+  }
+
+  for (const variant of landing.variants) {
+    assert.equal(
+      variant.screenshot?.file,
+      expected[variant.name],
+      `the ${variant.name} variant shows ${JSON.stringify(variant.screenshot?.file)} in its hero, and its claim is proved by ${JSON.stringify(expected[variant.name])}: the hero's picture is the screen the variant's own promise is about (the owner's instruction of 2026-10-30)`,
+    )
+    const row = rows.find((one) => one.file === variant.screenshot.file)
+    assert.ok(row, `the ${variant.name} variant names ${variant.screenshot.file}, which no row of website/data/console-screens.yaml carries: the loader reads that file, so this case is the second half of the same rule`)
+    assert.deepEqual(variant.screenshot, row, `the ${variant.name} variant's screen is not the row the console's data file carries: the hero renders the row's own alt text, caption and pixels, so the site's pages describe one picture once rather than describing it twice (D190)`)
+  }
+
+  assert.doesNotMatch(
+    landingText(),
+    /alt:|caption:|width:|height:/,
+    'website/data/landing.yaml carries a screen\'s alt text, caption or pixel size: the console\'s own data file is where a screen is described, and the campaign file names it (D190)',
+  )
 })
 
 // ---- the file's own shape -----------------------------------------------------------------
