@@ -21,10 +21,14 @@ clock and what its Restore deletes. Read those before you start. This file is th
   variable, and is printed nowhere — not in the block, not in a log, not in an error.
 - `bash`, `mktemp`, `gcloud`, `git`, `curl`, `awk` and `fugaro` on PATH, `gcloud` authenticated as
   you. Nothing is installed and nothing is fetched.
-- The installation's own build-staging bucket, `gs://fugaro-dev_cloudbuild/`, **already there and
-  readable by you**. The check lists it before it builds and stops before creating anything if it
-  cannot: `gcloud builds submit` creates that bucket when it is missing, and the bucket belongs to the
-  installation rather than to this check, so this check never brings one into being.
+- An account that can **create a bucket and an Artifact Registry repository and set IAM on both**
+  (`storage.buckets.create`, `artifactregistry.repositories.create` and `setIamPolicy` on each): a
+  project Owner can. The check makes its own staging bucket, `gs://fugaro-dev-chk190-staging`
+  (uniform access, `us-east5`), and its own registry, `fugaro-chk190`, and grants the installation's
+  build account (`fugaro-b-*`) `roles/storage.objectViewer` on that bucket and
+  `roles/artifactregistry.writer` on that registry, nothing project-wide. The installation's own
+  `gs://fugaro-dev_cloudbuild` is not touched. You do not need to read Cloud Logging: the check reads
+  the build's status, not its log.
 - **Around two hours at the terminal.** The cold-start wait is 35 minutes of it and the slow push is
   held open for an hour; one build and one idle Cloud Run instance are billed to the project while it
   runs.
@@ -86,15 +90,23 @@ worth knowing by name:
   **401/403** is the pass; anything else **ends the run there**, before it clones or pushes anything,
   rather than spending the next two hours behind a public URL. The fix is a project-level binding
   someone has to remove, not a flag here.
-- **The build-staging bucket cannot be listed** — `gs://fugaro-dev_cloudbuild/` is the installation's,
-  and `gcloud builds submit` would create it. Nothing was created, built or deployed; fix the bucket's
-  permissions, then run the check again.
+- **A bucket named `fugaro-dev-chk190-staging` is already there** — a hard stop like the service,
+  repository and secret above, before anything is created: the check never adopts one. If it holds
+  nothing but an earlier attempt's staged source, delete it (`gcloud storage rm -r
+  gs://fugaro-dev-chk190-staging`) and run again.
+- **The build fails** (`build`) — the build runs as one of the installation's own build accounts
+  (`fugaro-b-*`), from a build config that sets `options.logging: CLOUD_LOGGING_ONLY`, as Fugaro's
+  own image builds do, after the `grants` row gave that account its two grants and a 60 s wait for
+  them to take effect. The row carries Cloud Build's own failure detail; a grant that had not taken
+  effect yet is the likeliest cause, and running again is the fix. Nothing was deployed; the Restore
+  deletes what the run made.
 
 ## What is left behind
 
 Nothing. The Restore runs from the exit trap too, so a Ctrl-C in the middle still deletes the service,
-the image, the Artifact Registry repository, the Secret Manager container, the build's staged source
-and the throwaway branches on the sandbox repository — and it asserts three counts read `0` before the
+the image, the Artifact Registry repository, the Secret Manager container, the staging bucket with the
+build's source in it (the two grants go with the registry and the bucket) and the throwaway branches
+on the sandbox repository — and it asserts four counts read `0` before the
 scratch directory goes. If a count is not `0`, the directory is **kept**, with a message saying where
 it is and what to delete by hand.
 
@@ -102,8 +114,8 @@ Two of its facts are worth reading even on a clean run, because they are the one
 be believed too easily. `branch-deleted` lists the branches with a **freshly minted** identity token —
 the one the slow push used has expired by the time the Restore runs — and it never reads a listing
 that fails as "the branch is gone": a branch holding a 33 MiB blob left on the sandbox repository is
-the outcome that would actually cost you. `restore-staged-source` **reads the staging prefix back**
-rather than assuming the delete worked, and a prefix it cannot read is a failure, not a pass. If
+the outcome that would actually cost you. `bucket-deleted` **reads the staging bucket back**
+rather than assuming the delete worked, and a bucket it cannot read is a failure, not a pass. If
 either reads FAIL, the block says what to delete by hand.
 
 **No agent runs any step of it.**

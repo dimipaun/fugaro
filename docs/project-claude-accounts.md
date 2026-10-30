@@ -197,6 +197,20 @@ they are about to deploy against the same block. The rules, and what a refusal s
   also mount `anthropic-api-key` (in either spelling): an account job holds its account's token, and
   a key beside it is a credential no OAuth run of that job can use — and which credential the job
   serves would stop being answerable from the profile.
+- **An account may not be named `bitbucket-token`.** It is the one name a credential of the platform
+  goes by that an account may not take. `bitbucket-token` is the upstream git token's
+  (`ReservedSecrets`: the credential the proxy forwards with, and one a repository's job mounts); an
+  account's key in the credentials bundle resolves back to the bare account name; and that bare name
+  is what the policy's blocks and every audit line speak a credential by — so an account taking it
+  would leave one name meaning two credentials. The bundle refuses that account's key outright
+  (`internal/credsvc/bundle.go`, `schemas/creds-bundle.schema.json`), and `fugaro validate` and
+  `fugaro project policy publish` refuse the account name itself, so the clash is met where the
+  account is written rather than at `fugaro creds set` or at the service. **Fix:** rename the
+  account in `claude_accounts` and store its token under the new name. Every *other* name a
+  credential of the platform goes by stays an account name — `github-app-key` and
+  `anthropic-api-key` among them, since the bundle finds the App key by its kind rather than in the
+  index of names, and refuses the paid key only where one document carries both it and an account of
+  its own name.
 
 The subset rule is an **intersection, not a union**: a profile is not "some account of mine carries
 this repository" — the repositories it admits are the ones **every** account it lists carries. So a
