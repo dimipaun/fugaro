@@ -222,7 +222,10 @@ function pageShape(page: Page): Promise<{
   return page.evaluate(() => {
     const bridge = (window as unknown as { fugaro?: Record<string, unknown> }).fugaro
     const banner = document.querySelector('section.console-skew')
-    const headline = document.querySelector('h1.skew-headline')
+    // Class-only on purpose: the title is an `h1` on the refusal screen and an
+    // `h2` on a reduced console's card, and a spec that spelled the tag would
+    // read one of the two and call the other a missing headline.
+    const headline = document.querySelector('.skew-headline')
     const globals: Record<string, string> = {}
     for (const name of ['require', 'process', 'module', 'ipcRenderer', 'Buffer', 'global']) {
       globals[name] = typeof (window as unknown as Record<string, unknown>)[name]

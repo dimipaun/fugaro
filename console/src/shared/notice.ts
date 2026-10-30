@@ -104,6 +104,8 @@ export interface NoticeSpec {
    * text. It is what the reader has to know and to do, and the technical text
    * belongs in `details` */
   readonly reason: string
+  /** hooks the title carries, when the caller's vocabulary has its own */
+  readonly titleClasses?: readonly string[]
   /** hooks the reason paragraph carries, when the caller's vocabulary has its
    * own */
   readonly reasonClasses?: readonly string[]
@@ -212,7 +214,7 @@ export function renderNotice(factory: NoticeFactory, spec: NoticeSpec): DrawnNot
   mark.setAttribute('aria-hidden', 'true')
 
   const body = cell(root, factory, 'div', ['notice-body'])
-  const title = cell(body, factory, spec.heading, ['notice-title'])
+  const title = cell(body, factory, spec.heading, ['notice-title', ...(spec.titleClasses ?? [])])
   title.setAttribute('id', NOTICE_TITLE_ID)
   // The chip on the header hands the keyboard back here when it un-hides the
   // notice, and a heading is not focusable without it.

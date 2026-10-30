@@ -192,8 +192,8 @@ redesign step 1). The entry draws the body's two children, in this order, all fr
 in an `ok` run. The header holds the wordmark, the installation switcher, the navigation, the
 fleet gauge and Halt fleet; the switcher's menu holds the installation line and the rail's tree
 (§4.1), and the page holds the panel. **A third child precedes these two whenever the mode is
-not `ok`**: `startConsole` appends the version-skew banner to the same mount first (§2.8, §4.1),
-and in **refused** mode it is the whole document.
+not `ok`**: `startConsole` appends the version-skew notice to the same mount first (§2.8,
+§2.14, §4.1), and in **refused** mode it is the whole document.
 
 | Region | Element and hooks | What it holds |
 |---|---|---|
@@ -207,7 +207,8 @@ and in **refused** mode it is the whole document.
 | Page | `main.console-page` → `div.console-panel` | the page scrolls and the header does not; the panel is the page container (`max-width: var(--page-max)`, centred, padding 28 px 32 px 64 px) and holds the mounted screen's root, the installation issue view, or the onboarding view |
 | Onboarding | `section.installation-onboarding` → `h1.installation-onboarding-title`, `p.installation-onboarding-body`, `p.installation-onboarding-reason` (the CLI resolution's own sentence, only when no CLI was found), `code.installation-onboarding-command` | drawn by `drawOnboarding` into the panel when the machine has no installation at all: the picker's own words for the two onboarding screens (`ONBOARDING_COPY`) and the command the main process names (`src/main/onboarding.ts`). Nothing is read |
 | Installation issue | `section.installation-issue` → `h1.installation-issue-headline`, `p.installation-issue-sentence`, `code.installation-issue-command`, `details.installation-issue-details` (`summary.installation-issue-summary`, `pre.installation-issue-lines`), `div.installation-issue-actions` (`button.installation-issue-choose`, `button.installation-issue-remove`, `button.installation-issue-reveal`, `p.installation-issue-checkout-lead`, `button.installation-issue-checkout`) | drawn by `drawIssue` into the panel when a rail row with an issue is clicked, or at boot when no installation can be read (§4.1): the installation's name, **one plain sentence first** with the exact command, the CLI's own text behind the `details` disclosure, and the row's actions. No banner. The `data-issue` it carries is the main process's classification and no rule selects it |
-| Reduced/refused banner | `section.console-skew`, drawn by `renderVersionSkew` into the mount, **first of all** — before the header and the page | see §2.8 |
+| Reduced/refused notice | `section.notice` with `console-skew`, drawn by `renderVersionSkew` through `renderNotice` into the mount, **first of all** — before the header and the page: `data-severity`, `span.notice-mark`, `div.notice-body` → `h1\|h2.notice-title`, `p.notice-reason`, `button.notice-toggle`, `div.notice-details` → `dl.notice-facts` → `dt`/`dd`, and `button.notice-dismiss` when it can be put away | see §2.8 and §2.14 |
+| Reduced-mode chip | `button.console-reduced-chip` (`data-severity="warning"`, `aria-describedby`) with `span.console-reduced-chip-reason` beside it, in the header **after** `div.console-switcher` and before `nav.console-views` | drawn in the reduced mode and no other: the mode's headline for a reader who reaches the chip, and what brings a dismissed notice back (§2.14) |
 
 - **`VIEWS`** is `live`, `graph` and `coordinator` (never withheld), `spend` (view `spend`)
   and `projects` (view `caps`). A view the mode withholds is **not offered**: no link is
@@ -813,11 +814,15 @@ affordance is absent (`KILL_ABSENT_BECAUSE`), and a figure that is a lower bound
   `REFUSAL_UNREADABLE` ("the CLI refused this read, and its own sentence is longer than the
   console will draw").
 
-The **version-skew banner** (`renderVersionSkew` in `shared/version.ts`) is the third: the
-whole screen when the console refused, a banner a screen is mounted under when it is
-reduced. It is drawn into the mount — `document.body` — **before** the installation line,
-the nav and the panel, so it is the document's first child and their sibling rather than a
-child of `div.console-panel` (§4.1).
+The **version-skew notice** (`renderVersionSkew` in `shared/version.ts`, drawn through
+`renderNotice` in `shared/notice.ts`) is the third: the whole screen when the console
+refused, a card a screen is mounted under when it is reduced. It is `section.console-skew`
+and it carries `data-theme`, `data-mode` and `data-skew`; it is drawn into the mount —
+`document.body` — **before** the installation line, the nav and the panel, so it is the
+document's first child and their sibling rather than a child of `div.console-panel`
+(§4.1). It is a card in the flow and not a banner across the window (§2.14), and a reduced
+one can be put away — in which case it stays where it is, the body's first child, and only
+its `hidden` attribute changes.
 
 `refusal.html` itself is a **document**, not a screed: `<main>` with an `<h1>` ("Fugaro
 console") and one `<p>` ("This console will not draw a dashboard for the fugaro it
@@ -842,7 +847,7 @@ carry `data-theme` from code — see [§3.6](#36-how-the-theme-is-chosen).
 | degraded | Spend | `span.spend-degraded` with `data-degraded="true"` |
 | polling (no Firebase) | degraded | `data-kind="no-firebase"` + `data-state="polling"` |
 | no binary / refused | unavailable | `data-kind="no-binary"` / `"refused"` |
-| skew (refused / reduced) | chrome | the version-skew banner; the nav is missing the withheld buttons |
+| skew (refused / reduced) | chrome | the version-skew notice `section.console-skew` (§2.14): `data-mode`, `data-skew`, the reason, the facts, and every withheld view as an `li[data-hidden]`. The nav is missing the withheld buttons, and a dismissed notice is `[hidden]` on that same root with `button.console-reduced-chip` left in the header saying so |
 | the rail's row states (§4.1) | chrome (the installation rail) | `span.console-rail-state` with the **word** `running` / `silent` / `idle` beside its glyph `●` / `▲` / `○`. **Not a state the code emits today** — the rail is the canvas's addition, and what a row reads is §4.1's open item — so whichever task draws the row draws the word with it: the word is what makes the tone redundant, and the collapsed rail keeps it in the row's accessible name |
 | not built | Projects (`policy`, `enrollment`) | `data-state="not-built"` + a `projects-because` sentence |
 | empty | picker (status line), Live (a `gap` bar, and `p.live-review-empty` with the review inbox's own sentence), Spend (a `gap` key and row, a caps note) | the console's own sentence, never an empty box. The inbox's sentence says "in this feed" on purpose: `ready[]` ships empty when the runs bucket could not be read as well as when nothing is waiting, and nothing in the document separates them — `queued_note` is absent both when the read succeeded and when it has not happened yet (§2.3) |
@@ -1092,6 +1097,60 @@ and apart from that they carry only what `base.css`'s reset gives every `dt` and
 rule that wanted a hook on a row itself adds it here first.
 
 ---
+
+### 2.14 Notices — `console/src/shared/notice.ts` + `console/src/renderer/entry.ts`
+
+**A notice is a card in the flow, never full-bleed.** The version-skew state — the reduced
+mode's statement, and the refusal screen — is drawn by one reusable card, `renderNotice`
+(`console/src/shared/notice.ts`). That module imports no renderer module: its element and
+factory are declared structurally, the same choice `shared/version.ts` makes, so
+`src/shared` still depends on no screen, and the module attaches no listener — the entry
+that mounts the card is the only place with `nodeOf`, and it is where the disclosure, the
+dismissal and the chip are wired. **The version-skew notice is the only caller so far**: a
+second caller is a second row in its own section, and this is the table its hooks are added
+to.
+
+| Hook | Element | What it is |
+|---|---|---|
+| `section.notice` | the card's root | `display: grid` in three columns — the mark, the body, the dismiss button — on `--surface` with a 1 px `--border` edge, `--radius-md` and a 3 px left edge in the severity's colour. The root carries the caller's own extra class beside `notice` (`console-skew`), `aria-labelledby` pointing at the title, and the `data-severity` below |
+| `data-severity` | the card's root | `warning`\|`info`, and it is the **tone**: the left edge's colour and the mark's ink. §3.5 is why it is never the only carrier — the mark's shape differs, and a reader who cannot tell amber from blue reads the same card |
+| `span.notice-mark` | the mark | decoration (`aria-hidden`), drawn entirely by the stylesheet: a `!` in a triangle for a warning, an `i` in a circle for information. No rule gives it text |
+| `div.notice-body` | the card's column | the title, the reason and the disclosure |
+| `h1.notice-title` / `h2.notice-title` | the title | the console's own headline (`SKEW_HEADLINES`), one line, `--font-size-base`, semibold, ellipsised. It is an `h1` for the refused notice — the whole document, and its one `h1` — and an `h2` for a card under the window's own heading. It carries `tabindex="-1"` so the chip can put the keyboard on it |
+| `p.notice-reason` | the reason | **one plain sentence, in the console's voice** (`NOTICE_REASONS`): what is wrong and what to do about it, with no version number, range or command in it. The technical text is the facts below. The skew notice's paragraph carries `skew-reason` beside it |
+| `dl.notice-facts` → `dt`/`dd` | the facts | a real definition list: two columns, `max-content 1fr`. A value is a run of text or a real `ul` inside its `dd` — the withheld views are `li.skew-hidden` with `data-hidden`, and the reset's `list-style: none` does not reach them |
+| `dd.notice-version` | a version value | the mono face with tabular figures (§3.7): a version is compared character by character |
+| `button.notice-toggle` | the disclosure | `type="button"`, `aria-expanded` and `aria-controls` naming the details region, and its label flips between "Show details" and "Hide details". The region is `hidden` while folded — the state is the attribute, not a class |
+| `div.notice-details` | the disclosure region | the `dl.notice-facts`, and the element `aria-controls` names. `hidden` while folded |
+| `button.notice-dismiss` | the dismissal | drawn only when the notice is `dismissible`; a visible `×` that is `aria-hidden` and an `aria-label` that says what it does |
+| `button.console-reduced-chip` | the header's chip | the reduced mode's standing statement, in the header after `div.console-switcher` and before `nav.console-views`. `type="button"`, `data-severity="warning"` and the headline in `title` |
+| `span.console-reduced-chip-reason` | the chip's reason | visually hidden and **not** `aria-hidden`: the chip's visible word is two words long, so the mode's headline ("fugaro version skew: reduced mode") is what a reader who only reaches the chip is owed. `aria-describedby` on the chip names it |
+| `hidden` | any of the above | the theme's way of putting a thing away — a folded menu, a folded notice, a dismissed card. The reset maps it to `display: none !important` because it has to outrank the `display` the element's own rule sets |
+
+- **A card, and the one exception.** The card is `margin: var(--space-sm) auto 0` and
+  `max-width: var(--page-max)` — centred, inside the window's own edges, and never
+  full-bleed. The **refused** notice is the exception and it is not a card at all: it is
+  `section.notice:only-child`, the whole document, so it takes the room it is given
+  (`flex: 1 1 auto`) and drops the card's margins.
+- **The disclosure is one button and one region.** `aria-expanded` and the region's `hidden`
+  move together, and the label says which state the button is in. The refused notice has no
+  button at all: its details are drawn open (`disclosure: 'expanded'`), because the range and
+  the version line are what the operator acts on and folding them behind a button on the only
+  screen there is would hide the reason there is no dashboard.
+- **The dismissal is the session's and nothing else.** It is the card root's `hidden`
+  attribute and no storage, no IPC and no preference: a reload is a fresh window and draws
+  the notice again. The card keeps its place in the document — it stays the body's **first
+  child** (§4.1) — and clicking dismiss moves focus to the chip. **Escape does not
+  dismiss**: the card is not a dialog and has no key handling of its own.
+- **The chip is why dismissal is safe.** A reduced console withholds spend, caps and the
+  kill controls (§2.9): a window whose nav has no such button and no word about why is
+  exactly the state §4.4's first rule refuses. So the chip is drawn for as long as the mode
+  is — not for as long as the notice is — and activating it un-hides the notice and moves
+  focus to the card's title. In the `ok` mode there is no notice and no chip; in the refused
+  mode there is no dashboard and so no chip either.
+- **The tone is a shape first.** The mark's glyph and outline differ per severity
+  (`!` in a triangle, `i` in a circle), which is §3.5's rule read where it matters most: the
+  one card an operator may see before anything else they can act on.
 
 ## 3. The theme system
 
@@ -1646,7 +1705,8 @@ The entry appends up to **three** children to `document.body`, which is the moun
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│ section.console-skew                               reduced mode only     │
+│ section.console-skew (section.notice)              reduced mode only     │
+│   and button.console-reduced-chip, in the header below                    │
 ├──────────────────────────────────────────────────────────────────────────┤
 │ header.console-header   wordmark · switcher · nav · gauge · Halt fleet   │
 ├──────────────────────────────────────────────────────────────────────────┤
@@ -1657,11 +1717,14 @@ The entry appends up to **three** children to `document.body`, which is the moun
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **The version-skew banner is not in the panel.** `startConsole` appends it to the mount it
-  was handed, so the banner is the body's **first child**, appended before the header and the
-  page. It is `section.console-skew` and it carries `data-theme`, `data-mode` and `data-skew`
-  (`shared/version.ts`). In **refused** mode it is the whole document, because `bootDashboard`
-  returns straight after it and **the other two children are never appended**.
+- **The version-skew notice is not in the panel.** `startConsole` appends it to the mount it
+  was handed, so the notice is the body's **first child**, appended before the header and the
+  page. It is `section.console-skew` — a `section.notice` card (§2.14) — and it carries
+  `data-theme`, `data-mode`, `data-skew` and `data-severity` (`shared/version.ts`). A
+  dismissed notice keeps that place and takes `hidden`; the header's
+  `button.console-reduced-chip` is what says the mode is still reduced (§2.14). In
+  **refused** mode it is the whole document, because `bootDashboard` returns straight after
+  it and **the other two children are never appended**.
 - **The header is chrome and never scrolls**; the page scrolls. It wraps on a narrow window.
 - **`nav.console-views` is five tabs** (`button.console-view`, at least 44 px tall; the
   redesign draws links, and the renderer writes no `href`), the

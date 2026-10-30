@@ -820,6 +820,7 @@ function skewNoticeSpec(compatibility: CliCompatibility): NoticeSpec {
     heading: refused ? 'h1' : 'h2',
     disclosure: refused ? 'expanded' : 'toggle',
     title: SKEW_HEADLINES[compatibility.mode],
+    titleClasses: ['skew-headline'],
     reason: noticeReason(compatibility),
     reasonClasses: ['skew-reason'],
     details,
