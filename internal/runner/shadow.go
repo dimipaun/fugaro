@@ -128,7 +128,8 @@ func (r *run) noteIgnoredAB() {
 // cannot read the list cannot know the model is the owner's. The run's own
 // allow-list, price table and provider policy then judge the model the
 // ordinary way, as the coder the run is pinned to, because this runs before
-// checkBudget.
+// checkBudget — and a problem one of them reports about the coder pin is what
+// bootstrap reads as the arm's own refusal (modelRefusal, gateway.go).
 func (r *run) applyChallenger(a *config.Agent) error {
 	if !r.shadow {
 		return nil

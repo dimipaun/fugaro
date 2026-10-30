@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -16,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
+	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -323,6 +325,97 @@ func TestShadowAgentHasNoGitToken(t *testing.T) {
 	}
 }
 
+// TestShadowAgentEnvDropsEveryForgeToken: not one variable the champion's
+// agent carries a forge credential in reaches the challenger's agent — the
+// arm pushes nothing, so a credential in that environment is one an agent
+// could push with (A2.1, D554). The set is read off the code that builds it
+// rather than written out here: gitops.CredentialVars's variables, which
+// authVars copies into the agent's environment (the token itself, the
+// username, and the credential-helper config that makes git hand the token
+// over), and the provider's own GitAuth.Env, which is GitHub's GH_TOKEN. A
+// credential a later change adds to either is covered without an edit here,
+// and the champion's run proves the enumeration is the real one: every key it
+// names is in the champion's environment.
+func TestShadowAgentEnvDropsEveryForgeToken(t *testing.T) {
+	const (
+		user    = "x-access-token"
+		token   = "forge-token"
+		roToken = "ro-token"
+	)
+	// A provider that mints the way GitHub's does: the same value in the
+	// credential helper's environment and in GH_TOKEN (github.Provider.GitAuth).
+	champ, _ := armGWSpec(t, armCfg(t), "50", champTask(), armLayer)
+	champRemote := champ.useHTTPRemote(t, testutil.Token(user, token, roToken))
+	champ.provider.Auth = func(time.Duration) gitprov.GitAuth {
+		return gitprov.GitAuth{Username: user, Token: token, Expires: time.Now().Add(time.Hour),
+			Env: map[string]string{"GH_TOKEN": token}}
+	}
+
+	// forgeKeys is every variable name a forge credential travels in, and the
+	// value the champion's agent carries for it.
+	cred, err := gitops.CredentialVars(gitops.CredentialURL(champRemote.URL), user, token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth, err := champ.provider.GitAuth(context.Background(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	forgeKeys := map[string]string{}
+	maps.Copy(forgeKeys, cred)
+	maps.Copy(forgeKeys, auth.Env)
+	carrying := 0
+	for _, v := range forgeKeys {
+		if v == token {
+			carrying++
+		}
+	}
+	if carrying < 2 || len(forgeKeys) < len(cred) {
+		t.Fatalf("the enumeration found no forge credentials to test the drop with: %v", forgeKeys)
+	}
+
+	if _, err := champ.run(t, implement("feature"), review("ship", 0)); err != nil {
+		t.Fatal(err)
+	}
+	champEnv := envKeys(champ.agent.calls[0].Env)
+	for k := range forgeKeys {
+		if !champEnv[k] {
+			t.Fatalf("the enumeration names %s, which the champion's agent environment does not carry: %v", k, champ.agent.calls[0].Env)
+		}
+	}
+
+	shadow, p := armGWSpec(t, armCfg(t), "50", armTask(challengerModel), armLayer)
+	p.roToken = roToken
+	shadow.useHTTPRemote(t, testutil.Token(user, roToken))
+	if _, err := shadow.run(t, implement("feature"), review("ship", 0)); err != nil {
+		t.Fatal(err)
+	}
+	shadowEnv := envKeys(shadow.agent.calls[0].Env)
+	for k := range forgeKeys {
+		if shadowEnv[k] {
+			t.Fatalf("the challenger's agent environment carries %s", k)
+		}
+	}
+	for _, kv := range shadow.agent.calls[0].Env {
+		if strings.Contains(kv, token) || strings.Contains(kv, roToken) {
+			t.Fatalf("the challenger's agent environment carries a forge token: %s", kv)
+		}
+	}
+}
+
+// envKeys is the variable names an environment carries, whatever their values:
+// a credential variable set to the empty string is still a variable that
+// changes what git does (GIT_CONFIG_VALUE_0 is).
+func envKeys(env []string) map[string]bool {
+	out := make(map[string]bool, len(env))
+	for _, kv := range env {
+		if k, _, ok := strings.Cut(kv, "="); ok {
+			out[k] = true
+		}
+	}
+	return out
+}
+
 // TestShadowMintsNoWriteToken: the run never asks the provider for a
 // write-capable installation token, and its clone is made with the read-only
 // one — the remote accepts only that token, so a clone that used a write
@@ -386,7 +479,9 @@ func TestShadowChallengerCoderOnly(t *testing.T) {
 // TestShadowChallengerPolicyRechecked: a replayed or hand-edited task names
 // a challenger the run's own policy does not admit — the owner lists it, but
 // no route of this run serves it — and the run refuses it at bootstrap,
-// before any call and before the clone (D556).
+// before any call and before the clone (D556). The class it is recorded as is
+// the arm's own refusal, failed/none with the policy's reason, and never
+// infra_error, which would say the runner broke where the boundary held.
 func TestShadowChallengerPolicyRechecked(t *testing.T) {
 	g, _ := armGW(t, armCfg(t), "50", unroutedChallenger, armLayer)
 	pushes := countPushes(t, g.harness)
@@ -400,11 +495,9 @@ func TestShadowChallengerPolicyRechecked(t *testing.T) {
 	if !strings.Contains(rec.Reason, unroutedChallenger) {
 		t.Fatalf("the reason does not name the challenger: %q", rec.Reason)
 	}
-	if len(g.agent.calls) != 0 {
-		t.Fatalf("the agent ran %d stage(s) for a refused challenger", len(g.agent.calls))
-	}
-	if n := pushes(); n != 0 {
-		t.Fatalf("the remote accepted %d push(es) from a refused challenger", n)
+	if len(g.agent.calls) != 0 || pushes() != 0 || len(g.provider.State.PRs) != 0 {
+		t.Fatalf("a refused arm ran a stage or published: calls %d, pushes %d, PRs %d",
+			len(g.agent.calls), pushes(), len(g.provider.State.PRs))
 	}
 }
 
@@ -434,6 +527,113 @@ func TestShadowChallengerNotInOwnerListHalts(t *testing.T) {
 	// the owner's list alone.
 	if len(g.agent.calls) != 0 || pushes() != 0 {
 		t.Fatalf("a refused arm ran a stage or pushed: calls %d, pushes %d", len(g.agent.calls), pushes())
+	}
+}
+
+// TestShadowBudgetBackendFailureIsInfraError: an infrastructure failure at
+// bootstrap is infrastructure for a challenger arm too, and ends the run the
+// way it ends a run carrying no arm at all. The arm's own model is the one
+// thing about it the gate may refuse (D556), so a budget backend this run
+// cannot use — a Vertex budget under enforce, and a managed settings directory
+// the image cannot hold — is recorded infra_error/none, never as the arm's
+// refusal: a refusal says the boundary held, and reporting a broken
+// installation as one would hide it behind a decision.
+func TestShadowBudgetBackendFailureIsInfraError(t *testing.T) {
+	t.Run("vertex budget", func(t *testing.T) {
+		cfg := strings.Replace(armCfg(t), "auth: api-key", "auth: vertex", 1)
+		if cfg == armCfg(t) {
+			t.Fatal("the fixture does not name api-key auth")
+		}
+		g, _ := armGW(t, cfg, "50", challengerModel, armLayer)
+		g.deps.Env = append(g.deps.Env, "CLOUD_ML_REGION=us-east5", "ANTHROPIC_VERTEX_PROJECT_ID=proj-1234")
+		pushes := countPushes(t, g.harness)
+		rec, err := g.run(t)
+		if err == nil || rec == nil || rec.Status != runstore.StatusInfraError || rec.Outcome != runstore.OutcomeNone {
+			t.Fatalf("record = %+v, err = %v; want an infra_error with outcome none", rec, err)
+		}
+		if !strings.Contains(rec.Reason, "Vertex budgets are not supported yet") {
+			t.Fatalf("the reason does not name the Vertex budget: %q", rec.Reason)
+		}
+		if len(g.agent.calls) != 0 || pushes() != 0 {
+			t.Fatalf("a run that stopped at bootstrap ran a stage or pushed: calls %d, pushes %d", len(g.agent.calls), pushes())
+		}
+	})
+
+	t.Run("unwritable managed settings", func(t *testing.T) {
+		g, _ := armGW(t, armCfg(t), "50", challengerModel, armLayer)
+		g.deps.ManagedSettingsPath = filepath.Join(t.TempDir(), "absent", "managed-settings.json")
+		pushes := countPushes(t, g.harness)
+		rec, err := g.run(t)
+		if err == nil || rec == nil || rec.Status != runstore.StatusInfraError || rec.Outcome != runstore.OutcomeNone {
+			t.Fatalf("record = %+v, err = %v; want an infra_error with outcome none", rec, err)
+		}
+		if !strings.Contains(rec.Reason, "can't hold Claude Code's managed settings") {
+			t.Fatalf("the reason does not name the managed settings: %q", rec.Reason)
+		}
+		if len(g.agent.calls) != 0 || pushes() != 0 {
+			t.Fatalf("a run that stopped at bootstrap ran a stage or pushed: calls %d, pushes %d", len(g.agent.calls), pushes())
+		}
+	})
+}
+
+// TestShadowModelRefusalIsCoderPinsAlone: only the coder pin is the arm's
+// (D555), so a model this repository may not run that is *not* the
+// challenger's — here the reviewer pin, which both arms carry — is not the
+// arm's own refusal (D556) and ends the run infra_error/none, exactly as it
+// ends a run carrying no arm. The challenger itself is fine (the owner lists
+// it and a route serves it), so nothing about the arm is what the policy
+// refuses; recording it as the arm's decision would hide a run the champion
+// could not have run either.
+func TestShadowModelRefusalIsCoderPinsAlone(t *testing.T) {
+	cfg := strings.Replace(armCfg(t), "reviewer: "+sonnet, "reviewer: "+unroutedChallenger, 1)
+	if cfg == armCfg(t) {
+		t.Fatal("the fixture does not pin a reviewer")
+	}
+	t.Run("challenger", func(t *testing.T) {
+		g, _ := armGW(t, cfg, "50", challengerModel, armLayer)
+		pushes := countPushes(t, g.harness)
+		rec, err := g.run(t)
+		if err == nil || rec == nil || rec.Status != runstore.StatusInfraError || rec.Outcome != runstore.OutcomeNone {
+			t.Fatalf("record = %+v, err = %v; want an infra_error with outcome none", rec, err)
+		}
+		if !strings.Contains(rec.Reason, unroutedChallenger) {
+			t.Fatalf("the reason does not name the refused pin: %q", rec.Reason)
+		}
+		if len(g.agent.calls) != 0 || pushes() != 0 {
+			t.Fatalf("a run that stopped at bootstrap ran a stage or pushed: calls %d, pushes %d", len(g.agent.calls), pushes())
+		}
+	})
+	t.Run("no arm", func(t *testing.T) {
+		g, _ := armGWSpec(t, cfg, "50", armTask(""), armLayer)
+		rec, err := g.run(t)
+		if err == nil || rec == nil || rec.Status != runstore.StatusInfraError || rec.Outcome != runstore.OutcomeNone {
+			t.Fatalf("record = %+v, err = %v; want the same infra_error a run with no arm gets", rec, err)
+		}
+		if !strings.Contains(rec.Reason, unroutedChallenger) {
+			t.Fatalf("the reason does not name the refused pin: %q", rec.Reason)
+		}
+	})
+}
+
+// TestShadowHaltStaysHalt: a halt is not a refusal, whatever arm the run
+// carries: a cap the run has reached stops a challenger exactly as it stops
+// any other run (D556's "a failing challenger halts the shadow" is about the
+// model, and a halt is the governance's own outcome). The run here is an
+// enforcing one under api-key auth with no per-run cap, which halts at
+// bootstrap before anything is locked, pushed or opened.
+func TestShadowHaltStaysHalt(t *testing.T) {
+	g, _ := armGW(t, armCfg(t), "", challengerModel, armLayer)
+	pushes := countPushes(t, g.harness)
+	rec, err := g.run(t, implement("feature"), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec == nil || rec.Status != runstore.StatusHalted || rec.Outcome != runstore.OutcomeNone ||
+		rec.Halt == nil || rec.Halt.Reason != runstore.HaltNoCap {
+		t.Fatalf("record = %+v, want a halt over the missing cap", rec)
+	}
+	if len(g.agent.calls) != 0 || pushes() != 0 {
+		t.Fatalf("a halted arm ran a stage or pushed: calls %d, pushes %d", len(g.agent.calls), pushes())
 	}
 }
 

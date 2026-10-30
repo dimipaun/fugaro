@@ -30,6 +30,45 @@ import (
 // fugaro validate, fugaro update and the runner's bootstrap all say it.
 const VertexBudgetRefusal = "Vertex budgets are not supported yet: use budget.mode observe or off for this repository (see docs/gcp-live-checklist.md, check 20)"
 
+// coderPinPath is where config's own checks point a problem with the coder
+// pin: the first of internal/config's pinPaths, the string every
+// agent.models.* problem carries in its Path. Restated here because config
+// keeps those paths unexported, and pinned by the arm tests that name a coder
+// the run's policy refuses (shadow_test.go).
+const coderPinPath = "agent.models.coder"
+
+// modelRefusal is the class of checkBudget failure the run's model policy
+// raises — a model this run may not run, or cannot price — rather than
+// infrastructure failing under it, and it carries whether the coder pin was
+// one of the models refused. The coder is the one pin an A/B arm moves
+// (D555): a challenger arm's own model refused is the arm's own refusal
+// (D556), while the pins both arms share, and every infrastructure failure
+// (a Vertex budget, a managed settings directory, a price table), are the
+// champion's conditions too and are never recorded as the arm's decision.
+type modelRefusal struct {
+	msg      string
+	coderPin bool
+}
+
+func (e *modelRefusal) Error() string { return e.msg }
+
+// namesCoderPin reports whether the coder pin is one of the models a
+// model-policy check refused.
+func namesCoderPin(ps []config.Problem) bool {
+	return slices.ContainsFunc(ps, func(p config.Problem) bool { return p.Path == coderPinPath })
+}
+
+// refusal joins a model-policy check's problems into checkBudget's error, of
+// the class above. what is the sentence the run reports them under, exactly
+// as checkBudget has always reported them.
+func refusal(what string, ps []config.Problem) *modelRefusal {
+	msgs := make([]string, len(ps))
+	for i, p := range ps {
+		msgs[i] = p.String()
+	}
+	return &modelRefusal{msg: what + ": " + strings.Join(msgs, "; "), coderPin: namesCoderPin(ps)}
+}
+
 // haltGrace is how long a halted stage's agent gets to exit on its own
 // before it is stopped. A var so a test can shorten it.
 var haltGrace = 60 * time.Second
@@ -668,21 +707,13 @@ func (r *run) checkBudget() error {
 	// where the switch routes the model to it, which is the resolution
 	// applyRouting performed a step ago (resolvePolicy).
 	if ps := config.CheckAllowed(r.cfg.Agent, r.policy, r.ceilingAllowed(), r.routingSwitch(), r.modelProviders()); len(ps) > 0 {
-		msgs := make([]string, len(ps))
-		for i, p := range ps {
-			msgs[i] = p.String()
-		}
-		return fmt.Errorf("the models are not all allowed: %s", strings.Join(msgs, "; "))
+		return refusal("the models are not all allowed", ps)
 	}
 	if !r.gatewayOn() {
 		return nil
 	}
 	if ps := config.CheckPins(r.cfg.Agent, s.Prices); len(ps) > 0 {
-		msgs := make([]string, len(ps))
-		for i, p := range ps {
-			msgs[i] = p.String()
-		}
-		return fmt.Errorf("the models can't be priced under the budget: %s", strings.Join(msgs, "; "))
+		return refusal("the models can't be priced under the budget", ps)
 	}
 	for _, w := range config.PinWarnings(r.cfg.Agent, s.Prices) {
 		r.d.Log.Warn("model pin: "+w.String(), "code", w.Code)
@@ -752,11 +783,7 @@ func (r *run) checkProviderModels() error {
 	ps := config.CheckProviderPolicy(r.cfg.Agent, allowed, r.spec.Repo, r.modelProviders(), prices)
 	ps = append(ps, config.CheckProviderAuth(r.cfg.Agent, r.modelProviders())...)
 	if len(ps) > 0 {
-		msgs := make([]string, len(ps))
-		for i, p := range ps {
-			msgs[i] = p.String()
-		}
-		return fmt.Errorf("the models are not approved for this repository: %s", strings.Join(msgs, "; "))
+		return refusal("the models are not approved for this repository", ps)
 	}
 	// From here the pins are the run's: an unset background model becomes
 	// the provider coder's, so that CheckPins, CheckAllowed, the gateway's
@@ -767,7 +794,9 @@ func (r *run) checkProviderModels() error {
 		mode = r.spend.Mode
 	}
 	if ps := config.CheckProviderGateway(r.cfg.Agent, bg, r.modelProviders(), mode); len(ps) > 0 {
-		return errors.New(ps[0].Message)
+		// The first problem's own sentence, as this check has always
+		// reported; the class is what the caller reads.
+		return &modelRefusal{msg: ps[0].Message, coderPin: namesCoderPin(ps)}
 	}
 	r.cfg.Agent.Models.Background = bg
 	return nil

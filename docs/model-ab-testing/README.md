@@ -1,6 +1,15 @@
 # Model A/B testing
 
-**Status: plan only; nothing is implemented; no task approved.** Decisions D550–D573 were answered by the owner on
+**Status: the shadow half is merged and ships inert in 0.14.0; the sampler and the pair are not.**
+Merged: A1.1 (#1310, the task's and the record's `ab` block), A1.2 (#1316, the project layer's `ab:`
+keys) and A2.1 (#1337, the runner's challenger arm — it pushes nothing, opens no pull request,
+comments on nothing and holds no git credential, and both arms upload their patch). Nothing samples a
+run, launches a pair or reads one back yet (A3.3), so a run is a challenger only when a task hands it
+one by hand, and the slice is inert where it ships. A2.2 (Check 210, owner-run) and A3.3 are 0.15.0.
+
+*The status as first written, kept:* **Status: plan only; nothing is implemented; no task approved.**
+
+Decisions D550–D573 were answered by the owner on
 2026-10-29: the recommendation in every row except D570 (a new dedicated command, not the
 recommendation). The answers are not task approvals. T1-T3 are resolved: the command is `fugaro ab`;
 the digest section (A4.4) is dropped (reconciliation.md section 4).
