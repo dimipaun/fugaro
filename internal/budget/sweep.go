@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -447,16 +448,25 @@ func (s *Sweeper) deleteUsers(ctx context.Context, now time.Time, maxAge time.Du
 	sort.Strings(nodes)
 	// The node goes before the user: the node is what a p~ token reads its
 	// delivery from, and deleting it first leaves nothing readable even if the
-	// user deletion below fails. A node that cannot be deleted stops the p~
-	// users of this pass rather than deleting users whose payload node would
-	// outlive them, and the next interval retries.
+	// user deletion below fails. A node that cannot be deleted holds back the p~
+	// users whose payload node would outlive them, and the next interval
+	// retries -- but it does not stop the pass: the r~ and m~ users, and the p~
+	// users with no node at all, are this pass's still, and a failed node
+	// deletion that ended the whole cleanup would leave them for an interval
+	// over a subtree they have nothing to do with.
 	if len(nodes) > 0 {
 		updates := make(map[string]any, len(nodes))
 		for _, p := range nodes {
 			updates[p] = nil
 		}
 		if err := s.DB.Patch(ctx, "", updates); err != nil {
-			return 0, 0, errors.Join(append(errs, fmt.Errorf("deleting pairing nodes: %w", err))...)
+			errs = append(errs, fmt.Errorf("deleting pairing nodes: %w", err))
+			stranded := make(map[string]bool, len(nodes))
+			for _, p := range nodes {
+				stranded[strings.TrimPrefix(p, pairingRoot+"/")] = true
+			}
+			del = slices.DeleteFunc(del, func(u string) bool { return stranded[u] })
+			nodes = nil
 		}
 	}
 	if len(del) == 0 {
