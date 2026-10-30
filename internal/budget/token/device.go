@@ -322,6 +322,17 @@ func SealDelivery(phonePub []byte, uid string, plaintext []byte) ([]byte, error)
 	if len(phonePub) != DeviceKeySize {
 		return nil, fmt.Errorf("%w: the phone's key is %d bytes and an X25519 public key is %d", ErrDeviceKey, len(phonePub), DeviceKeySize)
 	}
+	// X25519's canonical encoding has the top bit of the last byte clear, and
+	// crypto/ecdh masks that bit away rather than refusing it: a key with it set
+	// combines to the same secret, so sealing would succeed and bind bytes the
+	// phone's own priv.PublicKey().Bytes() never spells — an AAD the phone
+	// cannot reproduce, and an envelope it could never open. Only a
+	// non-conforming client sends one. Refused rather than canonicalised,
+	// because rewriting the key would be this package spelling a key for the
+	// phone, which §2 (e) refuses for the request's text for the same reason.
+	if phonePub[DeviceKeySize-1]&0x80 != 0 {
+		return nil, fmt.Errorf("%w: the phone's key ends %#x, whose top bit is X25519's discarded one, so this is not the canonical spelling of the key the phone holds", ErrDeviceKey, phonePub[DeviceKeySize-1])
+	}
 	pub, err := ecdh.X25519().NewPublicKey(phonePub)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrDeviceKey, err)
@@ -412,10 +423,14 @@ func NewMACKey() ([]byte, error) {
 
 // DeliveryConfig is the installation's Firebase configuration as the phone
 // stores it (D199, §4.4): the bootstrap the QR also carries, whose copy here is
-// the authoritative record — a delivery whose configuration disagrees with what
-// the QR said the project is, is refused whole (P6.8).
+// the authoritative record. Its four field names are the QR's own — project,
+// gcp_project, database_url, api_key, as internal/cli's pairQR writes them
+// (§4.4) — because the phone refuses a delivery whose contents disagree with
+// what the QR said the project is, and that refusal compares field to field.
+// One field named for both would leave nothing to compare.
 type DeliveryConfig struct {
-	ProjectID   string `json:"project_id"`
+	Project     string `json:"project"`
+	GCPProject  string `json:"gcp_project"`
 	DatabaseURL string `json:"database_url"`
 	APIKey      string `json:"api_key"`
 }
@@ -431,9 +446,9 @@ type DeliveryConfig struct {
 // the device) is one %v away in a command whose job is to print what it did.
 //
 // encoding/json does not reach a printer's redaction on its own, so
-// MarshalJSON is the redacted diagnostic document: a Delivery that lands in a
-// --json document by accident (§4.5's rule is that a token never appears there)
-// prints neither secret. The payload the phone actually decodes is
+// MarshalJSON is the redaction too: a Delivery that lands in a --json document
+// by accident (§4.5's rule is that a token never appears there) prints neither
+// secret. The payload the phone actually decodes is
 // MarshalPayload's — one deliberate call, and the field names it writes are the
 // ones P6.8 reads.
 type Delivery struct {
@@ -450,7 +465,7 @@ type Delivery struct {
 // nothing would send an operator to the keychain item to find out which device
 // a delivery was for.
 func (d Delivery) String() string {
-	return "token.Delivery{config: " + d.Config.ProjectID + ", device: " + d.Device.UID + ", token and MAC key redacted}"
+	return "token.Delivery{config: " + d.Config.Project + ", device: " + d.Device.UID + ", token and MAC key redacted}"
 }
 
 // Format answers every verb with the redacted String, so %x and %q of a
@@ -460,24 +475,14 @@ func (d Delivery) Format(state fmt.State, _ rune) { io.WriteString(state, d.Stri
 
 func (d Delivery) GoString() string { return d.String() }
 
-// deliveryRedacted is what a redacted field says instead of its value. It is
-// not a spelling of any value: no token, and no key, is ever this word.
-const deliveryRedacted = "redacted"
-
 // deliveryWire is the payload's own JSON, and the one document the phone
 // decodes. The field names are pinned by the golden test beside this file
 // (testdata/delivery.golden.json) and by §4.4's contract; §4.5's document is
 // snake_case and so is this one.
 type deliveryWire struct {
-	Config deliveryConfigWire `json:"config"`
+	Config DeliveryConfig     `json:"config"`
 	Device deliveryDeviceWire `json:"device"`
 	MACKey string             `json:"mac_key"`
-}
-
-type deliveryConfigWire struct {
-	ProjectID   string `json:"project_id"`
-	DatabaseURL string `json:"database_url"`
-	APIKey      string `json:"api_key"`
 }
 
 type deliveryDeviceWire struct {
@@ -485,12 +490,13 @@ type deliveryDeviceWire struct {
 	Token string `json:"token"`
 }
 
-// wire renders the payload as the phone reads it: the MAC key in EncodeKey's
-// one spelling (unpadded base64url), so the bytes the phone holds are the bytes
-// the keychain holds and not a second encoding of them.
+// wire renders the payload as the phone reads it: the configuration under its
+// own names, and the MAC key in EncodeKey's one spelling (unpadded base64url),
+// so the bytes the phone holds are the bytes the keychain holds and not a
+// second encoding of them.
 func (d Delivery) wire() deliveryWire {
 	return deliveryWire{
-		Config: deliveryConfigWire(d.Config),
+		Config: d.Config,
 		Device: deliveryDeviceWire{UID: d.Device.UID, Token: d.Device.Token},
 		MACKey: EncodeKey(d.MACKey),
 	}
@@ -503,15 +509,12 @@ func (d Delivery) wire() deliveryWire {
 // is named.
 func (d Delivery) MarshalPayload() ([]byte, error) { return json.Marshal(d.wire()) }
 
-// MarshalJSON is the redacted document a Delivery prints as when encoding/json
-// reaches it: the configuration as it stands — the web API key is restricted
-// and the QR shows it in cleartext (§4.4's amendment) — and the token and the
-// MAC key replaced by deliveryRedacted. It is a diagnostic and never a payload:
-// a phone handed this document could not pair, which is what a caller who
-// reaches for json.Marshal instead of MarshalPayload gets.
-func (d Delivery) MarshalJSON() ([]byte, error) {
-	w := d.wire()
-	w.Device.Token = deliveryRedacted
-	w.MACKey = deliveryRedacted
-	return json.Marshal(w)
-}
+// MarshalJSON is the redaction, in encoding/json's shape: one string, as
+// keychain.Key's is. It is deliberately *not* a redacted payload — a document
+// with the payload's fields and a token that read "redacted" would be
+// well formed and wrong, and the phone would store it and fail at pairing
+// rather than the caller failing where they wrote json.Marshal instead of
+// MarshalPayload. A string is not a payload at all, so the accident is loud at
+// both ends: no field to misread, and a build that took it for one refuses it
+// whole (P6.8).
+func (d Delivery) MarshalJSON() ([]byte, error) { return json.Marshal(d.String()) }

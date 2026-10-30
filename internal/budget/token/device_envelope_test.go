@@ -2,7 +2,10 @@ package token_test
 
 import (
 	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/ecdh"
+	"crypto/hkdf"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -64,7 +67,8 @@ var (
 func testDelivery() token.Delivery {
 	return token.Delivery{
 		Config: token.DeliveryConfig{
-			ProjectID:   "owner-a",
+			Project:     "aurora",
+			GCPProject:  "owner-a",
 			DatabaseURL: "https://owner-a-default-rtdb.firebaseio.com",
 			APIKey:      "test-web-api-key",
 		},
@@ -151,6 +155,103 @@ func TestEnvelopeBindsThePhoneKey(t *testing.T) {
 	}
 	if _, err := token.OpenDelivery(privateB, deliveryUIDA, envelope); err == nil {
 		t.Fatal("a payload sealed for one phone's key opened under another phone's: the AAD does not bind the phone's key (§8)")
+	}
+}
+
+// deliveryTestAEAD derives the delivery's AEAD from a shared secret, the same
+// way device.go does, so a test can reach for the cipher. The info string is
+// spelled here as well as in device.go: it is part of what §8 pins, and a test
+// that asked the package for it could not tell a moved label from a matching
+// one.
+func deliveryTestAEAD(t *testing.T, shared []byte) cipher.AEAD {
+	t.Helper()
+	key, err := hkdf.Key(sha256.New, shared, nil, "fugaro-pairing-v1", token.KeySize)
+	if err != nil {
+		t.Fatalf("deriving the test's key: %v", err)
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		t.Fatalf("the test's cipher: %v", err)
+	}
+	g, err := cipher.NewGCM(block)
+	if err != nil {
+		t.Fatalf("the test's AEAD: %v", err)
+	}
+	return g
+}
+
+// deliveryTestSealed is one envelope built the way SealDelivery builds one —
+// ephemeral public key, nonce, ciphertext, tag — but under an AAD the test
+// chooses, so the AAD's layout can be held to a literal.
+func deliveryTestSealed(t *testing.T, phonePublic, nonce, aad []byte, plaintext []byte) []byte {
+	t.Helper()
+	ephemeral, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("the test's ephemeral key: %v", err)
+	}
+	pub, err := ecdh.X25519().NewPublicKey(phonePublic)
+	if err != nil {
+		t.Fatalf("the test's phone key: %v", err)
+	}
+	shared, err := ephemeral.ECDH(pub)
+	if err != nil {
+		t.Fatalf("the test's key agreement: %v", err)
+	}
+	out := append([]byte{token.DeliveryEnvelopeVersion}, ephemeral.PublicKey().Bytes()...)
+	out = append(out, nonce...)
+	return deliveryTestAEAD(t, shared).Seal(out, nonce, plaintext, aad)
+}
+
+// TestDeliveryAADIsThePinnedLayout holds §8's AAD to its literal, and holds
+// that each part of it is *bound* and not merely checked. The version byte is
+// checked before anything is opened, so through OpenDelivery a version byte
+// that was never in the AAD looks exactly like one that was — which is why this
+// test reaches for the cipher, builds the AAD by hand and seals an envelope
+// under the literal device.go is held to (seal_aad_test.go, and §14's three
+// mutations, one per part: the uid has its own test above, the key its own, and
+// this one the version byte and the layout around it).
+func TestDeliveryAADIsThePinnedLayout(t *testing.T) {
+	private, public := deliveryPair(t)
+	payload := deliveryPayload(t)
+	nonce := bytes.Repeat([]byte{0x5a}, deliveryNonceBytes)
+	// The literal: "pairing/", the uid, a zero byte, the phone's 32 key bytes,
+	// a zero byte, the version byte — never reordered, truncated, re-encoded or
+	// length-prefixed.
+	pinned := append([]byte("pairing/"+deliveryUIDA+"\x00"+string(public)+"\x00"), token.DeliveryEnvelopeVersion)
+
+	if got, err := token.OpenDelivery(private, deliveryUIDA, deliveryTestSealed(t, public, nonce, pinned, payload)); err != nil || !bytes.Equal(got, payload) {
+		t.Fatalf("an envelope sealed under the pinned AAD did not open: %q, %v — device.go's AAD is not the literal §8 pins", got, err)
+	}
+	// Every one of these is a *different* AAD, so the same envelope does not
+	// open: the literal above is what distinguishes them from the real one.
+	variants := []struct {
+		what   string
+		mutate func() []byte
+	}{
+		{"no version byte", func() []byte {
+			return []byte("pairing/" + deliveryUIDA + "\x00" + string(public) + "\x00")
+		}},
+		{"no second separator", func() []byte {
+			return append([]byte("pairing/"+deliveryUIDA+"\x00"+string(public)), token.DeliveryEnvelopeVersion)
+		}},
+		{"the version before the key", func() []byte {
+			return append([]byte("pairing/"+deliveryUIDA+"\x00"), append([]byte{token.DeliveryEnvelopeVersion}, public...)...)
+		}},
+		{"the key length-prefixed", func() []byte {
+			return append([]byte("pairing/"+deliveryUIDA+"\x00"+string([]byte{token.DeviceKeySize})+string(public)+"\x00"), token.DeliveryEnvelopeVersion)
+		}},
+		{"the key dropped", func() []byte {
+			return append([]byte("pairing/"+deliveryUIDA+"\x00\x00"), token.DeliveryEnvelopeVersion)
+		}},
+		{"the uid shorter than the pairing's", func() []byte {
+			return append([]byte("pairing/"+deliveryUIDB+"\x00"+string(public)+"\x00"), token.DeliveryEnvelopeVersion)
+		}},
+	}
+	for _, variant := range variants {
+		envelope := deliveryTestSealed(t, public, nonce, variant.mutate(), payload)
+		if got, err := token.OpenDelivery(private, deliveryUIDA, envelope); err == nil {
+			t.Errorf("an envelope sealed with the AAD's %s opened: %q, so that AAD is not distinguished from §8's", variant.what, got)
+		}
 	}
 }
 
@@ -246,6 +347,45 @@ func TestEnvelopeRefusesLowOrderKey(t *testing.T) {
 		if !errors.Is(err, token.ErrDeviceKey) || envelope != nil {
 			t.Errorf("%s: SealDelivery = %x, %v, want ErrDeviceKey and no envelope", name, envelope, err)
 		}
+	}
+}
+
+// TestSealDeliveryRefusesANonCanonicalKey: X25519 discards the top bit of a
+// public key's last byte, so crypto/ecdh accepts a key with it set and agrees
+// on the same secret — while the key's *bytes* are what §8's AAD binds, and the
+// phone spells them from its own private key, where that bit is always clear.
+// Sealing such a key would produce an envelope the phone could never open, and
+// that is a refusal at the seal rather than a surprise at the pairing.
+func TestSealDeliveryRefusesANonCanonicalKey(t *testing.T) {
+	private, public := deliveryPair(t)
+	stretched := bytes.Clone(public)
+	stretched[token.DeviceKeySize-1] |= 0x80
+	// The mutation this test is here for: crypto/ecdh takes the key with the
+	// top bit set and combines it to the same secret, so nothing below the seal
+	// refuses it.
+	canonical, err := ecdh.X25519().NewPublicKey(public)
+	if err != nil {
+		t.Fatalf("the generated key is not a public key: %v", err)
+	}
+	nonCanonical, err := ecdh.X25519().NewPublicKey(stretched)
+	if err != nil {
+		t.Fatalf("crypto/ecdh refused the key with the top bit set, so this test asserts nothing: %v", err)
+	}
+	key, err := ecdh.X25519().NewPrivateKey(private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	one, err := key.ECDH(nonCanonical)
+	if err != nil {
+		t.Fatalf("crypto/ecdh refused to combine with the key with the top bit set, so this test asserts nothing: %v", err)
+	}
+	if other, err := key.ECDH(canonical); err != nil || !bytes.Equal(one, other) {
+		t.Fatalf("the two spellings agree on different secrets (%v), so this test asserts nothing", err)
+	}
+
+	envelope, err := token.SealDelivery(stretched, deliveryUIDA, deliveryPayload(t))
+	if !errors.Is(err, token.ErrDeviceKey) || envelope != nil {
+		t.Fatalf("SealDelivery to a key whose last byte is %#x = %x, %v, want ErrDeviceKey and no envelope", stretched[token.DeviceKeySize-1], envelope, err)
 	}
 }
 
@@ -420,7 +560,8 @@ func TestDeliveryGolden(t *testing.T) {
 	}
 	var parsed struct {
 		Config struct {
-			ProjectID   string `json:"project_id"`
+			Project     string `json:"project"`
+			GCPProject  string `json:"gcp_project"`
 			DatabaseURL string `json:"database_url"`
 			APIKey      string `json:"api_key"`
 		} `json:"config"`
@@ -434,8 +575,10 @@ func TestDeliveryGolden(t *testing.T) {
 		t.Fatalf("the golden is not a JSON document the phone could read: %v", err)
 	}
 	switch {
-	case parsed.Config.ProjectID != d.Config.ProjectID:
-		t.Errorf("the golden's project_id is %q, want %q", parsed.Config.ProjectID, d.Config.ProjectID)
+	case parsed.Config.Project != d.Config.Project:
+		t.Errorf("the golden's project is %q, want %q", parsed.Config.Project, d.Config.Project)
+	case parsed.Config.GCPProject != d.Config.GCPProject:
+		t.Errorf("the golden's gcp_project is %q, want %q", parsed.Config.GCPProject, d.Config.GCPProject)
 	case parsed.Config.DatabaseURL != d.Config.DatabaseURL:
 		t.Errorf("the golden's database_url is %q, want %q", parsed.Config.DatabaseURL, d.Config.DatabaseURL)
 	case parsed.Config.APIKey != d.Config.APIKey:
