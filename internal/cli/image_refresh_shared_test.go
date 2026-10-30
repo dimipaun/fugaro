@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -130,12 +131,12 @@ func TestLaunchRefusesSharedJobOnOldRunner(t *testing.T) {
 // validation refuses checkout: shared until the release that builds a
 // shared image (config/image.go's sharedCheckoutShipped), so the launch has
 // no workflow to read the kind from and never starts a job — not even on an
-// image built from sharedSince, which is what this test's lock holds. The
-// sentence a person is owed is `fugaro validate`'s, which names 0.15.0 and
-// the two kinds that work today (internal/config/image_test.go); what is
-// pinned here is the end-to-end fact that no launch of a shared workflow
-// gets out of a 0.14.0 checkout, which is why the sharedSince gate is
-// covered by the direct test above and not through a run.
+// image built from sharedSince, which is what this test's lock holds. What
+// it pins is the refusal a person is owed, and the key it is about: fugaro
+// validate reads the same file and prints both, where the launch stops on
+// the refused file itself (it leaves no config to read the workflow's kind
+// from). The sharedSince gate keeps its own test above, which a launch
+// cannot reach until the flag flips.
 func TestRunRefusesSharedWorkflowBefore0150(t *testing.T) {
 	f := newCloudFixture(t)
 	testutil.IsolateGit(t)
@@ -155,12 +156,26 @@ func TestRunRefusesSharedWorkflowBefore0150(t *testing.T) {
 	if n := len(f.run.Requests()); n != 0 {
 		t.Errorf("the launch made %d call(s) to the Cloud Run API, want none: a shared workflow's fugaro.yaml is refused before anything is started", n)
 	}
+	out, errOut, err := execute(t, "validate")
+	if err == nil {
+		t.Fatalf("fugaro validate accepted a checkout: shared workflow:\n%s%s", out, errOut)
+	}
+	for _, want := range []string{"workflows.svc.checkout", "shared images arrive in " + config.SharedCheckoutSince} {
+		if !strings.Contains(out+errOut+err.Error(), want) {
+			t.Errorf("the refusal does not carry %q:\nstdout:\n%s\nstderr:\n%s\n%v", want, out, errOut, err)
+		}
+	}
 }
 
 // TestSharedSinceHasAReleaseBullet: sharedSince names 0.14.0, which is not
 // tagged, so docs/release.md's "Before you tag" list is the only thing that
 // holds the number to the release actually cut — the same job every other
-// *Since constant's bullet does.
+// *Since constant's bullet does. It also holds the bullet to the second
+// release this feature has: sharedSince is the release whose *runner* clones
+// for a shared job, while the image such a job runs is 0.15.0's
+// (config.SharedCheckoutSince, the release validation refuses checkout:
+// shared until), and a bullet that calls 0.14.0 the release the shared
+// images ship in would have an operator verify the wrong number.
 func TestSharedSinceHasAReleaseBullet(t *testing.T) {
 	var bullet string
 	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
@@ -174,5 +189,13 @@ func TestSharedSinceHasAReleaseBullet(t *testing.T) {
 	}
 	if !strings.Contains(bullet, "currently `\""+sharedSince+"\"`") {
 		t.Errorf("docs/release.md's sharedSince bullet does not carry the constant's release (%q)", sharedSince)
+	}
+	if sharedSince == config.SharedCheckoutSince {
+		t.Fatalf("sharedSince and config.SharedCheckoutSince are both %q: the runner release and the image release are two facts", sharedSince)
+	}
+	for _, want := range []string{"the release whose runner clones", config.SharedCheckoutSince} {
+		if !strings.Contains(bullet, want) {
+			t.Errorf("docs/release.md's sharedSince bullet does not say %q: the images arrive in %s, not in the runner's release", want, config.SharedCheckoutSince)
+		}
 	}
 }

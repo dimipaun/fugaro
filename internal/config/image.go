@@ -216,6 +216,14 @@ func validateKeyFiles(p string, files []string, add func(path, format string, ar
 	}
 }
 
+// SharedCheckoutSince is the first fugaro release that builds and refreshes a
+// shared dependency-layer image: the release validateCheckout refuses
+// checkout: shared until. It is a different fact from internal/cli's
+// sharedSince, which names the release whose *runner* clones for a shared job
+// (0.14.0): the runner half landed first, and the image such a job runs does
+// not exist before this release.
+const SharedCheckoutSince = "0.15.0"
+
 // sharedCheckoutShipped is false until the release that actually builds and
 // refreshes a shared dependency-layer image is tagged: nothing before it
 // does, so a repository that declares checkout: shared gets a job that
@@ -264,7 +272,7 @@ func validateCheckout(p string, w Workflow) []Problem {
 		return ps
 	}
 	if w.Checkout == CheckoutShared && !sharedCheckoutShipped {
-		add(p+".checkout", "shared images arrive in 0.15.0: no release builds or refreshes a shared dependency-layer image yet, so a shared workflow's job could not run; use checkout: baked to build a per-repository image, or checkout: clone to run the base image and clone the source at launch")
+		add(p+".checkout", "shared images arrive in "+SharedCheckoutSince+": no release builds or refreshes a shared dependency-layer image yet, so a shared workflow's job could not run; use checkout: baked to build a per-repository image, or checkout: clone to run the base image and clone the source at launch")
 		return ps
 	}
 	// A base: alongside clone or shared needs no refusal of its own here:
