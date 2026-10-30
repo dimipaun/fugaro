@@ -491,13 +491,22 @@ test('the Android switches firebase.json carries are the plan’s four', () => {
   // and the two ad switches are OFF. `src/app-config.ids.test.js`'s walk does
   // not read this file, and §7.4's build-time walk (P7.1b) reads it alongside
   // the generated native project; what is pinned here is the file itself.
+  //
+  // The four key names are the ones the SDK's build step reads, and they are
+  // not uniformly prefixed: `analytics/android/build.gradle:113` reads
+  // `analytics_default_allow_ad_personalization_signals`, while
+  // `:95` reads `google_analytics_adid_collection_enabled`. The prefixed
+  // `google_analytics_default_allow_ad_personalization_signals` is the
+  // **AndroidManifest** meta-data name (`analytics/android/src/main/
+  // AndroidManifest.xml:18`), not the `firebase.json` key, so writing it here
+  // would leave the switch unreachable and ad personalisation on.
   const firebase = JSON.parse(readFileSync(join(HERE, '..', 'firebase.json'), 'utf8'));
   assert.deepEqual(firebase, {
     'react-native': {
       analytics_auto_collection_enabled: true,
       crashlytics_auto_collection_enabled: true,
       google_analytics_adid_collection_enabled: false,
-      google_analytics_default_allow_ad_personalization_signals: false,
+      analytics_default_allow_ad_personalization_signals: false,
     },
   });
 });

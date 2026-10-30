@@ -3,6 +3,6 @@
     "analytics_auto_collection_enabled": true,
     "crashlytics_auto_collection_enabled": true,
     "google_analytics_adid_collection_enabled": false,
-    "google_analytics_default_allow_ad_personalization_signals": false
+    "analytics_default_allow_ad_personalization_signals": false
   }
 }
