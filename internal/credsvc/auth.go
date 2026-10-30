@@ -615,15 +615,19 @@ func (a *Authenticator) verifyRun(ctx context.Context, tok string, now time.Time
 //
 // fpr is at most MaxPRs pull requests, each positive. A claim that is present
 // but not an array of positive numbers is refused rather than read as none: a
-// value this service cannot read is not a value it may treat as empty.
+// value this service cannot read is not a value it may treat as empty. fb is
+// read the same way, so a claim that is present but is not a string — a
+// number, an object, null — is refused too rather than read as "no branch"
+// (an empty string is not a branch either, and is admitted like an absent
+// claim: it binds nothing, and B1.4 refuses the push).
 //
 // An identity minted without either claim — every launcher before this one —
 // is admitted with both empty; the proxy refuses its pushes later (B1.4).
 func branchClaims(claims map[string]any, run string) (string, []int, error) {
 	var prs []int
-	if _, present := claims["fpr"]; present {
+	if _, present := claims[token.ClaimPRs]; present {
 		var ok bool
-		if prs, ok = claimInts(claims, "fpr"); !ok || len(prs) > token.MaxPRs {
+		if prs, ok = token.ClaimInts(claims, token.ClaimPRs); !ok || len(prs) > token.MaxPRs {
 			return "", nil, fmt.Errorf("%w: the run identity's fpr is not an array of at most %d pull requests", ErrUnverified, token.MaxPRs)
 		}
 		for _, n := range prs {
@@ -632,7 +636,14 @@ func branchClaims(claims map[string]any, run string) (string, []int, error) {
 			}
 		}
 	}
-	branch := claimString(claims, "fb")
+	branch := ""
+	if raw, present := claims[token.ClaimBranch]; present {
+		s, ok := raw.(string)
+		if !ok {
+			return "", nil, fmt.Errorf("%w: the run identity's fb is not a branch", ErrUnverified)
+		}
+		branch = s
+	}
 	if branch == "" {
 		return "", prs, nil
 	}
@@ -824,24 +835,6 @@ func claimInt(m map[string]any, k string) (int64, bool) {
 		return int64(v), true
 	}
 	return 0, false
-}
-
-// claimInts reads a claim that is a JSON array of integers; it is false for
-// anything else, including an element that is not a whole number.
-func claimInts(m map[string]any, k string) ([]int, bool) {
-	arr, ok := m[k].([]any)
-	if !ok {
-		return nil, false
-	}
-	out := make([]int, 0, len(arr))
-	for _, el := range arr {
-		n, ok := claimInt(map[string]any{k: el}, k)
-		if !ok {
-			return nil, false
-		}
-		out = append(out, int(n))
-	}
-	return out, true
 }
 
 // GoogleKeysURL is where Google publishes the certificates that sign Firebase

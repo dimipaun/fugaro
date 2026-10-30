@@ -237,6 +237,11 @@ func TestMintRefusesBadClaims(t *testing.T) {
 		"fx in the past":     mut(func(c *token.Claims) { c.FX = t0.Add(-time.Second) }),
 		"fx unbounded":       mut(func(c *token.Claims) { c.FX = t0.Add(365 * 24 * time.Hour) }),
 		"uid over 128 bytes": mut(func(c *token.Claims) { c.Slug = strings.Repeat("s", 100); c.Run = strings.Repeat("r", 40) }),
+		"branch over the field length": mut(func(c *token.Claims) {
+			c.Branch = "fugaro/" + strings.Repeat("b", 300)
+		}),
+		"control character in branch": mut(func(c *token.Claims) { c.Branch = "fugaro/20261002-120000-ab12\n" }),
+		"branch not UTF-8":            mut(func(c *token.Claims) { c.Branch = "fugaro/\xff" }),
 	} {
 		if _, err := token.MintAt(context.Background(), e.signer, c, t0); err == nil {
 			t.Errorf("%s: minted", name)

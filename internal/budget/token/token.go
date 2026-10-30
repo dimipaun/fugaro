@@ -99,10 +99,21 @@ const (
 	maxBodyBytes = 1 << 20
 	httpTimeout  = 30 * time.Second
 
-	// MaxPRs is the most pull requests one identity may name (fpr): the
-	// largest review recipe reviews four (task.Spec's review_prs), and a
-	// follow-up continues one.
+	// MaxPRs is the most pull requests one identity may name (fpr). It is the
+	// same bound task.Spec validation holds review_prs to (internal/task):
+	// that is where a launch's own input is refused, and this is where the
+	// claim that reaches the signer is, so a task that got past the spec's
+	// rule cannot mint a claim it would have refused.
 	MaxPRs = 4
+)
+
+// ClaimBranch and ClaimPRs are the wire names of the branch and pull-request
+// claims (fb and fpr). They are exported because the credentials service reads
+// this same wire (internal/credsvc): one literal on both sides, so a rename on
+// one side cannot pass both suites.
+const (
+	ClaimBranch = "fb"
+	ClaimPRs    = "fpr"
 )
 
 // Claims are the facts a run's token proves (R5).
@@ -210,9 +221,13 @@ func claimInt(m map[string]any, k string) (int64, bool) {
 	return v, err == nil
 }
 
-// claimInts reads a claim that is a JSON array of integers; it is false for
-// anything else, including an element that is not a whole number.
-func claimInts(m map[string]any, k string) ([]int, bool) {
+// ClaimInts reads a claim that is a JSON array of whole numbers, like fpr; it
+// is false for anything else, including an element that is not a whole number,
+// so no caller reads a claim it cannot parse as an empty one. It is exported
+// because the credentials service reads this same wire (internal/credsvc), and
+// what the claim may hold is one rule held in one place (ValidSegment is the
+// same arrangement).
+func ClaimInts(m map[string]any, k string) ([]int, bool) {
 	arr, ok := m[k].([]any)
 	if !ok {
 		return nil, false

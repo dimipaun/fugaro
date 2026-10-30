@@ -362,6 +362,20 @@ func TestAuthBranchMustMatchBranchRE(t *testing.T) {
 			t.Errorf("fb %q: the refusal echoes the branch: %v", fb, err)
 		}
 	}
+
+	// A claim that is present but is not a string is refused rather than read
+	// as "no branch", the rule fpr is held to as well.
+	for name, fb := range map[string]any{
+		"a number":  3,
+		"an object": map[string]any{"fugaro": "20991231-000000-abcd"},
+		"null":      nil,
+		"an array":  []any{"fugaro/20991231-000000-abcd"},
+	} {
+		_, err := f.verify(f.runToken(func(c map[string]any) { c["fb"] = fb }), f.jobToken(), f.job)
+		if !errors.Is(err, ErrUnverified) {
+			t.Errorf("fb %s: err = %v, want ErrUnverified", name, err)
+		}
+	}
 }
 
 // TestAuthBranchOwnOrEarlierRun: fb binds the identity to a branch, and the

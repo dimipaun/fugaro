@@ -231,6 +231,38 @@ func TestLaunchMintsNoBranchForReviewOrArtifact(t *testing.T) {
 	}
 }
 
+// TestLaunchRefusesAStaleRunIDOnAFollowUp: a follow-up continues the branch a
+// run created, so its run id must sort after that run's. --run-id is the
+// operator's own text and prSpec holds it to its shape alone, so a run id that
+// sorts BEFORE the branch's would mint an identity naming a branch created
+// after the run itself — which the credentials service refuses at the run's
+// first call, halting a launch that used to work. The pairing is refused here,
+// before anything is signed and before anything is written to the bucket.
+func TestLaunchRefusesAStaleRunIDOnAFollowUp(t *testing.T) {
+	f := newLaunchBudget(t, "enforce")
+	env := memEnv(t, f.cloudFixture)
+	stale := &task.Spec{Version: 1, RunID: "20991231-000000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web",
+		Branch: "fugaro/20991231-120000-abcd", PR: 42, PreviousRun: "20991231-120000-abcd"}
+	key, err := env.mintBudgetToken(context.Background(), appSlug, stale, nil)
+	if err == nil || key != nil {
+		t.Fatalf("mintBudgetToken: key %v, err %v, want a refusal", key, err)
+	}
+	if n := len(f.iam.SignCalls()); n != 0 {
+		t.Fatalf("signJwt was called %d times for a refused launch", n)
+	}
+	if raw := readToken(t, f.cloudFixture, stale.RunID); raw != "" {
+		t.Fatal("a refused launch left a token object in the bucket")
+	}
+
+	// The same follow-up under a run id after that run's is admitted, and its
+	// identity names the branch it continues.
+	fresh := *stale
+	fresh.RunID = "20991231-130000-abcd"
+	if c := mintedClaimsFor(t, f, env, &fresh); c["fb"] != stale.Branch {
+		t.Fatalf("fb = %v, want the branch it continues %q", c["fb"], stale.Branch)
+	}
+}
+
 func TestRetryMintsFresh(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
 	env := memEnv(t, f.cloudFixture)

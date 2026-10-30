@@ -54,17 +54,19 @@ func MintAt(ctx context.Context, signer Signer, c Claims, now time.Time) (string
 	if email == "" {
 		return "", errors.New("budget token: no signer")
 	}
-	// fb and fpr are written only when the run has them, so a first run that
-	// continues nothing and opens its own pull request mints exactly the claim
-	// set every earlier release minted.
+	// fb and fpr are written only when the run has them. A run that pushes
+	// carries fb (the branch it creates or continues) and a follow-up and a
+	// review run carry fpr; a run that neither pushes nor writes a pull
+	// request — an artifact run — mints exactly the claim set every earlier
+	// release minted.
 	extra := map[string]any{
 		"fs": c.Slug, "fr": c.Run, "fx": c.FX.UnixMilli(), "fp": c.FP, "rb": c.RB,
 	}
 	if c.Branch != "" {
-		extra["fb"] = c.Branch
+		extra[ClaimBranch] = c.Branch
 	}
 	if len(c.PRs) > 0 {
-		extra["fpr"] = c.PRs
+		extra[ClaimPRs] = c.PRs
 	}
 	payload, err := json.Marshal(map[string]any{
 		"iss": email, "sub": email, "aud": Audience,
