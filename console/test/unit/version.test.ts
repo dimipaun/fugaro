@@ -307,9 +307,12 @@ describe('the supported range', () => {
     // 0.13.0 in the reduced mode for weeks because nothing failed when the CLI
     // shipped past the set. `docs/release-streams.yaml`'s CLI `current` is the
     // last *released* CLI (`next` is only a name the next minor will take, so a
-    // planned release is never read here). If this fails, the next console
-    // release re-reads that minor's documents and adds it to
-    // SUPPORTED_CLI_MINORS (src/shared/version.ts).
+    // planned release is never read here). Only `mode` is held, never the skew
+    // name: a release above the set answers `ok` as `newer` (the owner's ruling
+    // of 2026-10-30), and the release bump itself moves `current` to the new
+    // minor on the very commit the release gate reads, so holding membership
+    // would turn every CLI release red. If this fails, the console reads that
+    // CLI in the reduced mode: fix the decoder or the floor, not the set.
     const streams = readFileSync(join(__dirname, '..', '..', '..', 'docs', 'release-streams.yaml'), 'utf8')
     const cli = /- name: cli\n(?:[ \t]+[^\n]*\n)*?[ \t]+current: "([^"]+)"/.exec(streams)
     const released = cli?.[1]
@@ -320,7 +323,6 @@ describe('the supported range', () => {
       answer.mode,
       `the released CLI ${released} must answer ok: add its minor to SUPPORTED_CLI_MINORS once its documents are re-read`,
     ).toBe('ok')
-    expect(answer.skew, `the released CLI ${released} is not one of the minors this console has read`).toBe('supported')
   })
 
   it('is a release version the console can read, like the floor below it', () => {
