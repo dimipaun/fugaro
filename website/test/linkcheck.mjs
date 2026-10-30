@@ -225,6 +225,12 @@ const FIXTURE_FACTS = siteFacts(`canonical_url: https://site.example
 analytics:
   enabled: false
   measurement_id: ""
+marketing:
+  meta_pixel_id: ""
+  meta_origin: "https://connect.facebook.net"
+  linkedin_partner_id: ""
+  linkedin_origin: "https://snap.licdn.com"
+  calendly_origin: "https://assets.calendly.com"
 allowed_hosts:
   - github.com
   - site.example

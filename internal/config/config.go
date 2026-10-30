@@ -166,7 +166,8 @@ type Budget struct {
 // rest are what the gateway reads in a later task (T7.2), and until then a
 // file that writes one of them says what its runs will be held to. A key left
 // out, written as null, or written as 0 takes Fugaro's default — see
-// policy.DefaultGovernance, which is the one place the defaults are decided.
+// ee/governance's Defaults, which is the one place they are decided (a build
+// that links no ee/ features ships none of them, D522).
 //
 // The stages are the run's three spend stages. An artifact run's plan and
 // render steps have no governance budget, so neither sub-block has a key for
@@ -206,7 +207,7 @@ type GovernanceTiers struct {
 
 // TierLimits is one tier's block. Every key is optional; a key left out,
 // written as null or written as 0 takes Fugaro's default for that tier
-// (policy.DefaultTierExpectations). None of the three is a cap: the per-run cap
+// (ee/governance's Defaults). None of the three is a cap: the per-run cap
 // stays the ceiling whatever a tier says (G6).
 type TierLimits struct {
 	// ExpectedUSD is what a run of this tier is expected to cost; it is an

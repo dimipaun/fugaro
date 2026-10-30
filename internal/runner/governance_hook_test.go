@@ -12,33 +12,27 @@ import (
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
-// TestHooksDefaultToTodaysBehaviour: the stage hook's default pair is what the
-// runner did before it existed — the stage's own governance.stage_timeout, and
-// the stage_budget halt by time when it fires — so the seam adds no behaviour
-// of its own (G10). The pair is read the way the stage loop reads it.
-func TestHooksDefaultToTodaysBehaviour(t *testing.T) {
+// TestHooksDefaultToTheUntaggedBuild: the stage hook's default pair is the one
+// an untagged build runs with — no bound of its own and no halt — so the core
+// bounds no stage by governance whatever its layers wrote (D522, G10). The
+// pair is read the way the stage loop reads it, and it is the real default and
+// not a probe: a test that installed the off-switch itself could not tell it
+// from a core that had quietly kept a stage bound.
+func TestHooksDefaultToTheUntaggedBuild(t *testing.T) {
 	f := runner.StageHook()
 	if f.Timeout == nil || f.TimedOut == nil {
 		t.Fatalf("the default pair is %+v, want both functions", f)
 	}
 	g := policy.Governance{StageTimeout: policy.StageTimeout{
 		Implement: time.Minute, Review: 2 * time.Minute, Fix: 3 * time.Minute}}
-	for _, tc := range []struct {
-		stage string
-		want  time.Duration
-	}{
-		{"implement", time.Minute}, {"review", 2 * time.Minute},
-		{"review_first", 2 * time.Minute}, {"fix", 3 * time.Minute},
-		{"plan", 0}, {"render", 0}, {"", 0},
-	} {
-		v := runner.StageView{Stage: tc.stage, Governance: g, RunStage: 40 * time.Minute}
-		if got := f.Timeout(v); got != tc.want {
-			t.Errorf("Timeout(%q) = %v, want %v", tc.stage, got, tc.want)
+	for _, stage := range []string{"implement", "review", "review_first", "fix", "plan", "render", ""} {
+		v := runner.StageView{Stage: stage, Governance: g, RunStage: 40 * time.Minute}
+		if got := f.Timeout(v); got != 0 {
+			t.Errorf("Timeout(%q) = %v, want no bound: this build applies none", stage, got)
 		}
 	}
-	if d := f.TimedOut(runner.StageView{Stage: "implement", Governance: g}); !d.Halt ||
-		d.Reason != runstore.HaltStageBudget || d.Detail != "time" {
-		t.Errorf("TimedOut = %+v, want the stage_budget halt by time", d)
+	if d := f.TimedOut(runner.StageView{Stage: "implement", Governance: g}); d.Halt {
+		t.Errorf("TimedOut = %+v, want no stop", d)
 	}
 }
 
@@ -95,7 +89,6 @@ func TestUntaggedRunnerIgnoresGovernanceWithAWarning(t *testing.T) {
 		"governance:\n  stage_timeout: { implement: 200ms }\n")
 	h := newHarness(t, cfg, nil)
 	h.deps.Log = slog.New(slog.NewTextHandler(&logs, nil))
-	runner.SetCore(t)
 	rec, err := h.run(t, blockedStage)
 	if err != nil {
 		t.Fatal(err)
@@ -124,7 +117,6 @@ func TestUntaggedRunnerWithoutABlockWarnsAboutNothing(t *testing.T) {
 	var logs bytes.Buffer
 	h := newHarness(t, "", nil)
 	h.deps.Log = slog.New(slog.NewTextHandler(&logs, nil))
-	runner.SetCore(t)
 	rec, err := h.run(t, implement("feature"), review("ship", 0))
 	if err != nil {
 		t.Fatal(err)

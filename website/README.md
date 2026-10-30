@@ -56,11 +56,12 @@ published ranges are real) is W2.3's, in the level after it.
 No font, script, stylesheet, image or embed reaches a page from an origin outside this
 build: the pages use the system font stack `src/styles/tokens.css` names, no font file
 ships today, and a font added later is **self-hosted in this artifact**
-(`website/public/fonts/`, which the layout preloads from), and there is no Google Fonts, no CDN, no embed and no pixel — because every
+(`website/public/fonts/`, which the layout preloads from), and there is no Google Fonts, no CDN — because every
 third-party origin is a request from a reader's browser to a company this project has no
-relationship with (D106). There is exactly **one exception, and the owner chose it**: the
-analytics script (D93), loaded **only after the visitor consents**, with W1.12's banner as
-the gate that decides whether anything is fetched and its own tests for no request before
+relationship with (D106). There are two exceptions, and the owner chose both: the
+analytics script (D93) and, since G2.3, the three vendors of the four campaign pages
+(D401) — each loaded **only after the visitor consents**, with W1.12's banner as the gate
+that decides whether anything is fetched and its own tests for no request before
 consent, no cookie before consent, withdrawal and keyboard reachability. `readme.mjs`
 refuses a third-party font or script host in the shell's own sources today, and W1.11
 asserts the same over the built HTML's script, link, iframe and image origins.
@@ -106,6 +107,47 @@ planted second copy fails. The id, the audit trail and the choices behind them:
   `https://*.google.com`. No `'unsafe-inline'`, no `'unsafe-eval'`, no nonce and no hash —
   the site ships no inline script. `test/origins.mjs` holds the policy to that exact token
   list, and refuses any token it does not carry.
+
+**G2.3 is the task that added the second question** (D401), on the four campaign pages only —
+`/save`, `/control`, `/scale` and `/crew` — and the three loads it covers: Meta's pixel,
+LinkedIn's insight tag and Calendly's booking widget.
+
+- **A separate consent under its own key**, `fugaro:marketing-consent`, and not a second value
+  under the analytics key: a visitor who answered the site's question is not asked again on
+  every page they read, and one who answered the campaign's question has not answered the
+  site's. The banner asks both on a campaign page, and one press answers the questions that
+  were open on it.
+- **The configuration is the banner's markup**, in `data-marketing-*` attributes: the page the
+  loader was built for, the two vendor ids, the three origins and the booking link
+  `data/landing.yaml` writes. `site.js` names no host, so a page that is not one of the four
+  carries none of it and loads none of them, and a campaign page served from another path
+  loads none of them either.
+- **Both ids are empty in `site.yaml`, and an empty id is a loader switched off** (R3): the
+  owner has not supplied a pixel id or a partner id, and this repository publishes no
+  identifier the owner did not supply. `internal/cli`'s boundary test pins both empty and the
+  three origins exact, so the day they arrive is the day that pin is relaxed.
+- **Each vendor is handed the page's path and no query** (F22): the site builds the address it
+  reports from the origin and the path, and passes it to the pixel and the insight tag as
+  `page_location` rather than leaving them to read the address in the window, so what this site
+  hands them carries none of the campaign parameters a visitor arrived through. What a vendor's
+  own script reads out of the browser once it is running is the vendor's, and not something this
+  site can promise about — the guarantee is over the hand-off, which is also the half the plan
+  asks a test to hold (a test over the loader's configuration). The parameters G2.4 passes on to
+  Calendly are allow-listed and length-capped, and reach neither of these two.
+- **Withdrawal removes what this site may remove.** The pixel is told to revoke, and every
+  first-party cookie the two tags set is deleted from this host: Meta's `_fbp` and `_fbc`, and
+  the six LinkedIn documents for its insight tag — `li_sugr`, `AnalyticsSyncHistory`,
+  `UserMatchHistory`, `bcookie`, `lidc` and `li_gc` — which is the list `site.js` carries and
+  the privacy statement prints. A script already fetched keeps running until the visitor
+  reloads, and a cookie a vendor set on its own domain is the vendor's to remove, which the
+  privacy statement says in those words.
+- **The deployed policy gains each vendor's origin per directive** — `script-src` for the
+  three scripts, `img-src` and `connect-src` for the pixel's and the insight tag's beacons,
+  `style-src` for Calendly's stylesheet, and a new `frame-src` for the booking page — with no
+  wildcard anywhere and nothing else added to `script-src`. `test/origins.mjs` holds the exact
+  per-directive list, `test/brand.mjs` the coarse one, and `test/consent.mjs` the cross-check
+  that the gate loads from exactly the origins the policy admits. The Calendly booking link
+  itself stays a plain `<a href>`: a visitor who declines the campaign consent keeps it.
 
 ## The gates
 
@@ -1080,7 +1122,7 @@ added or removed without this sentence moving fails there:
     **The page's words go 492 → 868** — the boards' own labels, which are what a level says — and
     **D188's number moves with them, 600 → 900**: 900 is the smallest round ceiling above the
     page, and the next page down that D188 governs is the homepage at 563 words (Getting Started
-    is 309; the privacy statement, at 759, is the page the words-per-page ceiling itself is
+    is 309; the privacy statement, at 1144, is the page the words-per-page ceiling itself is
     derived from, so D188's own number does not measure it). The
     levels' words are no longer a data file: `website/data/zoom-levels.yaml` is gone and the
     boards are the source of truth — `src/lib/zoom-boards.mjs` reads each board's visible strings
@@ -1111,15 +1153,21 @@ added or removed without this sentence moving fails there:
     measured against the gates' own build rather than argued, and stated here so the figure a
     reader sees is the build the site has. The per-page and per-script figures are left where they
     are, by the owner's ruling of 2026-10-20, and they carry the same drift: the script's figure
-    is stated as 70,016 where the build is 70,008 and the page weight as 563,219 where the
-    homepage's is 563,140. The drawings are the owner's to read, and that is **Check 112** in
+    was stated as 70,016 where the build was 70,008 and the page weight as 563,219 where the
+    homepage's is 563,140 — the script's own figure is re-derived in the bullet below, with the
+    bytes G2.3 added to it. The drawings are the owner's to read, and that is **Check 112** in
     `docs/gcp-live-checklist.md`.
 
-  - **JavaScript per page:** 262,560 bytes. Three times 87,520: the one script the site ships,
-    `public/scripts/site.js` (70,016 bytes), plus 25 %. What the file carries is the copy
-    control, the menu, the consent gate and **both of the site's sliders** — the console page's,
+  - **JavaScript per page:** 333,549 bytes. Three times 111,183: the one script the site ships,
+    `public/scripts/site.js` (88,946 bytes), plus 25 %. What the file carries is the copy
+    control, the menu, the consent gate — the site's, and since G2.3 the campaign's own gate and
+    the three loaders behind it — and **both of the site's sliders** — the console page's,
     which the feedback-B round above added, and the homepage's, which the feedback-A round above
-    it added.
+    it added. **G2.3's campaign gate is the last 12,012 bytes, and the script's figure is
+    re-derived with them**: the build the derivation names has moved 70,016 → 88,946, and the
+    ceiling with it, 262,560 → 333,549. The drift the rounds before it left in this figure — the
+    bullet above records the build as 70,008 against the 70,016 it stated — ends here, in the
+    commit that moved the bytes; the page weight keeps its own until a round re-derives it.
     The console's half is the feedback-B round's, and it was the first JavaScript the site had
     gained since the menu (the owner's feedback of 2026-10-21): the bar the markup emits
     `hidden` — a Previous arrow, the count and a Next arrow — is revealed and driven here, the
@@ -1219,7 +1267,7 @@ added or removed without this sentence moving fails there:
     The ceiling is a ceiling, not a floor — a page with no lead region is a page D188's
     definition does not describe, and this gate says nothing about how much a page's first
     section should say.
-  - **Words per page:** 949 words. Every word a reader sees inside `main` — command blocks
+  - **Words per page:** 1430 words. Every word a reader sees inside `main` — command blocks
     and code spans included, since the ceiling is a claim about the page rather than about
     its prose — counted by `budget.mjs`'s own reader, which reads a page the way
     `test/lib/html.mjs`'s `textOf` does (a script or style body is not text, an image's
@@ -1240,8 +1288,11 @@ added or removed without this sentence moving fails there:
     **The number is no longer D188's own, and it is derived rather than picked.** The
     privacy statement is the page the App Store and Play listings link as a privacy policy,
     so it carries the software as well as the site and is the one page that is not the
-    site's pitch; the number is that page's own count on the gates' own build — **759
-    words** — plus 25 %, rounded up, which is **949**. `budget.mjs`'s
+    site's pitch; the number is that page's own count on the gates' own build — **1144
+    words** — plus 25 %, rounded up, which is **1430**. The count moved twice in G2.3: the
+    campaign section took the page 988 → 1030, and the owner's ruling of 2026-10-29 on the
+    banner's wording — one question, worded for everything the site may load, with the refusal's
+    reach stated in the consent card — took it 1030 → 1144. `budget.mjs`'s
     `wordsCeilingFailures` holds the derivation to the built page the way the same file
     holds the byte budgets to theirs, so a sentence added there re-derives this line in the
     commit that adds it. **The raise is that page's and nobody else's**: every other page of
