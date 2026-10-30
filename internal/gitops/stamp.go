@@ -153,9 +153,24 @@ func stampValue(v string) bool {
 var stampHookScript string
 
 // stampChainPlaceholder is where a written hook takes the hook directory it
-// chains to. It stays a quoted string, so the embedded file is a valid shell
-// script on its own, and what replaces it is quoted the same way.
-const stampChainPlaceholder = "'@FUGARO_CHAIN@'"
+// chains to, and stampChainLaterPlaceholder whether it looks one up at the
+// commit when it was given none. Both stay quoted strings, so the embedded
+// files are valid shell scripts on their own, and what replaces each is
+// quoted the same way.
+const (
+	stampChainPlaceholder      = "'@FUGARO_CHAIN@'"
+	stampChainLaterPlaceholder = "'@FUGARO_CHAIN_LATER@'"
+)
+
+// chainLater and chainNow are the two values stampChainLaterPlaceholder takes:
+// 1 is a hook directory looked up at the commit (WriteStampHooks with no
+// chainTo), 0 is one named now and never looked up — either by the caller
+// (chainTo) or because the hooks chain nowhere at all
+// (WriteStampHooksNoChain).
+const (
+	chainLater = "1"
+	chainNow   = "0"
+)
 
 // stampHookName is the hook that stamps a commit: git runs it before the
 // commit exists, and `git commit --no-verify` does not skip it (githooks(5),
@@ -188,7 +203,8 @@ const chainHook = `#!/bin/sh
 # pointing core.hooksPath at the stamp hook directory would otherwise silence
 # the repository's own %[1]s (constraint 2).
 fugaro_chain='@FUGARO_CHAIN@'
-if [ -z "$fugaro_chain" ]; then
+fugaro_chain_later='@FUGARO_CHAIN_LATER@'
+if [ "$fugaro_chain_later" = 1 ]; then
 	fugaro_chain=$(unset GIT_CONFIG_COUNT; git rev-parse --git-path hooks) || fugaro_chain=''
 fi
 fugaro_next="$fugaro_chain/%[1]s"
@@ -216,6 +232,11 @@ fi
 // repository's in $GIT_DIR/hooks stops running without this, silently
 // (constraint 2).
 //
+// A caller whose hooks must run none of the repository's — the runner's own
+// commits — writes them with WriteStampHooksNoChain instead: an empty chainTo
+// here means the opposite, that the repository's own directory is looked up at
+// the commit.
+//
 // A chainTo that is dir is refused: every hook would exec itself. It is not
 // hypothetical, because a caller that reads the repository's core.hooksPath
 // with the stamp's environment in place reads the stamp directory — the
@@ -225,6 +246,29 @@ fi
 // warning and no failure, and a stamp that silently does not run is worse than
 // one that does not exist.
 func WriteStampHooks(dir, chainTo string) error {
+	later := chainNow
+	if chainTo == "" {
+		later = chainLater
+	}
+	return writeStampHooks(dir, chainTo, later)
+}
+
+// WriteStampHooksNoChain writes the same hooks into dir as WriteStampHooks,
+// and they chain nowhere: the stamp runs and every other hook name exits 0
+// without running anything. It is what the runner's own commits are made
+// under (A3, follow-up 2a): an agent can write a hook of the repository's,
+// and a runner-owned git call is the one place no code of the agent's may
+// run. The caller's own commits then carry the trailers while remaining
+// untouched by whatever the checkout's configuration or $GIT_DIR/hooks holds.
+//
+// It is a different call and not WriteStampHooks(dir, something): "chain to
+// nothing" and "look the repository's directory up at the commit" are two
+// meanings, and an empty string is both of them.
+func WriteStampHooksNoChain(dir string) error {
+	return writeStampHooks(dir, "", chainNow)
+}
+
+func writeStampHooks(dir, chainTo, later string) error {
 	if chainTo != "" {
 		if !stampValue(chainTo) {
 			return fmt.Errorf("hook chain directory %s carries a control character", safetext.Field(chainTo))
@@ -254,6 +298,7 @@ func WriteStampHooks(dir, chainTo string) error {
 			script = stampHookScript
 		}
 		script = strings.ReplaceAll(script, stampChainPlaceholder, chain)
+		script = strings.ReplaceAll(script, stampChainLaterPlaceholder, later)
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o755); err != nil {
 			return err
 		}

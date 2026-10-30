@@ -135,6 +135,18 @@ const BudgetTokenEnv = "FUGARO_BUDGET_TOKEN"
 type Repo struct {
 	Dir string
 	Env []string
+	// CommitStamp is what a commit made through CommitAll or CommitEmpty
+	// carries — its trailers and, when the launcher named one, its author —
+	// and CommitHooks is the directory of the stamp hooks that read it
+	// (stamp.go). The two are set together by the runner, whose own commits
+	// are the run's and are stamped like the agent's (A3, D603).
+	//
+	// An empty CommitHooks is the behaviour every other caller has had:
+	// repository hooks off and nothing stamped. It is also what keeps the
+	// stamp out of a run whose commits are not the run's — a review or an
+	// artifact run (A3).
+	CommitStamp Stamp
+	CommitHooks string
 	// StripEnv names variables that never reach git or anything git runs
 	// (a core.fsmonitor command or a filter driver an agent wrote into
 	// .git/config), whether they come from the process or from Env.
@@ -147,6 +159,24 @@ func Open(dir string, env []string) (*Repo, error) {
 		return nil, fmt.Errorf("%s is not a git checkout: %w", dir, err)
 	}
 	return &Repo{Dir: dir, Env: env}, nil
+}
+
+// HooksDir returns the directory git resolves this checkout's hooks to:
+// core.hooksPath as the repository itself configured it, and git's default of
+// $GIT_DIR/hooks when it configured none. It is what a stamp hook directory
+// chains to (A3, constraint 2), read once by the runner at bootstrap so that
+// each of the pass-throughs it writes does not spawn a git of its own.
+//
+// It is the one runner-owned call made without noHooks, because reading the
+// configuration noHooks overrides is the whole point of it, and a repository's
+// core.hooksPath is where its hooks are. rev-parse is plumbing and runs no
+// hook.
+func (r *Repo) HooksDir(ctx context.Context) (string, error) {
+	var stdout bytes.Buffer
+	if err := r.gitRun(ctx, r.processEnv(), nil, nil, &stdout, "rev-parse", "--git-path", "hooks"); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(stdout.String()), nil
 }
 
 // GitDir returns the git directory git names for this checkout, absolute:
@@ -306,9 +336,36 @@ func (r *Repo) gitIn(ctx context.Context, in string, args ...string) (string, er
 }
 
 func (r *Repo) gitIO(ctx context.Context, in io.Reader, out io.Writer, args ...string) error {
-	cmd := exec.CommandContext(ctx, "git", append(slices.Clone(noHooks), args...)...)
+	return r.gitRun(ctx, r.processEnv(), noHooks, in, out, args...)
+}
+
+// gitCommit is the git of a commit made through r: the stamp's hook directory
+// in place of noHooks, and the stamp's own environment in place of the
+// process's (StampEnv). The command-line configuration outranks the
+// repository's own and the stamp's environment configuration alike
+// (git-config(1)), which is why the directory travels in both and is the same
+// one: the environment entries are what the hook reads its values from, and
+// the -c is what makes that hook the one git runs.
+//
+// A Repo with no CommitHooks commits as it always did — repository hooks off,
+// nothing stamped.
+func (r *Repo) gitCommit(ctx context.Context, args ...string) (string, error) {
+	env, prefix := r.processEnv(), noHooks
+	if r.CommitHooks != "" {
+		prefix = []string{"-c", "core.hooksPath=" + r.CommitHooks}
+		env = StampEnv(r.CommitStamp, r.CommitHooks, env)
+	}
+	var stdout bytes.Buffer
+	err := r.gitRun(ctx, env, prefix, nil, &stdout, args...)
+	return strings.TrimSpace(stdout.String()), err
+}
+
+// gitRun is gitIO with the environment and the leading -c arguments named by
+// the caller: gitIO's own are the process environment and noHooks.
+func (r *Repo) gitRun(ctx context.Context, env, prefix []string, in io.Reader, out io.Writer, args ...string) error {
+	cmd := exec.CommandContext(ctx, "git", append(slices.Clone(prefix), args...)...)
 	cmd.Dir = r.Dir
-	cmd.Env = r.processEnv()
+	cmd.Env = env
 	cmd.WaitDelay = gitWaitDelay
 	cmd.Stdin = in
 	var stderr bytes.Buffer
@@ -532,8 +589,9 @@ func (r *Repo) IsClean(ctx context.Context) (bool, error) {
 	return out == "", err
 }
 
-// CommitAll commits every change, skipping repository hooks. It reports
-// whether there was anything to commit.
+// CommitAll commits every change, skipping repository hooks, under the stamp
+// CommitHooks and CommitStamp name (gitCommit). It reports whether there was
+// anything to commit.
 func (r *Repo) CommitAll(ctx context.Context, msg string) (bool, error) {
 	if _, err := r.git(ctx, "add", "-A"); err != nil {
 		return false, err
@@ -541,14 +599,14 @@ func (r *Repo) CommitAll(ctx context.Context, msg string) (bool, error) {
 	if clean, err := r.IsClean(ctx); err != nil || clean {
 		return false, err
 	}
-	_, err := r.git(ctx, "commit", "--quiet", "--no-verify", "-m", msg)
+	_, err := r.gitCommit(ctx, "commit", "--quiet", "--no-verify", "-m", msg)
 	return err == nil, err
 }
 
 // CommitEmpty makes a commit with no changes, so a PR can exist for a branch
-// where the agent committed nothing.
+// where the agent committed nothing. It is stamped like CommitAll's.
 func (r *Repo) CommitEmpty(ctx context.Context, msg string) error {
-	_, err := r.git(ctx, "commit", "--quiet", "--no-verify", "--allow-empty", "-m", msg)
+	_, err := r.gitCommit(ctx, "commit", "--quiet", "--no-verify", "--allow-empty", "-m", msg)
 	return err
 }
 

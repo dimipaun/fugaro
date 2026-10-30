@@ -211,6 +211,16 @@ type run struct {
 	env     []string
 	secrets []string
 	budget  Budget
+	// stampHooks and runnerHooks are the two hook directories bootstrap wrote
+	// for this run's commits (writeStampHooks): the agent's stages commit
+	// under stampHooks, chained to the repository's own hooks, and the
+	// runner's own commits under runnerHooks, which chain nowhere. stampAuthor
+	// is the author its commits claim, nil for a run that names none. All
+	// three are empty for a run that never stamps — a review or an artifact
+	// run, whose commits are not the run's (A3).
+	stampHooks  string
+	runnerHooks string
+	stampAuthor *gitops.Person
 	// secMu guards secrets: the budget session registers a refreshed ID
 	// token from its own goroutine.
 	secMu sync.RWMutex
@@ -1125,6 +1135,150 @@ func (r *run) resolveCommitIdentity(ctx context.Context) {
 	}
 }
 
+// writeStampHooks writes the commit stamp of this run (A1, A3): two hook
+// directories outside the checkout, one for the agent's own commits and one
+// for the runner's, and the stamp the runner's own commits carry.
+//
+// Outside the checkout, because the hook directory is not part of the run's
+// work: nothing in it is the agent's to read, commit, clean or push, and a
+// directory inside the tree would put a file of the runner's in every diff of
+// a commit the agent makes while the stamp is installed.
+//
+// Two directories, because the two kinds of commit want opposite things from
+// the repository's own hooks. The agent's commits run under the directory
+// chained to the repository's configured hooks — a repository's husky or
+// lint-staged hook still runs on the agent's commits, which is the whole of
+// constraint 2 — and the runner's own commits run under one that chains
+// nowhere: the repository's configuration and $GIT_DIR/hooks are files and a
+// directory the agent can write, and no code of the agent's runs inside a git
+// call the runner makes.
+//
+// The chain directory is read once, here, so the 21 pass-throughs written for
+// it each carry the answer instead of spawning a git of their own at every
+// commit: `git rev-parse --git-path hooks` with the repository's own
+// configuration, which is what core.hooksPath resolves to once the stamp's own
+// environment entry is out of the way.
+//
+// The author is the launcher's, and only when the repository opted in
+// (git.author: launcher) and the task carries one (Spec.Author, A2b): with no
+// author here the commits are authored by the identity the run resolves, as
+// every run's were before this (D606, constraint 3).
+func (r *run) writeStampHooks(ctx context.Context) error {
+	root, err := os.MkdirTemp("", "fugaro-stamp-")
+	if err != nil {
+		return fmt.Errorf("making a directory for the run's commit hooks: %w", err)
+	}
+	chain, err := r.repo.HooksDir(ctx)
+	if err != nil {
+		return fmt.Errorf("reading the repository's hook directory: %w", err)
+	}
+	r.stampHooks = filepath.Join(root, "agent")
+	if err := gitops.WriteStampHooks(r.stampHooks, chain); err != nil {
+		return fmt.Errorf("writing the run's commit hooks: %w", err)
+	}
+	r.runnerHooks = filepath.Join(root, "runner")
+	if err := gitops.WriteStampHooksNoChain(r.runnerHooks); err != nil {
+		return fmt.Errorf("writing the runner's commit hooks: %w", err)
+	}
+	if r.cfg.Git.Author == config.GitAuthorLauncher && r.spec.Author != nil {
+		r.stampAuthor = &gitops.Person{Name: r.spec.Author.Name, Email: r.spec.Author.Email}
+	}
+	r.repo.CommitHooks = r.runnerHooks
+	r.repo.CommitStamp = gitops.Stamp{Author: r.stampAuthor, Trailers: r.stampTrailers("")}
+	return nil
+}
+
+// stampTrailers is the trailer set every commit a run makes carries: the run's
+// own ID and the rigor mode it has resolved (D601). model is the pin of the
+// stage that made the commit and is left out when there is none — a stage that
+// pinned no model, and every commit the runner makes itself, which belongs to
+// no stage (D602).
+func (r *run) stampTrailers(model string) []gitops.Trailer {
+	trailers := []gitops.Trailer{
+		{Key: gitops.TrailerRun, Value: r.rec.RunID},
+		{Key: gitops.TrailerRigor, Value: string(r.reachedRigor())},
+	}
+	if model != "" {
+		trailers = append(trailers, gitops.Trailer{Key: gitops.TrailerModel, Value: model})
+	}
+	return trailers
+}
+
+// stageEnv is the environment a stage's agent runs in: the run's own, the
+// stage's pins, and the stamp every commit it makes carries (A3). The model
+// trailer is this stage's pin, read the same way the record's StageTiming
+// reads it (cost.go).
+func (r *run) stageEnv(stage string, pins map[string]string) []string {
+	env := gitops.WithVars(r.env, pins)
+	if r.stampHooks == "" {
+		return env
+	}
+	stamp := gitops.Stamp{Author: r.stampAuthor,
+		Trailers: r.stampTrailers(r.cfg.Agent.ModelFor(config.StageRole(stage)))}
+	return gitops.StampEnv(stamp, r.stampHooks, env)
+}
+
+// logUnstampedCommits writes the one line finalize owes about the commits it
+// pushed: how many of the run's own commits carry no Fugaro-Run trailer
+// (D603, constraint 6). The agent can unset its environment, name a hook
+// directory of its own, or push the branch itself, so the trailers are a
+// record and never proof — and the count is how a reader tells a run whose
+// commits were stamped from one whose were not. Nothing is rewritten: a
+// commit rewritten after it was made is a commit nothing verified.
+func (r *run) logUnstampedCommits(ctx context.Context) {
+	if r.repo == nil || r.stampHooks == "" {
+		return
+	}
+	total, unstamped, err := r.unstampedCommits(ctx)
+	if err != nil {
+		r.d.Log.Warn("counting the run's commits without a Fugaro-Run trailer failed", "err", r.redactErr(err))
+		return
+	}
+	r.d.Log.Info("the run's own commits and how many carry no Fugaro-Run trailer", "commits", total, "unstamped", unstamped)
+}
+
+// unstampedCommits counts the run's own commits and how many of them lack the
+// trailer, in one git call: the boundary is guardBounds', which is the run's
+// own work and never the checkout's origin/<base>, which the agent can repoint
+// while a stage runs.
+//
+// The message is read through git's trailer placeholder rather than grepped:
+// a Fugaro-Run line anywhere in the body is not a trailer, and a commit with
+// an empty value has no run ID in it either. A trailer block prints as more
+// than one line — one per value — so the lines that do not begin with a commit
+// SHA belong to the commit before them.
+func (r *run) unstampedCommits(ctx context.Context) (total, unstamped int, err error) {
+	since, except := r.guardBounds(ctx)
+	args := []string{"--no-replace-objects", "log",
+		"--format=%H%x09%(trailers:key=" + gitops.TrailerRun + ",valueonly)",
+		"--end-of-options", since + "..HEAD"}
+	for _, e := range except {
+		args = append(args, "^"+e)
+	}
+	out, err := sessionGit(ctx, r.repo, args...)
+	if err != nil {
+		return 0, 0, err
+	}
+	var shas []string
+	stamped := map[string]bool{}
+	for _, line := range strings.Split(out, "\n") {
+		if sha, value, ok := strings.Cut(line, "\t"); ok && gitops.ValidCommitSHA(sha) {
+			shas = append(shas, sha)
+			stamped[sha] = strings.TrimSpace(value) != ""
+			continue
+		}
+		if strings.TrimSpace(line) != "" && len(shas) > 0 {
+			stamped[shas[len(shas)-1]] = true
+		}
+	}
+	for _, sha := range shas {
+		if !stamped[sha] {
+			unstamped++
+		}
+	}
+	return len(shas), unstamped, nil
+}
+
 // serviceTokens returns the installation's credentials service as the source
 // of this run's installation tokens, or nil when the installation has not
 // opted into one (providers.EnvCredentialsServiceURL unset): with the
@@ -2029,6 +2183,16 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if err := r.startCompression(ctx); err != nil {
 		return err
 	}
+	// The commits this run makes are stamped from here on (A3): the hooks the
+	// agent's stages and the runner's own commits run under, and the author
+	// the repository's git.author opt-in names. A review run and an artifact
+	// run write no trailer: neither pushes a branch of its own, so no commit
+	// of theirs is one of this run's (A3).
+	if !r.review && !r.artifact {
+		if err := r.writeStampHooks(ctx); err != nil {
+			return err
+		}
+	}
 	env, secrets, err := agent.BuildEnv(r.d.Env, agent.EnvSpec{
 		Auth: cfg.Agent.Auth, Secrets: secretEnvs, Set: set, PathPrepend: r.d.PathPrepend,
 		Gateway: r.gateway(), Compression: r.compression,
@@ -2834,7 +2998,7 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	}
 	tw := agent.NewRedactor(io.MultiWriter(&transcript, transcriptTail, relay), r.secretList())
 	sw := agent.NewRedactor(io.MultiWriter(NewLineWriter(log, "agent"), stderrTail), r.secretList())
-	req.Dir, req.Env, req.Transcript, req.Stderr = r.d.WorkDir, gitops.WithVars(r.env, pins), tw, sw
+	req.Dir, req.Env, req.Transcript, req.Stderr = r.d.WorkDir, r.stageEnv(name, pins), tw, sw
 	req.Model, req.MaxBudgetUSD = r.cfg.Agent.ModelFor(config.StageRole(name)), r.cfg.Agent.MaxBudgetUSD
 
 	deadlineCtx, cancelDeadline := r.budget.StageContext(ctx)
@@ -3323,6 +3487,9 @@ func (r *run) finalize(ctx context.Context) error {
 	// posting still records that it updated its pull request.
 	r.rec.PushedHead = sha
 	r.save(ctx)
+	// What the run pushed is final from here: the commits are all made, and
+	// the count of the ones without the trailer is logged beside them (D603).
+	r.logUnstampedCommits(ctx)
 	early := r.follow == nil && r.rec.PR != nil // opened at a stage boundary: settled by its number
 	var spec gitprov.PRSpec
 	switch {
