@@ -689,12 +689,13 @@ func checkRecipeImage(ctx context.Context, env *cloudEnv, slug string, spec *tas
 
 // repoRecipeForGate is a repository-sourced task's recipe, read from this
 // checkout the way recipeForLaunch reads it — the working tree, the
-// launcher's own approximation of the ref the runner checks out — so the
-// gates can judge the constructs the recipe's own text carries: the task
-// holds its name alone. nil for every other launch, and for one whose file
-// cannot be read here, which keeps the plain recipesSince it always had; the
-// runner's own parse refusal is the backstop there, exactly as it is for a
-// name this launcher cannot resolve at all.
+// launcher's own approximation of the ref the runner checks out. Only
+// recipeSinceFor's adversarial arm reads it: that step is the one construct
+// whose gate the task's own fields cannot carry (see recipeSinceFor). nil for
+// every other launch, and for one whose file cannot be read here, which keeps
+// the plain recipesSince it always had; the runner's own parse refusal is the
+// backstop there, exactly as it is for a name this launcher cannot resolve at
+// all.
 func repoRecipeForGate(ctx context.Context, spec *task.Spec) *recipe.Recipe {
 	if spec.Recipe == nil || spec.Recipe.YAML != "" {
 		return nil
@@ -718,16 +719,20 @@ func repoRecipeForGate(ctx context.Context, spec *task.Spec) *recipe.Recipe {
 // and start a job whose runner refuses the whole task at bootstrap, the
 // manifest being a field it does not know.
 //
-// The adversarial step is judged the same way, and it is the newest construct
-// any recipe can carry (adversarialSince), so its case comes first. It has no
-// task field behind it, unlike the manifest: a repository recipe is judged
-// from the launcher's read of the file it names (rp), and one this launcher
-// cannot read keeps recipesSince, with the runner's parse refusal as the
-// backstop.
+// The adversarial step is judged from rp too, and it is the newest construct
+// any recipe can carry (adversarialSince), so its case comes first. Unlike
+// the manifest and mode: artifact — a repository recipe's digest run and its
+// mode both reach the task as fields, which carry their own gates above —
+// the step has nothing in the task behind it, so the launcher's read of the
+// file the recipe names is the only place the gate can see it; one this
+// launcher cannot read keeps recipesSince, with the runner's parse refusal as
+// the backstop. Every older construct keeps the gate it always had, judged
+// from the embedded text alone: a repository recipe trips none of them here,
+// which is what its own tests pin.
 func recipeSinceFor(spec *task.Spec, rp *recipe.Recipe) string {
 	r := embeddedRecipeOf(spec)
-	if r == nil {
-		r = rp
+	if len(spec.DigestRuns) == 0 && r == nil && rp != nil && recipe.UsesAdversarial(rp) {
+		return adversarialSince
 	}
 	switch {
 	case len(spec.DigestRuns) > 0:
