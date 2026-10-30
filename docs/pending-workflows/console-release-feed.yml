@@ -11,20 +11,16 @@
 # the same pipeline released from the CLI's `v*` tag: that file's staged copy and
 # the applied copy under .github/workflows/ are byte-identical today, and this
 # one is that text with the three changes below and nothing else. The file it
-# replaces is staged *and* applied at once, and both copies stay staged after the
-# copy-in (docs/pending-workflows/README.md), so the copy-in is a three-command
-# sequence:
-#
-#     cp docs/pending-workflows/console-release-tag.yml docs/pending-workflows/console-release.yml
-#     cp docs/pending-workflows/console-release.yml .github/workflows/console-release.yml
-#     git rm docs/pending-workflows/console-release-tag.yml
-#     git add -A
-#     git commit -m "console: the console releases from its own console-vX.Y.Z tag"
-#
-# That leaves `.github/workflows/console-release.yml` and the staged
-# docs/pending-workflows/console-release.yml byte-identical again -- which is
-# what TestDocsConsoleReleaseWorkflowIsStagedAndPinned asserts, and why the first
-# command above exists rather than copying straight over the applied file: a
+# replaces is staged *and* applied at once, and the staged copy stays after the
+# copy-in (docs/pending-workflows/README.md), so the copy-in writes this file
+# over the staged `console-release.yml` **before** it writes the applied one.
+# There is one copy-in procedure here and not two: the three commands are with
+# the update-feed paragraph below, and the ones this file inherited named a
+# `console-release-tag.yml` that was applied and removed on 2026-10-23, so they
+# were unrunnable. What the copy-in leaves is `.github/workflows/console-release.yml`
+# and the staged docs/pending-workflows/console-release.yml byte-identical again,
+# which is what TestDocsConsoleReleaseWorkflowIsStagedAndPinned asserts, and why
+# the staged copy is written from this file rather than from the applied one: a
 # staged copy that differs from the file that runs puts `main` in the state the
 # staging directory exists to avoid, where the byte-identity clause is red and
 # scripts/release-gate.sh therefore refuses *every* tag, the CLI's included.
@@ -94,7 +90,12 @@
 # byte-identical, so an edit to one without the other fails a named test rather
 # than drifting silently.
 #
-# **What the update feed adds, in one paragraph (D764, D765).** electron-builder
+# **What the update feed adds, in one paragraph.** The step is Task 4.4 of
+# docs/plans/2026-10-15-desktop-console.md, which names the staged
+# docs/pending-workflows/console-release.yml in its own file list, and the design
+# it serves is section 7.3 of docs/design/desktop-console.md, which is where
+# electron-builder's companion electron-updater and the `latest-mac.yml` manifest
+# are named as the feed client and its format. electron-builder
 # publishes nothing here -- `build.publish` stays `null` in console/package.json
 # -- so the manifest electron-updater reads, `latest-mac.yml`, is written by the
 # release job beside the .zip it describes, out of the bytes that step has just
@@ -108,11 +109,24 @@
 # One console release therefore feeds the console's own stream, and nothing
 # else about this file moves: no new action, no new secret, no new environment,
 # and no change to the trigger, to the permissions each job holds or to the
-# draft-then-publish order. No `blockmap` either: D772 keeps the differential
-# download open and defaults to off.
+# draft-then-publish order. No `blockmap` either: the differential download is a
+# later decision that is off by default, so the feed carries the fields a full
+# download needs and nothing else.
 #
-# The three commands that copy this file in are the Linux change's three, and
-# the staged copy of console-release.yml stays after them:
+# **One consequence belongs to the website, and it is written here because the
+# step that meets it is a different run.** The feed's own SHA-256 joins the job's
+# console-sha256sums.txt, so the release's sums file names one asset that is not
+# a download. `website/data/console-sha256sums.txt` is that file copied verbatim
+# when the site's console downloads are turned on (W3.1), and
+# TestWebsiteConsoleReleaseFactsAreComplete requires every name in it to resolve
+# to an entry in website/content/downloads.json -- so the run that refreshes the
+# site after this change has to offer `latest-mac.yml` there, or leave the sums
+# file alone until it does. Neither this workflow nor this directory can decide
+# that, and a reader who copies the sums file without reading this line gets a
+# red `main` instead of a quiet gap between the release and the page.
+#
+# The three commands that copy this file in, and the staged copy of
+# console-release.yml stays after them:
 #
 #     cp docs/pending-workflows/console-release-feed.yml docs/pending-workflows/console-release.yml
 #     cp docs/pending-workflows/console-release-feed.yml .github/workflows/console-release.yml
@@ -755,7 +769,7 @@ jobs:
           record retry_apple_network xcrun stapler validate "$DMG"
           record spctl --assess --type open --context context:primary-signature -v "$DMG"
           record hdiutil detach "$MOUNT"
-          # The update feed (D764, D765): the manifest electron-updater reads
+          # The update feed: the manifest electron-updater reads
           # from this release. electron-builder cannot write it -- build.publish
           # is null in console/package.json -- so it is built here, out of the
           # bytes this step has just verified. `url` and `path` name the .zip

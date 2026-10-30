@@ -977,10 +977,14 @@ runs today with the console's **update feed** added and nothing else, so it is
 copied over the staged `console-release.yml` **and** into
 `.github/workflows/console-release.yml`, which is why its copy-in has one more
 command than usual. Staged on **2026-10-30**, on the owner's approval of the
-console's auto-update (Task 4.4 of `docs/plans/2026-10-15-desktop-console.md`;
-the chain is `docs/plans/2026-10-30-console-auto-update.md`, decisions **D764**
-and **D765**). It runs on the release tag and **never on a pull request**, like
-the file it supersedes.
+console's auto-update. The step is **Task 4.4** of
+`docs/plans/2026-10-15-desktop-console.md`, whose own file list names the staged
+`docs/pending-workflows/console-release.yml`; the design behind it is
+**section 7.3** of `docs/design/desktop-console.md`, which is where
+electron-updater and its `latest-mac.yml` manifest are named as the feed client
+and its format. Those two are the whole citation — there is no separate
+auto-update plan and no decision number for this change. It runs on the release
+tag and **never on a pull request**, like the file it supersedes.
 
 What it adds, and nothing else in the file moved:
 
@@ -1004,6 +1008,18 @@ What it adds, and nothing else in the file moved:
    feed therefore travels under the merged `console-sha256sums.txt` that cosign
    signs keyless, and it is attached to `console-vX.Y.Z` with the rest.
 
+**One consequence for the next website step, recorded here because that step is
+a different run.** The feed's entry in the release's `console-sha256sums.txt`
+makes that file name one asset that is not a download.
+`website/data/console-sha256sums.txt` is the release's file copied verbatim when
+the site's console downloads are turned on (W3.1), and
+`TestWebsiteConsoleReleaseFactsAreComplete` requires every name in it to resolve
+to an entry in `website/content/downloads.json`. So the run that refreshes the
+site after this change offers `latest-mac.yml` there, or leaves the sums file
+alone until it can; the workflow and this directory cannot decide that, and a
+copy-in that skips the note gets a red `main` instead of a quiet gap between the
+release and the page.
+
 **What it does not change**, which is the whole of the review: no new action
 (every `uses:` line and its SHA pin is unchanged), no new secret, no `env:` that
 names one, and nothing in `on:`, `permissions:`, `environment:`, the runners, the
@@ -1011,9 +1027,9 @@ Linux leg, `--latest=false`, the draft-then-publish order or who may approve.
 `TestDocsConsoleReleaseFeedIsStagedAndPinned` compares the two files for exactly
 those, and refuses a feed file that is byte-identical to the one it supersedes.
 
-**No `blockmap`**: D765 writes the fields electron-updater needs from a full
-download and nothing else, and the differential download D772 leaves open is off
-by default.
+**No `blockmap`**: the feed carries the fields electron-updater needs from a full
+download and nothing else, and the differential download is a later decision
+that is off by default.
 
 **To copy it in**, from the repository root — the first command is the one that
 keeps `console-release.yml` and its staged copy byte-identical, which is what
@@ -1052,6 +1068,10 @@ what it said before this file was staged:
 installer pack, which runs at release time only rather than on a pull request, and is copied in
 only after the packer and the unit suite can pass on a Windows runner.
 ```
+
+The bullet this file has in the opening list stays after the copy-in as the
+record of what was applied, the way `console-release-linux.yml`'s does; only the
+opening line counts files, and that is the sentence the copy-in rewrites.
 
 Both are spliced in the tree this file was staged from: the same suite was run
 with the three commands above applied to a scratch copy, and with both sentences

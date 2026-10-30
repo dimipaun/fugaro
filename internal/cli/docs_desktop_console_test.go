@@ -7386,14 +7386,16 @@ func TestConsoleReleaseLinuxStagedFileIsNotTheAppliedOne(t *testing.T) {
 }
 
 // consoleFeedFileName is the update feed's own name: electron-updater's macOS
-// manifest, which the release job writes beside the .zip (D765 -- D764 records
-// why the packer cannot write it: `build.publish` is `null` in
-// console/package.json, so electron-builder publishes nothing).
+// manifest, which the release job writes beside the .zip (design section 7.3,
+// and Task 4.4 of docs/plans/2026-10-15-desktop-console.md -- the packer cannot
+// write it: `build.publish` is `null` in console/package.json, so
+// electron-builder publishes nothing).
 const consoleFeedFileName = "latest-mac.yml"
 
 // consoleFeedTemplate is the printf that writes the feed, character for
-// character: the six fields D765 names and nothing else -- no `blockmap`, which
-// D772 leaves open and which is therefore off by default. `url` and `path` are
+// character: the six fields electron-updater reads from a full download and
+// nothing else -- no `blockmap`, whose differential download is a later decision
+// that is off by default. `url` and `path` are
 // the .zip's name **as GitHub stores it**, which is not the name the packer
 // gives it: the default macOS artifact name carries a space and GitHub renders
 // it as a dot, so a feed naming the packer's own spelling would point
@@ -7402,7 +7404,7 @@ const consoleFeedTemplate = `printf 'version: %s\nfiles:\n  - url: %s\n    sha51
 
 // consoleFeedSumLine appends the feed's own SHA-256 to the job's sums file, so
 // the feed travels to `publish` -- and to the release -- under the merged
-// console-sha256sums.txt that cosign signs (D765: the feed is in the sums).
+// console-sha256sums.txt that cosign signs: the feed is in the sums.
 const consoleFeedSumLine = `(cd "$(dirname "$FEED")" && shasum -a 256 "$(basename "$FEED")") >> "$SUMS"`
 
 // consoleReleaseMacosSumsStep is the publish job's check over the macOS leg's
@@ -7491,7 +7493,8 @@ func consoleLinesDropped(base, text string) []string {
 
 // TestDocsConsoleReleaseFeedIsStagedAndPinned holds the staged update feed to
 // what the console's auto-update needs and to nothing else (the owner's go of
-// 2026-10-30; D764, D765). The macOS `release` job writes `latest-mac.yml`
+// 2026-10-30; Task 4.4 of docs/plans/2026-10-15-desktop-console.md, design
+// section 7.3). The macOS `release` job writes `latest-mac.yml`
 // beside the .zip it has just verified, from the tag's version and the .zip's
 // own bytes, sums it into the job's console-sha256sums.txt and uploads it with
 // the other assets; `publish` requires it, checks it against the sums and
@@ -7513,14 +7516,14 @@ func TestDocsConsoleReleaseFeedIsStagedAndPinned(t *testing.T) {
 		`FEED_ASSET="$(basename "$ZIP" | tr ' ' '.')"`,
 		`ZIP_SHA512="$(openssl dgst -sha512 -binary "$ZIP" | base64 | tr -d '\n')"`,
 		`ZIP_SIZE="$(stat -f%z "$ZIP")"`,
-		`FEED="$(dirname "$ZIP")/latest-mac.yml"`,
+		`FEED="$(dirname "$ZIP")/` + consoleFeedFileName + `"`,
 		consoleFeedTemplate,
 		consoleFeedSumLine,
 		`record cat "$FEED"`,
 		`cp "$FEED" "$ASSETS/"`,
-		`-s latest-mac.yml`,
-		`grep -qF "  latest-mac.yml" console-sha256sums.txt`,
-		`FEED="latest-mac.yml"`,
+		`-s ` + consoleFeedFileName,
+		`grep -qF "  ` + consoleFeedFileName + `" console-sha256sums.txt`,
+		`FEED="` + consoleFeedFileName + `"`,
 		`test -s "$FEED"`,
 		`"$FEED"`,
 	} {
@@ -7528,12 +7531,24 @@ func TestDocsConsoleReleaseFeedIsStagedAndPinned(t *testing.T) {
 			t.Errorf("%s does not carry %q: the release job writes the update feed beside the zip from the bytes it just verified, sums it, uploads it with the other assets, and publish refuses a release that would ship without it", path, want)
 		}
 	}
+	// The feed's line in the release's sums file has a second reader, and this
+	// file is where the next run learns it: the site's copy of that file is
+	// checked name by name against the downloads it offers, so a sums file
+	// carrying the feed is a website step that has to decide something. The
+	// note lives in the header, which the copy-in carries into the workflow
+	// itself -- the one place a run that refreshes the site will look.
+	for _, want := range []string{"website/data/console-sha256sums.txt", "website/content/downloads.json"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("%s does not name %q: the feed joins console-sha256sums.txt, and the release's sums file is copied verbatim into the site, where every name in it has to resolve to an offered download (TestWebsiteConsoleReleaseFactsAreComplete) -- so the run that refreshes the site after this change has to be told, or it meets a red `main` it cannot explain", path, want)
+		}
+	}
+
 	wf := consoleReleaseShape(t, path, text)
 	for _, job := range wf.Jobs {
 		for _, step := range job.Steps {
 			for _, line := range consoleRunLines(step.Run) {
 				if strings.Contains(line, "blockmap") {
-					t.Errorf("%s's %q step runs %q: D765 writes the six fields electron-updater needs from a full download and nothing else, and the differential download D772 leaves open is off by default", path, step.Name, line)
+					t.Errorf("%s's %q step runs %q: the feed carries the fields electron-updater needs from a full download and nothing else, and the differential download is a later decision that is off by default", path, step.Name, line)
 				}
 			}
 		}
@@ -7564,15 +7579,15 @@ func TestDocsConsoleReleaseFeedIsStagedAndPinned(t *testing.T) {
 	}
 	_, sumsStep := consoleStepNamed(t, pub, "publish", consoleReleaseMacosSumsStep)
 	slines := consoleRunLines(sumsStep.Run)
-	if consoleLineIndex(slines, `if [ ! -s latest-mac.yml ]; then`, false) < 0 {
-		t.Errorf("%s's %q step does not require exactly one non-empty latest-mac.yml: a macOS artifact with no feed is a console release that can never update itself, and the check that refuses it belongs with the sums check it has to pass anyway", path, consoleReleaseMacosSumsStep)
+	if consoleLineIndex(slines, `if [ ! -s `+consoleFeedFileName+` ]; then`, false) < 0 {
+		t.Errorf("%s's %q step does not require exactly one non-empty %s: a macOS artifact with no feed is a console release that can never update itself, and the check that refuses it belongs with the sums check it has to pass anyway", path, consoleReleaseMacosSumsStep, consoleFeedFileName)
 	}
-	if consoleLineIndex(slines, `grep -qF "  latest-mac.yml" console-sha256sums.txt`, true) < 0 {
+	if consoleLineIndex(slines, `grep -qF "  `+consoleFeedFileName+`" console-sha256sums.txt`, true) < 0 {
 		t.Errorf("%s's %q step does not check the feed against console-sha256sums.txt: the signature over that file is what vouches for the feed, so a feed the sums file does not list is a manifest nothing signs", path, consoleReleaseMacosSumsStep)
 	}
 	_, publish := consoleStepNamed(t, pub, "publish", consoleReleasePublishStep)
 	plines := consoleRunLines(publish.Run)
-	if consoleLineIndex(plines, `FEED="latest-mac.yml"`, false) < 0 || consoleLineIndex(plines, `test -s "$FEED"`, false) < 0 {
+	if consoleLineIndex(plines, `FEED="`+consoleFeedFileName+`"`, false) < 0 || consoleLineIndex(plines, `test -s "$FEED"`, false) < 0 {
 		t.Errorf("%s's publish step does not read the feed with a non-empty check of its own: every other asset there is `test -s`'d before the release is created, and a release that ships an empty manifest is worse than one with none", path)
 	}
 	assets := -1
