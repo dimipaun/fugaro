@@ -187,8 +187,8 @@ const MaxPatchBytes = 2 << 20
 // arms upload one, which is the pair's material (D559, A2.1), and a run that
 // was not sampled uploads none. A failure warns: the pair loses the diff, and
 // the run it belongs to loses nothing it published. The two record fields are
-// set together, so a truncatedpatch is never one a reader has to guess the key
-// of.
+// set together, so a truncated patch is never one a reader has to guess the
+// key of.
 func (r *run) uploadPatch(ctx context.Context, head string) {
 	if r.rec.AB == nil {
 		return
