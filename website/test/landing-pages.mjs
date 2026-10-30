@@ -67,7 +67,7 @@ import path from 'node:path'
 
 import { loadLanding } from '../src/lib/landing.mjs'
 import { DIST, SITE, builtPages, cssRules, filesUnder, findAll, parse, servedFile, siteFacts, textOf, tokenize, walk } from './lib/html.mjs'
-import { buildCopy } from './lib/build.mjs'
+import { buildCopy, dropCampaignScreenshots } from './lib/build.mjs'
 
 const LANDING = loadLanding()
 const FACTS = siteFacts()
@@ -687,11 +687,7 @@ function heroOf(rel, dist = DIST) {
  */
 function withoutScreenshots(t) {
   const built = buildCopy(t, ({ site }) => {
-    const file = path.join(site, 'data', 'landing.yaml')
-    const before = readFileSync(file, 'utf8')
-    const after = before.replace(/^ {4}screenshot: .+$/gm, '')
-    assert.equal(before.match(/^ {4}screenshot: /gm)?.length, 4, 'the fixture did not find the four screenshots in the copy, so the state below is not the one it means to build')
-    writeFileSync(file, after)
+    assert.ok(dropCampaignScreenshots(site), 'the fixture found no screenshots to take out of the copy\'s website/data/landing.yaml, so the state below is not the one it means to build')
   })
   assert.equal(built.status, 0, `the campaign build failed with no screenshot named:\n${built.output}`)
   return built.dist
