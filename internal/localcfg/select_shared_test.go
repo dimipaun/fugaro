@@ -164,3 +164,34 @@ func TestSharedDiffIgnoresPublishedOnlyEntries(t *testing.T) {
 		t.Fatalf("a local-only entry = %v", d)
 	}
 }
+
+// TestSharedDiffIgnoresAnotherMachinesPairing: mailbox.keychain_item is a union
+// too, one level down (MergeShared unions its entries), so the pairing the
+// machine on the next desk recorded is no difference — while a local entry the
+// published object lacks is one. Without this the published file, which is a
+// union by construction, is reported as a difference on every machine and
+// publishing again cannot clear it: `fugaro doctor` would nag about a file
+// that is right.
+func TestSharedDiffIgnoresAnotherMachinesPairing(t *testing.T) {
+	local := &Config{Version: 1, Name: "aurora", GCPProject: "g1", Region: "us-east5",
+		Mailbox: &Mailbox{KeychainItem: map[string]string{pairUIDA: "aurora-BBBBBBBBBBBBBBBBBBBBBB"}}}
+	pub := local.Shared()
+	pub.Mailbox = &Mailbox{KeychainItem: maps.Clone(pub.Mailbox.KeychainItem)} // Shared() aliases the map
+	pub.Mailbox.KeychainItem[pairUIDB] = "aurora-CCCCCCCCCCCCCCCCCCCCCC"
+	if d := SharedDiff(pub, local); len(d) != 0 {
+		t.Fatalf("another machine's pairing counted as a difference: %v", d)
+	}
+	pub.Mailbox.KeychainItem[pairUIDA] = "aurora-DDDDDDDDDDDDDDDDDDDDDD"
+	if d := SharedDiff(pub, local); strings.Join(d, ",") != "mailbox" {
+		t.Fatalf("a changed entry = %v", d)
+	}
+	delete(pub.Mailbox.KeychainItem, pairUIDA)
+	if d := SharedDiff(pub, local); strings.Join(d, ",") != "mailbox" {
+		t.Fatalf("an entry the published object lacks = %v", d)
+	}
+	// A local config that has paired nothing is not a difference against a
+	// published file that has: that is the paragraph above, from the other side.
+	if d := SharedDiff(pub, &Config{Version: 1, Name: "aurora", GCPProject: "g1", Region: "us-east5"}); len(d) != 0 {
+		t.Fatalf("a machine with no mailbox block = %v", d)
+	}
+}

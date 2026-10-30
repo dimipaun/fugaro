@@ -337,13 +337,13 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 
 	// §7.1 steps 6, 8 and 9. The keychain write sits after the node write
 	// rather than at step 6's place before it, and the reason is the undo: the
-	// node is what the device is, so every failure below rolls back to it —
-	// a keychain that cannot be written removes the node again, a delivery
-	// that cannot be written removes the item — and writing the key first
-	// would leave an item to remove when the node write is the one that fails,
-	// for a step whose position §7.3 does not make load-bearing. M4's ordering
-	// is untouched: the node exists before anything reaches the phone, and
-	// nothing does until the delivery node exists.
+	// node is what the device is, so every failure below rolls the pairing back
+	// to nothing — a keychain that cannot be written removes the node again, a
+	// delivery that cannot be written removes the item and the node — and
+	// writing the key first would leave an item to remove when the node write
+	// is the one that fails, for a step whose position §7.3 does not make
+	// load-bearing. M4's ordering is untouched: the node exists before anything
+	// reaches the phone, and nothing does until the delivery node exists.
 	item, err := keychain.ParseItem(pairItemName(lc.Name, device.UID), lc.Name)
 	if err != nil {
 		// The name is built here out of the project's own name and a uid this
@@ -380,19 +380,19 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 	}
 	sealedPayload, err := delivery.MarshalPayload()
 	if err != nil {
-		return pairRefuse(ev, o, pairRefusedDelivery, pairRemoveItem(ctx, pairKeychain(), item, fmt.Errorf("building the delivery payload: %v", err)))
+		return pairRefuse(ev, o, pairRefusedDelivery, pairUndoPairing(ctx, db, lc, device.UID, item, fmt.Errorf("building the delivery payload: %v", err)))
 	}
 	sealed, err := token.SealDelivery(key, uid, sealedPayload)
 	if err != nil {
-		return pairRefuse(ev, o, pairRefusedDelivery, pairRemoveItem(ctx, pairKeychain(), item, fmt.Errorf("sealing the delivery to the key written at %s: %v", pairPathRequest(uid), err)))
+		return pairRefuse(ev, o, pairRefusedDelivery, pairUndoPairing(ctx, db, lc, device.UID, item, fmt.Errorf("sealing the delivery to the key written at %s: %v", pairPathRequest(uid), err)))
 	}
 	if err := db.Patch(ctx, pairPath(uid), map[string]any{"delivery": pairDeliveryNode{V: token.DeliveryEnvelopeVersion, Sealed: token.EncodeKey(sealed)}}); err != nil {
 		if errors.Is(err, rtdb.ErrPermission) {
 			return pairRefuse(ev, o, pairRefusedDatabaseAdmin,
-				pairRemoveItem(ctx, pairKeychain(), item, fmt.Errorf("the write to %s was refused: pairing writes the delivery node there with roles/firebasedatabase.admin, which this credential does not hold on project %s's Firebase project (its owners and editors hold it, and terraform.budget_admins): %w", pairPathDelivery(uid), lc.Name, err)))
+				pairUndoPairing(ctx, db, lc, device.UID, item, fmt.Errorf("the write to %s was refused: pairing writes the delivery node there with roles/firebasedatabase.admin, which this credential does not hold on project %s's Firebase project (its owners and editors hold it, and terraform.budget_admins): %w", pairPathDelivery(uid), lc.Name, err)))
 		}
 		return pairRefuse(ev, o, pairRefusalCode(err, pairRefusedDelivery),
-			pairRemoveItem(ctx, pairKeychain(), item, dbErr(lc, err, true)))
+			pairUndoPairing(ctx, db, lc, device.UID, item, dbErr(lc, err, true)))
 	}
 
 	// §7.1 step 9, decision 2: the whole subtree goes, so the payload does not
@@ -446,9 +446,18 @@ type pairDeliveryNode struct {
 // a second record of it. The project's own name is in it, so a config naming
 // the item cannot reach another project's key, and every character is one
 // keychain.ParseItem admits: the uid's body is unpadded base64url, whose two
-// punctuation characters are both in M5's alphabet.
+// punctuation characters are both in M5's alphabet, and a local config's
+// project name is 1 to 40 characters of a-z, 0-9 and '-'.
+//
+// **The name is the project and the uid and nothing else, and the arithmetic
+// is why**: ParseItem's ceiling is 64 characters, the body of a device uid is
+// 22 of them, and a project name may be 40 — so a project and one separator
+// leave exactly one character of slack, and a fixed prefix of any length
+// ("fugaro-mailbox-") is a name that cannot be built for the longest project
+// names localcfg accepts. A pairing that cannot name its item is a pairing
+// that cannot store a key, so the prefix is what gives way.
 func pairItemName(project, deviceUID string) string {
-	return "fugaro-mailbox-" + project + "-" + strings.TrimPrefix(deviceUID, "m~")
+	return project + "-" + strings.TrimPrefix(deviceUID, "m~")
 }
 
 // pairStoreMACKey draws this pairing's MAC key (D171) and stores it at item,
@@ -494,6 +503,19 @@ func pairRemoveItem(ctx context.Context, store keychain.Store, item keychain.Ite
 		return fmt.Errorf("%w; the MAC key stored at %s could not be removed either (%v), so it is there with no delivery behind it: delete it by hand", cause, item.Name(), oneLine(err.Error()))
 	}
 	return cause
+}
+
+// pairUndoPairing is the undo for every failure between the keychain write and
+// the delivery node: both of the things the pairing has written by then — the
+// item and the device node — go back, because a pairing that delivered nothing
+// is one the phone never completed, and `pairRemoveDeviceNode`'s own reason
+// applies to it in full: a node with no delivery behind it is a device that
+// fails USER on every request, on the allowlist, until someone removes it. The
+// item goes first, since it is the one written second and the one that holds
+// key material; the node's removal is what the operator is told about if it
+// fails, because that is the one they cannot do themselves by hand.
+func pairUndoPairing(ctx context.Context, db *rtdb.Client, lc *localcfg.Config, deviceUID string, item keychain.Item, cause error) error {
+	return pairRemoveDeviceNode(ctx, db, lc, deviceUID, pairRemoveItem(ctx, pairKeychain(), item, cause))
 }
 
 // pairPathRequest is the phone's half of the pairing session (§4.4): one node

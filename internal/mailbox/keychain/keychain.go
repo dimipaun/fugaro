@@ -357,12 +357,20 @@ func readerFor(goos string) (reader, error) {
 // argv is testable from one checkout.
 //
 // **The key reaches the storing program on standard input, never as an argv
-// element.** `secret-tool store` reads the secret from its standard input, and
-// that is the only storing path this build has: `security`'s -w takes the
-// password as an argv element, where every process on the machine reads it out
-// of `ps` for as long as the call lasts (M11). A platform with no such path
-// answers ErrBackend naming it rather than storing a key in the open, exactly
-// as the read side refuses Windows.
+// element**, and `secret-tool store` is the only path this build has that does
+// that (M11). macOS is the gap, and the reason is narrower than "the storing
+// program takes the secret as an argv": `security add-generic-password -w
+// <value>` does take it there, but `-w` with no value prompts on the terminal
+// instead, and `security -i` reads whole commands — password and all — from
+// standard input. Neither is a path this build can stand behind. The prompt
+// needs a terminal and a person to type a 32-byte key into, and `-i`'s command
+// language (its quoting, its update and delete forms, whether it ever falls
+// back to the terminal) is not something a test on this runner can exercise,
+// so a darwin writer written against it would be argv and exit handling no
+// test has ever run — the reason the read side leaves Windows alone. What that
+// costs is not hidden: `fugaro pair` cannot complete on macOS, which is the
+// platform this CLI is most likely to run on, and the operator gets ErrBackend
+// there rather than a key stored in the open. A darwin writer is its own task.
 func writerFor(goos string) (*writer, string) {
 	switch goos {
 	case "linux":
@@ -378,8 +386,14 @@ func writerFor(goos string) (*writer, string) {
 			// leave the same state behind, which is what the caller asked for.
 			notFound: 1,
 		}, ""
+	case "darwin":
+		// `security`'s storing side has two forms that keep the key out of an
+		// argv — the prompted -w and -i's commands on standard input — and
+		// neither is a form a test on this runner can exercise, so this build
+		// does not guess at one.
+		return nil, "this build cannot store a pairing key in the darwin keychain: `add-generic-password -w <value>` puts the key in an argv, where every process on the machine reads it out of `ps`, and the two forms that do not — -w with no value, which prompts on the terminal, and `security -i`, which reads commands from standard input — are forms no test in this repository can run (M11)"
 	default:
-		return nil, fmt.Sprintf("this build cannot store a pairing key in the %s keychain: the storing program takes the secret as an argv element, where every process on the machine reads it out of `ps`, and no argv of this package carries a key (M11)", goos)
+		return nil, fmt.Sprintf("this build cannot store a pairing key in the %s keychain: it has no storing path that keeps the key out of an argv, and no argv of this package carries a key (M11)", goos)
 	}
 }
 

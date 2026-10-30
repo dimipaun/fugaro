@@ -96,15 +96,20 @@ func TestKeychainItemOldSingleShapeRefused(t *testing.T) {
 }
 
 // TestKeychainItemPerPairingRoundTripsAndMerges is decision 9's shape and the
-// merge rule this block already had (§13): two pairings hold two items, the
-// entries survive a round trip, Shared() carries them, and MergeShared takes
-// the published block when the publishing machine has none — otherwise a
-// launcher whose own config has no mailbox: block erases the names another
-// machine recorded, silently, in the only place the installation's copy lives.
+// merge rule this block needs (§13): two pairings hold two items, the entries
+// survive a round trip, Shared() carries them, MergeShared takes the published
+// entries when the publishing machine has none — otherwise a launcher whose own
+// config has no mailbox: block erases the names another machine recorded,
+// silently, in the only place the installation's copy lives — and it unions
+// them when the machine has some, because with one item per pairing the names
+// in the block are several machines' pairings and not one machine's.
 //
-// Mutation (verified, run and restored): delete `if out.Mailbox == nil {
-// out.Mailbox = published.Mailbox }` from MergeShared: the first assertion
-// fails on a nil block, and no other test does.
+// Two mutations, both verified, run and restored. Deleting the whole merge
+// (`if published.Mailbox != nil || out.Mailbox != nil { … }`) fails the first
+// assertion, on a nil block; taking the published pointer instead of the union
+// (`if out.Mailbox == nil { out.Mailbox = published.Mailbox }`, which is what
+// this block did before decision 9's per-pairing names) fails the
+// other-machine assertion below, and no other test fails for either.
 func TestKeychainItemPerPairingRoundTripsAndMerges(t *testing.T) {
 	block := mailboxBlock(
 		entry(pairUIDA, "fugaro-mailbox-aurora-one"),
@@ -165,12 +170,38 @@ func TestKeychainItemPerPairingRoundTripsAndMerges(t *testing.T) {
 	if !strings.Contains(string(out), "fugaro-mailbox-aurora-one") {
 		t.Errorf("the merged file carries no item name:\n%s", out)
 	}
-	// The local block wins when there is one: a pointer field takes the local
-	// value, and the operator who wrote their own item names is the one who
-	// knows where their keys are.
+	// The local block does not replace the published one: its entries are
+	// unioned, the way repos and base_images are, because decision 9 made the
+	// block one item per pairing and the pairings in it are several machines'
+	// — a laptop that paired its own phone would otherwise publish a file that
+	// names its phone and forgets every other machine's. Where one uid is on
+	// both sides the local name wins: the operator who wrote their own item
+	// names is the one who knows where their keys are.
 	local = sharedBase(t, mailboxBlock(entry(pairUIDA, "fugaro-mailbox-aurora-local")))
-	if got := MergeShared(existing, local); got.Mailbox == nil || got.Mailbox.KeychainItem[pairUIDA] != "fugaro-mailbox-aurora-local" {
-		t.Errorf("the local item name must win: %+v", got.Mailbox)
+	got = MergeShared(existing, local)
+	if got.Mailbox == nil {
+		t.Fatalf("a local block was dropped")
+	}
+	if got.Mailbox.KeychainItem[pairUIDA] != "fugaro-mailbox-aurora-local" {
+		t.Errorf("the local item name must win the clash: %+v", got.Mailbox)
+	}
+	if got.Mailbox.KeychainItem[pairUIDB] != "fugaro-mailbox-aurora-two" {
+		t.Errorf("the other machine's pairing was erased by this one's: %+v", got.Mailbox)
+	}
+	// Unioned into a new block and a new map: the two inputs still hold what
+	// they held, which is what lets a caller publish from either.
+	if existing.Mailbox.KeychainItem[pairUIDA] != "fugaro-mailbox-aurora-one" || len(local.Mailbox.KeychainItem) != 1 {
+		t.Errorf("MergeShared modified an input's mailbox block: %+v %+v", existing.Mailbox, local.Mailbox)
+	}
+	// And the union is what a publish writes, so the next machine reads both.
+	out, err = got.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{"fugaro-mailbox-aurora-local", "fugaro-mailbox-aurora-two"} {
+		if !strings.Contains(string(out), line) {
+			t.Errorf("the merged file dropped %q:\n%s", line, out)
+		}
 	}
 	// A published object with none leaves the local one alone.
 	if got := MergeShared(sharedBase(t, ""), local); got.Mailbox == nil || got.Mailbox.KeychainItem[pairUIDA] != "fugaro-mailbox-aurora-local" {

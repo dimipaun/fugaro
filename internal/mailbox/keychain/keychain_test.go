@@ -267,6 +267,46 @@ func TestPlatformsWithNoReaderRefuse(t *testing.T) {
 	}
 }
 
+// TestDarwinReadsButCannotStore is the one platform where this build's two
+// halves disagree, and the platform the CLI is most likely to run on: the read
+// is `security find-generic-password -s <item> -w` (readerFor), and there is no
+// storing path this build stands behind (writerFor). The writes must be
+// ErrBackend — never a silent success, and never a key stored somewhere else —
+// and the sentence must be true of the platform: `security`'s storing side does
+// have argv-safe forms (a prompted -w, and -i's commands on standard input)
+// that no test in this repository can run, so "the storing program takes the
+// secret as an argv element" would be a false reason, and a reader who checked
+// it would stop believing the refusals that are right.
+func TestDarwinReadsButCannotStore(t *testing.T) {
+	r, err := readerFor("darwin")
+	if err != nil {
+		t.Fatalf("darwin has no reader: %v", err)
+	}
+	w, why := writerFor("darwin")
+	if w != nil {
+		t.Fatalf("writerFor(darwin) answered a storing program: %+v", w)
+	}
+	for _, want := range []string{"darwin", "ps", "M11"} {
+		if !strings.Contains(why, want) {
+			t.Errorf("the darwin refusal does not say %q, so the operator is sent to fix the wrong thing: %s", want, why)
+		}
+	}
+	item, err := ParseItem("aurora-BBBBBBBBBBBBBBBBBBBBBB", "aurora")
+	if err != nil {
+		t.Fatalf("ParseItem: %v", err)
+	}
+	s := &commandStore{reader: r, writer: w, noStore: why, run: func(context.Context, string, io.Reader, ...string) ([]byte, int, error) {
+		t.Error("a darwin store with no writer ran a program")
+		return nil, 0, nil
+	}}
+	if err := s.Put(context.Background(), item, NewKey([]byte(testKey))); !errors.Is(err, ErrBackend) {
+		t.Errorf("Put on darwin = %v, want ErrBackend", err)
+	}
+	if err := s.Delete(context.Background(), item); !errors.Is(err, ErrBackend) {
+		t.Errorf("Delete on darwin = %v, want ErrBackend", err)
+	}
+}
+
 // TestSystemReadsThisPlatform: System is readerFor(runtime.GOOS), so the
 // program this process would run is the one the table above pins.
 func TestSystemReadsThisPlatform(t *testing.T) {

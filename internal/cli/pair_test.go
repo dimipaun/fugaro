@@ -966,11 +966,14 @@ const pairDeviceUIDMarker = "m~" + "BBBBBBBBBBBBBBBBBBBBBB"
 
 // pairItemNameRE finds the keychain item name the done document carries. The
 // name is derived from the device uid, so it is drawn from crypto/rand too and
-// is normalised the same way: the 22 characters after the prefix are the uid's
-// own, and the marker keeps the golden readable.
-var pairItemNameRE = regexp.MustCompile(`fugaro-mailbox-aurora-[A-Za-z0-9_-]{22}`)
+// is normalised the same way: the 22 characters after the project are the uid's
+// own, and the marker keeps the golden readable. The project comes first and
+// there is no other word in the name — pairItemName's own comment carries the
+// arithmetic (a project name may be 40 characters and ParseItem's ceiling is
+// 64) — so the pattern is the project, one dash, and the uid's body.
+var pairItemNameRE = regexp.MustCompile(`aurora-[A-Za-z0-9_-]{22}`)
 
-const pairItemNameMarker = "fugaro-mailbox-aurora-" + "BBBBBBBBBBBBBBBBBBBBBB"
+const pairItemNameMarker = "aurora-" + "BBBBBBBBBBBBBBBBBBBBBB"
 
 // pairNoUID replaces those drawn values, in the stream and in the golden
 // alike, exactly as pairNoSignature replaces the fake's signature bytes.
@@ -1525,6 +1528,37 @@ func TestPairDeliversSealedConfigurationThenDeletesTheNode(t *testing.T) {
 	}
 }
 
+// TestPairItemNameFitsTheKeychain is the arithmetic behind the name's shape, at
+// both ends of what a local config accepts. The ceiling is keychain.ParseItem's
+// 64 characters, the body of the uid `fugaro pair` draws is 22 of them, and a
+// project name is 1 to 40 (localcfg's own rule) — so the longest name a project
+// can produce is 63 characters, and one fixed word in the name would put the
+// longest project names past the ceiling: ParseItem would refuse it, the
+// command would refuse the pairing as keychain_write_failed, and no keychain
+// would ever have been asked anything (pair.go's own refusal says so). The
+// rules that meet here are the config's name rule and this command's
+// derivation, so the boundary belongs in this command's tests and not only in
+// the keychain package's.
+func TestPairItemNameFitsTheKeychain(t *testing.T) {
+	body := strings.Repeat("B", 22)
+	deviceUID := "m~" + body
+	for _, project := range []string{"a", strings.Repeat("a", 40)} {
+		name := pairItemName(project, deviceUID)
+		if len(name) > keychain.ItemMax {
+			t.Fatalf("a %d-character project makes a %d-character item name, past ParseItem's %d", len(project), len(name), keychain.ItemMax)
+		}
+		if _, err := keychain.ParseItem(name, project); err != nil {
+			t.Fatalf("the name for a %d-character project is not one a key can be stored under: %v", len(project), err)
+		}
+		// Decision 9: `revoke` is given the device uid and nothing else, so the
+		// name has to carry the uid's body, and it has to carry the project's
+		// name, which is what keeps one project out of another's item (M5).
+		if !strings.HasSuffix(name, body) || !strings.Contains(name, project) {
+			t.Fatalf("the name %q is not derived from the project and the uid the pairing minted", name)
+		}
+	}
+}
+
 // TestPairDeliveryOpensOnlyWithThePhoneKey holds §8's two bindings: the ECDH
 // key agreement and the AAD. The phone's own key opens it; a second key does
 // not; and the phone's own key under another uid does not, which is what makes
@@ -1690,9 +1724,13 @@ func TestPairKeychainFailureDeliversNothing(t *testing.T) {
 	}
 }
 
-// TestPairDeliveryFailureRemovesTheItem is the second undo: the key is in the
-// keychain and the delivery cannot be written, so the item goes again — a key
-// at an item nothing will ever read is a key that outlives the pairing.
+// TestPairDeliveryFailureRemovesTheItem is the second undo, and it is the whole
+// of it: the key is in the keychain and the delivery cannot be written, so the
+// item goes again — a key at an item nothing will ever read is a key that
+// outlives the pairing — and the device node goes with it, because a node with
+// no delivery behind it is a device that fails USER on every request while it
+// sits on the allowlist (pairRemoveDeviceNode's own reason, and the same state
+// a keychain failure must not leave either).
 func TestPairDeliveryFailureRemovesTheItem(t *testing.T) {
 	f := newPairFixture(t, pairMe)
 	uid := pairFixedRand(t)
@@ -1710,12 +1748,21 @@ func TestPairDeliveryFailureRemovesTheItem(t *testing.T) {
 	if len(f.keys.Keys) != 0 {
 		t.Fatalf("the keychain holds %v, want the item removed again", f.keys.Keys)
 	}
+	if v := f.db.Value("config/admin/devices"); v != nil {
+		t.Fatalf("a delivery that could not be written left a device on the allowlist: %v", v)
+	}
+	// The pairing is not over: the phone's request node and the token it holds
+	// are untouched, so the operator can fix what refused the write and scan
+	// again while the wait lasts.
+	if v := f.db.Value(pairPathRequest(uid)); v == nil {
+		t.Fatal("the refusal deleted the phone's own request node")
+	}
 }
 
 // pairNoDelivery asserts nothing reached the phone: the delivery node holds no
 // sealed payload, whether the write was refused by the rules or never
-// attempted. What became of the device node differs between the two undos and
-// is asserted by each caller.
+// attempted. Both undos also take the device node back and each caller asserts
+// that; this is the half they share.
 func (f *pairFixture) pairNoDelivery(t *testing.T, uid string) {
 	t.Helper()
 	if v := f.db.Value(pairPathDelivery(uid)); v != nil {
