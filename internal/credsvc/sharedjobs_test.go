@@ -86,7 +86,7 @@ profiles:
 // judged against.
 func sharedJobsPolicyDoc() string {
 	return `{
-		"version": 3,
+		"version": 4,
 		"budget": {"mode": "enforce", "per_run_usd": 5},
 		"allow_repos": ["github/acme/webapp"],
 		"accounts": {

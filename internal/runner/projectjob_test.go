@@ -144,7 +144,7 @@ func projectPolicyFor(project, profile string) string {
 	if profile != "" {
 		own = `,"allow_repos":` + profile
 	}
-	return `{"version":3,"allow_repos":` + project + `,"profiles":{"standard":{"provider":"github"` +
+	return `{"version":4,"allow_repos":` + project + `,"profiles":{"standard":{"provider":"github"` +
 		own + `,` + profileShape + `}}}`
 }
 
@@ -156,7 +156,7 @@ func projectPolicyFor(project, profile string) string {
 // one (projectpolicy's CloneURLs) — so the fixture publishes what a real
 // publish publishes.
 func projectPolicyCloning(project, url string) string {
-	return `{"version":3,"allow_repos":` + project + `,"clone_urls":{"github%2Facme%2Fapp":"` + url + `"},` +
+	return `{"version":4,"allow_repos":` + project + `,"clone_urls":{"github%2Facme%2Fapp":"` + url + `"},` +
 		`"profiles":{"standard":{"provider":"github",` + profileShape + `}}}`
 }
 
@@ -465,7 +465,7 @@ func TestProjectJobBindsTheSlugToTheJobsRepository(t *testing.T) {
 // requires every account it lists to cover it — so the two lists here are the
 // same one repository.
 func projectPolicyServing(account string) string {
-	return `{"version":3,"allow_repos":["github/acme/app"],"profiles":{"standard":{"provider":"github",` +
+	return `{"version":4,"allow_repos":["github/acme/app"],"profiles":{"standard":{"provider":"github",` +
 		`"claude_accounts":["` + account + `"],"allow_repos":["github/acme/app"],` + profileShape + `}},` +
 		`"accounts":{"` + account + `":{"allow_repos":["github/acme/app"]}}}`
 }

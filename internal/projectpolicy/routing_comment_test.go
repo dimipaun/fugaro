@@ -85,7 +85,7 @@ func TestRoutingCommentsMatchTheCode(t *testing.T) {
 
 	// An unknown member beside a written `claude` is ignored: that is the
 	// tolerance the block keeps.
-	p, found, err := Decode([]byte(`{"version": 3, "routing": {"claude": {"via": "direct", "models": ["claude-sonnet-5"]}, "future": {"a": 1}}}`))
+	p, found, err := Decode([]byte(`{"version": 4, "routing": {"claude": {"via": "direct", "models": ["claude-sonnet-5"]}, "future": {"a": 1}}}`))
 	if err != nil || !found || p == nil {
 		t.Fatalf("Decode = (%v, %v, %v), want a policy: an unknown member beside a written `claude` is ignored, as the comment says", p, found, err)
 	}
@@ -94,11 +94,11 @@ func TestRoutingCommentsMatchTheCode(t *testing.T) {
 	}
 	// A block naming no `claude` switch is refused rather than decoded to a nil
 	// switch: a misspelt member, or a vendor this release does not route.
-	if _, _, err := Decode([]byte(`{"version": 3, "routing": {"future": {"a": 1}}}`)); err == nil || !strings.Contains(err.Error(), "no claude switch") {
+	if _, _, err := Decode([]byte(`{"version": 4, "routing": {"future": {"a": 1}}}`)); err == nil || !strings.Contains(err.Error(), "no claude switch") {
 		t.Errorf("err = %v, want the refusal for a block that names no `claude` switch", err)
 	}
 	// And an unknown value of the one member that does anything is refused.
-	if _, _, err := Decode([]byte(`{"version": 3, "routing": {"claude": {"via": "nope"}}}`)); err == nil || !strings.Contains(err.Error(), "routing.claude.via") {
+	if _, _, err := Decode([]byte(`{"version": 4, "routing": {"claude": {"via": "nope"}}}`)); err == nil || !strings.Contains(err.Error(), "routing.claude.via") {
 		t.Errorf("err = %v, want the via refusal (the one routing value this Fugaro checks)", err)
 	}
 }

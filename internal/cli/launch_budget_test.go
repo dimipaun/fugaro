@@ -461,7 +461,7 @@ func TestLauncherMintsATokenWhenAPolicyExistsAndTheLocalModeIsOff(t *testing.T) 
 	// an empty allow_repos is deny-all (plan task 1.5), so a policy that names
 	// no repository would refuse the launch before the mint decision these
 	// subtests are about.
-	policy := `{"version":3,"budget":{"mode":"enforce","per_run_usd":5},"allow_repos":["github/acme/*"]}`
+	policy := `{"version":4,"budget":{"mode":"enforce","per_run_usd":5},"allow_repos":["github/acme/*"]}`
 
 	t.Run("no policy, no token", func(t *testing.T) {
 		f := newOffModeBudget(t, "")
@@ -543,7 +543,7 @@ func TestLaunchReadsThePolicyOnce(t *testing.T) {
 	f := newOffModeBudget(t, "")
 	f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
 		", firebase_api_key: AIzaSyFakeFakeFakeFakeFake12345 }\n")
-	publishPolicy(t, f, `{"version":3,"budget":{"mode":"enforce","per_run_usd":5},"allow_repos":["*"]}`)
+	publishPolicy(t, f, `{"version":4,"budget":{"mode":"enforce","per_run_usd":5},"allow_repos":["*"]}`)
 	if _, _, err := runBudget(t); err != nil {
 		t.Fatal(err)
 	}
@@ -578,7 +578,7 @@ func TestLaunchRefusesADeniedPolicyRead(t *testing.T) {
 	f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
 		", firebase_api_key: AIzaSyFakeFakeFakeFakeFake12345 }\n")
 	f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
-	f.db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":3,"budget":{"mode":"enforce","per_run_usd":5}}`))
+	f.db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":4,"budget":{"mode":"enforce","per_run_usd":5}}`))
 	f.db.DenyRead(projectpolicy.PathShared())
 	_, _, err := runBudget(t)
 	if err == nil || ExitCode(err) != ExitUserError {
@@ -606,7 +606,7 @@ func TestLaunchRefusesAPolicyKeyThisFugaroDoesNotKnow(t *testing.T) {
 	f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
 		", firebase_api_key: AIzaSyFakeFakeFakeFakeFake12345 }\n")
 	f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
-	f.db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":3,"allow_repo":["acme/*"]}`))
+	f.db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":4,"allow_repo":["acme/*"]}`))
 	_, _, err := runBudget(t)
 	if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "allow_repo") {
 		t.Fatalf("err = %v, want a refusal naming the unknown key", err)
@@ -630,7 +630,7 @@ func TestLaunchRefusesAPolicyKeyThisFugaroDoesNotKnow(t *testing.T) {
 // for a policy he wrote himself.
 func TestLaunchClassifiesAMalformedPolicyAsTheUsersOwnError(t *testing.T) {
 	for name, node := range map[string]string{
-		"a budget the decoder refuses": `{"version":3,"budget":{"mode":"nonsense"}}`,
+		"a budget the decoder refuses": `{"version":4,"budget":{"mode":"nonsense"}}`,
 		"a node with no version":       `{"budget":{"mode":"enforce"}}`,
 		"not a JSON object":            `["budget"]`,
 	} {

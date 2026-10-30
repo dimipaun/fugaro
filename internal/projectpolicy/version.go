@@ -55,12 +55,34 @@ import (
 // internal/runner's own checkProjectJobAccount, before any stage, lease or
 // budget spend. The shape is version 2's; only what a runner must enforce
 // changed.
-const Version = 3
+//
+// Version 4 (bitbucket-workspace-token, plan task T2.1 as amended by
+// docs/secrets-brokering D493) is the node that carries the project's Bitbucket
+// token block: bitbucket_token.allow_repos (the repositories the project's
+// Bitbucket credential may reach, derived from
+// project_secrets.bitbucket-token.allow_data_to), bitbucket_token.proxy (the
+// operator's per-installation switch for the credentials service, D493), the
+// owner-allow-listed bitbucket_api_roots (D474), and the rules that hold a
+// profile mounting bitbucket-token to that block — its own exact allow_repos,
+// a subset of the block's, and no such mount on a GitHub profile. The block is
+// policy-wide and derived whether or not a profile mounts the token, because a
+// proxied run is launched in a job that does not hold the credential and reads
+// the block as its admission source. What a version-4 runner enforces and a
+// version-3 one does not is that block and those profile rules, and a
+// version-3 reader would decode past bitbucket_token as a top-level key it
+// merely lists in UnknownKeys (P8) — so the bump is the lockstep that makes it
+// refuse the node (RunnerSkew, or CLISkew on the operator's side) instead of
+// running a Bitbucket profile whose own allow_repos is the only gate. Every
+// installation republishes its policy for version 4; a version-3 node is
+// refused in the other direction too (D477), which is why the shape of this
+// node is version 3's and only what a reader must enforce changed.
+const Version = 4
 
 // VersionSince names, for each policy version, the fugaro release that
 // introduced it: 1 is the model itself (0.8.0, internal/cli's policySince), 2
-// is the profile gate above (0.8.5), 3 the account axis (0.9.0). It sits
-// beside Version because a bump of Version adds its row in the same change
+// is the profile gate above (0.8.5), 3 the account axis (0.9.0), 4 the
+// Bitbucket token block (0.14.0). It sits beside Version because a bump of
+// Version adds its row in the same change
 // (TestVersionSinceCoversEveryVersion fails until it does), and it is
 // read by every message about a node *ahead* of its reader (SkewSentence, so
 // the launch gate, the CLI's other reads, `fugaro project policy`, doctor and
@@ -76,6 +98,7 @@ var VersionSince = map[int]string{
 	1: "0.8.0",
 	2: "0.8.5",
 	3: "0.9.0",
+	4: "0.14.0",
 }
 
 // VersionRelease is the release that introduced policy version v, and false
