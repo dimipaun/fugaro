@@ -1,16 +1,13 @@
-DRAFT FOR COUNSEL REVIEW: not reviewed by counsel; not in force; prices and other Order Form items stay in [BRACKETS]
-
 # Fugaro Subscription Terms
 
 **Status.** This is counsel's restructured text, written 2026-10-28 (the date of the document
 counsel returned, which carries no date or version number in its own text). It replaces the draft
 of 2026-10-27 that followed the owner's answers, and reorganises the agreement by plan: Parts A to
-G, sections 1 to 34. It is not an offer, and nobody has agreed to it: counsel's document still
-carries the draft banner above, and the Licensor's name, jurisdiction, address, privacy notice URL
-and notice address are still in `[BRACKETS]`. These are the "Fugaro Subscription Terms" that the
+G, sections 1 to 34. Counsel has approved the text. It is not an offer, and nobody has agreed to it: the Licensor's name, jurisdiction, address, privacy notice URL
+and notice address were filled in by the owner on 2026-10-30. These are the "Fugaro Subscription Terms" that the
 business licence in [`ee/LICENSE`](../../ee/LICENSE), [`console/LICENSE.md`](../../console/LICENSE.md)
 and [`mobile/LICENSE.md`](../../mobile/LICENSE.md) refers to as published "at https://fugaro.dev/legal/subscription-terms";
-the text is in force only once the owner fills the brackets and publishes it
+the text is in force only once the owner publishes it
 ([implementation plan, L4.3](implementation-plan.md#l43--publish-the-subscription-terms-owner-run-after-counsel)).
 
 **How to read it.** Parts A to G are the agreement text, as counsel wrote it, with Markdown for
@@ -26,8 +23,8 @@ agreement is outside it.
 
 ## 1. Parties and acceptance
 
-1.1 These Terms are an agreement between **[LICENSOR LEGAL NAME]**, [a corporation incorporated
-under the laws of [JURISDICTION]], of [ADDRESS] (the **"Licensor"**), and the business that
+1.1 These Terms are an agreement between **DSSD Software**, a corporation incorporated
+under the laws of Ontario, of 1621 Maple Ridge Dr., Mississauga, Ontario, L4W 3R6, Canada (the **"Licensor"**), and the business that
 accepts them (the **"Customer"**).
 
 1.2 **Acceptance.** The Customer accepts these Terms when it first does any of the following: (a)
@@ -310,7 +307,7 @@ use that information only to provide the Subscription, License Keys, support and
 eligibility for a Free Plan and enforce the limit of one free seat per legal person, to contact
 the Customer and its Users about the Customer's License Key, and to comply with its legal
 obligations. The Licensor shall handle all of the information it collects and processes in
-accordance with its privacy notice at **[PRIVACY NOTICE URL]** and applicable law.
+accordance with its privacy notice at **https://fugaro.dev** and applicable law.
 
 ## 8. Support and updates
 
@@ -724,7 +721,7 @@ of this section is void.
 ## 32. Notices
 
 All notices under these Terms shall be in writing and sent to the addresses stated in the Order
-Form (for the Licensor, **[NOTICE EMAIL AND ADDRESS]**). Notices take effect on receipt. Email is
+Form (for the Licensor, **dimi@fugaro.dev, and 1621 Maple Ridge Dr., Mississauga, Ontario, L4W 3R6, Canada**). Notices take effect on receipt. Email is
 sufficient for notices.
 
 ## 33. Order of precedence and entire agreement
