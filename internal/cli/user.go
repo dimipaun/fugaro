@@ -58,9 +58,8 @@ import (
 //     config file itself, so the refusal is a speed bump (SECURITY.md's
 //     Owner/Editor bypass) and not a boundary.
 //
-// It is NOT registered yet: the wiring (internal/cli/root.go, the generated
-// CLI reference and the plugin skill) is E1b, after the pairing's T4. Nothing
-// in the tree calls this command's constructor until then.
+// It is registered on the root (root.go), and the working skill and the
+// generated CLI reference name it.
 
 // userListSource is what every refusal and every listing of this command says about
 // where the lists live, so the sentence cannot drift between them.
