@@ -8,7 +8,7 @@ where they differ. Base: `origin/main` at `e9dacf54b`, 2026-10-26.
 **Status: plan only. Nothing is implemented, and NO TASK IS APPROVED.** Each task needs the owner's
 explicit go; answering a decision approved none of them.
 
-The owner's answers that shape it — D400-D408 of 2026-10-26, and D409 of 2026-10-30:
+The owner's answers that shape it — D400-D408 of 2026-10-26, and D409-D411 of 2026-10-30:
 
 - **D406** (the notice's timing): moot; a new licence lands as `ee/LICENSE.md`. **D407:** the notice goes in with it. **D408:** a Team seat buys the `ee/` licence for the marked files, enforced by the licence key, plus support.
 - **D400** (not the recommendation): the console, mobile app, coordinator and orchestrators stay where
@@ -25,6 +25,11 @@ The owner's answers that shape it — D400-D408 of 2026-10-26, and D409 of 2026-
   writes to it.
 - **D404** the plan gates on "launch-ready", on whatever release the owner cuts.
 - **D405** (not the recommendation): no GitHub stars on the pages.
+- **D410** the design pass the owner asked for after reading the preview, and **D411** the owner's
+  instruction that followed it: the campaign hero's picture is a real screen of the console — one
+  the variant names in `website/data/landing.yaml`, held to the rows of
+  `website/data/console-screens.yaml` — shown large in the hero, with the campaign's own drawing
+  kept as the fallback for a variant that names none (F14, D190).
 
 ## Conventions every part follows
 
@@ -46,7 +51,7 @@ The owner's answers that shape it — D400-D408 of 2026-10-26, and D409 of 2026-
 - Numbers: decisions **D400-D429** and checks **160-169** are this work's block, taken above the highest
   decision written (D367) and reserved (up to D389 by the Bitbucket credentials plan) under `docs/` on
   `main` and in open PRs, and above the highest check reserved (154).
-  D400-D409 are written and answered; D410-D429 and checks 163-169 are reserved and unused.
+  D400-D411 are written and answered; D412-D429 and checks 163-169 are reserved and unused.
 
 ## Global constraints and review focus
 

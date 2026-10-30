@@ -300,7 +300,10 @@ function within(node, ancestor) {
 /**
  * The hero's illustration — `figure.hero-shot`, the terminal card the bold redesign draws
  * beside the copy (the owner's approved board, `website/design-ref/HomeV3.dc.html`) — or
- * `null` on a page that draws none.
+ * `null` on a page that draws none. The four campaign heroes carry the same class on the
+ * console screen they show (`CampaignHero.astro`, D411), so on those pages this returns the
+ * capture rather than a drawn card: the class means "this page's hero picture", and either
+ * one is a picture rather than the page's opening prose.
  *
  * It is taken out of the lead's word count, and `website/test/fold.mjs`'s rule 1 takes it out
  * of the lead region in the same way, because it is a picture rather than prose: the request

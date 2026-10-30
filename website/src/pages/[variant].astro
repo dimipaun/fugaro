@@ -72,15 +72,19 @@ const { variant } = Astro.props
     </Fragment>
   )}
 
-  {/* The hero draws the campaign's picture only while the variant has no media of its own: the
-      slot above the headline is the variant's own file when there is one, and the drawing does
-      not compete with it (F14, G2.5). */}
+  {/* The hero's picture: the console screen the variant names (`screenshot`, a row of
+      `website/data/console-screens.yaml`, whose `src`, `alt`, caption and pixel size the hero
+      renders), or the campaign's own drawing when the variant names no screen, and nothing while
+      the variant carries media of its own — the slot above the headline is the variant's own file
+      when there is one, and the hero's picture does not compete with it. One picture in the hero,
+      whichever of the three it is (F14, G2.5). */}
   <CampaignHero
     headline={variant.headline}
     supportingLine={variant.supportingLine}
     tone={variant.tone}
     calendlyURL={landing.calendlyURL}
     art={variant.video === null && variant.image === null}
+    screenshot={variant.screenshot}
   />
   <CampaignProof value={variant.proofNumber.value} source={variant.proofNumber.source} />
   <CampaignSteps />
