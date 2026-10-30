@@ -1,5 +1,7 @@
 # Shared images keyed by the resolved dependency set
 
+**Status: design only; C8a is built to it (2026-10-30) — the key, the superset lookup and the
+lock, in `internal/imagecheck` — and C8b and C8c are not.** *The status as first written, kept:*
 **Status: design only; nothing here is implemented.** This is the design the plan's task **C7**
 (`implementation-plan.md`) asks for; **C8** builds it, and this file is meant to be concrete enough
 that C8 needs no further design. Core MIT: nothing in this design is `ee/` behaviour.
@@ -12,8 +14,9 @@ per execution (U4). **D620**: key files before the source layer. **D621**: trigg
 build is Cloud Build cost outside the run budget. **D622**: the resolver runs only on the operator's
 machine. **D625**: propose, then confirm. Tension **T6** and open item **O6** are resolved
 (2026-10-29): each repository's job is updated per build, the bucket lock is the one source, and a
-divergence is a fork under user control, never automatic. Two values are still the owner's: the
-image-count cap (§8) and the retention (§9), listed at the end of this file.
+divergence is a fork under user control, never automatic. The image-count cap (§8), the retention
+(§9) and the C3/C4 question are ruled too (2026-10-29); the job's clone shape (§6) is still the
+owner's. All are listed at the end of this file.
 
 ## 1. What is shared, and what is not
 
@@ -102,14 +105,20 @@ The canonical form is text, one line per fact, with a version line first:
 
 ```
 key v1
-base:<base_ref>@<base_digest>
-pkg:<name>@<version>
-tool:<tool>@<version>
+base:"<base_ref>@<base_digest>"
+pkg:"<name>@<version>"
+tool:"<tool>@<version>"
 ```
 
 - Names and versions are used as the file states them, after the ecosystem's own canonicalisation
   where it defines one (PyPI's PEP 503 normalisation, which folds case, `-`, `_` and `.`; the Go
   module path as written, which is case-sensitive).
+- Each fact is written as a **quoted Go string literal** (`strconv.Quote`), which is the quotes in
+  the block above. A name or a version is text a key file supplied, and a fact holding a newline
+  would otherwise end its line and have the rest of it read as further facts: a package named
+  `left-pad@1.0.0\npkg:react@18.3.1` would hash as a two-package set and take that set's key — and
+  so be served its image. Quoting escapes that newline, and every other control character, quote and
+  backslash, so one fact is one line whatever it holds.
 - Every line is **deduplicated** and the lines after the version line are sorted bytewise, so the
   order of files, of entries in a file and of JSON or YAML keys cannot matter.
 - The bytes end with a single newline. The hash is the lower-case hex **SHA-256** of those bytes,
@@ -169,6 +178,8 @@ directory.
       "digest": "sha256:…",
       "base_ref": "web",
       "base_digest": "sha256:…",
+      "packages": ["left-pad@1.3.0", "react@18.3.1"],
+      "tools": ["node@22.11.0"],
       "built_at": "2026-10-29T09:12:04Z",
       "build_id": "…",
       "repositories": ["owner/repo-a", "owner/repo-b"],
@@ -178,6 +189,12 @@ directory.
   }
 }
 ```
+
+`packages` and `tools` are the resolved set the image was built from, as §2.4's lines without their
+`pkg:` and `tool:` prefixes. §4 decides a reuse from them, because a hash cannot be compared for
+containment: an entry holding only its key could never be a superset of anything. §5 calls a
+repository diverged when the entry it is on does not hold its set. A refresh stores the set it just
+resolved, beside the key it hashed from it.
 
 `repositories` and `jobs` are the same set seen twice: which repositories are on this image, and each
 one's job name as it is at update time (the operator's machine reads the job, so it knows). They are
@@ -349,11 +366,13 @@ number of images — and the answer's other two parts are the normalised key (§
 (§4); this is the alarm, not the mechanism. It is a **warning only**: nothing is refused and nothing
 is deleted for being over it.
 
-The proposed cap is **20** images per installation. A fixed default is proposed over a multiple of
-the enrolled-repository count because the count is not what grows — a repository's own set does,
-across its workflows and its dependency churn — so a cap that scaled with the repositories would
-never fire on the case it exists for. The warning names the count, the cap, and the two remedies
-(`fugaro image ls`, `fugaro image prune`). The value is the owner's, listed at the end of this file.
+The cap is **20** images per installation (ruled 2026-10-29). A fixed default is preferred over a
+multiple of the enrolled-repository count because the count is not what grows — a repository's own
+set does, across its workflows and its dependency churn — so a cap that scaled with the repositories
+would never fire on the case it exists for. The warning names the count, the cap, and the two
+remedies (`fugaro image ls`, `fugaro image prune`). The ruling keeps the paragraph above whole: 20 is
+a warning and never a refusal, so no refresh, no build and no command is stopped by the count, and
+nothing is deleted for being over it.
 
 ## 9. Clean-up: `fugaro image prune`
 
@@ -376,7 +395,7 @@ the same rule as §3.4's write (`blobx.DeleteIf` for a delete), so a crash betwe
 entry whose digest the registry no longer has, which
 `doctor` reports and the next `prune` finishes.
 
-**`images.retention_days`, default 30, is proposed, owner to confirm.** The key belongs to the
+**`images.retention_days`, default 30, is confirmed (ruled 2026-10-29).** The key belongs to the
 **project layer** — the shared, published part of the operator's local config, beside `base_images`
 (`internal/localcfg`) — and not to a repository's own `fugaro.yaml`: an entry is shared by several
 repositories and its deletion removes a registry image some other repository may still point at, so
@@ -548,7 +567,7 @@ C8b's file list amended — and this design's §6 route chosen — before that t
   one change; the lock is C8a's, so either order works.
 
 **Options for the owner** (this is the C3/C4 question the open list asks, stated as options rather
-than decided here):
+than decided in this section; the owner's ruling of 2026-10-29 is at the end of this file):
 
 1. **C8a now, C8b/C8c after C3.** C8a is pure and needs nothing shipped; it can land beside C3's work.
    C8b waits for C3's ordering. C4's warning lands whenever it is convenient and takes its
@@ -557,14 +576,24 @@ than decided here):
 3. **C3 → C8a/b/c with C4 folded into C8b**, so the lock-aware launch warning is written by the task
    that owns the lock.
 
-## Open for the owner
+## Owner rulings
 
-- **The image-count cap value** (§8): proposed **20** images per installation, warned by `doctor` and
-  `fugaro image ls`, never enforced.
-- **`images.retention_days`, default 30, is proposed, owner to confirm** (§9): owned by the project
-  layer, applied by `fugaro image prune`, never to an image a job still points at.
-- **The C3/C4 question** (stated as options in the C8 split): whether C8 ships after both, or C8a now with
-  C8b/C8c gated on C3 — C8 can ship without C4, and cannot without C3.
+Ruled 2026-10-29, after this design's review:
+
+- **The image-count cap value** (§8): **20** images per installation, warned by `doctor` and
+  `fugaro image ls`, never enforced. It is a warning and never a refusal: nothing is stopped and
+  nothing is deleted for being over it.
+- **`images.retention_days`** (§9): **30** days, confirmed. The key is owned by the project layer,
+  applied by `fugaro image prune`, never to an image a job still points at.
+- **The C3/C4 question** (stated as options in the C8 split): both are in 0.14.0, so option 1 is the
+  ruling — C8a lands beside C3, which touches none of C8a's files, and C8b waits for C3's
+  key-files-before-source ordering, without which a shared image would hold the first repository's
+  source. C4 is merged (#1315); as the C8 split says, the lock-aware form of its comparison
+  (`TestRunDigestComparesAgainstTheLockForItsKey`) is one change the lock's owner makes, not a
+  rework of the warning.
+
+Still open:
+
 - **How the job becomes clone-shaped (§6)**: route A, a third `checkout:` kind in `fugaro.yaml` (the
   design's recommendation: one writer for the job's env), or route B, the markers written onto the job
   alone (a smaller diff, and two places deciding what a job's shape is). C8b cannot work without one

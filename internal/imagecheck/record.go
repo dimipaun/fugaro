@@ -45,6 +45,11 @@ type Record struct {
 
 	KeyFiles        map[string]string `json:"key_files"` // path → git blob ID
 	ImageConfigHash string            `json:"image_config_hash"`
+	// Key is the repository's normalised dependency-set key (Key), computed
+	// from those same key files. It is empty for a repository whose key files
+	// do not reduce: such a repository is unkeyed (design §2.5), keeps its
+	// own per-(repository, workflow) image and is on no shared one.
+	Key string `json:"key,omitempty"`
 
 	BaseRef     string `json:"base_ref"`     // the base image as the build was given it
 	BaseDigest  string `json:"base_digest"`  // sha256:… of the base the build ran FROM

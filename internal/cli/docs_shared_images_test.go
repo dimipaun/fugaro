@@ -15,8 +15,8 @@ import (
 // that carries a fact — the four normalisation inputs, the same-versions
 // requirement on superset reuse, the propose-then-confirm rule and the three
 // choices it offers, the unattended refusal and the three spellings of its
-// flag, fork-never-mutate, the prune's job-pointer exception, the proposed
-// retention and the layer that owns it, the lock's home and the schema C8
+// flag, fork-never-mutate, the prune's job-pointer exception, the ruled cap
+// and retention and the layer the retention belongs to, the lock's home and the schema C8
 // adds, the create-if-absent first write, the clone shape a source-less image
 // needs, and each sub-task's red step. Emptying the control that carries one
 // of them fails its own assertion, rather than passing on a heading that is
@@ -41,6 +41,8 @@ func TestDocsSharedImagesDesign(t *testing.T) {
 	sharedImagesMustContain(t, section, path, "fact", []string{
 		// D618 as answered, plus O6's three image-count controls.
 		"only resolved package names, versions, toolchain and base image count",
+		// §2.4's escaping rule: a fact is one line whatever it holds.
+		"Each fact is written as a **quoted Go string literal**",
 		"only when it holds the whole set at the same versions",
 		// T6(c) as resolved: propose-then-confirm, and the unattended refusal.
 		"proposed and confirmed, never forked silently",
@@ -53,9 +55,12 @@ func TestDocsSharedImagesDesign(t *testing.T) {
 		// The prune's one exception, and its two conditions.
 		"never one a job still points at",
 		"no refresh has placed a repository on",
-		// The retention key, its default, its status and its layer.
-		"`images.retention_days`, default 30, is proposed, owner to confirm",
+		// The retention key, its default, its ruling and its layer.
+		"`images.retention_days`, default 30, is confirmed (ruled 2026-10-29)",
 		"it is shared policy, and only the project layer sets shared policy",
+		// The cap as ruled: 20, a warning and never a refusal.
+		"The cap is **20** images per installation (ruled 2026-10-29)",
+		"It is a warning and never a refusal",
 		// The lock: its home, the schema C8 adds, and its first write.
 		"under `builds/` in the runs bucket",
 		"`schemas/image-lock.schema.json`, which C8 adds",
@@ -89,7 +94,7 @@ func TestDocsSharedImagesDesign(t *testing.T) {
 		"### C8a. The key, the superset and the lock",
 		"### C8b. Refresh, proposal and the per-repository job update",
 		"### C8c. `image ls`, prune, the cap warning, the reference and the skill",
-		"## Open for the owner",
+		"## Owner rulings",
 		"`TestKeyIgnoresOrderCommentsFormattingRepoNameAndCommands`",
 		"`TestDivergenceNonInteractiveRefusesWithoutFlag`",
 		"`TestPruneKeepsAnImageAJobPointsAt`",

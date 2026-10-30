@@ -1,6 +1,9 @@
 # Forge, authorship and images
 
-**Status: plan only; nothing is implemented; no task is approved.** Decisions D600–D649 are
+**Status: plan only; no task is approved; C8a of the shared-images design is built to it
+(2026-10-30) — the key, the superset lookup and the lock, in `internal/imagecheck` — and nothing else
+in the plan is.** *The status as first written, kept:* **Status: plan only; nothing is implemented;
+no task is approved.** Decisions D600–D649 are
 **answered** (2026-10-29): every answer is the recommendation except D618, where the owner chose
 shared images across repos, scoped to repos with an identical resolved dependency set (plan C7 and
 C8). Tension T6 and open item O6 are resolved (2026-10-29): shared images stay under user control, a
@@ -15,7 +18,7 @@ owner. **Reconciled against** `origin/main` at `c192e8766` (2026-10-28).
 | [spec.md](spec.md) | The owner's spec, as received, with the name substitutions below |
 | [reconciliation.md](reconciliation.md) | Findings F1–F46 against the code, decisions D600–D649 (answered 2026-10-29), resolutions R1–R4, tensions T1–T6, open items O1–O6, UNVERIFIED U1–U8. **Where it disagrees with `spec.md`, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Slices A (authorship and trailers), B (forge), C (repositories and images, including shared images by dependency-set hash), D (change sets, `ee/`), E (people and tokens), and X1 (the live-check entries); C2, E2 and E3 withdrawn in review; levels L0–L7, the critical path, the shared-files table, Checks 230–235 (233 withdrawn). **Nothing in it is approved** |
-| [shared-images.md](shared-images.md) | The design task C7 asks for and C8 builds: the normalised dependency-set key and what it ignores, the lock under `builds/` and its concurrency, superset reuse and its supply-chain cost, propose-then-confirm on a divergence, the per-repository job update, `fugaro image ls`, the cap warning and the retention clean-up. Open for the owner: the cap, `images.retention_days` = 30, and the C3/C4 question |
+| [shared-images.md](shared-images.md) | The design task C7 asks for and C8 builds: the normalised dependency-set key and what it ignores, the lock under `builds/` and its concurrency, superset reuse and its supply-chain cost, propose-then-confirm on a divergence, the per-repository job update, `fugaro image ls`, the cap warning and the retention clean-up. **C8a is built** (2026-10-30); the cap (**20**, a warning and never a refusal), `images.retention_days` = 30 and the C3/C4 question are ruled (2026-10-29); the job's clone shape is still open |
 
 ## The only deviation from "verbatim"
 
