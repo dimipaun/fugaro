@@ -417,7 +417,7 @@ warnings → the caps panel.
 | Totals | `spend-totals`, `spend-total`, `spend-totals-word`, `spend-total-model`, `spend-total-notional`, `spend-total-compute`, `spend-total-runs`, `spend-total-run-hours`, `spend-totals-note`, `spend-totals-partial`, `spend-totals-rule` |
 | Chart | `spend-chart`, `spend-axis`, `spend-axis-word`, `spend-axis-top`, `spend-chart-svg`, `spend-gridline`, `spend-axis-line`, `spend-series`, `spend-bar`, `spend-gaps`, `spend-gap-column`, `spend-chart-keys`, `spend-chart-key`, `spend-chart-gap`, `spend-chart-na`, `spend-legend`, `spend-legend-key`, `spend-swatch`, `spend-legend-word`, `spend-legend-empty` |
 | Table | `spend-table`, `spend-table-head`, `spend-table-row`, `spend-th`, `spend-table-body`, `spend-row`, `spend-key`, `spend-gap-cell`, `spend-model`, `spend-notional`, `spend-compute`, `spend-runs`, `spend-run-hours`, `spend-tokens-in`, `spend-tokens-out`, `spend-partial`, `spend-unreadable`, `spend-num` |
-| Caps | `spend-caps`, `spend-caps-project`, `spend-caps-day`, `spend-caps-mode`, `spend-scope`, `spend-cap-limit`, `spend-cap-word`, `spend-cap-reserve`, `spend-cap-global`, `spend-cap-counted`, `spend-cap-daily`, `spend-cap-per-run`, `spend-cap-notional`, `spend-cap-compute`, `spend-cap-headroom`, `spend-cap-defaults`, `spend-cap-repos`, `spend-cap-repo`, `spend-cap-repo-name`, `spend-cap-spent`, `spend-kill`, `spend-kill-word`, `spend-kill-by`, `spend-kill-at`, `spend-kill-reason` |
+| Caps | `spend-caps`, `spend-caps-title`, `spend-caps-project`, `spend-caps-day`, `spend-caps-mode`, `spend-scope`, `spend-cap-limit`, `spend-cap-word`, `spend-cap-reserve`, `spend-cap-defaults`, `spend-cap-global`, `spend-cap-figure`, `spend-cap-counted`, `spend-cap-daily`, `spend-cap-per-run`, `spend-cap-notional`, `spend-cap-compute`, `spend-cap-headroom`, `spend-cap-repos`, `spend-cap-repo`, `spend-cap-repo-name`, `spend-cap-spent`, `spend-cap-bar`, `spend-cap-bar-svg`, `spend-cap-bar-track`, `spend-cap-bar-fill`, `spend-cap-at-cap`, `spend-kill`, `spend-kill-word`, `spend-kill-by`, `spend-kill-at`, `spend-kill-reason` |
 | Notes | `spend-note`, `spend-warning` |
 | By person | `spend-people`, `spend-people-title`, `spend-people-view`, `spend-people-you`, `spend-people-operator`, `spend-people-since`, `spend-people-until`, `spend-people-bound`, `spend-people-max-runs`, `spend-people-reason`, `spend-people-note`, `spend-people-rows`, `spend-people-totals`, `spend-people-unlaunched-word`, `spend-people-unlaunched`, `spend-person`, `spend-person-user`, `spend-person-total`, `spend-person-currency`, `spend-person-runs`, `spend-person-succeeded`, `spend-person-failed`, `spend-person-halted`, `spend-person-infra`, `spend-person-other`, `spend-person-no-record`, `spend-person-counted`, `spend-person-notional`, `spend-person-counted-runs`, `spend-person-average`, `spend-person-note` |
 
@@ -449,7 +449,12 @@ written yet), so a rule about it selects the row (or the total) and never the
 `span.spend-unreadable` inside it, which carries the marker text and no attribute;
 `data-degraded` (`true`) on
 `span.spend-degraded`; `data-available`, `data-scope-known`, `data-daily-scope`,
-`data-per-run-scope` (a document word, or `unknown`) on the caps panel, `data-available` also
+`data-per-run-scope` (a document word, or `unknown`) on the caps panel — `data-available` on
+`section.spend-caps` itself, the two scope attributes on the **`span.spend-scope`** of the
+figure whose cap the document names a scope for — and `data-at-cap` (`true|false`) on the
+**`li.spend-cap-repo`** that owns the daily-cap bar, `true` when the document's own
+`headroom_usd` is a measured value at or below zero, or its `counted_usd` has reached its
+`daily_cap_usd`: `data-available` also
 on **`section.spend-people`**, where `data-view` (`all|own|unknown`), `data-operator`
 (`true|false`) and `data-truncated` (`true|false`) record what the CLI's own read resolved —
 the view it scoped the rows to, whether the caller is an operator of the installation, and
@@ -472,6 +477,23 @@ table's own sentence across the money columns (`td.spend-gap-cell`, which carrie
 `colspan`) — a gap is a gap and never a `$0.00`. The `svg` is `aria-hidden` geometry
 (`SPEND_CHART_SIZE` and `preserveAspectRatio="none"`), so every figure it draws is also a
 reading in the table, a label in `ol.spend-chart-keys` or a word in `ul.spend-legend`.
+
+**The caps panel is figures under their own words, and the renderer adds nothing to them.**
+No column header carries `counted`, `billed` or `headroom`, so every figure is drawn as the
+word for what it is beside the number itself (`div.spend-cap-figure` → `span.spend-cap-word`
+plus the reading), the three money accounts among them: `billed` is the document's
+`spent_usd`, `notional` its `notional_usd` (the `~$` mark) and `compute` its `compute_usd`
+(the `est.` mark, and drawn **only** when the document carries the key at all — an absent or
+`null` one is `n/a`, never `$0.00`) — three figures, never a sum, in no figure, in no total
+and in no bar. A repository's **daily-cap bar** draws the CLI's own `counted_usd` against its
+`daily_cap_usd` (`counted / daily_cap_usd`, clamped to the bar's hundred-unit box and
+stretched to the window by `preserveAspectRatio="none"`, `aria-hidden` geometry as the chart
+is), with the counted dollars and the cap written as text beside it. That is the CLI's
+enforcement figure and not a sum the console made: `counted_usd` is what the installation has
+reserved and not released, a ceiling on spend, and what separates it from `spent_usd` is
+`leased_usd` — which is why no bar and no figure here is `billed + compute`, and why the
+renderer computes no sum of its own. A repository with no daily cap draws **no bar** and
+writes its cap `n/a` with its reason, never a zero-length bar and never a `$0.00`.
 
 States: killed (the kill banner, `data-killed="true"`); partial/hollow
 (`data-partial="true"` / `data-hollow="true"` on the key, the row and the bar, plus the
@@ -497,6 +519,9 @@ unknown breakdown (`li.spend-dim-unknown` with `data-dimension="unknown"`, under
 `ol.spend-switch` whose own `data-known="false"` is what says the document used a word this
 console does not know);
 unknown cap scope (`data-scope-known="false"`, "a scope this console does not know");
+at cap (`data-at-cap="true"` on the `li.spend-cap-repo` **and** the word `at cap` in
+`span.spend-cap-at-cap` — the fill and the word go amber, and the word is what carries the
+fact, never the tone alone, §3.5);
 by-person read refused or never made (`section.spend-people` with `data-available="false"`,
 the whole panel muted, the sentence drawn as the **text** of `p.spend-people-reason` — the
 CLI's own refusal, or the console's reason for having made no read); by-person panel private
@@ -517,8 +542,9 @@ drawn only when the document says the range includes a partial day). Exported:
 `SPEND_DEFAULT_CONTROLS = {since:'30d', until:null,
 by:'day', persons:false}`, `SPEND_PICKER_WINDOWS = ['7d','30d','90d','12w']`,
 `SPEND_DIMENSIONS` (eight), `SPEND_ACCOUNTS = ['model','notional','compute']`,
-`PARTIAL_MARKER = '(partial)'`, `UNREADABLE_MARKER = 'no readable record'`,
-`TABLE_GAP_SENTENCE` (the gap row's own sentence).
+`PARTIAL_MARKER = '(partial)'`, `UNREADABLE_MARKER = 'no readable record'`. The table's gap
+row carries the module's own `TABLE_GAP_SENTENCE` — the gap row's own sentence — which is not
+exported: it is the sentence a row draws, not a vocabulary anything reads.
 
 ### 2.5 Projects — `console/src/renderer/screens/projects.ts`
 
@@ -800,8 +826,8 @@ carry `data-theme` from code — see [§3.6](#36-how-the-theme-is-chosen).
 | lost / queued | Live run rows | the state chip `span.live-run-chip`'s **own word** (on a `live-run-lost` / `live-run-queued` row), the flag's reason in the chip's `title`, and — for `lost` — the pip `●`. The flag is **not** drawn as a `span.live-run-flag`: the chip already says the word, and the pipeline line above says it again, so the row says its state once |
 | stuck | Live run rows | the `live-run-stuck` class + `data-queued` + `data-flag` |
 | gap | Live, Spend | `data-state="gap"`, the mark `—`, a reason in `title` |
-| unavailable | `data-state="unavailable"`: Live (**the repository's cap bar**, `bar()` — the fleet budget panel writes no state anywhere: its cap, headroom and counts carry the `n/a` and the reason in `title` instead), Spend (a bar), Projects (**the panel state**, beside `read` and `not-built`), degraded (the cap line). **Not the sparkline's bars**: their state is the bar's own height, `measured` or `gap` (`spark()`, `live.ts` 896-925), so `[data-state='unavailable']` selects no bar of a burn window. `data-available="false"`: Spend's caps panel. The text `n/a` with a reason in `title`: **every** screen | **Run writes no `data-state` at all** — its numbers go through `putReading`, which sets the text and, for a value with no number, the `title` reason, and nothing else (§2.6), so a `[data-state]` colour rule selects nothing on that screen |
-| notional / estimated | the text marks: Live, Spend, Projects, Run, degraded. The attribute `data-state`: **Spend alone** | `~$` / `est.` are `formatReading`'s marks, so they appear wherever a notional or estimated reading is drawn, on all five screens (Live's repository and total notional figures, §2.3; the subscription model and the estimated compute on Projects and Run, §2.5, §2.6; the degraded compute, §2.7). The **attribute** `data-state="notional"` / `"estimated"` is written by Spend alone, on `rect.spend-bar`, and it is the **account's** state, not the breakdown on the axis: `SPEND_ACCOUNTS` is the three accounts of one grouped chart, and each of the three reads its own column into its own state — `model_micros` → `measured`, `notional_micros` → `notional`, `compute_micros` → `estimated` (`microsReading`, `spend.ts` 512-536) — with the bar copying that reading's state into the attribute (`barRect()`). A value the document does not carry draws **no bar**, so it writes no state: its `n/a` is written at the bar's own foot instead. `data-dimension` is the switch's word for the x-axis (`day\|week\|month\|year\|repo\|model\|person\|mode`) and decides nothing here: the notional chart is notional whether the rows are days or repositories. Projects' `data-state` is its panel state, Live's comes from a `percent` reading, Run writes none, and the degraded cap is always `unavailable` |
+| unavailable | `data-state="unavailable"`: Live (**the repository's cap bar**, `bar()` — the fleet budget panel writes no state anywhere: its cap, headroom and counts carry the `n/a` and the reason in `title` instead), Spend (**the caps panel's own `data-available`, and no bar of its chart** — `barRect` writes `measured`, `notional` or `estimated` and nothing else), Projects (**the panel state**, beside `read` and `not-built`), degraded (the cap line). **Not the sparkline's bars**: their state is the bar's own height, `measured` or `gap` (`spark()`, `live.ts` 896-925), so `[data-state='unavailable']` selects no bar of a burn window. `data-available="false"`: Spend's caps panel. The text `n/a` with a reason in `title`: **every** screen | **Run writes no `data-state` at all** — its numbers go through `putReading`, which sets the text and, for a value with no number, the `title` reason, and nothing else (§2.6), so a `[data-state]` colour rule selects nothing on that screen |
+| notional / estimated | the text marks: Live, Spend, Projects, Run, degraded. The attribute `data-state`: **Spend alone** | `~$` / `est.` are `formatReading`'s marks, so they appear wherever a notional or estimated reading is drawn, on all five screens (Live's repository and total notional figures, §2.3; the subscription model and the estimated compute on Projects and Run, §2.5, §2.6; the degraded compute, §2.7). The **attribute** `data-state="notional"` / `"estimated"` is written by Spend alone, on `rect.spend-bar`, and it is the **account's** state, not the breakdown on the axis: `SPEND_ACCOUNTS` is the three accounts of one grouped chart, and each of the three reads its own column into its own state — `model_micros` → `measured`, `notional_micros` → `notional`, `compute_micros` → `estimated` (`microsReading`, `spend.ts` 870-886) — with the bar copying that reading's state into the attribute (`barRect`, `spend.ts` 2398). A value the document does not carry draws **no bar**, so it writes no state: its `n/a` is written at the bar's own foot instead. `data-dimension` is the switch's word for the x-axis (`day\|week\|month\|year\|repo\|model\|person\|mode`) and decides nothing here: the notional chart is notional whether the rows are days or repositories. Projects' `data-state` is its panel state, Live's comes from a `percent` reading, Run writes none, and the degraded cap is always `unavailable` |
 | partial / hollow | Spend | `data-partial="true"` / `data-hollow="true"` + the `(partial)` marker |
 | unreadable | Spend | `data-unreadable="true"` on the row / `div.spend-totals` + the `no readable record` marker |
 | degraded | Spend | `span.spend-degraded` with `data-degraded="true"` |
@@ -1388,14 +1414,16 @@ the code already emits**, and the stylesheet must never be the only carrier of a
 | notional / estimated | the `~$` / `est.` prefix **in the number itself** |
 | partial | the `(partial)` marker text |
 | degraded / polling | the words `degraded` and `polling` |
-| cap near / over | the **number**: the percent reading and the repository bar's `data-fill`, and, on the fleet budget panel, the cap, the legend's figures and the full-cap banner's own sentence |
+| cap near / over | the **number**: the percent reading and the repository bar's `data-fill`, and, on the fleet budget panel, the cap, the legend's figures and the full-cap banner's own sentence. On Spend, the caps panel's **word** `at cap` in `span.spend-cap-at-cap`, drawn with the `counted` dollars and the `daily cap` it was measured from, beside the bar and never instead of them |
 | not-built | the panel's own sentence |
 | a run's rigor mode | the mode's own **word** — `POC`, `Startup`, `Pro`, `Critical`, `Hotfix` — in the chip on a Live row (§2.3), the MODE cell on Projects (§2.5) and the Rigor row on the run detail (§2.6). **This mark carries no colour at all**, and the row is here to say so: the five modes have no colour of their own in this tree, so the word is the whole of the mark and a rule must not paint the modes apart |
 
 The rules this makes binding on the stylesheet: (1) **a colour never replaces a word**;
 (2) a state colour is used on a **fill, a rule or a badge**, and the badge keeps its text;
-(3) the one state that is a colour-only reading today — a cap bar past its threshold — is
-always drawn beside its own percentage, so the colour is redundant by construction;
+(3) the one state that was a colour-only reading — a cap bar past its threshold — is
+always drawn beside the numbers it is made of and, on Spend's caps panel, beside its own
+word: the percent reading on Live, and the counted dollars, the cap and the word `at cap` on
+Spend, so the colour is redundant by construction;
 (4) `--ok` is used for *measured and inside the cap* **and for the rail's `running` row** —
 the installation the console is reading now, whose word is drawn beside its dot (§4.1), so
 the tone is still a state and not decoration — and never decoratively, per §6.1 rule 3
