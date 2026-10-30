@@ -2235,8 +2235,8 @@ div.spend-cap-bar {
 }
 
 svg.spend-cap-bar-svg {
-  width: 8rem;
-  height: 0.5rem;
+  width: 128px;
+  height: 8px;
   align-self: center;
 }
 
