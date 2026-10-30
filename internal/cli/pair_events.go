@@ -26,16 +26,20 @@ const pairEventVersion = 1
 // phone's hands.
 const pairQRVersion = 1
 
-// The five events the stream defines. qr, waiting and refused are written by
-// this command; code and done are the wait's and the delivery's (T2b, T3),
-// and their shapes live here beside the rest so the console is written against
-// one set rather than against whatever a later task invents.
+// The stream's events. qr, waiting and refused are written by this command;
+// code and done are the wait's and the delivery's (T2b, T3); listed and
+// revoked are `pair ls`'s and `pair revoke`'s, which are acts of their own and
+// say so rather than reporting themselves as a completed pairing. Their shapes
+// live here beside the rest so the console is written against one set rather
+// than against whatever a later task invents.
 const (
 	pairEventQR      = "qr"      // the QR's payload, the pairing uid, its expiry
 	pairEventWaiting = "waiting" // the command now waits for the phone's key
 	pairEventCode    = "code"    // the phone's key arrived: type the code it shows
 	pairEventDone    = "done"    // §4.5's document: what was written
 	pairEventRefused = "refused" // a stable code and a fixable reason
+	pairEventListed  = "listed"  // the pairings this installation holds (§4.2)
+	pairEventRevoked = "revoked" // what a revocation deleted, in its order (§4.3)
 )
 
 // The stable refusal codes, one per refusal §4.6 classes as exit 1, plus the
@@ -66,6 +70,11 @@ const (
 	pairRefusedKeychain           = "keychain_write_failed"
 	pairRefusedDelivery           = "delivery_write_failed"
 	pairRefusedInterrupted        = "interrupted" // the operator stopped the command
+	pairRefusedNoSelector         = "revoke_needs_a_selector"
+	pairRefusedTwoSelectors       = "revoke_has_two_selectors"
+	pairRefusedNoPairing          = "pairing_not_found"
+	pairRefusedTwoPairings        = "pairing_name_not_unique"
+	pairRefusedKeychainDelete     = "keychain_delete_failed"
 )
 
 // pairEvent is one line of the stream. Every event carries the version, its
@@ -89,6 +98,13 @@ type pairEvent struct {
 	// it back without anyone looking at the phone (M3).
 	// done: §4.5's document.
 	Document *pairDocument `json:"document,omitempty"`
+	// listed and revoked: §4.5's document for those two acts, under a field of
+	// its own. They are not one shared `document` field holding three shapes,
+	// because a console switches on the event's name and then reads the
+	// document, and a field whose shape depends on an earlier field is a
+	// decoder a console has to guess at.
+	List   *pairListDocument   `json:"list,omitempty"`
+	Revoke *pairRevokeDocument `json:"revoke,omitempty"`
 	// refused: the code an operator or a console acts on, and the reason.
 	Code   string `json:"code,omitempty"`
 	Reason string `json:"reason,omitempty"`
@@ -113,6 +129,48 @@ type pairDocument struct {
 	Wrote        []string `json:"wrote"`
 	Refused      []string `json:"refused"`
 	Warnings     []string `json:"warnings"`
+}
+
+// pairListDocument is §4.5's document for `pair ls` (§4.2): the pairings this
+// installation holds, one row per device node. warnings is present and empty,
+// like the pairing document's — this act has no warning to give, and a console
+// is written against one shape rather than against an absent field.
+type pairListDocument struct {
+	Project  string          `json:"project"`
+	At       string          `json:"at"`
+	Devices  []pairDeviceRow `json:"devices"`
+	Warnings []string        `json:"warnings"`
+}
+
+// pairDeviceRow is one device node as `pair ls` prints it, and it is §4.2's
+// list and nothing more: the uid (a key, and therefore printable), the name,
+// the administered email (D226), the role (D225) and the pairing time. No
+// token, no key and no keychain item's value — the node holds none of them
+// (M13) — and no column saying whether the device's Auth user still exists:
+// the Auth user is not in the database, so database admin cannot answer that
+// (decision 11).
+type pairDeviceRow struct {
+	UID   string `json:"uid"`
+	Name  string `json:"name"`
+	Email string `json:"email"`
+	Role  string `json:"role"`
+	At    string `json:"at"`
+}
+
+// pairRevokeDocument is §4.5's document for `pair revoke` (§4.3): the device
+// that was revoked, the keychain item this laptop held for it and what was
+// deleted, in the order it was deleted (M4's order, which is the command).
+// keychain_item is the item's name and never its value (§4.5's rule, M5), and
+// the Auth user appears in no field: it is not deleted, and a document that
+// named it under `wrote` would claim a deletion this command cannot make.
+type pairRevokeDocument struct {
+	Project      string     `json:"project"`
+	At           string     `json:"at"`
+	Device       pairDevice `json:"device"`
+	KeychainItem string     `json:"keychain_item"`
+	Wrote        []string   `json:"wrote"`
+	Refused      []string   `json:"refused"`
+	Warnings     []string   `json:"warnings"`
 }
 
 type pairPairing struct {

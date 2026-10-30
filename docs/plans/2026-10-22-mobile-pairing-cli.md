@@ -1269,8 +1269,12 @@ P6.13 are each SECURITY-SENSITIVE** (the mobile plan's group P-F and Global Cons
    rule are the app's; §4.4 and §7.2 state the contract P6.8 consumes and nothing more.
 5. **It does not change the rules, the golden or `RulesVersion`** (M14), and it forces no owner-run
    deploy.
-6. **It does not touch `shared/`**, and it adds no dependency: `crypto/ecdh` and `crypto/hkdf` are
-   the standard library (T3 asserts `go.mod` is unchanged).
+6. **It does not touch `shared/`**, and the crypto work adds no dependency: `crypto/ecdh` and
+   `crypto/hkdf` are the standard library (T3 asserts `go.mod` is unchanged). *Amended 2026-10-30:*
+   this bullet read as a claim about the whole work and is not one. T4's brief approved **one**
+   module, `rsc.io/qr`, for the terminal QR `renderPairQR` draws; it is the only line T4 adds to
+   `go.mod`, the boundary baselines record it, and no other task here adds one. The sentences in §2
+   and §16 that say `go.mod` gains no module are the same crypto work as T3's assertion, and hold.
 7. **It does not decide the app's store forms.** §13 lists what the owner must re-answer and states
    that the named memory could not be read here; it fills in no form and runs no store command.
 8. **It adds no new command beyond `fugaro pair` and its two subcommands.** The consumer is P4.1's

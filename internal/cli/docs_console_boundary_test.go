@@ -153,12 +153,15 @@ var consoleBoundaryAllowList = []string{
 // commit's message. A require line that arrives WITHOUT an edit here is the
 // failure this test exists for.
 //
-// The one entry that rule has already been applied to: `spf13/pflag` was
+// Two entries that rule has already been applied to. `spf13/pflag` was
 // promoted from the indirect block to the direct one by `next`'s Task 1.6 work
 // (internal/cli and plugin test files import it directly, so the direct require
 // is what the toolchain asks for), which is why its line here carries no
-// "// indirect" comment. The promotion is next's, not the console's: the
-// console still contributes nothing to this module.
+// "// indirect" comment. `rsc.io/qr` was a new require of the pairing CLI's
+// T4: `internal/cli/pair.go` draws the QR the operator shows from it, so the
+// module is a direct dependency of the CLI and nothing else in the tree
+// imports it. Neither promotion is the console's: the console still contributes
+// nothing to this module.
 var consoleGoModRequireBaseline = []string{
 	"cel.dev/expr v0.25.2 // indirect",
 	"cloud.google.com/go v0.123.0 // indirect",
@@ -236,6 +239,7 @@ var consoleGoModRequireBaseline = []string{
 	"google.golang.org/grpc v1.84.0 // indirect",
 	"google.golang.org/protobuf v1.36.12 // indirect",
 	"gopkg.in/yaml.v3 v3.0.1",
+	"rsc.io/qr v0.2.0",
 }
 
 // consoleEmbedDirectiveRE matches a go:embed directive comment and captures its

@@ -202,20 +202,20 @@ var planWillCreate = map[string]string{
 }
 
 // planWillCreateElsewhere is the other half of that rule: paths the plan names
-// that belong to another, later task — P6.6's pairing CLI and its sweep rule,
-// whose files are named in the plan's section 2 and its C0 so a reader can see
-// what the key's producer looks like. They must be *absent* too, and naming them
-// here is what keeps the derivation honest: a path the plan cites is either in
+// that belong to another, later task. It is empty on this branch, and that is
+// the state the rule is written for rather than a gap — its entries left it the
+// way an entry of planWillCreate leaves, one landed task at a time: the pairing
+// plan's T1a landed `internal/cli/pair.go`'s surface, its T2a the device token,
+// and its T4 the last of P6.6, `internal/budget/sweep_device_test.go` (the
+// `m~…` sweep rule's test). The path is now checked like any other — in the
+// tree, and cited by the plan — and the list has nothing left to excuse.
+//
+// An entry here must be *absent* from the tree and still cited by the plan,
+// which is what keeps the derivation honest: a path the plan cites is either in
 // the tree, or a path this plan's tasks create, or this list — and this list is
 // checked the same way (still absent, still cited), so it cannot rot into a
-// hiding place for a real path. `internal/cli/pair.go` and
-// `internal/budget/token/device.go` left it the way an entry of planWillCreate
-// leaves: the pairing plan's T1a landed the command's surface and its T2a the
-// device token, while the wait and the delivery that make the task whole have
-// not — see planPhaseSixPartial.
-var planWillCreateElsewhere = map[string]string{
-	"internal/budget/sweep_device_test.go": "P6.6's `m~…` sweep rule's test",
-}
+// hiding place for a real path.
+var planWillCreateElsewhere = map[string]string{}
 
 // planPathMoved is the third case, and the narrowest: a path the plan names
 // that has since *moved*, so it is neither in the tree under that name nor ever
@@ -905,6 +905,7 @@ var planPhaseSixMerged = map[string]string{
 	"P6.3": "shared/mailbox-schema/index.js",
 	"P6.4": "internal/budget/rules/rules.json.tmpl",
 	"P6.5": "shared/prompts/index.js",
+	"P6.6": "internal/budget/sweep.go",
 }
 
 // planPhaseSixUnbuilt is the other direction: the tasks the bullet calls
@@ -921,19 +922,16 @@ var planPhaseSixUnbuilt = map[string][]string{
 }
 
 // planPhaseSixPartial is the third state a task needs once half of it has
-// landed, and P6.6 is the one that has: the bullet cannot call it merged (its
-// sweep rule is not in the tree) and it cannot call it
-// unbuilt (its command's surface is). Both halves are held to the tree here, so
-// the sentence a reader plans against is a fact about this branch rather than a
-// memory of one.
+// landed. It is empty on this branch: P6.6 was its one entry — the bullet could
+// not call it merged while its sweep rule's test was not in the tree, and it
+// could not call it unbuilt while its command's surface was — and the pairing
+// plan's T4 landed the half that was missing, so P6.6 is in the merged list
+// above. The state recurs, so the map stays, and both halves of an entry are
+// still held to the tree here: the sentence a reader plans against is a fact
+// about this branch rather than a memory of one.
 var planPhaseSixPartial = map[string]struct {
 	built, unbuilt []string
-}{
-	"P6.6": {
-		built:   []string{"internal/cli/pair.go", "internal/budget/token/pairing.go", "internal/budget/token/device.go"},
-		unbuilt: []string{"internal/budget/sweep_device_test.go"},
-	},
-}
+}{}
 
 // TestMailboxPlanPhaseSixStatusIsTrue holds the premise bullet — the one that
 // says which of Phase 6 is merged, which is half-built and which is not — to
