@@ -423,7 +423,7 @@ func TestAuthIdentityWithoutBranchClaim(t *testing.T) {
 	}
 
 	for name, fpr := range map[string]any{
-		"five pull requests": []int{1, 2, 3, 4, 5},
+		"five pull requests":  []int{1, 2, 3, 4, 5},
 		"a zero pull request": []int{0},
 		"not an array":        "3",
 		"not a number":        []any{"3"},
