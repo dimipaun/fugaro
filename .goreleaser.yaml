@@ -34,6 +34,10 @@ archives:
     name_template: "fugaro_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - LICENSE
+      # The binary carries ee/ code, whose licence (clause 8.1) has to travel
+      # with every copy; this is the byte-for-byte copy of ee/LICENSE, outside
+      # ee/ so no archive path reaches the reserved directory.
+      - LICENSES/LicenseRef-Fugaro-Subscription.txt
       - README.md
       - THIRD_PARTY_NOTICES.md
 

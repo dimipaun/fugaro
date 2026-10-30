@@ -7,8 +7,9 @@ versions already published under MIT as they were.
 
 **Everything here is under [`ee/LICENSE`](LICENSE)**, the Fugaro Subscription Edition licence. Its text is **counsel's, of 2026-10-27**, one wording in `ee/`, `console/` and `mobile/`; it names Subscription Terms (at https://fugaro.dev/legal/subscription-terms, **not published yet**: the page goes up once counsel has approved the text) and a contributor agreement, published at https://gist.githubusercontent.com/dimipaun/d5bb5db937f973b25be5778ce14ec8dd/raw/64918c7fc0f782327db82e7e790db53c3d47d09f/fugaro-cla.md (a raw Gist link pinned to a revision, so a later edit to the Gist does not change it). Its
 first file is the assembly point, `ee/register`, which a build with the `ee` tag compiles in and
-which sets the seams the moved features fill; the features themselves move here one at a time, and
-nothing under this directory has ever been released.
+which sets the seams the moved features fill; the features themselves move here one at a time. No release before 0.13.0
+carries this directory; from 0.13.0 the binaries a release ships (the archives and the Homebrew
+cask) are built with the `ee` tag and carry its code.
 
 Three rules hold for everything placed here:
 
