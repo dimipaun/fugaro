@@ -853,3 +853,38 @@ func TestShadowReviewRunPostsNothing(t *testing.T) {
 		t.Fatalf("record = %+v, want the arm refused", rec)
 	}
 }
+
+// TestShadowNeverCheckpoints: checkpoints push mid-stage through a path of
+// their own (pushCheckpoint), not through pushBranch, so the arm's one gate
+// on it is checkpointsOn: a challenger with checkpoints configured starts no
+// checkpointer and pushes nothing, however long its stage holds a commit.
+//
+// Mutation (drop !r.shadow from checkpointsOn): a checkpointer runs during
+// the challenger's stage, the settled tip is pushed, and this test fails.
+func TestShadowNeverCheckpoints(t *testing.T) {
+	tick := runner.DriveCheckpoints(t)
+	cfg := strings.Replace(armPRCfg(t, 2, ", early_draft: false"), "total: 5m", "total: 1h", 1)
+	g, _ := armGW(t, cfg, "50", challengerModel, armLayer)
+	c := newClock()
+	g.harness.deps.Now = c.Now
+	pushes := countPushes(t, g.harness)
+	long := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		commitWIP(t, req, "wip")
+		if n := runner.CheckpointersRunning(); n != 0 {
+			t.Errorf("%d checkpoint goroutine(s) during a challenger's stage, want none", n)
+			tick()
+			c.advance(runner.CheckpointMinGap)
+			tick()
+		}
+		return implement("feature")(t, ctx, req)
+	}
+	if _, err := g.run(t, long, review("ship", 0)); err != nil {
+		t.Fatal(err)
+	}
+	if n := pushes(); n != 0 {
+		t.Fatalf("the remote accepted %d push(es) from a challenger with checkpoints on", n)
+	}
+	if remoteHasBranch(t, g.harness) {
+		t.Fatal("the run branch reached the remote")
+	}
+}
