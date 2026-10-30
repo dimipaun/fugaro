@@ -36,10 +36,21 @@ MIT licence it was published under. Its third-party components keep their own li
 
 ## `ee/`, the Subscription Edition
 
-[`ee/`](ee/README.md) is excluded from the MIT licence and reserved for net-new organisation
-features, under [`ee/LICENSE`](ee/LICENSE). Nothing under it has ever been released, and nothing
-outside `ee/` imports anything under it: its first file is the assembly point `ee/register`, which
-only a build with the `ee` build tag compiles in, through [`cmd/fugaro/ee_on.go`](cmd/fugaro/ee_on.go).
+[`ee/`](ee/README.md) is excluded from the MIT licence and holds the **business-licensed features**,
+new ones and those moved out of the core, under [`ee/LICENSE`](ee/LICENSE): every file under it
+carries the two-line notice naming `LicenseRef-Fugaro-Subscription`, the terms in that file. Three
+parts of the core moved there, and each is business-licensed where it now lives: governance's policy
+and its stage tripwires in `ee/governance/`, `fugaro report` in `ee/report/`, and the coordinator in
+`ee/coordinator/`. Nothing under it has ever been released, and nothing outside `ee/` imports anything
+under it: its first file is the assembly point `ee/register`, which only a build with the `ee` build
+tag compiles in, through [`cmd/fugaro/ee_on.go`](cmd/fugaro/ee_on.go).
+
+**Reading what governance writes is MIT.** `fugaro runs digest`, `fugaro diagnose` and
+`internal/digest` stay MIT in every build, tagged or not, and so do the record fields, the
+halt-reason enum and the halt and checkpoint plumbing those two read, and the wire formats the halts
+are written and read in (D521, D528, D529, T11). That is why a build without the tag still reads the
+halts and checkpoints a tagged build wrote, and why it decodes a `governance:` block and ignores it
+rather than refusing the run.
 
 ## `.agents/` is third-party code
 

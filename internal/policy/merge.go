@@ -129,8 +129,8 @@ func Merge(ceiling Layer, tighten ...Layer) Effective {
 	return e
 }
 
-// TightenDuration is tightenDuration for the packages outside this one: the
-// governance policy's tightenGovernance and tightenTier move to ee/governance
+// TightenDuration is tightenDuration for the packages outside this one:
+// ee/governance's Tighten and its tightenTier are the governance policy's
 // (plan task E2.3, design ee-boundary-moves.md §5.2) and cannot reach an
 // unexported method, so the moved code calls the rule here rather than keeping
 // a copy of it that would drift from this one.
