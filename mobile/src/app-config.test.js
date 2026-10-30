@@ -460,12 +460,24 @@ test('the native config paths come from the environment, and only when set', () 
       assert.equal('googleServicesFile' in resolveConfig(CONFIG.expo, env)[platform], false, platform);
     }
   }
-  // ... but in a build an unset or **empty** variable is the stop D260 asks
+  // ... and an **empty** value is the same as an unset one in the dev/lint
+  // state too: an EAS variable set to nothing is a variable nobody set, so the
+  // field stays absent rather than becoming `''`. Mutation: test `=== undefined`
+  // alone in `nativeConfigFile` and the assertions below find
+  // `googleServicesFile: ''`.
+  for (const env of [
+    { [NATIVE_CONFIG_VARIABLES.android]: '', [NATIVE_CONFIG_VARIABLES.ios]: '' },
+    { [ID_VARIABLES.ios]: SAMPLE, [ID_VARIABLES.android]: SAMPLE, [NATIVE_CONFIG_VARIABLES.android]: '', [NATIVE_CONFIG_VARIABLES.ios]: '' },
+  ]) {
+    for (const platform of ['ios', 'android']) {
+      assert.equal('googleServicesFile' in resolveConfig(CONFIG.expo, env)[platform], false, `${platform} carries no empty path`);
+    }
+  }
+  // ... while in a build the same unset-or-empty state is the stop D260 asks
   // for, not a resolution: a build whose `googleServicesFile` is unset or `''`
-  // would prebuild into a nameless Firebase app. The guard is
-  // `src/native-config-guard.test.js`'s; what is pinned here is that this file
-  // treats an empty value exactly as an unset one. Mutation: test `===
-  // undefined` alone and the empty case below stops refusing.
+  // would prebuild into a nameless Firebase app. That refusal is
+  // `src/native-config-guard.test.js`'s own; what is pinned here is that this
+  // file hands the guard nothing to pass on either value.
   for (const unset of [
     { [NATIVE_CONFIG_VARIABLES.android]: undefined, [NATIVE_CONFIG_VARIABLES.ios]: undefined },
     { [NATIVE_CONFIG_VARIABLES.android]: '', [NATIVE_CONFIG_VARIABLES.ios]: '' },

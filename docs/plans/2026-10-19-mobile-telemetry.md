@@ -111,7 +111,7 @@ the sentence it was written for without anything looking wrong.
 |---|---|---|
 | The app is an Expo app at `mobile/`, its own artifact outside the Go module, with **no Firebase SDK wired at all** | `mobile/package.json` (`engines: node ">=22 <23"`, `npm ">=10"`, `test: node --test "src/**/*.test.js"`); `mobile/index.js`, whose imports were read in full: `@react-native-async-storage/async-storage`, `expo` (`registerRootComponent`), `expo-secure-store`, `react`, `react-native`, and this app's own modules under `src/` — **no Firebase import of any kind**. The storage package is `@react-native-async-storage/async-storage` and not `expo-async-storage`: that name is the app's **own port module** at `mobile/src/accounts/expo-async-storage.js`, which the entry imports as `./src/accounts/expo-async-storage.js` | The telemetry work is the **first** thing that would put a Firebase SDK in the app. It therefore meets the app's unbuilt Firebase wiring head-on, and §3's **D259** is that question — **answered 2026-10-19, and the answer is §4.4's three-way split.** |
 | `mobile/app.json` carries the **EAS project id** and nothing Firebase-shaped | `mobile/app.json` (`expo.extra.eas.projectId = "70e67d4a-77d3-4110-9db6-e600266db345"`) | The EAS project the native config files would be delivered into already exists. |
-| **`mobile/app.config.js` and `mobile/eas.json` are on `main`** — P4.4's, merged by **PR #675** for the store path (check 89) | `ls mobile/`: `README.md`, `app.config.js`, `app.json`, `eas.json`, `index.js`, `package-lock.json`, `package.json`, `src/`; `mobile/eas.json` carries three build profiles — **`development`**, **`preview`** and **`internal`** — over the EAS environments `development`, `preview` and `production` | P7.1 **modifies both existing files**: the plugin entry and the build-time guard in `app.config.js`, the two `env` entries in each of `eas.json`'s three build profiles, and the Firebase entries in `mobile/.gitignore`. **Neither file is created by this change, and this plan no longer waits on #675.** |
+| **`mobile/app.config.js` and `mobile/eas.json` are on `main`** — P4.4's, merged by **PR #675** for the store path (check 89) | `ls mobile/`: `README.md`, `app.config.js`, `app.json`, `eas.json`, `index.js`, `package-lock.json`, `package.json`, `src/`; `mobile/eas.json` carries three build profiles — **`development`**, **`preview`** and **`internal`** — over the EAS environments `development`, `preview` and `production` | P7.1 **modifies `app.config.js`** — the plugin entry and the build-time guard — **and the Firebase entries in `mobile/.gitignore`**. **`eas.json` is not modified: retired 2026-10-30.** The planned two `env` entries in each of its three build profiles are the wrong mechanism; the files are delivered by **EAS environment variables with file visibility**, set in the EAS environments the profiles name through `eas.json`'s `environment` key, and an `env` block there would override them (§4.3 step 4, §14 item 2). **Neither file is created by this change, and this plan no longer waits on #675.** |
 | The app's account tuple is **four fields and holds no connection value** | `mobile/src/accounts/account.js` — `ACCOUNT_FIELDS = ['id', 'firebaseProjectId', 'authUid', 'fugaroProject']` | There is no `rtdbURL` and no web API key in an account today. **D259 (accepted 2026-10-19) is the row that puts them in secure storage rather than in the tuple**, and §3 and §4.4 explain why. |
 | The settings store **refuses an `AIza…` value outright**, and refuses the *word* `apiKey` as a key segment | `mobile/src/accounts/settings.js` — `SECRET_SHAPES` (whose Google entry is `['google-api-key', /^AIza[0-9A-Za-z_-]{35}$/]`), `judge` (which returns `SECRET_VALUE` for a match) and **`FORBIDDEN_KEY_SEGMENTS`**, the frozen list `apiKey` is a member of. **Cited by symbol, not by line**: a line number into a file this plan does not edit goes stale silently, and the symbols are what a reader greps for. | **This is the repository rule the brief names**: the Firebase web API key appears nowhere the app stores or the app ships. It is why D259's accepted answer puts the installation's connection values in **secure storage**, not in the tuple's settings entry — and why the store's fence is left exactly as it is (§4.4). |
 | The app's own config test already holds that rule for `app.json`, **with a planted `AIza…` value as its positive control** | `mobile/src/app-config.test.js` — the planted `expo.extra.firebase.apiKey` in its sample config, the `['$.expo.extra.firebase.apiKey', 'google-api-key']` entry in its walk's list, and the two assertions that `bundleIdentifier` and `package` are absent from `app.json`. **Cited by symbol, not by line**: P7.1 edits this file in this phase, so its line numbers move under anything written against them | The fence exists and is mutation-proven. P7.1 extends it to the two **native** config files and to `app.config.js`; it does not invent a new rule. |
@@ -260,9 +260,10 @@ changes from colliding whichever merges second.
 
 **Three pull requests this plan named have merged, and all three are in this change's base.**
 **#675** (`mobile/app.config.js` and `mobile/eas.json` — P4.4's store path) is merged, so **P7.1
-modifies those two files in place** rather than waiting on them: the plugin entry, the build-time
-guard and the ignore entries in `app.config.js`, the two `env` entries in each of `eas.json`'s
-three build profiles (§1's third table row, §4.3, P7.1), and no "Depends on" line below names
+modifies `app.config.js` in place** rather than waiting on it: the plugin entry, the build-time
+guard and the ignore entries (**the two `env` entries in each of `eas.json`'s three build profiles
+are retired 2026-10-30; `eas.json` is not modified at all, see §4.3 step 4**) (§1's third table
+row, §4.3, P7.1), and no "Depends on" line below names
 #675. **#689** (the website's privacy statement, now in two parts — the site and the software)
 and **#705** (*the app's analytics and crash reporting are always on*, the owner's ruling written
 into that page) are merged too, so **the page is in this tree and not a reading of another
@@ -443,7 +444,10 @@ a test or a guard rather than a sentence:
    not a build. The guard's shape is check 89's own (`jq` reads the submit track *before*
    anything is built; a profile naming a public track is a stop the owner takes there), and
    its text says what is missing by **name** and never prints a value.
-4. **EAS file secrets deliver them.** The owner creates them once, at their own terminal,
+4. **EAS file secrets deliver them** — **renamed 2026-10-30 (P7.1b): what delivers them is
+   EAS environment variables with file visibility**; the commands below are one way to create
+   such a file-valued variable, and the paragraph after them is the resolution. The owner
+   creates them once, at their own terminal,
    with their own Expo account — **no agent runs this and no agent reads either file**:
 
    ```
@@ -453,10 +457,15 @@ a test or a guard rather than a sentence:
        --type file --value ./GoogleService-Info.plist
    ```
 
-   and `eas.json`'s profiles name both in `env`, which is how the file secret becomes a path
-   on the build machine. **Both mechanisms — file secrets, and EAS's newer environment
-   variables with file visibility — are candidates; P7.1 picks the one EAS documents on the
-   day it is written and records which** (§14).
+   **RESOLVED 2026-10-30 (P7.1b): the mechanism is EAS environment variables with file
+   visibility**, set once in the **EAS environments** each build profile names through
+   `eas.json`'s `environment` key — on the worker each variable's value is the **path** EAS
+   wrote the file to, which is what the plugin's `googleServicesFile` wants and what the
+   owner's builds already do. **The `eas.json` `env` entries the sentence above names are
+   retired**: an `env` block there would *override* the EAS environment and replace that path
+   with a literal string, breaking the owner's builds, so `mobile/eas.json` carries **no**
+   `env`, `mobile/src/eas-config.test.js` refuses one per profile, and `eas.json` is not in
+   P7.1's diff at all (§14 item 2, P7.1's Files line).
 
 **Why the file-secret route rather than a committed template.** A committed template either
 carries the project's real apiKey (refused: `SECRET_SHAPES`'s `google-api-key` entry and the planted `apiKey` control in `mobile/src/app-config.test.js`) or
@@ -476,7 +485,7 @@ path into the phone's secure storage.**
 
 | | What it is | How it gets there | Where it is written down |
 |---|---|---|---|
-| **Built into the build** | **The telemetry project's two native config files** — `mobile/google-services.json` and `mobile/GoogleService-Info.plist`, naming **`fugaro-prod`** (D254). The plugin applies them at prebuild, so the app's **default** Firebase app is the Fugaro telemetry project for every installation, and no `apiKey` is ever written in JavaScript (§4.1). | **EAS file secrets**, named by `eas.json`'s profiles and applied on the build machine — §4.3's four-part rule: ignored at `mobile/.gitignore`, scanned by a tracked-files test with a planted control, refused by `app.config.js` when a profile carries neither, and never read by an agent. | **Nowhere in this repository.** Never committed, never a fixture, never a log line, never a pull request. |
+| **Built into the build** | **The telemetry project's two native config files** — `mobile/google-services.json` and `mobile/GoogleService-Info.plist`, naming **`fugaro-prod`** (D254). The plugin applies them at prebuild, so the app's **default** Firebase app is the Fugaro telemetry project for every installation, and no `apiKey` is ever written in JavaScript (§4.1). | **EAS environment variables with file visibility** — the mechanism P7.1b chose on 2026-10-30 — set once in the **EAS environments** `eas.json`'s profiles name through its `environment` key and applied on the build machine; **not** an `env` block in `eas.json`, which would override the EAS environment (§4.3 step 4). §4.3's four-part rule: ignored at `mobile/.gitignore`, the two paths untracked and ignored, refused by `app.config.js`'s D260 guard when a built platform's resolved file is missing, and never read by an agent. | **Nowhere in this repository.** Never committed, never a fixture, never a log line, never a pull request. |
 | **Inside the pairing payload** | **The installation's own Firebase connection** — its **Realtime Database URL** and its **web API key**. They differ per installation and **are not known at build time**, so no build can carry them. | **The encrypted pairing payload** the user's own installation hands over when an account is added by hand. The CLI already records both (`init_firebase.go`), and **G18** already reads them for the QR. They travel under **D113b**'s pairing key — the same key D111's item (2) is. | **Nowhere in this repository**, and nowhere on the wire unencrypted. |
 | **In the phone's secure storage** | **Two items per account (D232 stands)** — **(1)** the Firebase Auth **ID token** and **(2)** the **per-pairing MAC key** (D113b's option (a)) — **plus the pairing-delivered configuration**: the installation's **Realtime Database URL** and **web API key**, which are ordinary configuration and not secret. | **Platform secure storage** (Keychain / Keystore) for the two items. **Where the configuration is stored is task P6.8's choice** ([2026-10-22-mobile-pairing-cli.md](2026-10-22-mobile-pairing-cli.md)). Never logged, never a fixture — `SettingsStore`'s `SECRET_SHAPES` and `FORBIDDEN_KEY_SEGMENTS` are unchanged. | **D111's row** in [mobile/reconciliation.md](../mobile/reconciliation.md) and **Global Constraint 4** in [mobile/implementation-plan.md](../mobile/implementation-plan.md), each carrying a **dated amendment of 2026-10-22** that records the owner's acceptance of 2026-10-19 and keeps the original *two items* text visible, and a second of **2026-10-29** that records the owner's choice of D232. |
 
@@ -766,20 +775,28 @@ shape the tree already uses (`mobile/src/mailbox/write-path.test.js`,
    test asserts that **not one value from the fixture** appears in any captured event, that
    every parameter is a boolean or a member of its enum, and that `secretShaped` returns null
    for every string the capture holds. A planted run that logs a message's `text` fails it.
-3. **The ad-ID test (`mobile/src/app-config.test.js`, extended by P7.1).** The website promises
-   the app carries no advertising identifier (§4.2, §8.3), so the app's own config test — which
-   already walks `app.json` for a credential with a planted `AIza…` control — gains a third walk
-   over the **generated native config and the plugin options**:
+3. **The ad-ID test (`mobile/src/ad-id.test.js`, new at P7.1b).** The website promises
+   the app carries no advertising identifier (§4.2, §8.3). **Written 2026-10-30, and the two
+   corrections below are this walk's own record of itself**: it is a **new** test in the app,
+   not a third walk inside `mobile/src/app-config.test.js` (that file owns `app.json`'s
+   credential fence and its planted `AIza…` control, and this walk's subject is the build), and
+   it reads the **resolved config and `mobile/firebase.json`** rather than the generated native
+   project:
    - the two Android ad switches `google_analytics_adid_collection_enabled` and
-     `google_analytics_default_allow_ad_personalization_signals` must be **`false`** in
+     `analytics_default_allow_ad_personalization_signals` — **the unprefixed personalisation name
+     is deliberate**: it is the key the library's own build step reads, while the prefixed
+     `google_analytics_default_allow_ad_personalization_signals` is the *AndroidManifest*
+     meta-data name and, written in `firebase.json`, leaves the switch unreachable and ad
+     personalisation on (the asymmetry PR #1326 found and fixed) — must be **`false`** in
      `mobile/firebase.json` (the library reads them at build time and writes them as manifest
      placeholders), and `android/app/src/main/AndroidManifest.xml` must **not** declare
      `com.google.android.gms.permission.AD_ID` — **corrected 2026-10-30**: the walk does not
      assert a manifest value for Crashlytics, whose collection the library's own manifest
      hardcodes off and RNFirebase's init provider turns on from `firebase.json` (§4.2);
-   - the iOS project must not link `AdSupport` (read from the generated `Podfile.lock`), and the
-     plugin options that select the ad-ID-free Analytics variant must be present (§4.2's
-     **VERIFY** item);
+   - the Analytics plugin entry must carry the ad-ID-free iOS option, `ios.withoutAdIdSupport`
+     (§4.2's **VERIFY** item, resolved 2026-10-30) — **and the walk does not open the generated
+     `ios/Podfile.lock`**: nothing in this repository prebuilds, so that read is the owner's at
+     the first store build (§4.2, check 120);
    - the plugin options in `app.config.js` and the switches in `mobile/firebase.json` are checked
      **always**, because they are source; the generated files are checked **when they exist**,
      and the test **fails on a machine that has them and a `true`**, not one that has neither —
@@ -959,32 +976,40 @@ what did, and it is dated 2026-10-22.*
 ### Task P7.1: The config plugin, the native files, and the development build
 
 **Files.** `mobile/app.config.js` (**modified** — the plugin entry, the two `googleServicesFile`
-paths read from the environment, the build-time guard), `mobile/eas.json` (**modified** — the two
-`env` entries in each of its three build profiles, `development`, `preview` and `internal`),
-`mobile/firebase.json` (new — the app-root
+paths read from the environment, the build-time guard), `mobile/eas.json` (**not modified** —
+**retired 2026-10-30**: the planned two `env` entries in each of its three build profiles,
+`development`, `preview` and `internal`, are the wrong mechanism; the files are delivered by
+EAS environment variables with file visibility, and an `env` block would override them — §4.3
+step 4), `mobile/firebase.json` (new — the app-root
 `react-native` block of §4.2), `mobile/.gitignore`, `mobile/package.json` (the three
 `@react-native-firebase` dependencies), `mobile/README.md` (the Expo Go sentence D260 asks
-for), and `mobile/src/app-config.test.js` (the tracked-file and ignore rules of §4.3, the
-extension of the existing credential walk to `app.config.js`, and **the ad-ID test of §7.4**,
-which reads the plugin options, `mobile/firebase.json` and — when they exist — the generated
-`AndroidManifest.xml` and `Podfile.lock`).
+for), `mobile/src/app-config.test.js` (the tracked-file and ignore rules of §4.3, and the
+extension of the existing credential walk to `app.config.js`), **`mobile/native-config-guard.js`
+(new — D260's guard) and its tests `mobile/native-config-guard.test.js` and
+`mobile/src/ad-id.test.js`; **the ad-ID test of §7.4 is the new `mobile/src/ad-id.test.js`**, not
+an extension of `app-config.test.js`)**. The ad-ID walk reads the resolved config, the plugin
+options and `mobile/firebase.json` — **corrected 2026-10-30: it does not read
+`ios/Podfile.lock`**, because nothing in this repository prebuilds; only the generated
+`AndroidManifest.xml` is read, and only when the machine has one (§7.4, §4.2, check 120).
 **Depends on.** **D259 — accepted 2026-10-19**, the row that decides which project the native
 files name, which app is the default, and where an installation's own connection comes from
 (§4.4). **It was the last row P7.1 waited on, and it is answered**, so this line names a ruling
 rather than a question — as does every other dependency: D260 answered yes, and **D254 answered
 `fugaro-prod`**, the project that already exists, so the "project before its file" half is done
-the day the owner registers the two apps in it. **PR #675 is not a dependency**: it is merged, and P7.1 modifies the two files it added
-where they stand.
+the day the owner registers the two apps in it. **PR #675 is not a dependency**: it is merged, and P7.1 modifies `app.config.js` where it stands.
 **Verification.** `cd mobile && npm test` — the extended `app-config.test.js`: both native
 paths are untracked and ignored; `app.config.js` contains no `AIza…`-shaped value (planted
-control); a build profile with no `GOOGLE_SERVICES_JSON` in its `env` is refused by the guard's
-pure part; the existing "no credential, no installation" walk still passes; and **the ad-ID
+control); **a build whose resolved native config file is missing is refused (D260) — corrected
+2026-10-30: the guard checks the resolved *file*, not a profile's `env` key, so the planned
+"no `GOOGLE_SERVICES_JSON` in its `env`" sentence is retired with the `eas.json` wiring above**;
+the existing "no credential, no installation" walk still passes; and **the ad-ID
 walk passes** — the two Android ad switches are `false`, the manifest declares no `AD_ID`
-permission, and the iOS side links no `AdSupport`, each with a planted `true` control proved to
-fail the walk. §4.2's **VERIFY** item (the exact iOS pod/plugin option, and whether the Android
-permission removal is the plugin's own option) is resolved at this task's first commit by
-reading the pinned `@react-native-firebase` source, and §4.2's table is corrected in that commit
-if a name is wrong.
+permission, and the Analytics plugin entry carries the ad-ID-free iOS option, each with a
+planted `true` control proved to fail the walk. §4.2's **VERIFY** items (the exact iOS pod/plugin
+option, and whether the Android permission removal is the plugin's own option) were **resolved
+at P7.1a (2026-10-30)** by reading the pinned `@react-native-firebase` source — `ios.withoutAdIdSupport`,
+and Expo's own `android.blockedPermissions` because no plugin option exists — and §4.2's table
+is corrected in the same change.
 **Reviewer tier.** **SECURITY-SENSITIVE — independent opus review.** It is the change that
 decides which project the app's default Firebase app is (D259, accepted 2026-10-19), and it is the change that
 would put a native config file in the tree if it were wrong.
@@ -1244,19 +1269,24 @@ line below is a claim this plan makes **without** a source in this tree:
    **Two specifics are marked VERIFY in §4.2 and both are about the ad-ID promise**, which is
    why they are called out here rather than left inside that table: (a) the **exact pod or plugin
    option** that makes `@react-native-firebase/analytics` link the Firebase Analytics variant
-   with **no ad-ID support** — verified by reading the pinned package's podspec and config-plugin
-   source, then the generated `ios/Podfile.lock` for the absence of `AdSupport`; and (b) whether
+   with **no ad-ID support** — **RESOLVED 2026-10-30: `ios.withoutAdIdSupport`**, read from the
+   pinned package's config-plugin source and podspec; and (b) whether
    removing `com.google.android.gms.permission.AD_ID` from the merged manifest is **the config
-   plugin's own option** or a `tools:node="remove"` entry this plan has to add — verified in the
-   same plugin source and then in the generated `AndroidManifest.xml`. **If neither exists, the
-   plan cannot make the website's sentence true as written** and that is a finding for the owner
-   at P7.1's first commit, not something to phrase away. Neither is a live action and neither
+   plugin's own option** or a `tools:node="remove"` entry this plan has to add — **RESOLVED
+   2026-10-30: no plugin option exists**, so Expo's own `android.blockedPermissions` writes the
+   removal. **The generated-project half of each read is still the owner's**: nothing in this
+   repository prebuilds, so `ios/Podfile.lock`'s absence of `AdSupport` and the merged
+   `AndroidManifest.xml`'s absent permission are read at the first store build that carries the
+   SDKs (check 120), not here. Neither is a live action and neither
    reads a credential.
 2. **EAS file secrets.** The `eas secret:create --type file` mechanism and the `eas.json`
-   `env` reference of §4.3 are described from memory. **EAS also offers environment variables
-   with file visibility**; P7.1 picks the one EAS documents on the day it is written, records
-   which, and the plan's requirement is the same either way (the file exists only on the build
-   machine).
+   `env` reference of §4.3 are described from memory. **RESOLVED 2026-10-30 (P7.1b): the
+   mechanism actually chosen is EAS environment variables with file visibility**, set in the
+   EAS environments each build profile names through `eas.json`'s `environment` key; the
+   `eas secret:create` commands stay as one way to create them, and **§4.3's `eas.json` `env`
+   sentences and P7.1's "modifies `eas.json`" lines are retired** — an `env` block there would
+   override the EAS environment rather than deliver it. The plan's requirement is unchanged
+   either way (the file exists only on the build machine).
 3. **`@react-native-firebase`'s support for a second Firebase project in one binary.** D259's
    **accepted** answer needs the **default** app to be the telemetry project and each
    installation to be a **named** app (`firebase.app(<account id>)`). The plugin's config, and

@@ -85,6 +85,7 @@ import appConfig, {
 const APP_JSON = JSON.parse(readFileSync(new URL('../app.json', import.meta.url), 'utf8'));
 const EXPO = APP_JSON.expo;
 const SOURCE = readFileSync(new URL('../app.config.js', import.meta.url), 'utf8');
+const GUARD_SOURCE = readFileSync(new URL('../native-config-guard.js', import.meta.url), 'utf8');
 
 /**
  * A real file for each native config variable, in a temp directory: the
@@ -416,17 +417,22 @@ test('no environment value but the two identities reaches the config', () => {
   assert.deepEqual(resolveConfig(EXPO, polluted), resolveConfig(EXPO, build()));
 });
 
-test('app.config.js names exactly the variables it reads, as literals', () => {
+test('the config resolution names exactly the variables it reads, as literals', () => {
   // The positive control: a planted third variable is flagged, so the walk
   // below is known to be able to fail.
   assert.deepEqual(namedIn("const v = process.env['FIREBASE_TOKEN'];\n"), ['FIREBASE_TOKEN']);
-  // ... and the file itself names the two identities and the **two native
-  // config file** variables (P7.1a: the path of `google-services.json` and of
-  // `GoogleService-Info.plist` on a build worker), and nothing else. A fifth
-  // variable read here would be a fifth thing a build depends on, which is the
-  // reading this test exists to make deliberate -- the rule is unchanged, and
-  // what grew is the list of variables this file legitimately reads.
-  assert.deepEqual(namedIn(SOURCE), [
+  // ... and the two files the resolution reads the environment through --
+  // `app.config.js` and the guard module it imports -- together name the two
+  // identities, the **two native config file** variables (P7.1a: the path of
+  // `google-services.json` and of `GoogleService-Info.plist` on a build
+  // worker), and the platform EAS is building for (P7.1b's guard), and nothing
+  // else. A variable read in *either* file is a build dependency, so leaving
+  // the guard outside the walk would make its read invisible to the pin whose
+  // whole purpose is to make each one deliberate. Mutation: add a
+  // `process.env['FIREBASE_TOKEN']` read to `native-config-guard.js` and this
+  // goes red naming it.
+  assert.deepEqual([...namedIn(SOURCE), ...namedIn(GUARD_SOURCE)].sort(), [
+    'EAS_BUILD_PLATFORM',
     'FUGARO_ANDROID_PACKAGE',
     'FUGARO_IOS_BUNDLE_ID',
     'GOOGLE_SERVICES_JSON',
