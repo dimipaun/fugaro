@@ -783,3 +783,75 @@ func TestValidProfilesRefuseAProfileListBeyondTheBitbucketBlock(t *testing.T) {
 		t.Fatalf("a profile list equal to the block's was refused: %v", err)
 	}
 }
+
+// TestAdmitsIntersectsABitbucketTokenProfile: admission stays the intersection
+// of the project's allow_repos and the profile's own (§4.1, §4.3), and the
+// fixture is the state `fugaro project repos add` leaves behind — a project
+// list wider than the profile's. The block is not a third gate here; it is the
+// rule that produced the profile's list, checked where the node is judged. The
+// mutation is an Admits that reads the profile's list alone, which would admit
+// a repository the project never enrolled, or one that reads the project's
+// alone, which would admit every repository the profile's list narrows away.
+func TestAdmitsIntersectsABitbucketTokenProfile(t *testing.T) {
+	p, err := decodeBitbucketNode(t,
+		`"bitbucket_token":{"allow_repos":["bitbucket/workspace-a/repo-a","bitbucket/workspace-a/repo-b"],"proxy":true}`,
+		`"profiles":{"standard":{"provider":"bitbucket","cpu":2,"memory":"4Gi","timeout_class":"6h","secrets":["bitbucket-token"],"allow_repos":["bitbucket/workspace-a/repo-a"]}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The project's enrollment is the wider list, exactly as `repos add` would
+	// leave it: the profile's list is the narrower gate and the block's the
+	// narrower still.
+	p.AllowRepos = []string{"bitbucket/workspace-a/repo-a", "bitbucket/workspace-a/repo-b", "bitbucket/workspace-a/repo-c"}
+	for _, tc := range []struct {
+		repo string
+		want bool
+	}{
+		{"bitbucket/workspace-a/repo-a", true},  // on all three lists
+		{"bitbucket/workspace-a/repo-b", false}, // the project's and the block's, not the profile's
+		{"bitbucket/workspace-a/repo-c", false}, // the project's only, which widens nothing
+		{"github/workspace-a/repo-a", false},    // another provider's, so another job's
+	} {
+		ok, err := p.Admits("standard", tc.repo)
+		if err != nil {
+			t.Fatalf("Admits(standard, %s) = %v", tc.repo, err)
+		}
+		if ok != tc.want {
+			t.Errorf("Admits(standard, %s) = %v, want %v", tc.repo, ok, tc.want)
+		}
+	}
+}
+
+// TestValidProfilesRefuseBitbucketTokenOnAGitHubProfile: T2.1 — the token is a
+// Bitbucket job's credential, and a github profile mounting it would name a job
+// that clones github repositories and holds the github git credential. The
+// mutation is a validProfiles that reads the mount only as the allow_repos
+// side of the rule.
+func TestValidProfilesRefuseBitbucketTokenOnAGitHubProfile(t *testing.T) {
+	gh := `{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h","secrets":["bitbucket-token"],"allow_repos":["github/acme/app"]}}`
+	block := `"bitbucket_token":{"allow_repos":["bitbucket/workspace-a/*"]},`
+	if _, err := decodeBitbucketNode(t, block+`"profiles":`+gh); err == nil {
+		t.Fatal("a github profile mounting bitbucket-token was accepted")
+	} else if !strings.Contains(err.Error(), "serves github") || !strings.Contains(err.Error(), config.BitbucketSecret) {
+		t.Errorf("the refusal names neither the provider the profile serves nor the secret: %v", err)
+	}
+	// The same shape on a bitbucket job is what the rule is for, and it is
+	// accepted once the profile writes its own list within the block's.
+	bb := `{"standard":{"provider":"bitbucket","cpu":2,"memory":"4Gi","timeout_class":"6h","secrets":["bitbucket-token"],"allow_repos":["bitbucket/workspace-a/repo-a"]}}`
+	if _, err := decodeBitbucketNode(t, block+`"profiles":`+bb); err != nil {
+		t.Fatalf("a bitbucket profile mounting the token was refused: %v", err)
+	}
+	// And the deployer holds the same profile to the same rule, because a
+	// profile it deploys is one this node may be published with.
+	ghJob := bitbucketProfile()
+	ghJob.Provider = "github"
+	ghJob.AllowRepos = []string{"github/acme/app"}
+	if err := CheckProfiles(map[string]Profile{DefaultProfileName: {ghJob}}, nil); err == nil {
+		t.Error("CheckProfiles accepted a github profile mounting bitbucket-token")
+	}
+	withList := bitbucketProfile()
+	withList.AllowRepos = []string{"bitbucket/workspace-a/repo-a"}
+	if err := CheckProfiles(map[string]Profile{DefaultProfileName: {withList}}, nil); err != nil {
+		t.Errorf("CheckProfiles refused a bitbucket profile mounting the token with its own list: %v", err)
+	}
+}

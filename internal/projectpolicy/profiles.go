@@ -345,6 +345,13 @@ func validProfiles(profiles map[string]Profile, accounts map[string]Account) err
 					at, i, pattern, head, pr.Provider)
 			}
 		}
+		// The Bitbucket token's two profile-side rules, judged here because
+		// they read the mount and the profile's own allow_repos — the same
+		// list the pattern rule above has just checked, so a refusal about a
+		// pattern is about the pattern and not about the token.
+		if err := validBitbucketProfile(at, pr); err != nil {
+			return err
+		}
 		// The accounts the profile serves, judged last: validProfileAccounts'
 		// subset rule reads the profile's own allow_repos, and this is the
 		// point at which that list has been checked — so a refusal about a
@@ -355,6 +362,89 @@ func validProfiles(profiles map[string]Profile, accounts map[string]Account) err
 	}
 	if _, ok := profiles[DefaultProfileName]; !ok {
 		return fmt.Errorf("projectpolicy: profiles: %s must be defined: it is the profile every workflow that names none runs on", DefaultProfileName)
+	}
+	return nil
+}
+
+// validBitbucketProfile holds a profile that mounts the Bitbucket token to the
+// two rules that read the profile alone (T2.1): the mount is a bitbucket
+// profile's, and the profile writes its own list, exactly.
+//
+// The mount is a *shared job's* credential (D473): bitbucket-token is the one
+// reserved name a project may store once for a whole workspace or project and
+// mount from every repository its entry allow-lists, and the job it lands on
+// serves one provider. A github profile mounting it would put a Bitbucket
+// credential on a job that clones github repositories and holds the github git
+// credential, where nothing could use it — and the mount would name the
+// profile as a Bitbucket shared job to a reader of this node
+// (SharedBitbucketProfile). It is refused here rather than deployed as a job
+// whose second credential is dead weight, and the deployer gets the same rule
+// because it holds a profile to these rules through CheckProfiles before it
+// builds a job.
+//
+// The list is the profile's own and it is exact, for the reason
+// validProfileAccounts' is: bitbucket_token.allow_repos is what the token may
+// reach, and a profile's list is the narrower per-job half of that decision
+// (Admits intersects the two). An absent list would fall back to the project's
+// wider enrollment, which this token is not bounded by, and a wildcard would
+// make the subset rule against the block undecidable — so neither is a state
+// this node can express.
+func validBitbucketProfile(at string, pr Profile) error {
+	i := slices.Index(pr.Secrets, config.BitbucketSecret)
+	if i < 0 {
+		return nil
+	}
+	if pr.Provider != "bitbucket" {
+		// The sentence is the deployer's own (internal/infra's ProjectJobs
+		// refuses `%q is the Bitbucket credential` before it builds any job),
+		// worded here for the reason providerRequired's is: the two readers of
+		// one profile must not be told different things about it, and the node
+		// is the document a policy is published with.
+		return fmt.Errorf("%s.secrets[%d]: %q is the Bitbucket credential, and only a bitbucket profile mounts it: this profile serves %s, so its job holds that provider's git credential and could not use the token. Serve bitbucket, or drop the entry",
+			at, i, config.BitbucketSecret, pr.Provider)
+	}
+	if len(pr.AllowRepos) == 0 {
+		return fmt.Errorf("%s.secrets[%d]: a profile that mounts %s must write its own allow_repos: an absent list means the project's (%s.allow_repos is not written), which this token is not bounded by. Write the repositories this profile admits, exactly",
+			at, i, config.BitbucketSecret, at)
+	}
+	for j, pattern := range pr.AllowRepos {
+		if strings.Contains(pattern, "*") {
+			return fmt.Errorf("%s.allow_repos[%d]: %q carries a wildcard, and a profile that mounts %s must write exact repositories: whether this profile admits a repository is decided repository by repository against bitbucket_token.allow_repos, and a wildcard makes that undecidable. Write the repositories themselves",
+				at, j, pattern, config.BitbucketSecret)
+		}
+	}
+	return nil
+}
+
+// validBitbucketProfileRepos is the other half of that rule, and the half that
+// needs the node's whole policy: every repository a profile that mounts the
+// token admits is one the bitbucket_token block admits, matched with MatchRepo
+// — the one matcher the runner, the launcher and the credentials service use.
+// A node that carries no block bounds no repository, so a profile mounting the
+// token is refused: the token's reach is the block's (publish derives it from
+// project_secrets.bitbucket-token.allow_data_to), never the project's
+// allow_repos, which is what makes this a refusal rather than a fallback.
+//
+// The message names the profile, the repository and the block, and never a
+// value: there is none in either document, and the operator's remedy is to
+// edit the local config and publish again.
+func validBitbucketProfileRepos(profiles map[string]Profile, token *BitbucketToken) error {
+	for _, name := range profileMapNames(profiles) {
+		pr := profiles[name]
+		if !slices.Contains(pr.Secrets, config.BitbucketSecret) {
+			continue
+		}
+		at := "projectpolicy: profiles." + name
+		for _, repo := range pr.AllowRepos {
+			if token == nil {
+				return fmt.Errorf("%s.allow_repos: the profile mounts %s, and this policy carries no bitbucket_token block: that block is what the token may reach (publish derives it from project_secrets.%s.allow_data_to in the project's local config), and the project's own allow_repos is not a list this credential is bounded by. Publish a policy that carries the block, or take the entry off the profile",
+					at, config.BitbucketSecret, config.BitbucketSecret)
+			}
+			if !AdmitRepo(token.AllowRepos, repo) {
+				return fmt.Errorf("%s.allow_repos: the profile admits %s, and bitbucket_token.allow_repos is %s, which does not: the token's reach is the block's, and a profile's list can only narrow it. Add the repository to project_secrets.%s.allow_data_to in the project's local config and publish again, or take it off the profile's allow_repos",
+					at, repo, strings.Join(token.AllowRepos, ", "), config.BitbucketSecret)
+			}
+		}
 	}
 	return nil
 }

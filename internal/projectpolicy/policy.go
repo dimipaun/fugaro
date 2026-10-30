@@ -214,6 +214,25 @@ type Policy struct {
 	// CloneURLs' own business and not a reader's.
 	CloneURLs CloneURLs `json:"clone_urls,omitempty"`
 
+	// BitbucketToken is the project's Bitbucket credential block (D473, D474,
+	// docs/secrets-brokering D493): the repositories that token may reach, and
+	// whether the credentials service forwards it for them. It is derived from
+	// the project's local config (DeriveBitbucketToken) and is derived whether
+	// or not a profile mounts the token, because a proxied run's whole
+	// admission is this block — the job it runs in does not hold the
+	// credential. A profile that mounts the token is held to it:
+	// validProfiles and validBitbucketProfileRepos are the two halves of that
+	// rule.
+	BitbucketToken *BitbucketToken `json:"bitbucket_token,omitempty"`
+
+	// BitbucketAPIRoots are the Bitbucket API roots the owner allow-lists
+	// (D474, task T2.8): the runner accepts FUGARO_BITBUCKET_API_URL only when
+	// it is one of these, matched exactly after trimming one trailing "/". The
+	// block is data rather than an environment value for the reason CloneURLs
+	// is: an environment value on a shared job is launcher-writable, and every
+	// run of the project is held to one list.
+	BitbucketAPIRoots []string `json:"bitbucket_api_roots,omitempty"`
+
 	// UnknownKeys lists the top-level keys of the node this Fugaro does not
 	// know, sorted. Decode fills it in and never writes it back (json:"-"):
 	// the keys are tolerated so that a policy a newer Fugaro wrote does not
@@ -233,6 +252,7 @@ var knownTopLevelKeys = map[string]bool{
 	"providers": true, "model_prices": true, "routing": true,
 	"profiles": true, "clone_urls": true, "accounts": true,
 	"credentials": true, "base_branch": true,
+	"bitbucket_token": true, "bitbucket_api_roots": true,
 }
 
 // Budget is the ceiling a run is held to. An absent field is zero and means
@@ -810,6 +830,22 @@ func Decode(raw []byte) (*Policy, bool, error) {
 			return nil, true, err
 		}
 	}
+	// The Bitbucket block is judged *before* the profiles block, and the
+	// profiles against it: a profile that mounts the token admits a subset of
+	// this block's repositories, which is a property of the two together, and
+	// the profiles are the side that may not widen it. Reading them the other
+	// way round would hold a profile's list to a block this reader has not
+	// seen.
+	if braw, ok := doc["bitbucket_token"]; ok && !IsNull(braw) {
+		bt, err := decodeBitbucketTokenBlock(braw)
+		if err != nil {
+			return nil, true, err
+		}
+		if err := validBitbucketTokenBlock(bt); err != nil {
+			return nil, true, err
+		}
+		p.BitbucketToken = bt
+	}
 	if fraw, ok := doc["profiles"]; ok && !IsNull(fraw) {
 		// decodeProfileBlock's errors name their place themselves
 		// ("projectpolicy: profiles.<name>..."), so they are returned as they are.
@@ -819,6 +855,23 @@ func Decode(raw []byte) (*Policy, bool, error) {
 		}
 		p.Profiles = ps
 		if err := validProfiles(p.Profiles, p.Accounts); err != nil {
+			return nil, true, err
+		}
+	}
+	// The profile-side half of the Bitbucket rule, after both blocks have been
+	// decoded and judged: a profile mounting the token admits only what the
+	// block admits. A profile with no block at all is refused here rather than
+	// read as covered by the project's allow_repos — the token's reach is the
+	// block's, and the project's enrollment is not a list that token is
+	// bounded by.
+	if err := validBitbucketProfileRepos(p.Profiles, p.BitbucketToken); err != nil {
+		return nil, true, err
+	}
+	if rraw, ok := doc["bitbucket_api_roots"]; ok && !IsNull(rraw) {
+		if err := json.Unmarshal(rraw, &p.BitbucketAPIRoots); err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: bitbucket_api_roots: %w", err)
+		}
+		if err := validBitbucketAPIRoots(p.BitbucketAPIRoots); err != nil {
 			return nil, true, err
 		}
 	}
