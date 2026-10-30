@@ -149,6 +149,29 @@ LinkedIn's insight tag and Calendly's booking widget.
   that the gate loads from exactly the origins the policy admits. The Calendly booking link
   itself stays a plain `<a href>`: a visitor who declines the campaign consent keeps it.
 
+**G2.4 is the task that added the funnel and the pass-through** — three key events to GA4, and
+the campaign parameters a visitor arrived through, onto the booking address and nothing else.
+
+- **Three events, and only after the analytics grant.** `install_click` and `whatsapp_click`
+  are presses of the two secondary calls to action, found by the ids the markup gives them;
+  `demo_booked` is the booking frame's own report, taken only from the frame Calendly's script
+  built inside this page's container, reporting from the origin the booking link names — another
+  origin, another window of the page, or a message no frame sent is dropped unread, and no field
+  of the message is forwarded. None of the three carries a parameter, and none is sent before
+  the visitor has granted analytics or after a withdrawal; the count is the funnel, and the
+  campaign's own attribution reaches GA4 through the owner's Calendly-to-GA4 integration rather
+  than through this site (F22).
+- **The campaign parameters go onto the booking address and nowhere else.** The five `utm_*`
+  names the agenda's links carry, each value decoded and encoded again, a value longer than 100
+  characters dropped rather than truncated, and every other key dropped — into the embed's
+  address, which is the owner's link from `data/landing.yaml` with that query on it. They are
+  not sent to GA4, not put into the chat message a visitor reads, and not added to the plain
+  `Book a demo` anchor a visitor who declines the campaign consent keeps. A visitor with no
+  campaign parameter gets the owner's link exactly as the file writes it.
+- **The chat link is the third call to action**, and its address is `data/landing.yaml`'s
+  WhatsApp number with the variant's own pre-fill: the loader builds it, the section renders
+  it, and `wa.me` is on `allowed_hosts` because the site links to it.
+
 ## The gates
 
 Thirteen checks run over the **built** artifact (`dist/`) on every `npm run check` (W1.11), each
