@@ -174,6 +174,74 @@ func TestCheckCloneRecipeImageDigestSince(t *testing.T) {
 	}
 }
 
+// TestRecipesSkewRefusesAdversarialOnOldImage: a recipe holding the
+// adversarial step (review level 3) needs a job image whose runner acts on
+// it, which is a release of its own (adversarialSince) and newer than every
+// other recipe construct — 0.13.0 knows the digest step and still has no
+// adversarial kind in its version 1 step list, so it refuses the whole recipe
+// at parse. The gate turns that bootstrap refusal into one at the launcher's
+// terminal, for a derived image (checkRecipeImage) and for a checkout: clone
+// workflow's base image (checkCloneRecipeImage) alike, since both judge the
+// recipe's own text. A base image that is not a release cannot be dated, so
+// it only warns, and the runner refuses the recipe there.
+func TestRecipesSkewRefusesAdversarialOnOldImage(t *testing.T) {
+	f := newCloudFixture(t)
+	env := fileEnv(t, f)
+	const text = "version: 1\nname: mine\nsteps:\n  - first_line: {}\n  - review: { bounce: first_line }\n  - adversarial: { max_rounds: 2, bounce: first_line }\n"
+	spec := &task.Spec{Version: 1, RunID: "20261007-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x",
+		Recipe: &task.Recipe{Name: "mine", Source: string(recipe.SourceProject), YAML: text}}
+	check := func(baseRef string) (string, error) {
+		var warn bytes.Buffer
+		writeBuildRecord(t, f, appSlug, "web", baseRef)
+		err := checkRecipeImage(context.Background(), env, appSlug, spec, "base", &warn)
+		return warn.String(), err
+	}
+	// The newest release that knows the digest step, and still has no
+	// adversarial one: the gate is 0.15.0, not 0.13.0.
+	for _, baseRef := range []string{"ghcr.io/dimipaun/fugaro-base:0.13.0", "ghcr.io/dimipaun/fugaro-base:0.14.0"} {
+		warn, err := check(baseRef)
+		if err == nil || !strings.Contains(err.Error(), "recipe mine needs a job image whose runner knows recipes (fugaro 0.15.0 or later)") || ExitCode(err) != ExitUserError {
+			t.Fatalf("%s: warn = %q, err = %v", baseRef, warn, err)
+		}
+		if warn != "" {
+			t.Errorf("%s: warning %q, want none", baseRef, warn)
+		}
+	}
+	warn, err := check("us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c")
+	if err != nil {
+		t.Fatalf("dev base: %v", err)
+	}
+	if !strings.Contains(warn, "not a release base image") {
+		t.Errorf("dev base: warning %q, want the not-a-release note", warn)
+	}
+	// The same recipe on a checkout: clone workflow, whose job has no derived
+	// image and so no build record: the gate raises checkCloneImageSince's
+	// threshold on base_images.base itself.
+	lc := *env.lc
+	lc.BaseImages = map[string]string{"base": "ghcr.io/dimipaun/fugaro-base:0.14.0"}
+	var cloneWarn bytes.Buffer
+	err = checkCloneRecipeImage(&lc, spec, &cloneWarn)
+	if err == nil || !strings.Contains(err.Error(), "recipe mine needs a job image whose runner knows recipes (fugaro 0.15.0 or later)") ||
+		!strings.Contains(err.Error(), "release 0.14.0") || ExitCode(err) != ExitUserError {
+		t.Fatalf("clone 0.14.0: warn = %q, err = %v", cloneWarn.String(), err)
+	}
+	lc.BaseImages["base"] = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c"
+	cloneWarn.Reset()
+	if err := checkCloneRecipeImage(&lc, spec, &cloneWarn); err != nil {
+		t.Fatalf("clone dev base: %v", err)
+	}
+	if !strings.Contains(cloneWarn.String(), "not a release base image") {
+		t.Errorf("clone dev base: warning %q, want the not-a-release note", cloneWarn.String())
+	}
+	// A recipe without the step is not raised to adversarialSince: the
+	// constructs it does carry decide, as before.
+	spec.Recipe.YAML = "version: 1\nname: mine\nsteps:\n  - first_line: {}\n  - review: { bounce: first_line }\n"
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.13.0")
+	if err := checkRecipeImage(context.Background(), env, appSlug, spec, "base", &bytes.Buffer{}); err != nil {
+		t.Fatalf("no adversarial step: %v", err)
+	}
+}
+
 // TestCheckCloneImageSince (review finding 1, HIGH): checkCloneImageSince
 // judges base_images.base's own release directly, since a checkout: clone
 // workflow's job has no derived image and so no build record to judge. One

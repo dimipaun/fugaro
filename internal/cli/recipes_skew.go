@@ -276,6 +276,37 @@ const recipesV07Since = "0.7.0"
 // planTaskSince's bullet records.
 const digestSince = "0.13.0"
 
+// adversarialSince is the first fugaro release whose runner acts on the
+// adversarial step, review level 3 (D720): it runs the step after the senior
+// review, a rejection bounces back to the first-line loop, and the level
+// takes part in readiness (L4.2). A runner before it refuses the recipe
+// outright, at parse: its version 1 step list has no adversarial kind, so the
+// whole recipe is "is not a step type" (recipe.Parse, recipe.UsesAdversarial)
+// and the run dies at bootstrap with the bytes already in the bucket. This
+// gate is what turns that into a refusal at the launcher's terminal, naming
+// fugaro image refresh, so an image that cannot run the step never accepts
+// the launch at all.
+//
+// Like artifactsSince it carries no shipped flag: refusing every image that
+// predates the step is exactly the direction this gate wants, and an image
+// with no release tag (a dev build, a hand-pushed one) only warns, the same
+// as for every other *Since constant here — safe either way, since a runner
+// that cannot run the step refuses the recipe at bootstrap rather than
+// skipping it and opening an ordinary pull request in its place. It names
+// 0.15.0, the release L4.2 ships in: if L4.2 does not make 0.15.0 the
+// constant moves with it before the tag, so no image ever accepts an
+// adversarial launch and then refuses the recipe, and docs/release.md's
+// checklist verifies it against the tag actually cut, the way digestSince's
+// bullet records.
+//
+// A repository-sourced recipe is not judged by this constant: the task
+// carries its name alone, and reading the file at the task's ref needs the
+// checkout this gate's clone half has no context for (checkCloneRecipeImage
+// takes no context.Context; only its caller in run.go could resolve one), so
+// such a launch stays on recipesSince and an image that cannot run the step
+// refuses the recipe at bootstrap as infra_error instead of at the launcher.
+const adversarialSince = "0.15.0"
+
 // gitSecretIDSince is the first fugaro release whose runner reads
 // CheckJobSpec's git_secret_id (internal/infra/spec.go): the daily image
 // check job's own rebuild names the secret ID Readiness resolved, so a
@@ -668,6 +699,12 @@ func checkRecipeImage(ctx context.Context, env *cloudEnv, slug string, spec *tas
 // launch of a repository's own report recipe would be judged by recipesSince
 // and start a job whose runner refuses the whole task at bootstrap, the
 // manifest being a field it does not know.
+//
+// The adversarial step is judged the same way, and it is the newest construct
+// any recipe can carry (adversarialSince), so its case comes first. It has no
+// task field behind it, though: a repository-sourced recipe carries its name
+// alone and so is judged by recipesSince here, whatever step it holds — see
+// the note on that half in adversarialSince.
 func recipeSinceFor(spec *task.Spec) string {
 	r := embeddedRecipeOf(spec)
 	switch {
@@ -675,6 +712,8 @@ func recipeSinceFor(spec *task.Spec) string {
 		return digestSince
 	case r == nil:
 		return recipesSince
+	case recipe.UsesAdversarial(r):
+		return adversarialSince
 	case recipe.UsesDigest(r):
 		// The digest step is 0.13.0's, newer than every other construct
 		// here, so it is the binding gate; no mode: artifact construct can
