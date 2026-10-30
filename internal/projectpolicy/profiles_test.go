@@ -720,3 +720,66 @@ func TestDecodeProfileErrorsCarryTheirPrefixOnce(t *testing.T) {
 		}
 	}
 }
+
+// TestValidProfilesRequireAnOwnExactListForTheBitbucketToken: T2.1 — a profile
+// that mounts bitbucket-token is a Bitbucket shared job, and the list it
+// admits is the per-repository decision that job's token is bounded by, so the
+// profile writes it itself and writes it exactly. An absent list would fall
+// back to the project's wider enrollment, and a wildcard would make the subset
+// check against bitbucket_token.allow_repos undecidable. The mutation is a
+// validProfiles that reads the mount as an ordinary secret name.
+func TestValidProfilesRequireAnOwnExactListForTheBitbucketToken(t *testing.T) {
+	bbProfile := func(allow string) string {
+		return `{"standard":{"provider":"bitbucket","cpu":2,"memory":"4Gi","timeout_class":"6h","secrets":["bitbucket-token"]` + allow + `}}`
+	}
+	block := `"bitbucket_token":{"allow_repos":["bitbucket/workspace-a/*"]},`
+	// A profile mounting the token with no list of its own is refused: the
+	// project's allow_repos is not a list the profile's token is bounded by.
+	if _, err := decodeBitbucketNode(t, block+`"profiles":`+bbProfile(``)); err == nil {
+		t.Fatal("a bitbucket profile mounting bitbucket-token without its own allow_repos was accepted")
+	} else if !strings.Contains(err.Error(), "allow_repos") {
+		t.Errorf("the refusal does not name allow_repos: %v", err)
+	}
+	// A wildcard on that list is refused too, in either spelling.
+	for _, allow := range []string{
+		`,"allow_repos":["bitbucket/workspace-a/*"]`,
+		`,"allow_repos":["*"]`,
+	} {
+		if _, err := decodeBitbucketNode(t, block+`"profiles":`+bbProfile(allow)); err == nil {
+			t.Errorf("a bitbucket profile mounting bitbucket-token was accepted with allow_repos %s", allow)
+		} else if !strings.Contains(err.Error(), "wildcard") {
+			t.Errorf("the refusal for %s does not name the wildcard: %v", allow, err)
+		}
+	}
+	// The exact list within the block's is what the rule asks for.
+	if _, err := decodeBitbucketNode(t, block+`"profiles":`+bbProfile(`,"allow_repos":["bitbucket/workspace-a/repo-a"]`)); err != nil {
+		t.Fatalf("an exact profile list within the block's was refused: %v", err)
+	}
+}
+
+// TestValidProfilesRefuseAProfileListBeyondTheBitbucketBlock: T2.1 — the
+// profile's list is a subset of bitbucket_token.allow_repos, matched with
+// MatchRepo, because the block is what the credentials service will later
+// forward the token for (G3) and a profile's list can only narrow it. The
+// mutation is a subset check that is skipped when no block is written.
+func TestValidProfilesRefuseAProfileListBeyondTheBitbucketBlock(t *testing.T) {
+	block := `"bitbucket_token":{"allow_repos":["bitbucket/workspace-a/repo-a"]},`
+	mounting := func(allow string) string {
+		return block + `"profiles":{"standard":{"provider":"bitbucket","cpu":2,"memory":"4Gi","timeout_class":"6h","secrets":["bitbucket-token"],"allow_repos":[` + allow + `]}}`
+	}
+	if _, err := decodeBitbucketNode(t, mounting(`"bitbucket/workspace-a/repo-b"`)); err == nil {
+		t.Fatal("a profile whose allow_repos is beyond the block's was accepted")
+	} else if !strings.Contains(err.Error(), "bitbucket/workspace-a/repo-b") {
+		t.Errorf("the refusal does not name the repository: %v", err)
+	}
+	// A profile mounting the token with a list of its own, and no block at all:
+	// nothing bounds it, so it is refused rather than read as bounded by the
+	// project's allow_repos.
+	if _, err := decodeBitbucketNode(t, `"profiles":{"standard":{"provider":"bitbucket","cpu":2,"memory":"4Gi","timeout_class":"6h","secrets":["bitbucket-token"],"allow_repos":["bitbucket/workspace-a/repo-a"]}}`); err == nil {
+		t.Fatal("a profile mounting bitbucket-token was accepted with no bitbucket_token block")
+	}
+	// The repository itself is the block's, so the subset holds.
+	if _, err := decodeBitbucketNode(t, mounting(`"bitbucket/workspace-a/repo-a"`)); err != nil {
+		t.Fatalf("a profile list equal to the block's was refused: %v", err)
+	}
+}
