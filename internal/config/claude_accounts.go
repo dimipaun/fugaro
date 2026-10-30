@@ -194,6 +194,28 @@ func AllowedClaudeAccounts(accounts map[string]ClaudeAccount, repo string) []str
 	return out
 }
 
+// reservedAccountNameMessage is the ONE sentence both halves of the name rule
+// answer the name of another credential with, and the whole of the rule is
+// this: a name the platform already holds a credential under is no account
+// name. What the platform holds a credential under is ReservedSecrets, the
+// names a job mounts, and the account's own name is what those names are
+// spoken against — the account's key in the credentials bundle is
+// ClaudeAccountSecret(name) and the bundle resolves that key back to the bare
+// name (credsvc.CredentialKey answers the account name, not the key), which is
+// the name the cascade, the policy's accounts block and the proxy's audit line
+// all speak. So an account taking one of them would leave one name meaning two
+// credentials, which is the harm bitbucket-token is the sharpest case of: the
+// bundle's own key resolver refuses that account outright (B1.2). The names
+// secretnames.go reserves outside ReservedSecrets are not this sentence's:
+// codex-oauth-token is a harness credential nothing mounts or holds yet, and
+// creds-bundle is the service's own container, which no job mounts and which
+// no bundle entry names.
+//
+// The message never echoes the name (the rule every message here keeps: the
+// value that reached the check is untrusted text printed to a terminal) and it
+// names the fix, which is the operator's next move.
+const reservedAccountNameMessage = "this name is reserved: the platform holds another credential under it, so an account spoken by it would leave one name meaning two credentials — pick a different account name"
+
 // ValidateClaudeAccounts reports every rule the local config's
 // claude_accounts block breaks, the same shape as ValidateModelProviders.
 // A name or repository slug that fails its own check is never echoed raw:
@@ -208,6 +230,8 @@ func ValidateClaudeAccounts(accounts map[string]ClaudeAccount) []Problem {
 		switch {
 		case name == DefaultClaudeAccount:
 			ps = append(ps, Problem{Path: at, Message: `"default" is reserved for the unnamed claude-oauth-token secret and may not be configured here`})
+		case reservedSecretName(name):
+			ps = append(ps, Problem{Path: at, Message: reservedAccountNameMessage})
 		case len(name) > MaxClaudeAccountNameLen:
 			ps = append(ps, Problem{Path: at, Message: fmt.Sprintf("account name must be at most %d characters", MaxClaudeAccountNameLen)})
 		case !ClaudeAccountNameRE.MatchString(name):
@@ -231,16 +255,21 @@ func ValidateClaudeAccounts(accounts map[string]ClaudeAccount) []Problem {
 // is valid here and only here (claude_accounts itself refuses to define it, the
 // account being the unsuffixed claude-oauth-token every repository already
 // has), every other name is a named account's (ClaudeAccountNameRE and
-// MaxClaudeAccountNameLen). The message never echoes the name: a value that
-// fails this check reached it exactly because it is untrusted text, and the
-// sentence is printed to a terminal (the same treatment ValidateClaudeAccounts
-// gives one).
+// MaxClaudeAccountNameLen) and is not a name the platform holds a credential
+// under (reservedSecretName, reservedAccountNameMessage: a name that names
+// another credential is refused here exactly as it is refused as a key of
+// claude_accounts, and the profile may not admit an account the bundle cannot
+// hold). The message never echoes the name: a value that fails this check
+// reached it exactly because it is untrusted text, and the sentence is printed
+// to a terminal (the same treatment ValidateClaudeAccounts gives one).
 func ValidClaudeAccountRef(name string) string {
 	switch {
 	case name == "":
 		return `an account name must not be empty: name the account whose token this profile's runs use, or remove the entry`
 	case name == DefaultClaudeAccount:
 		return ""
+	case reservedSecretName(name):
+		return reservedAccountNameMessage
 	case len(name) > MaxClaudeAccountNameLen:
 		return fmt.Sprintf("account name must be at most %d characters", MaxClaudeAccountNameLen)
 	case !ClaudeAccountNameRE.MatchString(name):

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -899,5 +900,89 @@ func TestBundleCredentialKeyHoldsTheAccountNameRuleInBothHalves(t *testing.T) {
 				t.Errorf("CredentialKey(%q) tier = %q, want %q", tc.key, gotTier, tc.wantTier)
 			}
 		})
+	}
+}
+
+// TestReservedAccountNamesAgreeWithTheBundle: the names the local config
+// refuses as Claude account names and the names this bundle cannot tell an
+// account from are ONE set, read from both sides. The collision is one
+// question seen from either end, because an account's key in the bundle is
+// config.ClaudeAccountSecret(name) and CredentialKey resolves that key back to
+// the bare name: a name another credential of the platform already goes by —
+// the reserved names a job mounts (config.ReservedSecrets) and the name the
+// bundle speaks the bare token by (config.DefaultClaudeAccount) — would make
+// the bundle, the job's own mount and the proxy's audit line speak one name
+// for two credentials.
+//
+// The config side learns the reservation from that same list, so the two
+// cannot drift: a name the config admits and the bundle refuses is the gap
+// B1.2 left open (bitbucket-token was configurable and admittable by a policy
+// while CredentialKey refused its key), and a name the bundle cannot tell from
+// another credential but the config admitted would be an account no bundle can
+// hold. Red if either side moves alone — a ReservedSecrets entry added without
+// the account rule, or the bundle's refusal of bitbucket-token dropped.
+func TestReservedAccountNamesAgreeWithTheBundle(t *testing.T) {
+	// What a credential of the platform goes by: the reserved names a job
+	// mounts, and the default account's own (the bare token's bundle entry is
+	// spoken as config.DefaultClaudeAccount, while its document key is the
+	// reserved name beside it in the map).
+	held := map[string]bool{config.DefaultClaudeAccount: true}
+	for name := range config.ReservedSecrets {
+		held[name] = true
+	}
+	names := make([]string, 0, len(held))
+	for name := range held {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+
+	var refused []string
+	for _, account := range names {
+		key := config.ClaudeAccountSecret(account)
+		got, _, _, ok := CredentialKey(key)
+		if !ok {
+			refused = append(refused, account)
+		} else if got != account {
+			t.Errorf("CredentialKey(%q) resolved to %q, want the account's own name %q", key, got, account)
+		} else if !held[got] {
+			t.Errorf("CredentialKey(%q) = %q, a name no credential the job mounts or the bundle holds goes by: the config reserving it would be over-reach", key, got)
+		}
+
+		ps := config.ValidateClaudeAccounts(map[string]config.ClaudeAccount{account: {}})
+		if len(ps) != 1 {
+			t.Errorf("ValidateClaudeAccounts with an account named %q = %+v, want the one refusal", account, ps)
+			continue
+		}
+		if account == config.DefaultClaudeAccount {
+			// The one name the two halves part on, deliberately: the account
+			// every repository already has is valid as a REFERENCE and refused
+			// as a definition.
+			if msg := config.ValidClaudeAccountRef(account); msg != "" {
+				t.Errorf("ValidClaudeAccountRef(%q) = %q, want the default account to stay a valid reference", account, msg)
+			}
+			continue
+		}
+		if msg := config.ValidClaudeAccountRef(account); msg != ps[0].Message {
+			t.Errorf("the definition and the reference disagree about %q: %q vs %q; a policy would admit what the config refuses", account, ps[0].Message, msg)
+		}
+	}
+	// Both branches of the bundle's half are live, and this is the one name
+	// that takes the refusal: the family's git credential's.
+	if !slices.Equal(refused, []string{config.BitbucketSecret}) {
+		t.Errorf("CredentialKey refused the account keys of %v, want the git credential's name alone", refused)
+	}
+
+	// The other direction, on a name no credential goes by: it is an account
+	// name of its own, and the resolver answers it unrenamed at the tier a
+	// Claude account has.
+	plain := "acme-personal"
+	if msg := config.ValidClaudeAccountRef(plain); msg != "" {
+		t.Errorf("ValidClaudeAccountRef(%q) = %q, want an ordinary name to stay valid", plain, msg)
+	}
+	if ps := config.ValidateClaudeAccounts(map[string]config.ClaudeAccount{plain: {AllowDataTo: []string{"acme/app"}}}); len(ps) != 0 {
+		t.Errorf("an ordinary account name was refused: %+v", ps)
+	}
+	if got, kind, tier, ok := CredentialKey(config.ClaudeAccountSecret(plain)); !ok || got != plain || kind != KindModel || tier != creds.TierA {
+		t.Errorf("CredentialKey(%q) = (%q, %q, %q, %v), want the account itself at tier A", config.ClaudeAccountSecret(plain), got, kind, tier, ok)
 	}
 }
