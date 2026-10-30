@@ -268,9 +268,11 @@ type Mailbox struct {
 	// what `pair ls` prints and `pair revoke` names — so that a revoke deletes
 	// exactly one phone's item, and a pairing session's `p~…` is accepted too,
 	// because a session is what a partially written config would hold. Both
-	// halves are the shape a uid has (§2 (e), 128 random bits in unpadded
-	// base64url), and a key that is not one is refused rather than kept as a
-	// name nothing will ever look up.
+	// halves are the shape a uid has (§2 (e)), and not the same one: a device's
+	// is 16 random bytes in unpadded base64url behind `m~` and a session's is 32
+	// behind `p~`, which is why pairUIDRE carries a length per prefix. A key
+	// that is neither is refused rather than kept as a name nothing will ever
+	// look up.
 	//
 	// The value is the item's name: configuration, and not a secret — it may
 	// be printed, and the diagnostic a missing key produces names it — but its
@@ -284,14 +286,33 @@ type Mailbox struct {
 	KeychainItem map[string]string `yaml:"keychain_item,omitempty"`
 }
 
-// pairUIDRE is the shape of the uid a mailbox entry may be keyed by: a pairing
-// session's `p~` or a paired device's `m~`, followed by the 22 unpadded
-// base64url characters 128 random bits spell (token.PairingPrefix and
-// token's deviceUIDBytes). It is this file's copy of that shape and not the
-// token package's function, because the token package mints uids and this one
-// only recognises them; a key that is not a uid is a line an operator can fix,
-// and every uid this installation mints matches.
-var pairUIDRE = regexp.MustCompile(`^[mp]~[A-Za-z0-9_-]{22}$`)
+// pairUIDRE is the shape of the uid a mailbox entry may be keyed by, and it is
+// two shapes, because the installation mints two uids and they are two lengths.
+//
+// **The key `fugaro pair` asks the operator to record is the device's `m~` uid**
+// — the command prints `mailbox.keychain_item[<device uid>]`, `pair ls` lists
+// that same uid and `pair revoke` names it, and decision 9 derives the item's
+// name from the 22-character body behind `m~`. So the `m~` branch, 22 unpadded
+// base64url characters standing for the 16 random bytes of token's
+// deviceUIDBytes, is the one every entry a pairing looks up is keyed by.
+//
+// The `p~` branch is the pairing session's uid — PairingPrefix and the 43
+// characters 32 random bytes spell (pairing.go's draw, §2 (e)) — and it is
+// admitted **while nothing ever looks such an entry up**: the session's node is
+// deleted at the end of the same `fugaro pair`, its Auth user is the sweep's,
+// and the durable identity is the device's `m~`. It is admitted because a config
+// written while a session is open holds one (Mailbox's own comment says so),
+// and the cost is stated rather than hidden: a `p~` key is a line that reads no
+// key, not one that reads the wrong key — the item's name is still
+// keychain.ParseItem's and the pairing it would have named no longer exists.
+//
+// It is this file's copy of the shapes and not the token package's function,
+// because the token package mints uids and this one only recognises them, and
+// its byte counts are unexported; TestMailboxKeyedByARealPairingUIDLoads mints
+// one of each through that package and loads them here, which is what keeps the
+// two from drifting. A key that is neither shape is refused, which is the only
+// way an operator learns of a typo.
+var pairUIDRE = regexp.MustCompile(`^(?:p~[A-Za-z0-9_-]{43}|m~[A-Za-z0-9_-]{22})$`)
 
 // CredentialsService is the credentials service block: the installation's own
 // Cloud Run service, as the launcher needs it (docs/credentials-service,
@@ -1308,7 +1329,7 @@ func (c *Config) validate() error {
 		}
 		for _, uid := range slices.Sorted(maps.Keys(m.KeychainItem)) {
 			if !pairUIDRE.MatchString(uid) {
-				bad("mailbox.keychain_item.%s: the key is not a pairing's uid (%q or %q followed by 22 unpadded base64url characters), so no pairing would ever look this item up", uid, "p~", "m~")
+				bad("mailbox.keychain_item.%s: the key is not a pairing's uid (%q followed by 22 unpadded base64url characters is the device uid `fugaro pair` prints, and %q followed by 43 is a pairing session's), so no pairing would ever look this item up", uid, "m~", "p~")
 				continue
 			}
 			if _, err := keychain.ParseItem(m.KeychainItem[uid], c.Name); err != nil {
