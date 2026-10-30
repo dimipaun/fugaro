@@ -156,7 +156,8 @@ type ReviewSummary struct {
 	// rejection the cheap loop runs and the senior level is not reviewed
 	// again, so the senior verdict may name an earlier head than the one
 	// shipped (docs/review-levels-ab-jobmax D727). Empty when the round
-	// recorded none, which is every review written before this field.
+	// recorded none, which is every review written before this field
+	// existed.
 	Head string `json:"head,omitempty"`
 	// Bounce is which cheap loop this review followed, under review:
 	// {bounce: first_line}: 0 for a review before any senior rejection, 1
