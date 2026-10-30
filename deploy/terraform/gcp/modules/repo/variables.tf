@@ -39,6 +39,7 @@ variable "installation" {
     registry_host             = string
     base_registry             = string
     ghcr_registry             = string
+    shared_registry           = string
     scheduler_service_account = string
     role_ids = object({
       job_runner      = string
@@ -70,6 +71,11 @@ variable "installation" {
   validation {
     condition     = can(regex("^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$", var.installation.ghcr_registry))
     error_message = "installation.ghcr_registry must be a registry ID."
+  }
+
+  validation {
+    condition     = can(regex("^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$", var.installation.shared_registry))
+    error_message = "installation.shared_registry must be a registry ID."
   }
 
   validation {

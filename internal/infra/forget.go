@@ -15,6 +15,22 @@ const LogBucketAddress = "module.installation.google_logging_project_bucket_conf
 // root.
 const TagMoverRoleAddress = "module.installation.google_project_iam_custom_role.tag_mover"
 
+// SharedRegistryAddress is the shared image registry's address in the
+// installation root (design docs/forge-authorship-images/shared-images.md
+// §2.6).
+const SharedRegistryAddress = "module.installation.google_artifact_registry_repository.shared"
+
+// ForgetCreates are the resources a rollback's plan may create: each is one
+// the installation's own config declares and an installation applied before
+// it existed doesn't have, so the plan creates it, it stays, and the next
+// fugaro update adopts it by its mark (DiscoverInstallation) rather than
+// colliding with it. Every other create means the state isn't this
+// installation's, which CheckForgetPlan refuses.
+var ForgetCreates = []string{
+	TagMoverRoleAddress,
+	SharedRegistryAddress,
+}
+
 // ForgetDeletes are the addresses the rollback's apply may delete: the log
 // isolation, which is behaviour M5 added and M4 doesn't expect (the
 // exclusion keeps job logs out of _Default, where M4 reads them).
@@ -54,13 +70,13 @@ func ForgetAllowDelete(p *tf.Plan) []string {
 
 // CheckForgetPlan refuses a rollback plan that creates anything: it only
 // takes M5's behaviour away, so a create means the state is not the
-// installation's (or is empty). The one exception is the tag mover role,
-// which an installation applied before it existed doesn't have yet: the
-// plan creates it, and it stays, ungranted, like the other custom roles.
+// installation's (or is empty). The exceptions are the resources in
+// ForgetCreates, which an installation applied before they existed doesn't
+// have yet: the plan creates them, and they stay.
 func CheckForgetPlan(p *tf.Plan) error {
 	var creates []string
 	for _, rc := range p.ResourceChanges {
-		if rc.Address == TagMoverRoleAddress && slices.Equal(rc.Change.Actions, []string{"create"}) {
+		if slices.Equal(rc.Change.Actions, []string{"create"}) && slices.Contains(ForgetCreates, rc.Address) {
 			continue
 		}
 		if slices.Contains(rc.Change.Actions, "create") {
