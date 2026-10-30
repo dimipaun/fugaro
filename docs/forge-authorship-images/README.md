@@ -15,6 +15,7 @@ owner. **Reconciled against** `origin/main` at `c192e8766` (2026-10-28).
 | [spec.md](spec.md) | The owner's spec, as received, with the name substitutions below |
 | [reconciliation.md](reconciliation.md) | Findings F1–F46 against the code, decisions D600–D649 (answered 2026-10-29), resolutions R1–R4, tensions T1–T6, open items O1–O6, UNVERIFIED U1–U8. **Where it disagrees with `spec.md`, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Slices A (authorship and trailers), B (forge), C (repositories and images, including shared images by dependency-set hash), D (change sets, `ee/`), E (people and tokens), and X1 (the live-check entries); C2, E2 and E3 withdrawn in review; levels L0–L7, the critical path, the shared-files table, Checks 230–235 (233 withdrawn). **Nothing in it is approved** |
+| [shared-images.md](shared-images.md) | The design task C7 asks for and C8 builds: the normalised dependency-set key and what it ignores, the lock under `builds/` and its concurrency, superset reuse and its supply-chain cost, propose-then-confirm on a divergence, the per-repository job update, `fugaro image ls`, the cap warning and the retention clean-up. Open for the owner: the cap, `images.retention_days` = 30, and the C3/C4 question |
 
 ## The only deviation from "verbatim"
 

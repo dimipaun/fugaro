@@ -350,13 +350,15 @@ func TestDocsProjectClaudeAccountsOperatorGuide(t *testing.T) {
 			t.Errorf("%s no longer says %q: the operator guide is plan task 4's deliverable, and this is a fact of tasks 1 to 3 rather than a preference", projectClaudeAccountsDoc, want)
 		}
 	}
-	// The page states the versions the code states, so a version bump cannot
-	// leave it describing another release's node.
-	if projectpolicy.Version != 3 {
-		t.Fatalf("projectpolicy.Version = %d, and the guide describes version 3", projectpolicy.Version)
+	// The page documents 0.9.0's node, so what must hold is that version 3 is
+	// still the version 0.9.0 introduced: a later bump adds a row above it and
+	// leaves this guide describing its own release, rather than a bump silently
+	// rewriting what the page means.
+	if projectpolicy.Version < 3 {
+		t.Fatalf("projectpolicy.Version = %d, below the version 3 the guide describes", projectpolicy.Version)
 	}
 	if rel, ok := projectpolicy.VersionRelease(3); !ok || rel != "0.9.0" {
-		t.Fatalf("projectpolicy.VersionRelease(3) = (%q, %v), and the guide labels the page 0.9.0", rel, ok)
+		t.Fatalf("projectpolicy.VersionRelease(3) = (%q, %v), and the guide describes version 3, which 0.9.0 introduced", rel, ok)
 	}
 	// "0.9.0, released" and "The released Fugaro is <tree's version>" are one
 	// claim only while the tree's release is 0.9.0 or later.

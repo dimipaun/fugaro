@@ -360,3 +360,32 @@ func TestRecordNewerThan(t *testing.T) {
 		}
 	}
 }
+
+// TestRecordDigestMismatch: the launch's digest comparison is pure — a
+// record that names no digest of its own has nothing to compare, which is
+// not a mismatch, and neither is an unknown live digest. Only two digests
+// that are both known and different are drift.
+func TestRecordDigestMismatch(t *testing.T) {
+	const (
+		img    = "europe-docker.pkg.dev/p/r/app-web"
+		ours   = "sha256:" + "11"
+		theirs = "sha256:" + "22"
+	)
+	for _, tc := range []struct {
+		name     string
+		rec      *Record
+		live     string
+		mismatch bool
+	}{
+		{"matching", &Record{Image: img, ImageDigest: ours}, ours, false},
+		{"differing", &Record{Image: img, ImageDigest: ours}, theirs, true},
+		{"no digest of its own", &Record{Image: img}, ours, false},
+		{"unknown live digest", &Record{Image: img, ImageDigest: ours}, "", false},
+		{"render half only", &Record{}, "", false},
+		{"no record", nil, ours, false},
+	} {
+		if got := tc.rec.DigestMismatch(tc.live); got != tc.mismatch {
+			t.Errorf("%s: DigestMismatch = %v, want %v", tc.name, got, tc.mismatch)
+		}
+	}
+}

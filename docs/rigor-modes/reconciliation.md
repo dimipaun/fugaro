@@ -255,7 +255,7 @@ corpus tests rather than in review (plan T1.3).
 `internal/config/resolve.go`'s `Resolve` merges project-layer defaults → repo top
 level → workflow profile → repo workflow. The project layer is
 `config.LayerKey = "fugaro/project-layer.yaml"`; the published policy is
-`config/policy/shared` (`fugaro project policy publish`, version 3);
+`config/policy/shared` (`fugaro project policy publish`, version 4);
 `internal/projectpolicy` reads and writes it. Consequence: the spec's "a project
 has a default mode" and "paths can override it" are two different inputs — the
 repository's `fugaro.yaml` and the project's published policy — and the design
@@ -714,9 +714,9 @@ stale has found a merge that did not.
 | Files in `internal/runner` that mention `Severity` at all | 3 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
 | Image-skew `Since` constants | 19 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
-| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 86 | `ls internal/cli/docs_*_test.go \| wc -l` |
+| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 87 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
-| Published project-policy version | 3 | `sed -n 's/^const Version = //p' internal/projectpolicy/version.go` |
+| Published project-policy version | 4 | `sed -n 's/^const Version = //p' internal/projectpolicy/version.go` |
 | Blocks the project layer's `defaults:` may set whose value names a repository | 0 | `sed -n '/^type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -ci repo` |
 | Fields of `gitprov.PRSpec` whose name is a repository | 0 | `sed -n '/^type PRSpec struct {/,/^}/p' internal/gitprov/gitprov.go \| grep -ci repo` |
 | Sites that narrow an installation token to one repository | 1 | `git grep -hc '"repositories": \[\]string{s.repo}' internal/gitprov/github/apptoken.go` |

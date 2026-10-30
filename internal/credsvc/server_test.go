@@ -105,7 +105,7 @@ func testPolicyDocWith(fallback string) string {
 // exactly the case the intersection exists for.
 func testPolicyDocAccounts(fallback, accounts string) string {
 	return `{
-		"version": 3,
+		"version": 4,
 		"budget": ` + testBudgetDoc + `,
 		"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"],
 		"accounts": {
@@ -123,7 +123,7 @@ func testPolicyDocAccounts(fallback, accounts string) string {
 // and the project does not.
 func testPolicyDocAllowRepos(allowRepos, accounts string) string {
 	return `{
-		"version": 3,
+		"version": 4,
 		"budget": ` + testBudgetDoc + `,
 		"allow_repos": ` + allowRepos + `,
 		"accounts": {
@@ -140,7 +140,7 @@ func testPolicyDocAllowRepos(allowRepos, accounts string) string {
 // without ever reaching into the block.
 func testPolicyDocNoCredentials() string {
 	return `{
-		"version": 3,
+		"version": 4,
 		"budget": ` + testBudgetDoc + `,
 		"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"],
 		"accounts": {
@@ -158,7 +158,7 @@ func testPolicyDocNoCredentials() string {
 // an empty list would be a different one.
 func testPolicyDocNoAllowList() string {
 	return `{
-		"version": 3,
+		"version": 4,
 		"budget": {"mode": "enforce", "per_run_usd": 5},
 		"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"],
 		"accounts": {
@@ -175,7 +175,7 @@ func testPolicyDocNoAllowList() string {
 // and 0 is the written "no cap at all" rather than the absent key's one.
 func testPolicyDocControls(fallback string, stops bool, concurrency int) string {
 	return `{
-		"version": 3,
+		"version": 4,
 		"budget": ` + testBudgetDoc + `,
 		"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"],
 		"accounts": {
