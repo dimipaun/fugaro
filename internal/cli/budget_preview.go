@@ -716,7 +716,8 @@ var previewStageKinds = [...]string{"implement", "review_first", "fix", "review"
 // history mean is multiplied by. It mirrors the runner's loop: an implement,
 // then a first line of review_first and its fix, then a senior review, its
 // fix, and, with bounce, one more cheap pair; an adversarial step adds level
-// 3's round and its fix, and its own bounce-back to the cheap loop. A mode:
+// 3's round and its fix, and, with bounce, one more cheap pair of its own (one
+// round here too, however many its own cap allows). A mode:
 // review recipe runs the senior review alone, and a digest recipe has no
 // implement stage at all:
 // its first step is the runner's own work, which writes the run reports with
