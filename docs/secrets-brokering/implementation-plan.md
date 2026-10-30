@@ -9,8 +9,10 @@ spec, the reconciliation wins.
 - **Nothing is implemented. No task is approved.** Each task needs the owner's own explicit go.
   Answering a decision approves no task.
 - **The owner's answers of 2026-10-27 that shape the plan** (reconciliation §5):
-  - **D490:** S0 in **0.13.0**; the Bitbucket proxy (S1) in **0.14.0**; 0.12.1 gets only one
-    pointer sentence in the already-approved T1.1 of docs/bitbucket-workspace-token.
+  - **D490:** S0 in **0.13.0**; the Bitbucket proxy (S1) in **0.14.0** — the owner moved S1's proxy
+    chain to **0.15.0** on 2026-10-30 (below), so 0.14.0 carries only S1's inert and data-only
+    pieces; 0.12.1 gets only one pointer sentence in the already-approved T1.1 of
+    docs/bitbucket-workspace-token.
   - **D491:** staged; Bitbucket first; workflow secrets through a later vault fetch (S3); builds a
     listed exception with an exit slice (S4).
   - **D492/D493:** the wildcard path ships now (dc73, T1.1, T1.2 in 0.12.1); that plan's S2 is
@@ -49,11 +51,22 @@ spec, the reconciliation wins.
   consequence (O6).
 - **Review round 3 (2026-10-27, the last)** found that `fugaro update --provision-credentials`
   refuses a development build (`internal/cli/init_credentials.go` `resolveImage`), so Checks 191 and
-  192 can run only against a **released** 0.14.0: the flip moves after that release (O7). It also
+  192 can run only against a **released** release carrying the proxy — 0.15.0 since the 2026-10-30
+  move, not 0.14.0 — so the flip moves after that release (O7). It also
   made the published node the one source of whether a repository is proxied, put doctor's bundle
   read behind a flag, refused proxied runs on the Batch backend, added the h2c fallback task, the
   Terraform plumbing, the missing tests, and moved the exceptions table into the guard test as D499
   says. What it raised and this PR does not settle is in reconciliation §7 (O7, O8).
+- **The owner moved the Bitbucket proxy chain to 0.15.0 (2026-10-30, after the v0.13.0 tag).** B1.5,
+  B1.6, B1.7, B1.9, B1.10 and B1.11 ship in **0.15.0**, not 0.14.0, and B1.12 runs Check 191 on the
+  released 0.15.0. 0.14.0 ships only the pieces that are inert or data-only: policy version 4 with
+  the `bitbucket_token` block and the `proxy` switch (BW-T2.1, BW-T2.3), the API-root pin (BW-T2.8),
+  the bundle's Bitbucket token (B1.2), the git proxy's parser and rules (B1.3, B1.4), the flip list
+  still empty (B1.8) and the operator draft (B1.13 part one). No proxied run exists in 0.14.0: a
+  Bitbucket run's job still mounts and reads its own token, and `proxy: true` in a published node
+  changes nothing such a run does. The flip (B1.13 part two) follows the chain it flips, so it ships
+  in the release after the one Check 191 passes on — 0.16.0 under this reading (O7). This is the
+  move the 0.14.0 docs and the levels below record.
 
 ## Conventions every part follows
 
@@ -106,7 +119,7 @@ not one whose branch fails `task.BranchRE` (G6).
 | Slice | Release | What | Inert? |
 | --- | --- | --- | --- |
 | **S0** | **0.13.0** | The secret-reader audit as a tested doc, the guard, doctor's Secret Manager sweep and deployer read, Check 190 written and run | Yes: no behaviour change except doctor findings |
-| **S1** | **0.14.0**, then the flip after it (O7) | The Bitbucket proxy for per-repository jobs of opted-in installations and the re-planned Bitbucket S2 tasks ship in 0.14.0; Check 191 runs against the released 0.14.0; the flip (B1.13 part two) and Check 192 follow in the next release | Inert on upgrade: a repository is proxied only when the owner publishes `proxy: true` (B1.7); the mount stays until the flip list is filled (B1.13). The policy v4 bump itself is a lockstep upgrade (D477) |
+| **S1** | **0.15.0**, then the flip after it (O7) | The Bitbucket proxy for per-repository jobs of opted-in installations and the re-planned Bitbucket S2 tasks ship in 0.15.0 (owner, 2026-10-30); 0.14.0 ships only the inert and data-only pieces — policy v4 with the block and the `proxy` switch (BW-T2.1, BW-T2.3), the API-root pin (BW-T2.8), the bundle's Bitbucket token (B1.2), the proxy's parser and rules (B1.3, B1.4), the empty flip list (B1.8) and the operator draft (B1.13 part one); Check 191 runs against the released 0.15.0; the flip (B1.13 part two) and Check 192 follow in the next release | Inert on upgrade: a repository is proxied only when the owner publishes `proxy: true` (B1.7); the mount stays until the flip list is filled (B1.13); in 0.14.0 no run is proxied at all, whatever the node says. The policy v4 bump itself is a lockstep upgrade (D477) |
 | **S2** | unscheduled | Every `agent.auth` mode through the service (D498) | — |
 | **S3** | unscheduled | Workflow `secrets:` through a vault fetch (D491) | — |
 | **S4** | unscheduled | The build exception's exit: builds and the image check through the service (D491, U4) | — |
@@ -277,7 +290,7 @@ plan; this table says what happens to each task, and the levels below include th
 - **Depends on:** B0.5. **Reviewer tier:** standard.
 - **Commit:** `docs(live-checks): Check 190's run, as the owner reported it`
 
-### S1 (0.14.0)
+### S1 (0.14.0's inert and data-only pieces, then 0.15.0's proxy)
 
 #### B1.0: h2c end to end — CONDITIONAL, only if Check 190 fails the large push — SECURITY-SENSITIVE
 
@@ -552,9 +565,9 @@ plan; this table says what happens to each task, and the levels below include th
 
 #### B1.12: Check 191 — OWNER-RUN
 
-- **The build:** the **released 0.14.0** (`brew upgrade dimipaun/tap/fugaro`): the credentials
+- **The build:** the **released 0.15.0** (`brew upgrade dimipaun/tap/fugaro`): the credentials
   stage refuses a development build (`init_credentials.go` `resolveImage`), so this check runs after
-  0.14.0 ships (O7).
+  the release carrying the proxy ships — 0.15.0 under the 2026-10-30 move (O7).
 - **What the owner types,** installation `fugaro` only, never `belong`:
   1. `fugaro update --provision-credentials` (installation-wide; at a real terminal; on an
      installation already opted in it re-applies the installation root, so the service runs the S1
@@ -568,15 +581,17 @@ plan; this table says what happens to each task, and the levels below include th
   5. From the sandbox repository's checkout: `fugaro update --repo`.
   6. `CHECK191_REPO=<workspace>/<sandbox repository> bash scripts/live-checks/check191.sh`; paste
      the `CHECK 191 RESULT` block back.
-- **Depends on:** B1.10, B1.11, B1.13 part one, BW-T2.3, and the 0.14.0 release.
+- **Depends on:** B1.10, B1.11, B1.13 part one, BW-T2.3, and the 0.15.0 release.
 
 #### B1.13: The operator notes, then the flip (D500, G1) — SECURITY-SENSITIVE, owner-gated
 
-- **Files, part one (L6):** `docs/secrets-brokering/release-0.14.0-operators.md`
-  (new: the v4 lockstep publish, storing the token with `creds set`, setting `proxy: true`,
+- **Files, part one (0.14.0 L2):** `docs/secrets-brokering/release-0.14.0-operators.md`
+  (the v4 lockstep publish, which is every installation's own step in 0.14.0, and — as the proxy
+  chain's later release needs them — storing the token with `creds set`, setting `proxy: true`,
   re-applying each proxied repository from its checkout with `fugaro update --repo`, rebuilding
   images below `proxySince`, rotating both copies while S4 is open, and the cross-repository fetch
-  consequence, O6). **Part two (after B1.12 PASS and the owner's go):**
+  consequence, O6; after the 2026-10-30 move the draft says the proxy itself arrives in 0.15.0 and
+  that a 0.14.0 Bitbucket run's job still holds its own token). **Part two (after B1.12 PASS and the owner's go):**
   `internal/config/providers.go` (`ProxiedGitSecretNames = []string{"bitbucket-token"}`);
   `deploy/terraform/gcp/modules/workflow/sa.tf` (the mirror); `deploy/terraform/terraform_test.go`;
   `deploy/terraform/gcp/roots/repo/tests/repo.tftest.hcl`; `internal/infra/tf/testdata/golden/*`;
@@ -586,15 +601,21 @@ plan; this table says what happens to each task, and the levels below include th
   `### For operators` entry, in the flip's own PR, with the bundle-first order (store the token with
   `creds set` and run Check 191's step 6 before any `fugaro update --repo`).
 - **Tests:** part one: `TestDocsSecretsBrokeringOperatorSteps` (in `docs_secrets_brokering_test.go`,
-  as `docs_bitbucket_release_steps_test.go` pins T2.11's draft). Part two: B1.8's
+  as `docs_bitbucket_release_steps_test.go` pins T2.11's draft), which holds the draft to the
+  release the level table gives the proxy chain, with
+  `TestDocsSecretsBrokeringReadmeReleaseTable` holding the README's release table and the plan's own
+  S1 row to the same release. Part two: B1.8's
   `TestFilledProxiedListDropsMountAndAccessor`, now on the real list; the tftest.
 - **Command:** B1.8's command, plus `go test ./deploy/terraform/ -run 'TestEverySecretReader' -count=1 && go test ./internal/cli/ -run Docs -count=1`
 - **Red step:** a copy of `TestFilledProxiedListDropsMountAndAccessor` that reads the real list: it
   fails while the list is empty.
-- **Red step, part one:** `TestDocsSecretsBrokeringOperatorSteps` before the draft exists.
+- **Red step, part one:** `TestDocsSecretsBrokeringOperatorSteps` before the draft exists (it was
+  red on the claim the 2026-10-30 move changed, too).
 - **Commit, part one:** `docs(secrets-brokering): the 0.14.0 operator steps, drafted for the release notes`
-- **Depends on:** part one: B1.10; part two: B1.12 PASS on the released 0.14.0 and the owner's go;
-  it ships in the release after 0.14.0 (O7). **Reviewer tier:** opus + mandatory independent review.
+- **Depends on:** part one: BW-T2.1 and BW-T2.3 (the v4 step the lockstep publishes, and the pieces
+  0.14.0 ships; neither the draft nor its release notes wait for the proxy chain now that the chain
+  ships later); part two: B1.12 PASS on the released 0.15.0 and the owner's go; it ships in the
+  release after that (O7). **Reviewer tier:** opus + mandatory independent review.
 - **Commit:** `config, terraform: a proxied installation's Bitbucket jobs give up the token`
 
 #### B1.14: Check 192 — OWNER-RUN
@@ -631,7 +652,7 @@ moved to 0.14.0 and, for T2.1 and T2.3, amended as the re-planned table above sa
 
 | Decision | Tasks |
 | --- | --- |
-| D490 | Slices table; B0.1–B0.5 in 0.13.0; S1 in 0.14.0; T1.1's pointer (the other plan) |
+| D490 | Slices table; B0.1–B0.5 in 0.13.0; S1's proxy chain in 0.15.0 (0.14.0 ships its inert and data-only pieces, owner, 2026-10-30); T1.1's pointer (the other plan) |
 | D491 | B0.1's exit column; B3.1; B4.1 |
 | D492 | T1.1, T1.2 unchanged; B1.10 (D462 ends per repository) |
 | D493 | The re-planned S2 table; BW-T2.1, BW-T2.3 (amended), BW-T2.8; B1.4 replaces T2.9; B1.13 replaces T2.11 |
@@ -663,47 +684,48 @@ B1.9→B1.14; B1.12→B1.15; B1.14→B1.16. B0.5's result gates B1.5's start.
 | 0.13.0 | L2 | B0.6 |
 | 0.14.0 | L0 | BW-T2.1, B1.3 (and B1.0 if Check 190 failed) |
 | 0.14.0 | L1 | B1.1 (after O5), B1.2, B1.4, B1.8, BW-T2.3, BW-T2.8 |
-| 0.14.0 | L2 | B1.5, B1.9 |
-| 0.14.0 | L3 | B1.6 |
-| 0.14.0 | L4 | B1.7 |
-| 0.14.0 | L5 | B1.10, B1.11 |
-| 0.14.0 | L6 | B1.13 part one |
-| after 0.14.0 ships | L7 | B1.12 (OWNER-RUN, on the released 0.14.0) |
-| next release | L8 | B1.13 part two, B1.15 |
-| next release | L9 | B1.14 (OWNER-RUN, on that release) |
-| next release | L10 | B1.16 |
+| 0.14.0 | L2 | B1.13 part one |
+| 0.15.0 | L3 | B1.5, B1.9 |
+| 0.15.0 | L4 | B1.6 |
+| 0.15.0 | L5 | B1.7 |
+| 0.15.0 | L6 | B1.10, B1.11 |
+| after 0.15.0 ships | L7 | B1.12 (OWNER-RUN, on the released 0.15.0) |
+| next release (0.16.0) | L8 | B1.13 part two, B1.15 |
+| next release (0.16.0) | L9 | B1.14 (OWNER-RUN, on that release) |
+| next release (0.16.0) | L10 | B1.16 |
 
 B1.1 and B1.2 sit at L1 rather than L0 only because BW-T2.1 rewrites policy fixtures in
 `internal/credsvc` and `internal/cli` tests.
 
 **Critical path:** S0: B0.4 → B0.5 (the owner's run gates S1's design). S1: B1.3 → B1.4 → B1.5 →
 B1.6 → B1.7 → B1.10 → B1.13 part one → B1.12 (owner) → B1.13 part two → B1.14 (owner) → B1.16,
-with BW-T2.1 → B1.4 joining it. Seven levels ship in 0.14.0; Check 191 runs on the release, and the
-flip and Check 192 take the next release (O7).
+with BW-T2.1 → B1.4 joining it. Under the 2026-10-30 move three levels (L0–L2, the inert and
+data-only pieces and the operator draft) ship in 0.14.0 and the proxy chain takes L3–L6 of 0.15.0;
+Check 191 runs on the 0.15.0 release, and the flip and Check 192 take the release after it (O7).
 
 **Shared files** (every file written by more than one task, with the levels; no level holds two
 writers):
 
 | File | Writers (level) |
 | --- | --- |
-| `docs/secrets-brokering/README.md` | B0.4 (0.13.0 L0), B0.2 (0.13.0 L1), B1.11 (0.14.0 L5) |
-| `docs/secrets-brokering/secret-readers.md` | B0.1 (0.13.0 L0), B1.10 (L5), B1.13 part two (L8) |
-| `internal/cli/docs_secrets_brokering_test.go` | B0.1 (0.13.0 L0), B1.10 (L5), B1.13 part one (L6) |
-| `internal/cli/doctor.go` | B0.3 (0.13.0 L0), B1.9 (0.14.0 L2) |
-| `docs/gcp-live-checklist.md` | B0.4 (0.13.0 L0; after BW-T1.3 if scheduled), B0.6 (0.13.0 L2), B1.11 (L5), B1.15 (L8), B1.16 (L10) |
+| `docs/secrets-brokering/README.md` | B0.4 (0.13.0 L0), B0.2 (0.13.0 L1), B1.11 (0.15.0 L6) |
+| `docs/secrets-brokering/secret-readers.md` | B0.1 (0.13.0 L0), B1.10 (0.15.0 L6), B1.13 part two (L8) |
+| `internal/cli/docs_secrets_brokering_test.go` | B0.1 (0.13.0 L0), B1.13 part one (0.14.0 L2), B1.10 (0.15.0 L6) |
+| `internal/cli/doctor.go` | B0.3 (0.13.0 L0), B1.9 (0.15.0 L3) |
+| `docs/gcp-live-checklist.md` | B0.4 (0.13.0 L0; after BW-T1.3 if scheduled), B0.6 (0.13.0 L2), B1.11 (0.15.0 L6), B1.15 (L8), B1.16 (L10) |
 | `internal/config/providers.go` | B1.8 (L1), B1.13 part two (L8) |
 | `internal/infra/spec.go`, `readiness.go`, `tfvars.go`; the repo and workflow modules' variables | B1.8 (L1) only |
 | `deploy/terraform/gcp/modules/workflow/sa.tf`, `deploy/terraform/terraform_test.go`, `roots/repo/tests/repo.tftest.hcl`, the golden plans | B1.0 (conditional, before B1.5: golden plans only), B1.8 (L1), B1.13 part two (L8) |
-| `internal/cli/credentials_serve.go` | B1.0 (conditional), B1.5 (L2) |
+| `internal/cli/credentials_serve.go` | B1.0 (conditional), B1.5 (0.15.0 L3) |
 | `internal/credsvc/auth.go`, `auth_test.go` | BW-T2.1's fixture sweep (L0, `auth_test.go` at most), B1.1 (L1) |
-| `internal/credsvc/wire.go`, `server.go`, `audit.go` | B1.5 (L2) only; B1.6's contract test reads `wire.go` |
-| `internal/runner/runner.go` | BW-T2.8 (L1), B1.7 (L4) |
-| `internal/cli/launch_budget.go`, `launch_budget_test.go` | BW-T2.1's fixture sweep (L0, the test at most), B1.1 (L1), B1.7 (L4) |
-| `internal/cli/recipes_skew.go` | B1.7 (L4) only |
+| `internal/credsvc/wire.go`, `server.go`, `audit.go` | B1.5 (0.15.0 L3) only; B1.6's contract test reads `wire.go` |
+| `internal/runner/runner.go` | BW-T2.8 (L1), B1.7 (0.15.0 L5) |
+| `internal/cli/launch_budget.go`, `launch_budget_test.go` | BW-T2.1's fixture sweep (L0, the test at most), B1.1 (L1), B1.7 (0.15.0 L5) |
+| `internal/cli/recipes_skew.go` | B1.7 (0.15.0 L5) only |
 | `internal/config/project_secrets.go` | BW-T2.1 amended (L0) only |
 | `.claude/rules/credentials-service.md` | B1.8 (L1), B1.13 part two (L8) |
-| `internal/localcfg/localcfg.go`, `internal/localcfg/shared.go` | BW-T2.3 (L1), B1.9 (L2) |
-| `internal/cli/sharedcfg.go` | BW-T2.3 (L1, if it touches `sharedForbidden`), B1.9 (L2) |
+| `internal/localcfg/localcfg.go`, `internal/localcfg/shared.go` | BW-T2.3 (L1), B1.9 (0.15.0 L3) |
+| `internal/cli/sharedcfg.go` | BW-T2.3 (L1, if it touches `sharedForbidden`), B1.9 (0.15.0 L3) |
 | `internal/gcpfake/runservices.go` | B0.3 (0.13.0 L0) only |
 
 ## Check numbers
