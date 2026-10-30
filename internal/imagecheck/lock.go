@@ -107,11 +107,26 @@ func ParseLock(data []byte) (*Lock, error) {
 // LockWriter is the part of a bucket the lock's write needs. *blobx.Bucket
 // satisfies it, and the tests fake it: the lock's write is decided here and
 // nowhere else, so it can be tested without a bucket.
+//
+// The read is ReadStrict, not Read, because absence is what decides the
+// write: an absent object is created, a present one is replaced against its
+// generation. Read folds an HTTP 403 into ErrNotExist, so a read this
+// machine is not allowed to make would look like an empty lock and the
+// write after it would be a create that loses with ErrExists — a permissions
+// fault reported as another writer, and a lock that is never written.
+// ReadStrict keeps the two answers apart, and it is the right read for this
+// caller: the operator's machine holds unconditional objectAdmin, so a 403
+// there means no access.
 type LockWriter interface {
-	Read(ctx context.Context, key string) ([]byte, int64, error)
+	ReadStrict(ctx context.Context, key string) ([]byte, int64, error)
 	Create(ctx context.Context, key string, data []byte, contentType string) (int64, error)
 	ReplaceIf(ctx context.Context, key string, data []byte, gen int64, prev []byte) (int64, error)
 }
+
+// The bucket is the writer the operator's machine has, and nothing else calls
+// Update yet, so this is where the two are held together: a change to either
+// signature stops the build here rather than at C8b's first refresh.
+var _ LockWriter = (*blobx.Bucket)(nil)
 
 // Update reads the lock, applies plan to it and writes what plan returns by
 // §3.4's create-or-replace rule. A plan that returns a nil lock writes
@@ -125,14 +140,18 @@ type LockWriter interface {
 // returned. Both losing answers mean another writer was there first, and
 // both are safe for the same reason: a plan only ever adds or updates its
 // own key's entry, so the other writer's entries are not in its way.
-// ErrExists means the object appeared while this writer was planning, so
-// nothing was lost; ErrConflict means the object it read has changed since.
-// Either way the plan runs once more against what the other writer left,
-// and a second loss is an error naming the object and the generation that
+//
+// The two answers are told apart, as §3.4 tells them apart. ErrExists means
+// the object appeared while this writer was planning, so nothing was lost:
+// the next attempt reads what the other writer made and replaces against
+// its generation, without spending the one re-plan. ErrConflict means the
+// object it read has changed since, so it re-reads, re-plans once, and a
+// second conflict is an error naming the object and the generation that
 // collided, for the operator to rerun.
 func Update(ctx context.Context, w LockWriter, plan func(*Lock) (*Lock, error)) error {
-	for attempt := 0; ; attempt++ {
-		data, gen, err := w.Read(ctx, LockKey)
+	conflicts, lastErr := 0, error(nil)
+	for attempt := 0; attempt < lockWriteAttempts; attempt++ {
+		data, gen, err := w.ReadStrict(ctx, LockKey)
 		absent := errors.Is(err, blobx.ErrNotExist)
 		if err != nil && !absent {
 			return fmt.Errorf("reading %s: %w", LockKey, err)
@@ -147,9 +166,9 @@ func Update(ctx context.Context, w LockWriter, plan func(*Lock) (*Lock, error)) 
 		if err != nil || next == nil {
 			return err
 		}
-		out, err := json.Marshal(next)
+		out, err := marshalLock(next)
 		if err != nil {
-			return fmt.Errorf("the image lock: %w", err)
+			return err
 		}
 		if absent {
 			_, err = w.Create(ctx, LockKey, out, lockContentType)
@@ -159,14 +178,50 @@ func Update(ctx context.Context, w LockWriter, plan func(*Lock) (*Lock, error)) 
 		switch {
 		case err == nil:
 			return nil
-		case errors.Is(err, blobx.ErrExists), errors.Is(err, blobx.ErrConflict):
-			// Another writer was there. §3.4 re-reads and re-plans once; the
-			// second loss is the error below, which the operator acts on.
-			if attempt > 0 {
+		case errors.Is(err, blobx.ErrExists):
+			lastErr = err
+		case errors.Is(err, blobx.ErrConflict):
+			if conflicts++; conflicts > 1 {
 				return fmt.Errorf("writing %s: a second writer changed it while this one held generation %d: %w", LockKey, gen, err)
 			}
+			lastErr = err
 		default:
 			return fmt.Errorf("writing %s: %w", LockKey, err)
 		}
 	}
+	return fmt.Errorf("writing %s: another writer kept winning for %d attempts: %w", LockKey, lockWriteAttempts, lastErr)
+}
+
+// lockWriteAttempts bounds how many times Update re-reads and re-plans.
+// §3.4 grants one re-plan after a conflict, and a lost create does not spend
+// it — a create that loses found another writer's object, so nothing was
+// lost — so the bound is that budget plus the room a losing create needs. It
+// exists only so that a bucket answering ErrExists for an object that is not
+// there cannot spin forever.
+const lockWriteAttempts = 3
+
+// marshalLock is what Update writes: the plan's lock, normalised so that the
+// object stored is one this package can read back. A plan may hand back a
+// lock it built itself, and a fresh one holds a zero version and a nil
+// images map — an object ParseLock and the schema both refuse, so writing it
+// would leave the one source of every repository's image digest unreadable
+// for the whole installation while Update reported success. The re-parse is
+// the check on everything else a plan can do, and the object it rejects is
+// never written.
+func marshalLock(l *Lock) ([]byte, error) {
+	next := *l
+	if next.Version == 0 {
+		next.Version = LockVersion
+	}
+	if next.Images == nil {
+		next.Images = map[string]LockedImage{}
+	}
+	out, err := json.Marshal(&next)
+	if err != nil {
+		return nil, fmt.Errorf("the image lock: %w", err)
+	}
+	if _, err := ParseLock(out); err != nil {
+		return nil, fmt.Errorf("the lock this write would store: %w", err)
+	}
+	return out, nil
 }

@@ -96,15 +96,52 @@ func TestKeyIgnoresOrderCommentsFormattingRepoNameAndCommands(t *testing.T) {
 		Tools:      []string{"node@22.11.0"},
 	})
 	want := "key v1\n" +
-		"base:web@" + baseDigest + "\n" +
-		"pkg:left-pad@1.3.0\n" +
-		"pkg:react@18.3.1\n" +
-		"tool:node@22.11.0\n"
+		"base:\"web@" + baseDigest + "\"\n" +
+		"pkg:\"left-pad@1.3.0\"\n" +
+		"pkg:\"react@18.3.1\"\n" +
+		"tool:\"node@22.11.0\"\n"
 	if got != want {
 		t.Errorf("canonical form =\n%q\nwant\n%q", got, want)
 	}
 	if Key(resolvedWeb()) != hashOf([]byte(want)) {
 		t.Error("Key is not the SHA-256 of the canonical form")
+	}
+}
+
+// TestKeyCannotBeForgedByANewline: a name or a version is text a key file
+// supplied, and a fact holding a newline would otherwise end its line and
+// have the rest of it read as further facts. §2.4 quotes every fact for
+// exactly that: the set below names one package, called
+// "left-pad@1.3.0\npkg:react@18.3.1", and it is not the two-package set and
+// must not take its key — the two-package set's image would otherwise be
+// served to a repository whose dependency set it does not hold.
+func TestKeyCannotBeForgedByANewline(t *testing.T) {
+	forged := Resolved{
+		BaseRef:    "web",
+		BaseDigest: baseDigest,
+		Packages:   []string{"left-pad@1.3.0\npkg:react@18.3.1"},
+		Tools:      []string{"node@22.11.0"},
+	}
+	if got, want := Key(forged), Key(resolvedWeb()); got == want {
+		t.Errorf("one forged package took the two-package set's key %s", got)
+	}
+	// One line per fact, and no more: the version line plus the base, the
+	// forged package and the tool. The newline inside the name is escaped
+	// into the line rather than ending it, which is why the two sets differ
+	// by one line and not by two facts.
+	for _, c := range []struct {
+		name string
+		r    Resolved
+		want int
+	}{
+		{"the forged set", forged, 4},
+		{"the two-package set", resolvedWeb(), 5},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := canonical(c.r); strings.Count(got, "\n") != c.want {
+				t.Errorf("canonical form is\n%q\nwant %d lines", got, c.want)
+			}
+		})
 	}
 }
 

@@ -26,7 +26,7 @@
     "image": {
       "type": "object",
       "additionalProperties": false,
-      "$comment": "No property is required here, and that is deliberate: §3.2's strictness is about fields and the version, not presence, and the decoder refuses exactly what this schema does (TestLockSchemaAgreesWithTheDecoder in internal/imagecheck holds the two together). The writer always writes every property — the Go type has no pointer fields — so the requirement would only be met by documents the writer never produces.",
+      "$comment": "No property is required here, and that is deliberate: §3.2's strictness is about fields and the version, not presence. TestLockSchemaAgreesWithTheDecoder (internal/imagecheck) holds this schema and the decoder to the same documents; the two differences it pins are that a version written as 1.0 or 1e0 is the number 1 to a schema that reads numbers by value and a type error to encoding/json, and that a null where an array or an object is expected is an absent field to encoding/json and refused here. The writer always writes every property — the Go type has no pointer fields — so a required list would only be met by documents the writer never produces.",
       "properties": {
         "key": {
           "type": "string",

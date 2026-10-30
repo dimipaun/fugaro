@@ -28,37 +28,64 @@ func lockEntry() string {
 		`"last_used_at":"2026-10-29T09:40:11Z"}`
 }
 
-// lockFixtures are the documents the decoder and the published schema are
-// both held to, each with whether it is a lock this build reads.
-func lockFixtures() []struct {
-	name string
-	doc  string
-	ok   bool
-} {
-	return []struct {
-		name string
-		doc  string
-		ok   bool
-	}{
-		{"an installation with no images", `{"version":1,"images":{}}`, true},
-		{"one image", `{"version":1,"images":{` + lockEntry() + `}}`, true},
+// nullIsAbsent is why the four null fixtures below read differently: a JSON
+// null into a slice or a map is a no-op for encoding/json, so the decoder
+// reads the field as absent — which §3.2 does not refuse, the same reading
+// that lets an image carry only a key — while the schema's array and object
+// types refuse null.
+const nullIsAbsent = "a null is an absent field to encoding/json and a type error to the schema"
+
+// lockFixture is one document the decoder and the published schema are both
+// held to. ok is ParseLock's answer and schema the schema's; why is set on
+// the documents the two read differently and says which side is stricter,
+// so each difference is pinned here rather than discovered later.
+type lockFixture struct {
+	name   string
+	doc    string
+	ok     bool
+	schema bool
+	why    string
+}
+
+// lockFixtures are the documents both are held to. A fixture the two agree
+// on carries the same answer twice.
+func lockFixtures() []lockFixture {
+	return []lockFixture{
+		{name: "an installation with no images", doc: `{"version":1,"images":{}}`, ok: true, schema: true},
+		{name: "one image", doc: `{"version":1,"images":{` + lockEntry() + `}}`, ok: true, schema: true},
 		// §3.2's strictness is about fields, not presence: the decoder
 		// refuses a field it does not know and a version it does not read,
 		// and says nothing about a field that is missing. An entry the writer
 		// would not have written is still read, and the schema admits it too,
 		// so the two cannot drift apart on the question.
-		{"an image with only a key", `{"version":1,"images":{"` + lockKeyHex + `":{"key":"` + lockKeyHex + `"}}}`, true},
-		{"an unknown field beside the version", `{"version":1,"images":{},"cap":20}`, false},
-		{"an unknown field in an image", `{"version":1,"images":{` + lockEntry() + `,"cap":20}}`, false},
-		{"a version this build does not read", `{"version":2,"images":{}}`, false},
-		{"no version at all", `{"images":{}}`, false},
-		{"no images object", `{"version":1}`, false},
-		{"images that is a list", `{"version":1,"images":[]}`, false},
-		{"images that is null", `{"version":1,"images":null}`, false},
-		{"a digest that is a number", `{"version":1,"images":{"` + lockKeyHex + `":{"digest":1234}}}`, false},
-		{"data after the object", `{"version":1,"images":{}}{"version":1,"images":{}}`, false},
-		{"a document that is a list", `[{"version":1,"images":{}}]`, false},
-		{"a document that is not JSON", `{"version":1,`, false},
+		{name: "an image with only a key", doc: `{"version":1,"images":{"` + lockKeyHex + `":{"key":"` + lockKeyHex + `"}}}`, ok: true, schema: true},
+		{name: "an unknown field beside the version", doc: `{"version":1,"images":{},"cap":20}`, ok: false, schema: false},
+		{name: "an unknown field in an image", doc: `{"version":1,"images":{` + lockEntry() + `,"cap":20}}`, ok: false, schema: false},
+		{name: "a version this build does not read", doc: `{"version":2,"images":{}}`, ok: false, schema: false},
+		{name: "no version at all", doc: `{"images":{}}`, ok: false, schema: false},
+		{name: "no images object", doc: `{"version":1}`, ok: false, schema: false},
+		{name: "images that is a list", doc: `{"version":1,"images":[]}`, ok: false, schema: false},
+		{name: "images that is null", doc: `{"version":1,"images":null}`, ok: false, schema: false},
+		{name: "a digest that is a number", doc: `{"version":1,"images":{"` + lockKeyHex + `":{"digest":1234}}}`, ok: false, schema: false},
+		{name: "data after the object", doc: `{"version":1,"images":{}}{"version":1,"images":{}}`, ok: false, schema: false},
+		{name: "a document that is a list", doc: `[{"version":1,"images":{}}]`, ok: false, schema: false},
+		{name: "a document that is not JSON", doc: `{"version":1,`, ok: false, schema: false},
+		// The version, written so that it is the number 1 and not the token
+		// `1`. JSON Schema reads numbers by value, so it has no way to say
+		// "exactly this token" and admits both; encoding/json refuses a
+		// fraction and an exponent for an int field. The decoder is the
+		// stricter of the two here, and every version a writer could mean is
+		// refused by both.
+		{name: "a version written as a fraction", doc: `{"version":1.0,"images":{}}`, ok: false, schema: true,
+			why: "1.0 is the number 1 to a schema that reads numbers by value, and a type error to encoding/json"},
+		{name: "a version written as an exponent", doc: `{"version":1e0,"images":{}}`, ok: false, schema: true,
+			why: "1e0 is the number 1 to a schema that reads numbers by value, and a type error to encoding/json"},
+		// The same reading of a null, on each field that holds a list or an
+		// object. These are the schema's stricter half.
+		{name: "a null packages list", doc: `{"version":1,"images":{"` + lockKeyHex + `":{"packages":null}}}`, ok: true, schema: false, why: nullIsAbsent},
+		{name: "a null tools list", doc: `{"version":1,"images":{"` + lockKeyHex + `":{"tools":null}}}`, ok: true, schema: false, why: nullIsAbsent},
+		{name: "a null repositories list", doc: `{"version":1,"images":{"` + lockKeyHex + `":{"repositories":null}}}`, ok: true, schema: false, why: nullIsAbsent},
+		{name: "a null jobs object", doc: `{"version":1,"images":{"` + lockKeyHex + `":{"jobs":null}}}`, ok: true, schema: false, why: nullIsAbsent},
 	}
 }
 
@@ -89,9 +116,10 @@ func TestLockDecodesStrictly(t *testing.T) {
 
 // TestLockSchemaAgreesWithTheDecoder: the published schema
 // (schemas/image-lock.schema.json) and the decoder accept and refuse the
-// same documents. Neither can be widened alone — a document the decoder
-// takes and the schema rejects, or the other way round, is one of the two
-// lying about what the lock is.
+// same documents, and the two differences that exist are the fixtures'
+// stated ones rather than a hole. Neither can be widened alone — a document
+// the decoder takes and the schema rejects, or the other way round, is one
+// of the two lying about what the lock is.
 func TestLockSchemaAgreesWithTheDecoder(t *testing.T) {
 	data, err := os.ReadFile("../../schemas/image-lock.schema.json")
 	if err != nil {
@@ -123,10 +151,11 @@ func TestLockSchemaAgreesWithTheDecoder(t *testing.T) {
 	}
 	for _, tc := range lockFixtures() {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := ParseLock([]byte(tc.doc))
-			decoderOK := err == nil
-			if schemaOK := validates(t, tc.doc); decoderOK != schemaOK {
-				t.Errorf("the decoder says ok=%v and the schema says ok=%v for:\n%s", decoderOK, schemaOK, tc.doc)
+			if got := validates(t, tc.doc); got != tc.schema {
+				t.Errorf("the schema says ok=%v, want %v for:\n%s", got, tc.schema, tc.doc)
+			}
+			if tc.ok != tc.schema && tc.why == "" {
+				t.Errorf("the decoder says ok=%v and the schema says ok=%v for:\n%s\nand the fixture gives no reason", tc.ok, tc.schema, tc.doc)
 			}
 		})
 	}
@@ -145,8 +174,12 @@ type fakeLockBucket struct {
 	// for, and raceData is the object it leaves.
 	race     int
 	raceData []byte
-	creates  int
-	replaces int
+	// readErr and createErr, when set, are what the read and the conditional
+	// write answer instead of doing anything.
+	readErr   error
+	createErr error
+	creates   int
+	replaces  int
 }
 
 // lose races a conditional write: another writer's object is put there
@@ -158,8 +191,11 @@ func (b *fakeLockBucket) lose() {
 	}
 }
 
-func (b *fakeLockBucket) Read(ctx context.Context, key string) ([]byte, int64, error) {
+func (b *fakeLockBucket) ReadStrict(ctx context.Context, key string) ([]byte, int64, error) {
 	b.key = key
+	if b.readErr != nil {
+		return nil, 0, b.readErr
+	}
 	if !b.exists {
 		return nil, 0, blobx.ErrNotExist
 	}
@@ -169,6 +205,9 @@ func (b *fakeLockBucket) Read(ctx context.Context, key string) ([]byte, int64, e
 func (b *fakeLockBucket) Create(ctx context.Context, key string, data []byte, contentType string) (int64, error) {
 	b.creates++
 	b.ct = contentType
+	if b.createErr != nil {
+		return 0, b.createErr
+	}
 	b.lose()
 	if b.exists {
 		return 0, blobx.ErrExists
@@ -274,10 +313,10 @@ func TestLockUpdateAdoptsAnotherWritersFirstWrite(t *testing.T) {
 	}
 }
 
-// TestLockUpdateFailsOnASecondConflict: a writer that loses twice is not
-// left guessing. It re-reads and re-plans once, and a second loss exits with
-// an error naming the object and the generation it held, for the operator to
-// rerun.
+// TestLockUpdateFailsOnASecondConflict: a writer that loses its create to
+// another writer and then conflicts twice is not left guessing. It re-reads
+// and re-plans once, and the second conflict exits with an error naming the
+// object and the generation it held, for the operator to rerun.
 func TestLockUpdateFailsOnASecondConflict(t *testing.T) {
 	ctx := context.Background()
 	theirs := lockOf(lockedImage(hexKey("7"), resolvedWeb(), supersetBuilt))
@@ -285,7 +324,7 @@ func TestLockUpdateFailsOnASecondConflict(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b := &fakeLockBucket{race: 2, raceData: data}
+	b := &fakeLockBucket{race: 3, raceData: data}
 	err = Update(ctx, b, addEntry(hexKey("9")))
 	if err == nil {
 		t.Fatal("a writer that lost twice reported success")
@@ -298,7 +337,94 @@ func TestLockUpdateFailsOnASecondConflict(t *testing.T) {
 	if !errors.Is(err, blobx.ErrConflict) {
 		t.Errorf("the error %q does not wrap the conflict the bucket answered", err)
 	}
-	if b.creates+b.replaces != 2 {
-		t.Errorf("the write was attempted %d times, want 2 (a re-plan once, then give up)", b.creates+b.replaces)
+	// Three writes: the create that lost to the other writer's object — which
+	// §3.4 does not charge against the budget, since nothing was lost — then
+	// the re-plan, then the conflict that gives up.
+	if b.creates != 1 || b.replaces != 2 {
+		t.Errorf("creates=%d replaces=%d, want one lost create and two conflicts", b.creates, b.replaces)
+	}
+}
+
+// TestLockUpdateNormalisesWhatItWrites: a plan may hand back a lock it built
+// itself, and a fresh one holds a zero version and a nil images map — an
+// object ParseLock and the schema both refuse. Those two are normalised
+// rather than stored, and anything else this package could not read back is
+// refused before it is written, so a write never leaves the one source of
+// every repository's image digest unreadable while reporting success.
+func TestLockUpdateNormalisesWhatItWrites(t *testing.T) {
+	ctx := context.Background()
+	b := &fakeLockBucket{}
+	fresh := func(*Lock) (*Lock, error) {
+		return &Lock{Images: map[string]LockedImage{hexKey("9"): lockedImage(hexKey("9"), resolvedWeb(), supersetBuilt)}}, nil
+	}
+	if err := Update(ctx, b, fresh); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ParseLock(b.data)
+	if err != nil {
+		t.Fatalf("the object written is not one ParseLock reads: %v", err)
+	}
+	if got.Version != LockVersion || len(got.Images) != 1 {
+		t.Errorf("the object written: %+v", got)
+	}
+
+	empty := &fakeLockBucket{}
+	if err := Update(ctx, empty, func(*Lock) (*Lock, error) { return &Lock{}, nil }); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = ParseLock(empty.data); err != nil {
+		t.Fatalf("the object written is not one ParseLock reads: %v", err)
+	}
+	if got.Images == nil {
+		t.Error("the object written holds a null images map")
+	}
+
+	refused := &fakeLockBucket{}
+	err = Update(ctx, refused, func(l *Lock) (*Lock, error) { l.Version = 2; return l, nil })
+	if err == nil {
+		t.Fatal("a plan writing a lock version this build does not read reported success")
+	}
+	if !strings.Contains(err.Error(), "version 2") {
+		t.Errorf("the error %q does not name the version", err)
+	}
+	if refused.creates != 0 || refused.replaces != 0 {
+		t.Errorf("the refused lock was written: creates=%d replaces=%d", refused.creates, refused.replaces)
+	}
+}
+
+// TestLockUpdateReportsAnAccessErrorAsItself: the read is strict, so a
+// refusal is never mistaken for an empty lock. A read this machine may not
+// make comes back as the access error it is and no create follows it —
+// through the tolerant read a 403 would look like an absent object, and the
+// create after it would lose with ErrExists, which is a permissions fault
+// reported as another writer and a lock that is never written.
+func TestLockUpdateReportsAnAccessErrorAsItself(t *testing.T) {
+	ctx := context.Background()
+	b := &fakeLockBucket{readErr: blobx.ErrForbidden}
+	err := Update(ctx, b, addEntry(hexKey("9")))
+	if !errors.Is(err, blobx.ErrForbidden) {
+		t.Errorf("the error %q is not the read's refusal", err)
+	}
+	if b.creates != 0 || b.replaces != 0 {
+		t.Errorf("a write followed a refused read: creates=%d replaces=%d", b.creates, b.replaces)
+	}
+}
+
+// TestLockUpdateDoesNotSpinOnALostCreate: a lost create does not spend the
+// one re-plan a conflict costs, so a bucket that answered ErrExists for an
+// object that is not there would otherwise loop forever. The write gives up
+// after lockWriteAttempts and says what it was doing.
+func TestLockUpdateDoesNotSpinOnALostCreate(t *testing.T) {
+	ctx := context.Background()
+	b := &fakeLockBucket{createErr: blobx.ErrExists}
+	err := Update(ctx, b, addEntry(hexKey("9")))
+	if err == nil {
+		t.Fatal("a create that kept losing reported success")
+	}
+	if !strings.Contains(err.Error(), LockKey) {
+		t.Errorf("the error %q does not name the object", err)
+	}
+	if b.creates != lockWriteAttempts {
+		t.Errorf("the create was attempted %d times, want %d", b.creates, lockWriteAttempts)
 	}
 }

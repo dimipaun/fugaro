@@ -3,6 +3,7 @@ package imagecheck
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -53,14 +54,23 @@ func Key(r Resolved) string { return hashOf([]byte(canonical(r))) }
 // unable to matter.
 func canonical(r Resolved) string {
 	lines := make([]string, 0, 1+len(r.Packages)+len(r.Tools))
-	lines = append(lines, "base:"+r.BaseRef+"@"+r.BaseDigest)
+	lines = append(lines, "base:"+quoted(r.BaseRef+"@"+r.BaseDigest))
 	for _, p := range r.Packages {
-		lines = append(lines, "pkg:"+p)
+		lines = append(lines, "pkg:"+quoted(p))
 	}
 	for _, t := range r.Tools {
-		lines = append(lines, "tool:"+t)
+		lines = append(lines, "tool:"+quoted(t))
 	}
 	slices.Sort(lines)
 	lines = slices.Compact(lines)
 	return fmt.Sprintf("key v%d\n%s\n", KeyVersion, strings.Join(lines, "\n"))
 }
+
+// quoted writes a fact as a quoted Go string literal, so a name or a version
+// is one line whatever it holds. A fact is text a key file supplied, and an
+// unquoted newline in one would end its line and let the rest of it be read
+// as further facts: a package named "left-pad@1.0.0\npkg:react@18.3.1" would
+// hash as the two-package set and take its key, and so its image. Quoting
+// escapes that newline, and any other control character, a quote or a
+// backslash, so no fact can forge another.
+func quoted(fact string) string { return strconv.Quote(fact) }
