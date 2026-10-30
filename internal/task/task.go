@@ -960,11 +960,17 @@ func (s *Spec) Validate() error {
 	// single source of truth for a named account's shape (internal/config/
 	// claude_accounts.go, Task 1): this package imports them rather than
 	// keeping its own copy, so the two can never silently drift apart the
-	// way an earlier version of this check did.
+	// way an earlier version of this check did. config's own reserved name
+	// comes with them, and its sentence with it: a launcher that accepts an
+	// account name the runner refuses writes a task the run then dies on
+	// after it was paid for, so the two refuse the same names in the same
+	// words (config.ReservedClaudeAccountName).
 	switch {
 	case s.OAuthToken == "":
 	case s.OAuthToken == config.DefaultClaudeAccount:
 		bad(`task spec: oauth_token must not be "default": the empty value already means the repository's default account`)
+	case config.ReservedClaudeAccountName(s.OAuthToken):
+		bad("task spec: oauth_token: %s", config.ReservedClaudeAccountNameMessage)
 	case len(s.OAuthToken) > config.MaxClaudeAccountNameLen:
 		bad("task spec: oauth_token %q must be at most %d characters", s.OAuthToken, config.MaxClaudeAccountNameLen)
 	case !config.ClaudeAccountNameRE.MatchString(s.OAuthToken):

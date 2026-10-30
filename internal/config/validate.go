@@ -50,6 +50,24 @@ func validBranchName(b string) bool {
 // a base branch (the local config's repos.<r>.base_branch).
 func ValidBranchName(b string) bool { return validBranchName(b) }
 
+// ReservedClaudeAccountName reports whether name is the one account name the
+// credentials bundle reserves for a credential of the platform's own
+// (reservedClaudeAccountName, claude_accounts.go): an account spoken by it
+// would leave one name meaning two credentials.
+//
+// It is exported for the surfaces outside this package that carry an account
+// name — a task spec's oauth_token (internal/task) — so each of them asks the
+// same predicate instead of keeping a copy of the name. The surfaces inside
+// this package (claude_accounts' own keys, a profile's claude_accounts entry)
+// call reservedClaudeAccountName directly.
+func ReservedClaudeAccountName(name string) bool { return reservedClaudeAccountName(name) }
+
+// ReservedClaudeAccountNameMessage is the one sentence every surface refuses
+// the reserved name with (reservedAccountNameMessage): an operator reads the
+// same words whichever file they wrote the name in, and the sentence never
+// echoes the name, which is untrusted text printed to a terminal.
+const ReservedClaudeAccountNameMessage = reservedAccountNameMessage
+
 // A workflow secret's variable is mounted into the runner's own
 // environment on the job and into the image build step, so it must not be
 // one that Fugaro sets, or that changes how the runner, git, a shell, the
@@ -149,10 +167,18 @@ func Validate(c *Config) []Problem {
 	// check. Whether the name is one this repository may actually use
 	// (config.AllowedClaudeAccounts) depends on the local config, which this
 	// function never sees; fugaro run checks that at launch.
+	//
+	// The reserved name is the one rule here that is not about its shape: it
+	// matches ClaudeAccountNameRE and is well inside the length cap, and what
+	// refuses it is the platform already holding a credential under it
+	// (reservedClaudeAccountName), the same refusal claude_accounts' own keys
+	// and a profile's claude_accounts entry get.
 	switch {
 	case c.Agent.OAuthToken == "":
 	case c.Agent.OAuthToken == DefaultClaudeAccount:
 		add("agent.oauth_token", `must not be "default": the empty value already means the repository's default account`)
+	case ReservedClaudeAccountName(c.Agent.OAuthToken):
+		add("agent.oauth_token", "%s", ReservedClaudeAccountNameMessage)
 	case len(c.Agent.OAuthToken) > MaxClaudeAccountNameLen:
 		add("agent.oauth_token", "must be at most %d characters", MaxClaudeAccountNameLen)
 	case !ClaudeAccountNameRE.MatchString(c.Agent.OAuthToken):

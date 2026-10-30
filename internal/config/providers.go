@@ -628,8 +628,10 @@ func IsServiceHeldSecretEnv(env, name string) bool {
 // the module's own bitbucket_proxied input.
 //
 // It is EMPTY, and it stays empty until the flip. B1.13 part two fills it with
-// "bitbucket-token" in the release after 0.14.0, once B1.12 has passed and the
-// owner has given their go on Check 191 (D500, G1); the module's mirror, the
+// "bitbucket-token" in 0.16.0: the proxy chain it flips ships in 0.15.0, B1.12
+// runs Check 191 against the released 0.15.0, and the owner's go on that check
+// is what the next release's flip waits for (D500, G1; O7 and the S1 row of
+// docs/secrets-brokering/implementation-plan.md). The module's mirror, the
 // guard test and the tftest runs move in that one commit. Until then no job
 // loses an accessor or a mount for it, whatever the node admits, and a proxied
 // repository's run reads its token exactly as it always has.
