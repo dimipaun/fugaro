@@ -527,6 +527,53 @@ func TestRunnerHookDirIsNotDerivableFromTheStageEnv(t *testing.T) {
 	}
 }
 
+// TestRunnerOwnCommitsRunNoAgentPlantedHook: the leftover commit finalize
+// makes runs none of the hooks the agent left in the checkout — in
+// $GIT_DIR/hooks, the directory the agent's own stamp chains to, or in a
+// core.hooksPath it wrote into .git/config. gitops' own test proves the
+// no-chain directory chains nowhere; this one proves the runner's commits are
+// the ones made under it, which is where the agent's code and the runner's
+// environment would otherwise meet (A3, follow-up 2a).
+//
+// Mutation (point Repo.CommitHooks at the agent's chained directory): the
+// planted prepare-commit-msg runs inside the runner's own commit.
+func TestRunnerOwnCommitsRunNoAgentPlantedHook(t *testing.T) {
+	h := newHarness(t, "", nil)
+	marker := filepath.Join(t.TempDir(), "ran")
+	script := []byte("#!/bin/sh\necho ran >> " + marker + "\n")
+	dirty := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		res, err := implement("feature")(t, ctx, req)
+		if err != nil {
+			return res, err
+		}
+		configured := filepath.Join(t.TempDir(), "configured")
+		for _, dir := range []string{filepath.Join(req.Dir, ".git", "hooks"), configured} {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range []string{"prepare-commit-msg", "pre-commit", "post-commit"} {
+				if err := os.WriteFile(filepath.Join(dir, name), script, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		testutil.Git(t, req.Dir, "config", "core.hooksPath", configured)
+		if err := os.WriteFile(filepath.Join(req.Dir, "left.txt"), []byte("x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return res, nil
+	}
+	if _, err := h.run(t, dirty, review("ship", 0)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("a runner-owned commit ran a hook the agent planted in the checkout: %v", err)
+	}
+	if got := trailersOf(testutil.Git(t, h.deps.WorkDir, "log", "-1", "--format=%B"))["fugaro-run"]; len(got) != 1 {
+		t.Errorf("fugaro-run = %v, want one: the leftover commit was not the runner's stamped commit", got)
+	}
+}
+
 // TestRunnerOwnCommitsCarryTheRigorOfTheirMoment: the Fugaro-Rigor of a
 // commit is the mode the run had reached when the commit was made, for the
 // runner's own commits as for the agent's (D601: the record's Rigor.Mode is
