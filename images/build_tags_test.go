@@ -128,13 +128,10 @@ func TestBuildTagScanCatchesPlants(t *testing.T) {
 	}
 
 	// The positive control: the tree's own bodies are accepted, so a scan
-	// that refuses everything cannot pass the plants below.
+	// that refuses everything cannot pass the plants below. It reads every
+	// images/*/Dockerfile of the tree, so an image added later is judged too.
 	t.Run("the real bodies are accepted", func(t *testing.T) {
-		bodies := map[string]string{}
-		for _, name := range publishedImages {
-			bodies[name] = readDockerfile(t, name)
-		}
-		if gaps := scan(t, bodies); len(gaps) > 0 {
+		if gaps := imageBuildTagGaps(t, ".."); len(gaps) > 0 {
 			t.Errorf("the tree's own Dockerfiles report gaps: %v", gaps)
 		}
 	})
@@ -248,17 +245,7 @@ func TestRunImagesCarryNoKeyScanCatchesPlants(t *testing.T) {
 	}
 
 	t.Run("the real bodies are accepted", func(t *testing.T) {
-		root := t.TempDir()
-		for _, name := range publishedImages {
-			dir := filepath.Join(root, "images", name)
-			if err := os.MkdirAll(dir, 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte(readDockerfile(t, name)), 0o644); err != nil {
-				t.Fatal(err)
-			}
-		}
-		if gaps := imageKeyGaps(t, root); len(gaps) > 0 {
+		if gaps := imageKeyGaps(t, ".."); len(gaps) > 0 {
 			t.Errorf("the tree's own Dockerfiles report gaps: %v", gaps)
 		}
 	})
