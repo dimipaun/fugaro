@@ -631,7 +631,11 @@ func TestProjectLayerNeverEchoesCredentialsOrLongText(t *testing.T) {
 	}
 }
 
+// TestProjectLayerCorpus walks the valid and invalid project-layer corpus.
+// It runs with sharedShipped on because valid/ holds a checkout: shared
+// profile, a shape only the release that ships shared images accepts.
 func TestProjectLayerCorpus(t *testing.T) {
+	sharedShipped(t)
 	a := LayerAnchor{Project: "aurora", GCPProject: "proj-1234"}
 	for _, kind := range []string{"valid", "invalid"} {
 		files, err := filepath.Glob(filepath.Join("..", "..", "testdata", "project-layer", kind, "*.yaml"))

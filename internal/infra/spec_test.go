@@ -679,13 +679,19 @@ func TestSpecCloneSetsRemoteEnv(t *testing.T) {
 // shared dependency-layer image and clones the repository's own source at
 // launch. It declares the dependency-layer keys — the ones checkout: clone
 // refuses and this kind exists to accept.
+//
+// It is written as baked, which accepts the same keys: validation refuses
+// checkout: shared until 0.15.0 builds a shared image (config/image.go's
+// sharedCheckoutShipped), and sharedInputs moves the parsed workflow onto the
+// kind afterwards. What these tests pin is the job a shared workflow's spec
+// gets, not how its fugaro.yaml was validated.
 const sharedYAML = `version: 1
 project: aurora
 git: { provider: github, base_branch: main }
 agent: { auth: vertex }
 workflows:
   web:
-    checkout: shared
+    checkout: baked
     image: { apt: [libvips-dev], tools: { node: "24.19.0" }, key_files: [patches] }
     commands: { build: npm run build, test: npm test }
   api:
@@ -698,6 +704,9 @@ func sharedInputs(t *testing.T) Inputs {
 	t.Helper()
 	in := cloneInputs(t)
 	in.Cfg = parseCfg(t, []byte(sharedYAML))
+	web := in.Cfg.Workflows["web"]
+	web.Checkout = config.CheckoutShared
+	in.Cfg.Workflows["web"] = web
 	return in
 }
 
