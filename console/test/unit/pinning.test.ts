@@ -286,8 +286,13 @@ describe('console/package.json', () => {
     // filled -- the file that also removes the identifier the library sends.
     // A second importer is a second place a feed URL, a header or a download
     // can be configured, which is the surface Task 4.4 exists to keep to one.
+    // The four shapes are every way a module reaches a package: `import x from`,
+    // `import { x } from`, a bare `import 'electron-updater'` for its side
+    // effects, and `require`/`import()` at call time.
     const importers = sourceFiles()
-      .filter((file) => /(?:from|require\()\s*['"]electron-updater['"]/.test(codeOnly(file.source)))
+      .filter((file) =>
+        /(?:from|require\(|import\(|import)\s*['"]electron-updater['"]/.test(codeOnly(file.source)),
+      )
       .map((file) => file.path)
       .toSorted()
     expect(
