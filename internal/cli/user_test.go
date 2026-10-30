@@ -462,6 +462,110 @@ func TestUserRmRefusesTheLastOperator(t *testing.T) {
 	}
 }
 
+// userRigMe is who the rig's local config says the caller is — initConfig's
+// own `user: test@example.com` — written as the member text the two lists
+// hold, which is the member roles.go's meMember writes.
+const userRigMe = "user:test@example.com"
+
+// TestUserRmRefusesRemovingYourselfWithTwoOperators: the person running the
+// command cannot take their own member off the operators list, even when the
+// list holds somebody else and removing them would leave it populated. The
+// operators list is who can be told to settle the installation, and settling
+// it is not a thing a person hands off to themselves: another operator has to
+// remove them, or a project Owner from outside the list.
+func TestUserRmRefusesRemovingYourselfWithTwoOperators(t *testing.T) {
+	r := userRigFor(t, nil, []string{userRigMe, "user:person-2@example.com"})
+	out, _, err := userCommand(t, "rm", userRigMe, "--role", "operator")
+	if err == nil {
+		t.Fatalf("the caller removed themselves from the operators:\n%s", out)
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
+	}
+	for _, want := range []string{"remove yourself", "another operator", "project Owner", "nothing was written"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	r.unchanged(t)
+}
+
+// TestUserRmRefusesRemovingYourselfAsLastOperator: both refusals apply to the
+// only operator removing themselves, and the self-removal is the one shown —
+// it is the one with the way out in it (somebody else does it), and the count
+// of operators is a consequence of the member being the caller, not the reason.
+func TestUserRmRefusesRemovingYourselfAsLastOperator(t *testing.T) {
+	r := userRigFor(t, nil, []string{userRigMe})
+	out, _, err := userCommand(t, "rm", userRigMe, "--role", "operator")
+	if err == nil {
+		t.Fatalf("the only operator removed themselves:\n%s", out)
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
+	}
+	if !strings.Contains(err.Error(), "remove yourself") {
+		t.Errorf("the refusal is not the self-removal one: %v", err)
+	}
+	if strings.Contains(err.Error(), "no operator at all") {
+		t.Errorf("the last-operator refusal was the one shown: %v", err)
+	}
+	r.unchanged(t)
+}
+
+// TestUserRmAllowsRemovingAnotherOperator: removing somebody else is what the
+// command is for, and the refusal is the caller's own member alone.
+func TestUserRmAllowsRemovingAnotherOperator(t *testing.T) {
+	r := userRigFor(t, nil, []string{userRigMe, "user:person-2@example.com"})
+	out, _, err := userCommand(t, "rm", "user:person-2@example.com", "--role", "operator")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if _, operators := r.lists(t); strings.Join(operators, ",") != userRigMe {
+		t.Errorf("operators = %v, want the caller alone", operators)
+	}
+	if !strings.Contains(out, "no longer an operator") {
+		t.Errorf("the command does not say what it did:\n%s", out)
+	}
+	r.noCloudWrites(t)
+}
+
+// TestUserRmSelfMatchIsNormalised: the caller is placed by the same
+// normalisation every role check places them with — meMember turns the local
+// config's own `user:` into the `user:<address>` the lists hold — so the two
+// spellings are one person and the refusal turns on the identity.
+func TestUserRmSelfMatchIsNormalised(t *testing.T) {
+	if got := meMember("test@example.com"); got != userRigMe {
+		t.Fatalf("meMember(%q) = %q, want %q", "test@example.com", got, userRigMe)
+	}
+	// The same member text is removable from the launchers: the refusal is
+	// the operators list's, and the identity it turns on is placed on both.
+	r := userRigFor(t, []string{userRigMe, "user:person-2@example.com"}, []string{userRigMe, "user:person-2@example.com"})
+	out, _, err := userCommand(t, "rm", userRigMe, "--role", "launcher")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if launchers, _ := r.lists(t); strings.Join(launchers, ",") != "user:person-2@example.com" {
+		t.Errorf("launchers = %v, want the caller's member gone", launchers)
+	}
+}
+
+// TestUserRmSelfRefusalWritesNothing: the refusal is made before anything is
+// written — the config is byte for byte what it was, both members are still
+// listed, no cloud call changes anything and Terraform is read, never applied.
+func TestUserRmSelfRefusalWritesNothing(t *testing.T) {
+	r := userRigFor(t, nil, []string{userRigMe, "user:person-2@example.com"})
+	out, _, err := userCommand(t, "rm", userRigMe, "--role", "operator")
+	if err == nil {
+		t.Fatalf("the caller removed themselves from the operators:\n%s", out)
+	}
+	r.unchanged(t)
+	if _, operators := r.lists(t); strings.Join(operators, ",") != userRigMe+",user:person-2@example.com" {
+		t.Errorf("operators = %v, want both members", operators)
+	}
+	r.terraformReadsOnly(t)
+	r.noCloudWrites(t)
+}
+
 // TestUserLsListsBoth: the listing is this machine's own config, both lists,
 // with the addresses escaped the way this program prints a value it did not
 // write.

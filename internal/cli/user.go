@@ -366,6 +366,22 @@ func userEdit(cmd *cobra.Command, o cloudOptions, role, member string, add bool)
 	} else {
 		list = slices.DeleteFunc(list, func(m string) bool { return m == who })
 	}
+	// Removing yourself from the operators is refused, and refused before the
+	// last-operator check below: a caller who is the only operator is told they
+	// cannot take themselves off the list rather than that the list would be
+	// left empty, because somebody else removing them is the way out of both
+	// and the count is a consequence of whose member this is. The caller is
+	// placed the way every role check places them (roles.go): meMember writes
+	// the local config's own `user:` as the member the two lists hold, so this
+	// is not a second comparison of addresses, and an identity lc.Me cannot
+	// tell — its error — is the empty member, which is on no list.
+	if !add && r == userOperatorRole {
+		me, _ := lc.Me(ctx)
+		if operatorOf(lc, me) && who == meMember(me) {
+			return userErr("you cannot remove yourself from the operators of %s: %s is the identity this invocation is running as, and the operators list is who can be told to settle the installation — run its update, add a member, read its budget — so another operator has to remove you, or a project Owner from outside the list: nothing was written",
+				safetext.Field(onDisk.Name), safetext.Field(who))
+		}
+	}
 	// The last operator is refused: the operators list is who can be told to
 	// settle an installation — run its update, add a member, read its budget —
 	// and a machine's next fugaro update would apply an empty one, dropping
