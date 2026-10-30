@@ -1,0 +1,8 @@
+version: 1
+name: adversarial
+description: The cheap loop, the senior review, then the harder level-3 review
+use_when: A change whose review has to be hard on itself
+steps:
+  - first_line: { max_rounds: 2 }
+  - review: { bounce: first_line }
+  - adversarial: { max_rounds: 2, bounce: first_line }

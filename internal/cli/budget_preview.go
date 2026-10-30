@@ -715,8 +715,10 @@ var previewStageKinds = [...]string{"implement", "review_first", "fix", "review"
 // one round of each loop — the design's typical run, and the count the
 // history mean is multiplied by. It mirrors the runner's loop: an implement,
 // then a first line of review_first and its fix, then a senior review, its
-// fix, and, with bounce, one more cheap pair. A mode: review recipe runs the
-// senior review alone, and a digest recipe has no implement stage at all:
+// fix, and, with bounce, one more cheap pair; an adversarial step adds level
+// 3's round and its fix, and its own bounce-back to the cheap loop. A mode:
+// review recipe runs the senior review alone, and a digest recipe has no
+// implement stage at all:
 // its first step is the runner's own work, which writes the run reports with
 // no model call (run-digest).
 //
@@ -730,24 +732,36 @@ func previewTypicalCounts(rp *recipe.Recipe, first, rounds int) map[string]int {
 		return map[string]int{"review": 1}
 	}
 	f, n, bounce := 0, 0, false
+	adv, advBounce := 0, false
 	for _, s := range rp.Steps {
 		switch s.Kind {
 		case recipe.StepFirstLine:
 			f = roundCount(first, s.MaxRounds)
 		case recipe.StepReview:
 			n, bounce = roundCount(rounds, s.MaxRounds), s.Bounce
+		case recipe.StepAdversarial:
+			// The level-3 rounds have no agent.* knob yet, so the step's own
+			// max_rounds or the parser's default is what a typical run spends
+			// one of (L1.3/L4.4 add the knob and this read moves to it).
+			adv, advBounce = roundCount(recipe.DefaultAdversarialRounds, s.MaxRounds), s.Bounce
 		}
 	}
 	cheap := 0
 	if bounce && f > 0 && n > 0 {
 		cheap = f // the senior review sent it back to the cheap loop once
 	}
-	// The fix after the first line and the fix after the senior review are one
-	// kind in result.json ("fix"), so they share one mean and one count here.
+	// Level 3 bounces to the same cheap loop, under the same rule.
+	advCheap := 0
+	if advBounce && f > 0 && adv > 0 {
+		advCheap = f
+	}
+	// The fix after the first line and the fix after each review are one kind
+	// in result.json ("fix"), so they share one mean and one count here, and
+	// every review is the "review" kind however deep the level.
 	counts := map[string]int{
-		"review_first": f + cheap,     // the first line, and its bounce-back
-		"review":       n,             // one senior round
-		"fix":          f + n + cheap, // each review's demands answered
+		"review_first": f + cheap + advCheap,           // the first line, and its bounce-backs
+		"review":       n + adv,                        // the senior round and level 3's
+		"fix":          f + n + adv + cheap + advCheap, // each review's demands answered
 	}
 	if !recipe.UsesDigest(rp) {
 		counts["implement"] = 1 // the first_line step's first stage

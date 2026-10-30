@@ -651,11 +651,13 @@ func needsRecipeImage(spec *task.Spec, checkoutRecipe string) bool {
 // embeddedRecipeOf is the recipe spec.Recipe's exact YAML parses to, or nil
 // when there is none to parse: a repository-sourced recipe carries only its
 // name (the runner re-reads the file at the ref), and a bare agent.recipe
-// name is not resolved here either. Both still get the plain recipesSince
-// gate below, unless the task carries a report run's manifest, which is a
-// gate of its own whatever the recipe's source (recipeSinceFor); whether
-// either uses a 0.7.0 construct is for the run itself to find out, the same
-// way an older runner already refuses an unknown key.
+// name is not resolved here either. A repository recipe is judged from the
+// launcher's own read of its file (repoRecipeForGate); a bare agent.recipe
+// name still gets the plain recipesSince gate, unless the task carries a
+// report run's manifest, which is a gate of its own whatever the recipe's
+// source (recipeSinceFor); whether that one uses a 0.7.0 construct is for the
+// run itself to find out, the same way an older runner already refuses an
+// unknown key.
 func embeddedRecipeOf(spec *task.Spec) *recipe.Recipe {
 	if spec.Recipe == nil || spec.Recipe.YAML == "" {
 		return nil
@@ -682,14 +684,30 @@ func checkRecipeImage(ctx context.Context, env *cloudEnv, slug string, spec *tas
 			alt = "; or launch with --recipe default to run today's loop"
 		}
 	}
-	return checkImageSince(ctx, env, slug, spec, kind, recipeSinceFor(spec), subject, "recipes", alt, warn)
+	return checkImageSince(ctx, env, slug, spec, kind, recipeSinceFor(spec, repoRecipeForGate(ctx, spec)), subject, "recipes", alt, warn)
 }
 
-// recipeSinceFor is the release the embedded recipe's own constructs demand,
-// the newest of the gates its text trips (design generic-tool.md §3.1): a
-// recipe the launcher cannot read here — a repository-sourced one, which
-// carries only its name, or a bare agent.recipe name — keeps recipesSince,
-// the same way an older runner refuses its unknown keys at the run.
+// repoRecipeForGate is a repository-sourced task's recipe, read from this
+// checkout the way recipeForLaunch reads it — the working tree, the
+// launcher's own approximation of the ref the runner checks out — so the
+// gates can judge the constructs the recipe's own text carries: the task
+// holds its name alone. nil for every other launch, and for one whose file
+// cannot be read here, which keeps the plain recipesSince it always had; the
+// runner's own parse refusal is the backstop there, exactly as it is for a
+// name this launcher cannot resolve at all.
+func repoRecipeForGate(ctx context.Context, spec *task.Spec) *recipe.Recipe {
+	if spec.Recipe == nil || spec.Recipe.YAML != "" {
+		return nil
+	}
+	return repoRecipeFrom(spec, checkoutRoot(ctx, spec.Repo))
+}
+
+// recipeSinceFor is the release the recipe's own constructs demand, the
+// newest of the gates its text trips (design generic-tool.md §3.1): the
+// task's embedded text when it carries one, else rp, the launcher's own read
+// of a repository recipe's file (repoRecipeForGate). A bare agent.recipe
+// name, which no file here resolves, keeps recipesSince, the same way an
+// older runner refuses its unknown keys at the run.
 //
 // A task carrying digest_runs is judged by the manifest itself, whatever its
 // recipe's source: the field is what says the run executes the digest step
@@ -702,11 +720,15 @@ func checkRecipeImage(ctx context.Context, env *cloudEnv, slug string, spec *tas
 //
 // The adversarial step is judged the same way, and it is the newest construct
 // any recipe can carry (adversarialSince), so its case comes first. It has no
-// task field behind it, though: a repository-sourced recipe carries its name
-// alone and so is judged by recipesSince here, whatever step it holds — see
-// the note on that half in adversarialSince.
-func recipeSinceFor(spec *task.Spec) string {
+// task field behind it, unlike the manifest: a repository recipe is judged
+// from the launcher's read of the file it names (rp), and one this launcher
+// cannot read keeps recipesSince, with the runner's parse refusal as the
+// backstop.
+func recipeSinceFor(spec *task.Spec, rp *recipe.Recipe) string {
 	r := embeddedRecipeOf(spec)
+	if r == nil {
+		r = rp
+	}
 	switch {
 	case len(spec.DigestRuns) > 0:
 		return digestSince
@@ -1033,9 +1055,11 @@ func sharedImageOf(lock *imagecheck.Lock, repo, job string) (imagecheck.LockedIm
 }
 
 // checkCloneRecipeImage is checkRecipeImage for a checkout: clone workflow
-// (recipesSince, or the newer constant the embedded recipe's constructs
-// need): see checkCloneImageSince.
-func checkCloneRecipeImage(lc *localcfg.Config, spec *task.Spec, warn io.Writer) error {
+// (recipesSince, or the newer constant the recipe's constructs need): see
+// checkCloneImageSince. It reads a repository recipe's own file from this
+// checkout like its derived-image twin, so a checkout: clone launch is
+// judged on the recipe the run will read rather than on the name alone.
+func checkCloneRecipeImage(ctx context.Context, lc *localcfg.Config, spec *task.Spec, warn io.Writer) error {
 	subject, alt := "fugaro.yaml's agent.recipe", ""
 	if spec.Recipe != nil {
 		subject = "recipe " + spec.Recipe.Name
@@ -1043,7 +1067,7 @@ func checkCloneRecipeImage(lc *localcfg.Config, spec *task.Spec, warn io.Writer)
 			alt = "; or launch with --recipe default to run today's loop"
 		}
 	}
-	return checkCloneImageSince(lc, spec, recipeSinceFor(spec), subject, "recipes", alt, warn)
+	return checkCloneImageSince(lc, spec, recipeSinceFor(spec, repoRecipeForGate(ctx, spec)), subject, "recipes", alt, warn)
 }
 
 // refuseClonesNotShipped refuses, before any cloud effect, deploying or

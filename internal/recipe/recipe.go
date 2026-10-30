@@ -28,8 +28,10 @@ const (
 	MaxReviewRounds    = 10
 	// DefaultAdversarialRounds is the rounds an adversarial step runs when it
 	// writes no max_rounds: the same number as the senior review's own
-	// default, and the value internal/config aliases for
-	// agent.adversarial_rounds (it imports this package, never the reverse).
+	// default. It lives here rather than in internal/config because the
+	// parser and StageBound need it and this package imports nothing of the
+	// CLI's: a config key for the level-3 rounds, when one exists, aliases
+	// this constant rather than the other way round.
 	DefaultAdversarialRounds = 2
 	// MaxDescription is the longest description, counted in bytes (not
 	// characters), so a multi-byte description has fewer characters.

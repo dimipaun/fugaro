@@ -103,9 +103,22 @@ func (r *run) reviewRounds(st planStep) int {
 
 // checkPlan refuses a plan that does not end with a review step: a run
 // never skips the senior review, whatever the recipe says.
-func checkPlan(plan []planStep) error {
+//
+// It refuses the adversarial step too, and that refusal is load-bearing
+// rather than a guard: planOf has no arm for the step, so a recipe carrying
+// one would otherwise be planned without it and the run would open an
+// ordinary pull request with review level 3 never run — the outcome the
+// launcher's adversarialSince gate promises cannot happen. The step is
+// level 3's, and the runner that runs it is a later release's; until then
+// the only way one reaches this runner is a task written by hand or
+// replayed, and the run ends here instead (L4.2 replaces this with the step
+// itself).
+func checkPlan(rcp *recipe.Recipe, plan []planStep) error {
 	if n := len(plan); n == 0 || plan[n-1].Kind != recipe.StepReview || plan[n-1].Rounds < 1 {
 		return errors.New("the plan has no trailing review step, so the run would skip the senior review")
+	}
+	if recipe.UsesAdversarial(rcp) {
+		return errors.New("the adversarial step is not run by this runner (review level 3 ships in a newer fugaro), so the run would skip it")
 	}
 	return nil
 }
