@@ -121,6 +121,8 @@
 // collection switches themselves are **not** here: the SDK reads them from
 // `mobile/firebase.json` at build time (see that file).
 
+import { builtPlatforms, nativeConfigError, nativeConfigMissing } from './native-config-guard.js';
+
 /** The two variables, by platform. The names are this task's, and a rename is deliberate. */
 export const ID_VARIABLES = Object.freeze({
   ios: 'FUGARO_IOS_BUNDLE_ID',
@@ -449,12 +451,22 @@ export function resolveConfig(config, env = process.env) {
     );
   }
 
-  return withFirebase(
+  const resolved = withFirebase(
     config,
     declaring({ ...(config.ios ?? {}), [FIELDS.ios.field]: read('ios', env) }),
     { ...(config.android ?? {}), [FIELDS.android.field]: read('android', env) },
     env,
   );
+
+  // D260: a build whose resolved config carries no readable native config file
+  // is a stop, not a build. The subject is the **file** the config resolved to
+  // and never the variable name, and the check runs only in a build arm -- the
+  // dev arm above returns before it, so `npm test`, `expo start` and `eas-cli`'s
+  // local resolution are untouched by it.
+  const missing = nativeConfigMissing(resolved, builtPlatforms(env));
+  if (missing.length > 0) throw nativeConfigError(missing[0], NATIVE_CONFIG_VARIABLES[missing[0]]);
+
+  return resolved;
 }
 
 /**
