@@ -9,15 +9,13 @@ digests are `src/renderer/fonts/README.md`); and the update client the main proc
 file, one section each: elkjs's first, then the two fonts', then the update client's and its
 tree's.
 
-The console's one runtime dependency is **electron-updater 6.8.10**, the update client the main
-process drives (design section 7.4). It is packed into the asar's `node_modules` because
-`dist/main/updater-electron.js` requires it at run time, and the fifteen packages of its tree are
-packed beside it. Their sections are the last sixteen in this file, and every version in them is
-the one `package-lock.json` pins.
+The update client is the console's one runtime dependency (design section 7.4), packed into the
+asar's `node_modules` because `dist/main/updater-electron.js` requires it at run time, and the
+fifteen packages of its tree are packed beside it. Their sections are the last sixteen in this file,
+and every version in them is the one `package-lock.json` pins.
 
-The elkjs worker is `dist/bundle/elk-worker.min.js`,
-the layout worker of **elkjs 0.11.0**, copied verbatim by `npm run build` from
-`node_modules/elkjs/lib/elk-worker.min.js`.
+The elkjs worker is `dist/bundle/elk-worker.min.js`, the layout worker of **elkjs 0.11.0**, copied
+verbatim by `npm run build` from `node_modules/elkjs/lib/elk-worker.min.js`.
 
 elkjs is licensed under the Eclipse Public License 2.0. Its source is the
 `elkjs@0.11.0` package from the npm registry
