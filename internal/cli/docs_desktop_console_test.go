@@ -3786,11 +3786,13 @@ exit 3
 	}
 	// Every file the publish step requires, from both legs: the merged step
 	// (the state this file is in once the owner has copied the Linux change in)
-	// reads all eight, and the macOS-only step attaches four named ones and
-	// never looks at the rest, so one fixture runs the same step in both states.
+	// reads all of them, and the macOS-only step attaches the ones it names and
+	// never looks at the rest, so one fixture runs the same step in every state
+	// -- alone, with the Linux legs, and with the update feed.
 	for _, name := range []string{
 		"Fugaro Console-1.2.3-universal.dmg",
 		"Fugaro Console-1.2.3-universal-mac.zip",
+		"latest-mac.yml",
 		"console-verification.txt",
 		"console-sha256sums.txt",
 		"Fugaro.Console-1.2.3-linux-x64.AppImage",
@@ -7741,7 +7743,8 @@ func TestStagedLinuxFilesSurviveTheCopyIn(t *testing.T) {
 const consoleCopyInRunPattern = `Console|Docs|Lint`
 
 // consoleCopyInSensitive is what a copy-in changes, as a test source spells it:
-// the two staged files by name, the constants that name their four homes, and
+// the staged files by name, the constants that name their homes and the readers
+// this family goes through them with, and
 // the two helpers this file reads the staging README's opening line through
 // (`pendingWorkflows` derives the pending set from the directory, and
 // `pendingReadmeOpening` is the paragraph that states it). A test whose body
@@ -7756,7 +7759,7 @@ const consoleCopyInRunPattern = `Console|Docs|Lint`
 // It is a regular expression with word boundaries rather than a list of
 // substrings: `pendingWorkflows` is a helper here and `pendingWorkflowsReadmePath`
 // is a constant in another file, and a substring search cannot tell them apart.
-var consoleCopyInSensitive = regexp.MustCompile(`\b(?:console-linux\.yml|console-release-linux\.yml|consoleLinuxWorkflowPath|appliedConsoleLinuxPath|consoleReleaseLinuxWorkflowPath|consoleReleaseWorkflowPath|appliedConsoleReleasePath|pendingReadmeOpening|pendingWorkflows)\b`)
+var consoleCopyInSensitive = regexp.MustCompile(`\b(?:console-linux\.yml|console-release-linux\.yml|console-release-feed\.yml|consoleLinuxWorkflowPath|appliedConsoleLinuxPath|consoleReleaseLinuxWorkflowPath|consoleReleaseFeedWorkflowPath|consoleFeedText|consoleReleaseWorkflowPath|appliedConsoleReleasePath|pendingReadmeOpening|pendingWorkflows)\b`)
 
 // consoleCopyInUncoveredTests is every test in this package whose source
 // mentions what a copy-in changes and which consoleCopyInRunPattern does not
