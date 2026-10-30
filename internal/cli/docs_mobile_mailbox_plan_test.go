@@ -208,13 +208,12 @@ var planWillCreate = map[string]string{
 // here is what keeps the derivation honest: a path the plan cites is either in
 // the tree, or a path this plan's tasks create, or this list — and this list is
 // checked the same way (still absent, still cited), so it cannot rot into a
-// hiding place for a real path. P6.6's `internal/budget/token/device.go` left
-// the list in the pull request that landed it — the pairing plan's T2, "The
-// phone's key, the typed fingerprint and the device token"
-// (`docs/plans/2026-10-22-mobile-pairing-cli.md`, 2026-10-29) — and the two
-// files still listed here are still absent.
+// hiding place for a real path. `internal/cli/pair.go` and
+// `internal/budget/token/device.go` left it the way an entry of planWillCreate
+// leaves: the pairing plan's T1a landed the command's surface and its T2a the
+// device token, while the wait and the delivery that make the task whole have
+// not — see planPhaseSixPartial.
 var planWillCreateElsewhere = map[string]string{
-	"internal/cli/pair.go":                 "P6.6's `fugaro pair` (approved, not built)",
 	"internal/budget/sweep_device_test.go": "P6.6's `m~…` sweep rule's test",
 }
 
@@ -916,14 +915,29 @@ var planPhaseSixMerged = map[string]string{
 // confirmation) has no path here: its deliverable is app code this plan names
 // nowhere, so only its listing is asserted.
 var planPhaseSixUnbuilt = map[string][]string{
-	"P6.6":  {"internal/cli/pair.go", "internal/budget/sweep_device_test.go"},
 	"P6.7":  {"internal/cli/mailbox.go"},
 	"P6.12": nil,
 	"P6.13": {"internal/cli/mailbox.go"},
 }
 
+// planPhaseSixPartial is the third state a task needs once half of it has
+// landed, and P6.6 is the one that has: the bullet cannot call it merged (its
+// sweep rule is not in the tree) and it cannot call it
+// unbuilt (its command's surface is). Both halves are held to the tree here, so
+// the sentence a reader plans against is a fact about this branch rather than a
+// memory of one.
+var planPhaseSixPartial = map[string]struct {
+	built, unbuilt []string
+}{
+	"P6.6": {
+		built:   []string{"internal/cli/pair.go", "internal/budget/token/pairing.go", "internal/budget/token/device.go"},
+		unbuilt: []string{"internal/budget/sweep_device_test.go"},
+	},
+}
+
 // TestMailboxPlanPhaseSixStatusIsTrue holds the premise bullet — the one that
-// says which of Phase 6 is merged and which is not — to the tree. Nothing else
+// says which of Phase 6 is merged, which is half-built and which is not — to
+// the tree. Nothing else
 // in this repository checks that class of claim: the plan's own sections were
 // self-consistent about P6.2 (M6 and T8 both said its module and vectors are in
 // the tree) while the bullet a reader meets first said the opposite, which is
@@ -931,9 +945,10 @@ var planPhaseSixUnbuilt = map[string][]string{
 //
 // Mutation (verified, run and restored): move P6.2 into the bullet's "approved
 // and not built" list and this test fails naming it; move P6.6 into the merged
-// list and it fails on the missing shared/command-style proof or on the unbuilt
-// file that exists; delete shared/confirm/index.js's citation from the plan and
-// it fails on the path the merged claim needs.
+// list and it fails on the missing shared/command-style proof; call P6.6
+// unbuilt and it fails on the file that exists; delete
+// shared/confirm/index.js's citation from the plan and it fails on the path the
+// merged claim needs.
 func TestMailboxPlanPhaseSixStatusIsTrue(t *testing.T) {
 	doc := readDoc(t, mailboxPlan)
 	bullet := planSection(t, doc, "- **Phase 6 is approved")
@@ -943,7 +958,7 @@ func TestMailboxPlanPhaseSixStatusIsTrue(t *testing.T) {
 	const unbuiltMarker = "**Approved and not built:**"
 	i := strings.Index(bullet, unbuiltMarker)
 	if i < 0 {
-		t.Fatalf("%s's premise bullet no longer separates the merged Phase 6 tasks from the unbuilt ones (%q): the two lists are what a reader plans against", mailboxPlan, unbuiltMarker)
+		t.Fatalf("%s's premise bullet no longer separates the merged Phase 6 tasks from the unbuilt ones (%q): those lists are what a reader plans against", mailboxPlan, unbuiltMarker)
 	}
 	mergedPart, unbuiltPart := bullet[:i], bullet[i+len(unbuiltMarker):]
 
@@ -976,6 +991,45 @@ func TestMailboxPlanPhaseSixStatusIsTrue(t *testing.T) {
 			}
 			if !planCited(doc, f) {
 				t.Errorf("%s calls %s unbuilt and names none of its files: a reader cannot tell where that task's work lands", mailboxPlan, task)
+			}
+		}
+	}
+
+	// The half-built tasks, walked in both directions: what the bullet says has
+	// landed is in the tree, what it says has not is not, and neither half is
+	// left to the merged or the unbuilt sentence.
+	const partialMarker = "**Partly built:**"
+	for task, part := range planPhaseSixPartial {
+		j := strings.Index(bullet, partialMarker)
+		if j < 0 {
+			t.Errorf("%s's premise bullet carries no %s section, although %s is half-built: a task that is neither wholly merged nor wholly unbuilt has to be said so, or a reader plans against the wrong one", mailboxPlan, partialMarker, task)
+			continue
+		}
+		if j > i {
+			t.Errorf("%s's bullet puts %s after its unbuilt sentence: the states run from merged to unbuilt, and a reader reads them in order", mailboxPlan, partialMarker)
+			continue
+		}
+		partialPart := bullet[j+len(partialMarker) : i]
+		if !strings.Contains(partialPart, "**"+task+"**") {
+			t.Errorf("%s's premise bullet does not name %s in its partly-built sentence: this list is the plan's own claim about what is half done", mailboxPlan, task)
+		}
+		if regexp.MustCompile(`\b` + regexp.QuoteMeta(task) + `\b`).MatchString(unbuiltPart) {
+			t.Errorf("%s's premise bullet lists %s as partly built and as unbuilt in the same breath: a reader cannot tell which half is which", mailboxPlan, task)
+		}
+		for _, f := range part.built {
+			if _, err := os.Stat("../../" + f); err != nil {
+				t.Errorf("%s calls %s built on the strength of %s, which is not in the tree: %v", mailboxPlan, task, f, err)
+			}
+			if !planCited(doc, f) {
+				t.Errorf("%s says %s is built and never names %s: the claim has nothing a reader can check", mailboxPlan, task, f)
+			}
+		}
+		for _, f := range part.unbuilt {
+			if _, err := os.Stat("../../" + f); err == nil {
+				t.Errorf("%s calls %s partly built and names %s as the half that is missing, but it is in the tree: the status list must be rebuilt against the branch, not remembered", mailboxPlan, task, f)
+			}
+			if !planCited(doc, f) {
+				t.Errorf("%s calls %s's %s unbuilt and never names it: a reader cannot tell what is still missing", mailboxPlan, task, f)
 			}
 		}
 	}

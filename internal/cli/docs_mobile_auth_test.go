@@ -385,25 +385,27 @@ func mobileAuthCitedPaths(doc string, dirs map[string]bool) []string {
 // the same change, and a reader can see from the list alone what is still
 // missing.
 //
-// The plan writes three of these as this work's own new paths and three as the
-// mobile Phase 6 tasks' (P6.6 and P6.8, approved 2026-10-18 and unbuilt), and
-// the reconciliation's §F23 names the borrowed ones at once. P6.6's
+// The plan writes three of these as this work's own new paths and two as the
+// mobile Phase 6 tasks' (P6.8's, approved 2026-10-18 and unbuilt), and the
+// reconciliation's §F23 names the borrowed ones at once. P6.6's
 // `internal/budget/token/device.go` left the list in the pull request that
 // landed it — the pairing plan's T2, "The phone's key, the typed fingerprint
 // and the device token" (`docs/plans/2026-10-22-mobile-pairing-cli.md`,
 // 2026-10-29) — which is the deletion every entry owes its own pull request.
-// The list is held here rather than re-derived, so an implementer who finds a
-// fifth adds it visibly instead of loosening the rule.
+// The list is held here rather than re-derived, so an implementer who finds
+// another adds it visibly instead of loosening the rule.
 //
 // **The third of this work's own three is not here, and that is the rule
 // working**: `internal/cli/docs_mobile_auth_test.go` is the file this pin is
 // written in, P0's own commit is the one that landed it, and its entry left the
 // list in that commit -- the same deletion every other entry owes its own pull
-// request. mobile/node_modules is excused differently and permanently, which is
-// why it is not an entry here either: see mobileAuthNeverCarried.
+// request. `internal/cli/pair.go`'s entry left the same way, in the pull request
+// that landed the command's surface (T1a of the pairing plan), while the wait
+// that makes `fugaro pair` a whole act has not. mobile/node_modules is excused
+// differently and permanently, which is why it is not an entry here either: see
+// mobileAuthNeverCarried.
 var mobileAuthWillCreate = map[string]string{
 	"docs/mobile-auth/provider-sign-in.md": "P6's provider path, written out and refused",
-	"internal/cli/pair.go":                 "mobile Task P6.6 (`fugaro pair`), approved 2026-10-18 and unbuilt",
 	"mobile/src/pairing":                   "mobile Task P6.8, approved 2026-10-18 and unbuilt",
 	"mobile/src/overview":                  "mobile Task P6.8's overview screen, approved 2026-10-18 and unbuilt",
 }
@@ -418,8 +420,9 @@ var mobileAuthWillCreate = map[string]string{
 //
 // Mutation (verified, run and restored): rename a cited path in a scratch tree
 // and this test fails naming it; append a line number to a citation
-// (`rules.go:433`) and it fails on the same token; create `internal/cli/pair.go`
-// and it fails naming the entry and the pull request that owes its deletion.
+// (`rules.go:433`) and it fails on the same token; create
+// `internal/budget/token/device.go` and it fails naming the entry and the pull
+// request that owes its deletion.
 func TestDocsMobileAuthCitationsResolve(t *testing.T) {
 	dirs := mobileAuthTopLevelDirs(t)
 	named := map[string]bool{}
