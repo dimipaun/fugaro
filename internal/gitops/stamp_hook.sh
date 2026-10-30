@@ -88,6 +88,28 @@ fugaro_stamp() {
 	esac
 	(
 		unset GIT_DIR GIT_WORK_TREE
+		# No configuration of the machine's either, and no configuration an
+		# environment carries: this git is the child of the agent's own
+		# commit, so every variable below is one the agent set for it, and a
+		# trailer.<token>.command written in the user's own file or in the
+		# pairs of GIT_CONFIG_COUNT is a command the stamp would run. The
+		# rules the stamp states on the command line are the only ones left.
+		GIT_CONFIG_GLOBAL=/dev/null
+		GIT_CONFIG_NOSYSTEM=1
+		export GIT_CONFIG_GLOBAL GIT_CONFIG_NOSYSTEM
+		unset GIT_CONFIG_SYSTEM GIT_CONFIG_PARAMETERS
+		fugaro_config_count=${GIT_CONFIG_COUNT:-0}
+		case "$fugaro_config_count" in
+		'' | *[!0-9]*) fugaro_config_count=0 ;;
+		esac
+		fugaro_config_i=0
+		# The pairs a count numbers, one by one: a pair git never reads is
+		# still a pair, and the count itself is read before it goes.
+		while [ "$fugaro_config_i" -lt "$fugaro_config_count" ]; do
+			unset "GIT_CONFIG_KEY_$fugaro_config_i" "GIT_CONFIG_VALUE_$fugaro_config_i"
+			fugaro_config_i=$((fugaro_config_i + 1))
+		done
+		unset GIT_CONFIG_COUNT
 		cd /
 		git "$@" "$fugaro_message_abs"
 	)

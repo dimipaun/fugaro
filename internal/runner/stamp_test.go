@@ -431,8 +431,14 @@ func TestRunnerReviewAndArtifactNeverStamp(t *testing.T) {
 func TestStampHookDirOutsideWorktree(t *testing.T) {
 	h := newHarness(t, "", nil)
 	var hooks string
+	// Read while the stage is running, which is when a commit of the run's
+	// runs under the hooks: the run takes its directories back out when it
+	// ends (removeStampHooks).
 	capture := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
 		hooks = hooksPath(req.Env)
+		if _, err := os.Stat(filepath.Join(hooks, "prepare-commit-msg")); err != nil {
+			t.Fatalf("the stamp hook is not in %s: %v", hooks, err)
+		}
 		return implement("feature")(t, ctx, req)
 	}
 	if _, err := h.run(t, capture, review("ship", 0)); err != nil {
@@ -450,9 +456,6 @@ func TestStampHookDirOutsideWorktree(t *testing.T) {
 			t.Errorf("the hook directory %s is inside %s", hooks, root)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(hooks, "prepare-commit-msg")); err != nil {
-		t.Fatalf("the stamp hook is not in %s: %v", hooks, err)
-	}
 }
 
 // TestStampHooksNameTheResolvedChain: the pass-throughs name the repository's
@@ -465,19 +468,21 @@ func TestStampHookDirOutsideWorktree(t *testing.T) {
 // this test fails.
 func TestStampHooksNameTheResolvedChain(t *testing.T) {
 	h := newHarness(t, "", nil)
-	var hooks string
+	var script string
+	// Read while the stage is running, which is when a commit of the run's
+	// runs under the hooks: the run takes its directories back out when it
+	// ends (removeStampHooks).
 	capture := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
-		hooks = hooksPath(req.Env)
+		data, err := os.ReadFile(filepath.Join(hooksPath(req.Env), "pre-commit"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		script = string(data)
 		return implement("feature")(t, ctx, req)
 	}
 	if _, err := h.run(t, capture, review("ship", 0)); err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(filepath.Join(hooks, "pre-commit"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	script := string(data)
 	if want := "fugaro_chain=" + filepath.Join(h.deps.WorkDir, ".git", "hooks") + "\n"; !strings.Contains(script, want) {
 		t.Errorf("the pass-through does not name the resolved hook directory %q:\n%s", want, script)
 	}
@@ -609,5 +614,37 @@ func TestRunnerOwnCommitsCarryTheRigorOfTheirMoment(t *testing.T) {
 	got := trailersOf(msg)["fugaro-rigor"]
 	if want := []string{string(rec.Rigor.Mode)}; !slices.Equal(got, want) {
 		t.Errorf("fugaro-rigor = %v, want %v: the runner's own commit carries the mode of another moment", got, want)
+	}
+}
+
+// TestStampHookDirsRemovedAtRunEnd: the two hook directories a run writes are
+// taken back out when the run ends, and nothing writes them again afterwards:
+// a run's commits are all made before it ends, so a directory of the run's
+// left behind is /tmp filling up with hooks of finished runs.
+//
+// Mutation (drop removeStampHooks from Run's deferred handler): both
+// directories survive the run and this test fails naming them.
+func TestStampHookDirsRemovedAtRunEnd(t *testing.T) {
+	h := newHarness(t, "", nil)
+	var hooks string
+	capture := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		hooks = hooksPath(req.Env)
+		return implement("feature")(t, ctx, req)
+	}
+	if _, err := h.run(t, capture, review("ship", 0)); err != nil {
+		t.Fatal(err)
+	}
+	if hooks == "" {
+		t.Fatal("the stage environment names no hook directory")
+	}
+	root := filepath.Dir(hooks)
+	if want := "fugaro-stamp-"; !strings.HasPrefix(filepath.Base(root), want) {
+		t.Fatalf("the hook directory %s is not one of the run's temporary directories", hooks)
+	}
+	if _, err := os.Stat(hooks); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the agent's hook directory %s survived the run: %v", hooks, err)
+	}
+	if _, err := os.Stat(root); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the temporary directory %s of the run's commit hooks survived the run: %v", root, err)
 	}
 }

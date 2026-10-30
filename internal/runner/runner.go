@@ -535,6 +535,11 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 		}
 		r.stopCompression()
 		r.closeGateway()
+		// The run is over and no commit of it is still to be made: the two
+		// hook directories went with it. They are the one thing a run leaves
+		// in a temporary directory every run writes to, and a directory left
+		// behind is /tmp filling up with hooks of finished runs.
+		r.removeStampHooks()
 		rctx, cancelRelease := context.WithTimeout(context.WithoutCancel(ctx), releaseDeferredTimeout)
 		r.releaseLock(rctx)
 		cancelRelease()
@@ -1199,6 +1204,27 @@ func (r *run) writeStampHooks(ctx context.Context) error {
 		return gitops.Stamp{Author: r.stampAuthor, Trailers: r.stampTrailers("")}
 	}
 	return nil
+}
+
+// removeStampHooks takes the two hook directories writeStampHooks made back
+// out of the temporary directory, root and all — the MkdirTemp root of each
+// holds the one hook directory and nothing else. The run's last commit is
+// already made by the time it runs, and a hook of a finished run is a file
+// nothing is left to read: what the commit stamp travels in is the environment
+// of the commit, which is gone with the run. It is called from Run's deferred
+// handler, with the gateway's close and the lock's release: the paths that
+// return early out of it are the ones where another execution owns the run,
+// and those never reach bootstrap's writeStampHooks to have a directory to
+// remove.
+func (r *run) removeStampHooks() {
+	for _, dir := range []string{r.stampHooks, r.runnerHooks} {
+		if dir == "" {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Dir(dir)); err != nil {
+			r.d.Log.Warn("removing the run's commit hook directory failed", "dir", dir, "err", err)
+		}
+	}
 }
 
 // stampTrailers is the trailer set every commit a run makes carries: the run's
