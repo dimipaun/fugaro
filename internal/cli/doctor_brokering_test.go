@@ -483,22 +483,22 @@ func TestDoctorBrokeringBitbucketDirect(t *testing.T) {
 		}
 	})
 
-	t.Run("proxied and flipped, no mount", func(t *testing.T) {
+	t.Run("proxied and flipped, the mount given up", func(t *testing.T) {
 		flipProxiedGitList(t, config.BitbucketSecret)
 		r := newBrokeringRig(t)
-		r.jobMountingBitbucketToken(t)
+		// The job the flip's own re-apply deploys: the same name, no mount.
+		job := gcp.JobName(mustSlug("bitbucket", "workspace-a/repo-a"), "app")
+		r.run.SetJobJSON(job, `{"name":"projects/proj-1234/locations/us-east5/jobs/`+job+`",
+		  "template":{"template":{"containers":[{"image":"fake/app","env":[
+		    {"name":"FUGARO_REPOSITORY","value":"workspace-a/repo-a"}]}]}}}`)
 
 		o, err := r.doctor(t)
 		if err != nil {
 			t.Fatalf("doctor: %v", err)
 		}
-		// The deployed job mounts the token, so this rig is the warning case
-		// above; here the point is only that the check reads the jobs at all
-		// once the flip is on. A rig with no job is the ok case, and the job's
-		// own name is not in it.
 		cs := checksByID(o, "bitbucket-direct")
-		if len(cs) != 1 || cs[0].Severity != "warning" {
-			t.Fatalf("bitbucket-direct = %+v, want one warning", cs)
+		if len(cs) != 1 || !cs[0].OK {
+			t.Fatalf("bitbucket-direct = %+v, want one ok check", cs)
 		}
 	})
 
