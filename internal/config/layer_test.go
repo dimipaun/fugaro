@@ -690,4 +690,10 @@ func TestReviewFloorNotInLayer(t *testing.T) {
 			t.Errorf("a layer writing %q gave problems %q, want one naming review_floor", body, got)
 		}
 	}
+	// The repository's own file is the launcher's too — the branch the run
+	// checks out is the one the agent can edit mid-run — so it refuses the key
+	// on the same strict decode, with no field for it on this package's Config.
+	if _, ps := Parse([]byte(minimalRepo + "review_floor:\n  pro: [l2]\n")); len(ps) == 0 {
+		t.Error("fugaro.yaml accepted review_floor:, and the floor is the owner's key")
+	}
 }
