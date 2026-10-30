@@ -108,7 +108,21 @@ const ANDROID = 'com.example.sample';
  */
 const DECLARED = {
   ...EXPO,
+  // The Firebase wiring is the second thing a resolution carries in every state
+  // (P7.1a): `app.config.js` appends the three `@react-native-firebase` plugins
+  // and `expo-build-properties` to the list `app.json` already has, and removes
+  // Android's advertising-id permission. Spelled out, like the declaration
+  // below it, so this stays a statement about the config rather than a second
+  // copy of the code that produces it.
+  plugins: [
+    ...EXPO.plugins,
+    ['expo-build-properties', { ios: { useFrameworks: 'dynamic' } }],
+    '@react-native-firebase/app',
+    ['@react-native-firebase/analytics', { ios: { withoutAdIdSupport: true } }],
+    '@react-native-firebase/crashlytics',
+  ],
   ios: { ...EXPO.ios, infoPlist: { ITSAppUsesNonExemptEncryption: false } },
+  android: { ...EXPO.android, blockedPermissions: ['com.google.android.gms.permission.AD_ID'] },
 };
 
 /** An environment as EAS's build servers present it to `app.config.js`. */
@@ -369,14 +383,22 @@ test('no environment value but the two identities reaches the config', () => {
   assert.deepEqual(resolveConfig(EXPO, polluted), resolveConfig(EXPO, build()));
 });
 
-test('app.config.js names exactly the two identity variables, as literals', () => {
+test('app.config.js names exactly the variables it reads, as literals', () => {
   // The positive control: a planted third variable is flagged, so the walk
   // below is known to be able to fail.
   assert.deepEqual(namedIn("const v = process.env['FIREBASE_TOKEN'];\n"), ['FIREBASE_TOKEN']);
-  // ... and the file itself names the two, and nothing else. A third variable
-  // read here would be a third thing a build depends on, which is the reading
-  // this test exists to make deliberate.
-  assert.deepEqual(namedIn(SOURCE), ['FUGARO_ANDROID_PACKAGE', 'FUGARO_IOS_BUNDLE_ID']);
+  // ... and the file itself names the two identities and the **two native
+  // config file** variables (P7.1a: the path of `google-services.json` and of
+  // `GoogleService-Info.plist` on a build worker), and nothing else. A fifth
+  // variable read here would be a fifth thing a build depends on, which is the
+  // reading this test exists to make deliberate -- the rule is unchanged, and
+  // what grew is the list of variables this file legitimately reads.
+  assert.deepEqual(namedIn(SOURCE), [
+    'FUGARO_ANDROID_PACKAGE',
+    'FUGARO_IOS_BUNDLE_ID',
+    'GOOGLE_SERVICES_JSON',
+    'GOOGLE_SERVICE_INFO_PLIST',
+  ]);
   // The two switches are read off `env` by name and are not values of their
   // own; the point above still reads them out of the source, so the property
   // is "the only names written as literals are the identities".

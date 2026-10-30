@@ -89,6 +89,37 @@
 // `README.md` ("Building for internal testing") says whose ruling this is and
 // dated when. The merge into `ios.infoPlist` is a merge and not an assignment:
 // see `declaring`.
+//
+// **The Firebase wiring (mobile plan, Task P7.1a).** The app carries Firebase
+// through three `@react-native-firebase` packages, and this file is where their
+// config plugins are registered and where the two **native config files** are
+// pointed at. The files themselves are the owner's: the console writes
+// `google-services.json` (Android) and `GoogleService-Info.plist` (iOS), they
+// are registered in the project the owner chose, and they are **never
+// committed** -- `mobile/.gitignore` names both paths and `src/app-config.test.js`
+// reads that through git. A build gets them from the EAS environment, as **file**
+// variables:
+//
+//   GOOGLE_SERVICES_JSON        the path of google-services.json on the worker
+//   GOOGLE_SERVICE_INFO_PLIST   the path of GoogleService-Info.plist on it
+//
+// On a build worker the value of a file variable is the **path** the file was
+// written to, which is exactly what the plugin's `googleServicesFile` field
+// wants, so the variable is copied through and never inspected. **Neither is
+// required here**: an unset variable leaves the field absent and nothing throws,
+// because `eas-cli` resolves this file locally (see `resolveConfig`) on a machine
+// that has neither file. The guard that refuses a build profile missing them is
+// P7.1b's, and the profile wiring is `eas.json`'s -- this file only reads what it
+// is handed, and an error message here never repeats a value (see `missing`).
+//
+// The two **advertising-id** settings are the other half, and they are structural
+// rather than promised: `@react-native-firebase/analytics`'s iOS plugin takes
+// `ios.withoutAdIdSupport`, which writes `$RNFirebaseAnalyticsWithoutAdIdSupport
+// = true` into the Podfile so the pod links no `AdSupport` framework, and
+// Android's `com.google.android.gms.permission.AD_ID` is removed from the merged
+// manifest through Expo's own `android.blockedPermissions`. The Android
+// collection switches themselves are **not** here: the SDK reads them from
+// `mobile/firebase.json` at build time (see that file).
 
 /** The two variables, by platform. The names are this task's, and a rename is deliberate. */
 export const ID_VARIABLES = Object.freeze({
@@ -268,6 +299,121 @@ function declaring(section) {
   };
 }
 
+/** The three packages the app's Firebase wiring is made of (P7.1a). */
+export const FIREBASE_PACKAGES = Object.freeze([
+  '@react-native-firebase/app',
+  '@react-native-firebase/analytics',
+  '@react-native-firebase/crashlytics',
+]);
+
+/**
+ * The two variables that carry the native config files, by platform. On a build
+ * worker each holds the **path** EAS wrote the file to -- the file itself is a
+ * project file variable, so it is never in a checkout and never in a log.
+ */
+export const NATIVE_CONFIG_VARIABLES = Object.freeze({
+  ios: 'GOOGLE_SERVICE_INFO_PLIST',
+  android: 'GOOGLE_SERVICES_JSON',
+});
+
+/** The field of `expo` each native config file path is written to. */
+const GOOGLE_SERVICES_FIELD = 'googleServicesFile';
+
+/**
+ * Android's advertising-id permission: the one Play reads as "this app uses the
+ * advertising id". `@react-native-firebase/analytics` turns the SDK's *reading*
+ * of the id off through `firebase.json`, and it does not stop the merged
+ * manifest from **declaring** the permission -- the config plugin's source has
+ * no Android option for it at all -- so it is removed here, through Expo's own
+ * `android.blockedPermissions`, which prebuild writes as a `tools:node="remove"`
+ * entry. The plan requires the permission absent from the merged manifest
+ * (§4.2), and the build-time walk that reads the generated manifest is P7.1b's.
+ */
+const AD_ID_PERMISSION = 'com.google.android.gms.permission.AD_ID';
+
+/**
+ * The plugin entries this file appends, in the order prebuild applies them.
+ *
+ * `expo-build-properties` comes first and is the one entry whose option is not
+ * Firebase's own: the pinned `@react-native-firebase/app` config plugin says,
+ * in its `ios.disableSPM` deprecation, that Firebase's Apple SDK is
+ * Swift-Package-Manager-only and that a project built from it must use dynamic
+ * frameworks (`ios.useFrameworks: 'dynamic'`), which is that plugin's option.
+ * The pods it applies to are declared by the entries after it.
+ *
+ * The Analytics entry names the variant with **no advertising-id support**:
+ * `ios.withoutAdIdSupport` writes `$RNFirebaseAnalyticsWithoutAdIdSupport =
+ * true` into the Podfile, and the podspec then links `FirebaseAnalyticsCore`
+ * rather than the identity subspec -- so the app's binary contains no
+ * `AdSupport` framework and there is no id a later misconfiguration could read
+ * (§4.2, the iOS half of the ban D255's answer does not touch).
+ */
+const PLUGIN_ENTRIES = Object.freeze([
+  ['expo-build-properties', { ios: { useFrameworks: 'dynamic' } }],
+  FIREBASE_PACKAGES[0],
+  [FIREBASE_PACKAGES[1], { ios: { withoutAdIdSupport: true } }],
+  FIREBASE_PACKAGES[2],
+]);
+
+/** A plugin entry's name, whether it is a bare string or a `[name, options]` pair. */
+function pluginName(entry) {
+  return Array.isArray(entry) ? entry[0] : entry;
+}
+
+/**
+ * `list` with the entries above appended. **An append, and never a duplicate**: a
+ * plugin listed twice is a prebuild mod applied twice, and every entry here is
+ * one this file owns, so one that `app.json` (or a future base config) already
+ * named is left exactly as it was found.
+ */
+function appendingPlugins(list) {
+  const entries = Array.isArray(list) ? list : [];
+  const named = new Set(entries.map(pluginName));
+  return [...entries, ...PLUGIN_ENTRIES.filter((entry) => !named.has(pluginName(entry)))];
+}
+
+/**
+ * The native config file the build reads, as the one field it goes in -- or
+ * **nothing at all** when the variable is unset or empty. An absent field is the
+ * state `eas-cli` resolves this file in locally, and the state `expo start` and
+ * `npm test` run in: no store account, no console output, no throw. A variable
+ * that *is* set is copied through unread; **its value is a path, and this file
+ * never prints it** (see `missing` for why an error message here repeats no
+ * value).
+ */
+function nativeConfigFile(platform, env) {
+  const value = env[NATIVE_CONFIG_VARIABLES[platform]];
+  if (value === undefined || value === '') return {};
+  return { [GOOGLE_SERVICES_FIELD]: value };
+}
+
+/** `android.blockedPermissions` with the advertising-id permission in it, once. */
+function blockingAdId(permissions) {
+  const existing = Array.isArray(permissions) ? permissions : [];
+  if (existing.includes(AD_ID_PERMISSION)) return existing;
+  return [...existing, AD_ID_PERMISSION];
+}
+
+/**
+ * The two platform sections with the Firebase wiring merged in: the plugin list,
+ * each native config file that the environment supplied, and Android's
+ * advertising-id permission removal. Written as one function because both
+ * resolution modes apply all three -- what differs between them is the
+ * identities, not the SDK.
+ */
+function withFirebase(config, ios, android, env) {
+  return {
+    ...config,
+    plugins: appendingPlugins(config.plugins),
+    ios: { ...ios, ...nativeConfigFile('ios', env) },
+    android: {
+      ...android,
+      ...nativeConfigFile('android', env),
+      blockedPermissions: blockingAdId(config.android?.blockedPermissions),
+    },
+  };
+}
+
 /**
  * The resolved config: Expo's dynamic-config function, as a function of its
  * `env` so that the tests can call it with a fake one and a named mutation can
@@ -295,18 +441,20 @@ export function resolveConfig(config, env = process.env) {
     // is set is read and validated rather than dropped; a static identity in
     // `app.json` is still removed, so this file stays the one place they come
     // from.
-    return {
-      ...config,
-      ios: declaring(optionalSection('ios', config.ios, env)),
-      android: optionalSection('android', config.android, env),
-    };
+    return withFirebase(
+      config,
+      declaring(optionalSection('ios', config.ios, env)),
+      optionalSection('android', config.android, env),
+      env,
+    );
   }
 
-  return {
-    ...config,
-    ios: declaring({ ...(config.ios ?? {}), [FIELDS.ios.field]: read('ios', env) }),
-    android: { ...(config.android ?? {}), [FIELDS.android.field]: read('android', env) },
-  };
+  return withFirebase(
+    config,
+    declaring({ ...(config.ios ?? {}), [FIELDS.ios.field]: read('ios', env) }),
+    { ...(config.android ?? {}), [FIELDS.android.field]: read('android', env) },
+    env,
+  );
 }
 
 /**

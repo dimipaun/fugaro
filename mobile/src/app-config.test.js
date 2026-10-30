@@ -41,7 +41,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import { secretShaped } from './accounts/index.js';
-import { ID_VARIABLES, resolveConfig } from '../app.config.js';
+import { ID_VARIABLES, NATIVE_CONFIG_VARIABLES, resolveConfig } from '../app.config.js';
 
 const HERE = import.meta.dirname;
 const APP_JSON = join(HERE, '..', 'app.json');
@@ -60,7 +60,22 @@ const MANIFEST = JSON.parse(readFileSync(join(HERE, '..', 'package.json'), 'utf8
  */
 const DECLARED = Object.freeze({
   ...CONFIG.expo,
+  // The Firebase wiring every resolution carries (P7.1a): the plugin entries
+  // `app.config.js` appends to the two `app.json` already lists, and Android's
+  // advertising-id permission removal. The entries are spelled out here rather
+  // than taken from the file, for the reason above.
+  plugins: [
+    ...CONFIG.expo.plugins,
+    ['expo-build-properties', { ios: { useFrameworks: 'dynamic' } }],
+    '@react-native-firebase/app',
+    ['@react-native-firebase/analytics', { ios: { withoutAdIdSupport: true } }],
+    '@react-native-firebase/crashlytics',
+  ],
   ios: { ...CONFIG.expo.ios, infoPlist: { ITSAppUsesNonExemptEncryption: false } },
+  android: {
+    ...CONFIG.expo.android,
+    blockedPermissions: ['com.google.android.gms.permission.AD_ID'],
+  },
 });
 
 /** Every string in a JSON value, with the path it was found at. */
@@ -365,4 +380,124 @@ test('a resolved config registers the three @react-native-firebase plugins', () 
       assert.equal(names.includes(name), true, `${what} dropped the ${name} plugin app.json lists`);
     }
   }
+});
+
+// --- the two native config files, and the advertising-id settings (P7.1a) ----
+//
+// The tests above are about the *entries*: the plugins are registered and the
+// two paths are ignored. These are about the **values** those entries carry,
+// which is where the plan's structural promises live: the app's builds point at
+// the owner's Firebase project through a path the environment hands over, and
+// the app links no advertising-id support at all. The build-time walk of §7.4
+// -- the generated `AndroidManifest.xml`, the `Podfile.lock`, the planted
+// controls -- is P7.1b's and is not here.
+
+test('the native config paths come from the environment, and only when set', () => {
+  const SAMPLE = 'com.example.sample';
+  // Synthetic paths, and deliberately not the real names a console output has:
+  // this file holds no path the owner's machine has, and the value is copied
+  // through unread anyway.
+  const ANDROID_PATH = '/tmp/x/google-services.json';
+  const IOS_PATH = '/tmp/x/GoogleService-Info.plist';
+  const build = {
+    EAS_BUILD: 'true',
+    [ID_VARIABLES.ios]: SAMPLE,
+    [ID_VARIABLES.android]: SAMPLE,
+    [NATIVE_CONFIG_VARIABLES.android]: ANDROID_PATH,
+    [NATIVE_CONFIG_VARIABLES.ios]: IOS_PATH,
+  };
+  const resolved = resolveConfig(CONFIG.expo, build);
+  assert.equal(resolved.android.googleServicesFile, ANDROID_PATH);
+  // ... the iOS file goes in `ios.googleServicesFile`, which is the field the
+  // plugin reads -- not into `infoPlist`, where a path would be a plist value
+  // nothing looks at.
+  assert.equal(resolved.ios.googleServicesFile, IOS_PATH);
+  assert.equal('googleServicesFile' in resolved.ios.infoPlist, false);
+  // ... and the two are the only fields the two variables add: strip them --
+  // and the identities, which the same test above is the one about -- and the
+  // resolution is the one a build with no files makes, which is `DECLARED`.
+  const ios = { ...resolved.ios };
+  const android = { ...resolved.android };
+  for (const field of ['googleServicesFile', 'bundleIdentifier']) delete ios[field];
+  for (const field of ['googleServicesFile', 'package']) delete android[field];
+  assert.deepEqual({ ...resolved, ios, android }, DECLARED);
+
+  // Unset: the field is **absent**, in both modes, and nothing throws -- a
+  // developer's `expo start`, this suite, and the local `eas-cli` resolution
+  // all run on a machine that has neither file. Mutation: make the field
+  // unconditional (or default it to a path) and the two assertions below find
+  // one.
+  for (const env of [{}, { EAS_BUILD: 'true', [ID_VARIABLES.ios]: SAMPLE, [ID_VARIABLES.android]: SAMPLE }]) {
+    for (const platform of ['ios', 'android']) {
+      assert.equal('googleServicesFile' in resolveConfig(CONFIG.expo, env)[platform], false, platform);
+    }
+  }
+  // ... an **empty** value is the same as an absent one: an EAS variable set to
+  // nothing is a variable nobody set, and a build whose `googleServicesFile` is
+  // `''` is a prebuild that fails later, with a message about a missing file
+  // rather than about the variable. Mutation: test `=== undefined` alone and
+  // this goes red.
+  const empty = resolveConfig(CONFIG.expo, {
+    ...build,
+    [NATIVE_CONFIG_VARIABLES.android]: '',
+    [NATIVE_CONFIG_VARIABLES.ios]: '',
+  });
+  assert.equal('googleServicesFile' in empty.android, false);
+  assert.equal('googleServicesFile' in empty.ios, false);
+});
+
+test('a resolved config links no advertising-id support, on both platforms', () => {
+  const plugins = resolveConfig(CONFIG.expo, {}).plugins;
+  const optionsOf = (name) => plugins.find((entry) => pluginName(entry) === name)?.[1];
+
+  // iOS: the Analytics entry selects the variant with no ad-ID support, which
+  // is the option the pinned plugin reads to write the Podfile flag -- the
+  // whole of the iOS half of the ban, since the pod then links
+  // `FirebaseAnalyticsCore` rather than the identity subspec. Mutation: drop
+  // the option and this line goes red; it is also the one option §4.2's table
+  // asked P7.1 to resolve against the SDK's own source rather than name from
+  // memory.
+  assert.deepEqual(optionsOf('@react-native-firebase/analytics'), { ios: { withoutAdIdSupport: true } });
+  // Android: the permission Play reads as "this app uses the advertising id" is
+  // **removed** from the merged manifest, through Expo's own
+  // `android.blockedPermissions` -- which is the route, because the pinned
+  // `@react-native-firebase/app` plugin has no Android option at all (§4.2's
+  // other VERIFY item).
+  assert.deepEqual(resolveConfig(CONFIG.expo, {}).android.blockedPermissions, [
+    'com.google.android.gms.permission.AD_ID',
+  ]);
+  // ... once, and without dropping a permission a later base config blocked:
+  // the list is appended to, not replaced. Mutation: assign the array instead
+  // and the first entry is gone.
+  const base = { ...CONFIG.expo, android: { ...CONFIG.expo.android, blockedPermissions: ['android.permission.RECORD_AUDIO'] } };
+  assert.deepEqual(resolveConfig(base, {}).android.blockedPermissions, [
+    'android.permission.RECORD_AUDIO',
+    'com.google.android.gms.permission.AD_ID',
+  ]);
+  // ... and the iOS dynamic-frameworks option is present, because the pinned
+  // `@react-native-firebase/app` plugin's own source says the Firebase Apple
+  // SDK is Swift-Package-Manager-only and a project built from it must use
+  // dynamic frameworks. It is the one dependency this task added beyond the
+  // three packages, and this is what it is for.
+  assert.deepEqual(optionsOf('expo-build-properties'), { ios: { useFrameworks: 'dynamic' } });
+});
+
+test('the Android switches firebase.json carries are the plan’s four', () => {
+  // The Android collection and ad switches are read by the SDK at **build
+  // time**, from `firebase.json` at the app root, under `react-native` -- the
+  // Analytics library's own `build.gradle` turns each into a manifest
+  // placeholder -- so this file, and not `app.config.js`, is where they live
+  // (§4.2). The values are D255's answer: the two collection switches are ON
+  // and the two ad switches are OFF. `src/app-config.ids.test.js`'s walk does
+  // not read this file, and §7.4's build-time walk (P7.1b) reads it alongside
+  // the generated native project; what is pinned here is the file itself.
+  const firebase = JSON.parse(readFileSync(join(HERE, '..', 'firebase.json'), 'utf8'));
+  assert.deepEqual(firebase, {
+    'react-native': {
+      analytics_auto_collection_enabled: true,
+      crashlytics_auto_collection_enabled: true,
+      google_analytics_adid_collection_enabled: false,
+      google_analytics_default_allow_ad_personalization_signals: false,
+    },
+  });
 });
