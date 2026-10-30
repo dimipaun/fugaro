@@ -135,7 +135,10 @@ repository name, the workflow name, and build and test commands — the workflow
 The key is computed **only on the operator's machine** (D622), by `fugaro image refresh` and
 `fugaro project sync`, from a checkout at the repository's base branch head — the same tree
 `imagecheck.KeyFiles` reads there. Never in Cloud Build and never in a job: a job runs with
-installation credentials, and C2's resolver command is arbitrary code.
+installation credentials, and C2's resolver command is arbitrary code. The refresh passes the key
+it computed to the build as an input, and the build's record step writes the value it was given
+and never recomputes one of its own (D622): the key has to be the same fact on every machine, and
+the build's own clone is not the tree the operator's checkout is.
 
 The **local resolver** (the withdrawn plan task C2, D622) is the key's population input, as read
 here: a read-only command declared in the project layer which prints the repositories to consider,
@@ -417,7 +420,9 @@ Nothing is rewritten at once; a repository moves when it is next refreshed.
    record at `builds/<slug>/<workflow>/image.json`.
 2. The next `fugaro image refresh` computes the key (§2). With no entry for it and no superset, it
    builds once into the shared registry repository (§2.6) and moves that repository's job (§6). With
-   an entry, or a superset, it adopts and builds nothing. The repository stops building its own
+   an entry, or a superset, it adopts and builds nothing. The build is handed the key the refresh
+   computed and its record step writes that value as it is (D622): the build never recomputes a key
+   of its own, so the record's `key` is the operator's machine's fact whatever the build cloned. The repository stops building its own
    image; the old one stays where it is, pointed at by nothing, and §9's second clause removes it
    after `images.retention_days`.
 3. The second repository on a key finds the first's entry and adopts it, so a key built by two

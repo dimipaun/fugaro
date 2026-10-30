@@ -71,6 +71,14 @@ func TestDocsSharedImagesDesign(t *testing.T) {
 		"finds no checkout and no remote",
 		"it is a Cloud Build build argument",
 		"Route A is the design's recommendation",
+		// D622's split: the operator's machine computes the key and passes it
+		// in, and the build's record step writes what it was given (§2.5,
+		// §10). Each pin is one line of the document, so the fact is stated
+		// in both places that have to state it.
+		"it computed to the build as an input, and the build's record step writes the value it was given",
+		"and never recomputes one of its own (D622)",
+		"The build is handed the key the refresh",
+		"computed and its record step writes that value as it is (D622): the build never recomputes a key",
 		// C3's ordering is what lets the shared image hold no source, and C8
 		// can ship without C4's warning but not without C3.
 		"key files before the source layer",
