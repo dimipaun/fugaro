@@ -2,7 +2,7 @@
 
 **Status: plan only; nothing is implemented; no task approved.** The owner answered D720–D737 on
 2026-10-30, every one as recommended except **D730** (fully automatic `/jobmax` launches, not the
-recommendation). The answers approve no task. Still open: tension **OT1** (`/jobmax` guardrails), the
+recommendation; ruled the same day with guardrails and a per-project opt-in, off by default). The answers approve no task. Still open: the
 crash-report processor's name (**O4**; the console tasks stay draft until then), how a level meets a recipe without its step (**O7**, gates L3.1), where a teammate's console and phone read the owner's crash-report switch (**O9**, gates slice T), Hotfix's default levels (**O10**), and counsel's review
 of Terms §7.3 and the EU opt-out question (**O1**, **O2**).
 
@@ -12,8 +12,8 @@ of Terms §7.3 and the EU opt-out question (**O1**, **O2**).
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The owner's spec "Fugaro: Review Levels, A/B Testing, Job Max", as received, with one redaction (below) |
-| [reconciliation.md](reconciliation.md) | Findings F1–F44 against the code, decisions D720–D737 (answered 2026-10-30), open tension OT1, open items O1–O10, UNVERIFIED U1–U8. **Where it disagrees with `spec.md`, it wins** |
-| [implementation-plan.md](implementation-plan.md) | Slices L, B, J, T, G, V and task X1; levels 0–6; the critical path; the shared-files table; Checks 270–273. **Nothing in it is approved** |
+| [reconciliation.md](reconciliation.md) | Findings F1–F44 against the code, decisions D720–D737 (answered 2026-10-30), the D730 ruling (OT1, resolved), open items O1–O11, UNVERIFIED U1–U8. **Where it disagrees with `spec.md`, it wins** |
+| [implementation-plan.md](implementation-plan.md) | Slices L, B, J, T, G, V and tasks X1, X2; levels 0–6; the critical path; the shared-files table; Checks 270–273. **Nothing in it is approved** |
 
 ## Changes to the spec as received
 

@@ -20,7 +20,7 @@ the plan:
 - **D727** skips L2 after an L3 bounce and records each level's approved head.
 - **D728**: a reviewer A/B pair replays the challenger reviewer on the champion's patch, judged by A5, with `slot` added before A3.3.
 - **D729**: job max is defined in `parallelism`, and `/jobmax` is a plugin skill.
-- **D730**: launches are fully automatic, and task J1.2 waits for the tension OT1 ruling.
+- **D730** (ruled 2026-10-30, not the recommendation): `/jobmax` is fully automatic, with guardrails. It launches only inside the owner-set caps, only when every dependency is merged, and it stops and asks on any cap hit or ambiguity. The permission is a per-project opt-in the owner sets, off by default and revocable (J1.3), and with it off, the `parallelism` skill's one-yes-per-batch rule stays.
 - **D731** supersedes D255, console D5, the download page's text and Terms §7.3, and drops Firebase Analytics from the app.
 - **D732**: no crash reports from the CLI or the job.
 - **D733** approves `@sentry/electron`; the processor is named later, so **T2.1 and T2.2 stay draft until it is named**.
@@ -31,7 +31,6 @@ the plan:
 
 **Waiting on something external:**
 
-- OT1, the owner's ruling, gates J1.2.
 - O7, the owner's ruling on a recipe without a level's step, gates L3.1.
 - O9, where a teammate's console and phone read the owner's crash-report switch, gates T1.1, T1.2 and T1.3, and through them T2.1 and T3.1.
 - O10, Hotfix's default levels: the plan uses Pro's set until the owner rules.
@@ -62,8 +61,8 @@ the plan:
 | G5 | Effort never reaches a provider route (D725). A provider stage's environment keeps `MAX_THINKING_TOKENS=0` | L3.1, L4.3 |
 | G6 | A crash report holds the error type and frames only: no message, no absolute path, no user name, no breadcrumbs, no local variables (D734). A scrubber test feeds a hostile message carrying a token-shaped placeholder, a home path and a repository name, and asserts none of them leaves | T2.1, T3.1 |
 | G7 | Nothing is sent before the switch is read, and nothing is sent with the switch off (D734) | T2.1, T3.1 |
-| G8 | The CLI and the job send no crash report: `go.mod` carries no crash-reporting module (D732) | T1.1 |
-| G9 | `/jobmax` never launches a task whose dependency is unmerged (an unknown merge state counts as unmerged), and never launches past a cap (OT1's proposal, pending the ruling) | J1.2, Check 273 |
+| G8 | The CLI and the job send no crash report: `go.mod` carries no crash-reporting module (D732) | T0.1 |
+| G9 | `/jobmax` launches unattended only with the owner's opt-in on (default off). It never launches a task whose dependency is unmerged (an unknown merge state counts as unmerged), never launches past a cap, and stops and asks on any ambiguity (D730 as ruled) | J1.2, J1.3, Check 273 |
 | G10 | The A/B `slot` field is fixed before the pair launch writes pairs (D728), so pairs are not written twice in two formats | B1.1 before A3.3 |
 
 **Trust boundaries to probe in review:**
@@ -76,16 +75,15 @@ the plan:
 
 ## In-flight work this plan waits for (file conflicts)
 
-Open PRs on 2026-10-30 against `main` at `8301c23c8`. #1344, #1345 and #1325 named in an earlier
-draft have merged.
+Open PRs on 2026-10-30 against `main` at `c35da6943`. #1344, #1345, #1325, #1358, #1360, #1363 and #1365,
+named in earlier drafts, have merged.
 
 | In flight | Files shared with this plan | Tasks that wait |
 | --- | --- | --- |
 | #1362 (forge A2b, run 50f1) | `internal/config/config.go`, `internal/cli/run.go`, `internal/cli/validate.go`, `internal/cli/recipes_skew.go`, `internal/localcfg/localcfg.go`, `internal/localcfg/shared.go`, `schemas/fugaro.schema.json` | L1.2, L1.3, L1.4, L2.1, L3.2, T1.1 |
-| #1360 (C8b0, run 720d) | `internal/config/config.go`, `schemas/fugaro.schema.json`, `schemas/project-layer.schema.json` | L1.3 |
-| #1358 (run 5f0c; the A/B A3 queue follows it on the same file) | `internal/runner/runner.go` | L4.2, B1.2 |
-| #1363 (pairing T4) | `internal/cli/pair.go` | T1.3 |
-| #1365 (keychain) | `docs/plans/2026-10-22-mobile-pairing-cli.md` | T1.3 |
+| #1367 (`internal/cli/root.go`, `plugin/skills/working/SKILL.md`, `website/content/cli-reference.md`) | `plugin/skills/working/SKILL.md`, `website/content/cli-reference.md` | J1.1, L1.2, L5.1 |
+| #1368 (pairing: `pair.go`, `pair_test.go`) | `internal/cli/pair.go`, `internal/cli/pair_test.go` | T1.3 |
+| #1369 (runner stamping; the A/B A3 queue follows on the same file) | `internal/runner/runner.go` | L4.2, B1.2 |
 | #1332 (mobile P7.1b) | `mobile/app.config.js` | T3.1 |
 | #620 (managed-projects checks) | `docs/gcp-live-checklist.md` | X1, X2 |
 | Console Papaya steps 4b-2 to 7 | `console/src/renderer/theme/flight-deck.css`, `screens.css`, `console/src/renderer/screens/live.ts`, `run.ts`, `docs/design/console-styling.md` | G1.1, V1.2, V1.3 |
@@ -98,27 +96,36 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 
 ### Slice L: review levels 1–3
 
+#### L0.1 Answer U1: how Claude Code takes an effort setting
+
+- **Files:** `docs/multi-model.md` (its section on what was measured against Claude Code, beside `MAX_THINKING_TOKENS`).
+- **Interfaces:** produces the closed set of effort values and the per-process mechanism (a flag, an environment variable or a settings key) for the pinned Claude Code version. It is measured with the fake `claude` and the pinned binary's own `--help`, offline. If there is no per-process mechanism, the task says so and L4.3 is dropped (D725 then has nothing to apply).
+- **Tests and command:** `GOFLAGS=-p=2 go test ./internal/cli -run Docs -count=1`.
+- **Depends on:** none.
+- **Red step:** none. It is a measurement recorded in a doc, and L1.1's closed set is built from it.
+- **Commit:** `docs: how Claude Code takes an effort setting (U1)`.
+
 #### L1.1 The task's `review_levels` field (D724)
 
 - **Files:** `internal/config/levelsetting.go` (new), `internal/config/levelsetting_test.go` (new), `internal/task/task.go`, `schemas/task.schema.json`, `internal/task/task_test.go`.
-- **Interfaces:** produces `config.LevelSetting{Model, Effort, Off bool, Focus string}` and `config.ReviewLevels{L1, L2, L3 *LevelSetting}`. They live in `internal/config` because `internal/task` already imports `internal/config`, so a resolver in `config` cannot import `task`. `task.Spec.ReviewLevels` reuses the type. `Off` is the YAML/JSON `none`. `Effort` is decoded against a closed set (`config.Efforts`, U1), so an unknown value is refused at decode time. `Focus` is at most 500 bytes, is never put through a shell, and reaches the reviewer only as quoted data (L4.2). Consumed by L3.1 and L4.2. Inert until L3.1.
+- **Interfaces:** produces `config.LevelSetting{Model, Effort, Off bool, Focus string}` and `config.ReviewLevels{L1, L2, L3 *LevelSetting}`. They live in `internal/config` because `internal/task` already imports `internal/config`, so a resolver in `config` cannot import `task`. `task.Spec.ReviewLevels` reuses the type. `Off` is the YAML/JSON `none`. `Effort` is decoded against a closed set (`config.Efforts`, from L0.1), so an unknown value is refused at decode time. `Focus` is at most 500 bytes, is never put through a shell, and reaches the reviewer only as quoted data (L4.2). Consumed by L3.1 and L4.2. Inert until L3.1.
 - **Schema change:** `task.schema.json` gains `review_levels` (closed objects, `additionalProperties: false`).
 - **Tests:** `TestReviewLevelsRoundTrip`, `TestReviewLevelsRefusesUnknownKey`, `TestReviewLevelsFocusBound`, `TestLevelSettingRefusesUnknownEffort`, and `schemas/schemas_test.go`'s existing schema-vs-struct check.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/config ./internal/task ./schemas -run 'ReviewLevels|LevelSetting|Schema' -count=1`.
-- **Depends on:** none.
+- **Depends on:** L0.1 (the closed effort set).
 - **Red step:** `TestReviewLevelsRoundTrip` fails while `task.Parse` refuses the unknown field `review_levels`.
 - **Commit:** `task: the review_levels field (review levels L1.1)`.
 
 #### L1.2 The version gate and the `--review-levels` flag
 
-- **Files:** `internal/cli/recipes_skew.go`, `internal/cli/run.go`, `internal/cli/recipes_skew_test.go`, `internal/cli/run_review_test.go`.
-- **Interfaces:** consumes L1.1. Produces `reviewLevelsSince` and `fugaro run --review-levels <file|->` (YAML, decoded strictly into `task.ReviewLevels`). A job image older than `reviewLevelsSince` refuses the launch, naming `fugaro image refresh`.
-- **Tests:** `TestRecipesSkewRefusesReviewLevelsOnOldImage`, `TestRunReviewLevelsFlagWritesTaskField`.
-- **Command:** `GOFLAGS=-p=2 go test ./internal/cli -run 'RecipesSkew|RunReviewLevels' -count=1`.
-- **Version rule:** `reviewLevelsSince` names the release that ships L4.2, which is the first runner that acts on the field. Until L4.2 is released that version does not exist, so no image accepts a launch that sets the field, and no image can parse it and then ignore `none` or L3. `adversarialSince` (L2.1) follows the same rule.
-- **Depends on:** L1.1, L2.1 (the same `recipes_skew.go`), #1362.
+- **Files:** `internal/cli/recipes_skew.go`, `internal/cli/run.go`, `internal/cli/recipes_skew_test.go`, `internal/cli/run_review_test.go`, `website/content/cli-reference.md` (regenerated with `go run ./ee/clidoc`).
+- **Interfaces:** consumes L1.1. Produces `reviewLevelsSince` and `fugaro run --review-levels <file|->` (YAML, decoded strictly into `task.ReviewLevels`). A job image older than `reviewLevelsSince` refuses the launch, naming `fugaro image refresh`. The gate looks at the **resolved** run, not only at the task field, because a Critical default L3, a level added under O7, or an owner floor reaches a run with no task field at all. The launcher refuses an older image whenever the resolved levels include L3, any `none`, a per-level model or effort, or a floor. L3.2 supplies the resolved levels.
+- **Version rule:** `reviewLevelsSince` names the release that ships L4.2, which is the first runner that acts on levels. Until L4.2 is released that version does not exist, so no image accepts such a launch and then ignores `none` or L3. `adversarialSince` (L2.1) follows the same rule.
+- **Tests:** `TestRecipesSkewRefusesReviewLevelsOnOldImage`, `TestRecipesSkewRefusesResolvedL3OnOldImage`, `TestRunReviewLevelsFlagWritesTaskField`, `TestCliReferenceNamesEveryCommandAndFlag`, and `ee/clidoc`'s `TestCliReferenceIsCurrent`.
+- **Command:** `GOFLAGS=-p=2 go test ./internal/cli -run 'RecipesSkew|RunReviewLevels|CliReference' -count=1 && GOFLAGS=-p=2 go test -tags ee ./ee/clidoc -count=1 && (cd website && npm run check)`.
+- **Depends on:** L1.1, L2.1 (the same `recipes_skew.go`), #1362, #1367 (`cli-reference.md`).
 - **Red step:** the skew test fails because no constant judges the field.
-- **Release notes:** the CLI release's `### For operators` says to refresh job images (`fugaro image refresh`) before any launcher sets `--review-levels`.
+- **Release notes:** the CLI release's `### For operators` says to refresh job images (`fugaro image refresh`) before any launcher sets `--review-levels` or a repository sets levels.
 - **Commit:** `run: --review-levels, gated by the job image's version`.
 
 #### L1.3 Per-level settings in `fugaro.yaml` and the project layer (D722, D726)
@@ -134,8 +141,8 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 #### L1.4 The owner's level floor, owner-only and tighten-only (D722)
 
 - **Files:** `internal/localcfg/localcfg.go`, `internal/localcfg/localcfg_test.go`, `internal/projectpolicy/policy.go`, `internal/projectpolicy/policy_test.go`, `internal/cli/project_cmd.go` (the publish builds `projectpolicy.Policy` field by field), `internal/runner/policy.go` (the job reads the node at bootstrap), `internal/policy/policy.go` (the field on `Effective`), `internal/policy/merge.go`, `internal/policy/merge_test.go`.
-- **Interfaces:** produces `review_floor: {<mode>: [l1|l2|l3, …]}` in the owner's project config, published by `fugaro project policy publish` into the **owner-only policy node** (`internal/projectpolicy`). It is **not** a project-layer key: `docs/design/bucket-iam.md` §10 L2 says a launcher can embed any project-layer text in its own `task.json` and the runner trusts it, so a floor there could be dropped by the launcher it is meant to bind. The runner reads the node at bootstrap with its run token. `policy.Effective.ReviewFloor(mode)` merges as a union, so only tightening wins. A launcher with the owner's file applies it early (L3.2), and the job is authoritative.
-- **Tests:** `TestReviewFloorMergesTightenOnly`, `TestReviewFloorPublishedToPolicyNode`, `TestReviewFloorNotInLayer`, `TestRunnerReadsReviewFloorFromNode`.
+- **Interfaces:** produces `review_floor: {<mode>: [l1|l2|l3, …]}` in the owner's project config, published by `fugaro project policy publish` into the **owner-only policy node** (`internal/projectpolicy`). It is **not** a project-layer key: `docs/design/bucket-iam.md` §10 L2 says a launcher can embed any project-layer text in its own `task.json` and the runner trusts it, so a floor there could be dropped by the launcher it is meant to bind. The runner reads the node at bootstrap with its run token. `policy.Effective.ReviewFloor(mode)` merges as a union, so only tightening wins. A launcher with the owner's file applies it early (L3.2), and the job is authoritative. `projectpolicy.Decode` ignores unknown top-level keys, so a runner older than L4.2 would drop the floor silently. L1.2's gate on resolved levels refuses such an image whenever a floor is set. **No policy node:** `fugaro project policy publish` needs the installation's database and a `budget.mode`. An installation without them can publish no floor, so it runs on the rigor defaults alone, and `fugaro validate` warns when the owner's file sets a floor that cannot be published.
+- **Tests:** `TestReviewFloorMergesTightenOnly`, `TestReviewFloorPublishedToPolicyNode`, `TestReviewFloorNotInLayer`, `TestRunnerReadsReviewFloorFromNode`, `TestReviewFloorUnpublishableWarns`.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/policy ./internal/localcfg ./internal/projectpolicy -run 'ReviewFloor' -count=1 && GOFLAGS=-p=2 go test ./internal/runner -run 'TestRunnerReadsReviewFloor' -count=1 -timeout 30m`.
 - **Depends on:** #1362 (the same `localcfg.go`).
 - **Red step:** the merge test fails because the key does not exist.
@@ -145,8 +152,8 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 #### L2.1 The level-3 recipe step (D720, D726)
 
 - **Files:** `internal/recipe/recipe.go`, `internal/recipe/stages.go`, `schemas/recipe.schema.json`, `internal/cli/recipes_skew.go`, `internal/cli/recipes_skew_test.go`, `docs/recipes.md`, `docs/design/recipes.md`, `internal/recipe/recipe_test.go`, `internal/recipe/stages_test.go`.
-- **Interfaces:** produces `recipe.StepAdversarial` (`adversarial: { max_rounds, bounce: first_line }`): at most once, after `review`, and `bounce` may target only `first_line`. `StageBound` adds `n₃·(2 + 2·f)` with a bounce. It also produces `recipe.UsesAdversarial` and `adversarialSince`, a case in `recipeSinceFor` the way `UsesDigest` has one. `newKeys` is the 0.7.0 gate and would let a 0.13 image accept the launch and then refuse the step.
-- **Tests:** `TestAdversarialStepOrder`, `TestAdversarialBounceTarget`, `TestStageBoundWithAdversarial` (which pins 11 for today's `standard` at the defaults and 19 with L3 at f = 1, n = 2, n₃ = 2), and `TestRecipesSkewRefusesAdversarialOnOldImage`.
+- **Interfaces:** produces `recipe.StepAdversarial` (`adversarial: { max_rounds, bounce: first_line }`): at most once, after `review`, and `bounce` may target only `first_line`. `StageBound` adds `n₃·(2 + 2·f)` with a bounce. It also produces `recipe.UsesAdversarial` and `adversarialSince`, a case in `recipeSinceFor` the way `UsesDigest` has one. `recipe.Recipe.newKeys` (`internal/recipe/recipe.go`) is the 0.7.0 gate and would let a 0.13 image accept the launch and then refuse the step. `recipeSinceFor` returns the base gate when the task carries no catalog recipe (`r == nil`, a repository-sourced recipe), so the launcher reads the repository's recipe at the ref and applies `adversarialSince` to it too.
+- **Tests:** `TestAdversarialStepOrder`, `TestAdversarialBounceTarget`, `TestStageBoundWithAdversarial` (which pins 11 for today's `standard` at the defaults and 19 with L3 at f = 1, n = 2, n₃ = 2), `TestRecipesSkewRefusesAdversarialOnOldImage`, and `TestRecipesSkewRefusesRepositoryAdversarialOnOldImage`.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/recipe -count=1`, then `GOFLAGS=-p=2 go test ./internal/cli -run 'DocsRecipes|RecipesSkew' -count=1`.
 - **Depends on:** #1362 (the same `recipes_skew.go`).
 - **Red step:** a recipe with `adversarial:` is refused as an unknown step.
@@ -155,7 +162,7 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 #### L2.2 Per-rigor level defaults (D722, R2; folds rigor LV6.1)
 
 - **Files:** `internal/rigor/levels.go` (new), `internal/rigor/rounds.go`, `internal/rigor/levels_test.go` (new).
-- **Interfaces:** produces `rigor.DefaultLevels(mode)` for **L2 and L3 only**: POC {L2: none}; Startup and Pro {L2}; Critical {L2, L3}. L1 keeps following `agent.first_line_review` (`auto` turns it on only when a provider serves the coder and none serves the reviewer, `config.Agent.FirstLineOn`), except at POC, where L2 is `none` and L1 is turned on so a review still runs (D723). This is what keeps `solo`, `lint-fix` and this repository's `fugaro.yaml` (coder = reviewer) from resolving to L1 = L2 and being refused under D721. Hotfix is not in the spec: the plan gives it Pro's set until the owner rules on **O10**. Also produces `rigor.AdversarialCeiling(mode)`, held to `minRoundCeiling` while rigor O3 is open.
+- **Interfaces:** produces `rigor.DefaultLevels(mode)` for **L2 and L3 only**: POC {L2: none}; Startup and Pro {L2}; Critical {L2, L3}. L1 keeps following `agent.first_line_review` (`auto` turns it on only when a provider serves the coder and none serves the reviewer, `config.Agent.FirstLineOn`), except at POC, where L2 is `none` and L1 is turned on so a review still runs (D723). This is what keeps `solo`, `lint-fix`, and a coder = reviewer configuration on the catalog `default` recipe, from resolving to L1 = L2 and being refused under D721. A recipe that names `first_line` runs it regardless, so there the refusal stands (O11). Hotfix is not in the spec: the plan gives it Pro's set until the owner rules on **O10**. Also produces `rigor.AdversarialCeiling(mode)`, held to `minRoundCeiling` while rigor O3 is open.
 - **Tests:** `TestDefaultLevelsPerMode`, `TestDefaultLevelsLeaveL1ToFirstLineReview`, `TestAdversarialCeilingNeverRaises`.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/rigor -count=1`.
 - **Depends on:** none.
@@ -170,7 +177,7 @@ Every task's reviewer tier is **standard** unless marked otherwise.
   - Warns when L2 equals the coder's model, or when L1 and L2 share a vendor family. It creates `config.ModelFamily`: a Claude ID is `anthropic`, a provider ID is its vendor prefix. A/B D553 reuses it.
   - Refuses `effort` for a model a provider claims, with the reason.
   - Refuses a level model outside `allowed_models`.
-- **Tests:** `TestResolveLevelsPrecedence`, `TestResolveLevelsFloorRefusesNone`, `TestResolveLevelsRefusesSameModel`, `TestResolveLevelsWarnsCoderAndFamily`, `TestResolveLevelsRefusesProviderEffort`, `TestResolveLevelsRefusesModelOutsideAllowList`, `TestResolveLevelsSoloUnaffected` (`solo`, `lint-fix` and a coder = reviewer configuration resolve with no refusal at every mode).
+- **Tests:** `TestResolveLevelsPrecedence`, `TestResolveLevelsFloorRefusesNone`, `TestResolveLevelsRefusesSameModel`, `TestResolveLevelsWarnsCoderAndFamily`, `TestResolveLevelsRefusesProviderEffort`, `TestResolveLevelsRefusesModelOutsideAllowList`, `TestResolveLevelsSoloUnaffected` (`solo`, `lint-fix`, and a coder = reviewer configuration on the catalog `default` recipe, resolve with no refusal at every mode), and `TestResolveLevelsRefusesFirstLineRecipeWithCoderEqualsReviewer`. A recipe carrying `first_line: {}` (`standard`, `test-and-fix`) always runs L1 (`docs/recipes.md` §2), so a coder = reviewer configuration on it **is** refused under D721. That includes this repository's own `fugaro.yaml` launched with `--recipe standard`. See O11.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/config -run 'ResolveLevels' -count=1`.
 - **Depends on:** L1.1, L1.3, L1.4, L2.2, and the O7 ruling.
 - **Red step:** `TestResolveLevelsRefusesSameModel` fails before the refusal exists.
@@ -180,11 +187,12 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 #### L3.2 `fugaro validate` and launch apply the resolver
 
 - **Files:** `internal/cli/validate.go`, `internal/cli/run.go`, `internal/cli/validate_test.go`, `internal/cli/run_review_test.go`.
-- **Interfaces:** consumes L3.1 and L1.2. `validate` prints the warnings and refusals, and `--json` carries them. Launch refuses before writing the task.
-- **Tests:** `TestValidateLevelsSameModel`, `TestRunRefusesLevelsBelowFloor`.
-- **Command:** `GOFLAGS=-p=2 go test ./internal/cli -run 'ValidateLevels|RunRefusesLevels' -count=1`.
+- **Interfaces:** consumes L3.1 and L1.2. `validate` prints the warnings and refusals, and `--json` carries them. Launch refuses before writing the task, and hands the resolved levels to L1.2's version gate.
+- **Tests:** `TestValidateLevelsSameModel`, `TestRunRefusesLevelsBelowFloor`, `TestRunGatesResolvedLevelsOnImage`.
+- **Command:** `GOFLAGS=-p=2 go test ./internal/cli -run 'ValidateLevels|RunRefusesLevels|RunGatesResolvedLevels' -count=1`.
 - **Depends on:** L3.1, L1.2.
 - **Red step:** validate passes a same-model configuration before the change.
+- **Release notes:** the CLI release says that a coder = reviewer configuration on a recipe with `first_line` is now refused (O11).
 - **Commit:** `validate, run: the review-level checks at the launcher`.
 
 #### L4.1 The record: level-3 tier and each level's approved head (D727)
@@ -200,10 +208,10 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 #### L4.3 Effort for a Claude stage (D725)
 
 - **Files:** `internal/agent/env.go`, `internal/agent/effort_test.go` (new).
-- **Interfaces:** produces `agent.EffortVars(effort string, provider bool) (map[string]string, error)`. It is empty for a provider stage and for "", and it returns an error for a value outside `config.Efforts`. The variable or flag it sets is what U1 finds. **The task's first commit records U1's answer**, measured with the fake `claude` against the pinned Claude Code version, and stops if Claude Code has no per-process effort setting.
+- **Interfaces:** produces `agent.EffortVars(effort string, provider bool) (map[string]string, error)`. It is empty for a provider stage and for "", and it returns an error for a value outside `config.Efforts`. The variable or flag it sets is the one L0.1 recorded.
 - **Tests:** `TestEffortVarsClaudeOnly`, `TestEffortVarsNeverOnProviderStage`, `TestEffortVarsRefusesUnknown`.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/agent -run 'EffortVars' -count=1`.
-- **Depends on:** L1.1 (`config.Efforts`). L1.1's set is provisional until this task's first commit answers U1; if U1 changes it, this task edits `levelsetting.go` too (L1.1 has merged by then).
+- **Depends on:** L1.1 (`config.Efforts`, fixed by L0.1, so this task changes no schema).
 - **Red step:** an undefined function fails the test.
 - **Commit:** `agent: effort for a Claude stage, never a provider's`.
 
@@ -219,7 +227,7 @@ Every task's reviewer tier is **standard** unless marked otherwise.
   - A level's focus text enters the review prompt as quoted data under a fixed heading. The PR body records it through `safetext`, the sanitiser every job-written field takes. Quoting does not stop a hostile focus text from steering a model. What bounds that risk is that only a launcher writes it, and a floor-required level still runs.
 - **Tests:** `TestLevelsL3BounceSkipsL2`, `TestLevelsReadinessHighestLevel`, `TestLevelsPOCL1Decides`, `TestLevelsBootstrapRefusesBelowFloor`, `TestLevelsBootstrapRefusesSameModelTask`, `TestLevelsFocusIsQuotedAndRecorded`, `TestLevelsPRBodyShowsHeads`.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/runner -run 'TestLevels' -count=1 -timeout 30m`.
-- **Depends on:** L1.1, L2.1, L3.1, L4.1, L4.3, L4.5, #1358.
+- **Depends on:** L1.1, L2.1, L3.1, L4.1, L4.3, L4.5, #1369.
 - **Red step:** `TestLevelsL3BounceSkipsL2` fails because the runner rejects the step.
 - **Reviewer:** opus + mandatory independent review (readiness).
 - **Commit:** `runner: review level 3, its bounce, and readiness by the highest level`.
@@ -230,6 +238,7 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 - **Interfaces:** consumes L3.1. Today a stage pins one of two role slots plus the background model (`pinSlot`). This task routes an L1 or L3 model that differs from the coder's and the reviewer's: the stage's pins, its provider route (`agent.ProviderRouteVars` when a provider claims the model), and the gateway's allowed set for the run, which must name every level's model.
 - **Tests:** `TestRoutingL1ModelDistinctFromCoder`, `TestRoutingL3ProviderModelGetsRouteVars`, `TestRoutingRefusesLevelModelOutsideAllowedModels`.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/runner -run 'TestRouting' -count=1 -timeout 30m`.
+- **First commit:** records U5: whether in-job review Q9's gate (a Claude reviewer in a job waits for the credentials service) still binds under `auth: api-key` with both keys, read from `internal/runner/routing.go` and `docs/multi-model.md`. If it binds, a Claude model at L2 or L3 is refused next to a provider coder until the credentials service lands, and `ResolveLevels` (L3.1) says so.
 - **Depends on:** L3.1.
 - **Red step:** an L1 model different from the coder's runs on the coder's pin.
 - **Reviewer:** opus + mandatory independent review (the gateway's allowed models).
@@ -259,8 +268,8 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 #### B1.1 The `slot` field on the pair (D728, before A3.3)
 
 - **Files:** `internal/task/task.go`, `internal/task/task_test.go`, `schemas/task.schema.json`, `internal/runstore/runstore.go`, `internal/runstore/runstore_test.go`, `schemas/result.schema.json`, `internal/cli/recipes_skew.go` and `internal/cli/recipes_skew_test.go` (`slotSince`), `docs/model-ab-testing/implementation-plan.md` (D555 amended: a coder pair still holds every reviewer fixed; A3.3 now depends on B1.1).
-- **Interfaces:** produces `task.AB.Slot` ∈ {`coder`, `l1`, `l2`, `l3`}. Empty means `coder`, so records written by A1.1 still read. A launch with a non-empty slot is gated by `slotSince`.
-- **Tests:** `TestABSlotVocabulary`, `TestABSlotDefaultsToCoder`, `TestRecipesSkewRefusesSlotOnOldImage`.
+- **Interfaces:** produces `task.AB.Slot` ∈ {`coder`, `l1`, `l2`, `l3`} and `task.AB.ChampionRun`, the champion's run ID. `ChampionRun` is required on a reviewer-slot challenger and absent otherwise; it is what B1.2's "patch from another run" check compares with. Empty `Slot` means `coder`, so records written by A1.1 still read. A launch with a non-empty slot is gated by `slotSince`.
+- **Tests:** `TestABSlotVocabulary`, `TestABSlotDefaultsToCoder`, `TestABReviewerSlotNeedsChampionRun`, `TestRecipesSkewRefusesSlotOnOldImage`.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/task ./internal/runstore ./schemas -run 'ABSlot|Schema' -count=1 && GOFLAGS=-p=2 go test ./internal/cli -run 'RecipesSkew|Docs' -count=1`.
 - **Depends on:** L1.1, L4.1 and L1.2 (the same files, at earlier levels). Must land before A3.3.
 - **Red step:** an unknown field `slot` is refused.
@@ -271,14 +280,25 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 - **Files:** `internal/runner/abreplay.go` (new), `internal/runner/runner.go`, `internal/runner/abreplay_test.go` (new).
 - **Interfaces:** a challenger with `slot: lN` checks out the champion's base, applies the champion's patch (`runs/<slug>/<run-id>/ab/patch.diff`), runs one level-N review with the challenger model and publishes nothing (`ab.publish: none`). Its findings are recorded for the judge.
   - The patch is untrusted: any launcher, and the champion's own job agent, can write that object (`docs/design/bucket-iam.md` §10 L3).
-  - The replay refuses a patch that touches `.claude/**`, `.fugaro/**`, `.github/**`, `.git*`, `fugaro.yaml` or a recipe file, so no hook or setting crosses runs.
+  - It reads only the patch under `ChampionRun`'s own prefix.
+  - The replay refuses a patch that touches `.claude/**`, `.fugaro/**`, `.github/**`, `.git*`, `fugaro.yaml`, a recipe file, `CLAUDE.md` or `CLAUDE.local.md` at any depth, or `.mcp.json`, so no hook, instruction or tool setting crosses runs.
   - It applies the patch with `git apply` and no scripts, and runs the review with the reviewer's read-only tool set.
 - **Tests:** `TestABReplayReviewsChampionPatch`, `TestABReplayPublishesNothing`, `TestABReplayRefusesPatchFromOtherRun`, `TestABReplayRefusesPatchTouchingAgentConfig`.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/runner -run 'ABReplay' -count=1 -timeout 30m`.
-- **Depends on:** B1.1, L4.2, A3.3, A5.2.
+- **Depends on:** B1.1, L4.2, A5.2. It is launched by B1.4.
 - **Red step:** a `slot: l2` challenger runs a full coding loop.
 - **Reviewer:** opus + mandatory independent review (it reads another run's object).
 - **Commit:** `runner: an A/B reviewer arm replays the champion's patch`.
+
+#### B1.4 The deferred reviewer-arm launch (`ee/`)
+
+- **Files:** `ee/ab/` (the launch files A3.3 creates), and their tests.
+- **Interfaces:** A3.3 launches a coder pair's two arms at one moment (D571). A reviewer-slot challenger needs the champion's patch, which exists only once the champion has finished, so it is launched afterwards, by the same `ee/ab` code, at the champion's recorded start commit. It sets `ab.slot` and `ab.champion_run`. D571's one-commit rule holds, and its same-moment launch does not apply to reviewer slots.
+- **Tests:** `TestABReviewerArmLaunchesAfterChampionPatch`, `TestABReviewerArmUsesChampionStartSHA`.
+- **Command:** `GOFLAGS=-p=2 go test -tags ee ./ee/ab/... -count=1 && GOFLAGS=-p=2 go test ./internal/eeboundary/ -count=1`.
+- **Depends on:** B1.1, A3.3.
+- **Red step:** a reviewer-slot pair launches its challenger before the champion's patch exists.
+- **Commit:** `ab: launch a reviewer arm once the champion's patch exists`.
 
 #### B1.3 Per-slot scoring and `fugaro ab` grouping (`ee/`)
 
@@ -286,7 +306,8 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 - **Interfaces:** a reviewer pair's signals are misses (findings the judge matched in the champion's same-level review that the challenger lacked), false alarms (judge-marked) and cost. `fugaro ab` groups results by slot × model × effort. There is no per-person dimension (D560).
 - **Tests:** `TestABScoreReviewerSlot`, `TestABReportGroupsBySlot`.
 - **Command:** `GOFLAGS=-p=2 go test -tags ee ./ee/ab/... -count=1 && GOFLAGS=-p=2 go test ./internal/eeboundary/ -count=1`. Every new `ee/` file carries the business-licence notice that `ee/README.md` prescribes.
-- **Depends on:** B1.2, A4.3, A5.4.
+- **First commit:** records U4 from the A5 judge's own check (Check 211): how often the judge's finding matches agree across its two swapped passes. Below the owner's bar, the miss rate is reported as unreliable rather than as a figure.
+- **Depends on:** B1.2, B1.4, A4.3, A5.4.
 - **Red step:** a reviewer pair is scored with coder signals.
 - **Commit:** `ab: score and report the review slots`.
 
@@ -295,46 +316,59 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 #### J1.1 Job max in the `parallelism` skill (D729)
 
 - **Files:** `plugin/skills/parallelism/SKILL.md`, `plugin/skills/working/SKILL.md` (a one-line pointer), `plugin/parallelism_skill_test.go`.
-- **Content:** job max is "the most completed, reviewed runs in parallel, not tokens spent; only real dependencies order runs". Planning advice: contracts first, stubs and fakes so neither side waits, the graph kept wide and shallow. The skill's "one yes per batch" rule stays until OT1 is ruled.
+- **Content:** job max is "the most completed, reviewed runs in parallel, not tokens spent; only real dependencies order runs". Planning advice: contracts first, stubs and fakes so neither side waits, the graph kept wide and shallow. The skill's "one yes per batch" rule stays the default. The `/jobmax` exception applies only where the owner has turned on the project's opt-in (D730 as ruled; J1.3).
 - **Tests:** `TestParallelismSkillDefinesJobMax` (the phrase and the three techniques), plus the lint.
 - **Command:** `GOFLAGS=-p=2 go test ./plugin -count=1`.
-- **Depends on:** none.
+- **Depends on:** #1367 (`working/SKILL.md`).
 - **Red step:** the new test fails on the current skill.
 - **Commit:** `plugin: job max in the parallelism skill`.
 
-#### J1.2 The `/jobmax` skill (D729, D730; BLOCKED on OT1)
+#### J1.2 The `/jobmax` skill (D729, D730 as ruled)
 
-- **Files:** `plugin/skills/jobmax/SKILL.md` (new), `plugin/jobmax_skill_test.go` (new), `plugin/skills/parallelism/SKILL.md` (the `/jobmax` exception to "one yes per batch", as OT1 rules), `plugin/.claude-plugin/plugin.json` (description).
+- **Files:** `plugin/skills/jobmax/SKILL.md` (new), `plugin/jobmax_skill_test.go` (new), `plugin/plugin_test.go` (it pins exactly five skills), `plugin/skills/parallelism/SKILL.md` (the `/jobmax` exception to "one yes per batch", only with the opt-in on), `plugin/.claude-plugin/plugin.json` (description).
 - **Interfaces:**
-  - Starting point: a plan with a `*.graph.json`. When the backlog has none, `/jobmax` stops and points to the `parallelism` skill, which breaks the work into a graph with the user. That is the spec's "breaks the backlog or plan into parallel jobs", done as planning rather than as launches.
-  - Runs only on a clean checkout of the base branch, at its tip, and refuses otherwise. A branch's unreviewed plan text never drives launches.
-  - Reads `fugaro plan graph --plan <p> --json` and `fugaro plan status --all --json`. Without `--all`, merged and cancelled tasks are not listed.
-  - A dependency counts as done only when its state is **merged**. Cancelled, and done with an unknown merge state (Bitbucket, no `gh`, past the lookup cap), both count as not done. The skill reads the merge field itself rather than the built-in `ready` state, which treats an unknown merge as done.
-  - Launches each ready task with `fugaro run --batch <plan> --plan-task <plan>/<task> --task-file -`, inside the caps as OT1 rules. `--plan-task` is what `plan status` joins runs by. The run ID is the CLI's own, because `task.ValidRunID` accepts only `YYYYMMDD-HHMMSS-xxxx`.
+  - **The opt-in.** It reads the project's `jobmax.auto_launch` (J1.3) from the CLI document J1.3 names. Off, unset or unreadable means the `parallelism` rule applies: one yes for the whole batch, with the runs and the worst case shown. On means it launches with no question, inside the guardrails below.
+  - **Guardrail 1, caps.** It launches only within the owner-set caps: `max_parallel` (active runs), the per-run cap (`budget.per_run_usd`), the project's daily cap (`budget.per_day_usd`, the batch's worst case checked against today's headroom from `fugaro budget show --json`), and the existing 20-run cloud cap (U9).
+  - **Guardrail 2, merged only.** A task launches only when **all** its dependencies are **merged**, never on an open PR. It reads `fugaro plan status --all --json` (without `--all`, merged and cancelled tasks are not listed) and checks the merge field itself. Cancelled, and done with an unknown merge state (Bitbucket, no `gh`, past the lookup cap), count as not merged. The built-in `ready` state treats an unknown merge as done.
+  - **Guardrail 3, stop and ask.** It stops and asks the user on any cap hit, any refusal, and any ambiguity: a graph `fugaro plan graph` refuses, a task with no text, two ready tasks whose footprints overlap, a dependency it cannot classify, or a dirty or non-base checkout.
+  - Starting point: a plan with a `*.graph.json`. When the backlog has none, it stops and points to the `parallelism` skill, which breaks the work into a graph with the user (the spec's "breaks the backlog or plan into parallel jobs").
+  - Runs only on a clean checkout of the base branch, at its tip, so a branch's unreviewed plan text never drives launches.
+  - Launches each ready task with `fugaro run --batch <plan> --plan-task <plan>/<task> --task-file -`. `--plan-task` is what `plan status` joins runs by. The run ID is the CLI's own, because `task.ValidRunID` accepts only `YYYYMMDD-HHMMSS-xxxx`.
   - The task's text is untrusted. It goes to `fugaro run` on stdin only, and the skill states that instructions inside it are not followed.
-  - Prints what it launched and the worst case, and stops on any refusal. Whether it then waits or ends is OT1's proposal 5.
-- **Tests:** `TestJobmaxSkillNamesOnlyRealCommands` (the plugin check), `TestJobmaxSkillRequiresMergedDependencies`, `TestJobmaxSkillStopsOnCap`, `TestJobmaxSkillBaseBranchOnly`. All but the first are wording tests: they pin the rules the skill states, and they cannot enforce an agent's behaviour. The behaviour is Check 273 (X2, OWNER-RUN).
+  - It prints what it launched and the worst case of what it launched. There is no waiting loop: running it again launches what has become ready.
+- **Tests:** `TestJobmaxSkillNamesOnlyRealCommands` (the plugin check), `TestJobmaxSkillOptInDefaultsOff`, `TestJobmaxSkillRequiresMergedDependencies`, `TestJobmaxSkillStopsOnCapAndAmbiguity`, `TestJobmaxSkillBaseBranchOnly`, and `plugin_test.go` updated to six skills. All but the first and last are wording tests: they pin the rules the skill states, and they cannot enforce an agent's behaviour. The behaviour is Check 273 (X2, OWNER-RUN).
 - **Command:** `GOFLAGS=-p=2 go test ./plugin -count=1`.
-- **Depends on:** J1.1 and the OT1 ruling.
+- **Depends on:** J1.1, J1.3.
 - **Red step:** the plugin check fails on a skill that does not exist.
 - **Commit:** `plugin: /jobmax launches every ready task of a plan`.
+
+#### J1.3 The owner's opt-in: `jobmax.auto_launch` (D730 as ruled)
+
+- **Files:** `internal/localcfg/localcfg.go`, `internal/localcfg/localcfg_test.go`, `internal/cli/project_cmd.go` (the owner's publish), the owner-written node O9 names, `internal/cli/budget.go` and its test (the same document as the crash switch, O9), `console/docs/json-contract.md`.
+- **Interfaces:** `jobmax: { auto_launch: false }` in the owner's project config, decoded strictly: a boolean, default `false`, and any other key under `jobmax:` refused. It is published only by the owner, to the same owner-written, user-readable place as the crash switch (O9), never through the launcher-writable shared configuration. The owner can turn it off again at any time. The CLI document prints `jobmax_auto_launch: true|false|null`, and `null` (unreadable) means off.
+- **Tests:** `TestJobmaxAutoLaunchDefaultsOff`, `TestJobmaxAutoLaunchStrict`, `TestJobmaxAutoLaunchNotInShared`, `TestBudgetShowJobmaxAutoLaunchUnknownIsNull`.
+- **Command:** `GOFLAGS=-p=2 go test ./internal/localcfg -run Jobmax -count=1 && GOFLAGS=-p=2 go test ./internal/cli -run 'Jobmax|BudgetShow|Docs' -count=1`.
+- **Depends on:** T1.1 (the same `localcfg.go` and `project_cmd.go`), T1.2 (the same `budget.go` and contract), and the O9 ruling.
+- **Red step:** the unknown key `jobmax` is refused.
+- **Reviewer:** opus + mandatory independent review (an owner-only permission to spend).
+- **Commit:** `localcfg: jobmax.auto_launch, the owner's opt-in to unattended launches`.
 
 ### Slice T: crash reports (console and mobile; none from the CLI)
 
 #### T0.1 Record the supersessions (D731)
 
-- **Files:** `docs/design/desktop-console.md` (D5 marked superseded by D731), `docs/plans/2026-10-19-mobile-telemetry.md` (D255 superseded; Analytics dropped; the §7.4 scan refuses `setAnalyticsCollectionEnabled(` and admits exactly one `setCrashlyticsCollectionEnabled(` call site), `docs/mobile/implementation-plan.md` (P7.2/P7.3 re-scoped), `internal/cli/docs_mobile_telemetry_test.go` (its pinned facts move with the text).
-- **Tests and command:** `GOFLAGS=-p=2 go test ./internal/cli -run Docs -count=1 && (cd website && npm run check)`. `website/test/console.mjs` reads the D5 row.
+- **Files:** `docs/design/desktop-console.md` (D5 marked superseded by D731), `docs/plans/2026-10-19-mobile-telemetry.md` (D255 superseded; Analytics dropped; the §7.4 scan refuses `setAnalyticsCollectionEnabled(` and admits exactly one `setCrashlyticsCollectionEnabled(` call site), `docs/mobile/implementation-plan.md` (P7.2/P7.3 re-scoped), `internal/cli/docs_mobile_telemetry_test.go` (its pinned facts move with the text), `internal/cli/docs_no_crash_reporter_test.go` (new: G8, `TestGoModHasNoCrashReporter`, which needs no switch and so is not blocked on O9).
+- **Tests and command:** `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|GoModHasNoCrashReporter' -count=1 && (cd website && npm run check)`. `website/test/console.mjs` reads the D5 row.
 - **Depends on:** none.
 - **Red step:** the mobile telemetry docs test fails on the old "always on" pin until both move together.
 - **Commit:** `docs: crash reports are opt-out; the app drops Analytics (D731)`.
 
 #### T1.1 The switch: `telemetry.crash_reports` (D732, D734; BLOCKED on O9)
 
-- **Files:** `internal/localcfg/localcfg.go`, `internal/localcfg/shared.go` (`Shared()` is a deny-list: it sets `Telemetry = nil` as it does `UpdateCheck`), `internal/cli/sharedcfg.go` (`sharedForbidden`), `internal/localcfg/localcfg_test.go`, `internal/cli/project_cmd.go` (the owner's publish), the node writer O9 names, `internal/cli/docs_no_crash_reporter_test.go` (new: G8).
+- **Files:** `internal/localcfg/localcfg.go`, `internal/localcfg/shared.go` (`Shared()` is a deny-list: it sets `Telemetry = nil` as it does `UpdateCheck`), `internal/cli/sharedcfg.go` (`sharedForbidden`), `internal/localcfg/localcfg_test.go`, `internal/cli/project_cmd.go` (the owner's publish), the node writer O9 names.
 - **Interfaces:** produces `localcfg.Telemetry{CrashReports *bool}` (nil means true) in the owner's project config. It never goes through the launcher-writable shared configuration. Where the owner's value is published so that a **teammate's** console and phone can read it is **O9**: the policy node is readable only by run tokens, and `config list` is offline. The recommendation is an owner-written, user-readable node read by an online command the console already runs.
-- **Tests:** `TestTelemetryCrashReportsDefaultTrue`, `TestTelemetryNotInShared`, `TestTelemetrySharedForbidden`, `TestTelemetryPublishedByOwnerOnly`, `TestGoModHasNoCrashReporter`.
-- **Command:** `GOFLAGS=-p=2 go test ./internal/localcfg -run Telemetry -count=1 && GOFLAGS=-p=2 go test ./internal/cli -run 'Telemetry|SharedForbidden|GoModHasNoCrashReporter' -count=1`.
+- **Tests:** `TestTelemetryCrashReportsDefaultTrue`, `TestTelemetryNotInShared`, `TestTelemetrySharedForbidden`, `TestTelemetryPublishedByOwnerOnly`.
+- **Command:** `GOFLAGS=-p=2 go test ./internal/localcfg -run Telemetry -count=1 && GOFLAGS=-p=2 go test ./internal/cli -run 'Telemetry|SharedForbidden' -count=1`.
 - **Reviewer:** opus + mandatory independent review (an owner-only value).
 - **Depends on:** L1.4 (the same `localcfg.go` and `project_cmd.go`), #1362, and the O9 ruling.
 - **Red step:** the unknown key is refused.
@@ -346,7 +380,7 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 - **Interfaces:** the document gains `"crash_reports": true|false|null`. `null` means the owner's value could not be read, and the console then sends nothing (D734). `config list` is not used: it is offline by design (`config_list.go`: it "opens no bucket, calls no API").
 - **Tests:** `TestBudgetShowCrashReports`, `TestBudgetShowCrashReportsUnknownIsNull`.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/cli -run 'BudgetShow|Docs' -count=1`.
-- **Depends on:** T1.1, and V1.1 (the same `budget.go` and contract).
+- **Depends on:** T1.1, and V1.1 (the same contract).
 - **Red step:** the field is absent.
 - **Commit:** `budget show: the owner's crash-report switch`.
 
@@ -356,14 +390,14 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 - **Interfaces:** `token.Delivery` gains `CrashReports bool`, kept **outside** `DeliveryConfig`, whose four fields the phone compares with the QR (D199). `fugaro pair` takes the value from where O9 publishes it, the owner's value, never the operator's local file, and pairs with `false` when it cannot read it. The doc states O5: a changed switch reaches a phone at its next pairing.
 - **Tests:** `TestDeliveryCarriesCrashReports`, `TestDeliveryConfigStillFourFields`, `TestPairUnreadableSwitchIsFalse`.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/budget/token ./internal/cli -run 'Delivery|Pair|Docs' -count=1`.
-- **Depends on:** T1.1, #1363, #1365, and the O9 ruling.
+- **Depends on:** T1.1, #1368 (`pair.go`, `pair_test.go`), and the O9 ruling.
 - **Red step:** the field is absent from the payload.
 - **Reviewer:** opus + mandatory independent review (the pairing delivery).
 - **Commit:** `pair: the delivery carries the crash-report switch`.
 
 #### T2.1 The console reporter (D733, D734; DRAFT until the processor is named)
 
-- **Files:** `console/package.json`, `console/package-lock.json` (`@sentry/electron`, exact), `console/test/unit/pinning.test.ts` (its runtime-dependency allow-list asserts `dependencies` is empty today), `console/src/main/crash.ts` (new), `console/src/main/index.ts`, `console/src/main/installlist.ts` or the decoder of O9's document (the `crash_reports` field), `console/test/unit/crash.test.ts` (new), `console/THIRD_PARTY_NOTICES.md`, `docs/licensing/dependency-audit.md`, `docs/design/desktop-console.md` (a new section: what is sent), `website/src/pages/privacy.astro` (the console paragraph), `website/test/privacy.mjs` (it scans `console/src/` for reporting hosts and pins "carries none"), `docs/releases/console/` (the release's notes).
+- **Files:** `console/package.json`, `console/package-lock.json` (`@sentry/electron`, exact), `console/test/unit/pinning.test.ts` (its runtime-dependency allow-list asserts `dependencies` is empty today), `console/src/main/crash.ts` (new), `console/src/main/index.ts`, the `crash_reports` field decoded inside `console/src/main/crash.ts` from the output of the `budget show --json` operation the console already runs (no change to `console/src/shared/schema.ts`), `console/test/unit/crash.test.ts` (new), `console/THIRD_PARTY_NOTICES.md`, `docs/licensing/dependency-audit.md`, `docs/design/desktop-console.md` (a new section: what is sent), `website/src/pages/privacy.astro` (the console paragraph), `website/test/privacy.mjs` (it scans `console/src/` for reporting hosts and pins "carries none"), `docs/releases/console/` (the release's notes).
 - **Interfaces:**
   - Initialises only after O9's document returns `crash_reports: true` for the chosen installation, and closes the client when the switch reads false or null.
   - `beforeSend` keeps the exception type and frames (function, app-relative file, line). It drops the message, breadcrumbs, contexts, user, request, `server_name`, tags, extra and local variables.
@@ -423,19 +457,19 @@ processor (O4). No agent edits the Terms.
 
 ### Slice V: live gauges (D736, D737)
 
-#### V1.1 `budget show --json` prints `max_parallel` and today's headroom
+#### V1.1 The watch document carries `max_parallel`
 
-- **Files:** `internal/cli/budget.go`, `internal/cli/budget_show_totals_test.go`, `console/docs/json-contract.md`.
-- **Interfaces:** adds `max_parallel`. The day's remaining headroom is already printed (`headroom_usd`).
-- **Tests:** `TestBudgetShowMaxParallel`.
-- **Command:** `GOFLAGS=-p=2 go test ./internal/cli -run 'BudgetShow|Docs' -count=1`.
+- **Files:** `internal/cli/watch.go`, `internal/cli/watch_test.go`, `console/docs/json-contract.md`.
+- **Interfaces:** the document Live decodes (`fugaro watch --json`, closed `LIVE_KEYS`) gains `max_parallel`. Headroom is already there: Live takes it from `total.daily_cap_usd`. Live does not read `budget show`.
+- **Tests:** `TestWatchJSONMaxParallel`.
+- **Command:** `GOFLAGS=-p=2 go test ./internal/cli -run 'TestWatchJSON|Docs' -count=1`.
 - **Depends on:** none.
 - **Red step:** the field is absent.
-- **Commit:** `budget show: max_parallel for the console's cap bars`.
+- **Commit:** `watch: max_parallel for the console's cap bars`.
 
 #### V1.2 The spend-rate gauge, one-hour sparklines and cap bars on Live
 
-- **Files:** `console/src/renderer/screens/live.ts`, `console/src/renderer/theme/flight-deck.css`, `console/src/shared/schema.ts`, `console/test/unit/live.test.ts`, `docs/design/console-styling.md`.
+- **Files:** `console/src/renderer/screens/live.ts`, `console/src/renderer/theme/flight-deck.css`, `console/src/shared/schema.ts` (`LIVE_KEYS` gains `max_parallel`), `console/test/unit/live.test.ts`, `docs/design/console-styling.md`.
 - **Interfaces:**
   - An SVG gauge in $/h. Its red zone starts at the rate that would use up the day's remaining headroom before the UTC day ends.
   - `HourHistory` is a second bounded history (one hour, kept only while the console runs) beside the 5-minute `BurnHistory`, whose pin to `BurnWindow` is untouched.
@@ -454,7 +488,7 @@ processor (O4). No agent edits the Terms.
 - **Interfaces:** `diagnose --json` gains each level's rounds used and its cap. No console decoder reads `reviews` today. The Run screen draws one bar per level.
 - **Tests:** `run: iterations bar per level`.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/cli -run 'Diagnose|Docs' -count=1`, then `cd console && npm run typecheck && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 run`.
-- **Depends on:** L4.1, L4.2, G1.1, V1.2 and T1.2 (the same stylesheet, styling doc, `schema.ts` and contract, at earlier levels).
+- **Depends on:** L4.1, L4.2, G1.1, V1.2, T1.2 and J1.3 (the same stylesheet, styling doc, `schema.ts` and contract, at earlier levels).
 - **Red step:** the bar is absent.
 - **Commit:** `console: the run's review rounds against their caps`.
 
@@ -482,81 +516,86 @@ processor (O4). No agent edits the Terms.
 
 ## Parallel execution
 
-**Edges** (from the Depends-on lines; external gates in brackets):
+**Edges** (from the Depends-on lines; external gates in brackets; a level is one more than the highest level
+among a task's internal dependencies):
 
-- [#1362] → L1.4 → T1.1 [O9] → T1.2 / T1.3
-- L1.1, L2.1 → L1.2 [#1362]
-- [#1362, #1360] → L1.3
-- L1.1 → L4.3
+- L0.1 → L1.1 → L4.3
+- L1.1, L2.1 [#1362, #1367] → L1.2
+- [#1362] → L1.3, L1.4, L2.1
 - L1.1, L1.3, L1.4, L2.2 [O7] → L3.1
 - L3.1, L1.2 → L3.2
 - L3.1 → L4.5
-- L1.1, L2.1, L3.1, L4.1, L4.3, L4.5 [#1358] → L4.2
+- L1.1, L2.1, L3.1, L4.1, L4.3, L4.5 [#1369] → L4.2
 - L1.3, L2.1 → L4.4
-- L4.2, L3.2, J1.1 → L5.1
+- L4.2, L3.2, J1.1 [#1367] → L5.1
 - L1.1, L4.1, L1.2 → B1.1 [before A3.3]
-- B1.1, L4.2 [A3.3, A5.2] → B1.2
-- B1.2 [A4.3, A5.4] → B1.3
-- J1.1 [OT1] → J1.2
+- B1.1 [A3.3] → B1.4
+- B1.1, L4.2 [A5.2] → B1.2
+- B1.2, B1.4 [A4.3, A5.4] → B1.3
+- L1.4 [#1362, O9] → T1.1 → T1.2, T1.3 [#1368]
 - V1.1 → T1.2
-- T1.1 [#1363, #1365] → T1.3 → T3.1 [T0.1, #1332, P6.8] → T3.2
+- T1.1, T1.2 [O9] → J1.3
+- J1.1, J1.3 → J1.2
+- T0.1, T1.3 [#1332, P6.8] → T3.1 → T3.2
 - T1.2, T0.1, T3.1 [O4] → T2.1 → T2.2
 - [Papaya 4b-2..7] → G1.1
-- V1.1, G1.1 [Papaya 4b-2..7] → V1.2
-- L4.1, L4.2, G1.1, V1.2, T1.2 → V1.3
+- V1.1, G1.1 → V1.2
+- L4.1, L4.2, G1.1, V1.2, T1.2, J1.3 → V1.3
 - L4.2, T2.1, T3.1 [#620] → X1
 - J1.2, X1 → X2
 
-**Levels** (the tasks in one level run concurrently once their external gates are open):
+**Levels:**
 
 | Level | Tasks |
 | --- | --- |
-| 0 | L1.1, L1.4, L2.1, L2.2, L4.1, J1.1, T0.1, V1.1 |
-| 1 | L1.2, L1.3, L4.3, J1.2, T1.1, G1.1 |
-| 2 | L3.1, L4.4, B1.1, T1.2, T1.3, V1.2 |
-| 3 | L3.2, L4.5, T3.1 |
-| 4 | L4.2, T2.1, T3.2 |
+| 0 | L0.1, L1.3, L1.4, L2.1, L2.2, L4.1, J1.1, T0.1, G1.1, V1.1 |
+| 1 | L1.1, L4.4, T1.1, V1.2 |
+| 2 | L1.2, L3.1, L4.3, T1.2, T1.3 |
+| 3 | L3.2, L4.5, B1.1, J1.3, T3.1 |
+| 4 | L4.2, B1.4, J1.2, T2.1, T3.2 |
 | 5 | L5.1, B1.2, T2.2, V1.3, X1 |
 | 6 | B1.3, X2 |
 
-**Critical path (inside this plan):** for the review levels, L1.3 → L3.1 → L4.5 → L4.2 → L5.1 / X1, five
-tasks. It starts when #1362 and #1360 land, L3.1 also waits for the owner's ruling on O7, and L4.2 waits for
-#1358. The longest chain overall is six tasks, L1.3 → L3.1 → L4.5 → L4.2 → B1.2 → B1.3, and it also waits
-for the A/B plan's A3.3 and A5.x. Slices J, G and V are off the critical path. Slice T waits on O9, and its
-console half also waits on the processor's name (O4).
+**Critical path (inside this plan):** for the review levels, L0.1 → L1.1 → L3.1 → L4.5 → L4.2 → L5.1 / X1,
+six tasks. It starts at once, and also needs #1362 (for L1.3 and L1.4), the owner's ruling on O7 (L3.1) and
+#1369 (L4.2). The longest chain overall is seven tasks, L0.1 → L1.1 → L3.1 → L4.5 → L4.2 → B1.2 → B1.3, and it
+also waits for the A/B plan's A3.3 and A5.x. Slices G and V are off the critical path. Slice T and J1.3 wait
+on O9, and the console's T2.1 also waits on the processor's name (O4).
 
 **What must be sequential and why:**
 
-- L3.1 after L1.3 and L1.4: it consumes the settings and applies the floor.
+- L1.1 after L0.1: the closed effort set.
+- L3.1 after L1.1, L1.3, L1.4 and L2.2: it consumes the settings and the defaults, and applies the floor.
 - L4.5 and L4.2 after L3.1: they consume the resolved levels, and L4.2 routes through L4.5.
-- T1.1 after L1.4: the same `localcfg.go` and `project_cmd.go`.
+- T1.1 after L1.4, then J1.3 after T1.1 and T1.2: the same `localcfg.go`, `project_cmd.go`, `budget.go` and contract.
 - B1.1 after L1.1, L4.1 and L1.2: the same files.
 - T2.1 after T3.1: the same privacy page and test.
-- V1.3 after G1.1, V1.2 and T1.2: the same stylesheet, styling doc, `schema.ts` and contract.
+- V1.3 after G1.1, V1.2, T1.2 and J1.3: the same stylesheet, styling doc, `schema.ts` and contract.
 
-**Shared-files table** (every file with more than one writer; no level holds two writers of a file):
+**Shared-files table** (every file with more than one writer; no level holds two writers of a file, and every
+pair of writers is joined by a dependency path):
 
 | File | Writers (level) |
 | --- | --- |
-| `internal/task/task.go`, `schemas/task.schema.json` | L1.1 (0), B1.1 (2) |
-| `internal/runstore/runstore.go`, `schemas/result.schema.json` | L4.1 (0), B1.1 (2) |
-| `internal/cli/recipes_skew.go`, `internal/cli/recipes_skew_test.go` | L2.1 (0), L1.2 (1), B1.1 (2) |
-| `internal/localcfg/localcfg.go`, `internal/cli/project_cmd.go` | L1.4 (0), T1.1 (1) |
-| `internal/cli/run.go`, `internal/cli/run_review_test.go` | L1.2 (1), L3.2 (3) |
+| `internal/task/task.go`, `schemas/task.schema.json` | L1.1 (1), B1.1 (3) |
+| `internal/runstore/runstore.go`, `schemas/result.schema.json` | L4.1 (0), B1.1 (3) |
+| `internal/cli/recipes_skew.go`, `internal/cli/recipes_skew_test.go` | L2.1 (0), L1.2 (2), B1.1 (3) |
+| `internal/localcfg/localcfg.go`, `internal/cli/project_cmd.go` | L1.4 (0), T1.1 (1), J1.3 (3) |
+| `internal/cli/budget.go` | T1.2 (2), J1.3 (3) |
+| `internal/cli/run.go`, `internal/cli/run_review_test.go` | L1.2 (2), L3.2 (3) |
 | `internal/runner/runner.go` | L4.2 (4), B1.2 (5) |
-| `internal/cli/budget.go` | V1.1 (0), T1.2 (2) |
 | `docs/recipes.md` | L2.1 (0), L5.1 (5) |
-| `plugin/skills/parallelism/SKILL.md` | J1.1 (0), J1.2 (1) |
+| `plugin/skills/parallelism/SKILL.md` | J1.1 (0), J1.2 (4) |
 | `plugin/skills/working/SKILL.md` | J1.1 (0), L5.1 (5) |
 | `docs/gcp-live-checklist.md` | X1 (5), X2 (6) |
 | `docs/design/desktop-console.md` | T0.1 (0), T2.1 (4), T2.2 (5) |
 | `docs/mobile/implementation-plan.md` | T0.1 (0), T3.2 (4) |
-| `console/docs/json-contract.md` | V1.1 (0), T1.2 (2), V1.3 (5) |
-| `console/src/shared/schema.ts` | V1.2 (2), V1.3 (5) |
-| `docs/design/console-styling.md` | G1.1 (1), V1.2 (2), V1.3 (5) |
-| `console/src/renderer/theme/screens.css` | G1.1 (1), V1.3 (5) |
+| `console/docs/json-contract.md` | V1.1 (0), T1.2 (2), J1.3 (3), V1.3 (5) |
+| `console/src/shared/schema.ts` | V1.2 (1), V1.3 (5) |
+| `docs/design/console-styling.md` | G1.1 (0), V1.2 (1), V1.3 (5) |
+| `console/src/renderer/theme/screens.css` | G1.1 (0), V1.3 (5) |
 | `website/src/pages/privacy.astro`, `website/test/privacy.mjs` | T3.1 (3), T2.1 (4) |
-| the CLI release's notes (`docs/releases/`) | L1.2 (1), L5.1 (5) |
+| the CLI release's notes (`docs/releases/`) | L1.2 (2), L3.2 (3), L5.1 (5) |
 
 Every other file in the plan has one writer.
 
