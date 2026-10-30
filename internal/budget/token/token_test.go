@@ -137,6 +137,82 @@ func TestMintClaims(t *testing.T) {
 	}
 }
 
+// TestMintCarriesBranchAndPRClaims: a launcher that binds the run to a branch
+// and to pull requests mints those claims (fb, fpr, G6), and they travel to
+// the signer as the JSON types the wire names them by.
+func TestMintCarriesBranchAndPRClaims(t *testing.T) {
+	e := newEnv(t)
+	c := claims()
+	c.Branch = "fugaro/20261002-120000-ab12"
+	c.PRs = []int{7, 8}
+	cl := payload(t, e.mint(t, c, t0))["claims"].(map[string]any)
+	if cl["fb"] != c.Branch {
+		t.Errorf("fb = %v, want %q", cl["fb"], c.Branch)
+	}
+	prs, ok := cl["fpr"].([]any)
+	if !ok || len(prs) != 2 || prs[0].(float64) != 7 || prs[1].(float64) != 8 {
+		t.Errorf("fpr = %v, want [7 8]", cl["fpr"])
+	}
+}
+
+// TestSessionClaimsReadsBranchAndPRs: the claims the launcher minted come back
+// out of the session (B1.7 consumes them), and a mint that named none reads
+// back empty rather than as a zero PR.
+func TestSessionClaimsReadsBranchAndPRs(t *testing.T) {
+	e := newEnv(t)
+	c := claims()
+	c.Branch = "fugaro/20261002-115959-ab12"
+	c.PRs = []int{3}
+	s, err := token.Exchange(context.Background(), e.cfg(), e.mint(t, c, t0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := s.Claims()
+	if got.Branch != c.Branch {
+		t.Errorf("branch = %q, want %q", got.Branch, c.Branch)
+	}
+	if len(got.PRs) != 1 || got.PRs[0] != 3 {
+		t.Errorf("prs = %v, want [3]", got.PRs)
+	}
+
+	plain, err := token.Exchange(context.Background(), e.cfg(), e.mint(t, claims(), t0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := plain.Claims(); got.Branch != "" || len(got.PRs) != 0 {
+		t.Errorf("an identity minted without the claims reads back %q/%v", got.Branch, got.PRs)
+	}
+}
+
+// TestClaimsPRsAtMostFour: the fpr claim names at most MaxPRs pull requests,
+// each positive. A mint that would exceed either bound is refused before the
+// signer is called, so nothing is signed for a claim the service would refuse.
+func TestClaimsPRsAtMostFour(t *testing.T) {
+	e := newEnv(t)
+	mut := func(f func(*token.Claims)) token.Claims { c := claims(); f(&c); return c }
+	for name, c := range map[string]token.Claims{
+		"five pull requests": mut(func(c *token.Claims) { c.PRs = []int{1, 2, 3, 4, 5} }),
+		"a zero pull request": mut(func(c *token.Claims) {
+			c.PRs = []int{1, 0}
+		}),
+		"a negative pull request": mut(func(c *token.Claims) {
+			c.PRs = []int{-1}
+		}),
+	} {
+		if _, err := token.MintAt(context.Background(), e.signer, c, t0); err == nil {
+			t.Errorf("%s: minted", name)
+		}
+	}
+	if n := len(e.iam.SignCalls()); n != 0 {
+		t.Fatalf("a refused mint still called signJwt %d times", n)
+	}
+	ok := claims()
+	ok.PRs = []int{1, 2, 3, 4}
+	if _, err := token.MintAt(context.Background(), e.signer, ok, t0); err != nil {
+		t.Fatalf("four pull requests refused: %v", err)
+	}
+}
+
 func TestExpiryFXFormula(t *testing.T) {
 	got := token.ExpiryFX(t0, 90*time.Minute)
 	if want := t0.Add(90*time.Minute + time.Hour + 5*time.Minute); !got.Equal(want) {

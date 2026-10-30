@@ -19,6 +19,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -409,6 +410,36 @@ func sealDevNote(spec *task.Spec, clone bool) string {
 // it to make the draw fail.
 var newSealKey = token.NewKey
 
+// budgetBranch is the branch the run's identity may push (fb, G6): the branch
+// a first run creates, or the one a follow-up continues. A review run writes
+// only comments on its pull requests and an artifact run produces files, so
+// neither pushes and neither carries a branch — the proxy admits both with no
+// fb and refuses every push of theirs (B1.4).
+func budgetBranch(spec *task.Spec) string {
+	if spec.ReviewPRs != nil || spec.Mode == recipe.ModeArtifact {
+		return ""
+	}
+	if spec.Branch != "" {
+		return spec.Branch
+	}
+	return "fugaro/" + spec.RunID
+}
+
+// budgetPRs are the pull requests the run's identity may write (fpr, G6): the
+// one a follow-up continues, or the one to four a review run reviews. A first
+// run names none — it opens its own pull request, which is creation rather
+// than a write to a pull request that exists — and an artifact run names none
+// at all.
+func budgetPRs(spec *task.Spec) []int {
+	if len(spec.ReviewPRs) > 0 {
+		return spec.ReviewPRs
+	}
+	if spec.PR > 0 {
+		return []int{spec.PR}
+	}
+	return nil
+}
+
 // mintBudgetToken mints the run's custom token, seals it under a key drawn
 // for this launch and leaves it in the runs bucket. key is nil when the
 // project has no budget backend, and is otherwise the key the execution
@@ -481,7 +512,8 @@ func (e *cloudEnv) mintBudgetToken(ctx context.Context, slug string, spec *task.
 	}
 	// RB is the launcher's own, self-asserted name (config user or git
 	// email): attribution only, nothing in the rules trusts it.
-	claims := token.Claims{Slug: budget.Key(slug), Run: budget.Key(run), FX: token.ExpiryFX(time.Now(), jobTimeout), FP: e.lc.Name, RB: me}
+	claims := token.Claims{Slug: budget.Key(slug), Run: budget.Key(run), FX: token.ExpiryFX(time.Now(), jobTimeout), FP: e.lc.Name, RB: me,
+		Branch: budgetBranch(spec), PRs: budgetPRs(spec)}
 	tok, err := token.Mint(ctx, signer, claims)
 	switch {
 	case errors.Is(err, token.ErrNotMinter):

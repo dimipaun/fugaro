@@ -19,7 +19,9 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runner"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 const testSigner = "fugaro-token-signer@aurora-fp.iam.gserviceaccount.com"
@@ -131,6 +133,101 @@ func TestRunRequestedByInClaim(t *testing.T) {
 	}
 	if c := claimsOf(t, f, unsealed(t, lastLaunchKey(t, f.cloudFixture), data, spec.RunID)); c["rb"] != "retrier@example.com" {
 		t.Fatalf("rb = %v", c["rb"])
+	}
+}
+
+// mintedClaimsFor is the claim set of the token a direct mint sealed for
+// spec's run: what the launcher bound this run's identity to.
+func mintedClaimsFor(t *testing.T, f *launchBudgetFixture, env *cloudEnv, spec *task.Spec) map[string]any {
+	t.Helper()
+	key, err := env.mintBudgetToken(context.Background(), appSlug, spec, nil)
+	if err != nil || key == nil {
+		t.Fatalf("mintBudgetToken: key %v, err %v", key, err)
+	}
+	data, _, err := env.bucket.Read(context.Background(), token.ObjectKey(appSlug, spec.RunID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return claimsOf(t, f, unsealed(t, key, data, spec.RunID))
+}
+
+// claimPRs reads the fpr claim of a claim set, failing the test if it is not
+// there or not an array of numbers.
+func claimPRs(t *testing.T, c map[string]any) []int {
+	t.Helper()
+	arr, ok := c["fpr"].([]any)
+	if !ok {
+		t.Fatalf("fpr = %v, want an array", c["fpr"])
+	}
+	out := make([]int, 0, len(arr))
+	for _, v := range arr {
+		n, ok := v.(json.Number)
+		if !ok {
+			t.Fatalf("fpr holds %T, want a number", v)
+		}
+		i, err := n.Int64()
+		if err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, int(i))
+	}
+	return out
+}
+
+// TestLaunchMintsTheTaskBranchAndPRs: the launcher binds a run that pushes to
+// its branch — the branch it creates on a first run, the one it continues on a
+// follow-up — and to the pull request a follow-up continues (fb and fpr, G6).
+// A first run names no pull request: it opens its own.
+func TestLaunchMintsTheTaskBranchAndPRs(t *testing.T) {
+	f := newLaunchBudget(t, "enforce")
+	env := memEnv(t, f.cloudFixture)
+
+	first := &task.Spec{Version: 1, RunID: "20991231-000000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x"}
+	c := mintedClaimsFor(t, f, env, first)
+	if c["fb"] != "fugaro/20991231-000000-abcd" {
+		t.Errorf("fb = %v, want the run's own branch fugaro/%s", c["fb"], first.RunID)
+	}
+	if _, ok := c["fpr"]; ok {
+		t.Errorf("a first run named pull requests: %v", c["fpr"])
+	}
+
+	follow := &task.Spec{Version: 1, RunID: "20991231-120000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web",
+		Branch: "fugaro/20991231-000000-abcd", PR: 42, PreviousRun: "20991231-000000-abcd"}
+	c = mintedClaimsFor(t, f, env, follow)
+	if c["fb"] != follow.Branch {
+		t.Errorf("fb = %v, want the branch it continues %q", c["fb"], follow.Branch)
+	}
+	if prs := claimPRs(t, c); len(prs) != 1 || prs[0] != 42 {
+		t.Errorf("fpr = %v, want [42]", prs)
+	}
+}
+
+// TestLaunchMintsNoBranchForReviewOrArtifact: a review run writes only
+// comments on its pull requests and an artifact run pushes nothing, so neither
+// carries a branch — the proxy refuses every push of theirs (G6). A review
+// run still names the pull requests it reviews.
+func TestLaunchMintsNoBranchForReviewOrArtifact(t *testing.T) {
+	f := newLaunchBudget(t, "enforce")
+	env := memEnv(t, f.cloudFixture)
+
+	review := &task.Spec{Version: 1, RunID: "20991231-000000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web",
+		ReviewPRs: []int{5, 6}}
+	c := mintedClaimsFor(t, f, env, review)
+	if _, ok := c["fb"]; ok {
+		t.Errorf("a review run carries a branch: %v", c["fb"])
+	}
+	if prs := claimPRs(t, c); len(prs) != 2 || prs[0] != 5 || prs[1] != 6 {
+		t.Errorf("fpr = %v, want the pull requests it reviews [5 6]", prs)
+	}
+
+	artifact := &task.Spec{Version: 1, RunID: "20991231-000000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web",
+		Mode: recipe.ModeArtifact, Task: "x"}
+	c = mintedClaimsFor(t, f, env, artifact)
+	if _, ok := c["fb"]; ok {
+		t.Errorf("an artifact run carries a branch: %v", c["fb"])
+	}
+	if _, ok := c["fpr"]; ok {
+		t.Errorf("an artifact run names pull requests: %v", c["fpr"])
 	}
 }
 

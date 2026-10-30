@@ -168,6 +168,15 @@ type Identity struct {
 	FX time.Time
 	// Launcher is the identity that minted the run (the rb claim).
 	Launcher string
+	// Branch is the branch this identity may push (the fb claim): its own
+	// branch on a first run, the branch it continues on a follow-up. Empty on
+	// an identity minted without the claim — an older launcher's, or a review
+	// or artifact run, which pushes nothing (G6).
+	Branch string
+	// PRs are the pull requests this identity may write (the fpr claim): the
+	// one a follow-up continues, or the one to four a review run reviews.
+	// Empty when it writes none.
+	PRs []int
 	// Job is the Cloud Run job the run reported — the caller's claim, which is
 	// why JobAccount, the verified service account, is the one of the two that
 	// identifies the job — and JobAccount is the account that called: the
@@ -573,6 +582,10 @@ func (a *Authenticator) verifyRun(ctx context.Context, tok string, now time.Time
 	if !fx.After(now) {
 		return Identity{}, fmt.Errorf("%w: the run identity's fx has passed", ErrUnverified)
 	}
+	branch, prs, err := branchClaims(claims, run)
+	if err != nil {
+		return Identity{}, err
+	}
 	if err := a.checkLive(ctx, slug, run, now); err != nil {
 		return Identity{}, err
 	}
@@ -582,7 +595,54 @@ func (a *Authenticator) verifyRun(ctx context.Context, tok string, now time.Time
 		Project:  a.cfg.Project,
 		FX:       fx,
 		Launcher: claimString(claims, "rb"),
+		Branch:   branch,
+		PRs:      prs,
 	}, nil
+}
+
+// branchClaims reads the branch and pull-request claims (fb and fpr, G6) of a
+// verified run identity, and holds them to their rules.
+//
+// fb is the branch the run may push, and it is checked here rather than
+// trusted: it must be the form task.Spec validation already requires of every
+// branch a run may continue (fugaro/<run id>), and it must be this run's own
+// branch or one an earlier run created — a follow-up continues the branch the
+// run that created it pushed, and its own fr is the follow-up, so a branch
+// naming a LATER run is not one it can have inherited. An fb that is not a
+// Fugaro branch is refused without repeating it: like the token's kid, it is
+// caller text of unbounded length, while a branch that did match the form is
+// bounded by it and may be named in the refusal.
+//
+// fpr is at most MaxPRs pull requests, each positive. A claim that is present
+// but not an array of positive numbers is refused rather than read as none: a
+// value this service cannot read is not a value it may treat as empty.
+//
+// An identity minted without either claim — every launcher before this one —
+// is admitted with both empty; the proxy refuses its pushes later (B1.4).
+func branchClaims(claims map[string]any, run string) (string, []int, error) {
+	var prs []int
+	if _, present := claims["fpr"]; present {
+		var ok bool
+		if prs, ok = claimInts(claims, "fpr"); !ok || len(prs) > token.MaxPRs {
+			return "", nil, fmt.Errorf("%w: the run identity's fpr is not an array of at most %d pull requests", ErrUnverified, token.MaxPRs)
+		}
+		for _, n := range prs {
+			if n <= 0 {
+				return "", nil, fmt.Errorf("%w: the run identity's fpr names a pull request that is not positive", ErrUnverified)
+			}
+		}
+	}
+	branch := claimString(claims, "fb")
+	if branch == "" {
+		return "", prs, nil
+	}
+	if !task.BranchRE.MatchString(branch) {
+		return "", nil, fmt.Errorf("%w: the run identity's fb is not a Fugaro branch (fugaro/<run id>)", ErrUnverified)
+	}
+	if branchRun, _ := task.BranchRunID(branch); branchRun > run {
+		return "", nil, fmt.Errorf("%w: the run identity's branch %s names a later run than its own, so the run cannot have inherited it", ErrUnverified, branch)
+	}
+	return branch, prs, nil
 }
 
 // checkLive refuses a run whose write-once outcome exists on any day from the
@@ -764,6 +824,24 @@ func claimInt(m map[string]any, k string) (int64, bool) {
 		return int64(v), true
 	}
 	return 0, false
+}
+
+// claimInts reads a claim that is a JSON array of integers; it is false for
+// anything else, including an element that is not a whole number.
+func claimInts(m map[string]any, k string) ([]int, bool) {
+	arr, ok := m[k].([]any)
+	if !ok {
+		return nil, false
+	}
+	out := make([]int, 0, len(arr))
+	for _, el := range arr {
+		n, ok := claimInt(map[string]any{k: el}, k)
+		if !ok {
+			return nil, false
+		}
+		out = append(out, int(n))
+	}
+	return out, true
 }
 
 // GoogleKeysURL is where Google publishes the certificates that sign Firebase
