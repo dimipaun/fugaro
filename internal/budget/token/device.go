@@ -311,6 +311,10 @@ func checkPairingUID(uid string) error {
 // return the all-zero secret, which crypto/ecdh refuses) are each ErrDeviceKey.
 // The ephemeral private key is drawn here and never leaves this function: it is
 // not returned, not stored and not named by anything the caller can reach.
+//
+// What the envelope is not, in §8's own sentence: **a capability, not a
+// boundary**. It removes the value of a photographed QR or a copied payload and
+// it removes no reach — see the block above.
 func SealDelivery(phonePub []byte, uid string, plaintext []byte) ([]byte, error) {
 	if err := checkPairingUID(uid); err != nil {
 		return nil, err
@@ -387,7 +391,7 @@ func deliveryAEAD(shared []byte) (cipher.AEAD, error) {
 	}
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrSealKey, err)
+		return nil, fmt.Errorf("budget token: the delivery's cipher: %v", err)
 	}
 	return cipher.NewGCM(block)
 }
@@ -441,9 +445,10 @@ type Delivery struct {
 // String, Format and GoString are the redaction, in every shape a printer can
 // ask for one. Format answers every verb, so a verb added later is redacted by
 // default rather than by remembering this list, and GoString is what %#v would
-// use if Format did not win first. The uid, the project and the database URL
-// are printed deliberately: a uid is a key, and the fingerprint is not a secret
-// (§4.5).
+// use if Format did not win first. The project and the device uid are printed
+// deliberately: a uid is a key and not a secret (§4.5), and a print that named
+// nothing would send an operator to the keychain item to find out which device
+// a delivery was for.
 func (d Delivery) String() string {
 	return "token.Delivery{config: " + d.Config.ProjectID + ", device: " + d.Device.UID + ", token and MAC key redacted}"
 }
