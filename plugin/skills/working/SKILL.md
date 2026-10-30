@@ -13,7 +13,7 @@ Fugaro runs one coding task in a fleeting cloud worker: it checks out the reposi
 ## Decide first
 
 1. **Does the task belong in the cloud?** Ask the `routing` skill. A task that needs the user's machine, local data or credentials, or live cloud resources stays local.
-2. **Is it one task or several?** Independent pieces can run side by side: the `parallelism` skill.
+2. **Is it one task or several?** Independent pieces can run side by side: the `parallelism` skill, which defines job max — the most completed, reviewed runs in parallel.
 3. **Is the task good?** Bounded, checkable, and complete in its own text (below). If not, settle it with the user first.
 4. **Does the user want it launched?** Launching spends money. Launch only task text the user gave or approved, against a repository they named, and show both first.
 

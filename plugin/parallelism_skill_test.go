@@ -67,6 +67,33 @@ func TestParallelismSkillGraphExampleIsReadable(t *testing.T) {
 	}
 }
 
+// TestParallelismSkillDefinesJobMax: job max is defined here, and the three
+// techniques that keep a graph launchable are named beside it (D729). The
+// definition is a phrase because it is the thing a planner has to carry away:
+// the measure is finished, reviewed runs, and the only true order between them
+// is a real dependency. A skill that drifts to tokens spent, or that drops one
+// of the techniques, would leave `/jobmax` launching a graph nobody kept wide.
+func TestParallelismSkillDefinesJobMax(t *testing.T) {
+	skill, err := os.ReadFile(parallelismSkillPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(skill)
+	const definition = "the most completed, reviewed runs in parallel, not tokens spent; only real dependencies order runs"
+	if !strings.Contains(text, definition) {
+		t.Errorf("%s does not define job max as %q", parallelismSkillPath, definition)
+	}
+	for _, technique := range []string{
+		"contracts first",
+		"stubs and fakes",
+		"wide and shallow",
+	} {
+		if !strings.Contains(text, technique) {
+			t.Errorf("%s does not name the planning technique %q", parallelismSkillPath, technique)
+		}
+	}
+}
+
 // firstJSONBlock returns the body of the first ```json fence in text.
 func firstJSONBlock(t *testing.T, text string) string {
 	t.Helper()
