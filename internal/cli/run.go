@@ -3080,8 +3080,10 @@ func noteLine(note string) string {
 // checkGovernanceImage do, and reaches no gate at all when the file itself
 // could not be read. The key is judged for every mode — a review or artifact
 // run's runner decodes the same file strictly — while the author is recorded
-// for neither: a review or artifact run pushes nothing, so the identity it
-// would carry is a claim about commits that are never made (D605).
+// for neither: neither pushes, so the identity such a task carried would be a
+// claim about commits that are never made (D605). That is the two shapes
+// budgetBranch reads as "pushes nothing" — a review run carries review_prs
+// rather than a mode, and only an artifact recipe writes mode.
 func authorGates(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, clone *bool, warn io.Writer) error {
 	if clone != nil && *clone {
 		if err := checkCloneGitAuthorImage(ctx, env, spec, warn); err != nil {
@@ -3090,7 +3092,7 @@ func authorGates(ctx context.Context, env *cloudEnv, slug string, spec *task.Spe
 	} else if err := checkGitAuthorImage(ctx, env, slug, spec, kind, warn); err != nil {
 		return err
 	}
-	if spec.Mode == recipe.ModeReview || spec.Mode == recipe.ModeArtifact {
+	if spec.ReviewPRs != nil || spec.Mode == recipe.ModeArtifact {
 		return nil
 	}
 	author, err := launchAuthor(ctx, env.lc, spec.RequestedBy)
