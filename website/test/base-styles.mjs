@@ -3182,6 +3182,8 @@ function blockPadding(css, klass, width) {
 
 const CAMPAIGN_REDUCE = /prefers-reduced-motion\s*:\s*reduce/i
 const CAMPAIGN_NO_PREFERENCE = /prefers-reduced-motion\s*:\s*no-preference/i
+/** The site's pointer query, which is what makes a hover a hover: a touch screen has none. */
+const CAMPAIGN_POINTER = /hover\s*:\s*hover/
 
 /**
  * The font size in force on the elements a selector pattern names, at a viewport width: the last
@@ -3501,7 +3503,6 @@ test('the campaign page\'s motion is the reader\'s choice, and nothing is hidden
     // inside the campaign's own `no-preference` block *and* inside the site's pointer query,
     // because the owner's other bound is that a reader who asked their system for less motion —
     // or who is on a touch screen, where there is no hover to answer — is served the band still.
-    const CAMPAIGN_POINTER = /hover\s*:\s*hover/
     const MOVES = [
       { what: "the hero's booking plate", control: /\.campaign-hero-button/, icon: null, axis: 'y', px: -2 },
       { what: "the hero's calendar mark", control: /\.campaign-hero-button/, icon: 'calendar', axis: 'y', px: -2 },
@@ -3525,8 +3526,9 @@ test('the campaign page\'s motion is the reader\'s choice, and nothing is hidden
     }
     const isMove = (rule, selector, move) => {
       if (!move.control.test(selector) || !selector.includes(':hover')) return false
-      const mark = new RegExp(`\\.campaign-icon\\[data-icon=['"]?${move.icon}['"]?\\]`)
-      if (move.icon === null ? /\.campaign-icon/.test(selector) : !mark.test(selector)) return false
+      if (move.icon === null) {
+        if (/\.campaign-icon/.test(selector)) return false
+      } else if (!new RegExp(`\\.campaign-icon\\[data-icon=['"]?${move.icon}['"]?\\]`).test(selector)) return false
       if (!rule.conditions.some((condition) => CAMPAIGN_NO_PREFERENCE.test(condition))) return false
       if (!rule.conditions.some((condition) => CAMPAIGN_POINTER.test(condition))) return false
       return movedBy(rule.body, move.axis) === move.px
