@@ -81,6 +81,7 @@ import path from 'node:path'
 import { loadLanding } from '../src/lib/landing.mjs'
 import { DIST, SITE, builtPages, cssDeclarations, cssRules, filesUnder, findAll, parse, servedFile, siteFacts, textOf, tokenize, walk } from './lib/html.mjs'
 import { buildCopy, dropCampaignScreenshots } from './lib/build.mjs'
+import { readScreenRows } from './lib/screens.mjs'
 
 const LANDING = loadLanding()
 const FACTS = siteFacts()
@@ -414,10 +415,11 @@ test('there is no email form, and the calls to action are a plain booking link, 
 // **The mark is `aria-hidden`, and that is the rule rather than a detail**: the link's own words
 // are the meaning, so a reader who is not shown the drawing is owed nothing about it — and the
 // link is still an `<a>` to the file's own address with its label unchanged, which is what the
-// case above holds from the other side. What is *not* read here is the movement: the lift and
-// the nudge are facts about the cascade, and `website/test/base-styles.mjs` reads them (they
-// live inside `prefers-reduced-motion: no-preference`, so a reader who asked their system for
-// less is served the band still).
+// case above holds from the other side. What is *not* read here is the movement: the 2 px lift
+// on each of the four plates and the 2 px nudge on each of the three marks are facts about the
+// cascade, and `website/test/base-styles.mjs`'s campaign-motion case reads all seven — where
+// they are written, inside `prefers-reduced-motion: no-preference` and inside the site's
+// pointer query, so a reader who asked their system for less motion is served the band still.
 const CAMPAIGN_ICON = (el) => el.name === 'svg' && (el.attrs.get('class') ?? '').split(/\s+/).includes('campaign-icon')
 
 test('each call to action carries its own aria-hidden mark, and stays a link', () => {
@@ -1215,38 +1217,19 @@ test('the two fields of colour are cut at the site\'s largest radius, flat and u
 // drawn dead). `public/scripts/site.js` drives all of it and needed no change for these pages:
 // it finds a slider by `[data-slider]`, so the CSP is untouched and no page loads a second file.
 
-const HOME_SCREENS_FILE = 'home-screens.yaml'
-const HOME_SCREENS_YAML = `website/data/${HOME_SCREENS_FILE}`
+const HOME_SCREENS_YAML = 'website/data/home-screens.yaml'
 /** The campaign page's slider, as a `data-slot` a gate can find: the homepage's is `home-screens`. */
 const CAMPAIGN_SLIDER_SLOT = 'campaign-screens'
 
-/** A YAML scalar as the site's own reader reads it: quoted or plain, with the two escapes its
- *  reader knows. The rows below are written in that subset. */
-function yamlScalar(raw) {
-  const value = raw.trim()
-  return value.startsWith('"') && value.endsWith('"') ? value.slice(1, -1).replace(/\\(["\\])/g, '$1') : value
-}
-
 /**
- * The console rows of `website/data/home-screens.yaml`, read literally, in the file's order. It
- * is deliberately *this* file's own reader rather than the build's `loadHomeScreens()`: the
- * loader is what puts these rows on the page, and a gate that read them through it would be
- * asking the page whether it agrees with itself. The last row of the file is the `fugaro watch`
- * capture, which lives under `public/images/` — the hero's picture on the homepage and no slide
- * of either slider — and `dir` is what tells the two apart (`src/content.ts`).
+ * The console rows of `website/data/home-screens.yaml`, in the file's order. The reader is
+ * `test/lib/screens.mjs`'s, which is the same one `website/test/home.mjs` holds the homepage's
+ * panel to; the `fugaro watch` capture — the file's last row, under `public/images/`, and the
+ * homepage's hero picture rather than a slide of either slider — is filtered out here because
+ * the four campaign pages show the console's screens and that row is not one of them.
  */
 function consoleRows() {
-  const out = []
-  let row = null
-  for (const line of readFileSync(path.join(SITE, 'data', HOME_SCREENS_FILE), 'utf8').split('\n')) {
-    if (line.trim() === '' || line.trim().startsWith('#')) continue
-    let match
-    if ((match = /^ {2}- file: (\S+)$/.exec(line))) out.push((row = { file: match[1], dir: 'screenshots' }))
-    else if (row && (match = /^ {4}(alt|caption|dir|height|width): (.*)$/.exec(line))) {
-      row[match[1]] = match[1] === 'width' || match[1] === 'height' ? Number(match[2].trim()) : yamlScalar(match[2])
-    }
-  }
-  return out.filter((entry) => entry.dir === 'screenshots')
+  return readScreenRows(HOME_SCREENS_YAML).filter((entry) => entry.dir === 'screenshots')
 }
 
 /** The pictures one built slider shows, in the order a reader meets them: the row's file at the

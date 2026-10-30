@@ -309,12 +309,16 @@ const { headline, supportingLine, tone, calendlyURL, art, screenshot } = Astro.p
       transition: transform var(--duration-fast) var(--ease-out);
     }
 
+    /* `:not(:active)` for the same reason the closing band's rules carry it: the press below is
+       this rule's sibling at the same specificity, and a mouse press is `:hover` and `:active` at
+       once — without the exclusion the lift would answer it and the press would read as nothing
+       (`CampaignCalls.astro`). */
     @media (hover: hover) and (pointer: fine) {
-      .campaign-hero-button:hover {
+      .campaign-hero-button:hover:not(:active) {
         transform: translateY(-2px);
       }
 
-      .campaign-hero-button:hover :global(.campaign-icon[data-icon='calendar']) {
+      .campaign-hero-button:hover:not(:active) :global(.campaign-icon[data-icon='calendar']) {
         transform: translateY(-2px);
       }
     }

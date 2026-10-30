@@ -26,10 +26,12 @@
  *
  * The size is the consumer's: the mark is 1 em of the control's own type, so the hero's button
  * and the band's three draw it at the size of the words beside them rather than at a size this
- * file has to know. The `<style>` below is that one rule, and it is written with `:global()`
- * because the two consumers are two components: a page's own scoped rule cannot reach into
- * another component's element, so the mark's size is declared once here — where the element is
- * — and the two consumers' hover and focus rules reach it the same way.
+ * file has to know. The `<style>` below is that one rule, and it needs no `:global()`: the mark
+ * is this component's own element, so the rule is scoped to it here and the built stylesheet
+ * carries the class with this file's `data-astro-cid`. It is the *consumers* that reach across
+ * the boundary — the hero's button and the closing band's three style their own hover with
+ * `:global(.campaign-icon…)`, because a component's scoped selector cannot name another
+ * component's element (`CampaignCalls.astro`, `CampaignHero.astro`).
  */
 interface Props {
   /** Which mark to draw. One of the three the calls to action are, and no other. */

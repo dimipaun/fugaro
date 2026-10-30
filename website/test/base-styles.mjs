@@ -3493,5 +3493,49 @@ test('the campaign page\'s motion is the reader\'s choice, and nothing is hidden
       ),
       `${rel} draws the focus ring on the closing band's buttons in the site's own colour: that band is a field of the accent and the site's ring is the accent, so a ring in it is a ring a reader cannot see (the owner's feedback of 2026-10-30)`,
     )
+
+    // The movement itself — the other half of D412's finding 1, and until now the half no gate
+    // read. The owner asked the controls for "a small lift or icon nudge" and not for a second
+    // colour, so what an edit may not take away in silence is the 2 px each plate rises and the
+    // 2 px each mark travels the way its own action goes. Each one is read where it is written:
+    // inside the campaign's own `no-preference` block *and* inside the site's pointer query,
+    // because the owner's other bound is that a reader who asked their system for less motion —
+    // or who is on a touch screen, where there is no hover to answer — is served the band still.
+    const CAMPAIGN_POINTER = /hover\s*:\s*hover/
+    const MOVES = [
+      { what: "the hero's booking plate", control: /\.campaign-hero-button/, icon: null, axis: 'y', px: -2 },
+      { what: "the hero's calendar mark", control: /\.campaign-hero-button/, icon: 'calendar', axis: 'y', px: -2 },
+      { what: "the closing band's booking plate", control: /\.campaign-calls-primary/, icon: null, axis: 'y', px: -2 },
+      { what: "the closing band's two quiet actions", control: /\.campaign-calls-secondary/, icon: null, axis: 'y', px: -2 },
+      { what: "the closing band's calendar mark", control: /\.campaign-calls-primary/, icon: 'calendar', axis: 'y', px: -2 },
+      { what: "the install's arrow", control: /\.campaign-calls-secondary/, icon: 'download', axis: 'y', px: 2 },
+      { what: "the chat's bubble", control: /\.campaign-calls-secondary/, icon: 'chat', axis: 'x', px: 2 },
+    ]
+    /** The distance one rule moves by on one axis, as the built stylesheet writes it: `translateY`
+     *  for the vertical moves and `translateX` — which a minifier may write as the one-argument
+     *  `translate` — for the sideways one. `null` when the rule declares neither. */
+    const movedBy = (body, axis) => {
+      const patterns =
+        axis === 'x' ? [/translateX\(\s*(-?[\d.]+)px\s*\)/, /translate\(\s*(-?[\d.]+)px\s*\)/] : [/translateY\(\s*(-?[\d.]+)px\s*\)/]
+      for (const pattern of patterns) {
+        const found = pattern.exec(body)
+        if (found) return Number(found[1])
+      }
+      return null
+    }
+    const isMove = (rule, selector, move) => {
+      if (!move.control.test(selector) || !selector.includes(':hover')) return false
+      const mark = new RegExp(`\\.campaign-icon\\[data-icon=['"]?${move.icon}['"]?\\]`)
+      if (move.icon === null ? /\.campaign-icon/.test(selector) : !mark.test(selector)) return false
+      if (!rule.conditions.some((condition) => CAMPAIGN_NO_PREFERENCE.test(condition))) return false
+      if (!rule.conditions.some((condition) => CAMPAIGN_POINTER.test(condition))) return false
+      return movedBy(rule.body, move.axis) === move.px
+    }
+    for (const move of MOVES) {
+      assert.ok(
+        rules.some((rule) => (rule.selector ?? '').split(',').some((selector) => isMove(rule, selector.trim(), move))),
+        `${rel} writes no ${Math.abs(move.px)} px ${move.axis === 'x' ? 'sideways' : 'vertical'} move for ${move.what} on hover, inside both a \`prefers-reduced-motion: no-preference\` block and the site's pointer query: the owner asked each control for a small lift or an icon nudge rather than a colour, and a reader who asked their system for less motion — or who has no hover to give — is owed the same band still (D412's finding 1, the owner's feedback of 2026-10-30)`,
+      )
+    }
   }
 })
