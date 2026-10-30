@@ -3428,17 +3428,22 @@ test('the campaign page\'s motion is the reader\'s choice, and nothing is hidden
     // every inner page's `h1`, so a case that looked only for the at-rule inside a
     // `no-preference` block would pass with the campaign hero's own entrance deleted. The block
     // below is the one that names the campaign's parts, and the travel is read out of that.
+    //
+    // `.campaign-hero-shot` is the hero's picture on the pages as shipped — the console screen a
+    // variant names — and `.campaign-hero-art` is the drawing that takes the same slot on a page
+    // whose variant names no screen: the two are one part of the stagger, and either class is
+    // what a hero's picture rises with (`website/test/landing-pages.mjs` reads both pictures).
     const starting = rules.filter(
       (rule) =>
         rule.selector === '@starting-style' &&
         rule.conditions.some((condition) => CAMPAIGN_NO_PREFERENCE.test(condition)) &&
-        /\.campaign-hero-(line|action|art)(?![\w-])/.test(rule.body),
+        /\.campaign-hero-(line|action|shot|art)(?![\w-])/.test(rule.body),
     )
     assert.ok(
       starting.length > 0,
       `${rel} carries no \`@starting-style\` block of its own inside a \`prefers-reduced-motion: no-preference\` block: the layout's is every inner page's \`h1\`, so the hero's stagger — the sentence 100 ms after the headline, the button 200 ms after that, the picture 300 ms after that — is written in the campaign's styles or it is nowhere (the owner's feedback of 2026-10-30)`,
     )
-    for (const klass of ['campaign-hero-line', 'campaign-hero-action', 'campaign-hero-art']) {
+    for (const klass of ['campaign-hero-line', 'campaign-hero-action', 'campaign-hero-shot', 'campaign-hero-art']) {
       assert.ok(
         starting.some((rule) => rule.body.includes(`.${klass}`)),
         `${rel}'s campaign \`@starting-style\` blocks name no \`.${klass}\`: the hero's parts stagger in, and a part that is not in a block is a part that is simply there on the first frame (the owner's feedback of 2026-10-30)`,
