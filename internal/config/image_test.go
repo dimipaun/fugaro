@@ -251,7 +251,7 @@ func TestValidateCheckoutSharedRefusesSetup(t *testing.T) {
 // and shared.
 func TestCheckoutInvalidValue(t *testing.T) {
 	_, problems := Parse([]byte(webYAML + "    checkout: sometimes\n"))
-	if !hasProblem(problems, "workflows.web.checkout", "must be baked or clone; shared runs a shared dependency-layer image", 0) {
+	if !hasProblem(problems, "workflows.web.checkout", "must be baked or clone or shared; shared runs a shared dependency-layer image", 0) {
 		t.Fatalf("problems = %v", problems)
 	}
 }

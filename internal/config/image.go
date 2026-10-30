@@ -223,7 +223,17 @@ func validateKeyFiles(p string, files []string, add func(path, format string, ar
 // own source at launch (design forge-authorship-images/shared-images.md §6,
 // route A), so it accepts exactly the keys that describe that layer — and
 // refuses the ones that would put this repository's own content into an
-// image every repository on the same dependency set runs (§1, §2.2).
+// image every repository on the same dependency set runs (§1, §12).
+//
+// image.setup is the design's own open question and this is where it is
+// taken: §2.2 and §4 have the shared layer installed by whichever
+// repository's image.setup first built the key, and accept that the others
+// inherit that step, while §12 has the image hold the dependency layer "and
+// only it". The stricter reading wins, because a setup command runs in the
+// repository's checkout and its output is therefore that repository's
+// content — the alternative lets a workflow declare shared and still bake
+// its own work into a shared image. The cost is named where it is paid: a
+// workflow moving to shared (§10) loses the step.
 func validateCheckout(p string, w Workflow) []Problem {
 	var ps []Problem
 	add := func(path, format string, args ...any) {
@@ -232,7 +242,10 @@ func validateCheckout(p string, w Workflow) []Problem {
 	switch w.Checkout {
 	case CheckoutBaked, CheckoutClone, CheckoutShared:
 	default:
-		add(p+".checkout", "must be baked or clone; shared runs a shared dependency-layer image and clones the source at launch")
+		// The doubled "or" is deliberate: this enum names all three values it
+		// accepts, and internal/config/layer_test.go pins the "must be baked
+		// or clone" prefix of the same message for a profile's checkout:.
+		add(p+".checkout", "must be baked or clone or shared; shared runs a shared dependency-layer image and clones the source at launch")
 		return ps
 	}
 	// A base: alongside clone or shared needs no refusal of its own here:

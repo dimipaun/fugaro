@@ -921,6 +921,10 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 	// the image its job runs is a shared dependency-layer digest from the
 	// lock, which only the operator's machine writes onto the job (design
 	// forge-authorship-images/shared-images.md §6), and no spec can know it.
+	// Until C8b1's refresh writes that digest, the two markers below make a
+	// shared job clone-shaped while this tag — the per-repository image
+	// readiness.go's non-clone branch asks the operator to build — is what
+	// it runs; C8b1 owns replacing both.
 	image := gcp.ImageName(c.registryPath(), slug, name) + ":latest"
 	if w.Checkout == config.CheckoutClone {
 		image = lc.BaseImage(config.BaseKind)
