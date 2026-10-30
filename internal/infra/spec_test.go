@@ -3089,6 +3089,36 @@ func TestLocalEntryDisagreeingWithNodeRefused(t *testing.T) {
 	}
 }
 
+// TestLocalProxyForAnotherRepositoryWithEmptyNode: the local entry's proxy
+// switch and its allow_data_to are read for THIS repository, not on their own.
+// An entry that proxies workspace-b/other says nothing about acme/sandbox, so
+// a node that admits nothing disagrees with it about nothing: the run is not
+// refused, and this repository is not proxied — the fact is the node's answer
+// for this repository, which is false (G15).
+//
+// The mutant this test kills is the local entry consulted without its
+// allow-list: read entry.Proxy as the local answer (drop entry.AllowsData) and
+// every row below turns into the refusal "disagree about acme/sandbox".
+func TestLocalProxyForAnotherRepositoryWithEmptyNode(t *testing.T) {
+	const otherRepoEntry = "project_secrets:\n  bitbucket-token:\n    allow_data_to: [\"workspace-b/other\"]\n    proxy: true\n"
+	for name, node := range map[string]*projectpolicy.Policy{
+		"the project published no bitbucket_token block": {},
+		"the node's block admits no repository":          publishedNode(t, true),
+	} {
+		spec, err := Repo(proxiedSandboxInputs(t, otherRepoEntry, node))
+		if err != nil {
+			t.Errorf("%s: Repo = %v, want no error: the entry proxies another repository, which is not a disagreement about acme/sandbox", name, err)
+			continue
+		}
+		if spec.BitbucketProxied {
+			t.Errorf("%s: BitbucketProxied = true, want false: the node admits this repository nowhere, and the entry is about workspace-b/other (G15)", name)
+		}
+		if got, present := repoBitbucketProxied(t, spec); present {
+			t.Errorf("%s: the tfvars' repo.bitbucket_proxied = %v, want the key omitted: this repository is not proxied, whatever the entry says about another one", name, got)
+		}
+	}
+}
+
 // TestEmptyProxiedListChangesNothing is this branch's state, and the state the
 // whole flip is inert in: config.ProxiedGitSecretNames is empty, so a proxied
 // repository's job keeps the accessor on and the mount of its Bitbucket token
