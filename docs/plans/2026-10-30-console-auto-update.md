@@ -4,8 +4,8 @@
 [2026-10-15-desktop-console.md](2026-10-15-desktop-console.md), "L1") for console 0.116.0, and no
 task is approved beyond the owner's auto-update go.** It does not approve any change to the
 console's other surfaces, a new IPC operation, a new spawn row, or any redesign step. Decisions
-D760 to D772 are this plan's; the rows marked **open** wait for the owner, and the tasks that
-depend on them do not start until they are answered.
+D760 to D772 are this plan's; the owner answered all of them on 2026-10-30, as recommended, so no
+task waits on a decision.
 
 **Where the code stands (origin/main, 2026-10-30).** No auto-update code exists: no
 `electron-updater` import, no `autoUpdater`, no `src/main/updates.ts`. The tree actively forbids
@@ -25,15 +25,15 @@ as its versions.
 | **D761** | Check frequency | **At launch, then every 6 hours while the app is open.** | Owner, 2026-10-30. Matches design §7.3 ("on launch and then on a long interval"). |
 | **D762** | Install behaviour | **Download quietly, then a non-blocking "Restart to update" prompt; if ignored, install on quit. Never restart on its own.** | Owner, 2026-10-30. §7.3's "never silently install without telling the user". |
 | **D763** | A launch in progress | **Never install or restart while the launch flow is active** (a launch in flight, or its confirm window open). The updater defers the prompt and any install until the flow is idle. | Owner, 2026-10-30. A restart mid-launch would kill the process that holds the launch write path. |
-| **D764** | How the client finds the newest release | The console's releases share `dimipaun/fugaro` with the CLI's and are published `--latest=false`, so electron-updater's GitHub provider (which reads the repository's releases and would meet `vX.Y.Z` CLI releases with no `latest-mac.yml`) and GitHub's `releases/latest` both point at the wrong thing. **The updater lists the repository's releases itself** (one unauthenticated `GET https://api.github.com/repos/dimipaun/fugaro/releases`, a fixed `User-Agent` with no version or machine data), keeps only strict `console-vX.Y.Z` tags per D760, takes the highest, refuses anything not above the running version, and only then hands electron-updater a **generic** feed at `https://github.com/dimipaun/fugaro/releases/download/console-vX.Y.Z/`. | Plan, 2026-10-30, vetoable. The only design that satisfies D760 with the release layout the owner ruled on 2026-10-17. |
-| **D765** | Who writes `latest-mac.yml` | **The release workflow** (macOS `release` job, after verification, before the sums are written), so `build.publish` stays `null`, no `app-update.yml` enters the bundle, and the manifest is listed in `console-sha256sums.txt` and so covered by the keyless cosign signature. | Plan, 2026-10-30, vetoable. Setting a `publish` provider would widen the pinned build keys and put a feed URL in the bundle that D764 replaces anyway. |
-| **D766** | The dependency | `electron-updater` **6.8.10** exact (published 2026-09-26; 6.8.11 and 6.8.12 are under two weeks old). Its dependencies: `builder-util-runtime` 9.7.0, `semver`, `js-yaml`, `fs-extra`, `lazy-val` (already in the lockfile through electron-builder, moving from dev to runtime), and three new packages, `lodash.isequal`, `lodash.escaperegexp`, `tiny-typed-emitter`. `lodash.isequal` is deprecated upstream; recorded, not blocking. Every one is packed into the asar, so `THIRD_PARTY_NOTICES.md` gains their licences and Dependabot (already watching `console/`) sees them. | Plan, 2026-10-30. The owner's go approves the dependency; this records the exact pin. |
-| **D767** | **Open.** What the app trusts | **(a) Recommended:** HTTPS to the two allow-listed hosts (`api.github.com` for the listing, `github.com` for the feed; the asset redirect target is `*.githubusercontent.com` and is not under the app's control), electron-updater's SHA-512 check of the zip against `latest-mac.yml`, and Squirrel.Mac's code-signature check that the new bundle satisfies the running app's designated requirement (same Developer ID team). **(b)** Also verify the Sigstore bundle over `console-sha256sums.txt` inside the app. | (b) costs a large new runtime dependency (sigstore-js and its tree) in the process that installs code, for a check Squirrel's signature test already makes the last word. |
-| **D768** | **Open.** Where the off switch is, and where its state lives | **(a) Recommended:** a checkbox item **Check for Updates Automatically** (and **Check for Updates Now**) in the application menu, its state in a new `<userData>/updates.json` holding one boolean, written only when the switch changes; §5.1 rule 10 is amended to name the file. **(b)** The same item, the state as a field in `installations.json`. **(c)** A settings panel in the renderer. | (b) couples the update switch to the installations store and its strict decoder. (c) needs a new screen, a styling-doc section and the shared stylesheets that redesign steps 4b-2 to 7 hold, so it could not start before step 7 merges. |
-| **D769** | **Open.** The CLI's `update_check: false` | Task 4.4 says the console honours it, but §3.4 rule 7 forbids the console reading the CLI's config directory. **(a) Recommended:** the console honours `FUGARO_NO_UPDATE_CHECK=1` and its own switch, and Task 4.4's text is amended. **(b)** `fugaro config list --json` gains the field and the console reads it there. | (b) is a CLI change, a JSON-contract change and a version-skew case for an opt-out the console's own switch already gives. |
-| **D770** | **Open.** The updater's own disk writes | electron-updater caches the download under `~/Library/Caches/<app>-updater/` and Squirrel.Mac stages under its ShipIt cache. **(a) Recommended:** accept, and amend §5.1 rule 10 and §7.4 to name both as the updater's, removed by the install. **(b)** Notify only: no download, a menu item opens the release page. | (b) drops auto-install, which D5 ruled in. |
-| **D771** | **Open.** The first update-capable release cannot update itself | 0.116.0 is the first build with an updater, so 0.110.0 to 0.115.0 never see it, and 0.116.0 has nothing to update to until a later release. **(a) Recommended:** say it once in the 0.116.0 notes ("install this one by hand; later ones arrive by themselves") and run Check 59b against the first console release after 0.116.0. **(b)** Cut 0.116.1 soon after 0.116.0 so 59b can run at once. | (b) is a release made only to test the updater. |
-| **D772** | **Open.** Differential downloads | **(a) Recommended:** no `.blockmap`; every update is a full zip download. **(b)** Publish the blockmap too. | (b) adds a file the workflow has to produce, sum and attach, for a smaller download of an app that updates rarely. |
+| **D764** | How the client finds the newest release | The console's releases share `dimipaun/fugaro` with the CLI's and are published `--latest=false`, so electron-updater's GitHub provider (which reads the repository's releases and would meet `vX.Y.Z` CLI releases with no `latest-mac.yml`) and GitHub's `releases/latest` both point at the wrong thing. **The updater lists the repository's releases itself** (one unauthenticated `GET https://api.github.com/repos/dimipaun/fugaro/releases`, a fixed `User-Agent` with no version or machine data), keeps only strict `console-vX.Y.Z` tags per D760, takes the highest, refuses anything not above the running version, and only then hands electron-updater a **generic** feed at `https://github.com/dimipaun/fugaro/releases/download/console-vX.Y.Z/`. | Plan, 2026-10-30; **confirmed by the owner, 2026-10-30.** The only design that satisfies D760 with the release layout the owner ruled on 2026-10-17. |
+| **D765** | Who writes `latest-mac.yml` | **The release workflow** (macOS `release` job, after verification, before the sums are written), so `build.publish` stays `null`, no `app-update.yml` enters the bundle, and the manifest is listed in `console-sha256sums.txt` and so covered by the keyless cosign signature. | Plan, 2026-10-30; **confirmed by the owner, 2026-10-30.** Setting a `publish` provider would widen the pinned build keys and put a feed URL in the bundle that D764 replaces anyway. |
+| **D766** | The dependency | `electron-updater` **6.8.10** exact (published 2026-09-26; 6.8.11 and 6.8.12 are under two weeks old). Its dependencies: `builder-util-runtime` 9.7.0, `semver`, `js-yaml`, `fs-extra`, `lazy-val` (already in the lockfile through electron-builder, moving from dev to runtime), and three new packages, `lodash.isequal`, `lodash.escaperegexp`, `tiny-typed-emitter`. `lodash.isequal` is deprecated upstream; recorded, not blocking. Every one is packed into the asar, so `THIRD_PARTY_NOTICES.md` gains their licences and Dependabot (already watching `console/`) sees them. | Plan, 2026-10-30; **confirmed by the owner, 2026-10-30.** The owner's go approves the dependency; this records the exact pin. |
+| **D767** | What the app trusts | **(a) Recommended:** HTTPS to the two allow-listed hosts (`api.github.com` for the listing, `github.com` for the feed; the asset redirect target is `*.githubusercontent.com` and is not under the app's control), electron-updater's SHA-512 check of the zip against `latest-mac.yml`, and Squirrel.Mac's code-signature check that the new bundle satisfies the running app's designated requirement (same Developer ID team). **(b)** Also verify the Sigstore bundle over `console-sha256sums.txt` inside the app. | (b) costs a large new runtime dependency (sigstore-js and its tree) in the process that installs code, for a check Squirrel's signature test already makes the last word. **Owner, 2026-10-30: (a).** Squirrel's same-team check is the last word; no Sigstore code in the installer process. |
+| **D768** | Where the off switch is, and where its state lives | **(a) Recommended:** a checkbox item **Check for Updates Automatically** (and **Check for Updates Now**) in the application menu, its state in a new `<userData>/updates.json` holding one boolean, written only when the switch changes; §5.1 rule 10 is amended to name the file. **(b)** The same item, the state as a field in `installations.json`. **(c)** A settings panel in the renderer. | (b) couples the update switch to the installations store and its strict decoder. (c) needs a new screen, a styling-doc section and the shared stylesheets that redesign steps 4b-2 to 7 hold, so it could not start before step 7 merges. **Owner, 2026-10-30: (a).** A menu item needs no screen and no shared stylesheet. |
+| **D769** | The CLI's `update_check: false` | Task 4.4 says the console honours it, but §3.4 rule 7 forbids the console reading the CLI's config directory. **(a) Recommended:** the console honours `FUGARO_NO_UPDATE_CHECK=1` and its own switch, and Task 4.4's text is amended. **(b)** `fugaro config list --json` gains the field and the console reads it there. | (b) is a CLI change, a JSON-contract change and a version-skew case for an opt-out the console's own switch already gives. **Owner, 2026-10-30: (a).** Rule 7 stands; Task 4.4's text is amended in U5. |
+| **D770** | The updater's own disk writes | electron-updater caches the download under `~/Library/Caches/<app>-updater/` and Squirrel.Mac stages under its ShipIt cache. **(a) Recommended:** accept, and amend §5.1 rule 10 and §7.4 to name both as the updater's, removed by the install. **(b)** Notify only: no download, a menu item opens the release page. | (b) drops auto-install, which D5 ruled in. **Owner, 2026-10-30: (a).** Rule 10 and §7.4 are amended in U5. |
+| **D771** | The first update-capable release cannot update itself | 0.116.0 is the first build with an updater, so 0.110.0 to 0.115.0 never see it, and 0.116.0 has nothing to update to until a later release. **(a) Recommended:** say it once in the 0.116.0 notes ("install this one by hand; later ones arrive by themselves") and run Check 59b against the first console release after 0.116.0. **(b)** Cut 0.116.1 soon after 0.116.0 so 59b can run at once. | (b) is a release made only to test the updater. **Owner, 2026-10-30: (a).** No release is cut only for the check. |
+| **D772** | Differential downloads | **(a) Recommended:** no `.blockmap`; every update is a full zip download. **(b)** Publish the blockmap too. | (b) adds a file the workflow has to produce, sum and attach, for a smaller download of an app that updates rarely. **Owner, 2026-10-30: (a).** Full downloads only. |
 
 **Never, whatever the answers:** no update on Linux or Windows (D10, design §7.6), none in the
 unpackaged dev build (`app.isPackaged` false), none in CI, no request that carries an identifier
@@ -93,7 +93,8 @@ listed or attached).
 
 **Files:** `console/package.json` (`dependencies`: `electron-updater` 6.8.10), `console/package-lock.json`,
 `console/test/unit/pinning.test.ts` (the allow-list gains it; the "no update client" test becomes
-"the update client is imported by `updates.ts`"), `console/THIRD_PARTY_NOTICES.md`,
+"the update client is imported by `updater-electron.ts` only"), `console/test/unit/fuses.test.ts` (`publish`
+stays `null` per D765; its comment says the feed is decided), `console/THIRD_PARTY_NOTICES.md`,
 `console/src/main/updater-electron.ts` (new: the adapter from electron-updater to `UpdaterPort`,
 and the switch read), `console/src/main/index.ts` (start the controller after `whenReady`),
 `console/src/main/launch.ts` (an `isIdle()` read of its in-flight and pending state),
@@ -102,18 +103,18 @@ and the switch read), `console/src/main/index.ts` (start the controller after `w
 empty `requestHeaders`; `isIdle()` is false with a confirm open and with a launch in flight; the
 lockfile test still passes on the new entries.
 **Red step:** the pinning test with the dependency added and the allow-list unchanged.
-**Depends on:** U1; D767, D769, D770 answered. Before the 0.116.0 cut.
+**Depends on:** U1 merged (D767, D769, D770 answered 2026-10-30). Before the 0.116.0 cut.
 
 ### U4. The off switch (level 3)
 
-**Files (if D768 (a)):** `console/src/main/updatestore.ts` (new), `console/src/main/picker.ts`
+**Files (D768 (a), owner 2026-10-30):** `console/src/main/updatestore.ts` (new), `console/src/main/picker.ts`
 (the menu template gains the two items), `console/test/unit/updatestore.test.ts` (new), the menu
-test in `console/test/unit/`. **If D768 (c):** renderer files instead, gated on redesign step 7
-merging, and `flight-deck.css`, `screens.css` and `docs/design/console-styling.md` join its list.
+test in `console/test/unit/`.
+No renderer file, so U4 does not wait for any redesign step.
 **Tests:** default on; off persists across a restart; the file holds exactly one boolean; the
 item is visible on macOS only; off stops the timer at once.
 **Red step:** the persistence test against a switch held only in memory.
-**Depends on:** U3, D768.
+**Depends on:** U3 (D768 answered 2026-10-30).
 
 ### U5. Docs and Check 59b (level 4)
 
@@ -122,7 +123,7 @@ line), `docs/plans/2026-10-15-desktop-console.md` (Task 4.4's text per D769), `d
 (Check 59b's preconditions and `OLD`/`NEW`, per D771), `console/README.md`.
 **Tests:** `GOFLAGS=-p=2 go test ./internal/cli/ -run Docs -count=1 -timeout 40m`.
 **Red step:** the Check 59b docs test against a section still naming `0.110.0`/`0.111.0`.
-**Depends on:** U4, D771. No agent runs any step of Check 59b.
+**Depends on:** U4 (D771 answered 2026-10-30). No agent runs any step of Check 59b.
 
 ### Owner-run (no agent does these)
 
@@ -137,7 +138,7 @@ line), `docs/plans/2026-10-15-desktop-console.md` (Task 4.4's text per D769), `d
 |---|---|---|
 | 1 | U1, U2 | each other; redesign 4b-2 (#1371) and steps 5 to 7 (renderer only) |
 | 2 | U3 | redesign steps 5 to 7 |
-| 3 | U4 | redesign steps 5 to 7 if D768 (a); after step 7 if (c) |
+| 3 | U4 | redesign steps 5 to 7 (D768 (a): no renderer file) |
 | 4 | U5 | — |
 
 | File | U1 | U2 | U3 | U4 | U5 | Other holders |
@@ -147,11 +148,11 @@ line), `docs/plans/2026-10-15-desktop-console.md` (Task 4.4's text per D769), `d
 | `docs/pending-workflows/console-release-feed.yml`, `README.md` | | W | | | | — |
 | `internal/cli/docs_desktop_console_test.go` | | W | | | | — |
 | `console/package.json`, `package-lock.json`, `THIRD_PARTY_NOTICES.md` | | | W | | | — |
-| `console/test/unit/pinning.test.ts` | | | W | | | — |
+| `console/test/unit/pinning.test.ts`, `fuses.test.ts` | | | W | | | — |
 | `console/src/main/updater-electron.ts`, `index.ts`, `launch.ts` | | | W | | | — |
 | `console/src/main/updatestore.ts`, `picker.ts` | | | | W | | — |
 | `docs/design/desktop-console.md`, `docs/gcp-live-checklist.md`, `console/README.md` | | | | | W | — |
-| `flight-deck.css`, `screens.css`, `console-styling.md`, `screens/*.ts`, `entry.ts` | | | | (c) only | | redesign 4b-2 (#1371), steps 5 to 7 |
+| `flight-deck.css`, `screens.css`, `console-styling.md`, `screens/*.ts`, `entry.ts` | | | | | | redesign 4b-2 (#1371), steps 5 to 7 |
 
 No level has two writers of one file; each row has one writer in total.
 
