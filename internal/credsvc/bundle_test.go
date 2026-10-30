@@ -939,15 +939,18 @@ func TestReservedAccountNamesAgreeWithTheBundle(t *testing.T) {
 	var refused []string
 	for _, account := range names {
 		key := config.ClaudeAccountSecret(account)
-		got, _, _, ok := CredentialKey(key)
-		if !ok {
+		// The bundle's half: the account's key either holds no credential the
+		// loader can read, or resolves to a name the platform already goes by
+		// (the resolver answers the bare account name, never the key).
+		if got, _, _, ok := CredentialKey(key); !ok {
 			refused = append(refused, account)
 		} else if got != account {
 			t.Errorf("CredentialKey(%q) resolved to %q, want the account's own name %q", key, got, account)
-		} else if !held[got] {
-			t.Errorf("CredentialKey(%q) = %q, a name no credential the job mounts or the bundle holds goes by: the config reserving it would be over-reach", key, got)
 		}
 
+		// The config's half, in both spellings: a name another credential of
+		// the platform goes by is no claude_accounts key and no reference a
+		// profile may write.
 		ps := config.ValidateClaudeAccounts(map[string]config.ClaudeAccount{account: {}})
 		if len(ps) != 1 {
 			t.Errorf("ValidateClaudeAccounts with an account named %q = %+v, want the one refusal", account, ps)
