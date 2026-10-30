@@ -461,7 +461,7 @@ func printImageResult(w io.Writer, res *image.LocalResult, asJSON bool) error {
 }
 
 func newImageRenderCmd() *cobra.Command {
-	var workflow, cloudOutputs, layerBucket, layerSlug, layerSHA string
+	var workflow, cloudOutputs, layerBucket, layerSlug, layerSHA, key string
 	cmd := &cobra.Command{
 		Use:   "render",
 		Short: "Print the Dockerfile that builds the workflow's derived image",
@@ -497,7 +497,7 @@ func newImageRenderCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: workflow %s uses the repository Dockerfile %s\n", name, repoFile)
 			}
 			if cloudOutputs != "" {
-				if err := writeCloudOutputs(cmd.Context(), root, lc, rf, name, cloudOutputs); err != nil {
+				if err := writeCloudOutputs(cmd.Context(), root, lc, rf, name, cloudOutputs, key); err != nil {
 					return err
 				}
 			}
@@ -511,7 +511,8 @@ func newImageRenderCmd() *cobra.Command {
 	cmd.Flags().StringVar(&layerBucket, "layer-bucket", "", "the runs bucket holding the repository's copy of the project layer (used by the image build)")
 	cmd.Flags().StringVar(&layerSlug, "layer-slug", "", "the repository's storage slug (used by the image build)")
 	cmd.Flags().StringVar(&layerSHA, "layer-sha256", "", "the project layer's sha256 the build was submitted with (used by the image build)")
-	for _, n := range []string{"layer-bucket", "layer-slug", "layer-sha256"} {
+	cmd.Flags().StringVar(&key, "key", "", "the normalised dependency-set key the operator's machine computed, which the record writes as it was given it (used by the image build)")
+	for _, n := range []string{"layer-bucket", "layer-slug", "layer-sha256", "key"} {
 		_ = cmd.Flags().MarkHidden(n)
 	}
 	return cmd
@@ -521,7 +522,12 @@ func newImageRenderCmd() *cobra.Command {
 // render read: selftest.json (the smoke's spec, image.SpecForCloud),
 // record.json (the build record's source side, which record completes),
 // and source-commit and built-at (the image's labels).
-func writeCloudOutputs(ctx context.Context, root string, lc *localcfg.Config, rf resolvedFile, name, dir string) error {
+//
+// key is the normalised dependency-set key the operator's machine computed
+// for this repository, which the build was submitted with; it is written into
+// the record as it was given (D622) and never worked out here. The empty
+// value is a build that was handed no key.
+func writeCloudOutputs(ctx context.Context, root string, lc *localcfg.Config, rf resolvedFile, name, dir, key string) error {
 	cfg := rf.Cfg
 	git := func(args ...string) (string, error) {
 		c := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
@@ -598,6 +604,13 @@ func writeCloudOutputs(ctx context.Context, root string, lc *localcfg.Config, rf
 		// the base image's own fugaro, so this is the base's statement
 		// (imagecheck.Record.SealedBudgetToken, what the seal gate trusts).
 		SealedBudgetToken: true,
+		// The key is the operator's machine's, computed before the build was
+		// submitted and handed to it as an input, and the record writes it as
+		// it was given it (D622): the build never computes one of its own, so
+		// a build that cloned something else still keys its image to the set
+		// the refresh decided on. No key means no claimant, which the lock
+		// reads as "this installation has not keyed this repository".
+		Key: key,
 	}
 	specJSON, err := json.Marshal(spec)
 	if err != nil {
