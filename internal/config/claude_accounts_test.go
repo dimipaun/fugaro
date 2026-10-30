@@ -321,3 +321,56 @@ func TestProjectJobTokenAccount(t *testing.T) {
 		}
 	}
 }
+
+// TestValidateClaudeAccountsRefusesBitbucketToken: the account name
+// "bitbucket-token" is config.BitbucketSecret, the name of the credential a
+// job mounts for upstream git (ReservedSecrets) and the one name the
+// credentials bundle's own key resolver refuses —
+// claude-oauth-token-bitbucket-token resolves to it (credsvc.CredentialKey) —
+// so an account taking it would leave one name meaning two credentials.
+// Red before the rule: ValidateClaudeAccounts accepted the name, and an
+// operator learned of the clash only at `fugaro creds set` or bundle time.
+func TestValidateClaudeAccountsRefusesBitbucketToken(t *testing.T) {
+	ps := ValidateClaudeAccounts(map[string]ClaudeAccount{BitbucketSecret: {AllowDataTo: []string{"acme/app"}}})
+	if len(ps) != 1 {
+		t.Fatalf("ValidateClaudeAccounts with an account named %s = %+v, want one refusal", BitbucketSecret, ps)
+	}
+	if got, want := ps[0].Path, "claude_accounts."+BitbucketSecret; got != want {
+		t.Errorf("Problem.Path = %q, want %q", got, want)
+	}
+	if !strings.Contains(ps[0].Message, "reserved") {
+		t.Errorf("the refusal does not say the name is reserved: %q", ps[0].Message)
+	}
+	if strings.Contains(ps[0].Message, BitbucketSecret) {
+		t.Errorf("the refusal echoes the name: %q", ps[0].Message)
+	}
+}
+
+// TestValidClaudeAccountRefRefusesBitbucketToken: the reference half of the
+// same rule, and the reason a policy may no longer admit the account either.
+// A profile's claude_accounts entry naming the bundle's git credential is
+// refused where it is written (ValidClaudeAccountRef), in the same sentence
+// the definition is refused in — the two halves are one rule — and the
+// profile validation that reads the entry reports that refusal instead of
+// resolving a name that names another credential.
+func TestValidClaudeAccountRefRefusesBitbucketToken(t *testing.T) {
+	msg := ValidClaudeAccountRef(BitbucketSecret)
+	if msg == "" {
+		t.Fatalf("ValidClaudeAccountRef(%q) is valid, want a refusal", BitbucketSecret)
+	}
+	if strings.Contains(msg, BitbucketSecret) {
+		t.Errorf("the refusal echoes the name: %q", msg)
+	}
+	profiles := map[string]JobProfile{"standard": {ClaudeAccounts: []string{BitbucketSecret}}}
+	ps := ValidateProfileClaudeAccounts(profiles, map[string]ClaudeAccount{"acme-personal": {AllowDataTo: []string{"acme/app"}}}, nil)
+	if len(ps) != 1 {
+		t.Fatalf("a profile naming the git credential's name = %+v, want one refusal", ps)
+	}
+	if got, want := ps[0].Path, "profiles.standard.claude_accounts[0]"; got != want {
+		t.Errorf("Problem.Path = %q, want %q", got, want)
+	}
+	def := ValidateClaudeAccounts(map[string]ClaudeAccount{BitbucketSecret: {}})
+	if len(def) != 1 || def[0].Message != msg {
+		t.Errorf("the definition and the reference disagree about %s: %+v vs %q", BitbucketSecret, def, msg)
+	}
+}
