@@ -1656,15 +1656,19 @@ func TestInitRepoSilentWithoutCeiling(t *testing.T) {
 	}
 }
 
-// update --repo holds a checkout's governance against the run's ceiling too,
-// and with no project layer that ceiling carries Fugaro's own figures
-// (policy.Governance.WithDefaults, T7.1): a file that raises a guardrail is
-// named here as one the run clamps. The file's governance: block is also why
-// the merge runs at all — setsPolicy counts the key being written, so a
-// repository with no budget and no token limit still hears about the
-// guardrail it wrote — while the budget line above stays silent, because a
-// project with no budget has no ceiling to announce.
-func TestInitRepoClampsGovernanceAgainstFugarosDefaults(t *testing.T) {
+// update --repo reads a checkout's governance: block and, in a build that
+// links no ee/ features, holds nothing against it: the ceiling a raised
+// guardrail would be clamped by carries Fugaro's shipped figures, which
+// ee/register registers and this build does not carry (D521, D522). The block
+// is still decoded and accepted — refusing it would stop every repository of
+// the project (G2) — and nothing here names it as looser than anything.
+//
+// The budget line stays silent for its own reason: a project with no budget
+// has no ceiling to announce.
+//
+// The tagged build still clamps, and ee/governance's TestGovernanceTightenOnly
+// is where that rule is pinned (E2.3).
+func TestInitRepoDoesNotClampGovernanceInAnUntaggedBuild(t *testing.T) {
 	isolateProjects(t, t.TempDir())
 	path := writeProject(t, "aurora", "proj-1234")
 	data, err := os.ReadFile(path)
@@ -1684,8 +1688,8 @@ func TestInitRepoClampsGovernanceAgainstFugarosDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s\n%s", err, out, errOut)
 	}
-	if want := "fugaro.yaml governance.review_ratio: 20 is looser than 5; the runner will use 5"; !strings.Contains(errOut, want) {
-		t.Errorf("stderr lacks %q:\n%s", want, errOut)
+	if strings.Contains(errOut, "is looser than") {
+		t.Errorf("an untagged build clamped a governance value it does not enforce:\n%s", errOut)
 	}
 	if strings.Contains(errOut, "Budget ceiling") {
 		t.Errorf("a project with no budget announced one:\n%s", errOut)
@@ -2105,18 +2109,22 @@ func TestInitRefusesAProjectJobDeleteWhateverAllowDeleteNames(t *testing.T) {
 	}
 }
 
-// TestPrintCeilingCarriesTheProjectLayersGovernance: `update --repo` says
-// what the run will clamp, so its ceiling carries the project layer's
-// governance block the way `fugaro validate`'s and the runner's do (T7.1).
-// Merging against a ceiling built from the project config's budget alone let
-// this command pass a file whose stage timeout the run would never apply.
+// TestPrintCeilingDoesNotCarryGovernanceInAnUntaggedBuild: `update --repo`
+// states the ceiling the run will clamp against, and a build that links no
+// ee/ features has no governance in that ceiling whatever the project layer
+// writes: the merge records nothing dropped, so there is nothing for this
+// command to warn about (D521, D522). The budget half is unchanged and still
+// prints when the project has one.
 //
-// The governance-only case is the one the gate has to get right, and the
-// budget-only line has to stay the budget's: a file whose only policy is its
-// governance: block is one the layer's governance can clamp, so the warning
-// must print, and a layer carrying governance and no budget has no ceiling to
-// state — "none (no cap, ...)" would read as one (TestInitRepoSilentWithoutCeiling).
-func TestPrintCeilingCarriesTheProjectLayersGovernance(t *testing.T) {
+// What the tagged arm pins — the layer's 200ms stage timeout against the
+// file's 5m, warned about with both values named — is the merge
+// ee/governance's TestTheGovernanceWarningsSourceIsTheMergesRecord covers
+// (E2.3).
+//
+// The budget-only line stays the budget's either way: a layer carrying
+// governance and no budget has no ceiling to state — "none (no cap, ...)"
+// would read as one (TestInitRepoSilentWithoutCeiling).
+func TestPrintCeilingDoesNotCarryGovernanceInAnUntaggedBuild(t *testing.T) {
 	gov := func(d time.Duration) *config.Governance {
 		return &config.Governance{StageTimeout: config.StageTimeout{Implement: config.Duration{Duration: d}}}
 	}
@@ -2142,8 +2150,8 @@ func TestPrintCeilingCarriesTheProjectLayersGovernance(t *testing.T) {
 			var b strings.Builder
 			printCeiling(&b, lc, cfg)
 			got := b.String()
-			if !strings.Contains(got, "governance.stage_timeout.implement") || !strings.Contains(got, "200ms") {
-				t.Fatalf("update --repo's ceiling note does not warn about the layer's tighter stage timeout:\n%s", got)
+			if strings.Contains(got, "governance.") {
+				t.Fatalf("an untagged build warned about governance the run does not clamp:\n%s", got)
 			}
 			if has := strings.Contains(got, "Budget ceiling"); has != tc.wantCeiling {
 				t.Fatalf("a budget ceiling line printed = %v, want %v:\n%s", has, tc.wantCeiling, got)

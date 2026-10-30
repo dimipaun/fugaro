@@ -42,9 +42,12 @@ func (r *run) recordTier() {
 // the run's policy resolved for it. The defaults are already in it — the
 // ceiling is built with them (policy.Governance.WithDefaults, T7.1), which is
 // also what makes a repository's looser figure one the merge drops — so there
-// is nothing to fill in here: a tier of the vocabulary always carries the
-// shipped figure ($0.25/10m, $1/30m, $3/90m, $8/240m) unless a layer wrote a
-// tighter one.
+// is nothing to fill in here. The figures themselves are ee/governance's
+// (governance.Defaults, D521), so a tagged build carries the shipped
+// $0.25/10m, $1/30m, $3/90m, $8/240m for a tier of the vocabulary unless a
+// layer wrote a tighter one, and an untagged build — whose hook ships none and
+// resolves none (D522) — carries whatever the layers wrote, which is zero for
+// a repository that wrote nothing.
 func (r *run) tierExpectation(t tier.Tier) policy.TierExpectation {
 	return r.policy.Governance.Tiers.For(t)
 }

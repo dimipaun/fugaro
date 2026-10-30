@@ -170,7 +170,12 @@ type websiteFactsFile struct {
 	// from (W1.7), pinned below to go.mod's own module path.
 	Repository string                `yaml:"repository"`
 	Analytics  websiteFactsAnalytics `yaml:"analytics"`
-	Features   websiteFactsFeatures  `yaml:"features"`
+	// Marketing is the campaign measurement's configuration (plan Task G2.3,
+	// D401): the pixel's id, the insight tag's partner id and the origin each
+	// of the three loaders fetches its script from, read on the four campaign
+	// pages by the same consent banner under a second question.
+	Marketing websiteFactsMarketing `yaml:"marketing"`
+	Features  websiteFactsFeatures  `yaml:"features"`
 	// MinRuns is D97's N: no figure the site publishes is drawn from fewer
 	// runs than this, and it is the aggregation's own minimum rather than a
 	// second number written down here (W0.3, internal/stats.MinRuns).
@@ -194,6 +199,27 @@ type websiteFactsAnalytics struct {
 	// MeasurementID is the analytics property the site would report to. It is
 	// empty while analytics is off, and W3.2 supplies it.
 	MeasurementID string `yaml:"measurement_id"`
+}
+
+// websiteFactsMarketing is the campaign measurement's configuration (plan Task
+// G2.3, D401): the ids and the origins the pixel, the insight tag and the
+// booking widget load from, on the four campaign pages only, behind the
+// consent banner's second question.
+type websiteFactsMarketing struct {
+	// MetaPixelID and LinkedinPartnerID are the two identifiers the owner has
+	// not supplied yet, and both are empty until they are: an id invented here
+	// would send a campaign page's visitors into a stranger's ad account, and
+	// an empty id is a loader switched off rather than a loader that loads
+	// something nameless (R3).
+	MetaPixelID       string `yaml:"meta_pixel_id"`
+	LinkedinPartnerID string `yaml:"linkedin_partner_id"`
+	// The three origins, each the exact host the vendor documents rather than
+	// a scheme-wide or wildcard entry: the plan pins the narrowest origin each
+	// one needs (O3), and the deployed policy in firebase.json is held to this
+	// exact list.
+	MetaOrigin     string `yaml:"meta_origin"`
+	LinkedinOrigin string `yaml:"linkedin_origin"`
+	CalendlyOrigin string `yaml:"calendly_origin"`
 }
 
 // websiteFactsFeatures are the features the site renders only when they exist
@@ -1115,6 +1141,34 @@ func TestWebsiteFactsMatchTheRepository(t *testing.T) {
 	}
 	if facts.Features.Video {
 		t.Errorf("%s: features.video is true: the explainer video does not exist, so the hero may not render a player, an iframe, a poster or a play button. W2.4 sets this flag when the video exists, in the same commit that relaxes this check (D107, finding 57, plan Task W2.4 step 1)", websiteFactsPath)
+	}
+
+	// The campaign measurement (plan Task G2.3, D401). The two ids are pinned
+	// EMPTY, and this is the pin that says so: the owner has not supplied a
+	// pixel id or a partner id, the loaders are wired and gated around them, and
+	// an id this repository invented would send the four campaign pages'
+	// visitors into a stranger's ad account. A task that fills one in is a task
+	// the owner supplied the id for, and it relaxes this check in the same
+	// commit (R3) -- exactly as the video pin above is relaxed by W2.4.
+	if facts.Marketing.MetaPixelID != "" || facts.Marketing.LinkedinPartnerID != "" {
+		t.Errorf("%s: marketing carries meta_pixel_id = %q and linkedin_partner_id = %q, and both must be empty until the OWNER supplies them: the campaign loaders are wired, gated and held by website/test/consent.mjs either way, and an id nobody supplied would point the pixel or the insight tag at an account that is not this project's (R3, plan Task G2.3)", websiteFactsPath, facts.Marketing.MetaPixelID, facts.Marketing.LinkedinPartnerID)
+	}
+	// The three origins are exact origins: scheme, host, no path, no wildcard.
+	// A wildcard is the one shape the plan refuses outright in `script-src` and
+	// requires the owner's word for anywhere else (O3), and the deployed policy
+	// in firebase.json is held to these exact three values by
+	// website/test/origins.mjs.
+	for name, origin := range map[string]string{
+		"meta_origin":     facts.Marketing.MetaOrigin,
+		"linkedin_origin": facts.Marketing.LinkedinOrigin,
+		"calendly_origin": facts.Marketing.CalendlyOrigin,
+	} {
+		switch {
+		case !strings.HasPrefix(origin, "https://"):
+			t.Errorf("%s: marketing.%s = %q, want an absolute https origin: the three loaders fetch their scripts over TLS from the vendor's own host, and the deployed policy admits that origin and nothing wider (O3, plan Task G2.3)", websiteFactsPath, name, origin)
+		case strings.ContainsAny(strings.TrimPrefix(origin, "https://"), "/?#*"):
+			t.Errorf("%s: marketing.%s = %q, want a bare origin -- no path, no query and no wildcard: the campaign's origins are admitted by the consent check rather than by allowed_hosts, and a wildcard here would be a promise about every subdomain of a vendor's domain (O3, D401, plan Task G2.3)", websiteFactsPath, name, origin)
+		}
 	}
 
 	// The host list: bare hosts, and the two the site's links need.

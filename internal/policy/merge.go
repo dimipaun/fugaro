@@ -5,8 +5,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/dimipaun/fugaro/internal/tier"
 )
 
 func modeRank(m string) int {
@@ -80,8 +78,9 @@ func Merge(ceiling Layer, tighten ...Layer) Effective {
 		// layer that writes none of them (the job environment, the published
 		// policy node, a repository that has no governance: block) tightens
 		// nothing and the ceiling it was handed stands. The rule is asked of
-		// the policy hook (hook.go), whose default is tightenGovernance: it is
-		// the whole of what moves to ee/governance for these keys (§5.2).
+		// the policy hook (hook.go), whose default tightens nothing at all: an
+		// untagged build decodes the block and holds no run to it, and the
+		// rule itself is ee/governance's (§5.2, D522).
 		governanceHook().Tighten(&e, l.Governance, src)
 
 		if r := modeRank(l.Mode); r > 0 {
@@ -128,47 +127,6 @@ func Merge(ceiling Layer, tighten ...Layer) Effective {
 		e.Sources = nil
 	}
 	return e
-}
-
-// tightenGovernance applies one layer's governance limits to the running
-// effective ones. It is the whole of the tighten-only rule for them: the
-// smaller positive count, fraction or duration wins, a looser one is dropped
-// and recorded, and a zero (or a key the layer left out) is unset and passes
-// the running value through. The keys are named one by one rather than walked
-// by reflection: this is the list a key added to Governance has to be added to,
-// and nothing at compile time notices that it was forgotten.
-func (e *Effective) tightenGovernance(g Governance, src string) {
-	e.tightenInt(&e.Governance.ReviewRatio, g.ReviewRatio, KeyReviewRatio, src)
-	e.tightenInt(&e.Governance.ReviewFloorCalls, g.ReviewFloorCalls, KeyReviewFloorCalls, src)
-	e.tightenInt(&e.Governance.MaxSubagents, g.MaxSubagents, KeyMaxSubagents, src)
-
-	e.tightenCap(&e.Governance.StageBudget.Implement, g.StageBudget.Implement, KeyStageBudgetImplement, src)
-	e.tightenCap(&e.Governance.StageBudget.Review, g.StageBudget.Review, KeyStageBudgetReview, src)
-	e.tightenCap(&e.Governance.StageBudget.Fix, g.StageBudget.Fix, KeyStageBudgetFix, src)
-
-	e.tightenInt(&e.Governance.StageTokens.Implement, g.StageTokens.Implement, KeyStageTokensImplement, src)
-	e.tightenInt(&e.Governance.StageTokens.Review, g.StageTokens.Review, KeyStageTokensReview, src)
-	e.tightenInt(&e.Governance.StageTokens.Fix, g.StageTokens.Fix, KeyStageTokensFix, src)
-
-	e.tightenDuration(&e.Governance.StageTimeout.Implement, g.StageTimeout.Implement, KeyStageTimeoutImplement, src)
-	e.tightenDuration(&e.Governance.StageTimeout.Review, g.StageTimeout.Review, KeyStageTimeoutReview, src)
-	e.tightenDuration(&e.Governance.StageTimeout.Fix, g.StageTimeout.Fix, KeyStageTimeoutFix, src)
-
-	e.tightenTier(&e.Governance.Tiers.Trivial, g.Tiers.Trivial, tier.Trivial, src)
-	e.tightenTier(&e.Governance.Tiers.Small, g.Tiers.Small, tier.Small, src)
-	e.tightenTier(&e.Governance.Tiers.Medium, g.Tiers.Medium, tier.Medium, src)
-	e.tightenTier(&e.Governance.Tiers.Large, g.Tiers.Large, tier.Large, src)
-}
-
-// tightenTier is tightenGovernance's rule one level down, over the three keys
-// of a single tier: the smaller value wins per key, a looser one is dropped and
-// recorded, and a key the layer left at zero passes the running value through.
-// It never touches the per-run cap (G6): a tier's expected cost is an
-// expectation, so no key here can raise or replace the ceiling a run stops at.
-func (e *Effective) tightenTier(cur *TierExpectation, v TierExpectation, t tier.Tier, src string) {
-	e.tightenCap(&cur.ExpectedUSD, v.ExpectedUSD, TierKey(t, KeyExpectedUSD), src)
-	e.tightenInt(&cur.ExpectedMinutes, v.ExpectedMinutes, TierKey(t, KeyExpectedMinutes), src)
-	e.tightenInt(&cur.MaxSubagents, v.MaxSubagents, TierKey(t, KeyMaxSubagents), src)
 }
 
 // TightenDuration is tightenDuration for the packages outside this one: the

@@ -24,6 +24,11 @@ import assert from 'node:assert/strict'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { siteFacts } from './lib/html.mjs'
+import { loadLanding } from '../src/lib/landing.mjs'
+
+/** The analytics origin, the same one value `origins.mjs` and the banner hold (W3.2). */
+const ANALYTICS_ORIGIN = 'https://www.googletagmanager.com'
 
 const SITE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const REPO = path.dirname(SITE)
@@ -175,17 +180,35 @@ test('firebase.json deploys the build and names no project, and no .firebaserc i
   const csp = all['Content-Security-Policy']
   assert.ok(csp, 'no Content-Security-Policy')
   // The site loads from no origin but its own, with the one analytics exception W3.2 pins
-  // (D93, D106) — and that exception is read here as an exact origin, not as "a remote
-  // origin is fine". `website/test/origins.mjs` holds the whole policy to Google's
-  // documented minimum; this is the coarser check that the exception is the only one.
+  // (D93, D106) and the campaign's three (G2.3, D401) — and each exception is read here as an
+  // exact origin, not as "a remote origin is fine". The three sets are the ones the two data
+  // files write, so a CSP that dropped one, or grew a fourth, is this case failing rather than
+  // a literal below going stale; `website/test/origins.mjs` holds the whole policy, directive by
+  // directive, to Google's and the three vendors' documented minimum, and this is the coarser
+  // check that those exceptions are the only ones.
+  const campaign = siteFacts().marketing
   assert.deepEqual(
-    [...new Set([...csp.matchAll(/https?:\/\/[^\s;]*/g)].map((m) => m[0]))],
-    ['https://www.googletagmanager.com', 'https://*.google-analytics.com', 'https://*.google.com'],
-    `the CSP admits an origin that is not one of the three W3.2 pins: ${csp}`,
+    [...new Set([...csp.matchAll(/https?:\/\/[^\s;]*/g)].map((m) => m[0]))].sort(),
+    [
+      'https://www.googletagmanager.com',
+      'https://*.google-analytics.com',
+      'https://*.google.com',
+      campaign.metaOrigin,
+      campaign.linkedinOrigin,
+      campaign.calendlyOrigin,
+      'https://www.facebook.com',
+      'https://px.ads.linkedin.com',
+      new URL(loadLanding().calendlyURL).origin,
+    ].sort(),
+    `the CSP admits an origin that is not one of the ones the site's two data files and W3.2 pin: ${csp}`,
   )
   assert.ok(!/script-src[^;]*\*/.test(csp), 'script-src admits a wildcard origin')
   assert.match(csp, /default-src 'self'/)
-  assert.match(csp, /script-src 'self' https:\/\/www\.googletagmanager\.com(;|$)/, 'scripts are this site and Google Analytics, and nothing else')
+  assert.match(
+    csp,
+    new RegExp(`script-src 'self' ${ANALYTICS_ORIGIN.replace(/\./g, '\\.')}( https://\\S+)*;`),
+    'scripts are this site, Google Analytics and the three vendors of the campaign gate, and nothing else (W3.2, G2.3)',
+  )
   assert.equal(all['X-Content-Type-Options'], 'nosniff')
   assert.ok(all['Referrer-Policy'], 'no Referrer-Policy')
 

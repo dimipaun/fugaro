@@ -370,26 +370,3 @@ func ResetStageHook(t *testing.T) {
 // install one of the two halves at a time, the policy half's off-switch being
 // unimportable from this package's tests.
 func StageBoundAsked(layers []policy.Layer, stage string) bool { return stageBoundAsked(layers, stage) }
-
-// SetCore makes the stage hook the pair an untagged build has after the move
-// to ee/governance (E2.3): the governance block the run resolved is decoded
-// and then ignored — a stage gets no bound of its own and the ceiling that
-// fires leaves no halt. What the build then says about the block is not this
-// pair's to write: the run notes the blocks its layers carried and says the
-// line once, in core code, so it says it whether or not the policy half
-// resolved anything (D522, D523, noteIgnoredStageBound).
-//
-// It lives here rather than in production code because it is the pair that
-// switches enforcement off, and only a test may do that: a production seam
-// would be a way for a core caller to turn governance off in a tagged binary
-// (design §5.5).
-func SetCore(t *testing.T) {
-	t.Helper()
-	prev, wasSet := stageHooks, stageHooksSet
-	stageHooks = StageFuncs{
-		Timeout:  func(StageView) time.Duration { return 0 },
-		TimedOut: func(StageView) StageDecision { return StageDecision{} },
-	}
-	stageHooksSet = false
-	t.Cleanup(func() { stageHooks, stageHooksSet = prev, wasSet })
-}

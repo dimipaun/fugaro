@@ -40,9 +40,9 @@ type StageDecision struct {
 	Detail string
 }
 
-// StageFuncs is the runner's stage hook. Core default: today's implementation,
-// so nothing this build enforces changes until the move to ee/governance flips
-// it (G10).
+// StageFuncs is the runner's stage hook. The core default is the zero pair —
+// no bound and no halt — so an untagged build applies no governance to a stage
+// whatever its layers wrote (D522, G10).
 type StageFuncs struct {
 	// Timeout is the stage's own wall-clock ceiling; 0 means none.
 	Timeout func(v StageView) time.Duration
@@ -52,8 +52,7 @@ type StageFuncs struct {
 
 // stageHooks is the installed pair. Only ee/register may call SetStage: a
 // second caller could halve the enforcement a tagged binary registered, and
-// the core never sets it, so an untagged build enforces exactly what it
-// always did.
+// the core never sets it, so an untagged build bounds no stage by governance.
 var stageHooks = coreStageFuncs()
 
 // stageHooksSet records that a caller installed a pair, which only SetStage
@@ -139,16 +138,19 @@ func stageBoundAsked(layers []policy.Layer, stage string) bool {
 	return false
 }
 
-// coreStageFuncs is today's stage decision: the stage's own
-// governance.stage_timeout, and the stage_budget halt by time when it fires.
-// The two are one pair because they are one tripwire: a ceiling nobody stops
-// at would be no ceiling.
+// coreStageFuncs is the untagged build's stage decision: no bound of its own
+// and no halt. A stage runs under the run's own timeouts.stage alone, and the
+// governance block the run resolved is recorded as ignored rather than
+// enforced (D522, §5.3). A build that links ee/register replaces the pair with
+// the tripwire ee/governance carries.
+//
+// The pair is still a pair of functions and not nil: the stage loop calls both
+// on every stage, so the default has to answer, and the answer is that this
+// build has no stage bound to apply and no stop to leave.
 func coreStageFuncs() StageFuncs {
 	return StageFuncs{
-		Timeout: func(v StageView) time.Duration { return stageTimeoutOf(v.Governance, v.Stage) },
-		TimedOut: func(StageView) StageDecision {
-			return StageDecision{Halt: true, Reason: runstore.HaltStageBudget, Detail: "time"}
-		},
+		Timeout:  func(StageView) time.Duration { return 0 },
+		TimedOut: func(StageView) StageDecision { return StageDecision{} },
 	}
 }
 

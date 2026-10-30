@@ -140,18 +140,61 @@ const repo = site.facts.repository
           <div class="card privacy-card">
             <h3>Consent</h3>
             <p>
-              Google's script loads only after you accept: until then this page has asked Google
-              nothing. <strong>Accept</strong>, in the banner, loads Google's
-              script once; <strong>Decline</strong> loads nothing, now or on any later page.
+              Nothing is loaded before you are asked: Google's script loads only after you accept,
+              and until then this page has asked Google nothing, and the campaign pages have asked
+              Meta, LinkedIn and Calendly nothing. <strong>Accept</strong>, in the banner, loads
+              Google's script once; <strong>Decline</strong> loads nothing, now or on any later
+              page, and takes back the campaign pages' answer as well.
+            </p>
+            <p>
+              The banner asks about this site's measurement as a whole — Google Analytics 4, and
+              the three the campaign pages carry — and a refusal here covers all of them. Its{' '}
+              <strong>Accept</strong> is narrower, and is meant to be read that way: it loads
+              Google's script and leaves the campaign question where it stands, since a yes to
+              Meta, LinkedIn and Calendly is given on a campaign page and never by implication.
             </p>
             <p>
               Dismissing the banner — Escape, or reading on — is a refusal. The answer is kept in
-              this browser, under <code>fugaro:analytics-consent</code> in <code>localStorage</code>.
+              this browser, under <code>fugaro:analytics-consent</code> in{' '}
+              <code>localStorage</code>.
             </p>
             <p>
               To withdraw, use the banner here: it always offers the choice again. Declining stops
               reporting at once, on this page too, and deletes Google's cookies
-              (<code>_ga</code> and the rest) from this browser.
+              (<code>_ga</code> and the rest) from this browser — and, where the campaign pages
+              had loaded theirs, the vendor cookies listed below.
+            </p>
+          </div>
+
+          <div class="card privacy-card">
+            <h3>The campaign pages</h3>
+            <p>
+              Four of this site's pages — <code>/save</code>, <code>/control</code>,{' '}
+              <code>/scale</code> and <code>/crew</code> — are where the ads land, and the banner
+              on them asks a second question of its own: whether <strong>Meta's pixel</strong>,{' '}
+              <strong>LinkedIn's insight tag</strong> and{' '}
+              <strong>Calendly's booking widget</strong>{' '}
+              may load. The answer is kept in this browser under{' '}
+              <code>fugaro:marketing-consent</code>, apart from the analytics answer, and until you
+              accept it none of the three is asked anything, on any page.
+            </p>
+            <p>
+              With that consent, Meta and LinkedIn run their own scripts in this page, and this
+              site hands them the page's address built from the origin and the path, with no query
+              string. A script running here can read the address you arrived with, campaign
+              parameters included; what this site itself sends carries none of it. Both set
+              identifiers of their own in this browser — Meta's <code>_fbp</code> and{' '}
+              <code>_fbc</code>, and LinkedIn's <code>li_sugr</code>,{' '}
+              <code>AnalyticsSyncHistory</code>, <code>UserMatchHistory</code>,{' '}
+              <code>bcookie</code>, <code>lidc</code> and <code>li_gc</code>. Calendly's booking
+              widget is drawn on the page, and Calendly sets its own cookies.
+            </p>
+            <p>
+              Declining stops the three on the next page and deletes the cookies just listed from
+              this browser. A campaign page's banner is gone once it has been answered, so this
+              page — whose banner always offers the choice again — is where the answer is taken
+              back. A script already running on the page you are reading keeps running until you
+              reload, and a cookie a vendor set on its own domain is the vendor's to remove.
             </p>
           </div>
 
@@ -161,8 +204,9 @@ const repo = site.facts.repository
               <li>It sets no cookie of its own.</li>
               <li>It has no account, form or comment box.</li>
               <li>
-                It loads nothing from another origin except Google's script, and only after you
-                accept.
+                It loads nothing from another origin except Google's script — and, on the four
+                campaign pages above, the three vendors the second question covers — and only
+                after the consent that governs each.
               </li>
               <li>
                 It keeps no log of its own. The host's request logs are the host's, and this
