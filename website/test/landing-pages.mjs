@@ -48,8 +48,8 @@
 //      and no text inside the drawing, because a picture made of words is a second paragraph the
 //      page's word ceiling would have to count. A variant that names a video or an image takes
 //      the media slot at the top of the page instead, and renders no picture in the hero at all
-//      (D409's row records the owner's feedback of 2026-10-30, which asked for the picture as well
-//      as the band's absence; F14, G2.5).
+//      (the owner's feedback of 2026-10-30 asked for the picture as well as the band's absence:
+//      D409's row records the band, D411's the picture; F14, G2.5).
 //
 // **Red step** (the plan's own, recorded here as the plan requires — the line this file printed
 // before the template existed): the first case below failed with
@@ -548,7 +548,7 @@ test('a variant that names a video renders it in the hero, and one whose file is
   )
   // The hero's own picture stands down for the variant that brought its own media: the owner's
   // file is what the top of that page is for, and two pictures of the same campaign would be one
-  // too many (D409's row, F14). Both halves of the picture are read — the console screen the
+  // too many (D409's and D411's rows, F14). Both halves of the picture are read — the console screen the
   // variant names and the drawing a variant with no screen would fall back to — because `art` is
   // the one behaviour no shipped page can read: every variant in website/data/landing.yaml names
   // neither a video nor an image, so only this copy, where one does, reaches the prop's false half.

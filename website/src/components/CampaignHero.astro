@@ -33,16 +33,17 @@
  * would go.
  *
  * **What the eye lands on is a real screen of the console** (the owner's instruction of
- * 2026-10-30, after the design pass): the variant's `screenshot`, a row of
+ * 2026-10-30, after the design pass; D411): the variant's `screenshot`, a row of
  * `website/data/console-screens.yaml` that `website/data/landing.yaml` names by file — the Spend
  * screen for `/save`, whose subject is what a run is priced at, the run detail for `/control` —
  * the ledger, the verification and the findings a review policy's rounds end in — and the Live
  * screen for `/scale` and `/crew`, where the same console runs many at once. The picture is
  * shown large: it takes the hero's wider column on a wide viewport, where it is about half of a
  * 900 px first screen (a 16:10 capture in a column of the 1168 px band), and the full width of
- * the page under the booking action on a phone. It is framed the way the homepage's "See it"
- * slider frames the same four files — the panel behind it, the site's radius on the picture and
- * the screen's own caption under it — and everything about it but its size is the data file's:
+ * the page under the booking action on a phone. It is framed the way the console page's slider
+ * and the homepage's "See it" panel frame a screen — the panel behind it, the site's radius on
+ * the picture and the screen's own caption under it — and everything about it but its size is
+ * the data file's:
  * the `src` is derived from the row's name, and the `alt`, the caption and the two pixel
  * dimensions are the row's own, so nothing here writes a second copy of a sentence or a size
  * (F14, D190).
@@ -221,10 +222,11 @@ const { headline, supportingLine, tone, calendlyURL, art, screenshot } = Astro.p
     }
   }
 
-  /* The hero's picture: the console screen the variant names, in the frame the homepage's
-     "See it" slider gives the same four files — the panel one step above the ground, the site's
-     radius, and the screen's own caption under the picture at its right edge — so a reader who
-     has met the screens there meets them the same way here. The figure's own margin is reset:
+  /* The hero's picture: the console screen the variant names, in the frame the console page's
+     slider and the homepage's "See it" panel give a screen — the panel one step above the
+     ground, the site's radius, and the screen's own caption under the picture at its right
+     edge — so a reader who has met the screens there meets them the same way here. The
+     figure's own margin is reset:
      a `<figure>` arrives with one, and the hero's stack is spaced by its rules rather than by
      the user agent's. There is no width rule here because the picture needs none: on a phone the
      hero is a plain stack and the figure takes the content box, and from the wide breakpoint it

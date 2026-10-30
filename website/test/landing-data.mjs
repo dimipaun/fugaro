@@ -25,8 +25,10 @@
 //      `screenshot` is the *name* of one of the console's own captures under
 //      `website/public/screenshots/`, and it has to be a row of
 //      `website/data/console-screens.yaml` — the file that carries that picture's alt text, its
-//      caption and its own pixel size, and that the console page and the homepage's slider render
-//      their slides from. So no campaign page adds a picture, a re-encoded copy or an origin, and
+//      caption and its own pixel size, and that the console page's own slider renders its slides
+//      from (the homepage's "See it" panel is the same component over
+//      `website/data/home-screens.yaml`, whose console rows are held to this file's).
+//      So no campaign page adds a picture, a re-encoded copy or an origin, and
 //      the hero reads the screen's alt text and its size out of the data file rather than
 //      carrying a second copy of either: a name no row carries is refused by name, with the rows
 //      that exist in the message (the owner's instruction of 2026-10-30, D190).

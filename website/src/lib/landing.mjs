@@ -32,7 +32,9 @@
 //      an external player would be a fourth third party the consent work never admitted (F20,
 //      D107). Its `screenshot` is a name — the file under `public/screenshots/` the hero shows —
 //      and it is held to the rows of `website/data/console-screens.yaml`, the file the console
-//      page and the homepage's slider read their slides from: the page fetches one of the four
+//      page's own slider renders its slides from — the homepage's "See it" panel is the same
+//      component over `website/data/home-screens.yaml`, whose console rows are these files
+//      held to this one's alt and caption — so: the page fetches one of the four
 //      pictures the site already serves, a name no row carries is refused rather than rendered
 //      as a broken image, and the picture's alt text and its own pixel size come from that row
 //      rather than from a second copy written here (F14, D190).
@@ -77,8 +79,9 @@ const TYPICAL_COSTS = 'website/data/typical-costs.yaml'
 
 // `website/data/console-screens.yaml`, named in the messages a screenshot's refusal prints: the
 // file whose rows are the pictures under `website/public/screenshots/`, and the one place a
-// screen's alt text, its caption and its pixel size are written (the console page and the
-// homepage's "See it" slider read their slides from it through the same `loadConsoleScreens()`).
+// screen's alt text, its caption and its pixel size are written (the console page's slider and
+// this loader read its rows through the same `loadConsoleScreens()`; the homepage's "See it"
+// panel reads `website/data/home-screens.yaml`, whose console rows are held to this file's).
 const CONSOLE_SCREENS = 'website/data/console-screens.yaml'
 
 // The pre-fill message the spec writes, with the variant's own name in it (spec §6: "Hi Dimi, I
@@ -459,8 +462,9 @@ let loaded = null
  * The four campaign variants, read from `website/data/landing.yaml` and held against the site's
  * own facts — `loadSiteFacts()` for `min_runs` and `loadTypicalCosts(min_runs)` for the entries a
  * figure may be drawn from, which are the same two the caps-and-costs guide reads, and
- * `loadConsoleScreens()` for the rows a variant's `screenshot` is one of, which are the same
- * rows the console page's slider and the homepage's render.
+ * `loadConsoleScreens()` for the rows a variant's `screenshot` is one of, which are the rows the
+ * console page's own slider renders (the homepage's "See it" panel reads `home-screens.yaml`,
+ * whose console rows are held to these).
  *
  * A file that is missing, empty, or written in a shape the reader does not know throws, and every
  * message names the file: there is no fallback value anywhere below, because a default is how a

@@ -90,9 +90,12 @@ partner_logos: []
 # **What a screenshot is.** The hero's picture is a real screen of the console, and `screenshot`
 # names one: the file's NAME under `website/public/screenshots/`, which must be a row of
 # `website/data/console-screens.yaml` -- the file that carries that picture's alt text, its
-# caption and its own pixel size, and that the console page and the homepage's "See it" slider
-# already render their slides from. So the four files the owner supplied are used by the names
-# they already have: no campaign page adds a picture, a re-encoded copy or an origin, and the
+# caption and its own pixel size, and that the console page's own slider renders its slides
+# from. (The homepage's "See it" panel is the same component reading a file of its own,
+# `website/data/home-screens.yaml`, whose first three rows are these same three files, held to
+# the console file's alt and caption, row for row, by `website/test/home.mjs`.) So the four
+# files the owner supplied are used by the names they already have: no campaign page adds a
+# picture, a re-encoded copy or an origin, and the
 # hero reads the screen's alt text and its size out of the data file rather than carrying a
 # second copy of either (the loader refuses a name no row of that file carries, and
 # `website/test/console-screens.mjs` holds each row to the bytes it names).
