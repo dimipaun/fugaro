@@ -206,7 +206,7 @@ func TestShadowNeverPushes(t *testing.T) {
 		g, _ := armGW(t, armPRCfg(t, 2, ", early_draft: false"), "50", challengerModel, armLayer)
 		runner.ResetStageHook(t)
 		if err := runner.SetStageHook(runner.StageFuncs{
-			Timeout:  func(runner.StageView) time.Duration { return 300 * time.Millisecond },
+			Timeout: func(runner.StageView) time.Duration { return 300 * time.Millisecond },
 			TimedOut: func(runner.StageView) runner.StageDecision {
 				return runner.StageDecision{Halt: true, Reason: runstore.HaltStageBudget, Detail: "time"}
 			},

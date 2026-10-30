@@ -354,6 +354,21 @@ type run struct {
 	reviewSession string
 	// follow is a follow-up's state; nil for a first run.
 	follow *followState
+	// shadow is whether this run is a challenger arm (shadow.go): its task
+	// carried ab.publish: none, so nothing of it reaches the developer —
+	// no push, no pull request, no comment, no git credential the agent
+	// could push with. It is set at bootstrap, before the provider is even
+	// opened, and never cleared.
+	shadow bool
+	// ab is the ab: block of the project layer this run read, nil when the
+	// layer has none (or none applied): the list a challenger must be a
+	// member of at bootstrap (applyChallenger), and what the one D522
+	// capability line is about (noteIgnoredAB).
+	ab *config.AB
+	// abSaid is whether that line has been written; guarded by mu, for the
+	// same reason as ignoredGovernanceSaid: it is about the build, so a run
+	// says it once.
+	abSaid bool
 	// pr is the early draft pull request's state (prflow.go).
 	pr prFlow
 	// baseSHA is the base branch's commit as bootstrap fetched it (the
@@ -979,6 +994,13 @@ func (r *run) openProvider(ctx context.Context, kind, from string) error {
 	}
 	r.provider, r.providerKind, r.providerFrom = p, kind, from
 	if err := r.refreshGitAuth(ctx, bootstrapAuthMinValid); err != nil {
+		if errors.Is(err, errNoReadOnlyToken) {
+			// The arm's own boundary, not a provider that failed: the
+			// provider this repository runs on has no read-only credential
+			// to carry a challenger, so the run stops here, before the
+			// clone (shadow.go, mintGitAuth).
+			return r.refuseArm(err.Error())
+		}
 		return fmt.Errorf("getting git credentials from the %s provider: %w", kind, err)
 	}
 	r.resolveCommitIdentity(ctx)
@@ -1112,7 +1134,7 @@ func (r *run) runIDToken() string {
 // the caller decides how to handle the error (fail at open, warn and keep
 // the current ones mid-run).
 func (r *run) refreshGitAuth(ctx context.Context, minValid time.Duration) error {
-	auth, err := r.provider.GitAuth(ctx, minValid)
+	auth, err := r.mintGitAuth(ctx, minValid)
 	if err != nil {
 		return err
 	}
@@ -1134,8 +1156,11 @@ func (r *run) refreshGitAuth(ctx context.Context, minValid time.Duration) error 
 	// itself, and never pushes or opens anything on its behalf. Nor an
 	// artifact run's (design artifact-runs.md §3): its deliverable goes to
 	// the runs bucket, nothing is ever pushed, and the plan stage is the
-	// only agent stage there is.
-	if r.env != nil && r.follow == nil && !r.review && !r.artifact {
+	// only agent stage there is. Nor a challenger arm's (A2.1): the runner
+	// pushes nothing for it, and a credential in its environment would be
+	// the one thing this store could still hand a developer's repository
+	// through.
+	if r.env != nil && r.follow == nil && !r.review && !r.artifact && !r.shadow {
 		r.env = gitops.WithVars(r.env, vars)
 	}
 	return nil
@@ -1315,6 +1340,12 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	r.spec = spec
 	r.rec.RunID, r.rec.Repo = spec.RunID, spec.Repo
+	// The task's arm, before anything else the task's text can reach: an
+	// arm refuses the run further down the very path an unsampled run
+	// takes (shadow.go, readArm).
+	if err := r.readArm(); err != nil {
+		return err
+	}
 	// Read before the sync below moves the checkout off the baked commit.
 	r.rec.Image = r.imageInfo(ctx)
 
@@ -1618,6 +1649,17 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	ApplyRoles(&cfg.Agent, rcp)
 	r.cfg, r.wf, r.rec.Workflow, r.rec.BaseBranch = cfg, wf, name, cfg.Git.BaseBranch
+	// The arm-less agent, kept for the plan below and for nothing else: see
+	// the plan's derivation for why the challenger is not in it.
+	championAgent := r.cfg.Agent
+	// The arm's coder model, after the recipe's own role mapping and before
+	// anything reads a model: the routing switch and the pins resolvePolicy
+	// applies, the stage loop, the budget session and checkBudget's
+	// allow-list, price table and provider policy all judge the challenger
+	// as the coder this run runs (shadow.go, applyChallenger).
+	if err := r.applyChallenger(&r.cfg.Agent); err != nil {
+		return err
+	}
 	r.rec.FinalizeReserveS = wf.Timeouts.FinalizeReserve.Seconds()
 	dl := r.lockDeadline()
 	r.rec.Deadline = &dl
@@ -1687,7 +1729,17 @@ func (r *run) bootstrap(ctx context.Context) error {
 		// step, neither of which an artifact recipe's [plan], render shape
 		// has. Its own stage list is read directly (artifactHasPlan), and
 		// the render is the runner's (artifact.go).
-		plan := planOf(rcp, derived, cfg.Agent, r.modelProviders(), spec.Overrides.ReviewRounds, r.reachedRigor(), r.rigorCfg.Configured())
+		//
+		// The plan is derived from championAgent, never from the arm: the
+		// arms share a shape (D555 keeps "the reviewer, recipe, mode, tier
+		// and caps" the same), and the first-line step is derived from the
+		// coder's own family — Agent.FirstLineOn asks whether the coder's
+		// model is served by a route of this run's and the reviewer's is not
+		// — so a challenger whose family is routed would otherwise gain a
+		// stage the champion never had. Two runs whose stage sets differ are
+		// not two runs that differ in the coder model, and their records,
+		// costs and review findings would not be comparable.
+		plan := planOf(rcp, derived, championAgent, r.modelProviders(), spec.Overrides.ReviewRounds, r.reachedRigor(), r.rigorCfg.Configured())
 		if err := checkPlan(plan); err != nil {
 			return fmt.Errorf("recipe %s: %w", rrec.Name, err)
 		}
@@ -1850,7 +1902,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 	for k, v := range gitops.IdentityFor(r.identity) {
 		set[k] = v
 	}
-	if r.follow == nil && !r.review && !r.artifact {
+	if r.follow == nil && !r.review && !r.artifact && !r.shadow {
 		// A follow-up's agent gets no git credentials and no GH_TOKEN
 		// (design §6.1): the runner fetched the branch and pushes it, and
 		// the comments arrive in the prompt. A review run's agent gets
@@ -1858,7 +1910,10 @@ func (r *run) bootstrap(ctx context.Context) error {
 		// the checkout, and the runner never pushes or opens anything on
 		// its behalf. An artifact run's gets none for the same reason
 		// (design artifact-runs.md §3): no branch is pushed, and the
-		// deliverable is uploaded by the runner.
+		// deliverable is uploaded by the runner. A challenger arm's gets
+		// none because the arm pushes nothing at all (A2.1): the token in
+		// this environment would be one an agent could push with, which is
+		// exactly what no challenger may hold.
 		agentAuthVars, err := r.authVars()
 		if err != nil {
 			return fmt.Errorf("building git credentials: %w", err)
@@ -2011,6 +2066,15 @@ func (r *run) resolveConfig(data []byte) (*config.Config, error) {
 		if !out.Applied {
 			r.d.Log.Info("project layer not applied: fugaro.yaml does not name its project and gcp_project", "layer_project", out.Layer.Project, "layer_gcp_project", out.Layer.GCPProject)
 		}
+	}
+	if out.Layer != nil {
+		// The layer's ab: block, read here because this is where every path
+		// that resolves a configuration comes through (bootstrap's own read,
+		// and readBaseConfig's for a follow-up or a review run). What a
+		// challenger must be a member of (applyChallenger), and the one D522
+		// line a build with no A/B feature owes the person who wrote it.
+		r.ab = out.Layer.AB
+		r.noteIgnoredAB()
 	}
 	if len(out.Problems) > 0 {
 		return nil, fmt.Errorf("fugaro.yaml is invalid: %s", problemsText(out.Problems))
@@ -3015,6 +3079,13 @@ func (r *run) finalize(ctx context.Context) error {
 	// that end without a pull request included (design D27, V2.1.2).
 	r.recordChangedFiles(ctx)
 	r.save(ctx)
+	if r.shadow {
+		// A challenger arm's finalize is its own (shadow.go,
+		// shadowFinalize): the same record it would otherwise carry, and
+		// nothing that reaches the developer — no push, no pull request, no
+		// comment, no filing.
+		return r.shadowFinalize(ctx)
+	}
 	if r.skipPR {
 		// The check gate already ended the run (gate.go: endWithoutPR or
 		// failInfra), status, outcome and the stored report all theirs:
@@ -3109,6 +3180,12 @@ func (r *run) finalize(ctx context.Context) error {
 	records = r.redactRecords(records)
 	r.rec.HeadSHA, r.rec.Verify = sha, records
 	r.uploadVerifyRecords(ctx, records)
+	// Both arms' patch objects (A2.1): the run's own tree diff, from the
+	// commit it started at to the head it is about to push. sha is that head
+	// — the leftover commit, the run's own commits and the filing above are
+	// all behind it — so the champion's patch is the diff of the branch it
+	// publishes and the challenger's is the diff it holds back.
+	r.uploadPatch(ctx, sha)
 
 	pol := r.findingsPolicy()
 	ready, reason := Decide(records, decided, seniorReview(r.rec.Reviews), pol)

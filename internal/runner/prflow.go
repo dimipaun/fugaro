@@ -169,6 +169,13 @@ func (r *run) afterStage(ctx context.Context, stage string) {
 // bound of its own. A failure is the caller's to warn about; finalize
 // pushes again.
 func (r *run) pushBranch(ctx context.Context, sha string) error {
+	if r.shadow {
+		// A challenger arm never pushes, on any path (A2.1): an early draft,
+		// a verified tip and a checkpoint all come through here, and the
+		// guard is here rather than at each caller because the promise is
+		// absolute and the callers are many.
+		return nil
+	}
 	r.refreshForPush(ctx)
 	if rej := r.workflowGuard(ctx); rej != nil {
 		return rej // no network call for a push GitHub is sure to refuse
@@ -209,6 +216,12 @@ func (r *run) pushVerified(ctx context.Context, sha string) {
 // openDraft pushes the verified HEAD and opens the draft pull request. A
 // failure only warns: finalize opens the PR if none was recorded.
 func (r *run) openDraft(ctx context.Context, sha, stage string) {
+	if r.shadow {
+		// A challenger arm opens no pull request, the early draft included
+		// (A2.1). Nothing would have been pushed for it either
+		// (pushBranch), so this is the boundary and not a shortcut.
+		return
+	}
 	if err := r.pushBranch(ctx, sha); err != nil {
 		r.d.Log.Warn("pushing for the early pull request failed; finalize opens it", "err", r.redact(err.Error()))
 		return
@@ -221,6 +234,12 @@ func (r *run) openDraft(ctx context.Context, sha, stage string) {
 // mid-stage, rather than the verified boundary's. A failure only warns:
 // finalize opens the PR if none was recorded.
 func (r *run) openDraftPR(ctx context.Context, stage string, during bool) {
+	if r.shadow {
+		// No pull request of a challenger arm's is ever opened, so none is
+		// opened here (A2.1): the plan says the side effect and not just the
+		// path that usually reaches it.
+		return
+	}
 	title, desc := r.earlyPRText()
 	r.pr.lastStatus = r.d.Now()
 	section := r.redact(r.runningSection(stage, during))
@@ -272,6 +291,11 @@ func (r *run) warnTruncated(trunc bool) {
 // statusMaxFailures failures in a row it stops until finalize. A failure is
 // a warning, never a failed run.
 func (r *run) statusUpdate(ctx context.Context, stage string, during bool) {
+	if r.shadow {
+		// A challenger arm has no pull request to carry a status section
+		// (A2.1), and none of the calls below could do anything but fail.
+		return
+	}
 	n := r.prNumber()
 	if n == 0 || r.pr.stopped || r.pr.gone || ctx.Err() != nil {
 		return
