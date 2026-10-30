@@ -30,6 +30,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
@@ -39,9 +40,24 @@ import (
 type Kind string
 
 const (
+	// KindFetch is a git fetch: the upload-pack ref advertisement
+	// (GET .../info/refs?service=git-upload-pack) and the request that
+	// follows it (POST .../git-upload-pack). Both are reads of the
+	// repository the run already has.
 	KindFetch Kind = "fetch"
-	KindPush  Kind = "push"
-	KindREST  Kind = "rest"
+	// KindAdvertisement is the receive-pack ref advertisement
+	// (GET .../info/refs?service=git-receive-pack), which git sends before
+	// every push. It is a read - it moves no ref - so it is named apart from
+	// the push and allowed like one of those: a push whose update request
+	// nobody read is refused (G2), and this request has no update request at
+	// all. Folding it into KindPush would refuse the opening request of every
+	// push, and folding it into KindFetch would audit a run about to push as
+	// one that fetched.
+	KindAdvertisement Kind = "advertisement"
+	// KindPush is a git push: the POST .../git-receive-pack whose body is the
+	// update request the rules decide on.
+	KindPush Kind = "push"
+	KindREST Kind = "rest"
 )
 
 // Call names one of the REST calls the Bitbucket adapter makes (G4). The list
@@ -245,11 +261,37 @@ func Classify(method, path string, query url.Values) (Request, error) {
 	}
 	switch {
 	case segs[0] == "repositories":
+		// A workspace may be named "repositories", which is also the REST
+		// route head. The two readings cannot both apply to one path: git's
+		// action endpoints are POSTs on three segments while the REST call
+		// spelled at those segments is the repository read, which is a GET,
+		// and git's info/refs GET needs two segments no REST route takes for
+		// the same repository. So the git shape is asked first and the REST
+		// routes only when it does not match, and neither reading can hide a
+		// request from the other.
+		if gitShape(method, segs) {
+			return classifyGit(method, segs, query)
+		}
 		return classifyREST(method, segs[1:], query)
 	case len(segs) == 1 && segs[0] == "user":
 		return classifyUser(method, query)
 	}
 	return classifyGit(method, segs, query)
+}
+
+// gitShape reports whether the segments are one of git's two request shapes,
+// before the repository is looked at: a four-segment .../info/refs GET, or a
+// three-segment .../git-upload-pack or .../git-receive-pack POST. The method is
+// part of the shape, because it is what keeps the two readings of a path that
+// begins with "repositories" apart.
+func gitShape(method string, segs []string) bool {
+	switch {
+	case len(segs) == 4 && segs[2] == "info" && segs[3] == "refs":
+		return method == http.MethodGet
+	case len(segs) == 3 && (segs[2] == "git-upload-pack" || segs[2] == "git-receive-pack"):
+		return method == http.MethodPost
+	}
+	return false
 }
 
 // apiRootSegment is Bitbucket's API version segment, the first segment of every
@@ -335,26 +377,10 @@ func lowerHex(c byte) byte {
 // tells a push from a fetch and nothing else does: both services take a POST
 // and both begin with an info/refs GET.
 func classifyGit(method string, segs []string, query url.Values) (Request, error) {
-	switch {
-	case len(segs) == 4 && segs[2] == "info" && segs[3] == "refs" && method == http.MethodGet:
-		// The service parameter is the whole of git's query here, and it is
-		// read strictly: a second parameter cannot reach the upstream URL
-		// because only this one is carried.
-		service, err := only(query, "service")
-		if err != nil || len(service["service"]) != 1 {
-			return Request{}, &Refusal{Reason: ReasonCallNotAllowed}
-		}
-		var kind Kind
-		switch service.Get("service") {
-		case "git-upload-pack":
-			kind = KindFetch
-		case "git-receive-pack":
-			kind = KindPush
-		default:
-			return Request{}, &Refusal{Reason: ReasonCallNotAllowed}
-		}
-		return finishGit(kind, segs[0], segs[1], service)
-	case len(segs) == 3 && (segs[2] == "git-upload-pack" || segs[2] == "git-receive-pack") && method == http.MethodPost:
+	if !gitShape(method, segs) {
+		return Request{}, &Refusal{Reason: ReasonCallNotAllowed}
+	}
+	if len(segs) == 3 {
 		if len(query) != 0 {
 			return Request{}, &Refusal{Reason: ReasonCallNotAllowed}
 		}
@@ -364,7 +390,23 @@ func classifyGit(method string, segs []string, query url.Values) (Request, error
 		}
 		return finishGit(kind, segs[0], segs[1], nil)
 	}
-	return Request{}, &Refusal{Reason: ReasonCallNotAllowed}
+	// The service parameter is the whole of git's query here, and it is read
+	// strictly: a second parameter cannot reach the upstream URL because only
+	// this one is carried.
+	service, err := only(query, "service")
+	if err != nil || len(service["service"]) != 1 {
+		return Request{}, &Refusal{Reason: ReasonCallNotAllowed}
+	}
+	var kind Kind
+	switch service.Get("service") {
+	case "git-upload-pack":
+		kind = KindFetch
+	case "git-receive-pack":
+		kind = KindAdvertisement
+	default:
+		return Request{}, &Refusal{Reason: ReasonCallNotAllowed}
+	}
+	return finishGit(kind, segs[0], segs[1], service)
 }
 
 // finishGit canonicalises the repository of a git request and returns it with
@@ -570,9 +612,10 @@ func canonicalRepo(workspace, repo string) (string, error) {
 //
 // The order is the rules' own: the installation must proxy this repository
 // before anything else is considered, then the request must be about the
-// repository the job account is, and only then the action. A push is decided
-// on the refs the caller read with ReadUpdateRequest, ref by ref, before any
-// pack byte is forwarded (G2).
+// repository the job account is, and only then the action. A fetch and a ref
+// advertisement - the receive-pack one included, since it moves no ref - are
+// allowed there. A push is decided on the refs the caller read with
+// ReadUpdateRequest, ref by ref, before any pack byte is forwarded (G2).
 func Decide(req Request, id Identity, repo string, block *projectpolicy.BitbucketToken) Verdict {
 	if block == nil || !projectpolicy.AdmitRepo(block.AllowRepos, repo) {
 		return Verdict{Reason: ReasonNotAdmitted}
@@ -589,8 +632,12 @@ func Decide(req Request, id Identity, repo string, block *projectpolicy.Bitbucke
 		}
 	}
 	switch req.Kind {
-	case KindFetch:
-		return Verdict{Allow: true, Reason: string(KindFetch)}
+	case KindFetch, KindAdvertisement:
+		// Both are reads of the run's own repository, and the push that may
+		// follow the advertisement is decided at its POST (G2). A review run
+		// is allowed both: it may fetch, and the advertisement returns what a
+		// fetch of the same repository returns.
+		return Verdict{Allow: true, Reason: string(req.Kind)}
 	case KindPush:
 		return decidePush(req, id)
 	case KindREST:
@@ -740,19 +787,30 @@ func endpointParts(e *writeEndpoint) (out struct{ branch, repo string }) {
 }
 
 // readWriteBody parses a write's body: the JSON object the adapter sends, with
-// no key named twice anywhere in it. Two values under one key is the one shape
-// where the value the rules check and the value Bitbucket acts on can differ -
-// Go's decoder keeps the last, another parser may keep the first - so a body
-// that carries one is refused rather than read.
+// no key named twice anywhere in it, in one spelling. Two values under one key
+// is the one shape where the value the rules check and the value Bitbucket
+// acts on can differ - Go's decoder keeps the last, another parser may keep
+// the first - so a body that carries one is refused rather than read, and the
+// same goes for two keys that differ only in case and for a key the rules read
+// spelled in another case (see foldKey and readKeys).
+//
+// A body that is not an object at all - null, an array, a string, a number -
+// is refused too: json.Unmarshal reads every one of them into this struct as
+// "nothing was named", which is exactly what a body with no destination to
+// move looks like.
 func readWriteBody(body []byte) (*writeBody, bool) {
 	var w writeBody
-	if len(bytes.TrimSpace(body)) == 0 {
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) == 0 {
 		return &w, true
 	}
-	if !objectWithoutDuplicateKeys(body) {
+	if trimmed[0] != '{' {
 		return nil, false
 	}
-	if err := json.Unmarshal(body, &w); err != nil {
+	if !objectWithoutDuplicateKeys(trimmed) {
+		return nil, false
+	}
+	if err := json.Unmarshal(trimmed, &w); err != nil {
 		return nil, false
 	}
 	return &w, true
@@ -761,7 +819,7 @@ func readWriteBody(body []byte) (*writeBody, bool) {
 // objectWithoutDuplicateKeys reports whether body is exactly one JSON value
 // that names no object key twice. A decoder's own decoder keeps the last of
 // two values silently, which is what this walks around: every object's keys
-// are collected as they are read.
+// are collected as they are read, folded the way a decoder may fold them.
 func objectWithoutDuplicateKeys(body []byte) bool {
 	dec := json.NewDecoder(bytes.NewReader(body))
 	if !scanValue(dec) {
@@ -769,6 +827,32 @@ func objectWithoutDuplicateKeys(body []byte) bool {
 	}
 	_, err := dec.Token()
 	return err == io.EOF // nothing after the value
+}
+
+// readKeys are the keys the rules read a write's body by, each in the one
+// spelling bitbucket.Provider sends it. A body that spells one of them in any
+// other case is refused: json.Unmarshal matches a field name case-insensitively
+// and the API on the other side may not, so a "DESTINATION" this file reads as
+// absent is a destination the API may move, and a "SOURCE" it reads as absent
+// is a source a create may open from somewhere else (G12).
+var readKeys = map[string]bool{
+	"source": true, "destination": true, "branch": true,
+	"name": true, "repository": true, "full_name": true,
+}
+
+// foldKey folds an object key the way a decoder's case-insensitive field
+// matching may fold it, and reports whether the key is one this file can fold
+// at all. Only ASCII is folded, which is every key a write body carries: a key
+// with any other rune is refused rather than compared, because encoding/json
+// folds a non-ASCII rune by its own orbit rule and a comparison written here
+// would not be that rule.
+func foldKey(name string) (string, bool) {
+	for i := 0; i < len(name); i++ {
+		if name[i] >= utf8.RuneSelf {
+			return "", false
+		}
+	}
+	return strings.ToLower(name), true
 }
 
 // scanValue walks one JSON value, refusing a duplicate key in any object
@@ -791,10 +875,17 @@ func scanValue(dec *json.Decoder) bool {
 				return false
 			}
 			name, ok := key.(string)
-			if !ok || seen[name] {
+			if !ok {
 				return false
 			}
-			seen[name] = true
+			folded, ok := foldKey(name)
+			if !ok || seen[folded] {
+				return false
+			}
+			seen[folded] = true
+			if readKeys[folded] && name != folded {
+				return false
+			}
 			if !scanValue(dec) {
 				return false
 			}

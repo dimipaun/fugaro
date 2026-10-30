@@ -119,6 +119,82 @@ func TestRulesPushOnlyRunBranch(t *testing.T) {
 	}
 }
 
+// TestRulesPushThroughClassify drives a real push the way git does - the
+// receive-pack advertisement, then the POST whose body is the update request -
+// through Classify and Decide, rather than hand-building a Request. The
+// advertisement carries no update request at all, so it is a read and not a
+// push (G2); every push case elsewhere in this file starts at Decide.
+func TestRulesPushThroughClassify(t *testing.T) {
+	const pushURL = "https://bitbucket.org/acme/sandbox.git/git-receive-pack"
+
+	advertisement := classify(t, "GET", "https://bitbucket.org/acme/sandbox.git/info/refs?service=git-receive-pack")
+	if advertisement.Kind != KindAdvertisement {
+		t.Fatalf("the receive-pack advertisement classified as %q, want %q", advertisement.Kind, KindAdvertisement)
+	}
+	if got := Decide(advertisement, runIdentity(), jobRepo, admittedBlock()); !got.Allow {
+		t.Fatalf("the receive-pack advertisement = %+v, want an allow: git sends it before every push", got)
+	}
+	if got := Decide(advertisement, Identity{Run: "run-r", PRs: []int{9}}, jobRepo, admittedBlock()); !got.Allow {
+		t.Errorf("the advertisement from a review run = %+v, want an allow", got)
+	}
+
+	unread := classify(t, "POST", pushURL)
+	if got := Decide(unread, runIdentity(), jobRepo, admittedBlock()); got.Allow || got.Reason != ReasonPushUnread {
+		t.Fatalf("a push whose update request was not read = %+v, want %q", got, ReasonPushUnread)
+	}
+
+	for _, tc := range []struct {
+		name  string
+		body  string
+		allow bool
+		want  string
+	}{
+		{
+			name: "the run's own branch", body: pkt(oidA+" "+oidB+" refs/heads/"+runBranch) + "0000",
+			allow: true, want: string(KindPush),
+		},
+		{
+			name: "a force-push to the run's own branch", body: pkt(oidB+" "+oidA+" refs/heads/"+runBranch) + "0000",
+			allow: true, want: string(KindPush),
+		},
+		{
+			// The red step's own request, on the wire this time.
+			name: "the base branch", body: pkt(oidA+" "+oidB+" refs/heads/main") + "0000",
+			want: ReasonOtherRef,
+		},
+		{
+			// git's probe before a large chunked push: a flush packet and
+			// nothing else, which is a body somebody read.
+			name: "git's flush-only probe", body: "0000",
+			allow: true, want: string(KindPush),
+		},
+		{
+			name: "a delete", body: pkt(oidA+" "+zeroOID+" refs/heads/"+runBranch) + "0000",
+			want: ReasonRefDelete,
+		},
+		{
+			name: "a tag", body: pkt(oidA+" "+oidB+" refs/tags/v1.0.0") + "0000",
+			want: ReasonTagRef,
+		},
+		{
+			// A body the parser refuses is a body nobody read, and the push
+			// is refused for that rather than forwarded unread.
+			name: "an update request with no flush", body: pkt(oidA + " " + oidB + " refs/heads/" + runBranch),
+			want: ReasonPushUnread,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := classify(t, "POST", pushURL)
+			updates, _, err := ReadUpdateRequest(strings.NewReader(tc.body), 1<<20)
+			req.UpdatesRead, req.Updates = err == nil, updates
+			got := Decide(req, runIdentity(), jobRepo, admittedBlock())
+			if got.Allow != tc.allow || got.Reason != tc.want {
+				t.Fatalf("Decide = %+v, want allow=%v reason %q", got, tc.allow, tc.want)
+			}
+		})
+	}
+}
+
 // TestRulesPushDeleteRefused: a deletion moves a ref to the zero id, which is
 // not a push of the run's work but the removal of whatever is there. The
 // parser reports the zero id and leaves the decision here (B1.3), and the
@@ -217,20 +293,64 @@ func TestRulesFetchOtherRepositoryRefused(t *testing.T) {
 		t.Errorf("a REST read of another repository = %+v, want %q", got, ReasonOtherRepository)
 	}
 
-	// A workspace may be named "2.0", which is also the API root every REST
-	// path carries: the root is dropped only in front of a route the API has
-	// below it, so this git path still names a repository - and it is one the
-	// policy can admit, so dropping the segment positionally would refuse a
-	// job that may run.
+}
+
+// TestRulesWorkspaceNamedLikeARoute: a workspace may be named for a segment
+// the classifier reads as a route head - "2.0", the API root every REST path
+// carries, and "repositories", the REST route itself. Both must still reach
+// their repository: a positional read of either segment would refuse a
+// repository the policy can admit, which is a job that may run and cannot.
+func TestRulesWorkspaceNamedLikeARoute(t *testing.T) {
 	const rootRepo = "bitbucket/2.0/sandbox"
 	dot := classify(t, "GET", "https://bitbucket.org/2.0/sandbox.git/info/refs?service=git-upload-pack")
 	if dot.Repo != rootRepo {
-		t.Fatalf("a fetch of the repository in the workspace 2.0 classified as %q, want %q", dot.Repo, rootRepo)
+		t.Fatalf("a fetch in the workspace 2.0 classified as %q, want %q", dot.Repo, rootRepo)
 	}
 	block := admittedBlock()
 	block.AllowRepos = []string{"bitbucket/2.0/*"}
 	if got := Decide(dot, runIdentity(), rootRepo, block); !got.Allow {
 		t.Errorf("a fetch of %s = %+v, want an allow", rootRepo, got)
+	}
+
+	// "repositories" is the REST route head as well, so the git shape is
+	// asked before it: a fetch, the advertisement and the push POST are all
+	// git requests to this repository and none of them is a REST path.
+	const routeRepo = "bitbucket/repositories/sandbox"
+	route := admittedBlock()
+	route.AllowRepos = []string{"bitbucket/repositories/*"}
+	for _, tc := range []struct {
+		name   string
+		method string
+		url    string
+		kind   Kind
+	}{
+		{"the fetch", "GET", "https://bitbucket.org/repositories/sandbox.git/info/refs?service=git-upload-pack", KindFetch},
+		{"the push advertisement", "GET", "https://bitbucket.org/repositories/sandbox.git/info/refs?service=git-receive-pack", KindAdvertisement},
+		{"the push", "POST", "https://bitbucket.org/repositories/sandbox.git/git-receive-pack", KindPush},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := classify(t, tc.method, tc.url)
+			if req.Kind != tc.kind || req.Repo != routeRepo {
+				t.Fatalf("classified %+v, want the kind %q of %s", req, tc.kind, routeRepo)
+			}
+			if tc.kind == KindPush {
+				// A push whose update request nobody read is refused for
+				// that and not for its repository: the classification is what
+				// is under test here.
+				req.UpdatesRead = true
+				req.Updates = []RefUpdate{{Old: oidA, New: oidB, Ref: "refs/heads/" + runBranch, HashLen: 40}}
+			}
+			if got := Decide(req, runIdentity(), routeRepo, route); !got.Allow {
+				t.Fatalf("%s = %+v, want an allow", tc.name, got)
+			}
+		})
+	}
+
+	// The readings do not overlap, so a path that is not a git shape is still
+	// the REST route it looks like.
+	read := classify(t, "GET", "https://api.bitbucket.org/2.0/repositories/acme/sandbox")
+	if read.Call != CallRepoRead || read.Repo != jobRepo {
+		t.Fatalf("the repository read classified as %+v, want %q in %s", read, CallRepoRead, jobRepo)
 	}
 }
 
@@ -528,6 +648,37 @@ func TestRulesPRWriteBoundToRun(t *testing.T) {
 		{
 			name: "a body that is not an object", pr: PRFacts{Call: CallPRUpdate, Number: own.Number, SourceRepo: own.SourceRepo, SourceBranch: own.SourceBranch, Destination: "main"},
 			body: `"a string"`, want: ReasonBodyMalformed,
+		},
+		{
+			// null decodes into the struct as "nothing named", which reads
+			// exactly like a body with no destination to move.
+			name: "a null body", pr: PRFacts{Call: CallPRUpdate, Number: own.Number, SourceRepo: own.SourceRepo, SourceBranch: own.SourceBranch, Destination: "main"},
+			body: `null`, want: ReasonBodyMalformed,
+		},
+		{
+			name: "an empty array body", pr: PRFacts{Call: CallPRComment, Number: own.Number, SourceRepo: own.SourceRepo, SourceBranch: own.SourceBranch, Destination: "main"},
+			body: `[]`, want: ReasonBodyMalformed,
+		},
+		{
+			// The destination moved under a key a decoder may read as the
+			// one the rules checked: Go keeps the last of the two, the API
+			// may keep the first.
+			name: "a destination named in another case", pr: PRFacts{Call: CallPRUpdate, Number: own.Number, SourceRepo: own.SourceRepo, SourceBranch: own.SourceBranch, Destination: "main"},
+			body: `{"destination":{"branch":{"name":"release"}},"DESTINATION":{"branch":{"name":"main"}}}`, want: ReasonBodyMalformed,
+		},
+		{
+			// The same, one level down: the rules would read no destination
+			// branch at all and the API would read "release".
+			name: "a destination branch named in another case", pr: PRFacts{Call: CallPRUpdate, Number: own.Number, SourceRepo: own.SourceRepo, SourceBranch: own.SourceBranch, Destination: "main"},
+			body: `{"destination":{"branch":{"NAME":"release"}}}`, want: ReasonBodyMalformed,
+		},
+		{
+			name: "a source repository named in another case", pr: PRFacts{Call: CallPRCreate},
+			body: `{"source":{"branch":{"name":"` + runBranch + `"},"repository":{"Full_Name":"` + forkRepo + `"}}}`, want: ReasonBodyMalformed,
+		},
+		{
+			name: "a create whose source is spelled in another case", pr: PRFacts{Call: CallPRCreate},
+			body: `{"SOURCE":{"branch":{"name":"` + runBranch + `"}}}`, want: ReasonBodyMalformed,
 		},
 		{
 			// Two values under one key: the rules would read the last and
