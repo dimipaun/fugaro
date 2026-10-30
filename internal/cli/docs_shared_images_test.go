@@ -41,6 +41,8 @@ func TestDocsSharedImagesDesign(t *testing.T) {
 	sharedImagesMustContain(t, section, path, "fact", []string{
 		// D618 as answered, plus O6's three image-count controls.
 		"only resolved package names, versions, toolchain and base image count",
+		// §2.4's escaping rule: a fact is one line whatever it holds.
+		"Each fact is written as a **quoted Go string literal**",
 		"only when it holds the whole set at the same versions",
 		// T6(c) as resolved: propose-then-confirm, and the unattended refusal.
 		"proposed and confirmed, never forked silently",

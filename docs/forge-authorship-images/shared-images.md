@@ -1,5 +1,7 @@
 # Shared images keyed by the resolved dependency set
 
+**Status: design only; C8a is built to it (2026-10-30) — the key, the superset lookup and the
+lock, in `internal/imagecheck` — and C8b and C8c are not.** *The status as first written, kept:*
 **Status: design only; nothing here is implemented.** This is the design the plan's task **C7**
 (`implementation-plan.md`) asks for; **C8** builds it, and this file is meant to be concrete enough
 that C8 needs no further design. Core MIT: nothing in this design is `ee/` behaviour.
@@ -103,14 +105,20 @@ The canonical form is text, one line per fact, with a version line first:
 
 ```
 key v1
-base:<base_ref>@<base_digest>
-pkg:<name>@<version>
-tool:<tool>@<version>
+base:"<base_ref>@<base_digest>"
+pkg:"<name>@<version>"
+tool:"<tool>@<version>"
 ```
 
 - Names and versions are used as the file states them, after the ecosystem's own canonicalisation
   where it defines one (PyPI's PEP 503 normalisation, which folds case, `-`, `_` and `.`; the Go
   module path as written, which is case-sensitive).
+- Each fact is written as a **quoted Go string literal** (`strconv.Quote`), which is the quotes in
+  the block above. A name or a version is text a key file supplied, and a fact holding a newline
+  would otherwise end its line and have the rest of it read as further facts: a package named
+  `left-pad@1.0.0\npkg:react@18.3.1` would hash as a two-package set and take that set's key — and
+  so be served its image. Quoting escapes that newline, and every other control character, quote and
+  backslash, so one fact is one line whatever it holds.
 - Every line is **deduplicated** and the lines after the version line are sorted bytewise, so the
   order of files, of entries in a file and of JSON or YAML keys cannot matter.
 - The bytes end with a single newline. The hash is the lower-case hex **SHA-256** of those bytes,
@@ -170,6 +178,8 @@ directory.
       "digest": "sha256:…",
       "base_ref": "web",
       "base_digest": "sha256:…",
+      "packages": ["left-pad@1.3.0", "react@18.3.1"],
+      "tools": ["node@22.11.0"],
       "built_at": "2026-10-29T09:12:04Z",
       "build_id": "…",
       "repositories": ["owner/repo-a", "owner/repo-b"],
@@ -179,6 +189,12 @@ directory.
   }
 }
 ```
+
+`packages` and `tools` are the resolved set the image was built from, as §2.4's lines without their
+`pkg:` and `tool:` prefixes. §4 decides a reuse from them, because a hash cannot be compared for
+containment: an entry holding only its key could never be a superset of anything. §5 calls a
+repository diverged when the entry it is on does not hold its set. A refresh stores the set it just
+resolved, beside the key it hashed from it.
 
 `repositories` and `jobs` are the same set seen twice: which repositories are on this image, and each
 one's job name as it is at update time (the operator's machine reads the job, so it knows). They are
