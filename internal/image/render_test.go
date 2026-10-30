@@ -2,6 +2,7 @@ package image
 
 import (
 	"encoding/json"
+	"fmt"
 	"maps"
 	"os"
 	"os/exec"
@@ -1233,5 +1234,82 @@ func TestRenderCopiesConfiguredKeyFilesBeforeSource(t *testing.T) {
 	}
 	if strings.Contains(s, "'src/app.js'") {
 		t.Errorf("the key-file layer checks out a file image.key_files does not name:\n%s", s)
+	}
+}
+
+// TestKeyLayerRefusesControlCharacterInExpandedName: the key-file layer's
+// names come out of the repository's own tree — a glob match, the files under
+// a directory entry — and each one is written into the Dockerfile's checkout
+// RUN as itself. A name holding a newline would end that instruction, and the
+// rest of the name would then be read as a Dockerfile instruction of its own,
+// so the render refuses the name instead of writing it, and the refusal names
+// the entry by its index and never echoes the name into the message.
+func TestKeyLayerRefusesControlCharacterInExpandedName(t *testing.T) {
+	root, cfg := keyFileCheckout(t)
+	testutil.WriteFiles(t, root, map[string]string{
+		".yarn/patches/patch\nRUN touch /pwned.patch": "patch\n",
+	})
+	got, _, err := Dockerfile(root, cfg, "web", "dev")
+	if err == nil {
+		t.Fatalf("a committed file name holding a newline was written into the Dockerfile:\n%s", got)
+	}
+	if body := err.Error(); strings.Contains(body, "RUN") || strings.ContainsAny(body, "\n\r\x1b") {
+		t.Errorf("the refusal echoes the name it refuses: %q", body)
+	}
+	for _, name := range []string{".yarn/patches/it's.patch", `.yarn/patches/a\b.patch`, ".yarn/patches/a\x1bb.patch"} {
+		in := RenderInput{Workflow: "app", Base: config.BaseKind, Version: "dev", KeyFiles: []string{name}}
+		if _, err := Render(in); err == nil {
+			t.Errorf("Render wrote the key-file name %q into the Dockerfile", name)
+		}
+	}
+}
+
+// TestKeyLayerDirectoryExpansionCapped: a directory entry of the key-file
+// layer — an image.key_files entry, or a built-in path such as .yarn/patches —
+// reaches the Dockerfile as the files under it, so without a cap a
+// repository's own file count would decide the size of the checkout line. One
+// entry contributes at most maxKeyFilesPerEntry names; the next file refuses
+// the render, naming the entry and the cap.
+func TestKeyLayerDirectoryExpansionCapped(t *testing.T) {
+	patches := func(n int, dir string) map[string]string {
+		files := make(map[string]string, n)
+		for i := range n {
+			files[fmt.Sprintf("%s/%03d.patch", dir, i)] = "patch\n"
+		}
+		return files
+	}
+	for _, tc := range []struct {
+		name    string
+		dir     string
+		n       int
+		wantErr string
+	}{
+		{"a built-in directory at the cap", ".yarn/patches", maxKeyFilesPerEntry, ""},
+		{"a built-in directory over the cap", ".yarn/patches", maxKeyFilesPerEntry + 1, ".yarn/patches"},
+		{"a configured directory over the cap", "patches", maxKeyFilesPerEntry + 1, "image.key_files[0]"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, cfg := keyFileCheckout(t)
+			if tc.dir == "patches" {
+				cfg = parseConfig(t, strings.Replace(renderYAML, "    secrets:",
+					"    image: { key_files: [patches] }\n    secrets:", 1))
+			}
+			testutil.WriteFiles(t, root, patches(tc.n, tc.dir))
+			got, _, err := Dockerfile(root, cfg, "web", "dev")
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("%d files under %s: %v", tc.n, tc.dir, err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("%d files under %s rendered:\n%s", tc.n, tc.dir, got)
+			}
+			for _, want := range []string{tc.wantErr, fmt.Sprint(maxKeyFilesPerEntry)} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal = %v, want it to name %q and the cap of %d", err, want, maxKeyFilesPerEntry)
+				}
+			}
+		})
 	}
 }

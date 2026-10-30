@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"text/template"
+	"unicode/utf8"
 
 	"github.com/bmatcuk/doublestar/v4"
 	"gopkg.in/yaml.v3"
@@ -46,10 +47,47 @@ var derived = template.Must(template.New("Dockerfile").
 	Funcs(template.FuncMap{"join": strings.Join}).
 	Parse(images.DerivedTemplate))
 
+// maxKeyFilesPerEntry bounds how many names one entry of the key-file layer
+// may contribute to the Dockerfile. Each name is one word of one RUN line, and
+// the directories this layer reads hold a handful of files in a real
+// repository — a Yarn build, a few plugins, the patches a Yarn Berry checkout
+// applies — so 256 is far above any of them, while the layer stays bounded:
+// the expansion of a committed directory is otherwise a number the
+// repository's own file count chooses, not one this render does.
+const maxKeyFilesPerEntry = 256
+
+// usableKeyFileName reports whether a name of the key-file layer can be
+// written into the Dockerfile as itself. Those names come out of the
+// repository's own tree — a glob match, the files under a directory entry — so
+// a committed name is input, not a name this render chose: a newline or a
+// carriage return would end the checkout RUN instruction, and the rest of the
+// name would then be read as a Dockerfile instruction of its own, while a
+// quote or a backslash is a character the single-quoted shell word and git's
+// pathspec would each read differently from the name they were given. A glob
+// character is not refused: the checkout is a literal pathspec, so a name
+// holding one is still the one file the layer asked for.
+func usableKeyFileName(name string) bool {
+	if !utf8.ValidString(name) {
+		return false
+	}
+	for _, r := range name {
+		switch {
+		case r < 0x20, r == 0x7f, r == '\'', r == '"', r == '\\':
+			return false
+		}
+	}
+	return true
+}
+
 // Render renders images/derived/Dockerfile.tmpl for one workflow.
 func Render(in RenderInput) ([]byte, error) {
 	if in.Image.Node != "" {
 		return nil, fmt.Errorf("image.node was removed in 0.7.0 (%s)", config.MigrationDoc)
+	}
+	for i, name := range in.KeyFiles {
+		if !usableKeyFileName(name) {
+			return nil, fmt.Errorf("key file %d cannot be written into the Dockerfile's checkout loop; its name holds a control character, a quote or a backslash, so rename it in the repository", i)
+		}
 	}
 	for i, step := range in.Image.Setup {
 		if t := strings.TrimSpace(step); strings.HasPrefix(t, "-") || strings.HasPrefix(t, "[") {
@@ -180,8 +218,52 @@ func Dockerfile(root string, cfg *config.Config, name, version string) (data []b
 	in.KeyFiles = append(in.KeyFiles, slices.Sorted(maps.Keys(keys))...)
 	slices.Sort(in.KeyFiles)
 	in.KeyFiles = slices.Compact(in.KeyFiles)
+	if err := checkKeyFileExpansion(w.Image, in.KeyFiles); err != nil {
+		return nil, "", err
+	}
 	data, err = Render(in)
 	return data, "", err
+}
+
+// checkKeyFileExpansion refuses an entry of the key-file layer that reaches
+// the Dockerfile as more than maxKeyFilesPerEntry names: the workflow's
+// image.key_files entries and the built-in paths a dependency install reads
+// (imagecheck.NodeInstallPaths, three .yarn directories among them), each of
+// which the layer expands into the files under it. It counts the layer's own
+// names rather than globbing the checkout a second time: what has to stay
+// bounded is the Dockerfile, and a name counts under its entry whether the
+// entry or a cache: glob of the workflow put it in the layer.
+func checkKeyFileExpansion(img config.Image, layer []string) error {
+	for i, entry := range img.KeyFiles {
+		if err := capKeyFileEntry(layer, entry, fmt.Sprintf("image.key_files[%d]", i)); err != nil {
+			return err
+		}
+	}
+	for _, entry := range imagecheck.NodeInstallPaths {
+		if err := capKeyFileEntry(layer, entry, entry); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// capKeyFileEntry refuses entry when the layer holds more than
+// maxKeyFilesPerEntry names at or under it. name is how the refusal names the
+// entry — the config path of an image.key_files entry, or the path of a
+// built-in one — and both forms are safe to print: config refuses an entry
+// holding a control character, and the built-ins are this package's own
+// constants.
+func capKeyFileEntry(layer []string, entry, name string) error {
+	n := 0
+	for _, f := range layer {
+		if f == entry || strings.HasPrefix(f, entry+"/") {
+			n++
+		}
+	}
+	if n > maxKeyFilesPerEntry {
+		return fmt.Errorf("%s expands to %d key files, more than the %d one entry may contribute to the image", name, n, maxKeyFilesPerEntry)
+	}
+	return nil
 }
 
 // hasRegular reports whether the checkout has a regular file at rel, the test
