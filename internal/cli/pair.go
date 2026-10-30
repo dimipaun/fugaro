@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	// rsc.io/qr is the one module this work adds to go.mod, and the owner
+	// approved it by name with T4's brief. renderPairQR's comment records it.
 	"rsc.io/qr"
 
 	"github.com/dimipaun/fugaro/internal/budget/rules"
@@ -104,6 +106,11 @@ func newPairCmd() *cobra.Command {
 			"The typed code is the binding: nothing is written to the project before the\n" +
 			"code the operator types matches the key the phone wrote, so a refused\n" +
 			"pairing leaves the project exactly as it was.\n" +
+			"\n" +
+			"The code is drawn in a terminal wide enough for it. The payload is over a\n" +
+			"kilobyte, so its code is over a hundred columns wide, and a narrower\n" +
+			"terminal gets the payload line instead of a drawing that would wrap and\n" +
+			"stop being a QR code; --json carries that same payload for a console.\n" +
 			"\n" +
 			"Its own state is the local config: the project, its database URL and\n" +
 			"Identity Toolkit API key, and the signer account. --json streams the\n" +
@@ -802,9 +809,26 @@ func pairDatabaseAdminProbe(ctx context.Context, db *rtdb.Client, lc *localcfg.C
 // narrow terminal would wrap — and a wrapped QR code is not a QR code.
 const pairQRQuiet = 2
 
+// pairQRMaxColumns is the widest drawing this command prints. The terminal it
+// is normally run in is 80 columns, and a drawing wider than the terminal
+// wraps — and a wrapped QR code is not a QR code (pairQRQuiet). The payload is
+// a bootstrap configuration and a JWT, so it is over a kilobyte and its code is
+// over a hundred columns wide, which is wider than that terminal: what
+// renderPairQR writes then is the payload line, which is what this command
+// printed before it could draw at all, and the width the code would need, so an
+// operator who widens the terminal gets the drawing and one who does not can
+// still carry the payload to a console.
+const pairQRMaxColumns = 80
+
 // renderPairQR draws the payload as the QR the phone scans (§4.1, §4.4): the
 // code the operator's screen shows, from rsc.io/qr's encoder, so what is on
 // the screen is the code and not a description of it.
+//
+// The encoder is rsc.io/qr, the one module this work adds to go.mod. The build
+// before this one printed the payload and said the drawing was missing,
+// because "go.mod may not gain one before the owner approves it"; the approval
+// is T4's brief, which names rsc.io/qr. The plan's own "it adds no dependency"
+// (§17, bullet 6) is T3's crypto work, which adds none.
 //
 // It is drawn as half blocks — one text row carries two module rows, with
 // U+2580, U+2584 and U+2588 for the two, the top and the bottom one — because
@@ -823,6 +847,9 @@ func renderPairQR(w io.Writer, payload string) error {
 	code, err := qr.Encode(payload, qr.L)
 	if err != nil {
 		return userErr("encoding the QR code: %v", err)
+	}
+	if columns := code.Size + 2*pairQRQuiet; columns > pairQRMaxColumns {
+		return writePairQRPayload(w, payload, columns)
 	}
 	size := code.Size + 2*pairQRQuiet
 	var b strings.Builder
@@ -844,6 +871,24 @@ func renderPairQR(w io.Writer, payload string) error {
 		if _, err := fmt.Fprintln(w, b.String()); err != nil {
 			return userErr("writing the QR code: %v", err)
 		}
+	}
+	return nil
+}
+
+// writePairQRPayload is what a payload whose code is too wide to draw falls
+// back to: the payload line itself, and the width the code needs, so the
+// operator can widen the terminal rather than read a wrapped code. The line is
+// what --json's qr event carries too, so a console can draw the code where
+// there is room for it.
+func writePairQRPayload(w io.Writer, payload string, columns int) error {
+	_, err := fmt.Fprintf(w, "the pairing payload's QR code is %d columns wide, past the %d this is held to, "+
+		"and a wrapped QR code is not a QR code: widen the terminal to %d columns to scan the code, "+
+		"or carry this payload line, which --json's qr event carries too\n", columns, pairQRMaxColumns, columns)
+	if err != nil {
+		return userErr("writing the QR payload: %v", err)
+	}
+	if _, err := fmt.Fprintln(w, payload); err != nil {
+		return userErr("writing the QR payload: %v", err)
 	}
 	return nil
 }
@@ -1025,8 +1070,14 @@ func newPairRevokeCmd() *cobra.Command {
 			"The order is the command (M4): the device node under config/admin/devices\n" +
 			"goes first, because the node's existence is what the rules read and its\n" +
 			"deletion revokes at once, without waiting for an ID token to expire; then\n" +
-			"this laptop's OS keychain item for that pairing's MAC key; then the\n" +
-			"pairing's own node, if an abandoned session left one.\n" +
+			"this laptop's OS keychain item for that pairing's MAC key. Two deletions,\n" +
+			"and both are here.\n" +
+			"\n" +
+			"The pairing session's own node is not one of them. Its key is the p~ uid\n" +
+			"the session drew, and nothing on this laptop records that uid, so a revoke\n" +
+			"by device cannot name the node it would delete; the history sweep deletes\n" +
+			"it with the p~ user the node belongs to (mobile plan decision 2), and it\n" +
+			"is the sweep this command names rather than a node it did not touch.\n" +
 			"\n" +
 			"It does not delete the device's Auth user. No role a Terraform grant gives\n" +
 			"an operator can delete one (the history job's account is the only holder of\n" +

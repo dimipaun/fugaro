@@ -2123,6 +2123,42 @@ func TestPairLsJSON(t *testing.T) {
 	}
 }
 
+// TestPairLsEmptyInstallation is the listing every operator sees before they
+// have paired anything: no device node at all. The read answers that the node
+// is absent rather than failing, so the branch is a sentence and one event with
+// no rows in it — and an empty array rather than null, because a console
+// iterating the document should not need a case for a listing with nothing in
+// it.
+func TestPairLsEmptyInstallation(t *testing.T) {
+	f := newPairFixture(t, pairMe)
+	if f.db.Value(rules.PathDevices) != nil {
+		t.Fatal("the fixture has a device node: this test is about an installation with none")
+	}
+
+	out, _, err := pairRun(t, "ls")
+	if err != nil {
+		t.Fatalf("ls: %v", err)
+	}
+	if want := "no device is paired with aurora\n"; out != want {
+		t.Fatalf("ls printed %q, want %q", out, want)
+	}
+
+	asJSON, _, err := pairRun(t, "ls", "--json")
+	if err != nil {
+		t.Fatalf("ls --json: %v", err)
+	}
+	events := pairLines(t, asJSON)
+	if len(events) != 1 || events[0].Event != pairEventListed {
+		t.Fatalf("events = %v, want one %s", events, pairEventListed)
+	}
+	if list := events[0].List; list == nil || list.Devices == nil || len(list.Devices) != 0 {
+		t.Fatalf("the document is %+v, want no devices, present and empty", events[0].List)
+	}
+	if !strings.Contains(asJSON, `"devices":[]`) {
+		t.Fatalf("the stream wrote %s, want an empty array rather than null", asJSON)
+	}
+}
+
 // TestPairQRDrawsAScannableCode holds the drawing to the encoder, not to a
 // screenshot: the text renderPairQR writes is read back into a module grid and
 // compared with the grid rsc.io/qr encodes the payload to, which is the thing a
@@ -2166,6 +2202,42 @@ func TestPairQRDrawsAScannableCode(t *testing.T) {
 	}
 	if same {
 		t.Fatal("two payloads encode to one grid: the comparison above would pass for any drawing of that size")
+	}
+}
+
+// TestPairQRTooWidePrintsThePayload is the case the real command is in: the
+// payload is a bootstrap configuration and a JWT, so its code is over a hundred
+// columns wide and wraps in the terminal this is normally run in — and a
+// wrapped QR code is not a QR code. What is written then is the payload line
+// and the width the code needs, which is what this command printed before it
+// could encode at all; a drawing is never printed narrower than the code, and
+// never printed past the terminal that would wrap it.
+func TestPairQRTooWidePrintsThePayload(t *testing.T) {
+	payload := `{"v":1,"project":"aurora","gcp_project":"proj-1234",` +
+		`"database_url":"https://aurora-default-rtdb.europe-west1.firebasedatabase.app",` +
+		`"api_key":"` + pairAPIKey + `","uid":"p~AAAA","expires_at":"2026-10-29T12:02:00Z",` +
+		`"token":"eyJhbGciOiJSUzI1NiJ9.` + strings.Repeat("B", 400) + `.` + strings.Repeat("A", 342) + `"}`
+	code, err := qr.Encode(payload, qr.L)
+	if err != nil {
+		t.Fatal(err)
+	}
+	columns := code.Size + 2*pairQRQuiet
+	if columns <= pairQRMaxColumns {
+		t.Fatalf("this payload's code is %d columns, inside the %d limit: it is not the case this test is about", columns, pairQRMaxColumns)
+	}
+
+	var buf bytes.Buffer
+	if err := renderPairQR(&buf, payload); err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsAny(buf.String(), "█▀▄") {
+		t.Fatalf("a code too wide for the terminal was drawn anyway:\n%s", buf.String())
+	}
+	if !strings.Contains(buf.String(), payload) {
+		t.Fatalf("the payload line is not in the output:\n%s", buf.String())
+	}
+	if !strings.Contains(buf.String(), strconv.Itoa(columns)) {
+		t.Fatalf("the output does not say the terminal must be %d columns wide:\n%s", columns, buf.String())
 	}
 }
 
@@ -2337,6 +2409,30 @@ func TestPairEventsMatchTheSchema(t *testing.T) {
 	for _, want := range []string{pairEventQR, pairEventWaiting, pairEventCode, pairEventDone, pairEventRefused, pairEventListed, pairEventRevoked} {
 		if !names[want] {
 			t.Fatalf("no %s event was checked against the schema: %v", want, names)
+		}
+	}
+
+	// A uid the command did not write is still a row it prints: the lister
+	// lists every child of the allowlist, whose keys are unconstrained, so the
+	// published schema must admit what the command emits rather than the shape
+	// `fugaro pair` happens to write. A console validating the stream against a
+	// stricter pattern would refuse a listing the command legitimately printed.
+	handWritten := newPairFixture(t, pairMe)
+	handWritten.db.Set(rules.PathDevices+"/hand-written-entry", map[string]any{"name": "phone-a"})
+	handOut, _, err := pairRun(t, "ls", "--json")
+	if err != nil {
+		t.Fatalf("ls --json: %v", err)
+	}
+	if !strings.Contains(handOut, "hand-written-entry") {
+		t.Fatalf("the listing dropped the hand-written child, so this check is empty:\n%s", handOut)
+	}
+	for _, line := range pairEventLines(t, handOut) {
+		v, err := jsonschema.UnmarshalJSON(strings.NewReader(line))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.Validate(v); err != nil {
+			t.Fatalf("pair ls --json emitted a document the published schema refuses: %v", err)
 		}
 	}
 

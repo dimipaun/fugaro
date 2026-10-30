@@ -190,7 +190,7 @@
       "additionalProperties": false,
       "required": ["uid", "name", "email", "role", "at"],
       "properties": {
-        "uid": { "type": "string", "pattern": "^m~" },
+        "uid": { "type": "string", "description": "The node's own key. `fugaro pair` writes m~…, and the children of config/admin/devices are unconstrained, so a hand-written entry's key may be anything: `pair ls` lists every child rather than the ones it recognises, which is why this is a string and not a pattern." },
         "name": { "type": "string" },
         "email": { "type": "string" },
         "role": { "type": "string" },
@@ -202,7 +202,7 @@
       "additionalProperties": false,
       "required": ["uid", "name", "email", "role"],
       "properties": {
-        "uid": { "type": "string", "pattern": "^m~" },
+        "uid": { "type": "string", "description": "The device's uid: the node's own key, for the same reason deviceRow's is a string — a revoke names a key the allowlist held, and a hand-written entry's key may be anything." },
         "name": { "type": "string" },
         "email": { "type": "string" },
         "role": { "type": "string" }

@@ -2112,6 +2112,11 @@ The typed code is the binding: nothing is written to the project before the
 code the operator types matches the key the phone wrote, so a refused
 pairing leaves the project exactly as it was.
 
+The code is drawn in a terminal wide enough for it. The payload is over a
+kilobyte, so its code is over a hundred columns wide, and a narrower
+terminal gets the payload line instead of a drawing that would wrap and
+stop being a QR code; --json carries that same payload for a console.
+
 Its own state is the local config: the project, its database URL and
 Identity Toolkit API key, and the signer account. --json streams the
 pairing as one JSON object per line on stdout for a console to read.
@@ -2185,8 +2190,14 @@ its next request on.
 The order is the command (M4): the device node under config/admin/devices
 goes first, because the node's existence is what the rules read and its
 deletion revokes at once, without waiting for an ID token to expire; then
-this laptop's OS keychain item for that pairing's MAC key; then the
-pairing's own node, if an abandoned session left one.
+this laptop's OS keychain item for that pairing's MAC key. Two deletions,
+and both are here.
+
+The pairing session's own node is not one of them. Its key is the p~ uid
+the session drew, and nothing on this laptop records that uid, so a revoke
+by device cannot name the node it would delete; the history sweep deletes
+it with the p~ user the node belongs to (mobile plan decision 2), and it
+is the sweep this command names rather than a node it did not touch.
 
 It does not delete the device's Auth user. No role a Terraform grant gives
 an operator can delete one (the history job's account is the only holder of

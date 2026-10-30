@@ -2,6 +2,9 @@ package budget_test
 
 import (
 	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"sort"
 	"strings"
@@ -214,6 +217,50 @@ func TestSweepPairingNodeFailureStopsTheUser(t *testing.T) {
 	if got := e.users(); !reflect.DeepEqual(got, []string{pairUID}) {
 		t.Fatalf("users left = %v, want the pairing user kept until its node goes", got)
 	}
+}
+
+// TestSweepReportsTheNodesItDeletedWhenTheUsersFail: the pairing nodes go
+// before the users, so a pass whose user deletion fails has still deleted the
+// subtree a p~ token could read. The report is what an operator reads
+// afterwards, and one that said zero nodes would say nothing was removed while
+// the payload is gone.
+func TestSweepReportsTheNodesItDeletedWhenTheUsersFail(t *testing.T) {
+	e := newSweepEnv(t)
+	e.user(pairUID, 2*time.Hour)
+	e.pairingNode(pairUID)
+	e.sw.Auth = pairUsersFailToDelete(t)
+	rep, err := e.sw.Sweep(context.Background())
+	if err == nil {
+		t.Fatal("a failed user deletion was swallowed")
+	}
+	if e.has("pairing/" + pairUID) {
+		t.Fatal("the pairing node survived the pass that failed on its user")
+	}
+	if rep.PairingNodesDeleted != 1 {
+		t.Fatalf("report = %+v, want the node it deleted counted", rep)
+	}
+	if rep.UsersDeleted != 0 {
+		t.Fatalf("report = %+v, want no user claimed as deleted", rep)
+	}
+}
+
+// pairUsersFailToDelete is the Identity Toolkit's two admin calls the sweep
+// makes, with the listing answering and the deletion failing outright — a
+// per-user error would answer 200, and this is the request that never lands.
+func pairUsersFailToDelete(t *testing.T) *budget.AuthAdmin {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, ":batchGet"):
+			fmt.Fprintf(w, `{"users":[{"localId":%q,"createdAt":"%d"}]}`, pairUID, sweepNow.Add(-2*time.Hour).UnixMilli())
+		case strings.HasSuffix(r.URL.Path, ":batchDelete"):
+			http.Error(w, "the Identity Toolkit is unreachable", http.StatusBadGateway)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return &budget.AuthAdmin{Endpoint: srv.URL, Project: sweepFP, HTTP: srv.Client()}
 }
 
 // TestSweepDeviceRootMatchesTheRules pins the duplicated constant to the one

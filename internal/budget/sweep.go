@@ -466,7 +466,10 @@ func (s *Sweeper) deleteUsers(ctx context.Context, now time.Time, maxAge time.Du
 		s.warnf("Firebase user %s was not deleted: %s", f.UID, f.Message)
 	}
 	if err != nil {
-		return 0, 0, fmt.Errorf("deleting Firebase users: %w", err)
+		// The nodes above are deleted whatever happens here, so the count goes
+		// back with the error: a report that said zero would tell an operator
+		// nothing was removed when the subtree a phone could still read is gone.
+		return 0, len(nodes), fmt.Errorf("deleting Firebase users: %w", err)
 	}
 	return max(len(del)-len(failed), 0), len(nodes), nil
 }
