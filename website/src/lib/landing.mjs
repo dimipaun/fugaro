@@ -55,8 +55,8 @@ import { asList, asMap, asString, describe, loadConsoleScreens, loadSiteFacts, l
 
 /** One row of a screenshots data file, as `src/content.ts` reads it: the file's name and the site
  * path composed from it, its alt text, its caption and its own pixel size. A variant's
- * `screenshot` is one of these rows, because the hero shows a screen the site already serves. */
-/** @typedef {import('../content.ts').Screen} Screen */
+ * `screenshot` is one of these rows, because the hero shows a screen the site already serves.
+ * @typedef {import('../content.ts').Screen} Screen */
 
 /** Where the file lives, relative to the repository root: what every message below names. */
 export const LANDING_FILE = 'website/data/landing.yaml'
