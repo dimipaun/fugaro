@@ -32,10 +32,10 @@ import (
 // admission at all (Global Constraint 4's drop, if it had applied).
 func (s *Server) candidates(ctx context.Context, slug, canonical string, b *Bundle) ([]creds.Credential, []Tried, error) {
 	// b.Credentials() and never b.Entries(): the bundle holds the GitHub App
-	// key as well (C2.1), and it is not a candidate for anything. A cascade
-	// that offered it would attach an App private key to an Anthropic call as
-	// the caller's credential, so the filter is the accessor's rather than
-	// this loop's.
+	// key (C2.1) and the upstream Bitbucket token (D506) as well, and neither
+	// is a candidate for anything. A cascade that offered one would attach an
+	// App private key, or the caller's own git token, to an Anthropic call as
+	// its credential, so the filter is the accessor's rather than this loop's.
 	all := b.Credentials()
 	hasA := false
 	for _, c := range all {
