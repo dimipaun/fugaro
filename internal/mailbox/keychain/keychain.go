@@ -25,9 +25,16 @@
 //
 // **Nothing this package runs puts the key in an argv.** The programs below
 // take the item's name, which is not a secret (M5) and may be printed, and
-// print the key on their standard output. Their standard error is discarded
-// rather than captured: a failing tool's own complaint could echo what it was
-// asked for, and an error string is exactly where a key must never appear.
+// print the key on their standard output. A storing program takes the key on
+// its standard input instead.
+//
+// **No program's own words are ever echoed.** Its standard error is kept in the
+// same bounded buffer as its standard output and is read by exactly one caller:
+// the darwin storing side, whose `security -i` answers 0 for a command it could
+// not carry out, so its output is where the failure is. What that reading
+// produces is one of this package's own fixed sentences, never a byte of the
+// tool's text — a failing tool's complaint could echo what it was asked for,
+// and what it was asked for is the key.
 package keychain
 
 import (
@@ -186,8 +193,10 @@ type Store interface {
 // run is how a keychain program runs: one argv, no shell — the shape of
 // internal/procgroup.Run, which is what the real one is (M11: nothing this
 // command runs goes through a shell). stdin is where a *storing* program reads
-// the key, so that the key is in no argv.
-type run func(ctx context.Context, name string, stdin io.Reader, args ...string) (stdout []byte, code int, err error)
+// the key, so that the key is in no argv. Both streams are returned because one
+// program on one platform reports a failure on them rather than in its exit
+// status; nothing that reads them echoes them.
+type run func(ctx context.Context, name string, stdin io.Reader, args ...string) (stdout, stderr []byte, code int, err error)
 
 // reader is one platform's keychain program: what to run, the argv it takes,
 // and the exit code that means "there is no such item".
@@ -200,14 +209,40 @@ type reader struct {
 	notFound int
 }
 
-// writer is one platform's storing side: the program, the argv that stores an
-// item and the argv that removes one, and the exit code the removing argv
-// answers when the item is already gone — which is not a failure.
+// writer is one platform's storing side: the program, what storing an item runs
+// and what removing one runs, the exit code the removing run answers when the
+// item is already gone — which is not a failure — and how the program's own
+// output is read where its exit status is not the whole answer.
 type writer struct {
-	program  string
-	put      func(Item) []string
-	del      func(Item) []string
+	program string
+	// put and del each answer the argv of one run and what that run reads on
+	// its standard input. Linux's `secret-tool` takes the secret on standard
+	// input and its commands in the argv; darwin's `security -i` takes both in
+	// one command line on standard input, which is what keeps the key out of an
+	// argv on that platform too (M11). An error is a key or an item this
+	// platform's program cannot be given at all, and it is refused rather than
+	// escaped.
+	put      func(Item, Key) (args []string, stdin []byte, err error)
+	del      func(Item) (args []string, stdin []byte, err error)
 	notFound int
+	// verdict reads what the program printed for a failure it did not report in
+	// its exit status. It is nil where the exit status is the whole answer,
+	// which is every platform but darwin.
+	verdict func(stdout, stderr []byte) outputVerdict
+}
+
+// outputVerdict is what a storing program's own output says about the command
+// it ran. It exists for the platform whose tool answers 0 for a command it
+// could not carry out: without it a refused store would read as a successful
+// one, and `fugaro pair` would deliver a key that is not in the keychain.
+//
+// why is always one of this package's own sentences and never the tool's text,
+// which could echo what it was given — and what it was given is the key.
+type outputVerdict struct {
+	why string
+	// missing is the one failure Delete does not treat as one: the item is
+	// already gone, which is the state the caller asked for.
+	missing bool
 }
 
 // commandStore is the Store every platform's reader and writer become.
@@ -215,8 +250,10 @@ type commandStore struct {
 	reader reader
 	// writer is this platform's storing side, or nil where it has none. The
 	// two halves are separate programs and a platform can have one without the
-	// other: macOS reads a key through `security` and has no way to store one
-	// that does not put the key in an argv (M11), which is what noStore says.
+	// other: this build reads and stores on darwin and linux, and on a platform
+	// with no storing program — Windows, where the credential store is reached
+	// through advapi32 rather than through a program — the writes are the
+	// refusal noStore holds.
 	writer  *writer
 	noStore string
 	run     run
@@ -225,7 +262,7 @@ type commandStore struct {
 // Key reads the item through the platform's program and turns what it printed
 // into a key.
 func (s *commandStore) Key(ctx context.Context, item Item) (Key, error) {
-	stdout, code, err := s.run(ctx, s.reader.program, nil, s.reader.args(item)...)
+	stdout, _, code, err := s.run(ctx, s.reader.program, nil, s.reader.args(item)...)
 	switch {
 	case err != nil:
 		// The program could not be started, or the context ended it. Its own
@@ -250,19 +287,39 @@ func (s *commandStore) Key(ctx context.Context, item Item) (Key, error) {
 //
 // Nothing it prints is echoed, for the reason the read side says: a failing
 // tool's complaint could carry what it was asked for, and what it was asked for
-// is the key. The exit status and the program are what is safe to say.
+// is the key. The exit status, the program and the writer's own sentence for
+// what the output showed are what is safe to say.
 func (s *commandStore) Put(ctx context.Context, item Item, key Key) error {
 	if s.writer == nil {
 		return backendErr(s.noStore)
 	}
-	_, code, err := s.run(ctx, s.writer.program, bytes.NewReader(key.Bytes()), s.writer.put(item)...)
+	args, stdin, err := s.writer.put(item, key)
+	if err != nil {
+		// A key this platform's program cannot be given is a store that cannot
+		// happen, which is the write side of ErrBackend. The reason names the
+		// shape and never a byte of the key.
+		return backendErr(fmt.Sprintf("%s cannot be given the key for %q: %v", s.writer.program, item.Name(), err))
+	}
+	stdout, stderr, code, err := s.run(ctx, s.writer.program, stdinReader(stdin), args...)
 	switch {
 	case err != nil:
 		return backendErr(fmt.Sprintf("%s could not be run: %v", s.writer.program, err))
 	case code != 0:
 		return backendErr(fmt.Sprintf("%s exited %d storing the key at %q", s.writer.program, code, item.Name()))
 	}
+	if v := s.writer.read(stdout, stderr); v.why != "" {
+		return backendErr(fmt.Sprintf("%s did not store the key at %q: %s", s.writer.program, item.Name(), v.why))
+	}
 	return nil
+}
+
+// read is the writer's own reading of what its program printed, and nothing on
+// a platform whose exit status is the whole answer.
+func (w *writer) read(stdout, stderr []byte) outputVerdict {
+	if w.verdict == nil {
+		return outputVerdict{}
+	}
+	return w.verdict(stdout, stderr)
 }
 
 // Delete removes the item through the platform's storing program. The item's
@@ -273,15 +330,21 @@ func (s *commandStore) Delete(ctx context.Context, item Item) error {
 	if s.writer == nil {
 		return backendErr(s.noStore)
 	}
-	_, code, err := s.run(ctx, s.writer.program, nil, s.writer.del(item)...)
+	args, stdin, err := s.writer.del(item)
+	if err != nil {
+		return backendErr(fmt.Sprintf("%s cannot be given the item %q: %v", s.writer.program, item.Name(), err))
+	}
+	stdout, stderr, code, err := s.run(ctx, s.writer.program, stdinReader(stdin), args...)
 	switch {
 	case err != nil:
 		return backendErr(fmt.Sprintf("%s could not be run: %v", s.writer.program, err))
-	case code == 0 || code == s.writer.notFound:
-		return nil
-	default:
+	case code != 0 && code != s.writer.notFound:
 		return backendErr(fmt.Sprintf("%s exited %d deleting the key at %q", s.writer.program, code, item.Name()))
 	}
+	if v := s.writer.read(stdout, stderr); v.why != "" && !v.missing {
+		return backendErr(fmt.Sprintf("%s did not delete the key at %q: %s", s.writer.program, item.Name(), v.why))
+	}
+	return nil
 }
 
 // keyFrom turns what a keychain program printed into a key, or says why the
@@ -357,20 +420,32 @@ func readerFor(goos string) (reader, error) {
 // argv is testable from one checkout.
 //
 // **The key reaches the storing program on standard input, never as an argv
-// element**, and `secret-tool store` is the only path this build has that does
-// that (M11). macOS is the gap, and the reason is narrower than "the storing
-// program takes the secret as an argv": `security add-generic-password -w
-// <value>` does take it there, but `-w` with no value prompts on the terminal
-// instead, and `security -i` reads whole commands — password and all — from
-// standard input. Neither is a path this build can stand behind. The prompt
-// needs a terminal and a person to type a 32-byte key into, and `-i`'s command
-// language (its quoting, its update and delete forms, whether it ever falls
-// back to the terminal) is not something a test on this runner can exercise,
-// so a darwin writer written against it would be argv and exit handling no
-// test has ever run — the reason the read side leaves Windows alone. What that
-// costs is not hidden: `fugaro pair` cannot complete on macOS, which is the
-// platform this CLI is most likely to run on, and the operator gets ErrBackend
-// there rather than a key stored in the open. A darwin writer is its own task.
+// element**, on both platforms this build stores on (M11). `secret-tool store`
+// reads the secret from standard input and takes its attributes in the argv.
+// `security` is the harder half, because `add-generic-password -w <value>`
+// would put the key in an argv — where every process on the machine reads it
+// out of `ps` — so the darwin writer uses `security -i`: interactive mode reads
+// whole commands, password and all, from standard input, one command per run,
+// and its argv is the single element `-i`.
+//
+// **What was verified, and where.** The invocation, the quoting, the refusal of
+// a key that is not one bare word, and the failure reading are exercised on
+// every platform from one checkout by keychain_test.go, which puts a stand-in
+// `security` first on PATH and runs the writer against it as a real child
+// process — that child is where "no argv element and no environment variable
+// carries the key" is observed at all. What no hermetic test here can reach is
+// the real tool, so the live half is keychain_darwin_live_test.go, behind the
+// `darwin && keychain_live` tags: the owner runs it on his own Mac, because
+// only a person at a real keychain can say whether the item it writes is one
+// the reader reads back (M5: no agent reads a keychain).
+//
+// **`security -i` does not report a failed command in its exit status.** It
+// answers 0 for a command it could not carry out, so the exit status alone
+// would read a refused store as a successful one and `fugaro pair` would
+// deliver a key that is not in the keychain. The writer therefore reads what
+// the tool printed and maps it to ErrBackend, in this package's own sentence:
+// what the tool says is never repeated, because it could echo the command line
+// it was given, and that line carries the key.
 func writerFor(goos string) (*writer, string) {
 	switch goos {
 	case "linux":
@@ -379,22 +454,154 @@ func writerFor(goos string) (*writer, string) {
 			// libsecret's store takes attribute pairs and reads the secret
 			// from standard input; the label is what a person sees in the
 			// keyring UI, and the item's name is not a secret.
-			put: func(i Item) []string { return []string{"store", "--label", i.Name(), "service", i.Name()} },
-			del: func(i Item) []string { return []string{"clear", "service", i.Name()} },
+			put: func(i Item, k Key) ([]string, []byte, error) {
+				return []string{"store", "--label", i.Name(), "service", i.Name()}, k.Bytes(), nil
+			},
+			del: func(i Item) ([]string, []byte, error) { return []string{"clear", "service", i.Name()}, nil, nil },
 			// secret-tool answers 1 both for "no such item" and for its own
 			// failures; a clear that failed and an item that was already gone
 			// leave the same state behind, which is what the caller asked for.
 			notFound: 1,
 		}, ""
 	case "darwin":
-		// `security`'s storing side has two forms that keep the key out of an
-		// argv — the prompted -w and -i's commands on standard input — and
-		// neither is a form a test on this runner can exercise, so this build
-		// does not guess at one.
-		return nil, "this build cannot store a pairing key in the darwin keychain: `add-generic-password -w <value>` puts the key in an argv, where every process on the machine reads it out of `ps`, and the two forms that do not — -w with no value, which prompts on the terminal, and `security -i`, which reads commands from standard input — are forms no test in this repository can run (M11)"
+		return &writer{
+			program: "security",
+			// -i is the whole argv: the command is the standard input, which
+			// is what keeps the key out of `ps` (M11).
+			put: func(i Item, k Key) ([]string, []byte, error) {
+				word, err := securityWord(k)
+				if err != nil {
+					return nil, nil, err
+				}
+				service, err := securityQuoted(i.Name())
+				if err != nil {
+					return nil, nil, err
+				}
+				// -U updates the item when it is already there: one item per
+				// pairing, and a second `pair` for the same phone must replace
+				// the key rather than fail on the one that is there.
+				return []string{"-i"}, []byte("add-generic-password -U -s " + service + " -a " + service + " -w " + word + "\n"), nil
+			},
+			del: func(i Item) ([]string, []byte, error) {
+				service, err := securityQuoted(i.Name())
+				if err != nil {
+					return nil, nil, err
+				}
+				return []string{"-i"}, []byte("delete-generic-password -s " + service + "\n"), nil
+			},
+			// errSecItemNotFound is what the tool answers for an item that is
+			// not there when it does report one; the same state is also read
+			// out of its output, because in interactive mode it usually does
+			// not report it in the status at all.
+			notFound: 44,
+			verdict:  securityVerdict,
+		}, ""
 	default:
 		return nil, fmt.Sprintf("this build cannot store a pairing key in the %s keychain: it has no storing path that keeps the key out of an argv, and no argv of this package carries a key (M11)", goos)
 	}
+}
+
+// securityWord is the key as `security -i`'s line parser reads it: one bare
+// word, never quoted and never escaped.
+//
+// The pairing key has exactly one spelling (D171: `token.EncodeKey`'s unpadded
+// base64url), which is one bare word, so nothing here ever needs escaping. A
+// key outside that shape is refused rather than escaped, for two reasons: the
+// escaping rules of a command language no test on this runner can run would be
+// the only thing standing between the key and the parser, and the one byte that
+// cannot be escaped at all — a newline, which ends the line and starts a second
+// command — is exactly the byte a key must never be able to smuggle in.
+func securityWord(key Key) (string, error) {
+	material := key.Bytes()
+	if len(material) == 0 {
+		return "", errors.New("the key is empty")
+	}
+	for _, b := range material {
+		if !securityBareByte(b) {
+			return "", errors.New("the key is not one bare word for the security tool's command line")
+		}
+	}
+	return string(material), nil
+}
+
+// securityBareByte reports whether b is a byte `security -i`'s parser reads as
+// part of one argument: printable ASCII that is neither whitespace nor one of
+// the characters such a parser quotes with.
+func securityBareByte(b byte) bool {
+	return b > ' ' && b < 0x7f && b != '"' && b != '\'' && b != '\\'
+}
+
+// securityQuoted is an item's name as `security -i` reads it: one argument,
+// quoted, so a name that is empty or begins with a dash cannot be read as a
+// flag.
+//
+// The alphabet ParseItem enforces (`[A-Za-z0-9._-]`) holds none of the
+// characters that would need escaping inside those quotes, and
+// TestSecurityQuotedIsOneWord asserts that both ways: every name ParseItem
+// accepts is quotable, and every name it refuses for a quote, a backslash or a
+// control character is refused here too. The name is not a secret (M5), which
+// is why it may be printed in the refusal.
+func securityQuoted(name string) (string, error) {
+	if name == "" || strings.ContainsAny(name, "\"\\") || strings.IndexFunc(name, isControl) >= 0 {
+		return "", fmt.Errorf("the item name %q cannot be quoted for the security tool's command line", name)
+	}
+	return `"` + name + `"`, nil
+}
+
+// isControl reports whether r is a character a command line must not carry: it
+// would end the line, or be dropped by the parser, so what the tool stored
+// would not be what this package asked for.
+func isControl(r rune) bool { return r < 0x20 || r == 0x7f }
+
+// securityVerdict is what `security -i` printed, in this package's words.
+//
+// The tool answers 0 for a command it could not carry out, so its output is
+// where a failure is; a successful add or delete prints nothing at all, and
+// what it prints for a failure is a line beginning with its own name. Each such
+// line is classified into one of the sentences below — never repeated, because
+// the line can carry the command it was given, and that command carries the key
+// — and a line this table does not know is still a failure, which is what
+// securityUnknownWhy is for.
+func securityVerdict(stdout, stderr []byte) outputVerdict {
+	for _, stream := range [][]byte{stdout, stderr} {
+		for _, line := range strings.Split(string(stream), "\n") {
+			line = strings.TrimSpace(line)
+			if !strings.HasPrefix(line, "security:") {
+				continue
+			}
+			for _, shape := range securityFailureShapes {
+				if strings.Contains(line, shape.text) {
+					return outputVerdict{why: shape.why, missing: shape.missing}
+				}
+			}
+			return outputVerdict{why: securityUnknownWhy}
+		}
+	}
+	return outputVerdict{}
+}
+
+// securityUnknownWhy is the sentence for a failure line this package does not
+// recognise: an unrecognised line is still a failure, and saying so is the
+// difference between a refusal the operator can act on and a store that
+// silently did nothing.
+const securityUnknownWhy = "the security tool reported a failure it did not describe"
+
+// securityFailureShapes are the failures the tool prints, matched on the part
+// of the message that says which one it is. The messages are the framework's
+// (SecKeychain…), and the part matched is the sentence after the error's own
+// name, which is what changes between macOS versions.
+var securityFailureShapes = []struct {
+	text    string
+	why     string
+	missing bool
+}{
+	// The one failure that is not one for Delete: the item is already gone,
+	// which is the state the caller asked for.
+	{"could not be found", "the keychain holds no such item", true},
+	{"already exists", "an item is already stored there and could not be replaced", false},
+	{"User interaction is not allowed", "the keychain is locked and this session cannot ask for it to be unlocked", false},
+	{"passphrase you entered is not correct", "the keychain is locked and the passphrase was not accepted", false},
+	{"unknown command", "the security tool does not know the command", false},
 }
 
 // System is the keychain of the machine this process runs on.
@@ -427,14 +634,27 @@ func (n noBackend) Delete(context.Context, Item) error { return backendErr(n.why
 // runProcgroup is how a real reader runs its program: in a process group of its
 // own, with a deadline the caller sets on the whole group (internal/procgroup,
 // the discipline internal/watch/prstate.go's ask uses). The program's standard
-// output is capped and kept — it is the key, and it goes into a Key and nowhere
-// else — and its standard error is discarded rather than read, because a
-// failing tool's complaint is not worth the risk of it echoing what it was
-// asked for. stdin is the storing side's, and is nil for a read.
-func runProcgroup(ctx context.Context, name string, stdin io.Reader, args ...string) ([]byte, int, error) {
-	var out boundedBuffer
-	code, err := procgroup.Run(ctx, procgroup.Cmd{Name: name, Args: args, Stdin: stdin, Stdout: &out})
-	return out.Bytes(), code, err
+// output is capped and kept — for a read it is the key, and it goes into a Key
+// and nowhere else — and its standard error is kept the same way for the one
+// caller that reads it, the darwin storing side, whose tool reports a failure
+// there instead of in its exit status. Neither stream is ever echoed, and
+// neither is ever written anywhere but here. stdin is the storing side's, and
+// is nil for a read.
+func runProcgroup(ctx context.Context, name string, stdin io.Reader, args ...string) ([]byte, []byte, int, error) {
+	var out, complaints boundedBuffer
+	code, err := procgroup.Run(ctx, procgroup.Cmd{Name: name, Args: args, Stdin: stdin, Stdout: &out, Stderr: &complaints})
+	return out.Bytes(), complaints.Bytes(), code, err
+}
+
+// stdinReader is what a run reads on its standard input: the command the
+// program's interactive mode executes, or the key itself. A run that takes
+// nothing on standard input gets nil, which is the child's own standard input
+// rather than an empty pipe.
+func stdinReader(stdin []byte) io.Reader {
+	if len(stdin) == 0 {
+		return nil
+	}
+	return bytes.NewReader(stdin)
 }
 
 // boundedMax caps what one keychain program's standard output may occupy. A key

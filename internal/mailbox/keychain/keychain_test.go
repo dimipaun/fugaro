@@ -9,8 +9,10 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -267,44 +269,460 @@ func TestPlatformsWithNoReaderRefuse(t *testing.T) {
 	}
 }
 
-// TestDarwinReadsButCannotStore is the one platform where this build's two
-// halves disagree, and the platform the CLI is most likely to run on: the read
-// is `security find-generic-password -s <item> -w` (readerFor), and there is no
-// storing path this build stands behind (writerFor). The writes must be
-// ErrBackend — never a silent success, and never a key stored somewhere else —
-// and the sentence must be true of the platform: `security`'s storing side does
-// have argv-safe forms (a prompted -w, and -i's commands on standard input)
-// that no test in this repository can run, so "the storing program takes the
-// secret as an argv element" would be a false reason, and a reader who checked
-// it would stop believing the refusals that are right.
-func TestDarwinReadsButCannotStore(t *testing.T) {
+// TestDarwinWriterKeepsKeyOutOfArgv is M11's rule for the platform this CLI is
+// most likely to run on: the key reaches the darwin keychain through `security
+// -i`, whose commands come from standard input, so no argv element ever carries
+// the key — where every process on the machine would read it out of `ps`. The
+// item's name is not a secret (M5) and may sit in the command.
+func TestDarwinWriterKeepsKeyOutOfArgv(t *testing.T) {
+	item := mustItem(t, "fugaro-mailbox-aurora", "aurora")
+	w := darwinWriter(t)
+	if w.program != "security" {
+		t.Errorf("program = %q, want security", w.program)
+	}
+	args, stdin, err := w.put(item, NewKey([]byte(testKey)))
+	if err != nil {
+		t.Fatalf("the storing invocation = %v", err)
+	}
+	if strings.Join(args, " ") != "-i" {
+		t.Errorf("the storing argv = %q, want the single element -i", args)
+	}
+	for _, a := range args {
+		if strings.Contains(a, testKey) {
+			t.Errorf("the key is an argv element: %q", a)
+		}
+	}
+	// One command per run, and the key is the last word of it: what the tool
+	// reads on standard input is the only place the key appears.
+	want := `add-generic-password -U -s "fugaro-mailbox-aurora" -a "fugaro-mailbox-aurora" -w ` + testKey + "\n"
+	if string(stdin) != want {
+		t.Errorf("the storing command = %q, want %q", stdin, want)
+	}
+
+	// Delete names the item and carries no key at all: there is none to carry.
+	delArgs, delStdin, err := w.del(item)
+	if err != nil {
+		t.Fatalf("the deleting invocation = %v", err)
+	}
+	if strings.Join(delArgs, " ") != "-i" {
+		t.Errorf("the deleting argv = %q, want the single element -i", delArgs)
+	}
+	if got, want := string(delStdin), `delete-generic-password -s "fugaro-mailbox-aurora"`+"\n"; got != want {
+		t.Errorf("the deleting command = %q, want %q", got, want)
+	}
+	if strings.Contains(string(delStdin), testKey) {
+		t.Errorf("the deleting command carries a key: %q", delStdin)
+	}
+}
+
+// TestDarwinWriterRoundTripsThroughKeyFrom: what the storing command puts on the
+// program's standard input is what the reader reads back. The round trip is
+// taken through the reader's own decoder, over the words `security -i`'s line
+// parser would hand the tool, so a storing side that wrote a value the reader
+// refuses — or that split the key into two arguments — fails here rather than
+// on an operator's Mac.
+func TestDarwinWriterRoundTripsThroughKeyFrom(t *testing.T) {
+	item := mustItem(t, "fugaro-mailbox-aurora", "aurora")
+	w := darwinWriter(t)
+	for _, key := range []string{testKey, "another-not-a-secret-0002", "Aa0._-~"} {
+		t.Run(key, func(t *testing.T) {
+			_, stdin, err := w.put(item, NewKey([]byte(key)))
+			if err != nil {
+				t.Fatalf("the storing invocation = %v", err)
+			}
+			words := securityWords(string(stdin))
+			// The whole command, word by word: one bare key is what makes this
+			// eight words, and the item is the quoted name both times.
+			want := []string{"add-generic-password", "-U", "-s", item.Name(), "-a", item.Name(), "-w", key}
+			if strings.Join(words, "\x00") != strings.Join(want, "\x00") {
+				t.Fatalf("security would read %q, want %q", words, want)
+			}
+			// The reader's half: `find-generic-password -w` prints the value
+			// and one newline, and keyFrom is what turns that into a key.
+			got, why := keyFrom([]byte(words[len(words)-1] + "\n"))
+			if why != "" {
+				t.Fatalf("the reader refuses what the storing side wrote: %s", why)
+			}
+			if string(got.Bytes()) != key {
+				t.Errorf("the key read back is %q, want %q", got.Bytes(), key)
+			}
+		})
+	}
+}
+
+// TestDarwinWriterRefusesAKeyItCannotPutOnOneLine: the key goes into a command
+// line, so a byte that ends the line would be a second command and a byte the
+// parser quotes with would be a different value than the one this package
+// meant. Neither is escaped — the one spelling a pairing key has (EncodeKey's
+// base64url) needs no escaping — and a key outside that shape is refused, with
+// a sentence that carries no byte of it.
+func TestDarwinWriterRefusesAKeyItCannotPutOnOneLine(t *testing.T) {
+	item := mustItem(t, "fugaro-mailbox-aurora", "aurora")
+	w := darwinWriter(t)
+	for _, key := range []string{"", "two words", `a"quote`, `a'quote`, `a\backslash`, "line\nbreak", "tab\there"} {
+		t.Run(key, func(t *testing.T) {
+			if _, _, err := w.put(item, NewKey([]byte(key))); err == nil {
+				t.Fatalf("a key %q was accepted for a command line", key)
+			} else if key != "" && strings.Contains(err.Error(), key) {
+				t.Errorf("the refusal carries the key: %v", err)
+			}
+			s := &commandStore{writer: w, run: func(context.Context, string, io.Reader, ...string) ([]byte, []byte, int, error) {
+				t.Error("a key that cannot be written reached the program")
+				return nil, nil, 0, nil
+			}}
+			err := s.Put(t.Context(), item, NewKey([]byte(key)))
+			if !errors.Is(err, ErrBackend) {
+				t.Fatalf("Put of a key that is not one bare word = %v, want ErrBackend", err)
+			}
+			if key != "" && strings.Contains(err.Error(), key) {
+				t.Errorf("the refusal carries the key: %v", err)
+			}
+		})
+	}
+}
+
+// TestSecurityQuotedIsOneWord is ParseItem's other half: the item's name is a
+// word of a `security -i` command line, and the alphabet ParseItem enforces is
+// what makes quoting it a matter of two characters rather than of escaping. The
+// assertion runs both ways — every name ParseItem accepts is quotable, and
+// every name it refuses for a quote, a backslash or a control character is
+// refused here too, so the writer never depends on the reader's alphabet
+// without saying so.
+func TestSecurityQuotedIsOneWord(t *testing.T) {
+	accepted := []string{"fugaro-mailbox-aurora", "A.z_0-9", strings.Repeat("a", ItemMax)}
+	for _, name := range accepted {
+		item, err := ParseItem(name, "")
+		if err != nil {
+			t.Fatalf("ParseItem(%q) = %v", name, err)
+		}
+		quoted, err := securityQuoted(item.Name())
+		if err != nil {
+			t.Errorf("securityQuoted(%q) = %v, want a quoted word", name, err)
+			continue
+		}
+		if words := securityWords(quoted); len(words) != 1 || words[0] != name {
+			t.Errorf("security would read %q as %q, want one word %q", quoted, words, name)
+		}
+	}
+	refused := []string{"", `fugaro"aurora`, `fugaro\aurora`, "fugaro\naurora", "fugaro\taurora", "fugaro\x7faurora"}
+	for _, name := range refused {
+		t.Run(name, func(t *testing.T) {
+			if _, err := ParseItem(name, ""); err == nil {
+				t.Errorf("ParseItem(%q) accepted a name the command line cannot carry", name)
+			}
+			if _, err := securityQuoted(name); err == nil {
+				t.Errorf("securityQuoted(%q) answered a word, want a refusal", name)
+			}
+		})
+	}
+}
+
+// TestDarwinWriterReadsTheFailureSecurityHidesInItsOutput: `security -i` answers
+// 0 for a command it could not carry out — a locked keychain, a session that
+// cannot be asked to unlock it, a command it does not know — so a writer that
+// trusted the exit status alone would report a successful store for a keychain
+// that holds nothing, and `fugaro pair` would deliver a key that is not there.
+// Every shape the tool prints is read here, through the real runner and a real
+// child process standing in for the tool, and every one of them is ErrBackend.
+func TestDarwinWriterReadsTheFailureSecurityHidesInItsOutput(t *testing.T) {
+	cases := []struct {
+		name string
+		says string
+		code int
+	}{
+		{name: "an item that is already there without -U", says: `security: SecKeychainItemCreateFromContent: The specified item already exists in the keychain.`},
+		{name: "a locked keychain", says: `security: SecKeychainUnlock: The user name or passphrase you entered is not correct.`},
+		{name: "a session that cannot be asked to unlock it", says: `security: SecKeychainItemCopyContent: User interaction is not allowed.`},
+		{name: "a command the tool does not know", says: `security: unknown command "add-generic-passwords".  Type "help" for a list of commands.`},
+		{name: "a failure the tool did not describe", says: `security: SecKeychainItemCreateFromContent: something this package has never seen.`},
+		{name: "an exit status that does fail", code: 2},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			record := fakeSecurityOnPath(t, c.says, c.code)
+			store := darwinStore(t)
+			item := mustItem(t, "fugaro-mailbox-aurora", "aurora")
+			if err := store.Put(t.Context(), item, NewKey([]byte(testKey))); !errors.Is(err, ErrBackend) {
+				t.Fatalf("Put = %v, want ErrBackend", err)
+			}
+			// The store reached the tool exactly once: a refusal that never ran
+			// the program would pass the assertion above for the wrong reason.
+			if runs := fakeSecurityRuns(t, record); len(runs) != 1 {
+				t.Errorf("the stand-in security ran %d times, want once", len(runs))
+			}
+		})
+	}
+}
+
+// TestDarwinWriterErrorsNeverCarryTheKey is M5 on the write path, through the
+// same real child process: whatever the tool printed, the error the operator
+// sees is this package's own sentence, so no part of the key reaches a terminal,
+// a log line or a bug report. The command line the tool was given does hold the
+// key, which is why the tool's own text is never repeated.
+func TestDarwinWriterErrorsNeverCarryTheKey(t *testing.T) {
+	item := mustItem(t, "fugaro-mailbox-aurora", "aurora")
+	key := NewKey([]byte(testKey))
+	halves := []string{testKey[:8], testKey[8:]}
+	for _, c := range []struct {
+		name string
+		says string
+		code int
+	}{
+		{name: "the tool reported a failure", says: `security: SecKeychainItemCreateFromContent: The specified item already exists in the keychain.`},
+		{name: "the tool failed", code: 2},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			// The stand-in prints the command line it was given back at the
+			// tool, key and all: a real tool that did the same would put the key
+			// on a stream this package reads, and nothing of it may survive.
+			fakeSecurityOnPath(t, c.says, c.code)
+			store := darwinStore(t)
+			err := store.Put(t.Context(), item, key)
+			if !errors.Is(err, ErrBackend) {
+				t.Fatalf("Put = %v, want ErrBackend", err)
+			}
+			for _, part := range append(halves, testKey) {
+				if strings.Contains(err.Error(), part) {
+					t.Errorf("the error carries the key: %v", err)
+				}
+			}
+		})
+	}
+}
+
+// TestDarwinWriterKeyNeverInArgvOrEnv is M11 where it can actually be observed:
+// the argv and the environment of the child process the writer runs. Nothing
+// this package does passes the key in either — a process's argv and environment
+// are readable by every process on the machine — and the key reaches the tool
+// only on the standard input it was given.
+func TestDarwinWriterKeyNeverInArgvOrEnv(t *testing.T) {
+	record := fakeSecurityOnPath(t, "", 0)
+	store := darwinStore(t)
+	item := mustItem(t, "fugaro-mailbox-aurora", "aurora")
+	if err := store.Put(t.Context(), item, NewKey([]byte(testKey))); err != nil {
+		t.Fatalf("Put = %v", err)
+	}
+	if err := store.Delete(t.Context(), item); err != nil {
+		t.Fatalf("Delete = %v", err)
+	}
+	runs := fakeSecurityRuns(t, record)
+	if len(runs) != 2 {
+		t.Fatalf("the stand-in security ran %d times, want the store and the delete", len(runs))
+	}
+	for _, run := range runs {
+		if len(run.Argv) != 2 || run.Argv[1] != "-i" {
+			t.Errorf("the program ran as %q, want its own name and -i", run.Argv)
+		}
+		for _, arg := range run.Argv {
+			if strings.Contains(arg, testKey) {
+				t.Errorf("the key is an argv element: %q", run.Argv)
+			}
+		}
+		for _, env := range run.Env {
+			if strings.Contains(env, testKey) {
+				t.Errorf("the key is in the environment: %q", env)
+			}
+		}
+	}
+	if !strings.Contains(runs[0].Stdin, testKey) {
+		t.Errorf("the store handed the program no key at all: %q", runs[0].Stdin)
+	}
+	if strings.Contains(runs[1].Stdin, testKey) {
+		t.Errorf("the delete handed the program a key: %q", runs[1].Stdin)
+	}
+}
+
+// TestPlatformsWithNoWriterRefuse: darwin stores now, and the platforms this
+// build has no storing program for still answer ErrBackend rather than storing
+// a key somewhere else. The sentence has to be true of the platform — a
+// platform whose tool has an argv-safe form this build simply has not written
+// is not the same refusal as one whose tool has none — so the reason names the
+// platform and the argv rule (M11).
+func TestPlatformsWithNoWriterRefuse(t *testing.T) {
+	if w, why := writerFor("darwin"); w == nil {
+		t.Fatalf("darwin has no storing program, so `fugaro pair` cannot complete on the platform this CLI runs on: %s", why)
+	}
+	item := mustItem(t, "fugaro-mailbox-aurora", "aurora")
+	for _, goos := range []string{"windows", "plan9", "js", ""} {
+		t.Run("goos="+goos, func(t *testing.T) {
+			w, why := writerFor(goos)
+			if w != nil {
+				t.Fatalf("writerFor(%q) answered a storing program: %+v", goos, w)
+			}
+			for _, want := range []string{"argv", "M11"} {
+				if !strings.Contains(why, want) {
+					t.Errorf("the refusal does not say %q, so the operator is sent to fix the wrong thing: %s", want, why)
+				}
+			}
+			s := &commandStore{writer: w, noStore: why, run: func(context.Context, string, io.Reader, ...string) ([]byte, []byte, int, error) {
+				t.Error("a store with no writer ran a program")
+				return nil, nil, 0, nil
+			}}
+			if err := s.Put(t.Context(), item, NewKey([]byte(testKey))); !errors.Is(err, ErrBackend) {
+				t.Errorf("Put on %q = %v, want ErrBackend", goos, err)
+			}
+			if err := s.Delete(t.Context(), item); !errors.Is(err, ErrBackend) {
+				t.Errorf("Delete on %q = %v, want ErrBackend", goos, err)
+			}
+		})
+	}
+}
+
+// The stand-in `security` the darwin tests run: this test binary under that
+// name, first on PATH. A program reached through PATH is a real child process,
+// which is the only place where M11's claims — no argv element and no
+// environment variable carries the key — can be observed at all, and the only
+// place where a failure the tool reports in its output rather than in its exit
+// status can be exercised.
+const (
+	fakeSecurityRecord = "FUGARO_KEYCHAIN_TEST_SECURITY_RECORD"
+	fakeSecuritySays   = "FUGARO_KEYCHAIN_TEST_SECURITY_SAYS"
+	fakeSecurityCode   = "FUGARO_KEYCHAIN_TEST_SECURITY_CODE"
+)
+
+// TestMain is what lets the test binary be the stand-in: the writer runs it with
+// the argv it builds for `security` (`-i`), which the testing package's own flag
+// parsing would refuse, so the check has to come before m.Run().
+func TestMain(m *testing.M) {
+	if os.Getenv(fakeSecurityRecord) != "" {
+		fakeSecurity()
+		return
+	}
+	os.Exit(m.Run())
+}
+
+// fakeSecurityRun is one run of the stand-in, as it recorded it.
+type fakeSecurityRun struct {
+	Argv  []string `json:"argv"`
+	Stdin string   `json:"stdin"`
+	Env   []string `json:"env"`
+}
+
+// fakeSecurity is the stand-in's whole behaviour: it writes down what it was
+// given — its argv, the command line it read, its environment — and then answers
+// the shape the test asked for, which is the text on its standard error and the
+// exit status. The real tool's usual answer to a command it could not carry out
+// is a message and a zero status, which is the case the writer has to read.
+func fakeSecurity() {
+	stdin, _ := io.ReadAll(os.Stdin)
+	record := fakeSecurityRun{Argv: os.Args, Stdin: string(stdin), Env: os.Environ()}
+	if f, err := os.OpenFile(os.Getenv(fakeSecurityRecord), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); err == nil {
+		_ = json.NewEncoder(f).Encode(record)
+		_ = f.Close()
+	}
+	if says := os.Getenv(fakeSecuritySays); says != "" {
+		fmt.Fprintln(os.Stderr, says)
+	}
+	code, _ := strconv.Atoi(os.Getenv(fakeSecurityCode))
+	os.Exit(code)
+}
+
+// fakeSecurityOnPath puts the stand-in first on PATH and returns the file it
+// records into. PATH holds nothing else, so a test that uses it cannot reach a
+// real keychain even by accident (M5).
+func fakeSecurityOnPath(t *testing.T, says string, code int) string {
+	t.Helper()
+	dir := t.TempDir()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+	if err := os.Symlink(self, filepath.Join(dir, "security")); err != nil {
+		t.Fatalf("linking the test binary as security: %v", err)
+	}
+	record := filepath.Join(dir, "security.json")
+	t.Setenv("PATH", dir)
+	t.Setenv(fakeSecurityRecord, record)
+	t.Setenv(fakeSecuritySays, says)
+	t.Setenv(fakeSecurityCode, strconv.Itoa(code))
+	return record
+}
+
+// fakeSecurityRuns is what the stand-in recorded, one entry per run.
+func fakeSecurityRuns(t *testing.T, record string) []fakeSecurityRun {
+	t.Helper()
+	f, err := os.Open(record)
+	if err != nil {
+		t.Fatalf("the stand-in security recorded nothing: %v", err)
+	}
+	defer f.Close()
+	var runs []fakeSecurityRun
+	dec := json.NewDecoder(f)
+	for {
+		var run fakeSecurityRun
+		switch err := dec.Decode(&run); {
+		case errors.Is(err, io.EOF):
+			return runs
+		case err != nil:
+			t.Fatalf("reading what the stand-in security recorded: %v", err)
+		}
+		runs = append(runs, run)
+	}
+}
+
+// securityWords is what `security -i`'s line parser makes of one command line:
+// whitespace separates words and a double-quoted run is one word. It is the
+// reader's half of the round trip above, so a command line the tool would read
+// as something else — a key split in two, an item name that ends the word it is
+// in — fails there rather than on an operator's Mac.
+func securityWords(command string) []string {
+	var words []string
+	var word strings.Builder
+	quoted := false
+	for _, r := range strings.TrimSuffix(command, "\n") {
+		switch {
+		case r == '"':
+			quoted = !quoted
+		case r == ' ' && !quoted:
+			if word.Len() > 0 {
+				words = append(words, word.String())
+				word.Reset()
+			}
+		default:
+			word.WriteRune(r)
+		}
+	}
+	if word.Len() > 0 {
+		words = append(words, word.String())
+	}
+	return words
+}
+
+// darwinWriter is writerFor("darwin") with the test failing where the operator
+// would be refused: every darwin test starts from it, and a nil writer is the
+// one state none of them can say anything about.
+func darwinWriter(t *testing.T) *writer {
+	t.Helper()
+	w, why := writerFor("darwin")
+	if w == nil {
+		t.Fatalf("writerFor(darwin) answered no storing program, so a pairing key has no argv-safe way into the darwin keychain: %s", why)
+	}
+	return w
+}
+
+// darwinStore is the darwin Store as System() would build it on a Mac, run
+// through the real runner. The tests that need a real child process — the
+// stand-in security, and the argv and the environment — drive this rather than
+// System(), which on this runner is the linux store.
+func darwinStore(t *testing.T) *commandStore {
+	t.Helper()
 	r, err := readerFor("darwin")
 	if err != nil {
 		t.Fatalf("darwin has no reader: %v", err)
 	}
-	w, why := writerFor("darwin")
-	if w != nil {
-		t.Fatalf("writerFor(darwin) answered a storing program: %+v", w)
-	}
-	for _, want := range []string{"darwin", "ps", "M11"} {
-		if !strings.Contains(why, want) {
-			t.Errorf("the darwin refusal does not say %q, so the operator is sent to fix the wrong thing: %s", want, why)
-		}
-	}
-	item, err := ParseItem("aurora-BBBBBBBBBBBBBBBBBBBBBB", "aurora")
+	w := darwinWriter(t)
+	return &commandStore{reader: r, writer: w, run: runProcgroup}
+}
+
+// mustItem is ParseItem with the test failing on a name the table above says is
+// one: every test that needs an item has the same reason to stop.
+func mustItem(t *testing.T, name, project string) Item {
+	t.Helper()
+	item, err := ParseItem(name, project)
 	if err != nil {
-		t.Fatalf("ParseItem: %v", err)
+		t.Fatalf("ParseItem(%q, %q): %v", name, project, err)
 	}
-	s := &commandStore{reader: r, writer: w, noStore: why, run: func(context.Context, string, io.Reader, ...string) ([]byte, int, error) {
-		t.Error("a darwin store with no writer ran a program")
-		return nil, 0, nil
-	}}
-	if err := s.Put(context.Background(), item, NewKey([]byte(testKey))); !errors.Is(err, ErrBackend) {
-		t.Errorf("Put on darwin = %v, want ErrBackend", err)
-	}
-	if err := s.Delete(context.Background(), item); !errors.Is(err, ErrBackend) {
-		t.Errorf("Delete on darwin = %v, want ErrBackend", err)
-	}
+	return item
 }
 
 // TestSystemReadsThisPlatform: System is readerFor(runtime.GOOS), so the
@@ -358,8 +776,8 @@ func TestCommandStoreClassifiesEveryExit(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			s := &commandStore{reader: r, run: func(context.Context, string, io.Reader, ...string) ([]byte, int, error) {
-				return []byte(c.out), c.code, c.err
+			s := &commandStore{reader: r, run: func(context.Context, string, io.Reader, ...string) ([]byte, []byte, int, error) {
+				return []byte(c.out), nil, c.code, c.err
 			}}
 			key, err := s.Key(context.Background(), item)
 			if c.want == nil {
@@ -414,8 +832,10 @@ func TestTheItemNameAppearsInTheDiagnostic(t *testing.T) {
 		{name: "an item the keychain does not hold", store: &Fake{}, names: item.Name()},
 		{name: "an unreadable keychain", store: &Fake{Backend: ErrBackend}, names: "the OS keychain"},
 		{
-			name:  "a program that could not be run",
-			store: &commandStore{reader: r, run: func(context.Context, string, io.Reader, ...string) ([]byte, int, error) { return nil, -1, errMissing }},
+			name: "a program that could not be run",
+			store: &commandStore{reader: r, run: func(context.Context, string, io.Reader, ...string) ([]byte, []byte, int, error) {
+				return nil, nil, -1, errMissing
+			}},
 			names: r.program,
 		},
 	}
@@ -450,9 +870,11 @@ var errMissing = errors.New(`exec: "secret-tool": executable file not found in $
 
 // TestTheProgramsComplaintIsNeverEchoed runs a real child through the real
 // runner: the keychain tool complains on its standard error, and the complaint
-// is discarded rather than captured. A failing tool's own text could echo what
-// it was asked for, and an error string is exactly where a key must never
-// appear — so this package never reads that stream at all.
+// reaches no error the operator sees. The stream is kept — the darwin storing
+// side reads it for the failure `security -i` does not report in its exit
+// status — and the read side drops it unread, because a failing tool's own text
+// could echo what it was asked for and an error string is exactly where a key
+// must never appear.
 func TestTheProgramsComplaintIsNeverEchoed(t *testing.T) {
 	const env = "FUGARO_KEYCHAIN_STDERR_HELPER"
 	if os.Getenv(env) == "1" {
@@ -467,7 +889,7 @@ func TestTheProgramsComplaintIsNeverEchoed(t *testing.T) {
 		reader: reader{program: os.Args[0], args: func(Item) []string {
 			return []string{"-test.run=^TestTheProgramsComplaintIsNeverEchoed$"}
 		}, notFound: 44},
-		run: func(ctx context.Context, name string, stdin io.Reader, args ...string) ([]byte, int, error) {
+		run: func(ctx context.Context, name string, stdin io.Reader, args ...string) ([]byte, []byte, int, error) {
 			// The helper needs its variable set; runProcgroup is what the
 			// real Store uses, so this test drives that, not a stand-in.
 			t.Setenv(env, "1")
@@ -560,12 +982,12 @@ func TestPutAndDeleteAreTheStoringHalf(t *testing.T) {
 	var gotStdin []byte
 	var gotArgs []string
 	code := 0
-	s := &commandStore{writer: w, run: func(_ context.Context, name string, stdin io.Reader, args ...string) ([]byte, int, error) {
+	s := &commandStore{writer: w, run: func(_ context.Context, name string, stdin io.Reader, args ...string) ([]byte, []byte, int, error) {
 		gotArgs = append([]string{name}, args...)
 		if stdin != nil {
 			gotStdin, _ = io.ReadAll(stdin)
 		}
-		return nil, code, nil
+		return nil, nil, code, nil
 	}}
 	if err := s.Put(context.Background(), item, NewKey([]byte(testKey))); err != nil {
 		t.Fatalf("Put = %v", err)
