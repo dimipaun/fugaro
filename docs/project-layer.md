@@ -150,6 +150,7 @@ Each key may be set only in the layers listed; the project layer refuses the res
 | `profile` | repo | it chooses a profile; the project chooses its default with default_profile |
 | `git.provider` | project, repo |  |
 | `git.base_branch` | repo | a project-wide base branch would let a bucket writer point image builds at an unreviewed branch |
+| `git.author` | repo | it is the repository's own |
 | `git.pr.labels` | project, repo |  |
 | `git.pr.reviewers` | repo | reviewers are people of one repository |
 | `git.pr.early_draft` | project, repo |  |
