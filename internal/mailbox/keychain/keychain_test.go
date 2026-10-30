@@ -307,7 +307,9 @@ func TestDarwinWriterKeepsKeyOutOfArgv(t *testing.T) {
 	if strings.Join(delArgs, " ") != "-i" {
 		t.Errorf("the deleting argv = %q, want the single element -i", delArgs)
 	}
-	if got, want := string(delStdin), `delete-generic-password -s "fugaro-mailbox-aurora"`+"\n"; got != want {
+	// The removal names the account too, so that it is the exact inverse of the
+	// store rather than a match on the service alone.
+	if got, want := string(delStdin), `delete-generic-password -s "fugaro-mailbox-aurora" -a "fugaro-mailbox-aurora"`+"\n"; got != want {
 		t.Errorf("the deleting command = %q, want %q", got, want)
 	}
 	if strings.Contains(string(delStdin), testKey) {
@@ -324,7 +326,7 @@ func TestDarwinWriterKeepsKeyOutOfArgv(t *testing.T) {
 func TestDarwinWriterRoundTripsThroughKeyFrom(t *testing.T) {
 	item := mustItem(t, "fugaro-mailbox-aurora", "aurora")
 	w := darwinWriter(t)
-	for _, key := range []string{testKey, "another-not-a-secret-0002", "Aa0._-~"} {
+	for _, key := range []string{testKey, "another-not-a-secret-0002", "Aa0-_Z9"} {
 		t.Run(key, func(t *testing.T) {
 			_, stdin, err := w.put(item, NewKey([]byte(key)))
 			if err != nil {
@@ -351,15 +353,24 @@ func TestDarwinWriterRoundTripsThroughKeyFrom(t *testing.T) {
 }
 
 // TestDarwinWriterRefusesAKeyItCannotPutOnOneLine: the key goes into a command
-// line, so a byte that ends the line would be a second command and a byte the
+// line, so a byte that ends the line would be a second command, a byte the
 // parser quotes with would be a different value than the one this package
-// meant. Neither is escaped — the one spelling a pairing key has (EncodeKey's
-// base64url) needs no escaping — and a key outside that shape is refused, with
-// a sentence that carries no byte of it.
+// meant, and any metacharacter at all is a byte whose meaning depends on the
+// parsing rules of a program no test here runs. Nothing is escaped: the one
+// spelling a pairing key has (EncodeKey's base64url) is one bare word of an
+// alphabet that holds none of those bytes, and everything else is refused with
+// a sentence that carries no byte of the key.
 func TestDarwinWriterRefusesAKeyItCannotPutOnOneLine(t *testing.T) {
 	item := mustItem(t, "fugaro-mailbox-aurora", "aurora")
 	w := darwinWriter(t)
-	for _, key := range []string{"", "two words", `a"quote`, `a'quote`, `a\backslash`, "line\nbreak", "tab\there"} {
+	for _, key := range []string{
+		"", "two words", `a"quote`, `a'quote`, `a\backslash`, "line\nbreak", "tab\there",
+		// Printable ASCII that is not base64url: each of these is a byte a
+		// parser could read as something other than part of the value, and a
+		// key stored as something else while Put reported success is the
+		// failure this refusal exists to prevent.
+		"Aa0._-~", "a=b", "a+b", "a/b", "a$b", "a;b", "a`b", "a|b", "a&b", "a#b", "a*b",
+	} {
 		t.Run(key, func(t *testing.T) {
 			if _, _, err := w.put(item, NewKey([]byte(key))); err == nil {
 				t.Fatalf("a key %q was accepted for a command line", key)
@@ -447,6 +458,98 @@ func TestDarwinWriterReadsTheFailureSecurityHidesInItsOutput(t *testing.T) {
 			}
 			// The store reached the tool exactly once: a refusal that never ran
 			// the program would pass the assertion above for the wrong reason.
+			if runs := fakeSecurityRuns(t, record); len(runs) != 1 {
+				t.Errorf("the stand-in security ran %d times, want once", len(runs))
+			}
+		})
+	}
+}
+
+// TestSecurityVerdictReadsEveryShapeTheToolPrints pins the classification
+// itself, line by line, because it is the one rule the storing side's honesty
+// rests on: a successful add or delete prints nothing at all, so every
+// non-blank line is a failure — wherever in the line the message sits, since a
+// prompt or an echo of the command can precede it — and the only failure that
+// is not one for Delete is the line that says the item is already gone.
+func TestSecurityVerdictReadsEveryShapeTheToolPrints(t *testing.T) {
+	const prompt = "security> "
+	cases := []struct {
+		name    string
+		stdout  string
+		stderr  string
+		why     string
+		missing bool
+	}{
+		{name: "nothing at all"},
+		{name: "lines the tool left blank", stderr: "\n \n"},
+		{name: "an item that is already there", stderr: `security: SecKeychainItemCreateFromContent: The specified item already exists in the keychain.`, why: "already stored there"},
+		{name: "a locked keychain", stderr: `security: SecKeychainUnlock: The user name or passphrase you entered is not correct.`, why: "locked"},
+		{name: "a session that cannot be asked to unlock it", stderr: `security: SecKeychainItemCopyContent: User interaction is not allowed.`, why: "cannot ask for it to be unlocked"},
+		{name: "a command the tool does not know", stderr: `security: unknown command "add-generic-passwords".  Type "help" for a list of commands.`, why: "does not know the command"},
+		{name: "the item is not there", stderr: `security: SecKeychainSearchCopyNext: The specified item could not be found in the keychain.`, why: "no such item", missing: true},
+		{name: "a failure behind a prompt", stderr: prompt + `security: SecKeychainSearchCopyNext: The specified item could not be found in the keychain.`, why: "no such item", missing: true},
+		{name: "a message this package does not know", stderr: `security: SecKeychainItemCreateFromContent: something else entirely.`, why: "did not describe"},
+		// The fail-closed cases: a line the tool wrote and this package cannot
+		// place is a failure, because the alternative is reading a store that
+		// did not happen as one that did. A prompt on a line of its own, and an
+		// echo of the command on a line of its own — which is a shape
+		// `security -i` does not produce over a pipe, since there is no terminal
+		// to echo to, and which this reads as the failure it cannot tell it
+		// apart from.
+		{name: "a line the tool did not explain", stdout: prompt, why: "did not describe"},
+		{name: "an echo of the command on a line of its own", stdout: `add-generic-password -U -s "fugaro-mailbox-aurora" -w <key>` + "\n" + `security: SecKeychainItemCreateFromContent: The specified item already exists in the keychain.`, why: "did not describe"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := securityVerdict([]byte(c.stdout), []byte(c.stderr))
+			if c.why == "" {
+				if got.why != "" || got.missing {
+					t.Fatalf("securityVerdict(%q, %q) = %+v, want no failure", c.stdout, c.stderr, got)
+				}
+				return
+			}
+			if !strings.Contains(got.why, c.why) {
+				t.Errorf("securityVerdict(%q, %q) = %q, want it to mention %q", c.stdout, c.stderr, got.why, c.why)
+			}
+			if got.missing != c.missing {
+				t.Errorf("securityVerdict(%q, %q) missing = %v, want %v", c.stdout, c.stderr, got.missing, c.missing)
+			}
+		})
+	}
+}
+
+// TestDarwinWriterDeletesOnlyWhatIsGone is the deleting half of the same
+// reading, and the one asymmetry in it. A delete whose item is not there is not
+// a failure — that is the state the caller asked for, and both callers reach it
+// that way: the rollback of a delivery that could not be written, and `pair
+// revoke` run twice — while every other failure the tool reports without a
+// failing exit status is ErrBackend. The tool's own errSecItemNotFound (44) is
+// the same answer arriving on the exit-status path, and is read here too.
+func TestDarwinWriterDeletesOnlyWhatIsGone(t *testing.T) {
+	cases := []struct {
+		name    string
+		says    string
+		code    int
+		wantErr bool
+	}{
+		{name: "the tool says the item is not there", says: `security: SecKeychainSearchCopyNext: The specified item could not be found in the keychain.`},
+		{name: "the tool answers errSecItemNotFound", code: 44},
+		{name: "the tool says the keychain is locked", says: `security: SecKeychainUnlock: The user name or passphrase you entered is not correct.`, wantErr: true},
+		{name: "the tool does not know the command", says: `security: unknown command "delete-generic-passwords".  Type "help" for a list of commands.`, wantErr: true},
+		{name: "the tool exits with a failure", code: 2, wantErr: true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			record := fakeSecurityOnPath(t, c.says, c.code)
+			store := darwinStore(t)
+			item := mustItem(t, "fugaro-mailbox-aurora", "aurora")
+			err := store.Delete(t.Context(), item)
+			switch {
+			case c.wantErr && !errors.Is(err, ErrBackend):
+				t.Fatalf("Delete = %v, want ErrBackend", err)
+			case !c.wantErr && err != nil:
+				t.Fatalf("Delete = %v, want nil: the item is not there, which is the state the caller asked for", err)
+			}
 			if runs := fakeSecurityRuns(t, record); len(runs) != 1 {
 				t.Errorf("the stand-in security ran %d times, want once", len(runs))
 			}

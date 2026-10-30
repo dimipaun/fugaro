@@ -18,6 +18,13 @@
 // touches a keychain. The hermetic half — the invocation, the quoting, the
 // failure reading, and the argv and the environment of a real child process —
 // is keychain_test.go, which runs on every platform.
+//
+// Two things only this run can settle, and both are why the read-back below is
+// an assertion rather than a formality: that a successful `add-generic-password`
+// in interactive mode really is silent (the failure reading treats any line the
+// tool prints as a failure, so a prompt would refuse every store), and that the
+// value the storing command writes is the value the reader's own
+// `find-generic-password -w` hands back.
 package keychain
 
 import (

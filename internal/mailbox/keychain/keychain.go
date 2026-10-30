@@ -300,7 +300,10 @@ func (s *commandStore) Put(ctx context.Context, item Item, key Key) error {
 		// shape and never a byte of the key.
 		return backendErr(fmt.Sprintf("%s cannot be given the key for %q: %v", s.writer.program, item.Name(), err))
 	}
-	stdout, stderr, code, err := s.run(ctx, s.writer.program, stdinReader(stdin), args...)
+	// bytes.NewReader always, never a nil reader: a nil one would be the child's
+	// own standard input, and a program asked for a secret must read the pipe
+	// this package filled, not whatever the caller's terminal happens to hold.
+	stdout, stderr, code, err := s.run(ctx, s.writer.program, bytes.NewReader(stdin), args...)
 	switch {
 	case err != nil:
 		return backendErr(fmt.Sprintf("%s could not be run: %v", s.writer.program, err))
@@ -334,7 +337,7 @@ func (s *commandStore) Delete(ctx context.Context, item Item) error {
 	if err != nil {
 		return backendErr(fmt.Sprintf("%s cannot be given the item %q: %v", s.writer.program, item.Name(), err))
 	}
-	stdout, stderr, code, err := s.run(ctx, s.writer.program, stdinReader(stdin), args...)
+	stdout, stderr, code, err := s.run(ctx, s.writer.program, bytes.NewReader(stdin), args...)
 	switch {
 	case err != nil:
 		return backendErr(fmt.Sprintf("%s could not be run: %v", s.writer.program, err))
@@ -482,12 +485,16 @@ func writerFor(goos string) (*writer, string) {
 				// the key rather than fail on the one that is there.
 				return []string{"-i"}, []byte("add-generic-password -U -s " + service + " -a " + service + " -w " + word + "\n"), nil
 			},
+			// The removal names the account as well as the service, so that it
+			// is the exact inverse of the store: `-s` alone matches any item
+			// with that service, whoever wrote it, while the item this package
+			// writes is the one at that (service, account) pair.
 			del: func(i Item) ([]string, []byte, error) {
 				service, err := securityQuoted(i.Name())
 				if err != nil {
 					return nil, nil, err
 				}
-				return []string{"-i"}, []byte("delete-generic-password -s " + service + "\n"), nil
+				return []string{"-i"}, []byte("delete-generic-password -s " + service + " -a " + service + "\n"), nil
 			},
 			// errSecItemNotFound is what the tool answers for an item that is
 			// not there when it does report one; the same state is also read
@@ -502,33 +509,35 @@ func writerFor(goos string) (*writer, string) {
 }
 
 // securityWord is the key as `security -i`'s line parser reads it: one bare
-// word, never quoted and never escaped.
+// word, never quoted and never escaped, in the one alphabet a pairing key has.
 //
 // The pairing key has exactly one spelling (D171: `token.EncodeKey`'s unpadded
-// base64url), which is one bare word, so nothing here ever needs escaping. A
-// key outside that shape is refused rather than escaped, for two reasons: the
-// escaping rules of a command language no test on this runner can run would be
-// the only thing standing between the key and the parser, and the one byte that
-// cannot be escaped at all — a newline, which ends the line and starts a second
-// command — is exactly the byte a key must never be able to smuggle in.
+// base64url), and that alphabet holds nothing a command line's parser can read
+// as anything but a byte of the value: no whitespace, no quote, no backslash
+// and no metacharacter of any kind. A key outside it is refused rather than
+// escaped, because the escaping rules of a command language no test on this
+// runner can run would then be the only thing between the key and the parser —
+// and because a key that the parser read as something else would be stored as
+// something else while Put reported a successful store. The one byte that
+// cannot be escaped at all, a newline, would end the line and start a second
+// command; it is the sharpest case of the same rule.
 func securityWord(key Key) (string, error) {
 	material := key.Bytes()
 	if len(material) == 0 {
 		return "", errors.New("the key is empty")
 	}
 	for _, b := range material {
-		if !securityBareByte(b) {
-			return "", errors.New("the key is not one bare word for the security tool's command line")
+		if !securityKeyByte(b) {
+			return "", errors.New("the key is not the unpadded base64url spelling a pairing key has, so the security tool's command line cannot carry it")
 		}
 	}
 	return string(material), nil
 }
 
-// securityBareByte reports whether b is a byte `security -i`'s parser reads as
-// part of one argument: printable ASCII that is neither whitespace nor one of
-// the characters such a parser quotes with.
-func securityBareByte(b byte) bool {
-	return b > ' ' && b < 0x7f && b != '"' && b != '\'' && b != '\\'
+// securityKeyByte reports whether b is a byte of the one alphabet a pairing key
+// is written in: base64url's letters, digits, '-' and '_'.
+func securityKeyByte(b byte) bool {
+	return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' || b == '-' || b == '_'
 }
 
 // securityQuoted is an item's name as `security -i` reads it: one argument,
@@ -556,17 +565,32 @@ func isControl(r rune) bool { return r < 0x20 || r == 0x7f }
 // securityVerdict is what `security -i` printed, in this package's words.
 //
 // The tool answers 0 for a command it could not carry out, so its output is
-// where a failure is; a successful add or delete prints nothing at all, and
-// what it prints for a failure is a line beginning with its own name. Each such
-// line is classified into one of the sentences below — never repeated, because
-// the line can carry the command it was given, and that command carries the key
-// — and a line this table does not know is still a failure, which is what
-// securityUnknownWhy is for.
+// where a failure is, and the failure this function must never produce is a
+// silent success: a store that did not happen, reported as one, is a key
+// `fugaro pair` delivers and the keychain does not hold. **A successful add or
+// delete prints nothing at all**, so every non-blank line on either stream is a
+// failure — including a line the tool prefixed with something of its own, which
+// is why the message is looked for anywhere in the line rather than at its
+// start: a prompt or an echo of the command before the message would otherwise
+// read as a successful store. A line this package does not recognise is a
+// failure too, which is what securityUnknownWhy is for; what a failure is
+// *called* is always one of the sentences below and never the tool's text,
+// which can carry the command line it was given — and that line carries the
+// key.
+//
+// The assumption is worth stating, since nothing here can test it: a line this
+// function cannot place — a bare prompt, an echo of the command on a line of
+// its own — is read as a failure, because there is no way from here to tell it
+// from a message this package has never seen, and a store that did not happen
+// must not read as one that did. If the real tool ever writes such a line on a
+// successful run, this refuses every store: `fugaro pair` stops and says so
+// rather than delivering a key that may not be there. That is the direction to
+// fail in, and the owner's live test on a real Mac is what settles it.
 func securityVerdict(stdout, stderr []byte) outputVerdict {
 	for _, stream := range [][]byte{stdout, stderr} {
 		for _, line := range strings.Split(string(stream), "\n") {
 			line = strings.TrimSpace(line)
-			if !strings.HasPrefix(line, "security:") {
+			if line == "" {
 				continue
 			}
 			for _, shape := range securityFailureShapes {
@@ -644,17 +668,6 @@ func runProcgroup(ctx context.Context, name string, stdin io.Reader, args ...str
 	var out, complaints boundedBuffer
 	code, err := procgroup.Run(ctx, procgroup.Cmd{Name: name, Args: args, Stdin: stdin, Stdout: &out, Stderr: &complaints})
 	return out.Bytes(), complaints.Bytes(), code, err
-}
-
-// stdinReader is what a run reads on its standard input: the command the
-// program's interactive mode executes, or the key itself. A run that takes
-// nothing on standard input gets nil, which is the child's own standard input
-// rather than an empty pipe.
-func stdinReader(stdin []byte) io.Reader {
-	if len(stdin) == 0 {
-		return nil
-	}
-	return bytes.NewReader(stdin)
 }
 
 // boundedMax caps what one keychain program's standard output may occupy. A key

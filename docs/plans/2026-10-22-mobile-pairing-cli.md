@@ -1477,15 +1477,20 @@ plan diverges from the mobile plan's task text**, and they are the ones that hol
    `secret-tool store` reads it from standard input, and darwin's `security` is run as `security
    -i` — the whole argv is the single element `-i` — with one command per run on its standard
    input, `add-generic-password -U -s "<item>" -a "<item>" -w <key>` to store and
-   `delete-generic-password -s "<item>"` to remove. The item's name is not a secret (M5) and is
-   quoted into that command; the key has one spelling (D171: `EncodeKey`'s unpadded base64url),
-   which is one bare word, so nothing is ever escaped, and a key outside that shape is refused
-   rather than escaped — the byte that ends the line would be a second command. **`security -i`
-   answers 0 for a command it could not carry out**, so its exit status alone would read a refused
-   store as a successful one and `fugaro pair` would deliver a key that is not in the keychain: the
-   writer reads the tool's output for the failure and maps it to `ErrBackend` in this package's own
-   sentence, never repeating what the tool said, because that text can carry the command line it
-   was given — and that line carries the key. **What is verified where.** The invocation, the
+   `delete-generic-password -s "<item>" -a "<item>"` to remove — the removal names the account as
+   well, so that it is the exact inverse of the store rather than a match on the service alone. The
+   item's name is not a secret (M5) and is quoted into that command; the key has one spelling
+   (D171: `EncodeKey`'s unpadded base64url), whose alphabet holds no byte a command line's parser
+   can read as anything but part of the value, so nothing is ever escaped, and a key outside that
+   alphabet is refused rather than escaped — a key the parser read as something else would be
+   stored as something else while the store reported success. **`security -i` answers 0 for a
+   command it could not carry out**, so its exit status alone would read a refused store as a
+   successful one and `fugaro pair` would deliver a key that is not in the keychain: the writer
+   reads the tool's output and maps it to `ErrBackend` in this package's own sentence, never
+   repeating what the tool said, because that text can carry the command line it was given — and
+   that line carries the key. The reading fails closed: a successful add or delete prints nothing,
+   so every non-blank line is a failure, wherever in the line the message sits (a prompt or an echo
+   before it must not hide it) and whether or not this package recognises it. **What is verified where.** The invocation, the
    quoting, the refusals and the failure reading are hermetic: `keychain_test.go` puts a stand-in
    `security` first on `PATH` and runs the writer against it as a real child process, which is
    where "no argv element and no environment variable carries the key" is observed at all. The real
