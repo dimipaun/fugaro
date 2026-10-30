@@ -58,6 +58,8 @@ workflows:
 
 Without either, the image has no language runtime, and `fugaro validate` warns.
 
+**The key-file layer.** The image installs your dependencies above the source: it checks out, at the commit it bakes, only what the install reads — your `mise.toml` and its lockfile, your lockfile and `package.json`, each workspace member's `package.json`, the registry configuration, and the install files no lockfile carries (`.yarnrc`, `.yarnrc.yml`, `.pnpmfile.cjs`, `.yarn/releases/`, `.yarn/plugins/`, `.yarn/patches/`). `image.key_files` adds the paths of your own that list cannot know — a patch a postinstall applies, a vendored toolchain — each checked out as the path it is, a directory as the files under it. A change to any of them changes the image, so the daily image check rebuilds it.
+
 ## System packages and services
 
 Add Debian packages with `image.apt`, and steps that need the checkout with `image.setup` (they run as `fugaro`, with `sudo` for those steps only). Services start in `commands.test`. A server whose tests need PostgreSQL with PostGIS and pgvector, Redis and the Firebase emulators:
