@@ -778,7 +778,7 @@ func TestRunnerOwnCommitsRunNoRepositoryHook(t *testing.T) {
 	if err := WriteStampHooksNoChain(hooks); err != nil {
 		t.Fatal("WriteStampHooksNoChain:", err)
 	}
-	repo.CommitHooks, repo.CommitStamp = hooks, runStamp()
+	repo.CommitHooks, repo.CommitStamp = hooks, func() Stamp { return runStamp() }
 	if err := repo.CommitEmpty(ctx, "the runner's own"); err != nil {
 		t.Fatal(err)
 	}

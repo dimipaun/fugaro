@@ -504,13 +504,18 @@ func TestFollowUpAgentEnvHasNoGitToken(t *testing.T) {
 	rec, err := h.run(t, implement("tidy"), review("ship", 0))
 	mustReady(t, rec, err)
 	for i, call := range h.agent.calls {
-		for _, k := range []string{"FUGARO_GIT_TOKEN", "FUGARO_GIT_USERNAME", "GIT_CONFIG_COUNT", "GH_TOKEN"} {
+		for _, k := range []string{"FUGARO_GIT_TOKEN", "FUGARO_GIT_USERNAME", "GH_TOKEN"} {
 			if v := envValue(call.Env, k); v != "" {
 				t.Errorf("agent call %d has %s", i+1, k)
 			}
 		}
-		if strings.Contains(strings.Join(call.Env, "\n"), gitToken) {
-			t.Errorf("agent call %d's environment holds the git token", i+1)
+		// GIT_CONFIG_COUNT is not asserted here: the stamp's own core.hooksPath
+		// entry sets one, and it is the credential entries the run must not
+		// carry. Naming the credential rather than the namespace is what keeps
+		// this grip on the helper — a helper reached through a config entry
+		// this test did not think to list would pass a key-name check.
+		if findings := credentialConfigFindings(call.Env, gitToken); len(findings) > 0 {
+			t.Errorf("agent call %d carries a git credential: %v", i+1, findings)
 		}
 	}
 	if h.remoteTip(t) != rec.HeadSHA {

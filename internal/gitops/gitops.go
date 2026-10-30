@@ -135,17 +135,23 @@ const BudgetTokenEnv = "FUGARO_BUDGET_TOKEN"
 type Repo struct {
 	Dir string
 	Env []string
-	// CommitStamp is what a commit made through CommitAll or CommitEmpty
-	// carries — its trailers and, when the launcher named one, its author —
-	// and CommitHooks is the directory of the stamp hooks that read it
-	// (stamp.go). The two are set together by the runner, whose own commits
+	// CommitStamp, when set, is what a commit made through CommitAll or
+	// CommitEmpty carries — its trailers and, when the launcher named one, its
+	// author — and CommitHooks is the directory of the stamp hooks that read
+	// it (stamp.go). The two are set together by the runner, whose own commits
 	// are the run's and are stamped like the agent's (A3, D603).
+	//
+	// It is a function and not a Stamp because a run's rigor mode can rise
+	// while the run is in flight (runner/rigor.go, roundRigor and
+	// finalizeRigor): the Fugaro-Rigor of a commit is the mode the run had
+	// reached when the commit was made (D601), and a value read once at
+	// bootstrap would understate every commit made after a raise.
 	//
 	// An empty CommitHooks is the behaviour every other caller has had:
 	// repository hooks off and nothing stamped. It is also what keeps the
 	// stamp out of a run whose commits are not the run's — a review or an
 	// artifact run (A3).
-	CommitStamp Stamp
+	CommitStamp func() Stamp
 	CommitHooks string
 	// StripEnv names variables that never reach git or anything git runs
 	// (a core.fsmonitor command or a filter driver an agent wrote into
@@ -167,10 +173,11 @@ func Open(dir string, env []string) (*Repo, error) {
 // chains to (A3, constraint 2), read once by the runner at bootstrap so that
 // each of the pass-throughs it writes does not spawn a git of its own.
 //
-// It is the one runner-owned call made without noHooks, because reading the
-// configuration noHooks overrides is the whole point of it, and a repository's
-// core.hooksPath is where its hooks are. rev-parse is plumbing and runs no
-// hook.
+// It is one of the two runner-owned calls made without noHooks — the other is
+// gitCommit, which names the stamp's own hook directory instead — because
+// reading the configuration noHooks overrides is the whole point of it, and a
+// repository's core.hooksPath is where its hooks are. rev-parse is plumbing
+// and runs no hook.
 // The answer is made absolute here: rev-parse prints it relative to the
 // directory it was run in, and the hooks that carry it run in the root of the
 // working tree, not in the runner's own working directory.
@@ -275,12 +282,13 @@ func CloneBlobless(ctx context.Context, dir, remote, branch string, env []string
 	return &Repo{Dir: dir, Env: env, StripEnv: strip}, nil
 }
 
-// noHooks is prepended to every runner-owned git invocation. The runner's
-// git is plumbing: a repository hook (husky, lint-staged, a pre-push test
-// run) must never block bootstrap's checkout, finalize's commit or push, and
-// --no-verify only skips pre-commit and commit-msg, not prepare-commit-msg,
-// post-checkout, post-commit or pre-push. The agent's own git calls are
-// unaffected; they run the hooks as usual.
+// noHooks is prepended to every runner-owned git invocation but the commits
+// made through gitCommit, which put the stamp's own hook directory in its
+// place. The runner's git is plumbing: a repository hook (husky, lint-staged,
+// a pre-push test run) must never block bootstrap's checkout, finalize's
+// commit or push, and --no-verify only skips pre-commit and commit-msg, not
+// prepare-commit-msg, post-checkout, post-commit or pre-push. The agent's own
+// git calls are unaffected; they run the hooks as usual.
 var noHooks = []string{"-c", "core.hooksPath=" + os.DevNull}
 
 func (r *Repo) git(ctx context.Context, args ...string) (string, error) {
@@ -354,13 +362,20 @@ func (r *Repo) gitIO(ctx context.Context, in io.Reader, out io.Writer, args ...s
 // one: the environment entries are what the hook reads its values from, and
 // the -c is what makes that hook the one git runs.
 //
+// The stamp is read here, at the commit, and not when the caller set the
+// field: it is what the commit carries now.
+//
 // A Repo with no CommitHooks commits as it always did — repository hooks off,
 // nothing stamped.
 func (r *Repo) gitCommit(ctx context.Context, args ...string) (string, error) {
 	env, prefix := r.processEnv(), noHooks
 	if r.CommitHooks != "" {
+		var stamp Stamp
+		if r.CommitStamp != nil {
+			stamp = r.CommitStamp()
+		}
 		prefix = []string{"-c", "core.hooksPath=" + r.CommitHooks}
-		env = StampEnv(r.CommitStamp, r.CommitHooks, env)
+		env = StampEnv(stamp, r.CommitHooks, env)
 	}
 	var stdout bytes.Buffer
 	err := r.gitRun(ctx, env, prefix, nil, &stdout, args...)

@@ -8,6 +8,8 @@ package runner_test
 import (
 	"bytes"
 	"context"
+	"errors"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -17,6 +19,7 @@ import (
 	"unicode"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
 	"github.com/dimipaun/fugaro/internal/verify"
@@ -46,6 +49,67 @@ func trailersOf(msg string) map[string][]string {
 func branchCommit(t *testing.T, h *harness) string {
 	t.Helper()
 	return testutil.Git(t, h.remote, "log", "-1", "--format=%B", "fugaro/"+runID)
+}
+
+// configPairs reads the environment configuration entries an environment
+// carries: every GIT_CONFIG_KEY_n with the GIT_CONFIG_VALUE_n it is numbered
+// against. The namespace is shared by everything an environment configures —
+// the credential helper's two entries (gitops.CredentialVars) and the stamp's
+// core.hooksPath among them (stamp.go) — which is why a test that asks about
+// one of them asks about its key and value and never about the namespace.
+func configPairs(env []string) [][2]string {
+	values := map[string]string{}
+	for _, kv := range env {
+		if k, v, ok := strings.Cut(kv, "="); ok {
+			if i, ok := strings.CutPrefix(k, "GIT_CONFIG_VALUE_"); ok {
+				values[i] = v
+			}
+		}
+	}
+	var out [][2]string
+	for _, kv := range env {
+		k, v, ok := strings.Cut(kv, "=")
+		if !ok {
+			continue
+		}
+		i, ok := strings.CutPrefix(k, "GIT_CONFIG_KEY_")
+		if !ok {
+			continue
+		}
+		out = append(out, [2]string{v, values[i]})
+	}
+	return out
+}
+
+// credentialConfigFindings names the environment entries that configure a git
+// credential, or that hold one of the secrets: what a test asking whether an
+// agent can reach a credential is about.
+func credentialConfigFindings(env []string, secrets ...string) []string {
+	var out []string
+	for _, kv := range env {
+		for _, s := range secrets {
+			if s != "" && strings.Contains(kv, s) {
+				out = append(out, kv)
+			}
+		}
+	}
+	for _, pair := range configPairs(env) {
+		if strings.Contains(strings.ToLower(pair[0]+" "+pair[1]), "credential") {
+			out = append(out, pair[0]+"="+pair[1])
+		}
+	}
+	return out
+}
+
+// credentialHelperConfigured reports whether env configures a git credential
+// helper at all.
+func credentialHelperConfigured(env []string) bool {
+	for _, pair := range configPairs(env) {
+		if strings.HasPrefix(pair[0], "credential.") && strings.HasSuffix(pair[0], ".helper") {
+			return true
+		}
+	}
+	return false
 }
 
 // hooksPath is the core.hooksPath a stage's environment configures, "" when it
@@ -419,5 +483,84 @@ func TestStampHooksNameTheResolvedChain(t *testing.T) {
 	}
 	if !strings.Contains(script, "fugaro_chain_later=0\n") {
 		t.Errorf("the pass-through looks the repository's hook directory up at the commit:\n%s", script)
+	}
+}
+
+// TestRunnerHookDirIsNotDerivableFromTheStageEnv: the agent's environment
+// names the hook directory its own commits run under, so a runner-owned commit
+// must not run under a directory the agent can derive from it. It plants a
+// prepare-commit-msg exactly where an agent would put one — beside the
+// directory its own core.hooksPath names — and the leftover commit finalize
+// makes must not run it: the committed work is the runner's, and the runner's
+// own commits run no code of the agent's (A3, follow-up 2a).
+//
+// Mutation (write the runner's hooks beside the agent's, under one temporary
+// root): the planted hook runs inside the runner's own commit and this test
+// fails with its marker file present.
+func TestRunnerHookDirIsNotDerivableFromTheStageEnv(t *testing.T) {
+	h := newHarness(t, "", nil)
+	marker := filepath.Join(t.TempDir(), "ran")
+	var hooks string
+	dirty := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		hooks = hooksPath(req.Env)
+		planted := filepath.Join(filepath.Dir(hooks), "runner")
+		if err := os.MkdirAll(planted, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(planted, "prepare-commit-msg"), []byte("#!/bin/sh\necho ran >> "+marker+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		res, err := implement("feature")(t, ctx, req)
+		if err != nil {
+			return res, err
+		}
+		if err := os.WriteFile(filepath.Join(req.Dir, "left.txt"), []byte("x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return res, err
+	}
+	if _, err := h.run(t, dirty, review("ship", 0)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("a runner-owned commit ran a hook planted beside the directory the agent's own environment names: %v", err)
+	}
+}
+
+// TestRunnerOwnCommitsCarryTheRigorOfTheirMoment: the Fugaro-Rigor of a
+// commit is the mode the run had reached when the commit was made, for the
+// runner's own commits as for the agent's (D601: the record's Rigor.Mode is
+// the run's mode). The run here raises to Critical at the round moment — the
+// fix's own commit adds to the file the area rule matches, and finalize
+// resolves the same mode and leaves the block as the round left it — so the
+// leftover commit finalize makes must carry Critical, and not the mode the run
+// started at.
+//
+// Mutation (read the stamp once at bootstrap, as Repo.CommitStamp holding a
+// Stamp did): the leftover commit carries Startup while the record says
+// Critical.
+func TestRunnerOwnCommitsCarryTheRigorOfTheirMoment(t *testing.T) {
+	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "agent:\n",
+		"rigor:\n  default: startup\n  areas:\n    - { name: app, match: \"feature.txt\", mode: critical }\nagent:\n", 1)
+	h := newHarness(t, cfg, nil)
+	fix := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		shell(t, req, "echo more >> feature.txt && git commit -qam 'Address review' && echo x > left.txt")
+		verifyTest(t, ctx, req)
+		return agent.Result{}, nil
+	}
+	rec, err := h.run(t, implement("feature"), review("changes", 1), fix, review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Rigor == nil || rec.Rigor.At != runstore.RigorAtRound || string(rec.Rigor.Mode) != "critical" {
+		t.Fatalf("the run's mode = %+v, want critical decided at the round: without a raise before finalize this test proves nothing", rec.Rigor)
+	}
+	msg := branchCommit(t, h)
+	if !strings.Contains(msg, "uncommitted work at finalize") {
+		t.Fatalf("the tip is not the runner's own leftover commit: %q", msg)
+	}
+	got := trailersOf(msg)["fugaro-rigor"]
+	if want := []string{string(rec.Rigor.Mode)}; !slices.Equal(got, want) {
+		t.Errorf("fugaro-rigor = %v, want %v: the runner's own commit carries the mode of another moment", got, want)
 	}
 }

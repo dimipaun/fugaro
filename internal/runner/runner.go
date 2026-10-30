@@ -1153,6 +1153,13 @@ func (r *run) resolveCommitIdentity(ctx context.Context) {
 // directory the agent can write, and no code of the agent's runs inside a git
 // call the runner makes.
 //
+// The runner's directory is made in a temporary directory of its own and not
+// beside the agent's, because the agent's environment names the agent's one
+// (StampEnv's core.hooksPath) and a sibling could be derived from it: an agent
+// that could name the runner's directory could leave a prepare-commit-msg in
+// it and have it run inside the runner's own commit. Nothing it writes in the
+// checkout, or is told by its own stamp environment, reaches it.
+//
 // The chain directory is read once, here, so the 21 pass-throughs written for
 // it each carry the answer instead of spawning a git of their own at every
 // commit: `git rev-parse --git-path hooks` with the repository's own
@@ -1164,19 +1171,23 @@ func (r *run) resolveCommitIdentity(ctx context.Context) {
 // author here the commits are authored by the identity the run resolves, as
 // every run's were before this (D606, constraint 3).
 func (r *run) writeStampHooks(ctx context.Context) error {
-	root, err := os.MkdirTemp("", "fugaro-stamp-")
-	if err != nil {
-		return fmt.Errorf("making a directory for the run's commit hooks: %w", err)
-	}
 	chain, err := r.repo.HooksDir(ctx)
 	if err != nil {
 		return fmt.Errorf("reading the repository's hook directory: %w", err)
 	}
-	r.stampHooks = filepath.Join(root, "agent")
+	agentRoot, err := os.MkdirTemp("", "fugaro-stamp-")
+	if err != nil {
+		return fmt.Errorf("making a directory for the run's commit hooks: %w", err)
+	}
+	runnerRoot, err := os.MkdirTemp("", "fugaro-stamp-")
+	if err != nil {
+		return fmt.Errorf("making a directory for the runner's commit hooks: %w", err)
+	}
+	r.stampHooks = filepath.Join(agentRoot, "agent")
 	if err := gitops.WriteStampHooks(r.stampHooks, chain); err != nil {
 		return fmt.Errorf("writing the run's commit hooks: %w", err)
 	}
-	r.runnerHooks = filepath.Join(root, "runner")
+	r.runnerHooks = filepath.Join(runnerRoot, "runner")
 	if err := gitops.WriteStampHooksNoChain(r.runnerHooks); err != nil {
 		return fmt.Errorf("writing the runner's commit hooks: %w", err)
 	}
@@ -1184,7 +1195,9 @@ func (r *run) writeStampHooks(ctx context.Context) error {
 		r.stampAuthor = &gitops.Person{Name: r.spec.Author.Name, Email: r.spec.Author.Email}
 	}
 	r.repo.CommitHooks = r.runnerHooks
-	r.repo.CommitStamp = gitops.Stamp{Author: r.stampAuthor, Trailers: r.stampTrailers("")}
+	r.repo.CommitStamp = func() gitops.Stamp {
+		return gitops.Stamp{Author: r.stampAuthor, Trailers: r.stampTrailers("")}
+	}
 	return nil
 }
 

@@ -256,10 +256,19 @@ func WriteStampHooks(dir, chainTo string) error {
 // WriteStampHooksNoChain writes the same hooks into dir as WriteStampHooks,
 // and they chain nowhere: the stamp runs and every other hook name exits 0
 // without running anything. It is what the runner's own commits are made
-// under (A3, follow-up 2a): an agent can write a hook of the repository's,
-// and a runner-owned git call is the one place no code of the agent's may
-// run. The caller's own commits then carry the trailers while remaining
-// untouched by whatever the checkout's configuration or $GIT_DIR/hooks holds.
+// under (A3, follow-up 2a): a hook of the repository's is a file the run's
+// agent can write, and the checkout's configuration is another the agent can
+// write, so what a runner-owned git call runs is what the runner wrote and
+// never what the checkout says.
+//
+// What this buys is the checkout's configuration and its hooks, and the
+// directory is part of it: a caller writes dir somewhere the agent's own
+// environment does not name, because an agent that could derive the directory
+// could put a hook of its own in it and have it run inside the runner's own
+// commit. It is not a boundary against an agent that goes looking for the
+// runner's processes — the two share a user and SECURITY.md's "What one run's
+// agent can reach" names that as a known limit — but nothing the agent writes
+// in the checkout, or is told by its own stamp environment, reaches here.
 //
 // It is a different call and not WriteStampHooks(dir, something): "chain to
 // nothing" and "look the repository's directory up at the commit" are two
