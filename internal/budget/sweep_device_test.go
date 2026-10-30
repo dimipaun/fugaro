@@ -226,6 +226,29 @@ func TestSweepPairingReadFailureKeepsOtherDeletions(t *testing.T) {
 	}
 }
 
+// TestSweepDeviceReadFailureKeepsEveryDevice: an allowlist that could not be
+// read is not an empty one. Read as empty, it would make every paired phone's
+// m~ user an orphan and unpair them all in one pass, so the m~ family is left
+// alone for that interval while the r~ users still go.
+func TestSweepDeviceReadFailureKeepsEveryDevice(t *testing.T) {
+	e := newSweepEnv(t)
+	e.deviceNode(devUID)
+	e.user(devUID, 30*24*time.Hour)
+	e.user(budgetUID(runA), 72*time.Hour)
+	e.db.DenyRead(budget.DeviceRoot)
+
+	rep, err := e.sw.Sweep(context.Background())
+	if err == nil {
+		t.Fatal("a device allowlist that could not be read was swallowed")
+	}
+	if got := e.users(); !reflect.DeepEqual(got, []string{devUID}) {
+		t.Fatalf("users left = %v, want the run user gone and the paired device kept", got)
+	}
+	if rep.UsersDeleted != 1 {
+		t.Fatalf("report = %+v, want the run user counted as deleted", rep)
+	}
+}
+
 // TestSweepNeverCreatesAPairingNode: the node goes by a PATCH of a null at its
 // path, and the sweep names only nodes it has read in the tree — a null at a
 // path that does not exist must not bring a node into being. `fugaro pair`
