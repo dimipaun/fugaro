@@ -323,13 +323,22 @@ test('there is no email form, and the calls to action are a plain booking link, 
     assert.equal(findAll(doc, 'iframe').length, 0, `${rel} carries an iframe: the Calendly embed is G2.3's and loads only after the marketing consent (D401)`)
     assert.ok(!/calendly\.com\/(assets|widgets?|embed)/i.test(html), `${rel} names a Calendly embed asset: the booking call to action here is a plain link (G2.2, G2.3)`)
 
+    // The booking link is on the page twice since the owner's feedback of 2026-10-30 (finding
+    // 1): once in the hero, so the first screen has an action, and once in this closing band,
+    // which is where the three calls to action belong. Both are the file's one link.
     const demo = findAll(doc, (el) => el.name === 'a' && textOf(el).trim() === 'Book a demo')
-    assert.equal(demo.length, 1, `${rel} carries ${demo.length} "Book a demo" links; the campaign has one primary call to action`)
     assert.equal(
-      demo[0].attrs.get('href'),
-      LANDING.calendlyURL,
-      `${rel}'s booking link is ${JSON.stringify(demo[0].attrs.get('href'))}, and website/data/landing.yaml writes ${LANDING.calendlyURL}: the link is the file's, with no query of its own (the UTMs G2.4 passes through are added at the link, F22)`,
+      demo.length,
+      2,
+      `${rel} carries ${demo.length} "Book a demo" links; the page offers the booking in the hero and in the closing calls to action, and both are the campaign's one booking link`,
     )
+    for (const link of demo) {
+      assert.equal(
+        link.attrs.get('href'),
+        LANDING.calendlyURL,
+        `${rel}'s booking link is ${JSON.stringify(link.attrs.get('href'))}, and website/data/landing.yaml writes ${LANDING.calendlyURL}: the link is the file's, with no query of its own (the UTMs G2.4 passes through are added at the link, F22)`,
+      )
+    }
 
     const install = findAll(doc, (el) => el.name === 'a' && textOf(el).trim() === 'Install free')
     assert.equal(install.length, 1, `${rel} carries ${install.length} "Install free" links; the secondary call to action is the repository (spec §6)`)
@@ -351,6 +360,77 @@ test('there is no email form, and the calls to action are a plain booking link, 
     // case that presses them.
     for (const [id, link] of [['campaign-install', install[0]], ['campaign-whatsapp', chat[0]]]) {
       assert.equal(link.attrs.get('id'), id, `${rel}'s ${textOf(link).trim()} link carries no id="${id}", which is the one thing site.js reads it by (G2.4)`)
+    }
+  }
+})
+
+// **The first screen has an action** (the owner's feedback of 2026-10-30, finding 1). The
+// finding was read off the live preview: the hero promised something, drew a small box beside
+// the promise and put the only way to act at the bottom of the page. The booking link is now in
+// the hero as well, under the supporting line and above the picture, so a visitor who reads the
+// promise at 1440x900 or at 390x844 — the consent bar counted, it sits above the header — has
+// something to press without scrolling. The closing band keeps its own, because that is where
+// the three calls to action belong and a reader who reaches the end of the page should not have
+// to scroll back up.
+test('the hero carries the booking action, above the picture and before every other section', () => {
+  for (const { rel } of PAGES) {
+    const doc = parse(pageOf(rel).html)
+    const sections = findAll(doc, (el) => el.attrs.has('data-section'))
+    assert.equal(sections[0].attrs.get('data-section'), 'hero', `${rel} opens with ${JSON.stringify(sections[0].attrs.get('data-section'))} rather than the hero, so the action below is not on the first screen`)
+
+    const hero = sections[0]
+    const anchors = findAll(hero, (el) => el.name === 'a')
+    assert.equal(anchors.length, 1, `${rel}'s hero carries ${anchors.length} links; the first screen's one action is the booking`)
+    assert.equal(
+      textOf(anchors[0]).trim(),
+      'Book a demo',
+      `${rel}'s hero action is ${JSON.stringify(textOf(anchors[0]).trim())}: the first screen's one action is the booking, and it is a real link the markup holds rather than a script's`,
+    )
+
+    // The order a phone shows and a screen reader hears: the promise, then the action, then the
+    // picture. The picture is the biggest thing in the hero and it may not be the reason the
+    // booking link is below the fold.
+    const order = [...walk(hero)]
+      .filter((el) => ['h1', 'a', 'svg'].includes(el.name))
+      .map((el) => el.name)
+    assert.deepEqual(
+      order,
+      ['h1', 'a', 'svg'],
+      `${rel}'s hero draws ${JSON.stringify(order)}: the headline first, then the booking action, then the picture — the action sits directly under the supporting line and above the picture at every width (the owner's feedback of 2026-10-30)`,
+    )
+
+    const calls = findAll(doc, (el) => el.attrs.get('data-section') === 'calls-to-action')
+    assert.equal(calls.length, 1, `${rel} marks ${calls.length} calls-to-action sections`)
+    assert.equal(
+      findAll(calls[0], (el) => el.name === 'a' && textOf(el).trim() === 'Book a demo').length,
+      1,
+      `${rel}'s closing band carries no "Book a demo" link of its own: the three calls to action are that band's, and the hero's copy is the one for the first screen`,
+    )
+  }
+})
+
+// **No icon on top of a step** (the owner's feedback of 2026-10-30, finding 4). Each step was a
+// small column with a 28 px line icon above its heading, three of them in a row — a mark for a
+// heading that already says the same thing, and the reason the section read as three identical
+// cards rather than as one composition across the page. The headings and the lines are the
+// section now, and the layout is `base-styles.mjs`'s reading: the steps are as wide as the page.
+test('no picture sits on top of a step, and every step keeps its heading and its line', () => {
+  for (const { rel } of PAGES) {
+    const doc = parse(pageOf(rel).html)
+    const steps = findAll(doc, (el) => el.attrs.get('data-section') === 'how-it-works')
+    assert.equal(steps.length, 1, `${rel} marks ${steps.length} how-it-works sections; the spec's section 3 is one`)
+    assert.equal(
+      findAll(steps[0], 'svg').length,
+      0,
+      `${rel}'s how-it-works section draws ${findAll(steps[0], 'svg').length} picture(s): the step's own heading says what the step is, and a mark on top of it is a second thing to read for one fact (the owner's feedback of 2026-10-30)`,
+    )
+    assert.equal(findAll(steps[0], 'img').length, 0, `${rel}'s how-it-works section carries an image, and the step is words`)
+
+    const items = findAll(steps[0], (el) => el.name === 'li')
+    assert.equal(items.length, 3, `${rel}'s how-it-works section lists ${items.length} steps; the spec's three are three`)
+    for (const item of items) {
+      assert.equal(findAll(item, (el) => el.name === 'h3').length, 1, `${rel} carries a step with ${findAll(item, (el) => el.name === 'h3').length} headings: each step is named once, and the name is what a screen reader lists the steps by`)
+      assert.equal(findAll(item, (el) => el.name === 'p').length, 1, `${rel} carries a step with ${findAll(item, (el) => el.name === 'p').length} lines: each step is one heading and one line`)
     }
   }
 })
@@ -706,5 +786,74 @@ test('the hero\'s picture sits under the words on a phone, and every tone paints
       `${rel} paints the hero's accent with ${JSON.stringify(accents)}: an accent is a palette token, never a colour literal (W1.2)`,
     )
     assert.ok(new Set(accents).size > 1, `${rel} paints all four tones with ${JSON.stringify(accents)}: a tone the picture does not answer is a data attribute nothing reads (the owner's feedback of 2026-10-30)`)
+  }
+})
+
+// **The picture is flat, and it is framed by nothing** (the owner's feedback of 2026-10-30,
+// finding 2). What the first screen showed was a small box: a 1 px border around a panel, thin
+// line art inside it and a fraction of the screen spent on the one thing the page is about. The
+// drawing is now filled shapes in the palette's own tones — no gradient, no filter, no glow, no
+// shadow, and no shape hugging the edge of the viewBox, which is the frame the old drawing drew
+// for itself — and the rules below are what keeps the next redraw flat.
+//
+// The second half is the origin. The drawing is inline SVG precisely so that the picture costs
+// no request (the case above), and the styles that dress it may not add one either: a
+// `url(…)` — a background image, an SVG filter, a font — is a second origin on four pages built
+// for paid traffic, and `origins.mjs` and `privacy.mjs` are the site-wide halves of the same
+// rule. Nothing here is a host; what this reads is the local shape of it.
+test('the hero\'s picture is drawn flat and framed by nothing, and the campaign styles fetch nothing', () => {
+  for (const { rel } of PAGES) {
+    const { html } = artOf(rel)
+    const markup = artMarkup(html)
+    for (const guilty of [
+      /<linearGradient/i,
+      /<radialGradient/i,
+      /<filter\b/i,
+      /<mask\b/i,
+      /feDropShadow/i,
+      /drop-shadow/i,
+      /filter\s*:/i,
+      /box-shadow/i,
+    ]) {
+      assert.ok(
+        !guilty.test(markup),
+        `${rel}'s hero illustration carries ${JSON.stringify(guilty.source)}: the drawing is flat filled shapes in the palette's tones — no gradient, no glow and no shadow at rest (the owner's feedback of 2026-10-30)`,
+      )
+    }
+
+    // Every rectangle is inset from the viewBox, so none of them is the panel the drawing used to
+    // sit on: a rect that spans the box is a border around the picture, which is the timid shape
+    // the finding names. Four units is the room a rounded corner needs to be seen as one.
+    const doc = parse(html)
+    const svg = findAll(doc, (el) => el.name === 'svg' && (el.attrs.get('class') ?? '').split(/\s+/).includes('campaign-hero-art'))[0]
+    // (`viewBox` is written `viewbox` by the reader, as `caps-figures.mjs` records.)
+    const declared = svg.attrs.get('viewbox') ?? ''
+    const box = declared.trim().split(/\s+/).map(Number)
+    assert.equal(box.length, 4, `${rel}'s hero illustration declares no four-number viewBox (${JSON.stringify(declared)})`)
+    const [, , boxW, boxH] = box
+    for (const rect of findAll(svg, 'rect')) {
+      const [x, y, w, h] = ['x', 'y', 'width', 'height'].map((name) => Number(rect.attrs.get(name) ?? 0))
+      assert.ok(
+        x >= 4 && y >= 4 && x + w <= boxW - 4 && y + h <= boxH - 4,
+        `${rel}'s hero illustration draws a rect at ${JSON.stringify([x, y, w, h])} in a ${boxW}x${boxH} viewBox: the picture has no frame around it, so no shape hugs the edge of the box it is drawn in (the owner's feedback of 2026-10-30)`,
+      )
+    }
+
+    const css = findAll(parse(html), (el) => el.name === 'style').map((el) => el.raw ?? '').join('\n')
+    const campaignRules = cssRules(css).filter((rule) => /\.campaign-[a-z-]/.test(rule.selector ?? ''))
+    assert.ok(campaignRules.length > 0, `${rel} carries no campaign rule at all, so nothing below this line is a reading of it`)
+    for (const rule of campaignRules) {
+      for (const guilty of [/url\(/i, /@import/i]) {
+        assert.ok(
+          !guilty.test(rule.body),
+          `${rel}: the campaign rule "${rule.selector}" carries ${JSON.stringify(guilty.source)}: the campaign pages' own styles fetch nothing — no image, no filter, no font and no second origin (F14, the owner's feedback of 2026-10-30)`,
+        )
+      }
+    }
+    assert.equal(
+      cssRules(css).filter((rule) => rule.importURL !== undefined).length,
+      0,
+      `${rel}'s stylesheets carry an @import: every stylesheet on a campaign page is one the build produced and inlined, so nothing is fetched to read the page`,
+    )
   }
 })
