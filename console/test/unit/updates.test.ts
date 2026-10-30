@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
-// The update policy, rule by rule (desktop-console plan Task 4.4, auto-update
-// slice U1; design section 7.4, D760 to D764).
+// The update policy, rule by rule (desktop-console plan Task 4.4, "Auto-update
+// -- SECURITY-SENSITIVE"; design section 7.3 for the cadence, the refused
+// downgrade and the off switch, section 7.4 for "no update check that carries an
+// identifier").
 //
 // A signed update replaces the app that holds the console's launch write path,
 // so every rule this module holds is a test rather than a sentence: the gate,
@@ -181,6 +183,7 @@ function harness(
     env: {},
     currentVersion: RUNNING,
     switchOn: () => on,
+    localUpdateCheckOn: () => true,
     timer: { setInterval: timers.setInterval, clearInterval: timers.clearInterval },
     fetchReleases: fetchFake.fetchReleases,
     isLaunchFlowIdle: () => idle,
@@ -212,6 +215,28 @@ function settle(): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, 0)
   })
+}
+
+/** heldFetch is a `fetchReleases` that answers only when the test lets it, so a
+ * check can be inspected while its request is still in flight. */
+function heldFetch(body: string): {
+  readonly calls: readonly FetchCall[]
+  readonly fetchReleases: UpdatePolicyDeps['fetchReleases']
+  answer(): void
+} {
+  const calls: FetchCall[] = []
+  let open: (() => void) | null = null
+  const gate = new Promise<void>((resolve) => {
+    open = resolve
+  })
+  return {
+    calls,
+    fetchReleases: (url, headers) => {
+      calls.push({ url, headers })
+      return gate.then(() => body)
+    },
+    answer: () => open?.(),
+  }
 }
 
 afterEach(() => {
@@ -256,6 +281,17 @@ describe('the gate: nothing at all until every condition holds', () => {
     expect(timers.live).toBe(false)
   })
 
+  it('does nothing while the local update_check is off', async () => {
+    const { controller, fetches, updater, timers } = harness({ localUpdateCheckOn: () => false })
+    await controller.start()
+    await settle()
+    expect(fetches).toHaveLength(0)
+    expect(updater.checks).toBe(0)
+    expect(updater.events).toEqual([])
+    expect(timers.delays).toEqual([])
+    expect(timers.live).toBe(false)
+  })
+
   it('checks on an empty CI and on any FUGARO_NO_UPDATE_CHECK that is not 1', async () => {
     const { controller, fetches, timers } = harness({ env: { CI: '', FUGARO_NO_UPDATE_CHECK: '0' } })
     await controller.start()
@@ -286,11 +322,13 @@ describe('the cadence: one check at start, then every six hours', () => {
     expect(UPDATE_INTERVAL_MS).toBe(6 * 60 * 60 * 1000)
   })
 
-  it('does not check again before six hours have passed', async () => {
-    const { controller, fetches } = harness()
+  it('checks only when the timer fires, and arms one timer rather than one per check', async () => {
+    const { controller, fetches, timers } = harness()
     await controller.start()
     await settle()
+    await settle()
     expect(fetches).toHaveLength(1)
+    expect(timers.delays).toEqual([UPDATE_INTERVAL_MS])
   })
 
   it('checks again on each six-hour tick', async () => {
@@ -322,6 +360,31 @@ describe('the cadence: one check at start, then every six hours', () => {
     await settle()
     expect(timers.live).toBe(false)
     expect(fetches).toHaveLength(1)
+  })
+
+  it('abandons a check the switch closed while its request was in flight', async () => {
+    const held = heldFetch(listing([release('console-v0.120.0')]))
+    const { controller, updater, setSwitch } = harness({ fetchReleases: held.fetchReleases })
+    const started = controller.start()
+    await settle()
+    expect(held.calls).toHaveLength(1)
+    setSwitch(false)
+    held.answer()
+    await started
+    expect(updater.feedUrls).toEqual([])
+    expect(updater.checks).toBe(0)
+  })
+
+  it('abandons a check stop() interrupted, so nothing downloads after the app said stop', async () => {
+    const held = heldFetch(listing([release('console-v0.120.0')]))
+    const { controller, updater } = harness({ fetchReleases: held.fetchReleases })
+    const started = controller.start()
+    await settle()
+    controller.stop()
+    held.answer()
+    await started
+    expect(updater.feedUrls).toEqual([])
+    expect(updater.checks).toBe(0)
   })
 })
 
@@ -486,11 +549,20 @@ describe('the request carries no identifier', () => {
     ])
     await controller.start()
     await settle()
-    expect(updater.feedUrls).toEqual(['https://github.com/dimipaun/fugaro/releases/download/console-v0.121.0/'])
-    const sent = JSON.stringify({ urls: fetches.map((call) => call.url), headers: fetches[0]?.headers })
-    for (const absent of ['0.120.0', '0.121.0', 'darwin', 'machine', 'person', 'console-v']) {
+    const sent = JSON.stringify({
+      urls: fetches.map((call) => call.url),
+      headers: fetches[0]?.headers,
+      clientHeaders: updater.requestHeaders,
+    })
+    for (const absent of ['0.120.0', 'darwin', 'machine', 'person', 'installation', 'fugaro-console/']) {
       expect(sent).not.toContain(absent)
     }
+    // The feed URL is the one thing that names the release, and it names only
+    // the tag: scheme, this repository, and a shape that cannot carry more.
+    expect(updater.feedUrls).toEqual(['https://github.com/dimipaun/fugaro/releases/download/console-v0.121.0/'])
+    expect(updater.feedUrls[0]).toMatch(
+      /^https:\/\/github\.com\/dimipaun\/fugaro\/releases\/download\/console-v(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\/$/,
+    )
   })
 
   it('gives the updater an empty, frozen header table', async () => {
@@ -521,20 +593,50 @@ describe('the install: configured on, and only the user restarts', () => {
     expect(updater.quits).toBe(0)
   })
 
-  it('reports each finished download once, however many checks ran before it', async () => {
-    const { controller, updater, ready, timers } = harness()
+  it('prompts once for one finished download, however many times the event is repeated', async () => {
+    const { controller, updater, ready } = harness()
     await controller.start()
-    timers.fire()
-    await settle()
+    updater.emit('update-downloaded', { version: '0.120.0' })
     updater.emit('update-downloaded', { version: '0.120.0' })
     expect(ready).toEqual(['0.120.0'])
   })
 
-  it('leaves install-on-quit on, so quitting is what installs without asking', async () => {
-    const { controller, updater } = harness()
+  it('names the release whose download finished, not the one a later check moved the feed to', async () => {
+    const { controller, updater, ready, timers } = harness({}, [
+      listing([release('console-v0.120.0')]),
+      listing([release('console-v0.121.0')]),
+    ])
     await controller.start()
-    expect(updater.autoInstallOnAppQuit).toBe(true)
+    timers.fire()
+    await settle()
+    expect(updater.feedUrls).toEqual([
+      FEED,
+      'https://github.com/dimipaun/fugaro/releases/download/console-v0.121.0/',
+    ])
+    updater.emit('update-downloaded', { version: '0.120.0' })
+    expect(ready).toEqual(['0.120.0'])
+  })
+
+  it('ignores a completion for a release no feed was ever pointed at', async () => {
+    const { controller, updater, ready } = harness()
+    await controller.start()
+    updater.emit('update-downloaded', { version: '9.9.9' })
+    expect(ready).toEqual([])
     expect(updater.quits).toBe(0)
+  })
+
+  it('configures the client before a check that start() did not begin', async () => {
+    const { controller, updater, ready } = harness()
+    await controller.checkNow()
+    expect(updater.autoDownload).toBe(true)
+    expect(updater.autoInstallOnAppQuit).toBe(true)
+    expect(updater.allowDowngrade).toBe(false)
+    expect(updater.allowPrerelease).toBe(false)
+    expect(updater.requestHeaders).toEqual({})
+    expect(updater.events.toSorted()).toEqual(['error', 'update-downloaded'])
+    expect(updater.feedUrls).toEqual([FEED])
+    updater.emit('update-downloaded', { version: '0.120.0' })
+    expect(ready).toEqual(['0.120.0'])
   })
 
   it('installs when the user asks, and not before', async () => {
