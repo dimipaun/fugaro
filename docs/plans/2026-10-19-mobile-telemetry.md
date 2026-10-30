@@ -13,7 +13,9 @@ The gate is [mobile/implementation-plan.md](../mobile/implementation-plan.md)'s:
 writes the date into it — Phase 7's heading and its step **7b** — so **P7.1–P7.5 are approved**,
 on the one condition the gate carries, **that this plan is merged first**. The tasks are still
 **unbuilt**: approval is permission to start, and nothing below is a claim that anything
-exists. **This document replaces the earlier draft on `PR #693`** — a branch 151 commits behind
+exists. **Amended 2026-10-30: P7.1 is built** (P7.1a's wiring and P7.1b's guard and ad-ID
+walk) and **P7.2–P7.5 are not**; the sentence above is the state of 2026-10-22, kept as
+written. **This document replaces the earlier draft on `PR #693`** — a branch 151 commits behind
 `main`, superseded rather than merged — which asked for **D193–D200** and **checks 111–113**,
 numbers the coordinator and the wizard-and-website work had already taken. **This plan takes
 D253–D260 and checks 120–122 instead**, and §2 shows the reading that chose them.
@@ -50,7 +52,7 @@ date and the same condition.
 **Three things this document deliberately does not claim.**
 
 - **It is not an implementation.** The gate is passed (above), and the tasks below are
-  **approved and unbuilt**. Each is still **gated on the decision rows its "Depends on" line
+  **approved and unbuilt** — **amended 2026-10-30: P7.1 is built, P7.2–P7.5 are not.** Each is still **gated on the decision rows its "Depends on" line
   names** — every one of them is answered — exactly as Phase 6's tasks were gated on D160–D173
   before the owner answered them.
 - **It is not built, and no test here holds a behaviour.** Nothing this plan *adds* exists:
