@@ -82,6 +82,13 @@ func TestFingerprintShapeIsCrockfordXXXXdashXXXX(t *testing.T) {
 		make([]byte, token.DeviceKeySize),
 		bytes.Repeat([]byte{0xff}, token.DeviceKeySize),
 	}
+	// Four keys print only a few of the 32 characters; every byte value
+	// repeated reaches each one, so an alphabet entry swapped for a look-alike
+	// cannot hide behind the vectors.
+	for b := range 256 {
+		keys = append(keys, bytes.Repeat([]byte{byte(b)}, token.DeviceKeySize))
+	}
+	seen := map[byte]bool{}
 	for _, raw := range keys {
 		code := token.Fingerprint(raw)
 		if len(code) != 9 || code[4] != '-' {
@@ -91,6 +98,7 @@ func TestFingerprintShapeIsCrockfordXXXXdashXXXX(t *testing.T) {
 			if i == 4 {
 				continue
 			}
+			seen[code[i]] = true
 			if !strings.ContainsRune(deviceCrockford, rune(code[i])) {
 				t.Errorf("Fingerprint = %q: character %d is %q, and Crockford base32 has no I, L, O or U", code, i, code[i])
 			}
@@ -98,6 +106,9 @@ func TestFingerprintShapeIsCrockfordXXXXdashXXXX(t *testing.T) {
 		if want := deviceCrockford40(raw); code != want {
 			t.Errorf("Fingerprint(%d bytes) = %q, and decision 3 over the same bytes gives %q", len(raw), code, want)
 		}
+	}
+	if len(seen) != len(deviceCrockford) {
+		t.Errorf("%d keys printed %d distinct characters, want all %d of Crockford base32", len(keys), len(seen), len(deviceCrockford))
 	}
 	if got := token.Fingerprint(bytes.Repeat([]byte{0x01}, token.DeviceKeySize)); got != deviceCodeOfOnes {
 		t.Errorf("the all-0x01 vector moved: Fingerprint = %q, want %q", got, deviceCodeOfOnes)
