@@ -281,10 +281,10 @@ const { headline, supportingLine, tone, calendlyURL, art, screenshot } = Astro.p
      reduce rule is the second half of the pair for everything the site does not gate).
 
      **The picture is the screen here rather than the drawing, and the two are one class.** The
-     drawing carries the same 300 ms entrance in its own file, for the pages where it is the
-     hero's picture; this rule is the one every shipped page has, because a variant that names a
-     screenshot renders no drawing and Astro drops a component's styles from a page it does not
-     render. */
+     drawing carries the same 300 ms entrance in its own file, and that rule is the one that runs
+     on a page whose variant names no screen. On the pages as shipped the hero's picture is the
+     console screen, so the element that rises is this class's, and the drawing's rule is for an
+     element the page does not render. */
   @media (prefers-reduced-motion: no-preference) {
     .campaign-hero-button {
       transition:

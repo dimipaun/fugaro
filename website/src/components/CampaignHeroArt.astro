@@ -71,13 +71,12 @@
  * picture**: the hero shows a real screen of the console while the variant names a `screenshot`
  * in `website/data/landing.yaml`, and this drawing is what it shows instead when the variant
  * names none — one picture in the hero, and never both. Every variant in the file names a screen
- * today, so no page the repository builds renders this component, and Astro drops a component's
- * styles from a page it does not render: the hero's own entrance for the picture is therefore
- * declared in `CampaignHero.astro` (on `.campaign-hero-shot`), and the 300 ms rise below is this
- * component's own for the pages where it is the picture. It is not a variant's media either:
- * `[variant].astro` renders the file a variant names — its video or its image — in the layout's
- * `media` slot at the top of the page, and a variant that has one renders neither picture (F14,
- * G2.5, D190).
+ * today, so no page the repository builds renders this component: the hero's own entrance for the
+ * picture is therefore declared in `CampaignHero.astro` (on `.campaign-hero-shot`), and the 300 ms
+ * rise below is this component's own for the pages where it is the picture. It is not a variant's
+ * media either: `[variant].astro` renders the file a variant names — its video or its image — in
+ * the layout's `media` slot at the top of the page, and a variant that has one renders neither
+ * picture (F14, G2.5, D190).
  */
 interface Props {
   /** The variant's tone (`savings`, `control`, `scale`, `playful`), from `landing.yaml`. */
