@@ -593,6 +593,38 @@ func IsServiceHeldSecretEnv(env, name string) bool {
 	return IsModelSecretEnv(env) || slices.Contains(ServiceHeldSecretNames, name)
 }
 
+// ProxiedGitSecretNames are the git credential logical names a job gives up
+// once its repository is a PROXIED one: the published node's block admits the
+// repository with `proxy: true`, the credentials service fetches the
+// credential for the run's git traffic, and the job's own account therefore
+// keeps neither the secretAccessor (modules/workflow/sa.tf) nor the mount
+// (D500, D502, B1.7).
+//
+// It is a list of its own rather than a member of ServiceHeldSecretNames, and
+// the difference is the condition, not the credential: whether the service
+// holds a repository's git credential depends on that repository (G15: the
+// published node is the one source of whether it is proxied), while the names
+// in ServiceHeldSecretNames are held for every job of an opted-in
+// installation. So a name here drops only a job whose repository the fact
+// names, and every other Bitbucket repository — of an installation that opted
+// in or not — keeps mounting its token and reading it (G9). The fact itself is
+// per repository and never a config value: it is derived from the published
+// node (internal/infra's RepoSpec), which is why nothing here takes an
+// argument.
+//
+// Terraform cannot ask Go, so the same names are a literal in
+// modules/workflow/sa.tf's proxied_git_secret_names, held to this list by
+// deploy/terraform's TestProxiedGitSecretNamesMatchTheModule, and read beside
+// the module's own bitbucket_proxied input.
+//
+// It is EMPTY, and it stays empty until the flip. B1.13 part two fills it with
+// "bitbucket-token" in the release after 0.14.0, once B1.12 has passed and the
+// owner has given their go on Check 191 (D500, G1); the module's mirror, the
+// guard test and the tftest runs move in that one commit. Until then no job
+// loses an accessor or a mount for it, whatever the node admits, and a proxied
+// repository's run reads its token exactly as it always has.
+var ProxiedGitSecretNames = []string{}
+
 // ProviderBySecret is the provider whose key is the secret named secret.
 // Provider secrets are the owner's, in the local config, so a workflow's own
 // secrets cannot be checked against them by Validate: the places that hold
