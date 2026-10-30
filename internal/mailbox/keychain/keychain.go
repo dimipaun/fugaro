@@ -34,9 +34,9 @@
 // it could not carry out, so its output is where the failure is. What that
 // reading produces is one of this package's own fixed sentences; the one
 // exception is a line it does not recognise, which is quoted with every run of
-// key-alphabet characters long enough to be a key replaced by Redacted, so the
-// next surprise from the real tool is diagnosable from the operator's terminal
-// while a key the tool echoed is not.
+// key-alphabet characters that could be a key replaced by Redacted, so the next
+// surprise from the real tool is diagnosable from the operator's terminal while
+// a key the tool echoed is not.
 package keychain
 
 import (
@@ -607,7 +607,7 @@ func securityVerdict(stdout, stderr []byte, deleting bool) outputVerdict {
 			if line == "" {
 				continue
 			}
-			if shape, ok := securityFailure(line); ok {
+			if shape, ok := securityFailure(line, deleting); ok {
 				if !shape.missing {
 					return outputVerdict{why: shape.why}
 				}
@@ -637,13 +637,66 @@ func securityVerdict(stdout, stderr []byte, deleting bool) outputVerdict {
 
 // securityFailure is the shape line carries, if it is one of the failures the
 // tool prints.
-func securityFailure(line string) (securityShape, bool) {
+func securityFailure(line string, deleting bool) (securityShape, bool) {
+	if shape, ok := securityReturned(line, deleting); ok {
+		return shape, true
+	}
 	for _, shape := range securityFailureShapes {
 		if strings.Contains(line, shape.text) {
 			return shape, true
 		}
 	}
 	return securityShape{}, false
+}
+
+// securityReturnedRE is the whole line `security -i` prints for a command that
+// failed: the command's name and the framework's status, and nothing else. In
+// argv mode the tool prints the status's sentence instead; in interactive mode
+// it prints only this, which the owner's live run observed for a delete of an
+// item that was already gone (`delete-generic-password: returned -25300`).
+var securityReturnedRE = regexp.MustCompile(`^([a-z]+(?:-[a-z]+)*): returned (-?[0-9]+)$`)
+
+// securityItemNotFound is errSecItemNotFound as `security -i` prints it, and
+// securityDeleteCommand is the one command for which it means the item is
+// already gone rather than that the command failed.
+const (
+	securityItemNotFound  = "-25300"
+	securityDeleteCommand = "delete-generic-password"
+)
+
+// securityStatusNames are the framework statuses a keychain command plausibly
+// returns, named so that the operator's error says which one it was; a status
+// not listed here is still a failure and is quoted by its number alone.
+var securityStatusNames = map[string]string{
+	"-128":   "errSecUserCanceled: the user cancelled the keychain's prompt",
+	"-25244": "errSecInvalidOwnerEdit: this process may not change the item's owner",
+	"-25291": "errSecNotAvailable: no keychain is available",
+	"-25293": "errSecAuthFailed: the keychain's passphrase was not accepted",
+	"-25294": "errSecNoSuchKeychain: the keychain could not be found",
+	"-25299": "errSecDuplicateItem: an item is already stored there",
+	"-25300": "errSecItemNotFound: the keychain holds no such item",
+	"-25308": "errSecInteractionNotAllowed: the keychain is locked and this session cannot ask for it to be unlocked",
+}
+
+// securityReturned reads a `<command>: returned <status>` line. The item being
+// gone is the one status that is not a failure, and only on a delete and only
+// when the command that returned it is the delete itself; every other status,
+// and that status from any other command or on a store, is a failure whose
+// sentence carries the status.
+func securityReturned(line string, deleting bool) (securityShape, bool) {
+	m := securityReturnedRE.FindStringSubmatch(line)
+	if m == nil {
+		return securityShape{}, false
+	}
+	command, status := m[1], m[2]
+	if deleting && command == securityDeleteCommand && status == securityItemNotFound {
+		return securityShape{why: securityMissingWhy, missing: true}, true
+	}
+	why := "the security tool's command returned status " + status
+	if name, ok := securityStatusNames[status]; ok {
+		why += " (" + name + ")"
+	}
+	return securityShape{why: why + ": " + securityShown(line)}, true
 }
 
 // securityUnknownWhy is the sentence for a failure line this package does not
@@ -688,16 +741,34 @@ func securityItemEcho(line string) bool {
 // enough of one to matter.
 var securityKeyRunRE = regexp.MustCompile(`[A-Za-z0-9_-]{20,}`)
 
+// securityKeyRunLong is the length from which a run is redacted whatever it
+// holds. A pairing key is 43 characters, so every key is at least this long;
+// below it, a run with no digit and no underscore is a word of the tool's own —
+// a command name, a framework function — and is kept, so the line stays
+// readable.
+const securityKeyRunLong = 32
+
+// securityKeyRun reports whether run, a match of securityKeyRunRE, could be a
+// key and must be redacted.
+func securityKeyRun(run string) bool {
+	return len(run) >= securityKeyRunLong || strings.ContainsAny(run, "0123456789_")
+}
+
 // securityShownMax bounds how much of an unrecognised line an error quotes.
 const securityShownMax = 160
 
 // securityShown is an unrecognised line of the tool's output as an error may
-// quote it: every key-length run of the key's alphabet replaced by Redacted
-// first, so that truncating afterwards can never leave part of one, then cut to
+// quote it: every run of the key's alphabet that could be a key replaced by
+// Redacted first, so that truncating afterwards can never leave part of one, then cut to
 // securityShownMax bytes on a character boundary and quoted, so a control
 // character the tool printed cannot reach the terminal.
 func securityShown(line string) string {
-	shown := securityKeyRunRE.ReplaceAllString(line, Redacted)
+	shown := securityKeyRunRE.ReplaceAllStringFunc(line, func(run string) string {
+		if securityKeyRun(run) {
+			return Redacted
+		}
+		return run
+	})
 	if len(shown) > securityShownMax {
 		cut := securityShownMax
 		for cut > 0 && !utf8.RuneStart(shown[cut]) {
