@@ -395,8 +395,7 @@ test.describe('the version skew handshake', () => {
     expect(screen.skew).toBe('supported')
     expect(screen.theme).toBe('light')
     // The console's own version, and the range it is a claim about: the banner
-    // names both versions, and the range is the design's "the minor it was built
-    // against, plus the previous one".
+    // names both versions, and the set of minors it has read.
     expect(screen.consoleVersion).toBe(CLI_VERSION_BUILT_AGAINST)
     expect(result['consoleVersion']).toBe(CLI_VERSION_BUILT_AGAINST)
     expect(screen.sentence).toContain(CLI_VERSION_BUILT_AGAINST)
@@ -425,20 +424,34 @@ test.describe('the version skew handshake', () => {
     expect(screen.sentence).toContain(SUPPORTED_CLI_MINORS.join(', '))
   })
 
-  test('draws the banner for a CLI above the range too, and offers the console the update', async () => {
-    // The other direction of the same rule: a newer CLI is not "supported" just
-    // because it is newer, and the fix is the console's, not the CLI's.
-    const result = await mount(drawSkew('0.9.0\n', 'dark'))
+  test('draws no banner for a CLI above the set, and says the console is the older one', async () => {
+    // The owner's ruling of 2026-10-30: a newer plain release is read with the
+    // fields this console knows, so it is not a reduced mode; the fix it names
+    // is the console's update, never the CLI's upgrade.
+    const result = await mount(drawSkew('0.14.0\n', 'dark'))
     const screen = await drawn(page)
 
-    expect(screen.mode).toBe('reduced')
+    expect(result['mode']).toBe('ok')
+    expect(screen.mode).toBe('ok')
     expect(screen.skew).toBe('newer')
     expect(screen.theme).toBe('dark')
-    expect(screen.cliVersion).toBe('0.9.0')
+    expect(screen.cliVersion).toBe('0.14.0')
+    expect(screen.hidden).toEqual([])
+    expect(screen.sentence).toContain('older than the fugaro it is driving')
     expect(screen.sentence).toContain('update the console')
-    // Not the CLI's upgrade command: telling the operator to upgrade a fugaro
-    // that is *newer* than the console would be advice that breaks the console.
     expect(screen.sentence).not.toContain('brew upgrade')
+  })
+
+  test('draws the banner for a line that is not a plain release, however new', async () => {
+    const result = await mount(drawSkew('0.14.0-rc.1\n', 'dark'))
+    const screen = await drawn(page)
+
+    expect(result['mode']).toBe('reduced')
+    expect(screen.mode).toBe('reduced')
+    expect(screen.skew).toBe('irregular')
+    expect(screen.cliVersion).toBe('0.14.0-rc.1')
+    expect(screen.sentence).toContain('not a plain release number')
+    expect(screen.hidden).toEqual([...REDUCED_VIEWS])
   })
 
   test('the reduced mode hides the views it cannot support, and draws no figure', async () => {

@@ -306,6 +306,10 @@ interface Screen {
   readonly limitWords: readonly string[]
   readonly limits: readonly string[]
   readonly limitsInGlobal: number
+  /** the filled width of every drawn daily-cap bar, on the bar's hundred-unit box */
+  readonly capBars: readonly (string | null)[]
+  readonly atCaps: number
+  readonly atCapWords: readonly string[]
   readonly rows: number
   readonly notionalCells: readonly string[]
   readonly anchors: number
@@ -367,6 +371,14 @@ function screen(page: Page): Promise<Screen> {
       limitWords: texts('.spend-cap-limit .spend-cap-word'),
       limits: texts('.spend-cap-limit .spend-cap-reserve'),
       limitsInGlobal: all('.spend-cap-global .spend-cap-reserve').length,
+      // The daily-cap bars, by the share of the cap they fill: the CLI's own
+      // `counted_usd` against `daily_cap_usd`, and no sum. A repository with no
+      // daily cap draws none at all.
+      capBars: attributes('.spend-cap-bar-fill', 'width'),
+      // A repository at its cap says so in words, and carries the attribute a
+      // rule may key on.
+      atCaps: all('.spend-cap-repo[data-at-cap="true"]').length,
+      atCapWords: texts('.spend-cap-at-cap'),
       rows: all('.spend-row').length,
       notionalCells: texts('.spend-notional'),
       anchors: all('a').length,
@@ -845,6 +857,15 @@ test.describe('the Spend screen', () => {
     expect(drawn.limitWords).toEqual(['largest single lease (max reserve)'])
     expect(drawn.limits).toEqual(['$50.00'])
     expect(drawn.limitsInGlobal).toBe(0)
+    // The daily-cap bars draw the CLI's own counted dollars against the cap:
+    // two repositories with a cap, `$3.00` of `$5.00` (sixty of the bar's
+    // hundred units) and `$4.00` of `$7.00`, and none at all for `acme/docs`.
+    // The figures the bars stand for are text beside them, so the geometry
+    // carries no fact of its own.
+    expect(drawn.capBars).toEqual(['60', '57.14'])
+    expect(drawn.text).toContain('Caps today')
+    expect(drawn.atCaps).toBe(0)
+    expect(drawn.atCapWords).toEqual([])
   })
 
   test('hides the person breakdown by default', async () => {

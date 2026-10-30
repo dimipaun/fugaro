@@ -2151,17 +2151,16 @@ func TestRevokeRefusesNothingOrTwo(t *testing.T) {
 		})
 	}
 
-	// The shared name is refused with both uids, because the operator's next
-	// step is to pick one of them.
+	// The shared name is refused by class and count, not by echoing the typed
+	// selector or the node's uids: `pair ls` prints the uids the operator picks
+	// from, and this sentence prints neither.
 	f := seed(t)
 	_, _, err := pairRun(t, "revoke", "--name", "phone-a")
 	if err == nil {
 		t.Fatal("a name two devices share was revoked")
 	}
-	for _, uid := range []string{pairDevA, pairDevB} {
-		if !strings.Contains(err.Error(), uid) {
-			t.Fatalf("the refusal %q does not name %s", err, uid)
-		}
+	if !strings.Contains(err.Error(), "matched 2 devices by name") {
+		t.Fatalf("the refusal %q does not name the class and the count", err)
 	}
 
 	// And the same fixture revokes the unambiguous one, by name.
@@ -2225,6 +2224,44 @@ func TestPairRevokeSanitisesDeviceName(t *testing.T) {
 	}
 	if !strings.Contains(ls, pairCell(name)) {
 		t.Fatalf("ls does not print the device name the way revoke prints it:\n%s", ls)
+	}
+}
+
+// TestPairRevokeTwoMatchesDoesNotEchoSelector: a --name that matches more than
+// one node is refused by class and count, and the refusal prints neither the
+// value the operator typed nor the uids of the nodes it matched. The typed
+// value is the caller's own input and the uids come out of a node no rule
+// constrains, so a sentence quoting either would put a hostile string on the
+// terminal — while `pair ls`, whose listing is sanitised, is the step this
+// refusal is supposed to send the operator back to.
+func TestPairRevokeTwoMatchesDoesNotEchoSelector(t *testing.T) {
+	const name = "phone-a\x1b[2K"
+	f := newPairFixture(t, pairMe)
+	f.pairSeedDevice(pairDevA, name)
+	f.pairSeedDevice(pairDevB, name)
+	f.pairSeedItem(t, pairDevA)
+	f.pairSeedItem(t, pairDevB)
+
+	for _, args := range [][]string{
+		{"revoke", "--name", name},
+		{"revoke", "--name", name, "--json"},
+	} {
+		out, _, err := pairRun(t, args...)
+		if err == nil {
+			t.Fatalf("%v: a name two devices share was revoked:\n%s", args, out)
+		}
+		said := out + err.Error()
+		if !strings.Contains(said, "matched 2 devices by name") {
+			t.Errorf("%v: the refusal does not name the class and the count: %v", args, err)
+		}
+		for _, echoed := range []string{"phone-a", pairDevA, pairDevB} {
+			if strings.Contains(said, echoed) {
+				t.Errorf("%v: the refusal echoes %q: %s", args, echoed, said)
+			}
+		}
+	}
+	if f.db.Value(rules.PathDevices+"/"+pairDevA) == nil || f.db.Value(rules.PathDevices+"/"+pairDevB) == nil {
+		t.Fatal("a refused revoke deleted a device node")
 	}
 }
 

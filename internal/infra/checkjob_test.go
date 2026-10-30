@@ -670,6 +670,32 @@ func TestApplyWorkflowJobChangesOnlyImage(t *testing.T) {
 	}
 }
 
+// A checkout: shared workflow's job (the design's route A, shared-images.md
+// §6) carries FUGARO_CHECKOUT=shared and clones the source at launch, so its
+// image moves the way a clone job's does: fugaro image refresh puts a shared
+// dependency-layer image on it (shared-images.md §10). The update writes the
+// image and leaves the shape alone.
+func TestCheckJobMovesASharedJobsImage(t *testing.T) {
+	f, _, ws, owner := workflowJobCloud(t, func(j map[string]any) {
+		envEntry(j)["value"] = config.CheckoutShared
+	})
+	ctx := context.Background()
+	u, err := PlanWorkflowJob(ctx, f.c, "proj-1234", "us-east5", ws.Job, ws.Name, newBase, owner)
+	if err != nil || u == nil || !u.Changes() || u.OldImage() != oldBase || u.NewImage() != newBase {
+		t.Fatalf("plan: %v %+v", err, u)
+	}
+	if err := ApplyWorkflowJob(ctx, f.c, u); err != nil {
+		t.Fatal(err)
+	}
+	after := f.run.JobJSON("proj-1234", "us-east5", ws.Job)
+	if img := container(after)["image"]; img != newBase {
+		t.Fatalf("after: image = %v, want %s", img, newBase)
+	}
+	if v := envEntry(after)["value"]; v != config.CheckoutShared {
+		t.Fatalf("after: %s = %v, want %s: the update moves the image and keeps the shape", CheckoutEnv, v, config.CheckoutShared)
+	}
+}
+
 // A job that is not this repository's workflow job as fugaro update made it
 // is refused before anything is written. The "wrong workflow" case is the
 // one that matters most: it is what would let PlanWorkflowJob match and

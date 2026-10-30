@@ -754,7 +754,7 @@ describe('the renderer’s gate', () => {
     expect(mount.drawings).toHaveLength(1)
     const banner = mount.drawings[0]
     expect(banner?.getAttribute('data-mode')).toBe('reduced')
-    expect(banner?.getAttribute('data-skew')).toBe('newer')
+    expect(banner?.getAttribute('data-skew')).toBe('older')
     expect(banner?.getAttribute('data-theme')).toBe('dark')
     expect(
       drawnTree(banner as SkewElement).some((node) => node.textContent === SKEW_HEADLINES.reduced),

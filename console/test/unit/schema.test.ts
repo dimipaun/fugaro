@@ -256,6 +256,20 @@ function label(path: readonly (string | number)[]): string {
 }
 
 /** refusalFor is the refusal of a document that must be refused. */
+/**
+ * ignoring asserts the decoder's rule for a key it does not know (the owner's
+ * ruling of 2026-10-30): the document with the key added decodes, and to
+ * exactly the value the document without it decodes to -- so the key is
+ * neither a refusal nor carried into anything a screen could draw.
+ */
+function ignoring(original: unknown, withKey: unknown, decode: (raw: unknown) => { ok: boolean; value?: unknown }): void {
+  const before = decode(original)
+  const after = decode(withKey)
+  expect(before.ok, 'the original decodes').toBe(true)
+  expect(after.ok, 'the document with an unknown key decodes').toBe(true)
+  expect(after.value).toEqual(before.value)
+}
+
 function refusalFor(raw: unknown): { field: string; name: string; because: string } {
   const result = decodeDocument(raw, 'the live feed document')
   if (result.ok) throw new Error('expected a refusal')
@@ -709,15 +723,13 @@ describe('both document shapes decode', () => {
     // which can only see the keys its documents carry.
     expect([...Object.keys(FULL_LIVE_RUN)].sort()).toEqual([...RUN_KEYS].sort())
     expect([...Object.keys(FULL_FINISHED_RUN)].sort()).toEqual([...FINISHED_KEYS].sort())
-    // And the lists are closed like every other shape here: a key neither struct
-    // writes is a refusal on each of them, not a row with a field nobody read.
-    for (const [list, path] of [
-      ['runs', ['runs', 0, 'rogue']],
-      ['finished', ['finished', 0, 'rogue']],
+    // And a key neither struct writes -- a field a newer CLI added -- is
+    // ignored on each of them: the row decodes as it would without it.
+    for (const path of [
+      ['runs', 0, 'rogue'],
+      ['finished', 0, 'rogue'],
     ] as const) {
-      const refusal = refusalFor(patched(LIVE_REAL, path, 1))
-      expect(refusal.name, list).toBe('unknown-key')
-      expect(refusal.field, list).toBe(`${list}[0].rogue`)
+      ignoring(LIVE_REAL, patched(LIVE_REAL, path, 1), (raw) => decodeDocument(raw))
     }
   })
 
@@ -748,11 +760,9 @@ describe('both document shapes decode', () => {
       expect(RECORD_KEYS, always).toContain(always)
       expect(Object.keys(FULL_ROW), always).toContain(always)
     }
-    // And a key no version of `Row` writes is still a refusal: the shape is
-    // closed, so a CLI the console does not understand is skew, not a list.
-    const refusal = refusalFor(patched(DEGRADED_REAL, ['runs', 0, 'rogue'], 1))
-    expect(refusal.name).toBe('unknown-key')
-    expect(refusal.field).toBe('runs[0].rogue')
+    // And a key no version of `Row` writes yet -- a field a newer CLI added --
+    // is ignored, and the row decodes as it would without it.
+    ignoring(DEGRADED_REAL, patched(DEGRADED_REAL, ['runs', 0, 'rogue'], 1), (raw) => decodeDocument(raw))
   })
 
   it("lists every key of `JSONRepo`, and refuses the two a total carries alone", () => {
@@ -786,9 +796,8 @@ describe('both document shapes decode', () => {
       // from `total`, where they are accepted (read as neither yet, which is
       // what `TotalsView` says) rather than refused.
       expect(Object.keys(first.total ?? {}), notARepository).toContain(notARepository)
-      const refusal = refusalFor(patched(first, ['repos', 0, notARepository], 1))
-      expect(refusal.name, notARepository).toBe('unknown-key')
-      expect(refusal.field, notARepository).toBe(`repos[0].${notARepository}`)
+      // On a repository they are keys the console does not read, and ignored.
+      ignoring(first, patched(first, ['repos', 0, notARepository], 1), (raw) => decodeDocument(raw))
     }
     // And the entry the fixture does carry still decodes, key by key: the list
     // is what the struct writes, not merely what the test asserts.
@@ -917,38 +926,62 @@ describe('an unknown shape yields the skew state', () => {
     }
   })
 
-  it('refuses a rogue key by name, and sanitizes the name it draws', () => {
-    // The plan's red step in this file: a field the console does not know is a
-    // refusal, not a document with a field nobody read. The second half is this
-    // module's own rule -- an unknown key is *text a document chose*, and it
-    // ends up in a banner, so it goes through the sanitizer like any other.
-    const rogue = refusalFor(patched(first, ['rogue'], 1))
-    expect(rogue.name).toBe('unknown-key')
-    expect(rogue.field).toBe('rogue')
-    expect(rogue.because).toContain('rogue')
-
-    const nested = refusalFor(patched(first, ['connection', 'rogue'], 1))
-    expect(nested.name).toBe('unknown-key')
-    expect(nested.field).toBe('connection.rogue')
-
-    // A key shaped like a credential is neutralised before it can be drawn, and
-    // a key no class admits is not drawn at all.
+  it('ignores a key it does not know, at every level, rather than refusing the document', () => {
+    // The owner's ruling of 2026-10-30, red first: these documents carry the
+    // kind of fields a newer CLI adds (CLI 0.13/0.14-style rigor, governance,
+    // compute, authorship, A/B settings and pairing keys). Each decodes to
+    // exactly what the document without them decodes to -- nothing a screen
+    // could draw, sanitize or sum -- and the CLI's rule that a field's meaning
+    // never changes (a re-meant field is a renamed one) is what makes ignoring
+    // them safe.
     const credential = ['gh', 'p_', 'a'.repeat(36)].join('')
-    const hostile = refusalFor(patched(first, [credential], 1))
-    expect(hostile.field).not.toContain(credential)
-    expect(hostile.because).not.toContain(credential)
-    const unprintable = refusalFor(
-      patched(first, ['x'.repeat(2000)], 1),
-    )
-    expect(unprintable.field).toBe('a key the console will not draw')
+    const additions: readonly (readonly (string | number)[])[] = [
+      ['rogue'],
+      ['governance'],
+      ['pair'],
+      ['policy_version'],
+      [credential],
+      ['x'.repeat(2000)],
+      ['connection', 'rogue'],
+      ['total', 'compute_usd'],
+      ['total', 'leased'],
+      ['total', 'burn', 'window_s'],
+      ['repos', 0, 'leased'],
+      ['repos', 0, 'author'],
+      ['runs', 0, 'rigor_mode'],
+      ['runs', 0, 'ab'],
+      ['runs', 0, 'settings'],
+      ['runs', 0, 'author'],
+      ['runs', 0, 'governance'],
+    ]
+    for (const path of additions) {
+      ignoring(first, patched(first, path, { added: 'by a newer CLI', usd: 1 }), (raw) => decodeDocument(raw))
+    }
+    const all = additions.reduce<JSONDoc>((doc, path) => patched(doc, path, 1), first)
+    ignoring(first, all, (raw) => decodeDocument(raw))
+    // A key the console does not know never reaches the value: the decoded
+    // document carries none of them, and none of the hostile names.
+    expect(JSON.stringify(decoded(all))).not.toContain(credential)
+    expect(JSON.stringify(decoded(all))).not.toContain('by a newer CLI')
+  })
+
+  it('still refuses a removed field and a retyped one, which is what an additive rule cannot cover', () => {
+    const removed = clone(first) as Record<string, unknown>
+    delete removed.connection
+    expect(refusalFor(removed)).toMatchObject({ name: 'missing', field: 'connection' })
+    expect(refusalFor(patched(first, ['runs', 0, 'title'], 7))).toMatchObject({
+      name: 'not-a-string',
+      field: 'runs[0].title',
+    })
+    expect(refusalFor(patched(first, ['repos'], {}))).toMatchObject({ name: 'not-an-array', field: 'repos' })
   })
 
   it('says what it could not read, in the console`s own words', () => {
-    const result = decodeDocument(patched(first, ['rogue'], 1), 'the live feed document')
+    const result = decodeDocument(patched(first, ['now'], 1), 'the live feed document')
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.skew.because).toBe(
-      'the live feed document is not one the console reads: rogue is unknown-key',
+      'the live feed document is not one the console reads: now is not-a-string',
     )
     // And never the document itself: a skew banner that echoed a hostile
     // document would put it on screen, which is the failure this whole layer
@@ -1067,15 +1100,13 @@ describe('a document missing a field the screens read fails decoding by name', (
       expect(refusal.field, `${field} = ${String(value)}`).toBe(field)
     }
 
-    // And reading the key did not open the shape: a key no shape here has is
-    // still an unknown-key refusal beside it.
-    for (const [path, field] of [
-      [['total', 'leased'], 'total.leased'],
-      [['repos', 0, 'leased'], 'repos[0].leased'],
+    // And a near-miss name is not read as the key: `leased` is a key no shape
+    // here has, so it is ignored, and `leased_usd` stays what the document said.
+    for (const path of [
+      ['total', 'leased'],
+      ['repos', 0, 'leased'],
     ] as const) {
-      const refusal = refusalFor(patched(first, path, 1))
-      expect(refusal.name, field).toBe('unknown-key')
-      expect(refusal.field, field).toBe(field)
+      ignoring(first, patched(first, path, 1), (raw) => decodeDocument(raw))
     }
   })
 
@@ -1551,12 +1582,14 @@ describe('the plan status document (plan GV2.1)', () => {
     for (const [tags, keys, what] of pairs) {
       expect(tags.map((tag) => tag.key), what).toEqual([...keys])
     }
-    // ...and the refusal itself, one step past the list: a key no struct of the
-    // read writes is refused by name rather than read as nothing.
-    const rogue = patched(PLAN_STATUS, ['plans', 0, 'nodes', 0, 'colour'], 'red')
-    expect(planRefusal(rogue).name).toBe('unknown-key')
-    expect(planRefusal(rogue).field).toBe('plans[0].nodes[0].colour')
-    expect(planRefusal(patched(PLAN_STATUS, ['download'], 'https://example.invalid/x')).field).toBe('download')
+    // ...and one step past the list: a key no struct of the read writes yet is
+    // a field a newer CLI added, and it is ignored rather than refused.
+    for (const [path, value] of [
+      [['plans', 0, 'nodes', 0, 'colour'], 'red'],
+      [['download'], 'https://example.invalid/x'],
+    ] as const) {
+      ignoring(PLAN_STATUS, patched(PLAN_STATUS, path, value), (raw) => decodePlanStatus(raw))
+    }
   })
 
   it('refuses a feed document, and the feed refuses this one', () => {
@@ -1565,13 +1598,13 @@ describe('the plan status document (plan GV2.1)', () => {
     // and the feed's own document is refused here for the keys it lacks. A
     // screen that read one as the other would draw an empty graph over a live
     // feed, or an empty feed over a graph.
-    // The feed's own document is refused by this door for the key it carries
-    // that no struct of the read writes -- the two shapes share no key at all,
-    // so the very first one is already a refusal.
+    // The feed's own document is refused by this door for a key the plan
+    // document must carry and the feed does not -- the two shapes share no key
+    // at all.
     expect(decodeDocument(PLAN_STATUS).ok).toBe(false)
     const feed = decodePlanStatus(first)
     expect(feed.ok).toBe(false)
-    if (!feed.ok) expect(feed.skew.refusal.name).toBe('unknown-key')
+    if (!feed.ok) expect(feed.skew.refusal.name).toBe('missing')
     // The plan document's own door takes exactly the fixture, and an object
     // that is not one at all is refused before anything is read from it.
     expect(decodePlanStatus([]).ok).toBe(false)
@@ -1712,18 +1745,16 @@ describe('the coordinator’s stored project view (T1.2)', () => {
     expect(noPullRequest?.view.records[0]?.runs[0]?.filesTruncated).toBe(false)
   })
 
-  it('refuses a key no struct of the read writes, by the wire path it sits at', () => {
-    // The reader's own guard, and the same one the other documents are held to:
-    // a key the console has no field for is refused rather than carried past
-    // it. One at each level, because each shape has its own closed list.
+  it('ignores a key no struct of the read writes, and refuses a missing or retyped one', () => {
+    // The rule the other documents are held to: a key the console has no field
+    // for is a field a newer CLI added, and it is not carried past the decoder.
     const rogue = structuredClone(STORED_VIEW) as Record<string, unknown>
     const repos = rogue.repos as Record<string, unknown>[]
     ;(repos[0] as Record<string, unknown>).colour = 'red'
-    expect(coordinatorRefusal(rogue)).toMatchObject({ name: 'unknown-key', field: 'repos[0].colour' })
-    expect(coordinatorRefusal({ ...STORED_VIEW, download: 'https://example.invalid/x' })).toMatchObject({
-      name: 'unknown-key',
-      field: 'download',
-    })
+    ignoring(STORED_VIEW, rogue, (raw) => decodeCoordinatorStatus(raw))
+    ignoring(STORED_VIEW, { ...STORED_VIEW, download: 'https://example.invalid/x' }, (raw) =>
+      decodeCoordinatorStatus(raw),
+    )
 
     // A key the document must carry is refused by name rather than read as
     // nothing, and a value of the wrong type is refused by the field it is at.
@@ -1738,13 +1769,12 @@ describe('the coordinator’s stored project view (T1.2)', () => {
     expect(coordinatorRefusal(wrongType)).toMatchObject({ name: 'not-an-array', field: 'repos[0].view.records' })
 
     // An object that is not one at all is refused before anything is read from
-    // it, and the live feed's document is refused by this door for the very
-    // first key it carries: the two shapes share no key, so neither admits the
-    // other's.
+    // it, and the live feed's document is refused by this door for the key it
+    // lacks: the two shapes share no key, so neither admits the other's.
     expect(decodeCoordinatorStatus([]).ok).toBe(false)
     const feed = decodeCoordinatorStatus({ conn: { state: 'ok' }, runs: [] })
     expect(feed.ok).toBe(false)
-    if (!feed.ok) expect(feed.skew.refusal.name).toBe('unknown-key')
+    if (!feed.ok) expect(feed.skew.refusal.name).toBe('missing')
   })
 
   it('lists every key of the document and of each object in it, read off the structs', () => {

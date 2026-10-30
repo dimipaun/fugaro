@@ -518,17 +518,31 @@ describe('the launch reply', () => {
     expect(full.projectLayer).toEqual({ sha256: 'a'.repeat(64), generation: 3 })
   })
 
-  it('refuses a reply carrying a key it does not know', () => {
-    // Rule 11: a field the decoder does not know refuses the whole reply rather
-    // than being ignored -- the values here are drawn as the CLI's own facts.
-    const answer = decodeLaunchResult(JSON.stringify({ ...REPLY, invented: 'x' }))
-    expect(answer.ok).toBe(false)
-    expect(reason(answer)).toContain('invented')
-    // Nested as well: the two objects the CLI emits are closed too.
-    expect(decodeLaunchResult(JSON.stringify({ ...REPLY, recipe: { name: 'go', invented: 'x' } })).ok).toBe(false)
-    expect(
-      decodeLaunchResult(JSON.stringify({ ...REPLY, project_layer: { sha256: 'x', invented: 'x' } })).ok,
-    ).toBe(false)
+  it('ignores a key it does not know, at the top and inside the two objects', () => {
+    // The owner's ruling of 2026-10-30, which replaced rule 11's refusal: the
+    // reply arrives after the spend, so refusing it over a field a newer CLI
+    // added would report a launch that happened as one that did not. The value
+    // is built from the named keys alone, so the additions reach nothing.
+    const plain = value(decodeLaunchResult(JSON.stringify({ ...REPLY, recipe: { name: 'go', source: 'repo' } })))
+    const added = value(
+      decodeLaunchResult(
+        JSON.stringify({
+          ...REPLY,
+          invented: 'x',
+          rigor: 'thorough',
+          author: { name: 'someone' },
+          recipe: { name: 'go', source: 'repo', invented: 'x' },
+        }),
+      ),
+    )
+    expect(added).toEqual(plain)
+    expect(JSON.stringify(added)).not.toContain('invented')
+    const layer = value(
+      decodeLaunchResult(JSON.stringify({ ...REPLY, project_layer: { sha256: 'a'.repeat(64), invented: 'x' } })),
+    )
+    expect(layer.projectLayer).toEqual({ sha256: 'a'.repeat(64), generation: null })
+    // A known key of the wrong type is still a refusal.
+    expect(decodeLaunchResult(JSON.stringify({ ...REPLY, recipe: { name: 7, source: 'repo' } })).ok).toBe(false)
   })
 
   it('refuses a reply that is not the reply, rather than drawing part of it', () => {

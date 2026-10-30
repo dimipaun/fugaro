@@ -204,6 +204,12 @@ const chainHook = `#!/bin/sh
 # the repository's own %[1]s (constraint 2).
 fugaro_chain='@FUGARO_CHAIN@'
 fugaro_chain_later='@FUGARO_CHAIN_LATER@'
+# The machine's and the caller's configuration are in place for this one, unlike
+# the trailer step of the stamp itself: a global core.hooksPath is a legitimate
+# way to configure a repository's hooks, and dropping it here would stop a
+# repository's own hooks running (constraint 2). What it costs is that a global
+# or environment core.hooksPath an agent wrote decides the directory this execs
+# — its own code inside its own commit.
 if [ "$fugaro_chain_later" = 1 ]; then
 	fugaro_chain=$(unset GIT_CONFIG_COUNT; git rev-parse --git-path hooks) || fugaro_chain=''
 fi

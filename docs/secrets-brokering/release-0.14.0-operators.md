@@ -6,8 +6,11 @@ PR (`docs/releases/v0.14.0.md`), which is what an operator reads.
 
 This draft carries the **policy v4 lockstep** (decision D477, Bitbucket plan task T2.1 as amended by
 [implementation-plan.md](implementation-plan.md) D493) — the one step that is owed by every
-installation, whether or not it uses Bitbucket. The proxy steps (storing a token with `creds set`,
-`proxy: true`, `fugaro update --repo` per proxied repository) are B1.13's and are not in this draft.
+installation, whether or not it uses Bitbucket.
+
+Bitbucket brokering (the proxy) arrives in 0.15.0: the owner moved that chain there on 2026-10-30. In
+0.14.0 a Bitbucket run's job still holds its own token and reads it as it always has, so
+`proxy: true` in the published block changes nothing such a run does.
 
 ### For operators
 
@@ -18,8 +21,9 @@ installation, whether or not it uses Bitbucket. The proxy steps (storing a token
    and a 0.13.0-or-older CLI refuses a launch against a version-4 node. A job image built from
    0.13.0 or older is not caught at launch: the run starts and its runner halts at bootstrap with
    "refresh the runner image". Refresh each repository's image: `fugaro image refresh` in the
-   checkout of each onboarded repository (or `fugaro image build --repo <owner/name> --workflow
-   <name>`).
+   checkout of each onboarded repository (or `fugaro update --base base`). `fugaro image build`
+   alone is not enough: it builds on the base image the local config already pins, whose runner is
+   still the older release's.
 3. **Republish the project policy, per installation**, in your own terminal outside any repository
    checkout. The order is the lockstep, because `fugaro project policy publish` refuses to
    overwrite a node written in another version:
