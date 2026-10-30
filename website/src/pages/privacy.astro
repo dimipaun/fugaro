@@ -174,10 +174,10 @@ const repo = site.facts.repository
               you accept it none of them is asked anything, on any page.
             </p>
             <p>
-              With that consent, the trackers run their own scripts on this page, and this site
-              hands them the page's address built from the origin and the path, with no query
-              string; a script running here can read the address you arrived with, campaign
-              parameters included, though nothing this site sends carries them. They set
+              With that consent, the trackers run their own scripts on the campaign page, and this
+              site hands them the page's address built from the origin and the path, with no
+              query string; a script running there can read the address you arrived with,
+              campaign parameters included, though nothing this site sends carries them. They set
               identifiers of their own in this browser, and Calendly's widget is drawn on the
               page, with Calendly's own cookies.
             </p>
@@ -186,9 +186,9 @@ const repo = site.facts.repository
               <code>_fbp</code>, <code>_fbc</code>, <code>li_sugr</code>,{' '}
               <code>AnalyticsSyncHistory</code>, <code>UserMatchHistory</code>,{' '}
               <code>bcookie</code>, <code>lidc</code> and <code>li_gc</code>. A campaign page's
-              banner is gone once it has been answered, so this page is where the answer is taken
-              back. A script already running keeps running until you reload, and a cookie a vendor
-              set on its own domain is the vendor's to remove.
+              banner is gone once it has been answered, so the privacy page is where the answer is
+              taken back. A script already running keeps running until you reload, and a cookie a
+              vendor set on its own domain is the vendor's to remove.
             </p>
           </div>
 
@@ -218,6 +218,31 @@ const repo = site.facts.repository
               sent anywhere. Should measurement ever be switched on, this page changes at the same
               time, and the site asks you first.
             </p>
+          </div>
+
+          <div class="card privacy-card">
+            <h3>Analytics</h3>
+            <p>
+              This site has no analytics at all: nothing counts your visit, and no analytics
+              script, cookie or identifier is involved in the page you are reading. There is no
+              consent to give here, and nothing to withdraw.
+            </p>
+          </div>
+
+          <div class="card privacy-card">
+            <h3>What this site does not do</h3>
+            <ul>
+              <li>It sets no cookie, and it loads nothing that could set one.</li>
+              <li>
+                It loads nothing from another origin — no font, no script, no image, no embedded
+                player.
+              </li>
+              <li>It sells nothing, because it collects nothing to sell.</li>
+              <li>
+                It keeps no log of its own. The host's request logs are the host's, and this
+                repository does not control them.
+              </li>
+            </ul>
           </div>
         </>
       )}

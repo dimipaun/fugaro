@@ -82,6 +82,7 @@ import {
   walk,
 } from './lib/html.mjs'
 import { copyRepository } from './lib/build.mjs'
+import { controlTargetFailures } from './lib/controls.mjs'
 import { loadLanding } from '../src/lib/landing.mjs'
 
 // ---- the facts of the gate ---------------------------------------------------------------
@@ -1635,18 +1636,36 @@ test('the banner is labelled, its two choices are equal, and it is reachable by 
     assert.ok(skip >= 0 && at > skip && main > at, `${page.rel}: the banner is not between the skip link and <main>, so the tab order reaches the page content first`)
   }
 
-  // And the pair's own rules, read once: one rule draws the box both choices share, and the two
-  // modifiers that tell the primary from the secondary set paint and nothing else. That is the
-  // whole of the difference the owner asked for (the feedback of 2026-10-30: a clean pair, the
-  // accept primary and the decline secondary, both the same size and both always drawn).
+  // And the pair's own rules, read once: one unconditional rule draws the box both choices
+  // share — the target height and the padding — and the two modifiers that tell the primary
+  // from the secondary set paint and nothing else. That is the whole of the difference the
+  // owner asked for (the feedback of 2026-10-30: a clean pair, the accept primary and the
+  // decline secondary, both the same size and both always drawn). The box is looked for by
+  // what it declares, not by a class name alone: `:active` and the hover rules are the pair's
+  // too, and a rule that only scales or repaints on a press is not the box.
   const page = SHIPPED.find((p) => p.html.includes('consent-banner__button'))
   assert.ok(page, 'no built page carries the consent pair for its rules to be read from')
-  const pair = cssRules(pageCSS(page)).filter(
+  const css = pageCSS(page)
+  const pair = cssRules(css).filter(
     (rule) => typeof rule.selector === 'string' && rule.selector.includes('.consent-banner__button'),
   )
+  const box = pair.filter(
+    (rule) =>
+      rule.conditions.length === 0 &&
+      !rule.selector.includes('--') &&
+      cssDeclarations(rule.body).some(([property]) => property === 'min-height') &&
+      cssDeclarations(rule.body).some(([property]) => property === 'padding'),
+  )
   assert.ok(
-    pair.some((rule) => !rule.selector.includes('--')),
-    `${page.rel}: no rule draws the pair's shared box, so nothing gives the two consent choices the same height and the same padding`,
+    box.length > 0,
+    `${page.rel}: no rule in force at every width declares both the target height and the padding of the consent pair, so nothing gives the two choices the same box — and no other gate measures the banner's buttons against the target size`,
+  )
+  // The target size itself, read by the same reading the hero's and the caps page's controls
+  // are held to (`lib/controls.mjs`), because this is the only place it is measured at all.
+  assert.deepEqual(
+    controlTargetFailures(css, [['consent-banner__button', "the consent pair's choices"]]),
+    [],
+    `${page.rel}: a consent choice is not the 44 px target the owner's brief measures every control against`,
   )
   const PAINT = new Set(['background', 'background-color', 'color', 'border-color', 'box-shadow'])
   for (const rule of pair.filter((one) => one.selector.includes('.consent-banner__button--'))) {
