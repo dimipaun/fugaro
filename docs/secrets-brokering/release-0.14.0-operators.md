@@ -6,8 +6,11 @@ PR (`docs/releases/v0.14.0.md`), which is what an operator reads.
 
 This draft carries the **policy v4 lockstep** (decision D477, Bitbucket plan task T2.1 as amended by
 [implementation-plan.md](implementation-plan.md) D493) — the one step that is owed by every
-installation, whether or not it uses Bitbucket. The proxy steps (storing a token with `creds set`,
-`proxy: true`, `fugaro update --repo` per proxied repository) are B1.13's and are not in this draft.
+installation, whether or not it uses Bitbucket.
+
+Bitbucket brokering (the proxy) arrives in 0.15.0: the owner moved that chain there on 2026-10-30. In
+0.14.0 a Bitbucket run's job still holds its own token and reads it as it always has, so
+`proxy: true` in the published block changes nothing such a run does.
 
 ### For operators
 

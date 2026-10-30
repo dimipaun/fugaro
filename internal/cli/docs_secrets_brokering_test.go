@@ -24,6 +24,10 @@ const (
 	secretReadersDoc       = "docs/secrets-brokering/secret-readers.md"
 	secretsBrokeringPlan   = "docs/secrets-brokering/implementation-plan.md"
 	secretsBrokeringReadme = "docs/secrets-brokering/README.md"
+	// release0140OperatorsDoc is the 0.14.0 operator-steps draft (task B1.13
+	// part one), which the 0.14.0 release PR copies into that release's
+	// "### For operators" section.
+	release0140OperatorsDoc = "docs/secrets-brokering/release-0.14.0-operators.md"
 )
 
 // secretReaderColumns is the audit table's header, exactly: B0.2 parses these
@@ -192,6 +196,45 @@ func TestDocsSecretsBrokeringReadmeStatus(t *testing.T) {
 	const want = "The owner answered D490–D506 on 2026-10-27"
 	if !strings.Contains(status, want) {
 		t.Errorf("%s no longer says %q: the owner's answers of that date are what every slice in this directory is approved against", secretsBrokeringReadme, want)
+	}
+}
+
+// TestDocsRelease0140OperatorsSayTheBitbucketProxyIs0150: the draft an operator
+// reads for 0.14.0 says only what 0.14.0 ships. The owner moved the Bitbucket
+// proxy chain (B1.5-B1.7, B1.9, B1.10, B1.13) to 0.15.0 on 2026-10-30, so in
+// 0.14.0 a Bitbucket run's job still holds its own token and `proxy: true` in
+// the published block changes nothing a run does, and the draft has to say so:
+// an operator who reads the proxy steps as this release's keeps waiting for a
+// behaviour that is not here.
+func TestDocsRelease0140OperatorsSayTheBitbucketProxyIs0150(t *testing.T) {
+	draft := flattenDoc(readDoc(t, release0140OperatorsDoc))
+	for _, want := range []string{
+		// The step every installation owes, which the move does not touch.
+		"policy v4 lockstep",
+		"Bitbucket brokering (the proxy) arrives in 0.15.0",
+		"a Bitbucket run's job still holds its own token",
+		"`proxy: true` in the published block changes nothing such a run does",
+	} {
+		if !strings.Contains(draft, want) {
+			t.Errorf("%s does not say %q", release0140OperatorsDoc, want)
+		}
+	}
+}
+
+// TestDocsSecretsBrokeringReadmePlacesTheBitbucketProxyIn0150: the README's
+// release table is where a reader learns which release ships what, and its
+// 0.14.0 row promised the Bitbucket proxy. The chain moved to 0.15.0 on
+// 2026-10-30, so the row names what 0.14.0 actually ships (the data-only and
+// inert pieces) and 0.15.0 is the row that names the proxy.
+func TestDocsSecretsBrokeringReadmePlacesTheBitbucketProxyIn0150(t *testing.T) {
+	readme := flattenDoc(readDoc(t, secretsBrokeringReadme))
+	for _, want := range []string{
+		"the Bitbucket proxy itself arrives in 0.15.0, so no proxied run",
+		"| **0.15.0** | The Bitbucket proxy for per-repository jobs of opted-in installations",
+	} {
+		if !strings.Contains(readme, want) {
+			t.Errorf("%s does not say %q", secretsBrokeringReadme, want)
+		}
 	}
 }
 
