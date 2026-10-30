@@ -41,15 +41,19 @@ RUN mkdir -p /home/fugaro/.config/mise \
 {{- end}}
 
 WORKDIR /work/repo
-# The root mise config, the workflow's key files and the manifest the warm-up
-# was chosen from are all of the repository that the toolchains and the
-# dependency warm-up read, so they are the whole of this layer: the clone
-# keeps no worktree, and only those files are checked out, at the commit the
-# source layer below is reset to (design §7.2, D620). What sits above here is
-# the dependency install and no other file of the repository.
+# The root mise config, the workflow's key files, the registry configuration
+# and the manifests of the workspace are all of the repository that the
+# toolchains and the dependency warm-up read, so they are the whole of this
+# layer: the clone keeps no worktree, and only those files are checked out, at
+# the commit the source layer below is reset to. Key files before source is
+# D620 (docs/forge-authorship-images/reconciliation.md); §7.2 of the design is
+# the derived image's shape, and does not record this order. What sits above
+# here is the dependency install and no other file of the repository.
 #
 # Each path is checked out as the path it is, not as a pattern, so a name
-# holding a glob character is still the one file.
+# holding a glob character is still the one file, and only a file: a path that
+# is a directory at the commit is skipped, so a directory never drags its
+# whole subtree into this layer.
 #
 # A push to the branch after the render step must not change what is baked
 # in, so the commit is FUGARO_COMMIT, which is fetched by itself when it is
@@ -70,7 +74,7 @@ RUN --mount=type=bind,target=/src \
       || { echo "commit $commit is no longer reachable: the branch was force-pushed; re-run the build" >&2; exit 1; }; } \
 {{- if .ShellKeyFiles}}
  && for f in {{.ShellKeyFiles}}; do \
-      git cat-file -e "$commit:$f" 2>/dev/null || continue; \
+      [ "$(git cat-file -t "$commit:$f" 2>/dev/null)" = blob ] || continue; \
       git checkout --quiet "$commit" -- ":(literal)$f" || exit 1; \
     done \
 {{- end}}
@@ -95,7 +99,7 @@ RUN{{.SecretMounts}} {{.SecretEnv}}{{.WarmUp}}
 {{- end}}
 
 # The source layer: the rest of the checkout, at the commit the key files
-# were taken from, on top of the dependency install (design §7.2, D620).
+# were taken from, on top of the dependency install (D620).
 # Nothing above reads a remote, since the clone holds the commit's objects,
 # and image.setup comes after this, because a setup step may read any file
 # of the repository.

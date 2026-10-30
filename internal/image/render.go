@@ -6,6 +6,8 @@ import (
 	"bytes"
 	"crypto/sha1"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"maps"
@@ -16,6 +18,7 @@ import (
 	"text/template"
 
 	"github.com/bmatcuk/doublestar/v4"
+	"gopkg.in/yaml.v3"
 
 	"github.com/dimipaun/fugaro/images"
 	"github.com/dimipaun/fugaro/internal/config"
@@ -33,10 +36,11 @@ type RenderInput struct {
 	Version  string         // fugaro version, for the header
 	// KeyFiles are the repository paths the dependency install reads — the
 	// root mise config, its lockfile, the workflow's key files
-	// (imagecheck.KeyFiles) and the manifest the warm-up was chosen from —
-	// which the key-file layer checks out at FUGARO_COMMIT, before the source
-	// layer. Dockerfile fills them in from the checkout; an empty list is a
-	// checkout with nothing to check out early.
+	// (imagecheck.KeyFiles), the manifests the Node install reads and the
+	// registry configuration — which the key-file layer checks out at
+	// FUGARO_COMMIT, before the source layer. Dockerfile fills them in from
+	// the checkout; an empty list is a checkout with nothing to check out
+	// early.
 	KeyFiles []string
 }
 
@@ -133,7 +137,7 @@ func Dockerfile(root string, cfg *config.Config, name, version string) (data []b
 	// mise reads its lockfile when the checkout has one, and it pins what
 	// mise installs: MiseConfigFiles leaves it out (it declares no tool, and
 	// the image config hash covers it separately), so it is added here.
-	if fi, err := os.Lstat(filepath.Join(root, config.MiseLockfile)); err == nil && fi.Mode().IsRegular() {
+	if hasRegular(root, config.MiseLockfile) {
 		in.KeyFiles = append(in.KeyFiles, config.MiseLockfile)
 	}
 	// package.json is what the warm-up was chosen from and what every Node
@@ -145,6 +149,27 @@ func Dockerfile(root string, cfg *config.Config, name, version string) (data []b
 	// above the source layer would otherwise have nothing to read.
 	if in.PM != nil {
 		in.KeyFiles = append(in.KeyFiles, "package.json")
+		// Every package manager's install reads each workspace member's
+		// manifest to link the workspace and to check the lockfile against it,
+		// and pnpm reads the workspace definition itself, so a monorepo's
+		// install above the source layer needs them. No other file of a
+		// workspace member is read.
+		members, err := workspaceManifests(root)
+		if err != nil {
+			return nil, "", fmt.Errorf("workflows.%s: %w", name, err)
+		}
+		in.KeyFiles = append(in.KeyFiles, members...)
+		if hasRegular(root, "pnpm-workspace.yaml") {
+			in.KeyFiles = append(in.KeyFiles, "pnpm-workspace.yaml")
+		}
+	}
+	if (in.PM != nil || in.Mise) && hasRegular(root, ".npmrc") {
+		// npm reads .npmrc for the registry and its credentials, and mise's
+		// npm backend reads it too, so a private dependency or a private
+		// `npm:` tool fails to install without it above the source layer. The
+		// workflow's secret is exported into the step that reads it; the file
+		// holds only the reference to it.
+		in.KeyFiles = append(in.KeyFiles, ".npmrc")
 	}
 	if in.PM != nil && in.PM.Name == "yarn" && in.PM.Berry {
 		// Yarn Berry reads .yarnrc.yml, and it decided the cache mode above.
@@ -159,6 +184,101 @@ func Dockerfile(root string, cfg *config.Config, name, version string) (data []b
 	in.KeyFiles = slices.Compact(in.KeyFiles)
 	data, err = Render(in)
 	return data, "", err
+}
+
+// hasRegular reports whether the checkout has a regular file at rel, the test
+// every optional key file passes: a directory or a symlink is not a key file,
+// and the key-file layer would either skip it or check out the wrong thing.
+func hasRegular(root, rel string) bool {
+	fi, err := os.Lstat(filepath.Join(root, filepath.FromSlash(rel)))
+	return err == nil && fi.Mode().IsRegular()
+}
+
+// workspaceManifests returns the manifest paths of the members a Node
+// workspace declares at its root, as <dir>/package.json: every glob in
+// pnpm-workspace.yaml's packages: list and in package.json's workspaces. A
+// glob is a directory or a manifest path, and one pnpm writes as !glob
+// removes what the globs before it matched.
+func workspaceManifests(root string) ([]string, error) {
+	globs, err := workspaceGlobs(root)
+	if err != nil {
+		return nil, err
+	}
+	keep := map[string]bool{}
+	for _, g := range globs {
+		pattern := strings.TrimPrefix(strings.TrimSuffix(strings.TrimSpace(g), "/"), "!")
+		if pattern == "" {
+			continue
+		}
+		if !strings.HasSuffix(pattern, "package.json") {
+			pattern += "/package.json"
+		}
+		matches, err := doublestar.Glob(os.DirFS(root), pattern, doublestar.WithFilesOnly(), doublestar.WithNoFollow())
+		if err != nil {
+			return nil, fmt.Errorf("workspace %q: %w", g, err)
+		}
+		for _, m := range matches {
+			keep[m] = !strings.HasPrefix(strings.TrimSpace(g), "!")
+		}
+	}
+	var out []string
+	for path, in := range keep {
+		if in {
+			out = append(out, path)
+		}
+	}
+	slices.Sort(out)
+	return out, nil
+}
+
+// workspaceGlobs reads the two places a repository declares its workspace
+// members. pnpm-workspace.yaml is read as YAML and package.json as JSON, as
+// each tool writes them; a workspaces field of a shape neither npm nor Yarn
+// writes contributes nothing rather than failing the render, since neither
+// tool would read it either.
+func workspaceGlobs(root string) ([]string, error) {
+	var globs []string
+	switch data, err := config.ReadRegular(filepath.Join(root, "package.json"), config.MaxCheckoutFile); {
+	case err == nil:
+		var pkg struct {
+			Workspaces json.RawMessage `json:"workspaces"`
+		}
+		if err := json.Unmarshal(data, &pkg); err != nil {
+			return nil, fmt.Errorf("package.json: %w", err)
+		}
+		globs = append(globs, workspacesField(pkg.Workspaces)...)
+	case !errors.Is(err, fs.ErrNotExist):
+		return nil, fmt.Errorf("package.json: %w", err)
+	}
+	switch data, err := config.ReadRegular(filepath.Join(root, "pnpm-workspace.yaml"), config.MaxCheckoutFile); {
+	case err == nil:
+		var doc struct {
+			Packages []string `yaml:"packages"`
+		}
+		if err := yaml.Unmarshal(data, &doc); err != nil {
+			return nil, fmt.Errorf("pnpm-workspace.yaml: %w", err)
+		}
+		globs = append(globs, doc.Packages...)
+	case !errors.Is(err, fs.ErrNotExist):
+		return nil, fmt.Errorf("pnpm-workspace.yaml: %w", err)
+	}
+	return globs, nil
+}
+
+// workspacesField reads package.json's workspaces: npm and Yarn write a list,
+// and npm also writes {"packages": [...]}.
+func workspacesField(raw json.RawMessage) []string {
+	var list []string
+	if err := json.Unmarshal(raw, &list); err == nil {
+		return list
+	}
+	var obj struct {
+		Packages []string `json:"packages"`
+	}
+	if err := json.Unmarshal(raw, &obj); err == nil {
+		return obj.Packages
+	}
+	return nil
 }
 
 // checkoutTree is the imagecheck.Tree of a plain checkout directory, as
