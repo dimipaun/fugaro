@@ -148,8 +148,8 @@ var (
 	// ErrNoKey: there is no key at the item — it is absent, empty, or holds a
 	// value that is not a key.
 	ErrNoKey = errors.New("keychain: no key at the item")
-	// ErrBackend: the OS keychain could not be read.
-	ErrBackend = errors.New("keychain: the OS keychain could not be read")
+	// ErrBackend: the OS keychain could not be used — read, or written.
+	ErrBackend = errors.New("keychain: the OS keychain could not be used")
 )
 
 // noKey is ErrNoKey with the item named and the reason told apart: M5 allows
