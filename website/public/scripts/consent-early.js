@@ -15,18 +15,26 @@
 // drawn, which is right: with scripts off nothing can be loaded from Google either. The key and
 // the "always" flag are its own tag's data attributes, written by the layout from
 // `src/lib/consent-key.mjs`.
+//
+// **A campaign page carries a second key** (G2.3, D401): the page's third-party measurement is
+// asked by the same bar under its own decision, so a visitor who answered the site's question
+// and has not answered the campaign's is still undecided about the bar they are looking at, and
+// the bar has to be in its place from the first frame for that visitor too. The second key is
+// absent from every other page's tag, and a page that carries neither asks nothing.
 ;(function () {
   var tag = document.currentScript
   if (!tag) return
-  var key = tag.getAttribute('data-consent-key')
-  if (!key) return
-  var ask = tag.getAttribute('data-consent-always') === 'true'
-  if (!ask) {
+  function undecided(attribute) {
+    var key = tag.getAttribute(attribute)
+    if (!key) return false
     try {
-      ask = window.localStorage.getItem(key) === null
+      return window.localStorage.getItem(key) === null
     } catch (err) {
-      ask = true
+      return true
     }
   }
+  var keys = ['data-consent-key', 'data-marketing-consent-key']
+  var ask = tag.getAttribute('data-consent-always') === 'true'
+  for (var i = 0; !ask && i < keys.length; i++) ask = undecided(keys[i])
   if (ask) document.documentElement.setAttribute('data-consent-ask', '')
 })()
