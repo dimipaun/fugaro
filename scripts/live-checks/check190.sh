@@ -681,14 +681,18 @@ write_dockerfile() {
   # A throwaway image for a throwaway service: the Go tag matches go.mod's own
   # `go` directive, the module is made in the image (the proxy is standard
   # library only and imports nothing outside it), and the binary is the
-  # entrypoint. Nothing here is part of the repository's own images.
+  # entrypoint. Nothing here is part of the repository's own images. The binary
+  # is NOT /chk190: the deploy mounts the token's volume at the directory
+  # /chk190 (--set-secrets=/chk190/token), and a volume over the entrypoint's
+  # own path is a container that never starts — the revision is never ready and
+  # the deploy reports failure after creating the service.
   cat >"$SCRATCH/build/Dockerfile" <<'DOCKER_EOF'
 FROM golang:1.27-alpine
 WORKDIR /src
 COPY main.go ./
-RUN go mod init chk190 && CGO_ENABLED=0 go build -o /chk190 .
+RUN go mod init chk190 && CGO_ENABLED=0 go build -o /usr/local/bin/chk190 .
 ENV PORT=8080
-ENTRYPOINT ["/chk190"]
+ENTRYPOINT ["/usr/local/bin/chk190"]
 DOCKER_EOF
 }
 
@@ -709,6 +713,40 @@ images: ["${IMG:?}"]
 options:
   logging: CLOUD_LOGGING_ONLY
 CONFIG_EOF
+}
+
+# conditions_of KIND NAME: a Cloud Run service's or revision's status
+# conditions (type, status, reason, message), on one line, redacted. A deploy
+# that fails after the service exists says why only here: gcloud's own error is
+# often just "revision is not ready".
+conditions_of() {
+  gcloud run "$1" describe "$2" --project="${P:?}" --region="${L:?}" --format='yaml(status.conditions)' 2>/dev/null \
+    | grep -v -e 'lastTransitionTime:' -e '^status:' -e '^ *conditions:' \
+    | tr -d '\r' | tr '\n' ' ' | tr -s ' ' | redact | cut -c1-600 || true
+}
+
+# deploy_conditions: the service's conditions and its latest revision's, for the
+# deploy row. Reads only; a read that fails says so rather than ending the run.
+deploy_conditions() {
+  local svc rev revc
+  svc=$(conditions_of services "${SVC:?}")
+  rev=$(gcloud run services describe "${SVC:?}" --project="${P:?}" --region="${L:?}" \
+    --format='value(status.latestCreatedRevisionName)' 2>/dev/null | tr -d '\r' | head -n 1 || true)
+  if [ -n "$rev" ]; then
+    revc=$(conditions_of revisions "$rev")
+  fi
+  # The revision's own startup lines (the container's stderr), newest first: the
+  # condition says the container did not start, its log says why. The proxy
+  # logs counts and sizes only, and the lines are redacted anyway.
+  local logs=""
+  if [ -n "$rev" ]; then
+    logs=$(gcloud logging read \
+      "resource.type=\"cloud_run_revision\" AND resource.labels.revision_name=\"${rev}\"" \
+      --project="${P:?}" --freshness=30m --limit=6 --format='value(textPayload)' 2>/dev/null \
+      | grep -v '^$' | tr -d '\r' | tr '\n' ' ' | tr -s ' ' | redact | cut -c1-500 || true)
+  fi
+  printf 'service conditions: %s; revision %s conditions: %s; revision log: %s' \
+    "${svc:-unreadable}" "${rev:-unreadable}" "${revc:-unreadable}" "${logs:-none read}"
 }
 
 step_build_deploy() {
@@ -875,16 +913,23 @@ step_build_deploy() {
   # the service is this check's is on disk BEFORE the deploy starts, and a
   # deploy that FAILED takes it back.
   : >"$SERVICE_MINE"
-  if ! gcloud run deploy "${SVC:?}" "${DEPLOY_FLAGS[@]}" --quiet >&2; then
+  # The deploy's stderr is kept so the row can carry what gcloud said, and is
+  # replayed to the terminal afterwards so nothing the owner used to see is lost.
+  local deploy_rc=0
+  gcloud run deploy "${SVC:?}" "${DEPLOY_FLAGS[@]}" --quiet 2>"$SCRATCH/deploy.err" >&2 || deploy_rc=$?
+  cat "$SCRATCH/deploy.err" >&2 || true
+  if [ "$deploy_rc" != 0 ]; then
     local deployed
     deployed=$(svc_state)
     if [ "$deployed" = there ]; then
-      stop "the deploy reported failure, but ${SVC} IS there now, so it is this check's: the record says so and this run's Restore deletes it, with the image, the repository and the secret"
+      fact "deploy" FAIL "gcloud run deploy exited ${deploy_rc} after creating ${SVC}: $(git_error_excerpt deploy). $(deploy_conditions). Likely causes, most likely first: the container did not start (a volume mounted over the entrypoint's path, or the token file not readable at CHK190_TOKEN_FILE), so the revision never became ready; the runtime account cannot read the secret; or the container did not listen on \$PORT"
+      stop "the deploy reported failure, but ${SVC} IS there now, so it is this check's: the record says so and this run's Restore deletes it, with the image, the repository and the secret. The block's deploy row carries what gcloud and the service's conditions said"
     fi
     if [ "$deployed" = unreadable ]; then
       stop "the deploy reported failure and whether ${SVC} is there now cannot be read (the list failed), so the record of it is KEPT: a deploy that reported failure may still be serving and being billed, and the record is what makes this run's Restore delete it. Check 'gcloud run services list --project=${P} --region=${L} --filter=metadata.name=${SVC}' by hand; if the service is there, delete it yourself. Nothing else ran"
     fi
     rm -f "$SERVICE_MINE" || true
+    fact "deploy" FAIL "gcloud run deploy exited ${deploy_rc} and ${SVC} is not there: $(git_error_excerpt deploy)"
     stop "the deploy failed and ${SVC} is not there, so nothing of this check's is running: the record is removed again, and the image, the repository, the staging bucket and the secret container are deleted by this run's Restore"
   fi
   local url_err=$SCRATCH/url.err
@@ -896,6 +941,7 @@ step_build_deploy() {
   local cfg
   cfg=$(gcloud run services describe "${SVC:?}" --project="${P:?}" --region="${L:?}" \
     --format='value(spec.template.spec.containers[0].image,spec.template.spec.timeoutSeconds)' 2>/dev/null | tr '\n' ' ' || true)
+  fact "deploy" PASS "${SVC} deployed in ${L} from ${IMG}"
   fact "service-config" PASS "image ${cfg:-$IMG}; --timeout=3600 --min-instances=0 --max-instances=1; the token is mounted as the file /chk190/token and is in no environment variable; URL https://${HOST}"
 
   # The IAM assertion the plan requires BEFORE any request is sent: the
@@ -1084,6 +1130,7 @@ print_plan() {
   say "  [network, writes] gcloud builds submit --project=${P} --config=${SCRATCH}/cloudbuild.yaml --service-account=<build account> --gcs-source-staging-dir=${STAGING_PREFIX} --async ${SCRATCH}/build (the config: one docker build of ${IMG}, images: [${IMG}], options.logging CLOUD_LOGGING_ONLY)"
   say "  [network] gcloud builds describe <build id> --project=${P}, every 10 s until the build ends (its status, not its log: no Cloud Logging read is needed)"
   say "  [network, writes] gcloud run deploy ${SVC} ${DEPLOY_FLAGS[*]}"
+  say "  [network, a failed deploy only] gcloud run services describe ${SVC}, gcloud run revisions describe <its latest revision> and gcloud logging read of that revision's lines (reads, for the deploy row)"
   say "  [network] the probes: identity-token requests with curl to the service's own /chk190/stats and /chk190/health, and git clone (full and blobless), git push (small and above ${BIG_MIB} MiB on HTTP/1.1) and the slow push, all through the proxy to bitbucket.org"
   say "  [network, writes] one branch on $(repo_name): chk190/${NAME}, and its -slow sibling if that push ever completes"
   say "and its Restore (also from the exit trap) would run:"
@@ -1127,7 +1174,7 @@ main() {
 # FAIL — not reached, and any other recorded key follows, in the order the run
 # recorded it. That is what makes the block safe to diff between two runs.
 BLOCK_KEYS=(fugaro-version project-region repo token-file deploy-iam-only proxy-source baseline scratch
-  staging-bucket grants build service-config iam-policy unauthenticated-request clone-full clone-blobless push-small
+  staging-bucket grants build deploy service-config iam-policy unauthenticated-request clone-full clone-blobless push-small
   push-big-http1 cold-start timeout-3600 branch-deleted bucket-deleted restore scratch-removed)
 
 print_block() { # print_block FACTS STATUS — always on the owner's own stdout
