@@ -2,9 +2,7 @@
 
 **Status: plan only; nothing is implemented; no task approved.** The owner answered D720–D737 on
 2026-10-30, every one as recommended except **D730** (fully automatic `/jobmax` launches, not the
-recommendation; ruled the same day with guardrails and a per-project opt-in, off by default). The answers approve no task. Still open: the
-crash-report processor's name (**O4**; the console tasks stay draft until then), how a level meets a recipe without its step (**O7**, gates L3.1), where a teammate's console and phone read the owner's crash-report switch (**O9**, gates slice T), Hotfix's default levels (**O10**), and counsel's review
-of Terms §7.3 and the EU opt-out question (**O1**, **O2**).
+recommendation; ruled the same day with guardrails and a per-project opt-in, off by default). The answers approve no task. The open items O7, O9, O10 and O11 were ruled the same day (reconciliation §4). Still open: the crash-report processor's name (**O4**; the console tasks stay draft until then) and counsel's review of Terms §7.3 and the EU opt-out question (**O1**, **O2**).
 
 **Spec owner:** Dimi Paun. **Spec received:** 2026-10-30. **Reconciled against** `origin/main` at
 `24fe1de60` and the 11 PRs open on 2026-10-30, re-checked at `8301c23c8` against the 12 then open.
