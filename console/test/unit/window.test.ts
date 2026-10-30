@@ -901,7 +901,7 @@ describe('runVersionHandshake', () => {
       readVersion: async () => ({ ok: true, stdout: '0.9.0\n' }),
     })
     expect(compatibility.mode).toBe('reduced')
-    expect(compatibility.skew).toBe('newer')
+    expect(compatibility.skew).toBe('older')
     expect(compatibility.cliVersion).toBe('0.9.0')
     expect(hidesView(compatibility, 'spend')).toBe(true)
   })
