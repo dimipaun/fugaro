@@ -161,6 +161,7 @@ func TestScopesMatchDesignDoc(t *testing.T) {
 		"workflows.*.image.skip_build_scripts":  InProfile | InRepo,
 		"workflows.*.checkout":                  InProfile | InRepo,
 		"workflows.*.image.tools":               InProfile | InRepo,
+		"workflows.*.image.key_files":           InRepo,
 		"workflows.*.dockerfile":                InRepo,
 		"workflows.*.commands.build":            InProfile | InRepo,
 		"workflows.*.commands.test":             InProfile | InRepo,

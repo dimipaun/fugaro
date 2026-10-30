@@ -158,6 +158,39 @@ func validateImage(p string, w Workflow) []Problem {
 	return ps
 }
 
+// keyFilePathRules are image.key_files' rules, in the order validateKeyFiles
+// reports them, so the first failure is the one a person reads, each with the
+// message that names it. ValidKeyFilePath asks the same list, so a path that
+// comes from somewhere else — a patch pnpm's manifest names, which the build
+// checks out and keys the image on exactly as a hand-written entry — is
+// judged by one statement of the rules and not a second copy of them.
+var keyFilePathRules = []struct {
+	ok  func(f string) bool
+	msg string
+}{
+	{func(f string) bool { return strings.TrimSpace(f) != "" }, "must not be empty"},
+	{utf8.ValidString, "must be text"},
+	{func(f string) bool { return utf8.RuneCountInString(f) <= maxImageKeyFilePath },
+		fmt.Sprintf("must be at most %d characters", maxImageKeyFilePath)},
+	{imageKeyFileRE.MatchString, "must be a repository path holding no glob (* ? [ ] { }), no backslash and no control character"},
+	{func(f string) bool { return !strings.HasPrefix(f, "/") }, "must be a relative path inside the repository, not an absolute one"},
+	{func(f string) bool { return !slices.Contains(strings.Split(f, "/"), "..") }, "must not hold a .. segment: the path is checked out inside the repository it belongs to"},
+	{func(f string) bool { return path.Clean(f) == f }, "must be a clean path: no trailing slash, no // and no . segment"},
+	{func(f string) bool { return f != "." }, "must name a file or a directory, not the repository root: the root would check the whole checkout out early"},
+	{func(f string) bool { return f != ".git" && !strings.HasPrefix(f, ".git/") }, "must not name anything inside .git, which is not part of the checkout"},
+}
+
+// ValidKeyFilePath reports whether f is a path image.key_files accepts: one
+// clean repository-relative path, inside the repository, as the path it is.
+func ValidKeyFilePath(f string) bool {
+	for _, r := range keyFilePathRules {
+		if !r.ok(f) {
+			return false
+		}
+	}
+	return true
+}
+
 // validateKeyFiles checks image.key_files: each entry names one path inside
 // the repository, as the path it is. Every message names the entry by its
 // index and never echoes its value: a value may hold a terminal escape
@@ -169,25 +202,11 @@ func validateKeyFiles(p string, files []string, add func(path, format string, ar
 	seen := make(map[string]int, len(files))
 	for i, f := range files {
 		kp := fmt.Sprintf("%s.image.key_files[%d]", p, i)
-		switch {
-		case strings.TrimSpace(f) == "":
-			add(kp, "must not be empty")
-		case !utf8.ValidString(f):
-			add(kp, "must be text")
-		case utf8.RuneCountInString(f) > maxImageKeyFilePath:
-			add(kp, "must be at most %d characters", maxImageKeyFilePath)
-		case !imageKeyFileRE.MatchString(f):
-			add(kp, "must be a repository path holding no glob (* ? [ ] { }), no backslash and no control character")
-		case strings.HasPrefix(f, "/"):
-			add(kp, "must be a relative path inside the repository, not an absolute one")
-		case slices.Contains(strings.Split(f, "/"), ".."):
-			add(kp, "must not hold a .. segment: the path is checked out inside the repository it belongs to")
-		case path.Clean(f) != f:
-			add(kp, "must be a clean path: no trailing slash, no // and no . segment")
-		case f == ".":
-			add(kp, "must name a file or a directory, not the repository root: the root would check the whole checkout out early")
-		case f == ".git" || strings.HasPrefix(f, ".git/"):
-			add(kp, "must not name anything inside .git, which is not part of the checkout")
+		for _, r := range keyFilePathRules {
+			if !r.ok(f) {
+				add(kp, "%s", r.msg)
+				break
+			}
 		}
 		if j, dup := seen[f]; dup {
 			add(kp, "duplicates image.key_files[%d]", j)

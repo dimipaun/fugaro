@@ -193,6 +193,7 @@ Each key may be set only in the layers listed; the project layer refuses the res
 | `workflows.*.image.setup` | profile, repo |  |
 | `workflows.*.image.skip_build_scripts` | profile, repo |  |
 | `workflows.*.image.tools` | profile, repo |  |
+| `workflows.*.image.key_files` | repo | it names a file in the repository |
 | `workflows.*.dockerfile` | repo | it names a file in the repository |
 | `workflows.*.commands.build` | profile, repo |  |
 | `workflows.*.commands.test` | profile, repo |  |

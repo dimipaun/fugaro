@@ -145,8 +145,8 @@ type Tree interface {
 // Node dependency install reads, and so the paths a change to must rebuild
 // the image exactly as a lockfile change does:
 //
-//   - .yarnrc and .pnpmfile.cjs, the Yarn 1 and pnpm configuration files
-//     their installs read;
+//   - .yarnrc, .yarnrc.yml and .pnpmfile.cjs, the Yarn 1, Yarn 2 and pnpm
+//     configuration files their installs read;
 //   - .yarn/releases, .yarn/plugins and .yarn/patches, which a Yarn Berry
 //     repository commits: the Yarn build .yarnrc.yml's yarnPath names, the
 //     plugins it loads, and the patches a patch: resolution applies.
@@ -154,7 +154,7 @@ type Tree interface {
 // The last three are directories: installPatterns matches each path both as
 // itself and as its subtree, so a repository that keeps any of these
 // contributes every file under it.
-var NodeInstallPaths = []string{".yarnrc", ".pnpmfile.cjs", ".yarn/releases", ".yarn/plugins", ".yarn/patches"}
+var NodeInstallPaths = []string{".yarnrc", ".yarnrc.yml", ".pnpmfile.cjs", ".yarn/releases", ".yarn/plugins", ".yarn/patches"}
 
 // installPatterns are the tree globs covering each path: the path itself,
 // and everything under it, since a path may name a directory. A path that
@@ -172,6 +172,14 @@ func installPatterns(paths []string) []string {
 // pnpm-workspace.yaml or from package.json's pnpm field, and applies each
 // patch at install time, so a change to one changes what the install
 // produces.
+//
+// A manifest that does not parse contributes nothing, and a name the
+// checkout cannot use as the path it is (usablePatches) is dropped, rather
+// than failing the whole render: these names come out of a repository's own
+// dependency manifests, which validateImage's rules cannot reach, and this
+// key is computed for every workflow of a repository, Node or not. A Node
+// workflow whose manifest is unreadable still fails loudly and earlier, in
+// config.DetectNodePM and in the render's own workspace read.
 func PnpmPatches(tree Tree) ([]string, error) {
 	var out []string
 	switch data, err := tree.ReadFile("pnpm-workspace.yaml"); {
@@ -179,10 +187,9 @@ func PnpmPatches(tree Tree) ([]string, error) {
 		var doc struct {
 			Patched map[string]string `yaml:"patchedDependencies"`
 		}
-		if err := yaml.Unmarshal(data, &doc); err != nil {
-			return nil, fmt.Errorf("pnpm-workspace.yaml: %w", err)
+		if err := yaml.Unmarshal(data, &doc); err == nil {
+			out = append(out, usablePatches(doc.Patched)...)
 		}
-		out = append(out, slices.Sorted(maps.Values(doc.Patched))...)
 	case !errors.Is(err, fs.ErrNotExist):
 		return nil, fmt.Errorf("pnpm-workspace.yaml: %w", err)
 	}
@@ -193,15 +200,30 @@ func PnpmPatches(tree Tree) ([]string, error) {
 				Patched map[string]string `json:"patchedDependencies"`
 			} `json:"pnpm"`
 		}
-		if err := json.Unmarshal(data, &pkg); err != nil {
-			return nil, fmt.Errorf("package.json: %w", err)
+		if err := json.Unmarshal(data, &pkg); err == nil {
+			out = append(out, usablePatches(pkg.Pnpm.Patched)...)
 		}
-		out = append(out, slices.Sorted(maps.Values(pkg.Pnpm.Patched))...)
 	case !errors.Is(err, fs.ErrNotExist):
 		return nil, fmt.Errorf("package.json: %w", err)
 	}
 	slices.Sort(out)
 	return slices.Compact(out), nil
+}
+
+// usablePatches are the patchedDependencies values that name one clean
+// repository-relative path: a glob character would be read as a pattern and
+// check out files the patch does not name, a newline would break the
+// generated Dockerfile's checkout loop, and an entry naming anything else
+// unusable (config.ValidKeyFilePath) would key the image on a file the early
+// layer never checks out.
+func usablePatches(patched map[string]string) []string {
+	var out []string
+	for p := range maps.Values(patched) {
+		if config.ValidKeyFilePath(p) {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // KeyFiles are the workflow's cache key files in tree, with their blob
@@ -322,6 +344,7 @@ type imageSettings struct {
 	Apt              []string `json:"apt"`
 	Setup            []string `json:"setup"`
 	SkipBuildScripts bool     `json:"skip_build_scripts"`
+	KeyFiles         []string `json:"key_files"`
 }
 
 // ImageConfigHash is the hex SHA-256 of the canonical JSON of the
@@ -335,6 +358,7 @@ func ImageConfigHash(cfg *config.Config, workflow string, tree Tree) (string, er
 	c := imageConfig{Base: w.BaseKind(), Dockerfile: w.Dockerfile, Image: imageSettings{
 		SkipBuildScripts: w.Image.SkipBuildScripts,
 		Apt:              slices.Concat([]string{}, w.Image.Apt), Setup: slices.Concat([]string{}, w.Image.Setup),
+		KeyFiles: slices.Concat([]string{}, w.Image.KeyFiles),
 	}, Tools: w.Image.Tools}
 	if w.Dockerfile != "" {
 		id, err := tree.BlobID(w.Dockerfile)

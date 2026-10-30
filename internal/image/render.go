@@ -4,8 +4,6 @@ package image
 
 import (
 	"bytes"
-	"crypto/sha1"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -175,7 +173,7 @@ func Dockerfile(root string, cfg *config.Config, name, version string) (data []b
 		// Yarn Berry reads .yarnrc.yml, and it decided the cache mode above.
 		in.KeyFiles = append(in.KeyFiles, ".yarnrc.yml")
 	}
-	keys, err := imagecheck.KeyFiles(cfg, name, checkoutTree{root})
+	keys, err := imagecheck.KeyFiles(cfg, name, imagecheck.Dir{Root: root})
 	if err != nil {
 		return nil, "", fmt.Errorf("workflows.%s: %w", name, err)
 	}
@@ -279,52 +277,6 @@ func workspacesField(raw json.RawMessage) []string {
 		return obj.Packages
 	}
 	return nil
-}
-
-// checkoutTree is the imagecheck.Tree of a plain checkout directory, as
-// KeyFiles is computed over for a rebuild. The build's own checkout is read
-// as a git tree (imagecheck.Open), but the render runs where it stands, and
-// its blob IDs are unused: only the paths are.
-type checkoutTree struct{ root string }
-
-func (c checkoutTree) file(path string) (string, error) {
-	if !fs.ValidPath(path) {
-		return "", fmt.Errorf("%s: %w", path, fs.ErrNotExist)
-	}
-	full := filepath.Join(c.root, filepath.FromSlash(path))
-	// A symlink is not a key file, as the cache's own key leaves it out.
-	fi, err := os.Lstat(full)
-	if err != nil {
-		return "", err
-	}
-	if !fi.Mode().IsRegular() {
-		return "", fmt.Errorf("%s is not a regular file: %w", path, fs.ErrNotExist)
-	}
-	return full, nil
-}
-
-func (c checkoutTree) BlobID(path string) (string, error) {
-	data, err := c.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	h := sha1.New()
-	fmt.Fprintf(h, "blob %d\x00", len(data))
-	h.Write(data)
-	return hex.EncodeToString(h.Sum(nil)), nil
-}
-
-// Glob matches files only, and doesn't follow symlinks.
-func (c checkoutTree) Glob(pattern string) ([]string, error) {
-	return doublestar.Glob(os.DirFS(c.root), pattern, doublestar.WithFilesOnly(), doublestar.WithNoFollow())
-}
-
-func (c checkoutTree) ReadFile(path string) ([]byte, error) {
-	full, err := c.file(path)
-	if err != nil {
-		return nil, err
-	}
-	return os.ReadFile(full)
 }
 
 // shellWords renders each word as one single-quoted sh word, so a path with

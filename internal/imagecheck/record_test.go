@@ -102,6 +102,7 @@ func TestKeyFilesIncludeYarnAndPnpmInstallFiles(t *testing.T) {
 		"package.json":                        `{"name":"web","packageManager":"yarn@4.9.2"}`,
 		"yarn.lock":                           "# yarn lockfile v4\n",
 		".yarnrc":                             "registry \"https://registry.example.com\"\n",
+		".yarnrc.yml":                         "nodeLinker: node-modules\n",
 		".pnpmfile.cjs":                       "module.exports = { hooks: {} }\n",
 		".yarn/releases/yarn-4.9.2.cjs":       "#!/usr/bin/env node\n",
 		".yarn/plugins/@yarnpkg/plugin-x.cjs": "module.exports = {}\n",
@@ -110,7 +111,7 @@ func TestKeyFilesIncludeYarnAndPnpmInstallFiles(t *testing.T) {
 	}
 	testutil.WriteFiles(t, dir, files)
 	install := []string{".pnpmfile.cjs", ".yarn/patches/left-pad.patch", ".yarn/plugins/@yarnpkg/plugin-x.cjs",
-		".yarn/releases/yarn-4.9.2.cjs", ".yarnrc"}
+		".yarn/releases/yarn-4.9.2.cjs", ".yarnrc", ".yarnrc.yml"}
 	for _, tc := range []struct {
 		name string
 		cfg  *config.Config
@@ -252,6 +253,7 @@ workflows:
 		{"image.apt", withImage, strings.Replace(withImage, "apt: [curl]", "apt: [curl, jq]", 1), "FROM x\n", true},
 		{"image.setup", withImage, strings.Replace(withImage, "echo hi", "echo bye", 1), "FROM x\n", true},
 		{"image.tools", withImage, strings.Replace(withImage, `node: "20"`, `node: "22"`, 1), "FROM x\n", true},
+		{"image.key_files", withImage, strings.Replace(withImage, "setup: [echo hi]", "setup: [echo hi], key_files: [patches]", 1), "FROM x\n", true},
 		{"dockerfile content", withDockerfile, withDockerfile, "FROM y\n", true},
 		{"dockerfile path", withDockerfile, strings.Replace(withDockerfile, "web.Dockerfile", "other.Dockerfile", 1), "FROM x\n", true},
 		{"dockerfile instead of image", withImage, withDockerfile, "FROM x\n", true},
@@ -495,5 +497,106 @@ func TestRecordDigestMismatch(t *testing.T) {
 		if got := tc.rec.DigestMismatch(tc.live); got != tc.mismatch {
 			t.Errorf("%s: DigestMismatch = %v, want %v", tc.name, got, tc.mismatch)
 		}
+	}
+}
+
+// TestKeyFilesFollowYarnrcYml: the derived image bakes .yarnrc.yml into the
+// key-file layer for a Yarn Berry checkout (internal/image's Dockerfile adds
+// it), so the rebuild key carries it too — a change to it alone must rebuild,
+// or the warm-up runs against a file the image was not built with.
+func TestKeyFilesFollowYarnrcYml(t *testing.T) {
+	files := map[string]string{
+		"package.json": `{"name":"web","packageManager":"yarn@4.9.2"}`,
+		"yarn.lock":    "# yarn lockfile v4\n",
+		".yarnrc.yml":  "nodeLinker: node-modules\n",
+	}
+	before, after := t.TempDir(), t.TempDir()
+	testutil.WriteFiles(t, before, files)
+	files[".yarnrc.yml"] = "nodeLinker: pnp\n"
+	testutil.WriteFiles(t, after, files)
+	key := func(dir string) map[string]string {
+		t.Helper()
+		got, err := KeyFiles(parse(t, webYAML), "web", Dir{Root: dir})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	a, b := key(before), key(after)
+	if a[".yarnrc.yml"] == "" {
+		t.Fatalf(".yarnrc.yml is not a key file: %v", slices.Sorted(maps.Keys(a)))
+	}
+	if a[".yarnrc.yml"] == b[".yarnrc.yml"] {
+		t.Errorf("a change to .yarnrc.yml left the key alone: %q", a[".yarnrc.yml"])
+	}
+}
+
+// TestPnpmPatchesDropNamesTheCheckoutCannotUse: the patch paths come from
+// the repository's own manifests, where validateImage's rules cannot reach
+// them. A name that is not one clean repository-relative path is dropped
+// rather than keyed: a glob character would be read as a pattern and check
+// out files the patch does not name, and a newline would break the generated
+// Dockerfile's checkout loop.
+func TestPnpmPatchesDropNamesTheCheckoutCannotUse(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFiles(t, dir, map[string]string{
+		"package.json": `{"name":"web","pnpm":{"patchedDependencies":{` +
+			`"a":"patches/left-pad.patch",` +
+			`"b":"patches/*.patch",` +
+			`"c":"../outside.patch",` +
+			`"d":"/absolute.patch",` +
+			`"e":"patches/broken\n.patch",` +
+			`"f":"patches/.",` +
+			`"g":".git/config",` +
+			`"h":""}}}`,
+		"patches/left-pad.patch": "patch\n",
+	})
+	got, err := PnpmPatches(Dir{Root: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"patches/left-pad.patch"}; !slices.Equal(got, want) {
+		t.Errorf("PnpmPatches = %v, want %v", got, want)
+	}
+	keys, err := KeyFiles(parse(t, webYAML), "web", Dir{Root: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := keys["patches/left-pad.patch"]; !ok {
+		t.Errorf("the usable patch is not a key file: %v", slices.Sorted(maps.Keys(keys)))
+	}
+}
+
+// TestKeyFilesTolerateAManifestThatDoesNotParse: PnpmPatches reads two
+// manifests that a repository need not have written for this package at all,
+// and the key is computed for every workflow of the repository, Node or not,
+// so a manifest that does not parse contributes no patches instead of
+// failing the render. (config.DetectNodePM already refuses a package.json
+// that does not parse, in defaultCache, for the workflows that ask it for a
+// cache key; this is the pnpm-workspace.yaml half, and the patch reader's
+// own tolerance.)
+func TestKeyFilesTolerateAManifestThatDoesNotParse(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFiles(t, dir, map[string]string{
+		"pnpm-workspace.yaml": "patchedDependencies: [this is: not yaml\n",
+		"go.mod":              "module example.com/app\n",
+	})
+	if got, err := PnpmPatches(Dir{Root: dir}); err != nil || len(got) != 0 {
+		t.Errorf("PnpmPatches = %v, %v, want no patches and no error", got, err)
+	}
+	const goYAML = `version: 1
+project: aurora
+git: { provider: github }
+workflows:
+  go:
+    commands: { build: go build ./..., test: go test ./... }
+`
+	if _, err := KeyFiles(parse(t, goYAML), "go", Dir{Root: dir}); err != nil {
+		t.Errorf("a workflow with no dependencies at all was refused by a pnpm manifest it does not use: %v", err)
+	}
+	brokendir := t.TempDir()
+	testutil.WriteFiles(t, brokendir, map[string]string{"package.json": "{not json"})
+	if got, err := PnpmPatches(Dir{Root: brokendir}); err != nil || len(got) != 0 {
+		t.Errorf("PnpmPatches over a package.json that does not parse = %v, %v, want no patches and no error", got, err)
 	}
 }

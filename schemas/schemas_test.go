@@ -3627,4 +3627,33 @@ func TestSchemaCoversImageKeyFiles(t *testing.T) {
 			t.Errorf("%s: config.Parse accepts it", tc.name)
 		}
 	}
+
+	// checkout: clone builds no image at all, so a clone workflow refuses
+	// key_files, exactly as config.Parse does: the schema's clone branch
+	// cannot leave the key out, or an editor would bless a fugaro.yaml the
+	// run then refuses.
+	for _, entries := range []string{"", strconv.Quote("patches")} {
+		body := strings.Replace(base, "  app: {", "  app: { checkout: clone,", 1)
+		if entries != "" {
+			body = strings.Replace(body, head, "image: { key_files: ["+entries+"] }, "+head, 1)
+		}
+		schemaErr := sch.Validate(yamlInstance(t, []byte(body)))
+		_, ps := config.Parse([]byte(body))
+		switch {
+		case entries == "":
+			if schemaErr != nil {
+				t.Errorf("a clone workflow with no key files: schema rejects it: %v", schemaErr)
+			}
+			if len(ps) > 0 {
+				t.Errorf("a clone workflow with no key files: config.Parse rejects it: %v", ps)
+			}
+		default:
+			if schemaErr == nil {
+				t.Error("the schema accepts image.key_files under checkout: clone, which config.Parse refuses")
+			}
+			if len(ps) == 0 {
+				t.Error("config.Parse accepts image.key_files under checkout: clone")
+			}
+		}
+	}
 }
