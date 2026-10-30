@@ -229,10 +229,41 @@ func Classify(method, path string, query url.Values) (Request, error) {
 	if err != nil {
 		return Request{}, err
 	}
-	if segs[0] == "repositories" {
+	if segs[0] == apiRootSegment && len(segs) > 1 && (segs[1] == "repositories" || segs[1] == "user") {
+		// The API root the adapter's BaseURL is (https://api.bitbucket.org/2.0):
+		// a REST request that reached the proxy through the adapter's own
+		// client carries it. It is the only segment dropped anywhere, and it
+		// is dropped rather than kept so the two spellings of the same call
+		// classify alike - the upstream URL is rebuilt from the parts either
+		// way and never from this path.
+		//
+		// It is dropped only in front of the two route heads the API has
+		// below it, because a workspace may be named "2.0": positional
+		// stripping would read a git fetch of bitbucket/2.0/sandbox as a REST
+		// path and refuse a repository the policy can admit.
+		segs = segs[1:]
+	}
+	switch {
+	case segs[0] == "repositories":
 		return classifyREST(method, segs[1:], query)
+	case len(segs) == 1 && segs[0] == "user":
+		return classifyUser(method, query)
 	}
 	return classifyGit(method, segs, query)
+}
+
+// apiRootSegment is Bitbucket's API version segment, the first segment of every
+// REST path the adapter sends.
+const apiRootSegment = "2.0"
+
+// classifyUser reads GET /user, the one call the adapter makes that names no
+// repository: it asks the API which user the token belongs to, so that
+// Fugaro's own comments can be told from other people's.
+func classifyUser(method string, query url.Values) (Request, error) {
+	if method != http.MethodGet || len(query) != 0 {
+		return Request{}, &Refusal{Reason: ReasonCallNotAllowed}
+	}
+	return Request{Kind: KindREST, Call: CallUser}, nil
 }
 
 // pathSegments splits a path into the segments the classification is written
@@ -304,15 +335,8 @@ func lowerHex(c byte) byte {
 // tells a push from a fetch and nothing else does: both services take a POST
 // and both begin with an info/refs GET.
 func classifyGit(method string, segs []string, query url.Values) (Request, error) {
-	var (
-		kind Kind
-		ws   string
-	)
 	switch {
-	case len(segs) == 4 && segs[2] == "info" && segs[3] == "refs":
-		if method != http.MethodGet {
-			return Request{}, &Refusal{Reason: ReasonCallNotAllowed}
-		}
+	case len(segs) == 4 && segs[2] == "info" && segs[3] == "refs" && method == http.MethodGet:
 		// The service parameter is the whole of git's query here, and it is
 		// read strictly: a second parameter cannot reach the upstream URL
 		// because only this one is carried.
@@ -320,6 +344,7 @@ func classifyGit(method string, segs []string, query url.Values) (Request, error
 		if err != nil || len(service["service"]) != 1 {
 			return Request{}, &Refusal{Reason: ReasonCallNotAllowed}
 		}
+		var kind Kind
 		switch service.Get("service") {
 		case "git-upload-pack":
 			kind = KindFetch
@@ -328,17 +353,12 @@ func classifyGit(method string, segs []string, query url.Values) (Request, error
 		default:
 			return Request{}, &Refusal{Reason: ReasonCallNotAllowed}
 		}
-		ws = segs[0]
-		segs = segs[:2]
-		return finishGit(kind, ws, segs[1], service)
-	case len(segs) == 3 && (segs[2] == "git-upload-pack" || segs[2] == "git-receive-pack"):
-		if method != http.MethodPost {
-			return Request{}, &Refusal{Reason: ReasonCallNotAllowed}
-		}
+		return finishGit(kind, segs[0], segs[1], service)
+	case len(segs) == 3 && (segs[2] == "git-upload-pack" || segs[2] == "git-receive-pack") && method == http.MethodPost:
 		if len(query) != 0 {
 			return Request{}, &Refusal{Reason: ReasonCallNotAllowed}
 		}
-		kind = KindFetch
+		kind := KindFetch
 		if segs[2] == "git-receive-pack" {
 			kind = KindPush
 		}
@@ -630,7 +650,9 @@ func CheckPRWrite(pr PRFacts, body []byte, id Identity, repo string) Verdict {
 	if !ok {
 		return Verdict{Reason: ReasonBodyMalformed}
 	}
-	if destination := keys.destination(); destination != "" && destination != pr.Destination {
+	destination := keys.destination()
+	if (destination.branch != "" && destination.branch != pr.Destination) ||
+		(destination.repo != "" && !sameRepo(destination.repo, repo)) {
 		return Verdict{Reason: ReasonDestinationChange}
 	}
 	if id.Branch != "" && pr.SourceBranch == id.Branch && sameRepo(pr.SourceRepo, repo) {
@@ -696,15 +718,15 @@ func (w *writeBody) source() (out struct{ branch, repo string }) {
 	return endpointParts(w.Source)
 }
 
-// destination is the destination branch the body names, or "" when it names
-// none. The branch and not the repository: a destination repository the body
-// names is a destination change unless it is the run's own, and the run's own
-// is the one the service is serving.
-func (w *writeBody) destination() string {
+// destination is the destination the body names, either half of it empty when
+// it names none: the branch a write would move the pull request to, and the
+// repository it would move it into. Both are checked, because either one
+// moved is the destination moved.
+func (w *writeBody) destination() struct{ branch, repo string } {
 	if w.Destination == nil {
-		return ""
+		return struct{ branch, repo string }{}
 	}
-	return endpointParts(w.Destination).branch
+	return endpointParts(w.Destination)
 }
 
 func endpointParts(e *writeEndpoint) (out struct{ branch, repo string }) {
