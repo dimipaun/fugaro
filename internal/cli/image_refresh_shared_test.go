@@ -125,14 +125,18 @@ func TestLaunchRefusesSharedJobOnOldRunner(t *testing.T) {
 	}
 }
 
-// TestRunSharedWorkflowRefusedBelowSharedSince is the same gate driven the
-// way an operator meets it: a real `fugaro run` of a checkout: shared
-// workflow, from its checkout, refused before anything is written. It is
-// what holds internal/cli/run.go's call to the gate and the checkout kind it
-// reads — drop either the `shared` assignment or the `if shared { … }` block
-// and the launch below goes through, because nothing else refuses a shared
-// workflow on this image.
-func TestRunSharedWorkflowRefusedBelowSharedSince(t *testing.T) {
+// TestRunRefusesSharedWorkflowBefore0150 is the same repository driven the
+// way an operator meets it, and in 0.14.0 it stops before the gate above:
+// validation refuses checkout: shared until the release that builds a
+// shared image (config/image.go's sharedCheckoutShipped), so the launch has
+// no workflow to read the kind from and never starts a job — not even on an
+// image built from sharedSince, which is what this test's lock holds. The
+// sentence a person is owed is `fugaro validate`'s, which names 0.15.0 and
+// the two kinds that work today (internal/config/image_test.go); what is
+// pinned here is the end-to-end fact that no launch of a shared workflow
+// gets out of a 0.14.0 checkout, which is why the sharedSince gate is
+// covered by the direct test above and not through a run.
+func TestRunRefusesSharedWorkflowBefore0150(t *testing.T) {
 	f := newCloudFixture(t)
 	testutil.IsolateGit(t)
 	other := mustSlug("github", "acme/other")
@@ -144,20 +148,12 @@ func TestRunSharedWorkflowRefusedBelowSharedSince(t *testing.T) {
 		"  svc: { checkout: shared, commands: { build: sh build.sh, test: sh test.sh } }\n"})
 	t.Chdir(dir)
 	const key = "9f2c1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7"
-	lockWith(t, f, key, "ghcr.io/dimipaun/fugaro-base:0.13.0", "acme/other", other, "svc")
-	_, _, err := execute(t, "run", "--run-id", "20261030-100000-abcd", "A task")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "how to clone for a shared image (FUGARO_CHECKOUT) (fugaro "+sharedSince+" or later)") ||
-		!strings.Contains(err.Error(), "acme/other workflow svc was built from base image ghcr.io/dimipaun/fugaro-base:0.13.0, release 0.13.0") ||
-		!strings.Contains(err.Error(), "fugaro update --base base") ||
-		!strings.Contains(err.Error(), "fugaro image refresh --repo acme/other --workflow svc") {
-		t.Fatalf("err = %v", err)
-	}
-	// The same launch on an image built from sharedSince: nothing to refuse,
-	// which is what says the refusal above is this gate's and not a launch
-	// that would have failed anyway.
 	lockWith(t, f, key, "ghcr.io/dimipaun/fugaro-base:"+sharedSince, "acme/other", other, "svc")
-	if _, _, err := execute(t, "run", "--run-id", "20261030-100000-abce", "A task"); err != nil {
-		t.Fatalf("a shared image at %s: %v", sharedSince, err)
+	if _, _, err := execute(t, "run", "--run-id", "20261030-100000-abcd", "A task"); err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("a run of a checkout: shared workflow = %v, want refused", err)
+	}
+	if n := len(f.run.Requests()); n != 0 {
+		t.Errorf("the launch made %d call(s) to the Cloud Run API, want none: a shared workflow's fugaro.yaml is refused before anything is started", n)
 	}
 }
 
