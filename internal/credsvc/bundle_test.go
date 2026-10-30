@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -903,89 +902,88 @@ func TestBundleCredentialKeyHoldsTheAccountNameRuleInBothHalves(t *testing.T) {
 	}
 }
 
-// TestReservedAccountNamesAgreeWithTheBundle: the names the local config
-// refuses as Claude account names and the names this bundle cannot tell an
-// account from are ONE set, read from both sides. The collision is one
+// TestReservedAccountNamesAgreeWithTheBundle: the account names the local
+// config refuses and the account names this bundle refuses are ONE set, and
+// this test reads both ends: CredentialKey on the one side,
+// config.ValidClaudeAccountRef and config.ValidateClaudeAccounts on the other,
+// over every name a credential of the platform goes by. The collision is one
 // question seen from either end, because an account's key in the bundle is
 // config.ClaudeAccountSecret(name) and CredentialKey resolves that key back to
-// the bare name: a name another credential of the platform already goes by —
-// the reserved names a job mounts (config.ReservedSecrets) and the name the
-// bundle speaks the bare token by (config.DefaultClaudeAccount) — would make
-// the bundle, the job's own mount and the proxy's audit line speak one name
-// for two credentials.
+// the bare name — the name the cascade, the policy's accounts block and the
+// proxy's audit line all speak — so an account taking a name another credential
+// of the platform already goes by would leave one name meaning two credentials.
 //
-// The config side learns the reservation from that same list, so the two
-// cannot drift: a name the config admits and the bundle refuses is the gap
-// B1.2 left open (bitbucket-token was configurable and admittable by a policy
-// while CredentialKey refused its key), and a name the bundle cannot tell from
-// another credential but the config admitted would be an account no bundle can
-// hold. Red if either side moves alone — a ReservedSecrets entry added without
-// the account rule, or the bundle's refusal of bitbucket-token dropped.
+// The rows are the repository's answer to which names those are, and each is
+// true on both sides: bitbucket-token is reserved (the bundle's resolver refuses
+// its key unconditionally, and the published schema's `not` pins the same one
+// spelling), while the App key's name, the paid key's name and the default
+// token's secret name are legal account names — the bundle holds the App key
+// beside an account named after it (Bundle.byName), refuses a document that
+// gives one model name to two credentials rather than the account's name, and
+// speaks the default account's own entry as config.DefaultClaudeAccount.
+//
+// Red if either end moves alone: reserving another name in the config without
+// the bundle refusing its key fails the row, and dropping the bundle's refusal
+// fails the ParseBundle assertion below.
 func TestReservedAccountNamesAgreeWithTheBundle(t *testing.T) {
-	// What a credential of the platform goes by: the reserved names a job
-	// mounts, and the default account's own (the bare token's bundle entry is
-	// spoken as config.DefaultClaudeAccount, while its document key is the
-	// reserved name beside it in the map).
-	held := map[string]bool{config.DefaultClaudeAccount: true}
-	for name := range config.ReservedSecrets {
-		held[name] = true
-	}
-	names := make([]string, 0, len(held))
-	for name := range held {
-		names = append(names, name)
-	}
-	slices.Sort(names)
-
-	var refused []string
-	for _, account := range names {
-		key := config.ClaudeAccountSecret(account)
-		// The bundle's half: the account's key either holds no credential the
-		// loader can read, or resolves to a name the platform already goes by
-		// (the resolver answers the bare account name, never the key).
-		if got, _, _, ok := CredentialKey(key); !ok {
-			refused = append(refused, account)
-		} else if got != account {
-			t.Errorf("CredentialKey(%q) resolved to %q, want the account's own name %q", key, got, account)
+	for _, tc := range []struct {
+		name     string
+		reserved bool
+		why      string
+	}{
+		{config.BitbucketSecret, true, "the upstream git credential: CredentialKey refuses the account key, the document key and the job's mount all this one name"},
+		{config.GitHubAppKeySecret, false, "the App key's name: Bundle.byName holds the App key beside an account named after it"},
+		{config.AnthropicSecret, false, "the paid key's name: the bundle refuses a document holding both, not the account's name"},
+		{config.ClaudeOAuthToken, false, "the default token's secret: the bundle speaks its entry as config.DefaultClaudeAccount"},
+		{config.CodexOAuthToken, false, "a harness name nothing mounts or holds yet"},
+		{config.CredentialsBundleSecret, false, "the service's own container, which no job mounts and no bundle entry names"},
+		{"acme-personal", false, "an ordinary name"},
+	} {
+		key := config.ClaudeAccountSecret(tc.name)
+		_, _, _, admitted := CredentialKey(key)
+		bundleReserved := !admitted
+		refByName := config.ValidClaudeAccountRef(tc.name) != ""
+		ps := config.ValidateClaudeAccounts(map[string]config.ClaudeAccount{tc.name: {}})
+		refByKey := len(ps) == 1 && ps[0].Message == reservedAccountMessage()
+		if bundleReserved != tc.reserved || refByName != tc.reserved || refByKey != tc.reserved {
+			t.Errorf("%s: %q — the bundle refuses its account key %q: %v, a profile's reference is refused: %v, a claude_accounts key is refused: %v (%+v); all three must say reserved = %v",
+				tc.why, tc.name, key, bundleReserved, refByName, refByKey, ps, tc.reserved)
 		}
-
-		// The config's half, in both spellings: a name another credential of
-		// the platform goes by is no claude_accounts key and no reference a
-		// profile may write.
-		ps := config.ValidateClaudeAccounts(map[string]config.ClaudeAccount{account: {}})
-		if len(ps) != 1 {
-			t.Errorf("ValidateClaudeAccounts with an account named %q = %+v, want the one refusal", account, ps)
-			continue
-		}
-		if account == config.DefaultClaudeAccount {
-			// The one name the two halves part on, deliberately: the account
-			// every repository already has is valid as a REFERENCE and refused
-			// as a definition.
-			if msg := config.ValidClaudeAccountRef(account); msg != "" {
-				t.Errorf("ValidClaudeAccountRef(%q) = %q, want the default account to stay a valid reference", account, msg)
-			}
-			continue
-		}
-		if msg := config.ValidClaudeAccountRef(account); msg != ps[0].Message {
-			t.Errorf("the definition and the reference disagree about %q: %q vs %q; a policy would admit what the config refuses", account, ps[0].Message, msg)
-		}
-	}
-	// Both branches of the bundle's half are live, and this is the one name
-	// that takes the refusal: the family's git credential's.
-	if !slices.Equal(refused, []string{config.BitbucketSecret}) {
-		t.Errorf("CredentialKey refused the account keys of %v, want the git credential's name alone", refused)
 	}
 
-	// The other direction, on a name no credential goes by: it is an account
-	// name of its own, and the resolver answers it unrenamed at the tier a
-	// Claude account has.
-	plain := "acme-personal"
-	if msg := config.ValidClaudeAccountRef(plain); msg != "" {
-		t.Errorf("ValidClaudeAccountRef(%q) = %q, want an ordinary name to stay valid", plain, msg)
+	// The collision itself, on a document: the account's key beside the
+	// credential it would be named after. The loader refuses the pair, which is
+	// what makes the name unrepresentable rather than merely confusing.
+	git := config.ClaudeAccountSecret(config.BitbucketSecret) + ": " + fakeCred(t, "the-account") + "\n" +
+		config.BitbucketSecret + ": " + fakeCred(t, "the-git-token") + "\n"
+	if _, err := ParseBundle([]byte(git)); !errors.Is(err, ErrBundleUnknownKey) {
+		t.Errorf("ParseBundle(%q) = %v, want ErrBundleUnknownKey: the two names are one", git, err)
 	}
-	if ps := config.ValidateClaudeAccounts(map[string]config.ClaudeAccount{plain: {AllowDataTo: []string{"acme/app"}}}); len(ps) != 0 {
-		t.Errorf("an ordinary account name was refused: %+v", ps)
+	// And the pair the bundle DOES hold: an account named after the App key is
+	// legal here, which is why the config leaves that name alone.
+	appKey := config.GitHubAppKeySecret + ": " + fakeCred(t, "the-app-key") + "\n" +
+		config.ClaudeAccountSecret(config.GitHubAppKeySecret) + ": " + fakeCred(t, "the-account") + "\n"
+	if _, err := ParseBundle([]byte(appKey)); err != nil {
+		t.Errorf("ParseBundle(%q) = %v, want an account named after the App key to stay legal: the config refuses only the one spelling the bundle refuses", appKey, err)
 	}
-	if got, kind, tier, ok := CredentialKey(config.ClaudeAccountSecret(plain)); !ok || got != plain || kind != KindModel || tier != creds.TierA {
-		t.Errorf("CredentialKey(%q) = (%q, %q, %q, %v), want the account itself at tier A", config.ClaudeAccountSecret(plain), got, kind, tier, ok)
+
+	// The one name the two halves part on deliberately, and the only name the
+	// definition refuses while the resolver admits its key: the default account,
+	// which every repository already has and which a profile may therefore name.
+	defaultKey := config.ClaudeAccountSecret(config.DefaultClaudeAccount)
+	if _, _, _, ok := CredentialKey(defaultKey); !ok {
+		t.Errorf("CredentialKey(%q) refused the default account's key", defaultKey)
+	}
+	if msg := config.ValidClaudeAccountRef(config.DefaultClaudeAccount); msg != "" {
+		t.Errorf("ValidClaudeAccountRef(%q) = %q, want the default account to stay a valid reference", config.DefaultClaudeAccount, msg)
+	}
+	if ps := config.ValidateClaudeAccounts(map[string]config.ClaudeAccount{config.DefaultClaudeAccount: {}}); len(ps) != 1 {
+		t.Errorf("ValidateClaudeAccounts(%q) = %+v, want the default account refused as a definition", config.DefaultClaudeAccount, ps)
 	}
 }
+
+// reservedAccountMessage is the sentence the config answers a reserved name
+// with, read through the validator rather than spelled here: the two ends of
+// the rule must use one sentence, and a test that repeated it could not tell
+// that they stopped.
+func reservedAccountMessage() string { return config.ValidClaudeAccountRef(config.BitbucketSecret) }
