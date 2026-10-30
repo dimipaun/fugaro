@@ -285,13 +285,19 @@ type Mailbox struct {
 }
 
 // pairUIDRE is the shape of the uid a mailbox entry may be keyed by: a pairing
-// session's `p~` or a paired device's `m~`, followed by the 22 unpadded
-// base64url characters 128 random bits spell (token.PairingPrefix and
-// token's deviceUIDBytes). It is this file's copy of that shape and not the
-// token package's function, because the token package mints uids and this one
-// only recognises them; a key that is not a uid is a line an operator can fix,
-// and every uid this installation mints matches.
-var pairUIDRE = regexp.MustCompile(`^[mp]~[A-Za-z0-9_-]{22}$`)
+// session's `p~` followed by the 43 unpadded base64url characters 32 random
+// bytes spell (token.PairingPrefix, §2 (e)), or a paired device's `m~` followed
+// by the 22 that 16 spell (token's deviceUIDBytes). The two are two lengths and
+// not one class of one length: what `fugaro pair` prints and records is the
+// session's uid and what `pair ls` lists is the device's, so a pattern that
+// admits a single body length for both admits neither. It is this file's copy of
+// that shape and not the token package's function, because the token package
+// mints uids and this one only recognises them and its byte counts are
+// unexported; TestMailboxKeyedByARealPairingUIDLoads mints one of each through
+// that package and loads them here, which is what keeps the two from drifting. A
+// key that is not a uid is a line an operator can fix, and every uid this
+// installation mints matches.
+var pairUIDRE = regexp.MustCompile(`^(?:p~[A-Za-z0-9_-]{43}|m~[A-Za-z0-9_-]{22})$`)
 
 // CredentialsService is the credentials service block: the installation's own
 // Cloud Run service, as the launcher needs it (docs/credentials-service,
@@ -1308,7 +1314,7 @@ func (c *Config) validate() error {
 		}
 		for _, uid := range slices.Sorted(maps.Keys(m.KeychainItem)) {
 			if !pairUIDRE.MatchString(uid) {
-				bad("mailbox.keychain_item.%s: the key is not a pairing's uid (%q or %q followed by 22 unpadded base64url characters), so no pairing would ever look this item up", uid, "p~", "m~")
+				bad("mailbox.keychain_item.%s: the key is not a pairing's uid (%q followed by 43 unpadded base64url characters for a pairing session, %q followed by 22 for a paired device), so no pairing would ever look this item up", uid, "p~", "m~")
 				continue
 			}
 			if _, err := keychain.ParseItem(m.KeychainItem[uid], c.Name); err != nil {

@@ -1102,7 +1102,11 @@ T2, one writer per task — T2 lands the file, T3 extends it in a dependent task
 T2/T2a do for `mac.go`); `internal/cli/pair.go`'s step 8 and step 9; **`internal/localcfg/localcfg.go`** (and its test file) *(added
 2026-10-29, decision 9)*: the `mailbox.keychain_item` block widens from one item name to **one item
 per pairing uid**, validated by `keychain.ParseItem` as today, with the shared-config publish and
-merge rules kept.
+merge rules kept; **`internal/mailbox/keychain/`** *(added 2026-10-30, T3b)*: P4.1's file holds the
+reader, and T3b adds the **storing** side beside it — `Put` and `Delete`, one item per pairing, the
+key on standard input only (M11) — plus the stand-in store and the tests that put it on `PATH`.
+T3c (the darwin writer, `security -i`, and `keychain_darwin_live_test.go`, behind the darwin and
+keychain_live build tags) is that file's and is **not** a task of this §15.
 **Depends on.** T2; **D171, D199**; M5, M6, M14; §4.4, §8.
 **Verification.** `GOFLAGS=-p=2 go test ./internal/budget/token ./internal/cli -run 'Delivery|Envelope|Pair' -count=1`:
 the payload does not open without the phone's private key; a wrong version byte, a different uid and
@@ -1111,8 +1115,9 @@ no output, no log line, no `--json` document and no fixture; the payload carries
 configuration; `go.mod` gains **no module** (`crypto/ecdh` and `crypto/hkdf` only); the pairing node
 is deleted after the delivery is written; the widened block parses, round-trips and merges with
 **two** pairings holding two items, refuses an item name of the wrong shape, and a project that
-holds the old single name is migrated by re-running init (no compatibility shim, pre-1.0); the
-consumer reads each pairing's own item.
+holds the old single name is **refused**: the entry's key is not a pairing's uid, so the operator is
+told to run `fugaro pair` and record the item name it prints rather than being migrated by
+re-running init (no compatibility shim, pre-1.0); the consumer reads each pairing's own item.
 **Red step.** Drop the uid from the AAD and watch `TestEnvelopeBindsThePairingUID` fail.
 **Reviewer tier.** SECURITY-SENSITIVE — independent opus review. What a reviewer must confirm: that
 the envelope is claimed as **a capability, not a boundary** (§8), and that the key is never printed.
@@ -1121,7 +1126,9 @@ the envelope is claimed as **a capability, not a boundary** (§8), and that the 
 
 **Mobile task.** P6.6, part 4. **Files.** `internal/cli/pair.go`'s `ls` and `revoke`;
 `internal/budget/sweep.go` (the prefix rule and the report); `internal/budget/sweep_device_test.go`
-(new). **Depends on.** T1–T3; **D166**; M4, M13; §6; decisions 1, 2 and 6.
+(new). `internal/mailbox/keychain/` is **T3's** and not this task's: `revoke` removes the pairing's
+item through its `Delete` and edits nothing in it *(added 2026-10-30)*. **Depends on.** T1–T3;
+**D166**; M4, M13; §6; decisions 1, 2 and 6.
 **Verification.** `GOFLAGS=-p=2 go test ./internal/budget ./internal/cli -run 'Pair|Sweep|Revoke' -count=1`
 with the fakes: `revoke` deletes the **node before** the keychain item; the Auth user is **not**
 deleted; the sweeper never deletes an `m~` user whose device node exists and does delete one whose
@@ -1229,6 +1236,7 @@ agree on every row.
 | `internal/mailbox/action.go` | T5 | new; the refusal table and the Go re-validation of `shared/confirm` |
 | `internal/mailbox/expiry.go` | T6 | new here; P4.1's T7 names the same file for its own half, so **P4.1 lands it first and T6 extends it** |
 | `internal/mailbox/mac.go` | **nobody here** | P4.1's one MAC function; this plan **calls** it and edits nothing in it |
+| `internal/mailbox/keychain/` | **T3** | *(added 2026-10-30)* P4.1's reader (`Key`, the stand-in store and `keychain_test.go`) is merged; T3b adds the **storing** side — `Put` and `Delete`, one item per pairing, the key on standard input only — and T3c (#1365) the darwin writer (`security -i`) and `keychain_darwin_live_test.go`, behind `darwin && keychain_live`. T4's `revoke` calls `Delete` and edits nothing here |
 | `shared/` | **nobody** | every module these tasks read is merged; a task that needs to edit one is a finding |
 | `internal/budget/rules/` | **nobody** | M14: no generation |
 | `website/content/cli-reference.md` | T1 | **generated** — never hand-edited |
