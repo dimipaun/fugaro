@@ -84,7 +84,12 @@ resource "google_artifact_registry_repository" "base" {
 # derived image tagged latest or candidate- — so it carries that repository
 # registry's cleanup posture (modules/repo/registry.tf): cleanup deletes
 # versions, not tags, a keep policy wins over a delete, so no version tagged
-# latest (and none of the 3 newest) is ever deleted.
+# latest (and none of the 3 newest) is ever deleted. Its policies are declared
+# only while registry cleanup is on, as fugaro-base's are: --registry-cleanup
+# off means this installation declares no cleanup policy at all, and it is the
+# switch the plan and the console read. Its days and keep count stay the
+# repository registry's own, since var.registry_cleanup's two numbers are
+# fugaro-base's.
 resource "google_artifact_registry_repository" "shared" {
   project       = var.project
   location      = var.region
@@ -94,39 +99,51 @@ resource "google_artifact_registry_repository" "shared" {
 
   cleanup_policy_dry_run = var.registry_cleanup.dry_run
 
-  cleanup_policies {
-    id     = "keep-latest"
-    action = "KEEP"
-    condition {
-      tag_state    = "TAGGED"
-      tag_prefixes = ["latest"]
+  dynamic "cleanup_policies" {
+    for_each = var.registry_cleanup.enabled ? [1] : []
+    content {
+      id     = "keep-latest"
+      action = "KEEP"
+      condition {
+        tag_state    = "TAGGED"
+        tag_prefixes = ["latest"]
+      }
     }
   }
 
-  cleanup_policies {
-    id     = "keep-recent"
-    action = "KEEP"
-    most_recent_versions {
-      keep_count = 3
+  dynamic "cleanup_policies" {
+    for_each = var.registry_cleanup.enabled ? [1] : []
+    content {
+      id     = "keep-recent"
+      action = "KEEP"
+      most_recent_versions {
+        keep_count = 3
+      }
     }
   }
 
-  cleanup_policies {
-    id     = "delete-untagged"
-    action = "DELETE"
-    condition {
-      tag_state  = "UNTAGGED"
-      older_than = "${14 * 86400}s"
+  dynamic "cleanup_policies" {
+    for_each = var.registry_cleanup.enabled ? [1] : []
+    content {
+      id     = "delete-untagged"
+      action = "DELETE"
+      condition {
+        tag_state  = "UNTAGGED"
+        older_than = "${14 * 86400}s"
+      }
     }
   }
 
-  cleanup_policies {
-    id     = "delete-candidates"
-    action = "DELETE"
-    condition {
-      tag_state    = "TAGGED"
-      tag_prefixes = ["candidate-"]
-      older_than   = "${2 * 86400}s"
+  dynamic "cleanup_policies" {
+    for_each = var.registry_cleanup.enabled ? [1] : []
+    content {
+      id     = "delete-candidates"
+      action = "DELETE"
+      condition {
+        tag_state    = "TAGGED"
+        tag_prefixes = ["candidate-"]
+        older_than   = "${2 * 86400}s"
+      }
     }
   }
 

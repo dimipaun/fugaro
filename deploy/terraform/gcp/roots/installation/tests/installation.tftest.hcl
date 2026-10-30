@@ -327,6 +327,10 @@ run "cleanup_off" {
     error_message = "with cleanup disabled, fugaro-base must have no cleanup policy"
   }
   assert {
+    condition     = length(google_artifact_registry_repository.shared.cleanup_policies) == 0
+    error_message = "with cleanup disabled, the shared image registry must have no cleanup policy either: the switch governs this installation's own repositories, and the shared one is one of them"
+  }
+  assert {
     condition     = output.registry_cleanup_dry_run == false
     error_message = "the dry-run output must follow the input"
   }
