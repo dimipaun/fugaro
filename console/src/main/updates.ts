@@ -28,8 +28,15 @@ export const UPDATE_INTERVAL_MS = 6 * 60 * 60 * 1000
  * note: the feed "point[s] at the console's own `console-vX.Y.Z` release ...,
  * never at the CLI's `vX.Y.Z`"); the listing is read rather than
  * `/releases/latest` because the newest release is often a CLI one, which the
- * filter below has to be able to skip past. */
-export const RELEASES_URL = 'https://api.github.com/repos/dimipaun/fugaro/releases'
+ * filter below has to be able to skip past.
+ *
+ * `per_page=100` is the whole of the query, and it is there because the check
+ * reads **one page**: GitHub's default page is thirty releases, the CLI releases
+ * faster than the console, and a burst of thirty between two console releases
+ * would push the newest console tag off the page the console ever asks for --
+ * a check that answers "nothing new" for months. It stays on the allow-list
+ * below by being part of this constant and nothing else. */
+export const RELEASES_URL = 'https://api.github.com/repos/dimipaun/fugaro/releases?per_page=100'
 
 /** FEED_PREFIX is the whole of the feed URL but its tag, and the only host an
  * update may ever be downloaded from: a feed URL the policy did not build is a
@@ -205,6 +212,16 @@ export function createUpdateController(deps: UpdatePolicyDeps): UpdateController
   const expected = new Set<string>()
   let readyDeferred: string | null = null
   let restartDeferred = false
+  /** installable says whether the bytes on disk are a release this policy chose:
+   * set by a finished download whose version is the tag the feed was pointed at,
+   * cleared by one whose version is not (`onDownloaded`), and left alone by the
+   * switch. It is what the switch's return trip reads -- a download the policy
+   * has already refused is not made installable by turning the feature back on. */
+  let installable = false
+  /** switchedOff says a closed gate turned `autoInstallOnAppQuit` off, so the
+   * next `start()` -- which only runs under an open gate -- knows to re-arm it
+   * rather than leaving the client configured for a feature that is on. */
+  let switchedOff = false
 
   /** allowed is the gate, read fresh every time it matters: the switch or the
    * local opt-out can change between two ticks, and a check that started under
@@ -243,9 +260,31 @@ export function createUpdateController(deps: UpdatePolicyDeps): UpdateController
    * after the gate closed prompts nobody: `restartRequested` would refuse the
    * prompt's own button. */
   const onDownloaded = (payload: unknown): void => {
-    if (!allowed()) return
+    if (!allowed()) {
+      // A download that finishes under a closed gate is not installed on quit
+      // either, and this is the same rule `tick` holds from the other side: the
+      // gate can close between the check that pointed the feed and the download
+      // it started, and the tick that would notice is up to six hours away. The
+      // bytes are refused here and the refusal is remembered, so the switch
+      // coming back on re-arms the install only for a download this policy
+      // accepted.
+      switchedOff = true
+      deps.updater.autoInstallOnAppQuit = false
+      return
+    }
     const version = downloadedVersion(payload)
-    if (version === null) return
+    if (version === null) {
+      // A download the policy cannot tie to the tag it pointed the feed at: the
+      // zip's SHA-512 comes from `latest-mac.yml` alone, so the version that
+      // manifest names has to be the tag this controller resolved, and one that
+      // is not may be anything at all. It is not offered to the user, and it is
+      // not installed on quit either.
+      installable = false
+      deps.updater.autoInstallOnAppQuit = false
+      return
+    }
+    installable = true
+    deps.updater.autoInstallOnAppQuit = true
     expected.delete(version)
     if (!deps.isLaunchFlowIdle()) {
       readyDeferred = version
@@ -266,7 +305,10 @@ export function createUpdateController(deps: UpdatePolicyDeps): UpdateController
     deps.updater.autoInstallOnAppQuit = true
     deps.updater.allowDowngrade = false
     deps.updater.allowPrerelease = false
-    deps.updater.requestHeaders = Object.freeze<Record<string, string>>({})
+    // A plain object rather than a frozen one: electron-updater's own
+    // `addAuthHeader` writes to `requestHeaders`, and a frozen table throws
+    // inside the library the first time it does.
+    deps.updater.requestHeaders = {}
     deps.updater.on('update-downloaded', onDownloaded)
     deps.updater.on('error', () => {
       console.error(CLIENT_FAILED)
@@ -311,6 +353,11 @@ export function createUpdateController(deps: UpdatePolicyDeps): UpdateController
   const tick = (): void => {
     if (!allowed()) {
       clearTimer()
+      // The switch went off under a download that had already finished: the
+      // update is not installed on quit either, or a feature the operator has
+      // just turned off would replace the app the next time they close it.
+      switchedOff = true
+      deps.updater.autoInstallOnAppQuit = false
       return
     }
     void checkNow()
@@ -321,6 +368,14 @@ export function createUpdateController(deps: UpdatePolicyDeps): UpdateController
       if (!allowed()) return
       clearTimer()
       configure()
+      // The switch coming back on restores the install-on-quit the closed gate
+      // turned off -- for the download the policy accepted, and for no other:
+      // `installable` is the refusal in `onDownloaded`, which the switch does
+      // not undo.
+      if (switchedOff) {
+        switchedOff = false
+        deps.updater.autoInstallOnAppQuit = installable
+      }
       handle = deps.timer.setInterval(tick, UPDATE_INTERVAL_MS)
       await checkNow()
     },

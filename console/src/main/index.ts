@@ -61,6 +61,8 @@ import type { SpawnLogWriter } from './spawnlog'
 import { parseInstallationsDocument } from './installlist'
 import { createLaunchRunner, DECLINING_CONFIRMER } from './launch'
 import type { FrozenLaunch, LaunchRequest, TargetLookup } from './launch'
+import { startUpdates } from './updater-electron'
+import type { UpdateController } from './updates'
 import { CONFIRM_ENTRY_URL, createConfirmWindow } from './confirm'
 import { launchFingerprint } from './launchrules'
 import type { LaunchRecordFacts } from './launchrules'
@@ -693,6 +695,14 @@ function dashboardWindow(): BrowserWindow | null {
 }
 
 /**
+ * updates is the running update policy, or null on everything that is not a
+ * packaged macOS app. It is module scope rather than a local of `main` because
+ * `before-quit` is not inside `main`: the timer it holds has to be stopped by
+ * the quit, and the launcher's idle listener reaches it through this name.
+ */
+let updates: UpdateController | null = null
+
+/**
  * launchRunner is the launcher the surface's `run.launch` answers through, and
  * the handler reads it **at message time** rather than closing over it. That is
  * what makes this the fail-closed default rather than the shipped one: its
@@ -911,6 +921,20 @@ async function main(): Promise<void> {
     appEnv: process.env,
     log: createSpawnLog(process.env),
   })
+  // **The update policy comes up with the launcher it defers to**, and before
+  // the surface exists: `startUpdates` answers null on anything but a packaged
+  // macOS app, so this is a no-op on the Linux build and in development, and on
+  // a Mac it is where the client is hardened and the first check is started.
+  //
+  // The two halves are the same fact from each side: the policy asks
+  // `isIdle()` when it is about to prompt or install, and the flow tells it
+  // through `onIdle` when a launch that was in flight settles -- so a download
+  // that finished mid-launch is offered the moment the launch ends rather than
+  // waiting for the next six-hourly check.
+  updates = startUpdates({ isLaunchFlowIdle: () => launchRunner.isIdle() })
+  launchRunner.onIdle(() => {
+    updates?.launchFlowIdle()
+  })
   picker = installInstallationPicker({
     // `shell` and not `dialog`: the picker has no file dialog any more (owner's
     // ruling of 2026-10-20) and its one external link goes through
@@ -998,6 +1022,12 @@ app.on('before-quit', (event) => {
   if (closing) return
   closing = true
   event.preventDefault()
+  // The update controller goes first, and it is the one thing here that is not
+  // a child process: its timer is a live handle and its generation counter is
+  // what abandons a check whose listing is still in flight, so a quit that left
+  // it running would leave a check that finishes -- and prompts -- into a
+  // process on its way out.
+  updates?.stop()
   void boundSource
     .close()
     .catch(() => undefined)

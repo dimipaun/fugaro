@@ -526,6 +526,19 @@ describe('the two URLs the console may ever build', () => {
   })
 })
 
+describe('the listing is one page, and all of it', () => {
+  it('asks for a hundred releases per page', () => {
+    // The check reads one page and never paginates, so the page size is the
+    // whole of its reach. GitHub's default is thirty, the CLI releases faster
+    // than the console, and a burst of thirty CLI tags between two console
+    // releases would push the newest console tag off the only page this app
+    // ever asks for -- a check that answers "nothing new" for months. The
+    // literal is asserted rather than the constant, because a query string is
+    // exactly the part of a URL an edit removes without anything else noticing.
+    expect(RELEASES_URL).toBe('https://api.github.com/repos/dimipaun/fugaro/releases?per_page=100')
+  })
+})
+
 describe('the request carries no identifier', () => {
   it('sends exactly two fixed headers on the listing request', async () => {
     const { controller, fetches } = harness()
@@ -571,11 +584,17 @@ describe('the request carries no identifier', () => {
     )
   })
 
-  it('gives the updater an empty, frozen header table', async () => {
+  it('gives the updater an empty, writable header table', async () => {
+    // Empty, and deliberately not frozen: electron-updater's own
+    // `addAuthHeader` writes into `requestHeaders` on every request, and a
+    // frozen table throws inside the library the first time it does -- a
+    // failure that would surface as an update check that never completes.
     const { controller, updater } = harness()
     await controller.start()
     expect(updater.requestHeaders).toEqual({})
-    expect(Object.isFrozen(updater.requestHeaders)).toBe(true)
+    expect(Object.isFrozen(updater.requestHeaders)).toBe(false)
+    updater.requestHeaders['X-Probe'] = 'written'
+    expect(updater.requestHeaders).toEqual({ 'X-Probe': 'written' })
   })
 })
 
@@ -629,6 +648,20 @@ describe('the install: configured on, and only the user restarts', () => {
     updater.emit('update-downloaded', { version: '9.9.9' })
     expect(ready).toEqual([])
     expect(updater.quits).toBe(0)
+  })
+
+  it('refuses the bytes of a release it did not choose, and will not install them on quit', async () => {
+    // The version is what ties the download to the tag the feed was pointed at,
+    // and the zip's SHA-512 comes from the manifest beside it: a completion for
+    // a version this policy never asked for is a completion for bytes nobody
+    // checked, so it is neither offered to the operator nor left where a quit
+    // would install it.
+    const { controller, updater, ready } = harness()
+    await controller.start()
+    expect(updater.autoInstallOnAppQuit).toBe(true)
+    updater.emit('update-downloaded', { version: '9.9.9' })
+    expect(ready).toEqual([])
+    expect(updater.autoInstallOnAppQuit).toBe(false)
   })
 
   it('configures the client before a check that start() did not begin', async () => {
@@ -741,6 +774,48 @@ describe('the off switch after a download began', () => {
     expect(ready).toEqual([])
     controller.restartRequested()
     expect(updater.quits).toBe(0)
+  })
+
+  it('does not install that download on quit either, and the switch coming back on does not make it installable', async () => {
+    // The two halves of the same refusal. A feature the operator has just
+    // turned off must not replace the app the next time they close it, so the
+    // install-on-quit is turned off with the switch; and turning the switch
+    // back on re-arms the install for a download this policy accepted, which
+    // this one is not.
+    const { controller, updater, setSwitch } = harness()
+    await controller.start()
+    setSwitch(false)
+    updater.emit('update-downloaded', { version: '0.120.0' })
+    expect(updater.autoInstallOnAppQuit).toBe(false)
+    setSwitch(true)
+    await controller.start()
+    expect(updater.autoInstallOnAppQuit).toBe(false)
+  })
+
+  it('does not install on quit a download that finished while the gate was shut for another reason', async () => {
+    // The switch is not the only thing that closes the gate, and the tick that
+    // would notice a closed one is up to six hours away -- so a download that
+    // lands in between is refused where it lands.
+    const env: Record<string, string | undefined> = {}
+    const { controller, updater } = harness({ env })
+    await controller.start()
+    env['CI'] = 'true'
+    updater.emit('update-downloaded', { version: '0.120.0' })
+    expect(updater.autoInstallOnAppQuit).toBe(false)
+  })
+
+  it('installs on quit again for a download the policy did accept', async () => {
+    const { controller, updater, setSwitch, timers } = harness()
+    await controller.start()
+    updater.emit('update-downloaded', { version: '0.120.0' })
+    expect(updater.autoInstallOnAppQuit).toBe(true)
+    setSwitch(false)
+    timers.fire()
+    await settle()
+    expect(updater.autoInstallOnAppQuit).toBe(false)
+    setSwitch(true)
+    await controller.start()
+    expect(updater.autoInstallOnAppQuit).toBe(true)
   })
 })
 
