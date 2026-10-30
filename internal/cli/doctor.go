@@ -393,7 +393,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	// checkout (plan B1.9): the credentials service and its callers' invoker
 	// grants, the age of the stored credentials, and — behind
 	// --check-bitbucket-token, already refused above — what the bundle holds.
-	o.Checks = append(o.Checks, doctorCredentialsServiceDeployed(ctx, lc, crmSvc)...)
+	o.Checks = append(o.Checks, doctorCredentialsServiceDeployed(ctx, lc)...)
 	// The Batch backend's live checks (plan 2026-10-19-compute-backend.md Task
 	// 8 step 5, design §4.4). They return nothing for an installation with no
 	// batch block: the backend's own name is refused by internal/localcfg until

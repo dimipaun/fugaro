@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	crm "google.golang.org/api/cloudresourcemanager/v1"
 	"google.golang.org/api/googleapi"
 	runapi "google.golang.org/api/run/v2"
 	secretmanager "google.golang.org/api/secretmanager/v1"
@@ -57,12 +56,20 @@ const (
 	runRoutesInvoke = "run.routes.invoke"
 )
 
-// runInvokeRoles are the roles whose permissions include run.routes.invoke.
-// The workflow module grants each job account roles/run.invoker on the service
-// and nothing else (modules/workflow/sa.tf), which is the first entry; the
-// rest are named because an installation that granted one of them instead
-// would still be admitted by Cloud Run IAM, and a check that called that
-// missing would send the operator to re-apply a repository that works.
+// runInvokeRoles are the predefined roles whose permissions include
+// run.routes.invoke. The workflow module grants each job account
+// roles/run.invoker on the service and nothing else (modules/workflow/sa.tf),
+// which is the first entry; the rest are named because an installation that
+// granted one of them instead would still be admitted by Cloud Run IAM, and a
+// check that called that missing would send the operator to re-apply a
+// repository that works.
+//
+// They are matched by NAME and never expanded through the IAM API: a doctor
+// run resolves a custom role once, for the reads that need it
+// (TestDoctorSecretManagerChecksReadsACustomRoleOnce), and this check is not
+// worth a second answer to a question doctor already asked. A custom role on
+// the service's policy is therefore reported as not read rather than as a role
+// that carries nothing.
 var runInvokeRoles = []string{"roles/run.invoker", "roles/run.admin", "roles/run.developer", "roles/owner", "roles/editor"}
 
 // secretExpiryWarnWithin is how long before the expiry an operator recorded for
@@ -98,20 +105,22 @@ func refuseBitbucketTokenReadInAgent(getenv func(string) string) error {
 // there), the service exists, and every job account that may call it holds a
 // role that can invoke it.
 //
-// Both halves are read from the service's own IAM policy — where the module
-// writes the grant, one member, the job's own account, roles/run.invoker on
-// that one service — and from the project's, because IAM admits a caller by
-// the two policies together and an installation that granted the role on the
-// project instead would be admitted all the same. A service that is not there
-// is answered by Cloud Run as NOT_FOUND, which is the only way to see it: the
-// fake this check is tested against serves no service get, and the real API's
-// get is the same question asked twice.
+// Both halves are read from the service's own IAM policy, which is where the
+// module writes the grant: one member, the job's own account, roles/run.invoker
+// on that one service. The project's policy is deliberately not read a second
+// time — doctor reads it once, for the reads that ask it a question no other
+// answer covers (TestDoctorSecretManagerChecksReadsTheProjectPolicyOnce) — so a
+// job account granted the role at project level instead reads as missing, which
+// is not what an installation writes and is said in the fix. A service that is
+// not there is answered by Cloud Run as NOT_FOUND, which is the only way to see
+// it: the fake this check is tested against serves no service get, and the real
+// API's get is the same question asked twice.
 //
 // It is a warning and not an ordinary failure: a run whose job cannot invoke
 // the service cannot fetch a model credential, but an installation mid-opt-in
 // (the block written, the apply that creates the service still to come) is a
 // legitimate state, and --strict is where that is a failure.
-func doctorCredentialsServiceDeployed(ctx context.Context, lc *localcfg.Config, crmSvc *crm.Service) []doctorCheck {
+func doctorCredentialsServiceDeployed(ctx context.Context, lc *localcfg.Config) []doctorCheck {
 	if lc.CredentialsService == nil {
 		return nil
 	}
@@ -143,13 +152,7 @@ func doctorCredentialsServiceDeployed(ctx context.Context, lc *localcfg.Config, 
 		}
 		return unreadable("the IAM policy of the Cloud Run service " + infra.CredentialsServiceName + " (" + oneLineCLI(err.Error()) + ")")
 	}
-	policies := [][]iamBinding{bindingsOf(pol.Bindings, runBindingFields)}
-	if crmSvc != nil {
-		if pp, perr := projectPolicy(ctx, lc, crmSvc); perr == nil {
-			policies = append(policies, bindingsOf(pp.Bindings, crmBindingFields))
-		}
-	}
-	roles := newIAMRoles(ctx, lc)
+	bindings := bindingsOf(pol.Bindings, runBindingFields)
 	var (
 		missing []string
 		unread  []string
@@ -163,7 +166,7 @@ func doctorCredentialsServiceDeployed(ctx context.Context, lc *localcfg.Config, 
 			continue
 		}
 		member := "serviceAccount:" + gcp.ServiceAccountID(slug, j.Workflow) + "@" + lc.GCPProject + ".iam.gserviceaccount.com"
-		granted, unknown := invokerGranted(policies, roles, member)
+		granted, unknown := invokerGranted(bindings, member)
 		switch {
 		case granted:
 		case unknown:
@@ -196,21 +199,18 @@ func noteIfAny(note string, any bool) string {
 	return note
 }
 
-// invokerGranted reports whether the policies grant member a role that carries
-// run.routes.invoke, and whether a custom role on the way could not be read —
+// invokerGranted reports whether the policy grants member one of
+// runInvokeRoles, and whether a role on the way could not be judged —
 // "not read" and "carries nothing" are not the same answer, which is the rule
 // every other role question doctor asks is written by.
-func invokerGranted(policies [][]iamBinding, roles *iamRoles, member string) (granted, unread bool) {
-	for _, bs := range policies {
-		for _, b := range bs {
-			carries, errText := roleCarries(b.role, runInvokeRoles, runRoutesInvoke, roles)
-			if errText != "" {
-				unread = true
-				continue
-			}
-			if carries && slices.Contains(b.members, member) {
-				return true, unread
-			}
+func invokerGranted(bindings []iamBinding, member string) (granted, unread bool) {
+	for _, b := range bindings {
+		if isCustomRole(b.role) {
+			unread = true
+			continue
+		}
+		if slices.Contains(runInvokeRoles, b.role) && slices.Contains(b.members, member) {
+			return true, unread
 		}
 	}
 	return false, unread
