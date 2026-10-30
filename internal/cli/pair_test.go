@@ -1735,31 +1735,156 @@ func TestPairKeychainFailureDeliversNothing(t *testing.T) {
 // no delivery behind it is a device that fails USER on every request while it
 // sits on the allowlist (pairRemoveDeviceNode's own reason, and the same state
 // a keychain failure must not leave either).
+//
+// The two ways the write can fail are §4.6's two rows, and the refusal code is
+// what tells them apart: the rules refusing the write is exit 1 and
+// database_admin_missing (the operator needs roles/firebasedatabase.admin), and
+// a database that does not answer is exit 2 and database_unreachable. The undo
+// is the same either way and the code is not, which is why both are here: an
+// operator sent after a missing role when the database was simply down, or the
+// other way round, is sent to fix the wrong thing.
 func TestPairDeliveryFailureRemovesTheItem(t *testing.T) {
+	cases := []struct {
+		name string
+		code string
+		exit int
+		// fail makes the delivery write fail this way, given the pairing's uid.
+		fail func(t *testing.T, f *pairFixture, uid string)
+	}{
+		{
+			name: "the rules refuse the write",
+			code: pairRefusedDatabaseAdmin,
+			exit: ExitUserError,
+			fail: func(t *testing.T, f *pairFixture, uid string) { f.db.Deny(pairPathDelivery(uid)) },
+		},
+		{
+			name: "the database cannot be reached",
+			code: pairRefusedUnreachable,
+			exit: ExitRemoteError,
+			fail: func(t *testing.T, f *pairFixture, uid string) {
+				budgetTransport = pairPathWriteFails{rt: http.DefaultTransport, path: "/pairing/" + uid + ".json"}
+				t.Cleanup(func() { budgetTransport = nil })
+			},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newPairFixture(t, pairMe)
+			uid := pairFixedRand(t)
+			f.pairSeedRequest(uid, pairKey)
+			c.fail(t, f, uid)
+
+			out, _, err := pairRunIn(t, token.Fingerprint(pairKeyBytes), "--json", "--name", "phone-a")
+			if err == nil || ExitCode(err) != c.exit {
+				t.Fatalf("err = %v, want exit %d", err, c.exit)
+			}
+			events := pairLines(t, out)
+			last := events[len(events)-1]
+			if last.Event != pairEventRefused {
+				t.Fatalf("events = %v, want one refused", events)
+			}
+			if last.Code != c.code {
+				t.Fatalf("code = %q, want %q", last.Code, c.code)
+			}
+			f.pairNoDelivery(t, uid)
+			if len(f.keys.Keys) != 0 {
+				t.Fatalf("the keychain holds %v, want the item removed again", f.keys.Keys)
+			}
+			if v := f.db.Value("config/admin/devices"); v != nil {
+				t.Fatalf("a delivery that could not be written left a device on the allowlist: %v", v)
+			}
+			// The pairing is not over: the phone's request node and the token it holds
+			// are untouched, so the operator can fix what refused the write and scan
+			// again while the wait lasts.
+			if v := f.db.Value(pairPathRequest(uid)); v == nil {
+				t.Fatal("the refusal deleted the phone's own request node")
+			}
+		})
+	}
+}
+
+// pairPathWriteFails is the database going away for one write and answering
+// every other request: the difference between "the rules refused this" and "the
+// database is not there" is a difference of error class and of exit code, so a
+// test that wants the second has to fail the transport rather than the rules.
+type pairPathWriteFails struct {
+	rt   http.RoundTripper
+	path string
+}
+
+func (c pairPathWriteFails) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.Method == http.MethodPatch && strings.HasSuffix(r.URL.Path, c.path) {
+		return nil, errors.New("the database is unreachable")
+	}
+	return c.rt.RoundTrip(r)
+}
+
+// TestPairDatabaseErrorIsUnreachableNotDeliveryFailed is §4.6's split at the
+// delivery write: the code and the exit code must agree, and a database error
+// is the unreachable row. `delivery_write_failed` says the operator's own write
+// was refused and sends them looking for a fix in it, while the exit code
+// already says exit 2 — so the console acts on one thing and the operator reads
+// another.
+func TestPairDatabaseErrorIsUnreachableNotDeliveryFailed(t *testing.T) {
 	f := newPairFixture(t, pairMe)
 	uid := pairFixedRand(t)
 	f.pairSeedRequest(uid, pairKey)
-	f.db.Deny(pairPathDelivery(uid))
+	budgetTransport = pairPathWriteFails{rt: http.DefaultTransport, path: "/pairing/" + uid + ".json"}
+	t.Cleanup(func() { budgetTransport = nil })
 
 	out, _, err := pairRunIn(t, token.Fingerprint(pairKeyBytes), "--json", "--name", "phone-a")
-	if err == nil || ExitCode(err) != ExitUserError {
-		t.Fatalf("err = %v, want exit 1", err)
+	if err == nil || ExitCode(err) != ExitRemoteError {
+		t.Fatalf("err = %v, want exit 2: the database could not be reached", err)
 	}
-	if events := pairLines(t, out); events[len(events)-1].Event != pairEventRefused {
-		t.Fatalf("events = %v, want one refused", events)
+	events := pairLines(t, out)
+	last := events[len(events)-1]
+	if last.Code != pairRefusedUnreachable {
+		t.Fatalf("code = %q, want %q: a database that did not answer is §4.6's exit-2 row, and %q names a local write to fix",
+			last.Code, pairRefusedUnreachable, pairRefusedDelivery)
 	}
-	f.pairNoDelivery(t, uid)
-	if len(f.keys.Keys) != 0 {
-		t.Fatalf("the keychain holds %v, want the item removed again", f.keys.Keys)
+	if last.Reason == "" {
+		t.Fatalf("the refusal carries no reason: %v", last)
 	}
-	if v := f.db.Value("config/admin/devices"); v != nil {
-		t.Fatalf("a delivery that could not be written left a device on the allowlist: %v", v)
+}
+
+// TestPairNodeDeleteFailureAfterPairingSaysPairedAndNamesItem is the last step
+// of §7.1 failing after every step before it succeeded. The device IS paired —
+// the node is written and the key is in the keychain — so the refusal must say
+// so, name the keychain item the operator has to record in the local config
+// (nothing else tells them what `mailbox.keychain_item` should say), and say
+// that the history sweep removes the leftover node with the p~ Auth user
+// (decision 2). An operator who reads this as "the pairing failed" would pair
+// the phone again and leave the first device on the allowlist.
+func TestPairNodeDeleteFailureAfterPairingSaysPairedAndNamesItem(t *testing.T) {
+	f := newPairFixture(t, pairMe)
+	uid := pairFixedRand(t)
+	f.pairSeedRequest(uid, pairKey)
+	budgetTransport = pairPathWriteFails{rt: http.DefaultTransport, path: "/pairing.json"}
+	t.Cleanup(func() { budgetTransport = nil })
+
+	out, _, err := pairRunIn(t, token.Fingerprint(pairKeyBytes), "--json", "--name", "phone-a")
+	if err == nil || ExitCode(err) != ExitRemoteError {
+		t.Fatalf("err = %v, want exit 2", err)
 	}
-	// The pairing is not over: the phone's request node and the token it holds
-	// are untouched, so the operator can fix what refused the write and scan
-	// again while the wait lasts.
-	if v := f.db.Value(pairPathRequest(uid)); v == nil {
-		t.Fatal("the refusal deleted the phone's own request node")
+	events := pairLines(t, out)
+	last := events[len(events)-1]
+	if last.Event != pairEventRefused || last.Code != pairRefusedUnreachable {
+		t.Fatalf("events = %v, want one refused with %q", events, pairRefusedUnreachable)
+	}
+	deviceUID := f.pairDeviceUID(t)
+	for _, want := range []string{"the device is paired", "history sweep", pairItemName("aurora", deviceUID)} {
+		if !strings.Contains(last.Reason, want) {
+			t.Errorf("the refusal does not say %q:\n%s", want, last.Reason)
+		}
+	}
+	// The pairing stands: the device node is on the allowlist and the phone's
+	// payload was written. Only the node the payload sits under is left behind.
+	if f.db.Value("config/admin/devices/"+deviceUID) == nil {
+		t.Fatal("a pairing that was completed was undone because the pairing node could not be removed")
+	}
+	f.pairSealedDelivery(t, uid)
+	if len(f.keys.Keys) != 1 {
+		t.Fatalf("the keychain holds %v, want the key of a pairing that completed", f.keys.Keys)
 	}
 }
 
@@ -2045,6 +2170,61 @@ func TestRevokeRefusesNothingOrTwo(t *testing.T) {
 	}
 	if f.db.Value(rules.PathDevices+"/"+pairDevC) != nil {
 		t.Fatal("revoke --name did not delete the one device it matched")
+	}
+}
+
+// TestPairCellSanitises: nothing in the deployed document constrains a device
+// node's children (no `.validate`, no `$other` under config/admin/devices), so
+// a hand-written entry may hold a newline, an ANSI escape or a name longer than
+// any cell should be — and both printers of a node print what the node holds.
+// The cell is the one place that keeps such a name from opening a column,
+// moving the cursor or burying the rest of the listing.
+func TestPairCellSanitises(t *testing.T) {
+	long := strings.Repeat("x", 210)
+	cases := []struct{ name, in, want string }{
+		{"a newline", "phone\na", `phone\u000aa`},
+		{"a carriage return", "phone\ra", `phone\u000da`},
+		{"a tab", "phone\ta", `phone\u0009a`},
+		{"a NUL", "phone\x00a", `phone\u0000a`},
+		{"an ANSI escape", "\x1b[31mphone\x1b[0m", `\u001b[31mphone\u001b[0m`},
+		{"an overlong name", long, strings.Repeat("x", 200) + "... (truncated)"},
+	}
+	for _, c := range cases {
+		if got := pairCell(c.in); got != c.want {
+			t.Errorf("%s: pairCell(%q) = %q, want %q", c.name, c.in, got, c.want)
+		}
+	}
+}
+
+// TestPairRevokeSanitisesDeviceName is that same cell at the other printer:
+// `revoke` names the device it revoked in its text output, and the name comes
+// out of the node, so it goes through pairCell — the function `pair ls` uses —
+// and the two commands print one spelling of a hostile name rather than two.
+func TestPairRevokeSanitisesDeviceName(t *testing.T) {
+	const name = "phone-a\x1b[2K\nevil"
+	f := newPairFixture(t, pairMe)
+	f.pairSeedDevice(pairDevA, name)
+	f.pairSeedItem(t, pairDevA)
+
+	out, _, err := pairRun(t, "revoke", "--uid", pairDevA)
+	if err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	if !strings.Contains(out, pairCell(name)) {
+		t.Fatalf("revoke does not print the device name the way pair ls prints it:\n%s", out)
+	}
+	if strings.Contains(out, "\x1b") {
+		t.Fatalf("revoke printed a raw escape out of the node:\n%q", out)
+	}
+
+	// The same name through `pair ls`: one function, one spelling.
+	f.pairSeedDevice(pairDevB, name)
+	ls, _, err := pairRun(t, "ls")
+	if err != nil {
+		t.Fatalf("ls: %v", err)
+	}
+	if !strings.Contains(ls, pairCell(name)) {
+		t.Fatalf("ls does not print the device name the way revoke prints it:\n%s", ls)
 	}
 }
 

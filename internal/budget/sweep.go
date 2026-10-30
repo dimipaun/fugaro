@@ -141,8 +141,9 @@ func (s *Sweeper) warnf(format string, args ...any) {
 }
 
 // Sweep does one pass. A failure to list executions or to read the registry
-// stops it before anything is written; a failure on one run or on the user
-// cleanup is reported at the end, after the rest was done.
+// stops it before anything is written; a failure on one run, on the user
+// cleanup or on one of the two trees that cleanup reads is reported at the end,
+// after the rest was done.
 func (s *Sweeper) Sweep(ctx context.Context) (SweepReport, error) {
 	var rep SweepReport
 	now := s.Now()
@@ -413,14 +414,14 @@ func (s *Sweeper) deleteUsers(ctx context.Context, now time.Time, maxAge time.Du
 	if err != nil {
 		return 0, 0, fmt.Errorf("listing Firebase users: %w", err)
 	}
-	devices, err := s.deviceNodes(ctx)
-	if err != nil {
-		return 0, 0, err
-	}
-	pairings, err := s.pairingNodes(ctx)
-	if err != nil {
-		return 0, 0, err
-	}
+	// The two trees are read for the m~ and p~ rules alone, and a tree that
+	// could not be read is a family left alone rather than the whole pass: an
+	// unread allowlist reads as "every device is an orphan", and an unread
+	// pairing tree leaves no node the sweep may name. The r~ rule needs neither,
+	// so a failure here is reported and the pass goes on.
+	devices, devErr := s.deviceNodes(ctx)
+	pairings, pairErr := s.pairingNodes(ctx)
+	errs := []error{devErr, pairErr}
 	var del, nodes []string
 	for _, u := range users {
 		switch {
@@ -429,11 +430,11 @@ func (s *Sweeper) deleteUsers(ctx context.Context, now time.Time, maxAge time.Du
 				del = append(del, u.UID)
 			}
 		case strings.HasPrefix(u.UID, devicePrefix):
-			if !devices[u.UID] {
+			if devErr == nil && !devices[u.UID] {
 				del = append(del, u.UID)
 			}
 		case strings.HasPrefix(u.UID, pairingPrefix):
-			if now.Sub(u.Created) <= PairingUserMaxAge {
+			if pairErr != nil || now.Sub(u.Created) <= PairingUserMaxAge {
 				continue
 			}
 			del = append(del, u.UID)
@@ -455,11 +456,11 @@ func (s *Sweeper) deleteUsers(ctx context.Context, now time.Time, maxAge time.Du
 			updates[p] = nil
 		}
 		if err := s.DB.Patch(ctx, "", updates); err != nil {
-			return 0, 0, fmt.Errorf("deleting pairing nodes: %w", err)
+			return 0, 0, errors.Join(append(errs, fmt.Errorf("deleting pairing nodes: %w", err))...)
 		}
 	}
 	if len(del) == 0 {
-		return 0, len(nodes), nil
+		return 0, len(nodes), errors.Join(errs...)
 	}
 	failed, err := s.Auth.DeleteUsers(ctx, del)
 	for _, f := range failed {
@@ -469,9 +470,9 @@ func (s *Sweeper) deleteUsers(ctx context.Context, now time.Time, maxAge time.Du
 		// The nodes above are deleted whatever happens here, so the count goes
 		// back with the error: a report that said zero would tell an operator
 		// nothing was removed when the subtree a phone could still read is gone.
-		return 0, len(nodes), fmt.Errorf("deleting Firebase users: %w", err)
+		return 0, len(nodes), errors.Join(append(errs, fmt.Errorf("deleting Firebase users: %w", err))...)
 	}
-	return max(len(del)-len(failed), 0), len(nodes), nil
+	return max(len(del)-len(failed), 0), len(nodes), errors.Join(errs...)
 }
 
 // deviceNodes is the device allowlist as the sweep reads it: the uids that have

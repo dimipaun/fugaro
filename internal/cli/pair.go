@@ -404,8 +404,14 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 			return pairRefuse(ev, o, pairRefusedDatabaseAdmin,
 				pairUndoPairing(ctx, db, lc, device.UID, item, fmt.Errorf("the write to %s was refused: pairing writes the delivery node there with roles/firebasedatabase.admin, which this credential does not hold on project %s's Firebase project (its owners and editors hold it, and terraform.budget_admins): %w", pairPathDelivery(uid), lc.Name, err)))
 		}
-		return pairRefuse(ev, o, pairRefusalCode(err, pairRefusedDelivery),
-			pairUndoPairing(ctx, db, lc, device.UID, item, dbErr(lc, err, true)))
+		// The wire code is read off the classified error and not off what rtdb
+		// returned: §4.6's rows are dbErr's classes, so a database that did not
+		// answer is database_unreachable (exit 2) and never
+		// delivery_write_failed, which names a local write the operator would
+		// look for a fix in while the database was simply not there.
+		cause := dbErr(lc, err, true)
+		return pairRefuse(ev, o, pairRefusalCode(cause, pairRefusedDelivery),
+			pairUndoPairing(ctx, db, lc, device.UID, item, cause))
 	}
 
 	// §7.1 step 9, decision 2: the whole subtree goes, so the payload does not
@@ -415,10 +421,11 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 	if err := db.Patch(ctx, "pairing", map[string]any{uid: nil}); err != nil {
 		if errors.Is(err, rtdb.ErrPermission) {
 			return pairRefuse(ev, o, pairRefusedDatabaseAdmin,
-				fmt.Errorf("the deletion of %s was refused: the delivery is written and the device is paired, but the pairing node could not be removed, so the payload stays readable to the pairing token for as long as its ID token lives; deleting it needs roles/firebasedatabase.admin on project %s's Firebase project: %w", pairPath(uid), lc.Name, err))
+				fmt.Errorf("the deletion of %s was refused: the pairing is done — the delivery is written, the device is paired and its MAC key is in the OS keychain item %s — but the pairing node could not be removed, so the payload stays readable to the pairing token for as long as its ID token lives; deleting it needs roles/firebasedatabase.admin on project %s's Firebase project, and the history sweep deletes that node with the %s Auth user once the pairing is over: %w", pairPath(uid), item.Name(), lc.Name, uid, err))
 		}
-		return pairRefuse(ev, o, pairRefusalCode(err, pairRefusedDelivery),
-			fmt.Errorf("%w; the delivery is written and the device is paired, but %s could not be removed, so the payload stays readable to the pairing token for as long as its ID token lives", dbErr(lc, err, true), pairPath(uid)))
+		cause := dbErr(lc, err, true)
+		return pairRefuse(ev, o, pairRefusalCode(cause, pairRefusedDelivery),
+			fmt.Errorf("%w; the pairing is done — the delivery is written, the device is paired and its MAC key is in the OS keychain item %s — but %s could not be removed, so the payload stays readable to the pairing token for as long as its ID token lives; the history sweep deletes that node with the %s Auth user once the pairing is over", cause, item.Name(), pairPath(uid), uid))
 	}
 
 	if o.asJSON {
@@ -1025,7 +1032,9 @@ func runPairLs(cmd *cobra.Command, o *pairLsOptions) error {
 // deployed document declares no `.validate` and no `$other` under
 // config/admin/devices), so a hand-written entry may hold anything, and a
 // control character or a tab in one would otherwise escape the cell or open
-// the next column.
+// the next column. Both printers of a node go through it — `ls` as a cell and
+// `revoke` naming the device it revoked — so one hostile name has one spelling
+// and not two.
 func pairCell(s string) string {
 	return strings.ReplaceAll(pluginwire.Printable(strings.TrimSpace(s)), "\t", `\u0009`)
 }
@@ -1185,7 +1194,7 @@ func runPairRevoke(cmd *cobra.Command, o *pairRevokeOptions) error {
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "revoked %s", device.UID)
 	if device.Name != "" {
-		fmt.Fprintf(out, " (%s)", device.Name)
+		fmt.Fprintf(out, " (%s)", pairCell(device.Name))
 	}
 	fmt.Fprintf(out, ": deleted %s, so the phone is off %s's allowlist from its next request on\n", wrote[0], lc.Name)
 	fmt.Fprintf(out, "deleted this laptop's OS keychain item %s\n", item.Name())

@@ -60,6 +60,30 @@ func TestHistorySweepRemovesCrashedRun(t *testing.T) {
 	}
 }
 
+// TestHistoryPrintsPairingNodesDeleted: the sweep deletes the pairing/<uid>
+// node of the p~ user it deletes (decision 2), and this line is what an
+// operator reads afterwards. A node that is gone and not counted is a deletion
+// nobody can see — the pairing tree is empty whether one node went or none did
+// — and the payload the node held is the whole reason that deletion is in the
+// sweep's remit.
+func TestHistoryPrintsPairingNodesDeleted(t *testing.T) {
+	f := newHistoryFixture(t)
+	const uid = "p~AAAAAAAAAAAAAAAAAAAAAAAAAA"
+	f.db.Set("pairing/"+uid, map[string]any{"delivery": map[string]any{"v": 1, "sealed": "AAAA"}})
+	f.idt.AddUser(uid, time.Now().Add(-2*time.Hour))
+
+	out, _, err := execute(t, "budget", "history", "--sweep")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.db.Value("pairing/"+uid) != nil {
+		t.Fatal("the pairing node survived the pass that deleted its user")
+	}
+	if !strings.Contains(out, "1 users deleted, 1 pairing nodes deleted") {
+		t.Fatalf("output = %q, want the pairing node it deleted counted beside the users", out)
+	}
+}
+
 func TestHistoryNeedsExactlyOneMode(t *testing.T) {
 	newHistoryFixture(t)
 	for _, args := range [][]string{{"budget", "history"}, {"budget", "history", "--sweep", "--rollover"}} {
