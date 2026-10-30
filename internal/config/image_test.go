@@ -214,8 +214,9 @@ const sharedYAML = webYAML + `    checkout: shared
 // release that flips sharedCheckoutShipped makes these tests run it open.
 func sharedShipped(t *testing.T) {
 	t.Helper()
+	was := sharedCheckoutShipped
 	sharedCheckoutShipped = true
-	t.Cleanup(func() { sharedCheckoutShipped = false })
+	t.Cleanup(func() { sharedCheckoutShipped = was })
 }
 
 // TestValidateCheckoutSharedAllowsDependencyKeys (design

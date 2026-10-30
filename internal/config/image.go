@@ -235,6 +235,13 @@ const SharedCheckoutSince = "0.15.0"
 // (internal/cli/recipes_skew.go) were flipped.
 var sharedCheckoutShipped = false
 
+// SharedCheckoutRefusal is the problem validateCheckout reports for
+// checkout: shared while sharedCheckoutShipped is false. It is exported so a
+// launch, which reads the checkout's fugaro.yaml leniently, can find it among
+// that file's problems and refuse with this sentence rather than with
+// whatever later step trips over the config it could not use.
+const SharedCheckoutRefusal = "shared images arrive in " + SharedCheckoutSince + ": no release builds or refreshes a shared dependency-layer image yet, so a shared workflow's job could not run; use checkout: baked to build a per-repository image, or checkout: clone to run the base image and clone the source at launch"
+
 // validateCheckout checks a workflow's checkout: (design generic-tool.md §2,
 // G3). clone runs the installation's base image directly, with no build, so
 // a key that only a build can honor is refused, naming checkout: baked.
@@ -272,7 +279,7 @@ func validateCheckout(p string, w Workflow) []Problem {
 		return ps
 	}
 	if w.Checkout == CheckoutShared && !sharedCheckoutShipped {
-		add(p+".checkout", "shared images arrive in "+SharedCheckoutSince+": no release builds or refreshes a shared dependency-layer image yet, so a shared workflow's job could not run; use checkout: baked to build a per-repository image, or checkout: clone to run the base image and clone the source at launch")
+		add(p+".checkout", SharedCheckoutRefusal)
 		return ps
 	}
 	// A base: alongside clone or shared needs no refusal of its own here:

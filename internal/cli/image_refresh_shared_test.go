@@ -150,13 +150,17 @@ func TestRunRefusesSharedWorkflowBefore0150(t *testing.T) {
 	t.Chdir(dir)
 	const key = "9f2c1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7"
 	lockWith(t, f, key, "ghcr.io/dimipaun/fugaro-base:"+sharedSince, "acme/other", other, "svc")
-	if _, _, err := execute(t, "run", "--run-id", "20261030-100000-abcd", "A task"); err == nil || ExitCode(err) != ExitUserError {
+	out, errOut, err := execute(t, "run", "--run-id", "20261030-100000-abcd", "A task")
+	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("a run of a checkout: shared workflow = %v, want refused", err)
+	}
+	if want := "workflows.svc.checkout: shared images arrive in " + config.SharedCheckoutSince; !strings.Contains(err.Error(), want) {
+		t.Errorf("the launch's refusal = %v, want it to carry %q, the sentence fugaro validate prints, not whatever later step trips over the refused file", err, want)
 	}
 	if n := len(f.run.Requests()); n != 0 {
 		t.Errorf("the launch made %d call(s) to the Cloud Run API, want none: a shared workflow's fugaro.yaml is refused before anything is started", n)
 	}
-	out, errOut, err := execute(t, "validate")
+	out, errOut, err = execute(t, "validate")
 	if err == nil {
 		t.Fatalf("fugaro validate accepted a checkout: shared workflow:\n%s%s", out, errOut)
 	}
@@ -164,6 +168,36 @@ func TestRunRefusesSharedWorkflowBefore0150(t *testing.T) {
 		if !strings.Contains(out+errOut+err.Error(), want) {
 			t.Errorf("the refusal does not carry %q:\nstdout:\n%s\nstderr:\n%s\n%v", want, out, errOut, err)
 		}
+	}
+}
+
+// TestRunRefusesSharedCheckoutWhenLocalConfigNamesTheRepo is the launch a
+// set-up repository makes: its local config entry gives the provider and the
+// workflow, so nothing the launch needs comes from the refused fugaro.yaml,
+// and without the refusal it started a job the runner would refuse at
+// bootstrap. The --pr path reads the same checkout and is held to the same
+// sentence.
+func TestRunRefusesSharedCheckoutWhenLocalConfigNamesTheRepo(t *testing.T) {
+	f := newCloudFixture(t)
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/app.git")
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": "version: 1\nproject: aurora\ngit: { provider: github, base_branch: main }\nworkflows:\n" +
+		"  web: { checkout: shared, commands: { build: sh build.sh, test: sh test.sh } }\n"})
+	t.Chdir(dir)
+	want := "workflows.web.checkout: shared images arrive in " + config.SharedCheckoutSince
+	for _, args := range [][]string{
+		{"run", "A task"},
+		{"run", "--pr", "7", "A follow-up"},
+	} {
+		_, _, err := execute(t, args...)
+		if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), want) {
+			t.Errorf("%v = %v, want refused with %q", args, err, want)
+		}
+	}
+	if n := len(f.run.Requests()); n != 0 {
+		t.Errorf("the launches made %d call(s) to the Cloud Run API, want none", n)
 	}
 }
 

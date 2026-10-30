@@ -631,6 +631,21 @@ func TestProjectLayerNeverEchoesCredentialsOrLongText(t *testing.T) {
 	}
 }
 
+// TestProjectLayerRefusesCheckoutSharedUntil0150: a profile is the other
+// way a workflow gets its checkout, so the corpus's shared profile, valid
+// only behind sharedShipped, is refused today with the sentence a
+// repository's own fugaro.yaml gets.
+func TestProjectLayerRefusesCheckoutSharedUntil0150(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "project-layer", "valid", "checkout-shared-profile.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	l, ps := ParseProjectLayer(data, LayerAnchor{Project: "aurora", GCPProject: "proj-1234"})
+	if l != nil || !hasProblem(ps, "profiles.p.checkout", SharedCheckoutRefusal, 0) {
+		t.Errorf("a profile declaring checkout: shared parsed to %v with problems %v, want refused at profiles.p.checkout", l, ps)
+	}
+}
+
 // TestProjectLayerCorpus walks the valid and invalid project-layer corpus.
 // It runs with sharedShipped on because valid/ holds a checkout: shared
 // profile, a shape only the release that ships shared images accepts.
