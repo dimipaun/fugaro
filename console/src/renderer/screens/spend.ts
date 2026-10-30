@@ -279,6 +279,44 @@ const NO_RECORD_REASON = 'no readable record for these runs'
  */
 export const RESERVE_LABEL = 'largest single lease (max reserve)'
 
+/** CAPS_TITLE is the caps panel's own heading. The tab above the screen says
+ * Spend, and this panel is the one region of it that answers a different
+ * question -- what binds the money today -- so it says its own name rather than
+ * borrowing the screen's. */
+const CAPS_TITLE = 'Caps today'
+
+/** CAPS_AT_CAP_WORD is what a repository whose counted dollars have reached its
+ * daily cap is drawn as, beside the bar. It is a **word** and not a tone:
+ * section 3.5 forbids a state the stylesheet alone carries, and the amber of
+ * the bar is redundant by construction because this word is always with it. */
+const CAPS_AT_CAP_WORD = 'at cap'
+
+/**
+ * The caps panel's words for the figures it draws. A caps row carries no column
+ * headers -- it is a list of labelled figures rather than a table -- so every
+ * figure carries the word for what it is, and a reader never meets a run of
+ * numbers that says nothing about which account each one belongs to.
+ *
+ * `billed` is the console's word for `spent_usd`, the money actually charged
+ * (`budget show`'s own "spent" figure, `showRepo.SpentUSD`). It is drawn plain:
+ * no notional mark, no estimate mark, and never added to the notional dollars
+ * beside it.
+ */
+const CAPS_DAILY_CAP_WORD = 'daily cap'
+const CAPS_PER_RUN_CAP_WORD = 'per-run cap'
+const CAPS_COUNTED_WORD = 'counted'
+const CAPS_BILLED_WORD = 'billed'
+const CAPS_NOTIONAL_WORD = 'notional'
+const CAPS_COMPUTE_WORD = 'compute'
+const CAPS_HEADROOM_WORD = 'headroom'
+
+/** CAPS_BAR_UNITS is the cap bar's own drawing unit: the `viewBox` is a hundred
+ * units wide, so the filled `rect`'s width is the share of the cap the counted
+ * dollars reached and never a pixel (the shape the chart above and Live's fleet
+ * bar share). `preserveAspectRatio="none"` stretches the box to the panel, so
+ * the height is the stylesheet's and the width is the document's. */
+const CAPS_BAR_UNITS = 100
+
 // ---------------------------------------------------------------------------
 // The scope names.
 // ---------------------------------------------------------------------------
@@ -522,38 +560,27 @@ export interface SpendCapRow {
   readonly spent: Reading
   readonly notional: Reading
   /** compute is the repository's compute dollars, an **estimated** figure by
-   * design (`runstore.Cost.ComputeUSD`). The owner approved `compute_usd` on
-   * each `showRepo` on 2026-10-28, and `budget show --compute` writes it since
-   * 2026-10-29. The caps panel draws it as its own cell in its own state --
-   * `est. $0.12`, or `n/a` and never `$0.00` where the document carries none --
-   * and never adds it to the counted or the notional dollars beside it, which
-   * are two other accounts. It reads absent and `null` as `n/a` because that key
-   * is **flag-conditioned**: no released CLI writes it, and no caller of this
-   * console's `budget.show` row passes `--compute` until the Spend screen's read
-   * is flipped behind `budgetComputeSupported` (`src/shared/version.ts`). The
-   * cell is drawn only for a document that carries the key somewhere
-   * (`carriesCompute`, below): a document read without the flag -- every one the
-   * console itself produces today -- draws no compute cell at all rather than a
-   * column of `n/a`, and once one does carry it, a row that carries none is
-   * `n/a` and never `$0.00`.
+   * design (`runstore.Cost.ComputeUSD`), written by `budget show --compute`
+   * since 2026-10-29. The caps panel draws it as a third labelled figure beside
+   * the billed and the notional dollars -- `est. $0.12`, never the notional mark
+   * and never added to either of them -- and the key is **flag-conditioned**: no
+   * caller of this console's `budget.show` row passes `--compute` until the
+   * Spend screen's read is flipped behind `budgetComputeSupported`
+   * (`src/shared/version.ts`), so today only a document a person hands this
+   * reader carries it.
    *
-   * A value that is not a number is `n/a` too, and not a refusal, because this
-   * reader refuses no document at all -- the caps panel is the console's
-   * tolerant reader, and every number it cannot read is `n/a`. The contract
-   * states that as one rule (console/docs/json-contract.md §2): a key named
-   * ahead of its release is handled the way the decoder that owns the document
-   * handles a shape it cannot read; the closed decoders (`shared/schema.ts`,
-   * the digest) refuse it by name, and this one draws `n/a`. */
+   * Absent, `null` and a value that is not a number are all `n/a`, never
+   * `$0.00`: the caps panel refuses no document at all, so a key named ahead of
+   * its release is drawn the way this reader draws a shape it cannot read
+   * (contract §2), where the closed decoders refuse it by name. */
   readonly compute: Reading
   /** carriesCompute is whether this row carries `compute_usd` at all, which is
    * the flag's own trace on the wire: `budget show --compute` writes the key on
-   * every repository it lists (a figure it cannot give as `null`), and without
-   * the flag the CLI writes none, so a key that is nowhere in the document is a
-   * document read without the flag. The caps panel draws the compute cell only
-   * when some row carries the key, because the column is the read's and not the
-   * row's: a document that was not read with `--compute` gets no compute cell,
-   * rather than every repository row wearing a permanent `n/a` for a flag
-   * nobody passed. */
+   * every repository it lists, and without the flag the CLI writes none. The
+   * panel draws the compute figure only when some row carries the key, because
+   * the column is the **read's** and not the row's: a document that was not read
+   * with `--compute` gets no compute figure at all, rather than every repository
+   * row wearing a permanent `n/a` for a flag nobody passed. */
   readonly carriesCompute: boolean
   readonly headroom: Reading
   readonly dailyCap: Reading
@@ -2798,32 +2825,125 @@ function totalsLine(factory: ScreenFactory, model: SpendModel): ScreenElement {
   return element
 }
 
-/** scopeCell draws a cap and the scope that binds it. The scope is a word this
- * console chose from the document's own closed set, and an unknown one is drawn
- * as an explicit unknown with its sentence in the title. */
-function scopeCell(
+/** capScopeCell is `capFigure` for a cap: the same labelled figure, with the
+ * scope that binds it beside it. The scope is a word this console chose from the
+ * document's own closed set, and an unknown one is drawn as an explicit unknown
+ * with its sentence in the title. */
+function capScopeCell(
   parent: ScreenElement,
   factory: ScreenFactory,
+  word: string,
   reading: Reading,
-  unit: Parameters<typeof putReading>[2],
   scope: SpendScope,
   attribute: string,
   ...classes: string[]
 ): ScreenElement {
-  numberCell(parent, factory, 'span', reading, unit, ...classes)
-  const element = cell(parent, factory, 'span', 'spend-scope')
-  literal(element, scope.name)
-  element.setAttribute(attribute, scope.known ? scope.source : 'unknown')
-  element.setAttribute('data-scope-known', scope.known ? 'true' : 'false')
+  const element = capFigure(parent, factory, word, reading, ...classes)
+  const named = cell(element, factory, 'span', 'spend-scope')
+  literal(named, scope.name)
+  named.setAttribute(attribute, scope.known ? scope.source : 'unknown')
+  named.setAttribute('data-scope-known', scope.known ? 'true' : 'false')
   if (!scope.known) {
-    element.setAttribute('title', 'the document names a cap scope this console does not know, so it cannot say which scope binds')
+    named.setAttribute('title', 'the document names a cap scope this console does not know, so it cannot say which scope binds')
   }
   return element
 }
 
-/** capsPanel draws the caps: global, defaults and the per-repository
- * overrides, each cap with the scope that binds it. */
-function capsPanel(factory: ScreenFactory, model: SpendModel): ScreenElement {
+/** capFigure is one labelled figure of a caps row: the console's own word for
+ * what the number is, and the number in its own state beside it. */
+function capFigure(
+  parent: ScreenElement,
+  factory: ScreenFactory,
+  word: string,
+  reading: Reading,
+  ...classes: string[]
+): ScreenElement {
+  const element = cell(parent, factory, 'div', 'spend-cap-figure')
+  literal(cell(element, factory, 'span', 'spend-cap-word'), word)
+  numberCell(element, factory, 'span', reading, 'usd', ...classes)
+  return element
+}
+
+/** capsBarUnits is a share of the cap as a length on the bar's hundred-unit
+ * box. A repository past its cap draws a **full** bar and says `at cap` beside
+ * it: a bar longer than its own track would draw a share of the cap larger than
+ * the cap, which is not a figure this document holds. */
+function capsBarUnits(share: number): string {
+  return chartUnits(Math.min(1, share) * CAPS_BAR_UNITS)
+}
+
+/** capsAtCap is whether a repository is at its limit: either the headroom the
+ * document reports is a **measured** value of zero or less (the CLI measures it
+ * under the repository's own cap and the project-wide one, so a repository the
+ * project's cap is holding back is at its limit too), or the counted dollars are
+ * at or past the cap the row carries. Both grounds are figures the row draws, so
+ * the word is never beside numbers that contradict it -- the first needs no cap
+ * of the repository's own and therefore no bar. An unavailable headroom is not a
+ * zero: a row the document reports no headroom for, under a cap its counted
+ * dollars have not reached, draws neither the word nor the tone. */
+function capsAtCap(row: SpendCapRow): boolean {
+  if (row.headroom.value !== null && row.headroom.value <= 0) return true
+  const cap = row.dailyCap.value
+  const counted = row.counted.value
+  return cap !== null && counted !== null && counted >= cap
+}
+
+/** capsBar draws a repository's daily-cap bar: the CLI's own `counted_usd`
+ * against `daily_cap_usd`, as `aria-hidden` geometry -- the two figures it draws
+ * are written as text beside it, and the words `at cap` are written when the cap
+ * is reached, so the drawing loses no reader a fact.
+ *
+ * The row's `headroom` is written beside them too, because the word `at cap` is
+ * measured from it and not from the bar: the CLI reports the room left under
+ * whichever cap binds, the repository's own or the project-wide one, so a
+ * repository the global cap is holding back is at its limit with its counted
+ * dollars still **under** its own cap -- and, if nobody set that cap, with no bar
+ * at all. A state whose figure is off-screen is a state the reader cannot check.
+ *
+ * **The figure the bar draws is `counted_usd` and nothing else.** `counted_usd`
+ * is what the daily cap is enforced against (`budget.Counters.Counted`: the
+ * money reserved by runs and not yet released, a ceiling on spend), so it is the
+ * CLI's own answer to "how much of the cap is used". The renderer adds nothing:
+ * billed and notional are never summed, with each other or with compute, and the
+ * design's "billed + compute" is not a figure this document holds. A row the
+ * document gives no cap for draws no bar at all -- a bar of no length would read
+ * as a measurement of zero -- and its cap is drawn `n/a` with the reason. */
+function capsBar(parent: ScreenElement, factory: SpendFactory, row: SpendCapRow, atCap: boolean): ScreenElement {
+  const element = cell(parent, factory, 'div', 'spend-cap-bar')
+  const cap = row.dailyCap.value
+  const counted = row.counted.value
+  if (cap !== null && cap > 0 && counted !== null) {
+    const svgElement = makeNS(factory, 'svg', 'spend-cap-bar-svg')
+    svgElement.setAttribute('viewBox', '0 0 100 100')
+    svgElement.setAttribute('preserveAspectRatio', 'none')
+    svgElement.setAttribute('aria-hidden', 'true')
+    const track = makeNS(factory, 'rect', 'spend-cap-bar-track')
+    track.setAttribute('x', '0')
+    track.setAttribute('y', '0')
+    track.setAttribute('width', '100')
+    track.setAttribute('height', '100')
+    const filled = makeNS(factory, 'rect', 'spend-cap-bar-fill')
+    filled.setAttribute('x', '0')
+    filled.setAttribute('y', '0')
+    filled.setAttribute('width', capsBarUnits(counted / cap))
+    filled.setAttribute('height', '100')
+    svgElement.append(track)
+    svgElement.append(filled)
+    element.append(svgElement)
+  }
+  capFigure(element, factory, CAPS_COUNTED_WORD, row.counted, 'spend-cap-counted')
+  capScopeCell(element, factory, CAPS_DAILY_CAP_WORD, row.dailyCap, row.dailyScope, 'data-daily-scope', 'spend-cap-daily')
+  capFigure(element, factory, CAPS_HEADROOM_WORD, row.headroom, 'spend-cap-headroom')
+  if (atCap) literal(cell(element, factory, 'span', 'spend-cap-at-cap'), CAPS_AT_CAP_WORD)
+  return element
+}
+
+/** capsPanel draws what binds today: the console's own heading, the mode as a
+ * chip, the largest single lease, the repository defaults, the global row and
+ * one row per repository -- each figure under its own word, each cap beside the
+ * scope that binds it, and each repository's counted dollars drawn against its
+ * daily cap. */
+function capsPanel(factory: SpendFactory, model: SpendModel): ScreenElement {
   const caps = model.caps
   const element = make(factory, 'section', 'spend-caps')
   element.setAttribute('data-available', caps.available ? 'true' : 'false')
@@ -2835,6 +2955,7 @@ function capsPanel(factory: ScreenFactory, model: SpendModel): ScreenElement {
     literal(none, 'no budget show document was read, so this console does not know the caps: every cap here is n/a, not zero')
     return element
   }
+  literal(cell(element, factory, 'h2', 'spend-caps-title'), CAPS_TITLE)
   if (caps.project !== null) {
     textCell(element, factory, 'span', caps.project, 'project', 'caps.project', 'spend-caps-project')
   }
@@ -2854,26 +2975,29 @@ function capsPanel(factory: ScreenFactory, model: SpendModel): ScreenElement {
   literal(cell(reserve, factory, 'span', 'spend-cap-word'), RESERVE_LABEL)
   numberCell(reserve, factory, 'span', caps.reserve, 'usd', 'spend-cap-reserve')
   element.append(reserve)
-  if (caps.global !== null) {
-    const global = make(factory, 'div', 'spend-cap-global')
-    literal(cell(global, factory, 'span', 'spend-cap-word'), 'global')
-    numberCell(global, factory, 'span', caps.global.dailyCap, 'usd', 'spend-cap-daily')
-    numberCell(global, factory, 'span', caps.global.perRunCap, 'usd', 'spend-cap-per-run')
-    numberCell(global, factory, 'span', caps.global.counted, 'usd', 'spend-cap-counted')
-    numberCell(global, factory, 'span', caps.global.spent, 'usd', 'spend-cap-spent')
-    // The notional account again, and again its own state: never added to the
-    // counted dollars beside it.
-    numberCell(global, factory, 'span', caps.global.notional, 'usd', 'spend-cap-notional')
-    numberCell(global, factory, 'span', caps.global.headroom, 'usd', 'spend-cap-headroom')
-    if (caps.global.kill !== null) global.append(killBanner(factory, caps.global.kill))
-    element.append(global)
-  }
   if (caps.defaults !== null) {
     const defaults = make(factory, 'div', 'spend-cap-defaults')
     literal(cell(defaults, factory, 'span', 'spend-cap-word'), 'repository defaults')
-    numberCell(defaults, factory, 'span', caps.defaults.repoDailyCap, 'usd', 'spend-cap-daily')
-    numberCell(defaults, factory, 'span', caps.defaults.repoPerRunCap, 'usd', 'spend-cap-per-run')
+    capFigure(defaults, factory, CAPS_DAILY_CAP_WORD, caps.defaults.repoDailyCap, 'spend-cap-daily')
+    capFigure(defaults, factory, CAPS_PER_RUN_CAP_WORD, caps.defaults.repoPerRunCap, 'spend-cap-per-run')
     element.append(defaults)
+  }
+  if (caps.global !== null) {
+    // The global row's six figures, each under its own word: the two caps, the
+    // counted dollars the caps are measured against, the billed and notional
+    // accounts (drawn apart, never summed) and the room left under the caps.
+    // `budget show --json` also carries `leased_usd` here (counted minus spent,
+    // floored at 0); this console reads no such key, so it draws none.
+    const global = make(factory, 'div', 'spend-cap-global')
+    literal(cell(global, factory, 'span', 'spend-cap-word'), 'global')
+    capFigure(global, factory, CAPS_DAILY_CAP_WORD, caps.global.dailyCap, 'spend-cap-daily')
+    capFigure(global, factory, CAPS_PER_RUN_CAP_WORD, caps.global.perRunCap, 'spend-cap-per-run')
+    capFigure(global, factory, CAPS_COUNTED_WORD, caps.global.counted, 'spend-cap-counted')
+    capFigure(global, factory, CAPS_BILLED_WORD, caps.global.spent, 'spend-cap-spent')
+    capFigure(global, factory, CAPS_NOTIONAL_WORD, caps.global.notional, 'spend-cap-notional')
+    capFigure(global, factory, CAPS_HEADROOM_WORD, caps.global.headroom, 'spend-cap-headroom')
+    if (caps.global.kill !== null) global.append(killBanner(factory, caps.global.kill))
+    element.append(global)
   }
   const repos = cell(element, factory, 'ol', 'spend-cap-repos')
   // One row carrying the key is the whole document's answer: the key is
@@ -2883,17 +3007,20 @@ function capsPanel(factory: ScreenFactory, model: SpendModel): ScreenElement {
     const item = cell(repos, factory, 'li', 'spend-cap-repo')
     const name = textCell(item, factory, 'span', row.repo === '' ? row.slug : row.repo, keyClass('repo', row.repo === '' ? row.slug : row.repo), 'repos[].repo', 'spend-cap-repo-name')
     item.setAttribute('data-key', drawnKey(name))
-    numberCell(item, factory, 'span', row.counted, 'usd', 'spend-cap-counted')
-    numberCell(item, factory, 'span', row.notional, 'usd', 'spend-cap-notional')
-    // Compute is a third account, so it is a third cell in its own state --
-    // never added to the counted or the notional dollars beside it. It is
-    // drawn only for a document that was read with the flag, because an `n/a`
-    // column on every row of a read that never asked for the figure says
-    // nothing a person can act on.
-    if (showsCompute) numberCell(item, factory, 'span', row.compute, 'usd', 'spend-cap-compute')
-    numberCell(item, factory, 'span', row.headroom, 'usd', 'spend-cap-headroom')
-    scopeCell(item, factory, row.dailyCap, 'usd', row.dailyScope, 'data-daily-scope', 'spend-cap-daily')
-    scopeCell(item, factory, row.perRunCap, 'usd', row.perRunScope, 'data-per-run-scope', 'spend-cap-per-run')
+    const atCap = capsAtCap(row)
+    item.setAttribute('data-at-cap', atCap ? 'true' : 'false')
+    // The three money accounts of the repository, each in its own cell and each
+    // with its own word: billed (what was charged), notional (a subscription's
+    // list price) and compute (an estimate) are never added to one another.
+    capFigure(item, factory, CAPS_BILLED_WORD, row.spent, 'spend-cap-spent')
+    capFigure(item, factory, CAPS_NOTIONAL_WORD, row.notional, 'spend-cap-notional')
+    // Compute is drawn only for a document that was read with the flag, because
+    // an `n/a` cell on every row of a read that never asked for the figure says
+    // nothing a person can act on; a row that carries the key as `null` is `n/a`
+    // and never `$0.00`.
+    if (showsCompute) capFigure(item, factory, CAPS_COMPUTE_WORD, row.compute, 'spend-cap-compute')
+    capsBar(item, factory, row, atCap)
+    capScopeCell(item, factory, CAPS_PER_RUN_CAP_WORD, row.perRunCap, row.perRunScope, 'data-per-run-scope', 'spend-cap-per-run')
     if (row.kill !== null) item.append(killBanner(factory, row.kill))
   }
   for (const warning of caps.warnings) {
