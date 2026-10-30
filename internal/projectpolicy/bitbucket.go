@@ -153,8 +153,8 @@ func decodeBitbucketTokenBlock(raw json.RawMessage) (*BitbucketToken, error) {
 const maxBitbucketTokenStars = 2
 
 // validBitbucketTokenBlock holds the block to the rules of D464, whoever wrote
-// it: a written block names at least one repository, and every entry names a
-// Bitbucket repository whose owner segment is literal.
+// it: a written block names at least one repository, each well-formed, with a
+// literal owner segment and at most two wildcards.
 //
 // The narrower rules are the point. MatchRepo would accept "*" and
 // "bitbucket/*/*" in an allow_repos list — a project's enrollment may be that
@@ -178,7 +178,7 @@ func validBitbucketTokenBlock(b *BitbucketToken) error {
 			return fmt.Errorf("%s: %w", at, err)
 		}
 		if pattern == "*" {
-			return fmt.Errorf("%s: %s is not accepted: the Bitbucket token reaches one owner's repositories, so name the workspace (\"bitbucket/workspace-a/*\") rather than every repository of every provider", at, config.BitbucketSecret)
+			return fmt.Errorf("%s: \"*\" is not accepted: %s reaches one owner's repositories, so name the workspace (\"bitbucket/workspace-a/*\") rather than every repository of every provider", at, config.BitbucketSecret)
 		}
 		segs := strings.Split(pattern, "/")
 		if strings.Contains(segs[1], "*") {
