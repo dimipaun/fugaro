@@ -36,6 +36,7 @@ import { describe, expect, it } from 'vitest'
 
 import { parseVersionLine } from '../../src/main/spawn'
 import {
+  BUDGET_COMPUTE_CLI_FLOOR,
   CLI_HARD_FLOOR_VERSION,
   CLI_VERSION_BUILT_AGAINST,
   CONSOLE_CLI_UPGRADE_COMMAND,
@@ -46,6 +47,7 @@ import {
   SUPPORTED_CLI_MINORS,
   UNREADABLE_VERSION,
   classifyCliVersion,
+  budgetComputeSupported,
   compareMinors,
   hidesView,
   launchSupported,
@@ -373,6 +375,70 @@ describe('launchSupported', () => {
     // patch: `0.12` is above it and `0.11` is below it.
     expect(launchSupported('0.12')).toBe(true)
     expect(launchSupported('0.11')).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The compute floor.
+// ---------------------------------------------------------------------------
+
+describe('budgetComputeSupported', () => {
+  it('is the release that ships `budget show --compute`', () => {
+    // The flag landed on the CLI's main on 2026-10-29 and no released CLI
+    // carries it: `v0.12.1` is the newest tag, and it answers `--compute` with
+    // an unknown-flag error. 0.13.0 is the release that ships it.
+    expect(BUDGET_COMPUTE_CLI_FLOOR).toBe('0.13.0')
+    expect(budgetComputeSupported('0.12.1')).toBe(false)
+  })
+
+  it('admits a version at or above the floor, patch level by patch level', () => {
+    for (const line of ['0.13.0', 'v0.13.0', '0.13.1', '0.13.99', '0.14.0', '1.0.0']) {
+      expect(budgetComputeSupported(line), line).toBe(true)
+    }
+    expect(budgetComputeSupported('0.13.0+build.7')).toBe(true)
+    for (const line of ['0.12.99', '0.12.1', '0.12.0', '0.11.2', '0.6.0']) {
+      expect(budgetComputeSupported(line), line).toBe(false)
+    }
+  })
+
+  it('refuses a line it cannot place, rather than asking an older CLI for the flag', () => {
+    // The same rule `launchSupported` states: a prerelease is read as its
+    // release by `parseCliVersion`, and a `dev` build is unplaceable, so both
+    // are refusals here rather than an argv an older CLI rejects.
+    for (const line of ['0.13.0-rc.1', '0.13.0-rc', 'dev', 'devel', '', 'the binary did not answer']) {
+      expect(budgetComputeSupported(line), JSON.stringify(line)).toBe(false)
+    }
+    // A minor that names no patch is read as its x.y.0.
+    expect(budgetComputeSupported('0.13')).toBe(true)
+    expect(budgetComputeSupported('0.12')).toBe(false)
+  })
+
+  it('is a patch comparison of its own, which range membership cannot stand in for', () => {
+    // The flag is opt-in on a command the console draws in both modes, so the
+    // question is the floor's and never the range's: 0.12 is outside the
+    // supported range and above the launch floor, and it is still below this
+    // one.
+    expect(SUPPORTED_CLI_MINORS).not.toContain('0.13')
+    expect(launchSupported('0.12.1')).toBe(true)
+    expect(budgetComputeSupported('0.12.1')).toBe(false)
+    expect(budgetComputeSupported(LAUNCH_CLI_FLOOR)).toBe(false)
+  })
+
+  it('is asked over a range whose every member is below the floor, so no reachable state passes the flag yet', () => {
+    // The predicate is named before its caller, and the caller alone is not
+    // enough: the Spend screen's caps read is withheld in every mode that is
+    // not `ok` (`REDUCED_VIEW_OPERATIONS.caps`, `src/main/ipc.ts`), and `ok` is
+    // exact-minor membership of this range -- so a CLI at or above the floor is
+    // a CLI whose caps read is withheld. Widening the range to the minor that
+    // carries the flag is the other half of the change, and this test fails the
+    // day it lands without the floor being reconsidered in the same commit.
+    for (const minor of SUPPORTED_CLI_MINORS) {
+      expect(budgetComputeSupported(`${minor}.0`), minor).toBe(false)
+      expect(budgetComputeSupported(`${minor}.9`), minor).toBe(false)
+    }
+    const above = classifyCliVersion(BUDGET_COMPUTE_CLI_FLOOR)
+    expect(above.mode).toBe('reduced')
+    expect(hidesView(above, 'caps')).toBe(true)
   })
 })
 

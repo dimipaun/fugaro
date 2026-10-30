@@ -449,6 +449,12 @@ export const CONSOLE_OPERATIONS = [
         required: false,
         why: 'the design allow-list admits `--all` on this command.',
       },
+      {
+        key: 'compute',
+        kind: 'flag',
+        required: false,
+        why: 'the design allow-list admits `--compute` on this command, and only there: it costs a listing of the runs bucket, so the Spend screen’s caps read is the read that asks for it, and only of a CLI at or above `BUDGET_COMPUTE_CLI_FLOOR` (`src/shared/version.ts`). Like `--repo` and `--all` it is optional, and no caller passes it yet.',
+      },
     ],
   },
   // spend.report is the one read the Spend screen's controls make, and the
