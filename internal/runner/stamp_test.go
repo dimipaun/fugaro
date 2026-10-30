@@ -414,10 +414,10 @@ func TestStampHooksNameTheResolvedChain(t *testing.T) {
 		t.Fatal(err)
 	}
 	script := string(data)
-	if strings.Contains(script, "rev-parse --git-path hooks") {
-		t.Errorf("the pass-through resolves the repository's hook directory at the commit:\n%s", script)
+	if want := "fugaro_chain=" + filepath.Join(h.deps.WorkDir, ".git", "hooks") + "\n"; !strings.Contains(script, want) {
+		t.Errorf("the pass-through does not name the resolved hook directory %q:\n%s", want, script)
 	}
-	if !strings.Contains(script, h.deps.WorkDir) {
-		t.Errorf("the pass-through does not name the repository's hook directory under %s:\n%s", h.deps.WorkDir, script)
+	if !strings.Contains(script, "fugaro_chain_later=0\n") {
+		t.Errorf("the pass-through looks the repository's hook directory up at the commit:\n%s", script)
 	}
 }
