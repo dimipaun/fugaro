@@ -89,6 +89,10 @@ worth knowing by name:
 - **The build-staging bucket cannot be listed** — `gs://fugaro-dev_cloudbuild/` is the installation's,
   and `gcloud builds submit` would create it. Nothing was created, built or deployed; fix the bucket's
   permissions, then run the check again.
+- **The build fails** (`build-error`) — the build runs as one of the installation's own build
+  accounts (`fugaro-b-*`), from a build config that sets `options.logging: CLOUD_LOGGING_ONLY`, as
+  Fugaro's own image builds do: Cloud Build refuses a build that names its service account and says
+  nothing about its logs. Nothing was deployed; the Restore deletes what the run made.
 
 ## What is left behind
 

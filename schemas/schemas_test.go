@@ -3263,3 +3263,236 @@ func TestABSchemaEnumsMatchTheGoVocabulary(t *testing.T) {
 		}
 	}
 }
+
+// TestSchemaCoversSpecAuthor: task.schema.json's `author` property and
+// task.Spec.Author agree, on the shape and on which documents they accept.
+// The schema is additionalProperties: false, so a property missing here
+// makes every task that carries an author schema-invalid, and only the
+// schema's consumers would notice — the defect that made the plan_task and
+// oauth_token properties necessary, one field at a time (A2a).
+//
+// The bounds and the field names are read from internal/task's own constants
+// and the marshalled struct rather than restated, so a cap moved on one side,
+// or a field renamed, stops the two agreeing.
+func TestSchemaCoversSpecAuthor(t *testing.T) {
+	data, err := os.ReadFile("task.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	raw, ok := doc.Properties["author"]
+	if !ok {
+		t.Fatal("task.schema.json has no author property: a task carrying one is schema-invalid (additionalProperties: false)")
+	}
+	var author struct {
+		AdditionalProperties *bool    `json:"additionalProperties"`
+		Required             []string `json:"required"`
+		Properties           map[string]struct {
+			Pattern   string `json:"pattern"`
+			MaxLength int    `json:"maxLength"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(raw, &author); err != nil {
+		t.Fatal(err)
+	}
+	if author.AdditionalProperties == nil || *author.AdditionalProperties {
+		t.Error("author does not carry additionalProperties: false: a field inside it would be read by nobody")
+	}
+	if want := []string{"name", "email"}; !slices.Equal(author.Required, want) {
+		t.Errorf("author.required = %v, want %v (task.Person's own two fields)", author.Required, want)
+	}
+	if got := author.Properties["name"].MaxLength; got != task.MaxAuthorNameLen {
+		t.Errorf("author.name maxLength = %d, want task.MaxAuthorNameLen %d", got, task.MaxAuthorNameLen)
+	}
+	if got := author.Properties["email"].MaxLength; got != task.MaxAuthorEmailLen {
+		t.Errorf("author.email maxLength = %d, want task.MaxAuthorEmailLen %d", got, task.MaxAuthorEmailLen)
+	}
+	// The patterns are the schema's copy of AuthorProblem's own two rules, held
+	// against the Go check over a corpus rather than compared as strings: the
+	// Go rule is a loop over the fields (which is what lets it say which rule
+	// was broken), not an expression, so the two are compared by what they
+	// answer. Every case below is inside both caps, which maxLength carries
+	// above, so the pattern is the only rule in question.
+	nameRE := regexp.MustCompile(author.Properties["name"].Pattern)
+	emailRE := regexp.MustCompile(author.Properties["email"].Pattern)
+	for _, tc := range []struct {
+		name string
+		p    task.Person
+	}{
+		{"a plain pair", task.Person{Name: "person-1", Email: "person-1@example.invalid"}},
+		{"a space inside the name", task.Person{Name: "person one", Email: "person.one@example.invalid"}},
+		{"a name outside ASCII", task.Person{Name: "Jörg", Email: "jorg@example.invalid"}},
+		{"the name and the address at both caps", task.Person{Name: strings.Repeat("a", task.MaxAuthorNameLen), Email: strings.Repeat("a", task.MaxAuthorEmailLen-6) + "@b.co"}},
+		{"a blank name", task.Person{Name: "  ", Email: "person-1@example.invalid"}},
+		{"a name of one tab", task.Person{Name: "\t", Email: "person-1@example.invalid"}},
+		{"a newline in the name", task.Person{Name: "person-1\nperson-2", Email: "person-1@example.invalid"}},
+		{"an angle bracket in the name", task.Person{Name: "person-1 <person-2>", Email: "person-1@example.invalid"}},
+		{"a control character in the email", task.Person{Name: "person-1", Email: "person\x1b-1@example.invalid"}},
+		{"an email with no @", task.Person{Name: "person-1", Email: "person-1.example.invalid"}},
+		{"an email with two @", task.Person{Name: "person-1", Email: "person-1@example.invalid@x"}},
+		{"an email with an empty local part", task.Person{Name: "person-1", Email: "@example.invalid"}},
+		{"an email with an empty domain", task.Person{Name: "person-1", Email: "person-1@"}},
+	} {
+		byPattern := nameRE.MatchString(tc.p.Name) && emailRE.MatchString(tc.p.Email)
+		byGoRule := task.AuthorProblem(tc.p) == ""
+		if byPattern != byGoRule {
+			t.Errorf("%s: schema pattern accepts = %v, task.AuthorProblem accepts = %v (%s)", tc.name, byPattern, byGoRule, task.AuthorProblem(tc.p))
+		}
+	}
+
+	sch := compile(t, "task.schema.json")
+	// Both readers see the same document: the schema validates the JSON, and
+	// task.Parse is what the runner does with it. A fixture one refuses and
+	// the other accepts is the drift this test exists for, so each case
+	// asserts both.
+	agree := func(t *testing.T, raw string) (schemaErr, parseErr error) {
+		t.Helper()
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, parseErr = task.Parse([]byte(raw))
+		return sch.Validate(inst), parseErr
+	}
+	docFor := func(a *task.Person) string {
+		t.Helper()
+		s := task.Spec{Version: 1, RunID: "20261030-120000-abcd", Repo: "owner/repo-a", Ref: "main", Task: "do it", Author: a}
+		data, err := json.Marshal(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	for _, tc := range []struct {
+		name string
+		doc  string
+		ok   bool
+	}{
+		{"no author", docFor(nil), true},
+		{"an author", docFor(&task.Person{Name: "person-1", Email: "person-1@example.invalid"}), true},
+		{"a name over the cap", docFor(&task.Person{Name: strings.Repeat("a", task.MaxAuthorNameLen+1), Email: "person-1@example.invalid"}), false},
+		{"an email over the cap", docFor(&task.Person{Name: "person-1", Email: strings.Repeat("a", task.MaxAuthorEmailLen) + "@example.invalid"}), false},
+		{"a blank name", docFor(&task.Person{Name: "   ", Email: "person-1@example.invalid"}), false},
+		{"a missing email", `{"version":1,"run_id":"20261030-120000-abcd","repo":"owner/repo-a","ref":"main","task":"do it","overrides":{},"author":{"name":"person-1"}}`, false},
+		{"an email with two @", docFor(&task.Person{Name: "person-1", Email: "person-1@example.invalid@x"}), false},
+		{"an email with no @", docFor(&task.Person{Name: "person-1", Email: "person-1.example.invalid"}), false},
+		{"a newline in the name", docFor(&task.Person{Name: "person-1\nperson-2", Email: "person-1@example.invalid"}), false},
+		{"an angle bracket in the name", docFor(&task.Person{Name: "person-1 <person-2>", Email: "person-1@example.invalid"}), false},
+		{"a key the block does not have", `{"version":1,"run_id":"20261030-120000-abcd","repo":"owner/repo-a","ref":"main","task":"do it","overrides":{},"author":{"name":"person-1","email":"person-1@example.invalid","login":"person-1"}}`, false},
+	} {
+		schemaErr, parseErr := agree(t, tc.doc)
+		if tc.ok {
+			if schemaErr != nil {
+				t.Errorf("%s: schema rejects it: %v", tc.name, schemaErr)
+			}
+			if parseErr != nil {
+				t.Errorf("%s: task.Parse rejects it: %v", tc.name, parseErr)
+			}
+			continue
+		}
+		if schemaErr == nil {
+			t.Errorf("%s: schema accepts it", tc.name)
+		}
+		if parseErr == nil {
+			t.Errorf("%s: task.Parse accepts it", tc.name)
+		}
+	}
+	// The golden bytes: every field of a Person is written when the block is
+	// present, so a decoder reading it back cannot mistake a missing field
+	// for an empty one.
+	if got := docFor(&task.Person{Name: "person-1", Email: "person-1@example.invalid"}); !strings.Contains(got, `"author":{"name":"person-1","email":"person-1@example.invalid"}`) {
+		t.Errorf("an author is not written as its two fields: %s", got)
+	}
+}
+
+// TestSchemaCoversGitAuthor: fugaro.schema.json's git.author enum and
+// config's own vocabulary are one list, and the schema and config.Parse
+// agree on which files carry a legal value — the schema is what an editor
+// validates fugaro.yaml against, the parser is what the launcher does.
+//
+// The enum carries the empty string as well as config.GitAuthors' two
+// values: a file that spells out author: "" says what the key absent says
+// (today's behaviour, the run's own identity), and the parser accepts both,
+// so a schema that refused one of them would reject a file the CLI runs.
+func TestSchemaCoversGitAuthor(t *testing.T) {
+	data, err := os.ReadFile("fugaro.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	raw, ok := doc.Properties["git"]
+	if !ok {
+		t.Fatal("fugaro.schema.json has no git property")
+	}
+	var git struct {
+		Properties map[string]struct {
+			// []any, not []string: a JSON null in an enum of strings decodes
+			// into "" and would hide the null this test exists to check.
+			Enum []any `json:"enum"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(raw, &git); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := git.Properties["author"]
+	if !ok {
+		t.Fatal("fugaro.schema.json has no git.author property: a repository that opts in writes a file this schema rejects (additionalProperties: false)")
+	}
+	if want := []any{"", nil, config.GitAuthorFugaro, config.GitAuthorLauncher}; !slices.Equal(got.Enum, want) {
+		t.Errorf("git.author enum = %v, want %v (config.GitAuthors, with the empty value and an explicit null — the spells budget.mode's enum carries)", got.Enum, want)
+	}
+
+	sch := compile(t, "fugaro.schema.json")
+	const (
+		base   = "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  app: { commands: { build: make, test: make } }\n"
+		gitKey = "git: { provider: github }"
+	)
+	for _, tc := range []struct {
+		name   string
+		author string
+		ok     bool
+	}{
+		{"the key absent", "", true},
+		{"fugaro", "author: fugaro", true},
+		{"launcher", "author: launcher", true},
+		{"the empty value", `author: ""`, true},
+		// The two null spells YAML invites and config.Parse reads as the
+		// empty value: an empty scalar after the colon, and an explicit null.
+		{"the empty scalar", "author:", true},
+		{"an explicit null", "author: null", true},
+		{"a near miss", "author: Fugaro", false},
+		{"a value that is not one of the two", "author: them", false},
+	} {
+		body := base
+		if tc.author != "" {
+			body = strings.Replace(base, gitKey, "git: { provider: github, "+tc.author+" }", 1)
+		}
+		schemaErr := sch.Validate(yamlInstance(t, []byte(body)))
+		_, ps := config.Parse([]byte(body))
+		if tc.ok {
+			if schemaErr != nil {
+				t.Errorf("%s: schema rejects it: %v", tc.name, schemaErr)
+			}
+			if len(ps) > 0 {
+				t.Errorf("%s: config.Parse rejects it: %v", tc.name, ps)
+			}
+			continue
+		}
+		if schemaErr == nil {
+			t.Errorf("%s: schema accepts it", tc.name)
+		}
+		if len(ps) == 0 {
+			t.Errorf("%s: config.Parse accepts it", tc.name)
+		}
+	}
+}

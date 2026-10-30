@@ -116,6 +116,12 @@ func Validate(c *Config) []Problem {
 	if !slices.Contains(Providers, c.Git.Provider) {
 		add("git.provider", "must be one of %s", strings.Join(Providers, ", "))
 	}
+	// git.author is a closed vocabulary with one legal extra value: "" is
+	// the key absent (the run's own identity authors its commits, today's
+	// behaviour), so it is accepted without being named in the sentence.
+	if c.Git.Author != "" && !slices.Contains(GitAuthors, c.Git.Author) {
+		add("git.author", "must be one of %s", strings.Join(GitAuthors, ", "))
+	}
 	if !validBranchName(c.Git.BaseBranch) {
 		add("git.base_branch", "must be a plain git branch name: letters, digits, '.', '_', '-' and '/', not starting with '-', '.' or '/', with no '..', '//', component starting with '.', or trailing '/', '.' or '.lock'")
 	}
