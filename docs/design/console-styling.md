@@ -1106,9 +1106,11 @@ mode's statement, and the refusal screen — is drawn by one reusable card, `ren
 factory are declared structurally, the same choice `shared/version.ts` makes, so
 `src/shared` still depends on no screen, and the module attaches no listener — the entry
 that mounts the card is the only place with `nodeOf`, and it is where the disclosure, the
-dismissal and the chip are wired. **The version-skew notice is the only caller so far**: a
-second caller is a second row in its own section, and this is the table its hooks are added
-to.
+dismissal and the chip are wired. **The two ids the card's ARIA names are its own** (a
+per-card number, not a fixed pair): a document may hold more than one card, and two cards
+sharing an id would each be named by the other's title and open the other's facts. **The
+version-skew notice is the only caller so far**: a second caller is a second row in its own
+section, and this is the table its hooks are added to.
 
 | Hook | Element | What it is |
 |---|---|---|

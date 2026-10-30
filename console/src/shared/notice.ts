@@ -138,9 +138,26 @@ export const NOTICE_HIDE_DETAILS = 'Hide details'
 export const NOTICE_DISMISS_LABEL = 'Dismiss notice'
 
 const NOTICE_ROOT_CLASS = 'notice'
-const NOTICE_TITLE_ID = 'notice-title'
-const NOTICE_DETAILS_ID = 'notice-details'
+const NOTICE_ID_PREFIX = 'notice'
 const NOTICE_DISMISS_GLYPH = '×'
+
+/** cardsDrawn is how many cards this module has drawn in this document, and it
+ * is what the card's two ids are numbered by. A card cannot use a fixed id: a
+ * document may hold more than one (the reduced mode's card sits at the top of
+ * the window while a screen may draw its own), and two cards sharing an id
+ * would each point `aria-labelledby` at the first title and `aria-controls` at
+ * the first details region -- a second card named by the first card's words and
+ * with a disclosure button that opens someone else's facts. */
+let cardsDrawn = 0
+
+/** noticeIds are one card's two ids: its title's and its details region's. The
+ * number is the console's own (a document's counter), never a document's
+ * string, and it is only ever read back by one card's own ARIA. */
+function noticeIds(): { readonly title: string; readonly details: string } {
+  cardsDrawn += 1
+  const number = String(cardsDrawn)
+  return { title: `${NOTICE_ID_PREFIX}-title-${number}`, details: `${NOTICE_ID_PREFIX}-details-${number}` }
+}
 
 /** literal writes the console's own vocabulary into an element. Every argument
  * is a string literal, a constant of this file, or text the caller's own
@@ -200,9 +217,14 @@ function fact(parent: NoticeElement, factory: NoticeFactory, detail: NoticeDetai
  * The details are a `dl.notice-facts`: a real definition list, so a label and
  * its value are two elements rather than one run of text, and a list value is a
  * real `ul` inside its `dd`, so it draws bullets without a rule of its own.
+ *
+ * The two ids `aria-labelledby` and `aria-controls` name are this card's own
+ * (`noticeIds`), never a fixed pair: the card is reusable, and two cards that
+ * shared an id would point at each other's title and facts.
  */
 export function renderNotice(factory: NoticeFactory, spec: NoticeSpec): DrawnNotice {
   const root = factory.create('section')
+  const ids = noticeIds()
   // One attribute, written twice, and the first write is the one the theme's
   // selector scan can read: `test/unit/theme-selectors.test.ts` licenses a rule
   // by reading the class a `factory.create` is stamped with, and a list it cannot
@@ -212,14 +234,14 @@ export function renderNotice(factory: NoticeFactory, spec: NoticeSpec): DrawnNot
     root.setAttribute('class', [NOTICE_ROOT_CLASS, ...spec.classes].join(' '))
   }
   root.setAttribute('data-severity', spec.severity)
-  root.setAttribute('aria-labelledby', NOTICE_TITLE_ID)
+  root.setAttribute('aria-labelledby', ids.title)
 
   const mark = cell(root, factory, 'span', ['notice-mark'])
   mark.setAttribute('aria-hidden', 'true')
 
   const body = cell(root, factory, 'div', ['notice-body'])
   const title = cell(body, factory, spec.heading, ['notice-title', ...(spec.titleClasses ?? [])])
-  title.setAttribute('id', NOTICE_TITLE_ID)
+  title.setAttribute('id', ids.title)
   // The chip on the header hands the keyboard back here when it un-hides the
   // notice, and a heading is not focusable without it.
   title.setAttribute('tabindex', '-1')
@@ -232,12 +254,12 @@ export function renderNotice(factory: NoticeFactory, spec: NoticeSpec): DrawnNot
     toggle = cell(body, factory, 'button', ['notice-toggle'])
     toggle.setAttribute('type', 'button')
     toggle.setAttribute('aria-expanded', 'false')
-    toggle.setAttribute('aria-controls', NOTICE_DETAILS_ID)
+    toggle.setAttribute('aria-controls', ids.details)
     literal(toggle, NOTICE_SHOW_DETAILS)
   }
 
   const details = cell(body, factory, 'div', ['notice-details'])
-  details.setAttribute('id', NOTICE_DETAILS_ID)
+  details.setAttribute('id', ids.details)
   if (spec.disclosure === 'toggle') details.setAttribute('hidden', '')
   const facts = cell(details, factory, 'dl', ['notice-facts'])
   for (const detail of spec.details) fact(facts, factory, detail)

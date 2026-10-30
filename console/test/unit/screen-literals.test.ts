@@ -547,6 +547,16 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
         'the card root\'s class list: this file\'s own constant plus the caller\'s extra class, and the caller passes a string-literal list (the skew notice passes `console-skew`). The write before it stamps `NOTICE_ROOT_CLASS` alone, because a list the theme\'s selector scan cannot evaluate would leave `section.notice` unlicensed',
     },
     value: { within: 'attribute', reason: 'the parameter of the `attribute` helper itself: it is handed one value per entry of a caller\'s own closed table (`data-hidden`\'s `ReducedView`), never a document string' },
+    'ids.title': {
+      within: 'renderNotice',
+      reason:
+        'the card\'s own title id (`noticeIds`): the prefix is this file\'s constant and the number is a counter this module keeps, so nothing a document or a caller passes is in it. It is an id and not text -- `aria-labelledby` resolves it to an element, it is never read as words on screen',
+    },
+    'ids.details': {
+      within: 'renderNotice',
+      reason:
+        'the card\'s own details-region id, built by the same `noticeIds` call as the title\'s, so `aria-controls` names the region of **this** card and not of the first one drawn',
+    },
   },
   '../../shared/version.ts': {
     theme: { within: 'renderVersionSkew', reason: 'a `SkewTheme`, the closed two-word theme union' },
@@ -1149,6 +1159,16 @@ const SPEC_TEXT_CALLS: readonly string[] = Object.freeze([
   'versionCell',
 ])
 
+/** SPEC_TEXT_TABLES are the tables a spec's text may be read out of, **by
+ * name**, and the list carries the same weight as `SPEC_TEXT_CALLS`: each entry
+ * is a table of this console's own words keyed by a closed union
+ * (`HIDDEN_VIEW_WORDS[view]`, `SKEW_HEADLINES[mode]`), so whatever key selects a
+ * row the value is the console's. A name is not a form: `WORDS_BY_RUN[row.key]`
+ * has the same shape and holds whatever a document put there, which is why the
+ * rule reads the table's name and a fifth name is a decision rather than a
+ * rename. */
+const SPEC_TEXT_TABLES: readonly string[] = Object.freeze(['HIDDEN_VIEW_WORDS', 'SKEW_HEADLINES'])
+
 /** valueAt is the source text of a property value at `at`: everything up to the
  * next comma, newline or closing brace that is not inside a call, a list or an
  * object -- which is where a spec's values end. */
@@ -1186,13 +1206,15 @@ function specTextValues(source: string): readonly string[] {
 }
 
 /** allowedSpecText is whether a spec's text is the console's own by syntax: a
- * string literal, a constant, a table keyed by a closed union
- * (`HIDDEN_VIEW_WORDS[view]`), one of `SPEC_TEXT_CALLS`, or an identifier this
- * file binds to one of them. Anything else -- a version line, a raw argv, a
- * document field -- is a string that came from outside. */
+ * string literal, a constant, a row of one of `SPEC_TEXT_TABLES` (named, because
+ * the name is the whole claim -- the table is the console's and its keys are a
+ * closed union), one of `SPEC_TEXT_CALLS`, or an identifier this file binds to
+ * one of them. Anything else -- a version line, a raw argv, a document field, a
+ * table a document filled -- is a string that came from outside. */
 function allowedSpecText(value: string, source: string): boolean {
   if (STRING_LITERAL.test(value) || CONSTANT.test(value)) return true
-  if (/^[A-Z][A-Z0-9_]*\[[^\]]*\]$/.test(value)) return true
+  const table = /^([A-Z][A-Z0-9_]*)\[[^\]]*\]$/.exec(value)
+  if (table !== null && SPEC_TEXT_TABLES.includes(table[1] ?? '')) return true
   if (new RegExp(`^(?:${SPEC_TEXT_CALLS.join('|')})\\([^)]*\\)$`).test(value)) return true
   const code = blankComments(source)
   return new RegExp(`^[ \\t]*(?:const|let)\\s+${value}\\s*=\\s*(?:${SPEC_TEXT_CALLS.join('|')})\\(`, 'm').test(code)
@@ -1254,15 +1276,22 @@ describe('the shared drawers are held to the same rules', () => {
   })
 
   it('fails on a string from outside handed to the card (MUTATION)', () => {
-    // The three shapes the composition rule exists for: the version line the
-    // binary printed, a line the reader echoed, and a document field. Each is
-    // injected **inside** `skewNoticeSpec`, because outside it there is no spec.
+    // The four shapes the composition rule exists for: the version line the
+    // binary printed, a line the reader echoed, a document field, and a table a
+    // document filled -- which has the shape of the console's own tables
+    // (`HIDDEN_VIEW_WORDS[view]`) and is refused because its name is not one of
+    // `SPEC_TEXT_TABLES`. Each is injected **inside** `skewNoticeSpec`, because
+    // outside it there is no spec.
     const anchor = '  const details: NoticeDetail[] = ['
     expect(skew, 'the mutant would land outside skewNoticeSpec').toContain(anchor)
     const mutants: Record<string, string> = {
       version: skew.replace(anchor, `  const leaked: NoticeDetail = { label: rawLabel, text: rawLine }\n${anchor}`),
       title: skew.replace(anchor, `  const leakedTitle = { label: rawLabel, title: rawTitle }\n${anchor}`),
       reason: skew.replace(anchor, `  const leakedReason = { label: rawLabel, reason: rawReason }\n${anchor}`),
+      // The label is a literal so that the only thing this mutant can be caught
+      // by is the table's name: `[A-Z][A-Z0-9_]*[...]` alone would have let it
+      // through, and the row it selects is whatever the document wrote.
+      table: skew.replace(anchor, `  const leakedRow = { label: 'x', text: WORDS_BY_RUN[row.key] }\n${anchor}`),
     }
     const missed = Object.entries(mutants)
       .filter(([, mutant]) => specTextValues(mutant).every((value) => allowedSpecText(value, mutant)))

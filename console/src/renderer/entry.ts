@@ -2136,22 +2136,6 @@ export interface DashboardScope {
 }
 
 /**
- * bootDashboard is what the loaded document runs: read the bridge, hand it to
- * `startConsole`, and let the gate draw. It is a function of a *scope* rather
- * than of globals so that it can be driven -- in
- * `test/unit/entry-wiring.test.ts` with a fake document and a fake bridge, and
- * in `test/e2e/entry.spec.ts` in the real window.
- *
- * What it draws, and what it appends to the mount (`document.body`) in that
- * order, so DOM order and tab order agree with the layout: `startConsole`'s
- * refusal or banner first (it appends that itself), then the installation rail
- * (`drawRail`, Task 6.3), then the line saying which installation the console is
- * showing (`drawInstallation`), and then -- `mountDashboard`'s -- the navigation
- * and the panel with the Live screen in it. A refused console draws the refusal
- * and **stops**: no rail, no installation line, no navigation, no panel, and not
- * one read -- which is the whole of D7 from this side.
- */
-/**
  * drawReducedChip draws the header's Reduced-mode chip and wires the notice it
  * stands for. It is what is left on the document after the notice is put away,
  * and it is what brings the notice back.
@@ -2219,6 +2203,24 @@ function drawReducedChip(surface: DomSurface, header: SkewElement, notice: Drawn
   })
 }
 
+/**
+ * bootDashboard is what the loaded document runs: read the bridge, hand it to
+ * `startConsole`, and let the gate draw. It is a function of a *scope* rather
+ * than of globals so that it can be driven -- in
+ * `test/unit/entry-wiring.test.ts` with a fake document and a fake bridge, and
+ * in `test/e2e/entry.spec.ts` in the real window.
+ *
+ * What it draws, and what it appends to the mount (`document.body`) in that
+ * order, so DOM order and tab order agree with the layout: `startConsole`'s
+ * refusal or banner first (it appends that itself), then the installation rail
+ * (`drawRail`, Task 6.3), then the line saying which installation the console is
+ * showing (`drawInstallation`), and then -- `mountDashboard`'s -- the navigation
+ * and the panel with the Live screen in it, and the reduced mode's chip in the
+ * header between the switcher and the navigation (`drawReducedChip`). A refused
+ * console draws the refusal and **stops**: no rail, no installation line, no
+ * navigation, no panel, and not one read -- which is the whole of D7 from this
+ * side.
+ */
 export async function bootDashboard(scope: DashboardScope): Promise<void> {
   const surface = domSurface(scope.document)
   const gate = await startConsole({

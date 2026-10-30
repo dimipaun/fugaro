@@ -795,7 +795,10 @@ describe('renderVersionSkew', () => {
     expect(all(root, 'live')).toHaveLength(0)
     const title = one(root, 'notice-title')
     expect(title.tag).toBe('h2')
-    expect(title.getAttribute('id')).toBe('notice-title')
+    // The card's own id, and the root names itself by it: the id is the card's,
+    // because a document may hold more than one card (`notice.test.ts`).
+    expect(title.getAttribute('id')).not.toBeNull()
+    expect(root.getAttribute('aria-labelledby')).toBe(title.getAttribute('id'))
     expect(title.textContent).toBe(SKEW_HEADLINES.reduced)
     expect(one(root, 'skew-reason').textContent).toBe(NOTICE_REASONS.older)
     // The technical text is in the facts, behind the disclosure.

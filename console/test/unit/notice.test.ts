@@ -110,8 +110,23 @@ describe('renderNotice', () => {
     // The card names itself by its title, which is the heading a reader lands
     // on when the chip hands the keyboard back.
     expect(root.getAttribute('aria-labelledby')).toBe(title.getAttribute('id'))
-    expect(title.getAttribute('id')).toBe('notice-title')
+    expect(title.getAttribute('id')).not.toBeNull()
     expect(title.getAttribute('tabindex')).toBe('-1')
+  })
+
+  it('gives two cards on one document their own ids', () => {
+    // The card is reusable, so neither id can be a fixed name: the reduced
+    // mode's card is always on the window and a screen may draw its own, and
+    // two cards sharing an id would leave each one named by the other's title
+    // and its button opening the other's facts.
+    const first = renderNotice(factory, aSpec())
+    const second = renderNotice(factory, aSpec())
+    expect(second.title.getAttribute('id')).not.toBe(first.title.getAttribute('id'))
+    expect(second.details.getAttribute('id')).not.toBe(first.details.getAttribute('id'))
+    for (const card of [first, second]) {
+      expect(card.root.getAttribute('aria-labelledby')).toBe(card.title.getAttribute('id'))
+      expect(card.toggle?.getAttribute('aria-controls')).toBe(card.details.getAttribute('id'))
+    }
   })
 
   it('draws the title at the level the caller asked for', () => {
@@ -171,7 +186,7 @@ describe('renderNotice', () => {
     expect(toggle?.getAttribute('type')).toBe('button')
     expect(toggle?.getAttribute('aria-expanded')).toBe('false')
     expect(toggle?.getAttribute('aria-controls')).toBe(details.getAttribute('id'))
-    expect(details.getAttribute('id')).toBe('notice-details')
+    expect(details.getAttribute('id')).not.toBeNull()
     expect(details.getAttribute('hidden')).toBe('')
     expect(toggle?.textContent).toBe(NOTICE_SHOW_DETAILS)
     // The two labels are one decision, so the file that draws one draws both.
