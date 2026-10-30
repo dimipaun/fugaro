@@ -608,8 +608,9 @@ func writeCloudOutputs(ctx context.Context, root string, lc *localcfg.Config, rf
 		// submitted and handed to it as an input, and the record writes it as
 		// it was given it (D622): the build never computes one of its own, so
 		// a build that cloned something else still keys its image to the set
-		// the refresh decided on. No key means no claimant, which the lock
-		// reads as "this installation has not keyed this repository".
+		// the refresh decided on. A build handed no key writes no key, and a
+		// refresh cannot place a repository on a shared image by a key it does
+		// not have.
 		Key: key,
 	}
 	specJSON, err := json.Marshal(spec)
