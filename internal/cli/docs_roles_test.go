@@ -46,27 +46,31 @@ func TestDocsRolesDesign(t *testing.T) {
 	doc := readDoc(t, rolesDesignPath)
 	flat := flattenDoc(doc)
 
-	for _, want := range []string{
-		"## Decisions for the owner",
-		"## Out of scope",
-		// The rulings the design is bound by: the roles design itself (D446),
-		// its licence placement (T16), the interim over the lists (D627), the
-		// sign-in shape (D628) and suspension (D629).
-		"D446", "T16", "D627", "D628", "D629",
-	} {
+	// The rulings the design is bound by: the roles design itself (D446), its
+	// licence placement (T16), the interim over the lists (D627), the sign-in
+	// shape (D628) and suspension (D629).
+	for _, want := range []string{"D446", "T16", "D627", "D628", "D629"} {
 		if !strings.Contains(doc, want) {
-			t.Errorf("%s lacks %q", rolesDesignPath, want)
+			t.Errorf("%s does not cite %s: the rulings the design is bound by are what a reader checks its claims against, and a claim whose ruling is unnamed cannot be checked at all", rolesDesignPath, want)
 		}
 	}
 
-	rows := decisionsSectionRows(t, doc)
+	// The two sections by name, at whatever heading level and numbering the
+	// document gives them: neither is what the guard is about. rolesSection
+	// fails the test itself when the heading is missing.
+	for _, want := range []string{"Decisions for the owner", "Out of scope"} {
+		if body := rolesSection(t, doc, want); strings.TrimSpace(body) == "" {
+			t.Errorf("%s's %q section is empty: the heading is there and the section is not, which is what a guard anchored to the whole document would miss", rolesDesignPath, want)
+		}
+	}
+
+	rows := rolesDecisionRows(rolesSection(t, doc, "Decisions for the owner"))
 	if len(rows) < 10 {
 		t.Fatalf("%s's decisions table has %d rows: the design's open questions (the vocabulary, the viewer's cloud grant, the minter, the device role, enforcement in the console and the CLI) are what the owner answers, and a table that short has settled them by omission", rolesDesignPath, len(rows))
 	}
 	for i, row := range rows {
 		cells := strings.Split(strings.Trim(row, "|"), "|")
-		status := strings.TrimSpace(cells[len(cells)-1])
-		if status != "open" {
+		if status := strings.TrimSpace(cells[len(cells)-1]); status != "open" {
 			t.Errorf("%s decisions table row %d says %q, want %q:\n\n%s\n\nEvery product choice in this design is the owner's (D446), so a row the design has answered is the one thing this document may not contain. If the owner has since ruled on it, the answer goes with its ruling in the Settled list and the row leaves the open table.", rolesDesignPath, i+1, status, "open", strings.TrimSpace(row))
 		}
 	}
@@ -79,18 +83,28 @@ func TestDocsRolesDesign(t *testing.T) {
 	}
 }
 
-// decisionsSectionRows returns the table rows of the "Decisions for the owner"
-// section, up to the next heading of the same or a higher level.
-func decisionsSectionRows(t *testing.T, doc string) []string {
+// rolesSection returns the body of the section some heading names `name`. The
+// heading's own line is found by name rather than spelled out, so the guard
+// does not care what level or numbering the document gives the section, and
+// the cut is docSection's (docs_providers_test.go), which is the one helper in
+// this package for reading a section out of a document.
+func rolesSection(t *testing.T, doc, name string) string {
 	t.Helper()
-	var rows []string
-	in := false
 	for _, line := range strings.Split(doc, "\n") {
-		if strings.HasPrefix(line, "## ") {
-			in = strings.HasPrefix(line, "## Decisions for the owner")
-			continue
+		if headingLevel(line) > 0 && strings.Contains(line, name) {
+			return docSection(t, rolesDesignPath, doc, line)
 		}
-		if in && rolesDecisionRow.MatchString(line) {
+	}
+	t.Fatalf("%s has no heading naming the %q section", rolesDesignPath, name)
+	return ""
+}
+
+// rolesDecisionRows picks the decisions table's rows out of a section: a row
+// whose first cell is a decision number.
+func rolesDecisionRows(section string) []string {
+	var rows []string
+	for _, line := range strings.Split(section, "\n") {
+		if rolesDecisionRow.MatchString(line) {
 			rows = append(rows, line)
 		}
 	}
