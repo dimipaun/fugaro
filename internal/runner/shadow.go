@@ -222,7 +222,14 @@ func (r *run) patchDiff(ctx context.Context, head string) ([]byte, bool, error) 
 	if len(out) <= MaxPatchBytes {
 		return []byte(out), false, nil
 	}
+	// Cut at the last line boundary the cap allows, so the stored patch is
+	// whole lines wherever there is one; a diff whose bytes are one line
+	// longer than the cap (a minified file, a fixture) is cut at the cap
+	// itself, which is still the diff's own first bytes.
 	cut := strings.LastIndexByte(out[:MaxPatchBytes], '\n') + 1
+	if cut == 0 {
+		cut = MaxPatchBytes
+	}
 	return []byte(out[:cut]), true, nil
 }
 

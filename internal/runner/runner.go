@@ -1751,6 +1751,15 @@ func (r *run) bootstrap(ctx context.Context) error {
 		return err
 	}
 	if err := r.checkBudget(); err != nil {
+		// These checks judged the challenger as this run's coder
+		// (applyChallenger), so a model this repository may not run is the
+		// arm's own refusal and is recorded as one (D556) rather than as
+		// infrastructure that failed. A halt is not a refusal: a cap the run
+		// has reached stops a shadow exactly as it stops any other run.
+		var halted *HaltError
+		if r.shadow && !errors.As(err, &halted) {
+			return r.refuseArm(err.Error())
+		}
 		return err
 	}
 	if err := r.haltedErr(); err != nil {

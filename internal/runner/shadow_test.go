@@ -3,7 +3,9 @@ package runner_test
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -123,7 +125,22 @@ func (a *armProvider) GitAuthReadOnly(_ context.Context, _ time.Duration) (gitpr
 // run with no per-run cap.
 func armGW(t *testing.T, cfg, capUSD, challenger, layer string) (*gw, *armProvider) {
 	t.Helper()
-	h := newHarnessFiles(t, cfg, withLayer(armTask(challenger), layer), nil)
+	return armGWSpec(t, cfg, capUSD, armTask(challenger), layer)
+}
+
+// champTask is a champion arm's task: the pair block with the champion's own
+// arm, which publishes exactly as an unsampled run does (D554).
+func champTask() *task.Spec {
+	spec := armTask("")
+	spec.AB = &task.AB{PairID: "pair-" + runID, Arm: task.ABArmChampion}
+	return spec
+}
+
+// armGWSpec is armGW for a task of the test's own: a champion's (champTask),
+// or a challenger the fixture's layer does not list.
+func armGWSpec(t *testing.T, cfg, capUSD string, spec *task.Spec, layer string) (*gw, *armProvider) {
+	t.Helper()
+	h := newHarnessFiles(t, cfg, withLayer(spec, layer), nil)
 	up, srv := anthropicfake.New(t)
 	h.deps.Env = append(filterEnv(h.deps.Env, "ANTHROPIC_API_KEY"), "ANTHROPIC_API_KEY="+plantedKey)
 	env := map[string]string{runner.BudgetModeEnv: "enforce", runner.MaxRunUSDEnv: capUSD}
@@ -141,6 +158,13 @@ func armGW(t *testing.T, cfg, capUSD, challenger, layer string) (*gw, *armProvid
 	h.deps.RetryDelay = time.Millisecond
 	return g, p
 }
+
+// plainLayer is the same layer with no ab: block: an installation that never
+// turned the feature on, which every fixture run but these has.
+const plainLayer = `version: 1
+project: aurora
+gcp_project: proj-1234
+`
 
 // publishes are the provider calls that reach a person: every one of them is
 // a call a shadow arm must never make.
@@ -338,5 +362,259 @@ func TestShadowChallengerCoderOnly(t *testing.T) {
 	}
 	if want := sonnet; reviewer != want {
 		t.Fatalf("the review stage ran on %q, want the champion's reviewer %q", reviewer, want)
+	}
+	// And the arm runs the champion's stages: one implement, one review. The
+	// first-line review is derived from the coder's own family
+	// (Agent.FirstLineOn turns it on for a coder a route serves), so an arm
+	// whose challenger is a routed model would gain a stage the champion
+	// never had — two runs whose stage sets differ are not two runs that
+	// differ in the coder model (D555).
+	if n := len(g.agent.calls); n != 2 {
+		t.Fatalf("the challenger arm ran %d stages, want the champion's 2", n)
+	}
+}
+
+// TestShadowChallengerPolicyRechecked: a replayed or hand-edited task names
+// a challenger the run's own policy does not admit — the owner lists it, but
+// no route of this run serves it — and the run refuses it at bootstrap,
+// before any call and before the clone (D556).
+func TestShadowChallengerPolicyRechecked(t *testing.T) {
+	g, _ := armGW(t, armCfg(t), "50", unroutedChallenger, armLayer)
+	pushes := countPushes(t, g.harness)
+	rec, err := g.run(t, implement("feature"), review("ship", 0))
+	if err == nil {
+		t.Fatal("a challenger the run's policy does not admit was run")
+	}
+	if rec == nil || rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %+v, want a refusal", rec)
+	}
+	if !strings.Contains(rec.Reason, unroutedChallenger) {
+		t.Fatalf("the reason does not name the challenger: %q", rec.Reason)
+	}
+	if len(g.agent.calls) != 0 {
+		t.Fatalf("the agent ran %d stage(s) for a refused challenger", len(g.agent.calls))
+	}
+	if n := pushes(); n != 0 {
+		t.Fatalf("the remote accepted %d push(es) from a refused challenger", n)
+	}
+}
+
+// TestShadowChallengerNotInOwnerListHalts: membership is the owner's list in
+// the project layer the task carries, re-checked here and never trusted from
+// the task: an arm naming a model the owner did not open for this repository
+// is refused, whatever the run's own policy would say about the model (D556).
+func TestShadowChallengerNotInOwnerListHalts(t *testing.T) {
+	otherOnly := strings.Replace(armLayer, "challengers: ["+challengerModel+", "+unroutedChallenger+"]",
+		"challengers: ["+unroutedChallenger+"]", 1)
+	if otherOnly == armLayer {
+		t.Fatal("the layer does not carry a challenger list")
+	}
+	g, _ := armGW(t, armCfg(t), "50", challengerModel, otherOnly)
+	pushes := countPushes(t, g.harness)
+	rec, err := g.run(t, implement("feature"), review("ship", 0))
+	if err == nil {
+		t.Fatal("a challenger the owner did not list for this repository was run")
+	}
+	if rec == nil || rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %+v, want a refusal", rec)
+	}
+	if !strings.Contains(rec.Reason, "ab.challengers") {
+		t.Fatalf("the reason does not name the owner's list: %q", rec.Reason)
+	}
+	// The run's own policy would have admitted this model: what refused it is
+	// the owner's list alone.
+	if len(g.agent.calls) != 0 || pushes() != 0 {
+		t.Fatalf("a refused arm ran a stage or pushed: calls %d, pushes %d", len(g.agent.calls), pushes())
+	}
+}
+
+// TestShadowBitbucketHalts: a challenger's one credential must be read-only,
+// and only GitHub mints such a token, so a Bitbucket repository is never a
+// challenger in v1 (A2.1): the run stops at bootstrap, before the clone,
+// rather than mint the write-capable token a challenger must never hold.
+func TestShadowBitbucketHalts(t *testing.T) {
+	g, _ := armGW(t, armCfg(t), "50", challengerModel, armLayer)
+	// The provider a Bitbucket repository gets: a provider, with no
+	// read-only mint of its own.
+	g.deps.ProviderKind = gitprov.KindBitbucket
+	g.deps.OpenProvider = gitprov.Static(&auditProvider{Provider: g.provider, t: t, store: g.store})
+	pushes := countPushes(t, g.harness)
+	rec, err := g.run(t, implement("feature"), review("ship", 0))
+	if err == nil {
+		t.Fatal("a challenger arm ran against a provider that mints no read-only token")
+	}
+	if rec == nil || rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %+v, want a refusal", rec)
+	}
+	if !strings.Contains(rec.Reason, "read-only") {
+		t.Fatalf("the reason does not say what was missing: %q", rec.Reason)
+	}
+	if len(g.agent.calls) != 0 {
+		t.Fatalf("the agent ran %d stage(s) after the refusal", len(g.agent.calls))
+	}
+	if n := pushes(); n != 0 {
+		t.Fatalf("the remote accepted %d push(es)", n)
+	}
+	if remoteHasBranch(t, g.harness) {
+		t.Fatal("the run branch reached the remote")
+	}
+}
+
+// TestUntaggedRunnerABKeysCapabilityLine: a build with no A/B feature that
+// reads ab: keys in the project layer says so once, in the run log, and says
+// nothing about a licence (D522, D523). A layer without the block gets
+// nothing: a line that fired for every run would be a lie about a run nobody
+// configured.
+func TestUntaggedRunnerABKeysCapabilityLine(t *testing.T) {
+	const line = "ab: is set but this build does not include it, so it is ignored"
+	g, _ := armGWSpec(t, armCfg(t), "50", armTask(""), armLayer)
+	if _, err := g.run(t, implement("feature"), review("ship", 0)); err != nil {
+		t.Fatal(err)
+	}
+	logs := g.logs.String()
+	if n := strings.Count(logs, line); n != 1 {
+		t.Fatalf("the capability line appears %d time(s) in the run log, want once:\n%s", n, logs)
+	}
+	if s := strings.ToLower(logs); strings.Contains(s, "licen") {
+		t.Fatalf("the run log carries licence wording:\n%s", logs)
+	}
+
+	plain, _ := armGWSpec(t, armCfg(t), "50", armTask(""), plainLayer)
+	if _, err := plain.run(t, implement("feature"), review("ship", 0)); err != nil {
+		t.Fatal(err)
+	}
+	if s := plain.logs.String(); strings.Contains(s, line) {
+		t.Fatalf("a layer with no ab: block got the capability line:\n%s", s)
+	}
+}
+
+// TestShadowUploadsPatch: a challenger arm's patch object is the run's own
+// tree diff, from the commit it started at to its final head, with no commit
+// metadata in it — the pair's material, and the only thing a challenger
+// leaves anywhere (D559, A2.1).
+func TestShadowUploadsPatch(t *testing.T) {
+	g, _ := armGW(t, armCfg(t), "50", challengerModel, armLayer)
+	rec, err := g.run(t, implement("feature"), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	patch := readPatch(t, g)
+	if rec.PatchTruncated {
+		t.Fatal("the patch of a one-file run is truncated")
+	}
+	for _, want := range []string{"diff --git a/feature.txt b/feature.txt", "+feature"} {
+		if !strings.Contains(patch, want) {
+			t.Fatalf("the patch does not carry %q:\n%s", want, patch)
+		}
+	}
+	for _, unwanted := range []string{"commit ", "Author:", "Date:", "fugaro: "} {
+		if strings.Contains(patch, unwanted) {
+			t.Fatalf("the patch carries commit metadata (%q):\n%s", unwanted, patch)
+		}
+	}
+	if rec.PatchObject != runstore.PatchKey(g.store.Prefix()) {
+		t.Fatalf("patch_object = %q, want the run's own key", rec.PatchObject)
+	}
+	if rec.AB == nil || rec.AB.Arm != task.ABArmChallenger {
+		t.Fatalf("record ab = %+v, want the challenger's arm", rec.AB)
+	}
+}
+
+// TestShadowPatchCapped: a patch longer than the cap is stored cut, at the
+// cap, and the record says so — the cap is a fact (PatchTruncated) rather
+// than a silent cut, and the run it belongs to is not failed over it (A2.1).
+func TestShadowPatchCapped(t *testing.T) {
+	g, _ := armGW(t, armCfg(t), "50", challengerModel, armLayer)
+	big := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		shell(t, req, "awk 'BEGIN { for (i = 0; i < 300000; i++) print \"aaaaaaaaaaaaaaaa\" }' > big.txt && git add -A && git commit -qm big")
+		verifyTest(t, ctx, req)
+		return agent.Result{CostUSD: 1}, nil
+	}
+	rec, err := g.run(t, big, review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	patch := readPatch(t, g)
+	if !rec.PatchTruncated {
+		t.Fatal("a patch over the cap is not marked truncated")
+	}
+	if len(patch) > runner.MaxPatchBytes {
+		t.Fatalf("the stored patch is %d bytes, over the cap of %d", len(patch), runner.MaxPatchBytes)
+	}
+	if len(patch) < runner.MaxPatchBytes/2 {
+		t.Fatalf("the stored patch is %d bytes: the cap cut far more than the cap", len(patch))
+	}
+	if !strings.HasSuffix(patch, "\n") {
+		t.Fatal("the stored patch does not end at a line boundary")
+	}
+}
+
+// readPatch reads the run's patch object back out of the store. It reads
+// through the bucket rather than runstore.ReadFile, whose cap for anything
+// but a transcript is blobx.MaxReadBytes (1 MiB): a patch may be twice that
+// (MaxPatchBytes), so the runner's own reader would refuse a large one.
+func readPatch(t *testing.T, g *gw) string {
+	t.Helper()
+	r, err := g.bucket.NewReader(context.Background(), g.store.Prefix()+runstore.PatchName, nil)
+	if err != nil {
+		t.Fatalf("reading the patch object: %v", err)
+	}
+	defer r.Close()
+	data, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("reading the patch object: %v", err)
+	}
+	return string(data)
+}
+
+// TestChampionUploadsPatch: a champion publishes exactly as an unsampled run
+// and adds its patch object — the arms' one shared addition (A2.1).
+func TestChampionUploadsPatch(t *testing.T) {
+	g, _ := armGWSpec(t, armCfg(t), "50", champTask(), armLayer)
+	rec, err := g.run(t, implement("feature"), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	patch := readPatch(t, g)
+	if !strings.Contains(patch, "+feature") {
+		t.Fatalf("the champion's patch is not the branch it published:\n%s", patch)
+	}
+	if rec.PatchObject != runstore.PatchKey(g.store.Prefix()) {
+		t.Fatalf("patch_object = %q, want the run's own key", rec.PatchObject)
+	}
+	if rec.AB == nil || rec.AB.Arm != task.ABArmChampion {
+		t.Fatalf("record ab = %+v, want the champion's arm", rec.AB)
+	}
+	if rec.PushedHead == "" || len(g.provider.State.PRs) != 1 {
+		t.Fatalf("the champion did not publish: head %q, %d PR(s)", rec.PushedHead, len(g.provider.State.PRs))
+	}
+}
+
+// TestChampionPublishesAsUnsampled: the champion's run is an unsampled run
+// in everything but its record's ab block and its patch object: the same
+// provider calls, in the same order, with the same outcome (D554).
+func TestChampionPublishesAsUnsampled(t *testing.T) {
+	champ, _ := armGWSpec(t, armCfg(t), "50", champTask(), armLayer)
+	champRec, err := champ.run(t, implement("feature"), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, _ := armGWSpec(t, armCfg(t), "50", armTask(""), plainLayer)
+	plainRec, err := plain.run(t, implement("feature"), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := ops(champ.harness), ops(plain.harness); !slices.Equal(got, want) {
+		t.Fatalf("the champion's provider calls differ from an unsampled run's:\n%v\n%v", got, want)
+	}
+	if champRec.Status != plainRec.Status || champRec.Outcome != plainRec.Outcome || champRec.Reason != plainRec.Reason {
+		t.Fatalf("the champion ended %s/%s (%s), an unsampled run %s/%s (%s)",
+			champRec.Status, champRec.Outcome, champRec.Reason, plainRec.Status, plainRec.Outcome, plainRec.Reason)
+	}
+	if champRec.AB == nil || plainRec.AB != nil {
+		t.Fatalf("ab: champion %+v, unsampled %+v", champRec.AB, plainRec.AB)
+	}
+	if champRec.PatchObject == "" || plainRec.PatchObject != "" {
+		t.Fatalf("patch_object: champion %q, unsampled %q", champRec.PatchObject, plainRec.PatchObject)
 	}
 }
