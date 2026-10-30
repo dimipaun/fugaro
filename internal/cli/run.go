@@ -965,14 +965,14 @@ func warnImageDigestDrift(ctx context.Context, env *cloudEnv, slug string, spec 
 	// daily check's own latest-drift case (LatestMissing) — which is the
 	// one read failure the operator can act on, so it is named as such.
 	case errors.Is(err, imagecheck.ErrManifestUnknown):
-		fmt.Fprintf(warn, "warning: the registry has no %s:latest, so the digest the build record of %s workflow %s names (%s) is not the one that tag resolves to\n", image, spec.Repo, spec.Workflow, rec.ImageDigest)
+		fmt.Fprintf(warn, "warning: the registry has no %s:latest, so the digest the build record of %s workflow %s names (%s) is not the one that tag resolves to\n", image, spec.Repo, spec.Workflow, oneLine(rec.ImageDigest))
 		return
 	case err != nil:
 		skip(oneLine(err.Error()))
 		return
 	}
 	if rec.DigestMismatch(live) {
-		fmt.Fprintf(warn, "warning: the image of %s workflow %s is at digest %s, not the %s its build record names\n", spec.Repo, spec.Workflow, live, rec.ImageDigest)
+		fmt.Fprintf(warn, "warning: the image of %s workflow %s is at digest %s, not the %s its build record names\n", spec.Repo, spec.Workflow, oneLine(live), oneLine(rec.ImageDigest))
 	}
 }
 
