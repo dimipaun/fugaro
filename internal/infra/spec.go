@@ -582,19 +582,17 @@ func (c *repoCtx) resolveBitbucketProxied() error {
 	if !hasEntry {
 		return nil
 	}
-	if localProxies := entry.Proxy && entry.AllowsData(c.in.Repo); localProxies == nodeProxies {
+	localProxies := entry.Proxy && entry.AllowsData(c.in.Repo)
+	if localProxies == nodeProxies {
 		return nil
 	}
-	return userErr("the local config's project_secrets.%s entry and the project's published policy disagree about %s: the entry %s, and the published policy node %s. Whether a repository's git credential is brokered comes from the published node alone, because that node is what the credentials service reads when the repository's job asks it for the token — so make the two agree: publish this config with 'fugaro project policy publish', which derives the node's bitbucket_token block from this entry, or correct the entry so that it says what the node says", config.BitbucketSecret, c.in.Repo, proxySaid(entry.Proxy && entry.AllowsData(c.in.Repo), "admits it with proxy: true", "does not proxy it"), proxySaid(nodeProxies, "admits it with proxy: true", "does not proxy it"))
-}
-
-// proxySaid words one half of resolveBitbucketProxied's refusal: whether the
-// document said the repository is proxied.
-func proxySaid(proxied bool, yes, no string) string {
-	if proxied {
-		return yes
+	says := func(proxied bool) string {
+		if proxied {
+			return "admits it with proxy: true"
+		}
+		return "does not admit it with proxy: true"
 	}
-	return no
+	return userErr("the local config's project_secrets.%s entry and the project's published policy disagree about %s: the entry %s, and the published node %s. Whether a repository's git credential is brokered has one source, the published node, because that node is what the credentials service reads when the repository's job asks it for the token — so make the two agree: publish this config with 'fugaro project policy publish', which derives the node's bitbucket_token block from this entry, or correct the entry to say what the node says", config.BitbucketSecret, c.in.Repo, says(localProxies), says(nodeProxies))
 }
 
 // localRepo is the local config's entry for repo, matched as fugaro run
