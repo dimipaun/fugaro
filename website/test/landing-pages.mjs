@@ -553,7 +553,14 @@ test('a variant that names a video renders it in the hero, and one whose file is
   )
   const headline = findAll(parse(crew.html), 'h1').map((el) => textOf(el).trim())
   assert.deepEqual(headline, [LANDING.variants.find((one) => one.name === 'crew').headline], '/crew lost its headline along with the missing video, so the page is not complete without the file')
-  assert.equal(findAll(parse(crew.html), (el) => el.name === 'a' && textOf(el).trim() === 'Book a demo').length, 1, '/crew lost its booking link along with the missing video')
+  // Two, since the owner's feedback of 2026-10-30 (finding 1): the hero's own booking action and
+  // the closing band's. The video this variant names is not served, so both halves of the page
+  // are what it has to keep.
+  assert.equal(
+    findAll(parse(crew.html), (el) => el.name === 'a' && textOf(el).trim() === 'Book a demo').length,
+    2,
+    '/crew lost a booking link along with the missing video: the page keeps the hero action and the closing band without the file it names (F14, G2.5)',
+  )
   // And the drawing is there: `/crew` names a video the repository does not carry, so the
   // variant has no media and the hero draws the campaign's picture — the same fallback the four
   // shipped pages take today, reached here by a variant that did name a file (F14, G2.5).

@@ -3127,15 +3127,31 @@ function headlineColumn(css, width) {
 }
 
 /**
+ * The rules that set a band's own box, for one class and one viewport width. A rule that merely
+ * *names* the class is not one of them, and the two that name one without being it are both in
+ * the built stylesheet: `main:has(> .campaign-hero) { padding: 0 }` sets `main`'s padding, and
+ * `.campaign-steps [data-reveal] { … }` sets a descendant's. A reader that took either for the
+ * band's own would report a band padding nothing declares — the `main` rule above lands after
+ * the component's in the built stylesheet, so the hero's 112 px would come out as 0.
+ */
+function bandRules(css, klass, width) {
+  const targets = (selector) =>
+    selector
+      .split(',')
+      .map((part) => part.replace(/\[data-astro-cid-[^\]]*\]/g, '').trim())
+      .some((part) => new RegExp(`\\.${klass}(?![\\w-])(?=[\\[:.]|$)`).test(part))
+  return allRules(css).filter((rule) => appliesAt(width)(rule) && targets(rule.selector))
+}
+
+/**
  * A band's block padding at a viewport width, as `[start, end]` in pixels: the `padding-block`
  * shorthand, the block components of a `padding` shorthand, or the two longhands — whichever the
  * cascade puts last, which is how a browser reads them. `null` when nothing declares one.
  */
 function blockPadding(css, klass, width) {
   const tokens = lengthTokens(css)
-  const mine = allRules(css).filter((rule) => appliesAt(width)(rule) && new RegExp(`\\.${klass}(?![\\w-])`).test(rule.selector))
   let out = null
-  for (const rule of mine) {
+  for (const rule of bandRules(css, klass, width)) {
     const decls = declarations(rule)
     if (decls['padding-block'] !== undefined) {
       const parts = shorthandParts(decls['padding-block'])
