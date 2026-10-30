@@ -1269,8 +1269,12 @@ P6.13 are each SECURITY-SENSITIVE** (the mobile plan's group P-F and Global Cons
    rule are the app's; §4.4 and §7.2 state the contract P6.8 consumes and nothing more.
 5. **It does not change the rules, the golden or `RulesVersion`** (M14), and it forces no owner-run
    deploy.
-6. **It does not touch `shared/`**, and it adds no dependency: `crypto/ecdh` and `crypto/hkdf` are
-   the standard library (T3 asserts `go.mod` is unchanged).
+6. **It does not touch `shared/`**, and the crypto work adds no dependency: `crypto/ecdh` and
+   `crypto/hkdf` are the standard library (T3 asserts `go.mod` is unchanged). *Amended 2026-10-30:*
+   this bullet read as a claim about the whole work and is not one. T4's brief approved **one**
+   module, `rsc.io/qr`, for the terminal QR `renderPairQR` draws; it is the only line T4 adds to
+   `go.mod`, the boundary baselines record it, and no other task here adds one. The sentences in §2
+   and §16 that say `go.mod` gains no module are the same crypto work as T3's assertion, and hold.
 7. **It does not decide the app's store forms.** §13 lists what the owner must re-answer and states
    that the named memory could not be read here; it fills in no form and runs no store command.
 8. **It adds no new command beyond `fugaro pair` and its two subcommands.** The consumer is P4.1's
@@ -1471,17 +1475,34 @@ plan diverges from the mobile plan's task text**, and they are the ones that hol
    is `token.Lifetime` and the ID-token persistence is UNVERIFIED U2 of the mobile reconciliation —
    so decision 1's age is derived from a documented behaviour, and a real project is what would
    confirm it.
-9. **The OS keychain's storing side exists on Linux only, so `fugaro pair` cannot complete on
-   macOS.** *(Added 2026-10-30, T3b.)* The merged P4.1 reader has a `security` row and a
-   `secret-tool` row; the writer T3b adds has a `secret-tool` row alone, because M11 keeps the key
-   out of every argv and `secret-tool store` reads it from standard input. macOS's `security` does
-   have argv-safe forms — `add-generic-password -w` with no value prompts on the terminal, and
-   `security -i` reads whole commands from standard input — but neither is a path this container can
-   exercise, so T3b refuses the write there with `ErrBackend` and says so (the sentence names
-   `-w <value>`'s argv and the two forms it cannot test) rather than guessing at one. **The
-   consequence is not small and is not hidden:** the platform this CLI is most likely to run on is
-   the one where pairing stops at the keychain step. A darwin writer, tested on a darwin runner, is
-   a task of its own and is **not** in this plan's §15.
+9. **The OS keychain's storing side exists on Linux and on macOS.** *(Rewritten 2026-10-30, T3c;
+   added the same day as T3b, which is when darwin still refused.)* The reader has a `security` row
+   and a `secret-tool` row, and so does the writer. M11 keeps the key out of every argv on both:
+   `secret-tool store` reads it from standard input, and darwin's `security` is run as `security
+   -i` — the whole argv is the single element `-i` — with one command per run on its standard
+   input, `add-generic-password -U -s "<item>" -a "<item>" -w <key>` to store and
+   `delete-generic-password -s "<item>" -a "<item>"` to remove — the removal names the account as
+   well, so that it is the exact inverse of the store rather than a match on the service alone. The
+   item's name is not a secret (M5) and is quoted into that command; the key has one spelling
+   (D171: `EncodeKey`'s unpadded base64url), whose alphabet holds no byte a command line's parser
+   can read as anything but part of the value, so nothing is ever escaped, and a key outside that
+   alphabet is refused rather than escaped — a key the parser read as something else would be
+   stored as something else while the store reported success. **`security -i` answers 0 for a
+   command it could not carry out**, so its exit status alone would read a refused store as a
+   successful one and `fugaro pair` would deliver a key that is not in the keychain: the writer
+   reads the tool's output and maps it to `ErrBackend` in this package's own sentence, never
+   repeating what the tool said, because that text can carry the command line it was given — and
+   that line carries the key. The reading fails closed: a successful add or delete prints nothing,
+   so every non-blank line is a failure, wherever in the line the message sits (a prompt or an echo
+   before it must not hide it) and whether or not this package recognises it. **What is verified where.** The invocation, the
+   quoting, the refusals and the failure reading are hermetic: `keychain_test.go` puts a stand-in
+   `security` first on `PATH` and runs the writer against it as a real child process, which is
+   where "no argv element and no environment variable carries the key" is observed at all. The real
+   tool is reached only by `internal/mailbox/keychain/keychain_darwin_live_test.go`, behind the
+   `darwin && keychain_live` tags, and **the owner runs it himself** in his own terminal — M5's
+   rule is that no agent reads a keychain — with `go test -tags keychain_live
+   ./internal/mailbox/keychain/ -run Live -count=1 -v`; without the tags the file is not compiled,
+   so a plain `go test ./...` on a Mac never touches a keychain.
 
 ---
 

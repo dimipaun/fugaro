@@ -19,6 +19,7 @@ require (
 	golang.org/x/text v0.42.0 // the artifact-name collision rule normalizes and FULL folds with it
 	google.golang.org/api v0.299.0
 	gopkg.in/yaml.v3 v3.0.1
+	rsc.io/qr v0.2.0
 )
 
 require (

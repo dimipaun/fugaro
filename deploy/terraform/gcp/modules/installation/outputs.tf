@@ -23,6 +23,11 @@ output "ghcr_registry" {
   value       = google_artifact_registry_repository.ghcr.repository_id
 }
 
+output "shared_registry" {
+  description = "The shared image registry's ID: one repository per installation, holding the images every repository's builds share (design docs/forge-authorship-images/shared-images.md §2.6). fugaro update passes it to each repository root, which grants its build account writer and its job accounts reader on it."
+  value       = google_artifact_registry_repository.shared.repository_id
+}
+
 output "legacy_registry" {
   description = "The adopted legacy registry's ID, or null when none was adopted."
   value       = var.adopt_legacy_registry ? google_artifact_registry_repository.legacy[0].repository_id : null

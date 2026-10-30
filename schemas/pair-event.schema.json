@@ -1,0 +1,212 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/pair-event.schema.json",
+  "title": "fugaro pair --json event",
+  "description": "One line of `fugaro pair --json`, `fugaro pair ls --json` or `fugaro pair revoke --json` (mobile plan §4.5, amended 2026-10-29). The stream is newline-delimited and stdout carries nothing else, so a console that spawns the CLI reads one of these objects per line. The rule every branch below enforces is §4.5's: a uid may appear (it is a key), and a token may not, a key may not, the keychain item's value may not and the typed code may not — the console must never learn the code it is asking the operator to type (M3). The one exception is the qr event's payload, which is the content of a code the operator's own screen shows anyway.",
+  "type": "object",
+  "oneOf": [
+    { "$ref": "#/$defs/qr" },
+    { "$ref": "#/$defs/waiting" },
+    { "$ref": "#/$defs/code" },
+    { "$ref": "#/$defs/done" },
+    { "$ref": "#/$defs/refused" },
+    { "$ref": "#/$defs/listed" },
+    { "$ref": "#/$defs/revoked" }
+  ],
+  "$defs": {
+    "envelope": {
+      "$comment": "The four fields every event carries. v is pairEventVersion; a console pins it and stops on a version it does not know, because the shape of the rest of the line is this version's. project is empty for a refusal that happened before a project was selected, which is a stream a console must still be able to read — so it is required and unconstrained, not a non-empty string.",
+      "properties": {
+        "v": { "const": 1 },
+        "at": { "type": "string", "format": "date-time", "description": "When the event happened, in UTC." },
+        "project": { "type": "string", "description": "The Fugaro project name, once one is selected." }
+      },
+      "required": ["v", "at", "project"]
+    },
+    "qr": {
+      "description": "The QR the operator's screen shows and the phone photographs: the bootstrap configuration and the one-shot pairing token. This is the only event that carries a token, and it carries it inside payload, which is the code's own content and not a field a console acts on.",
+      "type": "object",
+      "additionalProperties": false,
+      "allOf": [{ "$ref": "#/$defs/envelope" }],
+      "required": ["event", "payload", "uid", "expires_at"],
+      "properties": {
+        "v": true,
+        "at": true,
+        "project": true,
+        "event": { "const": "qr" },
+        "payload": { "type": "string", "minLength": 1, "description": "The JSON the QR encodes (pairQRVersion is its own version, deliberately not the stream's)." },
+        "uid": { "type": "string", "pattern": "^p~", "description": "The pairing uid the token's claims name; it is also the key of the pairing node." },
+        "expires_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "waiting": {
+      "description": "The command now waits for the phone to write its key at the pairing node's request child.",
+      "type": "object",
+      "additionalProperties": false,
+      "allOf": [{ "$ref": "#/$defs/envelope" }],
+      "required": ["event", "expires_at", "timeout_ms"],
+      "properties": {
+        "v": true,
+        "at": true,
+        "project": true,
+        "event": { "const": "waiting" },
+        "expires_at": { "type": "string", "format": "date-time" },
+        "timeout_ms": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "code": {
+      "description": "The phone's key arrived: type the code the phone shows. It carries no field of its own beyond the uid and never the fingerprint, because a console that saw the fingerprint here could type it back without anyone looking at the phone (M3).",
+      "type": "object",
+      "additionalProperties": false,
+      "allOf": [{ "$ref": "#/$defs/envelope" }],
+      "required": ["event", "uid"],
+      "properties": {
+        "v": true,
+        "at": true,
+        "project": true,
+        "event": { "const": "code" },
+        "uid": { "type": "string", "pattern": "^p~" }
+      }
+    },
+    "done": {
+      "description": "§4.5's document: a completed pairing, and what it wrote.",
+      "type": "object",
+      "additionalProperties": false,
+      "allOf": [{ "$ref": "#/$defs/envelope" }],
+      "required": ["event", "uid", "document"],
+      "properties": {
+        "v": true,
+        "at": true,
+        "project": true,
+        "event": { "const": "done" },
+        "uid": { "type": "string", "pattern": "^p~" },
+        "document": { "$ref": "#/$defs/pairDocument" }
+      }
+    },
+    "refused": {
+      "description": "A refusal, with the stable code an operator or a console acts on and the reason it is fixable. §4.6's exit-1 rows are code here; the one exit-2 row is too, and the code says which case it is so an operator is not sent to fix the wrong thing.",
+      "type": "object",
+      "additionalProperties": false,
+      "allOf": [{ "$ref": "#/$defs/envelope" }],
+      "required": ["event", "code", "reason"],
+      "properties": {
+        "v": true,
+        "at": true,
+        "project": true,
+        "event": { "const": "refused" },
+        "code": { "type": "string", "minLength": 1 },
+        "reason": { "type": "string", "minLength": 1 }
+      }
+    },
+    "listed": {
+      "description": "`fugaro pair ls`: the pairings this installation holds, one row per device node.",
+      "type": "object",
+      "additionalProperties": false,
+      "allOf": [{ "$ref": "#/$defs/envelope" }],
+      "required": ["event", "list"],
+      "properties": {
+        "v": true,
+        "at": true,
+        "project": true,
+        "event": { "const": "listed" },
+        "list": { "$ref": "#/$defs/listDocument" }
+      }
+    },
+    "revoked": {
+      "description": "`fugaro pair revoke`: what a revocation deleted, in the order it deleted it (M4). The device's Auth user appears in no field, because this command cannot delete one and a document that named it under wrote would claim a deletion it did not make.",
+      "type": "object",
+      "additionalProperties": false,
+      "allOf": [{ "$ref": "#/$defs/envelope" }],
+      "required": ["event", "revoke"],
+      "properties": {
+        "v": true,
+        "at": true,
+        "project": true,
+        "event": { "const": "revoked" },
+        "revoke": { "$ref": "#/$defs/revokeDocument" }
+      }
+    },
+    "pairDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project", "at", "pairing", "request", "device", "keychain_item", "wrote", "refused", "warnings"],
+      "properties": {
+        "project": { "type": "string" },
+        "at": { "type": "string", "format": "date-time" },
+        "pairing": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["uid", "state", "expires_at"],
+          "properties": {
+            "uid": { "type": "string", "pattern": "^p~" },
+            "state": { "enum": ["completed"] },
+            "expires_at": { "type": "string", "format": "date-time" }
+          }
+        },
+        "request": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["key_fingerprint", "at"],
+          "properties": {
+            "key_fingerprint": { "type": "string", "minLength": 1, "description": "The code the phone showed, which is derived from the phone's public key and is not the key." },
+            "at": { "type": "string", "format": "date-time" }
+          }
+        },
+        "device": { "$ref": "#/$defs/device" },
+        "keychain_item": { "type": "string", "minLength": 1, "description": "The OS keychain item's name, never its value: the name is what the operator records in the local config's mailbox block, and the value is the MAC key." },
+        "wrote": { "type": "array", "items": { "type": "string" }, "description": "The database paths this pairing wrote, relative to the root." },
+        "refused": { "type": "array", "items": { "type": "string" } },
+        "warnings": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "listDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project", "at", "devices", "warnings"],
+      "properties": {
+        "project": { "type": "string" },
+        "at": { "type": "string", "format": "date-time" },
+        "devices": { "type": "array", "items": { "$ref": "#/$defs/deviceRow" } },
+        "warnings": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "revokeDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project", "at", "device", "keychain_item", "wrote", "refused", "warnings"],
+      "properties": {
+        "project": { "type": "string" },
+        "at": { "type": "string", "format": "date-time" },
+        "device": { "$ref": "#/$defs/device" },
+        "keychain_item": { "type": "string", "minLength": 1 },
+        "wrote": { "type": "array", "items": { "type": "string" } },
+        "refused": { "type": "array", "items": { "type": "string" } },
+        "warnings": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "deviceRow": {
+      "description": "One device node as `pair ls` prints it, and nothing else: the node holds no token and no key (M13), and no column says whether the device's Auth user still exists, because the Auth user is not in the database and database admin cannot reach it (decision 11).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["uid", "name", "email", "role", "at"],
+      "properties": {
+        "uid": { "type": "string", "description": "The node's own key. `fugaro pair` writes m~…, and the children of config/admin/devices are unconstrained, so a hand-written entry's key may be anything: `pair ls` lists every child rather than the ones it recognises, which is why this is a string and not a pattern." },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string" },
+        "at": { "type": "string", "description": "The node's pairing time as the node holds it; a hand-written node may hold anything, so it is a string and not a date-time here." }
+      }
+    },
+    "device": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["uid", "name", "email", "role"],
+      "properties": {
+        "uid": { "type": "string", "description": "The device's uid: the node's own key, for the same reason deviceRow's is a string — a revoke names a key the allowlist held, and a hand-written entry's key may be anything." },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string" }
+      }
+    }
+  }
+}

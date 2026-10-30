@@ -19,6 +19,7 @@ variable "installation" {
     registry_host             = string
     base_registry             = string
     ghcr_registry             = string
+    shared_registry           = string
     scheduler_service_account = string
     role_ids = object({
       job_runner      = string

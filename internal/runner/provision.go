@@ -16,11 +16,12 @@ import (
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
-// CheckoutEnv is the job environment variable internal/infra sets to
-// config.CheckoutClone on a checkout: clone workflow's job and to nothing on
-// a baked one (design generic-tool.md §2, G3/G4): it tells the runner's
-// bootstrap that there is no checkout baked into the image, so the run makes
-// its own blobless clone and installs the repository's mise tools.
+// CheckoutEnv is the job environment variable internal/infra sets to the
+// workflow's own config.Checkout value (clone or shared) on a workflow whose
+// image holds no repository's source, and to nothing on a baked one (design
+// generic-tool.md §2, G3/G4): it tells the runner's bootstrap that there is
+// no checkout baked into the image, so the run makes its own blobless clone
+// and installs the repository's mise tools.
 //
 // It is named here, in the runner, because the runner is what reads it;
 // internal/infra (spec.go) sets it from this constant, the way it takes
@@ -28,13 +29,13 @@ import (
 const CheckoutEnv = "FUGARO_CHECKOUT"
 
 // RemoteEnv is the job environment variable internal/infra sets to the
-// repository's credential-free clone URL on a checkout: clone workflow's
-// job: the image has no checkout baked into it, so bootstrap has to clone
-// one, and this says from where. It is what fugaro exec's --remote flag
-// defaults to (internal/cli/exec.go), so the repository reaches the runner
-// the way every other job setting does, from the job's own environment —
-// without it a clone job on Cloud Run has no remote at all and fails
-// bootstrap with "this job has no repository to clone".
+// repository's credential-free clone URL on a checkout: clone or checkout:
+// shared workflow's job: the image has no checkout baked into it, so
+// bootstrap has to clone one, and this says from where. It is what fugaro
+// exec's --remote flag defaults to (internal/cli/exec.go), so the repository
+// reaches the runner the way every other job setting does, from the job's own
+// environment — without it a clone job on Cloud Run has no remote at all and
+// fails bootstrap with "this job has no repository to clone".
 //
 // Named here, in the runner, for the same reason CheckoutEnv is: the runner
 // is what reads it (Deps.Remote), and internal/infra sets it from this
@@ -73,7 +74,10 @@ const provisionTimeout = 10 * time.Minute
 // lc.BaseImage(config.BaseKind)), which bakes no checkout, and projectJobEnv
 // carries none of the per-repository variables — FUGARO_CHECKOUT, the only
 // marker, is written by internal/infra's spec.go for a per-repository clone
-// workflow alone. Its environment is also a launcher's to override
+// or shared workflow alone. A shared job is one of these too: its image is
+// the dependency layer, which holds no checkout either (design
+// forge-authorship-images/shared-images.md §1), so it stands and falls with
+// the clone. Its environment is also a launcher's to override
 // (run.jobs.runWithOverrides), so reading the marker there would let a launch
 // decide whether the run clones at all; the design keeps that class of fact
 // computed from the job rather than read from the environment, as the provider
@@ -92,7 +96,11 @@ func (r *run) cloneJob() bool {
 	if _, project := r.projectJob(); project {
 		return true
 	}
-	return r.jobEnv(CheckoutEnv) == config.CheckoutClone
+	switch r.jobEnv(CheckoutEnv) {
+	case config.CheckoutClone, config.CheckoutShared:
+		return true
+	}
+	return false
 }
 
 // jobEnv reads key from the runner's environment; a nil Deps.Env means "the

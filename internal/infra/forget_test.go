@@ -61,6 +61,13 @@ func TestCheckForgetPlan(t *testing.T) {
 	if err := CheckForgetPlan(older); err != nil {
 		t.Fatalf("the tag mover role's create: %v", err)
 	}
+	// The same for the shared image registry, which an installation applied
+	// before it existed doesn't have: the rollback creates it, and the next
+	// fugaro update adopts it by its mark rather than colliding with it.
+	shared := &tf.Plan{ResourceChanges: []tf.ResourceChange{change(ForgetDeletes[0], "delete"), change(SharedRegistryAddress, "create")}}
+	if err := CheckForgetPlan(shared); err != nil {
+		t.Fatalf("the shared image registry's create: %v", err)
+	}
 	both := &tf.Plan{ResourceChanges: []tf.ResourceChange{change(TagMoverRoleAddress, "create"), change("module.installation.google_storage_bucket.runs", "create")}}
 	if err := CheckForgetPlan(both); err == nil || !strings.Contains(err.Error(), "google_storage_bucket.runs") || strings.Contains(err.Error(), "tag_mover") {
 		t.Fatalf("err = %v", err)

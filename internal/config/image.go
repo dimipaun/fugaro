@@ -219,22 +219,53 @@ func validateKeyFiles(p string, files []string, add func(path, format string, ar
 // validateCheckout checks a workflow's checkout: (design generic-tool.md §2,
 // G3). clone runs the installation's base image directly, with no build, so
 // a key that only a build can honor is refused, naming checkout: baked.
+// shared runs a shared dependency-layer image and clones the repository's
+// own source at launch (design forge-authorship-images/shared-images.md §6,
+// route A), so it accepts exactly the keys that describe that layer — and
+// refuses the ones that would put this repository's own content into an
+// image every repository on the same dependency set runs (§1, §12).
+//
+// image.setup is the design's own open question and this is where it is
+// taken: §2.2 and §4 have the shared layer installed by whichever
+// repository's image.setup first built the key, and accept that the others
+// inherit that step, while §12 has the image hold the dependency layer "and
+// only it". The stricter reading wins, because a setup command runs in the
+// repository's checkout and its output is therefore that repository's
+// content — the alternative lets a workflow declare shared and still bake
+// its own work into a shared image. The cost is named where it is paid: a
+// workflow moving to shared (§10) loses the step.
 func validateCheckout(p string, w Workflow) []Problem {
 	var ps []Problem
 	add := func(path, format string, args ...any) {
 		ps = append(ps, Problem{Path: path, Message: fmt.Sprintf(format, args...)})
 	}
-	if w.Checkout != CheckoutBaked && w.Checkout != CheckoutClone {
-		add(p+".checkout", "must be baked or clone")
+	switch w.Checkout {
+	case CheckoutBaked, CheckoutClone, CheckoutShared:
+	default:
+		// The doubled "or" is deliberate: this enum names all three values it
+		// accepts, and internal/config/layer_test.go pins the "must be baked
+		// or clone" prefix of the same message for a profile's checkout:.
+		add(p+".checkout", "must be baked or clone or shared; shared runs a shared dependency-layer image and clones the source at launch")
+		return ps
+	}
+	// A base: alongside clone or shared needs no refusal of its own here:
+	// since the 0.7.0 cut every non-empty base: (legacy or not) is refused
+	// by the caller with legacyBaseMessage, so neither kind can silently
+	// ignore one.
+	if w.Checkout == CheckoutShared {
+		const msg = "checkout: shared runs an image shared by every repository on the same dependency set, which holds no repository's own content; use checkout: baked to build a per-repository image"
+		if len(w.Image.Setup) > 0 {
+			add(p+".image.setup", "%s", msg)
+		}
+		if w.Dockerfile != "" {
+			add(p+".dockerfile", "%s", msg)
+		}
 		return ps
 	}
 	if w.Checkout != CheckoutClone {
 		return ps
 	}
 	const msg = "checkout: clone runs the base image with no build; use checkout: baked to build an image"
-	// A base: alongside clone needs no refusal of its own here: since the
-	// 0.7.0 cut every non-empty base: (legacy or not) is refused by the
-	// caller with legacyBaseMessage, so clone can never silently ignore one.
 	if len(w.Image.Apt) > 0 {
 		add(p+".image.apt", "%s", msg)
 	}

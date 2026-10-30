@@ -1679,6 +1679,19 @@ var runAccountGrants = setOf(
 	`google_artifact_registry_repository_iam_member | "roles/artifactregistry.reader" | repository=var.installation.ghcr_registry | google_service_account.build.member | for_each= | perms=`,
 	`google_artifact_registry_repository_iam_member | "roles/artifactregistry.writer" | repository=google_artifact_registry_repository.images.repository_id | google_service_account.build.member | for_each= | perms=`,
 	`google_artifact_registry_repository_iam_member | var.installation.role_ids.tag_mover | repository=google_artifact_registry_repository.images.repository_id | google_service_account.build.member | for_each= | perms=artifactregistry.tags.delete`,
+	// Reviewed for C8b-tf (the installation's shared image registry, design
+	// docs/forge-authorship-images/shared-images.md §2.6, §11): the build
+	// account writes the one repository every repository's shared images live
+	// in, and each job account reads it. Neither role carries a storage
+	// permission, neither can grant a role or act as or mint tokens for
+	// another account, and the target is that registry repository, never the
+	// project and never the runs bucket. The writer is this repository's own
+	// build account — the same account and the same role as on the
+	// repository's own registry above, on the shared one beside it — and the
+	// readers are this repository's job accounts, the set the workflow module
+	// resolves, spelled as members here so the key pins them.
+	`google_artifact_registry_repository_iam_member | "roles/artifactregistry.writer" | repository=var.installation.shared_registry | google_service_account.build.member | for_each= | perms=`,
+	`google_artifact_registry_repository_iam_member | "roles/artifactregistry.reader" | repository=var.installation.shared_registry | each.value | for_each={ for name, w in module.workflow : name => "serviceAccount:${w.service_account}" } | perms=`,
 	`google_project_iam_member | "roles/logging.logWriter" | project=var.project | google_service_account.build.member | for_each={ log_writer = "roles/logging.logWriter" build_submitter = var.installation.role_ids.build_submitter } | perms=`,
 	`google_project_iam_member | var.installation.role_ids.build_submitter | project=var.project | google_service_account.build.member | for_each={ log_writer = "roles/logging.logWriter" build_submitter = var.installation.role_ids.build_submitter } | perms=cloudbuild.builds.create,cloudbuild.builds.get`,
 	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=local.secrets[each.value] | google_service_account.build.member | for_each=toset(var.repo.build_secrets) | perms=`,

@@ -390,11 +390,11 @@ const (
 )
 
 // DiscoverInstallation finds the installation's resources that exist: the
-// runs bucket, the legacy registry and the base registry. Each that
-// carries fugaro=managed (and, for the bucket, is in the project) is
-// imported; one under our name without our mark is refused. A marked
-// legacy registry sets AdoptLegacyRegistry; an unmarked one isn't ours and
-// is left alone, since nothing plans it then.
+// runs bucket, the legacy registry, the base registry and the shared image
+// registry. Each that carries fugaro=managed (and, for the bucket, is in the
+// project) is imported; one under our name without our mark is refused. A
+// marked legacy registry sets AdoptLegacyRegistry; an unmarked one isn't ours
+// and is left alone, since nothing plans it then.
 //
 // It also finds the singletons an earlier apply made, which a rollback's
 // state rm leaves in place and whose create would then fail: the custom
@@ -445,6 +445,21 @@ func DiscoverInstallation(ctx context.Context, c *Clients, spec InstallationSpec
 		d.add(importGhcrRegistry, spec.Region, "", spec.Names.GhcrRegistry)
 	case ghcr != nil:
 		d.foreign("Artifact Registry repository "+spec.Names.GhcrRegistry, ghcr.Labels, managed)
+	}
+	// The shared image registry, one repository per installation (design
+	// docs/forge-authorship-images/shared-images.md §2.6): a lost state, or a
+	// rollback's state rm, leaves it live, and it is the config's own create
+	// then — so it is adopted by its mark, or refused by name, exactly as the
+	// remote repository above is.
+	shared, err := d.registry(spec.Region, gcp.SharedRegistryRepoID())
+	if err != nil {
+		return Imports{}, err
+	}
+	switch {
+	case shared != nil && hasMarks(shared.Labels, managed):
+		d.add(importSharedRegistry, spec.Region, "", gcp.SharedRegistryRepoID())
+	case shared != nil:
+		d.foreign("Artifact Registry repository "+gcp.SharedRegistryRepoID(), shared.Labels, managed)
 	}
 	if err := d.installationSingletons(spec); err != nil {
 		return Imports{}, err
