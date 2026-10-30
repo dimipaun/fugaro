@@ -15,7 +15,7 @@ import (
 // a stage that has no governance budget (an artifact run's plan and render,
 // T7.1), and a tier name outside the vocabulary (governance.tiers, T8.1) are
 // all refused rather than read as "no limit". A key left out, or written as
-// null or 0, is unset and takes Fugaro's default (policy.DefaultGovernance).
+// null or 0, is unset and takes Fugaro's default (ee/governance's Defaults).
 //
 // A count written as a fraction is not one of the cases: yaml.v3 reads 2.5
 // into every int64 key of fugaro.yaml as 2, max_run_tokens included, and the
@@ -244,6 +244,11 @@ func TestGovernanceAbsentIsOutOfTheHash(t *testing.T) {
 // governance key there would be a second home T7.2's wiring does not read.
 // Governance lives in the layer file, published by `fugaro config publish
 // FILE`.
+//
+// What the two surfaces resolve to is not asserted here: which value wins when
+// they are merged is the tighten-only rule, which an untagged build does not
+// apply at all and which ee/governance's TestGovernanceTightenOnly pins for
+// the build that does (E2.3).
 func TestGovernanceCeilingReachesTheResolvedConfig(t *testing.T) {
 	l := mustLayer(t, testLayer+"governance:\n  review_ratio: 20\n  stage_budget: { implement: 0.9 }\n")
 	c, _, ps := Resolve([]byte(minimalRepo+"governance:\n  review_ratio: 3\n"), l)
@@ -256,20 +261,6 @@ func TestGovernanceCeilingReachesTheResolvedConfig(t *testing.T) {
 	}
 	if c.Governance == nil || c.Governance.ReviewRatio != 3 || c.Governance.StageBudget.Implement != 0 {
 		t.Fatalf("the repository's block = %+v", c.Governance)
-	}
-	// The merge is what brings them together, and the repository's tighter
-	// value is the effective one (G6) while a key only the layer writes keeps
-	// the layer's, which is the loosening the project layer is allowed.
-	ceiling := policy.Layer{Governance: c.Layer.Governance.Policy()}.Governance.WithDefaults()
-	// The middle layer is the default branch's own file, which a repository
-	// that keeps the block only on its branch does not write.
-	e := policy.Merge(policy.Layer{Governance: ceiling}, policy.Layer{}, policy.Layer{Governance: c.Governance.Policy()})
-	if e.Governance.ReviewRatio != 3 || e.Governance.StageBudget.Implement != 0.9 {
-		t.Fatalf("effective governance = %+v", e.Governance)
-	}
-	if e.Sources[policy.KeyReviewRatio] != policy.SourceBranch ||
-		e.Sources[policy.KeyStageBudgetImplement] != policy.SourceCeiling {
-		t.Errorf("sources = %v", e.Sources)
 	}
 }
 

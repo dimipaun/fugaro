@@ -6,27 +6,31 @@ import (
 	"github.com/dimipaun/fugaro/internal/policy"
 )
 
-// TestHooksDefaultToTodaysBehaviour: the policy hook's default pair is what
-// the core did before the seam — the values DefaultGovernance ships and the
-// tighten-only rule of (*Effective).tightenGovernance — and the readers that
-// need them go through the hook rather than around it (G10). The probe at the
-// end is the proof of the second half: defaults the core never ships and a
-// tighten rule that overwrites, both reaching a merge the core runs.
-func TestHooksDefaultToTodaysBehaviour(t *testing.T) {
-	// Today's behaviour, with the default pair installed: a layer's ceiling is
-	// the shipped guardrails, and a later layer that loosens one is dropped and
-	// recorded.
-	if got := (policy.Governance{}).WithDefaults(); got != policy.DefaultGovernance() {
-		t.Errorf("WithDefaults() = %+v, want DefaultGovernance() %+v", got, policy.DefaultGovernance())
+// TestHooksDefaultToTheUntaggedBuild: the policy hook's default pair is the
+// one an untagged build runs with — nothing shipped and a rule that tightens
+// nothing — so the core holds no run to a governance: block on its own (D522,
+// G10). The readers still go through the hook rather than around it, which the
+// probe at the end proves: defaults the core never ships and a tighten rule
+// that rewrites, both reaching a merge the core runs.
+func TestHooksDefaultToTheUntaggedBuild(t *testing.T) {
+	// The untagged default, installed: an empty layer resolves no guardrails,
+	// and a layer that writes one is neither tightened nor dropped — there is
+	// no ceiling for it to be looser than.
+	if got := (policy.Governance{}).WithDefaults(); got != (policy.Governance{}) {
+		t.Errorf("WithDefaults() = %+v, want the zero governance: this build ships none", got)
 	}
-	ceiling := policy.Layer{Governance: policy.Governance{}.WithDefaults()}
-	e := policy.Merge(ceiling, policy.Layer{},
+	e := policy.Merge(
+		policy.Layer{Governance: policy.Governance{}.WithDefaults()},
+		policy.Layer{},
 		policy.Layer{Governance: policy.Governance{ReviewRatio: policy.DefaultReviewRatio + 1}})
-	if e.Governance.ReviewRatio != policy.DefaultReviewRatio {
-		t.Errorf("review_ratio = %d, want the ceiling's %d", e.Governance.ReviewRatio, policy.DefaultReviewRatio)
+	if e.Governance != (policy.Governance{}) {
+		t.Errorf("the block was enforced: %+v", e.Governance)
 	}
-	if len(e.Ignored) != 1 || e.Ignored[0].Key != policy.KeyReviewRatio {
-		t.Errorf("the looser layer was not recorded: %+v", e.Ignored)
+	if len(e.Ignored) != 0 {
+		t.Errorf("the block was recorded as a dropped value: %+v", e.Ignored)
+	}
+	if len(e.Sources) != 0 {
+		t.Errorf("the block sourced a key: %+v", e.Sources)
 	}
 
 	// The probe: WithDefaults and DefaultGovernanceKeys read the hook's
@@ -56,13 +60,16 @@ func TestHooksDefaultToTodaysBehaviour(t *testing.T) {
 	}
 }
 
-// TestUntaggedPolicyIgnoresGovernance: the pair an untagged build has after the
-// move (E2.3) decodes a governance: block and enforces none of it — nothing to
-// tighten from, and a tighten rule that writes nothing — so a block reaches
-// neither the effective policy nor result.json's policy.ignored. Ignoring is
-// what it does; refusing the block is what it must never do (D522, G2).
+// TestUntaggedPolicyIgnoresGovernance: the core's own pair decodes a
+// governance: block and enforces none of it — nothing to tighten from, and a
+// tighten rule that writes nothing — so a block reaches neither the effective
+// policy nor result.json's policy.ignored. Ignoring is what it does; refusing
+// the block is what it must never do (D522, G2).
+//
+// The pair is the real default and not a probe: this is the state every
+// untagged build is in, and a test that installed the off-switch itself could
+// not tell it from a core that had quietly kept the shipped values.
 func TestUntaggedPolicyIgnoresGovernance(t *testing.T) {
-	policy.SetCore(t)
 	e := policy.Merge(
 		policy.Layer{Governance: policy.Governance{}.WithDefaults()},
 		policy.Layer{},
@@ -90,7 +97,7 @@ func TestUntaggedPolicyIgnoresGovernance(t *testing.T) {
 func TestLateOrDuplicatePolicyHookIsRefused(t *testing.T) {
 	policy.ResetHooks(t)
 	real := policy.GovernanceFuncs{
-		Defaults: policy.DefaultGovernance,
+		Defaults: func() policy.Governance { return policy.Governance{ReviewRatio: 5} },
 		Tighten:  func(*policy.Effective, policy.Governance, string) {},
 	}
 	for _, tc := range []struct {
@@ -114,7 +121,7 @@ func TestLateOrDuplicatePolicyHookIsRefused(t *testing.T) {
 	}); err == nil {
 		t.Error("a second SetGovernance was accepted, so a tagged build's enforcement can be replaced")
 	}
-	if got := (policy.Governance{}).WithDefaults(); got != policy.DefaultGovernance() {
+	if got := (policy.Governance{}).WithDefaults(); got.ReviewRatio != 5 {
 		t.Errorf("a refused call changed the installed pair: WithDefaults() = %+v", got)
 	}
 }

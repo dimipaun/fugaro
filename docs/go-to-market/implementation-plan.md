@@ -185,7 +185,9 @@ upstream response carries.
   tests are amended to the new exact list.
 - **Command:** `cd website && node --test test/origins.mjs test/brand.mjs test/consent.mjs test/layout.mjs test/privacy.mjs && npm run check`
   and `go test ./internal/cli/ -run Docs -count=1`
-- **Depends on:** G2.2; #864 merged or rebased on (it writes `site.js` and `consent.mjs`).
+- **Depends on:** G2.2. (This line named #864 when the plan was written; #864 was closed unmerged and
+  superseded by #1003, so G2.3 was built on `main` as it stands, reading `site.js` and `consent.mjs`
+  as they are.)
 - **Commit:** `website: a marketing consent, and the pixel, the insight tag and Calendly behind it`
 - **Red step:** the origins test fails because the pages carry no such loaders and the CSP lacks the hosts.
 - **Reviewer tier:** `opus + mandatory independent review` (privacy and consent).

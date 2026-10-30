@@ -409,6 +409,30 @@ let loaded = null
 export function loadLanding() {
   if (loaded !== null) return loaded
   const facts = loadSiteFacts()
-  loaded = parseLanding(readLandingFile(SITE_ROOT), LANDING_FILE, { facts, typicalCosts: loadTypicalCosts(facts.minRuns) })
+  const parsed = parseLanding(readLandingFile(SITE_ROOT), LANDING_FILE, { facts, typicalCosts: loadTypicalCosts(facts.minRuns) })
+  loaded = { ...parsed, variants: parsed.variants.map((one) => ({ ...one, video: carried(one.video), image: carried(one.image) })) }
   return loaded
+}
+
+/**
+ * A variant's media when the site also SERVES it: the path as the file wrote it, or null when
+ * nothing is under `website/public/` at it.
+ *
+ * The document's own rule is that the media is a self-hosted path, and this is the other half of
+ * it: the owner produces the campaign's video and pictures when they exist, and this repository
+ * carries none of them today, so a variant that names a file nobody has produced renders a
+ * player or a picture with nothing behind it — a broken element on the one page a visitor
+ * reached from an ad. Reporting null instead is what makes the page complete without the file
+ * (F14, G2.5), and it is read here rather than in a template so one page and one component
+ * cannot disagree about what exists.
+ *
+ * `parseLanding()` still reads the document as written, which is what its own cases hold: what a
+ * file NAMES and what the site HAS are two questions, and this is the second one.
+ *
+ * @param {string | null} media
+ * @returns {string | null}
+ */
+function carried(media) {
+  if (media === null) return null
+  return existsSync(path.join(SITE_ROOT, 'public', media)) ? media : null
 }

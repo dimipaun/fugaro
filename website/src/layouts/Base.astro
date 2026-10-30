@@ -57,7 +57,7 @@
  */
 import { loadSite } from '../content.ts'
 import ConsentBanner from '../components/ConsentBanner.astro'
-import { CONSENT_KEY } from '../lib/consent-key.mjs'
+import { CONSENT_KEY, MARKETING_CONSENT_KEY } from '../lib/consent-key.mjs'
 
 // The design tokens (W1.2), then the page chrome and element defaults that apply them.
 //
@@ -86,9 +86,20 @@ interface Props {
    * page that is not a page of the site. See the block under the chrome below.
    */
   campaign?: boolean
+  /**
+   * The campaign page's own route, from `landing.yaml` (G2.3): the banner carries it, and the
+   * campaign loaders run on that page and on no other, so the configuration a page carries is
+   * the configuration of the page it is on.
+   */
+  campaignPath?: string
+  /**
+   * `landing.yaml`'s booking link, on a campaign page: the address the inline Calendly embed is
+   * built from. It is passed down rather than copied into `site.yaml`, so the link has one home.
+   */
+  calendlyURL?: string
 }
 
-const { title, description, alwaysOffer = false, campaign = false } = Astro.props
+const { title, description, alwaysOffer = false, campaign = false, campaignPath, calendlyURL } = Astro.props
 
 // The whole generated layer, read and validated. A missing file, a file whose generated
 // header is gone, a data file this reader does not understand: the build stops here, with
@@ -247,6 +258,27 @@ const isCurrent = (href: string) => pagePath === href
 // `public/scripts/` names a host and a build with the flag off names none at all.
 const ANALYTICS_ORIGIN = 'https://www.googletagmanager.com'
 const analyticsEnabled = facts.analytics.enabled
+
+// The campaign measurement (G2.3, D401): the pixel, the insight tag and Calendly's embed, on
+// the four campaign pages and nowhere else. The configuration is `site.yaml`'s own block — the
+// two ids, empty until the owner supplies them, and the three origins — plus the page this
+// layout is rendering, which is what the loader's path check reads, and the booking link the
+// embed is built from. Nothing here is a host typed into a component: the origins come from
+// `site.yaml` and reach the loader through the banner's markup, so `public/scripts/site.js`
+// names no host and a build of a non-campaign page carries none of them.
+const marketing =
+  campaign && campaignPath && calendlyURL
+    ? {
+        key: MARKETING_CONSENT_KEY,
+        path: campaignPath,
+        metaID: facts.marketing.metaPixelID,
+        metaOrigin: facts.marketing.metaOrigin,
+        linkedinID: facts.marketing.linkedinPartnerID,
+        linkedinOrigin: facts.marketing.linkedinOrigin,
+        calendlyURL,
+        calendlyOrigin: facts.marketing.calendlyOrigin,
+      }
+    : null
 ---
 
 <!doctype html>
@@ -443,7 +475,11 @@ const analyticsEnabled = facts.analytics.enabled
         deferred, on purpose; same origin, so `script-src 'self'` admits it. Rendered only when
         the banner is. */}
     {analyticsEnabled && (
-      <script src="/scripts/consent-early.js" data-consent-key={CONSENT_KEY} data-consent-always={alwaysOffer ? 'true' : undefined}></script>
+      <script
+        src="/scripts/consent-early.js"
+        data-consent-key={CONSENT_KEY}
+        data-marketing-consent-key={marketing?.key}
+        data-consent-always={alwaysOffer ? 'true' : undefined}></script>
     )}
   </head>
 
@@ -457,20 +493,34 @@ const analyticsEnabled = facts.analytics.enabled
         analytics are on, so with the flag off there is no banner, no configuration and no
         analytics origin anywhere in the artifact. It sits after the skip link and before the
         header, which is where a keyboard reaches it first. */}
-    {/* The campaign mode's own slot for it (G2.2). G2.3 wires the campaign consent — the
-        third-party loads the ads bring with them — through this slot; until it does, the site's
-        own banner renders in the slot as the fallback, so the page a visitor lands on from an ad
-        asks the same question, in the same place, as every other page of the site, and a
-        visitor who declines it still has the page's plain booking link. */}
+    {/* The campaign mode's own slot for it (G2.2, G2.3). On a campaign page the banner is the
+        campaign variant: the same element, the same two choices and the same consent key, with
+        the campaign measurement's own key and configuration beside them, so one press answers
+        every question that bar is asking. Every other page renders the site's own banner, with
+        no marketing configuration and none of the three origins in its markup — a visitor who
+        never opens a campaign page is unchanged by G2.3 (F17). The one exception is the page
+        that always offers the choice: it carries the campaign decision's key without the
+        configuration, which is what makes the withdrawal it offers reach the campaign
+        measurement too (`marketingKey`, and `site.js`'s refusal-only write). */}
     {campaign ? (
       <slot name="campaign-banner">
         {analyticsEnabled && (
-          <ConsentBanner alwaysOffer={alwaysOffer} measurementID={facts.analytics.measurementID} analyticsOrigin={ANALYTICS_ORIGIN} />
+          <ConsentBanner
+            alwaysOffer={alwaysOffer}
+            measurementID={facts.analytics.measurementID}
+            analyticsOrigin={ANALYTICS_ORIGIN}
+            marketing={marketing}
+          />
         )}
       </slot>
     ) : (
       analyticsEnabled && (
-        <ConsentBanner alwaysOffer={alwaysOffer} measurementID={facts.analytics.measurementID} analyticsOrigin={ANALYTICS_ORIGIN} />
+        <ConsentBanner
+          alwaysOffer={alwaysOffer}
+          measurementID={facts.analytics.measurementID}
+          analyticsOrigin={ANALYTICS_ORIGIN}
+          marketingKey={alwaysOffer ? MARKETING_CONSENT_KEY : null}
+        />
       )
     )}
 
@@ -573,12 +623,12 @@ const analyticsEnabled = facts.analytics.enabled
     )}
 
     <main id="main">
-      {/* The variant's own picture, when it has one (G2.2): `/crew`'s cat imagery is the owner's
-          file and lands here, and a variant that names no image renders nothing in the slot —
-          today all four, so the page is complete without the media the owner has not produced
-          (F14, G2.5). The slot is inside `main` and ahead of the page's own sections, so the
-          image is the first thing a reader meets and the hero's words follow it; nothing is
-          drawn around an empty slot. */}
+      {/* The variant's own media, when it has one (G2.2, G2.3): the campaign's video or
+          `/crew`'s cat imagery is the owner's file and lands here, and a variant that names
+          neither renders nothing in the slot — today all four, so the page is complete without
+          the media the owner has not produced (F14, G2.5). The slot is inside `main` and ahead
+          of the page's own sections, so the media is the first thing a reader meets and the
+          hero's words follow it; nothing is drawn around an empty slot. */}
       <slot name="media" />
       <slot />
     </main>
