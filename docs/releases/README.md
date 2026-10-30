@@ -2,6 +2,8 @@
 
 `vX.Y.Z.md` in this directory is the hand-written **Highlights** of release `vX.Y.Z`. GoReleaser puts it into the GitHub release body between the install header and the generated `## Changelog` (`.goreleaser.yaml`, `release.header`), which is followed by the base-images footer.
 
+From 0.13.0 the binaries a release ships — the archive downloads and the Homebrew cask — are built with the `ee` build tag — the MIT core plus the `ee/` code, under the Subscription terms in [`ee/LICENSE`](../../ee/LICENSE) — so a highlight that describes what a user gets is describing those; a `go install` build compiles the source without the tag and is the core alone.
+
 It is a required release artifact from 0.4.0 on: `scripts/release.sh X.Y.Z` refuses to start, and the release workflow refuses to publish, when `docs/releases/vX.Y.Z.md` is missing or empty. Earlier releases (v0.1.0 to v0.3.1) have none, and none is written for them.
 
 Commit it to `main` through a PR **before** running `scripts/release.sh`: GoReleaser reads it from the tag's tree, and the script runs from a clean `main`. The procedure is in [../release.md](../release.md) ("Cutting a release"); the `/new-release` skill (`.claude/skills/new-release/SKILL.md`) follows it.

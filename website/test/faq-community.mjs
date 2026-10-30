@@ -32,9 +32,10 @@
 //      eight words or more from any of the three appears in either built page. Both sides of
 //      that comparison are normalized the same way, so the markdown punctuation a document
 //      writes (backticks, hyphens, headings) cannot hide a sentence from the check.
-//   5. **No link runs into the word after it.** Astro drops the whitespace between a closing
-//      tag and the next line's text, so a sentence written as a link followed by a newline
-//      builds as `LICENSEis the whole of it`: the page reads wrong while every fact on it is
+//   5. **No link or code span runs into the text after it.** Astro drops the whitespace between
+//      a closing tag and the next line's text, so a sentence written as a link followed by a
+//      newline builds as `LICENSEis the whole of it`, and a code span followed by a parenthesis
+//      builds as `Subscription(ee/LICENSE)`: the page reads wrong while every fact on it is
 //      still true, which is why this one is checked over the built HTML of both pages.
 //   6. **The community page is set in the bold redesign's look** (redesign P1, `base.css` §2c;
 //      the owner's brief of 2026-10-21). The page has no board of its own, so what it is held
@@ -62,7 +63,11 @@
 //   9. **Both of the community page's licence elements state the core/`ee/` split** (F7; R2 as
 //      amended by O2). The Licence card and the `#licence` band each link `LICENSING.md` beside
 //      `LICENSE`, say the licence is the core's and which parts of the repository it does not
-//      cover, and the band names the reserved `ee/` directory among them. The sentence that
+//      cover, and the band names the reserved `ee/` directory among them. Each element also
+//      names the licence the binary's `ee/` code is under — `LicenseRef-Fugaro-Subscription`,
+//      or `ee/LICENSE` — because from 0.13.0 the released binary is the core plus that code
+//      (D447/T21), and a licence note that stops at the core describes a binary nobody
+//      downloads. The sentence that
 //      `LICENSE` is "the only text that governs" is gone: it stopped being true the day one
 //      file outside it was under another licence, which is what the reserved directory is.
 //      Each refusal has a plant, on the element the defect sits in.
@@ -725,18 +730,19 @@ test('every look refusal fires on the defect it names', () => {
   }
 })
 
-test('no link on either page runs into the word that follows it', () => {
+test('no link or code span on either page runs into the text that follows it', () => {
   // Astro drops the whitespace between a closing tag and the text on the next line, so a
   // sentence written as `<a>LICENSE</a>` followed by a newline and `is the whole of it` is
   // built as "LICENSEis the whole of it" — the page reads wrong and no fact-check notices,
   // because every fact on it is still there. The punctuation a sentence may legitimately run
-  // into (`</a>.`, `</a>,`, `</a>)`) is not a word, so the rule is a letter or digit.
+  // into (`</a>.`, `</a>,`, `</a>)`) is not glued text, so the rule is a letter, a digit or an
+  // opening parenthesis, after a link or after a code span.
   for (const page of ['faq', 'community']) {
-    const glued = /<\/a>[A-Za-z0-9][^<]{0,40}/.exec(builtPage(page))
+    const glued = /<\/(?:a|code)>[A-Za-z0-9(][^<]{0,40}/.exec(builtPage(page))
     assert.equal(
       glued,
       null,
-      `website/src/pages/${page}.astro renders a link that runs into the word after it: ${JSON.stringify(glued && glued[0])} — write the space after the link as \`{' '}\``,
+      `website/src/pages/${page}.astro renders a link or a code span that runs into the text after it: ${JSON.stringify(glued && glued[0])} — write the space after the tag as \`{' '}\``,
     )
   }
 })
@@ -816,6 +822,12 @@ function licenceSplitFailures(html) {
     if (!/\bparts\b[^.]*\bnot\b/.test(text)) {
       out.push(`${what} does not say which parts of the repository the licence does not cover: a licence stated without its scope is the claim the split retired`)
     }
+    // The split has a second half from the release that compiles `ee/` in: the binary a reader
+    // downloads is the core plus that code, so an element that stops at the core's licence
+    // describes a binary nobody gets (F7, R2 as amended by O2; D447/T21).
+    if (!element.includes('LicenseRef-Fugaro-Subscription') && !links(element, 'ee/LICENSE')) {
+      out.push(`${what} does not name the licence the binary's ee/ code is under (LicenseRef-Fugaro-Subscription, ee/LICENSE): the released binary carries that code beside the MIT core, so a note that stops at the core describes a binary nobody downloads`)
+    }
   }
 
   const band = pageText(elements.find((element) => element.what === 'the `#licence` band').html)
@@ -882,6 +894,16 @@ test('every licence-element refusal fires on the defect it names', () => {
       what: 'the retired sentence back in the band',
       plant: (html) => editLicenceElement(html, BAND, (one) => one.replace(/<\/p>/, ' It is the only text that governs what you may do with the code.</p>')),
       expected: /still says the licence is "the only text that governs"/,
+    },
+    {
+      what: `${CARD} stopping at the core's licence`,
+      plant: (html) => editLicenceElement(html, CARD, (one) => one.replace(/ee\/LICENSE|LicenseRef-Fugaro-Subscription/g, 'LICENSING.md')),
+      expected: /the Licence card does not name the licence the binary's ee\/ code is under/,
+    },
+    {
+      what: `${BAND} stopping at the core's licence`,
+      plant: (html) => editLicenceElement(html, BAND, (one) => one.replace(/ee\/LICENSE|LicenseRef-Fugaro-Subscription/g, 'LICENSING.md')),
+      expected: /the `#licence` band does not name the licence the binary's ee\/ code is under/,
     },
   ]
 

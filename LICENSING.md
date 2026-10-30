@@ -41,8 +41,9 @@ new ones and those moved out of the core, under [`ee/LICENSE`](ee/LICENSE): ever
 carries the two-line notice naming `LicenseRef-Fugaro-Subscription`, the terms in that file. Three
 parts of the core moved there, and each is business-licensed where it now lives: governance's policy
 and its stage tripwires in `ee/governance/`, `fugaro report` in `ee/report/`, and the coordinator in
-`ee/coordinator/`. Nothing under it has ever been released, and nothing outside `ee/` imports anything
-under it: its first file is the assembly point `ee/register`, which only a build with the `ee` build
+`ee/coordinator/`. No release before 0.13.0 carries it; from 0.13.0 the binaries a release ships (the
+archives and the Homebrew cask) are built with the `ee` tag and carry its code beside the MIT core.
+Nothing outside `ee/` imports anything under it: its first file is the assembly point `ee/register`, which only a build with the `ee` build
 tag compiles in, through [`cmd/fugaro/ee_on.go`](cmd/fugaro/ee_on.go).
 
 **Reading what governance writes is MIT.** `fugaro runs digest`, `fugaro diagnose` and
