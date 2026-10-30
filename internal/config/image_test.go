@@ -227,12 +227,13 @@ func TestValidateCheckoutSharedAllowsDependencyKeys(t *testing.T) {
 // forge-authorship-images/shared-images.md §1, §2.2): a shared image is run
 // by every repository on the same dependency set, so a key that would put
 // this repository's own content into it is refused — image.setup, which
-// runs in the repository's checkout, and a workflow's own dockerfile,
-// which builds a per-repository image at all. Each refusal names the key
-// and the reason, and both are refused for the reason alone: the same keys
-// are accepted under checkout: baked.
+// runs in the repository's checkout, and a workflow's own dockerfile, which
+// builds a per-repository image at all. Each refusal names its key (the
+// problem's path) and the reason, in one sentence, and names checkout:
+// baked as the way out — which is how a workflow gets a per-repository
+// step at all.
 func TestValidateCheckoutSharedRefusesSetup(t *testing.T) {
-	const msg = "checkout: shared runs an image shared by every repository on the same dependency set"
+	const msg = "checkout: shared runs an image shared by every repository on the same dependency set, which holds no repository's own content; use checkout: baked to build a per-repository image"
 	for _, tc := range []struct{ name, extra, path string }{
 		{"image.setup", "    image: { setup: [\"npx playwright install --with-deps chromium\"] }\n", "workflows.web.image.setup"},
 		{"dockerfile", "    dockerfile: .fugaro/web.Dockerfile\n", "workflows.web.dockerfile"},
