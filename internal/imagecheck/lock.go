@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
+	"slices"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
@@ -101,7 +103,67 @@ func ParseLock(data []byte) (*Lock, error) {
 	if l.Images == nil {
 		return nil, errors.New("the image lock: no images object")
 	}
+	if err := l.checkOneJobPerEntry(); err != nil {
+		return nil, err
+	}
 	return &l, nil
+}
+
+// checkOneJobPerEntry refuses a lock that places one job on two entries. A
+// job is one repository and one workflow together, and it runs one image: an
+// entry that said a job is on this image would have to be read against every
+// other entry saying otherwise, and §9's "is a job pointing at this image?"
+// would then answer with whichever entry the reader met first. A repository
+// whose two workflows are on two images is two jobs, and is not this.
+func (l *Lock) checkOneJobPerEntry() error {
+	seen := map[string]string{}
+	for _, key := range slices.Sorted(maps.Keys(l.Images)) {
+		for _, repo := range slices.Sorted(maps.Keys(l.Images[key].Jobs)) {
+			job := l.Images[key].Jobs[repo]
+			if job == "" {
+				continue
+			}
+			if prev, ok := seen[job]; ok && prev != key {
+				return fmt.Errorf("the image lock: job %s of %s is on two images (%s and %s), and a job runs one image: an entry is wrong and the lock has to be repaired before a launch reads it", job, repo, prev, key)
+			}
+			seen[job] = key
+		}
+	}
+	return nil
+}
+
+// LockReader is the part of a bucket the lock's read needs: *blobx.Bucket
+// satisfies it (the assertion under LockWriter holds the read's signature
+// too), and it is what ReadLock is written against, so the read is decided
+// here and can be tested without a bucket.
+type LockReader interface {
+	ReadStrict(ctx context.Context, key string) ([]byte, int64, error)
+}
+
+// ReadLock reads the installation's lock, and returns nil, nil when there is
+// none: absence means "this installation has not migrated", which a caller
+// permits, so it is not an error.
+//
+// A read this machine is not allowed to make is. It is ReadStrict for that
+// reason (LockWriter's comment has the whole of it): Read folds an HTTP 403
+// into ErrNotExist, so through it a credentials fault would arrive as an
+// absent lock — the one answer a caller may act on by doing nothing, and a
+// gate that would then permit what it cannot see.
+func ReadLock(ctx context.Context, r LockReader) (*Lock, error) {
+	data, _, err := r.ReadStrict(ctx, LockKey)
+	switch {
+	case errors.Is(err, blobx.ErrNotExist):
+		return nil, nil
+	case errors.Is(err, blobx.ErrForbidden):
+		return nil, fmt.Errorf("reading %s: access denied (HTTP 403): this machine's credentials need read access to the project's runs bucket, and a denied read is not an absent lock: %w", LockKey, err)
+	case err != nil:
+		return nil, fmt.Errorf("reading %s: %w", LockKey, err)
+	}
+	l, err := ParseLock(data)
+	if err != nil {
+		return nil, err
+	}
+	return l, nil
 }
 
 // LockWriter is the part of a bucket the lock's write needs. *blobx.Bucket
