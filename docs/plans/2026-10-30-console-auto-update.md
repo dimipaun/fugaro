@@ -98,11 +98,25 @@ stays `null` per D765; its comment says the feed is decided), `console/THIRD_PAR
 `console/src/main/updater-electron.ts` (new: the adapter from electron-updater to `UpdaterPort`,
 and the switch read), `console/src/main/index.ts` (start the controller after `whenReady`),
 `console/src/main/launch.ts` (an `isIdle()` read of its in-flight and pending state),
-`console/test/unit/updater-electron.test.ts` (new).
+`console/test/unit/updater-electron.test.ts` (new), and U1's `console/src/main/updates.ts` and
+`updates.test.ts` for the four controller fixes below.
+**Found by U1's review (2026-10-30), and part of U3:** electron-updater 6.8.10 sends an
+`x-user-staging-id` header on every feed request and writes a random UUID to
+`<userData>/.updaterId` (`AppUpdater.js` ~387 and ~501-524); `requestHeaders` cannot remove it,
+because it is merged on top. That breaks §7.4 (no identifier) and §5.1 rule 10 (no other file).
+The adapter replaces the staging id with a constant shared by every install, so no file is
+written, and drops the header from what `computeFinalHeaders` returns. A test checks the headers
+electron-updater itself computes, which a fake updater cannot see. Controller fixes: the listing
+reads `?per_page=100`; turning the switch off after a download sets `autoInstallOnAppQuit` to
+false; a downloaded version that differs from the chosen tag is refused and not installed on quit
+(the zip's SHA-512 comes only from `latest-mac.yml`); `requestHeaders` is a plain object, not
+frozen, so a later `addAuthHeader` cannot throw.
 **Tests:** the adapter sets `autoDownload`, `allowDowngrade = false`, `allowPrerelease = false`,
-empty `requestHeaders`; `isIdle()` is false with a confirm open and with a launch in flight; the
+empty `requestHeaders`; the real header computation carries no staging id and `userData` holds no
+`.updaterId`; `isIdle()` is false with a confirm open and with a launch in flight; the
 lockfile test still passes on the new entries.
-**Red step:** the pinning test with the dependency added and the allow-list unchanged.
+**Red step:** the pinning test with the dependency added and the allow-list unchanged, and the
+staging-id test against an unhardened `autoUpdater`.
 **Depends on:** U1 merged (D767, D769, D770 answered 2026-10-30). Before the 0.116.0 cut.
 
 ### U4. The off switch (level 3)
@@ -143,8 +157,7 @@ line), `docs/plans/2026-10-15-desktop-console.md` (Task 4.4's text per D769), `d
 
 | File | U1 | U2 | U3 | U4 | U5 | Other holders |
 |---|---|---|---|---|---|---|
-| `console/src/main/updates.ts` | W | | | | | — |
-| `console/test/unit/updates.test.ts` | W | | | | | — |
+| `console/src/main/updates.ts`, `updates.test.ts` | W | | W (review fixes; U1 merged first) | | | — |
 | `docs/pending-workflows/console-release-feed.yml`, `README.md` | | W | | | | — |
 | `internal/cli/docs_desktop_console_test.go` | | W | | | | — |
 | `console/package.json`, `package-lock.json`, `THIRD_PARTY_NOTICES.md` | | | W | | | — |
@@ -154,7 +167,7 @@ line), `docs/plans/2026-10-15-desktop-console.md` (Task 4.4's text per D769), `d
 | `docs/design/desktop-console.md`, `docs/gcp-live-checklist.md`, `console/README.md` | | | | | W | — |
 | `flight-deck.css`, `screens.css`, `console-styling.md`, `screens/*.ts`, `entry.ts` | | | | | | redesign 4b-2 (#1371), steps 5 to 7 |
 
-No level has two writers of one file; each row has one writer in total.
+No level has two writers of one file. `updates.ts` has two writers, U1 then U3, in different levels, and U3 starts only after U1 has merged.
 
 **Launched 2026-10-30:** U1 as run `20261030-161924-1755` and U2 as run `20261030-161930-84ca`,
-both from `main`, both file-disjoint from every open PR and running task.
+both from `main`, both file-disjoint from every open PR and running task; merged as #1378 and #1379, and the feed workflow was copied in as #1390. U3 launched after U1 merged.
