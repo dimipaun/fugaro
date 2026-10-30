@@ -362,7 +362,7 @@ func TestStampHookSquashedCommitKeepsOneTrailer(t *testing.T) {
 	testutil.Git(t, dir, "add", "-A")
 	commitStamp(t, dir, env, "second subject\n\nsecond body\n")
 
-	env = append(env, "GIT_SEQUENCE_EDITOR=sed -i '2s/^pick/squash/'", "GIT_EDITOR=true")
+	env = append(env, "GIT_SEQUENCE_EDITOR=sed -i.bak '2s/^pick/squash/'", "GIT_EDITOR=true")
 	if out, err := stampGit(t, dir, env, "rebase", "-i", "--root"); err != nil {
 		t.Fatalf("git rebase -i --root: %v\n%s", err, out)
 	}
