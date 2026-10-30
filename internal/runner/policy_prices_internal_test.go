@@ -12,7 +12,7 @@ import (
 // refuses a key holding "." or "/" — the documented
 // deepseek/deepseek-v4-flash carries the slash. Nothing here builds the policy
 // in Go: the runner's read of that node is what these tests walk.
-const slashPricedNode = `{"version":3,"budget":{"mode":"enforce","per_run_usd":5},` +
+const slashPricedNode = `{"version":4,"budget":{"mode":"enforce","per_run_usd":5},` +
 	`"model_prices":{"deepseek%2Fdeepseek-v4.1-flash":{"input_per_m":1,"output_per_m":2}}}`
 
 // slashModel is the model ID the node above prices, as an operator writes it.
@@ -92,7 +92,7 @@ func TestPolicyCeilingKeepsTheJobsRoutesAndCatalog(t *testing.T) {
 	}
 	// The override over a catalog-priced model keeps that model's limits: an
 	// override replaces the rates, not the row the file materialized.
-	ovNode := []byte(`{"version":3,"budget":{"mode":"enforce","per_run_usd":5},` +
+	ovNode := []byte(`{"version":4,"budget":{"mode":"enforce","per_run_usd":5},` +
 		`"model_prices":{"deepseek%2Fdeepseek-v4-flash":{"input_per_m":9,"output_per_m":9}}}`)
 	p2, _, err := projectpolicy.Decode(ovNode)
 	if err != nil {

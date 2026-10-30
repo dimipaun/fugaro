@@ -19,7 +19,7 @@ func TestSkewMessagesShareTheSentence(t *testing.T) {
 			t.Errorf("%s does not start with Skew: %q", name, msg)
 		}
 	}
-	if Version != 3 {
+	if Version != 4 {
 		t.Errorf("Version = %d: a version bump needs the plan's skew handling, this test and the CLI's", Version)
 	}
 }

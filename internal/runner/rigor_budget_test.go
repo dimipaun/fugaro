@@ -134,7 +134,7 @@ func TestPolicyRigorModeLeavesThePublishedCapAlone(t *testing.T) {
 			// enforce with $0.09. Each call costs $0.04, so the node's cap is
 			// what refuses the third one.
 			b := policyRun(t, gwConfig(t, tc.rig), "off", "0.20",
-				`{"version":3,"budget":{"mode":"enforce","per_run_usd":0.09}}`, capScript(3)...)
+				`{"version":4,"budget":{"mode":"enforce","per_run_usd":0.09}}`, capScript(3)...)
 			var st []int
 			rec, err := b.run(t, calling(&st, implement("feature"), call{sonnet, 4000}, call{sonnet, 4000}, call{sonnet, 4000}))
 			if err != nil {
