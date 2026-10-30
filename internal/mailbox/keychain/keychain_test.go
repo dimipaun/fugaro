@@ -467,18 +467,21 @@ func TestDarwinWriterReadsTheFailureSecurityHidesInItsOutput(t *testing.T) {
 
 // TestSecurityVerdictReadsEveryShapeTheToolPrints pins the classification
 // itself, line by line, because it is the one rule the storing side's honesty
-// rests on: a successful add or delete prints nothing at all, so every
-// non-blank line is a failure — wherever in the line the message sits, since a
-// prompt or an echo of the command can precede it — and the only failure that
-// is not one for Delete is the line that says the item is already gone.
+// rests on: a successful add prints nothing at all and a successful delete
+// prints only its confirmation (after, on some macOS versions, the dump of the
+// item it removed), so every other non-blank line is a failure — wherever in
+// the line the message sits, since a prompt or an echo of the command can
+// precede it — and the only failure that is not one for Delete is the line that
+// says the item is already gone.
 func TestSecurityVerdictReadsEveryShapeTheToolPrints(t *testing.T) {
 	const prompt = "security> "
 	cases := []struct {
-		name    string
-		stdout  string
-		stderr  string
-		why     string
-		missing bool
+		name     string
+		stdout   string
+		stderr   string
+		deleting bool
+		why      string
+		missing  bool
 	}{
 		{name: "nothing at all"},
 		{name: "lines the tool left blank", stderr: "\n \n"},
@@ -497,11 +500,40 @@ func TestSecurityVerdictReadsEveryShapeTheToolPrints(t *testing.T) {
 		// to echo to, and which this reads as the failure it cannot tell it
 		// apart from.
 		{name: "a line the tool did not explain", stdout: prompt, why: "did not describe"},
-		{name: "an echo of the command on a line of its own", stdout: `add-generic-password -U -s "fugaro-mailbox-aurora" -w <key>` + "\n" + `security: SecKeychainItemCreateFromContent: The specified item already exists in the keychain.`, why: "did not describe"},
+		{name: "an echo of the command on a line of its own", stdout: `add-generic-password -U -s "fugaro-mailbox-aurora" -w <key>`, why: "did not describe"},
+		{name: "an echo of the command before a failure", stdout: `add-generic-password -U -s "fugaro-mailbox-aurora" -w <key>` + "\n" + `security: SecKeychainItemCreateFromContent: The specified item already exists in the keychain.`, why: "already stored there"},
+		{name: "a line the tool did not explain before the item being gone", stdout: prompt, stderr: `security: SecKeychainSearchCopyNext: The specified item could not be found in the keychain.`, deleting: true, why: "did not describe"},
+
+		// What a delete that worked prints: the confirmation alone, or after
+		// the dump of the item it removed, on either stream.
+		{name: "a delete that worked", stdout: securityDeleted, deleting: true},
+		{name: "a delete that worked, after the item it removed", stdout: securityDeletedWithItem, deleting: true},
+		{name: "a delete that worked, its dump and its confirmation on two streams", stdout: strings.TrimSuffix(securityDeletedWithItem, securityDeleted), stderr: securityDeleted, deleting: true},
+		{name: "a delete that worked, in CRLF", stdout: strings.ReplaceAll(securityDeletedWithItem, "\n", "\r\n"), deleting: true},
+
+		// What a delete that worked prints is not a store that worked.
+		{name: "a store answered with a delete's confirmation", stdout: securityDeleted, why: "did not describe"},
+		{name: "a store answered with an item dump", stdout: securityDeletedWithItem, why: "did not describe"},
+		{name: "a store answered with an item dump alone", stdout: strings.TrimSuffix(securityDeletedWithItem, securityDeleted), why: "did not describe"},
+
+		// The confirmation is a whole line, the dump is accepted only with it,
+		// and neither excuses a failure printed next to it.
+		{name: "an item dump without the confirmation", stdout: strings.TrimSuffix(securityDeletedWithItem, securityDeleted), deleting: true, why: "without saying that it deleted it"},
+		{name: "the confirmation inside another line", stdout: "security: " + securityDeleted, deleting: true, why: "did not describe"},
+		{name: "the confirmation without its full stop", stdout: strings.TrimSuffix(securityDeleted, "."), deleting: true, why: "did not describe"},
+		{name: "a dump line that is not one", stdout: "attributes: " + testKey + "\n" + securityDeleted, deleting: true, why: "did not describe"},
+		{name: "a failure after the confirmation", stdout: securityDeletedWithItem, stderr: `security: SecKeychainItemDelete: User interaction is not allowed.`, deleting: true, why: "cannot ask for it to be unlocked"},
+		{name: "a failure before the confirmation", stdout: `security: SecKeychainSearchCopyNext: The user name or passphrase you entered is not correct.` + "\n" + securityDeleted, deleting: true, why: "passphrase was not accepted"},
+		{name: "a message this package does not know after the confirmation", stdout: securityDeletedWithItem + "\n" + `security: SecKeychainItemDelete: something else entirely.`, deleting: true, why: "did not describe"},
+
+		// The item being gone is the item-not-found sentence only.
+		{name: "the item is not there, on a delete", stderr: `security: SecKeychainSearchCopyNext: The specified item could not be found in the keychain.`, deleting: true, why: "no such item", missing: true},
+		{name: "the keychain itself is not there", stderr: `security: SecKeychainSearchCopyNext: The specified keychain could not be found.`, deleting: true, why: "keychain the security tool was asked to use could not be found"},
+		{name: "something else that could not be found", stderr: `security: SecKeychainItemDelete: The specified attribute could not be found.`, deleting: true, why: "did not describe"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := securityVerdict([]byte(c.stdout), []byte(c.stderr))
+			got := securityVerdict([]byte(c.stdout), []byte(c.stderr), c.deleting)
 			if c.why == "" {
 				if got.why != "" || got.missing {
 					t.Fatalf("securityVerdict(%q, %q) = %+v, want no failure", c.stdout, c.stderr, got)
@@ -534,6 +566,11 @@ func TestDarwinWriterDeletesOnlyWhatIsGone(t *testing.T) {
 	}{
 		{name: "the tool says the item is not there", says: `security: SecKeychainSearchCopyNext: The specified item could not be found in the keychain.`},
 		{name: "the tool answers errSecItemNotFound", code: 44},
+		{name: "the tool says the password was deleted", says: securityDeleted},
+		{name: "the tool describes the item it deleted", says: securityDeletedWithItem},
+		{name: "the tool says the keychain itself is not there", says: `security: SecKeychainSearchCopyNext: The specified keychain could not be found.`, wantErr: true},
+		{name: "the tool describes an item and does not say it deleted it", says: strings.TrimSuffix(securityDeletedWithItem, securityDeleted), wantErr: true},
+		{name: "the tool says it deleted the password and then fails", says: securityDeletedWithItem + "\n" + `security: SecKeychainItemDelete: User interaction is not allowed.`, wantErr: true},
 		{name: "the tool says the keychain is locked", says: `security: SecKeychainUnlock: The user name or passphrase you entered is not correct.`, wantErr: true},
 		{name: "the tool does not know the command", says: `security: unknown command "delete-generic-passwords".  Type "help" for a list of commands.`, wantErr: true},
 		{name: "the tool exits with a failure", code: 2, wantErr: true},
@@ -557,34 +594,104 @@ func TestDarwinWriterDeletesOnlyWhatIsGone(t *testing.T) {
 	}
 }
 
+// securityDeleted is the line `security delete-generic-password` prints when it
+// removed the item, and securityDeletedWithItem is the same answer preceded by
+// the attribute dump the tool prints of the item it removed: the keychain's
+// path, the record's version and class, and one line per attribute.
+const (
+	securityDeleted         = "password has been deleted."
+	securityDeletedWithItem = `keychain: "/Users/operator/Library/Keychains/login.keychain-db"
+version: 512
+class: "genp"
+attributes:
+    0x00000007 <blob>="fugaro-mailbox-aurora"
+    0x00000008 <blob>=<NULL>
+    "acct"<blob>="fugaro-mailbox-aurora"
+    "cdat"<timedate>=0x32303236313033303132303030305A00  "20261030120000Z\000"
+    "crtr"<uint32>=<NULL>
+    "cusi"<sint32>=<NULL>
+    "desc"<blob>=<NULL>
+    "gena"<blob>=<NULL>
+    "icmt"<blob>=<NULL>
+    "invi"<sint32>=<NULL>
+    "mdat"<timedate>=0x32303236313033303132303030305A00  "20261030120000Z\000"
+    "nega"<sint32>=<NULL>
+    "prot"<blob>=<NULL>
+    "scrp"<sint32>=<NULL>
+    "svce"<blob>="fugaro-mailbox-aurora"
+    "type"<uint32>=<NULL>
+` + securityDeleted
+)
+
+// TestSecurityUnknownLineIsShownRedacted: a line the verdict cannot place is
+// quoted in the error, so the operator's terminal says what the real tool
+// printed, and every key-length run of the key's alphabet in it is redacted, so
+// a tool that echoed the command line it was given does not put the key there.
+func TestSecurityUnknownLineIsShownRedacted(t *testing.T) {
+	cases := []struct {
+		name string
+		line string
+		want string
+		not  []string
+	}{
+		{name: "a message", line: `security: SecKeychainItemDelete: something new.`, want: `"security: [REDACTED]: something new."`},
+		{name: "an echoed command line", line: `add-generic-password -U -s "fugaro-mailbox-aurora" -w ` + testKey, want: `-w [REDACTED]"`, not: []string{testKey, testKey[:19], testKey[len(testKey)-19:]}},
+		{name: "a short word is kept", line: `version: 512 class genp`, want: `"version: 512 class genp"`},
+		{name: "a run one short of the threshold is kept", line: strings.Repeat("a", 19), want: strings.Repeat("a", 19)},
+		{name: "a run at the threshold is redacted", line: "x " + strings.Repeat("a", 20) + " y", want: `"x [REDACTED] y"`},
+		{name: "a control character is escaped", line: "bell\a", want: `"bell\a"`},
+		{name: "a long line is cut", line: strings.Repeat("word ", 100), want: `..."`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := securityShown(c.line)
+			if !strings.Contains(got, c.want) {
+				t.Errorf("securityShown(%q) = %s, want it to contain %s", c.line, got, c.want)
+			}
+			for _, part := range c.not {
+				if strings.Contains(got, part) {
+					t.Errorf("securityShown(%q) = %s carries %q", c.line, got, part)
+				}
+			}
+			if len(got) > securityShownMax+len(`"..."`) {
+				t.Errorf("securityShown answered %d bytes, more than %d", len(got), securityShownMax)
+			}
+		})
+	}
+	v := securityVerdict([]byte("security: SecKeychainItemDelete: something new.\n"), nil, true)
+	if !strings.Contains(v.why, securityUnknownWhy) || !strings.Contains(v.why, "something new.") {
+		t.Errorf("the unknown-line verdict = %q, want the sentence and the line", v.why)
+	}
+}
+
 // TestDarwinWriterErrorsNeverCarryTheKey is M5 on the write path, through the
 // same real child process: whatever the tool printed, the error the operator
-// sees is this package's own sentence, so no part of the key reaches a terminal,
-// a log line or a bug report. The command line the tool was given does hold the
-// key, which is why the tool's own text is never repeated.
+// sees carries no part of the key, so none reaches a terminal, a log line or a
+// bug report. The command line the tool was given does hold the key, which is
+// why a line of the tool's own is only ever quoted redacted — and a key too
+// short for the redaction's run length is removed by name.
 func TestDarwinWriterErrorsNeverCarryTheKey(t *testing.T) {
 	item := mustItem(t, "fugaro-mailbox-aurora", "aurora")
-	key := NewKey([]byte(testKey))
-	halves := []string{testKey[:8], testKey[8:]}
+	const shortKey = "short-key-01"
 	for _, c := range []struct {
 		name string
+		key  string
 		says string
 		code int
 	}{
-		{name: "the tool reported a failure", says: `security: SecKeychainItemCreateFromContent: The specified item already exists in the keychain.`},
-		{name: "the tool failed", code: 2},
+		{name: "the tool reported a failure", key: testKey, says: `security: SecKeychainItemCreateFromContent: The specified item already exists in the keychain.`},
+		{name: "the tool echoed its command line", key: testKey, says: `add-generic-password -U -s "fugaro-mailbox-aurora" -a "fugaro-mailbox-aurora" -w ` + testKey},
+		{name: "the tool echoed a key too short to look like one", key: shortKey, says: `add-generic-password -U -s "fugaro-mailbox-aurora" -a "fugaro-mailbox-aurora" -w ` + shortKey},
+		{name: "the tool failed", key: testKey, code: 2},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			// The stand-in prints the command line it was given back at the
-			// tool, key and all: a real tool that did the same would put the key
-			// on a stream this package reads, and nothing of it may survive.
 			fakeSecurityOnPath(t, c.says, c.code)
 			store := darwinStore(t)
-			err := store.Put(t.Context(), item, key)
+			err := store.Put(t.Context(), item, NewKey([]byte(c.key)))
 			if !errors.Is(err, ErrBackend) {
 				t.Fatalf("Put = %v, want ErrBackend", err)
 			}
-			for _, part := range append(halves, testKey) {
+			for _, part := range []string{c.key, c.key[:8], c.key[8:]} {
 				if strings.Contains(err.Error(), part) {
 					t.Errorf("the error carries the key: %v", err)
 				}

@@ -20,9 +20,12 @@
 // is keychain_test.go, which runs on every platform.
 //
 // Two things only this run can settle, and both are why the read-back below is
-// an assertion rather than a formality: that a successful `add-generic-password`
-// in interactive mode really is silent (the failure reading treats any line the
-// tool prints as a failure, so a prompt would refuse every store), and that the
+// an assertion rather than a formality: that the tool in interactive mode
+// prints nothing on a successful `add-generic-password` and only its
+// confirmation (with the removed item's attribute dump before it, on some macOS
+// versions) on a successful `delete-generic-password` — the failure reading
+// treats any other line as a failure, and quotes the first such line, with
+// every key-length run redacted, in the error this test prints — and that the
 // value the storing command writes is the value the reader's own
 // `find-generic-password -w` hands back.
 package keychain
