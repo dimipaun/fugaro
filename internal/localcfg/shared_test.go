@@ -66,6 +66,8 @@ mailbox:
 credentials_service:
   url: https://fugaro-credentials-abcde-uc.a.run.app
 user: someone@example.com
+commit_name: Someone Else
+commit_email: someone-else@users.noreply.github.com
 providers:
   openrouter:
     kind: anthropic-compat
@@ -119,7 +121,7 @@ func TestSharedSubsetNeverLeaksOwnerOrPersonalFields(t *testing.T) {
 	// batch.service_account is published (it is an installation fact, not the
 	// deprecated build one), so the forbidden word would fail on the block
 	// this file now carries.
-	for _, forbidden := range []string{"terraform:", "launchers", "alert_email", "user:", "endpoints:", "bucket_url", "registry:", "providers:", "openrouter", "routing:", "claude-sonnet-5-5", "base_branch", "fugaro-build@my-project.iam.gserviceaccount.com", "claude_accounts:", "acme-personal", "update_check"} {
+	for _, forbidden := range []string{"terraform:", "launchers", "alert_email", "user:", "endpoints:", "bucket_url", "registry:", "providers:", "openrouter", "routing:", "claude-sonnet-5-5", "base_branch", "fugaro-build@my-project.iam.gserviceaccount.com", "claude_accounts:", "acme-personal", "update_check", "commit_name", "commit_email", "Someone Else", "someone-else@users.noreply.github.com"} {
 		if strings.Contains(string(out), forbidden) {
 			t.Errorf("published file contains %q:\n%s", forbidden, out)
 		}
@@ -132,8 +134,28 @@ func TestSharedSubsetNeverLeaksOwnerOrPersonalFields(t *testing.T) {
 	// operator's own and stays in their config after it has been published to
 	// the node (nothing here reads it again, but Shared must not be the thing
 	// that clears it).
-	if lc.Terraform.StateBucket == "" || lc.User == "" || lc.Bucket == "" || len(lc.Providers) != 1 || len(lc.ClaudeAccounts) != 1 || lc.Routing == nil || lc.Routing.Claude == nil || lc.Repos["acme/web"].BaseBranch != "main" || lc.BaseBranch != "trunk" || lc.Build.ServiceAccount == "" || lc.UpdateCheck == nil || lc.CredentialsService == nil {
+	if lc.Terraform.StateBucket == "" || lc.User == "" || lc.Bucket == "" || len(lc.Providers) != 1 || len(lc.ClaudeAccounts) != 1 || lc.Routing == nil || lc.Routing.Claude == nil || lc.Repos["acme/web"].BaseBranch != "main" || lc.BaseBranch != "trunk" || lc.Build.ServiceAccount == "" || lc.UpdateCheck == nil || lc.CredentialsService == nil || lc.CommitName == "" || lc.CommitEmail == "" {
 		t.Errorf("Shared modified its receiver: %+v", lc)
+	}
+}
+
+// TestSharedBlanksCommitIdentity: commit_name and commit_email are one
+// machine's person, like user:, and are never published — a launcher who could
+// write them into the runs bucket would be choosing whose name every
+// teammate's commits carry, and, for commit_email, which forge account the
+// history links them to (D604, D606, D649). The fields are read straight off
+// the published copy here, where the leak test above only greps its bytes.
+func TestSharedBlanksCommitIdentity(t *testing.T) {
+	lc := fullLocalConfig(t)
+	if lc.CommitName == "" || lc.CommitEmail == "" {
+		t.Fatalf("the fixture carries no commit identity to blank: %+v", lc)
+	}
+	s := lc.Shared()
+	if s.CommitName != "" || s.CommitEmail != "" {
+		t.Errorf("Shared published commit_name %q and commit_email %q, want both blank", s.CommitName, s.CommitEmail)
+	}
+	if lc.CommitName == "" || lc.CommitEmail == "" {
+		t.Error("Shared cleared the receiver's own commit identity")
 	}
 }
 

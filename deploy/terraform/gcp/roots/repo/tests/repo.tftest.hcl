@@ -807,6 +807,135 @@ run "build_role_set_on_own_registry" {
   }
 }
 
+# The installation's shared image registry (design
+# docs/forge-authorship-images/shared-images.md §2.6, §11): this repository's
+# build account writes it, because a shared image is built by a repository's
+# own build and pushed into the one repository every repository's shared
+# images live in. Writer and nothing wider — no admin, which could delete
+# another repository's image — and on that one repository, never the project.
+run "build_writes_shared_registry" {
+  command = plan
+
+  module {
+    source = "../../modules/repo"
+  }
+
+  variables {
+    project        = var.github.project
+    fugaro_project = var.github.fugaro_project
+    region         = var.github.region
+    installation   = var.github.installation
+    repo           = var.github.repo
+  }
+
+  override_resource {
+    target          = google_service_account.build
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-b-acme-webapp-5b8bba58@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-b-acme-webapp-5b8bba58@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-b-acme-webapp-5b8bba58@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  assert {
+    condition = (google_artifact_registry_repository_iam_member.build_shared.role == "roles/artifactregistry.writer" &&
+      google_artifact_registry_repository_iam_member.build_shared.repository == "fugaro-shared-images-0829826e4aa4" &&
+      google_artifact_registry_repository_iam_member.build_shared.location == "us-east5" &&
+    google_artifact_registry_repository_iam_member.build_shared.project == "proj-1234")
+    error_message = "the build account must be a writer on the installation's shared registry, on that one repository and in the installation's project"
+  }
+  assert {
+    condition     = google_artifact_registry_repository_iam_member.build_shared.member == "serviceAccount:fugaro-b-acme-webapp-5b8bba58@proj-1234.iam.gserviceaccount.com"
+    error_message = "the shared registry's writer must be this repository's own build account"
+  }
+  assert {
+    condition = toset([for m in [google_artifact_registry_repository_iam_member.build_images, google_artifact_registry_repository_iam_member.build_tag_mover, google_artifact_registry_repository_iam_member.build_base, google_artifact_registry_repository_iam_member.build_ghcr, google_artifact_registry_repository_iam_member.build_shared] :
+    m.role if m.repository == var.github.installation.shared_registry]) == toset(["roles/artifactregistry.writer"])
+    error_message = "writer is the build account's only role on the shared registry: no repoAdmin, no admin, no tag mover"
+  }
+  assert {
+    condition = (google_artifact_registry_repository.images.repository_id == "fugaro-acme-webapp-e9eafd3c6e8c" &&
+      google_artifact_registry_repository_iam_member.build_images.repository == google_artifact_registry_repository.images.repository_id &&
+      google_artifact_registry_repository_iam_member.build_tag_mover.repository == google_artifact_registry_repository.images.repository_id &&
+    google_artifact_registry_repository_iam_member.operator_images["user:operator@example.com"].repository == google_artifact_registry_repository.images.repository_id)
+    error_message = "the repository's own registry and the grants on it are unchanged: the shared registry is added beside it, and the per-repository registry stays until a repository moves (design §10)"
+  }
+}
+
+# Each of this repository's job accounts reads the shared registry, and reads
+# it only: a job on a shared image pulls it from there, and the build account
+# is the one writer (design docs/forge-authorship-images/shared-images.md §11).
+# Every member on that repository is one of those two sets of accounts — no
+# operator, no person, no allUsers.
+run "job_reads_shared_registry_only" {
+  command = plan
+
+  module {
+    source = "../../modules/repo"
+  }
+
+  variables {
+    project        = var.bitbucket.project
+    fugaro_project = var.bitbucket.fugaro_project
+    region         = var.bitbucket.region
+    installation   = var.bitbucket.installation
+    repo           = var.bitbucket.repo
+  }
+
+  override_resource {
+    target          = google_service_account.build
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-b-acme-sandbox-78cbc6a5@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-b-acme-sandbox-78cbc6a5@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-b-acme-sandbox-78cbc6a5@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  override_resource {
+    target          = module.workflow["web"].google_service_account.job
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  assert {
+    condition     = keys(google_artifact_registry_repository_iam_member.job_shared) == ["web"]
+    error_message = "every workflow's job account must be granted on the shared registry, keyed by the workflow"
+  }
+  assert {
+    condition = alltrue([for m in google_artifact_registry_repository_iam_member.job_shared :
+      m.role == "roles/artifactregistry.reader" &&
+      m.repository == var.bitbucket.installation.shared_registry &&
+      m.location == var.bitbucket.region &&
+    m.project == var.bitbucket.project])
+    error_message = "a job account must be a reader on the shared registry, on that one repository"
+  }
+  assert {
+    condition     = google_artifact_registry_repository_iam_member.job_shared["web"].member == "serviceAccount:fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+    error_message = "the shared registry's reader must be the workflow's own job account"
+  }
+  assert {
+    condition = toset(concat(
+      [google_artifact_registry_repository_iam_member.build_shared.member],
+      [for m in google_artifact_registry_repository_iam_member.job_shared : m.member],
+      )) == toset([
+      "serviceAccount:fugaro-b-acme-sandbox-78cbc6a5@proj-1234.iam.gserviceaccount.com",
+      "serviceAccount:fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com",
+    ])
+    error_message = "the shared registry's members are exactly this repository's build account and its job accounts: no operator, no person, no allUsers"
+  }
+  assert {
+    condition = alltrue([for m in [google_artifact_registry_repository_iam_member.build_images, google_artifact_registry_repository_iam_member.build_tag_mover] :
+    m.repository == google_artifact_registry_repository.images.repository_id])
+    error_message = "the repository's own registry and the grants on it are unchanged: the shared registry is added beside it, and the per-repository registry stays until a repository moves (design §10)"
+  }
+}
+
 run "build_iam" {
   command = plan
 

@@ -140,6 +140,8 @@ ALLOWED = {
                         "--min-instances", "--max-instances", "--set-secrets", "--set-env-vars", "--quiet"),
     ("run", "services", "list"): ("--project", "--region", "--filter", "--format"),
     ("run", "services", "describe"): ("--project", "--region", "--format"),
+    ("run", "revisions", "describe"): ("--project", "--region", "--format"),
+    ("logging", "read"): ("--project", "--freshness", "--limit", "--format"),
     ("run", "services", "get-iam-policy"): ("--project", "--region", "--format"),
     ("run", "services", "delete"): ("--project", "--region", "--quiet"),
 }
@@ -271,6 +273,12 @@ elif sub == ("builds", "submit"):
         state_set("build", "FAILURE\tPermission \"artifactregistry.repositories.uploadArtifacts\" denied on resource")
     else:
         state_set("build", "SUCCESS\t")
+    # The image's Dockerfile, kept so the deploy below can start (or not start)
+    # the container it describes.
+    src = positionals[-1] if len(positionals) > 2 else ""
+    if os.path.exists(os.path.join(src, "Dockerfile")):
+        with open(os.path.join(LOG, "Dockerfile"), "w") as fh:
+            fh.write(open(os.path.join(src, "Dockerfile")).read())
     if has("--async"):
         emit("fake-build-1")
 elif sub == ("builds", "describe"):
@@ -281,17 +289,53 @@ elif sub == ("run", "deploy"):
     if mode == "deploy-fails":
         sys.stderr.write("ERROR: (gcloud.run.deploy) the deploy failed\n")
         sys.exit(1)
+    # Like Cloud Run: the service is created first, then the revision must
+    # start. A secret volume mounted over the image's entrypoint (the volume is
+    # the directory of the --set-secrets path) is a container that never starts.
     state_set("svc", "1")
+    mount = os.path.dirname(flag("--set-secrets").split("=")[0])
+    entry = ""
+    dockerfile = os.path.join(LOG, "Dockerfile")
+    if os.path.exists(dockerfile):
+        for line in open(dockerfile):
+            if line.startswith("ENTRYPOINT"):
+                entry = line.split('"')[1]
+    over = bool(mount) and (entry == mount or entry.startswith(mount + "/"))
+    if mode == "deploy-not-ready" or over:
+        state_set("revfail", "1")
+        sys.stderr.write("Deploying container to Cloud Run service [fugaro-chk190]\n")
+        sys.stderr.write("Creating Revision... failed (auth Bearer FAKE-BEARER-VALUE)\n")
+        sys.stderr.write("ERROR: (gcloud.run.deploy) Revision 'fugaro-chk190-00001-abc' is not ready and cannot serve traffic. The user-provided container failed to start.\n")
+        sys.exit(1)
 elif sub == ("run", "services", "list"):
     if state_get("svc") == "1":
         emit("fugaro-chk190")
 elif sub == ("run", "services", "describe"):
     fmt = flag("--format")
-    if "status.url" in fmt:
+    if "status.conditions" in fmt:
+        if state_get("revfail") == "1":
+            emit("status:", "  conditions:", "  - lastTransitionTime: '2026-10-30T00:00:00Z'",
+                 "    message: Revision 'fugaro-chk190-00001-abc' is not ready and cannot serve traffic.",
+                 "    reason: RevisionFailed", "    status: 'False'", "    type: Ready")
+        else:
+            emit("status:", "  conditions:", "  - status: 'True'", "    type: Ready")
+    elif "latestCreatedRevisionName" in fmt:
+        emit("fugaro-chk190-00001-abc")
+    elif "status.url" in fmt:
         emit("https://fugaro-chk190-fake.a.run.app")
     else:
         emit("us-east5-docker.pkg.dev/fugaro-dev/fugaro-chk190/fugaro-chk190:chk190")
         emit("3600")
+elif sub == ("run", "revisions", "describe"):
+    if state_get("revfail") == "1":
+        emit("status:", "  conditions:", "  - lastTransitionTime: '2026-10-30T00:00:00Z'",
+             "    message: 'The user-provided container failed to start: exec /chk190: is a directory'",
+             "    reason: ContainerMissing", "    status: 'False'", "    type: ContainerReady")
+    else:
+        emit("status:", "  conditions:", "  - status: 'True'", "    type: Ready")
+elif sub == ("logging", "read"):
+    if state_get("revfail") == "1" and 'revision_name="fugaro-chk190-00001-abc"' in positionals[2]:
+        emit("chk190: the mounted token cannot be read from CHK190_TOKEN_FILE: read /chk190/token: is a directory")
 elif sub == ("run", "services", "get-iam-policy"):
     if mode == "public-invoker":
         emit('{"bindings": [{"role": "roles/run.invoker", "members": ["allUsers"]}]}')
@@ -762,6 +806,9 @@ test_happy_path() {
   expect_contains "$(cat "$dir/logs/gcloud.calls")" "builds describe fake-build-1" "happy path: the build's status was read back"
   expect_absent "$(cat "$dir/logs/gcloud.calls")" "_cloudbuild" "happy path: the installation's staging bucket is not touched"
   expect_contains "$out" "FACT build: PASS" "happy path: the build row"
+  expect_contains "$out" "FACT deploy: PASS" "happy path: the deploy row"
+  # The token's volume is mounted at /chk190, so the binary cannot live there.
+  expect_absent "$(cat "$dir/logs/Dockerfile")" 'ENTRYPOINT ["/chk190' "happy path: the entrypoint is not under the secret's mount"
 
   # The check's own bucket and grants: made by it, on its own resources only.
   expect_contains "$(cat "$dir/logs/gcloud.calls")" "storage buckets create gs://fugaro-dev-chk190-staging --project=fugaro-dev --location=us-east5 --uniform-bucket-level-access" "happy path: the bucket is the check's own, uniform access, in the region"
@@ -922,6 +969,26 @@ test_a_failed_build_is_read_from_its_status() {
   expect_contains "$(cat "$dir/logs/gcloud.calls")" "builds cancel fake-build-1" "failed build: the Restore cancels the build"
 }
 
+# The owner's real run: the deploy created the service and then reported
+# failure, and the block said nothing about why. The row now carries gcloud's
+# own words (redacted) and the service's and revision's conditions.
+test_a_deploy_that_fails_after_creating_the_service_says_why() {
+  local dir=$work/deploynotready
+  prepare "$dir"
+  run190 "$dir" FAKE_GCLOUD_MODE=deploy-not-ready
+  expect_status "$status" 1 "deploy not ready: the verdict"
+  expect_contains "$out" "FACT deploy: FAIL — gcloud run deploy exited 1 after creating fugaro-chk190" "deploy not ready: the row"
+  expect_contains "$out" "is not ready and cannot serve traffic. The user-provided container failed to start." "deploy not ready: gcloud's own error"
+  expect_contains "$out" "reason: RevisionFailed" "deploy not ready: the service's condition"
+  expect_contains "$out" "revision fugaro-chk190-00001-abc conditions:" "deploy not ready: the revision is named"
+  expect_contains "$out" "exec /chk190: is a directory" "deploy not ready: the revision's condition"
+  expect_contains "$out" "revision log: chk190: the mounted token cannot be read" "deploy not ready: the revision's own startup line"
+  expect_absent "$out" "FAKE-BEARER-VALUE" "deploy not ready: a credential in gcloud's output is redacted"
+  expect_contains "$err" "Deploying container to Cloud Run service" "deploy not ready: the deploy's output still reaches the terminal"
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "run services delete fugaro-chk190" "deploy not ready: the Restore deletes the service"
+  expect_contains "$out" "FACT restore: PASS" "deploy not ready: the Restore"
+}
+
 # The bucket is read back after its delete: a delete that did not take is a
 # FAIL with the command to run by hand, and the scratch directory is kept.
 test_a_bucket_left_behind_is_a_failure() {
@@ -993,6 +1060,7 @@ t test_a_staging_bucket_already_there_is_a_hard_stop
 t test_a_build_without_the_grants_fails
 t test_a_grant_that_fails_stops_before_the_build
 t test_a_failed_build_is_read_from_its_status
+t test_a_deploy_that_fails_after_creating_the_service_says_why
 t test_a_bucket_left_behind_is_a_failure
 t test_restore_leftover
 t test_never_belong

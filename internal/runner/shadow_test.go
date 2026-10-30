@@ -313,15 +313,17 @@ func TestShadowAgentHasNoGitToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	req := g.agent.calls[0]
-	for _, key := range []string{"FUGARO_GIT_TOKEN", "GH_TOKEN", "GIT_ASKPASS", "GIT_CONFIG_KEY_0"} {
+	for _, key := range []string{"FUGARO_GIT_TOKEN", "GH_TOKEN", "GIT_ASKPASS"} {
 		if v := envValue(req.Env, key); v != "" {
 			t.Fatalf("the challenger's agent environment carries %s=%q", key, v)
 		}
 	}
-	for _, kv := range req.Env {
-		if strings.Contains(kv, "ro-token") {
-			t.Fatalf("the challenger's agent environment carries the run's git credential: %s", kv)
-		}
+	// GIT_CONFIG_KEY_0 is not asserted by name: the stamp's core.hooksPath entry
+	// is one, and what must not reach the challenger's agent is a credential —
+	// an entry that configures a helper for the remote, or a value holding the
+	// token, whatever it is numbered.
+	if findings := credentialConfigFindings(req.Env, "ro-token"); len(findings) > 0 {
+		t.Fatalf("the challenger's agent environment carries the run's git credential: %v", findings)
 	}
 }
 
@@ -390,13 +392,32 @@ func TestShadowAgentEnvDropsEveryForgeToken(t *testing.T) {
 	if _, err := shadow.run(t, implement("feature"), review("ship", 0)); err != nil {
 		t.Fatal(err)
 	}
-	shadowEnv := envKeys(shadow.agent.calls[0].Env)
-	for k := range forgeKeys {
-		if shadowEnv[k] {
-			t.Fatalf("the challenger's agent environment carries %s", k)
+	// The comparison is by value and not by variable name: the stamp's own
+	// core.hooksPath entry is a GIT_CONFIG_KEY_0 the challenger's agent carries
+	// like everyone else's, so a name-based drop check would either fail on it
+	// or have to be narrowed until it stopped covering the helper. What must
+	// not be there is any value the champion's forge credential is made of,
+	// under whatever name.
+	shadowEnv := shadow.agent.calls[0].Env
+	carried := map[string]bool{}
+	for _, kv := range shadowEnv {
+		if _, v, ok := strings.Cut(kv, "="); ok && v != "" {
+			carried[v] = true
 		}
 	}
-	for _, kv := range shadow.agent.calls[0].Env {
+	for _, pair := range configPairs(shadowEnv) {
+		carried[pair[0]] = true
+		carried[pair[1]] = true
+	}
+	for k, v := range forgeKeys {
+		if v == "" || k == "GIT_CONFIG_COUNT" {
+			continue
+		}
+		if carried[v] {
+			t.Fatalf("the challenger's agent environment carries the champion's %s (%q)", k, v)
+		}
+	}
+	for _, kv := range shadowEnv {
 		if strings.Contains(kv, token) || strings.Contains(kv, roToken) {
 			t.Fatalf("the challenger's agent environment carries a forge token: %s", kv)
 		}

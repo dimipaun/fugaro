@@ -70,3 +70,32 @@ resource "google_artifact_registry_repository_iam_member" "operator_images" {
   role       = "roles/artifactregistry.reader"
   member     = each.value
 }
+
+# Writer on the installation's shared image registry, and on nothing else: a
+# shared image is built by this repository's own build, from this repository's
+# own checkout, and pushed into the one repository every repository's shared
+# images live in (design docs/forge-authorship-images/shared-images.md §2.6,
+# §11). Writer and not admin, exactly as on this repository's own registry:
+# the build creates versions and moves tags, and deleting one is a permission
+# it does not hold.
+resource "google_artifact_registry_repository_iam_member" "build_shared" {
+  project    = var.project
+  location   = var.region
+  repository = var.installation.shared_registry
+  role       = "roles/artifactregistry.writer"
+  member     = google_service_account.build.member
+}
+
+# Each of this repository's job accounts reads the shared registry, and reads
+# it only: a job on a shared image pulls it from there, and the build is the
+# one writer (design §11). The check job is not here: it runs as the build
+# account, which the writer grant above already covers.
+resource "google_artifact_registry_repository_iam_member" "job_shared" {
+  for_each = { for name, w in module.workflow : name => "serviceAccount:${w.service_account}" }
+
+  project    = var.project
+  location   = var.region
+  repository = var.installation.shared_registry
+  role       = "roles/artifactregistry.reader"
+  member     = each.value
+}

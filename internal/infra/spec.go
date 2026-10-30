@@ -162,11 +162,17 @@ type Inputs struct {
 type InstallationOutputs struct {
 	// ProjectName is the Fugaro project's name; empty in the outputs of an
 	// installation applied before M9a.
-	ProjectName             string   `json:"project_name"`
-	RunsBucket              string   `json:"runs_bucket"`
-	RegistryHost            string   `json:"registry_host"`
-	BaseRegistry            string   `json:"base_registry"`
-	GhcrRegistry            string   `json:"ghcr_registry"`
+	ProjectName  string `json:"project_name"`
+	RunsBucket   string `json:"runs_bucket"`
+	RegistryHost string `json:"registry_host"`
+	BaseRegistry string `json:"base_registry"`
+	GhcrRegistry string `json:"ghcr_registry"`
+	// SharedRegistry is the installation's one shared image registry: the
+	// Artifact Registry repository every repository's shared images live in
+	// (design docs/forge-authorship-images/shared-images.md §2.6). Empty in
+	// the outputs of an installation applied before it existed, which
+	// withDefaults fills with the name Go gives a new one.
+	SharedRegistry          string   `json:"shared_registry"`
 	LegacyRegistry          string   `json:"legacy_registry"`
 	SchedulerServiceAccount string   `json:"scheduler_service_account"`
 	RoleIDs                 RoleIDs  `json:"role_ids"`
@@ -351,6 +357,7 @@ type RepoInstallation struct {
 	RegistryHost            string      `json:"registry_host"`
 	BaseRegistry            string      `json:"base_registry"`
 	GhcrRegistry            string      `json:"ghcr_registry"`
+	SharedRegistry          string      `json:"shared_registry"`
 	SchedulerServiceAccount string      `json:"scheduler_service_account"`
 	RoleIDs                 RepoRoleIDs `json:"role_ids"`
 	Launchers               []string    `json:"launchers"`
@@ -692,6 +699,7 @@ func withDefaults(o InstallationOutputs, lc *localcfg.Config, bucket string) Ins
 	def(&o.RunsBucket, bucket)
 	def(&o.BaseRegistry, BaseRegistry)
 	def(&o.GhcrRegistry, GhcrRegistry)
+	def(&o.SharedRegistry, gcp.SharedRegistryRepoID())
 	def(&o.SchedulerServiceAccount, serviceAccountEmail(SchedulerServiceAccountID, lc.GCPProject))
 	def(&o.RoleIDs.Launcher, role(RoleLauncher))
 	def(&o.RoleIDs.JobRunner, role(RoleJobRunner))
@@ -1145,6 +1153,7 @@ func Repo(in Inputs) (RepoSpec, error) {
 			RegistryHost:            c.registryHost,
 			BaseRegistry:            c.inst.BaseRegistry,
 			GhcrRegistry:            c.inst.GhcrRegistry,
+			SharedRegistry:          c.inst.SharedRegistry,
 			SchedulerServiceAccount: c.inst.SchedulerServiceAccount,
 			RoleIDs:                 RepoRoleIDs{JobRunner: c.inst.RoleIDs.JobRunner, BuildSubmitter: c.inst.RoleIDs.BuildSubmitter, TagMover: c.inst.RoleIDs.TagMover},
 			Launchers:               c.inst.Launchers,
@@ -1455,6 +1464,15 @@ func (rs RepoSpec) Addresses() []string {
 	add(root + "google_artifact_registry_repository.images")
 	for _, member := range operators {
 		add(root + "google_artifact_registry_repository_iam_member.operator_images[" + q(member) + "]")
+	}
+	// The installation's shared image registry (design
+	// docs/forge-authorship-images/shared-images.md §2.6, §11): this
+	// repository's build account writes it, and each of its job accounts
+	// reads it. Both grants are declared without a gate, so they are
+	// addresses of every repository root.
+	add(root + "google_artifact_registry_repository_iam_member.build_shared")
+	for _, key := range slices.Sorted(maps.Keys(rs.Workflows)) {
+		add(root + "google_artifact_registry_repository_iam_member.job_shared[" + q(key) + "]")
 	}
 	// modules/repo/build.tf
 	add(root + "google_service_account.build")

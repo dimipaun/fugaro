@@ -100,6 +100,12 @@ worth knowing by name:
   them to take effect. The row carries Cloud Build's own failure detail; a grant that had not taken
   effect yet is the likeliest cause, and running again is the fix. Nothing was deployed; the Restore
   deletes what the run made.
+- **The deploy fails** (`deploy`) — the row carries the last lines `gcloud run deploy` printed
+  (redacted), and when the service was created but its revision never became ready, the service's and
+  the revision's status conditions and the revision's last startup log lines, so the block says why
+  the container did not start. The token's volume is mounted at the directory `/chk190`, so the
+  proxy's binary lives at `/usr/local/bin/chk190`: a volume over the entrypoint is a container that
+  never starts. The Restore deletes the service with everything else.
 
 ## What is left behind
 

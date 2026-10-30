@@ -415,6 +415,60 @@ func TestRemoteRepositoryReaderGrants(t *testing.T) {
 	}
 }
 
+// TestSharedRegistryRepoIDMatchesTheModule: the installation module declares
+// the shared image registry's ID as a literal — Terraform cannot call Go —
+// and this is the only place the two spellings meet (design
+// docs/forge-authorship-images/shared-images.md §2.6). A rename on either side
+// fails here rather than shipping an installation whose repositories grant
+// their build and job accounts on a repository nobody created, or whose
+// builds push into a repository their readers do not hold.
+func TestSharedRegistryRepoIDMatchesTheModule(t *testing.T) {
+	const path = "gcp/modules/installation/registry.tf"
+	b, err := fs.ReadFile(FS, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := 0
+	for _, blk := range resourceBlocks(t, path, b, "google_artifact_registry_repository") {
+		if blk.name != "google_artifact_registry_repository.shared" {
+			continue
+		}
+		found++
+		if want := gcp.SharedRegistryRepoID(); !hasAttr(blk.body, "repository_id", `"`+want+`"`) {
+			t.Errorf("%s: %s does not set repository_id = %q (gcp.SharedRegistryRepoID, the name internal/infra passes to each repository root and internal/backend/gcp will build the shared image's path from): a literal on one side and the other side's name are the same string or the installation is broken", path, blk.name, want)
+		}
+		if !hasAttr(blk.body, "format", `"DOCKER"`) || !hasAttr(blk.body, "location", "var.region") {
+			t.Errorf("%s: %s must be a Docker registry in the installation's region", path, blk.name)
+		}
+		if !hasAttr(blk.body, "labels", `{ fugaro = "managed" }`) {
+			t.Errorf("%s: %s must carry fugaro=managed", path, blk.name)
+		}
+		for _, wide := range []string{`"allUsers"`, `"allAuthenticatedUsers"`} {
+			if strings.Contains(blk.body, wide) {
+				t.Errorf("%s: %s names %s: the shared registry holds every repository's images and is readable by the accounts the grants name and by nobody else", path, blk.name, wide)
+			}
+		}
+	}
+	if found != 1 {
+		t.Errorf("found %d google_artifact_registry_repository.shared blocks in %s, want exactly 1", found, path)
+	}
+
+	// The installation module grants nobody on it: its writer is each
+	// repository's build account and its readers are each repository's job
+	// accounts, granted by that repository's own root. A member here would be
+	// a grant to that principal on every repository's shared images at once.
+	walk(t, func(p string, b []byte) {
+		if !strings.HasPrefix(p, "gcp/modules/installation/") {
+			return
+		}
+		for _, blk := range resourceBlocks(t, p, b, "google_artifact_registry_repository_iam_member") {
+			if strings.Contains(blk.body, "repository.shared") || strings.Contains(blk.body, gcp.SharedRegistryRepoID()) {
+				t.Errorf("%s: %s grants a member on the shared registry: it is granted per repository, by that repository's root (modules/repo/registry.tf)", p, blk.name)
+			}
+		}
+	})
+}
+
 // Destroying the Terraform config must never turn off an API the project
 // (or someone else in it) still uses.
 func TestProjectServicesKeepOnDestroy(t *testing.T) {

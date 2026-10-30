@@ -49,10 +49,18 @@ func TestGitCredentialsOverHTTP(t *testing.T) {
 		t.Fatalf("remote branch %s, want %s", got, rec.HeadSHA)
 	}
 	env := h.agent.calls[0].Env
-	for k, want := range map[string]string{"FUGARO_GIT_TOKEN": gitToken, "FUGARO_GIT_USERNAME": "x-token-auth", "GH_TOKEN": gitToken, "GIT_CONFIG_COUNT": "2"} {
+	for k, want := range map[string]string{"FUGARO_GIT_TOKEN": gitToken, "FUGARO_GIT_USERNAME": "x-token-auth", "GH_TOKEN": gitToken, "GIT_CONFIG_COUNT": "3"} {
 		if got := envValue(env, k); got != want {
 			t.Errorf("agent %s = %q, want %q", k, got, want)
 		}
+	}
+	// Three, not two: the stamp's core.hooksPath entry is numbered after the
+	// credential helper's two, and git reads the first count entry it finds.
+	// A helper's two entries displaced by the stamp's would leave the push
+	// asking for a password, so what the count covers is asserted by name and
+	// not by the number alone.
+	if !credentialHelperConfigured(env) {
+		t.Errorf("the agent's environment configures no credential helper: %v", configPairs(env))
 	}
 	if data, _ := os.ReadFile(filepath.Join(h.deps.WorkDir, ".git", "config")); strings.Contains(string(data), gitToken) {
 		t.Fatalf(".git/config holds the token:\n%s", data)
