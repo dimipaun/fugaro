@@ -1,14 +1,19 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"os/exec"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -189,6 +194,13 @@ const MaxPatchBytes = 2 << 20
 // the run it belongs to loses nothing it published. The two record fields are
 // set together, so a truncated patch is never one a reader has to guess the
 // key of.
+//
+// The diff is redacted before it is stored (patchDiff), the way every other
+// agent-derived object in the runs bucket is: an agent may commit a value the
+// run redacts — SECURITY.md says a run cannot be stopped from doing that —
+// and a challenger's diff reaches no remote where anything else would scan
+// it, while the judge run of a pair (A5.1) fetches exactly this object. The
+// same pass runs for both arms, so the two diffs of a pair stay comparable.
 func (r *run) uploadPatch(ctx context.Context, head string) {
 	if r.rec.AB == nil {
 		return
@@ -205,32 +217,85 @@ func (r *run) uploadPatch(ctx context.Context, head string) {
 	r.rec.PatchObject, r.rec.PatchTruncated = runstore.PatchKey(r.d.Store.Prefix()), truncated
 }
 
+// patchGuard is how much of a diff past the cap is read before the cut: a
+// value the run redacts may straddle the cut, and redacting the whole of it
+// needs the bytes just past it. The guard is read, redacted and dropped, so
+// it never widens what the bucket holds.
+const patchGuard = 64 << 10
+
 // patchDiff reads the tree diff between the run's start commit and head.
 // Nothing external runs for it (not diff.external, not a textconv, which the
 // agent could set in .git/config or .gitattributes), rename detection is off
 // so the same trees always give the same bytes, and no commit metadata is in
 // it: a pair's two diffs are compared, and the messages an agent writes are
 // not part of what is compared.
+//
+// What it holds is bounded as git writes it, never after: a vendored tree or
+// a formatter sweep can be hundreds of MiB of diff, and a buffer holding all
+// of it before the cap applies would take the container to its memory limit
+// and lose the patch with an infra_error. The bytes past the guard are read
+// and dropped.
 func (r *run) patchDiff(ctx context.Context, head string) ([]byte, bool, error) {
 	if r.repo == nil || r.startSHA == "" || head == "" {
 		return nil, false, errors.New("the run has no start commit to diff from")
 	}
-	out, err := sessionGit(ctx, r.repo, "--literal-pathspecs", "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", "--end-of-options", r.startSHA, head)
-	if err != nil {
+	w := &cappedWriter{limit: MaxPatchBytes + patchGuard}
+	args := []string{"--literal-pathspecs", "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", "--end-of-options", r.startSHA, head}
+	if err := gitStream(ctx, r.repo, w, args...); err != nil {
 		return nil, false, err
 	}
-	if len(out) <= MaxPatchBytes {
-		return []byte(out), false, nil
+	text := agent.Redact(w.buf.String(), r.secretList())
+	truncated := w.over
+	if len(text) > MaxPatchBytes {
+		// Cut at the last line boundary the cap allows, so the stored patch is
+		// whole lines wherever there is one; a diff whose bytes are one line
+		// longer than the cap (a minified file, a fixture) is cut at the cap
+		// itself, which is still the diff's own first bytes.
+		cut := strings.LastIndexByte(text[:MaxPatchBytes], '\n') + 1
+		if cut == 0 {
+			cut = MaxPatchBytes
+		}
+		text, truncated = text[:cut], true
 	}
-	// Cut at the last line boundary the cap allows, so the stored patch is
-	// whole lines wherever there is one; a diff whose bytes are one line
-	// longer than the cap (a minified file, a fixture) is cut at the cap
-	// itself, which is still the diff's own first bytes.
-	cut := strings.LastIndexByte(out[:MaxPatchBytes], '\n') + 1
-	if cut == 0 {
-		cut = MaxPatchBytes
+	return []byte(text), truncated, nil
+}
+
+// cappedWriter keeps the first limit bytes written to it and counts the rest
+// as dropped, so a reader can bound what a command may cost it.
+type cappedWriter struct {
+	buf   bytes.Buffer
+	limit int
+	over  bool
+}
+
+func (w *cappedWriter) Write(p []byte) (int, error) {
+	n := len(p)
+	if room := w.limit - w.buf.Len(); room > 0 {
+		if room < n {
+			w.over = true
+			p = p[:room]
+		}
+		w.buf.Write(p)
+	} else if n > 0 {
+		w.over = true
 	}
-	return []byte(out[:cut]), true, nil
+	return n, nil
+}
+
+// gitStream runs a read-only git command in repo with its stdout going to w,
+// as sessionGit runs one into a buffer of its own: the same error shape,
+// the same environment, the same wait for a child holding the pipe.
+func gitStream(ctx context.Context, repo *gitops.Repo, w io.Writer, args ...string) error {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = repo.Dir
+	cmd.Env = repo.Environ()
+	cmd.WaitDelay = 5 * time.Second
+	var stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = w, &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
+	}
+	return nil
 }
 
 // shadowFinalize is finalize for a challenger arm: the same record, without

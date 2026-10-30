@@ -333,6 +333,15 @@ func (r *run) statusUpdate(ctx context.Context, stage string, during bool) {
 // follow-up's PR with no section is left alone (noSection). A PR that is
 // not open gives ErrPRNotOpen and nothing is written.
 func (r *run) writeStatus(ctx context.Context, n int, section string, timeout time.Duration) error {
+	if r.shadow {
+		// A challenger arm writes no status section, on any path (A2.1), and
+		// this is the one method that reads a pull request and updates it. It
+		// is guarded here rather than at its callers because a governance
+		// halt reaches it through checkpointPR, which needs no pull request of
+		// its own to find a number: a follow-up's bootstrap records one, and
+		// the arm of a follow-up publishes nothing like any other arm.
+		return nil
+	}
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	info, err := r.provider.PullRequest(cctx, n)

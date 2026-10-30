@@ -3088,18 +3088,24 @@ func (r *run) finalize(ctx context.Context) error {
 	// that end without a pull request included (design D27, V2.1.2).
 	r.recordChangedFiles(ctx)
 	r.save(ctx)
+	if r.skipPR {
+		// The check gate already ended the run (gate.go: endWithoutPR or
+		// failInfra), status, outcome and the stored report all theirs:
+		// there is nothing left to commit, push or open a pull request for.
+		//
+		// A challenger arm stands down here too, and before shadowFinalize:
+		// the gate ends both arms of a pair the same way, so the two records
+		// agree (D559). An arm finalized from a checkout no stage ran in
+		// would turn a clean gate's succeeded/none into "the agent made no
+		// commits" and mask the gate's own infra_error behind it.
+		return nil
+	}
 	if r.shadow {
 		// A challenger arm's finalize is its own (shadow.go,
 		// shadowFinalize): the same record it would otherwise carry, and
 		// nothing that reaches the developer — no push, no pull request, no
 		// comment, no filing.
 		return r.shadowFinalize(ctx)
-	}
-	if r.skipPR {
-		// The check gate already ended the run (gate.go: endWithoutPR or
-		// failInfra), status, outcome and the stored report all theirs:
-		// there is nothing left to commit, push or open a pull request for.
-		return nil
 	}
 	// A report run's last word before anything is pushed: the files it commits
 	// under docs/fugaro-reviews/ are the runner's own, byte for byte

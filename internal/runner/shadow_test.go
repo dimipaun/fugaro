@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -140,7 +142,14 @@ func champTask() *task.Spec {
 // or a challenger the fixture's layer does not list.
 func armGWSpec(t *testing.T, cfg, capUSD string, spec *task.Spec, layer string) (*gw, *armProvider) {
 	t.Helper()
-	h := newHarnessFiles(t, cfg, withLayer(spec, layer), nil)
+	return armGWFiles(t, cfg, capUSD, spec, layer, nil)
+}
+
+// armGWFiles is armGWSpec with the repository's own files, for a run whose
+// configuration is a repo recipe (the check gate's).
+func armGWFiles(t *testing.T, cfg, capUSD string, spec *task.Spec, layer string, files map[string]string) (*gw, *armProvider) {
+	t.Helper()
+	h := newHarnessFiles(t, cfg, withLayer(spec, layer), files)
 	up, srv := anthropicfake.New(t)
 	h.deps.Env = append(filterEnv(h.deps.Env, "ANTHROPIC_API_KEY"), "ANTHROPIC_API_KEY="+plantedKey)
 	env := map[string]string{runner.BudgetModeEnv: "enforce", runner.MaxRunUSDEnv: capUSD}
@@ -616,5 +625,203 @@ func TestChampionPublishesAsUnsampled(t *testing.T) {
 	}
 	if champRec.PatchObject == "" || plainRec.PatchObject != "" {
 		t.Fatalf("patch_object: champion %q, unsampled %q", champRec.PatchObject, plainRec.PatchObject)
+	}
+}
+
+// armGateCfg is the check-gate fixture's configuration with the project
+// identity the owner's layer carries (armCfg's own insertion, on gateCfg's
+// file): the layer applies, and the recipe under test is the gate's.
+func armGateCfg(t *testing.T) string {
+	t.Helper()
+	cfg := armCfg(t)
+	out := strings.Replace(cfg, "  review_rounds: 2\n", "  recipe: test-and-fix\n  review_rounds: 2\n", 1)
+	if out == cfg {
+		t.Fatal("fixture has no agent.review_rounds line")
+	}
+	return out
+}
+
+// TestShadowGateVerdictStands: a check gate that ends the run ends both arms
+// of a pair the same way. finalize stands down for an arm wherever it stands
+// down for the champion, so an arm of a clean gate keeps the gate's verdict
+// instead of re-deriving the record from a checkout no stage ran in — "the
+// agent made no commits" — which would leave the two records of a pair
+// disagreeing about one run (D559) and hide a gate's own infra_error.
+func TestShadowGateVerdictStands(t *testing.T) {
+	cfg, files := armGateCfg(t), gateFiles("test-and-fix", testAndFixRecipe)
+
+	champ, _ := armGWFiles(t, cfg, "50", champTask(), armLayer, files)
+	champRec, err := champ.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if champRec.Status != runstore.StatusSucceeded || champRec.Outcome != runstore.OutcomeNone || champRec.Gate != "clean" {
+		t.Fatalf("the champion's gate did not end the run cleanly: %+v", champRec)
+	}
+
+	shadow, _ := armGWFiles(t, cfg, "50", armTask(challengerModel), armLayer, files)
+	rec, err := shadow.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != champRec.Status || rec.Outcome != champRec.Outcome ||
+		rec.Reason != champRec.Reason || rec.Gate != champRec.Gate {
+		t.Fatalf("the arm ended %s/%s %q gate %q, the champion %s/%s %q gate %q",
+			rec.Status, rec.Outcome, rec.Reason, rec.Gate,
+			champRec.Status, champRec.Outcome, champRec.Reason, champRec.Gate)
+	}
+	if strings.Contains(rec.Reason, "no commits") {
+		t.Fatalf("the arm's record was re-derived from the checkout: %q", rec.Reason)
+	}
+	if got := publishes(shadow.harness); len(got) != 0 {
+		t.Fatalf("a challenger arm called the provider: %v", got)
+	}
+}
+
+// TestPatchRedacted: the patch object is redacted, both arms' alike. An agent
+// may commit a value the run redacts (SECURITY.md says a run cannot be
+// stopped from it), a challenger's diff reaches no remote where anything else
+// would scan it, and a pair's judge run fetches exactly this object (A5.1);
+// the same pass for both arms keeps the two diffs comparable.
+func TestPatchRedacted(t *testing.T) {
+	leak := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		shell(t, req, `echo "key = $ANTHROPIC_API_KEY" > leak.txt && git add -A && git commit -qm leak`)
+		verifyTest(t, ctx, req)
+		return agent.Result{CostUSD: 1}, nil
+	}
+	for _, tc := range []struct {
+		name string
+		spec *task.Spec
+	}{
+		{"challenger", armTask(challengerModel)},
+		{"champion", champTask()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g, _ := armGWSpec(t, armCfg(t), "50", tc.spec, armLayer)
+			rec, err := g.run(t, leak, review("ship", 0))
+			if err != nil {
+				t.Fatal(err)
+			}
+			patch := readPatch(t, g)
+			if strings.Contains(patch, plantedKey) {
+				t.Fatalf("the stored patch carries the value the run redacts:\n%s", patch)
+			}
+			if !strings.Contains(patch, "leak.txt") {
+				t.Fatalf("the stored patch is not the run's own diff:\n%s", patch)
+			}
+			if rec.PatchObject == "" {
+				t.Fatal("the run recorded no patch object")
+			}
+		})
+	}
+}
+
+// armFollowCfg is the arm fixture's configuration with the follow-up block
+// its second run reads.
+func armFollowCfg(t *testing.T) string {
+	t.Helper()
+	return armCfg(t) + "followup:\n  trusted: [\"" + aliceID + "\", \"" + bobID + "\"]\n"
+}
+
+// armFollowupHarness is a harness whose first run (runID) opened PR 1
+// through the gateway, with the arm's provider: the state a follow-up of that
+// pull request starts from.
+func armFollowupHarness(t *testing.T, cfg string) (*gw, *fuHarness) {
+	t.Helper()
+	h := newHarnessFiles(t, cfg, withLayer(armTask(""), armLayer), nil)
+	h.provider.SelfID = fugaroSelf
+	statePath := filepath.Join(t.TempDir(), "fake.json")
+	h.provider.Path = statePath
+	up, srv := anthropicfake.New(t)
+	h.deps.Env = append(filterEnv(h.deps.Env, "ANTHROPIC_API_KEY"), "ANTHROPIC_API_KEY="+plantedKey)
+	env := map[string]string{runner.BudgetModeEnv: "enforce", runner.MaxRunUSDEnv: "50"}
+	spend, err := runner.SpendFromEnv(func(k string) (string, bool) { v, ok := env[k]; return v, ok })
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.deps.Spend, h.deps.GatewayUpstream = spend, srv.URL
+	logs := &lockedBuf{}
+	h.deps.Log = slog.New(slog.NewTextHandler(logs, nil))
+	g := &gw{harness: h, fake: up, logs: logs}
+	wireRoutes(t, g, []string{armFamily}, "", nil, "acme/app")
+	p := &armProvider{auditProvider: &auditProvider{Provider: h.provider, t: t, store: h.store}, roToken: "ro-token"}
+	h.deps.OpenProvider = gitprov.Static(p)
+	h.deps.RetryDelay = time.Millisecond
+
+	first, err := g.run(t, commitOnly("feature"), review("ship", 0))
+	if err != nil || first.PR == nil || first.PR.Number != 1 || first.PushedHead == "" {
+		t.Fatalf("first run: rec = %+v, err = %v", first, err)
+	}
+	return g, &fuHarness{harness: h, statePath: statePath, first: first}
+}
+
+// armFollowup stores a challenger arm's task as a follow-up of PR 1, as the
+// follow-up harness's own followUp does, with this task's ab block.
+func (h *fuHarness) armFollowup(t *testing.T, id, text string, ab *task.AB) {
+	t.Helper()
+	spec := &task.Spec{Version: 1, RunID: id, Repo: "acme/app", Ref: "main", Workflow: h.first.Workflow,
+		Task: text, Branch: "fugaro/" + runID, PR: 1, PreviousRun: runID, AB: ab,
+		ProjectLayer: &task.ProjectLayer{SHA256: config.LayerSum([]byte(armLayer)), Generation: 3, YAML: armLayer}}
+	store := runstore.Open(h.bucket, repoSlug, id)
+	if err := store.WriteTask(context.Background(), spec); err != nil {
+		t.Fatal(err)
+	}
+	h.store, h.deps.Store = store, store
+	for _, dir := range []string{h.deps.WorkDir, h.deps.StateDir} {
+		if err := os.RemoveAll(dir); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h.deps.Env = append(filterEnv(h.deps.Env, "HOME"), "HOME="+t.TempDir())
+	h.agent = &scriptedAgent{t: t}
+	h.deps.Agent = h.agent
+}
+
+// TestShadowFollowupHaltWritesNoStatus: a governance halt of a challenger arm
+// that is a follow-up writes nothing on the pull request its task names. The
+// halt path reaches the status write without a pull request of the arm's own
+// — a follow-up's bootstrap records one — so the guard belongs at the write
+// itself, as it is for a push, a draft and the early draft.
+func TestShadowFollowupHaltWritesNoStatus(t *testing.T) {
+	g, fu := armFollowupHarness(t, armFollowCfg(t))
+	fu.armFollowup(t, followID, "Please rename the helper to fooBar.",
+		&task.AB{PairID: "pair-" + followID, Arm: task.ABArmChallenger, Publish: task.ABPublishNone,
+			Challenger: challengerModel, ChallengerSource: task.ABChallengerOwner})
+
+	runner.ResetStageHook(t)
+	if err := runner.SetStageHook(runner.StageFuncs{
+		Timeout: func(runner.StageView) time.Duration { return 300 * time.Millisecond },
+		TimedOut: func(runner.StageView) runner.StageDecision {
+			return runner.StageDecision{Halt: true, Reason: runstore.HaltStageBudget, Detail: "time"}
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	long := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		commitWIP(t, req, "wip")
+		<-ctx.Done()
+		return agent.Result{}, ctx.Err()
+	}
+
+	pubs := func() []string { return publishes(g.harness) }
+	before := len(pubs())
+	rec, err := g.run(t, long)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusHalted || rec.Halt == nil {
+		t.Fatalf("record = %+v, want a halt", rec)
+	}
+	if rec.Checkpoint == nil {
+		t.Fatal("the halt did not go through the governance path, so nothing wrote a status section")
+	}
+	if rec.AB == nil || rec.AB.Arm != task.ABArmChallenger {
+		t.Fatalf("the follow-up did not run as the arm it was given: %+v", rec.AB)
+	}
+	if rec.PR == nil || rec.PR.Number != 1 {
+		t.Fatalf("the follow-up recorded no pull request: %+v", rec.PR)
+	}
+	if got := pubs(); len(got) != before {
+		t.Fatalf("a halted challenger follow-up called the provider: %v", got[before:])
 	}
 }
