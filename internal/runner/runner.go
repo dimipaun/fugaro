@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"maps"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -36,6 +37,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
 	"github.com/dimipaun/fugaro/internal/gitprov/github"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/headroomproc"
@@ -969,9 +971,82 @@ func (r *run) redactAll(ss []string) []string {
 	return out
 }
 
+// checkBitbucketAPIRoot refuses a cloud run whose Bitbucket API root
+// (FUGARO_BITBUCKET_API_URL) is neither Bitbucket's own API nor a root the
+// owner allow-listed in the published policy (D474, T2.8). It runs before the
+// provider opens, so a launcher who overrode the job's environment -- the
+// variable is launcher-writable -- cannot have the run send the token to a
+// host of their own. A local invocation keeps the override: it runs on the
+// developer's own credentials, not the job's (Deps.Local).
+//
+// The roots are the project's published bitbucket_api_roots, read through the
+// run's one policy read (projectPolicy, memoized and already made by
+// admissionCheck): a node the run cannot read stops it there, and no node, or
+// a node with no roots, admits only the default.
+func (r *run) checkBitbucketAPIRoot(ctx context.Context) error {
+	if r.d.Local {
+		return nil
+	}
+	root := envLookup(r.d.Env, providers.EnvBitbucketAPIURL)
+	if root == "" {
+		return nil
+	}
+	canonical := canonicalAPIRoot(root)
+	if canonical != "" && canonical == canonicalAPIRoot(bitbucket.DefaultBaseURL) {
+		return nil
+	}
+	p, found, err := r.projectPolicy(ctx)
+	if err != nil {
+		return err
+	}
+	if found && p != nil {
+		for _, allowed := range p.BitbucketAPIRoots {
+			if c := canonicalAPIRoot(allowed); c != "" && c == canonical {
+				return nil
+			}
+		}
+	}
+	where := "a root with no host"
+	if u := parseAPIRoot(root); u != nil && u.Host != "" {
+		where = "the host " + strconv.Quote(u.Host)
+	}
+	return fmt.Errorf("%s names %s, which is neither Bitbucket's own API (%s) nor a root this project's published policy allows: a cloud run sends its Bitbucket token to no other root. The owner allows the root by listing it in bitbucket_api_roots and running 'fugaro project policy publish'; until then, unset %s so the run uses Bitbucket's own API",
+		providers.EnvBitbucketAPIURL, where, bitbucket.DefaultBaseURL, providers.EnvBitbucketAPIURL)
+}
+
+// canonicalAPIRoot is how a Bitbucket API root is compared: scheme and host
+// case-folded and one trailing "/" trimmed, the normalization the node's own
+// validator uses (projectpolicy.validBitbucketAPIRoots). It is an equality,
+// never a prefix test -- a root that merely begins with an allowed one
+// (https://api.bitbucket.org.evil.example/2.0) is another host and is refused.
+// A value with no scheme or host canonicalizes to "" and matches nothing.
+func canonicalAPIRoot(raw string) string {
+	u := parseAPIRoot(raw)
+	if u == nil {
+		return ""
+	}
+	return strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host) + strings.TrimSuffix(u.Path, "/")
+}
+
+// parseAPIRoot parses raw, nil when it is not a URL: a value's host is read
+// for the refusal's message and its parts compared by canonicalAPIRoot, and
+// neither is done on a string that is not a URL.
+func parseAPIRoot(raw string) *url.URL {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return nil
+	}
+	return u
+}
+
 // openProvider opens the provider of kind, which from names the source of
 // (for error messages), and fetches its first git credentials.
 func (r *run) openProvider(ctx context.Context, kind, from string) error {
+	if kind == gitprov.KindBitbucket {
+		if err := r.checkBitbucketAPIRoot(ctx); err != nil {
+			return err
+		}
+	}
 	p, secrets, err := r.d.OpenProvider(ctx, kind, r.spec.Repo)
 	for _, s := range secrets {
 		r.addSecret(s)
