@@ -34,4 +34,9 @@ module "workflow" {
   # that job's model-secret accessors. Null on an installation that has not
   # opted in, which is every installation today, and then nothing changes.
   credentials_service = var.installation.credentials_service
+
+  # The per-repository fact (D500, D502), from the published node: this job is
+  # the one a proxied repository's credential leaves, and no other workflow's
+  # (G9).
+  bitbucket_proxied = var.repo.bitbucket_proxied
 }

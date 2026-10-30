@@ -1854,3 +1854,128 @@ run "credentials_service_on_build_keeps_the_app_key" {
     error_message = "the build account's grants stay secretAccessor to its own account, opt-in or not"
   }
 }
+
+# The Bitbucket token's flip list, with the repository the published node
+# admits as proxied (B1.8, D500, G9). The list is EMPTY on this branch — the
+# flip is B1.13 part two, after the owner's go on Check 191 — so nothing moves
+# for a proxied repository either: the job keeps its accessor on
+# bitbucket-token and the container keeps the mount its runner reads the token
+# from. The model credential's accessor is gone (C1.18's half, identified by
+# variable) and its mount stays (C1.20 is the task that removes it), exactly as
+# in credentials_service_on_provider_keys.
+#
+# This run is the guard on the gate. Filling proxied_git_secret_names in the
+# module without the release that moves the runner's read to the service (B1.7,
+# and config.ProxiedGitSecretNames with it) fails every assertion here, on
+# purpose: the accessor and the mount would go while the job still reads the
+# token, which is a job Cloud Run refuses to create.
+run "proxied_bitbucket_keeps_its_token_with_the_empty_list" {
+  command = plan
+
+  module {
+    source = "../../modules/workflow"
+  }
+
+  variables {
+    project             = var.bitbucket.project
+    fugaro_project      = var.bitbucket.fugaro_project
+    region              = var.bitbucket.region
+    name                = "web"
+    repo_label          = var.bitbucket.repo.label
+    workflow            = var.bitbucket.repo.workflows.web
+    secrets             = var.bitbucket.repo.secrets
+    runs_bucket         = var.bitbucket.installation.runs_bucket
+    job_runner_role     = var.bitbucket.installation.role_ids.job_runner
+    credentials_service = { name = "fugaro-credentials", region = "us-east5" }
+    bitbucket_proxied   = true
+  }
+
+  override_resource {
+    target          = google_service_account.job
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  assert {
+    condition = tomap({ for k, m in google_secret_manager_secret_iam_member.job : k => m.secret_id }) == tomap({
+      bitbucket-token = "fugaro-acme-sandbox-bitbucket-token-a9273afb5a2f66ba"
+      sandbox-probe   = "fugaro-acme-sandbox-sandbox-probe-8ed07eaf4b722cd8"
+    })
+    error_message = "with the flip list empty, a proxied repository's job account keeps its accessor on the Bitbucket token: the drop is what the flip fills the list for (B1.8), and taking it away now would leave the container mounting a secret it cannot resolve (F1)"
+  }
+  assert {
+    condition = tomap({ for e in google_cloud_run_v2_job.this[0].template[0].template[0].containers[0].env : e.name => e.value_source[0].secret_key_ref[0].secret
+      if length(e.value_source) > 0 }) == tomap({
+      CLAUDE_CODE_OAUTH_TOKEN = "fugaro-acme-sandbox-claude-oauth-token-d68d08fb66f32201"
+      FUGARO_BITBUCKET_TOKEN  = "fugaro-acme-sandbox-bitbucket-token-a9273afb5a2f66ba"
+      SANDBOX_PROBE           = "fugaro-acme-sandbox-sandbox-probe-8ed07eaf4b722cd8"
+    })
+    error_message = "with the flip list empty the container mounts exactly what it mounted before the module knew the repository was proxied — the Bitbucket token among them: the mount goes with the accessor, and the flip is what moves both (B1.8, C2.3)"
+  }
+  assert {
+    condition     = length(google_cloud_run_v2_service_iam_member.credentials) == 1
+    error_message = "the job account still gains its one invoker grant on the service in this shape too"
+  }
+}
+
+# The same repository with the fact FALSE — the value a tfvars that never
+# mentions it carries (bitbucket_proxied is optional and false), and the one
+# every repository of an installation whose node admits nothing as proxied
+# sends. It keeps the token too, list filled or not: the drop is keyed on the
+# repository, never on the installation's opt-in alone (G9). With the list
+# EMPTY on this branch the two runs cannot tell the input's clause apart from
+# its absence — nothing is dropped either way — so the clause itself is pinned
+# where it is written, by TestProxiedGitSecretNamesMatchTheModule in
+# deploy/terraform, which reads the module source.
+run "non_proxied_bitbucket_keeps_its_token" {
+  command = plan
+
+  module {
+    source = "../../modules/workflow"
+  }
+
+  variables {
+    project             = var.bitbucket.project
+    fugaro_project      = var.bitbucket.fugaro_project
+    region              = var.bitbucket.region
+    name                = "web"
+    repo_label          = var.bitbucket.repo.label
+    workflow            = var.bitbucket.repo.workflows.web
+    secrets             = var.bitbucket.repo.secrets
+    runs_bucket         = var.bitbucket.installation.runs_bucket
+    job_runner_role     = var.bitbucket.installation.role_ids.job_runner
+    credentials_service = { name = "fugaro-credentials", region = "us-east5" }
+    bitbucket_proxied   = false
+  }
+
+  override_resource {
+    target          = google_service_account.job
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  assert {
+    condition = tomap({ for k, m in google_secret_manager_secret_iam_member.job : k => m.secret_id }) == tomap({
+      bitbucket-token = "fugaro-acme-sandbox-bitbucket-token-a9273afb5a2f66ba"
+      sandbox-probe   = "fugaro-acme-sandbox-sandbox-probe-8ed07eaf4b722cd8"
+    })
+    error_message = "a repository the node does not admit as proxied keeps its job's accessor on the Bitbucket token, whatever the flip list says and whether or not the installation opted in (G9)"
+  }
+  assert {
+    condition = tomap({ for e in google_cloud_run_v2_job.this[0].template[0].template[0].containers[0].env : e.name => e.value_source[0].secret_key_ref[0].secret
+      if length(e.value_source) > 0 }) == tomap({
+      CLAUDE_CODE_OAUTH_TOKEN = "fugaro-acme-sandbox-claude-oauth-token-d68d08fb66f32201"
+      FUGARO_BITBUCKET_TOKEN  = "fugaro-acme-sandbox-bitbucket-token-a9273afb5a2f66ba"
+      SANDBOX_PROBE           = "fugaro-acme-sandbox-sandbox-probe-8ed07eaf4b722cd8"
+    })
+    error_message = "a repository the node does not admit as proxied keeps its Bitbucket token mounted: the flip touches proxied repositories alone (G9)"
+  }
+}

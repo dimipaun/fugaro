@@ -155,6 +155,13 @@ variable "credentials_service" {
   }
 }
 
+variable "bitbucket_proxied" {
+  description = "Whether the published node admits this repository with `proxy: true` (D500, D502), which is the one condition a git credential leaves the job under: a proxied repository's job gives up the secretAccessor on and the mount of every name in proxied_git_secret_names (sa.tf). False for every other repository, of an installation that opted in or not, which keeps both (G9, G15)."
+  type        = bool
+  default     = false
+  nullable    = false
+}
+
 variable "job_runner_role" {
   description = "The installation's fugaroJobRunner role, as its full name projects/<project>/roles/<id>."
   type        = string

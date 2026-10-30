@@ -76,6 +76,11 @@ locals {
   #     secret alone. D145 leaves Bitbucket untouched: a Bitbucket credential
   #     is a repository access token, issued for one repository, which no
   #     service can mint per job (F7).
+  #   * a PROXIED REPOSITORY'S GIT CREDENTIAL, by its LOGICAL NAME too, through
+  #     local.is_proxied_git below. That one is held for ONE repository rather
+  #     than for the installation, which is why it has a list of its own
+  #     (proxied_git_secret_names) and a per-repository input beside it (G9,
+  #     G15).
   #
   # TestServiceHeldSecretsMatchTheCredentialsService pins these four literals
   # and both expressions below to Go.
@@ -94,10 +99,40 @@ locals {
   # service.
   service_held_secret_names = []
 
+  # The Bitbucket token's own flip list (B1.8, D500): the logical names of the
+  # git credentials the credentials service brokers for a repository the
+  # published node admits with `proxy: true`. A list of its own, beside
+  # service_held_secret_names, because its condition is the repository's rather
+  # than the installation's (G15): a name here drops the accessor and the mount
+  # of a PROXIED repository's job alone, and every other Bitbucket repository —
+  # of an installation that opted in or not — keeps both (G9).
+  #
+  # It is EMPTY until the flip, which is B1.13 part two, after the owner's go
+  # on Check 191: config.ProxiedGitSecretNames is the switch, this literal is
+  # held to it by deploy/terraform's TestProxiedGitSecretNamesMatchTheModule,
+  # and the flip fills both in one commit. Filling it early would take the
+  # accessor off a job whose runner still reads the token from its own mount
+  # (B1.7 is what moves that read to the service), and a mount the account
+  # cannot resolve is a job Cloud Run refuses to create — every run of a
+  # proxied repository would fail. Until then nothing moves, whatever the node
+  # admits.
+  proxied_git_secret_names = []
+
+  # One entry per mount: this mount is a proxied git credential exactly when
+  # the node admits the repository AND its logical name is one the list names.
+  # Both halves are needed — the list alone would take the token from a
+  # repository nobody proxied, the input alone from every Bitbucket repository
+  # of an installation that opted in — and both clauses below read this one
+  # local, so the two cannot drift apart.
+  is_proxied_git = {
+    for env, logical in var.workflow.secret_env :
+    env => var.bitbucket_proxied && contains(local.proxied_git_secret_names, logical)
+  }
+
   # One entry per mount, so the drop below is per mount and never per name.
   is_service_held = {
     for env, logical in var.workflow.secret_env :
-    env => contains(local.model_secret_env_names, env) || startswith(env, local.model_secret_env_prefix) || contains(local.service_held_secret_names, logical)
+    env => contains(local.model_secret_env_names, env) || startswith(env, local.model_secret_env_prefix) || contains(local.service_held_secret_names, logical) || local.is_proxied_git[env]
   }
 
   # The secrets the job's own account may read, by logical name: every secret
@@ -140,11 +175,17 @@ locals {
   # (review finding F1): with the opt-in on and the list filled, the App key's
   # mount goes in the same plan as its accessor.
   #
+  # Both lists are read here, and the proxied one only for the repository the
+  # node admitted: a proxied repository's git credential is mounted no more
+  # than the App key is, which is the half of the drop the runner's own read
+  # cannot replace — a mount the account cannot resolve is a job Cloud Run
+  # refuses to create (B1.8, G9).
+  #
   # The check job is not this module: it runs as the build account, which
   # keeps its accessor on the App key and clones with it (D148, F3).
   job_mounts = {
     for env, logical in var.workflow.secret_env :
-    env => logical if var.credentials_service == null || !contains(local.service_held_secret_names, logical)
+    env => logical if var.credentials_service == null || !contains(local.service_held_secret_names, logical) && !local.is_proxied_git[env]
   }
 }
 
