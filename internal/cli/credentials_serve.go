@@ -467,11 +467,12 @@ func credentialsServiceJobAccounts(raw, fugaroProject, gcpProject string) ([]cre
 // The host's own bounds. A proxied model call is long-lived -- it streams a
 // completion that can take minutes, and Cloud Run's request timeout is set to
 // the hour the module allows (credentials.tf, Check 91 measures what its front
-// end does with one) -- so there is deliberately no WriteTimeout and no
-// ReadTimeout: either would cut a call in flight, which is a run that fails
-// for a reason nothing in its record explains. What is bounded is the part
-// that cannot be long-lived: a client that has opened a connection and not
-// sent its request, and a connection left idle between calls.
+// end does with one) -- and so is a git fetch or push through the same host
+// (B1.5), so there is deliberately no WriteTimeout and no ReadTimeout: either
+// would cut a call in flight, which is a run that fails for a reason nothing
+// in its record explains. What is bounded is the part that cannot be
+// long-lived: a client that has opened a connection and not sent its request,
+// a connection left idle between calls, and a peer that has stopped reading.
 const (
 	// serveReadHeaderTimeout bounds a caller that connects and then says
 	// nothing. Every request the service answers is a small JSON POST or a
@@ -479,8 +480,35 @@ const (
 	serveReadHeaderTimeout = 30 * time.Second
 	// serveIdleTimeout is how long a kept-alive connection with no request on
 	// it is held. The runner's gateway calls the service repeatedly over one
-	// job, so it is generous.
+	// job, so it is generous. It is also what bounds an HTTP/2 connection that
+	// has been opened and has no stream on it -- h2 has no header timeout of
+	// its own, and net/http gives an h2 connection this same field as its idle
+	// timer (server.go: `if idle := sc.hs.IdleTimeout()`), started as soon as
+	// the preface is read.
 	serveIdleTimeout = 2 * time.Minute
+	// serveMaxConcurrentStreams is how many streams one HTTP/2 connection may
+	// hold open at once. It is a bound on how much work one connection may ask
+	// this process for -- each stream is a handler goroutine, and for this
+	// service an upstream call carrying a credential behind it -- and not a
+	// throughput decision: Go's own default is 250, with a TODO in its source
+	// to make it 100 "as the GFE seems to", and the hop in front of this
+	// process is that front end. So 100 is the number a caller already handles
+	// from a peer it cannot tell apart from this one, which means it is never
+	// the limit a legitimate caller hits first, and a caller that wants more
+	// in flight opens another connection.
+	serveMaxConcurrentStreams = 100
+	// serveWriteByteTimeout is the one write bound HTTP/2 offers that a long
+	// streamed push still survives, and it is why it is set where a
+	// WriteTimeout is not: it is not a deadline for the stream but for a
+	// single write attempt with no progress, restarted by every byte written
+	// (net/http's writeWithByteTimeout). Two minutes of a connection that
+	// cannot accept one byte is a peer that has stopped reading -- a runner
+	// that died, a git client on a link that is gone -- and it is holding a
+	// goroutine and an upstream connection that carries a model credential;
+	// without this, the only thing that ends it is Cloud Run's own request
+	// timeout an hour out (credentials.tf). A pack or a model stream that is
+	// still moving is never cut: progress restarts the clock.
+	serveWriteByteTimeout = 2 * time.Minute
 	// serveShutdownGrace is how long a SIGTERM lets the calls in flight finish
 	// before the process returns. Cloud Run sends SIGTERM and then kills the
 	// container ten seconds later, so this is under that: a stream cut off by
@@ -529,18 +557,86 @@ func hostCredentialsService(ctx context.Context, cfg credsvc.Config, getenv func
 	return serveUntilStop(ctx, ln, credentialsHTTPServer(ctx, srv, errw), errw)
 }
 
+// credentialsServeProtocols is what the host speaks on its one listener:
+// HTTP/1.1 and HTTP/2 cleartext (h2c), the second of them with prior
+// knowledge, and no TLS of this process's own -- Cloud Run's front end
+// terminates TLS and then talks to the container, and with the service's port
+// named `h2c` (credentials.tf) it talks HTTP/2 cleartext.
+//
+// h2c is what B1.0 exists for, and B1.0 is conditional on the owner's Check
+// 190 failing a large push (implementation-plan.md, whose entry depends on
+// B0.6 recording one). Nothing in this file rests on a measurement of that
+// check: docs/gcp-live-checklist.md still records it as not run on this tree,
+// and the reconciliation marks the reading it rests on (U2: that HTTP/2's
+// streaming keeps the pack off the HTTP/1 path's buffer) unverified. So what
+// is stated here is the belief the task was planned on and not a result — the
+// hop in front of this process buffers an HTTP/1 request body and refuses one
+// a large git pack exceeds, and an HTTP/2 body is streamed past that buffer,
+// which is the hop the port's name (credentials.tf) turns h2c on for. Check
+// 190's live re-run is the owner's, and it is what would prove it.
+//
+// HTTP/1.1 stays on, and not as a courtesy: it is what every caller this
+// service has today speaks. The runner's gateway is a plain net/http client
+// (internal/gateway, internal/credsvc's own callers), and its requests go out
+// over HTTP/1.1 unless it asks for something else; a server that spoke only
+// h2c would fail every model call this installation makes, which is a whole
+// installation halted by a transport choice.
+//
+// The GODEBUG=http2debug refusal is not weakened by this and does not depend
+// on it: it is the first thing serveCredentials does, before the environment
+// is read and long before a listener exists, and a process that refused under
+// it cannot have started an h2c server (TestCredentialsServeRefusesHTTP2DebugStill).
+func credentialsServeProtocols() *http.Protocols {
+	var protocols http.Protocols
+	protocols.SetHTTP1(true)
+	protocols.SetUnencryptedHTTP2(true)
+	// TLS-based HTTP/2 is deliberately not enabled: this process serves no
+	// TLS. Cloud Run's front end owns the listener's TLS, and an h2 ALPN
+	// negotiation is not something that can happen on a cleartext socket.
+	protocols.SetHTTP2(false)
+	return &protocols
+}
+
 // credentialsHTTPServer is the host's own shape, and a function of the handler
 // rather than of the service so that the bounds below are the same object
 // whoever is served -- and so that a test can drive a real listener, request
 // and shutdown through them without a service's worth of fakes
 // (TestCredentialsServeHostStopsOnSignal).
+//
+// The HTTP/2 half of it is stated rather than left to the library's defaults,
+// because every default here is a decision about this service that nobody
+// made. Two of them are load-bearing in the direction this task is about:
+//
+//   - Server.ReadTimeout and Server.WriteTimeout stay zero, and on HTTP/2 that
+//     is not the same statement as on HTTP/1.1. net/http's h2 server arms a
+//     per-stream timer from ReadTimeout when the stream is created, closing
+//     the request body at that deadline whatever progress the body is making
+//     (internal/http2: `if sc.hs.ReadTimeout() > 0 { st.readDeadline =
+//     time.AfterFunc(...)}`), and another from WriteTimeout for the response.
+//     A non-zero value there would cut a 33 MiB push or a minute-long model
+//     stream mid-flight; the same fields also carry h2's send-ping
+//     health-check interval, which nothing here needs.
+//   - Server.IdleTimeout and Server.MaxHeaderBytes are reused by the h2
+//     server as they are -- the idle timer of a connection with no stream on
+//     it, and MAX_HEADER_LIST_SIZE -- so the bounds above cover both
+//     protocols rather than only the one they were first written for.
+//
+// What is stated is the two the h2 server would otherwise choose for this
+// process: the concurrent-stream limit (serveMaxConcurrentStreams) and the
+// no-progress write bound (serveWriteByteTimeout). Left at its default is the
+// frame size, which is a transport detail neither limit depends on.
 func credentialsHTTPServer(ctx context.Context, h http.Handler, errw io.Writer) *http.Server {
 	return &http.Server{
 		Handler:           h,
+		Protocols:         credentialsServeProtocols(),
 		ReadHeaderTimeout: serveReadHeaderTimeout,
 		IdleTimeout:       serveIdleTimeout,
 		MaxHeaderBytes:    serveMaxHeaderBytes,
-		BaseContext:       func(net.Listener) context.Context { return ctx },
+		HTTP2: &http.HTTP2Config{
+			MaxConcurrentStreams: serveMaxConcurrentStreams,
+			WriteByteTimeout:     serveWriteByteTimeout,
+		},
+		BaseContext: func(net.Listener) context.Context { return ctx },
 		// Nothing here prints a request, a header or a body: this logger
 		// carries Go's own connection-level lines (a client that hung up
 		// mid-request, a TLS handshake failure) and nothing this service

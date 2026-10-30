@@ -2318,7 +2318,7 @@ run "credentials_service_on" {
     credentials_service = {
       account_id       = "fugaro-credentials"
       service          = "fugaro-credentials"
-      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials:0.15.0@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
       bundle_secret    = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
       firebase_project = "aurora-fp"
       rtdb_url         = "https://aurora-fp-default-rtdb.firebaseio.com"
@@ -2433,9 +2433,26 @@ run "credentials_service_on" {
   }
   assert {
     condition = (google_cloud_run_v2_service.credentials[0].template[0].service_account == google_service_account.credentials[0].email &&
-      google_cloud_run_v2_service.credentials[0].template[0].containers[0].image == "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3" &&
+      google_cloud_run_v2_service.credentials[0].template[0].containers[0].image == "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials:0.15.0@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3" &&
     google_cloud_run_v2_service.credentials[0].template[0].timeout == "3600s")
     error_message = "the service runs as its own account, on the image the variable carries, with the longest timeout Cloud Run allows for a streaming proxy"
+  }
+  # This run's image is 0.15.0, the first release whose process serves HTTP/2
+  # cleartext (internal/cli/credentials_serve.go), so the container's port is
+  # NAMED h2c — the name is the whole of what makes Cloud Run speak HTTP/2 to
+  # the process instead of HTTP/1.1, which is the hop the plan's B1.0 is for:
+  # it is conditional on the owner's Check 190 failing a large push, and an
+  # unnamed port is the HTTP/1 path whose body limit that check exercises.
+  # Nothing here is a measurement of it — the checklist still records Check 190
+  # as not run, and the run further down is the image the gate keeps unnamed.
+  # The number is the port the process itself falls back to when the platform's
+  # PORT is unset (servePort) and Cloud Run's own default, so the name and the
+  # listener cannot point at different ports.
+  assert {
+    condition = (length(google_cloud_run_v2_service.credentials[0].template[0].containers[0].ports) == 1 &&
+      google_cloud_run_v2_service.credentials[0].template[0].containers[0].ports[0].name == "h2c" &&
+    google_cloud_run_v2_service.credentials[0].template[0].containers[0].ports[0].container_port == 8080)
+    error_message = "an image whose release serves h2c must have its container port named h2c and numbered 8080: the name is what makes the front end speak HTTP/2 to this process"
   }
   # The environment is the seven names C1.14's `fugaro credentials serve`
   # reads and internal/infra/tf's credentialsServiceEnv allows, and it is held
@@ -2568,6 +2585,49 @@ run "credentials_service_first_apply_has_no_audience_yet" {
   assert {
     condition     = length(google_cloud_run_v2_service.credentials[0].template[0].containers[0].env) == 7
     error_message = "the unset case sets the same seven names, the audience among them: a name the module drops is a service the process refuses by a different message"
+  }
+}
+
+# The port's name follows the image, and this is the other direction of that
+# pairing (B1.0): a front end told h2c in front of a process that answers
+# HTTP/1.1 only serves nothing at all, so an image that is not one of the
+# releases whose server speaks h2c gets no port at all — Cloud Run's own
+# HTTP/1.1, which is what the service answers on today.
+#
+# It is not a hypothetical image. Only the owner-run credentials stage writes
+# credentials_service.image, and an ordinary `fugaro update` carries the
+# previous release's digest forward (infra.CarriedCredentialsService), so this
+# is exactly the pairing a 0.15.0 update leaves behind for an installation that
+# opted in earlier: 0.14.0's process with no name in front of it. An image
+# reference the module cannot read a release out of (a hand-written digest, a
+# version that is not three numbers) reads the same way, and so does the
+# tagless image of the first-apply run above.
+run "credentials_service_port_follows_the_image" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    credentials_service = {
+      account_id       = "fugaro-credentials"
+      service          = "fugaro-credentials"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials:0.14.0@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      bundle_secret    = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      firebase_project = "aurora-fp"
+      rtdb_url         = "https://aurora-fp-default-rtdb.firebaseio.com"
+      job_accounts = [{
+        provider = "github"
+        repo     = "acme/webapp"
+        workflow = "web"
+      }]
+    }
+  }
+
+  assert {
+    condition     = length(google_cloud_run_v2_service.credentials[0].template[0].containers[0].ports) == 0
+    error_message = "an image whose release does not serve h2c must have no named port: Cloud Run reads the name as the protocol to speak, and h2c in front of an HTTP/1.1 process fails every call the installation makes"
   }
 }
 

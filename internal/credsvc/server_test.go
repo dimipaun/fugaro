@@ -619,9 +619,39 @@ func newSvcWith(t *testing.T, mutate func(*svc, *Config)) *svc {
 		t.Fatalf("NewServer: %v", err)
 	}
 	s.server = srv
-	s.http = httptest.NewServer(srv)
+	s.http = httptest.NewUnstartedServer(srv)
+	// The fixture's server speaks what the deployment's host speaks (B1.0):
+	// HTTP/1.1 and HTTP/2 cleartext on one listener, from the standard
+	// library's own protocol set, exactly as internal/cli/credentials_serve.go
+	// sets it for the Cloud Run service. Every test that does not ask for h2c
+	// keeps calling over HTTP/1.1 -- net/http's client chooses HTTP/1.1 for a
+	// plain http:// address unless it is told otherwise -- so this changes the
+	// server under test and not the tests that were already here.
+	//
+	// What is deliberately NOT mirrored is the deployment host's HTTP2 config
+	// (its concurrent-stream limit and its no-progress write bound): those
+	// bound what the hop in front of the process may ask of it, no test here
+	// reaches across a connection that far, and the host's own values are
+	// pinned where they are set (TestCredentialsServeStillSpeaksHTTP1).
+	var protocols http.Protocols
+	protocols.SetHTTP1(true)
+	protocols.SetUnencryptedHTTP2(true)
+	s.http.Config.Protocols = &protocols
+	s.http.Start()
 	t.Cleanup(s.http.Close)
 	return s
+}
+
+// h2cClient is a caller that speaks HTTP/2 to the fixture's cleartext address
+// with prior knowledge: it opens the connection, sends the HTTP/2 preface and
+// no TLS handshake at all. That is what Cloud Run's front end does to the
+// container once the service's port is named h2c (B1.0, credentials.tf), and
+// only HTTP/2 is offered here, so a test using this client cannot be passing
+// over HTTP/1.1 by negotiation.
+func h2cClient() *http.Client {
+	var protocols http.Protocols
+	protocols.SetUnencryptedHTTP2(true)
+	return &http.Client{Transport: &http.Transport{Protocols: &protocols}}
 }
 
 // credsRun is the run this fixture's calls are made for, as creds names it:
@@ -642,6 +672,23 @@ func (s *svc) post(t *testing.T, path, body string, mutate ...func(*http.Request
 // authenticator does not admit, or none at all.
 func (s *svc) postTokens(t *testing.T, path, body, runTok, jobTok, job string, mutate ...func(*http.Request)) *http.Response {
 	t.Helper()
+	return s.postWith(t, s.http.Client(), path, body, runTok, jobTok, job, mutate...)
+}
+
+// postH2C is postTokens over the protocol the deployment actually speaks to the
+// container: HTTP/2 cleartext, prior knowledge, no TLS (B1.0). The model path's
+// streamed answers are what this has to keep whole -- a front end that buffers
+// an HTTP/1 body is the failure this whole task exists for.
+func (s *svc) postH2C(t *testing.T, path, body string, mutate ...func(*http.Request)) *http.Response {
+	t.Helper()
+	return s.postWith(t, h2cClient(), path, body, s.runToken(), s.jobToken(), s.job, mutate...)
+}
+
+// postWith is the call the two above share, with the client given as well as
+// the two identities: what protocol the call goes out over is the test's, and
+// nothing else about it is.
+func (s *svc) postWith(t *testing.T, client *http.Client, path, body, runTok, jobTok, job string, mutate ...func(*http.Request)) *http.Response {
+	t.Helper()
 	req, err := http.NewRequest(http.MethodPost, s.http.URL+path, strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("building the call: %v", err)
@@ -654,7 +701,7 @@ func (s *svc) postTokens(t *testing.T, path, body, runTok, jobTok, job string, m
 	for _, m := range mutate {
 		m(req)
 	}
-	resp, err := s.http.Client().Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("the call failed: %v", err)
 	}

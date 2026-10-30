@@ -10,6 +10,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -399,6 +400,213 @@ func TestCredentialsServiceEnvIsTheDeploymentsOwn(t *testing.T) {
 	}
 }
 
+// serveForTest runs the host's own server -- credentialsHTTPServer over a real
+// listener, driven by serveUntilStop -- with a test's handler in place of the
+// service's, and returns its address and the server object. Every protocol test
+// below is written against this and not against httptest.NewServer, because the
+// object they pin is the one the deployment is served by: a protocol set on the
+// standard library's own test server would be a different server.
+func serveForTest(t *testing.T, h http.Handler) (string, *http.Server) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := credentialsHTTPServer(ctx, h, io.Discard)
+	done := make(chan error, 1)
+	go func() { done <- serveUntilStop(ctx, ln, srv, io.Discard) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(30 * time.Second):
+			t.Error("the host did not stop")
+		}
+	})
+	return "http://" + ln.Addr().String(), srv
+}
+
+// h2cClient is a caller that speaks HTTP/2 to a cleartext address with prior
+// knowledge: it opens the connection, sends the HTTP/2 preface and no TLS
+// handshake at all. That is what Cloud Run's front end does to the container
+// once the service's port is named h2c, and it is why the service must serve
+// unencrypted HTTP/2 rather than merely announce it.
+//
+// Only HTTP/2 is offered, so a server that answers over HTTP/1.1 cannot pass
+// by negotiation: the client would fail before any request was made.
+func h2cClient() *http.Client {
+	var protocols http.Protocols
+	protocols.SetUnencryptedHTTP2(true)
+	return &http.Client{Transport: &http.Transport{Protocols: &protocols}}
+}
+
+// TestCredentialsServeSpeaksH2C is what B1.0 exists for (owner-run Check 190,
+// 2026-10-30): a 33 MiB pack over HTTP/1.1 was cut by the platform's front end
+// with a 413 before the service saw four bytes of it, and the front end speaks
+// HTTP/2 cleartext to a container whose port is named h2c. So the server this
+// command builds must answer an HTTP/2 client that does no TLS at all -- and
+// answer it AS HTTP/2, because a server that merely ignored the preface would
+// be serving HTTP/1.1 to a front end that has already committed to h2c.
+func TestCredentialsServeSpeaksH2C(t *testing.T) {
+	addr, _ := serveForTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "answered over HTTP/%d.%d", r.ProtoMajor, r.ProtoMinor)
+	}))
+	resp, err := h2cClient().Get(addr + "/v1/messages")
+	if err != nil {
+		t.Fatalf("an h2c call failed: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the h2c call is %d %q, want 200", resp.StatusCode, body)
+	}
+	if resp.ProtoMajor != 2 {
+		t.Fatalf("the answer is HTTP/%d.%d (%q), want HTTP/2: the front end speaks h2c to this container, and a large push is cut at the HTTP/1 limit otherwise", resp.ProtoMajor, resp.ProtoMinor, body)
+	}
+}
+
+// TestCredentialsServeStillSpeaksHTTP1 is the other half of the protocol set,
+// and the half that keeps this task from halting an installation: every caller
+// the service has today speaks HTTP/1.1 (the runner's gateway is a plain
+// net/http client), so a server that answered only an h2c client would refuse
+// every model call. The client below offers HTTP/1.1 alone, so h2c cannot carry
+// this request by negotiation: what it pins is that the same listener still
+// serves the older protocol, and that the h2c addition did not replace it.
+func TestCredentialsServeStillSpeaksHTTP1(t *testing.T) {
+	addr, srv := serveForTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "answered over HTTP/%d.%d", r.ProtoMajor, r.ProtoMinor)
+	}))
+	// The protocol set is stated, not inferred from an answer: both protocols
+	// on, TLS-based HTTP/2 off (this process terminates no TLS; Cloud Run's
+	// front end does, and it speaks h2c to the container).
+	if srv.Protocols == nil || !srv.Protocols.HTTP1() || !srv.Protocols.UnencryptedHTTP2() {
+		t.Fatalf("the host's protocols = %+v, want HTTP/1.1 and unencrypted HTTP/2", srv.Protocols)
+	}
+	if srv.Protocols.HTTP2() {
+		t.Error("the host offers TLS-based HTTP/2: it serves no TLS, and the front end's h2c is the unencrypted protocol")
+	}
+	// The HTTP/2 side of the server is the block net/http reads when it builds
+	// the h2 handler, and neither number in it may fall back to a default: Go's
+	// own MaxConcurrentStreams is 250 (net/http/internal/http2/server.go, whose
+	// comment there is a TODO to make it 100 "as the GFE seems to"), and its
+	// WriteByteTimeout default of 0 would let a peer that stopped reading hold a
+	// goroutine and an upstream connection carrying a model credential for as
+	// long as the route's own timeout allows. Read off the server object because
+	// both are invisible to a client that behaves, and written as literals
+	// rather than as the constants: the two numbers are the decision, and a test
+	// that compared them to the constants would follow a change of one
+	// silently.
+	if srv.HTTP2 == nil {
+		t.Fatal("the host has no HTTP2 config: the h2c server takes net/http's defaults for the stream count and the write bound")
+	}
+	if srv.HTTP2.MaxConcurrentStreams != 100 {
+		t.Errorf("the host allows %d concurrent streams, want 100, the limit the front end in front of it allows a caller", srv.HTTP2.MaxConcurrentStreams)
+	}
+	if srv.HTTP2.WriteByteTimeout != 2*time.Minute {
+		t.Errorf("the host's write-byte timeout = %v, want 2m: the bound on a peer that has stopped reading, not on a stream still moving", srv.HTTP2.WriteByteTimeout)
+	}
+	var protocols http.Protocols
+	protocols.SetHTTP1(true)
+	client := &http.Client{Transport: &http.Transport{Protocols: &protocols}}
+	resp, err := client.Get(addr + "/v1/messages")
+	if err != nil {
+		t.Fatalf("an HTTP/1.1 call failed: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK || resp.ProtoMajor != 1 {
+		t.Fatalf("the HTTP/1.1 call is %d over HTTP/%d.%d (%q), want 200 over HTTP/1", resp.StatusCode, resp.ProtoMajor, resp.ProtoMinor, body)
+	}
+}
+
+// largeBodyReader produces n bytes of a repeating pattern without ever holding
+// them, and counts how many it has handed out: what the test below needs is a
+// body big enough to matter that the test itself never allocates (a 40 MiB
+// []byte here would make the test's own footprint the largest thing in the
+// room, which is the measurement the assertion below turns into a claim about
+// the server).
+type largeBodyReader struct {
+	left int64
+	next byte
+	sent *atomic.Int64
+}
+
+func (r *largeBodyReader) Read(p []byte) (int, error) {
+	if r.left <= 0 {
+		return 0, io.EOF
+	}
+	n := int64(len(p))
+	if n > r.left {
+		n = r.left
+	}
+	for i := int64(0); i < n; i++ {
+		r.next++
+		p[i] = r.next
+	}
+	r.left -= n
+	r.sent.Add(n)
+	return int(n), nil
+}
+
+// TestCredentialsServeH2CStreamsALargeBody is B1.0's own claim, measured: a
+// 40 MiB body (a pack larger than the 33 MiB one Check 190 lost) reaches the
+// handler through an h2c connection, and it reaches it as a stream rather than
+// as a buffer.
+//
+// The assertion is about WHEN the handler sees the body, and it is the one a
+// buffering front end cannot pass: the client counts every byte it has handed
+// to its transport, and the handler records that count as it reads its first
+// chunk. HTTP/2 flow control bounds how far a truthful peer may run ahead of a
+// handler that has not read yet, so a server that streams shows a count in the
+// low megabytes; a server that reads the whole body into memory before it calls
+// the handler shows 40 MiB there, which is exactly what the front end did to
+// Check 190's push (it answered 413 having read the body it would not stream).
+//
+// What is deliberately not asserted is the process's heap: a delta measured
+// around a transfer is a GC-timing observation and not a property of this
+// server, while the count above is deterministic. The handler's own buffer is
+// 32 KiB and the total is exact, so a body that arrived truncated (which is
+// what a cut at the HTTP/1 limit looks like) fails here too.
+func TestCredentialsServeH2CStreamsALargeBody(t *testing.T) {
+	const body = 40 << 20
+	var sent, read, sentAtFirstRead atomic.Int64
+	addr, _ := serveForTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		buf := make([]byte, 32<<10)
+		first := true
+		for {
+			n, err := r.Body.Read(buf)
+			if n > 0 {
+				if first {
+					sentAtFirstRead.Store(sent.Load())
+					first = false
+				}
+				read.Add(int64(n))
+			}
+			if err != nil {
+				break
+			}
+		}
+		io.WriteString(w, "read")
+	}))
+	src := &largeBodyReader{left: body, sent: &sent}
+	resp, err := h2cClient().Post(addr+"/v1/messages", "application/octet-stream", src)
+	if err != nil {
+		t.Fatalf("an h2c push failed: %v", err)
+	}
+	defer resp.Body.Close()
+	answer, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK || resp.ProtoMajor != 2 {
+		t.Fatalf("the push is %d over HTTP/%d.%d (%q), want 200 over HTTP/2", resp.StatusCode, resp.ProtoMajor, resp.ProtoMinor, answer)
+	}
+	if got := read.Load(); got != body {
+		t.Fatalf("the handler read %d bytes, want %d: a body that arrives short is what a cut at the HTTP/1 limit looks like", got, body)
+	}
+	if got := sentAtFirstRead.Load(); got >= body/4 {
+		t.Fatalf("the handler's first chunk arrived after the client had handed over %d of %d bytes: this server read the whole body before it served it, which is the behaviour that lost Check 190's 33 MiB push", got, body)
+	}
+}
+
 // TestCredentialsServePort: PORT is the platform's, and a value that is not a
 // port is a deployment that is wrong -- refused by name rather than defaulted,
 // because a service listening where the front end does not reach it looks
@@ -517,5 +725,43 @@ func TestCredentialsServeRefusesHTTP2Debug(t *testing.T) {
 	_, _, err := execute(t, "credentials", "serve")
 	if err == nil || !strings.Contains(err.Error(), "http2debug") {
 		t.Fatalf("err = %v, want the http2debug refusal", err)
+	}
+}
+
+// TestCredentialsServeRefusesHTTP2DebugStill is the same refusal held against
+// the h2c path this task adds, and it is the test that has to exist because the
+// new path is the one http2debug would be loudest about: at 2 it prints HTTP/2
+// frames, and the frames of a proxied call are a model credential and, from
+// B1.5, the credential a git push carries. So the refusal has to be true of
+// the process and not merely of the HTTP/1.1 branch of it.
+//
+// What "still" means here is the order, and it is asserted from both ends: the
+// refusal comes before the environment is read (so an EMPTY environment is
+// refused for http2debug and not for its first missing variable), and it comes
+// before anything is served (so a COMPLETE environment -- the one that builds a
+// configuration NewServer accepts -- is refused too, with the h2c server never
+// built). The context is bounded so that a version of this code that served
+// instead of refusing fails the test rather than hanging it.
+func TestCredentialsServeRefusesHTTP2DebugStill(t *testing.T) {
+	t.Setenv("GODEBUG", "http2debug=2")
+	for _, tc := range []struct {
+		name string
+		env  map[string]string
+	}{
+		{name: "empty", env: map[string]string{}},
+		{name: "complete", env: credentialsServeEnv},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := map[string]string{"GODEBUG": "http2debug=2"}
+			for k, v := range tc.env {
+				env[k] = v
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			err := serveCredentials(ctx, newCredentialsServeCmd(), func(k string) string { return env[k] })
+			if err == nil || !strings.Contains(err.Error(), "http2debug") {
+				t.Fatalf("err = %v, want the http2debug refusal: a process that serves the h2c path prints the frames of a call that carries a credential", err)
+			}
+		})
 	}
 }
