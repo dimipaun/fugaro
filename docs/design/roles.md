@@ -1,6 +1,7 @@
 # Roles on the existing lists
 
-**Status: design. No code. Every decision in this document is open and belongs to the owner.**
+**Status: design. No code. Every decision in this document is open and belongs to the owner, except
+the three the owner ruled on 2026-10-30, recorded in §9's *Settled* list.**
 
 This is subscriptions **S5.1** and forge **E0**: the viewer, operator and admin roles of
 `docs/mobile-auth/spec.md` §"Allowlist and roles", laid over the lists an installation already has,
@@ -53,6 +54,9 @@ Three more facts about the lists matter here.
   and no admin (`internal/cli/pair.go:511`).
 - **A pairing session is a third identity**, the one-shot `pu` claim (`pairingClaim`,
   `internal/budget/rules/rules.go:540`). It reaches the two pairing nodes and nothing else.
+- **A run is not a person.** A run's job account holds no role on the Firebase project
+  (`modules/firebase/iam.tf:2`) and is on none of the lists, so it holds no `signJwt` on the signer:
+  an agent inside a run cannot mint a role claim or write a device node, whatever its prompt says.
 
 ### 1.2 What each list grants, per surface
 
@@ -64,14 +68,14 @@ is checked against a role anywhere.
 | Firebase signer: mint a custom token | token-minter custom role on the signer account (`modules/firebase/iam.tf:35`) | same (`local.people = launchers ∪ operators`, `:30`) | not by this grant |
 | RTDB | `roles/firebasedatabase.viewer` (`:44`) | same | `roles/firebasedatabase.admin` (`:53`), which *writes* `/config`, bypassing the rules |
 | Firestore (spend history) | `roles/datastore.viewer` (`:65`) | same | same |
-| Launch a job | `roles/batch.jobsEditor`, conditioned to Fugaro-shaped job names (`modules/compute/iam.tf:140`) | — | — |
-| Run as a job account | `roles/iam.serviceAccountUser` on each run account, never on the project (`modules/compute/iam.tf:159`) | — | — |
+| Launch a job (Cloud Run) | the `job_runner` custom role, `run.jobs.run` and `run.jobs.runWithOverrides` (`modules/installation/iam.tf:26`), on the project's job (`modules/project/iam.tf:7`) and each workflow job (`modules/workflow/job.tf:97`) | — | — |
+| Launch a job (the opt-in Batch backend, `--provision-batch`) | `roles/batch.jobsEditor`, conditioned to Fugaro-shaped job names (`modules/compute/iam.tf:140`), and `roles/iam.serviceAccountUser` on each run account, never on the project (`:159`) | — | — |
 | Cancel a run, read job/execution status | the `fugaroLauncher` custom role: `run.jobs.get/list`, `run.executions.get/list/cancel`, `run.operations.get` (`modules/installation/iam.tf:8`) | — | — |
 | Run logs | `roles/logging.viewAccessor` on the isolated log view (`modules/installation/logging.tf:106`) | same | — |
 | Runs bucket | read the whole bucket (`objectViewer`, `modules/installation/iam.tf:156`); write `runs/` and `tokens/` only (`objectUser`, conditioned, `:172`) | read and write **all** of it (`objectAdmin`, `:141`) | — |
 | Terraform state bucket | — | `roles/storage.objectAdmin` (`:194`) | — |
 | Image builds / base images | — | `fugaroBuildSubmitter` (`:77`), the base-image writer on the registry (`:204`) | — |
-| Secret Manager | list secrets and versions, metadata only (`fugaroLauncher`, `modules/installation/iam.tf:16`) | same | — |
+| Secret Manager | list secrets and versions, metadata only (`fugaroLauncher`, `modules/installation/iam.tf:16`) | — | — |
 | The credentials service | nothing: it admits the installation's **job service accounts** only (`internal/credsvc/auth.go:312`, `:475`) | same | same |
 
 Read together, that table says who can do what today:
@@ -81,12 +85,17 @@ Read together, that table says who can do what today:
   there is no backend API that starts a job on anyone's behalf (F31, `:321`).
 - **An operator applies Terraform and onboards repositories.** Operators hold the state bucket, the
   runs bucket whole, the build submitter, the Cloud Asset reader (`:128`) and the base-image writer.
-  An operator who is not also a launcher cannot launch or cancel: `launcher_jobs_editor` and the
-  `fugaroLauncher` role are granted to `var.launchers` alone.
-- **An owner or editor, and every `budget_admin`, can do anything on this table and more.** They hold
-  `roles/firebasedatabase.admin`, which bypasses the rules, and they already hold `roles/owner` or
-  `roles/editor` on the project — Terraform, Secret Manager and the Firebase project included. §4
-  calls this the *admin* row.
+  An operator who is not also a launcher cannot launch or cancel: the `job_runner` grants on the jobs,
+  `launcher_jobs_editor` on the Batch backend and the `fugaroLauncher` role are granted to
+  `var.launchers` alone.
+- **An owner or editor can do anything on this table and more.** Owners and editors hold
+  `roles/owner` or `roles/editor` on the project — Terraform, Secret Manager and the Firebase project
+  included — and `roles/firebasedatabase.admin`, which bypasses the rules. §2 calls this the *admin*
+  column.
+- **A `budget_admin` who is on no other list holds two grants and nothing else:**
+  `roles/firebasedatabase.admin` and `roles/datastore.viewer` (`modules/firebase/iam.tf:31`, `:53`,
+  `:65`). They can write anything in the database over IAM, `/config` (caps and kill switches) and
+  the device nodes included, and cannot launch, cancel, read the runs bucket or apply Terraform.
 - **Every launcher and every operator can mint a token for any identity in the project.** Both are
   in `local.people`, and the token-minter role is granted to that set (F44,
   `docs/forge-authorship-images/reconciliation.md:310`). A claim, a uid or an email in a custom token
@@ -129,7 +138,7 @@ grants a read there grants a write beside it.
 | --- | --- | --- | --- |
 | Read run status and logs | runs bucket `objectViewer` + job/execution `get` + log view — **boundary**, narrowed to reads | same — boundary | same, plus `firebasedatabase.admin` — boundary |
 | Read spend | `roles/datastore.viewer` on the history — **boundary** | same — boundary | same — boundary |
-| Launch | must not | `batch.jobsEditor` (conditioned) + `serviceAccountUser` — **boundary** | today: `roles/owner`/`editor` — boundary |
+| Launch | must not | `job_runner` on the jobs (Batch: `batch.jobsEditor`, conditioned, + `serviceAccountUser`) — **boundary** | today: `roles/owner`/`editor` — boundary |
 | Cancel | must not | `run.executions.cancel` — **boundary** | today: as owner/editor — boundary |
 | Steer or talk to an agent | must not | the launch itself is the whole of it today — **gap**: nothing distinguishes steering from launching | same |
 | Change caps and kill switches | must not | must not — **gap**: today `firebasedatabase.admin` writes `/config` over IAM, and the rules give no client token a write there | `firebasedatabase.admin` — boundary |
@@ -141,8 +150,8 @@ grants a read there grants a write beside it.
 
 The **viewer** row is where the matrix and today part company, and it is the row T16 asks about.
 Every one of its `must not` cells is unenforceable today: the mint is granted to `local.people`
-(`modules/firebase/iam.tf:35`), and `serviceAccountUser` and `run.executions.cancel` come bundled with
-the launch, so a person cannot be given a read without also being given the writes beside it — which
+(`modules/firebase/iam.tf:35`), and `run.executions.cancel` comes bundled in `fugaroLauncher` with
+the reads, so a person cannot be given a read without also being given the writes beside it — which
 is F6's "there is no viewer anywhere" read from the other side. A read-only list needs its own role:
 `run.jobs.get`, `run.jobs.list`, `run.executions.get`, `run.executions.list` and `run.operations.get`,
 and neither of `run.executions.cancel` nor the mint.
@@ -162,8 +171,9 @@ where it is most confusing.
 | `operators` | apply Terraform, onboard repositories, write the whole runs bucket, submit builds | **admin** |
 | (nothing) | read the project's runs without any write | **viewer** |
 
-So "the roles on the existing lists" is not a relabelling; it is a decision, and it is D680 and D681
-in §9. The options are laid out there rather than chosen here: the mapping may be accepted as-is
+So "the roles on the existing lists" is not a relabelling; it is a decision. The owner ruled the
+vocabulary on 2026-10-30 (§9 *Settled*: map now, rename later); which list becomes which role is
+D681. The options were: the mapping may be accepted as-is
 (today's *operator* is the role *admin*, today's *launcher* is the role *operator*, and a new list is
 the viewer); the lists may be renamed pre-1.0 while the surface is still free to move (the
 pre-1.0 rule in `CLAUDE.md`); or both vocabularies may be kept and the mapping documented. The third
@@ -193,8 +203,9 @@ What a read-only list would grant:
 
 What it must **not** grant, and what each absence protects:
 
-- **no `batch.jobsEditor` and no `serviceAccountUser`** — a viewer cannot create a job and cannot act
-  as a run account, which is the whole of the launch surface (F28);
+- **no `job_runner` on any job, and on the Batch backend no `batch.jobsEditor` and no
+  `serviceAccountUser`** — a viewer cannot start a job and cannot act as a run account, which is the
+  whole of the launch surface (F28);
 - **no token-minter role** — otherwise a viewer can mint the identity of anyone in the project, and
   the role it is being denied exists only on paper (F44);
 - **no Terraform state bucket** — a viewer cannot read or lock the installation's state;
@@ -273,7 +284,7 @@ is a real question and it is not settled by D629, so it is **D693**. The shape o
 
 | Surface | Suspension would have to reach |
 | --- | --- |
-| Launch | the IAM grant (`batch.jobsEditor`, `serviceAccountUser`) or a check the launcher runs |
+| Launch | the IAM grant (`job_runner` on the jobs; on Batch, `batch.jobsEditor` and `serviceAccountUser`) or a check the launcher runs |
 | Cancel | `run.executions.cancel` |
 | Read the project | the RTDB and bucket reads |
 | Sign-in | the minter's check, or the auth user's own state |
@@ -321,8 +332,8 @@ rule changes.
 Files: `internal/localcfg/localcfg.go` (a `viewers` list beside `launchers`), `internal/cli/init.go`
 (`--viewer`), the Terraform variables and IAM in `deploy/terraform/gcp/modules/firebase/` and
 `deploy/terraform/gcp/modules/installation/`. A new read-only job role, and the grants §4 lists.
-Tests: `TestViewerListRefusesDomain`, `TestViewerGetsNoMinterRole`, `TestViewerGetsNoJobsEditor`,
-`TestViewerRoleHasNoCancelPermission`. Depends on: **D680, D681, D682, D683, D684**. Ships inert:
+Tests: `TestViewerListRefusesDomain`, `TestViewerGetsNoMinterRole`, `TestViewerGetsNoJobRunner`,
+`TestViewerRoleHasNoCancelPermission`. Depends on: **D681, D682, D683, D684**. Ships inert:
 an installation with an empty viewer list applies exactly today's plan. **For operators:** the list
 is a Terraform variable, so the change lands on an owner-run `fugaro update`; the release notes carry
 the step. **Security-sensitive.**
@@ -368,6 +379,20 @@ addition this design asks of it.
 **Checks 258–259** are left for the two the build finds it needs; §9 records that the numbering is
 held.
 
+**Release placement (owner, 2026-10-30).** R8 (E1) ships in 0.14.0 if it is in time. R1, R4 and R5
+are cloud role enforcement and none of them is in 0.14.0; enforcement is 0.15.0.
+
+**Files more than one slice touches.** Everything else is one slice's own, so slices that share no
+row here can run in parallel once their dependencies are answered.
+
+| File | Slices | Order |
+| --- | --- | --- |
+| `internal/cli/user.go`, `internal/cli/user_test.go` | R8, R2, R6 | R8 first: it creates them |
+| the plugin skill and the regenerated CLI reference | R8, R2, R6 | one slice at a time, regenerated last |
+| `deploy/terraform/gcp/modules/firebase/iam.tf` | R1, R4 | R1 first: R4 moves the minter grant R1 withholds |
+| `internal/budget/rules/rules.go` and its goldens | R5, and R4 if the minted claim changes the rules | R4 before R5 |
+| the release notes' *For operators* section | R1, R2, R4, R5 | each slice adds its own entry |
+
 ## 9. Decisions for the owner
 
 ### Settled
@@ -392,6 +417,10 @@ Restated, with its source, so that nothing below is read as open that is not.
   (`docs/mobile-auth/reconciliation.md:540`)
 - **Pairing decision 13 (amended 2026-10-29)** — the device role is inherited from the pairing user's
   role and may only be lowered. (`docs/plans/2026-10-22-mobile-pairing-cli.md:477`)
+- **2026-10-30, vocabulary (was D680)** — map viewer, operator and admin onto the existing IAM lists
+  now; rename the lists later. Which list becomes which role stays D681.
+- **2026-10-30, `fugaro user`** — E1 ships in 0.14.0 if it is in time.
+- **2026-10-30, enforcement** — no cloud role enforcement in 0.14.0; it is 0.15.0 (R1, R4, R5).
 - **D433** — free read-only viewers once the viewer role exists (D446). Out of scope here (§10), but
   it is what a viewer *is for*.
 
@@ -399,7 +428,6 @@ Restated, with its source, so that nothing below is read as open that is not.
 
 | # | Question | Options | Recommendation | Cost of each | Status |
 | --- | --- | --- | --- | --- | --- |
-| D680 | Which vocabulary survives? | (a) map the roles onto today's list names; (b) rename the lists pre-1.0; (c) keep both | (b) | (a) leaves "operator" meaning admin forever; (b) churns every config file and the Terraform variables once, while the surface is still free; (c) two words for one thing, permanently | open |
 | D681 | Which existing list becomes which role? | (a) `launchers`→operator, `operators`→admin, new list→viewer; (b) a fresh launcher/operator/viewer triple and today's `operators` becomes an onboarding list only | (a) | (a) matches what each list already grants (§3); (b) renames a list whose grants do not move, so the name and the grant disagree until the grants move too | open |
 | D682 | Where does the viewer list live? | (a) a new IAM list, core MIT; (b) derive viewers from the device nodes' `role` child; (c) no viewer list, the console/app only | (a) | (a) one more list and its grants; (b) the device node is per-phone, `session`-scoped and written by `fugaro pair`, so a viewer without a phone cannot exist and IAM would have to read RTDB to answer; (c) fails D446's "the cloud included" | open |
 | D683 | How much of the runs bucket does a viewer read? | (a) `objectViewer` on the whole bucket; (b) a conditioned read on `runs/` and `fugaro/`; (c) none, reads come through the CLI | (a) | (a) also hands a viewer `cache/`, `locks/` and the history; (b) no `storage.objects.list`, so a viewer cannot list the bucket; (c) a viewer cannot read logs or artifacts at all | open |
