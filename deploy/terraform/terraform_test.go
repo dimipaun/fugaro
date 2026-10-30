@@ -4395,6 +4395,166 @@ func TestServiceHeldSecretsMatchTheCredentialsService(t *testing.T) {
 	}
 }
 
+// TestProxiedGitSecretNamesMatchTheModule pins the proxied git flip list to
+// the module that has to spell it out — config.ProxiedGitSecretNames and
+// modules/workflow/sa.tf's proxied_git_secret_names — and the two clauses it
+// drives to the per-repository input they are keyed on (B1.8, D500, G9).
+//
+// It is the same guard as TestServiceHeldSecretsMatchTheCredentialsService,
+// for the list that needs a second one: a git credential the service brokers
+// for a PROXIED repository is held for that repository alone (G15: the
+// published node's block is the one source of whether a repository is
+// proxied), so the job gives up the accessor and the mount only when
+// var.bitbucket_proxied is true. Every other Bitbucket repository — of an
+// installation that opted in or not — keeps both (G9).
+//
+// Both sides are empty today. The flip is B1.13 part two, after the owner's go
+// on Check 191 (D500, G1), and it fills Go's list and this literal in one
+// commit: with the module's list filled and Go's empty (or the reverse), one
+// side plans a drop the other does not produce, which is the drift this test
+// refuses.
+func TestProxiedGitSecretNamesMatchTheModule(t *testing.T) {
+	const path = "gcp/modules/workflow/sa.tf"
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripComments(string(b))
+
+	m := regexp.MustCompile(`proxied_git_secret_names\s*=\s*\[([^\]]*)\]`).FindStringSubmatch(code)
+	if m == nil {
+		t.Fatalf("%s declares no proxied_git_secret_names list", path)
+	}
+	var got []string
+	for _, q := range regexp.MustCompile(`"([^"]*)"`).FindAllStringSubmatch(m[1], -1) {
+		got = append(got, q[1])
+	}
+	want := slices.Clone(config.ProxiedGitSecretNames)
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("%s: proxied_git_secret_names = %v, config.ProxiedGitSecretNames = %v", path, got, config.ProxiedGitSecretNames)
+	}
+
+	// local returns the squashed body of a per-mount local: the expression one
+	// entry of the map is, which is where both halves of the drop are written.
+	local := func(name string) string {
+		t.Helper()
+		re := regexp.MustCompile(`(?s)\b` + name + `\s*=\s*\{\s*for env, logical in var\.workflow\.secret_env\s*:\s*(env => [^\n]+)`)
+		found := re.FindStringSubmatch(code)
+		if found == nil {
+			t.Fatalf("%s declares no %s local of the per-mount shape", path, name)
+		}
+		return squash(found[1])
+	}
+
+	// The credential is proxied exactly when this repository is (the input) AND
+	// its logical name is one the list names. Dropping either half leaves a
+	// proxied repository's token with the job — the credential the flip exists
+	// to take away — or takes it from a repository the node never admitted.
+	if got, want := local("is_proxied_git"), "env => var.bitbucket_proxied && contains(local.proxied_git_secret_names, logical)"; got != want {
+		t.Errorf("%s: is_proxied_git = %s, want %s: the drop is per mount and keyed on the repository being proxied AND on the list", path, got, want)
+	}
+
+	// The accessor: job_secret_names drops a proxied repository's credential
+	// through is_service_held, which is consulted only once the installation
+	// has opted in — so an installation without the service keeps every mount
+	// and every accessor whatever the node says (G9, D147).
+	if got := local("is_service_held"); !strings.HasSuffix(got, "|| local.is_proxied_git[env]") {
+		t.Errorf("%s: is_service_held = %s; the job's accessor set must drop a proxied repository's credential (the clause `|| local.is_proxied_git[env]`), or the token the service brokers is still the job's to read", path, got)
+	}
+
+	// And the mount goes with the accessor (C2.3, review finding F1): a job
+	// whose account may not read a mounted secret is a job Cloud Run refuses to
+	// create. The drop is the list AND the input, inside the same opt-in gate
+	// as the service-held names — a non-proxied repository of an opted-in
+	// installation still mounts its Bitbucket token (G9).
+	if got, want := local("job_mounts"), "env => logical if var.credentials_service == null || !contains(local.service_held_secret_names, logical) && !local.is_proxied_git[env]"; got != want {
+		t.Errorf("%s: job_mounts = %s, want %s: the mount must go with the accessor, for a proxied repository only", path, got, want)
+	}
+}
+
+// TestEmptyProxiedListChangesNothing pins the state B1.8 ships: the flip list
+// is empty on both sides, and with it empty and the per-repository input
+// defaulting to false, no job loses an accessor or a mount for any input. It
+// is the other half of the flip's guard — TestProxiedGitSecretNamesMatchTheModule
+// holds the two lists to each other, this holds the wiring that decides when
+// either can bite.
+//
+// The mutations it refuses are the ones that would move a real installation's
+// job: a `bitbucket_proxied` that defaults to true, or that a repository root
+// has to write (either creates a drop for a repository nobody proxied), a
+// dropped pass-down (the workflow module then plans with false and a proxied
+// repository keeps the token), and a clause that reads the list or the input
+// directly rather than the per-mount local.
+func TestEmptyProxiedListChangesNothing(t *testing.T) {
+	if len(config.ProxiedGitSecretNames) != 0 {
+		t.Errorf("config.ProxiedGitSecretNames = %v: the flip is B1.13 part two, after the owner's go on Check 191 (D500), so nothing may fill it here", config.ProxiedGitSecretNames)
+	}
+
+	for _, tc := range []struct{ path, want string }{
+		{"gcp/roots/repo/variables.tf", "bitbucket_proxied = optional(bool, false)"},
+		{"gcp/modules/repo/variables.tf", "bitbucket_proxied = optional(bool, false)"},
+	} {
+		b, err := fs.ReadFile(FS, tc.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(squash(stripComments(string(b))), tc.want) {
+			t.Errorf("%s: the repo object must carry %q: the fact is per repository, and false is what a tfvars written before it existed means (bitbucket_proxied is optional, so no plan moves for one that omits it)", tc.path, tc.want)
+		}
+	}
+
+	// The workflow module's own variable, defaulting to false: every repository
+	// of an installation whose tfvars says nothing about the fact plans exactly
+	// what it planned before the module knew about it.
+	wb, err := fs.ReadFile(FS, "gcp/modules/workflow/variables.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wcode := stripComments(string(wb))
+	i := regexp.MustCompile(`(?m)^\s*variable\s+"bitbucket_proxied"\s*\{`).FindStringIndex(wcode)
+	if i == nil {
+		t.Fatalf("gcp/modules/workflow/variables.tf declares no bitbucket_proxied variable")
+	}
+	if body := wcode[i[1]:matchBrace(wcode, i[1]-1)]; !hasAttr(body, "default", "false") {
+		t.Errorf("gcp/modules/workflow/variables.tf: bitbucket_proxied must default to false; with a default of true, or a required variable, the module drops the Bitbucket token of a repository nobody proxied:\n%s", body)
+	}
+
+	// And the pass-down, without which the module's input is always false and a
+	// proxied repository keeps the credential the flip is for.
+	rb, err := fs.ReadFile(FS, "gcp/modules/repo/workflows.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(squash(stripComments(string(rb))), "bitbucket_proxied = var.repo.bitbucket_proxied") {
+		t.Error("gcp/modules/repo/workflows.tf: the repo module must pass repo.bitbucket_proxied down to each workflow, or no job is ever the proxied one")
+	}
+
+	// The list and the input are read in one place, the per-mount local both
+	// clauses use: with the list empty that local is false for every env of
+	// every workflow, which is what makes this release a no-op, and it is what
+	// the guard tftest runs plan.
+	sb, err := fs.ReadFile(FS, "gcp/modules/workflow/sa.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scode := stripComments(string(sb))
+	if m := regexp.MustCompile(`proxied_git_secret_names\s*=\s*\[([^\]]*)\]`).FindStringSubmatch(scode); m == nil {
+		t.Error("gcp/modules/workflow/sa.tf declares no proxied_git_secret_names list")
+	} else if strings.TrimSpace(m[1]) != "" {
+		t.Errorf("gcp/modules/workflow/sa.tf: proxied_git_secret_names = [%s]: the flip is B1.13 part two, after the owner's go on Check 191 (D500), so nothing may fill it here", m[1])
+	}
+	for _, clause := range []struct{ name, want string }{
+		{"the job's accessor set", "|| local.is_proxied_git[env]"},
+		{"the job's mounts", "&& !local.is_proxied_git[env]"},
+	} {
+		if !strings.Contains(squash(scode), clause.want) {
+			t.Errorf("gcp/modules/workflow/sa.tf: %s does not read local.is_proxied_git (%q), so the flip list would not be the one thing that moves it:\n%s", clause.name, clause.want, scode)
+		}
+	}
+}
+
 // TestCredentialsServiceIsOptIn pins the opt-in and the wiring: both
 // declarations default to null (D147: with the service off nothing changes,
 // and an installation that has not opted in must plan what it planned

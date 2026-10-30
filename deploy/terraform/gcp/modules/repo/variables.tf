@@ -103,6 +103,12 @@ variable "repo" {
     # already-existing secret of the installation root, never one this module
     # creates. Local configs without a project copy of anything send none.
     project_secrets = optional(map(string), {})
+    # Whether the published node admits this repository with `proxy: true`
+    # (D500, D502): the one condition a job gives up its git credential's
+    # accessor and mount under. Optional and false, so a tfvars written before
+    # the fact existed — every golden one — plans exactly what it planned, and
+    # false is what an installation that never proxies a repository sends.
+    bitbucket_proxied = optional(bool, false)
     registry = object({
       repository_id   = string
       cleanup_dry_run = bool
