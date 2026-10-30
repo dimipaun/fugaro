@@ -92,6 +92,7 @@ var Scopes = []ScopeRow{
 	{Key: "workflows.*.image.setup", In: InProfile | InRepo},
 	{Key: "workflows.*.image.skip_build_scripts", In: InProfile | InRepo},
 	{Key: "workflows.*.image.tools", In: InProfile | InRepo},
+	{Key: "workflows.*.image.key_files", In: InRepo, Why: whyFiles},
 	{Key: "workflows.*.dockerfile", In: InRepo, Why: whyFiles},
 	{Key: "workflows.*.commands.build", In: InProfile | InRepo},
 	{Key: "workflows.*.commands.test", In: InProfile | InRepo},
@@ -171,6 +172,11 @@ var ExecutableKeys = []string{
 var NonExecutableImageKeys = map[string]string{
 	"workflows.*.image.node": "removed in 0.7.0, refused unconditionally by validateImage (" + MigrationDoc + "); never a command",
 	"workflows.*.image.jdk":  "removed in 0.7.0, refused unconditionally by validateImage (" + MigrationDoc + "); never reaches a Dockerfile",
+	// key_files holds repository paths, not shell: each one is written into
+	// the image's checkout loop as a single-quoted word, and validateImage
+	// refuses a value that is not a clean relative path, so a path can only
+	// name a file in the repository being built.
+	"workflows.*.image.key_files": "names repository paths checked out before the source layer, never run as shell",
 }
 
 // ScopeOf is the row of path, a fugaro.yaml path with a real workflow name

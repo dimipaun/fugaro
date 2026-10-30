@@ -2,9 +2,11 @@ package config
 
 import (
 	"fmt"
+	"path"
 	"regexp"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 
@@ -27,6 +29,16 @@ var (
 	// character below is rejected by construction, not by a separate
 	// denylist, which is what TestValidMiseTool pins against regression.
 	miseVersionRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+~:-]*$`)
+	// imageKeyFileRE is the shape an image.key_files entry must have. It
+	// refuses by construction every character that would be read as
+	// something other than itself further down: a glob character (the entry
+	// becomes a doublestar pattern of the rebuild key), a backslash (git
+	// reads it as an escape inside a pathspec, and Windows would read it as
+	// a separator), and a control character (the entry is written into the
+	// Dockerfile's checkout loop and into the refusal message). The rules it
+	// cannot state — relative, cleaned, no "..", no ".git" — are checked one
+	// at a time below, each with its own message.
+	imageKeyFileRE = regexp.MustCompile(`^[^\x00-\x1f\x7f\\*?\[\]{}]+$`)
 )
 
 // maxMiseToolNameLen and maxMiseToolVersionLen bound an image.tools key and
@@ -36,6 +48,11 @@ var (
 const (
 	maxMiseToolNameLen    = 128
 	maxMiseToolVersionLen = 64
+	// maxImageKeyFiles and maxImageKeyFilePath bound image.key_files: at
+	// most 32 entries of at most 200 characters, so neither the Dockerfile's
+	// checkout loop nor the rebuild key can be made large from a config.
+	maxImageKeyFiles    = 32
+	maxImageKeyFilePath = 200
 )
 
 // validMiseToolName and validMiseToolVersion are ValidMiseTool's two halves,
@@ -118,6 +135,7 @@ func validateImage(p string, w Workflow) []Problem {
 			add(fmt.Sprintf("%s.image.apt[%d]", p, i), "must be a package name, optionally pinned as name=version")
 		}
 	}
+	validateKeyFiles(p, img.KeyFiles, add)
 	for i, step := range img.Setup {
 		sp := fmt.Sprintf("%s.image.setup[%d]", p, i)
 		trimmed := strings.TrimSpace(step)
@@ -138,6 +156,64 @@ func validateImage(p string, w Workflow) []Problem {
 		add(p+".dockerfile", "must be a relative path inside the repository, such as .fugaro/%s.Dockerfile", strings.TrimPrefix(p, "workflows."))
 	}
 	return ps
+}
+
+// keyFilePathRules are image.key_files' rules, in the order validateKeyFiles
+// reports them, so the first failure is the one a person reads, each with the
+// message that names it. ValidKeyFilePath asks the same list, so a path that
+// comes from somewhere else — a patch pnpm's manifest names, which the build
+// checks out and keys the image on exactly as a hand-written entry — is
+// judged by one statement of the rules and not a second copy of them.
+var keyFilePathRules = []struct {
+	ok  func(f string) bool
+	msg string
+}{
+	{func(f string) bool { return strings.TrimSpace(f) != "" }, "must not be empty"},
+	{utf8.ValidString, "must be text"},
+	{func(f string) bool { return utf8.RuneCountInString(f) <= maxImageKeyFilePath },
+		fmt.Sprintf("must be at most %d characters", maxImageKeyFilePath)},
+	{imageKeyFileRE.MatchString, "must be a repository path holding no glob (* ? [ ] { }), no backslash and no control character"},
+	{func(f string) bool { return !strings.HasPrefix(f, "/") }, "must be a relative path inside the repository, not an absolute one"},
+	{func(f string) bool { return !slices.Contains(strings.Split(f, "/"), "..") }, "must not hold a .. segment: the path is checked out inside the repository it belongs to"},
+	{func(f string) bool { return path.Clean(f) == f }, "must be a clean path: no trailing slash, no // and no . segment"},
+	{func(f string) bool { return f != "." }, "must name a file or a directory, not the repository root: the root would check the whole checkout out early"},
+	{func(f string) bool { return f != ".git" && !strings.HasPrefix(f, ".git/") }, "must not name anything inside .git, which is not part of the checkout"},
+}
+
+// ValidKeyFilePath reports whether f is a path image.key_files accepts: one
+// clean repository-relative path, inside the repository, as the path it is.
+func ValidKeyFilePath(f string) bool {
+	for _, r := range keyFilePathRules {
+		if !r.ok(f) {
+			return false
+		}
+	}
+	return true
+}
+
+// validateKeyFiles checks image.key_files: each entry names one path inside
+// the repository, as the path it is. Every message names the entry by its
+// index and never echoes its value: a value may hold a terminal escape
+// sequence, and a refusal that printed one would put it in a log.
+func validateKeyFiles(p string, files []string, add func(path, format string, args ...any)) {
+	if len(files) > maxImageKeyFiles {
+		add(p+".image.key_files", "must have at most %d entries", maxImageKeyFiles)
+	}
+	seen := make(map[string]int, len(files))
+	for i, f := range files {
+		kp := fmt.Sprintf("%s.image.key_files[%d]", p, i)
+		for _, r := range keyFilePathRules {
+			if !r.ok(f) {
+				add(kp, "%s", r.msg)
+				break
+			}
+		}
+		if j, dup := seen[f]; dup {
+			add(kp, "duplicates image.key_files[%d]", j)
+			continue
+		}
+		seen[f] = i
+	}
 }
 
 // validateCheckout checks a workflow's checkout: (design generic-tool.md §2,
@@ -170,6 +246,9 @@ func validateCheckout(p string, w Workflow) []Problem {
 	}
 	if w.Image.SkipBuildScripts {
 		add(p+".image.skip_build_scripts", "%s", msg)
+	}
+	if len(w.Image.KeyFiles) > 0 {
+		add(p+".image.key_files", "%s", msg)
 	}
 	if w.Dockerfile != "" {
 		add(p+".dockerfile", "%s", msg)

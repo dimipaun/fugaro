@@ -166,6 +166,7 @@ func TestParseProjectLayerRefuses(t *testing.T) {
 		{"named Claude accounts are repo-only", head + "defaults:\n  agent:\n    oauth_token: acme-personal\n", "agent.oauth_token may only be set in: repo, override"},
 		{"base branch is repo-only", head + "defaults:\n  git:\n    base_branch: evil\n", "git.base_branch may only be set in: repo"},
 		{"dockerfile is repo-only", head + "profiles:\n  p:\n    dockerfile: x.Dockerfile\n", "workflows.*.dockerfile may only be set in: repo"},
+		{"key files are repo-only", head + "profiles:\n  p:\n    image:\n      key_files: [patches]\n", "workflows.*.image.key_files may only be set in: repo"},
 		{"workflow keys are not defaults", head + "defaults:\n  workflows:\n    web:\n      commands: { test: x }\n", "may only be set in: profile, repo"},
 		{"unknown key", head + "defaults:\n  agent:\n    colour: red\n", "defaults.agent.colour: is not a fugaro.yaml key"},
 		// claude_accounts is a local-config-only key (design

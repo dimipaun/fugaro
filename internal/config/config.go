@@ -695,11 +695,21 @@ type Image struct {
 	// mise config for a repository without a mise config of its own (design
 	// base-image.md section 4). The Fugaro base only.
 	Tools MiseTools `yaml:"tools"`
+	// KeyFiles are repository-relative paths — a file or a directory — the
+	// dependency install reads and the lockfiles do not carry: the early
+	// layer of the derived image checks them out before the source layer,
+	// and a change to one of them rebuilds the image, exactly as a lockfile
+	// change does (design §7.2). A repository that patches dependencies at
+	// install time (patch-package, a vendored toolchain) declares them here;
+	// validateImage refuses anything that could leave the repository or
+	// match more than the path it names.
+	KeyFiles []string `yaml:"key_files"`
 }
 
 // IsZero reports whether the image block sets nothing.
 func (i Image) IsZero() bool {
-	return i.Node == "" && i.JDK == "" && len(i.Apt) == 0 && len(i.Setup) == 0 && !i.SkipBuildScripts && len(i.Tools) == 0
+	return i.Node == "" && i.JDK == "" && len(i.Apt) == 0 && len(i.Setup) == 0 && !i.SkipBuildScripts && len(i.Tools) == 0 &&
+		len(i.KeyFiles) == 0
 }
 
 // Commands are the repository's build and test commands, run through `sh -c`.
