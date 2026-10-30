@@ -62,7 +62,7 @@ import (
 // CLI reference and the plugin skill) is E1b, after the pairing's T4. Nothing
 // in the tree calls this command's constructor until then.
 
-// userDocs is what every refusal and every listing of this command says about
+// userListSource is what every refusal and every listing of this command says about
 // where the lists live, so the sentence cannot drift between them.
 const userListSource = "terraform.launchers and terraform.operators in this machine's own project config"
 
@@ -122,6 +122,13 @@ fallback to it is a fetch of the runs bucket that only this machine's own file
 would have made unnecessary.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			// A coding agent may run ls, and selection on a machine with no
+			// project config of its own fetches the shared config from the
+			// runs bucket with the person's credentials before the refusal
+			// below: GODEBUG=http2debug would print them to stderr.
+			if err := refuseHTTP2Debug(os.Getenv); err != nil {
+				return err
+			}
 			sel, lc, err := selectProject(cmd.Context(), o)
 			if err != nil {
 				return err

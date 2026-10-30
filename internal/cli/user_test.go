@@ -509,6 +509,22 @@ func TestUserLsListsBoth(t *testing.T) {
 	}
 }
 
+// TestUserLsRefusesHTTP2Debug: ls is open to a coding agent, and its
+// selection can read the runs bucket with the person's credentials, so
+// GODEBUG=http2debug is refused before anything is read.
+func TestUserLsRefusesHTTP2Debug(t *testing.T) {
+	r := userRigFor(t, []string{"user:person-1@example.com"}, []string{"user:person-2@example.com"})
+	t.Setenv("GODEBUG", "http2debug=2")
+	out, _, err := userCommand(t, "ls")
+	if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "http2debug") {
+		t.Fatalf("ls under GODEBUG=http2debug: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "person-1") {
+		t.Errorf("ls listed members before refusing:\n%s", out)
+	}
+	r.noCloudWrites(t)
+}
+
 // TestUserRefusedInAgentSession: add and rm are run by a person at their own
 // terminal (allow_delete.go's rule), so a coding agent's session is refused
 // before anything is read and nothing is written.
