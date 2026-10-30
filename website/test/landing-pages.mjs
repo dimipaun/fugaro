@@ -18,11 +18,12 @@
 //      sentinel `unmeasured`, the band prints no digit at all — the band's whole job is to be
 //      the one place a measurement appears, and a figure typed into it would be the claim F6
 //      refuses (G2.1's guard reads the file; this reads the built page).
-//   4. **A visitor who declines marketing consent still has a working Book a demo link.** The
-//      booking call to action is a plain `<a href>` to the file's Calendly link: no embed, no
-//      iframe, no vendor script, and no WhatsApp link — G2.3 renders the embed behind the
-//      campaign consent and G2.4 owns the `wa.me` link and its events, and both of them need
-//      the plain link to already be here (spec §6, F17, F22, D401).
+//   4. **A visitor who declines marketing consent still has a working way to book and a way to
+//      chat.** The booking call to action is a plain `<a href>` to the file's Calendly link and
+//      the chat one is the `wa.me` link the file's WhatsApp number and the variant's own
+//      pre-fill make: no embed, no iframe and no vendor script behind either. G2.3 renders the
+//      embed behind the campaign consent and G2.4 owns the key events the three calls fire, and
+//      both of them need the plain links to already be here (spec §6, F17, F22, D401).
 //   5. **The page is complete without the media the owner has not produced yet.** No campaign
 //      video exists and no partner logo exists, so no `<video>` is rendered, the social-proof
 //      section is not rendered at all while `partner_logos` is empty, and every file the page
@@ -215,8 +216,8 @@ test('the proof band prints no figure while the variant carries the sentinel', (
 
 // ---- 4. the calls to action ---------------------------------------------------------------
 
-test('there is no email form, and the calls to action are a plain booking link and the repository', () => {
-  for (const { rel } of PAGES) {
+test('there is no email form, and the calls to action are a plain booking link, the repository and the chat', () => {
+  for (const { variant, rel } of PAGES) {
     const { html } = pageOf(rel)
     const doc = parse(html)
 
@@ -240,6 +241,24 @@ test('there is no email form, and the calls to action are a plain booking link a
     const install = findAll(doc, (el) => el.name === 'a' && textOf(el).trim() === 'Install free')
     assert.equal(install.length, 1, `${rel} carries ${install.length} "Install free" links; the secondary call to action is the repository (spec §6)`)
     assert.equal(install[0].attrs.get('href'), REPOSITORY, `${rel}'s install link is ${JSON.stringify(install[0].attrs.get('href'))}, and site.yaml names the repository (${REPOSITORY})`)
+
+    // The third call to action: the chat the spec's §6 asks for, and the one link a visitor can
+    // use without leaving a booking. Its address is the loader's — the file's number and this
+    // variant's own pre-fill — so a page that typed one would be a second copy of the file.
+    const chat = findAll(doc, (el) => el.name === 'a' && textOf(el).trim() === 'Chat with the founder')
+    assert.equal(chat.length, 1, `${rel} carries ${chat.length} "Chat with the founder" links; the third call to action is the WhatsApp chat (spec §6)`)
+    assert.equal(
+      chat[0].attrs.get('href'),
+      variant.whatsappURL,
+      `${rel}'s chat link is ${JSON.stringify(chat[0].attrs.get('href'))}, and landing.yaml's WhatsApp number with this variant's own pre-fill makes ${variant.whatsappURL}: the link is the file's, and nothing here adds a query to it`,
+    )
+
+    // The two ids are how `site.js` finds the two secondary calls to fire their key events
+    // (G2.4): the markup is where the hook lives, so it is pinned here rather than only in the
+    // case that presses them.
+    for (const [id, link] of [['campaign-install', install[0]], ['campaign-whatsapp', chat[0]]]) {
+      assert.equal(link.attrs.get('id'), id, `${rel}'s ${textOf(link).trim()} link carries no id="${id}", which is the one thing site.js reads it by (G2.4)`)
+    }
   }
 })
 

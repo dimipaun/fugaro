@@ -22,12 +22,16 @@ Three things it deliberately does **not** claim:
   `canonicalBytes`, and `shared/mailbox-schema/vectors.json`), **P6.4** (rules generation 3 — the
   same fields in the template, the `kind` / parent-kind / MAC-shape macros, and
   `config/admin/devices/$uid`, which `USER` now requires) and **P6.5** (`shared/prompts` — the
-  queue, `PROMPT_TTL_MS`, the interrupt table). **Approved and not built:** **P6.6** (`fugaro pair`
-  — the tokens, the device node, and the OS keychain entry the pairing key lives in), **P6.7** (the
+  queue, `PROMPT_TTL_MS`, the interrupt table). **Partly built:** **P6.6** (`fugaro pair`) — its
+  command's surface and its one-shot pairing token are in the tree (`internal/cli/pair.go`,
+  `internal/budget/token/pairing.go`, the pairing CLI plan's T1a, landed 2026-10-29), while the
+  device token, the wait for the phone's key and the sweep rule are not. **Approved and not built:**
+  **P6.7** (the
   consumer's enforcement of the D128 amendment — this command's inbound gate, the action record,
   the ledger and the expiry), **P6.12** (the phone's spoken confirmation, which consumes the merged
   confirmation machine) and **P6.13** (the sweeper's rule for stored prompts). So the MAC **can** be
-  computed today and the **key cannot**: no pairing exists until P6.6 runs. What that means for
+  computed today and the **key cannot**: no pairing exists until the wait and the delivery above
+  land, and the surface that landed on 2026-10-29 is not one yet. What that means for
   this command's startup is §8.3's first row, and §8.4 says **which half of the MAC work is
   P4.1's and which is P6.7's**. A module existing and a task being *built* are not the same claim,
   and this bullet is held to the tree by the pin (`TestMailboxPlanPhaseSixStatusIsTrue`).

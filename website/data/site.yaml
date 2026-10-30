@@ -161,8 +161,10 @@ min_runs: 20
 # renders, firebase.google.com for Google's own Firebase privacy policy, which
 # the privacy statement links rather than restating, calendly.com for the
 # booking link the four campaign pages carry as a plain `Book a demo` anchor
-# (G2.2; the inline embed G2.3 adds is the consent check's, not this list's) --
-# and the site's own canonical origin, and nothing else. The one third-party
+# (G2.2; the inline embed G2.3 adds is the consent check's, not this list's),
+# wa.me for the chat link the same section carries, whose address is the number
+# `landing.yaml` writes (G2.4) -- and the site's own canonical origin, and
+# nothing else. The one third-party
 # origin the owner decided on (D93's analytics script, loaded only after
 # consent) is admitted by the consent task's own check, not by an entry here.
 #
@@ -176,4 +178,5 @@ allowed_hosts:
   - raw.githubusercontent.com
   - firebase.google.com
   - calendly.com
+  - wa.me
   - fugaro.dev
