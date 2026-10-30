@@ -255,7 +255,7 @@ corpus tests rather than in review (plan T1.3).
 `internal/config/resolve.go`'s `Resolve` merges project-layer defaults → repo top
 level → workflow profile → repo workflow. The project layer is
 `config.LayerKey = "fugaro/project-layer.yaml"`; the published policy is
-`config/policy/shared` (`fugaro project policy publish`, version 3);
+`config/policy/shared` (`fugaro project policy publish`, version 4);
 `internal/projectpolicy` reads and writes it. Consequence: the spec's "a project
 has a default mode" and "paths can override it" are two different inputs — the
 repository's `fugaro.yaml` and the project's published policy — and the design
