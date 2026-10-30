@@ -23,6 +23,7 @@
 version: 1
 
 summaries:
+  v0.13.0: Fugaro now ships governance, fugaro report and the coordinator as business-licensed parts of the one released binary, while the core, fugaro runs digest and fugaro diagnose stay free, and a repository can bound its own runs with expectation tiers and a stage timeout that stops a run with a checkpoint.
   v0.11.4: The review-range fix from 0.11.3 now costs a handful of git calls however many branches a repository has, falls back safely on an old git, and the pull request and the run report say which commits the review covered. A run also records the backlog items it closed, and a pull request the coordinator cannot read stops using its read budget after three tries.
   v0.11.5: A plan status command shows every plan next to its runs and the planning skill now writes the plan graph for it, the review note counts other branches exactly, and the release script reads the stream version from one file.
   v0.11.6: The base image publishes and signs again so image refresh works, runs record their model calls and sub-agents per stage, and in a repository with rigor set up the mode thresholds now decide which findings block and Hotfix keeps only the security gate.

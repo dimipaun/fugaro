@@ -50,6 +50,9 @@ const (
 	// are different key sets, so the caller's token is signed by a key the run
 	// token's set does not hold.
 	testJobKid = "google-kid"
+	// branchRun is the run id the branch-claim tests stand on: fb names a
+	// branch by a run id, and the ordering rule compares run ids as strings.
+	branchRun = "20991231-000000-abcd"
 )
 
 // testKey is the key every token here is signed with, generated once: a
@@ -330,6 +333,119 @@ func TestVerifyAcceptsLiveRun(t *testing.T) {
 		t.Fatal("the liveness check asked about no day at all")
 	} else if want := budget.Day(f.now) + 1; asked[0] != want {
 		t.Errorf("the first day asked about = %d, want the day above today (%d)", asked[0], want)
+	}
+}
+
+// TestAuthBranchMustMatchBranchRE: the branch claim (fb, G6) is the branch the
+// identity may push, and a value that is not a Fugaro branch is refused
+// whatever else the token says. Before the check existed the claim was read by
+// nobody, so fb = main was accepted.
+//
+// The refusal does not repeat the value: an fb that is not a Fugaro branch is
+// caller text of unbounded length, like the kid, and the package's no-echo
+// rule holds for it too.
+func TestAuthBranchMustMatchBranchRE(t *testing.T) {
+	f := newFixture(t)
+	f.run = branchRun
+	for _, fb := range []string{
+		"main",
+		"fugaro/20991231-000000-abcd-extra",
+		"fugaro/2026-10-20-090000-abcd",
+		"not-fugaro/20991231-000000-abcd",
+		"Fugaro/20991231-000000-abcd",
+	} {
+		_, err := f.verify(f.runToken(func(c map[string]any) { c["fb"] = fb }), f.jobToken(), f.job)
+		if !errors.Is(err, ErrUnverified) {
+			t.Fatalf("fb %q: err = %v, want ErrUnverified", fb, err)
+		}
+		if strings.Contains(err.Error(), fb) {
+			t.Errorf("fb %q: the refusal echoes the branch: %v", fb, err)
+		}
+	}
+
+	// A claim that is present but is not a string is refused rather than read
+	// as "no branch", the rule fpr is held to as well.
+	for name, fb := range map[string]any{
+		"a number":  3,
+		"an object": map[string]any{"fugaro": "20991231-000000-abcd"},
+		"null":      nil,
+		"an array":  []any{"fugaro/20991231-000000-abcd"},
+	} {
+		_, err := f.verify(f.runToken(func(c map[string]any) { c["fb"] = fb }), f.jobToken(), f.job)
+		if !errors.Is(err, ErrUnverified) {
+			t.Errorf("fb %s: err = %v, want ErrUnverified", name, err)
+		}
+	}
+}
+
+// TestAuthBranchOwnOrEarlierRun: fb binds the identity to a branch, and the
+// binding is one a run can actually have — its own branch, or the branch of a
+// run that sorts before it (a follow-up continues the branch its predecessor
+// pushed). A branch of a LATER run, and a branch that is not a Fugaro branch at
+// all, are refused: the first cannot have been inherited, and the second is not
+// one of this installation's.
+func TestAuthBranchOwnOrEarlierRun(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  string
+		fb   string
+		ok   bool
+	}{
+		{"its own branch", "20991231-000000-abcd", "fugaro/20991231-000000-abcd", true},
+		{"the branch an earlier run created", "20991231-120000-abcd", "fugaro/20991231-000000-abcd", true},
+		{"the branch of a later run", "20991231-000000-abcd", "fugaro/20991231-120000-abcd", false},
+		{"a branch that is not a Fugaro branch", "20991231-000000-abcd", "release/1.x", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.run = tc.run
+			id, err := f.verify(f.runToken(func(c map[string]any) { c["fb"] = tc.fb }), f.jobToken(), f.job)
+			if tc.ok {
+				if err != nil {
+					t.Fatalf("Verify refused %s: %v", tc.fb, err)
+				}
+				if id.Branch != tc.fb {
+					t.Errorf("branch = %q, want %q", id.Branch, tc.fb)
+				}
+				return
+			}
+			if !errors.Is(err, ErrUnverified) {
+				t.Fatalf("err = %v, want ErrUnverified", err)
+			}
+		})
+	}
+}
+
+// TestAuthIdentityWithoutBranchClaim: the claims are additive, so an identity
+// minted before the launcher wrote them — and a review or artifact run, which
+// the launcher mints without fb — is admitted with both empty rather than
+// refused. The proxy refuses such an identity's pushes later (B1.4).
+//
+// fpr is read on its own (a review run carries it and no fb), and a value this
+// service cannot read as one to four positive pull requests is refused: a
+// claim that is present but malformed is not a claim to treat as absent.
+func TestAuthIdentityWithoutBranchClaim(t *testing.T) {
+	f := newFixture(t)
+	f.run = branchRun
+	if id := f.verifyOK(); id.Branch != "" || len(id.PRs) != 0 {
+		t.Fatalf("identity without the claims = %q/%v, want empty", id.Branch, id.PRs)
+	}
+
+	id := f.verifyOK(func(c map[string]any) { c["fpr"] = []int{3, 4} })
+	if id.Branch != "" || len(id.PRs) != 2 || id.PRs[0] != 3 || id.PRs[1] != 4 {
+		t.Fatalf("review identity = %q/%v, want empty/[3 4]", id.Branch, id.PRs)
+	}
+
+	for name, fpr := range map[string]any{
+		"five pull requests":  []int{1, 2, 3, 4, 5},
+		"a zero pull request": []int{0},
+		"not an array":        "3",
+		"not a number":        []any{"3"},
+	} {
+		_, err := f.verify(f.runToken(func(c map[string]any) { c["fpr"] = fpr }), f.jobToken(), f.job)
+		if !errors.Is(err, ErrUnverified) {
+			t.Errorf("fpr %s: err = %v, want ErrUnverified", name, err)
+		}
 	}
 }
 

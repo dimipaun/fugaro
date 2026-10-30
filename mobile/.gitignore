@@ -27,3 +27,16 @@ web-build/
 
 # The app's own logs, if a run ever leaves one.
 *.log
+
+# The two native Firebase config files (P7.1a). The Firebase console writes
+# them -- `google-services.json` for Android, `GoogleService-Info.plist` for
+# iOS -- and they name the project the app's builds talk to, which is the
+# owner's registration and not a source file. A build gets them from the EAS
+# environment instead, as file variables whose value is the path EAS wrote the
+# file to (`GOOGLE_SERVICES_JSON`, `GOOGLE_SERVICE_INFO_PLIST`; `app.config.js`
+# has the whole shape). They are ignored here, in the app's own ignore file,
+# because both paths are under `mobile/` -- the repository root's `.gitignore`
+# is not touched and does not need to be. `src/app-config.test.js` reads this
+# rule back through `git check-ignore`.
+google-services.json
+GoogleService-Info.plist

@@ -37,7 +37,7 @@ func routedPolicyNode(via string, models ...string) string {
 	for i, m := range models {
 		quoted[i] = `"` + m + `"`
 	}
-	return `{"version":3,` +
+	return `{"version":4,` +
 		`"providers":{"openrouter":{"kind":"anthropic-compat","base_url":"https://openrouter.ai/api/v1",` +
 		`"auth":"bearer","secret":"openrouter-key","models":["` + claimedSenior + `"],"allow_data_to":["*"]}},` +
 		`"routing":{"claude":{"via":"` + via + `","models":[` + strings.Join(quoted, ",") + `]}}}`

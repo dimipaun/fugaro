@@ -59,6 +59,25 @@ func Merge(ceiling Layer, tighten ...Layer) Effective {
 
 		e.tightenCap(&e.PerDayUSD, l.PerDayUSD, KeyPerDayUSD, src)
 
+		// The A/B rate is a bound like the caps above, and the one key of the
+		// ab: block that crosses layers: the project layer sets it and a
+		// repository may only lower it, to 0, which never samples that
+		// repository (D556, D557). A layer that writes no rate passes the
+		// earlier layers through, which is a nil ABRate and not a 0 one: the
+		// opt-out is the value 0, so the two cannot share the zero value. No
+		// layer carries a rate yet, so the rule is unexercised by a real
+		// configuration until the launcher that fills it ships (Layer.ABRate).
+		if l.ABRate != nil {
+			switch {
+			case e.ABRate == nil || *l.ABRate < *e.ABRate:
+				e.ABRate, e.Sources[KeyABRate] = l.ABRate, src
+			case *l.ABRate > *e.ABRate:
+				e.Ignored = append(e.Ignored, Ignored{KeyABRate,
+					strconv.FormatFloat(*l.ABRate, 'f', -1, 64),
+					strconv.FormatFloat(*e.ABRate, 'f', -1, 64), e.Sources[KeyABRate]})
+			}
+		}
+
 		if l.MaxRunTokens > 0 {
 			switch {
 			case e.MaxRunTokens == 0 || l.MaxRunTokens < e.MaxRunTokens:

@@ -194,3 +194,42 @@ func TestDocsSecretsBrokeringReadmeStatus(t *testing.T) {
 		t.Errorf("%s no longer says %q: the owner's answers of that date are what every slice in this directory is approved against", secretsBrokeringReadme, want)
 	}
 }
+
+// TestDocsCheck190IsRegistered: Check 190 — this work's one owner-run check, and
+// the one number of its block that is registered — has both halves of its
+// registration in the register: a `| 190 |` row in the summary table and a
+// `## Check 190:` section below it, and the section says it has not been run and
+// that no agent runs any step of it. The pairing is the convention every work's
+// own docs tests carry (docs_checks_145_149_test.go for 145–149): a row without
+// its section is a promise of steps that are not written, and a section without
+// its row is a check nothing points at, so either half alone is a number a
+// reader cannot use. B0.6 records the owner's run in that section, so this pin
+// holds the registration and never the words of the result.
+func TestDocsCheck190IsRegistered(t *testing.T) {
+	register := readDoc(t, liveChecksDoc)
+	if !regexp.MustCompile(`(?m)^\|\s*190\s*\|`).MatchString(register) {
+		t.Errorf("%s's register has no `| 190 |` row: Check 190 is written below it, and the table is where a reader finds it", liveChecksDoc)
+	}
+	heading := "\n## Check 190:"
+	i := strings.Index(register, heading)
+	if i < 0 {
+		t.Fatalf("%s has no `## Check 190:` section: the row above points at steps that have to be there", liveChecksDoc)
+	}
+	// Bounded by the next `## ` heading, so a check written after this one does
+	// not widen what is read here.
+	section := register[i+1:]
+	if end := strings.Index(section, "\n## "); end >= 0 {
+		section = section[:end]
+	}
+	flat := strings.ToLower(flattenDoc(section))
+	for _, want := range []string{
+		"**not run.**",
+		// The register's own rule for an owner-run check: no agent runs any step
+		// of it, and the text has to say so.
+		"no agent runs any step of it",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("Check 190's section does not say %q: the check is owner-run and has not been run, and a section that leaves either half out reads as something an agent did", want)
+		}
+	}
+}

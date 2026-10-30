@@ -472,6 +472,14 @@ var censusOutputNames = []string{
 	// is the shape these lists match, and the text is those modules' rather than
 	// this repository's, which is what they step over.
 	"THIRD_PARTY_NOTICES.md",
+	// mobile/.gitignore's google-services.json and GoogleService-Info.plist:
+	// the native Firebase config files, which carry a project's own identifiers
+	// and credentials rather than repository text. mobile/app.config.js writes
+	// googleServicesFile from the environment, so the path can be anywhere, and
+	// `npx expo prebuild` writes mobile/android/app/google-services.json, which
+	// is why the name is matched at any depth rather than at the app root.
+	"google-services.json",
+	"GoogleService-Info.plist",
 }
 
 // censusOutputMarkers are matched against a file's base name, because the
@@ -1022,6 +1030,8 @@ var censusIgnored = []struct {
 	{"mobile/.gitignore", "dist/", "mobile/dist/index.html", false},
 	{"mobile/.gitignore", "web-build/", "mobile/web-build/index.html", false},
 	{"mobile/.gitignore", "*.log", "mobile/app.log", false},
+	{"mobile/.gitignore", "google-services.json", "mobile/google-services.json", false},
+	{"mobile/.gitignore", "GoogleService-Info.plist", "mobile/GoogleService-Info.plist", false},
 	{"deploy/sandbox/.gitignore", "node_modules/", "deploy/sandbox/node_modules/tfjs/index.js", false},
 	{"deploy/sandbox/.gitignore", "junit.xml", "deploy/sandbox/junit.xml", false},
 	{"internal/budget/rules/emulator/.gitignore", "node_modules/", "internal/budget/rules/emulator/node_modules/x/index.js", false},

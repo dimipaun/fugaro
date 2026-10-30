@@ -1,0 +1,872 @@
+#!/usr/bin/env bash
+# Tests for scripts/live-checks/check190.sh, with fake `gcloud`, `git`, `curl`
+# and `fugaro` on PATH: NOTHING here reaches a cloud, a project, a Bitbucket
+# repository or the network, no agent runs a live command, and the fake tools
+# record every argument they are given so the test can assert that no command
+# ever named anything but the sandbox installation's project and that the token
+# never appears in an argument or in the output.
+#
+# Usage: bash scripts/live-checks/check190_test.sh
+set -euo pipefail
+
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+script=$here/check190.sh
+work=$(mktemp -d)
+kept=()
+cleanup_all() {
+  local d
+  for d in ${kept[@]+"${kept[@]}"}; do rm -rf "$d" 2>/dev/null || true; done
+  if [ -n "${CHECK190_TEST_KEEP:-}" ]; then echo "kept: $work" >&2; else rm -rf "$work"; fi
+}
+trap cleanup_all EXIT
+
+failures=0
+fail() {
+  echo "FAIL: $*" >&2
+  failures=$((failures + 1))
+}
+expect_contains() { # haystack needle what
+  case "$1" in
+  *"$2"*) ;;
+  *) fail "$3: expected to contain '$2'; got: $(printf '%s' "$1" | head -c 600)" ;;
+  esac
+}
+expect_absent() {
+  case "$1" in
+  *"$2"*) fail "$3: found '$2' where it must never appear" ;;
+  esac
+}
+expect_status() { # status want what
+  [ "$1" = "$2" ] || fail "$3: expected exit $2, got $1"
+}
+
+# --------------------------------------------------------------------- fakes
+write_fake_fugaro() { # dir
+  mkdir -p "$1/bin"
+  cat >"$1/bin/fugaro" <<'FUGARO_EOF'
+#!/usr/bin/env bash
+# A stand-in for `fugaro`, for scripts/live-checks/check190.sh's test only.
+set -euo pipefail
+printf 'fugaro %s\n' "$*" >>"$FAKE_LOG_DIR/fugaro.calls"
+case "${1:-}" in
+version) echo "fugaro 0.13.0 (test)" ;;
+doctor)
+  # Faithful to internal/cli/doctor.go's emitDoctor: the checks first, then the
+  # project: line, then secrets: — all on stdout — and exit 1 as soon as any
+  # check of its own failed, whatever the project: line said.
+  case "${FAKE_FUGARO_MODE:-ok}" in
+  ok) echo "project: fugaro (GCP fugaro-dev, us-east5)" ;;
+  other) echo "project: fugaro (GCP someone-else-prod, us-east5)" ;;
+  *) exit 1 ;;
+  esac
+  ;;
+*) exit 1 ;;
+esac
+FUGARO_EOF
+  chmod +x "$1/bin/fugaro"
+}
+
+write_fake_gcloud() { # dir
+  mkdir -p "$1/bin"
+  cat >"$1/bin/gcloud" <<'GCLOUD_EOF'
+#!/usr/bin/env python3
+"""A stand-in for `gcloud`, for scripts/live-checks/check190.sh's test only.
+
+It keeps a little state in $FAKE_GCLOUD_STATE -- whether the service, the
+repository and the secret exist -- so the guards, the deploy and the Restore see
+a project that changes the way a real one would. It never talks to anything.
+"""
+import os, sys
+
+STATE = os.environ["FAKE_GCLOUD_STATE"]
+LOG = os.environ["FAKE_LOG_DIR"]
+mode = os.environ.get("FAKE_GCLOUD_MODE", "ok")
+
+with open(os.path.join(LOG, "gcloud.calls"), "a") as fh:
+    fh.write("gcloud " + " ".join(sys.argv[1:]) + "\n")
+
+args = sys.argv[1:]
+
+
+def flag(name, default=""):
+    for a in args:
+        if a.startswith(name + "="):
+            return a[len(name) + 1:]
+    return default
+
+
+def has(name):
+    return name in args
+
+
+def state_get(k):
+    path = os.path.join(STATE, "gcloud." + k)
+    if os.path.exists(path):
+        return open(path).read().strip()
+    return "0"
+
+
+def state_set(k, v):
+    with open(os.path.join(STATE, "gcloud." + k), "w") as fh:
+        fh.write(v)
+
+
+# Like the real CLI, a flag a subcommand does not have is an error. EVERY
+# subcommand this script calls is listed with the flags it may pass; a call to a
+# subcommand that is not here, or with a flag that is not in its list, fails
+# with exit 2. A misspelled or invented flag therefore cannot hide in any call.
+ALLOWED = {
+    ("auth", "print-identity-token"): (),
+    ("projects", "describe"): ("--format",),
+    ("iam", "service-accounts", "list"): ("--project", "--filter", "--format"),
+    ("storage", "ls"): (),
+    ("storage", "rm"): ("-r",),
+    ("secrets", "create"): ("--project", "--replication-policy", "--data-file", "--quiet"),
+    ("secrets", "add-iam-policy-binding"): ("--project", "--member", "--role", "--quiet"),
+    ("secrets", "list"): ("--project", "--filter", "--format"),
+    ("secrets", "delete"): ("--project", "--quiet"),
+    ("artifacts", "repositories", "create"): ("--project", "--location", "--repository-format", "--description", "--quiet"),
+    ("artifacts", "repositories", "list"): ("--project", "--location", "--filter", "--format"),
+    ("artifacts", "repositories", "delete"): ("--project", "--location", "--quiet"),
+    ("artifacts", "docker", "images", "delete"): ("--project", "--delete-tags", "--quiet"),
+    ("builds", "submit"): ("--project", "--tag", "--service-account", "--gcs-source-staging-dir"),
+    ("run", "deploy"): ("--project", "--region", "--image", "--no-allow-unauthenticated", "--timeout",
+                        "--min-instances", "--max-instances", "--set-secrets", "--set-env-vars", "--quiet"),
+    ("run", "services", "list"): ("--project", "--region", "--filter", "--format"),
+    ("run", "services", "describe"): ("--project", "--region", "--format"),
+    ("run", "services", "get-iam-policy"): ("--project", "--region", "--format"),
+    ("run", "services", "delete"): ("--project", "--region", "--quiet"),
+}
+
+positionals = [a for a in args if not a.startswith("-")]
+path = tuple(positionals[:4])
+sub = None
+for n in (4, 3, 2):
+    if tuple(positionals[:n]) in ALLOWED:
+        sub, path = tuple(positionals[:n]), tuple(positionals[:n])
+        break
+if sub is None:
+    sys.stderr.write("ERROR: (gcloud) unknown command: %s\n" % " ".join(args))
+    sys.exit(2)
+allowed = ALLOWED[sub]
+for a in args:
+    if a.startswith("--") and a.split("=")[0] not in allowed:
+        sys.stderr.write("ERROR: (gcloud) unrecognized argument: %s\n" % a)
+        sys.exit(2)
+    if a.startswith("-") and not a.startswith("--") and a not in allowed:
+        sys.stderr.write("ERROR: (gcloud) unrecognized argument: %s\n" % a)
+        sys.exit(2)
+if has("--quiet"):
+    pass
+
+PROJECT = flag("--project")
+if PROJECT and PROJECT != "fugaro-dev":
+    sys.stderr.write("ERROR: (gcloud) this check runs on fugaro-dev only\n")
+    sys.exit(1)
+
+
+def emit(*lines):
+    sys.stdout.write("\n".join(lines) + ("\n" if lines else ""))
+
+
+if sub == ("auth", "print-identity-token"):
+    emit("FAKE-IDENTITY-TOKEN")
+elif sub == ("projects", "describe"):
+    emit("123456789012")
+elif sub == ("iam", "service-accounts", "list"):
+    emit("fugaro-b-1@fugaro-dev.iam.gserviceaccount.com")
+elif sub == ("storage", "ls"):
+    # The bucket guard and the staged-source read-back are both this call. A
+    # real listing of a prefix with nothing under it prints nothing and exits 0
+    # (an empty prefix is a `matched no objects` error only for the `**` form),
+    # so an empty listing here is the honest answer.
+    if mode == "bucket-missing":
+        sys.stderr.write("ERROR: (gcloud) gs://fugaro-dev_cloudbuild/ not found: 404\n")
+        sys.exit(1)
+    if mode == "staged-left":
+        emit("gs://fugaro-dev_cloudbuild/chk190-source/x/main.go")
+elif sub == ("storage", "rm"):
+    pass
+elif sub == ("secrets", "create"):
+    data = flag("--data-file")
+    if not data or not os.path.exists(data):
+        sys.stderr.write("ERROR: (gcloud) no such file: %s\n" % data)
+        sys.exit(1)
+    state_set("secret", "1")
+elif sub == ("secrets", "add-iam-policy-binding"):
+    pass
+elif sub == ("secrets", "list"):
+    if state_get("secret") == "1":
+        emit("projects/fugaro-dev/secrets/fugaro-chk190-token")
+elif sub == ("secrets", "delete"):
+    state_set("secret", "0")
+elif sub == ("artifacts", "repositories", "create"):
+    state_set("repo", "1")
+elif sub == ("artifacts", "repositories", "list"):
+    if state_get("repo") == "1":
+        emit("projects/fugaro-dev/locations/us-east5/repositories/fugaro-chk190")
+elif sub == ("artifacts", "repositories", "delete"):
+    state_set("repo", "0")
+elif sub == ("artifacts", "docker", "images", "delete"):
+    pass
+elif sub == ("builds", "submit"):
+    pass
+elif sub == ("run", "deploy"):
+    if mode == "deploy-fails":
+        sys.stderr.write("ERROR: (gcloud.run.deploy) the deploy failed\n")
+        sys.exit(1)
+    state_set("svc", "1")
+elif sub == ("run", "services", "list"):
+    if state_get("svc") == "1":
+        emit("fugaro-chk190")
+elif sub == ("run", "services", "describe"):
+    fmt = flag("--format")
+    if "status.url" in fmt:
+        emit("https://fugaro-chk190-fake.a.run.app")
+    else:
+        emit("us-east5-docker.pkg.dev/fugaro-dev/fugaro-chk190/fugaro-chk190:chk190")
+        emit("3600")
+elif sub == ("run", "services", "get-iam-policy"):
+    if mode == "public-invoker":
+        emit('{"bindings": [{"role": "roles/run.invoker", "members": ["allUsers"]}]}')
+    else:
+        emit('{"bindings": [{"role": "roles/run.invoker", "members": ["serviceAccount:fugaro-b-1@fugaro-dev.iam.gserviceaccount.com"]}]}')
+elif sub == ("run", "services", "delete"):
+    if mode == "delete-fails":
+        sys.stderr.write("ERROR: (gcloud.run.services.delete) could not delete\n")
+        sys.exit(1)
+    state_set("svc", "0")
+GCLOUD_EOF
+  chmod +x "$1/bin/gcloud"
+}
+
+write_fake_git() { # dir
+  mkdir -p "$1/bin"
+  cat >"$1/bin/git" <<'GIT_EOF'
+#!/usr/bin/env python3
+"""A stand-in for `git`, for scripts/live-checks/check190.sh's test only: no
+socket is opened and no repository exists. It records every argument, the mode
+of the config file the identity token is in, and the branch refs a push would
+have made on the remote, so the Restore's branch delete can be asserted.
+"""
+import os, sys
+
+STATE = os.environ["FAKE_GIT_STATE"]
+LOG = os.environ["FAKE_LOG_DIR"]
+mode = os.environ.get("FAKE_GIT_MODE", "ok")
+args = sys.argv[1:]
+
+with open(os.path.join(LOG, "git.calls"), "a") as fh:
+    fh.write("git " + " ".join(args) + "\n")
+
+# The identity token arrives in an 0600 file named by GIT_CONFIG_GLOBAL: a token
+# on a command line is visible in `ps` to every user of the machine for as long
+# as the process lives, and the slow push would hold it there for an hour. The
+# mode is logged so the test can assert the file really is 0600.
+conf = os.environ.get("GIT_CONFIG_GLOBAL", "")
+if conf:
+    try:
+        with open(os.path.join(LOG, "git.calls"), "a") as fh:
+            fh.write("git config %s mode=%04o\n" % (conf, os.stat(conf).st_mode & 0o777))
+    except OSError as exc:
+        with open(os.path.join(LOG, "git.calls"), "a") as fh:
+            fh.write("git config %s unreadable: %s\n" % (conf, exc))
+
+sub, rest, i = None, [], 0
+while i < len(args):
+    a = args[i]
+    if a == "-C":
+        i += 2
+        continue
+    if a == "-c":
+        i += 2
+        continue
+    if a.startswith("-"):
+        i += 1
+        continue
+    sub, rest = a, args[i + 1:]
+    break
+
+positionals = [a for a in rest if not a.startswith("-")]
+
+
+def branches():
+    path = os.path.join(STATE, "git.branches")
+    if not os.path.exists(path):
+        return []
+    return [b for b in open(path).read().split() if b]
+
+
+def set_branches(bs):
+    with open(os.path.join(STATE, "git.branches"), "w") as fh:
+        fh.write("\n".join(bs))
+
+
+def forwarded():
+    """One forwarded request: what the proxy's own counters count, which is the
+    requests it passes upstream and never its own /chk190/stats and
+    /chk190/health."""
+    path = os.path.join(STATE, "git.forwarded")
+    n = int(open(path).read().strip()) if os.path.exists(path) else 0
+    with open(path, "w") as fh:
+        fh.write(str(n + 1))
+    return n + 1
+
+
+def pushes():
+    path = os.path.join(STATE, "git.pushes")
+    n = int(open(path).read().strip()) if os.path.exists(path) else 0
+    with open(path, "w") as fh:
+        fh.write(str(n + 1))
+    return n + 1
+
+
+def ref_of(name):
+    if ":" in name:
+        name = name.split(":", 1)[1]
+    if not name.startswith("refs/"):
+        name = "refs/heads/" + name
+    return name
+
+
+if sub == "clone":
+    forwarded()
+    if mode == "clone-fails":
+        sys.stderr.write("fatal: unable to access the repository\n")
+        sys.exit(128)
+    dest = positionals[-1]
+    os.makedirs(os.path.join(dest, ".git"), exist_ok=True)
+elif sub == "ls-remote":
+    forwarded()
+    if mode == "ls-remote-fails":
+        # What an expired identity token looks like: the Restore runs an hour
+        # after the token in GIT_CONF was minted.
+        sys.stderr.write("fatal: could not read Username for 'https://bitbucket.org': terminal prompts disabled\n")
+        sys.exit(128)
+    for b in branches():
+        sys.stdout.write("0000000000000000000000000000000000000000\t%s\n" % b)
+elif sub == "push":
+    forwarded()
+    n = pushes()
+    if "--delete" in rest:
+        gone = [ref_of(p) for p in positionals]
+        keep = [b for b in branches() if b not in gone]
+        if mode == "delete-fails":
+            keep = branches()
+        set_branches(keep)
+    elif n == 2 and mode == "bigpush-fails":
+        sys.stderr.write("error: RPC failed; HTTP 413 curl 22 The requested URL returned error: 413\n")
+        sys.stderr.write("error: failed to push some refs to 'https://fugaro-chk190-fake.a.run.app/workspace-a/repo-a.git'\n")
+        sys.exit(128)
+    elif n == 3:
+        if mode == "slow-completes":
+            sys.exit(0)
+        sys.stderr.write("error: RPC failed; HTTP 504 curl 22 The requested URL returned error: 504\n")
+        sys.exit(128)
+    else:
+        set_branches(branches() + [ref_of(positionals[-1])])
+elif sub == "commit":
+    if mode == "commit-fails":
+        sys.stderr.write("fatal: could not commit\n")
+        sys.exit(1)
+elif sub == "rev-parse":
+    # The scratch directory is not inside a work tree, which is what the check's
+    # own guard asks: a scratch directory inside a repository could be committed.
+    sys.exit(1)
+elif sub in ("checkout", "add", "config"):
+    pass
+GIT_EOF
+  chmod +x "$1/bin/git"
+}
+
+write_fake_curl() { # dir
+  mkdir -p "$1/bin"
+  cat >"$1/bin/curl" <<'CURL_EOF'
+#!/usr/bin/env python3
+"""A stand-in for `curl` (and for the Cloud Run front end), for
+scripts/live-checks/check190.sh's test only: no socket is opened.
+
+It answers the check's own two routes on the throwaway service -- /chk190/stats
+and /chk190/health -- and refuses anything that carries no credential, which is
+what the unauthenticated probe must see.
+"""
+import os, sys
+
+LOG = os.environ["FAKE_LOG_DIR"]
+STATE = os.environ["FAKE_CURL_STATE"]
+mode = os.environ.get("FAKE_CURL_MODE", "ok")
+args = sys.argv[1:]
+
+with open(os.path.join(LOG, "curl.calls"), "a") as fh:
+    fh.write("curl " + " ".join(args) + "\n")
+
+
+def flag(name, default=""):
+    if name in args:
+        return args[args.index(name) + 1]
+    for a in args:
+        if a.startswith(name + "="):
+            return a[len(name) + 1:]
+    return default
+
+
+conf = flag("--config")
+conf_text = ""
+if conf:
+    try:
+        conf_text = open(conf).read()
+        with open(os.path.join(LOG, "curl.calls"), "a") as fh:
+            fh.write("curl config %s mode=%04o\n" % (conf, os.stat(conf).st_mode & 0o777))
+    except OSError as exc:
+        with open(os.path.join(LOG, "curl.calls"), "a") as fh:
+            fh.write("curl config %s unreadable: %s\n" % (conf, exc))
+authed = "authorization:" in conf_text.lower()
+
+url = [a for a in args if not a.startswith("-")][-1]
+out = flag("-o")
+fmt = flag("-w")
+status, body = 200, ""
+
+
+def counter(name):
+    path = os.path.join(STATE, "curl." + name)
+    n = int(open(path).read().strip()) if os.path.exists(path) else 0
+    with open(path, "w") as fh:
+        fh.write(str(n + 1))
+    return n + 1
+
+
+def forwarded():
+    path = os.path.join(STATE, "git.forwarded")
+    return int(open(path).read().strip()) if os.path.exists(path) else 0
+
+
+if not authed:
+    # Cloud Run with IAM required: no credential, no request. `public` is the
+    # service a project-level allUsers/run.invoker binding would leave behind,
+    # which the service's own get-iam-policy cannot show.
+    if mode == "public":
+        status, body = 200, "start=1 instance=chk190-1\n"
+    else:
+        status, body = 401, ""
+elif "/chk190/stats" in url:
+    # The proxy counts the requests it forwards upstream, so the counters here
+    # are the fake git's own forwarded requests and never this call itself.
+    n = forwarded()
+    body = "requests=%d in=%d out=%d" % (n, 4096 * n, 65536 * n)
+elif "/chk190/health" in url:
+    n = counter("health")
+    if mode == "same-instance":
+        n = 1
+    body = "start=%d instance=chk190-%d" % (1000 * n, n)
+else:
+    status, body = 404, ""
+
+if out and out != "/dev/null":
+    with open(out, "w") as fh:
+        fh.write(body)
+if fmt:
+    sys.stdout.write(fmt.replace("%{http_code}", str(status)))
+elif not out or out == "/dev/null":
+    sys.stdout.write(body)
+CURL_EOF
+  chmod +x "$1/bin/curl"
+}
+
+# ------------------------------------------------------------------- the runs
+run190() { # dir extra-env...
+  local dir=$1
+  shift
+  mkdir -p "$dir/state" "$dir/logs"
+  : >"$dir/logs/gcloud.calls"
+  : >"$dir/logs/fugaro.calls"
+  : >"$dir/logs/curl.calls"
+  : >"$dir/logs/git.calls"
+  status=0
+  env \
+    PATH="$dir/bin:$PATH" HOME="$dir/home" TMPDIR="$dir/tmp" \
+    FAKE_LOG_DIR="$dir/logs" FAKE_GCLOUD_STATE="$dir/state" \
+    FAKE_CURL_STATE="$dir/state" FAKE_GIT_STATE="$dir/state" \
+    CHECK190_REPO=workspace-a/repo-a CHECK190_TOKEN_FILE="$dir/token" \
+    CHECK190_IDLE_SECONDS=0 CHECK190_SLOW_SECONDS=3 CHECK190_BIG_MIB=1 \
+    CHECK190_CURL_SECONDS=3 \
+    ${1+"$@"} \
+    bash "$script" >"$dir/out" 2>"$dir/err" || status=$?
+  out=$(cat "$dir/out")
+  err=$(cat "$dir/err")
+  scratch=$(sed -n 's/^.*scratch directory: \([^ ]*\).*/\1/p' "$dir/err" | head -n 1)
+}
+
+# run_copy DIR SCRIPT extra-env...: the same run, but against a copy of the
+# script (the public-invoker case mutates the copy rather than the real file).
+run_copy() { # dir script extra-env...
+  local dir=$1 copy=$2
+  shift 2
+  mkdir -p "$dir/state" "$dir/logs"
+  : >"$dir/logs/gcloud.calls"
+  : >"$dir/logs/fugaro.calls"
+  : >"$dir/logs/curl.calls"
+  : >"$dir/logs/git.calls"
+  status=0
+  env \
+    PATH="$dir/bin:$PATH" HOME="$dir/home" TMPDIR="$dir/tmp" \
+    FAKE_LOG_DIR="$dir/logs" FAKE_GCLOUD_STATE="$dir/state" \
+    FAKE_CURL_STATE="$dir/state" FAKE_GIT_STATE="$dir/state" \
+    CHECK190_REPO=workspace-a/repo-a CHECK190_TOKEN_FILE="$dir/token" \
+    CHECK190_IDLE_SECONDS=0 CHECK190_SLOW_SECONDS=3 CHECK190_BIG_MIB=1 \
+    CHECK190_CURL_SECONDS=3 \
+    ${1+"$@"} \
+    bash "$copy" >"$dir/out" 2>"$dir/err" || status=$?
+  out=$(cat "$dir/out")
+  err=$(cat "$dir/err")
+  scratch=$(sed -n 's/^.*scratch directory: \([^ ]*\).*/\1/p' "$dir/err" | head -n 1)
+}
+
+prepare() { # dir
+  mkdir -p "$1/home" "$1/tmp" "$1/state"
+  write_fake_fugaro "$1"
+  write_fake_gcloud "$1"
+  write_fake_git "$1"
+  write_fake_curl "$1"
+  # The token file the owner writes with umask 077.
+  (umask 077 && printf 'FAKE-BITBUCKET-TOKEN\n' >"$1/token")
+}
+
+# --------------------------------------------------------------- the tests
+test_dry_run() {
+  local dir=$work/dry
+  prepare "$dir"
+  run190 "$dir" CHECK190_DRY_RUN=1
+  expect_status "$status" 0 "dry run"
+  expect_contains "$out" "CHECK 190 RESULT" "dry run: the block"
+  expect_contains "$out" "FACT fugaro-version: PASS" "dry run: the version"
+  expect_contains "$out" "FACT project-region: PASS — fugaro-dev/us-east5" "dry run: the hard-coded project"
+  expect_contains "$out" "FACT token-file: PASS" "dry run: the token file"
+  expect_contains "$out" "FACT dry-run: PASS" "dry run: the marker fact"
+  expect_contains "$out" "FACT restore: PASS — nothing of this check's was created" "dry run: nothing to delete"
+  expect_contains "$out" "CHECK 190 RESULT END (exit 0)" "dry run: the end line"
+
+  # Nothing was created, built, deployed or deleted: only reads were made.
+  local calls
+  calls=$(cat "$dir/logs/gcloud.calls")
+  expect_absent "$calls" "secrets create" "dry run: no secret created"
+  expect_absent "$calls" "repositories create" "dry run: no repository created"
+  expect_absent "$calls" "builds submit" "dry run: no build"
+  expect_absent "$calls" "run deploy" "dry run: no deploy"
+  expect_absent "$calls" "delete" "dry run: nothing deleted"
+  expect_absent "$(cat "$dir/logs/git.calls")" "push" "dry run: nothing pushed"
+  [ -n "$scratch" ] || fail "dry run: the script did not say where its scratch directory is"
+  if [ -d "$scratch" ]; then fail "dry run: the scratch directory $scratch survived"; fi
+}
+
+test_project_guard() {
+  local dir=$work/other
+  prepare "$dir"
+  run190 "$dir" FAKE_FUGARO_MODE=other CHECK190_DRY_RUN=1
+  expect_status "$status" 1 "project guard"
+  expect_contains "$err" "not the fugaro-dev installation" "project guard: the stop"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "create" "project guard: nothing created"
+  if [ -d "$scratch" ]; then fail "project guard: the scratch directory survived"; fi
+}
+
+# The token file is the one thing this check must never copy into a project
+# without being sure of: a file another user can read is a token that has
+# already leaked.
+test_token_file_is_refused_unless_0600() {
+  local dir=$work/tokenmode
+  prepare "$dir"
+  chmod 644 "$dir/token"
+  run190 "$dir"
+  expect_status "$status" 1 "token mode"
+  expect_contains "$err" "not 0600" "token mode: the stop names the mode"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "create" "token mode: nothing created"
+
+  local dir2=$work/notoken
+  prepare "$dir2"
+  rm -f "$dir2/token"
+  run190 "$dir2"
+  expect_status "$status" 1 "missing token file"
+  expect_contains "$err" "not a regular file" "missing token file: the stop"
+  expect_absent "$(cat "$dir2/logs/gcloud.calls")" "create" "missing token file: nothing created"
+
+  local dir3=$work/norepo
+  prepare "$dir3"
+  run190 "$dir3" CHECK190_REPO=
+  expect_status "$status" 1 "no CHECK190_REPO"
+  expect_contains "$(cat "$dir3/err")" "CHECK190_REPO must be" "no CHECK190_REPO: the stop"
+}
+
+# THE RED STEP. The deploy line is the one place a throwaway service could be
+# left answering the whole internet, and the token it attaches is a real one: a
+# deploy without --no-allow-unauthenticated must be refused before anything is
+# created. The case is a copy of the script with that line taken out, because
+# the guard has to read the command line a real run would use and not a
+# sentence about it.
+test_a_deploy_line_without_no_allow_unauthenticated_is_refused() {
+  local dir=$work/publicinv
+  prepare "$dir"
+  mkdir -p "$dir/copy"
+  cp -r "$here/check190" "$dir/copy/check190"
+  sed '/^  --no-allow-unauthenticated$/d' "$script" >"$dir/copy/check190.sh"
+  run_copy "$dir" "$dir/copy/check190.sh"
+  expect_status "$status" 1 "public invoker: the verdict"
+  expect_contains "$err" "--no-allow-unauthenticated" "public invoker: the stop names the missing flag"
+  local calls
+  calls=$(cat "$dir/logs/gcloud.calls")
+  expect_absent "$calls" "run deploy" "public invoker: nothing was deployed"
+  expect_absent "$calls" "create" "public invoker: nothing was created"
+}
+
+# A knob the header advertises and nothing reads is worse than no knob at all: a
+# reader -- or a test -- sets it, gets no effect, and gets no error either. The
+# header is read up to the line that ends it, not to a fixed line number: this
+# script's own header is longer than Check 91's, and a fixed number would stop
+# before the knobs paragraph and check nothing.
+test_every_advertised_knob_is_read() {
+  local name reads knobs
+  knobs=$(sed -n '1,/^set -euo pipefail/p' "$script" | grep -o 'CHECK190_[A-Z_]*' | sort -u)
+  if [ -z "$knobs" ]; then
+    fail "the header advertises no CHECK190_ knob at all, so this test reads nothing"
+    return 0
+  fi
+  for name in $knobs; do
+    # The READ, not a mention: every knob the header names appears in prose as
+    # well, so counting mentions could never fire. `${NAME:-` is an expansion,
+    # and an expansion cannot be a comment.
+    reads=$(grep -cF "\${$name:-" "$script" || true)
+    if [ "$reads" -lt 1 ]; then
+      fail "$name is advertised in the header and read nowhere in the script (no \${$name:-...} expansion in it)"
+    fi
+  done
+}
+
+test_happy_path() {
+  local dir=$work/happy
+  prepare "$dir"
+  run190 "$dir"
+  expect_status "$status" 0 "happy path: the verdict"
+  expect_contains "$out" "FACT clone-full: PASS" "happy path: the full clone"
+  expect_contains "$out" "FACT clone-blobless: PASS" "happy path: the blobless clone"
+  expect_contains "$out" "FACT push-small: PASS" "happy path: the small push"
+  expect_contains "$out" "FACT push-big-http1: PASS" "happy path: the large push"
+  expect_contains "$out" "FACT cold-start: PASS" "happy path: the cold start"
+  # The row that cannot pass in a test: the front end's own 3600 s limit is what
+  # it measures, and the knob shortens the stall to seconds. INFO is the honest
+  # verdict for a run that ended early, and the row names its own cap.
+  expect_contains "$out" "FACT timeout-3600: INFO" "happy path: the timeout row"
+  expect_contains "$out" "FACT iam-policy: PASS" "happy path: the IAM read"
+  expect_contains "$out" "FACT unauthenticated-request: PASS — an unauthenticated GET /chk190/health was refused with 401" "happy path: the unauthenticated probe"
+  expect_contains "$out" "FACT branch-deleted: PASS" "happy path: the branch"
+  expect_contains "$out" "FACT restore: PASS" "happy path: the Restore"
+  expect_contains "$out" "FACT scratch-removed: PASS" "happy path: the scratch directory"
+  expect_contains "$out" "CHECK 190 RESULT END (exit 0)" "happy path: the end line"
+
+  # The token is in the secret container and nowhere else, and the identity
+  # token is in a 0600 file rather than in an argument.
+  local calls
+  calls=$(cat "$dir/logs/gcloud.calls")
+  expect_contains "$calls" "secrets create fugaro-chk190-token --project=fugaro-dev --replication-policy=automatic --data-file=$dir/token --quiet" "happy path: the token reaches the secret by --data-file"
+  expect_absent "$(cat "$dir/logs/git.calls" "$dir/logs/curl.calls" "$dir/logs/gcloud.calls" "$dir/out" "$dir/err")" "FAKE-IDENTITY-TOKEN" "happy path: the identity token is in no argument and no output"
+  expect_absent "$(cat "$dir/logs/git.calls" "$dir/logs/curl.calls" "$dir/logs/gcloud.calls" "$dir/out" "$dir/err")" "FAKE-BITBUCKET-TOKEN" "happy path: the sandbox token is in no argument and no output"
+  expect_contains "$(cat "$dir/logs/git.calls")" "mode=0600" "happy path: the git config file is 0600"
+  expect_contains "$(cat "$dir/logs/curl.calls")" "mode=0600" "happy path: the curl config file is 0600"
+
+  # The deploy line: IAM required, the timeout, one instance, and the token as a
+  # mounted FILE rather than an environment variable.
+  local deploy
+  deploy=$(grep 'run deploy' "$dir/logs/gcloud.calls")
+  expect_contains "$deploy" "--no-allow-unauthenticated" "happy path: the deploy requires IAM"
+  expect_contains "$deploy" "--timeout=3600" "happy path: the deploy sets the timeout"
+  expect_contains "$deploy" "--min-instances=0" "happy path: the deploy scales to zero"
+  expect_contains "$deploy" "--max-instances=1" "happy path: the deploy keeps one instance"
+  expect_contains "$deploy" "--set-secrets=/chk190/token=fugaro-chk190-token:latest" "happy path: the token is mounted as a file"
+  expect_absent "$deploy" "CHK190_TOKEN=" "happy path: the token is in no environment variable"
+
+  # Everything this run created was deleted again.
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "run services delete fugaro-chk190" "happy path: the service deleted"
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "repositories delete fugaro-chk190" "happy path: the repository deleted"
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "secrets delete fugaro-chk190-token" "happy path: the secret deleted"
+  if [ -d "$scratch" ]; then fail "happy path: the scratch directory survived"; fi
+}
+
+# The assertion the plan names: the service's IAM policy is read BEFORE any
+# request is sent, and a public member in it is a stop -- not a warning, and not
+# something the check discovers from a 200.
+test_a_public_iam_policy_stops_before_any_request() {
+  local dir=$work/publiciam
+  prepare "$dir"
+  run190 "$dir" FAKE_GCLOUD_MODE=public-invoker
+  expect_status "$status" 1 "public IAM: the verdict"
+  expect_contains "$err" "names a public member" "public IAM: the stop"
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "get-iam-policy" "public IAM: the policy was read"
+  expect_absent "$(cat "$dir/logs/git.calls")" "clone" "public IAM: no git request was sent"
+  expect_absent "$(cat "$dir/logs/curl.calls")" "/chk190/health" "public IAM: no request was sent"
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "run services delete" "public IAM: the service is still deleted"
+}
+
+# A push the front end does not cut is a FAIL and not a quiet INFO: the design
+# assumes the 3600 s limit, and a push that completes after an hour says there is
+# no such limit on this path.
+test_a_slow_push_that_completes_is_a_failure() {
+  local dir=$work/slowok
+  prepare "$dir"
+  run190 "$dir" FAKE_GIT_MODE=slow-completes
+  expect_status "$status" 1 "slow push completed: the verdict"
+  expect_contains "$out" "FACT timeout-3600: FAIL" "slow push completed: the row"
+  expect_contains "$out" "did not end the request" "slow push completed: the reason"
+}
+
+# A large push the front end refuses is the gate this whole check exists for,
+# and its row has to carry both halves: what the client was told, and whether the
+# container saw the bytes.
+test_a_refused_large_push_is_recorded_with_the_front_ends_answer() {
+  local dir=$work/bigrefused
+  prepare "$dir"
+  run190 "$dir" FAKE_GIT_MODE=bigpush-fails
+  # Exit 1: the row is a FAIL, and a FAILed fact must never come back as a pass.
+  expect_status "$status" 1 "refused large push: the verdict"
+  expect_contains "$out" "FACT push-big-http1: FAIL" "refused large push: the row"
+  expect_contains "$out" "HTTP 413" "refused large push: the front end's answer"
+  expect_contains "$out" "1 request(s)" "refused large push: the counters beside it"
+}
+
+# A resource the Restore could not delete is a FAIL, the scratch directory is
+# kept, and the run does not come back reading as a pass.
+test_restore_leftover() {
+  local dir=$work/leftover
+  prepare "$dir"
+  run190 "$dir" FAKE_GCLOUD_MODE=delete-fails
+  expect_status "$status" 1 "leftover: the verdict"
+  expect_contains "$out" "FACT restore: FAIL" "leftover: the row"
+  expect_contains "$out" "service there" "leftover: which count is not 0"
+  expect_contains "$out" "FACT scratch-removed: FAIL" "leftover: the directory is kept"
+  [ -n "$scratch" ] || fail "leftover: the script did not say where its scratch directory is"
+  if [ -n "$scratch" ] && [ -d "$scratch" ]; then
+    kept+=("$scratch")
+  else
+    fail "leftover: the scratch directory was removed although a count was not 0"
+  fi
+}
+
+# The Restore reads the branch back with a freshly minted identity token, and a
+# listing that FAILS is not the answer "the branch is gone". That is the
+# ordinary case rather than a corner: the token GIT_CONF holds was minted before
+# the slow push, which is held open for an hour, so by the time the Restore runs
+# every call answers 403 — and reading that as "gone" is how a branch carrying
+# the large blob would stay on the sandbox repository while the block said it
+# had been deleted.
+test_a_branch_listing_that_fails_is_not_the_branch_is_gone() {
+  local dir=$work/lsfail
+  prepare "$dir"
+  run190 "$dir" FAKE_GIT_MODE=ls-remote-fails
+  expect_status "$status" 1 "failed branch listing: the verdict"
+  expect_contains "$out" "FACT branch-deleted: FAIL — whether this run's branches" "failed branch listing: the row says the listing failed"
+  expect_contains "$out" "cannot be read" "failed branch listing: the reason"
+  expect_absent "$out" "no branch named chk190/" "failed branch listing: the block does not claim the branch is gone"
+}
+
+# The unauthenticated probe is a stop and not a row. A project-level allUsers or
+# run.invoker binding does not appear in the service's own get-iam-policy, so
+# this probe is the only thing that sees it — and a run that carried on would
+# spend the next two hours cloning, pushing and holding a request open behind a
+# public URL with the sandbox repository's token attached.
+test_a_service_that_answers_unauthenticated_calls_stops_the_run() {
+  local dir=$work/publicsvc
+  prepare "$dir"
+  run190 "$dir" FAKE_CURL_MODE=public
+  expect_status "$status" 1 "public service: the verdict"
+  expect_contains "$out" "FACT unauthenticated-request: FAIL — an unauthenticated GET /chk190/health answered 200" "public service: the row"
+  expect_contains "$out" "FACT clone-full: FAIL — not reached" "public service: nothing was cloned"
+  expect_absent "$(cat "$dir/logs/git.calls")" "clone" "public service: no git request was sent"
+}
+
+# The staging bucket is the installation's and not this check's: `gcloud builds
+# submit` CREATES gs://<project>_cloudbuild when it is missing, and this run's
+# Restore removes only its own prefix under it. So a bucket that cannot be
+# listed is a stop BEFORE anything is created, and nothing is created.
+test_an_unreadable_staging_bucket_stops_before_anything_is_created() {
+  local dir=$work/bucket
+  prepare "$dir"
+  run190 "$dir" FAKE_GCLOUD_MODE=bucket-missing
+  expect_status "$status" 1 "staging bucket: the verdict"
+  expect_contains "$out" "FACT build-staging: FAIL" "staging bucket: the row"
+  expect_contains "$err" "would CREATE it to stage this run's source" "staging bucket: the stop names what gcloud would do"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "secrets create" "staging bucket: no secret was created"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "repositories create" "staging bucket: no repository was created"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "run deploy" "staging bucket: nothing was deployed"
+}
+
+# The `gcloud storage rm -r` above the read-back is best-effort — a failure
+# there must not lose the rest of the block — so the row says what a listing
+# found rather than what the command was asked to do. Check 91's Restore reads
+# its own staged source back for the same reason.
+test_a_staged_source_left_behind_is_a_failure() {
+  local dir=$work/staged
+  prepare "$dir"
+  run190 "$dir" FAKE_GCLOUD_MODE=staged-left
+  expect_status "$status" 1 "staged source: the verdict"
+  expect_contains "$out" "FACT restore-staged-source: FAIL — the build's source this run staged at gs://fugaro-dev_cloudbuild/chk190-source/" "staged source: the row names the prefix it read back"
+  expect_contains "$out" "is still there" "staged source: the row says the listing found it"
+}
+
+# This check is the sandbox installation's and nobody else's: the project is
+# hard-coded, the doctor stop names it, and no executed command may ever name
+# another installation's project.
+test_never_belong() {
+  local text calls cfg projects p
+  [ -f "$work/happy/logs/gcloud.calls" ] || test_happy_path
+  text=$(cat "$script")
+  expect_contains "$text" "P=fugaro-dev" "never belong: the project is hard-coded"
+  cfg=$(printf '%s\n' "$text" | grep -v '^[[:space:]]*#' | grep -n 'gcloud config' || true)
+  if [ -n "$cfg" ]; then
+    fail "never belong: the script runs a gcloud config command: $cfg"
+  fi
+  local outside
+  outside=$(printf '%s\n' "$text" | grep -iv -e "never \`belong\`" -e "never belong" | grep -c "belong" || true)
+  [ "$outside" = 0 ] || fail "never belong: 'belong' appears outside the lines that refuse it ($outside)"
+  calls=$(cat "$work"/happy/logs/gcloud.calls "$work"/happy/logs/git.calls "$work"/happy/logs/curl.calls 2>/dev/null)
+  expect_absent "$calls" "belong" "never belong: no command named it"
+  projects=$(grep -o -- '--project=[^ ]*' "$work/happy/logs/gcloud.calls" | sort -u || true)
+  [ -n "$projects" ] || fail "never belong: no gcloud --project argument was recorded, so this test checks nothing"
+  for p in $projects; do
+    [ "$p" = "--project=fugaro-dev" ] || fail "never belong: a gcloud command named $p"
+  done
+}
+
+# Sharding, so a Go test could run these side by side: CHECK_TEST_SHARD="i/n"
+# runs every n-th test starting at i (each test works in its own directory under
+# $work), CHECK_TEST_ONLY=name runs that one test alone (for a solo rerun of a
+# flaky-looking one). Neither set: all run.
+test_index=0
+t() {
+  local i=$test_index
+  test_index=$((test_index + 1))
+  if [ -n "${CHECK_TEST_ONLY:-}" ]; then
+    [ "$1" = "$CHECK_TEST_ONLY" ] || return 0
+  elif [ -n "${CHECK_TEST_SHARD:-}" ]; then
+    [ $((i % ${CHECK_TEST_SHARD#*/})) -eq "${CHECK_TEST_SHARD%/*}" ] || return 0
+  fi
+  "$1"
+}
+
+t test_dry_run
+t test_project_guard
+t test_token_file_is_refused_unless_0600
+t test_a_deploy_line_without_no_allow_unauthenticated_is_refused
+t test_every_advertised_knob_is_read
+t test_happy_path
+t test_a_public_iam_policy_stops_before_any_request
+t test_a_slow_push_that_completes_is_a_failure
+t test_a_refused_large_push_is_recorded_with_the_front_ends_answer
+t test_a_branch_listing_that_fails_is_not_the_branch_is_gone
+t test_a_service_that_answers_unauthenticated_calls_stops_the_run
+t test_an_unreadable_staging_bucket_stops_before_anything_is_created
+t test_a_staged_source_left_behind_is_a_failure
+t test_restore_leftover
+t test_never_belong
+
+if [ "$failures" -ne 0 ]; then
+  echo "check190_test.sh: $failures failure(s)" >&2
+  exit 1
+fi
+echo "check190_test.sh: ok"

@@ -19,7 +19,7 @@ func TestSkewMessagesShareTheSentence(t *testing.T) {
 			t.Errorf("%s does not start with Skew: %q", name, msg)
 		}
 	}
-	if Version != 3 {
+	if Version != 4 {
 		t.Errorf("Version = %d: a version bump needs the plan's skew handling, this test and the CLI's", Version)
 	}
 }
@@ -183,5 +183,27 @@ func TestSkewSentencePicksByDirectionAndReader(t *testing.T) {
 		if SkewRemedy(ve, reader) == ve.Error() {
 			t.Errorf("SkewRemedy(%+v, %v) is the bare sentence: the reader is given no remedy", ve, reader)
 		}
+	}
+}
+
+// TestDecodeRefusesAVersion3Node: version 4 is the Bitbucket token's lockstep
+// (D477), and the bump holds in both directions — a version-4 binary refuses
+// the version-3 node it used to read, with the skew sentence rather than a
+// decode past a block whose profile rules a version-3 runner does not enforce.
+// The version-4 node that a version-3 binary met was already refused by that
+// binary's own check; what this pins is the direction the bump adds, and that
+// it is the documented refusal (a VersionError naming both versions) and not an
+// unknown-field error naming a key and no move.
+func TestDecodeRefusesAVersion3Node(t *testing.T) {
+	p, found, err := Decode([]byte(`{"version": 3, "profiles": {"standard": {"allow_repos": ["github/acme/app"]}}}`))
+	var ve *VersionError
+	if err == nil || p != nil || !found {
+		t.Fatalf("Decode of a version-3 node = (%v, %v, %v), want an error, no policy and found", p, found, err)
+	}
+	if !errors.As(err, &ve) || ve.Found != 3 || ve.Understood != Version {
+		t.Fatalf("Decode of a version-3 node: err = %v, want a VersionError found 3, understood %d", err, Version)
+	}
+	if got, want := err.Error(), fmt.Sprintf(Skew, 3, Version); got != want {
+		t.Errorf("Decode of a version-3 node: err = %q, want %q", got, want)
 	}
 }

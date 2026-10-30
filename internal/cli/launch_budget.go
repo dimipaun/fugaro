@@ -19,6 +19,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -409,6 +410,52 @@ func sealDevNote(spec *task.Spec, clone bool) string {
 // it to make the draw fail.
 var newSealKey = token.NewKey
 
+// budgetBranch is the branch the run's identity may push (fb, G6): the branch
+// a first run creates, or the one a follow-up continues. A review run writes
+// only comments on its pull requests and an artifact run produces files, so
+// neither pushes and neither carries a branch — the proxy admits both with no
+// fb and refuses every push of theirs (B1.4).
+//
+// The branch a follow-up continues is checked here rather than minted
+// verbatim. A branch is named by the run id that created it, and the service
+// admits that name only when it is not later than the identity's own fr (G6):
+// a follow-up launched with a --run-id that sorts before the run it continues
+// — the flag is the operator's own text, and prSpec holds it to its shape
+// alone — would mint an identity the service refuses at its first call, and a
+// refusal there halts the run. So the pairing is refused at the launch, where
+// nothing has been signed yet; see the arm below.
+func budgetBranch(spec *task.Spec) (string, error) {
+	if spec.ReviewPRs != nil || spec.Mode == recipe.ModeArtifact {
+		return "", nil
+	}
+	if spec.Branch == "" {
+		return "fugaro/" + spec.RunID, nil
+	}
+	root, ok := task.BranchRunID(spec.Branch)
+	switch {
+	case !ok:
+		return "", userErr("the run follows up on %q, which is not a branch of this installation (fugaro/<run id>), so its identity could name no branch it may push", spec.Branch)
+	case root > spec.RunID:
+		return "", userErr("the run id %s sorts before %s, the run of the branch %s it continues, so the run would carry an identity naming a branch created after the run itself and the credentials service would refuse every call of it; launch the follow-up under a run id after %s, or without --run-id", spec.RunID, root, spec.Branch, root)
+	}
+	return spec.Branch, nil
+}
+
+// budgetPRs are the pull requests the run's identity may write (fpr, G6): the
+// one a follow-up continues, or the one to four a review run reviews. A first
+// run names none — it opens its own pull request, which is creation rather
+// than a write to a pull request that exists — and an artifact run names none
+// at all.
+func budgetPRs(spec *task.Spec) []int {
+	if len(spec.ReviewPRs) > 0 {
+		return spec.ReviewPRs
+	}
+	if spec.PR > 0 {
+		return []int{spec.PR}
+	}
+	return nil
+}
+
 // mintBudgetToken mints the run's custom token, seals it under a key drawn
 // for this launch and leaves it in the runs bucket. key is nil when the
 // project has no budget backend, and is otherwise the key the execution
@@ -479,9 +526,14 @@ func (e *cloudEnv) mintBudgetToken(ctx context.Context, slug string, spec *task.
 	if err != nil {
 		return nil, remote(fmt.Errorf("the run's budget token cannot be sealed, because its seal key could not be drawn, so nothing is launched: %w", err))
 	}
+	branch, err := budgetBranch(spec)
+	if err != nil {
+		return nil, err
+	}
 	// RB is the launcher's own, self-asserted name (config user or git
 	// email): attribution only, nothing in the rules trusts it.
-	claims := token.Claims{Slug: budget.Key(slug), Run: budget.Key(run), FX: token.ExpiryFX(time.Now(), jobTimeout), FP: e.lc.Name, RB: me}
+	claims := token.Claims{Slug: budget.Key(slug), Run: budget.Key(run), FX: token.ExpiryFX(time.Now(), jobTimeout), FP: e.lc.Name, RB: me,
+		Branch: branch, PRs: budgetPRs(spec)}
 	tok, err := token.Mint(ctx, signer, claims)
 	switch {
 	case errors.Is(err, token.ErrNotMinter):

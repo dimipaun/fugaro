@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -721,5 +722,61 @@ func TestGitHubPullRequestDraftByTitle(t *testing.T) {
 	got, err := open(t, "pull_open_prefixed.json").PullRequest(ctx, 12)
 	if err != nil || !got.Draft || got.State != gitprov.PROpen {
 		t.Fatalf("got %+v, %v", got, err)
+	}
+}
+
+// TestGitAuthReadOnlyPermissions is A2.1's credential boundary for a
+// challenger arm: the token the arm's clone is made with asks GitHub for the
+// reads a checkout needs and no write anywhere, and the credential it answers
+// with carries no environment — so the arm's agent has no GH_TOKEN, and the
+// run it belongs to never holds a token that could push.
+//
+// The set is asserted as an equality rather than as "no write" alone, for the
+// reason the coordinator's test gives: a permission asked for and never used
+// is reach a stolen token would have for nothing. It is read twice — the
+// variable the mint uses, and testdata/shadow_token.json's request body, which
+// the fixture server refuses a mismatch against — so a permission added to one
+// without the other fails here rather than reaching GitHub.
+func TestGitAuthReadOnlyPermissions(t *testing.T) {
+	want := map[string]string{"contents": "read", "metadata": "read"}
+	if !maps.Equal(shadowTokenPermissions, want) {
+		t.Fatalf("shadowTokenPermissions = %v, want %v", shadowTokenPermissions, want)
+	}
+	for name, level := range shadowTokenPermissions {
+		if strings.Contains(level, "write") {
+			t.Errorf("a challenger arm's token asks GitHub for %s: %s", name, level)
+		}
+	}
+	p := open(t, "shadow_token.json")
+	if p.readOnly == nil || p.tokens == p.readOnly {
+		t.Fatal("the read-only mint is the run's own mint: a shadow would be handed a token that can push")
+	}
+	auth, err := p.GitAuthReadOnly(ctx, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if auth.Username != gitUsername || auth.Token != "ghs_fixture_shadow_token" {
+		t.Fatalf("GitAuthReadOnly = %+v", auth)
+	}
+	if !auth.Expires.Equal(time.Date(2026, 9, 27, 11, 0, 0, 0, time.UTC)) {
+		t.Errorf("expires = %s", auth.Expires)
+	}
+	if len(auth.Env) != 0 {
+		t.Errorf("the read-only credential carries an environment: %v", auth.Env)
+	}
+}
+
+// TestGitAuthReadOnlyRefusesServiceHeldKey: with the App's key held by the
+// credentials service there is no read-only mint to ask for, and the arm is
+// refused rather than handed the run's own token (A2.1). Bitbucket is refused
+// the same way, by having no read-only mint at all.
+func TestGitAuthReadOnlyRefusesServiceHeldKey(t *testing.T) {
+	p, err := New(Options{Owner: "acme", Repo: "web", AppID: "1234", ServiceHeldKey: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = p.GitAuthReadOnly(ctx, time.Hour)
+	if err == nil || !strings.Contains(err.Error(), "no read-only mint") {
+		t.Fatalf("err = %v, want a refusal naming the read-only mint", err)
 	}
 }

@@ -61,7 +61,9 @@ import (
 // 67b" back into §13's row; put rule 4's "on the STT path a hit means the
 // utterance is not sent" back; put §4.5's "the text is not sent" back; restore
 // §2's "not shipped"; restore §2's "checked field by field through PARENTKIND";
-// restore §2's "rules.go:583-590"; rename a `## Check 49:` heading; delete a
+// restore §2's "rules.go:583-590"; give §2 the citation it carried before
+// mobile-auth P2's comment grew the file, "rules.go:584-592"; rename a
+// `## Check 49:` heading; delete a
 // `| 49 |`, `| 57 |`, `| 11b |`, `| 81 |`, `| 82 |` or `| 89 |` summary row;
 // rename `## Check 19:`; add a
 // `| 48 |` row or a `## Check 69c` section; restore §13's "the register says so
@@ -422,10 +424,6 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 	for _, want := range []string{
 		"not** through `PARENTKIND`",
 		"those three are what `PARENTKIND` gates",
-		// The line citation, which an earlier revision gave as `583-590`: 583 is
-		// the tail of the KINDREQ case, `case "PARENTKIND":` is 584, and the
-		// `parent()` read is 592 — outside the range it cited.
-		"rules.go:584-592",
 	} {
 		if !strings.Contains(exists, want) {
 			t.Errorf("%s's §2 does not say %q, so it no longer says which check reads the kind field, or where that check is", designPath, want)
@@ -436,8 +434,30 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 		"rules.go:583-590",
 	} {
 		if strings.Contains(exists, bad) {
-			t.Errorf("%s's §2 carries %q, which the rules contradict: `kind` is validated inline on its own node, and PARENTKIND's case and its parent() read are at rules.go:584 and :592", designPath, bad)
+			t.Errorf("%s's §2 carries %q, which the rules contradict: `kind` is validated inline on its own node", designPath, bad)
 		}
+	}
+	// §2's line citation, resolved rather than pinned to a literal. It was
+	// `583-590`, round 13 corrected it to `584-592`, and mobile-auth P2's
+	// comment above `PathDevices` grew the file by 27 lines and moved the case
+	// to 611 and its `parent()` read to 619 — three revisions, one pinned
+	// string, and the drift a literal cannot see. So the two lines are read out
+	// of rules.go and §2 has to name them.
+	src := strings.Split(readDoc(t, "internal/budget/rules/rules.go"), "\n")
+	caseAt, readAt := 0, 0
+	for i, l := range src {
+		if caseAt == 0 && strings.Contains(l, `case "PARENTKIND":`) {
+			caseAt = i + 1
+		}
+		if readAt == 0 && strings.Contains(l, `kindOf("newData.parent()")`) {
+			readAt = i + 1
+		}
+	}
+	if caseAt == 0 || readAt == 0 {
+		t.Fatalf("internal/budget/rules/rules.go carries no `case \"PARENTKIND\":` (%d) or no `kindOf(\"newData.parent()\")` (%d), so the citation this test resolves has nothing to resolve against", caseAt, readAt)
+	}
+	if cite := "rules.go:" + strconv.Itoa(caseAt) + "-" + strconv.Itoa(readAt); !strings.Contains(exists, cite) {
+		t.Errorf("%s's §2 does not cite PARENTKIND at %q, where internal/budget/rules/rules.go carries the case (:%d) and its parent() read (:%d): the sentence points at whatever now sits on the lines it names", designPath, cite, caseAt, readAt)
 	}
 
 	// 6. The redactor masks; it does not block. `internal/agent/redact.go`'s

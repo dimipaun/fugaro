@@ -428,6 +428,33 @@ func runDelta(slug, run string, depth int) (string, error) {
 // family USER reaches fails its existence test. Deleting an Auth user does not
 // revoke on its own — an issued ID token keeps passing until it expires — which
 // is the whole reason D166 chose a node.
+//
+// The entry carries the administered email and the role as children beside the
+// pairing instant (D222, D225), named by internal/mobileauth's NodeFieldEmail
+// and NodeFieldRole so that the writer and every reader share one spelling.
+// The rules read neither of them in v1: a role predicate is D225's later half
+// and is not this work's, so a role on this node is recorded authority and not
+// yet enforced authority.
+//
+// Those fields take no rules generation, and the deployed document does not
+// move (reconciliation §F29): it declares no `.validate` on this node and no
+// `$other` beneath it, USER turns on the node's *existence* alone —
+// `root.child('config/admin/devices').child(auth.uid).exists()` — and nothing
+// in it names a child of the node. So an entry written before the fields
+// existed admits its holder exactly as one carrying them does, and a project
+// whose rules were deployed before this work needs no redeploy.
+// internal/projectpolicy/version.go's generation-3 note is the precedent:
+// optional children of a node that behaves identically without them owe no
+// bump, where a bump would make `projectpolicy.Read` answer "not found" and
+// drop every published policy on an installation whose owner has not redeployed
+// the rules yet.
+//
+// What would move the document is not the fields but a rule that reads one of
+// them, or a `.validate` over the node's shape: that is a generation, with
+// internal/projectpolicy/version.go's RulesVersion bumped and the goldens
+// regenerated — a decision of its own, taken on purpose by whoever needs it
+// rather than discovered by whoever writes the first predicate that touches
+// these children.
 const PathDevices = "config/admin/devices"
 
 // userClaim is the mobile app's user claim (D112, D113): a custom claim mu

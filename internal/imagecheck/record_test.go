@@ -191,7 +191,8 @@ workflows:
 // TestRecordJSON pins the record's field names, which the check and
 // fugaro image status read.
 func TestRecordJSON(t *testing.T) {
-	r := Record{Version: RecordVersion, Repo: "acme/webapp", Workflow: "web", KeyFiles: map[string]string{"yarn.lock": "abc"}}
+	key := Key(Resolved{BaseRef: "web", BaseDigest: baseDigest, Packages: []string{"left-pad@1.3.0"}, Tools: []string{"node@22.11.0"}})
+	r := Record{Version: RecordVersion, Repo: "acme/webapp", Workflow: "web", KeyFiles: map[string]string{"yarn.lock": "abc"}, Key: key}
 	data, err := json.Marshal(r)
 	if err != nil {
 		t.Fatal(err)
@@ -201,15 +202,31 @@ func TestRecordJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{"adopted", "base_branch", "base_digest", "base_ref", "build_id", "built_at", "fugaro_version", "image", "image_config_hash",
-		"image_digest", "key_files", "repo", "source_commit", "source_commit_time", "template_salt", "version", "workflow"}
+		"image_digest", "key", "key_files", "repo", "source_commit", "source_commit_time", "template_salt", "version", "workflow"}
 	if got := slices.Sorted(maps.Keys(m)); !slices.Equal(got, want) {
 		t.Fatalf("fields = %v\nwant     %v", got, want)
 	}
 	if m["adopted"] != false {
 		t.Error("adopted is not false")
 	}
+	if m["key"] != key {
+		t.Errorf("key = %v, want %s", m["key"], key)
+	}
 	if RecordKey("acme-webapp-0123456789abcdef", "web") != "builds/acme-webapp-0123456789abcdef/web/image.json" {
 		t.Errorf("RecordKey = %s", RecordKey("acme-webapp-0123456789abcdef", "web"))
+	}
+	// An unkeyed repository's record carries no key at all (§2.5): the field
+	// is omitted, so a record an older fugaro wrote and one written for a
+	// repository whose key files do not reduce are the same document.
+	unkeyed, err := json.Marshal(Record{Version: RecordVersion})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(unkeyed), `"key"`) {
+		t.Errorf("an unkeyed record carries a key: %s", unkeyed)
+	}
+	if rec, err := ParseRecord(unkeyed); err != nil || rec.Key != "" {
+		t.Errorf("a record written before the field existed: %+v, %v", rec, err)
 	}
 }
 
@@ -357,6 +374,35 @@ func TestRecordNewerThan(t *testing.T) {
 	} {
 		if got := tc.cur.NewerThan(ours); got != tc.newer {
 			t.Errorf("%s: NewerThan = %v, want %v", tc.name, got, tc.newer)
+		}
+	}
+}
+
+// TestRecordDigestMismatch: the launch's digest comparison is pure — a
+// record that names no digest of its own has nothing to compare, which is
+// not a mismatch, and neither is an unknown live digest. Only two digests
+// that are both known and different are drift.
+func TestRecordDigestMismatch(t *testing.T) {
+	const (
+		img    = "europe-docker.pkg.dev/p/r/app-web"
+		ours   = "sha256:" + "11"
+		theirs = "sha256:" + "22"
+	)
+	for _, tc := range []struct {
+		name     string
+		rec      *Record
+		live     string
+		mismatch bool
+	}{
+		{"matching", &Record{Image: img, ImageDigest: ours}, ours, false},
+		{"differing", &Record{Image: img, ImageDigest: ours}, theirs, true},
+		{"no digest of its own", &Record{Image: img}, ours, false},
+		{"unknown live digest", &Record{Image: img, ImageDigest: ours}, "", false},
+		{"render half only", &Record{}, "", false},
+		{"no record", nil, ours, false},
+	} {
+		if got := tc.rec.DigestMismatch(tc.live); got != tc.mismatch {
+			t.Errorf("%s: DigestMismatch = %v, want %v", tc.name, got, tc.mismatch)
 		}
 	}
 }

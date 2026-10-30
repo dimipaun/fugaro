@@ -729,15 +729,36 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 	if err != nil {
 		return nil, false, userErr("%v", err)
 	}
+	// The Bitbucket block is derived the same way and for the same reason: it
+	// is the operator's project_secrets.bitbucket-token.allow_data_to, and no
+	// command writes it by hand (D473, D493). It is derived whether or not a
+	// profile mounts the token — a proxied run's job holds no credential at
+	// all and this block is its whole admission — so the derivation reads the
+	// profiles for nothing, and the two states that mean "this token reaches no
+	// repository" publish no block at all (DeriveBitbucketToken). The profiles
+	// are then judged against it by the node's own rule, in the same
+	// checkPolicyBytes call that judges them against the accounts block.
+	//
+	// bitbucket_api_roots is the operator's own allow-list (D474) and the node
+	// is where the run reads it. It is copied rather than derived, and it is
+	// held to the node's rule (projectpolicy.validBitbucketAPIRoots, applied by
+	// that same decode) rather than to a copy of it here: one rule, at the one
+	// point a root can be written.
+	token, err := projectpolicy.DeriveBitbucketToken(profiles, lc.ProjectSecrets)
+	if err != nil {
+		return nil, false, userErr("%v", err)
+	}
 	pol := &projectpolicy.Policy{
-		Version:    projectpolicy.Version,
-		Budget:     projectpolicy.Budget{Mode: lc.Budget.Mode, PerRunUSD: lc.Budget.PerRunUSD, AllowedModels: lc.Budget.AllowedModels, MaxRunTokens: lc.Budget.MaxRunTokens},
-		AllowRepos: nonNil(allow),
-		BaseBranch: lc.BaseBranch,
-		Providers:  policyProviders(lc),
-		Prices:     policyPrices(lc),
-		Profiles:   profiles,
-		Accounts:   accounts,
+		Version:           projectpolicy.Version,
+		Budget:            projectpolicy.Budget{Mode: lc.Budget.Mode, PerRunUSD: lc.Budget.PerRunUSD, AllowedModels: lc.Budget.AllowedModels, MaxRunTokens: lc.Budget.MaxRunTokens},
+		AllowRepos:        nonNil(allow),
+		BaseBranch:        lc.BaseBranch,
+		Providers:         policyProviders(lc),
+		Prices:            policyPrices(lc),
+		Profiles:          profiles,
+		Accounts:          accounts,
+		BitbucketToken:    token,
+		BitbucketAPIRoots: lc.BitbucketAPIRoots,
 	}
 	switch {
 	case !silent:
@@ -1543,6 +1564,16 @@ func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[
 	// that grew is one more repository whose runs hold that token, and one
 	// that shrank is a run that will be refused.
 	diffLines(out, accountLines(old), accountLines(new))
+	// The Bitbucket block and the API-root allow-list are derived from this
+	// machine's local config, so they are replaced on every publish — and a
+	// replacement is what the operator has to read, because both are decisions
+	// about where a credential may go: the block is the token's whole reach,
+	// and a root off this list is a run that sends the token elsewhere or is
+	// refused. A node another operator's config wrote carries values this
+	// machine cannot re-derive, and those lines are the difference between a
+	// publish that says what it removed and one that quietly narrowed the
+	// installation (the review of #1329).
+	diffLines(out, bitbucketLines(old), bitbucketLines(new))
 	// The routing switch moves with this publish: it comes from the operator's
 	// config, so a route that appeared or changed is a line an operator reading
 	// money-and-data-sharing changes must see — a route that quietly starts
@@ -1688,6 +1719,39 @@ func accountLines(p *projectpolicy.Policy) map[string]string {
 // of what an accounts entry carries.
 func accountText(a projectpolicy.Account) string {
 	return fmt.Sprintf("allow_repos %s", strings.Join(a.AllowRepos, ", "))
+}
+
+// bitbucketLines is the Bitbucket block and the API-root allow-list as lines,
+// for the diff and for `policy show` — one function for both, so the command an
+// operator audits the node with and the diff a publish prints cannot disagree
+// about what the node carries. A policy that carries neither — which is every
+// project without a project_secrets.bitbucket-token entry — has no lines, so a
+// publish that has nothing to say about them says nothing: a "none" row would
+// announce, on every publish, two blocks that are not there.
+func bitbucketLines(p *projectpolicy.Policy) map[string]string {
+	if p == nil {
+		return nil
+	}
+	out := map[string]string{}
+	if bt := p.BitbucketToken; bt != nil {
+		out["bitbucket_token.allow_repos"] = strings.Join(bt.AllowRepos, ", ")
+		out["bitbucket_token.proxy"] = proxyText(bt.Proxy)
+	}
+	if len(p.BitbucketAPIRoots) > 0 {
+		out["bitbucket_api_roots"] = strings.Join(p.BitbucketAPIRoots, ", ")
+	}
+	return out
+}
+
+// proxyText is the operator's per-installation switch (D493) as one line. Both
+// readings are printed, and neither is left out: "the block is here" and "the
+// token is forwarded" are two different statements, and a switch that is off
+// is what a node with no proxy says without writing the member at all.
+func proxyText(proxy bool) string {
+	if proxy {
+		return "on (the credentials service forwards this token)"
+	}
+	return "off (the jobs that mount this token hold it)"
 }
 
 // profileLines is one line per value of every profile, and one per job it
@@ -2385,6 +2449,18 @@ func printPolicy(out io.Writer, p *projectpolicy.Policy) {
 	// member prints as no line.
 	if p.Credentials != nil {
 		fmt.Fprintf(out, "  credentials: %s\n", credentialsText(p.Credentials))
+	}
+	// The Bitbucket block and the API-root allow-list, on the credentials rule:
+	// a policy that carries neither prints neither. They are the same lines the
+	// publish diff prints (bitbucketLines), because they answer the question
+	// this command exists to answer for the project's one long-lived forge
+	// credential — which repositories it may reach (D473) and whether the
+	// credentials service holds it instead of the job (D493) — and a block the
+	// node carries that this command does not print is a setting nobody can
+	// audit.
+	lines := bitbucketLines(p)
+	for _, key := range slices.Sorted(maps.Keys(lines)) {
+		fmt.Fprintf(out, "  %s: %s\n", key, lines[key])
 	}
 	// One line per clone URL, under the canonical repository name the runner
 	// looks up (plan task 3.3 step 3). Like routing: this Fugaro reads the

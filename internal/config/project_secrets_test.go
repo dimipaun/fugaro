@@ -3,6 +3,8 @@ package config
 import (
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestProjectSecretAllowedRepos(t *testing.T) {
@@ -229,5 +231,41 @@ func TestValidateProjectSecretsRefusesWideningWildcards(t *testing.T) {
 		if !strings.Contains(ps[0].Message, tc.want) {
 			t.Errorf("entry %q: message %q does not say %q", tc.entry, ps[0].Message, tc.want)
 		}
+	}
+}
+
+// TestProjectSecretProxyOnlyOnBitbucketToken: D493 — proxy is the Bitbucket
+// token's switch, because the credentials service forwards that one token and
+// nothing else, and it is written only on the entry the service reads it from.
+// The mutation is a ValidateProjectSecrets that ignores the member: a proxy on
+// another entry would be a setting nothing reads, written by an operator who
+// believes their installation is proxied.
+func TestProjectSecretProxyOnlyOnBitbucketToken(t *testing.T) {
+	proxied := ProjectSecret{AllowDataTo: []string{"workspace-a/repo-a"}, Proxy: true}
+	if ps := ValidateProjectSecrets(map[string]ProjectSecret{BitbucketSecret: proxied}); len(ps) != 0 {
+		t.Fatalf("proxy on %s was refused: %+v", BitbucketSecret, ps)
+	}
+	for _, name := range []string{AnthropicSecret, "github-app-key", ClaudeOAuthToken} {
+		ps := ValidateProjectSecrets(map[string]ProjectSecret{name: proxied})
+		if len(ps) != 1 || ps[0].Path != "project_secrets."+name+".proxy" {
+			t.Errorf("proxy on %q = %+v, want one problem at project_secrets.%s.proxy", name, ps, name)
+		}
+	}
+	// The member is read from the operator's file by its own key: a misspelt
+	// tag would drop the switch silently, and the installation the owner
+	// proxied would go on mounting the token on every job.
+	var entry ProjectSecret
+	if err := yaml.Unmarshal([]byte("allow_data_to: [workspace-a/repo-a]\nproxy: true\n"), &entry); err != nil {
+		t.Fatalf("decoding a project_secrets entry: %v", err)
+	}
+	if !entry.Proxy || !entry.AllowsData("workspace-a/repo-a") {
+		t.Errorf("decoded entry = %+v, want proxy true with its allow_data_to", entry)
+	}
+	var absent ProjectSecret
+	if err := yaml.Unmarshal([]byte("allow_data_to: [workspace-a/repo-a]\n"), &absent); err != nil {
+		t.Fatalf("decoding a project_secrets entry: %v", err)
+	}
+	if absent.Proxy {
+		t.Error("an entry that writes no proxy is proxied")
 	}
 }

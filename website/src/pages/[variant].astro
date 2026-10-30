@@ -22,10 +22,10 @@
  * footer, and the `media` slot a variant's own picture lands in when the owner has produced one
  * (spec §6, F14, G2.5).
  *
- * **Nothing here renders the embed or the chat link.** G2.3 renders the Calendly embed behind
- * the marketing consent and G2.4 owns the `wa.me` link and the events; this page carries the
- * plain booking link both of them build on, and no vendor asset, no `iframe` and no WhatsApp
- * link of its own (F17, F22, D401).
+ * **Nothing here renders the embed.** G2.3 renders the Calendly embed behind the marketing
+ * consent and G2.4 owns the events; this page carries the plain booking link both of them build
+ * on, the chat link the file's WhatsApp number makes, and no vendor asset and no `iframe` of its
+ * own (F17, F22, D401).
  */
 import Base from '../layouts/Base.astro'
 import CampaignHero from '../components/CampaignHero.astro'
@@ -72,13 +72,21 @@ const { variant } = Astro.props
     </Fragment>
   )}
 
-  <CampaignHero headline={variant.headline} supportingLine={variant.supportingLine} tone={variant.tone} />
+  {/* The hero draws the campaign's picture only while the variant has no media of its own: the
+      slot above the headline is the variant's own file when there is one, and the drawing does
+      not compete with it (F14, G2.5). */}
+  <CampaignHero
+    headline={variant.headline}
+    supportingLine={variant.supportingLine}
+    tone={variant.tone}
+    art={variant.video === null && variant.image === null}
+  />
   <CampaignProof value={variant.proofNumber.value} source={variant.proofNumber.source} />
   <CampaignSteps />
   {/* Hidden while the file names no partner: the section is not rendered at all, so a campaign
       page with no proof of a partnership does not claim one (F11, F12, D405). */}
   {landing.partnerLogos.length > 0 && <CampaignSocialProof logos={landing.partnerLogos} />}
-  <CampaignCalls calendlyURL={landing.calendlyURL} repository={site.facts.repository} />
+  <CampaignCalls calendlyURL={landing.calendlyURL} repository={site.facts.repository} whatsappURL={variant.whatsappURL} />
 </Base>
 
 <style>

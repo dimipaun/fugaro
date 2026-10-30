@@ -22,8 +22,8 @@ streams:
     # Badger is 0.10, Camel 0.11, and one name per minor after that.
     names: [Badger, Camel, Dolphin, Gecko, Hippo, Koala, Moose]
     # The last CLI release, v0.11.3 "Camel three"; 0.12.0 "Dolphin" is next.
-    current: "0.12.1"
-    next: Gecko
+    current: "0.13.0"
+    next: Hippo
     tag_prefix: v
 
   - name: console

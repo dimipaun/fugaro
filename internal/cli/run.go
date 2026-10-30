@@ -21,6 +21,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/imagecheck"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/policy"
@@ -799,6 +801,12 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 					return launchResult{}, err
 				}
 			}
+			// The digest drift, last of this branch's image reads, and the
+			// only one that never refuses: a checkout: clone workflow has no
+			// derived image and so no record to compare (the branch above),
+			// and nothing here can stop a launch D619 ruled may not be
+			// pinned.
+			warnImageDigestDrift(ctx, env, slug, spec, warn)
 		}
 		if spec.Mode == recipe.ModeArtifact {
 			// The mode: artifact gate: a task carrying mode is refused
@@ -891,6 +899,97 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 		res.ProjectLayer = &launchProjectLayer{SHA256: spec.ProjectLayer.SHA256, Generation: spec.ProjectLayer.Generation}
 	}
 	return res, nil
+}
+
+// warnImageDigestDrift warns, once, when the workflow's image is no longer at
+// the digest its build record names: the record and the registry's latest tag
+// disagree, so what the job runs and what the record says it runs are not the
+// same image. It is a warning and never a refusal, and it pins nothing: Cloud
+// Run cannot vary the image per execution, so a launch has no way to run the
+// recorded digest (D619) — it only tells the operator, whose fix is the daily
+// image check or fugaro image refresh. Neither side's read can refuse the
+// launch either: a workflow with no build record at all — a checkout: clone
+// workflow runs the installation's base image and is never built — is silent,
+// anything else the launcher cannot read is a warning, and an identity the
+// registry refuses is silent too (registryDenied).
+//
+// The reference it reads is the installation's own image for this workflow —
+// the same derivation the job spec uses (Workflow's registryPath and
+// ImageName) — and never the record's own Image field: the record comes from
+// the runs bucket, so building the outbound read's host out of it would let a
+// hand-edited or forged record choose where the launcher connects, and a
+// registry-path change after the build would leave the record naming an image
+// this installation no longer has. A record naming no digest of its own is
+// nothing to compare, so the registry is not read at all.
+func warnImageDigestDrift(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, warn io.Writer) {
+	skip := func(why string) {
+		fmt.Fprintf(warn, "warning: the image digest of %s workflow %s is not compared with its build record: %s\n", spec.Repo, spec.Workflow, why)
+	}
+	host, err := infra.RegistryHost(env.lc)
+	if err != nil {
+		skip(oneLine(err.Error()))
+		return
+	}
+	image := gcp.ImageName(host+"/"+gcp.RegistryRepoID(slug), slug, spec.Workflow)
+	b, err := env.recordBucket(ctx)
+	if err != nil {
+		skip(oneLine(err.Error()))
+		return
+	}
+	data, _, err := b.Read(ctx, imagecheck.RecordKey(slug, spec.Workflow))
+	switch {
+	case errors.Is(err, blobx.ErrNotExist):
+		return
+	case err != nil:
+		skip(oneLine(err.Error()))
+		return
+	}
+	rec, err := imagecheck.ParseRecord(data)
+	if err != nil {
+		skip("the record is unreadable (" + oneLine(err.Error()) + ")")
+		return
+	}
+	if rec.ImageDigest == "" {
+		return
+	}
+	live, err := checkRegistry().Digest(ctx, image+":latest")
+	switch {
+	// A launchers-only identity holds no artifactregistry read (the
+	// operator role has it): every launch would otherwise warn about a
+	// permission it was never meant to have, which is not drift and not
+	// anything its reader can act on. Silence here says "not compared" by
+	// saying nothing, exactly as a workflow with no build record does.
+	case registryDenied(err):
+		return
+	// The tag the build promoted the recorded digest to is gone — the
+	// daily check's own latest-drift case (LatestMissing) — which is the
+	// one read failure the operator can act on, so it is named as such.
+	case errors.Is(err, imagecheck.ErrManifestUnknown):
+		fmt.Fprintf(warn, "warning: the registry has no %s:latest, so the digest the build record of %s workflow %s names (%s) is not the one that tag resolves to\n", image, spec.Repo, spec.Workflow, oneLine(rec.ImageDigest))
+		return
+	case err != nil:
+		skip(oneLine(err.Error()))
+		return
+	}
+	if rec.DigestMismatch(live) {
+		fmt.Fprintf(warn, "warning: the image of %s workflow %s is at digest %s, not the %s its build record names\n", spec.Repo, spec.Workflow, oneLine(live), oneLine(rec.ImageDigest))
+	}
+}
+
+// registryDenied reports whether err is the registry refusing the launcher's
+// identity rather than failing to answer: a 401 or 403 from the manifest read.
+// The launcher role is granted run.jobs, run.executions, run.operations.get
+// and secretmanager.list, and artifactregistry read goes to operators alone
+// (deploy/terraform/gcp/modules/repo/registry.tf), so a principal that may
+// launch and may not read the registry is the expected state rather than a
+// fault. The check is textual because the error crosses the OCI client, which
+// reports the status in its message and wraps nothing a caller can match on.
+func registryDenied(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "HTTP 401") || strings.Contains(msg, "HTTP 403")
 }
 
 // taskText is the task from exactly one of TEXT and --task-file. With

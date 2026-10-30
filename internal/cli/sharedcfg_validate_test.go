@@ -312,6 +312,29 @@ func TestParseSharedRefusals(t *testing.T) {
 	}
 }
 
+// TestSharedConfigRefusesBitbucketAPIRoots: the API-root allow-list is the
+// owner's policy about where the installation's Bitbucket token may be sent
+// (D474), published through the policy node, which the runner reads and fails
+// closed on. The shared config is a file any launcher with objectAdmin on the
+// runs bucket can write, so a root published there would let that launcher
+// choose the host a run hands the credential to — localcfg.Config.Shared nils
+// the key, and this reader refuses it by key and by value.
+func TestSharedConfigRefusesBitbucketAPIRoots(t *testing.T) {
+	data := validShared() + "bitbucket_api_roots:\n    - https://api.bitbucket.example/2.0\n"
+	_, err := ParseShared([]byte(data), sharedAnchor)
+	if err == nil {
+		t.Fatal("a published shared config carrying bitbucket_api_roots: was accepted")
+	}
+	for _, want := range []string{"bitbucket_api_roots", "never published", "fugaro update"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if strings.ContainsAny(err.Error(), "\n\x1b\a") {
+		t.Errorf("the refusal is not one clean line: %q", err.Error())
+	}
+}
+
 // A published image_source other than the default is accepted only on a
 // machine whose own local config records the same one (design §10.7,
 // DECIDED as option (i)): the pin's shape is checked against the owner that

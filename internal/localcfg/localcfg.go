@@ -141,6 +141,23 @@ type Config struct {
 	// can collide with a ReservedSecrets key in the first place, so
 	// ValidateProjectSecrets checks membership in ReservedSecrets only.
 	ProjectSecrets map[string]config.ProjectSecret `yaml:"project_secrets,omitempty"`
+	// BitbucketAPIRoots are the Bitbucket API roots the owner allow-lists
+	// (D474), for an installation that sends its Bitbucket token to a root of
+	// its own rather than to Bitbucket's: a cloud run refuses any
+	// FUGARO_BITBUCKET_API_URL outside this list (projectpolicy's
+	// bitbucket_api_roots, which `fugaro project policy publish` copies this
+	// into — the run reads the node, so this file is where the owner writes
+	// it). Only the owner sets it, here, never in fugaro.yaml, and the shared
+	// config never carries it: whoever can write the runs bucket must not be
+	// able to widen where a credential is sent.
+	//
+	// It is a copy and not a derivation, and it is held to the node's rule
+	// alone (projectpolicy.validBitbucketAPIRoots): an https root that reaches
+	// one host, without a query, a fragment or userinfo. There is no second
+	// copy of that rule here on purpose — a root that the node would refuse is
+	// refused by the publish that builds the node, before anything is written,
+	// with a sentence naming the entry.
+	BitbucketAPIRoots []string `yaml:"bitbucket_api_roots,omitempty"`
 	// Profiles are the project's job profiles (design
 	// docs/design/project-centric.md §4.1), by name: what a Cloud Run job is
 	// deployed as, and what a repository's workflow selects with job_profile.

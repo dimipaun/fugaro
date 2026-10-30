@@ -54,13 +54,25 @@ func MintAt(ctx context.Context, signer Signer, c Claims, now time.Time) (string
 	if email == "" {
 		return "", errors.New("budget token: no signer")
 	}
+	// fb and fpr are written only when the run has them. A run that pushes
+	// carries fb (the branch it creates or continues) and a follow-up and a
+	// review run carry fpr; a run that neither pushes nor writes a pull
+	// request — an artifact run — mints exactly the claim set every earlier
+	// release minted.
+	extra := map[string]any{
+		"fs": c.Slug, "fr": c.Run, "fx": c.FX.UnixMilli(), "fp": c.FP, "rb": c.RB,
+	}
+	if c.Branch != "" {
+		extra[ClaimBranch] = c.Branch
+	}
+	if len(c.PRs) > 0 {
+		extra[ClaimPRs] = c.PRs
+	}
 	payload, err := json.Marshal(map[string]any{
 		"iss": email, "sub": email, "aud": Audience,
 		"iat": now.Unix(), "exp": now.Add(Lifetime).Unix(),
-		"uid": c.UID(),
-		"claims": map[string]any{
-			"fs": c.Slug, "fr": c.Run, "fx": c.FX.UnixMilli(), "fp": c.FP, "rb": c.RB,
-		},
+		"uid":    c.UID(),
+		"claims": extra,
 	})
 	if err != nil {
 		return "", err

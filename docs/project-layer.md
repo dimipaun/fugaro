@@ -24,12 +24,26 @@ A workflow takes a profile only when it names one (`workflows.<name>.profile`), 
 
 A workflow's **job profile** is a different selection on a different key: `workflows.<name>.job_profile` names a profile of the *published policy* (§5, phase 3 of [plans/2026-10-14-project-centric.md](plans/2026-10-14-project-centric.md)), which is the Cloud Run job's shape — its provider, cpu, memory, task timeout, secret mounts and admission list — and not the project layer's workflow template. It is `job_profile` and not `profile` because `profile` already names the layer's template above; a file may carry both. A workflow that names none runs on `standard`, which any policy carrying a `profiles` block must define; writing `job_profile: standard` says the same thing and is treated exactly like omitting the key, so it runs with no policy or a policy without profiles too. The selection is refused, never resolved to another profile: `policy publish` refuses a `profiles:` block that does not define `standard`, and a run refuses a workflow whose `job_profile` the published policy does not define (`internal/runner`'s checkJobProfile; a project that has published no policy at all refuses an explicit selection other than `standard` too, because nothing defines it). What a profile *holds* — its cpu, memory, task timeout, secrets and admission list — is applied where the job is built: `fugaro setup` deploys one Cloud Run job and one job service account per (profile, provider, Claude account) for every profile a local config names (§10), a `checkout: clone` workflow's launch of a repository on the profile's own provider runs on that job rather than on a per-repository one (a repository on another provider, and a repository whose profile is one no shared job serves — in this release every Bitbucket repository, either way, since no shared job serves Bitbucket — keeps its per-repository job, decided before the launch takes a claim), and a run in it holds the repository to the profile's own `allow_repos` as well as the project's (`internal/runner`'s `admissionCheck`). The Claude account is an axis of that job's name: a profile serves a Claude account by listing it in `profiles.<p>.claude_accounts` (the `default` account, or a name of the local config's `claude_accounts`), which deploys one job per (profile, provider, account) and mounts that account's token on it — the `default` account on the profile's no-account job. A profile that mounts a Claude OAuth token in its `secrets:` is still refused (`fugaro setup` refuses it: the field is how a profile states accounts, design [project-named-oauth-tokens.md](design/project-named-oauth-tokens.md) D4), and a launch that selects an account the profile serves no job for is refused (§5). Which runs actually work on a shared job today is [below](#which-runs-work-on-a-shared-job-today) — in short, every gate the tree carries is open, and the design's live end-to-end check has not been run. A launch that cannot read the repository's own workflows — `fugaro run --repo …` from a machine with no checkout of it — keeps the per-repository job, as it does today. A baked workflow keeps its per-repository job until phase 4 ends (design [project-centric.md §4.4](design/project-centric.md)), and a policy that carries no `profiles:` block changes nothing: the jobs stay per repository, and a workflow that names a `job_profile` other than `standard` there is refused at run start, because nothing defines it.
 
-**The policy is version 3 from fugaro 0.9.0, the release that states Claude accounts in it**
+**The policy is version 4 from fugaro 0.14.0, the release that states the Bitbucket token's block in it**
 (`projectpolicy.Version`, and the `projectpolicy.VersionSince` table beside it names the release
 each version came in — 1 is the model, 0.8.0; 2 is the profile gate, 0.8.5; 3 is the account axis,
-0.9.0 — which is the release a refusal for a node *ahead* of the binary quotes, never 0.8.0, the
-release the model ships in). Version 3 adds `profiles.<p>.claude_accounts` and the `accounts` block
-that gates it: together they say which account each job of a profile serves, and one job per
+0.9.0; 4 is the Bitbucket token block, 0.14.0 — which is the release a refusal for a node *ahead*
+of the binary quotes, never 0.8.0, the release the model ships in). Version 4 adds
+`bitbucket_token.allow_repos` (the repositories the project's Bitbucket credential may reach),
+`bitbucket_token.proxy` (the operator's per-installation switch for the credentials service) and
+the owner-allow-listed `bitbucket_api_roots`, together with the rules that hold a profile mounting
+`bitbucket-token` to that block: its own exact `allow_repos`, a subset of the block's, and no such
+mount on a GitHub profile. The block is policy-wide and derived whether or not a profile mounts the
+token, because a proxied run is launched in a job that does not hold the credential and reads the
+block as its admission source. A version-3 reader would decode past `bitbucket_token` as a
+top-level key it merely lists in its unknown keys, so the bump is what makes it refuse the node
+("refresh the runner image") rather than run a Bitbucket profile whose own `allow_repos` is the
+only gate — and the other direction refuses too: a version-3 node is refused by this release's
+runs and by `fugaro project policy publish`, with the delete-then-publish remedy. Every
+installation republishes its policy for version 4.
+
+Version 3 (0.9.0) is the node that came before it: `profiles.<p>.claude_accounts` and the
+`accounts` block that gates it say which account each job of a profile serves, and one job per
 (profile, provider, account) is what `fugaro setup` deploys (§10). A reader from before that release
 cannot run such a node at all — `claude_accounts` is a member *inside* a profile entry, which its
 own profile decode refuses — so the version field is what turns that into the documented refusal,

@@ -61,7 +61,14 @@ date and the same condition.
   to `main` by **PR #675**, and P7.1 **modifies** them (§1's third table row, P7.1's "Files").
   The one Go test this change adds
   (`internal/cli/docs_mobile_telemetry_test.go`) pins **this document's own claims** and
-  nothing else.
+  nothing else. **The bullet above is kept as written: it describes 2026-10-19. Amended
+  2026-10-30 (Task P7.1a, the first half of P7.1):** the three `@react-native-firebase`
+  packages and `expo-build-properties` are now in `mobile/package.json`, `mobile/firebase.json`
+  exists, and `mobile/app.config.js` registers the config plugins; the native config files are
+  still absent from the tree, and are ignored by `mobile/.gitignore` so they stay absent.
+  **Still to come, in P7.1b**: the build-time guard (**D260**) and the ad-ID walk, this
+  document's file list and status lines, and `shared/telemetry-consent/` with
+  `mobile/src/telemetry/`.
 - **It runs no live step and it holds no secret.** The Firebase project is created by the
   owner, the native config files are delivered by EAS from the owner's own secrets, and **no
   agent creates a Firebase project, runs `eas build`, `eas secret:create` or `eas submit`, or

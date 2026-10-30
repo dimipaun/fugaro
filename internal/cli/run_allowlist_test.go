@@ -68,7 +68,7 @@ func TestLaunchPolicyGatesRefusesASlugOfAnotherRepository(t *testing.T) {
 	f := newLaunchBudget(t, "off")
 	// The allow-list admits every repository, so what refuses below is the
 	// binding and not the policy.
-	publishPolicy(t, f, `{"version":3,"allow_repos":["*"]}`)
+	publishPolicy(t, f, `{"version":4,"allow_repos":["*"]}`)
 	env := memEnv(t, f.cloudFixture)
 	spec := &task.Spec{Version: 1, RunID: budgetRun, Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x"}
 
@@ -115,7 +115,7 @@ func TestProviderKindsAgreeWithTheConfigsList(t *testing.T) {
 // is the only reason an operator sees it now rather than as a failed run.
 func TestRunRefusesBeforeLaunch(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
-	publishPolicy(t, f, `{"version":3,"allow_repos":["github/other/*"]}`)
+	publishPolicy(t, f, `{"version":4,"allow_repos":["github/other/*"]}`)
 	_, _, err := runBudget(t)
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v (exit %d), want a user error", err, ExitCode(err))
@@ -190,7 +190,7 @@ func TestRunRefusesUnderAPolicyOfThePolicyGeneration(t *testing.T) {
 // batch the policy refuses.
 func TestRunAttemptsRefusesBeforeAnyLaunch(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
-	publishPolicy(t, f, `{"version":3,"allow_repos":["github/other/*"]}`)
+	publishPolicy(t, f, `{"version":4,"allow_repos":["github/other/*"]}`)
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--attempts", "2", "Add a feature")
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v (exit %d), want a user error from the policy gate", err, ExitCode(err))
