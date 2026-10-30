@@ -3741,14 +3741,25 @@ request says so.
 
 The console's icon is the **website's own mark**, not a second drawing of it, and there is
 one file on disk rather than two to keep in step: `console/build/icon.png` is
-byte-for-byte `brand/app-icon-1024.png`, the opaque app-icon master that
+byte-for-byte `brand/app-icon-macos-1024.png`, the macOS app-icon master that
 `scripts/gen-brand-icons.py` writes from `brand/fugaro-logo.png` — the file
 `brand/README.md` and `website/README.md` both name as the source of truth for every icon
-the site serves. The website's own home-screen icon,
-`website/public/android-chrome-512x512.png`, is the same composition — the artwork cropped
-to its alpha bounding box, centred at 80 % extent on the opaque ground the generator paints
-(`--ground` of the palette in force when it last ran) — at half the size, so the console and
-a visitor's browser tab are showing the same picture.
+the site serves. Its body is the composition of the website's own home-screen icon,
+`website/public/android-chrome-512x512.png` — the artwork cropped to its alpha bounding box,
+centred at 80 % extent on the opaque ground the generator paints (`--ground` of the palette
+in force when it last ran) — so the console and a visitor's browser tab are showing the same
+picture.
+
+**The shape is macOS's (the owner's report of 2026-10-30).** Until then the file was the
+opaque square `brand/app-icon-1024.png`, and the Dock showed it as a square beside every
+rounded system icon: macOS draws an app's icon exactly as the file is and does not mask it.
+The macOS master follows Apple's icon template since Big Sur: a 1024 transparent canvas, the
+body an **824 px squircle** centred in a **100 px margin**, and a soft black shadow inside
+the margin. The outline is the superellipse |x|^n + |y|^n = 1 with n = 5.1, the
+least-squares fit to the system apps' icons on macOS 26 (Notes, Calculator; within 2.4 px
+RMS), and the shadow (10 px down, Gaussian sigma 16, 20 % black) is measured off the same
+icons. The same file is the Linux icon (`build.linux.icon`), where a rounded icon on a
+transparent ground is as usual as a square one.
 
 ### 1024, and the artwork's real size
 
@@ -3758,11 +3769,11 @@ carrying the same picture at twice the real pixels, and the mark grew with the c
 alpha bounding box of the file (alpha > 8, the generator's own `ALPHA_THRESHOLD`) is
 **1089 x 738 pixels**, with the rest transparent margin. `scripts/gen-brand-icons.py` crops
 to that box and then scales it per output, so the generator's own
-`fit(art, 1024, 0.80, ground)` — factor **0.7522**, artwork **819 x 555** — *down*scales it
-now, and the site's `android-chrome-512x512.png` (factor 0.3761, artwork 410 x 278) is the
-same artwork downscaled further. `brand/app-icon-1024.png` is therefore a
-native-resolution rendering of the mark rather than an interpolation of a smaller one, and
-the console's icon inherits exactly that.
+`fit(art, 824, 0.80, ground)` for the macOS body — factor **0.6053**, artwork **659 x 447**
+— *down*scales it now, and the site's `android-chrome-512x512.png` (factor 0.3761, artwork
+410 x 278) is the same artwork downscaled further. `brand/app-icon-macos-1024.png` is
+therefore a native-resolution rendering of the mark rather than an interpolation of a
+smaller one, and the console's icon inherits exactly that.
 
 **This section used to ask for that change, and the figures above are the answer to it.**
 Until 2026-10-20 the source was a 1024 x 1024 canvas whose mark was only **548 x 371 px**,
@@ -3788,12 +3799,13 @@ The **file choice stands**, for two reasons that never depended on the artwork's
 
 **A source change is still the only thing that moves this**, and it is a one-liner when it
 happens: replace `brand/fugaro-logo.png`, then
-`python3 -I scripts/gen-brand-icons.py && cp brand/app-icon-1024.png console/build/icon.png`,
+`python3 -I scripts/gen-brand-icons.py && cp brand/app-icon-macos-1024.png console/build/icon.png`,
 which is the whole change — `website/test/brand.mjs` and `test/unit/icon.test.ts` are what
 check it. Nothing here smooths the 512 up and calls it a 1024.
 
-`test/unit/icon.test.ts` asserts the size, the opacity (colour type 2 — a `.icns` with holes
-in it shows the desktop through the mark) and the bytes; the PR records the same figures.
+`test/unit/icon.test.ts` asserts the size, the alpha channel (colour type 6), the template's
+shape (transparent canvas corners and margin, rounded body corners, an opaque centre, the
+body's bounding box exactly 824 px at 100) and the bytes; the PR records the same figures.
 
 ### Where the packager takes it, and where a running console does
 
@@ -3828,7 +3840,7 @@ and the committed ones' ground is in any case older than `tokens.css`'s current 
 leaves the console's icon stale **until the equality test says so**:
 
 ```sh
-python3 -I scripts/gen-brand-icons.py && cp brand/app-icon-1024.png console/build/icon.png
+python3 -I scripts/gen-brand-icons.py && cp brand/app-icon-macos-1024.png console/build/icon.png
 ```
 
 That is the whole sync. It is a byte copy rather than a build step on purpose: electron's
@@ -3838,14 +3850,15 @@ implementation of the generator's own decision to keep in step.
 
 ### The tests, and the mutations each one was run against
 
-`test/unit/icon.test.ts` (9 tests), and every one of them was seen red against a planted
+`test/unit/icon.test.ts` (10 tests), and every one of them was seen red against a planted
 change before it was committed:
 
 | Claim | Mutation it was run against |
 |---|---|
 | the bytes are the master's | a 1024 x 1024 RGB PNG of the ground colour alone planted as `build/icon.png` — "is the app-icon master, byte for byte" red |
-| the picture is the site's | the same planted file: "is the picture the website serves…" red, naming block 421 at 218.06 against a tolerance of 8. The site's *maskable* icon, a different composition of the same mark, measures 218.87 the same way; the site's 512 measures **3.96**, which is what the tolerance is set from (see the test) |
-| it is a 1024, opaque PNG | the site's 512 icon planted in its place — the size assertion red ("expected 512 to be 1024"); that file is opaque too, so the colour-type half of the test is what the `logo.png` in `public/` would fail |
+| the picture is the site's | the same planted file: "is the picture the website serves…" red, naming block 421 at 218.06 against a tolerance of 8. The site's *maskable* icon, a different composition of the same mark, measures 218.87 the same way; the body of the macOS master against the site's 512 measures **3.65** over its 208 opaque blocks, which is what the tolerance is set from (see the test) |
+| it is a 1024 PNG with alpha | the site's 512 icon planted in its place — the size assertion red ("expected 512 to be 1024"); the opaque square `brand/app-icon-1024.png` planted — the colour type red (2, not 6) |
+| it has the macOS shape | the same opaque square planted: "has the macOS icon shape…" red on the first transparent canvas corner; it fails "is the picture the website serves…" too, because its body is at the wrong extent |
 | the packaging config names it | `build.mac.icon` pointed at `build/icon.icns` — "is the icon the packaging config names…" red |
 | the dock icon is set on macOS, unpackaged | `deps.packaged` dropped from `installDevDockIcon`'s guard — "does nothing once packaged" red; `deps.platform` dropped — "does nothing off macOS" red |
 | the entry point wires it | `packaged: app.isPackaged` in `src/main/index.ts` replaced with `packaged: true` — "is the icon the entry point actually installs" red |
@@ -3859,9 +3872,10 @@ installs it" is read off the file's text.
 Nothing under `.github/workflows/` — the release workflow is staged in
 `docs/pending-workflows/` and is the owner's to copy in, so the PNG-to-`.icns` conversion
 is asserted as *what that file's `npm run package` will do*, not as something this branch
-ran. Apple's icon shape: macOS draws its own rounded-rect mask over a full-bleed icon, and
-the mark is not redrawn, recoloured or inset to anticipate it — that would be editing the
-website's artwork. And any signed or notarised build: unchanged from Task 4.1's record
+ran. The mark itself: the macOS master puts the website's composition on Apple's body
+unchanged, and it is not redrawn or recoloured. (This paragraph used to say macOS draws its
+own rounded-rect mask over a full-bleed icon; it does not, and the square the owner saw in
+the Dock on 2026-10-30 is the evidence.) And any signed or notarised build: unchanged from Task 4.1's record
 above.
 
 ## The first run asks for nothing (the owner's ruling of 2026-10-20)
