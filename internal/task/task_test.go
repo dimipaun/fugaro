@@ -920,3 +920,167 @@ func manyIDs(n int) []string {
 	}
 	return ids
 }
+
+// abChallenger is a sampled challenger's block: the shape A3.3's launcher
+// writes, with an invented model ID (no fixture in this repository names a
+// real one).
+func abChallenger(pairID string) *AB {
+	return &AB{PairID: pairID, Arm: ABArmChallenger, Publish: ABPublishNone,
+		Challenger: "invented-challenger-1", ChallengerSource: ABChallengerOwner}
+}
+
+// TestABRoundTrip: the pair block survives a marshal/parse round trip, both
+// arms, and the challenger's own values are the ones that come back.
+func TestABRoundTrip(t *testing.T) {
+	pairID := "20261029-120000-abcd"
+	for _, ab := range []*AB{
+		abChallenger(pairID),
+		{PairID: pairID, Arm: ABArmChampion},
+	} {
+		s := Spec{Version: 1, RunID: pairID, Repo: "owner/repo-a", Ref: "main", Task: "do it", AB: ab}
+		data, err := s.Marshal()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(data), `"ab"`) {
+			t.Fatalf("AB set but missing from marshal: %s", data)
+		}
+		got, err := Parse(data)
+		if err != nil {
+			t.Fatalf("parse of %s: %v", data, err)
+		}
+		if got.AB == nil || *got.AB != *ab {
+			t.Fatalf("round trip = %+v, want %+v", got.AB, ab)
+		}
+	}
+}
+
+// TestABChallengerRequiresPublishNone: a challenger that would publish is
+// refused. D554 makes the shadow arm the whole reason a pair is safe to
+// launch, so a block saying otherwise is a launcher's bug, not a run's
+// opinion.
+func TestABChallengerRequiresPublishNone(t *testing.T) {
+	ab := abChallenger("20261029-120000-abcd")
+	ab.Publish = ""
+	s := Spec{Version: 1, RunID: "20261029-120000-abcd", Repo: "owner/repo-a", Ref: "main", Task: "do it", AB: ab}
+	err := s.Validate()
+	if err == nil || !strings.Contains(err.Error(), "publish") {
+		t.Fatalf("a challenger with no publish = %v, want a refusal naming publish", err)
+	}
+}
+
+// TestABChallengerRequiresModel: a challenger naming no model is refused —
+// the pair's one difference (D555) is the coder model, so a challenger
+// without one is a champion's task launched twice.
+func TestABChallengerRequiresModel(t *testing.T) {
+	ab := abChallenger("20261029-120000-abcd")
+	ab.Challenger = ""
+	s := Spec{Version: 1, RunID: "20261029-120000-abcd", Repo: "owner/repo-a", Ref: "main", Task: "do it", AB: ab}
+	err := s.Validate()
+	if err == nil || !strings.Contains(err.Error(), "challenger") {
+		t.Fatalf("a challenger naming no model = %v, want a refusal naming challenger", err)
+	}
+}
+
+// TestABChampionRefusesPublishNone: the champion is the run the developer
+// gets: it publishes exactly as an unsampled run and runs no challenger, so
+// the three fields that describe a challenger are refused on it rather than
+// ignored. Ignoring them is what would break the record: the runner echoes
+// Spec.AB onto result.json (A2.1), and both published schemas refuse a
+// champion carrying any of the three.
+func TestABChampionRefusesPublishNone(t *testing.T) {
+	const pairID = "20261029-120000-abcd"
+	champion := func(mutate func(*AB)) *AB {
+		ab := &AB{PairID: pairID, Arm: ABArmChampion}
+		mutate(ab)
+		return ab
+	}
+	for _, tc := range []struct {
+		name string
+		ab   *AB
+	}{
+		{"a publish", champion(func(ab *AB) { ab.Publish = ABPublishNone })},
+		{"a challenger model", champion(func(ab *AB) { ab.Challenger = "invented-challenger-1" })},
+		{"a challenger source", champion(func(ab *AB) { ab.ChallengerSource = ABChallengerOwner })},
+	} {
+		s := Spec{Version: 1, RunID: pairID, Repo: "owner/repo-a", Ref: "main", Task: "do it", AB: tc.ab}
+		err := s.Validate()
+		if err == nil || !strings.Contains(err.Error(), "champion") {
+			t.Errorf("a champion carrying %s = %v, want a refusal naming champion", tc.name, err)
+		}
+	}
+	// The bare champion — the shape A3.3 launches — is accepted.
+	s := Spec{Version: 1, RunID: pairID, Repo: "owner/repo-a", Ref: "main", Task: "do it",
+		AB: &AB{PairID: pairID, Arm: ABArmChampion}}
+	if err := s.Validate(); err != nil {
+		t.Fatalf("a champion carrying nothing but its pair and arm: %v", err)
+	}
+}
+
+// TestABRefusesOverrideModel: the challenger never travels as an override
+// (D555). Overrides.Model with no per-role models reaches every stage
+// (Spec.Apply), so a task carrying both would change the reviewer the two
+// arms share and the review signals would stop being comparable.
+func TestABRefusesOverrideModel(t *testing.T) {
+	s := Spec{Version: 1, RunID: "20261029-120000-abcd", Repo: "owner/repo-a", Ref: "main", Task: "do it",
+		AB: abChallenger("20261029-120000-abcd"), Overrides: Overrides{Model: "invented-champion-1"}}
+	err := s.Validate()
+	if err == nil || !strings.Contains(err.Error(), "overrides.model") {
+		t.Fatalf("ab with overrides.model = %v, want a refusal naming overrides.model", err)
+	}
+	// The same override without a pair block is the flag it always was.
+	s.AB = nil
+	if err := s.Validate(); err != nil {
+		t.Fatalf("overrides.model without an ab block: %v", err)
+	}
+}
+
+// TestABUnknownArmRefused: the arm's vocabulary is closed, like rigor's and
+// tier's: a near miss is a launcher's bug rather than a run's opinion about
+// which arm it is.
+func TestABUnknownArmRefused(t *testing.T) {
+	for _, arm := range []ABArm{"", "Champion", "champion ", "shadow"} {
+		s := Spec{Version: 1, RunID: "20261029-120000-abcd", Repo: "owner/repo-a", Ref: "main", Task: "do it",
+			AB: &AB{PairID: "20261029-120000-abcd", Arm: arm}}
+		err := s.Validate()
+		if err == nil || !strings.Contains(err.Error(), "arm") {
+			t.Errorf("arm %q = %v, want a refusal naming arm", arm, err)
+		}
+	}
+	// The pair's own id, and the challenger's source, are the same kind of
+	// closed value: an empty pair id names no pair, and a source that is not
+	// the owner's is not one D572 reserves.
+	for _, tc := range []struct {
+		name string
+		ab   *AB
+		want string
+	}{
+		{"empty pair_id", &AB{Arm: ABArmChampion}, "pair_id"},
+		{"unknown source", &AB{PairID: "20261029-120000-abcd", Arm: ABArmChallenger, Publish: ABPublishNone, Challenger: "invented-challenger-1", ChallengerSource: "repo"}, "challenger_source"},
+		{"unknown publish", &AB{PairID: "20261029-120000-abcd", Arm: ABArmChallenger, Publish: "all", Challenger: "invented-challenger-1", ChallengerSource: ABChallengerOwner}, "publish"},
+	} {
+		s := Spec{Version: 1, RunID: "20261029-120000-abcd", Repo: "owner/repo-a", Ref: "main", Task: "do it", AB: tc.ab}
+		err := s.Validate()
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s = %v, want a refusal naming %s", tc.name, err, tc.want)
+		}
+	}
+}
+
+// TestSpecWithoutABIsByteIdentical: a launch that sampled nothing writes no
+// ab key at all, so its task.json is byte-for-byte what the release before
+// this field wrote. That is what keeps every unsampled launch readable by a
+// runner older than the field, whose Parse refuses the whole spec over an
+// unknown key — the same claim Spec.BaseBranch, CompressionOff and
+// DigestRuns rest on.
+func TestSpecWithoutABIsByteIdentical(t *testing.T) {
+	s := Spec{Version: 1, RunID: "20261029-120000-abcd", Repo: "owner/repo-a", Ref: "main", Task: "do it"}
+	data, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"version":1,"run_id":"20261029-120000-abcd","repo":"owner/repo-a","ref":"main","task":"do it","overrides":{}}`
+	if string(data) != want {
+		t.Fatalf("a spec with no ab block is not byte-identical to the previous release's:\n got %s\nwant %s", data, want)
+	}
+}
