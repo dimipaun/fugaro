@@ -46,6 +46,10 @@ tags=$(awk '
   }
   END { printf "%s", out }
 ' .goreleaser.yaml)
+# A tree with no ee/ (the core-without-ee workflow deletes it) has nothing for
+# the tag to compile, and go list would fail there on the assembly file that
+# imports it.
+[ -d ee ] || tags=""
 tags_flag=""
 [ -n "$tags" ] && tags_flag="-tags=$tags"
 

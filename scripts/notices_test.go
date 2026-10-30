@@ -116,12 +116,20 @@ func TestThirdPartyNoticesUnionsTheBuildMatrix(t *testing.T) {
 		"FAKE_MODULE_DIR=" + modules,
 	})
 
-	notices := readText(t, out)
-	for _, want := range []string{
+	want := []string{
 		"example.com/everywhere", "the everywhere module's licence text",
 		"example.com/darwinonly", "the darwin-only module's licence text",
-		"example.com/tagonly", "the tag-only module's licence text",
-	} {
+	}
+	// The fake answers a tagged call with a module no untagged call links, so the
+	// tag-only module is expected exactly when this tree's release build compiles
+	// the tag: the core-without-ee workflow deletes ee/, and there the tag names
+	// no code for the script to ask for.
+	if len(releaseTags(t, root)) > 0 {
+		want = append(want, "example.com/tagonly", "the tag-only module's licence text")
+	}
+
+	notices := readText(t, out)
+	for _, want := range want {
 		if !strings.Contains(notices, want) {
 			t.Errorf("%s lacks %q: the darwin/arm64 target's modules, or the tagged build's, are missing, so the script does not ask go list -deps once per target and with the release build's tags\n%s", noticesFile, want, firstLines(notices, 20))
 		}
@@ -467,8 +475,12 @@ var imagePlants = []struct {
 		want:    "images/base/Dockerfile",
 	},
 	{
-		name:   "a planted tagged base image naming the Subscription Edition licence is accepted",
-		bodies: map[string]string{"base": dockerfilePlant(taggedBuild, subscriptionLicenceLabel)},
+		name: "a planted tree whose tagged images name the Subscription Edition licence is accepted",
+		bodies: map[string]string{
+			"base":        dockerfilePlant(taggedBuild, subscriptionLicenceLabel),
+			"history":     dockerfilePlant(taggedBuild, subscriptionLicenceLabel),
+			"credentials": dockerfilePlant("", mitLicenceLabel),
+		},
 	},
 	{
 		name:   "a planted untagged credentials image with an MIT label is accepted",
@@ -501,36 +513,44 @@ func dockerfilePlant(tags, label string) string {
 	return body + label + "\n"
 }
 
-// plantImages writes a tree carrying one Dockerfile per published image: the
-// bodies a plant names, and an untagged one with the MIT label for the rest,
-// which is what the three carry until E1.4 sets the tag (design §8).
+// plantImages writes a tree carrying the Dockerfiles a plant names. The reader
+// takes its list of images from the tree, so a plant writes only the image it is
+// about.
 func plantImages(t *testing.T, bodies map[string]string) string {
 	t.Helper()
 	root := t.TempDir()
-	for _, name := range imageDockerfiles {
-		body, ok := bodies[name]
-		if !ok {
-			body = dockerfilePlant("", mitLicenceLabel)
-		}
-		writePlant(t, root, "images/"+name+"/Dockerfile", body)
+	for _, name := range slices.Sorted(maps.Keys(bodies)) {
+		writePlant(t, root, "images/"+name+"/Dockerfile", bodies[name])
 	}
 	return root
 }
 
-// imageTagLabelGaps reports every published image whose Dockerfile compiles the
+// imageTagLabelGaps reports every image in the tree whose Dockerfile compiles the
 // tagged binary without a licence label naming the Subscription Edition licence.
 // The tag is what puts ee/ code into the image, and the label is the one thing a
-// person who pulls it reads before it runs (F16c, G11).
+// person who pulls it reads before it runs (F16c, G11). The list comes from the
+// tree rather than from a list written here, so an image added later is gated
+// without anyone remembering this file -- the credentials image is the other half
+// of the gate, carrying no ee/ code and keeping its MIT label (D524, design §8).
 func imageTagLabelGaps(t *testing.T, root string) []string {
 	t.Helper()
+	paths, err := filepath.Glob(filepath.Join(root, "images", "*", "Dockerfile"))
+	if err != nil {
+		t.Fatalf("globbing the image Dockerfiles under %s: %v", root, err)
+	}
+	if len(paths) == 0 {
+		return []string{"the tree has no images/*/Dockerfile, so nothing gates the images that publish ee/ code"}
+	}
+	slices.Sort(paths)
+
 	var gaps []string
-	for _, name := range imageDockerfiles {
-		rel := "images/" + name + "/Dockerfile"
-		body := readTextIfAny(t, filepath.Join(root, filepath.FromSlash(rel)))
-		if body == "" {
-			gaps = append(gaps, rel+" cannot be read, so nothing says which licence the image it builds is under")
-			continue
+	for _, path := range paths {
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			t.Fatal(err)
 		}
+		rel = filepath.ToSlash(rel)
+		body := readText(t, path)
 		if !slices.Contains(dockerfileBuildTags(body), taggedBuild) {
 			continue
 		}
@@ -540,12 +560,6 @@ func imageTagLabelGaps(t *testing.T, root string) []string {
 	}
 	return gaps
 }
-
-// imageDockerfiles are the three images the release publishes, by the directory
-// each Dockerfile sits in. The credentials image is here for the other half of
-// the gate: it runs no coordination and carries no ee/ code, so it builds
-// untagged and keeps an MIT label (D524, design §8).
-var imageDockerfiles = []string{"base", "history", "credentials"}
 
 // dockerfileBuildTags is the build tag set a Dockerfile's own `go build` command
 // passes. The RUN's continuation lines are joined first, so the flag reads the
@@ -847,9 +861,15 @@ func (e *envList) UnmarshalYAML(node *yaml.Node) error {
 
 // releaseTags is the build tag set .goreleaser.yaml's builds compile. The
 // notices file and the enumeration that checks it are both about the binary the
-// archive ships, so both ask the toolchain for this build.
+// archive ships, so both ask the toolchain for this build. A tree with no ee/ --
+// the core-without-ee workflow deletes it -- has nothing for the tag to compile
+// and cannot ask for it: the assembly file the tag builds imports a package that
+// is not there.
 func releaseTags(t *testing.T, root string) []string {
 	t.Helper()
+	if _, err := os.Stat(filepath.Join(root, "ee")); err != nil {
+		return nil
+	}
 	cfg := readGoreleaser(t, filepath.Join(root, ".goreleaser.yaml"))
 	return slices.Sorted(maps.Keys(buildTagSet(t, cfg, []byte(noTagWorkflow))))
 }
