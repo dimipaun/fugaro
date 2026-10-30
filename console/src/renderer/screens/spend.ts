@@ -201,8 +201,8 @@ export type SpendDimension = (typeof SPEND_DIMENSIONS)[number]
  * SPEND_ACCOUNTS is the three accounts the design keeps apart, in the order the
  * screen draws them: the billed model dollars, the notional `~$` of a
  * subscription, and compute (an estimate by design). It is a list rather than
- * three fields so that "there are exactly three charts" is a fact a test can
- * read off it.
+ * three fields so that "every group holds exactly three bars" is a fact a test
+ * can read off it.
  */
 export const SPEND_ACCOUNTS = Object.freeze(['model', 'notional', 'compute'] as const)
 
@@ -400,6 +400,68 @@ export interface SpendSeries {
   readonly peak: Reading
   /** why there is nothing to draw, or `null` when there is */
   readonly empty: string | null
+}
+
+/**
+ * SpendBar is one bar of the grouped chart: one account's value for one key.
+ *
+ * Its `share` is the bar's height as a share of the chart's **one shared axis**,
+ * not of the account's own peak: the three accounts are drawn as three bars side
+ * by side on one scale, so a reader can see how the day's three figures sit
+ * against each other. The bar is its own account's value and never a sum -- a
+ * bar carrying billed + notional would be the one figure the design forbids --
+ * and `reading` is what the document said about it, which is the figure the
+ * table draws beside it.
+ */
+export interface SpendBar {
+  readonly key: string
+  readonly account: SpendAccount
+  readonly reading: Reading
+  /** the bar's height, as a percent of the chart's own shared axis */
+  readonly share: Reading
+  readonly partial: boolean
+  readonly hollow: boolean
+}
+
+/**
+ * SpendGroup is one key's group: the three accounts' bars side by side, and the
+ * document's own row behind them -- or `null` for a day the history does not
+ * hold, which is drawn as one hatched column labelled "no record" and never as
+ * three bars of no height.
+ *
+ * `bars` holds one bar per account, in `SPEND_ACCOUNTS` order, always three of
+ * them: a bar whose reading is `n/a` is still a bar here (the model says what
+ * the document said), and the drawing is what leaves it out and writes its `n/a`
+ * at its foot.
+ */
+export interface SpendGroup {
+  readonly key: string
+  /** the history holds no document for this key */
+  readonly gap: boolean
+  readonly partial: boolean
+  readonly row: SpendRow | null
+  readonly bars: readonly SpendBar[]
+}
+
+/**
+ * SpendChart is the one chart the screen draws: a shared axis, one group per
+ * key, and the rows the range does not cover.
+ *
+ * `axis` is the **largest value any account draws**, in that account's own state
+ * -- a `~$` axis top is a notional figure and says so. It is one value the
+ * document carries and never a sum: the three accounts are never added, on the
+ * axis or anywhere else, and an axis topped by billed + notional would be a
+ * figure no document holds.
+ *
+ * `outside` is the rows whose key is not a key of the chart (a day before
+ * `since`, say). They are listed in the table and are not drawn in the chart,
+ * because on a day axis the position IS the date: a row placed by its own date
+ * would sit right of `until` and stretch the axis past the range.
+ */
+export interface SpendChart {
+  readonly axis: Reading
+  readonly groups: readonly SpendGroup[]
+  readonly outside: readonly SpendGroup[]
 }
 
 /**
@@ -711,6 +773,7 @@ export interface SpendModel {
   readonly switches: readonly SpendSwitchEntry[]
   readonly rows: readonly SpendRow[]
   readonly series: readonly SpendSeries[]
+  readonly chart: SpendChart
   readonly totals: SpendTotals
   readonly caps: SpendCaps
   readonly persons: SpendPersons
@@ -1411,6 +1474,109 @@ function withAccountState(value: number, account: SpendAccount): Reading {
   }
 }
 
+/** CHART_AXIS_REASON is the console's sentence for a chart with nothing to draw:
+ * no account holds a value in the range, so there is no top to the axis -- and
+ * the axis top is `n/a` with this reason rather than a `$0.00` nobody measured. */
+const CHART_AXIS_REASON = 'no account has a value to draw in the range the document covers'
+
+/** chartAxis is the chart's one shared axis: the largest value any account
+ * draws, in the state of the account that drew it. It is a value the document
+ * carries, and it is never a sum. */
+function chartAxis(series: readonly SpendSeries[]): Reading {
+  let best: { readonly value: number; readonly account: SpendAccount } | null = null
+  for (const one of series) {
+    for (const point of one.points) {
+      const { reading } = point
+      if (!plottable(reading) || reading.value === null) continue
+      if (best === null || reading.value > best.value) best = { value: reading.value, account: one.account }
+    }
+  }
+  return best === null ? unavailable(CHART_AXIS_REASON) : withAccountState(best.value, best.account)
+}
+
+/** barOf is one value as a bar on the chart's shared axis. A value the document
+ * does not carry draws no bar: its share is a gap carrying the value's own
+ * reason, which is the rule `pointAt` follows for a height. */
+function barOf(
+  value: { readonly key: string; readonly reading: Reading; readonly partial: boolean },
+  account: SpendAccount,
+  axis: number | null,
+): SpendBar {
+  const { key, reading, partial } = value
+  if (reading.value === null) {
+    return { key, account, reading, share: gap(reading.because), partial, hollow: partial }
+  }
+  const share = axis === null || axis === 0 ? 0 : (reading.value / axis) * 100
+  return { key, account, reading, share: measured(share), partial, hollow: partial }
+}
+
+/** groupOf is the series as one group per key. The three series share a key
+ * space -- `buildSeries` enumerates the range's days for every account, and
+ * walks the document's rows in the document's own order for a breakdown with no
+ * axis -- so the keys are the first series' points and each account's bar for a
+ * key is that series' point at the same index. */
+function groupOf(series: readonly SpendSeries[], rows: readonly SpendRow[], axis: Reading): readonly SpendGroup[] {
+  const first = series[0]
+  if (first === undefined) return []
+  const held = new Map<string, SpendRow>()
+  for (const row of rows) held.set(row.key, row)
+  const groups: SpendGroup[] = []
+  for (let at = 0; at < first.points.length; at += 1) {
+    const bars: SpendBar[] = []
+    for (const one of series) {
+      const point = one.points[at]
+      if (point === undefined) continue
+      bars.push(barOf(point, one.account, axis.value))
+    }
+    const key = first.points[at]?.key ?? ''
+    const row = held.get(key) ?? null
+    groups.push({
+      key,
+      // The history holds no document for a key of the enumerated range, and
+      // that is the whole of what a gap is: a row the range does not cover is a
+      // row (`outside`), not a gap.
+      gap: row === null,
+      partial: row === null ? bars.some((bar) => bar.partial) : row.partial,
+      row,
+      bars,
+    })
+  }
+  return groups
+}
+
+/**
+ * buildChart is the three series as the one chart the screen draws.
+ *
+ * `days` is the enumerated range when the document groups by day, and `null`
+ * otherwise -- the same argument `buildSeries` takes, and the reason the rows a
+ * range does not cover can be told from the days it does: with no axis there is
+ * no outside.
+ */
+export function buildChart(
+  series: readonly SpendSeries[],
+  rows: readonly SpendRow[],
+  days: readonly string[] | null,
+): SpendChart {
+  const axis = chartAxis(series)
+  const groups = groupOf(series, rows, axis)
+  const inside = new Set<string>()
+  for (const group of groups) inside.add(group.key)
+  const outside: SpendGroup[] = []
+  if (days !== null) {
+    for (const row of rows) {
+      if (inside.has(row.key)) continue
+      outside.push({
+        key: row.key,
+        gap: false,
+        partial: row.partial,
+        row,
+        bars: SPEND_ACCOUNTS.map((account) => barOf(plotted(row, account), account, axis.value)),
+      })
+    }
+  }
+  return { axis, groups, outside }
+}
+
 // ---------------------------------------------------------------------------
 // The caps panel.
 // ---------------------------------------------------------------------------
@@ -1576,6 +1742,10 @@ export function buildSpendModel(
   const withheld = dimension === 'person' && !personsEnabled
   const drawn = withheld ? [] : rows
   const days = dimension === 'day' ? dayRange(since, until) : null
+  const series: readonly SpendSeries[] = SPEND_ACCOUNTS.map((account) =>
+    withheld ? withheldSeries(account) : buildSeries(drawn, account, days),
+  )
+  const chart = buildChart(series, drawn, days)
 
   const notes: string[] = []
   if (withheld) notes.push(PERSON_OFF_NOTE)
@@ -1588,7 +1758,7 @@ export function buildSpendModel(
     // days, because a row outside the range is a row, not a gap.
     notes.push('a day in this range with no document is a gap, not a zero: the history keeps a window and days outside it are pruned')
   }
-  const stray = outsideRange(drawn, days)
+  const stray = chart.outside.length
   if (stray > 0) {
     notes.push(`${stray} row(s) outside the range the document covers are listed below and not drawn in the charts: a day axis places a point by its date`)
   }
@@ -1611,11 +1781,8 @@ export function buildSpendModel(
       note: entry === 'person' && !personsEnabled ? PERSON_OFF_NOTE : null,
     })),
     rows: drawn,
-    series: SPEND_ACCOUNTS.map((account) =>
-      withheld
-        ? withheldSeries(account)
-        : buildSeries(drawn, account, days),
-    ),
+    series,
+    chart,
     totals: totalsOf(report['totals']),
     caps: capsOf(budget),
     persons: { enabled: personsEnabled, withheld },
@@ -1628,17 +1795,6 @@ export function buildSpendModel(
     warnings: arrayAt(report['warnings']).filter((warning): warning is string => typeof warning === 'string'),
     notes,
   }
-}
-
-/** outsideRange counts the rows whose key is not a day of the enumerated range:
- * the rows `buildSeries` does not plot. With no range there is no axis to be
- * outside of. A repeated key is one row on the axis and is not counted. */
-function outsideRange(rows: readonly SpendRow[], days: readonly string[] | null): number {
-  if (days === null) return 0
-  const inside = new Set(days)
-  const outside = new Set<string>()
-  for (const row of rows) if (!inside.has(row.key)) outside.add(row.key)
-  return outside.size
 }
 
 /** hasGapDay says whether a day of the enumerated range has no row at all,
@@ -2019,6 +2175,29 @@ export interface ScreenFactory {
   create(tag: string): ScreenElement
 }
 
+/**
+ * SpendFactory is a `ScreenFactory` that can also make an element in the **SVG**
+ * namespace: the chart's bars, its gridlines and its axis are geometry, and an
+ * element made with `create` is in the HTML namespace and is not drawn inside an
+ * `svg` at all.
+ *
+ * It is a second interface rather than a method added to `ScreenFactory`, for
+ * the reason `run.ts`'s `RunFactory` states: the two namespaces are two calls in
+ * the DOM (`createElement` and `createElementNS`), and the cross-screen tests
+ * hold the screens' factories assignable to each other -- a base factory that
+ * had grown an SVG method would make that guard fail for a screen that draws no
+ * SVG. `entry.ts`'s `DomScreenFactory` answers both.
+ */
+export interface SpendFactory extends ScreenFactory {
+  createNS(tag: string): ScreenElement
+}
+
+/** makeNS is `make` in the SVG namespace, so the class is still written in the
+ * one place `make` writes it. */
+function makeNS(factory: SpendFactory, tag: string, ...classes: string[]): ScreenElement {
+  return make({ create: (name) => factory.createNS(name) }, tag, ...classes)
+}
+
 /** make is a fresh element with its classes. */
 function make(factory: ScreenFactory, tag: string, ...classes: string[]): ScreenElement {
   const element = factory.create(tag)
@@ -2096,14 +2275,266 @@ function killBanner(factory: ScreenFactory, kill: KillView): ScreenElement {
   return element
 }
 
-/** header draws the project line: project, source, the range and the declared
- * week convention. */
+/** CHART_AXIS_WORD is the axis line's own word: the figure beside it is the
+ * axis top, and the gridlines under it are shares of that one figure. */
+const CHART_AXIS_WORD = 'axis'
+
+/** GAP_COLUMN_WORD labels the one column a day the history does not hold draws:
+ * a gap, said in words, so the hatch is never read as a measurement. */
+const GAP_COLUMN_WORD = 'no record'
+
+/** SPEND_CHART_SIZE is the chart's own drawing unit: the `viewBox` is
+ * `0 0 100 100` and `preserveAspectRatio="none"` stretches it to the panel, so a
+ * bar's width and its height are shares and never pixels (the shape `live.ts`'s
+ * fleet bar uses). */
+const SPEND_CHART_SIZE = 100
+
+/** SPEND_GRIDLINE_SHARES are the shares of the axis the gridlines are drawn at,
+ * the top one being the axis itself. They are the drawing's geometry: the axis
+ * top is the one figure, and it is written once, beside the top gridline. */
+const SPEND_GRIDLINE_SHARES = Object.freeze([25, 50, 75, 100])
+
+/** SPEND_GROUP_INSET is the share of a group's own width left empty on each
+ * side, so two neighbouring groups are not read as one bar of six columns. */
+const SPEND_GROUP_INSET = 0.15
+
+/** SPEND_BAR_INSET is the share of one bar's column left empty between it and
+ * its neighbour in the same group: a key's three bars are siblings standing side
+ * by side, and that gap is what says they are not stacked. */
+const SPEND_BAR_INSET = 0.1
+
+/** PERSON_SWITCH_WORD is the person knob's own word. It is the console's, not
+ * the document's: the breakdown switch's `person` word is the CLI's, and this
+ * one names the operator's decision about the by-person view. */
+const PERSON_SWITCH_WORD = 'person breakdown'
+
+/** TableGapSentence is the one cell a day the history does not hold draws across
+ * the money columns: three `n/a`s would read as three measurements, and there is
+ * no document at all behind the row. */
+const TABLE_GAP_SENTENCE = 'No record for this day. A gap, not a zero.'
+
+/** BarShape is one `rect`'s four lengths, in the drawing's units. */
+interface BarShape {
+  readonly x: string
+  readonly y: string
+  readonly width: string
+  readonly height: string
+}
+
+/** chartUnits is a length in the chart's drawing units, rounded so an attribute
+ * is a short string rather than a float's whole expansion. */
+function chartUnits(value: number): string {
+  return String(Math.round(value * 100) / 100)
+}
+
+/** barShape is the geometry of one bar: the `column`th bar of `columns` in the
+ * `at`th group of `count`, `share` percent of the axis tall. `columns` is how
+ * many bars the group holds -- the three accounts, or one for a day the history
+ * does not hold -- so the same function draws a bar and a gap's own column. */
+function barShape(at: number, count: number, column: number, columns: number, share: number): BarShape {
+  const group = SPEND_CHART_SIZE / count
+  const inner = group * (1 - 2 * SPEND_GROUP_INSET)
+  const columnWidth = inner / columns
+  const width = columns === 1 ? inner : columnWidth * (1 - SPEND_BAR_INSET)
+  const x = at * group + group * SPEND_GROUP_INSET + (columns === 1 ? 0 : column * columnWidth)
+  const height = (share / 100) * SPEND_CHART_SIZE
+  return {
+    x: chartUnits(x),
+    y: chartUnits(SPEND_CHART_SIZE - height),
+    width: chartUnits(width),
+    height: chartUnits(height),
+  }
+}
+
+/** gridline is one horizontal line of the grid, at `share` percent of the axis.
+ * It carries no figure of its own: the axis top is the one figure, and a label
+ * on every line would be four numbers saying three times what the top says. */
+function gridline(factory: SpendFactory, share: number): ScreenElement {
+  const element = makeNS(factory, 'line', 'spend-gridline')
+  element.setAttribute('x1', '0')
+  element.setAttribute('x2', '100')
+  element.setAttribute('y1', chartUnits(SPEND_CHART_SIZE - (share / 100) * SPEND_CHART_SIZE))
+  element.setAttribute('y2', chartUnits(SPEND_CHART_SIZE - (share / 100) * SPEND_CHART_SIZE))
+  return element
+}
+
+/** axisLine is the baseline the bars stand on. It is drawn after them so it sits
+ * over their feet rather than under them. */
+function axisLine(factory: SpendFactory): ScreenElement {
+  const element = makeNS(factory, 'line', 'spend-axis-line')
+  element.setAttribute('x1', '0')
+  element.setAttribute('x2', '100')
+  element.setAttribute('y1', '100')
+  element.setAttribute('y2', '100')
+  return element
+}
+
+/** barRect is one bar: its four lengths in the drawing's units, the account it
+ * draws, the reading's own state, and the **drawn** key it belongs to, so a test
+ * can find a key's bars as siblings of one group. */
+function barRect(factory: SpendFactory, bar: SpendBar, shape: BarShape, key: string): ScreenElement {
+  const element = makeNS(factory, 'rect', 'spend-bar')
+  element.setAttribute('x', shape.x)
+  element.setAttribute('y', shape.y)
+  element.setAttribute('width', shape.width)
+  element.setAttribute('height', shape.height)
+  element.setAttribute('data-key', key)
+  element.setAttribute('data-account', bar.account)
+  element.setAttribute('data-state', bar.reading.state)
+  element.setAttribute('data-partial', bar.partial ? 'true' : 'false')
+  element.setAttribute('data-hollow', bar.hollow ? 'true' : 'false')
+  element.setAttribute('data-height', formatReading(bar.share, 'percent'))
+  return element
+}
+
+/** gapColumn is the one column a day the history does not hold draws: the full
+ * height of the plot, hatched. It is one column and not three bars of no height,
+ * because a bar of no height reads as a measurement of zero. */
+function gapColumn(factory: SpendFactory, shape: BarShape, key: string): ScreenElement {
+  const element = makeNS(factory, 'rect', 'spend-gap-column')
+  element.setAttribute('x', shape.x)
+  element.setAttribute('y', shape.y)
+  element.setAttribute('width', shape.width)
+  element.setAttribute('height', shape.height)
+  element.setAttribute('data-key', key)
+  return element
+}
+
+/** seriesBars is one account's bars, in one `g`: the group carries the account
+ * so a stylesheet paints a bar by the money it draws, and a test reads the three
+ * accounts apart without knowing the order they were drawn in. */
+function seriesBars(
+  factory: SpendFactory,
+  account: SpendAccount,
+  groups: readonly SpendGroup[],
+  keys: readonly string[],
+): ScreenElement {
+  const element = makeNS(factory, 'g', 'spend-series')
+  element.setAttribute('data-account', account)
+  for (let at = 0; at < groups.length; at += 1) {
+    const group = groups[at]
+    if (group === undefined || group.gap) continue
+    const bar = group.bars.find((one) => one.account === account)
+    if (bar === undefined || bar.share.value === null) continue
+    const shape = barShape(at, groups.length, SPEND_ACCOUNTS.indexOf(account), SPEND_ACCOUNTS.length, bar.share.value)
+    element.append(barRect(factory, bar, shape, keys[at] ?? ''))
+  }
+  return element
+}
+
+/**
+ * chartKey is one key of the chart's label row, under the group's own bars: the
+ * document's key through `putText`, the marks a gap and an `n/a` account need,
+ * and the `(partial)` marker. It returns the **drawn** key, which is what the
+ * bars and the gap column carry, so an attribute never echoes a string `putText`
+ * refused.
+ */
+function chartKey(parent: ScreenElement, factory: ScreenFactory, model: SpendModel, group: SpendGroup): string {
+  const element = cell(parent, factory, 'li', 'spend-chart-key')
+  element.setAttribute('data-gap', group.gap ? 'true' : 'false')
+  element.setAttribute('data-partial', group.partial ? 'true' : 'false')
+  const keyed = textCell(element, factory, 'span', group.key, keyClass(model.dimension, group.key), 'rows[].key', 'spend-key')
+  element.setAttribute('data-key', drawnKey(keyed))
+  if (group.gap) {
+    literal(cell(element, factory, 'span', 'spend-chart-gap'), GAP_COLUMN_WORD)
+  } else {
+    for (const bar of group.bars) {
+      if (bar.reading.value !== null) continue
+      // A value the document does not carry draws no bar, and its `n/a` is
+      // written here, at the bar's own foot.
+      const none = numberCell(element, factory, 'span', bar.reading, 'usd', 'spend-chart-na')
+      none.setAttribute('data-account', bar.account)
+    }
+  }
+  if (group.partial) literal(cell(element, factory, 'span', 'spend-partial'), PARTIAL_MARKER)
+  return drawnKey(keyed)
+}
+
+/** legendRow is one row of the legend: the account's own word and the swatch a
+ * stylesheet paints (solid, hatched or dashed) that the word beside it names. An
+ * account with nothing to draw carries the console's sentence for it instead of
+ * a sample, so a legend is never a swatch with no figure behind it. */
+function legendRow(parent: ScreenElement, factory: ScreenFactory, series: SpendSeries): void {
+  const element = cell(parent, factory, 'li', 'spend-legend-key')
+  element.setAttribute('data-account', series.account)
+  const swatch = cell(element, factory, 'span', 'spend-swatch')
+  swatch.setAttribute('data-account', series.account)
+  literal(cell(element, factory, 'span', 'spend-legend-word'), series.title)
+  if (series.empty !== null) literal(cell(element, factory, 'span', 'spend-legend-empty'), series.empty)
+}
+
+/**
+ * chart draws the one grouped chart: every key's three accounts as three bars
+ * standing side by side on one shared axis.
+ *
+ * **Grouped, never stacked.** The three bars of a key are siblings, and each
+ * one's height is its own account's share of the axis top -- the largest value
+ * any account draws. Nothing is summed: a stack would draw billed + notional as
+ * one column, which is the one figure the design forbids, and an axis topped by
+ * that sum would be a figure no document holds.
+ *
+ * The `svg` is `aria-hidden`: it is geometry, and every value it draws is a
+ * reading in the table below, a key in the label row or a word in the legend, so
+ * a reader with a screen reader loses no figure and no word.
+ */
+function chart(factory: SpendFactory, model: SpendModel): ScreenElement {
+  const element = make(factory, 'div', 'spend-chart')
+  const top = cell(element, factory, 'div', 'spend-axis')
+  literal(cell(top, factory, 'span', 'spend-axis-word'), CHART_AXIS_WORD)
+  numberCell(top, factory, 'span', model.chart.axis, 'usd', 'spend-axis-top')
+
+  const svgElement = makeNS(factory, 'svg', 'spend-chart-svg')
+  svgElement.setAttribute('viewBox', '0 0 100 100')
+  svgElement.setAttribute('preserveAspectRatio', 'none')
+  svgElement.setAttribute('height', '100')
+  svgElement.setAttribute('aria-hidden', 'true')
+  element.append(svgElement)
+
+  const groups = model.chart.groups
+  const labels = cell(element, factory, 'ol', 'spend-chart-keys')
+  const keys: string[] = []
+  for (const group of groups) keys.push(chartKey(labels, factory, model, group))
+
+  // An axis with no value has no scale, so it has no gridlines either: the axis
+  // top says `n/a` and the plot is left empty rather than drawn as a scale of
+  // nothing.
+  if (model.chart.axis.value !== null) {
+    for (const share of SPEND_GRIDLINE_SHARES) svgElement.append(gridline(factory, share))
+  }
+  const gaps = makeNS(factory, 'g', 'spend-gaps')
+  for (let at = 0; at < groups.length; at += 1) {
+    const group = groups[at]
+    if (group === undefined || !group.gap) continue
+    gaps.append(gapColumn(factory, barShape(at, groups.length, 0, 1, 100), keys[at] ?? ''))
+  }
+  svgElement.append(gaps)
+  for (const account of SPEND_ACCOUNTS) svgElement.append(seriesBars(factory, account, groups, keys))
+  svgElement.append(axisLine(factory))
+
+  const legend = cell(element, factory, 'ul', 'spend-legend')
+  for (const one of model.series) legendRow(legend, factory, one)
+  return element
+}
+
+/**
+ * header draws the project line: the project's own name, and beside it the range
+ * that came back, the week convention the document declares and the source.
+ *
+ * The heading is the **project** and not the word "Spend": the tab above the
+ * screen already says which view this is, and the title row is where the
+ * project's name belongs.
+ */
 function header(factory: ScreenFactory, model: SpendModel): ScreenElement {
   const element = make(factory, 'header', 'spend-header')
   const heading = cell(element, factory, 'h1', 'spend-project')
   putText(heading, model.project, 'project', 'project')
   if (model.source !== null) textCell(element, factory, 'span', model.source, 'label', 'source', 'spend-source')
   if (model.range.since !== null) textCell(element, factory, 'span', model.range.since, 'label', 'since', 'spend-since')
+  // The arrow between the two ends of the range is the console's own mark; the
+  // two days are the document's strings and go through `textCell`.
+  if (model.range.since !== null && model.range.until !== null) {
+    literal(cell(element, factory, 'span', 'spend-range-arrow'), '→')
+  }
   if (model.range.until !== null) textCell(element, factory, 'span', model.range.until, 'label', 'until', 'spend-until')
   if (model.range.weeks !== null) {
     // The document declares the week convention rather than leaving it to a
@@ -2123,19 +2554,26 @@ function header(factory: ScreenFactory, model: SpendModel): ScreenElement {
 }
 
 /**
- * windowItem is one window of the range picker: a cell whose word the caller
- * passes as a literal (the console's own vocabulary for `reportRange`'s
- * grammar), and whether the operator chose it.
+ * windowItem is one window of the range picker: a real `button` whose whole text
+ * is the window's own word (the console's own vocabulary for `reportRange`'s
+ * grammar), pressed when it is the window the operator chose.
+ *
+ * It is a button and not a cell: the picker is a segmented control, and a click
+ * is the whole of what it does. `entry.ts` reads the window's word off this
+ * element's `textContent` and nothing else about it.
  */
 function windowItem(parent: ScreenElement, factory: ScreenFactory, current: boolean): ScreenElement {
-  const item = cell(parent, factory, 'li', 'spend-window')
-  item.setAttribute('data-current', current ? 'true' : 'false')
-  return item
+  const item = cell(parent, factory, 'li', 'spend-item')
+  const button = cell(item, factory, 'button', 'spend-window')
+  button.setAttribute('type', 'button')
+  button.setAttribute('aria-pressed', current ? 'true' : 'false')
+  button.setAttribute('data-current', current ? 'true' : 'false')
+  return button
 }
 
 /**
  * picker draws the range picker: `report --since`'s windows as the console's own
- * words, with the one the operator chose marked, and whether the range's end is
+ * words, with the one the operator chose pressed, and whether the range's end is
  * the operator's own day rather than `report`'s today.
  *
  * What it draws is the **request**; the header draws the range that came back,
@@ -2158,7 +2596,7 @@ function picker(factory: ScreenFactory, controls: SpendControls): ScreenElement 
   literal(windowItem(element, factory, quarter), '90d')
   literal(windowItem(element, factory, twelveWeeks), '12w')
   // A range the operator named as a day is not one of these windows, and the
-  // picker says so rather than marking the nearest one.
+  // picker says so rather than pressing the nearest one.
   const day = !week && !month && !quarter && !twelveWeeks
   element.setAttribute('data-day', day ? 'true' : 'false')
   // `--until` is the CLI's own today unless the operator set an end. Which of
@@ -2169,44 +2607,66 @@ function picker(factory: ScreenFactory, controls: SpendControls): ScreenElement 
 }
 
 /**
- * personKnob draws the person view's own switch (design D15): its word, whether
- * it is on, and the one-line note the design asks for beside a view that is off
- * by default.
+ * personKnob draws the person view's own switch (design D15): a real `button`
+ * whose word names the view and whose state says whether it is on, and the
+ * one-line note the design asks for beside a view that is off by default.
  *
  * It is a control of its own rather than a state of the breakdown switch: the
  * switch's `person` word is one of the eight the CLI has, and the operator's
  * decision about it is a different thing from the breakdown the screen is
  * currently drawn by. The knob's own `data-enabled` is what the event wiring
  * reads, and the switch's `person` word is drawn disabled until it is on.
+ *
+ * The note is a sibling of the button rather than a child: a button holds
+ * phrasing content, and the note is a sentence a reader must be able to select
+ * and a screen reader must be able to reach without pressing the switch.
  */
-function personKnob(factory: ScreenFactory, model: SpendModel): ScreenElement {
-  const element = make(factory, 'div', 'spend-persons')
+function personKnob(parent: ScreenElement, factory: ScreenFactory, model: SpendModel): void {
   const on = model.persons.enabled
+  const element = cell(parent, factory, 'button', 'spend-persons')
+  element.setAttribute('type', 'button')
   element.setAttribute('data-enabled', on ? 'true' : 'false')
-  literal(cell(element, factory, 'span', 'spend-persons-word'), 'person breakdown')
-  const state = cell(element, factory, 'span', 'spend-persons-state')
-  if (on) literal(state, 'on')
-  else literal(state, 'off')
-  const note = cell(element, factory, 'p', 'spend-persons-note')
-  if (on) literal(note, PERSON_ON_NOTE)
-  else literal(note, PERSON_OFF_NOTE)
-  return element
+  element.setAttribute('aria-pressed', on ? 'true' : 'false')
+  literal(cell(element, factory, 'span', 'spend-persons-word'), PERSON_SWITCH_WORD)
+  literal(cell(element, factory, 'span', 'spend-persons-state'), on ? 'on' : 'off')
+  const note = cell(parent, factory, 'p', 'spend-persons-note')
+  literal(note, on ? PERSON_ON_NOTE : PERSON_OFF_NOTE)
 }
 
-/** tabs draws the breakdown switch: the eight words, which of them is the
- * document's own grouping, and which this console may show. */
+/**
+ * tabs draws the breakdown switch: the eight words as a segmented control, with
+ * the document's own grouping pressed and the words this console may not show
+ * drawn as plain cells that say why in their `title`.
+ *
+ * A disabled word is a `span` and not a disabled button: a control that cannot
+ * be pressed is not a control, and the words the design lists are still all
+ * drawn -- a reader sees the shape of the CLI's vocabulary and which part of it
+ * this console may use.
+ */
 function tabs(factory: ScreenFactory, model: SpendModel): ScreenElement {
   const element = make(factory, 'ol', 'spend-switch')
   element.setAttribute('data-known', model.dimensionKnown ? 'true' : 'false')
   for (const entry of model.switches) {
-    const item = cell(element, factory, 'li', 'spend-dim')
-    // The eight words are the CLI's own (`ParseDim`'s help line) and this is
-    // the console drawing its own vocabulary for them, not a document's string.
-    literal(item, entry.dimension)
-    item.setAttribute('data-dimension', entry.dimension)
-    item.setAttribute('data-enabled', entry.enabled ? 'true' : 'false')
-    item.setAttribute('data-current', entry.current ? 'true' : 'false')
-    if (entry.note !== null) item.setAttribute('title', entry.note)
+    const item = cell(element, factory, 'li', 'spend-item')
+    if (entry.enabled) {
+      const button = cell(item, factory, 'button', 'spend-dim')
+      button.setAttribute('type', 'button')
+      button.setAttribute('aria-pressed', entry.current ? 'true' : 'false')
+      button.setAttribute('data-dimension', entry.dimension)
+      button.setAttribute('data-enabled', 'true')
+      button.setAttribute('data-current', entry.current ? 'true' : 'false')
+      // The eight words are the CLI's own (`ParseDim`'s help line) and this is
+      // the console drawing its own vocabulary for them, not a document's
+      // string.
+      literal(button, entry.dimension)
+      continue
+    }
+    const off = cell(item, factory, 'span', 'spend-dim')
+    off.setAttribute('data-dimension', entry.dimension)
+    off.setAttribute('data-enabled', 'false')
+    off.setAttribute('data-current', entry.current ? 'true' : 'false')
+    literal(off, entry.dimension)
+    if (entry.note !== null) off.setAttribute('title', entry.note)
   }
   if (!model.dimensionKnown) {
     // A ninth word is a newer CLI. The switch says so in the console's own
@@ -2221,93 +2681,103 @@ function tabs(factory: ScreenFactory, model: SpendModel): ScreenElement {
   return element
 }
 
-/** point draws one point of one account's series. */
-function point(factory: ScreenFactory, model: SpendModel, drawn: SpendPoint): ScreenElement {
-  const element = make(factory, 'li', 'spend-point')
-  element.setAttribute('data-state', drawn.reading.state)
-  element.setAttribute('data-height', formatReading(drawn.height, 'percent'))
-  element.setAttribute('data-partial', drawn.partial ? 'true' : 'false')
-  element.setAttribute('data-hollow', drawn.hollow ? 'true' : 'false')
-  const keyed = textCell(
-    element,
-    factory,
-    'span',
-    drawn.key,
-    keyClass(model.dimension, drawn.key),
-    'rows[].key',
-    'spend-point-key',
-  )
+/** readingOf is one account's reading for a group: what the document said, or a
+ * gap carrying the day's own reason when the group holds no bar for it. */
+function readingOf(group: SpendGroup, account: SpendAccount): Reading {
+  const bar = group.bars.find((one) => one.account === account)
+  return bar === undefined ? gap(NO_DOCUMENT_DAY) : bar.reading
+}
+
+/** moneyCells are a row's three money cells, in the order the headings name
+ * them: each account's own reading, in its own state. */
+function moneyCells(parent: ScreenElement, factory: ScreenFactory, group: SpendGroup): void {
+  numberCell(parent, factory, 'td', readingOf(group, 'model'), 'usd', 'spend-model')
+  numberCell(parent, factory, 'td', readingOf(group, 'notional'), 'usd', 'spend-notional')
+  numberCell(parent, factory, 'td', readingOf(group, 'compute'), 'usd', 'spend-compute')
+}
+
+/** periodRow draws one period of the table: its key (with the one `(partial)`
+ * and the unreadable marker the design asks for), the three accounts, the runs
+ * and the runtime -- or one cell across the money columns for a day the history
+ * does not hold. */
+function periodRow(factory: ScreenFactory, model: SpendModel, group: SpendGroup): ScreenElement {
+  const element = make(factory, 'tr', 'spend-row')
+  element.setAttribute('data-gap', group.gap ? 'true' : 'false')
+  element.setAttribute('data-partial', group.partial ? 'true' : 'false')
+  element.setAttribute('data-hollow', (group.row?.hollow ?? false) ? 'true' : 'false')
+  element.setAttribute('data-unreadable', group.row?.unreadable === true ? 'true' : 'false')
+  const keyed = textCell(element, factory, 'td', group.key, keyClass(model.dimension, group.key), 'rows[].key', 'spend-key')
   element.setAttribute('data-key', drawnKey(keyed))
-  numberCell(element, factory, 'span', drawn.reading, 'usd', 'spend-point-value')
-  if (drawn.partial) literal(cell(element, factory, 'span', 'spend-partial'), PARTIAL_MARKER)
-  return element
-}
-
-/** accountBlock draws one account's chart. Three of these, never one, and each
- * with its own peak: the accounts are never summed and they are never drawn on
- * one axis either. */
-function accountBlock(factory: ScreenFactory, model: SpendModel, series: SpendSeries): ScreenElement {
-  const element = make(factory, 'div', 'spend-account')
-  element.setAttribute('data-account', series.account)
-  const heading = cell(element, factory, 'h2', 'spend-account-title')
-  // The title is the console's own word for the account, and the design's
-  // headings are the console's vocabulary.
-  literal(heading, series.title)
-  numberCell(element, factory, 'span', series.peak, 'usd', 'spend-peak')
-  element.setAttribute('data-peak', formatReading(series.peak, 'usd'))
-
-  const list = cell(element, factory, 'ol', 'spend-series')
-  list.setAttribute('data-segments', String(series.segments))
-  if (series.points.length === 0) {
-    // An account with nothing to draw is not an empty chart: it is the console
-    // saying what it has not got, in the mark and the state of a gap.
-    const empty = cell(list, factory, 'li', 'spend-point', 'spend-num')
-    const none = gap(series.empty ?? 'this account has no point to draw')
-    putReading(empty, none, 'usd')
-    empty.setAttribute('data-state', none.state)
-    empty.setAttribute('data-height', formatReading(none, 'percent'))
-    return element
+  if (group.partial) literal(cell(keyed, factory, 'span', 'spend-partial'), PARTIAL_MARKER)
+  if (group.row?.unreadable === true) literal(cell(keyed, factory, 'span', 'spend-unreadable'), UNREADABLE_MARKER)
+  if (group.gap) {
+    const across = cell(element, factory, 'td', 'spend-gap-cell')
+    across.setAttribute('colspan', String(SPEND_ACCOUNTS.length))
+    literal(across, TABLE_GAP_SENTENCE)
+  } else {
+    moneyCells(element, factory, group)
   }
-  for (const drawn of series.points) list.append(point(factory, model, drawn))
+  numberCell(element, factory, 'td', group.row?.runs ?? gap(NO_DOCUMENT_DAY), 'count', 'spend-runs')
+  numberCell(element, factory, 'td', group.row?.runHours ?? gap(NO_DOCUMENT_DAY), 'hours', 'spend-run-hours')
   return element
 }
 
-/** rowLine draws one report row: its key, the three accounts in their own
- * states, the runs it covers and its `(partial)` marker. */
-function rowLine(factory: ScreenFactory, model: SpendModel, row: SpendRow): ScreenElement {
-  const element = make(factory, 'li', 'spend-row')
-  element.setAttribute('data-partial', row.partial ? 'true' : 'false')
-  element.setAttribute('data-hollow', row.hollow ? 'true' : 'false')
-  element.setAttribute('data-unreadable', row.unreadable ? 'true' : 'false')
-  const keyed = textCell(element, factory, 'span', row.key, keyClass(model.dimension, row.key), 'rows[].key', 'spend-key')
-  element.setAttribute('data-key', drawnKey(keyed))
-  numberCell(element, factory, 'span', row.model, 'usd', 'spend-model')
-  numberCell(element, factory, 'span', row.notional, 'usd', 'spend-notional')
-  numberCell(element, factory, 'span', row.compute, 'usd', 'spend-compute')
-  numberCell(element, factory, 'span', row.runs, 'count', 'spend-runs')
-  numberCell(element, factory, 'span', row.runHours, 'hours', 'spend-run-hours')
-  if (row.tokens !== null) {
-    numberCell(element, factory, 'span', row.tokens.in, 'count', 'spend-tokens-in')
-    numberCell(element, factory, 'span', row.tokens.out, 'count', 'spend-tokens-out')
-  }
-  if (row.unreadable) literal(cell(element, factory, 'span', 'spend-unreadable'), UNREADABLE_MARKER)
-  if (row.partial) literal(cell(element, factory, 'span', 'spend-partial'), PARTIAL_MARKER)
+/**
+ * spendTable draws the periods as a table: one row per key of the chart, and
+ * then the rows the range does not cover -- the chart leaves those out and the
+ * note above says how many there are.
+ *
+ * The runs columns are not money and are never summed with it; a figure the
+ * document does not carry is the reading's own `n/a`, never a `$0.00`.
+ */
+function spendTable(factory: ScreenFactory, model: SpendModel): ScreenElement {
+  const element = make(factory, 'table', 'spend-table')
+  const head = cell(element, factory, 'thead', 'spend-table-head')
+  const headRow = cell(head, factory, 'tr', 'spend-table-row')
+  literal(cell(headRow, factory, 'th', 'spend-th'), 'key')
+  literal(cell(headRow, factory, 'th', 'spend-th'), 'billed model')
+  literal(cell(headRow, factory, 'th', 'spend-th'), 'notional (list price)')
+  literal(cell(headRow, factory, 'th', 'spend-th'), 'compute (estimated)')
+  literal(cell(headRow, factory, 'th', 'spend-th'), 'runs')
+  literal(cell(headRow, factory, 'th', 'spend-th'), 'runtime')
+  const body = cell(element, factory, 'tbody', 'spend-table-body')
+  for (const group of model.chart.groups) body.append(periodRow(factory, model, group))
+  for (const group of model.chart.outside) body.append(periodRow(factory, model, group))
   return element
 }
 
-/** totalsLine draws the document's own totals row. */
+/** totalsLine draws the document's own totals: the four cells the design names,
+ * and the one line that says what the money in them is.
+ *
+ * Nothing here is computed by the console -- the totals are the document's own
+ * -- and the four cells are four figures, never a fifth that added two of them.
+ */
 function totalsLine(factory: ScreenFactory, model: SpendModel): ScreenElement {
   const element = make(factory, 'div', 'spend-totals')
   element.setAttribute('data-partial', model.totals.partial ? 'true' : 'false')
   element.setAttribute('data-unreadable', model.totals.unreadable ? 'true' : 'false')
-  literal(cell(element, factory, 'span', 'spend-totals-word'), 'total')
-  numberCell(element, factory, 'span', model.totals.model, 'usd', 'spend-total-model')
-  numberCell(element, factory, 'span', model.totals.notional, 'usd', 'spend-total-notional')
-  numberCell(element, factory, 'span', model.totals.compute, 'usd', 'spend-total-compute')
-  numberCell(element, factory, 'span', model.totals.runs, 'count', 'spend-total-runs')
-  numberCell(element, factory, 'span', model.totals.runHours, 'hours', 'spend-total-run-hours')
-  if (model.totals.unreadable) literal(cell(element, factory, 'span', 'spend-unreadable'), UNREADABLE_MARKER)
-  if (model.totals.partial) literal(cell(element, factory, 'span', 'spend-partial'), PARTIAL_MARKER)
+  const billed = cell(element, factory, 'div', 'spend-total')
+  literal(cell(billed, factory, 'span', 'spend-totals-word'), 'billed model')
+  numberCell(billed, factory, 'span', model.totals.model, 'usd', 'spend-total-model')
+  const notional = cell(element, factory, 'div', 'spend-total')
+  literal(cell(notional, factory, 'span', 'spend-totals-word'), 'notional (list price)')
+  numberCell(notional, factory, 'span', model.totals.notional, 'usd', 'spend-total-notional')
+  const compute = cell(element, factory, 'div', 'spend-total')
+  literal(cell(compute, factory, 'span', 'spend-totals-word'), 'compute (estimated)')
+  numberCell(compute, factory, 'span', model.totals.compute, 'usd', 'spend-total-compute')
+  const runs = cell(element, factory, 'div', 'spend-total')
+  literal(cell(runs, factory, 'span', 'spend-totals-word'), 'runs · runtime')
+  numberCell(runs, factory, 'span', model.totals.runs, 'count', 'spend-total-runs')
+  numberCell(runs, factory, 'span', model.totals.runHours, 'hours', 'spend-total-run-hours')
+  const note = cell(element, factory, 'p', 'spend-totals-note')
+  // "Today is partial." is drawn only when the document says the range includes
+  // a partial day: it is a fact about this range, not a permanent label.
+  if (model.totals.partial) literal(cell(note, factory, 'span', 'spend-totals-partial'), 'Today is partial.')
+  literal(
+    cell(note, factory, 'span', 'spend-totals-rule'),
+    'Billed and notional are different kinds of money, so they are never added together.',
+  )
+  if (model.totals.unreadable) literal(cell(note, factory, 'span', 'spend-unreadable'), UNREADABLE_MARKER)
   return element
 }
 
@@ -2600,7 +3070,7 @@ function peoplePanel(factory: ScreenFactory, people: SpendPeople): ScreenElement
  * link at all.
  */
 export function renderSpend(
-  factory: ScreenFactory,
+  factory: SpendFactory,
   model: SpendModel,
   theme: SpendTheme,
   controls: SpendControls = SPEND_DEFAULT_CONTROLS,
@@ -2608,16 +3078,21 @@ export function renderSpend(
   const root = make(factory, 'section', 'spend')
   root.setAttribute('data-theme', theme)
   root.append(header(factory, model))
-  root.append(picker(factory, controls))
-  root.append(tabs(factory, model))
-  root.append(personKnob(factory, model))
 
-  const accounts = cell(root, factory, 'div', 'spend-accounts')
-  for (const series of model.series) accounts.append(accountBlock(factory, model, series))
+  // The controls and their two one-line notes sit in one row under the title:
+  // the picker and the breakdown switch side by side, and the person switch's
+  // own note beside it.
+  const controlsRow = cell(root, factory, 'div', 'spend-controls')
+  controlsRow.append(picker(factory, controls))
+  controlsRow.append(tabs(factory, model))
+  const peopleRow = cell(root, factory, 'div', 'spend-people')
+  personKnob(peopleRow, factory, model)
+  controlsRow.append(peopleRow)
+  root.append(controlsRow)
 
-  const rows = cell(root, factory, 'ol', 'spend-rows')
-  for (const row of model.rows) rows.append(rowLine(factory, model, row))
   root.append(totalsLine(factory, model))
+  root.append(chart(factory, model))
+  root.append(spendTable(factory, model))
 
   // The by-person panel sits beside the report's own totals -- it is the same
   // window read a second way -- and it is drawn only while the operator's knob
