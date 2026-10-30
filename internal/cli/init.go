@@ -3225,6 +3225,11 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// answer that judges no entry — never an empty node, which would read a
 	// node the operator cannot reach as "nothing is proxied" and refuse their
 	// entry over it.
+	//
+	// None of it is conditioned on --plan-only: a disagreement is a
+	// contradiction in the configuration, not a change to make, and a plan
+	// that cannot be applied is not a plan — so the refusal lands before the
+	// plan is written, in every mode.
 	p, found, err := r.policy.read(ctx, lc)
 	in.Policy = repoPolicyInput(lc, p, found, err)
 	if err := checkRepoProject(cfg.Project, outs.ProjectName); err != nil {
