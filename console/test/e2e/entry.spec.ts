@@ -99,6 +99,7 @@ import {
   classifyCliVersion,
 } from '../../src/shared/version'
 import { EXPOSED_OPERATIONS } from '../../src/preload/index'
+import { REDUCED_CHIP_LABEL, REDUCED_CHIP_REASON_ID } from '../../src/renderer/entry'
 import { installCliStub, resolveConsoleBinary } from '../support/cliStub'
 import type { CliStub } from '../support/cliStub'
 import { expectNoFirstRunPicker } from '../support/firstRun'
@@ -222,7 +223,10 @@ function pageShape(page: Page): Promise<{
   return page.evaluate(() => {
     const bridge = (window as unknown as { fugaro?: Record<string, unknown> }).fugaro
     const banner = document.querySelector('section.console-skew')
-    const headline = document.querySelector('h1.skew-headline')
+    // Class-only on purpose: the title is an `h1` on the refusal screen and an
+    // `h2` on a reduced console's card, and a spec that spelled the tag would
+    // read one of the two and call the other a missing headline.
+    const headline = document.querySelector('.skew-headline')
     const globals: Record<string, string> = {}
     for (const name of ['require', 'process', 'module', 'ipcRenderer', 'Buffer', 'global']) {
       globals[name] = typeof (window as unknown as Record<string, unknown>)[name]
@@ -558,6 +562,99 @@ test.describe('the renderer entry, in the real window', () => {
       await expect(picker.locator('#picker-status')).toHaveText('e2e is the installation this console is showing (reduced).')
     } finally {
       await close(launched)
+    }
+  })
+
+  test('a reduced console puts the card away, and the header chip keeps saying why', async () => {
+    // The dismissal and the chip, in the real window: design section 2.14 makes
+    // the card dismissible **because** the header says the mode for as long as
+    // the mode is, and the two are one mechanism -- the chip is what un-hides
+    // the card, and the card is what the chip stands for.
+    stub.setVersion('0.9.0')
+    const launched = await launch(stub.env)
+    try {
+      const { page } = launched
+      await expect(page.locator('button.console-reduced-chip')).toHaveCount(1)
+      const chip = await page.evaluate(() => {
+        const button = document.querySelector('button.console-reduced-chip')
+        const describedBy = button?.getAttribute('aria-describedby') ?? null
+        const reason = describedBy === null ? null : document.getElementById(describedBy)
+        return {
+          text: button?.textContent ?? null,
+          severity: button?.getAttribute('data-severity') ?? null,
+          title: button?.getAttribute('title') ?? null,
+          describedBy,
+          reason: reason?.textContent ?? null,
+          // Not `aria-hidden`: the chip's own word is two words long, and the
+          // headline is what a reader who only reaches the chip is owed.
+          reasonHidden: reason?.getAttribute('aria-hidden') ?? null,
+        }
+      })
+      expect(chip).toEqual({
+        text: REDUCED_CHIP_LABEL,
+        severity: 'warning',
+        title: SKEW_HEADLINES.reduced,
+        describedBy: REDUCED_CHIP_REASON_ID,
+        reason: SKEW_HEADLINES.reduced,
+        reasonHidden: null,
+      })
+      // Escape is not a way out: the card is not a dialog and carries no key
+      // handling of its own.
+      await page.keyboard.press('Escape')
+      const afterEscape = await page.evaluate(() => ({
+        hidden: document.querySelector('section.console-skew')?.hasAttribute('hidden') ?? null,
+      }))
+      expect(afterEscape, 'Escape dismissed the notice').toEqual({ hidden: false })
+
+      // The dismissal is the session's and nothing else: the card is `hidden`,
+      // it stays the body's first child, the chip keeps its place, and the
+      // keyboard moves to the control that brings the card back.
+      await page.locator('button.notice-dismiss').click()
+      const dismissed = await pageShape(page)
+      expect(dismissed.bodyChildren[0]).toBe('notice console-skew')
+      const putAway = await page.evaluate(() => ({
+        hidden: document.querySelector('section.console-skew')?.hasAttribute('hidden') ?? null,
+        chips: document.querySelectorAll('button.console-reduced-chip').length,
+        focused: document.activeElement === document.querySelector('button.console-reduced-chip'),
+      }))
+      expect(putAway).toEqual({ hidden: true, chips: 1, focused: true })
+      // And Escape does not bring it back either: the chip is a button, and a
+      // button is activated by a click or by Enter and Space.
+      await page.keyboard.press('Escape')
+      expect(
+        await page.evaluate(() => document.querySelector('section.console-skew')?.hasAttribute('hidden') ?? null),
+        'Escape un-hid the notice',
+      ).toBe(true)
+
+      // Activating the chip hands the card back, with the keyboard on it.
+      await page.locator('button.console-reduced-chip').click()
+      const restored = await page.evaluate(() => {
+        const title = document.querySelector('.skew-headline')
+        return {
+          hidden: document.querySelector('section.console-skew')?.hasAttribute('hidden') ?? null,
+          focused: document.activeElement === title,
+          tabindex: title?.getAttribute('tabindex') ?? null,
+        }
+      })
+      expect(restored).toEqual({ hidden: false, focused: true, tabindex: '-1' })
+
+      // A fresh window draws the card again: the dismissal was the renderer's
+      // memory and nothing was stored. A second launch rather than a reload,
+      // because the console refuses every navigation the renderer asks for
+      // (`denyNavigation`), so "reload" in this app is a new window.
+      await page.locator('button.notice-dismiss').click()
+    } finally {
+      await close(launched)
+    }
+    const again = await launch(stub.env)
+    try {
+      const drawn = await again.page.evaluate(() => ({
+        hidden: document.querySelector('section.console-skew')?.hasAttribute('hidden') ?? null,
+        chips: document.querySelectorAll('button.console-reduced-chip').length,
+      }))
+      expect(drawn, 'the dismissal outlived the window').toEqual({ hidden: false, chips: 1 })
+    } finally {
+      await close(again)
     }
   })
 

@@ -45,6 +45,7 @@ import {
   CONSOLE_CLI_UPGRADE_COMMAND,
   HIDDEN_VIEW_WORDS,
   LAUNCH_CLI_FLOOR,
+  NOTICE_REASONS,
   REDUCED_VIEWS,
   SKEW_HEADLINES,
   SUPPORTED_CLI_MINORS,
@@ -61,6 +62,7 @@ import {
   unreadableReason,
 } from '../../src/shared/version'
 import type { CliCompatibility, ReducedView, SkewElement } from '../../src/shared/version'
+import { NOTICE_SHOW_DETAILS } from '../../src/shared/notice'
 import { githubToken } from '../support/fakeSecrets'
 
 // ---------------------------------------------------------------------------
@@ -756,45 +758,105 @@ describe('skewSentence', () => {
   })
 })
 
+describe('NOTICE_REASONS', () => {
+  it('is one plain sentence per drawn skew, and nothing else in it', () => {
+    // The card's reason is what a reader gets before they open anything, so it
+    // is one sentence: exactly one full stop, no semicolon, and no version
+    // number, range or command -- the technical text is the details below it.
+    expect(Object.keys(NOTICE_REASONS).sort()).toEqual([
+      'below-floor',
+      'irregular',
+      'older',
+      'unplaceable',
+      'unreadable',
+    ])
+    for (const [name, sentence] of Object.entries(NOTICE_REASONS)) {
+      expect(sentence.endsWith('.'), `${name}: ${sentence}`).toBe(true)
+      expect(sentence.slice(0, -1), name).not.toContain('.')
+      expect(sentence, name).not.toContain(';')
+      expect(sentence).not.toContain(CONSOLE_CLI_UPGRADE_COMMAND)
+      expect(sentence).not.toContain(CLI_VERSION_BUILT_AGAINST)
+      expect(sentence).not.toContain(SUPPORTED_CLI_MINORS.join(', '))
+    }
+  })
+})
+
 describe('renderVersionSkew', () => {
-  it('draws the banner: both versions, the reason, and what is withheld', () => {
+  it('draws the card: the title, the reason, both versions and what is withheld', () => {
     const compatibility = classifyCliVersion('0.9.0')
-    const root = renderVersionSkew(factory, compatibility, 'light')
-    expect(root.getAttribute('class')).toBe('console-skew')
+    const { root } = renderVersionSkew(factory, compatibility, 'light')
+    expect(root.getAttribute('class')).toBe('notice console-skew')
     expect(root.getAttribute('data-mode')).toBe('reduced')
     expect(root.getAttribute('data-skew')).toBe('older')
     expect(root.getAttribute('data-theme')).toBe('light')
-    expect(one(root, 'skew-headline').textContent).toBe(SKEW_HEADLINES.reduced)
+    expect(root.getAttribute('data-severity')).toBe('warning')
+    // `console-skew` and not `live`: a refused console draws no dashboard, and
+    // the absence of that root is how a spec says so.
+    expect(all(root, 'live')).toHaveLength(0)
+    const title = one(root, 'notice-title')
+    expect(title.tag).toBe('h2')
+    // The card's own id, and the root names itself by it: the id is the card's,
+    // because a document may hold more than one card (`notice.test.ts`).
+    expect(title.getAttribute('id')).not.toBeNull()
+    expect(root.getAttribute('aria-labelledby')).toBe(title.getAttribute('id'))
+    expect(title.textContent).toBe(SKEW_HEADLINES.reduced)
+    expect(one(root, 'skew-reason').textContent).toBe(NOTICE_REASONS.older)
+    // The technical text is in the facts, behind the disclosure.
     expect(one(root, 'skew-sentence').textContent).toBe(skewSentence(compatibility))
     // The console's own version and the CLI's reported one, each in its own
     // cell: the first is a constant of this console, the second is a string the
-    // binary chose and goes through `putText`.
+    // binary chose and goes through `versionText`.
     expect(one(root, 'skew-console-version').textContent).toBe(CLI_VERSION_BUILT_AGAINST)
     expect(one(root, 'skew-cli-version').textContent).toBe('0.9.0')
     const hidden = all(root, 'skew-hidden')
     expect(hidden.map((node) => node.getAttribute('data-hidden'))).toEqual([...REDUCED_VIEWS])
     expect(hidden.map((node) => node.textContent)).toEqual(REDUCED_VIEWS.map((view) => HIDDEN_VIEW_WORDS[view]))
+    // A label and its value are two elements with a space between them. The
+    // strip this card replaces drew them as spans in a row and read `reads0.9.0`
+    // in a text run; a `dl` cannot.
+    expect(drawn(one(root, 'notice-facts'))).toContain('this console reads ' + CLI_VERSION_BUILT_AGAINST)
+    expect(drawn(one(root, 'notice-facts'))).toContain('the fugaro it is driving reports 0.9.0')
+  })
+
+  it('folds the details behind a real button, and the button says which way it goes', () => {
+    const { root, toggle, details } = renderVersionSkew(factory, classifyCliVersion('0.9.0'), 'light')
+    expect(toggle).not.toBeNull()
+    expect(toggle?.tag).toBe('button')
+    expect(toggle?.getAttribute('type')).toBe('button')
+    expect(toggle?.getAttribute('aria-expanded')).toBe('false')
+    expect(toggle?.getAttribute('aria-controls')).toBe(details.getAttribute('id'))
+    expect(toggle?.textContent).toBe(NOTICE_SHOW_DETAILS)
+    expect(details.getAttribute('hidden')).toBe('')
+    // The dismissal is the reader's, so the card has one.
+    expect(all(root, 'notice-dismiss')).toHaveLength(1)
   })
 
   it('draws the refusal screen, and it is not a dashboard', () => {
-    const root = renderVersionSkew(factory, classifyCliVersion('0.5.0'), 'dark')
+    const { root, toggle, dismiss, details } = renderVersionSkew(factory, classifyCliVersion('0.5.0'), 'dark')
     expect(root.getAttribute('data-mode')).toBe('refused')
-    expect(one(root, 'skew-headline').textContent).toBe(SKEW_HEADLINES.refused)
+    expect(one(root, 'notice-title').tag).toBe('h1')
+    expect(one(root, 'notice-title').textContent).toBe(SKEW_HEADLINES.refused)
+    expect(one(root, 'skew-reason').textContent).toBe(NOTICE_REASONS['below-floor'])
     expect(one(root, 'skew-cli-version').textContent).toBe('0.5.0')
-    // No `live` root: the root a dashboard mounts under is absent, which is how
-    // `test/e2e/skew.spec.ts` says "no dashboard" in the real window too.
+    // The whole document: no `live` root, and nothing that *does* something --
+    // the refusal screen has no control in it at all.
     expect(all(root, 'live')).toHaveLength(0)
-    // And nothing that *does* something: no link, no button.
     expect(walk(root).filter((node) => node.tag === 'a' || node.tag === 'button')).toHaveLength(0)
+    expect(toggle).toBeNull()
+    expect(dismiss).toBeNull()
+    // Its details are open: the range and the version line are what the operator
+    // acts on, and there is no second screen to open them from.
+    expect(details.getAttribute('hidden')).toBeNull()
   })
 
   it('says the console could not read a version rather than drawing a blank', () => {
-    const root = renderVersionSkew(factory, classifyCliVersion('usage: fugaro version'), 'light')
+    const { root } = renderVersionSkew(factory, classifyCliVersion('usage: fugaro version'), 'light')
     expect(one(root, 'skew-cli-version').textContent).toBe(UNREADABLE_VERSION)
+    expect(one(root, 'skew-reason').textContent).toBe(NOTICE_REASONS.unreadable)
     expect(drawn(root)).not.toContain('usage')
   })
 
-  it('draws the reader\'s own reason under the banner, so there is something to act on', () => {
+  it('draws the reader\'s own reason as a fact, so there is something to act on', () => {
     // A compatibility built by `unreadableCompatibility` is the reader's answer
     // after a spawn that failed or a read that did not finish. "It could not
     // read a version" without the why is a refusal screen with no next step, so
@@ -802,16 +864,17 @@ describe('renderVersionSkew', () => {
     // this module writes.
     const reason = 'the fugaro binary did not answer within 5000ms; run `fugaro version` yourself'
     const compatibility = unreadableCompatibility(reason)
-    const root = renderVersionSkew(factory, compatibility, 'light')
+    const { root } = renderVersionSkew(factory, compatibility, 'light')
     expect(unreadableReason(compatibility)).toBe(reason)
     expect(one(root, 'skew-because').textContent).toBe(reason)
-    // Beside the sentence, not inside it: the sentence stays the console's.
+    // In its own fact, not inside the sentence: the sentence stays the console's.
     expect(one(root, 'skew-sentence').textContent).not.toContain('5000ms')
+    expect(drawn(one(root, 'notice-facts'))).toContain('why ' + reason)
   })
 
-  it('draws no reason cell when the placement read a line', () => {
+  it('draws no reason fact when the placement read a line', () => {
     for (const line of [CAPTURED_RELEASE_OUTPUT, CAPTURED_DEV_OUTPUT, '0.9.0', '0.5.0', 'not a version']) {
-      const root = renderVersionSkew(factory, classifyCliVersion(line), 'light')
+      const { root } = renderVersionSkew(factory, classifyCliVersion(line), 'light')
       expect(all(root, 'skew-because'), line).toHaveLength(0)
     }
   })
@@ -824,7 +887,7 @@ describe('renderVersionSkew', () => {
     // attribute, since the redaction happens before the sink.
     const token = githubToken()
     const compatibility = unreadableCompatibility(`the reader answered with ${token}`)
-    const root = renderVersionSkew(factory, compatibility, 'light')
+    const { root } = renderVersionSkew(factory, compatibility, 'light')
     const reason = unreadableReason(compatibility)
     expect(reason).not.toBeNull()
     expect(reason ?? '').toContain('the reader answered with')
@@ -834,22 +897,22 @@ describe('renderVersionSkew', () => {
   })
 
   it('draws no withheld list when there is nothing withheld', () => {
-    const root = renderVersionSkew(factory, classifyCliVersion(CAPTURED_RELEASE_OUTPUT), 'light')
+    const { root } = renderVersionSkew(factory, classifyCliVersion(CAPTURED_RELEASE_OUTPUT), 'light')
     expect(root.getAttribute('data-mode')).toBe('ok')
     expect(all(root, 'skew-hidden')).toHaveLength(0)
     expect(one(root, 'skew-sentence').textContent).toBe(skewSentence(classifyCliVersion(CAPTURED_RELEASE_OUTPUT)))
   })
 
-  it('draws only class, title and data-* attributes, as a screen may', () => {
+  it('draws only the attributes a card may carry, as a screen may', () => {
+    // No `href`, no `src`, no `style`, nothing that starts with `on`: the
+    // disclosure and the dismissal are real buttons with real ARIA, and that is
+    // the whole of what the card adds to the strip it replaces.
+    const allowed = /^(?:class|title|id|type|tabindex|hidden|data-[a-z0-9-]+|aria-[a-z0-9-]+)$/
     for (const line of [CAPTURED_RELEASE_OUTPUT, '0.9.0', '0.5.0', CAPTURED_DEV_OUTPUT, 'not a version']) {
-      const root = renderVersionSkew(factory, classifyCliVersion(line), 'light')
+      const { root } = renderVersionSkew(factory, classifyCliVersion(line), 'light')
       for (const node of walk(root)) {
         for (const name of node.attributes.keys()) {
-          const lowered = name.toLowerCase()
-          expect(
-            lowered === 'class' || lowered === 'title' || lowered.startsWith('data-'),
-            `${line}: ${name}`,
-          ).toBe(true)
+          expect(allowed.test(name.toLowerCase()), `${line}: ${name}`).toBe(true)
         }
       }
     }
@@ -865,7 +928,7 @@ describe('renderVersionSkew', () => {
     const long = `0.9.0-${'a1b2c3d4'.repeat(6)}`
     const compatibility: CliCompatibility = classifyCliVersion(long)
     expect(compatibility.cliVersion, 'the grammar accepts the line').toBe(long)
-    const root = renderVersionSkew(factory, compatibility, 'light')
+    const { root } = renderVersionSkew(factory, compatibility, 'light')
     const cell = one(root, 'skew-cli-version')
     const text = cell.textContent ?? ''
     const attribute = cell.getAttribute('title')
@@ -883,7 +946,7 @@ describe('renderVersionSkew', () => {
   it('draws no string the binary printed when it could not read one', () => {
     const token = githubToken()
     const compatibility = classifyCliVersion(`${token}\n`)
-    const root = renderVersionSkew(factory, compatibility, 'light')
+    const { root } = renderVersionSkew(factory, compatibility, 'light')
     expect(drawn(root)).not.toContain(token)
     expect(JSON.stringify([...walk(root)].map((node) => [...node.attributes]))).not.toContain(token)
   })

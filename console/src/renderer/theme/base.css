@@ -103,6 +103,15 @@ ol {
   list-style: none;
 }
 
+/* The `hidden` attribute is how this theme puts a thing away -- a menu, a
+ * notice's details, a dismissed card -- and it is `!important` because it has to
+ * outrank the `display` the element's own rule sets: a card that is a grid and a
+ * menu that is a block would both keep their place otherwise, and the attribute
+ * that says "not now" would be a decoration. */
+[hidden] {
+  display: none !important;
+}
+
 button {
   margin: 0;
   padding: 0;
@@ -156,17 +165,186 @@ body {
   min-width: 0;
 }
 
-/* The version-skew banner is the body's first child when the mode is not `ok`
- * and the whole document when the console refused (design section 2.8). */
-section.console-skew {
-  flex: none;
+/* ---- Notices (design section 2.14) --------------------------------------- */
+
+/* A notice is a card in the flow and never full-bleed: it keeps the window's
+ * own edges, and the `console-skew` one is the body's first child when the mode
+ * is not `ok` (design section 2.8). The refused notice is the one exception and
+ * it is not a card at all -- it is the whole document, so `:only-child` gives it
+ * the room and takes the card's margins away. */
+section.notice {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr) max-content;
+  gap: var(--space-sm);
+  align-items: start;
+  margin: var(--space-sm) auto 0;
+  max-width: var(--page-max);
   padding: var(--space-sm) var(--space-md);
   background: var(--surface);
-  border-bottom: var(--rule-width) solid var(--border);
+  border: var(--rule-width) solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-md);
+  color: var(--text);
 }
 
-section.console-skew:only-child {
+section.notice:only-child {
   flex: 1 1 auto;
+  max-width: none;
+  margin: 0;
+}
+
+/* The tone is a colour and it is a shape. The colour is the card's left edge and
+ * the mark's ink; the shape is the mark itself, so a reader who cannot tell
+ * amber from blue still reads which of the two tones this is. */
+section.notice[data-severity='warning'] {
+  border-left-color: var(--warn);
+}
+
+.notice-mark {
+  width: 16px;
+  height: 16px;
+  margin-top: var(--space-2xs);
+  border: var(--rule-width) solid currentColor;
+  border-radius: var(--radius-pill);
+  color: var(--accent);
+  font-size: var(--font-size-xs);
+  font-weight: var(--weight-semibold);
+  line-height: 14px;
+  text-align: center;
+}
+
+section.notice[data-severity='warning'] .notice-mark {
+  color: var(--warn);
+  border-radius: 0;
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+}
+
+.notice-mark::before {
+  content: '!';
+}
+
+section.notice[data-severity='info'] .notice-mark::before {
+  content: 'i';
+}
+
+.notice-body {
+  min-width: 0;
+}
+
+.notice-title {
+  margin: 0;
+  overflow: hidden;
+  font-size: var(--font-size-base);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notice-reason {
+  margin: var(--space-2xs) 0 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-base);
+  line-height: var(--leading-normal);
+}
+
+/* A button that reads as text: it carries no box of its own, because what it
+ * discloses is part of the sentence above it and not a control beside it. */
+.notice-toggle {
+  margin-top: var(--space-2xs);
+  padding: 0;
+  background: none;
+  border: 0;
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--font-size-base);
+  text-align: left;
+  cursor: pointer;
+}
+
+.notice-details {
+  margin-top: var(--space-xs);
+}
+
+/* The facts are a real definition list, so a label and its value are two
+ * elements: the label is the term, and the value is what the reader came for. */
+.notice-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-2xs) var(--space-md);
+  margin: 0;
+}
+
+.notice-facts dt {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.notice-facts dd {
+  margin: 0;
+  font-size: var(--font-size-sm);
+}
+
+/* A version, an id, a path: the values §3.7 sets in the mono face so two of them
+ * can be compared character by character. */
+.notice-version {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* A list value is a real `ul` and draws real bullets: the reset above takes them
+ * off every list in the console, and a value a mode withholds is one of the few
+ * places a reader is meant to read down a list rather than across a row. */
+.notice-facts dd ul {
+  margin: 0;
+  padding-left: var(--space-md);
+  list-style: disc;
+}
+
+.notice-dismiss {
+  min-width: var(--row-height);
+  min-height: var(--row-height);
+  padding: 0;
+  background: none;
+  border: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-base);
+  line-height: 1;
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+.notice-dismiss:hover {
+  color: var(--text);
+}
+
+/* The header's Reduced-mode chip, and the reason it carries for a reader who
+ * reaches it: the chip's visible word is two words long, so the headline the
+ * dismissed card carried is drawn here and hidden from the eye alone. */
+button.console-reduced-chip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--row-height);
+  padding: 0 var(--space-xs);
+  background: none;
+  border: var(--rule-width) solid var(--warn);
+  border-radius: var(--radius-pill);
+  color: var(--text);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+span.console-reduced-chip-reason {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 /* ---- The header row ------------------------------------------------------ */
@@ -715,7 +893,8 @@ p.installation-binary {
  */
 @media (forced-colors: active) {
   body,
-  section.console-skew,
+  section.notice,
+  button.console-reduced-chip,
   header.console-header,
   div.console-switcher-menu,
   main.console-page,
@@ -725,6 +904,8 @@ p.installation-binary {
   }
 
   header.console-header,
+  section.notice,
+  button.console-reduced-chip,
   button.console-switcher-button,
   div.console-switcher-menu,
   div.console-rail-head,
@@ -733,6 +914,27 @@ p.installation-binary {
   section.console-installation,
   button.console-halt {
     border-color: CanvasText;
+  }
+
+  /* A notice's severity is a colour (the card's left edge) and a shape (the
+   * mark). The system takes the colour away, so the edge is mapped rather than
+   * dropped -- an edge of the card is what says the card is one -- and the mark
+   * keeps its glyph with the adjustment off, because the glyph is the half that
+   * is not a colour at all. */
+  section.notice {
+    border-left-color: CanvasText;
+  }
+
+  .notice-mark {
+    color: CanvasText;
+    forced-color-adjust: none;
+  }
+
+  .notice-toggle,
+  .notice-dismiss {
+    background: ButtonFace;
+    border-color: ButtonText;
+    color: ButtonText;
   }
 
   /* The underline is a box-shadow, which forced colors drops; a border is
