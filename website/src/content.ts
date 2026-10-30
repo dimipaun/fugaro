@@ -1139,9 +1139,9 @@ export function loadHomeScreens(): ScreensFacts {
  * rather than a slide.
  *
  * **One reader for the three pages that show these rows**, which is the owner's feedback of
- * 2026-10-30 (D412's finding 3): the homepage's "See it" panel and the four campaign pages' own slider
- * show one set of pictures — the same file, the same `alt`, the same caption, the same order —
- * so the set is named once here and a page that wants another one is a change in this function
+ * 2026-10-30 (D412's finding 3): the homepage's "See it" panel and the four campaign pages'
+ * own slider show one set of pictures — the same file, the same `alt`, the same caption, the
+ * same order — so the set is named once here and a page that wants another one is a change in this function
  * rather than a second filter on a second page. The rule is the directory the row is served
  * from — `screenshots` for the console's captures, `images` for the terminal capture — so it is
  * the row's own shape being read and not a file name written down a second time.

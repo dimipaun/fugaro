@@ -54,8 +54,8 @@
 //      carries its own mark.** The steps' panel and the closing band are cut at `--radius-xl`,
 //      the site's largest corner step, and each of the three calls to action has an inline
 //      `aria-hidden` mark beside its label: the owner's feedback of 2026-10-30 (D412's findings 1
-//      and 2) asked for a friendlier band than three right angles and three lines of type, and the mark is
-//      decoration whose meaning is the link's own words, so no reader is owed it (F14).
+//      and 2) asked for a friendlier band than three right angles and three lines of type, and the
+//      mark is decoration whose meaning is the link's own words, so no reader is owed it (F14).
 //   9. **Every campaign page shows the console's screens, in the homepage's own slider.** The
 //      four pages that argue for the product now show it: below the hero and above the closing
 //      call to action, the same `ScreenshotSlider` over the same rows
