@@ -98,6 +98,22 @@ const (
 	maxFieldLen  = 200
 	maxBodyBytes = 1 << 20
 	httpTimeout  = 30 * time.Second
+
+	// MaxPRs is the most pull requests one identity may name (fpr). It is the
+	// same bound task.Spec validation holds review_prs to (internal/task):
+	// that is where a launch's own input is refused, and this is where the
+	// claim that reaches the signer is, so a task that got past the spec's
+	// rule cannot mint a claim it would have refused.
+	MaxPRs = 4
+)
+
+// ClaimBranch and ClaimPRs are the wire names of the branch and pull-request
+// claims (fb and fpr). They are exported because the credentials service reads
+// this same wire (internal/credsvc): one literal on both sides, so a rename on
+// one side cannot pass both suites.
+const (
+	ClaimBranch = "fb"
+	ClaimPRs    = "fpr"
 )
 
 // Claims are the facts a run's token proves (R5).
@@ -107,6 +123,16 @@ type Claims struct {
 	FX   time.Time // fx: when the identity stops being honoured by the rules
 	FP   string    // fp: the Fugaro project (must equal /fugaro/project)
 	RB   string    // rb: requested_by, the launcher's own identity
+	// Branch is the branch the run may push (fb): fugaro/<run id> on a first
+	// run, the branch it continues on a follow-up. Empty on a review or
+	// artifact run, which pushes nothing, and on every identity a launcher
+	// minted before this claim existed — such a token stays valid and reads
+	// back empty.
+	Branch string
+	// PRs are the pull requests the run may write (fpr): the one a follow-up
+	// continues, or the one to four a review run reviews. Empty when the run
+	// writes no pull request.
+	PRs []int
 }
 
 // UID is the Firebase uid of the run: r~<slug>~<run>.
@@ -134,9 +160,18 @@ func ValidSegment(s string) bool {
 }
 
 func (c Claims) validate(now time.Time) error {
+	for _, n := range c.PRs {
+		if n <= 0 {
+			return errors.New("budget token: a pull request claim must be a positive number")
+		}
+	}
 	switch {
-	case !utf8.ValidString(c.Slug) || !utf8.ValidString(c.Run) || !utf8.ValidString(c.FP) || !utf8.ValidString(c.RB):
+	case len(c.PRs) > MaxPRs:
+		return fmt.Errorf("budget token: the identity names more than %d pull requests", MaxPRs)
+	case !utf8.ValidString(c.Slug) || !utf8.ValidString(c.Run) || !utf8.ValidString(c.FP) || !utf8.ValidString(c.RB) || !utf8.ValidString(c.Branch):
 		return errors.New("budget token: a claim is not valid UTF-8")
+	case c.Branch != "" && (len(c.Branch) > maxFieldLen || strings.ContainsFunc(c.Branch, unicode.IsControl)):
+		return errors.New("budget token: invalid branch claim")
 	case !ValidSegment(c.Slug):
 		return errors.New("budget token: invalid slug")
 	case !ValidSegment(c.Run):
@@ -184,6 +219,32 @@ func claimInt(m map[string]any, k string) (int64, bool) {
 	}
 	v, err := n.Int64()
 	return v, err == nil
+}
+
+// ClaimInts reads a claim that is a JSON array of whole numbers, like fpr; it
+// is false for anything else, including an element that is not a whole number,
+// so no caller reads a claim it cannot parse as an empty one. It is exported
+// because the credentials service reads this same wire (internal/credsvc), and
+// what the claim may hold is one rule held in one place (ValidSegment is the
+// same arrangement).
+func ClaimInts(m map[string]any, k string) ([]int, bool) {
+	arr, ok := m[k].([]any)
+	if !ok {
+		return nil, false
+	}
+	out := make([]int, 0, len(arr))
+	for _, el := range arr {
+		n, ok := el.(json.Number)
+		if !ok {
+			return nil, false
+		}
+		v, err := n.Int64()
+		if err != nil {
+			return nil, false
+		}
+		out = append(out, int(v))
+	}
+	return out, true
 }
 
 // sameRun reports whether got (the payload of a token) names the run and

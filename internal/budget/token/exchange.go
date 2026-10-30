@@ -193,9 +193,13 @@ func (s *Session) UID() string { return s.uid }
 // registry entry and outcome, which the rules compare with the token's.
 func (s *Session) Claims() Claims {
 	extra, _ := s.want["claims"].(map[string]any)
-	c := Claims{Slug: claimString(extra, "fs"), Run: claimString(extra, "fr"), FP: claimString(extra, "fp"), RB: claimString(extra, "rb")}
+	c := Claims{Slug: claimString(extra, "fs"), Run: claimString(extra, "fr"), FP: claimString(extra, "fp"), RB: claimString(extra, "rb"),
+		Branch: claimString(extra, ClaimBranch)}
 	if fx, ok := claimInt(extra, "fx"); ok {
 		c.FX = time.UnixMilli(fx).UTC()
+	}
+	if prs, ok := ClaimInts(extra, ClaimPRs); ok {
+		c.PRs = prs
 	}
 	return c
 }
