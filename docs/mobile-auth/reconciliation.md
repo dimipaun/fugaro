@@ -86,9 +86,11 @@ than quietly worked around:
    (D72, D74) — and the **repository** allow-list, which is what this tree calls an allow-list
    today: `internal/cli/project_cmd.go`'s `newProjectCmd` describes itself as *"The project's
    policy, its allow-list and the repositories enrolled"* and the field is
-   `projectpolicy.Policy.AllowRepos`. `fugaro pair` is **planned and unbuilt**
-   (`docs/mobile/implementation-plan.md` Task P6.6, approved 2026-10-18), as are its files
-   `internal/cli/pair.go` and `internal/budget/token/device.go`.
+   `projectpolicy.Policy.AllowRepos`. `fugaro pair` is **planned and half-built**
+   (`docs/mobile/implementation-plan.md` Task P6.6, approved 2026-10-18): *(amended 2026-10-29:
+   `internal/cli/pair.go` and its one-shot pairing token landed as the pairing CLI plan's T1a, while
+   the wait, the delivery, the device token (`internal/budget/token/device.go`) and the line that
+   registers the command have not, so the command is still one nobody can run).*
 4. **`docs/central-orchestrator/` has no test of its own.** **No test reads a file under it** —
    `internal/cli/docs_coordinator_test.go` is the only `_test.go` that names the folder at all, and
    what it names is the **string** `docs/central-orchestrator/README.md` as something the
@@ -231,7 +233,8 @@ must be shown rather than told.
 ### The allowlist, the roles and the record
 
 **F11 — Gap. "The project creator becomes the first admin" has no mechanism.** No code writes a
-device node (`internal/cli/pair.go` does not exist), no Auth `uid` exists before a person signs in,
+device node (`internal/cli/pair.go` exists but writes no node yet: its wait and its delivery are
+unbuilt, amended 2026-10-29), no Auth `uid` exists before a person signs in,
 and `fugaro init` writes none. **Consequence:** the sentence needs a writer, a moment and an
 identity; §4's D230 recommends which.
 
@@ -321,7 +324,10 @@ either breaks that sentence or has to be behind the demo entry — and the plan'
 `internal/cli/pair.go` + `internal/budget/token/device.go` + one line of `internal/cli/root.go`;
 Task P6.8 is `mobile/src/pairing/` and `mobile/src/overview/`. The pairing **nodes** are in the tree
 (rules generation 3, merged as #601). **Consequence:** this work extends an unbuilt task, and every
-part of its plan that touches the CLI depends on P6.6 landing first (§2 of the plan).
+part of its plan that touches the CLI depends on P6.6 landing first (§2 of the plan). *(Amended
+2026-10-29: `internal/cli/pair.go` landed as the pairing CLI plan's T1a — the command's surface, its
+pairing token and its QR — so the file is no longer missing while the task still is: the wait, the
+delivery, the device token and the `root.go` line have not.)*
 
 **F24 — Rule. The name `allow` is taken twice** (§0.3): `fugaro allow-delete` over Terraform
 addresses, and `allow_repos` over repositories. **Consequence:** `fugaro allow add|rm|ls` would be

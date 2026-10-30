@@ -137,7 +137,7 @@ recommended), [mobile/reconciliation.md](../mobile/reconciliation.md) (D110–D1
 | The pairing nodes and their grants | `internal/budget/rules/rules.json.tmpl` (generation 3) | **reads** them, §2 (a); adds no generation |
 | The device node and `USER`'s existence test | `rules.json.tmpl`'s `config/admin/devices`, `internal/budget/rules/rules.go`'s `userClaim`, `PathDevices` | **reads** them; P6.6 writes the node over IAM |
 | The `p~` / `mu` claims and the `PAIRING` macro | `rules.go`'s `pairingClaim`, the template's `PAIRING` uses | **reads** them; P6.6 mints both claims |
-| Custom-token minting | `internal/budget/token`'s `Mint`/`MintAt`, `Lifetime`, `UID` | **reuses** it; adds the two new uid shapes and the delivery envelope |
+| Custom-token minting | `internal/budget/token`'s `Mint`/`MintAt`, `Lifetime`, `UID` | **reuses** the signing path, the token encoding and `parseJWT`. *(Amended 2026-10-29: not `Mint` itself — `Claims.validate` needs a `Slug` and a `Run` that `ValidSegment` refuses a `~` in, plus `FP` and `RB` a pairing token does not carry — so T1a's `MintPairing` sits beside it in `internal/budget/token/pairing.go` and adds the `p~` shape; the `m~` shape and the delivery envelope are T2's and T3's.)* |
 | A versioned AEAD envelope with AAD | `internal/budget/token/seal.go` (`Seal`/`Unseal`, `KeySize`, `EnvelopeVersion`, `nonceSize`, `tagSize`, `aad`) | **reuses the shape and the reasoning**, not the key-based API — §8 |
 | The sweep's user deletion and its report | `internal/budget/sweep.go`'s `deleteUsers`, `uidPrefix`, `SweepReport`, `RunUID` | **extends** the prefix test and the report — T4, decisions 1 and 6 |
 | The message binding and its vectors | `internal/mailbox/message.go` (P4.1 T1, merged) | **reused as-is**; the MAC function itself is P4.1 T2/T2a, unbuilt *(amended 2026-10-29: merged — `mac.go`'s `MacOf`, `VerifyMAC` and `NewOutboxSigner`)* |
@@ -487,6 +487,16 @@ types. The default `2m` leaves room for a slow scan without approaching either b
 | `--json` | bool | `false` | one JSON document instead of lines |
 | `--project`, `--gcp-project` | string | `""` | the existing project selectors, `addCloudFlags`'s, unchanged |
 
+*(Amended 2026-10-29, owner: `--json` streams newline-delimited events (`qr`, `waiting`, `code`,
+`done`, `refused`), `v: 1`; `done` carries this document; the typed code is read as one stdin line;
+the console's pairing screen is a later console release. **Amended again 2026-10-29:** the `qr`
+event carries its payload **in cleartext**, so the one-shot pairing token and the Firebase web API
+key do appear on stdout in it. That is the exception this section's "a token never does" rule needs
+said out loud rather than assumed: the payload is the code's own content, the operator's screen
+shows it anyway, the token is one-shot and dead in five minutes, and the API key is the restricted
+web key the app's config already carries — while the MAC key, the device token, the keychain item
+and the typed code stay out of every event, `qr` included.)*
+
 `Args: cobra.NoArgs`. It prints `project: <name> (GCP <id>)` first, as every cloud command does,
 then the QR, then the fingerprint prompt, then what it wrote. **Visible** in the CLI reference: the
 operator has to be able to find it, and D166 makes it the only way to add or revoke a device (T3, CLI
@@ -595,6 +605,16 @@ One object per act, always with `project`:
 same value the operator saw on the phone, and it is not a secret (it is a hash of a public key).
 `refused[]` carries a code and never a paraphrase. `warnings` is present and empty, like `ls`'s.
 
+*(Amended 2026-10-29, owner: `--json` streams newline-delimited events (`qr`, `waiting`, `code`,
+`done`, `refused`), `v: 1`; `done` carries this document; the typed code is read as one stdin line;
+the console's pairing screen is a later console release. **Amended again 2026-10-29:** the `qr`
+event carries its payload **in cleartext**, so the one-shot pairing token and the Firebase web API
+key do appear on stdout in it. That is the exception this section's "a token never does" rule needs
+said out loud rather than assumed: the payload is the code's own content, the operator's screen
+shows it anyway, the token is one-shot and dead in five minutes, and the API key is the restricted
+web key the app's config already carries — while the MAC key, the device token, the keychain item
+and the typed code stay out of every event, `qr` included.)*
+
 ### 4.6 Exit codes
 
 | Code | When |
@@ -646,7 +666,7 @@ with it, verified against the tree:
 
 | State | Where | Who may write it | Written how |
 | --- | --- | --- | --- |
-| The pairing token | nowhere (minted, shown in the QR, discarded) | — | `token.Mint` with `uid = pu = p~<random>`, `exp = iat + min(5m, timeout + 30s)` |
+| The pairing token | nowhere (minted, shown in the QR, discarded) | — | `token.MintPairing` with `uid = pu = p~<random>`, `exp = iat + min(5m, timeout + 30s)` *(amended 2026-10-29: §1's row says why it is not `Mint`; T1a landed it)* |
 | The phone's public key | `pairing/$uid/request` = `{key, at}` | **the phone**, under the `p~` token | once only; the template's write-once rule and `$other` fence it (§2 (a)) |
 | The pairing payload | `pairing/$uid/delivery` | **the CLI**, with **database admin** | sealed to the phone's key; read once by the phone (§8) |
 | The device node | `config/admin/devices/$uid` = name, administered email, role, at | **the CLI**, with **database admin** | written **before** the token is delivered (M4); no secret (M13) |
@@ -993,6 +1013,16 @@ a finding.**
 (new); `internal/cli/root.go` (**one line**); `website/content/cli-reference.md` (regenerated);
 `docs/design/v1.md` §9.1 (one row and the `--json` list). **These four move together in one commit**
 (§5). **Depends on.** P6.4 (merged); **D165**; §2 (a), §2 (e); M3; §5.
+*(Amended 2026-10-29: T1 is **split**, because three of the four files cannot move with a command
+that is not registered yet. **T1a** landed the command's surface, the one-shot pairing token, the QR
+payload and the `--json` event stream as six new files — `internal/cli/pair.go` +
+`internal/cli/pair_test.go`, `internal/cli/pair_events.go`, `internal/cli/testdata/pair-events.golden.jsonl`,
+`internal/budget/token/pairing.go` + `pairing_test.go`, all now in §16's table — and deliberately
+adds **no** `root.go` line, regenerates no reference and touches `docs/design/v1.md` nowhere, so the
+command is in the tree and on nobody's `fugaro --help` yet. **T1b** is the other three: the
+`root.go` line, the regenerated reference and the §9.1 row, which T4 lands with `pair ls` and
+`pair revoke` — one registration for one command, and the reference cannot name a command the root
+does not have.)*
 **Verification.** `go run ./internal/clidoc` then
 `GOFLAGS=-p=2 go test ./internal/clidoc ./internal/cli -run 'CliRef|Docs|Lint|Pair' -count=1`, plus
 `gofmt -l internal/cli`: the QR holds the bootstrap configuration and the token and **no key**; the
@@ -1152,7 +1182,11 @@ agree on every row.
 | --- | --- | --- |
 | `internal/cli/root.go` | **T1** | **one line**; P4.1's line (`newMailboxCmd()`) is its own and the two are independent — the mobile plan reserves one line for each |
 | `internal/localcfg/localcfg.go` + `mailbox_test.go` | **T3** | *(added 2026-10-29, decision 9)* the `mailbox` block widened to one keychain item per pairing; P4.1 owns the merged one-item form, so this is a dependent edit |
-| `internal/cli/pair.go` | T1, T2, T3, T4 | one writer per task: T1 the surface and the QR, T2 the wait and the compare, T3 the delivery, T4 `ls` and `revoke` |
+| `internal/cli/pair.go` | **T1a**, T2, T3, T4 | one writer per task: T1a the surface and the QR, T2 the wait and the compare, T3 the delivery, T4 `ls` and `revoke` |
+| `internal/cli/pair_test.go` | **T1a** | new; the tests §15 T1 names, plus T2's to extend |
+| `internal/cli/pair_events.go` | **T1a** | new *(added 2026-10-29)*: the `--json` stream's encoder, its version and the whole event set — `qr`, `waiting`, `code`, `done`, `refused` — so T2b and T3 emit into one shape instead of each inventing one |
+| `internal/cli/testdata/pair-events.golden.jsonl` | **T1a** | new *(added 2026-10-29)*: the stream, one line per event, decoded strictly on every run |
+| `internal/budget/token/pairing.go` + `pairing_test.go` | **T1a** | new *(added 2026-10-29)*: `MintPairing`, `PairingLifetime`, `PairingMaxLifetime`, `PairingSlack`, `PairingPrefix`; §1's row says why `Mint` cannot mint a `p~` token, and T1a is its only writer — T2's `device.go` is the same package's other new file and shares no name with it |
 | `internal/budget/token/device.go` | **T2 and T3** | the one deliberate two-writer file: T2 lands the device token and the fingerprint, T3 extends it with the delivery envelope in a dependent task — the precedent is P4.1's `mac.go` (T2 `verify`, T2a `sign`) |
 | `internal/budget/sweep.go` | **T4** | the prefix rule and the report field; **P6.13's delete set is not here** — the merged plan's decision 8 keeps the two apart, and a task that puts a `mailbox/` path in this file is a finding |
 | `internal/budget/sweep_device_test.go` | T4 | new |

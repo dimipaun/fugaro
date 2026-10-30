@@ -20,6 +20,13 @@ package rules
 // message's tag is *valid*. The rules check the field's shape; the value is
 // P6.7's (`fugaro mailbox`, D169/D171) and needs the per-pairing key, which
 // the database never holds.
+//
+// The device node's fields are P2's three cases at the end of the node's own
+// test (`TestDeviceNodeFieldsUnreadableByThePhone`,
+// `TestDeviceNodeFieldsUnwritableByThePhone`, `TestDeviceNodeWithoutFieldsStillAdmits`):
+// the administered address and the role are written beside the pairing instant
+// and change nothing a client can do — not its read of the node, not its write
+// to it, and not the admission of an entry that predates them.
 
 import (
 	"strconv"
@@ -27,6 +34,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/mobileauth"
 )
 
 // The pairing identities. They are `p~` uids because the rules now require one:
@@ -154,6 +162,126 @@ func TestDeviceNodeGatesEverythingUserReaches(t *testing.T) {
 	// own node would hold the two halves of its identity, and `fugaro pair
 	// revoke` would be advice rather than a revocation.
 	h.mustRead(alice, beat(mbAlice))
+}
+
+// pairedEntry is the device node as `fugaro pair` writes it now that P1's
+// fields exist (D222, D225): the instant the account was paired, the
+// administered address and the role resolved at the write. The two field names
+// come from `internal/mobileauth` rather than being spelled here, so the node
+// this test writes and the node the CLI writes cannot drift apart.
+func pairedEntry() map[string]any {
+	return map[string]any{
+		"pairedAt":                msgAt,
+		mobileauth.NodeFieldEmail: "alice@example.com",
+		mobileauth.NodeFieldRole:  string(mobileauth.RoleOperator),
+	}
+}
+
+// TestDeviceNodeFieldsUnreadableByThePhone is P2's first claim: the new fields
+// sit on a node no client token may read, and the node's being readable to
+// nobody does not change because they are there. The phone that holds the entry
+// reads neither field and not the entry itself — a client that could read its
+// own node would hold the allowlist's shape, and one that could read `role`
+// would read an authority the CLI tells it rather than one it may fetch.
+//
+// The heartbeat read is the control beside the refusals: the node is there,
+// carries this account and admits it, so each refusal below is a refusal of
+// that path rather than of a token the rules admit nowhere.
+func TestDeviceNodeFieldsUnreadableByThePhone(t *testing.T) {
+	h := newHarness(t)
+	h.mustAllow(h.consumer(mbAlice), "alice's heartbeat", put(beat(mbAlice), aHeartbeat()))
+	h.set(PathDevices+"/"+mbAlice, pairedEntry())
+	alice := h.unpaired(mbAlice)
+	h.mustRead(alice, beat(mbAlice))
+
+	for _, p := range []string{
+		PathDevices + "/" + mbAlice,
+		PathDevices + "/" + mbAlice + "/" + mobileauth.NodeFieldEmail,
+		PathDevices + "/" + mbAlice + "/" + mobileauth.NodeFieldRole,
+	} {
+		h.mustReadDenied(alice, p)
+	}
+}
+
+// TestDeviceNodeFieldsUnwritableByThePhone is P2's second claim: no client
+// write reaches the node or either field, so a phone cannot promote itself to
+// admin, cannot rewrite the address it was admitted under, and cannot delete
+// the node whose deletion only `fugaro pair revoke` performs.
+//
+// The reads that follow the denials are the control: the entry is still there,
+// still carries this account and still admits it, so each refusal was a refusal
+// of *that* write rather than of a tree the write had already emptied.
+func TestDeviceNodeFieldsUnwritableByThePhone(t *testing.T) {
+	h := newHarness(t)
+	h.mustAllow(h.consumer(mbAlice), "alice's heartbeat", put(beat(mbAlice), aHeartbeat()))
+	h.set(PathDevices+"/"+mbAlice, pairedEntry())
+	alice := h.unpaired(mbAlice)
+	h.mustRead(alice, beat(mbAlice))
+
+	h.mustDeny(alice, "an account writing its own device node",
+		put(PathDevices+"/"+mbAlice, map[string]any{"pairedAt": msgAt}))
+	h.mustDeny(alice, "an account promoting itself to admin",
+		put(PathDevices+"/"+mbAlice+"/"+mobileauth.NodeFieldRole, string(mobileauth.RoleAdmin)))
+	h.mustDeny(alice, "an account rewriting its own entry's email",
+		put(PathDevices+"/"+mbAlice+"/"+mobileauth.NodeFieldEmail, "mallory@example.com"))
+	h.mustDeny(alice, "an account deleting its own entry's role",
+		map[string]any{PathDevices + "/" + mbAlice + "/" + mobileauth.NodeFieldRole: nil})
+	h.mustDeny(alice, "an account deleting its own entry's email",
+		map[string]any{PathDevices + "/" + mbAlice + "/" + mobileauth.NodeFieldEmail: nil})
+	h.mustDeny(alice, "an account deleting its own device node",
+		map[string]any{PathDevices + "/" + mbAlice: nil})
+
+	h.mustRead(alice, beat(mbAlice))
+	if got, want := h.value(PathDevices+"/"+mbAlice+"/"+mobileauth.NodeFieldRole), `"operator"`; got != want {
+		t.Fatalf("the entry's role reads %s after the write that tried to promote its holder, want %s", got, want)
+	}
+}
+
+// TestDeviceNodeWithoutFieldsStillAdmits is P2's third claim, and the one that
+// keeps the fields from becoming load-bearing by accident: USER (userClaim)
+// turns on the node's *existence* — root.child('config/admin/devices')
+// .child(auth.uid).exists() — not on its shape, so an entry written before
+// P1's fields existed admits its holder exactly as one carrying them does, and
+// an installation whose rules were deployed before this work keeps pairing
+// phones without a rules generation (reconciliation §F29).
+//
+// The states are walked in order, and the refusals of an account with no node
+// at all sit beside them: they are what says the two admissions above are the
+// node's doing rather than the mailbox's.
+func TestDeviceNodeWithoutFieldsStillAdmits(t *testing.T) {
+	h := newHarness(t)
+	h.mustAllow(h.consumer(mbAlice), "alice's heartbeat", put(beat(mbAlice), aHeartbeat()))
+	h.mustAllow(h.consumer(mbAlice), "the first outbox message to ack",
+		put(outbox(mbAlice, "c1"), aMessage("c1", mbAlice)))
+	h.mustAllow(h.consumer(mbAlice), "the second outbox message to ack",
+		put(outbox(mbAlice, "c2"), aMessage("c2", mbAlice)))
+
+	// 1. The node as it was written before the fields existed: existence
+	// alone, which is all `fugaro pair` wrote when this test was new.
+	h.pairDevice(mbAlice)
+	bare := h.unpaired(mbAlice)
+	h.mustRead(bare, "mailbox/"+mbAlice+"/outbox")
+	h.mustRead(bare, beat(mbAlice))
+	h.mustAllow(bare, "an inbox message from an account whose node predates the fields",
+		put(inbox(mbAlice, "m1"), aMessage("m1", mbAlice)))
+	h.mustAllow(bare, "the ack on its own outbox message", put(outbox(mbAlice, "c1")+"/acked", true))
+
+	// 2. The same account, its node rewritten with the two fields beside the
+	// pairing instant. The answer does not move, because USER reads neither.
+	h.set(PathDevices+"/"+mbAlice, pairedEntry())
+	fielded := h.unpaired(mbAlice)
+	h.mustRead(fielded, "mailbox/"+mbAlice+"/outbox")
+	h.mustRead(fielded, beat(mbAlice))
+	h.mustAllow(fielded, "an inbox message from an account whose node carries the fields",
+		put(inbox(mbAlice, "m2"), aMessage("m2", mbAlice)))
+	h.mustAllow(fielded, "the ack on its own outbox message", put(outbox(mbAlice, "c2")+"/acked", true))
+
+	// 3. The control both admissions are read against: an account with no
+	// device node is refused the same read and the same write.
+	bob := h.unpaired(mbBob)
+	h.mustReadDenied(bob, "mailbox/"+mbBob+"/outbox")
+	h.mustDeny(bob, "an inbox message from an account with no device node",
+		put(inbox(mbBob, "m1"), aMessage("m1", mbBob)))
 }
 
 // TestPairingSessionWritesItsRequestOnceAndReadsOnlyItsDelivery is D165: the
