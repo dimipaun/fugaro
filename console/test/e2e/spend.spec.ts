@@ -279,7 +279,6 @@ return spend.readSpend(read, controls, ${JSON.stringify(BUDGET)}, readPeople).th
     asked: asked,
     askedPeople: askedPeople,
     args: outcome.args,
-    rows: outcome.model.rows.length,
   };
 });
 })()`
