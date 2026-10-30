@@ -755,9 +755,10 @@ run_git() {
 repo_name() { printf '%s' "$REPO"; }
 branch_name() { printf 'chk190/%s' "$NAME"; }
 git_url() { printf 'https://%s/%s.git' "$HOST" "$REPO"; }
-# The slow push's own route: the same repository, on the same host, through the
-# proxy's stall prefix — and the path the proxy forwards that request with,
-# which is the same URL without the prefix.
+# slow_push_url: the slow push's own route — the same repository, on the same
+# host, through the proxy's stall prefix. slow_upstream_url: the URL the proxy
+# forwards that request with once it has stripped the prefix, which is the same
+# repository on the upstream the proxy's own default names.
 slow_push_url() { printf 'https://%s%s%s.git' "$HOST" "$STALL_PREFIX" "$REPO"; }
 slow_upstream_url() { printf '%s/%s.git' "$UPSTREAM" "$REPO"; }
 
