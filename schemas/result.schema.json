@@ -466,6 +466,53 @@
       "maxItems": 64,
       "description": "The ids of the backlog items this run closed as the follow-up whose review shipped the round an earlier run on its pull request left open (docs/rigor-modes D31, plan T4.7), in the order it closed them. The closed item files are on the run's branch, each with a `## Closed by` section naming the pull request. Nothing consumes this property yet. At most 64 (runstore.MaxBacklogClosed). Absent — never an empty list — for a run that closed none, which is every record written before this field existed.",
       "items": { "type": "string", "pattern": "^[0-9]{8}-[0-9]{2}$", "description": "One item id, as `backlog` writes them." }
+    },
+    "ab": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pair_id", "arm"],
+      "description": "The A/B pair block the run's task carried (docs/model-ab-testing, decisions D550-D573; runstore.Record.AB, task.AB): the pair both arms belong to, which arm this run is, and, for a challenger, the coder model it ran. It is the task's own block echoed onto the record, so a pair can be scored from records alone, without a bucket listing (D559). Absent — never a block with an empty arm — for a run that was not sampled, which is every record written before this field existed, so an old reader sees the record it always saw and version stays 1 (the field is additive). The enums are internal/task's own closed vocabulary, spelled exactly as it spells it, and they are the same ones task.schema.json carries: a task and the record it produces state one block the same way.",
+      "properties": {
+        "pair_id": {
+          "type": "string",
+          "pattern": "\\S",
+          "description": "The pair both arms belong to: one value, written by the launcher onto both tasks, so a reader joins the two records by it. Opaque to the runner, and a blank one names no pair (the pattern is task.Spec.Validate's strings.TrimSpace rule)."
+        },
+        "arm": {
+          "enum": ["champion", "challenger"],
+          "description": "Which arm this run is. The champion is the run the developer gets and publishes exactly as an unsampled run; the challenger is a shadow (task.ABArmChampion, task.ABArmChallenger)."
+        },
+        "publish": {
+          "enum": ["none"],
+          "description": "Present only on a challenger, and only as \"none\" (task.ABPublishNone): the challenger's arm never pushes, opens, updates or comments on a pull request (D554). A champion publishes as it always did and carries nothing here."
+        },
+        "challenger": {
+          "type": "string",
+          "pattern": "\\S",
+          "description": "The coder model the challenger arm ran, and the one difference between the arms (D555). A blank one is no model (the pattern is task.Spec.Validate's strings.TrimSpace rule)."
+        },
+        "challenger_source": {
+          "enum": ["owner"],
+          "description": "Who named the challenger: the owner, in the project layer, never the repository's own file (D556, task.ABChallengerOwner)."
+        }
+      },
+      "not": {
+        "allOf": [
+          { "properties": { "arm": { "const": "champion" } }, "required": ["arm"] },
+          { "anyOf": [{ "required": ["publish"] }, { "required": ["challenger"] }, { "required": ["challenger_source"] }] }
+        ]
+      },
+      "if": { "properties": { "arm": { "const": "challenger" } }, "required": ["arm"] },
+      "then": { "required": ["publish", "challenger"] }
+    },
+    "patch_object": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The key of the run's own tree diff under the runs bucket, runs/<repo-slug>/<run-id>/ab/patch.diff: the diff from the run's StartSHA to its final head, with no commit metadata in it, which both arms upload because the paired comparison reads the two diffs. Absent for a run that uploaded none — every run before this field existed, and one that died before finalize — so an absent key means there is no patch, never that the patch is empty."
+    },
+    "patch_truncated": {
+      "type": "boolean",
+      "description": "Set when the stored patch is shorter than the run's real diff, because the object is capped: the truncation is recorded as a fact rather than hidden, as changed_files.truncated is, so a reader can tell a short patch from a cut-off one."
     }
   }
 }

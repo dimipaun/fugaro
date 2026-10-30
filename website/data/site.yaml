@@ -100,6 +100,35 @@ analytics:
   enabled: true
   measurement_id: "G-DZ4F35D3EH"
 
+# The campaign measurement's configuration (plan Task G2.3, reconciliation F17, F18,
+# F22 and D401): the pixel's id, the insight tag's partner id, and the one origin
+# each of the three loaders fetches its script from. It is a separate block from
+# `analytics` above because it is a separate question, asked only on the four
+# campaign pages and stored under its own key -- and a separate origin list
+# because these origins are admitted by the consent check, not by
+# `allowed_hosts` below, which lists the hosts the site LINKS to.
+#
+# **Both ids are empty, and an empty id disables its loader.** The owner has not
+# supplied a pixel id or a partner id yet, and this repository publishes no
+# identifier the owner did not supply: an invented id would send a campaign
+# page's visitors into a stranger's ad account, which is the one failure this
+# file cannot take back. So the loaders are wired, gated and tested, and they
+# load nothing until a line here carries the owner's own id. The origins are
+# exact hosts and not wildcards: the plan pins the narrowest origin each vendor
+# documents (O3), and `website/test/origins.mjs` holds the deployed policy to
+# this exact list.
+#
+# The Calendly link is NOT here: it is `website/data/landing.yaml`'s
+# `calendly_url`, one value with one home, and the banner carries it to the
+# loader. What is here is only the origin Calendly's own widget script and
+# stylesheet come from.
+marketing:
+  meta_pixel_id: ""
+  meta_origin: "https://connect.facebook.net"
+  linkedin_partner_id: ""
+  linkedin_origin: "https://snap.licdn.com"
+  calendly_origin: "https://assets.calendly.com"
+
 # The features the site renders only when they exist. The console is published:
 # console/ holds the application, .github/workflows/console-release.yml signed,
 # notarised and stapled its .dmg and .zip and packed its unsigned Linux pair, and
@@ -132,8 +161,10 @@ min_runs: 20
 # renders, firebase.google.com for Google's own Firebase privacy policy, which
 # the privacy statement links rather than restating, calendly.com for the
 # booking link the four campaign pages carry as a plain `Book a demo` anchor
-# (G2.2; the inline embed G2.3 adds is the consent check's, not this list's) --
-# and the site's own canonical origin, and nothing else. The one third-party
+# (G2.2; the inline embed G2.3 adds is the consent check's, not this list's),
+# wa.me for the chat link the same section carries, whose address is the number
+# `landing.yaml` writes (G2.4) -- and the site's own canonical origin, and
+# nothing else. The one third-party
 # origin the owner decided on (D93's analytics script, loaded only after
 # consent) is admitted by the consent task's own check, not by an entry here.
 #
@@ -147,4 +178,5 @@ allowed_hosts:
   - raw.githubusercontent.com
   - firebase.google.com
   - calendly.com
+  - wa.me
   - fugaro.dev

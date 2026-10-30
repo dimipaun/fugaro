@@ -143,6 +143,44 @@
       "maxItems": 5000,
       "items": { "type": "string", "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$" },
       "description": "The report run's manifest (task-governance plan T3.6, task.Spec.DigestRuns): the run IDs of the records the digest step may read, which the launching CLI listed from this repository's own runs/ prefix — the last 40 days, newest first, at most task.MaxDigestRuns of them. Absent for every launch that is not a report run, so a spec written for one is byte-identical to what the previous release wrote. The job reads each named record by name and never lists, so this list is what decides which records a run reads; the runner still refuses an ID outside its own repository's prefix (G2). It is accepted only with a recipe whose first step is digest (task.RecipeUsesDigest), the only step that reads it; a repository-sourced recipe carries its name alone, so the launcher judges the file it resolved (internal/cli/run_digest_manifest.go) and the runner resolves that name at the task's ref. Needs a 0.13.0 runner (internal/cli/recipes_skew.go's digestSince, the same gate the digest step itself needs): task.Parse decodes with DisallowUnknownFields, so an older runner refuses the whole spec rather than running the task without its manifest. The launcher's image gate refuses at an older job image every launch whose task carries this field, whatever its recipe's source (internal/cli/recipes_skew.go's recipeSinceFor reads the manifest before the recipe), and one whose task carries the catalog run-digest's own text; a repository report recipe whose listing came out empty carries neither, and there the older runner refuses the digest step at bootstrap."
+    },
+    "ab": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pair_id", "arm"],
+      "description": "The A/B pair block of a sampled launch (docs/model-ab-testing, decisions D550-D573; task.AB): which pair this run belongs to, which arm it is, and, for a challenger, the coder model it runs and the fact that it never publishes. Absent for every launch that was not sampled — which is every launch today, since nothing samples yet — so a spec without it is byte-identical to what the release before this field wrote. Both arms of one pair carry the same pair_id and differ in nothing but this block (D555): the challenger travels here and never in overrides.model, which a run with no per-role models applies to every stage and would move the reviewer both arms share, which is why an ab block and overrides.model never appear together. The vocabulary is closed, like rigor's and tier's: an unknown arm, publish or challenger_source is refused rather than read as something else. Needs a runner that knows the field: task.Parse decodes with DisallowUnknownFields, so an older runner refuses the whole spec rather than running a challenger as a publishing run, and the launcher's own gate is what keeps a sampled launch off such a job.",
+      "properties": {
+        "pair_id": {
+          "type": "string",
+          "pattern": "\\S",
+          "description": "The pair both arms belong to: one value, written by the launcher onto both tasks, so a reader joins the two records by it. Opaque to the runner, and a blank one names no pair (the pattern is task.Spec.Validate's strings.TrimSpace rule, as the paths entries below carry it)."
+        },
+        "arm": {
+          "enum": ["champion", "challenger"],
+          "description": "Which arm this run is. The champion is the run the developer gets and publishes exactly as an unsampled run; the challenger is a shadow (task.ABArmChampion, task.ABArmChallenger)."
+        },
+        "publish": {
+          "enum": ["none"],
+          "description": "Present only on a challenger, and only as \"none\" (task.ABPublishNone): the challenger's arm never pushes, opens, updates or comments on a pull request, and the safety switch is stated rather than left to an absent field (D554). A champion publishes as it always did and carries nothing here."
+        },
+        "challenger": {
+          "type": "string",
+          "pattern": "\\S",
+          "description": "The coder model the challenger arm runs, and the one difference between the arms (D555). It is an entry of the project layer's own challenger list, which the runner re-checks at bootstrap rather than trusting this text, so this schema does not carry that list's shape. A blank one is no model (the pattern is task.Spec.Validate's strings.TrimSpace rule)."
+        },
+        "challenger_source": {
+          "enum": ["owner"],
+          "description": "Who named the challenger: the owner, in the project layer, never the repository's own file (D556, task.ABChallengerOwner). It is the seam D572 reserves for a later auto-flip writer; nothing reads it to pick a challenger."
+        }
+      },
+      "not": {
+        "allOf": [
+          { "properties": { "arm": { "const": "champion" } }, "required": ["arm"] },
+          { "anyOf": [{ "required": ["publish"] }, { "required": ["challenger"] }, { "required": ["challenger_source"] }] }
+        ]
+      },
+      "if": { "properties": { "arm": { "const": "challenger" } }, "required": ["arm"] },
+      "then": { "required": ["publish", "challenger"] }
     }
   },
   "dependentRequired": {
@@ -150,7 +188,10 @@
     "pr": ["branch", "previous_run"],
     "previous_run": ["branch", "pr"]
   },
-  "not": { "allOf": [{ "required": ["review_prs"] }, { "anyOf": [{ "required": ["branch"] }, { "required": ["pr"] }, { "required": ["previous_run"] }] }] },
+  "allOf": [
+    { "not": { "allOf": [{ "required": ["review_prs"] }, { "anyOf": [{ "required": ["branch"] }, { "required": ["pr"] }, { "required": ["previous_run"] }] }] } },
+    { "not": { "allOf": [{ "required": ["ab"] }, { "properties": { "overrides": { "required": ["model"] } }, "required": ["overrides"] }] } }
+  ],
   "if": { "not": { "anyOf": [{ "required": ["branch"] }, { "required": ["review_prs"] }] } },
   "then": { "required": ["task"], "properties": { "task": { "minLength": 1 } } }
 }

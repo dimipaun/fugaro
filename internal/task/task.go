@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -296,6 +297,21 @@ type Spec struct {
 	// the list arbitrarily long. Nil for every launch that declares none, which
 	// today is every launch: unlike Tier above, no launcher writes it yet.
 	ExpectedScope []string `json:"expected_scope,omitempty"`
+	// AB is the pair block of a sampled launch (docs/model-ab-testing, D550):
+	// which pair this run belongs to, which arm it is, and, for a challenger,
+	// the coder model and the fact that it never publishes. Nil for every
+	// launch that was not sampled, which is every launch today — nothing
+	// samples yet, since the launcher's planner is A3.3 — so a spec without
+	// one is byte-identical to what the release before this field wrote.
+	//
+	// A runner before the release that reads this field refuses the whole
+	// spec (Parse decodes with DisallowUnknownFields), which is the
+	// fail-closed behaviour a pair relies on: an older runner refuses a task
+	// carrying `ab` rather than running a challenger as a publishing run.
+	// That skew is why the launcher gates a sampled launch on a job image
+	// that has the field (A3.3) instead of letting the run fail at bootstrap
+	// after the task was written.
+	AB *AB `json:"ab,omitempty"`
 }
 
 // MaxDeclaredPaths bounds the paths one launch may declare (Spec.Paths,
@@ -574,6 +590,79 @@ type ProjectLayer struct {
 	SHA256     string `json:"sha256"`               // of YAML
 	Generation int64  `json:"generation,omitempty"` // the object's, for display
 	YAML       string `json:"yaml"`                 // the exact text
+}
+
+// ABArm, ABPublish and ABChallengerSource are the pair block's three closed
+// vocabularies. Each is a named string type with one exported list, as
+// rigor.Mode and tier.Tier are, because a near miss is a launcher's bug
+// rather than a run's opinion about which arm it is — and a named type is
+// what keeps an arbitrary string out of a field the schemas pin to an enum.
+type (
+	ABArm              string
+	ABPublish          string
+	ABChallengerSource string
+)
+
+const (
+	// ABArmChampion is the run the developer gets: it publishes exactly as
+	// an unsampled run.
+	ABArmChampion ABArm = "champion"
+	// ABArmChallenger is the shadow arm, whose one difference from the
+	// champion is the coder model (D555).
+	ABArmChallenger ABArm = "challenger"
+	// ABPublishNone is the only value AB.Publish takes: a challenger's arm
+	// never pushes, opens, updates or comments on a pull request (D554), so
+	// the safety switch is stated rather than left to an absent field.
+	ABPublishNone ABPublish = "none"
+	// ABChallengerOwner is the only value AB.ChallengerSource takes: the
+	// owner names a challenger in the project layer and never fugaro.yaml
+	// (D556). It is the seam D572 reserves for a later auto-flip writer —
+	// nothing reads it to pick a challenger, and nothing writes another one.
+	ABChallengerOwner ABChallengerSource = "owner"
+)
+
+// ABArms, ABPublishes and ABChallengerSources are each whole vocabulary,
+// closed the way rigor.Modes and tier.Tiers are: a value outside one is
+// refused where it is written, never matched as an unknown arm later.
+var (
+	ABArms              = []ABArm{ABArmChampion, ABArmChallenger}
+	ABPublishes         = []ABPublish{ABPublishNone}
+	ABChallengerSources = []ABChallengerSource{ABChallengerOwner}
+)
+
+// AB is the pair block a sampled launch carries (docs/model-ab-testing,
+// D550-D573): which pair the run belongs to, which arm it is, and, for a
+// challenger, what may never happen to it. It is the launcher's own claim,
+// like Spec.Tier, and it decides nothing in this package: nothing here
+// samples, and a spec carrying no block is byte-identical to what the release
+// before this field wrote.
+//
+// Both arms are separate runs with separate IDs, branches and records, joined
+// by this block (R1); the champion is the run the developer gets and
+// publishes exactly as an unsampled run, while the challenger is a shadow
+// whose only difference is the coder model (D554, D555). That model travels
+// here and never through Overrides.Model, which a run with no per-role models
+// applies to every stage (Spec.Apply) and would change the reviewer both arms
+// share — Validate refuses a task carrying both for that reason.
+type AB struct {
+	// PairID names the pair both arms belong to: one value, written by the
+	// launcher onto both tasks, so a reader joins the two records by it. It
+	// is opaque to this package.
+	PairID string `json:"pair_id"`
+	// Arm is ABArmChampion or ABArmChallenger.
+	Arm ABArm `json:"arm"`
+	// Publish is ABPublishNone on a challenger, and empty on a champion,
+	// which publishes as it always did and so has nothing to say here.
+	Publish ABPublish `json:"publish,omitempty"`
+	// Challenger is the coder model the challenger arm runs, empty on a
+	// champion. It is an entry of the project layer's own challenger list
+	// (D556), which the runner re-checks at bootstrap rather than trusting
+	// this text: a replayed or hand-edited task is checked too.
+	Challenger string `json:"challenger,omitempty"`
+	// ChallengerSource is ABChallengerOwner on a challenger, and empty on a
+	// champion: the owner set that model in the project layer, never the
+	// repository's own file (D556).
+	ChallengerSource ABChallengerSource `json:"challenger_source,omitempty"`
 }
 
 // Overrides are the only config values a single task may change.
@@ -864,6 +953,54 @@ func (s *Spec) Validate() error {
 		}
 		if !inputSHA256RE.MatchString(in.SHA256) {
 			bad("task spec: inputs[%d].sha256 %q must be 64 lower-case hex digits, the sha256 of the file", i, in.SHA256)
+		}
+	}
+	// The pair block (A1.1): its own closed vocabularies, and the shapes the
+	// pair's own fairness rests on. A challenger must be a shadow that never
+	// publishes (D554) and must name the coder model it runs (D555) — the one
+	// difference between the arms — while a champion publishes as an unsampled
+	// run and runs no challenger, so the three fields that describe one are
+	// refused on it rather than ignored. That last rule is what keeps a task
+	// and the record the runner echoes from it (A2.1) in step with the
+	// published result schema, which refuses a champion carrying any of the
+	// three. An absent block is legal, and is what every launch writes today.
+	if ab := s.AB; ab != nil {
+		if strings.TrimSpace(ab.PairID) == "" {
+			bad("task spec: ab.pair_id is required")
+		}
+		if !slices.Contains(ABArms, ab.Arm) {
+			bad("task spec: ab.arm %q must be %s or %s", ab.Arm, ABArmChampion, ABArmChallenger)
+		}
+		switch ab.Arm {
+		case ABArmChampion:
+			if ab.Publish != "" {
+				bad("task spec: ab.publish must be empty on a champion, which publishes as an unsampled run")
+			}
+			if ab.Challenger != "" {
+				bad("task spec: ab.challenger describes a challenger, and this arm is the champion")
+			}
+			if ab.ChallengerSource != "" {
+				bad("task spec: ab.challenger_source describes a challenger, and this arm is the champion")
+			}
+		case ABArmChallenger:
+			if !slices.Contains(ABPublishes, ab.Publish) {
+				bad("task spec: ab.publish must be %q on a challenger: a challenger's arm never publishes", ABPublishNone)
+			}
+			if strings.TrimSpace(ab.Challenger) == "" {
+				bad("task spec: ab.challenger is required on a challenger: the coder model is the arms' one difference")
+			}
+			if ab.ChallengerSource != "" && !slices.Contains(ABChallengerSources, ab.ChallengerSource) {
+				bad("task spec: ab.challenger_source %q must be %s or empty", ab.ChallengerSource, ABChallengerOwner)
+			}
+		}
+		// The challenger never travels as an override (D555): with no
+		// per-role models, Overrides.Model reaches every stage (Spec.Apply),
+		// so a task carrying both would move the reviewer the arms share and
+		// the review signals would stop being comparable. The launcher writes
+		// the model into the block instead, and the runner applies it to the
+		// coder role alone.
+		if s.Overrides.Model != "" {
+			bad("task spec: ab and overrides.model don't go together: the challenger travels in ab, never as an override")
 		}
 	}
 	o := s.Overrides

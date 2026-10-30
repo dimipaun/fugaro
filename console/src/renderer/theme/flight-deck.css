@@ -1413,3 +1413,329 @@ span.run-log-severity {
 span.run-log-message {
   color: var(--text-2);
 }
+
+/* ---- The ledger, the pull request and the scrubber ------------------------
+ *
+ * The three panels step 3b drew. The ledger's own rule is the one that matters:
+ * **the hero is the billed total and nothing else**, the plan's part is drawn
+ * apart from it, and the bar is two shares of that total rather than a picture
+ * of everything the run touched. The scrubber's geometry is SVG (`viewBox="0 0
+ * 100 56"` stretched to the panel), so the shares are the document's and no
+ * pixel of a layout is a length this stylesheet had to know.
+ * ------------------------------------------------------------------------- */
+
+p.run-ledger-hero {
+  display: grid;
+  gap: var(--space-3xs);
+  margin-bottom: var(--space-sm);
+}
+
+span.run-ledger-word {
+  font-size: var(--text-label);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+/* The hero is the one figure on the panel that is not on the bar's axis: the
+ * dollars the table billed, in the largest type the ledger has. It overrides
+ * `run-number`'s right-alignment because a hero is read from its own left edge
+ * and not as a column of a table. */
+p.run-ledger-hero span.run-ledger-total-value {
+  min-width: 0;
+  font-size: var(--text-hero);
+  font-weight: var(--weight-medium);
+  line-height: 1;
+  text-align: left;
+  color: var(--billed);
+}
+
+svg.run-ledger-bar {
+  display: block;
+  width: 100%;
+}
+
+rect.run-ledger-rail {
+  fill: var(--track);
+}
+
+rect.run-ledger-billed {
+  fill: var(--billed);
+}
+
+/* The estimate is an outline rather than a fill, and the outline is a
+ * device-space hairline: the bar is a 100-unit axis stretched to the panel, so a
+ * stroke in user units is a border that thickens with the window and the dashes
+ * would stretch with it. */
+rect.run-ledger-estimate {
+  fill: none;
+  stroke: var(--estimate-outline);
+  stroke-width: 1;
+  stroke-dasharray: 3 2;
+  vector-effect: non-scaling-stroke;
+}
+
+ul.run-ledger-legend {
+  display: grid;
+  gap: var(--space-3xs);
+  margin-top: var(--space-2xs);
+  list-style: none;
+}
+
+/* A key is a swatch, a word and a right-aligned figure: the three columns are
+ * what makes a column of dollars read down as a column. */
+li.run-ledger-key {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2xs) var(--space-sm);
+}
+
+span.run-ledger-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: var(--radius-chip);
+}
+
+span.run-ledger-swatch-billed {
+  background: var(--billed);
+}
+
+span.run-ledger-swatch-estimate {
+  border: var(--rule-width) dashed var(--estimate-outline);
+}
+
+span.run-ledger-key-word {
+  font-size: var(--text-xs);
+  color: var(--text-2);
+}
+
+/* The plan's part is not one of the run's three accounts: it is separated by a
+ * rule and drawn under the notional mark, so the plan's list price is never read
+ * as a bill. */
+p.run-ledger-notional {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2xs) var(--space-sm);
+  margin-top: var(--space-xs);
+  padding-top: var(--space-xs);
+  border-top: var(--rule-width) solid var(--line);
+}
+
+span.run-ledger-notional-value {
+  color: var(--notional);
+}
+
+div.run-recon {
+  margin-top: var(--space-sm);
+  padding-top: var(--space-sm);
+  border-top: var(--rule-width) solid var(--line);
+}
+
+h3.run-recon-word,
+h3.run-split-word {
+  font-size: var(--text-label);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+p.run-recon-line,
+p.run-recon-diff {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2xs) var(--space-sm);
+  margin-top: var(--space-3xs);
+}
+
+span.run-recon-label {
+  font-size: var(--text-xs);
+  color: var(--text-2);
+}
+
+/* A difference that is not zero is the one figure on this panel a reader has to
+ * notice, and the word beside it says what it is: the tone is the second channel
+ * and never the only one. */
+p.run-recon-diff-warn span.run-recon-diff-value {
+  color: var(--warn-text);
+}
+
+div.run-split {
+  margin-top: var(--space-sm);
+  padding-top: var(--space-sm);
+  border-top: var(--rule-width) solid var(--line);
+}
+
+h3.run-split-word {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs);
+}
+
+span.run-split-caption {
+  font-size: var(--text-label);
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--text-3);
+}
+
+p.run-route,
+p.run-model {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2xs) var(--space-sm);
+  margin-top: var(--space-3xs);
+}
+
+p.run-split-absent {
+  margin-top: var(--space-3xs);
+  color: var(--text-3);
+  font-size: var(--text-xs);
+}
+
+/* The pull request is text and never a control: the number and the URL are mono
+ * because they are identifiers a reader selects, and the URL is not a link --
+ * no document names the provider, so the console will not build one. */
+section.run-pr > span.run-pr-repo {
+  color: var(--text-2);
+}
+
+section.run-pr > span.run-pr-number {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--text);
+  user-select: text;
+}
+
+section.run-pr > span.run-pr-url {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--live-text);
+  user-select: text;
+}
+
+span.run-pr-sep {
+  color: var(--text-3);
+}
+
+/* ---- The replay scrubber -------------------------------------------------- */
+
+div.run-replay-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2xs) var(--space-sm);
+}
+
+div.run-replay-head h2.run-panel-title {
+  margin-bottom: 0;
+}
+
+p.run-replay-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs);
+  font-size: var(--text-xs);
+  color: var(--text-2);
+}
+
+span.run-replay-sep {
+  color: var(--text-3);
+}
+
+/* The track is a 56-unit-high box stretched to the panel's width: vertically
+ * one unit is one pixel, horizontally one unit is one percent of the window. */
+svg.run-replay-track {
+  display: block;
+  width: 100%;
+  height: 56px;
+  margin-top: var(--space-sm);
+}
+
+rect.run-replay-rail {
+  fill: var(--track);
+}
+
+rect.run-replay-fill {
+  fill: var(--live-fill);
+}
+
+/* A tick is a record that arrived. The two tones are the second channel -- the
+ * playhead is at an `x` and the fill says which side of it is behind -- and the
+ * hairline is a device-space stroke so a tick is 3 px whatever the window is. */
+line.run-replay-tick {
+  stroke: var(--live-text);
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+}
+
+line.run-replay-tick-past {
+  stroke: var(--decor);
+}
+
+line.run-replay-playhead {
+  stroke: var(--warn);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+/* The moment scrubbed to, in its own row under the track: the track is stretched
+ * horizontally and text cannot be, so the label is placed by the layout rather
+ * than by a position inside the drawing. */
+p.run-replay-scrubbed {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs);
+  margin-top: var(--space-2xs);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--warn);
+}
+
+span.run-replay-at {
+  padding: 0 var(--space-3xs);
+  border-radius: var(--radius-chip);
+  background: var(--warn);
+  color: var(--warn-ink);
+  user-select: text;
+}
+
+p.run-replay-axis {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  margin-top: var(--space-2xs);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-xs);
+  color: var(--text-2);
+}
+
+span.run-replay-from,
+span.run-replay-mid,
+span.run-replay-to {
+  user-select: text;
+}
+
+p.run-replay-no-span {
+  margin-top: var(--space-2xs);
+  font-size: var(--text-xs);
+  color: var(--text-2);
+}
+
+p.run-replay-window-line {
+  margin-top: var(--space-2xs);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-2);
+}

@@ -208,12 +208,12 @@ var planWillCreate = map[string]string{
 // here is what keeps the derivation honest: a path the plan cites is either in
 // the tree, or a path this plan's tasks create, or this list — and this list is
 // checked the same way (still absent, still cited), so it cannot rot into a
-// hiding place for a real path. `internal/cli/pair.go` left it the way an entry
-// of planWillCreate leaves: the pairing plan's T1a landed the command's surface,
-// while the wait and the delivery that make the task whole have not — see
-// planPhaseSixPartial.
+// hiding place for a real path. `internal/cli/pair.go` and
+// `internal/budget/token/device.go` left it the way an entry of planWillCreate
+// leaves: the pairing plan's T1a landed the command's surface and its T2a the
+// device token, while the wait and the delivery that make the task whole have
+// not — see planPhaseSixPartial.
 var planWillCreateElsewhere = map[string]string{
-	"internal/budget/token/device.go":      "P6.6's device token",
 	"internal/budget/sweep_device_test.go": "P6.6's `m~…` sweep rule's test",
 }
 
@@ -922,7 +922,7 @@ var planPhaseSixUnbuilt = map[string][]string{
 
 // planPhaseSixPartial is the third state a task needs once half of it has
 // landed, and P6.6 is the one that has: the bullet cannot call it merged (its
-// device token and its sweep rule are not in the tree) and it cannot call it
+// sweep rule is not in the tree) and it cannot call it
 // unbuilt (its command's surface is). Both halves are held to the tree here, so
 // the sentence a reader plans against is a fact about this branch rather than a
 // memory of one.
@@ -930,8 +930,8 @@ var planPhaseSixPartial = map[string]struct {
 	built, unbuilt []string
 }{
 	"P6.6": {
-		built:   []string{"internal/cli/pair.go", "internal/budget/token/pairing.go"},
-		unbuilt: []string{"internal/budget/token/device.go", "internal/budget/sweep_device_test.go"},
+		built:   []string{"internal/cli/pair.go", "internal/budget/token/pairing.go", "internal/budget/token/device.go"},
+		unbuilt: []string{"internal/budget/sweep_device_test.go"},
 	},
 }
 

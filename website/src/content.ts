@@ -543,6 +543,25 @@ export interface AnalyticsFacts {
   measurementID: string
 }
 
+/**
+ * The campaign measurement's configuration (G2.3, D401): the two vendor ids and the
+ * one origin each of the three loaders fetches its script from. An empty id disables
+ * its loader, which is the state the file ships in — the owner has not supplied a
+ * pixel id or a partner id, and this repository invents none (R3).
+ */
+export interface MarketingFacts {
+  /** The Meta pixel's id, empty until the owner supplies it. */
+  metaPixelID: string
+  /** The origin the pixel's own script is fetched from. */
+  metaOrigin: string
+  /** The LinkedIn partner id, empty until the owner supplies it. */
+  linkedinPartnerID: string
+  /** The origin the insight tag's own script is fetched from. */
+  linkedinOrigin: string
+  /** The origin Calendly's widget script and stylesheet are fetched from. */
+  calendlyOrigin: string
+}
+
 /** The features the site renders only when they exist (D95, D107). */
 export interface FeatureFacts {
   consoleDownloads: boolean
@@ -554,6 +573,7 @@ export interface SiteFacts {
   canonicalURL: string
   repository: string
   analytics: AnalyticsFacts
+  marketing: MarketingFacts
   features: FeatureFacts
   minRuns: number
   allowedHosts: string[]
@@ -565,7 +585,13 @@ const SITE_FILE = 'website/data/site.yaml'
 // not here and no longer exists in the file -- W2.2 wrote one and the owner ruled on
 // 2026-10-17 that there is no second domain (the amendment under plan Task W2.2), so the
 // key coming back is refused with the key list as well as by the Go boundary test.
-const SITE_KEYS = ['allowed_hosts', 'analytics', 'canonical_url', 'features', 'min_runs', 'repository', 'version']
+const SITE_KEYS = ['allowed_hosts', 'analytics', 'canonical_url', 'features', 'marketing', 'min_runs', 'repository', 'version']
+
+// The keys the campaign measurement's block may carry, and the ones that are an origin rather
+// than an id: an origin is read as an absolute origin and refused anything else, and an id is
+// read as a string — empty meaning "this loader does not load".
+const MARKETING_KEYS = ['calendly_origin', 'linkedin_origin', 'linkedin_partner_id', 'meta_origin', 'meta_pixel_id']
+const MARKETING_ORIGINS = ['calendly_origin', 'linkedin_origin', 'meta_origin']
 
 export function loadSiteFacts(): SiteFacts {
   const file = SITE_FILE
@@ -624,6 +650,25 @@ export function loadSiteFacts(): SiteFacts {
     }
   }
 
+  // The campaign measurement (G2.3): two ids and the three origins the loaders fetch their
+  // scripts from. Every origin is an origin alone — the banner's configuration carries it into
+  // the loader, which builds each request by appending its own path, so a path, a query or a
+  // trailing slash here would be copied into all three — and an id may be empty, which is how a
+  // vendor the owner has not supplied is wired but not loaded.
+  const marketing = asMap(doc.marketing, file, 'marketing')
+  refuseUnknownKeys(marketing, MARKETING_KEYS, `${file} marketing`)
+  const marketingOrigins: Record<string, string> = {}
+  for (const key of MARKETING_ORIGINS) {
+    const written = asString(marketing[key], file, `marketing.${key}`)
+    const url = new URL(asURL(marketing[key], file, `marketing.${key}`))
+    if (written !== url.origin || url.protocol !== 'https:') {
+      throw new Error(
+        `${file}: marketing.${key} is ${JSON.stringify(written)}, and it is an origin alone over https (${url.origin}): the loader builds each request by appending the vendor's own path to it, so a path, a query, a trailing slash or another scheme here would be copied into the request (G2.3, D401).`,
+      )
+    }
+    marketingOrigins[key] = url.origin
+  }
+
   const minRuns = asInt(doc.min_runs, file, 'min_runs')
   if (minRuns < 1) {
     throw new Error(`${file}: min_runs is ${minRuns}, and D97's minimum sample is a positive count (W0.3, internal/stats.MinRuns).`)
@@ -633,6 +678,13 @@ export function loadSiteFacts(): SiteFacts {
     canonicalURL: canonical.origin,
     repository: asURL(doc.repository, file, 'repository'),
     analytics: { enabled, measurementID },
+    marketing: {
+      metaPixelID: asString(marketing.meta_pixel_id, file, 'marketing.meta_pixel_id'),
+      metaOrigin: marketingOrigins.meta_origin,
+      linkedinPartnerID: asString(marketing.linkedin_partner_id, file, 'marketing.linkedin_partner_id'),
+      linkedinOrigin: marketingOrigins.linkedin_origin,
+      calendlyOrigin: marketingOrigins.calendly_origin,
+    },
     features: {
       consoleDownloads: asBool(features.console_downloads, file, 'features.console_downloads'),
       video: asBool(features.video, file, 'features.video'),

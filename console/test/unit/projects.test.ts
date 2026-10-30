@@ -1044,6 +1044,32 @@ describe('buildRunModel', () => {
     expect(buildRunModel(runInputs({ diagnosis: unknown })).stages[0]?.deadline).toBeNull()
   })
 
+  it('draws the reported/charged pair and the two splits in the ledger, not in the diagnosis', () => {
+    // Step 3b moved them: the pair is a reconciliation against the billed total
+    // and the two splits are two scopes of the same spend, so all four are read
+    // beside the total they sit under rather than under the halt and the failed
+    // tests. The warning that is about the pair stays verbatim with it.
+    const document = {
+      ...DIAGNOSIS,
+      reported_usd: 1.2,
+      charge_usd: 1.25,
+      route_by: { 'anthropic-api': 0.9 },
+      model_by: { 'claude-sonnet-5': 1.25 },
+      reported_warning: 'the providers reported less than the table charged',
+    }
+    const tree = renderRun(factory, buildRunModel(runInputs({ diagnosis: document })), 'light')
+    const ledger = one(tree, 'run-ledger')
+    expect(one(ledger, 'run-reported-usd').textContent).toBe('$1.20')
+    expect(one(ledger, 'run-charge-usd').textContent).toBe('$1.25')
+    expect(one(ledger, 'run-recon-diff-value').textContent).toBe('$0.05')
+    expect(texts(ledger, 'run-route-name')).toEqual(['anthropic-api'])
+    expect(texts(ledger, 'run-model-name')).toEqual(['claude-sonnet-5'])
+    expect(one(ledger, 'run-reported-warning').textContent).toBe('the providers reported less than the table charged')
+    const diagnosis = one(tree, 'run-diagnosis')
+    expect(all(diagnosis, 'run-route')).toHaveLength(0)
+    expect(all(diagnosis, 'run-reported-usd')).toHaveLength(0)
+  })
+
   it('builds a pull request URL per provider, for the day gap 7 lands', () => {
     // Design section 5.1 rule 2's construction, both providers, unit-tested now
     // so that the screen only has to start offering the link later. The two

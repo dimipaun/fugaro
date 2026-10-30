@@ -22,10 +22,10 @@
  * footer, and the `media` slot a variant's own picture lands in when the owner has produced one
  * (spec §6, F14, G2.5).
  *
- * **Nothing here renders the embed or the chat link.** G2.3 renders the Calendly embed behind
- * the marketing consent and G2.4 owns the `wa.me` link and the events; this page carries the
- * plain booking link both of them build on, and no vendor asset, no `iframe` and no WhatsApp
- * link of its own (F17, F22, D401).
+ * **Nothing here renders the embed.** G2.3 renders the Calendly embed behind the marketing
+ * consent and G2.4 owns the events; this page carries the plain booking link both of them build
+ * on, the chat link the file's WhatsApp number makes, and no vendor asset and no `iframe` of its
+ * own (F17, F22, D401).
  */
 import Base from '../layouts/Base.astro'
 import CampaignHero from '../components/CampaignHero.astro'
@@ -48,15 +48,27 @@ export function getStaticPaths() {
 const { variant } = Astro.props
 ---
 
-<Base title={variant.headline} description={variant.supportingLine} campaign>
-  {/* The variant's own picture, when it has one: `/crew`'s cat imagery is the owner's file and
-      lands in the layout's `media` slot. No variant names one yet, so nothing is passed and the
-      page renders complete without it (F14, G2.5). The `alt` is empty because the file's media
-      is the campaign's flourish rather than a thing a reader has to be told about — the words
-      beside it are the page's content. */}
-  {variant.image && (
+<Base
+  title={variant.headline}
+  description={variant.supportingLine}
+  campaign
+  campaignPath={variant.path}
+  calendlyURL={landing.calendlyURL}
+>
+  {/* The variant's own media, when it has one, in the layout's `media` slot: the top of the
+      hero, above the headline. A video is the campaign's own file and a picture its still, so
+      each renders where it is named — and `loadLanding()` reports neither when the file the
+      owner has not produced yet is not under `website/public/`, so a variant that names a video
+      the repository does not carry renders the page complete rather than a player with nothing
+      in it (F14, G2.5). No variant names either today. The `alt` is empty because the file's
+      media is the campaign's flourish rather than a thing a reader has to be told about — the
+      words beside it are the page's content. */}
+  {(variant.video || variant.image) && (
     <Fragment slot="media">
-      <img class="campaign-media" src={variant.image} alt="" decoding="async" />
+      {variant.video && (
+        <video class="campaign-media" src={variant.video} controls preload="metadata" playsinline></video>
+      )}
+      {variant.image && <img class="campaign-media" src={variant.image} alt="" decoding="async" />}
     </Fragment>
   )}
 
@@ -66,7 +78,7 @@ const { variant } = Astro.props
   {/* Hidden while the file names no partner: the section is not rendered at all, so a campaign
       page with no proof of a partnership does not claim one (F11, F12, D405). */}
   {landing.partnerLogos.length > 0 && <CampaignSocialProof logos={landing.partnerLogos} />}
-  <CampaignCalls calendlyURL={landing.calendlyURL} repository={site.facts.repository} />
+  <CampaignCalls calendlyURL={landing.calendlyURL} repository={site.facts.repository} whatsappURL={variant.whatsappURL} />
 </Base>
 
 <style>

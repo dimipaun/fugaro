@@ -18,11 +18,12 @@
 //      sentinel `unmeasured`, the band prints no digit at all — the band's whole job is to be
 //      the one place a measurement appears, and a figure typed into it would be the claim F6
 //      refuses (G2.1's guard reads the file; this reads the built page).
-//   4. **A visitor who declines marketing consent still has a working Book a demo link.** The
-//      booking call to action is a plain `<a href>` to the file's Calendly link: no embed, no
-//      iframe, no vendor script, and no WhatsApp link — G2.3 renders the embed behind the
-//      campaign consent and G2.4 owns the `wa.me` link and its events, and both of them need
-//      the plain link to already be here (spec §6, F17, F22, D401).
+//   4. **A visitor who declines marketing consent still has a working way to book and a way to
+//      chat.** The booking call to action is a plain `<a href>` to the file's Calendly link and
+//      the chat one is the `wa.me` link the file's WhatsApp number and the variant's own
+//      pre-fill make: no embed, no iframe and no vendor script behind either. G2.3 renders the
+//      embed behind the campaign consent and G2.4 owns the key events the three calls fire, and
+//      both of them need the plain links to already be here (spec §6, F17, F22, D401).
 //   5. **The page is complete without the media the owner has not produced yet.** No campaign
 //      video exists and no partner logo exists, so no `<video>` is rendered, the social-proof
 //      section is not rendered at all while `partner_logos` is empty, and every file the page
@@ -43,11 +44,12 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 import { loadLanding } from '../src/lib/landing.mjs'
 import { DIST, SITE, builtPages, cssRules, filesUnder, findAll, parse, servedFile, siteFacts, textOf, walk } from './lib/html.mjs'
+import { buildCopy } from './lib/build.mjs'
 
 const LANDING = loadLanding()
 const FACTS = siteFacts()
@@ -214,8 +216,8 @@ test('the proof band prints no figure while the variant carries the sentinel', (
 
 // ---- 4. the calls to action ---------------------------------------------------------------
 
-test('there is no email form, and the calls to action are a plain booking link and the repository', () => {
-  for (const { rel } of PAGES) {
+test('there is no email form, and the calls to action are a plain booking link, the repository and the chat', () => {
+  for (const { variant, rel } of PAGES) {
     const { html } = pageOf(rel)
     const doc = parse(html)
 
@@ -239,6 +241,24 @@ test('there is no email form, and the calls to action are a plain booking link a
     const install = findAll(doc, (el) => el.name === 'a' && textOf(el).trim() === 'Install free')
     assert.equal(install.length, 1, `${rel} carries ${install.length} "Install free" links; the secondary call to action is the repository (spec §6)`)
     assert.equal(install[0].attrs.get('href'), REPOSITORY, `${rel}'s install link is ${JSON.stringify(install[0].attrs.get('href'))}, and site.yaml names the repository (${REPOSITORY})`)
+
+    // The third call to action: the chat the spec's §6 asks for, and the one link a visitor can
+    // use without leaving a booking. Its address is the loader's — the file's number and this
+    // variant's own pre-fill — so a page that typed one would be a second copy of the file.
+    const chat = findAll(doc, (el) => el.name === 'a' && textOf(el).trim() === 'Chat with the founder')
+    assert.equal(chat.length, 1, `${rel} carries ${chat.length} "Chat with the founder" links; the third call to action is the WhatsApp chat (spec §6)`)
+    assert.equal(
+      chat[0].attrs.get('href'),
+      variant.whatsappURL,
+      `${rel}'s chat link is ${JSON.stringify(chat[0].attrs.get('href'))}, and landing.yaml's WhatsApp number with this variant's own pre-fill makes ${variant.whatsappURL}: the link is the file's, and nothing here adds a query to it`,
+    )
+
+    // The two ids are how `site.js` finds the two secondary calls to fire their key events
+    // (G2.4): the markup is where the hook lives, so it is pinned here rather than only in the
+    // case that presses them.
+    for (const [id, link] of [['campaign-install', install[0]], ['campaign-whatsapp', chat[0]]]) {
+      assert.equal(link.attrs.get('id'), id, `${rel}'s ${textOf(link).trim()} link carries no id="${id}", which is the one thing site.js reads it by (G2.4)`)
+    }
   }
 })
 
@@ -295,6 +315,61 @@ test('the page is complete without the video file, and fetches nothing the build
       }
     }
   }
+})
+
+// The other half of the media rule (G2.2's review finding, G2.3): a variant's `video` is a
+// fact the loader validated and the template never rendered, which is a promise nothing keeps.
+// The repository carries no video, so the only way to see the render is a copy that names one:
+// this case builds two — a variant whose file is under `website/public/` and one whose file is
+// not — and reads both pages, because the rule is "when it is set" AND "complete when the file
+// is missing", and a case that only built the first would pass on a page that carried a player
+// with nothing behind it.
+test('a variant that names a video renders it in the hero, and one whose file is missing renders without it', async (t) => {
+  const VIDEO = '/videos/save.mp4'
+  const built = buildCopy(t, ({ site }) => {
+    const file = path.join(site, 'data', 'landing.yaml')
+    const before = readFileSync(file, 'utf8')
+    const after = before
+      .replace('  - path: /save\n', `  - path: /save\n    video: ${VIDEO}\n`)
+      .replace('  - path: /crew\n', '  - path: /crew\n    video: /videos/crew.mp4\n')
+    assert.notEqual(after, before, 'the fixture did not name a video in the copy, so no case below could read one')
+    writeFileSync(file, after)
+    mkdirSync(path.join(site, 'public', 'videos'), { recursive: true })
+    writeFileSync(path.join(site, 'public', 'videos', 'save.mp4'), 'not really a video, and the build goes on')
+  })
+  assert.equal(built.status, 0, `the campaign build failed with a video named:\n${built.output}`)
+
+  const save = builtPages(built.dist).find((entry) => entry.rel === 'save/index.html')
+  assert.ok(save, 'the copy built no /save page')
+  const videos = findAll(parse(save.html), 'video')
+  assert.equal(videos.length, 1, `/save renders ${videos.length} <video> elements although its variant names one video: the variant's media is rendered, once`)
+  assert.equal(
+    videos[0].attrs.get('src'),
+    VIDEO,
+    `/save's video is ${JSON.stringify(videos[0].attrs.get('src'))}, and the variant names ${VIDEO}: the file's path is what the page fetches, and nothing rewrites it`,
+  )
+  assert.ok(servedFile(built.dist, VIDEO) !== null, `/save names ${VIDEO} and the copy does not serve it, so the page carries a request for nothing`)
+  // The hero: the media slot is inside `main` and ahead of the words, so a reader meets the
+  // campaign's own file first and the headline follows it.
+  const order = [...save.html.matchAll(/<(main|video|h1)\b/g)].map((m) => m[1])
+  assert.deepEqual(
+    order.slice(0, 3),
+    ['main', 'video', 'h1'],
+    `the /save page draws ${JSON.stringify(order.slice(0, 3))}; the video is the campaign's own and sits at the top of the hero, above the headline (F14)`,
+  )
+
+  // The variant whose file the owner has not produced: no player, and the page is otherwise
+  // whole — its own headline, its own calls to action.
+  const crew = builtPages(built.dist).find((entry) => entry.rel === 'crew/index.html')
+  assert.ok(crew, 'the copy built no /crew page')
+  assert.equal(
+    findAll(parse(crew.html), 'video').length,
+    0,
+    '/crew names a video the repository does not carry and renders a <video> anyway: a player with nothing behind it is the broken element a visitor reached from an ad sees (F14, G2.5)',
+  )
+  const headline = findAll(parse(crew.html), 'h1').map((el) => textOf(el).trim())
+  assert.deepEqual(headline, [LANDING.variants.find((one) => one.name === 'crew').headline], '/crew lost its headline along with the missing video, so the page is not complete without the file')
+  assert.equal(findAll(parse(crew.html), (el) => el.name === 'a' && textOf(el).trim() === 'Book a demo').length, 1, '/crew lost its booking link along with the missing video')
 })
 
 // ---- 6. the campaign chrome: no menu, a minimal footer, and a responsive mode -------------

@@ -507,6 +507,26 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
       reason:
         '`stageShare`: a measured duration as its share of the longest one drawn beside it, on the bar\'s own hundred-unit axis -- geometry rather than text or a style, and the same kind of value `graph.ts` writes through `coord`, with both numbers the model\'s (`measured` readings the panel read) and never a string a document can spell',
     },
+    'shareOfPercent(billed, total)': {
+      within: 'ledgerBar',
+      reason:
+        '`shareOfPercent`: the billed model figure as its share of the ledger\'s own measured total, on the bar\'s hundred-unit axis -- the bar\'s width, geometry rather than text or a style, of two numbers the panel read and never a string a document can spell',
+    },
+    'shareOfPercent(estimate, total)': {
+      within: 'ledgerBar',
+      reason:
+        'the same share for the compute figure, which the outline segment starts at and is as wide as; geometry off the same two readings',
+    },
+    'trackCoord(playheadAt)': {
+      within: 'replayPanel',
+      reason:
+        '`trackCoord` of the position `positionOf` returned for the scrubbed record -- the playhead\'s `x1`/`x2` and the width of the rail\'s filled part. Geometry on the track\'s hundred-unit axis, off a stamp the console clamps and never a string a document can spell',
+    },
+    'trackCoord(position)': {
+      within: 'replayPanel',
+      reason:
+        'the same coordinate for one tick: `positionOf` of a record\'s own stamp, clamped to the window, written as the tick line\'s `x1`/`x2`. Geometry, and the tick carries no text of its own',
+    },
   },
   '../../shared/version.ts': {
     "classes.join(' ')": { within: 'cell', reason: 'the class list of the `cell` helper; every call site passes string-literal class names' },

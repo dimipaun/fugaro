@@ -1063,6 +1063,130 @@ func TestCredsCommandsNeverLogAValue(t *testing.T) {
 	assertNoValue(t, out+errOut+err.Error(), value)
 }
 
+// The upstream Bitbucket token (D506) is an entry of the same document and
+// written by the same command, so it is held to the same rules: the value
+// comes from stdin and from nowhere else, the write is the loader's document,
+// and the whole command is refused in a coding agent's session exactly as it
+// is for every other name.
+func TestCredsSetBitbucketToken(t *testing.T) {
+	t.Run("stdin only", func(t *testing.T) {
+		f := credsFixtureFor(t)
+		existing := credsValue(t, "existing")
+		ours := credsValue(t, "bbtoken")
+		f.seed(t, []byte(config.ClaudeOAuthToken+": "+existing+"\n"))
+
+		out, errOut, err := executeStdin(t, "", "creds", "set", config.BitbucketSecret, ours)
+		if err == nil || ExitCode(err) != ExitUserError {
+			t.Fatalf("a value in the argument position = %v, want a refusal", err)
+		}
+		if leak := out + errOut + err.Error(); strings.Contains(leak, ours) {
+			t.Fatalf("the value in the argument position was echoed back: %q", leak)
+		}
+		if n := f.writes(); n != 0 {
+			t.Fatalf("%d version(s) written from the argument position", n)
+		}
+
+		out, errOut, err = executeStdin(t, ours+"\n", "creds", "set", config.BitbucketSecret)
+		if err != nil {
+			t.Fatalf("creds set %s = %v (stderr %q)", config.BitbucketSecret, err, errOut)
+		}
+		if !strings.Contains(errOut, "dropped the value's trailing newline") {
+			t.Errorf("the dropped trailing newline was not said: %q", errOut)
+		}
+		if n := f.writes(); n != 1 {
+			t.Fatalf("%d version(s) written, want 1", n)
+		}
+		b, err := credsvc.ParseBundle(f.Latest(f.id))
+		if err != nil {
+			t.Fatalf("the service's loader refuses the document this command wrote: %v", err)
+		}
+		e, ok := b.BitbucketToken()
+		if !ok {
+			t.Fatalf("the document holds no %s entry", config.BitbucketSecret)
+		}
+		if e.Kind != credsvc.KindGit || e.Key != config.BitbucketSecret {
+			t.Errorf("the entry written is %+v, want the git kind keyed %q", e, config.BitbucketSecret)
+		}
+		// The bytes that were piped in, minus the one trailing newline: what
+		// the document holds is what the proxy forwards with.
+		if e.Value() != ours {
+			t.Errorf("the stored token is not the one piped in (%d bytes stored, %d piped)", len(e.Value()), len(ours))
+		}
+		// The git entry is not a model credential: the other entry keeps its
+		// bytes, and the cascade is offered it alone.
+		if e, ok := b.Lookup(config.DefaultClaudeAccount); !ok || e.Value() != existing {
+			t.Errorf("the default account's entry = %v, want the bytes it already had", ok)
+		}
+		if got := b.Credentials(); len(got) != 1 || got[0].Name != config.DefaultClaudeAccount {
+			t.Errorf("Credentials() = %v, want the model credential alone", got)
+		}
+		assertNoValue(t, out+errOut, ours, existing)
+	})
+
+	t.Run("refused in an agent's session", func(t *testing.T) {
+		f := credsFixtureFor(t)
+		f.seed(t, []byte(config.ClaudeOAuthToken+": "+credsValue(t, "existing")+"\n"))
+		t.Setenv("CLAUDECODE", "1")
+
+		_, _, err := executeStdin(t, credsValue(t, "bbtoken")+"\n", "creds", "set", config.BitbucketSecret)
+		if err == nil || ExitCode(err) != ExitUserError {
+			t.Fatalf("creds set %s in an agent's session = %v, want a refusal", config.BitbucketSecret, err)
+		}
+		if !strings.Contains(err.Error(), "nothing was written") || !strings.Contains(err.Error(), "CLAUDECODE") {
+			t.Errorf("the refusal does not name the marker: %v", err)
+		}
+		if n := len(f.Requests()); n != 0 {
+			t.Fatalf("%d request(s) were made from an agent's session", n)
+		}
+	})
+}
+
+// `creds ls` names the git entry as it names every other one — its NAME in the
+// document's own spelling, PRESENT, and the version's time — and never a byte
+// of its value. The kind is what decides the accessor the service uses, and it
+// is not printed: the listing's shape is names and metadata and nothing else
+// (C1.25).
+func TestCredsLsNamesBitbucketToken(t *testing.T) {
+	f := credsFixtureFor(t)
+	oauth := credsValue(t, "oauth")
+	value := credsValue(t, "bbtoken")
+	f.seed(t, []byte(config.ClaudeOAuthToken+": "+oauth+"\n"+
+		config.BitbucketSecret+": "+value+"\n"))
+
+	out, errOut, err := execute(t, "creds", "ls")
+	if err != nil {
+		t.Fatalf("%v (stderr %q)", err, errOut)
+	}
+	for _, want := range []string{config.BitbucketSecret, config.ClaudeOAuthToken, "PRESENT"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the listing does not hold %q:\n%s", want, out)
+		}
+	}
+	assertNoValue(t, out+errOut, value, oauth)
+
+	jsonOut, errOut, err := execute(t, "creds", "ls", "--json")
+	if err != nil {
+		t.Fatalf("%v (stderr %q)", err, errOut)
+	}
+	var list struct {
+		Credentials []credsRow `json:"credentials"`
+	}
+	if err := json.Unmarshal([]byte(jsonOut), &list); err != nil {
+		t.Fatalf("unmarshal %q: %v", jsonOut, err)
+	}
+	var names []string
+	for _, r := range list.Credentials {
+		names = append(names, r.Name)
+	}
+	if !slices.Contains(names, config.BitbucketSecret) {
+		t.Errorf("--json credentials = %q, want %q among them", names, config.BitbucketSecret)
+	}
+	assertNoValue(t, jsonOut+errOut, value, oauth)
+	if n := f.writes(); n != 0 {
+		t.Errorf("the listing wrote %d version(s)", n)
+	}
+}
+
 // assertRedacted fails if s still carries a secret the way the production
 // redactor would catch it — the raw bytes, the JSON escape, a line of a
 // multi-line secret, and the encoded forms (the base64 cores of a secret of at

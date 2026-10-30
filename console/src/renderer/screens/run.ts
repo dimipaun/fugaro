@@ -206,11 +206,26 @@ export interface RunRow {
   readonly rigor: RigorView | null
 }
 
-/** RunLedger is the run's spend: the three accounts, apart. */
+/** RunLedger is the run's spend: the three accounts, apart, and the plan's
+ * part of the model figure, which is none of them.
+ *
+ * `total` is the dollars the table **billed** (`runstore.Cost.TotalUSD`); it is
+ * the hero, and nothing on this screen adds anything to make it. `model` is the
+ * billed part of the model figure and `compute` the estimate beside it.
+ *
+ * `notional` is `model_notional_usd`, the part of the model figure the run's
+ * plan paid. It is **not money anybody was charged**, so it is drawn as its own
+ * line, is never a segment of the bar and is never inside the hero: a hero of
+ * `total + notional` would be a bill nobody received. The record carries it only
+ * from C1.16, so an absent one is `unavailable` and no line is drawn -- and a
+ * record whose whole figure is the plan's (a subscription run written before the
+ * key existed) draws that figure once, on the model line, under the notional
+ * mark. */
 export interface RunLedger {
   readonly model: Reading
   readonly compute: Reading
   readonly total: Reading
+  readonly notional: Reading
 }
 
 /** RunStage is one stage of the timeline. */
@@ -375,6 +390,10 @@ export interface RunReplay {
   readonly dropped: Reading
   readonly from: string | null
   readonly to: string | null
+  /** `stamps` is every record's own stamp, in the ring's order. The scrubber's
+   * ticks are placed from these and not from a count: a tick is a record that
+   * arrived, at the moment it arrived. */
+  readonly stamps: readonly string[]
   /** the frame in effect at the moment scrubbed to, or null */
   readonly scrubbed: ReplayDocument | null
   readonly scrubbedBecause: string | null
@@ -543,7 +562,25 @@ function ledgerOf(row: Record<string, unknown>): RunLedger {
           ? unavailable(COMPUTE_NOT_ESTIMATED)
           : compute,
     total: readNumber(cost['total_usd'], 'row.cost.total_usd'),
+    notional: planReading(model, notional),
   }
+}
+
+/** NOTIONAL_NONE_BECAUSE is what the ledger's notional line says when the record
+ * carries no plan-paid part: `model_notional_usd` is `omitempty`, so a run that
+ * paid nothing through its plan writes no key, and the absence is a measured
+ * nothing rather than a part the console could not read. */
+const NOTIONAL_NONE_BECAUSE = 'the record carries no row.cost.model_notional_usd'
+
+/** planReading is the ledger's notional line: the part of the model figure the
+ * record says the plan paid, marked **notional** so the plan's list price is
+ * never read as a bill (`formatReading` draws it `~$X`). A hand-edited record
+ * can carry a part above the figure it is part of; the part is read as the part
+ * of that figure it can be, the same clamp `stagePartOf` applies to a stage. */
+function planReading(model: Reading, part: Reading): Reading {
+  if (part.value === null || part.value <= 0) return unavailable(NOTIONAL_NONE_BECAUSE)
+  const ceiling = model.value ?? part.value
+  return notional(Math.min(part.value, ceiling))
 }
 
 /** STAGE_SPEND_BECAUSE is the sentence a verify record's spend cell carries: a
@@ -979,6 +1016,7 @@ export function buildRunModel(inputs: RunInputs): RunModel {
       dropped: measured(bounds.dropped),
       from: bounds.from,
       to: bounds.to,
+      stamps: buffer.records().map(recordStamp),
       scrubbed,
       scrubbedBecause:
         scrubAt === null
@@ -1398,20 +1436,231 @@ function haltLine(factory: RunFactory, halt: RunHalt): ScreenElement {
   return element
 }
 
-/** ledgerPanel is the three accounts, apart. */
-function ledgerPanel(factory: ScreenFactory, model: RunLedger): ScreenElement {
+/**
+ * The ledger's own words. Every one of them is the console's vocabulary and
+ * goes to the screen through `literal`; the figures beside them are readings and
+ * go through `numberCell`. `RECON_DIFF_WORD` is deliberately not the design's
+ * "Over-charged": a difference the console can measure says nothing about *why*
+ * the two accounts differ, and a word that names a cause is a claim the console
+ * cannot support.
+ */
+const LEDGER_HERO_WORD = 'TOTAL CHARGED'
+
+const LEDGER_MODEL_WORD = 'Model, as charged'
+
+const LEDGER_COMPUTE_WORD = 'Compute, estimated'
+
+const LEDGER_NOTIONAL_WORD = 'Paid by the plan, not in the total'
+
+const RECON_WORD = 'RECONCILIATION'
+
+const RECON_REPORTED_WORD = 'Providers reported'
+
+const RECON_CHARGED_WORD = 'Table charged'
+
+const RECON_DIFF_WORD = 'Difference'
+
+const ROUTE_SPLIT_WORD = 'By provider route'
+
+/** ROUTE_SPLIT_CAPTION is the one thing a reader needs to read `route_by`
+ * correctly: a Claude call carries no provider route, so the split is the spend
+ * of the run's *routed* calls and not of the whole run. */
+const ROUTE_SPLIT_CAPTION = 'Claude calls have no route'
+
+const MODEL_SPLIT_WORD = 'By model'
+
+/** NO_ROUTE_SPLIT and NO_MODEL_SPLIT are what an absent split draws. A split
+ * that arrived empty and one the record never carried are different facts, and
+ * the field the reader looks for is named rather than a zero drawn (`omitempty`
+ * writes no key at all for an empty map). */
+const NO_ROUTE_SPLIT = 'the document carries no route_by: no provider route reported a cost for this run'
+
+const NO_MODEL_SPLIT = 'the document carries no model_by: no per-model split arrived for this run'
+
+/** NO_PROVIDER_REPORTED is why the reconciliation has no difference: both
+ * figures are `omitempty`, so an absent one is a run whose routed calls no
+ * provider priced, and a difference from it would be a subtraction against a
+ * zero nobody wrote. */
+const NO_PROVIDER_REPORTED = 'no provider reported a cost for this run\'s routed calls'
+
+/**
+ * RUN_LEDGER_BAR_BOX and its siblings are the bar's own axis: a hundred units
+ * wide and fourteen tall, stretched to the panel by
+ * `preserveAspectRatio="none"`. A segment's width is then the share itself, so
+ * no pixel of a layout is ever a number this screen had to know -- and the two
+ * shares are **of the total**, which is what makes the bar a picture of the
+ * ledger's one billed figure and never of the plan's part of it.
+ */
+const RUN_LEDGER_BAR_BOX = '0 0 100 14'
+const RUN_LEDGER_BAR_HEIGHT = '14'
+const RUN_LEDGER_BAR_FULL = '100'
+const RUN_LEDGER_BAR_ORIGIN = '0'
+
+/** shareOfPercent is a figure as a share of the total, on the bar's axis. */
+function shareOfPercent(value: number, total: number): string {
+  return String((value / total) * 100)
+}
+
+/** trackCoord is one position on the scrubber's hundred-unit axis as a string.
+ * Every coordinate the track draws reaches the document through here, so the
+ * scan's vocabulary has an entry per position rather than one per attribute
+ * name. */
+function trackCoord(value: number): string {
+  return String(value)
+}
+
+/** barDrawn says whether the ledger's bar can be drawn at all: the total has to
+ * be a measured figure above zero (a share of zero is not a share), the model
+ * line has to be **billed money** (a notional figure is not part of what the
+ * table charged) and the compute has to be measured or estimated. When one of
+ * the three is not, the bar is not drawn and the legend rows still carry their
+ * values -- an `n/a` with its reason, never a gap a reader fills in. */
+function barDrawn(ledger: RunLedger): boolean {
+  if (ledger.total.value === null || ledger.total.value <= 0) return false
+  if (ledger.total.state !== 'measured') return false
+  if (ledger.model.state !== 'measured' || ledger.model.value === null) return false
+  if (ledger.compute.value === null) return false
+  return ledger.compute.state === 'measured' || ledger.compute.state === 'estimated'
+}
+
+/** ledgerBar is the model and the compute as two shares of the total: the
+ * billed dollars solid, the estimate an outline. It is decorative -- the legend
+ * below carries both figures as text -- so it is `aria-hidden` and holds no
+ * word of its own. */
+function ledgerBar(factory: RunFactory, ledger: RunLedger): ScreenElement {
+  const billed = ledger.model.value ?? 0
+  const estimate = ledger.compute.value ?? 0
+  const total = ledger.total.value ?? 0
+  const element = makeNS(factory, 'svg', 'run-ledger-bar')
+  element.setAttribute('viewBox', RUN_LEDGER_BAR_BOX)
+  element.setAttribute('preserveAspectRatio', 'none')
+  element.setAttribute('height', RUN_LEDGER_BAR_HEIGHT)
+  element.setAttribute('aria-hidden', 'true')
+  const track = makeNS(factory, 'rect', 'run-ledger-rail')
+  track.setAttribute('x', RUN_LEDGER_BAR_ORIGIN)
+  track.setAttribute('y', RUN_LEDGER_BAR_ORIGIN)
+  track.setAttribute('width', RUN_LEDGER_BAR_FULL)
+  track.setAttribute('height', RUN_LEDGER_BAR_HEIGHT)
+  element.append(track)
+  const charged = makeNS(factory, 'rect', 'run-ledger-billed')
+  charged.setAttribute('x', RUN_LEDGER_BAR_ORIGIN)
+  charged.setAttribute('y', RUN_LEDGER_BAR_ORIGIN)
+  charged.setAttribute('width', shareOfPercent(billed, total))
+  charged.setAttribute('height', RUN_LEDGER_BAR_HEIGHT)
+  element.append(charged)
+  // The outline starts where the billed segment ends, so its `x` is the same
+  // share written again rather than a second reading of it.
+  const outlined = makeNS(factory, 'rect', 'run-ledger-estimate')
+  outlined.setAttribute('x', shareOfPercent(billed, total))
+  outlined.setAttribute('y', RUN_LEDGER_BAR_ORIGIN)
+  outlined.setAttribute('width', shareOfPercent(estimate, total))
+  outlined.setAttribute('height', RUN_LEDGER_BAR_HEIGHT)
+  element.append(outlined)
+  return element
+}
+
+/** differenceOf is the reconciliation's difference: what the table charged less
+ * what the providers reported, **only when the document measured both**. One
+ * absent figure is a run whose routed calls nobody priced, and subtracting from
+ * it would be a difference against a zero the document never wrote. */
+function differenceOf(diagnosis: RunDiagnosis): Reading {
+  const reported = diagnosis.reportedUsd
+  const charge = diagnosis.chargeUsd
+  if (reported.value === null || charge.value === null) return unavailable(NO_PROVIDER_REPORTED)
+  return measured(charge.value - reported.value)
+}
+
+/**
+ * ledgerPanel is the run's money: the billed total under its caption, the bar
+ * that shows the model and the compute as shares of it, the plan's part apart
+ * from both, then the reconciliation and the two splits `diagnose` carries.
+ *
+ * **Nothing here is summed, and the three groups are three different scopes.**
+ * The hero is `total_usd`, the table's own bill; `route_by` is the spend of the
+ * run's *routed* calls (a Claude call has no route) and `model_by` is the spend
+ * by model -- two splits of overlapping but different scopes, which is why their
+ * figures do not add up to the hero and are not meant to. Adding any two of them
+ * would invent a figure about money.
+ */
+function ledgerPanel(factory: RunFactory, model: RunModel): ScreenElement {
   const element = make(factory, 'section', 'run-ledger')
   element.setAttribute('aria-label', LEDGER_PANEL_NAME)
   literal(cell(element, factory, 'h2', 'run-panel-title'), 'ledger')
-  const model_ = cell(element, factory, 'p', 'run-ledger-model')
-  literal(model_, 'model, as the run was charged:')
-  numberCell(model_, factory, 'span', model.model, 'usd', 'run-ledger-model-value')
-  const compute = cell(element, factory, 'p', 'run-ledger-compute')
-  literal(compute, 'compute, an estimate by design:')
-  numberCell(compute, factory, 'span', model.compute, 'usd', 'run-ledger-compute-value')
-  const total = cell(element, factory, 'p', 'run-ledger-total')
-  literal(total, 'total the table charged:')
-  numberCell(total, factory, 'span', model.total, 'usd', 'run-ledger-total-value')
+  const ledger = model.ledger
+  const hero = cell(element, factory, 'p', 'run-ledger-hero')
+  literal(cell(hero, factory, 'span', 'run-ledger-word'), LEDGER_HERO_WORD)
+  numberCell(hero, factory, 'span', ledger.total, 'usd', 'run-ledger-total-value')
+  if (barDrawn(ledger)) element.append(ledgerBar(factory, ledger))
+  const legend = cell(element, factory, 'ul', 'run-ledger-legend')
+  const modelKey = cell(legend, factory, 'li', 'run-ledger-key')
+  const modelSwatch = cell(modelKey, factory, 'span', 'run-ledger-swatch', 'run-ledger-swatch-billed')
+  modelSwatch.setAttribute('aria-hidden', 'true')
+  literal(cell(modelKey, factory, 'span', 'run-ledger-key-word'), LEDGER_MODEL_WORD)
+  numberCell(modelKey, factory, 'span', ledger.model, 'usd', 'run-ledger-model-value')
+  const computeKey = cell(legend, factory, 'li', 'run-ledger-key')
+  const computeSwatch = cell(computeKey, factory, 'span', 'run-ledger-swatch', 'run-ledger-swatch-estimate')
+  computeSwatch.setAttribute('aria-hidden', 'true')
+  literal(cell(computeKey, factory, 'span', 'run-ledger-key-word'), LEDGER_COMPUTE_WORD)
+  numberCell(computeKey, factory, 'span', ledger.compute, 'usd', 'run-ledger-compute-value')
+  // The plan's part is drawn once and only once: a record whose whole model
+  // figure is the plan's (`modelReading`'s fallback) draws that figure on the
+  // model line under the notional mark, and a second line here would be the same
+  // dollars twice.
+  if (ledger.notional.value !== null && ledger.model.state !== 'notional') {
+    const plan = cell(element, factory, 'p', 'run-ledger-notional')
+    literal(cell(plan, factory, 'span', 'run-ledger-word'), LEDGER_NOTIONAL_WORD)
+    numberCell(plan, factory, 'span', ledger.notional, 'usd', 'run-ledger-notional-value')
+  }
+  const reconciliation = cell(element, factory, 'div', 'run-recon')
+  literal(cell(reconciliation, factory, 'h3', 'run-recon-word'), RECON_WORD)
+  const reported = cell(reconciliation, factory, 'p', 'run-recon-line')
+  literal(cell(reported, factory, 'span', 'run-recon-label'), RECON_REPORTED_WORD)
+  numberCell(reported, factory, 'span', model.diagnosis.reportedUsd, 'usd', 'run-reported-usd')
+  const charged = cell(reconciliation, factory, 'p', 'run-recon-line')
+  literal(cell(charged, factory, 'span', 'run-recon-label'), RECON_CHARGED_WORD)
+  numberCell(charged, factory, 'span', model.diagnosis.chargeUsd, 'usd', 'run-charge-usd')
+  const difference = differenceOf(model.diagnosis)
+  const differenceLine =
+    difference.value !== null && difference.value !== 0
+      ? make(factory, 'p', 'run-recon-diff', 'run-recon-diff-warn')
+      : make(factory, 'p', 'run-recon-diff')
+  reconciliation.append(differenceLine)
+  literal(cell(differenceLine, factory, 'span', 'run-recon-label'), RECON_DIFF_WORD)
+  numberCell(differenceLine, factory, 'span', difference, 'usd', 'run-recon-diff-value')
+  // The two warnings are the CLI's own sentences about this pair and stay
+  // verbatim under it: the console draws what the run wrote and never a
+  // conclusion of its own about the difference above.
+  if (model.diagnosis.reportedWarning !== null) {
+    textCell(reconciliation, factory, 'p', model.diagnosis.reportedWarning, 'sentence', 'reported_warning', 'run-reported-warning')
+  }
+  for (const warning of model.diagnosis.pinWarnings) {
+    textCell(reconciliation, factory, 'p', warning, 'sentence', 'pin_warnings[]', 'run-pin-warning')
+  }
+  const routeSplit = cell(element, factory, 'div', 'run-split')
+  const routeWord = cell(routeSplit, factory, 'h3', 'run-split-word')
+  literal(routeWord, ROUTE_SPLIT_WORD)
+  literal(cell(routeWord, factory, 'span', 'run-split-caption'), ROUTE_SPLIT_CAPTION)
+  if (model.diagnosis.byRoute.length === 0) {
+    // The mark and its reason, the console's own treatment for a value the
+    // document does not carry: an empty split and an absent key both read as
+    // `n/a`, and never as a route that spent nothing.
+    putReading(cell(routeSplit, factory, 'p', 'run-split-absent'), unavailable(NO_ROUTE_SPLIT))
+  }
+  for (const split of model.diagnosis.byRoute) {
+    const line = cell(routeSplit, factory, 'p', 'run-route')
+    textCell(line, factory, 'span', split.name, 'label', 'route_by', 'run-route-name')
+    numberCell(line, factory, 'span', split.usd, 'usd', 'run-route-usd')
+  }
+  const modelSplit = cell(element, factory, 'div', 'run-split')
+  literal(cell(modelSplit, factory, 'h3', 'run-split-word'), MODEL_SPLIT_WORD)
+  if (model.diagnosis.byModel.length === 0) {
+    putReading(cell(modelSplit, factory, 'p', 'run-split-absent'), unavailable(NO_MODEL_SPLIT))
+  }
+  for (const split of model.diagnosis.byModel) {
+    const line = cell(modelSplit, factory, 'p', 'run-model')
+    textCell(line, factory, 'span', split.name, 'label', 'model_by', 'run-model-name')
+    numberCell(line, factory, 'span', split.usd, 'usd', 'run-model-usd')
+  }
   return element
 }
 
@@ -1799,31 +2048,10 @@ function diagnosePanel(factory: RunFactory, model: RunModel): ScreenElement {
     numberCell(line, factory, 'span', diagnosis.followUpComments, 'count', 'run-follow-up-comments')
     textCell(line, factory, 'span', diagnosis.followUpSession, 'label', 'follow_up.session', 'run-follow-up-session')
   }
-  // The two accounts of a call's cost, side by side, because the document's own
-  // warning is about the *difference* between them: what the providers reported
-  // and what the table charged. Nothing is subtracted here -- the warning is a
-  // sentence the CLI wrote, and the console draws it as it is.
-  const reported = cell(element, factory, 'p', 'run-reported')
-  literal(reported, 'the providers reported:')
-  numberCell(reported, factory, 'span', diagnosis.reportedUsd, 'usd', 'run-reported-usd')
-  literal(cell(reported, factory, 'span', 'run-charged-word'), 'the table charged:')
-  numberCell(reported, factory, 'span', diagnosis.chargeUsd, 'usd', 'run-charge-usd')
-  if (diagnosis.reportedWarning !== null) {
-    textCell(element, factory, 'p', diagnosis.reportedWarning, 'sentence', 'reported_warning', 'run-reported-warning')
-  }
-  for (const warning of diagnosis.pinWarnings) {
-    textCell(element, factory, 'p', warning, 'sentence', 'pin_warnings[]', 'run-pin-warning')
-  }
-  for (const split of diagnosis.byRoute) {
-    const line = cell(element, factory, 'p', 'run-route')
-    textCell(line, factory, 'span', split.name, 'label', 'route_by', 'run-route-name')
-    numberCell(line, factory, 'span', split.usd, 'usd', 'run-route-usd')
-  }
-  for (const split of diagnosis.byModel) {
-    const line = cell(element, factory, 'p', 'run-model')
-    textCell(line, factory, 'span', split.name, 'label', 'model_by', 'run-model-name')
-    numberCell(line, factory, 'span', split.usd, 'usd', 'run-model-usd')
-  }
+  // The money the diagnosis carries is not drawn here: the reported/charged
+  // pair, the two warnings about it and the two splits are the ledger panel's
+  // (step 3b), because they are all accounts of the same run's spend and belong
+  // beside the total they are read against.
   return element
 }
 
@@ -1849,22 +2077,120 @@ const LEDGER_PANEL_NAME = 'Ledger'
 
 const PR_PANEL_NAME = 'Pull request'
 
-/** replayPanel is the ring: its bound, its span, and the moment scrubbed to. */
-function replayPanel(factory: ScreenFactory, model: RunReplay): ScreenElement {
+/**
+ * The scrubber's own axis: a 56-unit-high track with the rail twelve of those
+ * units tall, so one vertical unit is one pixel and the geometry needs no
+ * measurement of the panel. Horizontal shares are percentages of the window,
+ * which is what `preserveAspectRatio="none"` stretches.
+ */
+const RUN_REPLAY_TRACK_BOX = '0 0 100 56'
+const RUN_REPLAY_TRACK_SIZE = '56'
+const RUN_REPLAY_RAIL_Y = '22'
+const RUN_REPLAY_RAIL_HEIGHT = '12'
+const RUN_REPLAY_TICK_TOP = '16'
+const RUN_REPLAY_TICK_BOTTOM = '40'
+const RUN_REPLAY_PLAYHEAD_TOP = '6'
+const RUN_REPLAY_PLAYHEAD_BOTTOM = '50'
+
+/** REPLAY_NO_POSITIONS is what a ring with no span draws: a tick is a moment on
+ * the window's axis, and one distinct moment is no axis at all. */
+const REPLAY_NO_POSITIONS = 'fewer than two records with distinct times arrived: there is no span to place a tick on'
+
+/** positionOf is a stamp's share of `from`..`to`, 0..100, or null when the two
+ * ends do not give a span to measure against -- a stamp the parser refuses, or
+ * a window of no width. A record outside the window is clamped to its end rather
+ * than dropped: it is a record that arrived, and a tick drawn nowhere would be
+ * a record the screen hid. */
+function positionOf(stamp: string, from: string | null, to: string | null): number | null {
+  if (from === null || to === null) return null
+  const at = Date.parse(stamp)
+  const start = Date.parse(from)
+  const end = Date.parse(to)
+  if (!Number.isFinite(at) || !Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null
+  return Math.min(100, Math.max(0, ((at - start) / (end - start)) * 100))
+}
+
+/** MIDPOINT_MS is how the axis's middle label is found: the moment halfway
+ * between the window's two ends. It is a scale mark and not a fact about the
+ * run, which is why it is drawn only as the axis's own label. */
+function midpointOf(from: string, to: string): string {
+  const start = Date.parse(from)
+  const end = Date.parse(to)
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return to
+  return new Date((start + end) / 2).toISOString()
+}
+
+/**
+ * replayPanel is the ring: what it holds, the window's own span as a scrubber,
+ * and the moment scrubbed to. The ticks are **real records** -- one per record,
+ * at its timestamp's share of `from`..`to` -- so the track is what arrived and
+ * not a count of arrivals. The playhead is drawn only when something was
+ * scrubbed to, because with nothing scrubbed there is no moment to mark and the
+ * whole window is what is shown.
+ *
+ * **The previous/next controls and "Show whole window" are not drawn.** They
+ * would move nothing: `entry.ts` passes no ring to this screen, so on the real
+ * screen the ring is empty and a control over it is a button that does nothing
+ * -- the one thing design section 5.1 forbids.
+ */
+function replayPanel(factory: RunFactory, model: RunReplay): ScreenElement {
   const element = make(factory, 'section', 'run-replay')
   element.setAttribute('aria-label', REPLAY_PANEL_NAME)
-  literal(cell(element, factory, 'h2', 'run-panel-title'), 'replay buffer')
-  const records = cell(element, factory, 'p', 'run-replay-records')
-  literal(records, 'records held:')
-  numberCell(records, factory, 'span', model.records, 'count', 'run-replay-count')
-  literal(cell(records, factory, 'span', 'run-replay-window-word'), 'over a window of')
-  // The window is drawn as a reading like every other number, so a build with
-  // no window has an `n/a` and not a zero-second window.
-  numberCell(records, factory, 'span', model.windowSeconds, 'seconds', 'run-replay-window')
-  const span = cell(element, factory, 'p', 'run-replay-span')
-  literal(span, 'window:')
-  if (model.from !== null) textCell(span, factory, 'span', model.from, 'label', 'replay.from', 'run-replay-from')
-  if (model.to !== null) textCell(span, factory, 'span', model.to, 'label', 'replay.to', 'run-replay-to')
+  const head = cell(element, factory, 'div', 'run-replay-head')
+  literal(cell(head, factory, 'h2', 'run-panel-title'), 'Replay')
+  const note = cell(head, factory, 'p', 'run-replay-note')
+  numberCell(note, factory, 'span', model.records, 'count', 'run-replay-count')
+  literal(cell(note, factory, 'span', 'run-replay-records-word'), 'records')
+  literal(cell(note, factory, 'span', 'run-replay-sep'), '·')
+  literal(cell(note, factory, 'span', 'run-replay-bound'), REPLAY_BOUND_NOTE)
+  const track = makeNS(factory, 'svg', 'run-replay-track')
+  track.setAttribute('viewBox', RUN_REPLAY_TRACK_BOX)
+  track.setAttribute('preserveAspectRatio', 'none')
+  track.setAttribute('height', RUN_REPLAY_TRACK_SIZE)
+  track.setAttribute('aria-hidden', 'true')
+  const rail = makeNS(factory, 'rect', 'run-replay-rail')
+  rail.setAttribute('x', '0')
+  rail.setAttribute('y', RUN_REPLAY_RAIL_Y)
+  rail.setAttribute('width', '100')
+  rail.setAttribute('height', RUN_REPLAY_RAIL_HEIGHT)
+  track.append(rail)
+  const playheadAt = model.scrubbed === null ? null : positionOf(recordStamp(model.scrubbed), model.from, model.to)
+  if (playheadAt !== null) {
+    const fill = makeNS(factory, 'rect', 'run-replay-fill')
+    fill.setAttribute('x', '0')
+    fill.setAttribute('y', RUN_REPLAY_RAIL_Y)
+    fill.setAttribute('width', trackCoord(playheadAt))
+    fill.setAttribute('height', RUN_REPLAY_RAIL_HEIGHT)
+    track.append(fill)
+  }
+  const positioned = model.stamps.flatMap((stamp) => {
+    const position = positionOf(stamp, model.from, model.to)
+    return position === null ? [] : [position]
+  })
+  const distinct = new Set(model.stamps).size
+  for (const position of positioned) {
+    const past = playheadAt !== null && position > playheadAt
+    const tick = past
+      ? makeNS(factory, 'line', 'run-replay-tick', 'run-replay-tick-past')
+      : makeNS(factory, 'line', 'run-replay-tick', 'run-replay-tick-live')
+    tick.setAttribute('x1', trackCoord(position))
+    tick.setAttribute('x2', trackCoord(position))
+    tick.setAttribute('y1', RUN_REPLAY_TICK_TOP)
+    tick.setAttribute('y2', RUN_REPLAY_TICK_BOTTOM)
+    track.append(tick)
+  }
+  if (playheadAt !== null) {
+    const playhead = makeNS(factory, 'line', 'run-replay-playhead')
+    playhead.setAttribute('x1', trackCoord(playheadAt))
+    playhead.setAttribute('x2', trackCoord(playheadAt))
+    playhead.setAttribute('y1', RUN_REPLAY_PLAYHEAD_TOP)
+    playhead.setAttribute('y2', RUN_REPLAY_PLAYHEAD_BOTTOM)
+    track.append(playhead)
+  }
+  element.append(track)
+  // The moment scrubbed to sits in its own row directly under the track, before
+  // the axis: it is the playhead's label, and a text node inside the drawing
+  // would be stretched horizontally by `preserveAspectRatio`.
   const scrubbed = cell(element, factory, 'p', 'run-replay-scrubbed')
   if (model.scrubbed !== null) {
     literal(scrubbed, 'showing the moment')
@@ -1874,7 +2200,18 @@ function replayPanel(factory: ScreenFactory, model: RunReplay): ScreenElement {
     // did not write, so it is drawn through `putText`.
     putText(scrubbed, model.scrubbedBecause, 'sentence', 'scrubbedBecause')
   }
-  literal(cell(element, factory, 'p', 'run-replay-note'), REPLAY_BOUND_NOTE)
+  const axis = cell(element, factory, 'p', 'run-replay-axis')
+  if (model.from !== null) textCell(axis, factory, 'span', model.from, 'label', 'replay.from', 'run-replay-from')
+  if (model.from !== null && model.to !== null && model.from !== model.to) {
+    textCell(axis, factory, 'span', midpointOf(model.from, model.to), 'label', 'replay.midpoint', 'run-replay-mid')
+  }
+  if (model.to !== null) textCell(axis, factory, 'span', model.to, 'label', 'replay.to', 'run-replay-to')
+  if (distinct < 2) literal(cell(element, factory, 'p', 'run-replay-no-span'), REPLAY_NO_POSITIONS)
+  const window_ = cell(element, factory, 'p', 'run-replay-window-line')
+  literal(window_, 'over a window of')
+  // The window is drawn as a reading like every other number, so a build with
+  // no window has an `n/a` and not a zero-second window.
+  numberCell(window_, factory, 'span', model.windowSeconds, 'seconds', 'run-replay-window')
   return element
 }
 
@@ -1903,7 +2240,7 @@ export function renderRun(factory: RunFactory, model: RunModel, theme: RunTheme)
   main.append(logsPanel(factory, model.logs))
   main.append(replayPanel(factory, model.replay))
   const aside = cell(layout, factory, 'aside', 'run-aside')
-  aside.append(ledgerPanel(factory, model.ledger))
+  aside.append(ledgerPanel(factory, model))
   aside.append(pullRequestPanel(factory, model.pullRequest))
   for (const warning of model.warnings) {
     textCell(root, factory, 'p', warning, 'sentence', 'warnings[]', 'run-warning')

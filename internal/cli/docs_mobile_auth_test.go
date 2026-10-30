@@ -385,11 +385,15 @@ func mobileAuthCitedPaths(doc string, dirs map[string]bool) []string {
 // the same change, and a reader can see from the list alone what is still
 // missing.
 //
-// The plan writes three of these as this work's own new paths and three as the
-// mobile Phase 6 tasks' (P6.6's device token and P6.8's two, approved
-// 2026-10-18 and unbuilt), and the reconciliation's §F23 names the borrowed
-// ones at once. The list is held here rather than re-derived, so an implementer
-// who finds another adds it visibly instead of loosening the rule.
+// The plan writes three of these as this work's own new paths and two as the
+// mobile Phase 6 tasks' (P6.8's, approved 2026-10-18 and unbuilt), and the
+// reconciliation's §F23 names the borrowed ones at once. P6.6's
+// `internal/budget/token/device.go` left the list in the pull request that
+// landed it — the pairing plan's T2, "The phone's key, the typed fingerprint
+// and the device token" (`docs/plans/2026-10-22-mobile-pairing-cli.md`,
+// 2026-10-29) — which is the deletion every entry owes its own pull request.
+// The list is held here rather than re-derived, so an implementer who finds
+// another adds it visibly instead of loosening the rule.
 //
 // **The third of this work's own three is not here, and that is the rule
 // working**: `internal/cli/docs_mobile_auth_test.go` is the file this pin is
@@ -402,7 +406,6 @@ func mobileAuthCitedPaths(doc string, dirs map[string]bool) []string {
 // mobileAuthNeverCarried.
 var mobileAuthWillCreate = map[string]string{
 	"docs/mobile-auth/provider-sign-in.md": "P6's provider path, written out and refused",
-	"internal/budget/token/device.go":      "mobile Task P6.6's device token, approved 2026-10-18 and unbuilt",
 	"mobile/src/pairing":                   "mobile Task P6.8, approved 2026-10-18 and unbuilt",
 	"mobile/src/overview":                  "mobile Task P6.8's overview screen, approved 2026-10-18 and unbuilt",
 }

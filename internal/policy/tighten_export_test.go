@@ -11,10 +11,10 @@ import (
 
 // TestExportedTightenRulesAreTheMerges: the three exported wrappers are the
 // merge's own tighten-only rule and not a second copy of it — the governance
-// policy moves to ee/governance, whose moved tightenGovernance and tightenTier
-// cannot reach the unexported methods, and a copy would be a second place the
-// rule lives, to drift from this one the first time a key's shape changed
-// (design ee-boundary-moves.md §5.2).
+// policy lives in ee/governance, whose Tighten and tightenTier cannot reach the
+// unexported methods, and a copy would be a second place the rule lives, to
+// drift from this one the first time a key's shape changed (design
+// ee-boundary-moves.md §5.2).
 //
 // What each wrapper answers is what Merge answers, driven through the public
 // API only: the state a layer's value is applied to is built by Merge, the
