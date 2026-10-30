@@ -1292,9 +1292,11 @@ func TestWebsiteCanonicalHostAppearsOnlyInSiteYaml(t *testing.T) {
 			continue
 		}
 		// The Subscription Terms are generated from a document under docs/, and
-		// clause 29.1 names the address where they are published: that is the
+		// three clauses name the Licensor's own address: 29.1 where they are
+		// published, the privacy notice's URL and the notice email. That is the
 		// agreement's wording, which the page may not change.
-		if hit.file == "website/content/subscription-terms.md" && strings.Contains(hit.text, "29.1 ") {
+		if hit.file == "website/content/subscription-terms.md" &&
+			(strings.Contains(hit.text, "29.1 ") || strings.Contains(hit.text, "privacy notice at") || strings.Contains(hit.text, "Form (for the Licensor")) {
 			continue
 		}
 		t.Errorf("%s:%d names the site's host %q: the canonical URL has one source, %s, and every absolute link, the canonical <link>, the sitemap and the OpenGraph tag are built from it -- a copy here is a second source that keeps pointing at the old domain after the one line changes (D92, plan Task W2.2 step 1)\n%s", hit.file, hit.line, host, websiteFactsPath, hit.text)
