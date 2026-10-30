@@ -3121,12 +3121,12 @@ func authorGates(ctx context.Context, env *cloudEnv, slug string, spec *task.Spe
 //
 // nil means the launch records nobody, so the run's commits author and commit
 // under the run's own identity, which is what every run does today (D605): me
-// is not an address (user: alice, a CI box, a bot account), or a commit_email
-// was given that the launcher may not claim. That last case is refused and not
-// omitted (D649): commit_email has to be the address the launcher launches as,
-// or a forge noreply address, and anything else is a colleague's address, which
-// is the one thing this rule exists to keep out of a history the forge links to
-// that colleague's account.
+// is not an address (user: alice, a CI box, a bot account). A commit_email the
+// launcher may not claim is the one case answered with a refusal instead of an
+// omission (D649): it has to be the address the launcher launches as, or a
+// forge noreply address, and anything else is a colleague's address — the one
+// thing this rule exists to keep out of a history the forge links to that
+// colleague's account.
 func launchAuthor(ctx context.Context, lc *localcfg.Config, me string) (*task.Person, error) {
 	email := me
 	if lc.CommitEmail != "" {
@@ -3153,7 +3153,7 @@ func launchAuthor(ctx context.Context, lc *localcfg.Config, me string) (*task.Pe
 	// block, and a task the runner refuses empty-handed is worse than a launch
 	// that says which key to fix.
 	if p := task.AuthorProblem(*author); p != "" {
-		return nil, userErr("the local config gives the commit author a %s; fix commit_name or commit_email, or leave the author out", p)
+		return nil, userErr("the commit author this launch would record has a %s; fix the local config's commit_name or commit_email, or this machine's git config user.name, which is what the name falls back to", p)
 	}
 	return author, nil
 }
