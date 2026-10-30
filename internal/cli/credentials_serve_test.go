@@ -487,21 +487,24 @@ func TestCredentialsServeStillSpeaksHTTP1(t *testing.T) {
 		t.Error("the host offers TLS-based HTTP/2: it serves no TLS, and the front end's h2c is the unencrypted protocol")
 	}
 	// The HTTP/2 side of the server is the block net/http reads when it builds
-	// the h2 handler, and neither value in it may drift to a default: Go's own
-	// MaxConcurrentStreams is 250 (above the 100 the front end in front of this
-	// process allows a caller), and its WriteByteTimeout default of 0 would
-	// leave a peer that stopped reading holding a goroutine and an upstream
-	// connection carrying a model credential for as long as the route's own
-	// timeout. Asserted on the server object because both are invisible to a
-	// client that behaves.
+	// the h2 handler, and neither number in it may fall back to a default: Go's
+	// own MaxConcurrentStreams is 250 (net/http/internal/http2/server.go, whose
+	// comment there is a TODO to make it 100 "as the GFE seems to"), and its
+	// WriteByteTimeout default of 0 would let a peer that stopped reading hold a
+	// goroutine and an upstream connection carrying a model credential for as
+	// long as the route's own timeout allows. Read off the server object because
+	// both are invisible to a client that behaves, and written as literals
+	// rather than as the constants: the two numbers are the decision, and a test
+	// that compared them to the constants would follow a change of one
+	// silently.
 	if srv.HTTP2 == nil {
 		t.Fatal("the host has no HTTP2 config: the h2c server takes net/http's defaults for the stream count and the write bound")
 	}
-	if srv.HTTP2.MaxConcurrentStreams != serveMaxConcurrentStreams {
-		t.Errorf("the host allows %d concurrent streams, want %d", srv.HTTP2.MaxConcurrentStreams, serveMaxConcurrentStreams)
+	if srv.HTTP2.MaxConcurrentStreams != 100 {
+		t.Errorf("the host allows %d concurrent streams, want 100, the limit the front end in front of it allows a caller", srv.HTTP2.MaxConcurrentStreams)
 	}
-	if srv.HTTP2.WriteByteTimeout != serveWriteByteTimeout {
-		t.Errorf("the host's write-byte timeout = %v, want %v", srv.HTTP2.WriteByteTimeout, serveWriteByteTimeout)
+	if srv.HTTP2.WriteByteTimeout != 2*time.Minute {
+		t.Errorf("the host's write-byte timeout = %v, want 2m: the bound on a peer that has stopped reading, not on a stream still moving", srv.HTTP2.WriteByteTimeout)
 	}
 	var protocols http.Protocols
 	protocols.SetHTTP1(true)
