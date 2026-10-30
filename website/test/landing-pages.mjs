@@ -53,8 +53,8 @@
 //   8. **The page's two fields of colour are the site's own shape, and each closing action
 //      carries its own mark.** The steps' panel and the closing band are cut at `--radius-xl`,
 //      the site's largest corner step, and each of the three calls to action has an inline
-//      `aria-hidden` mark beside its label: the owner's feedback of 2026-10-30 asked for a
-//      friendlier band than three right angles and three lines of type, and the mark is
+//      `aria-hidden` mark beside its label: the owner's feedback of 2026-10-30 (D412's findings 1
+//      and 2) asked for a friendlier band than three right angles and three lines of type, and the mark is
 //      decoration whose meaning is the link's own words, so no reader is owed it (F14).
 //   9. **Every campaign page shows the console's screens, in the homepage's own slider.** The
 //      four pages that argue for the product now show it: below the hero and above the closing
@@ -62,7 +62,7 @@
 //      (`website/data/home-screens.yaml`, drawn from this site's own `public/screenshots/`), with
 //      the focusable track, the dots and the `hidden` control bar the homepage's panel has, and
 //      every slide in the document so a reader with no script gets the pictures stacked (the
-//      owner's feedback of 2026-10-30, finding 3; D246, F14).
+//      owner's feedback of 2026-10-30, D412's finding 3; D246, F14).
 //
 // **Red step** (the plan's own, recorded here as the plan requires — the line this file printed
 // before the template existed): the first case below failed with
@@ -137,7 +137,7 @@ function sectionsOf(html) {
  * **A picture is something a reader is meant to look at, and a decorative mark is not one.** The
  * hero's readings count the elements that draw a picture — the console screen (`<img>`), the
  * campaign's own drawing (`<svg>`) and the media a variant names — and since the owner's
- * feedback of 2026-10-30 (finding 1) each call to action carries an `<svg>` mark beside its
+ * feedback of 2026-10-30 (D412's finding 1) each call to action carries an `<svg>` mark beside its
  * label. That mark is `aria-hidden` decoration whose meaning is the link's own words, so it is
  * not a picture of anything and no reading of "how many pictures has this hero" may count it:
  * a hero with a booking button would otherwise carry two pictures and a page whose variant names
@@ -405,7 +405,7 @@ test('there is no email form, and the calls to action are a plain booking link, 
   }
 })
 
-// **Each action carries its own small mark** (the owner's feedback of 2026-10-30, finding 1).
+// **Each action carries its own small mark** (the owner's feedback of 2026-10-30, D412's finding 1).
 // The finding was that the three closing actions read as three lines of a paragraph rather than
 // as three things a reader can do, and the marks are the half of the answer a browser gets with
 // no script at all: the booking has a calendar beside it, the install a download and the chat a
@@ -457,19 +457,19 @@ test('each call to action carries its own aria-hidden mark, and stays a link', (
       assert.equal(
         found.length,
         1,
-        `${rel}'s ${JSON.stringify(label)} action carries ${found.length} mark(s): the owner asked each of the three closing actions for one small icon beside its label (the owner's feedback of 2026-10-30, finding 1)`,
+        `${rel}'s ${JSON.stringify(label)} action carries ${found.length} mark(s): the owner asked each of the three closing actions for one small icon beside its label (the owner's feedback of 2026-10-30, D412's finding 1)`,
       )
       const [mark] = found
       assert.equal(
         mark.attrs.get('aria-hidden'),
         'true',
-        `${rel}'s ${JSON.stringify(label)} mark is ${JSON.stringify(mark.attrs.get('aria-hidden'))} to a screen reader: the link's own words are the meaning, and a mark announced beside them is the same fact read twice (the owner's feedback of 2026-10-30, finding 1)`,
+        `${rel}'s ${JSON.stringify(label)} mark is ${JSON.stringify(mark.attrs.get('aria-hidden'))} to a screen reader: the link's own words are the meaning, and a mark announced beside them is the same fact read twice (the owner's feedback of 2026-10-30, D412's finding 1)`,
       )
       assert.equal(mark.attrs.get('focusable'), 'false', `${rel}'s ${JSON.stringify(label)} mark is focusable, and a decorative drawing is not something a keyboard should land on`)
       assert.equal(
         mark.attrs.get('data-icon'),
         icon,
-        `${rel}'s ${JSON.stringify(label)} action carries the ${JSON.stringify(mark.attrs.get('data-icon'))} mark: the owner named the three — a calendar for the booking, a download for the install and a bubble for the chat (the owner's feedback of 2026-10-30, finding 1)`,
+        `${rel}'s ${JSON.stringify(label)} action carries the ${JSON.stringify(mark.attrs.get('data-icon'))} mark: the owner named the three — a calendar for the booking, a download for the install and a bubble for the chat (the owner's feedback of 2026-10-30, D412's finding 1)`,
       )
 
       // Inline, in the control's own colour: no icon font, no fetched file, and no host. The
@@ -477,7 +477,7 @@ test('each call to action carries its own aria-hidden mark, and stays a link', (
       // references something — `<use href>`, `<image>`, a font — would be the second origin the
       // four pages may not have (F14).
       assert.equal(mark.attrs.get('stroke'), 'currentColor', `${rel}'s ${JSON.stringify(label)} mark is stroked in ${JSON.stringify(mark.attrs.get('stroke'))}: the band paints one colour, so the mark is drawn in the control's own`)
-      assert.equal(mark.attrs.get('fill'), 'none', `${rel}'s ${JSON.stringify(label)} mark is filled with ${JSON.stringify(mark.attrs.get('fill'))}: the site's marks are line drawings (the owner's feedback of 2026-10-30, finding 1)`)
+      assert.equal(mark.attrs.get('fill'), 'none', `${rel}'s ${JSON.stringify(label)} mark is filled with ${JSON.stringify(mark.attrs.get('fill'))}: the site's marks are line drawings (the owner's feedback of 2026-10-30, D412's finding 1)`)
       assert.deepEqual(
         findAll(mark, (el) => ['use', 'image', 'foreignObject'].includes(el.name)).map((el) => el.name),
         [],
@@ -499,7 +499,7 @@ test('each call to action carries its own aria-hidden mark, and stays a link', (
     assert.deepEqual(
       findAll(booking, CAMPAIGN_ICON).map((el) => [el.attrs.get('data-icon'), el.attrs.get('aria-hidden')]),
       [['calendar', 'true']],
-      `${rel}'s hero booking carries ${JSON.stringify(findAll(booking, CAMPAIGN_ICON).map((el) => el.attrs.get('data-icon')))}: the two booking links are one action, and the hero's shares the closing band's mark (the owner's feedback of 2026-10-30, finding 1)`,
+      `${rel}'s hero booking carries ${JSON.stringify(findAll(booking, CAMPAIGN_ICON).map((el) => el.attrs.get('data-icon')))}: the two booking links are one action, and the hero's shares the closing band's mark (the owner's feedback of 2026-10-30, D412's finding 1)`,
     )
   }
 })
@@ -532,7 +532,7 @@ test('the hero carries the booking action, above the picture and before every ot
     // booking link is below the fold.
     // The icon the action carries is part of the action — it is inside the `<a>` — so it is read
     // as one element with it rather than as a fourth thing the hero draws (the owner's feedback
-    // of 2026-10-30, finding 1).
+    // of 2026-10-30, D412's finding 1).
     const order = [...walk(hero)]
       .filter((el) => ['h1', 'a', 'img', 'svg'].includes(el.name))
       .map((el) => el.name)
@@ -719,7 +719,7 @@ test('a variant that names a video renders it in the hero, and one whose file is
   const crewHero = findAll(parse(crew.html), (el) => el.attrs.get('data-section') === 'hero')
   assert.equal(crewHero.length, 1, 'the copy built no /crew hero to read the picture off')
   // Read inside the hero: the screen this variant names is one of the console's, and the slider
-  // below the hero shows it too (the owner's feedback of 2026-10-30, finding 3), so the page's
+  // below the hero shows it too (the owner's feedback of 2026-10-30, D412's finding 3), so the page's
   // own count of that file is two and the hero's is one.
   const crewPicture = picturesIn(crewHero[0]).filter((el) => el.attrs.get('src') === LANDING.variants.find((one) => one.name === 'crew').screenshot.src)
   assert.equal(
@@ -1126,7 +1126,7 @@ test('the hero\'s picture is drawn flat and framed by nothing, and the campaign 
 // ---- 8. the two fields of colour, and the corners they are cut at --------------------------
 
 // **The band behind the closing actions was too square** (the owner's feedback of 2026-10-30,
-// finding 2). A page whose hero, steps and closing call to action all end in right angles reads
+// D412's finding 2). A page whose hero, steps and closing call to action all end in right angles reads
 // as a wireframe rather than as the site's own design, and the two fields of colour a campaign
 // page paints — the steps' panel and the closing band — were the flat rectangles the finding
 // names. Both are now cut at `--radius-xl`, the site's largest corner step
@@ -1168,14 +1168,14 @@ test('the two fields of colour are cut at the site\'s largest radius, flat and u
       assert.deepEqual(
         radii,
         ['var(--radius-xl)'],
-        `${rel}'s ${field} is cut at ${JSON.stringify(radii)}: the owner asked the band behind the closing actions for generous corners and for any other panel with the same hard-cornered look to be rounded with it, and the radius is the site's own largest step rather than a number the component invented (the owner's feedback of 2026-10-30, finding 2)`,
+        `${rel}'s ${field} is cut at ${JSON.stringify(radii)}: the owner asked the band behind the closing actions for generous corners and for any other panel with the same hard-cornered look to be rounded with it, and the radius is the site's own largest step rather than a number the component invented (the owner's feedback of 2026-10-30, D412's finding 2)`,
       )
 
       for (const rule of own) {
         for (const refused of [/gradient/i, /box-shadow/i, /drop-shadow/i, /(^|[\s;{])border\s*:/i, /(^|[\s;{])filter\s*:/i]) {
           assert.ok(
             !refused.test(rule.body),
-            `${rel}: "${rule.selector}" carries ${JSON.stringify(refused.source)}: the rounded field is the owner's whole change to its box — the two fields stay flat colour, with no gradient, no shadow, no filter and no hairline drawn around them (the owner's feedback of 2026-10-30, finding 2)`,
+            `${rel}: "${rule.selector}" carries ${JSON.stringify(refused.source)}: the rounded field is the owner's whole change to its box — the two fields stay flat colour, with no gradient, no shadow, no filter and no hairline drawn around them (the owner's feedback of 2026-10-30, D412's finding 2)`,
           )
         }
       }
@@ -1192,7 +1192,7 @@ test('the two fields of colour are cut at the site\'s largest radius, flat and u
   }
 })
 
-// ---- 9. the console's screens on every campaign page (the owner's feedback of 2026-10-30) --
+// ---- 9. the console's screens on every campaign page (D412's finding 3, 2026-10-30) --------
 
 // **The finding was "the campaign pages show one screenshot and no way to see the rest".** The
 // homepage has had a slider of all of the console's screens since the brief of 2026-10-21, and
@@ -1256,7 +1256,7 @@ function slidesOf(html, slot) {
   const slider = findAll(doc, (el) => el.attrs.get('data-slot') === slot)[0]
   assert.ok(
     slider,
-    `a built page carries no [data-slot="${slot}"]: the slider is what shows these pages the console's screens, and a page without one is a page whose pictures nobody sees (the owner's feedback of 2026-10-30, finding 3)`,
+    `a built page carries no [data-slot="${slot}"]: the slider is what shows these pages the console's screens, and a page without one is a page whose pictures nobody sees (the owner's feedback of 2026-10-30, D412's finding 3)`,
   )
   return findAll(slider, (el) => el.name === 'li' && el.attrs.has('data-slider-slide')).map((slide) => {
     const [img] = findAll(slide, 'img')
@@ -1296,7 +1296,7 @@ test('every campaign page shows the console\'s screens in the homepage\'s own sl
     assert.equal(
       sliders.length,
       1,
-      `${rel} carries ${sliders.length} [data-slot="${CAMPAIGN_SLIDER_SLOT}"]: the owner asked every landing page for one slideshow of the console's screens (the owner's feedback of 2026-10-30, finding 3)`,
+      `${rel} carries ${sliders.length} [data-slot="${CAMPAIGN_SLIDER_SLOT}"]: the owner asked every landing page for one slideshow of the console's screens (the owner's feedback of 2026-10-30, D412's finding 3)`,
     )
     const [slider] = sliders
     assert.equal(slider.name, 'section', `the campaign slideshow is a <${slider.name}>: it is a section of the page with its own heading, not a div the heading above it happens to cover`)
@@ -1323,7 +1323,7 @@ test('every campaign page shows the console\'s screens in the homepage\'s own sl
     assert.deepEqual(
       slides,
       homeSlides,
-      `${rel}'s slideshow shows ${JSON.stringify(slides.map((slide) => slide.src))} with the words ${JSON.stringify(slides.map((slide) => slide.caption))}, and the homepage's panel shows ${JSON.stringify(homeSlides.map((slide) => slide.src))} with ${JSON.stringify(homeSlides.map((slide) => slide.caption))}: the four pages show the screens the homepage shows, in the file's own order, with each row's own alt text, caption and size (the owner's feedback of 2026-10-30, finding 3; D246)`,
+      `${rel}'s slideshow shows ${JSON.stringify(slides.map((slide) => slide.src))} with the words ${JSON.stringify(slides.map((slide) => slide.caption))}, and the homepage's panel shows ${JSON.stringify(homeSlides.map((slide) => slide.src))} with ${JSON.stringify(homeSlides.map((slide) => slide.caption))}: the four pages show the screens the homepage shows, in the file's own order, with each row's own alt text, caption and size (the owner's feedback of 2026-10-30, D412's finding 3; D246)`,
     )
     for (const [index, slide] of slides.entries()) {
       assert.ok((slide.alt ?? '').trim() !== '', `${rel}'s slide ${index + 1} (${slide.src}) carries no alt text: a reader who cannot see the picture is owed what it shows, and the words are ${HOME_SCREENS_YAML}'s own`)
@@ -1350,7 +1350,7 @@ test('every campaign page shows the console\'s screens in the homepage\'s own sl
     assert.deepEqual(
       slides.slice(1).map((slide) => slide.loading),
       slides.slice(1).map(() => 'lazy'),
-      `${rel}'s slides after the first load ${JSON.stringify(slides.slice(1).map((slide) => slide.loading))}: every screen below the first is fetched when a reader reaches it, and the hero's own picture stays the page's one eager one (the owner's feedback of 2026-10-30, finding 3)`,
+      `${rel}'s slides after the first load ${JSON.stringify(slides.slice(1).map((slide) => slide.loading))}: every screen below the first is fetched when a reader reaches it, and the hero's own picture stays the page's one eager one (the owner's feedback of 2026-10-30, D412's finding 3)`,
     )
   }
 })

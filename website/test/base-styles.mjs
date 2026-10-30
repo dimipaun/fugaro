@@ -2790,7 +2790,7 @@ test('the copy confirmation sits over its button and never moves the command', (
 // ---- the campaign pages' content lands on the chrome's left edge (G2.2) --------------------
 //
 // The four campaign pages are a run of full-width bands — the spec's five sections and the
-// screens band of the owner's feedback of 2026-10-30 — each padding its own content onto the
+// screens band of the owner's feedback of 2026-10-30 (D412's finding 3) — each padding its own content onto the
 // page's one pair of margins with `--frame-gutter`, the expression the site's own header and footer
 // carry, so the headline starts on the wordmark's left edge and the two margins are equal. That
 // holds only while `main` contributes nothing: the gutter is a percentage of the box it is used
@@ -2807,7 +2807,7 @@ test('the copy confirmation sits over its button and never moves the command', (
 // both are in force is the defect.
 
 /** The bands a campaign page is built from — the spec's five sections and the screens band the
- *  owner's feedback of 2026-10-30 (finding 3) put between the steps and the closing field — and
+ *  owner's feedback of 2026-10-30 (D412's finding 3) put between the steps and the closing field — and
  *  the two chrome blocks its mode draws. The list is in the order a reader meets them, which is
  *  what the spacing case below reads the gaps between; every one of them is a full-width band
  *  that pads its own content onto the page's one gutter. */
