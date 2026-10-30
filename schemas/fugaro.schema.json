@@ -30,6 +30,10 @@
       "additionalProperties": false,
       "properties": {
         "provider": { "enum": ["github", "bitbucket"] },
+        "author": {
+          "enum": ["", "fugaro", "launcher"],
+          "description": "Who a run's commits are authored by: launcher (the person who launched it, as a stated claim — D604) or fugaro (the run's own identity, which is what the empty value and the absent key both mean, today's behaviour — D606). The repository's own opt-in: the project layer and a profile cannot set it. It selects a behaviour and mints no identity; the launcher fills the address from its own local identity and writes it into the run's task (A2b), so a launch against a runner that does not read the field is refused at launch rather than run with the key silently ignored."
+        },
         "base_branch": {
           "type": "string",
           "description": "A plain git branch name. Git accepts shell metacharacters in ref names; Fugaro does not, because the branch reaches git, Docker build arguments and Cloud Build.",

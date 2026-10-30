@@ -54,3 +54,47 @@ workflows:
 		t.Errorf("a claimed allow-list entry was refused: %q", got)
 	}
 }
+
+// TestValidateGitAuthorClosedVocabulary pins git.author's vocabulary (A2a):
+// the key is the repository's opt-in for the launcher's own identity as the
+// commit author (D604, D606), so a value outside it is a launcher's bug
+// rather than a run's opinion, exactly as git.provider's two values are.
+// The empty value is legal and is the key absent: it is today's behaviour,
+// the run's own identity authoring its commits.
+//
+// The refusal names both values, because that sentence is what an author
+// reads to fix the file — the same reason git.provider's does.
+func TestValidateGitAuthorClosedVocabulary(t *testing.T) {
+	const base = `
+version: 1
+project: aurora
+git: { provider: github }
+workflows:
+  app: { commands: { build: sh build.sh, test: sh test.sh } }
+`
+	cfg, ps := Parse([]byte(strings.Replace(base, "git: { provider: github }", "git: { provider: github, author: launcher }", 1)))
+	if len(ps) > 0 {
+		t.Fatalf("git.author: launcher was refused: %v", ps)
+	}
+	if cfg.Git.Author != GitAuthorLauncher {
+		t.Fatalf("git.author = %q, want %q", cfg.Git.Author, GitAuthorLauncher)
+	}
+	for _, author := range []string{"", GitAuthorFugaro, GitAuthorLauncher} {
+		cfg.Git.Author = author
+		if got := problemsText(Validate(cfg)); got != "" {
+			t.Errorf("git.author = %q was refused: %q", author, got)
+		}
+	}
+	// A near miss — the value with the wrong case — is refused at its own
+	// path, naming both values it could have been.
+	cfg.Git.Author = "Fugaro"
+	got := problemsText(Validate(cfg))
+	if !strings.Contains(got, "git.author") {
+		t.Errorf("an unknown git.author was not refused at its own path: %q", got)
+	}
+	for _, want := range []string{GitAuthorFugaro, GitAuthorLauncher} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the git.author refusal does not name %q: %q", want, got)
+		}
+	}
+}

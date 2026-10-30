@@ -311,11 +311,41 @@ type Followup struct {
 	AllowPublic bool `yaml:"allow_public"`
 }
 
+// GitAuthorFugaro and GitAuthorLauncher are the two values git.author may
+// take: "fugaro" is a run's own identity authoring its commits, and
+// "launcher" is the person who launched it (D604, D606). "" is neither of
+// them and means the same as GitAuthorFugaro — the key absent, which is what
+// every file written before the key said.
+const (
+	GitAuthorFugaro   = "fugaro"
+	GitAuthorLauncher = "launcher"
+)
+
+// GitAuthors is git.author's closed vocabulary, the sentence a misspelling
+// reads (Validate) and the list schemas/fugaro.schema.json's enum mirrors.
+// The empty value is not in it: a file that spells it out is the key absent,
+// and is accepted as such.
+var GitAuthors = []string{GitAuthorFugaro, GitAuthorLauncher}
+
 // Git describes the repository's git provider and pull request settings.
 type Git struct {
 	Provider   string     `yaml:"provider"`
 	BaseBranch string     `yaml:"base_branch"`
 	PR         PRSettings `yaml:"pr"`
+	// Author is who a run's commits are authored by: GitAuthorLauncher, the
+	// person who launched it as a stated claim (D604), or GitAuthorFugaro,
+	// the run's own identity — the same as the key being absent, which is
+	// what every repository has today (D606). It is the repository's own
+	// opt-in and no other layer sets it: the project layer and a profile
+	// cannot (config.Scopes has no row for it), so a repository decides for
+	// itself whose name goes into its history.
+	//
+	// It selects a behaviour and mints no identity: the launcher fills the
+	// address from its own local identity and writes it into the task
+	// (internal/task's Spec.Author, A2b), which a runner before A3 does not
+	// read. The launcher gates a launch against such a runner rather than let
+	// the key be silently ignored, the way it gates rigor: (A2b).
+	Author string `yaml:"author"`
 }
 
 // PRSettings are applied to every pull request Fugaro opens.
