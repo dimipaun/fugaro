@@ -189,9 +189,14 @@ func TestReducePackageLockToNameAndVersion(t *testing.T) {
 		}
 	}
 	// A nested path's name is the path after the last node_modules/, and the
-	// root entry is the repository, not a dependency.
+	// root entry is the repository itself, not a dependency.
 	if got := reduced(t, "package-lock.json", `{"packages":{"":{"name":"app","version":"9.9.9"},"node_modules/a/node_modules/b":{"version":"2.0.0"}}}`); !slices.Equal(got, []string{"b@2.0.0"}) {
 		t.Errorf("a nested entry or the root entry: %v", got)
+	}
+	// A workspace member's entry is written under its own path and names
+	// itself, which is the name the lock states for it.
+	if got := reduced(t, "package-lock.json", `{"packages":{"":{"name":"app","version":"9.9.9"},"packages/a":{"name":"@app/a","version":"1.0.0"}}}`); !slices.Equal(got, []string{"@app/a@1.0.0"}) {
+		t.Errorf("a workspace member's own entry: %v", got)
 	}
 	// An entry with no version states no resolved version (a link or a
 	// workspace member's own entry): it is not a fact, and it is skipped.

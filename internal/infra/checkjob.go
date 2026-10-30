@@ -360,12 +360,14 @@ func (u *WorkflowJobUpdate) NewImage() string { return u.newImage }
 // Changes reports whether the update changes anything.
 func (u *WorkflowJobUpdate) Changes() bool { return u != nil && u.oldImage != u.newImage }
 
-// PlanWorkflowJob reads a checkout: clone workflow's job and plans moving
-// its container's image to newImage (the local config's base_images.base).
-// It is read-only; nil, nil when there is no such job. The job must be
-// owner's workflow job as fugaro update made it: labelled fugaro=managed,
-// fugaro_repo=owner.Label and fugaro_workflow=workflow, with
-// FUGARO_CHECKOUT=clone in its container's environment; anything else is
+// PlanWorkflowJob reads a workflow job whose container checks the repository
+// out itself — checkout: clone, and checkout: shared, neither of which bakes
+// the checkout into its image — and plans moving its container's image to
+// newImage (the image the caller resolved for this workflow). It is
+// read-only; nil, nil when there is no such job. The job must be owner's
+// workflow job as fugaro update made it: labelled fugaro=managed,
+// fugaro_repo=owner.Label and fugaro_workflow=workflow, with FUGARO_CHECKOUT
+// set to clone or shared in its container's environment; anything else is
 // ErrCheckJobShape (the same shape error the check job's own plan uses:
 // both name the same fix, fugaro update). The environment is checked
 // as well as the labels because a baked job's image must never be moved to

@@ -85,19 +85,38 @@ The workflow's key files are the evidence set; each is reduced by its own format
 
 | File | Reduction |
 | --- | --- |
-| `package-lock.json` | every entry of `packages` with a `version` (the root `""` entry is skipped: it is the repository, not a dependency), as its `name` (the path after the last `node_modules/`, or the entry's own `name`) and `version`, transitives included |
-| `pnpm-lock.yaml` | every `packages` / `snapshots` key, split at the last `@` into name and version |
-| `yarn.lock` | every entry header line `"name@range":` with its `version:` field; the `__metadata` block is ignored |
-| `go.sum` | every `module version` line, with the `/go.mod`-suffixed duplicates skipped, so each module@version appears once |
-| `requirements.txt` | every `name==version` pin; a line that is not a pin (`-r`, a URL, an unpinned name, a comment) makes the repository unkeyed |
-| `poetry.lock`, `uv.lock`, `Pipfile.lock` | each `[[package]]` / `package` entry's `name` and `version` |
-| `Cargo.lock` | each `[[package]]` entry's `name` and `version` |
-| `Gemfile.lock`, `composer.lock` | each `specs` / `packages` entry's `name` and `version` |
+| `package-lock.json` | every entry of `packages` with a `version` (the root `""` entry is skipped: it is the repository, not a dependency), as its `name` (the path after the last `node_modules/`, or the entry's own name for a workspace member's entry, which is written under the member's path) and `version`, transitives included |
+| `npm-shrinkwrap.json` | `package-lock.json`'s reduction: one format under the two names npm writes it under, and a repository's lockfile is whichever of them npm wrote |
+| `pnpm-lock.yaml`, `pnpm-lock.yml` | every `packages` / `snapshots` key, split at the last `@` into name and version, with pnpm 6's leading `/` and a peer suffix in parentheses (pnpm 7 and later) neither part of the name nor of the version |
+| `yarn.lock` | every entry header line `"name@range":` (the first of the ranges it lists) with its `version` field, which Yarn 1 writes after a space and Berry after a colon; the `__metadata` block is the lock's own header and is ignored |
+| `go.sum`, `go.work.sum` | every `module version` line, with the `/go.mod`-suffixed duplicates skipped, so each module@version appears once |
+| `requirements.txt`, `requirements*.txt` | every `name==version` pin, with the name as PEP 503 normalises it and any extras dropped from the name: a pin's `--hash` continuation lines, its environment marker and a full-line comment are the pin's own and are not facts. A line that is not a pin — `-r`, a URL, an editable install, an option, an unpinned name — makes the repository **unkeyed**, because the file then does not state what pip would install |
+| `poetry.lock`, `uv.lock`, `Pipfile.lock` | each `[[package]]` / `package` entry's `name` and `version`. Pipfile.lock's `default` and `develop` sections are both read, and the `==` its versions are written with is pip's operator, not part of the version |
+| `Cargo.lock` | each `[[package]]` entry's `name` and `version`, the workspace's own crate included: it is one of the lock's packages |
+| `Gemfile.lock`, `composer.lock` | each `specs` / `packages` entry's `name` and `version`; both of Bundler's resolving blocks (GEM, GIT, PATH) and both of composer's (`packages`, `packages-dev`) are read, and Dev-only dependencies are not exempt (O6) |
+
+The key-file layer carries more than lockfiles (D620: the install above the source layer reads them),
+and the rest of it states no resolved package set of its own. Each contributes no `pkg:` fact, and
+none of them makes a repository unkeyed:
+
+| File | Reduction |
+| --- | --- |
+| mise's configuration — `mise.toml`, `.mise.toml`, `mise/config.toml`, `.mise/config.toml`, `.config/mise.toml`, `.config/mise/config.toml`, `.tool-versions`, `mise.lock`, the `conf.d` fragments under `mise/`, `.mise/` and `.config/mise/` | the **toolchain**, §2.1's second input rather than a package set: each tool's pin as `tool@version`. These are key files because the install reads them, and §2.1's tool half is what the key takes from them, so no `pkg:` fact comes from one |
+| `package.json`, each workspace member's `package.json` | nothing: they state dependency ranges and the workspace's members, and the lockfile beside them is what resolves those |
+| `pnpm-workspace.yaml` | nothing: it names the workspace's members, not a resolved set |
+| `.npmrc`, `.yarnrc`, `.yarnrc.yml`, `.pnpmfile.cjs`, `.yarn/releases/…`, `.yarn/plugins/…`, `.yarn/patches/…`, and the patch files a `patchedDependencies` entry names | nothing: they configure the install and patch its inputs, so a change to one rebuilds the image (the key files and `ImageConfigHash`), and none of them names a version |
+| a path `image.key_files` names | by its own name when the table above knows the format — an operator may key a lockfile the built-ins do not — nothing when the file states no resolved set, and unkeyed when it is a lock or tool file of an ecosystem the table does not name |
 
 Anything else — a lock file of another format, a tool file that is not a mise config, a
 `requirements.txt` that is not pinned — makes the repository **unkeyed** (§2.5). Dev-only
 dependencies are not exempt: they make a key like any other, because the owner did not choose to
 exempt them (O6).
+
+A key file that cannot be read in full makes the repository unkeyed for the same reason: one larger
+than 8 MiB, or holding more than 200 000 entries, is refused rather than truncated, because a set
+read in part is a different set and it would take another repository's key. `internal/imagecheck/reduce.go`
+is this table: `Reduce(name, bytes)` returns the pairs, nothing for a file that states no resolved
+set, or the reason the file leaves the repository unkeyed.
 
 ### 2.4 Canonical form and the hash
 
@@ -179,7 +198,7 @@ directory.
       "key": "9f2c…",
       "image": "europe-west1-docker.pkg.dev/project/fugaro-shared-4a1b2c3d4e5f/img-9f2c1a2b3c4d",
       "digest": "sha256:…",
-      "base_ref": "web",
+      "base_ref": "ghcr.io/<owner>/fugaro-base:0.15.0",
       "base_digest": "sha256:…",
       "packages": ["left-pad@1.3.0", "react@18.3.1"],
       "tools": ["node@22.11.0"],

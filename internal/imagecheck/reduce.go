@@ -249,6 +249,7 @@ func eachLine(data []byte, f func(indent int, text string) bool) {
 // for a link — a workspace member or a symlink — which is not a resolved
 // dependency of the repository's.
 type npmPackage struct {
+	Name    string `json:"name"`
 	Version string `json:"version"`
 }
 
@@ -273,7 +274,7 @@ func reduceNPMLock(rel string, data []byte) ([]string, error) {
 	switch {
 	case doc.Packages != nil:
 		for p, e := range doc.Packages {
-			name, ok := npmPathName(p)
+			name, ok := npmName(p, e)
 			// An entry without a version is a link to the repository's own
 			// tree, not a dependency: it states nothing to install.
 			if !ok || e.Version == "" {
@@ -314,17 +315,19 @@ func reduceNPMLock(rel string, data []byte) ([]string, error) {
 	return set.pairs(), nil
 }
 
-// npmPathName is the package an npm path names: the last node_modules
-// segment ends the path to it, and the root entry ("") and a workspace
-// member's own entry ("apps/web") name the repository's tree rather than a
-// dependency.
-func npmPathName(p string) (string, bool) {
-	const segment = "node_modules/"
-	i := strings.LastIndex(p, segment)
-	if i < 0 {
+// npmName is the package an entry of the packages map names: the last
+// node_modules segment ends the path to it, and an entry outside node_modules
+// is a path the lock writes for a workspace member, whose name is the entry's
+// own. The root entry ("") is the repository itself rather than a dependency.
+func npmName(p string, e npmPackage) (string, bool) {
+	if p == "" {
 		return "", false
 	}
-	name := p[i+len(segment):]
+	name := e.Name
+	const segment = "node_modules/"
+	if i := strings.LastIndex(p, segment); i >= 0 {
+		name = p[i+len(segment):]
+	}
 	return name, name != ""
 }
 
