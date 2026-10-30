@@ -35,12 +35,12 @@ type RenderInput struct {
 	Secrets  []string       // workflow secret variables, mounted into the warm-up and setup steps
 	Version  string         // fugaro version, for the header
 	// KeyFiles are the repository paths the dependency install reads — the
-	// root mise config, its lockfile, the workflow's key files
-	// (imagecheck.KeyFiles), the manifests the Node install reads and the
-	// registry configuration — which the key-file layer checks out at
-	// FUGARO_COMMIT, before the source layer. Dockerfile fills them in from
-	// the checkout; an empty list is a checkout with nothing to check out
-	// early.
+	// root mise config, its lockfile, the workflow's key files and the paths
+	// image.key_files names, all four out of imagecheck.KeyFiles, the
+	// manifests the workspace members write, and the registry configuration —
+	// which the key-file layer checks out at FUGARO_COMMIT, before the source
+	// layer. Dockerfile fills them in from the checkout; an empty list is a
+	// checkout with nothing to check out early.
 	KeyFiles []string
 }
 

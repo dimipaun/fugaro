@@ -33,25 +33,43 @@ RUN curl -fsSLo /tmp/examplectl.tgz https://downloads.example.com/examplectl/1.2
 USER fugaro
 
 WORKDIR /work/repo
+# The root mise config, the workflow's key files, the registry configuration
+# and the manifests of the workspace are all of the repository that the
+# toolchains and the dependency warm-up read, so they are the whole of this
+# layer: the clone keeps no worktree, and only those files are checked out, at
+# the commit the source layer below is reset to. Key files before source is
+# D620 (docs/forge-authorship-images/reconciliation.md); §7.2 of the design is
+# the derived image's shape, and does not record this order. What sits above
+# here is the dependency install and no other file of the repository.
+#
+# Each path is checked out as the path it is, not as a pattern, so a name
+# holding a glob character is still the one file, and only a file: a path that
+# is a directory at the commit is skipped, so a directory never drags its
+# whole subtree into this layer. A key that names a directory — .yarn/patches,
+# an image.key_files entry — reaches this list as the files under it, which is
+# what imagecheck.KeyFiles returns.
+#
 # A push to the branch after the render step must not change what is baked
-# in, so the checkout is reset to FUGARO_COMMIT, which is fetched by itself
-# when it is no longer on the branch. When it can't be fetched either, the
-# build fails, saying so.
+# in, so the commit is FUGARO_COMMIT, which is fetched by itself when it is
+# no longer on the branch. When it can't be fetched either, the build
+# fails, saying so.
 ARG FUGARO_COMMIT=""
 RUN --mount=type=bind,target=/src \
     --mount=type=secret,id=git-credentials,uid=1000,required=false \
     case "$FUGARO_COMMIT" in *[!0-9a-f]*) echo "FUGARO_COMMIT is not a commit ID" >&2; exit 1 ;; esac \
  && GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
       -c credential.helper='store --file=/run/secrets/git-credentials' \
-      clone --quiet --branch "$BASE_BRANCH" --single-branch -- "$REPO_URL" /work/repo \
- && if [ -n "$FUGARO_COMMIT" ]; then \
-      { git cat-file -e "$FUGARO_COMMIT^{commit}" 2>/dev/null \
-        || GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
-             -c credential.helper='store --file=/run/secrets/git-credentials' \
-             fetch --quiet origin "$FUGARO_COMMIT"; } \
-      && git reset --quiet --hard "$FUGARO_COMMIT" \
-      || { echo "commit $FUGARO_COMMIT is no longer reachable: the branch was force-pushed; re-run the build" >&2; exit 1; }; \
-    fi \
+      clone --quiet --no-checkout --branch "$BASE_BRANCH" --single-branch -- "$REPO_URL" /work/repo \
+ && commit="${FUGARO_COMMIT:-HEAD}" \
+ && { git cat-file -e "$commit^{commit}" 2>/dev/null \
+      || GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
+           -c credential.helper='store --file=/run/secrets/git-credentials' \
+           fetch --quiet origin "$commit" \
+      || { echo "commit $commit is no longer reachable: the branch was force-pushed; re-run the build" >&2; exit 1; }; } \
+ && for f in 'mise.toml'; do \
+      [ "$(git cat-file -t "$commit:$f" 2>/dev/null)" = blob ] || continue; \
+      git checkout --quiet "$commit" -- ":(literal)$f" || exit 1; \
+    done \
  && git remote set-url origin -- "$REPO_ORIGIN"
 
 # The runtimes: the repository's root mise config and image.tools, installed
@@ -60,6 +78,13 @@ RUN --mount=type=bind,target=/src \
 RUN --mount=type=cache,id=fugaro-mise,target=/home/fugaro/.cache/mise,uid=1000,gid=1000 mise install \
  && missing="$(mise ls --current --missing)" \
  && if [ -n "$missing" ]; then printf 'mise left these tools missing:\n%s\n' "$missing" >&2; exit 1; fi
+
+# The source layer: the rest of the checkout, at the commit the key files
+# were taken from, on top of the dependency install (D620).
+# Nothing above reads a remote, since the clone holds the commit's objects,
+# and image.setup comes after this, because a setup step may read any file
+# of the repository.
+RUN git reset --quiet --hard "${FUGARO_COMMIT:-HEAD}"
 
 USER root
 RUN rm -f /etc/sudoers.d/fugaro-build \

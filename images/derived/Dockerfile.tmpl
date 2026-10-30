@@ -53,7 +53,9 @@ WORKDIR /work/repo
 # Each path is checked out as the path it is, not as a pattern, so a name
 # holding a glob character is still the one file, and only a file: a path that
 # is a directory at the commit is skipped, so a directory never drags its
-# whole subtree into this layer.
+# whole subtree into this layer. A key that names a directory — .yarn/patches,
+# an image.key_files entry — reaches this list as the files under it, which is
+# what imagecheck.KeyFiles returns.
 #
 # A push to the branch after the render step must not change what is baked
 # in, so the commit is FUGARO_COMMIT, which is fetched by itself when it is

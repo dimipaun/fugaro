@@ -15,12 +15,15 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
 	"slices"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/dimipaun/fugaro/internal/config"
 )
@@ -138,9 +141,77 @@ type Tree interface {
 	ReadFile(path string) ([]byte, error)
 }
 
+// NodeInstallPaths are the repository paths beyond the lockfiles that a
+// Node dependency install reads, and so the paths a change to must rebuild
+// the image exactly as a lockfile change does:
+//
+//   - .yarnrc and .pnpmfile.cjs, the Yarn 1 and pnpm configuration files
+//     their installs read;
+//   - .yarn/releases, .yarn/plugins and .yarn/patches, which a Yarn Berry
+//     repository commits: the Yarn build .yarnrc.yml's yarnPath names, the
+//     plugins it loads, and the patches a patch: resolution applies.
+//
+// The last three are directories: installPatterns matches each path both as
+// itself and as its subtree, so a repository that keeps any of these
+// contributes every file under it.
+var NodeInstallPaths = []string{".yarnrc", ".pnpmfile.cjs", ".yarn/releases", ".yarn/plugins", ".yarn/patches"}
+
+// installPatterns are the tree globs covering each path: the path itself,
+// and everything under it, since a path may name a directory. A path that
+// names a file matches the first glob only.
+func installPatterns(paths []string) []string {
+	out := make([]string, 0, 2*len(paths))
+	for _, p := range paths {
+		out = append(out, p, p+"/**")
+	}
+	return out
+}
+
+// PnpmPatches are the patch files the repository's pnpm manifests name, as
+// repository-relative paths: pnpm reads patchedDependencies from
+// pnpm-workspace.yaml or from package.json's pnpm field, and applies each
+// patch at install time, so a change to one changes what the install
+// produces.
+func PnpmPatches(tree Tree) ([]string, error) {
+	var out []string
+	switch data, err := tree.ReadFile("pnpm-workspace.yaml"); {
+	case err == nil:
+		var doc struct {
+			Patched map[string]string `yaml:"patchedDependencies"`
+		}
+		if err := yaml.Unmarshal(data, &doc); err != nil {
+			return nil, fmt.Errorf("pnpm-workspace.yaml: %w", err)
+		}
+		out = append(out, slices.Sorted(maps.Values(doc.Patched))...)
+	case !errors.Is(err, fs.ErrNotExist):
+		return nil, fmt.Errorf("pnpm-workspace.yaml: %w", err)
+	}
+	switch data, err := tree.ReadFile("package.json"); {
+	case err == nil:
+		var pkg struct {
+			Pnpm struct {
+				Patched map[string]string `json:"patchedDependencies"`
+			} `json:"pnpm"`
+		}
+		if err := json.Unmarshal(data, &pkg); err != nil {
+			return nil, fmt.Errorf("package.json: %w", err)
+		}
+		out = append(out, slices.Sorted(maps.Values(pkg.Pnpm.Patched))...)
+	case !errors.Is(err, fs.ErrNotExist):
+		return nil, fmt.Errorf("package.json: %w", err)
+	}
+	slices.Sort(out)
+	return slices.Compact(out), nil
+}
+
 // KeyFiles are the workflow's cache key files in tree, with their blob
 // IDs: every file its cache key globs match, or, when fugaro.yaml declares
-// no cache, the key of the per-base default (config.DefaultCache).
+// no cache, the key of the per-base default (config.DefaultCache). The
+// dependency install's own inputs join them — the install files of
+// NodeInstallPaths, the patch files PnpmPatches names, and the paths
+// image.key_files asks for — whether or not the workflow declares a cache:,
+// since a change to one of them changes the image just as a lockfile change
+// does.
 func KeyFiles(cfg *config.Config, workflow string, tree Tree) (map[string]string, error) {
 	w, ok := cfg.Workflows[workflow]
 	if !ok {
@@ -153,26 +224,44 @@ func KeyFiles(cfg *config.Config, workflow string, tree Tree) (map[string]string
 			return nil, fmt.Errorf("workflows.%s: %w", workflow, err)
 		}
 	}
+	patches, err := PnpmPatches(tree)
+	if err != nil {
+		return nil, fmt.Errorf("workflows.%s: %w", workflow, err)
+	}
+	install := append(slices.Clone(NodeInstallPaths), w.Image.KeyFiles...)
+	install = append(install, patches...)
 	out := map[string]string{}
 	for _, e := range entries {
-		for _, pattern := range e.Key {
-			matches, err := tree.Glob(pattern)
-			if err != nil {
-				return nil, fmt.Errorf("cache key %q: %w", pattern, err)
-			}
-			for _, m := range matches {
-				id, err := tree.BlobID(m)
-				switch {
-				case errors.Is(err, fs.ErrNotExist):
-					continue
-				case err != nil:
-					return nil, fmt.Errorf("cache key file %s: %w", m, err)
-				}
-				out[m] = id
-			}
+		if err := addKeyFiles(out, tree, "cache key", e.Key); err != nil {
+			return nil, err
 		}
 	}
+	if err := addKeyFiles(out, tree, "install", installPatterns(install)); err != nil {
+		return nil, err
+	}
 	return out, nil
+}
+
+// addKeyFiles records every file the patterns match in tree, with its blob
+// ID. what names the patterns in an error.
+func addKeyFiles(out map[string]string, tree Tree, what string, patterns []string) error {
+	for _, pattern := range patterns {
+		matches, err := tree.Glob(pattern)
+		if err != nil {
+			return fmt.Errorf("%s %q: %w", what, pattern, err)
+		}
+		for _, m := range matches {
+			id, err := tree.BlobID(m)
+			switch {
+			case errors.Is(err, fs.ErrNotExist):
+				continue
+			case err != nil:
+				return fmt.Errorf("%s file %s: %w", what, m, err)
+			}
+			out[m] = id
+		}
+	}
+	return nil
 }
 
 // nodeDetectFiles are the files config.DetectNodePM reads (their content

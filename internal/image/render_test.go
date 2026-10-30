@@ -60,7 +60,9 @@ WORKDIR /work/repo
 # Each path is checked out as the path it is, not as a pattern, so a name
 # holding a glob character is still the one file, and only a file: a path that
 # is a directory at the commit is skipped, so a directory never drags its
-# whole subtree into this layer.
+# whole subtree into this layer. A key that names a directory — .yarn/patches,
+# an image.key_files entry — reaches this list as the files under it, which is
+# what imagecheck.KeyFiles returns.
 #
 # A push to the branch after the render step must not change what is baked
 # in, so the commit is FUGARO_COMMIT, which is fetched by itself when it is
@@ -170,7 +172,9 @@ WORKDIR /work/repo
 # Each path is checked out as the path it is, not as a pattern, so a name
 # holding a glob character is still the one file, and only a file: a path that
 # is a directory at the commit is skipped, so a directory never drags its
-# whole subtree into this layer.
+# whole subtree into this layer. A key that names a directory — .yarn/patches,
+# an image.key_files entry — reaches this list as the files under it, which is
+# what imagecheck.KeyFiles returns.
 #
 # A push to the branch after the render step must not change what is baked
 # in, so the commit is FUGARO_COMMIT, which is fetched by itself when it is
@@ -1086,5 +1090,148 @@ func TestRenderAddsNoSecretMount(t *testing.T) {
 	}
 	if line := s[source : strings.Index(s[source:], "\n")+source]; strings.Contains(line, "--mount") {
 		t.Errorf("the source layer mounts something: %q", line)
+	}
+}
+
+// TestRenderCopiesYarnAndPnpmInstallFilesBeforeSource: the files Yarn's and
+// pnpm's installs read, which no lockfile carries, are checked out with the
+// key files, before the dependency install: .yarnrc is Yarn 1's own
+// configuration, .pnpmfile.cjs holds pnpm's hooks, and a Yarn Berry
+// repository commits the Yarn build .yarnrc.yml's yarnPath names, the plugins
+// it loads and the patches it applies. A key that is a directory reaches the
+// layer as the files under it.
+func TestRenderCopiesYarnAndPnpmInstallFilesBeforeSource(t *testing.T) {
+	root := t.TempDir()
+	testutil.WriteFiles(t, root, map[string]string{
+		"package.json":                        `{"name":"app","packageManager":"yarn@4.9.2"}`,
+		"yarn.lock":                           "# yarn lockfile v4\n",
+		".yarnrc.yml":                         "yarnPath: .yarn/releases/yarn-4.9.2.cjs\nplugins:\n  - path: .yarn/plugins/@yarnpkg/plugin-x.cjs\n",
+		".yarnrc":                             "registry \"https://registry.example.com\"\n",
+		".pnpmfile.cjs":                       "module.exports = { hooks: {} }\n",
+		".yarn/releases/yarn-4.9.2.cjs":       "#!/usr/bin/env node\n",
+		".yarn/plugins/@yarnpkg/plugin-x.cjs": "module.exports = {}\n",
+		".yarn/patches/left-pad.patch":        "patch\n",
+		"src/app.js":                          "export {}\n",
+	})
+	got, _, err := Dockerfile(root, parseConfig(t, renderYAML), "web", "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(got)
+	clone := strings.Index(s, "clone --quiet --no-checkout")
+	keyFiles := strings.Index(s, `git checkout --quiet "$commit" -- ":(literal)$f"`)
+	warmUp := strings.Index(s, "# Dependency warm-up for yarn.lock.")
+	source := strings.Index(s, sourceReset)
+	if !(clone >= 0 && keyFiles > clone && warmUp > keyFiles && source > warmUp) {
+		t.Fatalf("the install files are not checked out between the clone and the warm-up, with the source after it (clone %d, key files %d, warm-up %d, source %d):\n%s",
+			clone, keyFiles, warmUp, source, s)
+	}
+	for _, want := range []string{"'.yarnrc'", "'.pnpmfile.cjs'", "'.yarn/releases/yarn-4.9.2.cjs'",
+		"'.yarn/plugins/@yarnpkg/plugin-x.cjs'", "'.yarn/patches/left-pad.patch'"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("the key-file layer does not check out %s:\n%s", want, s)
+		}
+	}
+	if strings.Contains(s, "'src/app.js'") {
+		t.Errorf("the key-file layer checks out a file no install reads:\n%s", s)
+	}
+	// A checkout with none of them names none of them: the layer is the
+	// repository's files, not a fixed list.
+	plain, cfg := keyFileCheckout(t)
+	got, _, err = Dockerfile(plain, cfg, "web", "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, unwanted := range []string{".yarnrc", ".pnpmfile.cjs", ".yarn/releases", ".yarn/plugins", ".yarn/patches"} {
+		if strings.Contains(string(got), "'"+unwanted) {
+			t.Errorf("a checkout without %s still lists it:\n%s", unwanted, got)
+		}
+	}
+}
+
+// TestRenderCopiesPnpmPatchedDependencies: pnpm applies the patch files
+// patchedDependencies names while it installs, so they are key files: the map
+// lives in package.json's pnpm field or in pnpm-workspace.yaml, and a
+// directory of patches that neither names is not one.
+func TestRenderCopiesPnpmPatchedDependencies(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		files map[string]string
+	}{
+		{"package.json", map[string]string{
+			"package.json": `{"name":"app","packageManager":"pnpm@9.15.0","pnpm":{"patchedDependencies":{"left-pad@1.3.0":"patches/left-pad.patch"}}}`,
+		}},
+		{"pnpm-workspace.yaml", map[string]string{
+			"package.json":        `{"name":"app","packageManager":"pnpm@9.15.0"}`,
+			"pnpm-workspace.yaml": "packages:\n  - 'packages/*'\npatchedDependencies:\n  left-pad@1.3.0: patches/left-pad.patch\n",
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			files := map[string]string{
+				"pnpm-lock.yaml":         "lockfileVersion: '9.0'\n",
+				"patches/left-pad.patch": "patch\n",
+				"patches/unused.patch":   "patch\n",
+				"src/app.js":             "export {}\n",
+			}
+			for k, v := range tc.files {
+				files[k] = v
+			}
+			testutil.WriteFiles(t, root, files)
+			got, _, err := Dockerfile(root, parseConfig(t, renderYAML), "web", "dev")
+			if err != nil {
+				t.Fatal(err)
+			}
+			s := string(got)
+			if !strings.Contains(s, "'patches/left-pad.patch'") {
+				t.Errorf("the key-file layer does not check out the patch pnpm applies:\n%s", s)
+			}
+			if strings.Contains(s, "'patches/unused.patch'") || strings.Contains(s, "'src/app.js'") {
+				t.Errorf("the key-file layer checks out a file pnpm's manifest does not name:\n%s", s)
+			}
+			if strings.Index(s, "'patches/left-pad.patch'") > strings.Index(s, "# Dependency warm-up for pnpm-lock.yaml.") {
+				t.Errorf("the patch is checked out after the install that applies it:\n%s", s)
+			}
+		})
+	}
+}
+
+// TestRenderCopiesConfiguredKeyFilesBeforeSource: image.key_files names what
+// the built-in list cannot know — the patches a postinstall applies, a
+// vendored toolchain — and the key-file layer checks each one out before the
+// dependency install, a directory as the files under it.
+func TestRenderCopiesConfiguredKeyFilesBeforeSource(t *testing.T) {
+	root := t.TempDir()
+	testutil.WriteFiles(t, root, map[string]string{
+		"mise.toml":           "[tools]\nnode = \"24\"\n",
+		"package.json":        `{"name":"app","private":true}`,
+		"package-lock.json":   `{"name":"app","lockfileVersion":3}`,
+		"patches/a.patch":     "a\n",
+		"patches/sub/b.patch": "b\n",
+		"vendor/tool":         "#!/bin/sh\n",
+		"src/app.js":          "console.log(1)\n",
+	})
+	cfg := parseConfig(t, strings.Replace(renderYAML, "    secrets:",
+		"    image: { key_files: [patches, vendor/tool] }\n    secrets:", 1))
+	got, _, err := Dockerfile(root, cfg, "web", "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(got)
+	clone := strings.Index(s, "clone --quiet --no-checkout")
+	keyFiles := strings.Index(s, `git checkout --quiet "$commit" -- ":(literal)$f"`)
+	warmUp := strings.Index(s, "# Dependency warm-up for package-lock.json.")
+	source := strings.Index(s, sourceReset)
+	if !(clone >= 0 && keyFiles > clone && warmUp > keyFiles && source > warmUp) {
+		t.Fatalf("image.key_files is not checked out before the dependency install, with the source after it (clone %d, key files %d, warm-up %d, source %d):\n%s",
+			clone, keyFiles, warmUp, source, s)
+	}
+	for _, want := range []string{"'patches/a.patch'", "'patches/sub/b.patch'", "'vendor/tool'"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("the key-file layer does not check out %s:\n%s", want, s)
+		}
+	}
+	if strings.Contains(s, "'src/app.js'") {
+		t.Errorf("the key-file layer checks out a file image.key_files does not name:\n%s", s)
 	}
 }

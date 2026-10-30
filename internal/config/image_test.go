@@ -1,9 +1,11 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -58,6 +60,8 @@ func TestParseImageSkipBuildScripts(t *testing.T) {
 var imageFieldReasons = map[string]string{
 	"Node": "removed in 0.7.0; refused unconditionally by validateImage, never run as shell",
 	"JDK":  "removed in 0.7.0; refused unconditionally by validateImage, never reaches a Dockerfile",
+	"KeyFiles": "repository paths the image checks out before the source layer, each written as one " +
+		"single-quoted word into the checkout loop; validateImage refuses anything but a clean relative path",
 }
 
 // TestImageFieldsAreClassified is decision L7's reflection-style guard: a
@@ -126,6 +130,7 @@ func TestCloneRefusesImageBuildKeys(t *testing.T) {
 		{"image.setup", "    image: { setup: [\"make deps\"] }\n", "workflows.web.image.setup"},
 		{"image.tools", "    image: { tools: { node: \"24\" } }\n", "workflows.web.image.tools"},
 		{"image.skip_build_scripts", "    image: { skip_build_scripts: true }\n", "workflows.web.image.skip_build_scripts"},
+		{"image.key_files", "    image: { key_files: [patches] }\n", "workflows.web.image.key_files"},
 		{"dockerfile", "    dockerfile: .fugaro/web.Dockerfile\n", "workflows.web.dockerfile"},
 	}
 	for _, tc := range cases {
@@ -391,4 +396,119 @@ func TestServicesCorpusGetsUniformDefaults(t *testing.T) {
 		!slices.Equal(w.Commands.Reports, []string{"**/junit*.xml", "**/build/test-results/**/*.xml"}) {
 		t.Errorf("defaults = %+v, reports %v", w.Resources, w.Commands.Reports)
 	}
+}
+
+// keyFilesYAML is webYAML with an image.key_files list, each entry written as
+// the JSON string a YAML parser reads back as itself (so a control character
+// or a backslash is the one under test, not a YAML escape).
+func keyFilesYAML(entries ...string) string {
+	quoted := make([]string, len(entries))
+	for i, e := range entries {
+		quoted[i] = strconv.Quote(e)
+	}
+	return webYAML + "    image: { key_files: [" + strings.Join(quoted, ", ") + "] }\n"
+}
+
+// TestValidateImageKeyFilesRefusesEscapes: an image.key_files entry is one
+// path inside the repository, and validateImage refuses everything that could
+// name something else: an absolute path, a .. segment, .git, the repository
+// root, a path that is not clean, a backslash (git reads it as an escape in a
+// pathspec) and a control character (the entry reaches a Dockerfile line).
+// Each refusal names the entry by its index, and never echoes the value.
+func TestValidateImageKeyFilesRefusesEscapes(t *testing.T) {
+	for _, tc := range []struct{ name, entry, msg string }{
+		{"absolute", "/etc/passwd", "not an absolute one"},
+		{"a parent segment", "../outside", ".. segment"},
+		{"a parent segment in the middle", "a/../../etc/passwd", ".. segment"},
+		{"a bare parent", "..", ".. segment"},
+		{".git/config", ".git/config", "inside .git"},
+		{"the .git directory", ".git", "inside .git"},
+		{"the repository root", ".", "repository root"},
+		{"a trailing slash", "patches/", "clean path"},
+		{"a doubled slash", "a//b", "clean path"},
+		{"a dot segment", "./patches", "clean path"},
+		{"a dot segment in the middle", "a/./b", "clean path"},
+		{"empty", "", "must not be empty"},
+		{"only spaces", "   ", "must not be empty"},
+		{"a backslash", `a\b`, "no backslash"},
+		{"an escape sequence", "a\x1bb", "control character"},
+		{"a newline", "a\nb", "control character"},
+		{"over the length cap", strings.Repeat("a", maxImageKeyFilePath+1), "at most 200 characters"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, problems := Parse([]byte(keyFilesYAML(tc.entry)))
+			if !hasProblem(problems, "workflows.web.image.key_files[0]", tc.msg, 0) {
+				t.Fatalf("problems = %v, want one at image.key_files[0] ~ %q", problems, tc.msg)
+			}
+			for _, p := range problems {
+				if strings.ContainsAny(p.Message, "\x1b\n\r") {
+					t.Errorf("the refusal echoes the value into the message: %q", p.Message)
+				}
+			}
+		})
+	}
+}
+
+// TestValidateImageKeyFilesRefusesGlobsAndDuplicates: an entry is the path it
+// is, not a pattern (the rebuild key turns it into a doublestar glob, so a
+// pattern would key the image on files the install never reads), and the list
+// carries each path once, within its cap. A path that is only unusual is
+// accepted: the point is a strict shape, not a short list of blessed names.
+func TestValidateImageKeyFilesRefusesGlobsAndDuplicates(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		entries []string
+		msg     string
+	}{
+		{"a star", []string{"*.patch"}, "no glob"},
+		{"a doublestar", []string{"**/*.patch"}, "no glob"},
+		{"a character class", []string{"p[abc]"}, "no glob"},
+		{"a brace group", []string{"p{a,b}"}, "no glob"},
+		{"a question mark", []string{"patch?"}, "no glob"},
+		{"a duplicate", []string{"patches", "vendor/x", "patches"}, "duplicates image.key_files[0]"},
+		{"over the cap", caps(maxImageKeyFiles + 1), "at most 32 entries"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, problems := Parse([]byte(keyFilesYAML(tc.entries...)))
+			if !hasProblem(problems, "workflows.web.image.key_files", tc.msg, 0) &&
+				!hasProblem(problems, "workflows.web.image.key_files[2]", tc.msg, 0) &&
+				!hasProblem(problems, "workflows.web.image.key_files[0]", tc.msg, 0) {
+				t.Fatalf("problems = %v, want one ~ %q", problems, tc.msg)
+			}
+		})
+	}
+	for _, tc := range []struct {
+		name    string
+		entries []string
+	}{
+		{"a directory", []string{"patches"}},
+		{"a file in a directory", []string{".yarn/patches/left-pad.patch"}},
+		{"several", []string{"patches", "vendor/toolchain.toml", ".pnpmfile.cjs"}},
+		{"a space", []string{"vendor/my tool"}},
+		{"a non-ASCII path", []string{"vendor/café/tool"}},
+		{"at the cap", caps(maxImageKeyFiles)},
+		{"at the length cap", []string{strings.Repeat("a", maxImageKeyFilePath)}},
+	} {
+		t.Run("valid "+tc.name, func(t *testing.T) {
+			cfg, problems := Parse([]byte(keyFilesYAML(tc.entries...)))
+			if len(problems) > 0 {
+				t.Fatalf("unexpected problems: %v", problems)
+			}
+			if !slices.Equal(cfg.Workflows["web"].Image.KeyFiles, tc.entries) {
+				t.Fatalf("image.key_files = %v, want %v", cfg.Workflows["web"].Image.KeyFiles, tc.entries)
+			}
+			if cfg.Workflows["web"].Image.IsZero() {
+				t.Fatal("image.key_files alone leaves Image.IsZero")
+			}
+		})
+	}
+}
+
+// caps is n distinct key-file entries, each valid.
+func caps(n int) []string {
+	out := make([]string, n)
+	for i := range out {
+		out[i] = fmt.Sprintf("patches/%02d.patch", i)
+	}
+	return out
 }

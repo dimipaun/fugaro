@@ -91,8 +91,99 @@ func TestKeyFilesExplicitCache(t *testing.T) {
 	}
 }
 
-// TestDirBlobIDMatchesGit: the directory tree's blob IDs are the ones git
-// records, so a build's record compares with the check's git tree.
+// TestKeyFilesIncludeYarnAndPnpmInstallFiles: the files a Node install reads
+// that a lockfile does not carry are key files, whether the workflow declares
+// a cache: or takes the default, and a directory key (.yarn/patches and
+// friends) contributes every file under it, since the install reads whatever
+// that directory holds. A file no install reads is not one.
+func TestKeyFilesIncludeYarnAndPnpmInstallFiles(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"package.json":                        `{"name":"web","packageManager":"yarn@4.9.2"}`,
+		"yarn.lock":                           "# yarn lockfile v4\n",
+		".yarnrc":                             "registry \"https://registry.example.com\"\n",
+		".pnpmfile.cjs":                       "module.exports = { hooks: {} }\n",
+		".yarn/releases/yarn-4.9.2.cjs":       "#!/usr/bin/env node\n",
+		".yarn/plugins/@yarnpkg/plugin-x.cjs": "module.exports = {}\n",
+		".yarn/patches/left-pad.patch":        "patch\n",
+		"src/app.js":                          "export {}\n",
+	}
+	testutil.WriteFiles(t, dir, files)
+	install := []string{".pnpmfile.cjs", ".yarn/patches/left-pad.patch", ".yarn/plugins/@yarnpkg/plugin-x.cjs",
+		".yarn/releases/yarn-4.9.2.cjs", ".yarnrc"}
+	for _, tc := range []struct {
+		name string
+		cfg  *config.Config
+		want []string
+	}{
+		{"the default cache", parse(t, webYAML), append(slices.Clone(install), "yarn.lock")},
+		// The install files are the install's own, not the cache's: a
+		// workflow that declares a cache: of its own still rebuilds when one
+		// of them changes, and its cache key replaces only the lockfile half.
+		{"an explicit cache", parse(t, strings.Replace(webYAML, "test: sh test.sh }",
+			"test: sh test.sh }, cache: [{ key: ['other.lock'], paths: [~/.cache/x] }]", 1)), install},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := KeyFiles(tc.cfg, "web", Dir{Root: dir})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(slices.Sorted(maps.Keys(got)), tc.want) {
+				t.Fatalf("KeyFiles = %v, want %v", slices.Sorted(maps.Keys(got)), tc.want)
+			}
+			if got[".yarn/patches/left-pad.patch"] != gitBlobID(files[".yarn/patches/left-pad.patch"]) {
+				t.Errorf("the patch file's blob ID is not the file's: %v", got)
+			}
+			if _, ok := got["src/app.js"]; ok {
+				t.Errorf("a source file is a key file: %v", got)
+			}
+		})
+	}
+}
+
+// TestKeyFilesIncludeConfiguredEntries: image.key_files names paths the
+// built-in list cannot know — what a patch-package postinstall applies, a
+// vendored toolchain — and each one is a key file: a file as itself, a
+// directory as every file under it, so a change to any of them changes the
+// key exactly as a lockfile change does.
+func TestKeyFilesIncludeConfiguredEntries(t *testing.T) {
+	const configured = `test: sh test.sh }, image: { key_files: [patches, vendor/toolchain.toml] }`
+	cfg := parse(t, strings.Replace(webYAML, "test: sh test.sh }", configured, 1))
+	files := map[string]string{
+		"package.json":           `{"name":"web"}`,
+		"package-lock.json":      "{}",
+		"patches/a.patch":        "a\n",
+		"patches/nested/b.patch": "b\n",
+		"vendor/toolchain.toml":  "[toolchain]\n",
+		"docs/readme.md":         "# x\n",
+	}
+	dir := t.TempDir()
+	testutil.WriteFiles(t, dir, files)
+	got, err := KeyFiles(cfg, "web", Dir{Root: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"package-lock.json", "patches/a.patch", "patches/nested/b.patch", "vendor/toolchain.toml"}
+	if !slices.Equal(slices.Sorted(maps.Keys(got)), want) {
+		t.Fatalf("KeyFiles = %v, want %v", slices.Sorted(maps.Keys(got)), want)
+	}
+	// One byte inside the directory changes the key, and a directory the
+	// config does not name does not.
+	patched := t.TempDir()
+	testutil.WriteFiles(t, patched, files)
+	testutil.WriteFiles(t, patched, map[string]string{"patches/a.patch": "a2\n", "docs/readme.md": "# y\n"})
+	other, err := KeyFiles(cfg, "web", Dir{Root: patched})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["patches/a.patch"] == other["patches/a.patch"] {
+		t.Error("a change inside a configured directory does not change the key")
+	}
+	if got["docs/readme.md"] != other["docs/readme.md"] || other["docs/readme.md"] != "" {
+		t.Error("a file no key names is in the key")
+	}
+}
+
 func TestDirBlobIDMatchesGit(t *testing.T) {
 	testutil.IsolateGit(t)
 	dir := t.TempDir()
