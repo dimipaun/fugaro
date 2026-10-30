@@ -92,13 +92,56 @@ func TestMigrateV3ToV4PreservesHandEditedAllowList(t *testing.T) {
 	if changes[0].Changed == "" {
 		t.Error("changes[0].Changed is empty: the diff must say what the step changed")
 	}
-	for _, kept := range []string{"allow_repos", "clone_urls", "routing", "profiles", "accounts"} {
+	// Kept is read off the node, not off a list in the step: every top-level key
+	// but version, including the block no release of this Fugaro models. That is
+	// what makes the diff an operator reads a claim about *their* node.
+	for _, kept := range []string{"allow_repos", "clone_urls", "routing", "profiles", "accounts", "future_release_block"} {
 		if !slices.Contains(changes[0].Kept, kept) {
 			t.Errorf("changes[0].Kept = %v, want it to name %s", changes[0].Kept, kept)
 		}
 	}
+	if slices.Contains(changes[0].Kept, "version") {
+		t.Errorf("changes[0].Kept = %v, want it to leave out the one field the step writes", changes[0].Kept)
+	}
 	if changes[0].Note != "" {
 		t.Errorf("changes[0].Note = %q, want no further move for a node with no Bitbucket profile", changes[0].Note)
+	}
+}
+
+// TestMigrateV3ToV4EditsOnlyTheVersionBytes: the step edits the node in place,
+// so the migration is the owner's document with one field written and not a
+// re-encoding of it. Decoding into a map and marshalling it again would sort
+// the keys, compact the whitespace, escape <, > and &, and fold a repeated key
+// onto the last one — semantics survive that, but a caller that diffs the two
+// nodes, or skips a write it believes changed nothing, is reading a document
+// that is not the one it holds. The fixture carries a block this Fugaro does
+// not model, with a value encoding/json would escape, so the property is
+// pinned rather than argued.
+func TestMigrateV3ToV4EditsOnlyTheVersionBytes(t *testing.T) {
+	raw := migrateFixture(t, "policy-v3-hand-edited.json")
+	migrated, _, err := Migrate(raw)
+	if err != nil {
+		t.Fatalf("Migrate = %v", err)
+	}
+	want := bytes.Replace(raw, []byte(`"version": 3`), []byte(`"version": 4`), 1)
+	if !bytes.Equal(migrated, want) {
+		t.Errorf("the migrated node is not the node with its version rewritten:\n got %s\nwant %s", migrated, want)
+	}
+	// The unmodelled block comes back with its own bytes, including the & and
+	// < a re-encoding would write as escapes: that is the difference between
+	// editing the owner's document and writing a new one that means the same.
+	if !bytes.Contains(migrated, []byte(`"escaped": "a & b <c>"`)) {
+		t.Error("the migrated node does not hold the unmodelled block's value as the fixture wrote it, so the step re-encoded the document rather than editing it")
+	}
+	p, found, err := Decode(migrated)
+	if err != nil || !found || p == nil {
+		t.Fatalf("the migrated node does not decode: (%v, %v, %v)", p, found, err)
+	}
+	// The unmodelled block is carried, and the reader reports it as unmodelled
+	// rather than reading it: a step that re-encoded a typed block would drop a
+	// newer release's key with nothing failing, which is what this guards.
+	if !slices.Contains(p.UnknownKeys, "future_release_block") {
+		t.Errorf("the migrated node's unknown keys = %v, want the block the fixture carries", p.UnknownKeys)
 	}
 }
 
@@ -242,8 +285,11 @@ func TestMigrateCurrentIsANoOp(t *testing.T) {
 // library. The bitbucket_token block version 4 reads is derived at publish from
 // the project's local config, so no step may invent it from the node, and the
 // node without it is one the current reader refuses. The migration stops
-// there, and the change list says the one move that finishes the job:
-// republish, which derives the block.
+// there, and both the change list and the refusal itself say the one move that
+// finishes the job: republish, which derives the block. The refusal has to say
+// it and not only sit beside it — the caller prints the error, so a refusal
+// that names the reader's field and no move sends the operator to the wrong
+// file.
 func TestMigrateReportsTheBitbucketRepublish(t *testing.T) {
 	raw := migrateFixture(t, "policy-v3-bitbucket-profile.json")
 	migrated, changes, err := Migrate(raw)
@@ -269,6 +315,9 @@ func TestMigrateReportsTheBitbucketRepublish(t *testing.T) {
 	if !strings.Contains(err.Error(), "bitbucket_token") {
 		t.Errorf("%v does not name the block the node is missing", err)
 	}
+	if !strings.Contains(err.Error(), changes[0].Note) {
+		t.Errorf("%v does not carry the move that finishes the job, so a caller printing only the error tells the operator what the reader refused and not what to do about it", err)
+	}
 }
 
 // TestEveryOlderVersionHasAMigratorOrARefusal is the version-bump guard beside
@@ -276,6 +325,11 @@ func TestMigrateReportsTheBitbucketRepublish(t *testing.T) {
 // either moved forward by a step or named as too old, and the tables and the
 // behaviour agree. A bump of Version that adds neither fails here, because the
 // alternative is a release that ships an installation nothing can move.
+//
+// The too-old refusal is a *VersionError like any other skew, and the remedy
+// the operator reads comes from SkewSentence and not from a sentence of this
+// package's own: version.go words a version skew in one place so the two sides
+// cannot drift, and a second wording here would be the drift.
 func TestEveryOlderVersionHasAMigratorOrARefusal(t *testing.T) {
 	for v := 1; v < Version; v++ {
 		_, migrates := migrators[v]
@@ -294,19 +348,19 @@ func TestEveryOlderVersionHasAMigratorOrARefusal(t *testing.T) {
 			}
 			continue
 		}
-		var too *TooOldError
-		if !errors.As(err, &too) {
-			t.Errorf("policy version %d: Migrate = %v, want a migrator or a too-old refusal", v, err)
+		var ve *VersionError
+		if !errors.As(err, &ve) {
+			t.Errorf("policy version %d: Migrate = %v, want a migrator or a *VersionError", v, err)
 			continue
 		}
-		if too.Found != v {
-			t.Errorf("policy version %d: the refusal carries %d, want the version on the node", v, too.Found)
+		if ve.Found != v || ve.Understood != Version {
+			t.Errorf("policy version %d: the refusal carries (%d, %d), want (%d, %d)", v, ve.Found, ve.Understood, v, Version)
 		}
 		if !bytes.Equal(migrated, raw) {
 			t.Errorf("policy version %d: a refused node must come back untouched", v)
 		}
-		if !strings.Contains(err.Error(), "--delete") {
-			t.Errorf("policy version %d: %v does not name the remedy", v, err)
+		if msg := SkewSentence(ve, ReaderCLI); !strings.Contains(msg, "--delete") {
+			t.Errorf("policy version %d: SkewSentence = %q, want the older-node remedy the operator is told to run", v, msg)
 		}
 	}
 }

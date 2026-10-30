@@ -54,5 +54,9 @@
   },
   "clone_urls": {
     "github%2Fowner%2Frepo-a": "https://github.com/owner/repo-a.git"
+  },
+  "future_release_block": {
+    "kept": "byte for byte, the way the owner's node held it",
+    "escaped": "a & b <c>"
   }
 }
