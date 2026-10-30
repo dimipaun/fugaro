@@ -186,7 +186,7 @@ function drawSkew(line: string, theme: string): string {
   return bundle(`
 var version = load('/shared/version.js');
 var compatibility = version.classifyCliVersion(${JSON.stringify(line)});
-mount(version.renderVersionSkew(domFactory(), compatibility, ${JSON.stringify(theme)}));
+mount(version.renderVersionSkew(domFactory(), compatibility, ${JSON.stringify(theme)}).root);
 return {
   mode: compatibility.mode,
   skew: compatibility.skew,

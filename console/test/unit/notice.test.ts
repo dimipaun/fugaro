@@ -58,6 +58,20 @@ class FakeScreen {
 
 const factory = { create: (tag: string): FakeScreen => new FakeScreen(tag) }
 
+/** DrawnFake is `DrawnNotice` over this file's fake: the card hands back the
+ * elements its factory made, so every part is a `FakeScreen` here. */
+interface DrawnFake {
+  readonly root: FakeScreen
+  readonly title: FakeScreen
+  readonly details: FakeScreen
+  readonly toggle: FakeScreen | null
+  readonly dismiss: FakeScreen | null
+}
+
+function draw(spec: NoticeSpec): DrawnFake {
+  return renderNotice(factory, spec) as unknown as DrawnFake
+}
+
 function walk(node: FakeScreen): readonly FakeScreen[] {
   const out: FakeScreen[] = [node]
   for (const child of node.nodes) out.push(...walk(child))
@@ -103,7 +117,7 @@ function aSpec(overrides: Partial<NoticeSpec> = {}): NoticeSpec {
 
 describe('renderNotice', () => {
   it('draws the card, its tone and the label that names it', () => {
-    const { root, title } = renderNotice(factory, aSpec())
+    const { root, title } = draw(aSpec())
     expect(root.tag).toBe('section')
     expect(root.classes).toEqual(['notice', 'console-skew'])
     expect(root.getAttribute('data-severity')).toBe('warning')
@@ -119,8 +133,8 @@ describe('renderNotice', () => {
     // mode's card is always on the window and a screen may draw its own, and
     // two cards sharing an id would leave each one named by the other's title
     // and its button opening the other's facts.
-    const first = renderNotice(factory, aSpec())
-    const second = renderNotice(factory, aSpec())
+    const first = draw(aSpec())
+    const second = draw(aSpec())
     expect(second.title.getAttribute('id')).not.toBe(first.title.getAttribute('id'))
     expect(second.details.getAttribute('id')).not.toBe(first.details.getAttribute('id'))
     for (const card of [first, second]) {
@@ -130,12 +144,12 @@ describe('renderNotice', () => {
   })
 
   it('draws the title at the level the caller asked for', () => {
-    expect(renderNotice(factory, aSpec()).title.tag).toBe('h2')
-    expect(renderNotice(factory, aSpec({ heading: 'h1' })).title.tag).toBe('h1')
+    expect(draw(aSpec()).title.tag).toBe('h2')
+    expect(draw(aSpec({ heading: 'h1' })).title.tag).toBe('h1')
   })
 
   it('draws the mark as decoration, and leaves its shape to the stylesheet', () => {
-    const { root } = renderNotice(factory, aSpec())
+    const { root } = draw(aSpec())
     const mark = one(root, 'notice-mark')
     expect(mark.tag).toBe('span')
     expect(mark.getAttribute('aria-hidden')).toBe('true')
@@ -143,7 +157,7 @@ describe('renderNotice', () => {
   })
 
   it('draws the reason as one paragraph, with the caller\'s own hook beside it', () => {
-    const { root } = renderNotice(factory, aSpec({ reasonClasses: ['skew-reason'] }))
+    const { root } = draw(aSpec({ reasonClasses: ['skew-reason'] }))
     const reason = one(root, 'notice-reason')
     expect(reason.tag).toBe('p')
     expect(reason.classes).toEqual(['notice-reason', 'skew-reason'])
@@ -151,7 +165,7 @@ describe('renderNotice', () => {
   })
 
   it('draws a dl of dt/dd rows, so a label and its value are two elements', () => {
-    const { root } = renderNotice(factory, aSpec())
+    const { root } = draw(aSpec())
     const facts = one(root, 'notice-facts')
     expect(facts.tag).toBe('dl')
     const tags = walk(facts).map((node) => node.tag)
@@ -167,7 +181,7 @@ describe('renderNotice', () => {
   })
 
   it('draws a list value as a real ul inside its dd, hooks and all', () => {
-    const { root } = renderNotice(factory, aSpec())
+    const { root } = draw(aSpec())
     const facts = one(root, 'notice-facts')
     const value = walk(facts).filter((node) => node.tag === 'dd')[1] as FakeScreen
     expect(value.nodes.map((node) => node.tag)).toEqual(['ul'])
@@ -181,7 +195,7 @@ describe('renderNotice', () => {
   })
 
   it('folds the details behind a button, and the button carries the ARIA', () => {
-    const { toggle, details } = renderNotice(factory, aSpec())
+    const { toggle, details } = draw(aSpec())
     expect(toggle?.tag).toBe('button')
     expect(toggle?.getAttribute('type')).toBe('button')
     expect(toggle?.getAttribute('aria-expanded')).toBe('false')
@@ -196,19 +210,19 @@ describe('renderNotice', () => {
   it('draws an expanded notice with no button at all', () => {
     // The refused notice is the whole document: there is no second screen to
     // open its facts from, so they are drawn open and no control is created.
-    const { root, toggle, details } = renderNotice(factory, aSpec({ disclosure: 'expanded', dismissible: false }))
+    const { root, toggle, details } = draw(aSpec({ disclosure: 'expanded', dismissible: false }))
     expect(toggle).toBeNull()
     expect(details.getAttribute('hidden')).toBeNull()
     expect(walk(root).filter((node) => node.tag === 'button')).toHaveLength(0)
   })
 
   it('draws no dismiss button when the notice is not dismissible', () => {
-    const { dismiss } = renderNotice(factory, aSpec({ dismissible: false }))
+    const { dismiss } = draw(aSpec({ dismissible: false }))
     expect(dismiss).toBeNull()
   })
 
   it('draws a dismiss button whose name says what it does and whose glyph is decoration', () => {
-    const { dismiss } = renderNotice(factory, aSpec())
+    const { dismiss } = draw(aSpec())
     expect(dismiss?.tag).toBe('button')
     expect(dismiss?.getAttribute('type')).toBe('button')
     expect(dismiss?.getAttribute('aria-label')).toBe(NOTICE_DISMISS_LABEL)
@@ -221,7 +235,7 @@ describe('renderNotice', () => {
     // The grid places them, so the order is the document's and not the
     // stylesheet's: a keyboard reader tabs from the reason to the button to the
     // dismissal, and a reader with no stylesheet reads them in that order too.
-    const { root } = renderNotice(factory, aSpec())
+    const { root } = draw(aSpec())
     expect(root.nodes.map((node) => node.tag)).toEqual(['span', 'div', 'button'])
     expect(root.nodes[1]?.classes).toEqual(['notice-body'])
   })

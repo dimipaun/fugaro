@@ -658,7 +658,7 @@ describe('the bundle in a document', () => {
     expect(notice.attributes.has('hidden')).toBe(false)
   })
 
-  it('draws no chip in the ok mode, for the console's own version and a newer one', async () => {
+  it("draws no chip in the ok mode, for the console's own version and a newer one", async () => {
     // The chip is the reduced mode's standing statement and nothing else's: a
     // console that reads what it is driving says nothing about versions, and a
     // refused one has no dashboard for a chip to stand in.

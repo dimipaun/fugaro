@@ -189,6 +189,7 @@ section.notice {
 
 section.notice:only-child {
   flex: 1 1 auto;
+  max-width: none;
   margin: 0;
 }
 
