@@ -191,7 +191,8 @@ workflows:
 // TestRecordJSON pins the record's field names, which the check and
 // fugaro image status read.
 func TestRecordJSON(t *testing.T) {
-	r := Record{Version: RecordVersion, Repo: "acme/webapp", Workflow: "web", KeyFiles: map[string]string{"yarn.lock": "abc"}}
+	key := Key(Resolved{BaseRef: "web", BaseDigest: baseDigest, Packages: []string{"left-pad@1.3.0"}, Tools: []string{"node@22.11.0"}})
+	r := Record{Version: RecordVersion, Repo: "acme/webapp", Workflow: "web", KeyFiles: map[string]string{"yarn.lock": "abc"}, Key: key}
 	data, err := json.Marshal(r)
 	if err != nil {
 		t.Fatal(err)
@@ -201,15 +202,31 @@ func TestRecordJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{"adopted", "base_branch", "base_digest", "base_ref", "build_id", "built_at", "fugaro_version", "image", "image_config_hash",
-		"image_digest", "key_files", "repo", "source_commit", "source_commit_time", "template_salt", "version", "workflow"}
+		"image_digest", "key", "key_files", "repo", "source_commit", "source_commit_time", "template_salt", "version", "workflow"}
 	if got := slices.Sorted(maps.Keys(m)); !slices.Equal(got, want) {
 		t.Fatalf("fields = %v\nwant     %v", got, want)
 	}
 	if m["adopted"] != false {
 		t.Error("adopted is not false")
 	}
+	if m["key"] != key {
+		t.Errorf("key = %v, want %s", m["key"], key)
+	}
 	if RecordKey("acme-webapp-0123456789abcdef", "web") != "builds/acme-webapp-0123456789abcdef/web/image.json" {
 		t.Errorf("RecordKey = %s", RecordKey("acme-webapp-0123456789abcdef", "web"))
+	}
+	// An unkeyed repository's record carries no key at all (§2.5): the field
+	// is omitted, so a record an older fugaro wrote and one written for a
+	// repository whose key files do not reduce are the same document.
+	unkeyed, err := json.Marshal(Record{Version: RecordVersion})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(unkeyed), `"key"`) {
+		t.Errorf("an unkeyed record carries a key: %s", unkeyed)
+	}
+	if rec, err := ParseRecord(unkeyed); err != nil || rec.Key != "" {
+		t.Errorf("a record written before the field existed: %+v, %v", rec, err)
 	}
 }
 
