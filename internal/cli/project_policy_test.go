@@ -17,7 +17,9 @@ import (
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -3333,4 +3335,63 @@ func TestProjectPolicyPublishCarriesTheProjectBaseBranch(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestReviewFloorPublishedToPolicyNode is D722's publish half: the owner's
+// review-level floor travels from his project config into the policy node —
+// the one object only the owner writes and the runner fails closed on — and
+// nowhere else. A project that sets no floor publishes no member at all, so
+// its node is byte for byte what it was before the key existed.
+func TestReviewFloorPublishedToPolicyNode(t *testing.T) {
+	f := newProjectFixture(t, "review_floor:\n  pro: [l2]\n  critical: [l2, l3]\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	p := publishedPolicy(t, f)
+	if len(p.ReviewFloor) != 2 {
+		t.Fatalf("ReviewFloor = %v, want the two modes the config writes", p.ReviewFloor)
+	}
+	if got, want := p.ReviewFloor[rigor.Pro], []policy.Level{policy.LevelL2}; !slices.Equal(got, want) {
+		t.Errorf("ReviewFloor[pro] = %v, want %v", got, want)
+	}
+	if got, want := p.ReviewFloor[rigor.Critical], []policy.Level{policy.LevelL2, policy.LevelL3}; !slices.Equal(got, want) {
+		t.Errorf("ReviewFloor[critical] = %v, want %v", got, want)
+	}
+	if raw := nodeJSON(t, f, projectpolicy.PathShared()); !strings.Contains(raw, `"review_floor"`) {
+		t.Errorf("the node does not carry the floor:\n%s", raw)
+	}
+
+	// A project that writes none: no member, and no other change to the node.
+	g := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	if raw := nodeJSON(t, g, projectpolicy.PathShared()); strings.Contains(raw, "review_floor") {
+		t.Errorf("a project that sets no floor published one:\n%s", raw)
+	}
+	if p := publishedPolicy(t, g); p.ReviewFloor != nil {
+		t.Errorf("ReviewFloor = %v, want nil", p.ReviewFloor)
+	}
+}
+
+// TestReviewFloorNotInShared: the floor is the owner's, and the shared config
+// is the file any launcher with objectAdmin on the runs bucket can write. A
+// floor published there would be the launcher the floor exists to bind,
+// setting it (D722, G1, docs/design/bucket-iam.md §10 L1, L2), so the reader
+// refuses the key — the way it refuses bitbucket_api_roots — and the publisher
+// never writes it (localcfg.Config.Shared drops it).
+func TestReviewFloorNotInShared(t *testing.T) {
+	if !slices.Contains(sharedForbidden, "review_floor") {
+		t.Fatal("sharedForbidden does not name review_floor, so a published floor would be read")
+	}
+	data := validShared() + "review_floor:\n    pro: [l2]\n"
+	_, err := ParseShared([]byte(data), sharedAnchor)
+	if err == nil {
+		t.Fatal("a published shared config carrying review_floor: was accepted")
+	}
+	for _, want := range []string{"review_floor", "never published", "fugaro update"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
 }

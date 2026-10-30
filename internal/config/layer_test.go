@@ -672,3 +672,22 @@ func TestProjectLayerCorpus(t *testing.T) {
 		}
 	}
 }
+
+// TestReviewFloorNotInLayer is D722's boundary, and it is a test rather than a
+// change: the owner's review-level floor is published through the policy node
+// and read from there, and this package gains no key for it. The project layer
+// is written by the launcher and published to the runs bucket, so a floor in
+// it could be dropped by the very launcher the floor is meant to bind
+// (docs/design/bucket-iam.md §10 L1, L2) — the key must stay unreadable here.
+// The layer is decoded with KnownFields, so the key alone is what refuses it,
+// at the top level and under defaults: alike.
+func TestReviewFloorNotInLayer(t *testing.T) {
+	for _, body := range []string{
+		"review_floor:\n  pro: [l2]\n",
+		"defaults:\n  review_floor:\n    pro: [l2]\n",
+	} {
+		if got := layerProblems(t, layerHead+body); !strings.Contains(got, "review_floor") {
+			t.Errorf("a layer writing %q gave problems %q, want one naming review_floor", body, got)
+		}
+	}
+}
