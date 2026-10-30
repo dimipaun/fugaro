@@ -693,7 +693,12 @@ func TestReviewFloorNotInLayer(t *testing.T) {
 	// The repository's own file is the launcher's too — the branch the run
 	// checks out is the one the agent can edit mid-run — so it refuses the key
 	// on the same strict decode, with no field for it on this package's Config.
+	// The problem has to name the key: any other refusal (a file that is not
+	// valid YAML, a missing required field) would satisfy a bare "it was
+	// refused" too.
 	if _, ps := Parse([]byte(minimalRepo + "review_floor:\n  pro: [l2]\n")); len(ps) == 0 {
 		t.Error("fugaro.yaml accepted review_floor:, and the floor is the owner's key")
+	} else if got := problemsText(ps); !strings.Contains(got, "review_floor") {
+		t.Errorf("fugaro.yaml refused the file with %q, want a problem naming review_floor", got)
 	}
 }

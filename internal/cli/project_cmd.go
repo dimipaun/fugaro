@@ -750,14 +750,30 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 	}
 	// The review-level floor is copied rather than derived, and it is held to
 	// the same rule the loader applies (localcfg's ReviewFloorPolicy, which is
-	// also what validate calls), so a floor the operator's file spells wrong
-	// cannot reach the node half-read: the floor is a minimum, and a level
-	// lost on the way to the node is a run reviewing less than the owner asked
-	// for. A project that sets none publishes no member at all, so its node is
-	// byte for byte what it was before the key existed.
+	// policy.ParseFloor and also what validate calls), so a floor the
+	// operator's file spells wrong cannot reach the node half-read: the floor
+	// is a minimum, and a level lost on the way to the node is a run reviewing
+	// less than the owner asked for. A project that sets none publishes no
+	// member at all, so its node is byte for byte what it was before the key
+	// existed.
 	floor, err := lc.ReviewFloorPolicy()
 	if err != nil {
 		return nil, false, userErr("%v", err)
+	}
+	// A config that says nothing about the floor does not take the node's
+	// away: the floor is the one member of this node that binds the operator's
+	// own future runs, and the publish that would drop it is the one he did
+	// not mean — a second machine whose config predates the key, or a key
+	// deleted while tidying a file. He says the floor goes on purpose by
+	// writing the key with no mode under it, and the two spellings reach here
+	// differently: the key absent is a nil map (keep what the node has), the
+	// key written empty a non-nil one (`review_floor: {}` is no floor, so the
+	// member goes). A config that writes a floor replaces the member with what
+	// it writes, the way routing does — that edit is the operator's own, and
+	// the diff prints it either way.
+	keepReviewFloor := lc.ReviewFloor == nil && old != nil && len(old.ReviewFloor) > 0
+	if keepReviewFloor {
+		floor = old.ReviewFloor
 	}
 	pol := &projectpolicy.Policy{
 		Version:           projectpolicy.Version,
@@ -1615,9 +1631,20 @@ func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[
 	if new.Credentials != nil {
 		fmt.Fprintf(out, "  credentials kept: %s\n", credentialsText(new.Credentials))
 	}
-	// And the two members that stop older readers (the plan's C1.2 skew
+	// The floor is the one member a publish keeps when the config is silent
+	// about it (buildProjectPolicy), and a kept member that prints nothing is
+	// the diff an operator who deleted the key reads as "it is gone": the
+	// value is unchanged, so no +/- line of the diff above mentions it. It is
+	// printed whenever the node carried a floor and still carries the same
+	// one, which is both the silent case and the case of a config that writes
+	// what the node already had — in either, the floor the runs read is the
+	// floor that was there before this publish, which is the fact to state.
+	if old != nil && len(new.ReviewFloor) > 0 && before["review_floor"] == now["review_floor"] {
+		fmt.Fprintf(out, "  review_floor kept: %s\n", reviewFloorText(new))
+	}
+	// And the members that stop older readers (the plan's C1.2 skew
 	// section, which hands this warning to the review of this task; the review
-	// asked for it): publishing either is a decision with a cost that is paid
+	// asked for it): publishing one is a decision with a cost that is paid
 	// by every run of the project until the CLI and the runner image are
 	// upgraded, and a diff that named the values without naming that cost would
 	// be a diff an operator can read and still not know what they are
@@ -1675,11 +1702,12 @@ func credentialsText(c *projectpolicy.Credentials) string {
 // section: "the review of this task decides whether `fugaro project policy
 // publish` warns before publishing either"; the review asked for the line, and
 // the placement it settled on is the one below — the warning goes out with the
-// diff, once the write has landed). Both are members an older reader refuses
-// rather than ignores, so this is not a version-skew nicety — it is the
-// difference between a project that publishes and a project whose every launch,
-// every publish and every run stops until the CLI and the runner image are
-// upgraded:
+// diff, once the write has landed). Each is a member an older reader cannot
+// apply, so this is not a version-skew nicety — it is the difference between a
+// project that publishes and a project whose every launch, every publish and
+// every run stops until the CLI and the runner image are upgraded (or, for the
+// floor, one whose runs go on reviewing less than the owner required, which is
+// the worse of the two and is why that line says so):
 //
 //   - a `credentials` member: an older CLI does not know the key, lists it and
 //     refuses every launch of the project, cascade or not, and refuses to
@@ -1689,12 +1717,22 @@ func credentialsText(c *projectpolicy.Credentials) string {
 //     refuses launch and publish, and an older runner refuses the policy it
 //     reads, which halts the run with that routing error rather than a skew
 //     sentence.
+//   - `review_floor`: a member an older reader does not know at all, and the
+//     two directions differ. An older CLI lists it in the keys it does not
+//     know and refuses every launch and every publish of the project, the way
+//     it does a `credentials` block. An older *runner image* lists it, warns
+//     once that the key has no effect, and runs the levels its rigor mode and
+//     the repository ask for — so the floor is published and does not bind,
+//     which is the direction that matters (the plan's L1.2, a launcher's gate
+//     on the *resolved* levels, is what refuses that image; it is not in this
+//     change, so until it ships the operator upgrades the image himself).
 //
 // The lines are printed as part of the diff, after the shared node's write
 // (printPolicyDiff is called once that write has landed), so they are claims
 // about the node as it now is: "before this publish" would be advice about a
-// moment that has already passed. What is still ahead is the next launch, which
-// is what an older reader refuses, so each line ends there.
+// moment that has already passed. What is still ahead is the next launch —
+// refused by an older reader, or, for the floor, run by an image that does not
+// apply it — so each line ends there.
 //
 // The line names the requirement and not a version number: this binary has no
 // version to name (the release that carries the cascade decides that), and a
@@ -1709,6 +1747,9 @@ func skewWarning(p *projectpolicy.Policy) []string {
 	}
 	if p.Routing != nil && p.Routing.Claude != nil && p.Routing.Claude.ViaValue() == projectpolicy.RouteCascade {
 		out = append(out, "  warning: this node now carries routing.claude.via: cascade, which a Fugaro older than the one publishing it refuses whole: an older CLI refuses every launch and every publish of this project, and an older runner halts every run it launches with that routing error — upgrade the CLI and the runner image before the next launch")
+	}
+	if len(p.ReviewFloor) > 0 {
+		out = append(out, "  warning: this node now carries a review_floor member, which a Fugaro older than the one publishing it does not know: an older CLI refuses every launch and every publish of this project, and an older runner image warns that the key has no effect and runs the levels anyway, so the floor does not bind there — upgrade the CLI, and the runner image before the next run that has to be held to the floor")
 	}
 	return out
 }
@@ -1947,7 +1988,30 @@ func policyLines(p *projectpolicy.Policy) map[string]string {
 		"providers":             strings.Join(slices.Sorted(maps.Keys(p.Providers)), ", "),
 		"profiles":              profilesText(p),
 		"accounts":              accountsText(p),
+		"review_floor":          reviewFloorText(p),
 	}
+}
+
+// reviewFloorText is the owner's review-level floor as one line, mode by mode
+// (D722, G1). It is a row of the diff and of `policy show` for the reason the
+// Bitbucket block is: it is a value this publish decides, and a floor that
+// appeared, changed or went away is exactly what an operator reading the diff
+// has to see — the member bounds how much review a launcher-written layer may
+// turn off, so a diff that did not name it would leave him unable to tell
+// whether the floor he published is the floor the runs now read.
+func reviewFloorText(p *projectpolicy.Policy) string {
+	if len(p.ReviewFloor) == 0 {
+		return "none (a run reviews what its rigor mode and the repository ask for)"
+	}
+	modes := make([]string, 0, len(p.ReviewFloor))
+	for _, mode := range slices.Sorted(maps.Keys(p.ReviewFloor)) {
+		levels := make([]string, 0, len(p.ReviewFloor[mode]))
+		for _, l := range p.ReviewFloor[mode] {
+			levels = append(levels, string(l))
+		}
+		modes = append(modes, fmt.Sprintf("%s: %s", mode, strings.Join(levels, ", ")))
+	}
+	return strings.Join(modes, "; ")
 }
 
 // profilesText is the policy's profile names as one line, for the diff's

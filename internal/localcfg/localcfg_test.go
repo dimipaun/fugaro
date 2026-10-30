@@ -1472,6 +1472,20 @@ func TestReviewFloorDecodeStrict(t *testing.T) {
 		t.Errorf("a config that sets no floor gives (%v, %v), want (nil, nil)", f, err)
 	}
 
+	// The key written with no mode under it is the other way to say "none",
+	// and it is the spelling `fugaro project policy publish` reads as "take
+	// the node's floor away on purpose" — an absent key keeps the node's floor
+	// (internal/cli's buildProjectPolicy). The two differ in the field and not
+	// in the floor: a written empty object is a non-nil empty map, an absent
+	// key a nil one, and both parse to no floor.
+	if empty, err := Parse([]byte(sample + "review_floor: {}\n")); err != nil {
+		t.Fatal(err)
+	} else if empty.ReviewFloor == nil {
+		t.Error("a written empty object read as an absent key, so a publish cannot tell 'drop the floor' from silence about it")
+	} else if f, err := empty.ReviewFloorPolicy(); err != nil || f != nil {
+		t.Errorf("review_floor: {} gives (%v, %v), want (nil, nil)", f, err)
+	}
+
 	// Every name the vocabulary does not hold, and every shape of a floor that
 	// says nothing, is a load error.
 	for _, tc := range []struct {

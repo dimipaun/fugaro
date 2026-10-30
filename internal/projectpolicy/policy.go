@@ -933,17 +933,20 @@ func Decode(raw []byte) (*Policy, bool, error) {
 // decodeReviewFloor reads the owner's review-level floor (Policy.ReviewFloor)
 // from the node.
 //
-// It is strict wherever strictness decides whether the floor binds. A mode
-// that is not one of rigor's and a level outside l1/l2/l3 are refused rather
-// than dropped — a dropped level is a run that reviews less than the owner
-// required, which is the one direction this key must never move, and the node
-// is hand-writable — and so is a mode named twice, for the reason every block
-// here refuses one (encoding/json keeps the last value it reads, so which
-// floor a run got would depend on the order the keys were written in).
+// What the members *mean* is policy.ParseFloor's rule, the same one the
+// operator's config file is held to: a mode that is not one of rigor's, a
+// level outside l1/l2/l3, a level listed twice and a mode with no level in it
+// are refused rather than dropped — a dropped level is a run that reviews less
+// than the owner required, which is the one direction this key must never
+// move, and the node is hand-writable. What is left here is the document's own
+// shape, which the config loader has no equivalent of: the member must be an
+// object whose keys are named once (encoding/json keeps the last value it
+// reads, so a mode named twice would leave which floor a run got up to the
+// order the keys were written in).
 //
 // A block that names no mode at all is no floor: the publisher writes nothing
-// for a project that sets none, and reading a written empty object as "the
-// owner requires nothing" would be the same answer.
+// for a project that sets none, and a written empty object — which is how an
+// operator takes a published floor away on purpose — reads as the same answer.
 func decodeReviewFloor(raw json.RawMessage) (map[rigor.Mode][]policy.Level, error) {
 	names, err := objectMemberNames(raw)
 	if err != nil {
@@ -956,41 +959,11 @@ func decodeReviewFloor(raw json.RawMessage) (map[rigor.Mode][]policy.Level, erro
 	if err := json.Unmarshal(raw, &written); err != nil {
 		return nil, fmt.Errorf("projectpolicy: review_floor: %w", err)
 	}
-	out := make(map[rigor.Mode][]policy.Level, len(written))
-	for _, mode := range sortedStringKeys(written) {
-		m, ok := rigor.Parse(mode)
-		if !ok {
-			return nil, fmt.Errorf("projectpolicy: review_floor.%s: %q is not a rigor mode (%s)", mode, mode, vocabulary(rigor.Modes))
-		}
-		levels, seen := make([]policy.Level, 0, len(written[mode])), map[policy.Level]bool{}
-		for _, name := range written[mode] {
-			l, ok := policy.ParseLevel(name)
-			switch {
-			case !ok:
-				return nil, fmt.Errorf("projectpolicy: review_floor.%s: %q is not a review level (%s)", mode, name, vocabulary(policy.Levels))
-			case seen[l]:
-				return nil, fmt.Errorf("projectpolicy: review_floor.%s: %q is listed twice", mode, name)
-			}
-			seen[l] = true
-			levels = append(levels, l)
-		}
-		if len(levels) == 0 {
-			return nil, fmt.Errorf("projectpolicy: review_floor.%s: a floor with no level in it says nothing; remove the mode to leave it unfloored, or name the levels that must run", mode)
-		}
-		out[m] = levels
+	floor, err := policy.ParseFloor(written)
+	if err != nil {
+		return nil, fmt.Errorf("projectpolicy: %w", err)
 	}
-	return out, nil
-}
-
-// vocabulary is a closed vocabulary as an error prints it, read off the list
-// itself rather than written out again, so a vocabulary that grows cannot
-// leave the sentence behind.
-func vocabulary[T ~string](names []T) string {
-	out := make([]string, 0, len(names))
-	for _, n := range names {
-		out = append(out, string(n))
-	}
-	return strings.Join(out, ", ")
+	return floor, nil
 }
 
 // validCloneURLs checks the clone_urls block, entry by entry: each key a

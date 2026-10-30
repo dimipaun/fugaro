@@ -5,6 +5,7 @@ import (
 	"math/rand"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/rigor"
@@ -204,6 +205,45 @@ func TestReviewFloorMergesTightenOnly(t *testing.T) {
 	}
 	if got := more.ReviewFloor[rigor.Pro]; !slices.Equal(got, []Level{LevelL1, LevelL3}) {
 		t.Errorf("a later layer was modified: ReviewFloor(pro) = %v", got)
+	}
+}
+
+// TestParseFloor is the one rule a written floor is held to, shared by the
+// operator's config file and the policy node (internal/localcfg and
+// internal/projectpolicy call it): the two cannot disagree about what a
+// written floor means, which is why the rule lives beside the vocabulary and
+// not in either caller. Every name outside the vocabularies is refused rather
+// than dropped, and every refusal of one document is reported at once.
+func TestParseFloor(t *testing.T) {
+	got, err := ParseFloor(map[string][]string{"critical": {"l2", "l3"}, "pro": {"l2"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[rigor.Mode][]Level{rigor.Pro: {LevelL2}, rigor.Critical: {LevelL2, LevelL3}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ParseFloor = %v, want %v", got, want)
+	}
+
+	// A mode and a level this Fugaro does not know, in one document: both are
+	// named, because an operator fixing a file should not have to publish once
+	// per mistake.
+	_, err = ParseFloor(map[string][]string{"prod": {"l2"}, "pro": {"l4"}})
+	if err == nil {
+		t.Fatal("ParseFloor accepted a mode and a level outside the vocabulary")
+	}
+	for _, want := range []string{"prod", "is not a rigor mode", "l4", "is not a review level"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+
+	// No mode at all is no floor, whether the key is absent or written empty:
+	// the empty object is how an operator says a published floor goes away.
+	for _, written := range []map[string][]string{nil, {}} {
+		f, err := ParseFloor(written)
+		if err != nil || f != nil {
+			t.Errorf("ParseFloor(%v) = (%v, %v), want (nil, nil)", written, f, err)
+		}
 	}
 }
 

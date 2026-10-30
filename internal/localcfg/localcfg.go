@@ -267,6 +267,14 @@ type Config struct {
 	// A mode that is not one of rigor's, a level outside l1/l2/l3, and a
 	// repeated level are refused at load (validate), never dropped: a
 	// misspelt floor is a run that reviews less than the owner asked for.
+	//
+	// A publish keeps the node's floor when this file sets none (see
+	// internal/cli's buildProjectPolicy): a floor is the one value a publish
+	// must not lower by accident, so silence about it is not a request to
+	// remove it. Taking a published floor away on purpose is therefore a
+	// written empty object — `review_floor: {}` — and not an absent key. The
+	// two spellings are told apart here (a written empty object is a non-nil
+	// empty map, an absent key a nil one) and mean the same floor, none.
 	ReviewFloor map[string][]string `yaml:"review_floor,omitempty"`
 	Repos       map[string]Repo     `yaml:"repos"`
 	// notes are warnings added after parsing (AddWarning), such as a
@@ -1184,8 +1192,9 @@ func profileNames(profiles map[string]config.JobProfile) []string {
 
 // ReviewFloorPolicy is the owner's floor in the policy package's vocabulary:
 // the form `fugaro project policy publish` writes into the node, and nil when
-// the file sets no floor (so the published node carries no member at all). It
-// is the one rule for the key — validate calls it too — so the file the
+// the file sets no floor — the key left out and an empty object alike, which
+// is what leaves the published node without the member. The rule itself is
+// policy.ParseFloor, the one the node's own decoder applies, so the file the
 // operator writes and the node the runner reads cannot disagree about what a
 // written floor means.
 //
@@ -1194,58 +1203,7 @@ func profileNames(profiles map[string]config.JobProfile) []string {
 // run reviewing less than the file says, which is the direction this key must
 // never move.
 func (c *Config) ReviewFloorPolicy() (map[rigor.Mode][]policy.Level, error) {
-	var errs []error
-	bad := func(f string, a ...any) { errs = append(errs, fmt.Errorf("review_floor."+f, a...)) }
-	out := make(map[rigor.Mode][]policy.Level, len(c.ReviewFloor))
-	for _, mode := range slices.Sorted(maps.Keys(c.ReviewFloor)) {
-		m, ok := rigor.Parse(mode)
-		if !ok {
-			bad("%s: %q is not a rigor mode (%s)", mode, mode, vocabulary(rigor.Modes))
-			continue
-		}
-		names := c.ReviewFloor[mode]
-		if len(names) == 0 {
-			bad("%s: a floor with no level in it says nothing; remove the mode to leave it unfloored, or name the levels that must run", mode)
-			continue
-		}
-		levels, seen := make([]policy.Level, 0, len(names)), map[policy.Level]bool{}
-		for _, name := range names {
-			l, ok := policy.ParseLevel(name)
-			switch {
-			case !ok:
-				bad("%s: %q is not a review level (%s)", mode, name, vocabulary(policy.Levels))
-				continue
-			case seen[l]:
-				bad("%s: %q is listed twice", mode, name)
-				continue
-			}
-			seen[l] = true
-			levels = append(levels, l)
-		}
-		if len(levels) > 0 {
-			out[m] = levels
-		}
-	}
-	if len(errs) > 0 {
-		return nil, errors.Join(errs...)
-	}
-	if len(out) == 0 {
-		return nil, nil
-	}
-	return out, nil
-}
-
-// vocabulary is a closed vocabulary as an error prints it, read off the list
-// itself rather than written out again: the floor's refusals name the whole
-// set (rigor.Modes, policy.Levels), so a name this file refuses is a name the
-// operator can see is not in it, and a vocabulary that grows cannot leave the
-// sentence behind.
-func vocabulary[T ~string](names []T) string {
-	out := make([]string, 0, len(names))
-	for _, n := range names {
-		out = append(out, string(n))
-	}
-	return strings.Join(out, ", ")
+	return policy.ParseFloor(c.ReviewFloor)
 }
 
 func (c *Config) validate() error {
@@ -1487,11 +1445,12 @@ func (c *Config) validate() error {
 	}
 	// The floor is a closed vocabulary twice over — the modes rigor names and
 	// the three levels — and this file is where it is written. Its one rule is
-	// ReviewFloorPolicy's, called here so that the load and the publish cannot
-	// disagree about what a written floor means; a name it refuses is a run
-	// that would review less than the owner asked for, and nothing downstream
-	// can tell a misspelt mode from one the owner meant to leave alone
-	// (projectpolicy.Decode holds the node to the same vocabulary).
+	// ReviewFloorPolicy's, which is policy.ParseFloor, the rule
+	// projectpolicy.Decode holds the node to: called here so that the load and
+	// the publish cannot disagree about what a written floor means, and so that
+	// neither can disagree with the node. A name it refuses is a run that would
+	// review less than the owner asked for, and nothing downstream can tell a
+	// misspelt mode from one the owner meant to leave alone.
 	if _, err := c.ReviewFloorPolicy(); err != nil {
 		bad("%v", err)
 	}

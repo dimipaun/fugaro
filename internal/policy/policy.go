@@ -27,7 +27,11 @@
 package policy
 
 import (
+	"errors"
+	"fmt"
+	"maps"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/rigor"
@@ -341,6 +345,78 @@ func KnownLevel(l Level) bool { return slices.Contains(Levels, l) }
 func ParseLevel(s string) (Level, bool) {
 	l := Level(s)
 	return l, KnownLevel(l)
+}
+
+// ParseFloor is a written floor — mode name to level names, the way the owner's
+// project config and the policy node both spell it — in this package's
+// vocabulary, or the errors that say why it is not one.
+//
+// It is the one rule for the key, and it lives beside the vocabulary it
+// enforces: internal/localcfg holds the config file to it and
+// internal/projectpolicy holds the node to it, so the file the owner writes
+// and the node the runner reads cannot disagree about what a written floor
+// means. An unknown mode, an unknown level, a level listed twice and a mode
+// with no level in it are all errors rather than values dropped: the floor is
+// a minimum, so a level lost on the way in is a run reviewing less than the
+// owner asked for — the one direction this key must never move.
+//
+// A floor that names no mode at all is no floor (nil), whether the file leaves
+// the key out or writes an empty object: the empty object is how an operator
+// says the node's floor goes away on purpose, and it is what leaves the
+// published node without the member.
+func ParseFloor(written map[string][]string) (map[rigor.Mode][]Level, error) {
+	var errs []error
+	bad := func(f string, a ...any) { errs = append(errs, fmt.Errorf("review_floor."+f, a...)) }
+	out := make(map[rigor.Mode][]Level, len(written))
+	for _, mode := range slices.Sorted(maps.Keys(written)) {
+		m, ok := rigor.Parse(mode)
+		if !ok {
+			bad("%s: %q is not a rigor mode (%s)", mode, mode, vocabulary(rigor.Modes))
+			continue
+		}
+		names := written[mode]
+		if len(names) == 0 {
+			bad("%s: a floor with no level in it says nothing; remove the mode to leave it unfloored, or name the levels that must run", mode)
+			continue
+		}
+		levels, seen := make([]Level, 0, len(names)), map[Level]bool{}
+		for _, name := range names {
+			l, ok := ParseLevel(name)
+			switch {
+			case !ok:
+				bad("%s: %q is not a review level (%s)", mode, name, vocabulary(Levels))
+				continue
+			case seen[l]:
+				bad("%s: %q is listed twice", mode, name)
+				continue
+			}
+			seen[l] = true
+			levels = append(levels, l)
+		}
+		if len(levels) > 0 {
+			out[m] = levels
+		}
+	}
+	if len(errs) > 0 {
+		return nil, errors.Join(errs...)
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
+}
+
+// vocabulary is a closed vocabulary as an error prints it, read off the list
+// itself rather than written out again: the floor's refusals name the whole
+// set (rigor.Modes, Levels), so a name this package refuses is a name the
+// operator can see is not in it, and a vocabulary that grows cannot leave the
+// sentence behind.
+func vocabulary[T ~string](names []T) string {
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		out = append(out, string(n))
+	}
+	return strings.Join(out, ", ")
 }
 
 // Layer is one source of policy. The zero value of every field means "unset".
