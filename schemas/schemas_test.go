@@ -3196,6 +3196,20 @@ func TestResultSchemaABBlock(t *testing.T) {
 	if err := validate(t, rec); err == nil {
 		t.Error("schema accepts an unknown arm on a record")
 	}
+	// The patch object is the key it is, and the truncation flag means
+	// nothing without one: a record that stored no patch cannot say the patch
+	// it does not name was cut (patch_object's pattern and patch_truncated's
+	// dependentRequired).
+	rec = base
+	rec.AB, rec.PatchTruncated = &task.AB{PairID: base.RunID, Arm: task.ABArmChampion}, true
+	if err := validate(t, rec); err == nil {
+		t.Error("schema accepts patch_truncated with no patch_object")
+	}
+	rec = base
+	rec.AB, rec.PatchObject = &task.AB{PairID: base.RunID, Arm: task.ABArmChampion}, "patch.diff"
+	if err := validate(t, rec); err == nil {
+		t.Error("schema accepts a patch_object that is not the run's own key")
+	}
 }
 
 // TestABSchemaEnumsMatchTheGoVocabulary ties both schemas' ab enums to the Go

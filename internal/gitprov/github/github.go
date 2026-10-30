@@ -64,6 +64,12 @@ type Provider struct {
 	// (tokenSource, when this process holds the App key) or the credentials
 	// service (ServiceTokens, when it does not -- C2.2).
 	tokens tokenMinter
+	// readOnly is where a challenger arm's installation token comes from: a
+	// mint of this process's own, scoped to the reads a clone needs (A2.1).
+	// It is nil when the App's key is the credentials service's, which mints
+	// a run's token and no read-only one: a shadow there is refused rather
+	// than handed a token that could push.
+	readOnly tokenMinter
 	// app is the client authenticated AS the App (JWT), used for the reads
 	// only an App's own key authorizes (GET /app). It is nil when the key is
 	// the service's: see appSlug.
@@ -126,16 +132,18 @@ func New(o Options) (*Provider, error) {
 	// rather than the key's path.
 	var app *httpjson.Client
 	var tokens tokenMinter = noTokenSource{}
+	var readOnly tokenMinter
 	if o.PrivateKey != nil && !o.ServiceHeldKey {
 		app = &httpjson.Client{BaseURL: o.BaseURL, HTTP: o.HTTP, Header: header, Auth: appAuth(o.AppID, o.PrivateKey, o.Now)}
 		tokens = &tokenSource{app: app, owner: o.Owner, repo: o.Repo, now: o.Now}
+		readOnly = &tokenSource{app: app, owner: o.Owner, repo: o.Repo, now: o.Now, permissions: shadowTokenPermissions}
 	}
 	if o.Warn == nil {
 		o.Warn = func(string) {}
 	}
 	p := &Provider{
 		owner: o.Owner, repo: o.Repo, graphqlURL: graphqlURL(o.BaseURL), warn: o.Warn,
-		tokens: tokens, app: app,
+		tokens: tokens, readOnly: readOnly, app: app,
 	}
 	p.api = &httpjson.Client{BaseURL: o.BaseURL, HTTP: o.HTTP, Header: header, Auth: func(ctx context.Context) (string, error) {
 		tok, _, err := p.tokens.Token(ctx, apiMinValid)
@@ -403,6 +411,28 @@ func (p *Provider) GitAuth(ctx context.Context, minValid time.Duration) (gitprov
 		return gitprov.GitAuth{}, err
 	}
 	return gitprov.GitAuth{Username: gitUsername, Token: tok, Expires: exp, Env: map[string]string{"GH_TOKEN": tok}}, nil
+}
+
+// GitAuthReadOnly mints an installation token scoped to the reads a clone
+// needs (shadowTokenPermissions) and returns it with no environment at all:
+// a challenger arm's agent holds no git credential — no FUGARO_GIT_TOKEN, no
+// GH_TOKEN, no credential helper — and the runner's own clone and fetch are
+// the only calls this token makes (A2.1, D554). The runner learns the method
+// by shape, so nothing in gitprov has to name a shadow.
+//
+// A provider whose key is the credentials service's refuses: the service
+// mints a run's token, which can push, and there is no read-only mint to ask
+// it for. Refusing is the whole point -- falling back to the run's token
+// would hand a challenger the write capability the arm must never have.
+func (p *Provider) GitAuthReadOnly(ctx context.Context, minValid time.Duration) (gitprov.GitAuth, error) {
+	if p.readOnly == nil {
+		return gitprov.GitAuth{}, errors.New("github: this installation's tokens are the credentials service's, which has no read-only mint; a challenger arm cannot run against it")
+	}
+	tok, exp, err := p.readOnly.Token(ctx, minValid)
+	if err != nil {
+		return gitprov.GitAuth{}, err
+	}
+	return gitprov.GitAuth{Username: gitUsername, Token: tok, Expires: exp}, nil
 }
 
 // Repository implements gitprov.Provider.
