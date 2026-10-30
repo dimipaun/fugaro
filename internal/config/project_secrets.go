@@ -25,6 +25,16 @@ type ProjectSecret struct {
 	// this project secret; empty means none. An entry may use "*" inside a
 	// segment, never across "/".
 	AllowDataTo []string `yaml:"allow_data_to,omitempty" json:"allow_data_to,omitempty"`
+	// Proxy is the Bitbucket token's per-installation switch (D493): true when
+	// the credentials service forwards that token for the repositories
+	// allow_data_to names instead of mounting it on their jobs, so the jobs
+	// themselves never hold it (G3, G9). It is accepted on
+	// project_secrets.bitbucket-token alone — every other reserved name is
+	// mounted and nothing forwards it — and it is deliberately not a
+	// per-repository decision: whether the installation runs a proxy is one
+	// choice for the whole installation, and the per-repository half is
+	// allow_data_to, published as the policy node's bitbucket_token.allow_repos.
+	Proxy bool `yaml:"proxy,omitempty" json:"proxy,omitempty"`
 }
 
 // AllowsData reports whether repo (owner/name) may mount p. Case-folded,
@@ -166,6 +176,15 @@ func ValidateProjectSecrets(secrets map[string]ProjectSecret) []Problem {
 			if msg := invalidAllowDataToEntry(r); msg != "" {
 				ps = append(ps, Problem{Path: at + ".allow_data_to", Message: msg})
 			}
+		}
+		// proxy is the Bitbucket token's switch and nothing else's (D493): it
+		// is what the credentials service reads to decide whether to forward
+		// that one token, and no other reserved name is forwarded at all. A
+		// proxy written on another entry would be a setting nothing reads,
+		// which is the failure mode this block's checks exist to prevent — an
+		// operator who wrote it believes their installation is proxied.
+		if secrets[name].Proxy && name != BitbucketSecret {
+			ps = append(ps, Problem{Path: at + ".proxy", Message: fmt.Sprintf("%s is the Bitbucket token's switch: only project_secrets.%s may set proxy, because the credentials service forwards that token alone — every other reserved name is mounted on the job that needs it (D493)", pluginwire.Printable("proxy"), BitbucketSecret)})
 		}
 	}
 	return ps
