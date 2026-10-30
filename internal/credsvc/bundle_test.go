@@ -73,15 +73,17 @@ func (s *scriptedSource) readCount() int {
 }
 
 // bundleDoc is a valid document holding every credential the platform
-// defines: the two model families and the GitHub App's private key (C2.1).
-// The App key is in it on purpose — it is in the document and NOT in the
-// cascade, and a document without one would not show that.
+// defines: the two model families, the GitHub App's private key (C2.1) and
+// the upstream Bitbucket token (D506). The last two are in it on purpose —
+// each is in the document and NOT in the cascade, and a document without one
+// would not show that.
 func bundleDoc(t *testing.T) []byte {
 	t.Helper()
 	return []byte("claude-oauth-token: " + fakeCred(t, "default") + "\n" +
 		"claude-oauth-token-alice: " + fakeCred(t, "alice") + "\n" +
 		config.AnthropicSecret + ": " + fakeCred(t, "paid") + "\n" +
-		config.GitHubAppKeySecret + ": " + fakeCred(t, "appkey") + "\n")
+		config.GitHubAppKeySecret + ": " + fakeCred(t, "appkey") + "\n" +
+		config.BitbucketSecret + ": " + fakeCred(t, "gittoken") + "\n")
 }
 
 // TestBundleLoadsOncePerCall: one read of the container answers a whole
@@ -107,8 +109,8 @@ func TestBundleLoadsOncePerCall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if got := b.Names(); len(got) != 4 {
-		t.Fatalf("names = %v, want the four credentials of the document", got)
+	if got := b.Names(); len(got) != 5 {
+		t.Fatalf("names = %v, want the five credentials of the document", got)
 	}
 	// Every credential of one call, and every credential of the next call
 	// inside the TTL, comes from the one read.
@@ -254,6 +256,116 @@ func TestBundleHoldsTheAppKeyAndAnAccountNamedAfterIt(t *testing.T) {
 				t.Fatalf("ParseBundle(%q) = %v, %v; want ErrBundleUnknownKey", tc.doc, got, err)
 			}
 		})
+	}
+}
+
+// TestBundleBitbucketTokenStrict: the upstream Bitbucket credential is a
+// bundle entry of its own, and it is held to the SAME strict decoding as
+// every other entry — a key outside the platform's credentials is refused,
+// and so is a value that is empty, not a string, or over the per-credential
+// bound. Before this change the key was refused as unknown, which is the red
+// step this test is.
+func TestBundleBitbucketTokenStrict(t *testing.T) {
+	ok, err := ParseBundle([]byte(config.BitbucketSecret + ": " + fakeCred(t, "bb") + "\n"))
+	if err != nil {
+		t.Fatalf("ParseBundle with %s = %v; the platform defines this credential", config.BitbucketSecret, err)
+	}
+	if ok.Len() != 1 {
+		t.Fatalf("the document holds %d entries, want 1", ok.Len())
+	}
+	for _, tc := range []struct {
+		name string
+		doc  string
+		want error
+	}{
+		{"an unknown key beside it", config.BitbucketSecret + ": " + fakeCred(t, "bb") + "\nbitbucket-tokens: " + fakeCred(t, "x") + "\n", ErrBundleUnknownKey},
+		{"an empty value", config.BitbucketSecret + ": \"\"\n", ErrBundleBadValue},
+		{"a value over the bound", config.BitbucketSecret + ": " + strings.Repeat("x", MaxBundleValueBytes+1) + "\n", ErrBundleBadValue},
+		{"a value that is not a string", config.BitbucketSecret + ": 1234\n", ErrBundleBadValue},
+		{"the key twice", config.BitbucketSecret + ": " + fakeCred(t, "x") + "\n" + config.BitbucketSecret + ": " + fakeCred(t, "y") + "\n", ErrBundleUnknownKey},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ParseBundle([]byte(tc.doc))
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("ParseBundle(%q) = %v, %v; want %v", tc.doc, got, err, tc.want)
+			}
+		})
+	}
+}
+
+// TestBundleGitKindNeverACascadeCandidate: the Bitbucket credential is in the
+// document and is NEVER a credential the cascade may select — the same
+// posture the GitHub App's key has, and for the same reason: a candidate the
+// cascade could select would be handed to an Anthropic call as the caller's
+// credential. Credentials is the whole of what the cascade is offered, and
+// the git kind is not in it; Lookup answers model credentials only, so the
+// git entry is reachable solely through BitbucketToken, and that accessor
+// selects by KIND and never by name.
+func TestBundleGitKindNeverACascadeCandidate(t *testing.T) {
+	doc := []byte(config.ClaudeOAuthToken + ": " + fakeCred(t, "default") + "\n" +
+		config.BitbucketSecret + ": " + fakeCred(t, "bb") + "\n")
+	b, err := ParseBundle(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := b.Credentials()
+	if len(got) != 1 || got[0] != (creds.Credential{Name: config.DefaultClaudeAccount, Tier: creds.TierA}) {
+		t.Errorf("Credentials() = %v, want the model credential alone", got)
+	}
+	for _, c := range got {
+		if c.Name == config.BitbucketSecret {
+			t.Errorf("Credentials() offers the git credential (%v) to the cascade", c)
+		}
+	}
+	if _, ok := b.Lookup(config.BitbucketSecret); ok {
+		t.Errorf("Lookup(%q) answered, and it answers model credentials only", config.BitbucketSecret)
+	}
+	e, ok := b.BitbucketToken()
+	if !ok {
+		t.Fatalf("BitbucketToken() found nothing, and the document holds %q", config.BitbucketSecret)
+	}
+	if e.Kind != KindGit || e.Tier != "" || e.Key != config.BitbucketSecret {
+		t.Errorf("BitbucketToken() = %+v, want the git kind, no tier, keyed %q", e, config.BitbucketSecret)
+	}
+	if e.Value() != fakeCred(t, "bb") {
+		t.Errorf("BitbucketToken() answered the wrong entry: %q", e.Value())
+	}
+	// A document without the entry is found=false and never an empty
+	// credential, which is the state the service refuses on rather than
+	// falling back to a token the job holds (D143).
+	plain, err := ParseBundle([]byte(config.ClaudeOAuthToken + ": " + fakeCred(t, "default") + "\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e, ok := plain.BitbucketToken(); ok || e.Value() != "" {
+		t.Errorf("BitbucketToken() on a document without the entry = (%+v, %v), want nothing", e, ok)
+	}
+}
+
+// TestBundleModelAccountNamedBitbucketTokenRefused: an account spelled
+// claude-oauth-token-bitbucket-token resolves to the name the git entry's
+// document key is, and that name is the one the platform reads as the
+// upstream Bitbucket token elsewhere (config.BitbucketSecret is a
+// ReservedSecret, the policy's block names it, and the proxy's audit line
+// names the credential it used). A model account resolving to it would leave
+// one name meaning two credentials, so the key is refused rather than loaded
+// under a name that shadows the kind.
+func TestBundleModelAccountNamedBitbucketTokenRefused(t *testing.T) {
+	key := config.ClaudeAccountSecret(config.BitbucketSecret)
+	if _, _, _, ok := CredentialKey(key); ok {
+		t.Fatalf("CredentialKey(%q) accepted a name that shadows the git kind", key)
+	}
+	if _, err := ParseBundle([]byte(key + ": " + fakeCred(t, "x") + "\n")); !errors.Is(err, ErrBundleUnknownKey) {
+		t.Fatalf("ParseBundle with %q = %v, want ErrBundleUnknownKey", key, err)
+	}
+	// The near misses stay legal: a name that merely starts with it is a name
+	// of its own, and the git entry itself is a different key.
+	if _, _, _, ok := CredentialKey(config.ClaudeAccountSecret(config.BitbucketSecret + "-x")); !ok {
+		t.Errorf("CredentialKey refused %q, which is a name of its own",
+			config.ClaudeAccountSecret(config.BitbucketSecret+"-x"))
+	}
+	if _, kind, _, ok := CredentialKey(config.BitbucketSecret); !ok || kind != KindGit {
+		t.Errorf("CredentialKey(%q) = kind %q, %v; want the git kind", config.BitbucketSecret, kind, ok)
 	}
 }
 
@@ -584,6 +696,13 @@ func TestBundleSchemaMatchesTheLoader(t *testing.T) {
 			config.ClaudeAccountSecret(config.GitHubAppKeySecret) + ": " + fakeCred(t, "y") + "\n"},
 		{"the app key with a credential-shaped key", "github-app-key-pem: " + fakeCred(t, "x") + "\n"},
 		{"a key that is nearly the app key", "github-app-keys: " + fakeCred(t, "x") + "\n"},
+		{"the upstream git credential", config.BitbucketSecret + ": " + fakeCred(t, "x") + "\n"},
+		{"a key that is nearly the git credential", "bitbucket-tokens: " + fakeCred(t, "x") + "\n"},
+		// The account family's one reserved spelling: it resolves to the git
+		// credential's own key, so the loader refuses it, and the schema has
+		// to refuse it too even though the pattern alone admits it.
+		{"an account named like the git credential", config.ClaudeAccountSecret(config.BitbucketSecret) + ": " + fakeCred(t, "x") + "\n"},
+		{"an account that merely starts like it", config.ClaudeAccountSecret(config.BitbucketSecret+"-x") + ": " + fakeCred(t, "x") + "\n"},
 		{"the exact count bound", many.String()},
 		{"an unknown key", "antropic-api-key: " + fakeCred(t, "x") + "\n"},
 		{"an account name outside the rule", "claude-oauth-token-9alice: " + fakeCred(t, "x") + "\n"},
@@ -617,10 +736,11 @@ func TestBundleSchemaMatchesTheLoader(t *testing.T) {
 // secret's logical name and the credential's name is the account's, which is
 // what the policy's accounts block, the marks and the wire contract speak.
 //
-// It is also where the App key's exclusion is pinned from the document side
-// (C2.1): the key is loaded and is reachable through AppKey, and it is in
-// NEITHER Credentials (what the cascade is offered) nor a candidate — a bundle
-// that holds it holds one credential fewer than it holds entries.
+// It is also where the exclusions are pinned from the document side: the App
+// key (C2.1) and the upstream Bitbucket token (D506) are loaded, each is
+// reachable through its own kind-based accessor, and each is in NEITHER
+// Credentials (what the cascade is offered) nor a candidate — a bundle that
+// holds them holds two credentials fewer than it holds entries.
 func TestBundleCredentialKeyIsTheCascadesSpelling(t *testing.T) {
 	b, err := ParseBundle(bundleDoc(t))
 	if err != nil {
@@ -680,6 +800,29 @@ func TestBundleCredentialKeyIsTheCascadesSpelling(t *testing.T) {
 			t.Errorf("Credentials() offers the App key (%v) to the cascade", c)
 		}
 	}
+	// The upstream Bitbucket token, the same way: in the document, findable by
+	// its KIND, not a model credential, and not a candidate.
+	git, ok := b.BitbucketToken()
+	if !ok {
+		t.Fatalf("BitbucketToken() found nothing, and the document holds %q", config.BitbucketSecret)
+	}
+	if git.Kind != KindGit || git.Tier != "" || git.Key != config.BitbucketSecret {
+		t.Errorf("the git entry = %+v, want the git kind, no tier, keyed %q", git, config.BitbucketSecret)
+	}
+	if git.Value() == "" {
+		t.Error("the git entry has no value")
+	}
+	if _, ok := b.Lookup(config.BitbucketSecret); ok {
+		t.Errorf("Lookup(%q) answered, and it answers model credentials only", config.BitbucketSecret)
+	}
+	for _, c := range got {
+		if c.Name == config.BitbucketSecret {
+			t.Errorf("Credentials() offers the git token (%v) to the cascade", c)
+		}
+	}
+	if want, got := b.Len(), len(got); want != got+2 {
+		t.Errorf("the document holds %d entries and the cascade is offered %d, want two kind-only credentials", want, got)
+	}
 }
 
 // TestBundleCredentialKeyHoldsTheAccountNameRuleInBothHalves: CredentialKey is
@@ -726,6 +869,14 @@ func TestBundleCredentialKeyHoldsTheAccountNameRuleInBothHalves(t *testing.T) {
 		{name: "the app key", key: config.GitHubAppKeySecret, wantName: config.GitHubAppKeySecret, wantKind: KindGitHubApp, wantTier: "", wantOK: true},
 		{name: "the app key under the account prefix", key: config.ClaudeAccountSecret(config.GitHubAppKeySecret), wantName: config.GitHubAppKeySecret, wantKind: KindModel, wantTier: creds.TierA, wantOK: true},
 		{name: "an app key that is not the app key", key: "github-app-private-key", wantOK: false},
+		// The upstream Bitbucket token: the second key that is not a model
+		// credential — a kind of its own, no tier.
+		{name: "the upstream git token", key: config.BitbucketSecret, wantName: config.BitbucketSecret, wantKind: KindGit, wantTier: "", wantOK: true},
+		{name: "a git token that is not the git token", key: "bitbucket-tokens", wantOK: false},
+		// The one account name the family may not take: it resolves to the
+		// git entry's own key, so the name would mean two credentials.
+		{name: "an account named like the git token", key: config.ClaudeAccountSecret(config.BitbucketSecret), wantOK: false},
+		{name: "an account that merely starts like it", key: config.ClaudeAccountSecret(config.BitbucketSecret + "-x"), wantName: config.BitbucketSecret + "-x", wantKind: KindModel, wantTier: creds.TierA, wantOK: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			gotName, gotKind, gotTier, ok := CredentialKey(tc.key)

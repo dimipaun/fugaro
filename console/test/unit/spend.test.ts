@@ -43,6 +43,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 import {
+  ESTIMATED_MARK,
   GAP_MARK,
   NOTIONAL_MARK,
   UNAVAILABLE_MARK,
@@ -1888,12 +1889,13 @@ describe('the caps panel', () => {
 
   it('reads `compute_usd` off a cap row as an estimate, and n/a where there is none', () => {
     // The owner approved `compute_usd` on each `showRepo` on 2026-10-28, and
-    // `budget show --compute` writes it since 2026-10-29. This console passes
-    // no such flag -- its spawn row is its own reviewed run -- so the key is
-    // still only in a document a person hands this reader. The row reader
-    // already ignores keys it does not know, so the console reads the new one
-    // into the model -- as an **estimate**, compute's own account -- and draws
-    // nothing with it yet; the Spend redesign is the screen that will.
+    // `budget show --compute` writes it since 2026-10-29. This console's own
+    // `budget.show` row declares that flag and the caps panel draws the figure
+    // in its own cell, but no caller passes it yet -- the Spend screen's caps
+    // read is flipped behind `budgetComputeSupported` in its own reviewed run --
+    // so the key is still only in a document a person hands this reader. The
+    // row reader reads it into the model as an **estimate**, compute's own
+    // account, which is what the drawing test below starts from.
     const model = buildSpendModel(DAY_REPORT, {
       ...BUDGET,
       repos: [{ ...THE_REPOS[0], compute_usd: 0.75 }],
@@ -1919,6 +1921,77 @@ describe('the caps panel', () => {
       repos: [{ ...THE_REPOS[0], compute_usd: null }],
     })
     expect(nulled.caps.repos[0]?.compute.value).toBeNull()
+  })
+
+  it('draws that compute in its own cell: `est. $0.12`, `n/a` where there is none', () => {
+    // The cell is the third dollar account of a cap row, beside the counted and
+    // the notional dollars and never summed with either: a compute the
+    // document priced is drawn through `formatReading` -- `ESTIMATED_MARK`'s
+    // `est.`, and never the notional mark -- and a key the document does not
+    // carry is `n/a` with its reason, never `$0.00`.
+    const priced = buildSpendModel(DAY_REPORT, {
+      ...BUDGET,
+      repos: [{ ...THE_REPOS[0], compute_usd: 0.12 }],
+    })
+    const reading = priced.caps.repos[0]?.compute
+    if (reading === undefined) throw new Error('no first repository row')
+    expect(formatReading(reading, 'usd')).toBe(`${ESTIMATED_MARK} $0.12`)
+    const tree = renderSpend(factory, priced, 'light')
+    const row = firstRepoRow(tree)
+    expect(texts(row, 'spend-cap-compute')).toEqual([`${ESTIMATED_MARK} $0.12`])
+    expect(texts(row, 'spend-cap-compute')[0]).not.toContain(NOTIONAL_MARK)
+    // The two accounts beside it are the document's own figures, untouched by
+    // the third: `counted_usd: 3`, `notional_usd: 1` on this fixture.
+    expect(texts(row, 'spend-cap-counted')).toEqual(['$3.00'])
+    expect(texts(row, 'spend-cap-notional')).toEqual([`${NOTIONAL_MARK}$1.00`])
+    // A measured `0` is a figure the document priced at nothing, and it is
+    // drawn as one rather than as the `n/a` an absent key draws.
+    const zero = renderSpend(
+      factory,
+      buildSpendModel(DAY_REPORT, { ...BUDGET, repos: [{ ...THE_REPOS[0], compute_usd: 0 }] }),
+      'light',
+    )
+    expect(texts(firstRepoRow(zero), 'spend-cap-compute')).toEqual([`${ESTIMATED_MARK} $0.00`])
+    // A `null` -- the key a `budget show --compute` writes for a repository
+    // whose bucket read found no estimate -- is `n/a`, and the cell carries the
+    // reader's own sentence for why, which is what keeps an `n/a` defensible.
+    const nulled = buildSpendModel(DAY_REPORT, {
+      ...BUDGET,
+      repos: [{ ...THE_REPOS[0], compute_usd: null }],
+    })
+    const absent = firstRepoRow(renderSpend(factory, nulled, 'light'))
+    expect(texts(absent, 'spend-cap-compute')).toEqual([UNAVAILABLE_MARK])
+    expect(one(absent, 'spend-cap-compute').getAttribute('title')).toBe('the document has no compute_usd')
+    // A value that is not a number is `n/a` too, with the reader's sentence for
+    // *that* -- the caps panel refuses no document, so a shape it cannot read is
+    // the same drawn state as a key it was not sent, and the two are told apart
+    // by the reason the cell carries.
+    const wrongKind = buildSpendModel(DAY_REPORT, {
+      ...BUDGET,
+      repos: [{ ...THE_REPOS[0], compute_usd: '0.12' }],
+    })
+    const wrongRow = firstRepoRow(renderSpend(factory, wrongKind, 'light'))
+    expect(texts(wrongRow, 'spend-cap-compute')).toEqual([UNAVAILABLE_MARK])
+    expect(one(wrongRow, 'spend-cap-compute').getAttribute('title')).toBe('compute_usd is a string, not a number')
+    // The column is the read's and not the row's. The key is flag-conditioned,
+    // so a document read without `--compute` -- the recorded fixture, and every
+    // document this console produces today -- carries it on no row and draws no
+    // compute cell at all: an `n/a` on every row would be a permanent column
+    // for a flag nobody passed. Once one row carries it, every row draws the
+    // cell, and a row that carries none is `n/a` rather than blank.
+    expect(all(renderSpend(factory, modelOf(), 'light'), 'spend-cap-compute')).toHaveLength(0)
+    const mixed = renderSpend(
+      factory,
+      buildSpendModel(DAY_REPORT, {
+        ...BUDGET,
+        repos: [{ ...THE_REPOS[0], compute_usd: 0.12 }, ...THE_REPOS.slice(1)],
+      }),
+      'light',
+    )
+    expect(all(mixed, 'spend-cap-compute')).toHaveLength(THE_REPOS.length)
+    const [, withoutIt] = all(mixed, 'spend-cap-repo')
+    if (withoutIt === undefined) throw new Error('no second repository row')
+    expect(texts(withoutIt, 'spend-cap-compute')).toEqual([UNAVAILABLE_MARK])
   })
 
   it('draws an unrecognised scope word as an unknown, and never echoes it', () => {
@@ -2260,6 +2333,14 @@ function one(node: ScreenElement, className: string): FakeScreen {
   expect(found, `expected exactly one .${className}`).toHaveLength(1)
   const first = found[0]
   if (first === undefined) throw new Error(`no .${className}`)
+  return first
+}
+
+/** firstRepoRow is the caps panel's first repository row, which is the row
+ * every per-row cell is asserted on. */
+function firstRepoRow(tree: ScreenElement): FakeScreen {
+  const first = all(tree, 'spend-cap-repo')[0]
+  if (first === undefined) throw new Error('no repository row')
   return first
 }
 

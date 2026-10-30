@@ -460,10 +460,18 @@ export interface SpendCapRow {
   /** compute is the repository's compute dollars, an **estimated** figure by
    * design (`runstore.Cost.ComputeUSD`). The owner approved `compute_usd` on
    * each `showRepo` on 2026-10-28, and `budget show --compute` writes it since
-   * 2026-10-29 -- but this console's `budget.show` row passes no such flag
-   * (adding one is its own reviewed run), so the key still only arrives in a
-   * document a person hands this reader. It reads absent and `null` as `n/a`
-   * and draws nothing with it: the Spend redesign is the screen that will.
+   * 2026-10-29. The caps panel draws it as its own cell in its own state --
+   * `est. $0.12`, or `n/a` and never `$0.00` where the document carries none --
+   * and never adds it to the counted or the notional dollars beside it, which
+   * are two other accounts. It reads absent and `null` as `n/a` because that key
+   * is **flag-conditioned**: no released CLI writes it, and no caller of this
+   * console's `budget.show` row passes `--compute` until the Spend screen's read
+   * is flipped behind `budgetComputeSupported` (`src/shared/version.ts`). The
+   * cell is drawn only for a document that carries the key somewhere
+   * (`carriesCompute`, below): a document read without the flag -- every one the
+   * console itself produces today -- draws no compute cell at all rather than a
+   * column of `n/a`, and once one does carry it, a row that carries none is
+   * `n/a` and never `$0.00`.
    *
    * A value that is not a number is `n/a` too, and not a refusal, because this
    * reader refuses no document at all -- the caps panel is the console's
@@ -473,6 +481,16 @@ export interface SpendCapRow {
    * handles a shape it cannot read; the closed decoders (`shared/schema.ts`,
    * the digest) refuse it by name, and this one draws `n/a`. */
   readonly compute: Reading
+  /** carriesCompute is whether this row carries `compute_usd` at all, which is
+   * the flag's own trace on the wire: `budget show --compute` writes the key on
+   * every repository it lists (a figure it cannot give as `null`), and without
+   * the flag the CLI writes none, so a key that is nowhere in the document is a
+   * document read without the flag. The caps panel draws the compute cell only
+   * when some row carries the key, because the column is the read's and not the
+   * row's: a document that was not read with `--compute` gets no compute cell,
+   * rather than every repository row wearing a permanent `n/a` for a flag
+   * nobody passed. */
+  readonly carriesCompute: boolean
   readonly headroom: Reading
   readonly dailyCap: Reading
   readonly dailyScope: SpendScope
@@ -1467,6 +1485,7 @@ function capRowOf(raw: unknown): SpendCapRow | null {
     spent: readNumber(repo['spent_usd'], 'repos[].spent_usd'),
     notional: usdReading(repo, 'notional_usd', 'notional'),
     compute: usdReading(repo, 'compute_usd', 'compute'),
+    carriesCompute: Object.prototype.hasOwnProperty.call(repo, 'compute_usd'),
     headroom: readNumber(repo['headroom_usd'], 'repos[].headroom_usd'),
     dailyCap: readNumber(repo['daily_cap_usd'], 'repos[].daily_cap_usd'),
     dailyScope: scopeOf(textAt(repo['daily_cap_source']) ?? ''),
@@ -2370,12 +2389,21 @@ function capsPanel(factory: ScreenFactory, model: SpendModel): ScreenElement {
     element.append(defaults)
   }
   const repos = cell(element, factory, 'ol', 'spend-cap-repos')
+  // One row carrying the key is the whole document's answer: the key is
+  // flag-conditioned and the CLI writes it on every repository or on none.
+  const showsCompute = caps.repos.some((row) => row.carriesCompute)
   for (const row of caps.repos) {
     const item = cell(repos, factory, 'li', 'spend-cap-repo')
     const name = textCell(item, factory, 'span', row.repo === '' ? row.slug : row.repo, keyClass('repo', row.repo === '' ? row.slug : row.repo), 'repos[].repo', 'spend-cap-repo-name')
     item.setAttribute('data-key', drawnKey(name))
     numberCell(item, factory, 'span', row.counted, 'usd', 'spend-cap-counted')
     numberCell(item, factory, 'span', row.notional, 'usd', 'spend-cap-notional')
+    // Compute is a third account, so it is a third cell in its own state --
+    // never added to the counted or the notional dollars beside it. It is
+    // drawn only for a document that was read with the flag, because an `n/a`
+    // column on every row of a read that never asked for the figure says
+    // nothing a person can act on.
+    if (showsCompute) numberCell(item, factory, 'span', row.compute, 'usd', 'spend-cap-compute')
     numberCell(item, factory, 'span', row.headroom, 'usd', 'spend-cap-headroom')
     scopeCell(item, factory, row.dailyCap, 'usd', row.dailyScope, 'data-daily-scope', 'spend-cap-daily')
     scopeCell(item, factory, row.perRunCap, 'usd', row.perRunScope, 'data-per-run-scope', 'spend-cap-per-run')

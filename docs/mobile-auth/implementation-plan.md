@@ -53,7 +53,9 @@ decorating it:
    (reconciliation §F29, whose precedent is `version.go`'s own note that the credentials children
    "deliberately did not make a generation 4"). P2 is therefore not a rules-generation part: it is
    the part that **proves** the document does not move, and that says what would move it.
-4. **The Phase 6 tasks this extends are unbuilt.** `internal/cli/pair.go` does not exist,
+4. **The Phase 6 tasks this extends are unbuilt.** *(Amended 2026-10-29: `internal/cli/pair.go`
+   landed as the pairing CLI plan's T1a — the command's surface, its pairing token and its QR — so
+   the file exists while the task does not: the wait, the delivery and the device token have not.)*
    `fugaro pair` is not registered in `internal/cli/root.go`, and `mobile/src/pairing/` is not in
    the tree. Every part here that touches the CLI (P3, P5) or the app (P4) is written as an
    **extension** of a task that has not landed, and §2 makes that the first edge in the graph.
@@ -216,9 +218,10 @@ has a **filter** and an **excuse list**, and both are part of the part:
   directory. Anything with a space, a `|`, a `—` or a glob in it is prose, not a citation.
 - **The excuse list, by name, each entry with its reason, and each entry required to be *stale-able*.**
   **Three** paths this work will create (`internal/cli/docs_mobile_auth_test.go` — this part;
-  `internal/mobileauth/` — P1; `docs/mobile-auth/provider-sign-in.md` — P6) and four that another
-  approved, unbuilt task owns (`internal/cli/pair.go` and `internal/budget/token/device.go` —
-  mobile Task **P6.6**; `mobile/src/pairing/` and `mobile/src/overview/` — Task **P6.8**) are
+  `internal/mobileauth/` — P1; `docs/mobile-auth/provider-sign-in.md` — P6) and three that another
+  approved, unbuilt task owns (`internal/budget/token/device.go` — mobile Task **P6.6**, whose
+  `internal/cli/pair.go` left the list when the pairing CLI plan's T1a landed its command surface on
+  2026-10-29; `mobile/src/pairing/` and `mobile/src/overview/` — Task **P6.8**) are
   excused **only while they do not exist**. The guard **fails on an excused path that resolves**,
   which is the property that makes the list self-cleaning: the pull request that lands P1 or Phase 6
   deletes its entry in the same change, and a reader can see from the list alone what is still

@@ -1825,6 +1825,32 @@ describe('the closed sets', () => {
     expect(validateArguments('runs.list', { repo: 'acme/app', all: false }).ok).toBe(true)
     expect(validateArguments('runs.list', { pr: 42, all: false }).ok).toBe(true)
   })
+
+  it('accepts `compute` on `budget show` alone, and a boolean and nothing else', () => {
+    // The console half of `budget show --compute` (console 0.115, the Spend
+    // caps read): one optional boolean on one row. The CLI admits the flag
+    // beside both `--repo` and `--all` (`internal/cli/budget.go`), so the
+    // surface admits both pairings -- and refuses neither pair, which is the
+    // difference between this key and the two above.
+    expect(validateArguments('budget.show', { compute: true }).ok).toBe(true)
+    expect(validateArguments('budget.show', { compute: false }).ok).toBe(true)
+    expect(validateArguments('budget.show', { repo: 'acme/app', compute: true }).ok).toBe(true)
+    expect(validateArguments('budget.show', { all: true, compute: true }).ok).toBe(true)
+    for (const value of ['yes', 'true', 1, 0, null, {}, []]) {
+      expect(validateArguments('budget.show', { compute: value }).ok, String(value)).toBe(false)
+    }
+    // No other row gains it, including the two reads whose figures nobody
+    // draws: `spend.report` (the rail's and the screen's own curve) and
+    // `runs.list`. A key an operation does not declare is refused by name,
+    // before a handler sees it and before an argv exists.
+    for (const name of ['spend.report', 'runs.list', 'runs.stats', 'live.watch'] as const) {
+      expect(validateArguments(name, { compute: true }).ok, name).toBe(false)
+    }
+    // The prototype keys are refused whatever the row declares, which is the
+    // one class of key no schema can admit.
+    expect(validateArguments('budget.show', JSON.parse('{"__proto__":{"compute":true}}')).ok).toBe(false)
+    expect(validateArguments('budget.show', { constructor: 'yes' }).ok).toBe(false)
+  })
 })
 
 describe('the spend read’s arguments', () => {

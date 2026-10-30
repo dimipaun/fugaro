@@ -346,12 +346,15 @@ export function locationsFor(platform: string = process.platform): PlatformLocat
  * with `process.env` anywhere in this file, and that is the property
  * `test/unit/spawn.test.ts` diffs the child's own report against.
  *
- * **It is the whole list on both routes, and the WSL route adds exactly one key
- * to the environment `wsl.exe` is handed (`WSLENV_KEY`, see `childEnvironment`).**
- * That key is not a variable the distribution receives: it is `wsl.exe`'s own
- * share list, and the console states it empty rather than leaving it out, so
- * "no Windows variable is shared with the distribution" is a sentence this
- * console wrote rather than a default it inherited (F20, D5(a)).
+ * **It is the whole list on both routes, and the WSL route adds exactly two keys
+ * to the environment `wsl.exe` is handed (`WSLENV_KEY` and `WSL_UTF8_VAR`, see
+ * `childEnvironment`).** Neither is a variable the distribution receives:
+ * `WSLENV_KEY` is `wsl.exe`'s own share list, and the console states it empty
+ * rather than leaving it out, so "no Windows variable is shared with the
+ * distribution" is a sentence this console wrote rather than a default it
+ * inherited (F20, D5(a)); `WSL_UTF8_VAR` is the console's own switch asking
+ * `wsl.exe` for UTF-8 rather than the machine's console encoding, and the empty
+ * share list is what keeps it out of the distribution.
  */
 export const CHILD_ENV_KEYS: readonly string[] = Object.freeze([
   'PATH',
@@ -406,6 +409,9 @@ export const SPAWN_FLAGS: readonly string[] = Object.freeze([
   '--dir',
   '--repo',
   '--all',
+  // `budget show`'s own opt-in, and the Spend screen's caps read is its only
+  // caller: it costs a listing of the runs bucket, so no other row carries it.
+  '--compute',
   '--by',
   '--since',
   '--until',
@@ -624,6 +630,7 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     args: [
       { key: 'repo', flag: '--repo', kind: 'value' },
       { key: 'all', flag: '--all', kind: 'boolean' },
+      { key: 'compute', flag: '--compute', kind: 'boolean' },
     ],
     dirFlag: false,
   },
