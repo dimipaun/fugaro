@@ -24,6 +24,33 @@ locals {
   # directions).
   credentials_service_on = var.credentials_service != null
 
+  # The release the image pin names, or "" when the reference carries no
+  # released version. The digest says nothing about which process is inside it,
+  # and the version beside it is the only thing that does: C1.20's stage
+  # resolves the release's own image and writes both (`mirror.RemoteRef`, so
+  # `…/fugaro-credentials:<version>@sha256:<digest>`), and a reference an
+  # operator wrote by hand, a digest alone, or a version that is not
+  # three numbers reads as "" — the direction that claims nothing.
+  credentials_image_release = local.credentials_service_on ? try(regex(":([0-9]+\\.[0-9]+\\.[0-9]+)@sha256:", var.credentials_service.image)[0], "") : ""
+
+  # Whether that process serves HTTP/2 cleartext, which is what the port's name
+  # below is read as by Cloud Run's front end. The two MUST move together, and
+  # they do not move on their own: only the owner-run credentials stage writes
+  # credentials_service.image, and an ordinary `fugaro update` carries the
+  # previous release's digest forward (infra.CarriedCredentialsService), so a
+  # port named h2c in front of an image whose process answers HTTP/1.1 only
+  # would halt every call an opted-in installation makes — the front end reads
+  # the HTTP/2 preface as a malformed request line. So the name follows the
+  # image: the service's h2c support (internal/cli/credentials_serve.go) first
+  # ships in 0.15.0 (the release the plan puts B1.0 in), and anything at or
+  # above that release gets the name while anything below it — and anything
+  # this cannot read — keeps today's HTTP/1.1 port, so the same apply that
+  # re-pins the image is the one that renames the port.
+  credentials_image_serves_h2c = local.credentials_image_release == "" ? false : (
+    tonumber(split(".", local.credentials_image_release)[0]) > 0 ||
+    tonumber(split(".", local.credentials_image_release)[1]) >= 15
+  )
+
   # The audience for the first apply of an installation whose tfvars carry no
   # credentials_service.url yet (C1.14's `fugaro credentials serve` refuses to
   # bind a port, by name, without one).
@@ -307,21 +334,33 @@ resource "google_cloud_run_v2_service" "credentials" {
       image = var.credentials_service.image
 
       # The port the container listens on, and its name is the whole point of
-      # this block: Cloud Run reads that name, and `h2c` is what makes it speak
-      # HTTP/2 cleartext to the container end to end instead of HTTP/1.1. The
-      # owner's Check 190 (2026-10-30) is why it is here: a 33 MiB pack pushed
-      # over HTTP/1.1 was answered 413 Request Entity Too Large by the front end
-      # before the service saw four bytes of it, because the HTTP/1 path buffers
-      # a body that size, and nothing on this side of the front end changes that
-      # limit. The service's own server speaks both protocols on its one
-      # listener (internal/cli/credentials_serve.go), so this name turns the
-      # second one on for the hop that was cutting the push and leaves the
-      # HTTP/1.1 callers it has today working. 8080 is the number the process
-      # itself falls back to when Cloud Run's PORT is unset (servePort), and it
-      # is Cloud Run's own default.
-      ports {
-        name           = "h2c"
-        container_port = 8080
+      # this block: Cloud Run reads that name and talks to the container the way
+      # it spells. `h2c` is HTTP/2 cleartext, which is what B1.0 is for — the
+      # plan made that task conditional on the owner's Check 190 failing a large
+      # push, because the hop in front of this process buffers an HTTP/1 request
+      # body and refuses one a large git pack exceeds (413). None of that is
+      # measured on this tree: the checklist still records Check 190 as not run,
+      # and the reconciliation marks the reading it rests on (U2: that HTTP/2
+      # streaming keeps the pack off that buffer) unverified. So the name is
+      # what the plan expects to turn that hop's HTTP/2 on, not a result. The
+      # service's own server speaks both protocols on its one listener
+      # (internal/cli/credentials_serve.go), so the HTTP/1.1 callers it has
+      # today keep working. 8080 is the number the process itself falls back to
+      # when Cloud Run's PORT is unset (servePort), and it is Cloud Run's own
+      # default.
+      #
+      # The name follows the image: an unnamed port is HTTP/1.1, and a front end
+      # told h2c in front of a process that cannot answer it serves nothing at
+      # all, so only an image whose own server speaks h2c gets the name (the
+      # local above says why the two cannot be assumed to have moved together).
+      # An installation that has not re-pinned its image yet keeps today's
+      # unnamed port and today's working HTTP/1.1 service.
+      dynamic "ports" {
+        for_each = local.credentials_image_serves_h2c ? [8080] : []
+        content {
+          name           = "h2c"
+          container_port = ports.value
+        }
       }
 
       resources {

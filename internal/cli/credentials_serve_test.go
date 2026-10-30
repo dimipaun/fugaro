@@ -486,6 +486,23 @@ func TestCredentialsServeStillSpeaksHTTP1(t *testing.T) {
 	if srv.Protocols.HTTP2() {
 		t.Error("the host offers TLS-based HTTP/2: it serves no TLS, and the front end's h2c is the unencrypted protocol")
 	}
+	// The HTTP/2 side of the server is the block net/http reads when it builds
+	// the h2 handler, and neither value in it may drift to a default: Go's own
+	// MaxConcurrentStreams is 250 (above the 100 the front end in front of this
+	// process allows a caller), and its WriteByteTimeout default of 0 would
+	// leave a peer that stopped reading holding a goroutine and an upstream
+	// connection carrying a model credential for as long as the route's own
+	// timeout. Asserted on the server object because both are invisible to a
+	// client that behaves.
+	if srv.HTTP2 == nil {
+		t.Fatal("the host has no HTTP2 config: the h2c server takes net/http's defaults for the stream count and the write bound")
+	}
+	if srv.HTTP2.MaxConcurrentStreams != serveMaxConcurrentStreams {
+		t.Errorf("the host allows %d concurrent streams, want %d", srv.HTTP2.MaxConcurrentStreams, serveMaxConcurrentStreams)
+	}
+	if srv.HTTP2.WriteByteTimeout != serveWriteByteTimeout {
+		t.Errorf("the host's write-byte timeout = %v, want %v", srv.HTTP2.WriteByteTimeout, serveWriteByteTimeout)
+	}
 	var protocols http.Protocols
 	protocols.SetHTTP1(true)
 	client := &http.Client{Transport: &http.Transport{Protocols: &protocols}}

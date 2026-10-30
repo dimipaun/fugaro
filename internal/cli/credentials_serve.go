@@ -563,11 +563,17 @@ func hostCredentialsService(ctx context.Context, cfg credsvc.Config, getenv func
 // terminates TLS and then talks to the container, and with the service's port
 // named `h2c` (credentials.tf) it talks HTTP/2 cleartext.
 //
-// h2c is what B1.0 exists for. The owner-run Check 190 (2026-10-30) pushed a
-// 33 MiB pack at this service and the front end answered 413 Request Entity
-// Too Large before the service saw four bytes: the pack's body is what the
-// HTTP/1 path of that front end buffers, and no setting on this side changes
-// it. HTTP/2 streams the body instead, so the limit is never reached.
+// h2c is what B1.0 exists for, and B1.0 is conditional on the owner's Check
+// 190 failing a large push (implementation-plan.md, whose entry depends on
+// B0.6 recording one). Nothing in this file rests on a measurement of that
+// check: docs/gcp-live-checklist.md still records it as not run on this tree,
+// and the reconciliation marks the reading it rests on (U2: that HTTP/2's
+// streaming keeps the pack off the HTTP/1 path's buffer) unverified. So what
+// is stated here is the belief the task was planned on and not a result — the
+// hop in front of this process buffers an HTTP/1 request body and refuses one
+// a large git pack exceeds, and an HTTP/2 body is streamed past that buffer,
+// which is the hop the port's name (credentials.tf) turns h2c on for. Check
+// 190's live re-run is the owner's, and it is what would prove it.
 //
 // HTTP/1.1 stays on, and not as a courtesy: it is what every caller this
 // service has today speaks. The runner's gateway is a plain net/http client

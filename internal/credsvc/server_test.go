@@ -627,6 +627,12 @@ func newSvcWith(t *testing.T, mutate func(*svc, *Config)) *svc {
 	// keeps calling over HTTP/1.1 -- net/http's client chooses HTTP/1.1 for a
 	// plain http:// address unless it is told otherwise -- so this changes the
 	// server under test and not the tests that were already here.
+	//
+	// What is deliberately NOT mirrored is the deployment host's HTTP2 config
+	// (its concurrent-stream limit and its no-progress write bound): those
+	// bound what the hop in front of the process may ask of it, no test here
+	// reaches across a connection that far, and the host's own values are
+	// pinned where they are set (TestCredentialsServeStillSpeaksHTTP1).
 	var protocols http.Protocols
 	protocols.SetHTTP1(true)
 	protocols.SetUnencryptedHTTP2(true)
