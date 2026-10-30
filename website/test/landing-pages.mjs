@@ -120,6 +120,23 @@ function sectionsOf(html) {
   return findAll(parse(html), (el) => el.attrs.has('data-section')).map((el) => el.attrs.get('data-section'))
 }
 
+/**
+ * **A picture is something a reader is meant to look at, and a decorative mark is not one.** The
+ * hero's readings count the elements that draw a picture — the console screen (`<img>`), the
+ * campaign's own drawing (`<svg>`) and the media a variant names — and since the owner's
+ * feedback of 2026-10-30 (finding 1) each call to action carries an `<svg>` mark beside its
+ * label. That mark is `aria-hidden` decoration whose meaning is the link's own words, so it is
+ * not a picture of anything and no reading of "how many pictures has this hero" may count it:
+ * a hero with a booking button would otherwise carry two pictures and a page whose variant names
+ * a video would carry one. The attribute rather than the class, because `aria-hidden` is what
+ * the rule is — a drawing a screen reader is told nothing about is a drawing the page is not
+ * showing anyone (`CampaignIcon.astro`).
+ */
+const PICTURE_ELEMENTS = new Set(['img', 'picture', 'source', 'svg', 'video'])
+function picturesIn(node) {
+  return findAll(node, (el) => PICTURE_ELEMENTS.has(el.name) && el.attrs.get('aria-hidden') !== 'true')
+}
+
 /** The layout's own source, which the static case below reads. */
 function layoutSource() {
   const file = path.join(SITE, 'src', 'layouts', 'Base.astro')
@@ -401,13 +418,16 @@ test('the hero carries the booking action, above the picture and before every ot
     // The order a phone shows and a screen reader hears: the promise, then the action, then the
     // picture. The picture is the biggest thing in the hero and it may not be the reason the
     // booking link is below the fold.
+    // The icon the action carries is part of the action — it is inside the `<a>` — so it is read
+    // as one element with it rather than as a fourth thing the hero draws (the owner's feedback
+    // of 2026-10-30, finding 1).
     const order = [...walk(hero)]
       .filter((el) => ['h1', 'a', 'img', 'svg'].includes(el.name))
       .map((el) => el.name)
     assert.deepEqual(
       order,
-      ['h1', 'a', 'img'],
-      `${rel}'s hero draws ${JSON.stringify(order)}: the headline first, then the booking action, then the picture — the action sits directly under the supporting line and above the picture at every width (the owner's feedback of 2026-10-30)`,
+      ['h1', 'a', 'svg', 'img'],
+      `${rel}'s hero draws ${JSON.stringify(order)}: the headline first, then the booking action — its icon inside it — and then the picture, so the action sits directly under the supporting line and above the picture at every width (the owner's feedback of 2026-10-30)`,
     )
 
     const calls = findAll(doc, (el) => el.attrs.get('data-section') === 'calls-to-action')
@@ -554,7 +574,7 @@ test('a variant that names a video renders it in the hero, and one whose file is
   // neither a video nor an image, so only this copy, where one does, reaches the prop's false half.
   const saveHero = findAll(parse(save.html), (el) => el.attrs.get('data-section') === 'hero')
   assert.equal(saveHero.length, 1, 'the copy built no /save hero to read the picture off')
-  const savePicture = findAll(saveHero[0], (el) => el.name === 'img' || el.name === 'svg')
+  const savePicture = picturesIn(saveHero[0])
   assert.equal(
     savePicture.length,
     0,
@@ -584,7 +604,12 @@ test('a variant that names a video renders it in the hero, and one whose file is
   // has no media the loader can report and the hero draws the console screen the variant names —
   // the same picture the four shipped pages take today, reached here by a variant that did name a
   // file (F14, G2.5).
-  const crewPicture = findAll(parse(crew.html), 'img').filter((el) => el.attrs.get('src') === LANDING.variants.find((one) => one.name === 'crew').screenshot.src)
+  const crewHero = findAll(parse(crew.html), (el) => el.attrs.get('data-section') === 'hero')
+  assert.equal(crewHero.length, 1, 'the copy built no /crew hero to read the picture off')
+  // Read inside the hero: the screen this variant names is one of the console's, and the slider
+  // below the hero shows it too (the owner's feedback of 2026-10-30, finding 3), so the page's
+  // own count of that file is two and the hero's is one.
+  const crewPicture = picturesIn(crewHero[0]).filter((el) => el.attrs.get('src') === LANDING.variants.find((one) => one.name === 'crew').screenshot.src)
   assert.equal(
     crewPicture.length,
     1,
@@ -710,7 +735,7 @@ test('the hero shows the console screen its variant names, once, with the row\'s
 
     // One picture, and it is the screen: the drawing is the fallback for a variant that names
     // none, so the two never share a hero.
-    const pictures = findAll(hero, (el) => el.name === 'img' || el.name === 'svg')
+    const pictures = picturesIn(hero)
     assert.equal(
       pictures.length,
       1,

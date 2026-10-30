@@ -2789,8 +2789,9 @@ test('the copy confirmation sits over its button and never moves the command', (
 
 // ---- the campaign pages' content lands on the chrome's left edge (G2.2) --------------------
 //
-// The four campaign pages are five full-width bands, each padding its own content onto the page's
-// one pair of margins with `--frame-gutter`, the expression the site's own header and footer
+// The four campaign pages are a run of full-width bands — the spec's five sections and the
+// screens band of the owner's feedback of 2026-10-30 — each padding its own content onto the
+// page's one pair of margins with `--frame-gutter`, the expression the site's own header and footer
 // carry, so the headline starts on the wordmark's left edge and the two margins are equal. That
 // holds only while `main` contributes nothing: the gutter is a percentage of the box it is used
 // in, so a `main` that pads the bands or caps their width resolves it against a box that is not
@@ -2805,8 +2806,12 @@ test('the copy confirmation sits over its button and never moves the command', (
 // carrying none is the other shape that puts their content on the chrome's edge. A page where
 // both are in force is the defect.
 
-/** The five sections a campaign page is built from, and the two chrome blocks its mode draws. */
-const CAMPAIGN_BLOCKS = ['campaign-hero', 'campaign-proof', 'campaign-steps', 'campaign-social-proof', 'campaign-calls']
+/** The bands a campaign page is built from — the spec's five sections and the screens band the
+ *  owner's feedback of 2026-10-30 (finding 3) put between the steps and the closing field — and
+ *  the two chrome blocks its mode draws. The list is in the order a reader meets them, which is
+ *  what the spacing case below reads the gaps between; every one of them is a full-width band
+ *  that pads its own content onto the page's one gutter. */
+const CAMPAIGN_BLOCKS = ['campaign-hero', 'campaign-proof', 'campaign-steps', 'campaign-social-proof', 'campaign-screens', 'campaign-calls']
 const CAMPAIGN_CHROME = ['campaign-header', 'campaign-footer']
 
 /** The two widths the reading is taken at: a phone, and a desktop. The campaign mode's own
@@ -2957,7 +2962,7 @@ export function campaignLeftEdgeFailures(css, html) {
       }
       if (Math.abs(mainLeft + room - chrome) > 0.5) {
         out.push(
-          `at ${width} px \`main\` starts the campaign bands at ${Math.round(mainLeft)} px and \`.${klass}\` pads ${Math.round(room)} px more, so their content lands at ${Math.round(mainLeft + room)} px while the chrome is at ${Math.round(chrome)} px: the five bands are as wide as the page and carry the page's one gutter, so \`main\` gives them neither a gutter nor a ceiling of its own — the two in force at once is the second left edge (G2.2)`,
+          `at ${width} px \`main\` starts the campaign bands at ${Math.round(mainLeft)} px and \`.${klass}\` pads ${Math.round(room)} px more, so their content lands at ${Math.round(mainLeft + room)} px while the chrome is at ${Math.round(chrome)} px: the bands are as wide as the page and carry the page's one gutter, so \`main\` gives them neither a gutter nor a ceiling of its own — the two in force at once is the second left edge (G2.2)`,
         )
       }
     }
