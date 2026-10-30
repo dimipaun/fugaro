@@ -937,7 +937,14 @@ func checkSharedImageSince(ctx context.Context, env *cloudEnv, slug string, spec
 	if err != nil {
 		return remote(err)
 	}
-	data, _, err := b.Read(ctx, imagecheck.LockKey)
+	// ReadStrict, not Read: Read folds an HTTP 403 into ErrNotExist, and an
+	// absent lock means "this repository has not migrated", which this gate
+	// permits — so a read the launcher is not allowed to make would disable
+	// the gate silently rather than fail it. The launcher holds read on the
+	// runs bucket, so a 403 here means no access, and it is a remote error
+	// like any other (imagecheck/lock.go's LockWriter has the same reasoning
+	// for the lock's write).
+	data, _, err := b.ReadStrict(ctx, imagecheck.LockKey)
 	switch {
 	case errors.Is(err, blobx.ErrNotExist):
 		return nil
@@ -951,7 +958,14 @@ func checkSharedImageSince(ctx context.Context, env *cloudEnv, slug string, spec
 		// judging nothing would launch onto the wrong binary.
 		return refuse("cannot be judged (" + oneLineCLI(err.Error()) + ")")
 	}
-	img, ok := sharedImageOf(lock, spec.Repo, gcp.JobName(slug, spec.Workflow))
+	// The job a launch starts, not the workflow: a named Claude account gets
+	// its own job (jobWorkflow), and the lock records the job names that
+	// exist, so matching on the bare workflow would miss every one of them.
+	variant, ok := jobWorkflow(spec.Workflow, spec.OAuthToken)
+	if !ok {
+		return nil
+	}
+	img, ok := sharedImageOf(lock, spec.Repo, gcp.JobName(slug, variant))
 	if !ok {
 		return nil
 	}
