@@ -49,6 +49,7 @@ var Scopes = []ScopeRow{
 	{Key: "profile", In: InRepo, Why: "it chooses a profile; the project chooses its default with default_profile"},
 	{Key: "git.provider", In: InProject | InRepo},
 	{Key: "git.base_branch", In: InRepo, Why: whyBranch},
+	{Key: "git.author", In: InRepo, Why: whyRepoShape},
 	{Key: "git.pr.labels", In: InProject | InRepo},
 	{Key: "git.pr.reviewers", In: InRepo, Why: whyPeople},
 	{Key: "git.pr.early_draft", In: InProject | InRepo},

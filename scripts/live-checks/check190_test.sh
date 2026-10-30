@@ -129,7 +129,7 @@ ALLOWED = {
     ("artifacts", "repositories", "list"): ("--project", "--location", "--filter", "--format"),
     ("artifacts", "repositories", "delete"): ("--project", "--location", "--quiet"),
     ("artifacts", "docker", "images", "delete"): ("--project", "--delete-tags", "--quiet"),
-    ("builds", "submit"): ("--project", "--tag", "--service-account", "--gcs-source-staging-dir"),
+    ("builds", "submit"): ("--project", "--tag", "--config", "--service-account", "--gcs-source-staging-dir", "--gcs-log-dir"),
     ("run", "deploy"): ("--project", "--region", "--image", "--no-allow-unauthenticated", "--timeout",
                         "--min-instances", "--max-instances", "--set-secrets", "--set-env-vars", "--quiet"),
     ("run", "services", "list"): ("--project", "--region", "--filter", "--format"),
@@ -210,7 +210,29 @@ elif sub == ("artifacts", "repositories", "delete"):
 elif sub == ("artifacts", "docker", "images", "delete"):
     pass
 elif sub == ("builds", "submit"):
-    pass
+    # The real API's own refusal, which ended the owner's first real run: a
+    # build that names its service account must say where its logs go, and the
+    # default logs bucket is not an answer. --tag cannot say it (there is no
+    # logging flag), so only --config with options.logging or --gcs-log-dir
+    # can. --tag and --config are one mutually exclusive group, as in gcloud.
+    if flag("--tag") and flag("--config"):
+        sys.stderr.write("ERROR: (gcloud.builds.submit) argument --tag: At most one of --config | --pack | --tag can be specified.\n")
+        sys.exit(2)
+    logging = ""
+    cfg = flag("--config")
+    if cfg:
+        if not os.path.exists(cfg):
+            sys.stderr.write("ERROR: (gcloud.builds.submit) Unable to read file [%s]\n" % cfg)
+            sys.exit(1)
+        text = open(cfg).read()
+        with open(os.path.join(LOG, "cloudbuild.yaml"), "w") as fh:
+            fh.write(text)
+        for word in ("CLOUD_LOGGING_ONLY", "NONE"):
+            if "logging: " + word in text:
+                logging = word
+    if flag("--service-account") and not logging and not flag("--gcs-log-dir"):
+        sys.stderr.write("ERROR: (gcloud.builds.submit) INVALID_ARGUMENT: invalid argument: if 'build.service_account' is specified, the build must either (a) specify 'build.logs_bucket', (b) use the REGIONAL_USER_OWNED_BUCKET default logs bucket, or (c) use CLOUD_LOGGING_ONLY / NONE logging.\n")
+        sys.exit(1)
 elif sub == ("run", "deploy"):
     if mode == "deploy-fails":
         sys.stderr.write("ERROR: (gcloud.run.deploy) the deploy failed\n")
@@ -681,6 +703,16 @@ test_happy_path() {
   expect_contains "$deploy" "--max-instances=1" "happy path: the deploy keeps one instance"
   expect_contains "$deploy" "--set-secrets=/chk190/token=fugaro-chk190-token:latest" "happy path: the token is mounted as a file"
   expect_absent "$deploy" "CHK190_TOKEN=" "happy path: the token is in no environment variable"
+
+  # The build names its own account, so it must also name where its logs go:
+  # CLOUD_LOGGING_ONLY in a config file, as Fugaro's own image builds do.
+  local build
+  build=$(grep 'builds submit' "$dir/logs/gcloud.calls")
+  expect_contains "$build" "--service-account=projects/fugaro-dev/serviceAccounts/fugaro-b-1@fugaro-dev.iam.gserviceaccount.com" "happy path: the build runs as the build account"
+  expect_contains "$build" "--config=" "happy path: the build is a config file"
+  expect_absent "$build" "--tag=" "happy path: the build is not --tag, which cannot set logging"
+  expect_contains "$(cat "$dir/logs/cloudbuild.yaml")" "logging: CLOUD_LOGGING_ONLY" "happy path: the build logs to Cloud Logging only"
+  expect_contains "$(cat "$dir/logs/cloudbuild.yaml")" "us-east5-docker.pkg.dev/fugaro-dev/fugaro-chk190/" "happy path: the build pushes the check's own image"
 
   # Everything this run created was deleted again.
   expect_contains "$(cat "$dir/logs/gcloud.calls")" "run services delete fugaro-chk190" "happy path: the service deleted"

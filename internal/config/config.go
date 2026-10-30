@@ -311,11 +311,46 @@ type Followup struct {
 	AllowPublic bool `yaml:"allow_public"`
 }
 
+// GitAuthorFugaro and GitAuthorLauncher are the two values git.author may
+// take: "fugaro" is a run's own identity authoring its commits, and
+// "launcher" is the person who launched it (D604, D606). "" is neither of
+// them and means the same as GitAuthorFugaro — the key absent, which is what
+// every file written before the key said.
+const (
+	GitAuthorFugaro   = "fugaro"
+	GitAuthorLauncher = "launcher"
+)
+
+// GitAuthors is git.author's closed vocabulary, the sentence a misspelling
+// reads (Validate) and the list schemas/fugaro.schema.json's enum mirrors.
+// The empty value is not in it: a file that spells it out is the key absent,
+// and is accepted as such.
+var GitAuthors = []string{GitAuthorFugaro, GitAuthorLauncher}
+
 // Git describes the repository's git provider and pull request settings.
 type Git struct {
 	Provider   string     `yaml:"provider"`
 	BaseBranch string     `yaml:"base_branch"`
 	PR         PRSettings `yaml:"pr"`
+	// Author is who a run's commits are authored by: GitAuthorLauncher, the
+	// person who launched it as a stated claim (D604), or GitAuthorFugaro,
+	// the run's own identity — the same as the key being absent, which is
+	// what every repository has today (D606). It is the repository's own
+	// opt-in and no other layer sets it: Scopes gives it InRepo alone, so a
+	// project layer or a profile that writes it is refused for being out of
+	// scope, and a repository decides for itself whose name goes into its
+	// history.
+	//
+	// It selects a behaviour and mints no identity: the launcher fills the
+	// address from its own local identity and writes it into the task
+	// (internal/task's Spec.Author), and nothing fills or reads the key yet.
+	//
+	// The json tag is what keeps an absent key out of the resolved config's
+	// hash, as Rigor's and Governance's are: SHA256 marshals this struct
+	// (resolve.go), so a string with no json name would write author: "" into
+	// every repository's config and move the hash — and so the derived image —
+	// of a file that did not change.
+	Author string `yaml:"author,omitempty" json:"author,omitempty"`
 }
 
 // PRSettings are applied to every pull request Fugaro opens.

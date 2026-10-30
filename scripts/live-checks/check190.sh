@@ -659,6 +659,25 @@ ENTRYPOINT ["/chk190"]
 DOCKER_EOF
 }
 
+# write_build_config: the build as a config file rather than --tag, because a
+# build that names its service account must say where its logs go (the API
+# refuses it otherwise), and --tag has no flag for that. CLOUD_LOGGING_ONLY is
+# what Fugaro's own image builds use with the same account
+# (internal/backend/gcp/build.go, images/derived/cloudbuild.yaml), which holds
+# roles/logging.logWriter for it; a logs bucket would be one more thing the
+# installation owns and this check would write into. The file is outside the
+# build directory, so it is not part of the staged source.
+write_build_config() {
+  cat >"$SCRATCH/cloudbuild.yaml" <<CONFIG_EOF
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ["build", "-t", "${IMG:?}", "."]
+images: ["${IMG:?}"]
+options:
+  logging: CLOUD_LOGGING_ONLY
+CONFIG_EOF
+}
+
 step_build_deploy() {
   # The build account: this check never builds as the project's default Compute
   # account, which on fugaro-dev has had roles/editor removed. It reads the
@@ -739,15 +758,16 @@ step_build_deploy() {
   mkdir -p "$SCRATCH/build"
   cp "$PROXY_SRC/main.go" "$SCRATCH/build/main.go" || stop "the proxy source could not be copied into the scratch directory"
   write_dockerfile
+  write_build_config
   say "building ${IMG} (gcloud builds submit). If it offers to CREATE anything — the staging bucket, an API, a grant — say NO, stop, and report it: those are the installation's and are not this check's to accept"
   BUILD_ATTEMPTED=yes
   local build_rc=0
-  gcloud builds submit --project="${P:?}" --tag="${IMG:?}" \
+  gcloud builds submit --project="${P:?}" --config="$SCRATCH/cloudbuild.yaml" \
     --service-account="projects/${P}/serviceAccounts/${BUILD_SA}" \
     --gcs-source-staging-dir="${STAGING_PREFIX:?}" "$SCRATCH/build" \
     >&2 2>"$SCRATCH/build.err" || build_rc=$?
   if [ "$build_rc" != 0 ]; then
-    fact "build-error" FAIL "gcloud builds submit (as ${BUILD_SA}) exited ${build_rc}: $(git_error_excerpt build). Likely causes, most likely first: the identity the build ran as cannot read the source this run staged at ${STAGING_PREFIX} (storage.objects.get; roles/storage.objectViewer on gs://${P}_cloudbuild); it cannot WRITE the image to Artifact Registry (artifactregistry.repositories.uploadArtifacts; roles/artifactregistry.writer on the project, since ${SVC} is created by this run); YOUR account lacks roles/iam.serviceAccountUser on it; the Cloud Build API is not enabled in ${P}; or the Go tag in the Dockerfile is not a tag that registry has. The grants are the installation's IAM, not this check's to change. Nothing was deployed, and the repository, the image, the staged source and the secret container are deleted by this run's Restore"
+    fact "build-error" FAIL "gcloud builds submit (as ${BUILD_SA}) exited ${build_rc}: $(git_error_excerpt build). Likely causes, most likely first: the build config at ${SCRATCH}/cloudbuild.yaml lost its 'options: logging: CLOUD_LOGGING_ONLY' (a build that names its service account is refused without a logging option, before anything runs); the identity the build ran as cannot read the source this run staged at ${STAGING_PREFIX} (storage.objects.get; roles/storage.objectViewer on gs://${P}_cloudbuild); it cannot WRITE the image to Artifact Registry (artifactregistry.repositories.uploadArtifacts; roles/artifactregistry.writer on the project, since ${SVC} is created by this run); YOUR account lacks roles/iam.serviceAccountUser on it; the Cloud Build API is not enabled in ${P}; or the Go tag in the Dockerfile is not a tag that registry has. The grants are the installation's IAM, not this check's to change. Nothing was deployed, and the repository, the image, the staged source and the secret container are deleted by this run's Restore"
     stop "the build failed (exit ${build_rc}), so nothing was deployed: the block's build-error row carries what gcloud said"
   fi
 
@@ -959,7 +979,7 @@ print_plan() {
   say "  [network, writes] gcloud secrets create ${SECRET} --project=${P} --data-file=<CHECK190_TOKEN_FILE>"
   say "  [network, writes] gcloud secrets add-iam-policy-binding ${SECRET} --project=${P} --member=serviceAccount:<project-number>-compute@developer.gserviceaccount.com --role=roles/secretmanager.secretAccessor"
   say "  [network, writes] gcloud artifacts repositories create ${SVC} --project=${P} --location=${L} --repository-format=docker"
-  say "  [network, writes] gcloud builds submit --project=${P} --tag=${IMG} --service-account=<build account> --gcs-source-staging-dir=${STAGING_PREFIX} ${SCRATCH}/build"
+  say "  [network, writes] gcloud builds submit --project=${P} --config=${SCRATCH}/cloudbuild.yaml --service-account=<build account> --gcs-source-staging-dir=${STAGING_PREFIX} ${SCRATCH}/build (the config: one docker build of ${IMG}, images: [${IMG}], options.logging CLOUD_LOGGING_ONLY)"
   say "  [network, writes] gcloud run deploy ${SVC} ${DEPLOY_FLAGS[*]}"
   say "  [network] the probes: identity-token requests with curl to the service's own /chk190/stats and /chk190/health, and git clone (full and blobless), git push (small and above ${BIG_MIB} MiB on HTTP/1.1) and the slow push, all through the proxy to bitbucket.org"
   say "  [network, writes] one branch on $(repo_name): chk190/${NAME}, and its -slow sibling if that push ever completes"
