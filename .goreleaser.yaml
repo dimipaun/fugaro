@@ -20,6 +20,10 @@ builds:
     goarch: [amd64, arm64]
     flags:
       - -trimpath
+    # The released binary is the mixed-licence one: MIT core plus the ee/ code
+    # under the Subscription terms (D447, T21). Every licence label names that
+    # split, and scripts/notices_test.go refuses the tag without them.
+    tags: [ee]
     ldflags:
       - -s -w -X github.com/dimipaun/fugaro/internal/cli.Version={{ .Version }} -X github.com/dimipaun/fugaro/internal/cli.Commit={{ .FullCommit }}
     mod_timestamp: "{{ .CommitTimestamp }}"
@@ -126,7 +130,7 @@ homebrew_casks:
     skip_upload: '{{ if eq .Env.HOMEBREW_TAP_GITHUB_TOKEN "" }}true{{ else }}auto{{ end }}'
     homepage: https://github.com/dimipaun/fugaro
     description: Fleeting cloud workers that run coding-agent tasks and always end with a pull request
-    license: MIT
+    license: MIT AND LicenseRef-Fugaro-Subscription
     # The binary is not signed or notarized by Apple.
     hooks:
       post:

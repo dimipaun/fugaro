@@ -271,7 +271,9 @@ const pullRequestsSentence = ci.pullRequest
               next line, and the built card would read "LICENSING.mdsays which parts are not"
               (website/test/faq-community.mjs refuses a link that runs into the word after it). */}
           <a href={sourceHref('LICENSING.md')} rel="noopener">LICENSING.md</a>{' '}
-          says which parts are not
+          says which parts are not, and the binary built from this repository carries the
+          reserved <code>ee/</code> directory's code under <code>LicenseRef-Fugaro-Subscription</code>
+          (<a href={sourceHref('ee/LICENSE')} rel="noopener">ee/LICENSE</a>)
         </p>
       </li>
     </ul>
@@ -324,7 +326,9 @@ const pullRequestsSentence = ci.pullRequest
         <a href={sourceHref('LICENSE')} rel="noopener">LICENSE</a>;{' '}
         <a href={sourceHref('LICENSING.md')} rel="noopener">LICENSING.md</a>{' '}
         says which parts of the repository are not, and the reserved <code>ee/</code> directory is
-        one.
+        one. From 0.13.0 the binary built from this repository is the core plus that directory's
+        code, under <code>LicenseRef-Fugaro-Subscription</code>{' '}
+        (<a href={sourceHref('ee/LICENSE')} rel="noopener">ee/LICENSE</a>).
       </p>
     </div>
   </section>

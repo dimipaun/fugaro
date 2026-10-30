@@ -62,7 +62,11 @@
 //   9. **Both of the community page's licence elements state the core/`ee/` split** (F7; R2 as
 //      amended by O2). The Licence card and the `#licence` band each link `LICENSING.md` beside
 //      `LICENSE`, say the licence is the core's and which parts of the repository it does not
-//      cover, and the band names the reserved `ee/` directory among them. The sentence that
+//      cover, and the band names the reserved `ee/` directory among them. Each element also
+//      names the licence the binary's `ee/` code is under — `LicenseRef-Fugaro-Subscription`,
+//      or `ee/LICENSE` — because from 0.13.0 the released binary is the core plus that code
+//      (D447/T21), and a licence note that stops at the core describes a binary nobody
+//      downloads. The sentence that
 //      `LICENSE` is "the only text that governs" is gone: it stopped being true the day one
 //      file outside it was under another licence, which is what the reserved directory is.
 //      Each refusal has a plant, on the element the defect sits in.
@@ -816,6 +820,12 @@ function licenceSplitFailures(html) {
     if (!/\bparts\b[^.]*\bnot\b/.test(text)) {
       out.push(`${what} does not say which parts of the repository the licence does not cover: a licence stated without its scope is the claim the split retired`)
     }
+    // The split has a second half from the release that compiles `ee/` in: the binary a reader
+    // downloads is the core plus that code, so an element that stops at the core's licence
+    // describes a binary nobody gets (F7, R2 as amended by O2; D447/T21).
+    if (!element.includes('LicenseRef-Fugaro-Subscription') && !links(element, 'ee/LICENSE')) {
+      out.push(`${what} does not name the licence the binary's ee/ code is under (LicenseRef-Fugaro-Subscription, ee/LICENSE): the released binary carries that code beside the MIT core, so a note that stops at the core describes a binary nobody downloads`)
+    }
   }
 
   const band = pageText(elements.find((element) => element.what === 'the `#licence` band').html)
@@ -882,6 +892,16 @@ test('every licence-element refusal fires on the defect it names', () => {
       what: 'the retired sentence back in the band',
       plant: (html) => editLicenceElement(html, BAND, (one) => one.replace(/<\/p>/, ' It is the only text that governs what you may do with the code.</p>')),
       expected: /still says the licence is "the only text that governs"/,
+    },
+    {
+      what: `${CARD} stopping at the core's licence`,
+      plant: (html) => editLicenceElement(html, CARD, (one) => one.replace(/ee\/LICENSE|LicenseRef-Fugaro-Subscription/g, 'LICENSING.md')),
+      expected: /the Licence card does not name the licence the binary's ee\/ code is under/,
+    },
+    {
+      what: `${BAND} stopping at the core's licence`,
+      plant: (html) => editLicenceElement(html, BAND, (one) => one.replace(/ee\/LICENSE|LicenseRef-Fugaro-Subscription/g, 'LICENSING.md')),
+      expected: /the `#licence` band does not name the licence the binary's ee\/ code is under/,
     },
   ]
 
