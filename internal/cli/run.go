@@ -10,6 +10,7 @@ import (
 	"io"
 	"math/rand/v2"
 	"os"
+	"os/exec"
 	"slices"
 	"strings"
 	"time"
@@ -824,6 +825,14 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			} else if err := checkImageSince(ctx, env, slug, spec, kind, artifactsSince, "a mode: artifact recipe", "mode: artifact", "", warn); err != nil {
 				return launchResult{}, err
 			}
+		}
+		// The author, last of the fields this launch decides: the key that
+		// opted the repository in is judged first and refuses an image that
+		// cannot read it, the field is dropped rather than refused where the
+		// image is not known to read it (authorSkew), and only then is the
+		// identity resolved from this machine's local config.
+		if err := authorGates(ctx, env, slug, spec, kind, mode, warn); err != nil {
+			return launchResult{}, err
 		}
 		// The seal's gate (D19): a launch that mints hands its execution the
 		// seal key in the marker, which only a runner at sealSince or later
@@ -3057,4 +3066,121 @@ func claimHolder() string {
 // from the installation's config, so it is escaped like other such text.
 func noteLine(note string) string {
 	return "note: " + pluginwire.Printable(oneLineCLI(note)) + "\n"
+}
+
+// authorGates is the launch's half of the authorship gates, run where
+// finishLaunch knows the workflow's kind and checkout mode and before the task
+// is written: the key a repository opted in with (gitAuthorSince) is judged
+// first and refuses the launch, the field this launch would write (authorSince)
+// is dropped rather than refused, and only then is the author resolved from
+// this machine's local config.
+//
+// clone is the workflow's checkout mode, nil where the launch could not read
+// it: the key gate then takes the derived-image judge, as checkRigorImage and
+// checkGovernanceImage do, and reaches no gate at all when the file itself
+// could not be read. The key is judged for every mode — a review or artifact
+// run's runner decodes the same file strictly — while the author is recorded
+// for neither: a review or artifact run pushes nothing, so the identity it
+// would carry is a claim about commits that are never made (D605).
+func authorGates(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, clone *bool, warn io.Writer) error {
+	if clone != nil && *clone {
+		if err := checkCloneGitAuthorImage(ctx, env, spec, warn); err != nil {
+			return err
+		}
+	} else if err := checkGitAuthorImage(ctx, env, slug, spec, kind, warn); err != nil {
+		return err
+	}
+	if spec.Mode == recipe.ModeReview || spec.Mode == recipe.ModeArtifact {
+		return nil
+	}
+	author, err := launchAuthor(ctx, env.lc, spec.RequestedBy)
+	if err != nil {
+		return err
+	}
+	spec.Author = author
+	authorSkew(ctx, env, slug, spec, clone, warn)
+	return nil
+}
+
+// launchAuthor is the identity a launch records as its commits' author
+// (task.Spec.Author, D604): the local config's commit_email when it is set,
+// else the launcher's own identity me — the user: key, else git config
+// user.email, which is what localcfg.Me answered — with, as the name, the local
+// config's commit_name, else git's own user.name on this machine, else the
+// address's local part.
+//
+// nil means the launch records nobody, so the run's commits author and commit
+// under the run's own identity, which is what every run does today (D605): me
+// is not an address (user: alice, a CI box, a bot account), or a commit_email
+// was given that the launcher may not claim. That last case is refused and not
+// omitted (D649): commit_email has to be the address the launcher launches as,
+// or a forge noreply address, and anything else is a colleague's address, which
+// is the one thing this rule exists to keep out of a history the forge links to
+// that colleague's account.
+func launchAuthor(ctx context.Context, lc *localcfg.Config, me string) (*task.Person, error) {
+	email := me
+	if lc.CommitEmail != "" {
+		if lc.CommitEmail != me && !forgeNoreply(lc.CommitEmail) {
+			return nil, userErr("the local config's commit_email %s is neither the address you launch as (%s) nor a forge noreply address, so a run must not author its commits with it: one launcher must not attribute commits to somebody else. Set user: to that address to launch as it, or leave commit_email out",
+				pluginwire.Printable(lc.CommitEmail), pluginwire.Printable(me))
+		}
+		email = lc.CommitEmail
+	}
+	if !isAddress(email) {
+		return nil, nil
+	}
+	name := lc.CommitName
+	if name == "" {
+		name = gitUserName(ctx)
+	}
+	if name == "" {
+		name = email[:strings.IndexByte(email, '@')]
+	}
+	author := &task.Person{Name: name, Email: email}
+	// The shape Spec.Validate enforces when the runner reads the task back
+	// (task.AuthorProblem): the two fields become git's own header values, so a
+	// commit_name holding a line break would forge the rest of the header
+	// block, and a task the runner refuses empty-handed is worse than a launch
+	// that says which key to fix.
+	if p := task.AuthorProblem(*author); p != "" {
+		return nil, userErr("the local config gives the commit author a %s; fix commit_name or commit_email, or leave the author out", p)
+	}
+	return author, nil
+}
+
+// isAddress reports whether s is a commit address: the rule task.AuthorProblem
+// applies to a Person's email — one @ with a local part and a domain around it
+// — and the one D605's "not an email" means, so a launcher whose recorded
+// identity is a bare name (user: alice) records no author at all rather than
+// one git cannot read.
+func isAddress(s string) bool {
+	at := strings.IndexByte(s, '@')
+	return at > 0 && at == strings.LastIndexByte(s, '@') && at < len(s)-1
+}
+
+// forgeNoreply reports whether email is one of a forge's own noreply addresses
+// — GitHub's <id>+<login>@users.noreply.github.com and GitLab's
+// <id>-<login>@users.noreply.gitlab.com — which a launcher may set commit_email
+// to without claiming somebody else's address (D649): such an address is
+// routed to the account that owns it and to no mailbox, which is the whole of
+// what a launcher can arrange for itself. Only the domain is judged: the id and
+// the login in the local part are the person's own, and nothing before E's
+// authenticated identity could verify which login a launcher holds.
+func forgeNoreply(email string) bool {
+	dom := email[strings.IndexByte(email, '@')+1:]
+	return dom == "users.noreply.github.com" || dom == "users.noreply.gitlab.com"
+}
+
+// gitUserName is this machine's git config user.name, "" when it is unset or
+// git cannot be asked: a commit's display name is a nicety next to its address,
+// and the address's local part stands in when git has none (launchAuthor), so a
+// missing or slow git costs the author its name and never the launch.
+func gitUserName(ctx context.Context) string {
+	cmd := exec.CommandContext(ctx, "git", "config", "user.name")
+	cmd.WaitDelay = 5 * time.Second
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }

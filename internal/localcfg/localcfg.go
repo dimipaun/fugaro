@@ -216,8 +216,27 @@ type Config struct {
 	// `fugaro doctor`'s own cli-version check ignores both); nil or true
 	// leaves it on. Operator-only, like claude_accounts: never published to
 	// the runs bucket (Shared).
-	UpdateCheck *bool     `yaml:"update_check,omitempty"`
-	User        string    `yaml:"user,omitempty"`
+	UpdateCheck *bool  `yaml:"update_check,omitempty"`
+	User        string `yaml:"user,omitempty"`
+	// CommitName and CommitEmail are the name and address a run's commits are
+	// authored by when the repository opted in (git.author: launcher, D604,
+	// D606): the launcher's own identity, which `fugaro run` reads from here
+	// and writes into the task (internal/task's Spec.Author, A2a), and which
+	// A3's stamp environment then writes into the agent's git environment.
+	//
+	// CommitEmail is deliberately not free-form (D649): the launcher accepts
+	// it only when it is the launcher's own recorded identity or a forge
+	// noreply address, so one person cannot write a colleague's address into a
+	// history the forge links to that colleague's account. CommitName is the
+	// display half of the same claim and has no such rule beyond the shape a
+	// commit's own header holds (task.AuthorProblem).
+	//
+	// Neither is published (Shared blanks both, like user:): they are one
+	// machine's person, not the installation's fact, and a launcher who could
+	// write them into the runs bucket could choose whose name every teammate's
+	// commits carry.
+	CommitName  string    `yaml:"commit_name,omitempty"`
+	CommitEmail string    `yaml:"commit_email,omitempty"`
 	MaxParallel int       `yaml:"max_parallel"`
 	Endpoints   Endpoints `yaml:"endpoints,omitempty"`
 	// BaseBranch is the project's default base branch: the one repositories

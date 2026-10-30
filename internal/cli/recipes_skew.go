@@ -509,6 +509,44 @@ const rigorRequestSince = "0.11.1"
 // field too (tierGateSubject), on the same image.
 const governanceSince = "0.13.0"
 
+// authorSince is the first fugaro release whose runner reads a task's author
+// field (task.Spec.Author, the launcher's identity a launch records for the
+// repositories that opted in, D604/D606): an older runner refuses the field
+// outright, since task.Parse decodes with DisallowUnknownFields, and the run
+// would fail at bootstrap on a task nobody can read. It must equal the release
+// that ships task.Spec.Author: docs/release.md ("Before you tag") has the
+// release checklist verify it.
+//
+// The launch is never refused over this field: authorSkew drops it and says so
+// (baseBranchSkew's shape), because what it carries is an attribution — the run
+// it is dropped for does the same work and commits it under the identity it
+// would have had before the field existed (D605). What is refused is the key
+// the repository opted in with (gitAuthorSince): its holder asked for the
+// launcher's identity, and is told when the job image cannot be shown to honor
+// the opt-in rather than have it silently ignored.
+const authorSince = "0.14.0"
+
+// gitAuthorSince is the first fugaro release whose config reader knows
+// fugaro.yaml's git.author (config.GitAuthorLauncher, D606: a repository opts
+// in to its launcher's identity). The file is decoded with KnownFields, so a
+// runner built from an older base image refuses the key at bootstrap, before
+// the agent starts and after the launch was paid for. Like rigorSince and
+// governanceSince the judge is the image that runs the run: the installation's
+// base image for a checkout: clone workflow (its job runs no derived image of
+// its own), the base a workflow's build record was built FROM for a derived
+// one. The gate is fugaro update --repo's (refuseGitAuthorSkew, judged on the
+// installation's base image before any cloud effect) and the launch's
+// (checkGitAuthorImage, checkCloneGitAuthorImage), which runs only where the
+// file the run will read can be read here at all (launchFileConfig).
+//
+// It names the same release as authorSince and is still its own constant:
+// the two answer different questions about one release — a config key's reader
+// and a task field's — and the message each produces names what that reader
+// has to know. rigorSince and rigorRequestSince are the same pair of questions
+// answered by two different releases, which is why they carry two numbers.
+// docs/release.md ("Before you tag") has the checklist verify both.
+const gitAuthorSince = "0.14.0"
+
 // asksForRigor reports whether a launch asks for a rigor mode or declares a
 // path: the two task fields a runner older than rigorRequestSince refuses
 // outright, and so the condition the launch's own gate is written on. A
@@ -1404,4 +1442,126 @@ func catalogSwitchSkew(repo string, names []string, ref string, shipped bool, wa
 			where, repo, catalogSince, pluginwire.Printable(ref), rel)
 	}
 	return nil
+}
+
+// checkGitAuthorImage and checkCloneGitAuthorImage are the launch's own
+// gitAuthorSince gate, for a workflow whose job image is a derived one and for
+// a checkout: clone workflow respectively: the pair every other config-key
+// image gate has (checkRigorImage and checkCloneRigorImage), judged on the key
+// the configuration the run will read writes (gitAuthorLauncher). The refusal
+// names the fix that kind of image has — fugaro image refresh for a built
+// image, fugaro update --base base for the installation's own — and the way
+// out the file's author has, from gitAuthorSubject.
+func checkGitAuthorImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, warn io.Writer) error {
+	if !gitAuthorLauncher(launchFileConfig(ctx, env, spec)) {
+		return nil
+	}
+	subject, alt := gitAuthorSubject(spec.Repo)
+	return checkImageSince(ctx, env, slug, spec, kind, gitAuthorSince, subject, "the git.author key", "; or "+alt, warn)
+}
+
+// checkCloneGitAuthorImage is checkGitAuthorImage for a checkout: clone
+// workflow: see checkCloneImageSince.
+func checkCloneGitAuthorImage(ctx context.Context, env *cloudEnv, spec *task.Spec, warn io.Writer) error {
+	if !gitAuthorLauncher(launchFileConfig(ctx, env, spec)) {
+		return nil
+	}
+	subject, alt := gitAuthorSubject(spec.Repo)
+	return checkCloneImageSince(env.lc, spec, gitAuthorSince, subject, "the git.author key", "; or "+alt, warn)
+}
+
+// gitAuthorLauncher reports whether the configuration the run will read opted
+// in to the launcher's identity. Like rigorLaunchSources it is the file the run
+// checks out and not the launcher's working tree (launchFileConfig), so a
+// launch whose file cannot be read here — one for another repository from a
+// checkout that is not its own — is gated on nothing, and its bootstrap, which
+// reads the file this launcher could not, is what meets the key then.
+func gitAuthorLauncher(cfg *config.Config) bool {
+	return cfg != nil && cfg.Git.Author == config.GitAuthorLauncher
+}
+
+// gitAuthorSubject names, for the gates' messages, the key a repository opted
+// in with and the way out its author has. git.author is InRepo (config.Scopes),
+// so unlike rigor: and governance: there is no project-layer half to name.
+func gitAuthorSubject(repo string) (subject, alt string) {
+	return "fugaro.yaml's git.author of " + repo,
+		"remove the git.author key from fugaro.yaml to run under the run's own identity until every job image is current"
+}
+
+// refuseGitAuthorSkew refuses fugaro update --repo, before any cloud effect,
+// when the repository's fugaro.yaml sets git.author: launcher and the
+// installation's base image predates gitAuthorSince — a runner built from it
+// decodes the file with KnownFields and refuses the run at bootstrap on a key
+// it does not know. The states of ref are read as refuseRigorSkew reads them:
+// no base image passes, one that is not a release only warns.
+func refuseGitAuthorSkew(repo, author, ref string, warn io.Writer) error {
+	if author != config.GitAuthorLauncher {
+		return nil
+	}
+	subject, alt := gitAuthorSubject(repo)
+	switch rel, ok := releaseOf(ref); {
+	case ref == "":
+		return nil
+	case !ok:
+		fmt.Fprintf(warn, "warning: %s cannot be judged: the installation's base image is %s, which is not a release base image, so whether its runner reads the key is not checked\n",
+			subject, pluginwire.Printable(ref))
+	case imagePredates(rel, gitAuthorSince):
+		return userErr("%s needs a job image whose runner reads it (fugaro %s or later), but the installation's base image is %s, release %s: an older runner decodes the file strictly and refuses the run at bootstrap on a key it does not know. Run fugaro update --base base in your own terminal window to move the installation's base image to a current release, or %s",
+			subject, gitAuthorSince, pluginwire.Printable(ref), rel, alt)
+	}
+	return nil
+}
+
+// authorSkew drops spec.Author, and says so on warn, unless the job image is
+// shown to run a fugaro at authorSince or later: an older runner refuses the
+// whole task at bootstrap (task.Parse decodes with DisallowUnknownFields), so
+// carrying the field would turn a launch that works today into a run that dies
+// after it was paid for, over an attribution alone — which is why this gate
+// omits the field where the key's gate refuses the launch.
+//
+// "Shown to" is stricter than the other gates' "not shown to predate": an image
+// whose judge answers nothing — a base image with no release tag (a dev build,
+// a hand-pushed one, a mirror without one), a build record that cannot be read
+// — drops the field too. The field here is not the branch baseBranchSkew
+// carries, where the unknown case keeps it because dropping it silently changes
+// what the run does: nothing the run does changes here, the warning names the
+// image and both ways to move it, and the two mistakes are not symmetric (a
+// dropped attribution is announced and recoverable on the next launch; a task
+// an older runner refuses is a paid-for run that never started).
+//
+// The judge is baseBranchSkew's, for the same two shapes and the same reason: a
+// checkout: clone job runs the installation's base image itself, a derived image
+// the base its build record was built FROM. clone is that workflow's checkout
+// mode, nil when the launch could not read it; both judges are then asked, and
+// either one not being shown to know the field drops it.
+func authorSkew(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, clone *bool, warn io.Writer) {
+	a := spec.Author
+	if a == nil {
+		return
+	}
+	drop := func() {
+		spec.Author = nil
+		fmt.Fprintf(warn, "the job image is not known to run fugaro %s or later, which is the release that reads a task's author: the launch records none, so this run's commits stay the run's own identity. Run fugaro update --base base for the installation's base image, or fugaro image refresh --repo %s --workflow %s for a workflow's own, to record %s <%s> again\n",
+			authorSince, spec.Repo, spec.Workflow, pluginwire.Printable(a.Name), pluginwire.Printable(a.Email))
+	}
+	shown := func(rel string, known bool) bool { return known && !imagePredates(rel, authorSince) }
+	if clone == nil {
+		if rel, known := releaseOf(env.lc.BaseImage(config.BaseKind)); !shown(rel, known) {
+			drop()
+			return
+		}
+		if rel, known := recordBaseRelease(ctx, env, slug, spec); !shown(rel, known) {
+			drop()
+		}
+		return
+	}
+	if *clone {
+		if rel, known := releaseOf(env.lc.BaseImage(config.BaseKind)); !shown(rel, known) {
+			drop()
+		}
+		return
+	}
+	if rel, known := recordBaseRelease(ctx, env, slug, spec); !shown(rel, known) {
+		drop()
+	}
 }
