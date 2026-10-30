@@ -1210,8 +1210,12 @@ test("the page naming a reporter the repository does not hold, or the app holdin
   // Direction B: the page names a reporter nothing in the tree holds, and it does not say which
   // version carries it. This is the half the brief asks for, and the sentence the fixture strips
   // is what the page uses instead while the plan is still a plan.
+  // The app declares the reporters since P7.1a, which satisfies direction B on its own, so the
+  // fixture removes them from the dependency list to plant the state this half refuses.
+  const undeclared = JSON.parse(packageJSON)
+  for (const { pkg } of APP_TELEMETRY) delete undeclared.dependencies?.[pkg]
   const noVersion = page.replace(/Earlier builds of the app send nothing at all\./, 'The app sends these reports.')
-  const unbacked = telemetryFailures({ page: noVersion, packageJSON, planExists: false })
+  const unbacked = telemetryFailures({ page: noVersion, packageJSON: JSON.stringify(undeclared), planExists: false })
   assert.equal(unbacked.length, 3, unbacked.join('\n'))
   for (const product of APP_TELEMETRY.map((one) => one.product)) {
     assert.ok(

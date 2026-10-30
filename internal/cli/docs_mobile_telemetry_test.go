@@ -283,9 +283,10 @@ func TestTelemetryPlanGateIsPassedAndTheTwoDocumentsAgree(t *testing.T) {
 //
 // The rule is the plan's own (§4.3, part 2): P7.1's JS test "fails if the file
 // is tracked by git, and fails if it is not ignored". This test holds the
-// tracked half, because that is the half this repository can hold today: the
-// ignore half is P7.1's to add (`mobile/.gitignore` carries no entry for either
-// path yet, and the plan says so). Reading mere *existence* instead - which
+// tracked half only, because in Go the ignored half would be a second reading
+// of the same tree: P7.1a added the two lines to `mobile/.gitignore`, and
+// `mobile/src/app-config.test.js` is where the `git check-ignore` half lives,
+// beside the prebuild fixture it needs. Reading mere *existence* instead - which
 // this test did first - is stricter than the rule and false-fails the workflow
 // the plan mandates: D260 and P7.1's `npx expo prebuild` writes a local
 // `mobile/android/app/google-services.json` from the EAS file secret, and a
@@ -368,10 +369,12 @@ func TestTelemetryPlanLinksResolve(t *testing.T) {
 }
 
 // TestTelemetryPlanNamesTheFlagsItDependsOn: the plan states the exact native
-// switch names, and the app's dependency list still does not name the SDKs.
-// Both halves are the plan's "nothing here is built" claim, from the two sides
-// a reader can check: the names an implementer has to write down, and the
-// dependency that would have to exist for any of them to matter.
+// switch names, and the app's dependency list names the SDKs the switches are
+// read by. The first half is the plan's "nothing here is built" claim from the
+// side a reader can check -- the names an implementer has to write down; the
+// second half moved when P7.1a wired the SDKs in, and what it pins now is that
+// the three packages the plan names are the ones the app declares, and that the
+// telemetry module the flags will be read from is still P7.2's and P7.3's.
 func TestTelemetryPlanNamesTheFlagsItDependsOn(t *testing.T) {
 	plan := readDoc(t, telemetryPlan)
 	for _, want := range []string{
@@ -393,8 +396,14 @@ func TestTelemetryPlanNamesTheFlagsItDependsOn(t *testing.T) {
 	}
 
 	pkg := readDoc(t, "mobile/package.json")
-	if strings.Contains(pkg, "@react-native-firebase") {
-		t.Errorf("mobile/package.json names @react-native-firebase: the plan is a plan and P7.1 is unbuilt, so the dependency is not the app's yet")
+	for _, want := range []string{
+		"@react-native-firebase/app",
+		"@react-native-firebase/analytics",
+		"@react-native-firebase/crashlytics",
+	} {
+		if !strings.Contains(pkg, want) {
+			t.Errorf("mobile/package.json does not name %s: P7.1a wired the three packages in, and the plan's Task P7.1 names them as the dependency the flags depend on", want)
+		}
 	}
 	if _, err := os.Stat("../../mobile/src/telemetry"); err == nil {
 		t.Errorf("mobile/src/telemetry exists: the plan's telemetry module is P7.2's and P7.3's, and neither is built")

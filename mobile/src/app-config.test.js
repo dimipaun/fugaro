@@ -35,12 +35,13 @@
 // build resolves and no test here reads -- is `src/app-config.icons.test.js`'s.
 
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 
 import { secretShaped } from './accounts/index.js';
-import { ID_VARIABLES, resolveConfig } from '../app.config.js';
+import { ID_VARIABLES, NATIVE_CONFIG_VARIABLES, resolveConfig } from '../app.config.js';
 
 const HERE = import.meta.dirname;
 const APP_JSON = join(HERE, '..', 'app.json');
@@ -59,7 +60,22 @@ const MANIFEST = JSON.parse(readFileSync(join(HERE, '..', 'package.json'), 'utf8
  */
 const DECLARED = Object.freeze({
   ...CONFIG.expo,
+  // The Firebase wiring every resolution carries (P7.1a): the plugin entries
+  // `app.config.js` appends to the two `app.json` already lists, and Android's
+  // advertising-id permission removal. The entries are spelled out here rather
+  // than taken from the file, for the reason above.
+  plugins: [
+    ...CONFIG.expo.plugins,
+    ['expo-build-properties', { ios: { useFrameworks: 'dynamic' } }],
+    '@react-native-firebase/app',
+    ['@react-native-firebase/analytics', { ios: { withoutAdIdSupport: true } }],
+    '@react-native-firebase/crashlytics',
+  ],
   ios: { ...CONFIG.expo.ios, infoPlist: { ITSAppUsesNonExemptEncryption: false } },
+  android: {
+    ...CONFIG.expo.android,
+    blockedPermissions: ['com.google.android.gms.permission.AD_ID'],
+  },
 });
 
 /** Every string in a JSON value, with the path it was found at. */
@@ -265,4 +281,232 @@ test('a resolved config declares that the app uses only exempt encryption', () =
     false,
     'the declaration lives in app.config.js, not in the static config',
   );
+});
+
+// --- the Firebase config plugin, and the two native files (P7.1a) ------------
+//
+// The app gains Firebase (the mobile plan's Phase 7): `@react-native-firebase/app`
+// puts the SDK in the app, `analytics` and `crashlytics` are the two products it
+// carries, and the native config file that names the Firebase project is the
+// **owner's** -- registered in the console, delivered to the build as an EAS file
+// environment variable, and never committed (D259, §4.3). Two things follow, and
+// both are checkable from the tree alone:
+//
+//   * **the two paths are ignored.** `mobile/google-services.json` (Android) and
+//     `mobile/GoogleService-Info.plist` (iOS) are where the console's own output
+//     goes and where the plugin looks for them, so they are the two paths a
+//     later `git add -A` would commit. `mobile/.gitignore` names them; this test
+//     reads that through `git check-ignore` rather than by reading the file, so
+//     it asserts the rule git actually applies -- and proves the question can
+//     answer "no" with a path that is not ignored.
+//   * **the resolved config wires the plugin.** `app.config.js` is the one file
+//     the three packages' config plugins are registered in, and a resolution is
+//     what a build reads. What the plugin *options* mean -- the ad-ID switches,
+//     the iOS variant -- is the build-time walk's (§7.4, P7.1b); what is pinned
+//     here is that the entries exist, in both modes, once each, and that the
+//     plugins `app.json` already lists survive.
+
+/** The two native config files, by the names the Firebase console writes. */
+const NATIVE_CONFIG_FILES = Object.freeze(['google-services.json', 'GoogleService-Info.plist']);
+
+/** The three packages, in the order the config registers them. */
+const FIREBASE_PACKAGES = Object.freeze([
+  '@react-native-firebase/app',
+  '@react-native-firebase/analytics',
+  '@react-native-firebase/crashlytics',
+]);
+
+/** The plugin's name, whether the entry is a bare string or a `[name, options]` pair. */
+function pluginName(entry) {
+  return Array.isArray(entry) ? entry[0] : entry;
+}
+
+/** The repository root, asked of git rather than walked up to. */
+function repositoryRoot() {
+  return execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
+}
+
+/** Is `path` (from the repository root) matched by an ignore rule? */
+function ignoredByGit(path, root) {
+  try {
+    execFileSync('git', ['check-ignore', '-q', '--', path], { cwd: root, stdio: 'pipe' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+test('the two native Firebase config files are untracked and ignored', () => {
+  const root = repositoryRoot();
+  // The control: the predicate below answers "no" for a file that is in the tree
+  // and not ignored. Without it, an `ignoredByGit` that always returned true
+  // would satisfy the assertions under it.
+  assert.equal(ignoredByGit('mobile/app.json', root), false, 'the control: a tracked file is not ignored');
+
+  for (const name of NATIVE_CONFIG_FILES) {
+    const path = join('mobile', name);
+    // Not tracked. `--error-unmatch` is the question "is this path in the index",
+    // asked of git: an untracked file is what a checkout without the owner's
+    // console output looks like, and a tracked one is the failure this rule is
+    // about (a committed project id, a committed api key).
+    assert.throws(
+      () => execFileSync('git', ['ls-files', '--error-unmatch', '--', path], { cwd: root, stdio: 'pipe' }),
+      `${path} is tracked: the native config file is the owner's, and it is never committed`,
+    );
+    // ... and ignored, so the next `git add -A` does not pick it up either.
+    assert.equal(ignoredByGit(path, root), true, `${path} is not matched by mobile/.gitignore`);
+  }
+});
+
+test('a resolved config registers the three @react-native-firebase plugins', () => {
+  const SAMPLE = 'com.example.sample';
+  const staticPlugins = (CONFIG.expo.plugins ?? []).map(pluginName);
+  for (const [what, env] of [
+    ['a build', { EAS_BUILD: 'true', [ID_VARIABLES.ios]: SAMPLE, [ID_VARIABLES.android]: SAMPLE }],
+    ['a dev/lint run', {}],
+  ]) {
+    const { plugins } = resolveConfig(CONFIG.expo, env);
+    const names = plugins.map(pluginName);
+    for (const pkg of FIREBASE_PACKAGES) {
+      assert.equal(names.includes(pkg), true, `${what} does not register ${pkg}`);
+    }
+    // ... once each: `withPlugins` runs a plugin twice for two entries, and the
+    // second run is a second application of the same prebuild edit.
+    assert.equal(new Set(names).size, names.length, `${what} registers a plugin twice`);
+    // ... and the plugins `app.json` already lists are still there: this file
+    // appends, and an append that replaced the list would drop the app's own
+    // secure-store and splash configuration.
+    for (const name of staticPlugins) {
+      assert.equal(names.includes(name), true, `${what} dropped the ${name} plugin app.json lists`);
+    }
+  }
+});
+
+// --- the two native config files, and the advertising-id settings (P7.1a) ----
+//
+// The tests above are about the *entries*: the plugins are registered and the
+// two paths are ignored. These are about the **values** those entries carry,
+// which is where the plan's structural promises live: the app's builds point at
+// the owner's Firebase project through a path the environment hands over, and
+// the app links no advertising-id support at all. The build-time walk of §7.4
+// -- the generated `AndroidManifest.xml`, the `Podfile.lock`, the planted
+// controls -- is P7.1b's and is not here.
+
+test('the native config paths come from the environment, and only when set', () => {
+  const SAMPLE = 'com.example.sample';
+  // Synthetic paths, and deliberately not the real names a console output has:
+  // this file holds no path the owner's machine has, and the value is copied
+  // through unread anyway.
+  const ANDROID_PATH = '/tmp/x/google-services.json';
+  const IOS_PATH = '/tmp/x/GoogleService-Info.plist';
+  const build = {
+    EAS_BUILD: 'true',
+    [ID_VARIABLES.ios]: SAMPLE,
+    [ID_VARIABLES.android]: SAMPLE,
+    [NATIVE_CONFIG_VARIABLES.android]: ANDROID_PATH,
+    [NATIVE_CONFIG_VARIABLES.ios]: IOS_PATH,
+  };
+  const resolved = resolveConfig(CONFIG.expo, build);
+  assert.equal(resolved.android.googleServicesFile, ANDROID_PATH);
+  // ... the iOS file goes in `ios.googleServicesFile`, which is the field the
+  // plugin reads -- not into `infoPlist`, where a path would be a plist value
+  // nothing looks at.
+  assert.equal(resolved.ios.googleServicesFile, IOS_PATH);
+  assert.equal('googleServicesFile' in resolved.ios.infoPlist, false);
+  // ... and the two are the only fields the two variables add: strip them --
+  // and the identities, which the same test above is the one about -- and the
+  // resolution is the one a build with no files makes, which is `DECLARED`.
+  const ios = { ...resolved.ios };
+  const android = { ...resolved.android };
+  for (const field of ['googleServicesFile', 'bundleIdentifier']) delete ios[field];
+  for (const field of ['googleServicesFile', 'package']) delete android[field];
+  assert.deepEqual({ ...resolved, ios, android }, DECLARED);
+
+  // Unset: the field is **absent**, in both modes, and nothing throws -- a
+  // developer's `expo start`, this suite, and the local `eas-cli` resolution
+  // all run on a machine that has neither file. Mutation: make the field
+  // unconditional (or default it to a path) and the two assertions below find
+  // one.
+  for (const env of [{}, { EAS_BUILD: 'true', [ID_VARIABLES.ios]: SAMPLE, [ID_VARIABLES.android]: SAMPLE }]) {
+    for (const platform of ['ios', 'android']) {
+      assert.equal('googleServicesFile' in resolveConfig(CONFIG.expo, env)[platform], false, platform);
+    }
+  }
+  // ... an **empty** value is the same as an absent one: an EAS variable set to
+  // nothing is a variable nobody set, and a build whose `googleServicesFile` is
+  // `''` is a prebuild that fails later, with a message about a missing file
+  // rather than about the variable. Mutation: test `=== undefined` alone and
+  // this goes red.
+  const empty = resolveConfig(CONFIG.expo, {
+    ...build,
+    [NATIVE_CONFIG_VARIABLES.android]: '',
+    [NATIVE_CONFIG_VARIABLES.ios]: '',
+  });
+  assert.equal('googleServicesFile' in empty.android, false);
+  assert.equal('googleServicesFile' in empty.ios, false);
+});
+
+test('a resolved config links no advertising-id support, on both platforms', () => {
+  const plugins = resolveConfig(CONFIG.expo, {}).plugins;
+  const optionsOf = (name) => plugins.find((entry) => pluginName(entry) === name)?.[1];
+
+  // iOS: the Analytics entry selects the variant with no ad-ID support, which
+  // is the option the pinned plugin reads to write the Podfile flag -- the
+  // whole of the iOS half of the ban, since the pod then links
+  // `FirebaseAnalyticsCore` rather than the identity subspec. Mutation: drop
+  // the option and this line goes red; it is also the one option §4.2's table
+  // asked P7.1 to resolve against the SDK's own source rather than name from
+  // memory.
+  assert.deepEqual(optionsOf('@react-native-firebase/analytics'), { ios: { withoutAdIdSupport: true } });
+  // Android: the permission Play reads as "this app uses the advertising id" is
+  // **removed** from the merged manifest, through Expo's own
+  // `android.blockedPermissions` -- which is the route, because the pinned
+  // `@react-native-firebase/app` plugin has no Android option at all (§4.2's
+  // other VERIFY item).
+  assert.deepEqual(resolveConfig(CONFIG.expo, {}).android.blockedPermissions, [
+    'com.google.android.gms.permission.AD_ID',
+  ]);
+  // ... once, and without dropping a permission a later base config blocked:
+  // the list is appended to, not replaced. Mutation: assign the array instead
+  // and the first entry is gone.
+  const base = { ...CONFIG.expo, android: { ...CONFIG.expo.android, blockedPermissions: ['android.permission.RECORD_AUDIO'] } };
+  assert.deepEqual(resolveConfig(base, {}).android.blockedPermissions, [
+    'android.permission.RECORD_AUDIO',
+    'com.google.android.gms.permission.AD_ID',
+  ]);
+  // ... and the iOS dynamic-frameworks option is present, because the pinned
+  // `@react-native-firebase/app` plugin's own source says the Firebase Apple
+  // SDK is Swift-Package-Manager-only and a project built from it must use
+  // dynamic frameworks. It is the one dependency this task added beyond the
+  // three packages, and this is what it is for.
+  assert.deepEqual(optionsOf('expo-build-properties'), { ios: { useFrameworks: 'dynamic' } });
+});
+
+test('the Android switches firebase.json carries are the plan’s four', () => {
+  // The Android collection and ad switches are read by the SDK at **build
+  // time**, from `firebase.json` at the app root, under `react-native` -- the
+  // Analytics library's own `build.gradle` turns each into a manifest
+  // placeholder -- so this file, and not `app.config.js`, is where they live
+  // (§4.2). The values are D255's answer: the two collection switches are ON
+  // and the two ad switches are OFF. `src/app-config.ids.test.js`'s walk does
+  // not read this file, and §7.4's build-time walk (P7.1b) reads it alongside
+  // the generated native project; what is pinned here is the file itself.
+  //
+  // The four key names are the ones the SDK's build step reads, and they are
+  // not uniformly prefixed: `analytics/android/build.gradle:113` reads
+  // `analytics_default_allow_ad_personalization_signals`, while
+  // `:95` reads `google_analytics_adid_collection_enabled`. The prefixed
+  // `google_analytics_default_allow_ad_personalization_signals` is the
+  // **AndroidManifest** meta-data name (`analytics/android/src/main/
+  // AndroidManifest.xml:18`), not the `firebase.json` key, so writing it here
+  // would leave the switch unreachable and ad personalisation on.
+  const firebase = JSON.parse(readFileSync(join(HERE, '..', 'firebase.json'), 'utf8'));
+  assert.deepEqual(firebase, {
+    'react-native': {
+      analytics_auto_collection_enabled: true,
+      crashlytics_auto_collection_enabled: true,
+      google_analytics_adid_collection_enabled: false,
+      analytics_default_allow_ad_personalization_signals: false,
+    },
+  });
 });
