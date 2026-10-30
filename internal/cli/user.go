@@ -372,10 +372,20 @@ func userEdit(cmd *cobra.Command, o cloudOptions, role, member string, add bool)
 	// and the count is a consequence of whose member this is. The caller is
 	// placed the way every role check places them (roles.go): meMember writes
 	// the local config's own `user:` as the member the two lists hold, so this
-	// is not a second comparison of addresses, and an identity lc.Me cannot
-	// tell — its error — is the empty member, which is on no list.
+	// is not a second comparison of addresses. An identity lc.Me cannot tell is
+	// refused below rather than placed: the empty member it would answer is on
+	// no list, so reading its error as "not the caller" is what let an operator
+	// remove themselves.
 	if !add && r == userOperatorRole {
-		me, _ := lc.Me(ctx)
+		// An identity that cannot be read is refused rather than treated as
+		// the empty member: the empty member is on no list (meMember), so the
+		// guard below would let the caller's own member go — an operator
+		// removing themselves is exactly what this refusal exists to stop.
+		me, err := lc.Me(ctx)
+		if err != nil {
+			return userErr("nothing was written: fugaro user rm cannot tell whether %s is the identity this invocation is running as, because %v (set user in the local config %s, or git config user.email, and rerun this). An operator must not remove themselves from %s — the operators list is who can be told to settle the installation — so with the identity unread the removal is refused rather than compared against a member that is on no list",
+				safetext.Field(who), err, safetext.Field(sel.Path), safetext.Field(onDisk.Name))
+		}
 		if operatorOf(lc, me) && who == meMember(me) {
 			return userErr("you cannot remove yourself from the operators of %s: %s is the identity this invocation is running as, and the operators list is who can be told to settle the installation — run its update, add a member, read its budget — so another operator has to remove you, or a project Owner from outside the list: nothing was written",
 				safetext.Field(onDisk.Name), safetext.Field(who))

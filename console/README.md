@@ -1604,14 +1604,36 @@ Three rules a reader would not guess, all taken from the wire:
 - **Numbers are the tolerant axis and keys are not.** An absent or `null` number
   is an unavailable reading with a sentence; an absent *string* key a screen
   reads is a refusal by name (`runs[0].round`, `missing`).
-- **An unknown key is a refusal, and the key is text.** A document with a key
-  this console does not know is refused by name rather than half-drawn, and the
-  name goes through the sanitizer before it reaches a banner — a key shaped like
-  a credential is neutralised and a key no class admits is not drawn at all.
+- **An unknown key is ignored; a missing or retyped one is a refusal** (the
+  owner's ruling of 2026-10-30, which replaced "an unknown key is a refusal").
+  The CLI's compatibility rule is that its JSON only grows: a field is added,
+  never re-meant — a field whose meaning changes gets a new name — and removing
+  or retyping one is a format change. So a key a newer CLI added is skipped, and
+  the value is built from the keys the console names, so the key reaches no
+  screen; a field the console reads that is absent or of the wrong type is still
+  refused by name, on the screen whose read it is.
 
-The tests hold the plan's four claims, and three mutants die on them: reading a
-degraded document as a live one (4 tests), reading a missing number as `0` (3
-tests), and a shape that stops refusing unknown keys (2 tests).
+The tests hold the plan's claims: reading a degraded document as a live one,
+reading a missing number as `0`, carrying an unknown key into the value, and
+accepting a missing or retyped field each fail a named test.
+
+### Version skew: an older console reads a newer CLI
+
+`src/shared/version.ts` places the `fugaro version` line. A member of
+`SUPPORTED_CLI_MINORS` (`0.7`, `0.8`, `0.11`, `0.12`, `0.13`: the minors whose
+documents this console has read) **or any plain release above the newest
+member** answers `ok`, and the console draws everything it can read — it is the
+older of the two, and says so in its own words if asked. The reduced mode (a
+banner, and the spend screen, the caps and the kill/resume controls withheld)
+is for a CLI older than the newest member and above the floor (`0.9`, `0.10`,
+`0.6`), for a line that is not a plain `major.minor.patch` release number (a
+prerelease or build tail, a leading zero, a missing patch), and for a `dev`
+build; below `CLI_HARD_FLOOR_VERSION` the console refuses. A read that fails to
+decode against a newer CLI — a field removed or retyped — is refused on its own
+screen with the decoder's sentence. `version.test.ts` reads the CLI's
+`current` line from `docs/release-streams.yaml` and fails when the latest
+released CLI does not answer `ok` as a member, which is the release
+checklist's reminder to re-read that minor and add it.
 
 ### The corpus was corrected against the wire, not against itself
 

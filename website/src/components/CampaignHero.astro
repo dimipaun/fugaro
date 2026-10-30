@@ -9,10 +9,28 @@
  * the data file writes them, so a campaign whose message changes changes the file and not this
  * component.
  *
- * **The hero's third element — the muted looping video — is not here.** A variant's `video` is
- * a path under `website/public/` that the owner produces, no variant names one yet, and the
- * layout's `media` slot is where a picture or a video lands when one does (spec §6, F14, G2.5).
- * The hero therefore renders complete without it rather than with a hole where a file would go.
+ * **The first screen carries the action** (the owner's feedback of 2026-10-30, finding 1). The
+ * live preview's hero promised something, drew a small box beside the promise and put the only
+ * way to act at the bottom of the page, so a visitor who had read the headline had nothing to
+ * press. The booking link is now the hero's own third element, directly under the supporting
+ * line and above the picture, at 1440x900 and at 390x844 — the consent bar and the header are
+ * both above it in the flow and both counted. It is the same link the closing band offers
+ * (`CampaignCalls.astro`), read from the same file, so the two are one booking and not two.
+ *
+ * **The headline is the page's, so its measure is the page's.** `.display-xl` is
+ * `clamp(44px, 7.2vw, 104px)`, which is a size for a headline that owns the width of a band:
+ * in the half-width column the hero used to give it, the longest variant's headline (48
+ * characters) wrapped to five lines at 768 px and three at 1440 px. The owner's answer was to
+ * widen the measure and cap the size, and the two are one rule below — the headline spans the
+ * band and `clamp(17px, 5.2vw, 56px)` caps it. The size is read against the column at 390, 768
+ * and 1440 px in `website/test/base-styles.mjs`, which is what keeps a later edit from putting
+ * the fifth line back.
+ *
+ * **The hero's muted looping video — the spec's third element — is not here.** A variant's
+ * `video` is a path under `website/public/` that the owner produces, no variant names one yet,
+ * and the layout's `media` slot is where a picture or a video lands when one does (spec §6, F14,
+ * G2.5). The hero therefore renders complete without it rather than with a hole where a file
+ * would go.
  *
  * **What the eye lands on is the campaign's own drawing.** The owner's feedback of 2026-10-30
  * asked the hero to hold a picture that carries the idea in one look rather than a third
@@ -25,9 +43,11 @@
  * suppressed outright while a variant names its own media, which then takes that slot instead
  * (F14, G2.5).
  *
- * **The tone rides on the section, not on a second stylesheet.** `data-tone` is the variant's
- * own word from the file (`playful` is `/crew`'s), and the campaign pages' own rules key their
- * accents off it, so the four pages are one template with one difference the data file states.
+ * **The tone rides on the section.** `data-tone` is the variant's own word from the file
+ * (`playful` is `/crew`'s), written on the band beside the section's name and the file it was
+ * read from; the drawing carries its own copy of it, which is what its accents and its four
+ * motifs are keyed off, so the four pages are one template with one difference the data file
+ * states and no page types a colour of its own.
  */
 import CampaignHeroArt from './CampaignHeroArt.astro'
 
@@ -38,6 +58,8 @@ interface Props {
   supportingLine: string
   /** The variant's tone (`savings`, `control`, `scale`, `playful`). */
   tone: string
+  /** The owner's booking link, from `website/data/landing.yaml`: the first screen's one action. */
+  calendlyURL: string
   /**
    * Whether the hero draws the campaign's own picture. False while the variant names media of
    * its own, which takes the layout's `media` slot at the top of the page instead.
@@ -45,66 +67,176 @@ interface Props {
   art: boolean
 }
 
-const { headline, supportingLine, tone, art } = Astro.props
+const { headline, supportingLine, tone, calendlyURL, art } = Astro.props
 ---
 
 <section class="campaign-hero" data-section="hero" data-tone={tone} data-source="website/data/landing.yaml">
   {/* The words first in the markup, so the reading order is the order a phone shows and a
-      screen reader hears: the promise, the sentence that backs it, and then the picture. */}
-  <div class="campaign-hero-copy">
-    <h1 class="campaign-hero-headline display-xl">{headline}</h1>
-    <p class="campaign-hero-line">{supportingLine}</p>
+      screen reader hears: the promise, the sentence that backs it, the way to act on it, and
+      then the picture. */}
+  <h1 class="campaign-hero-headline display-xl">{headline}</h1>
+  <div class="campaign-hero-body">
+    <div class="campaign-hero-copy">
+      <p class="campaign-hero-line">{supportingLine}</p>
+      <p class="campaign-hero-action">
+        <a class="campaign-hero-button" href={calendlyURL}>Book a demo</a>
+      </p>
+    </div>
+    {art && <CampaignHeroArt tone={tone} />}
   </div>
-  {art && <CampaignHeroArt tone={tone} />}
 </section>
 
 <style>
-  /* Tokens only (W1.2): the type scale's two largest steps, the site's ground and the tone the
-     sentence under the headline is set in. */
+  /* Tokens only (W1.2): the type scale's steps, the site's ground and the tone the sentence
+     under the headline is set in. */
   .campaign-hero {
     padding-block: var(--space-2xl) var(--space-xl);
     padding-inline: var(--frame-gutter);
   }
 
+  /* The headline takes the band, and its size is capped. The two are one rule and the arithmetic
+     is `base-styles.mjs`'s: at 390 px the band's content box is 358 px and the longest headline
+     is 48 characters, which is two lines up to 22.7 px and three at the 44 px `.display-xl`
+     floors at. 5.5 vw is under that ceiling at every width — the ceiling *rises* as a share of
+     the viewport (22.7/390, 45.8/768) because the gutter is a smaller part of a wider page — and
+     `--font-size-4xl` is the ceiling a wide viewport stops at: 56 px at 1440, where the band is
+     1168 px wide (the wide breakpoint's gutter is `max(24px, (1440px − 1216px)/2 + 24px)`, 136
+     px, and `base.css` redefines `--frame-gutter` with `--space-md` from 48 rem for exactly
+     that). The floor is `--font-size-lg` rather than the body's step, so the page's `h1` never
+     falls below the type around it, and `base-styles.mjs` holds both ends: the line count at
+     the three widths and the headline's lead over every other heading on the page.
+
+     The 5.5 vw is the largest slope the two-line rule allows at 390 px. That is the whole
+     tension of this rule and it is worth naming: a 48-character headline on two lines in 358 px
+     is a ~21 px headline, so on a phone the `h1` is *smaller* than a section heading would be at
+     `.display-lg`'s 32 px floor. The page answers it by scaling its own section type with the
+     viewport too (`CampaignSteps.astro`, `CampaignCalls.astro`, both under this slope), so the
+     `h1` is the largest type on the page at all three measured widths rather than only from
+     615 px up. The alternative — a 32 px phone `h1` — is three lines for three of the four
+     headlines, which is the wrap the owner asked to be rid of. */
   .campaign-hero-headline {
     margin: 0;
-    max-width: 22ch;
+    max-width: none;
+    font-size: clamp(var(--font-size-lg), 5.5vw, var(--font-size-4xl));
   }
 
+  /* The sentence under the headline is the body's size on a phone and the body's larger step
+     from the wide breakpoint: at 390 px a 21 px headline over a 20 px sentence is not a
+     headline and its lead, and the pair is one of the things the case in `base-styles.mjs`
+     reads. */
   .campaign-hero-line {
-    margin: var(--space-md) 0 0;
+    margin: 0;
     max-width: var(--measure);
     color: var(--text-muted);
-    font-size: var(--font-size-lg);
+    font-size: var(--font-size-base);
     line-height: var(--leading-snug);
   }
 
-  /* The playful campaign is the one the spec asks for a lighter register (`/crew`): the same
-     brand and the same type, with the headline's own line given a little more room to breathe.
-     It is a tone and not a second look, so it changes nothing a gate reads — no colour of its
-     own, no size of its own. */
-  .campaign-hero[data-tone='playful'] .campaign-hero-headline {
-    max-width: 26ch;
+  .campaign-hero-action {
+    margin: var(--space-lg) 0 0;
   }
 
-  /* The wide viewport is where the hero becomes two columns: the words on the reading start and
-     the drawing on the outer edge, level with each other. The two-column rule is inside the
-     breakpoint and nowhere else, so the phone's hero is the plain stack the markup's order
-     gives it — the headline, the sentence, the picture — and the picture can never be the
-     reason a reader has to scroll to the booking link (the owner's feedback of 2026-10-30). */
-  @media (min-width: 48rem) {
+  /* The first screen's one action: the accent as its fill and the ground as its label, the pair
+     `a11y.mjs` computes for a filled button, and the shape the homepage's own button is — a
+     56 px control a thumb finds, at the width of its column. It is a link and not a button
+     element because the booking is a page the visitor goes to. */
+  .campaign-hero-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    min-height: 56px;
+    padding: 0 var(--space-xl);
+    border-radius: var(--radius-sm);
+    background: var(--accent);
+    color: var(--ground);
+    font-size: var(--font-size-lg);
+    font-weight: var(--weight-black);
+    text-decoration: none;
+  }
+
+  .campaign-hero-button:active {
+    transform: scale(0.97);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .campaign-hero-button:hover {
+      background: var(--accent-on-dark);
+    }
+  }
+
+  /* The entrance (the owner's feedback of 2026-10-30, finding 5). The headline's own rise is
+     `base.css`'s — `main h1.display-xl:not(.hero-tagline)` is every inner page's header, and a
+     campaign hero is one — so what is written here is the rest of the stagger: the sentence
+     100 ms after it, the button 200 ms after, and the picture 300 ms after that, each rising
+     the same 18 px over the site's own entrance duration. CSS only, on the first frame the
+     browser draws: a page with no script, or a browser without `@starting-style`, shows the
+     hero as it is, and a reader who asked their system for less motion never gets the block at
+     all rather than getting it neutralised. The button's own feedback — its hover and its
+     press — is declared here too and for the same reason: the campaign's motion is written for
+     a reader who has not asked for less, so nothing on these four pages leans on a rule
+     elsewhere to undo it (`website/test/base-styles.mjs` reads that, and `base.css`'s universal
+     reduce rule is the second half of the pair for everything the site does not gate). */
+  @media (prefers-reduced-motion: no-preference) {
+    .campaign-hero-button {
+      transition:
+        background-color var(--duration-fast) var(--ease-out),
+        transform var(--duration-fast) var(--ease-out);
+    }
+
+    .campaign-hero-line,
+    .campaign-hero-action {
+      transition:
+        opacity var(--duration-entrance) var(--ease-out),
+        transform var(--duration-entrance) var(--ease-out);
+    }
+
+    .campaign-hero-line {
+      transition-delay: 100ms;
+    }
+
+    .campaign-hero-action {
+      transition-delay: 200ms;
+    }
+
+    @starting-style {
+      .campaign-hero-line,
+      .campaign-hero-action {
+        opacity: 0;
+        transform: translateY(18px);
+      }
+    }
+  }
+
+  /* The wide viewport is where the hero becomes two columns: the sentence and the action on the
+     reading start and the drawing on the outer edge, level with each other. The headline is
+     above both, which is what lets it be the width of the band at every width — the measure the
+     owner asked for — and it is the reason the picture can be the biggest thing in the hero
+     without the action being under it. The two-column rule is inside the breakpoint and nowhere
+     else, so the phone's hero is the plain stack the markup's order gives it. */
+  @media (min-width: 60rem) {
     .campaign-hero {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(0, 30rem);
-      align-items: center;
-      column-gap: var(--space-2xl);
       padding-block: var(--space-3xl) var(--space-2xl);
+    }
+
+    .campaign-hero-body {
+      display: grid;
+      grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+      align-items: end;
+      column-gap: var(--space-xl);
     }
 
     /* The copy keeps the first column and the drawing the second, whether or not a drawing is
        rendered: a variant with media of its own is the same hero with one column painted. */
     .campaign-hero-copy {
       grid-column: 1;
+    }
+
+    /* The sentence takes the body's larger step here, where the headline is 42 px and up: it is
+       the pair the case in `base-styles.mjs` reads, and the headline's lead over it only widens
+       with the viewport. */
+    .campaign-hero-line {
+      font-size: var(--font-size-lg);
     }
   }
 </style>

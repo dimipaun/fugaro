@@ -13,6 +13,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // userCommand runs the user command tree on its own, so a case here drives one
@@ -580,6 +581,55 @@ func TestUserRmSelfRefusalWritesNothing(t *testing.T) {
 		t.Errorf("operators = %v, want both members", operators)
 	}
 	r.terraformReadsOnly(t)
+	r.noCloudWrites(t)
+}
+
+// dropUser rewrites the rig's local config without its user line, which is the
+// state a caller whose identity cannot be read is in.
+func (r *userRig) dropUser(t *testing.T) {
+	t.Helper()
+	var kept []string
+	for _, line := range strings.Split(string(r.configNow(t)), "\n") {
+		if strings.HasPrefix(line, "user:") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	if err := os.WriteFile(r.cfg, []byte(strings.Join(kept, "\n")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestUserRmRefusesWhenCallerIdentityUnreadable: the self-removal guard turns
+// on who is running the command, and a caller the local config cannot tell —
+// no user, git config user.email answering nothing — is refused rather than
+// read as "not the caller". The empty member meMember answers is on no list, so
+// reading lc.Me's error that way is what would let an operator remove
+// themselves from the list that is who can be told to settle the installation,
+// which is the one thing the guard exists to stop.
+func TestUserRmRefusesWhenCallerIdentityUnreadable(t *testing.T) {
+	r := userRigFor(t, nil, []string{userRigMe, "user:person-2@example.com"})
+	// After the rig, whose fake terraform is built by `go build`: a GIT_DIR of
+	// this test's would fail its VCS stamping.
+	testutil.IsolateGit(t)
+	t.Setenv("GIT_DIR", t.TempDir())
+	r.dropUser(t)
+	before := string(r.configNow(t))
+	out, _, err := userCommand(t, "rm", userRigMe, "--role", "operator")
+	if err == nil {
+		t.Fatalf("an operator removed themselves with the identity unread:\n%s", out)
+	}
+	for _, want := range []string{"cannot tell whether", "set user in the local config", "git config user.email", "nothing was written"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if now := string(r.configNow(t)); now != before {
+		t.Errorf("the refused command wrote the config:\n%s", now)
+	}
+	if _, operators := r.lists(t); strings.Join(operators, ",") != userRigMe+",user:person-2@example.com" {
+		t.Errorf("operators = %v, want both members", operators)
+	}
 	r.noCloudWrites(t)
 }
 

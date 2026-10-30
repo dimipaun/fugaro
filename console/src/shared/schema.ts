@@ -24,23 +24,35 @@
 // it would say a project had spent nothing all day when what happened is that
 // the console could not ask.
 //
-// **What this module refuses, and why refusing is the point.** A document with
-// an unknown top-level key, a missing key the screens read, a string key that
-// is not a string, an array key that is not an array, a `degraded` that is not
-// `true` -- each is a document this console does not know how to read, and each
-// is refused **by name** (`runs[0].round`, `missing`) rather than rendered
-// half-empty. Task 3.2 turns that refusal into the skew banner; a decode that
-// silently dropped the unknown half would turn a CLI the console does not
-// understand into a screen that looks fine.
+// **What this module refuses, and why refusing is the point.** A missing key
+// the screens read, a string key that is not a string, an array key that is not
+// an array, a `degraded` that is not `true` -- each is a document this console
+// does not know how to read, and each is refused **by name** (`runs[0].round`,
+// `missing`) rather than rendered half-empty. The read's screen draws that
+// refusal as its own skew sentence; a decode that silently dropped a field the
+// console needs would turn a CLI the console does not understand into a screen
+// that looks fine.
 //
-// **The two tolerant axes, named.** Numbers are read through `readNumber`, so a
-// number that is absent, `null` or not a number becomes an *unavailable
-// reading* with a sentence rather than a refusal: the contract's own `*float64`
-// convention makes `null` a normal value ("no cap set", "no spend recorded"),
-// and the availability model already says what to draw for it. And the keys
-// *inside* `runstore.Cost` are not closed, because that struct is versioned
-// independently of this one and the console reads six fields of it; the live
-// half of this file closes every object it decodes. Everything else is closed.
+// **What it ignores: a key it does not know** (the owner's ruling of
+// 2026-10-30). The CLI's compatibility rule is that its JSON only grows: a
+// field is added, never re-meant -- a field whose meaning changes is a new
+// field with a new name -- and a removal or a retyping is a format change. So
+// a key outside a shape's `*_KEYS` list is a field a newer CLI added, and it is
+// skipped rather than refused: every view below is built field by field from
+// the keys the console names, so an unknown key reaches no screen, no
+// sanitizer and no sum. This file used to refuse such a key whole
+// (`unknown-key`), and the history in `RUN_KEYS` and `RECORD_KEYS` below is
+// what that cost: every CLI release that added a column turned the Live and
+// Runs screens into the skew state until a console release caught up. The
+// `*_KEYS` lists stay, pinned to the Go structs by `schema.test.ts`, as the
+// console's statement of what it has read.
+//
+// **The tolerant axes for a known key, named.** Numbers are read through
+// `readNumber`, so a number that is absent, `null` or not a number becomes an
+// *unavailable reading* with a sentence rather than a refusal: the contract's
+// own `*float64` convention makes `null` a normal value ("no cap set", "no
+// spend recorded"), and the availability model already says what to draw for
+// it.
 //
 // **A one-shot read's document is not a shape of the feed.** `plan status
 // --json` is the first of those to be decoded here (GV2.1), and it gets its own
@@ -48,7 +60,7 @@
 // no common marker, so a feed document is refused by this door for the keys it
 // is missing and a plan document is refused as an unknown shape by the feed's.
 // The section at the end of this file is that document, and it follows the same
-// rules -- closed objects, refusals by name, quantities as readings.
+// rules -- unknown keys ignored, refusals by name, quantities as readings.
 //
 // **Nothing here imports anything at runtime**, for the same reason
 // `sanitize.ts` does not: the renderer loads this module and has no Node, no
@@ -315,8 +327,6 @@ export type SchemaRefusalName =
   | 'unknown-shape'
   /** a key the shape requires is absent */
   | 'missing'
-  /** a key the shape does not have */
-  | 'unknown-key'
   /** a key that must be a string is not one */
   | 'not-a-string'
   /** a key that must be an array is not one */
@@ -396,31 +406,6 @@ function at<T>(where: string, decode: () => T): Decoded<T> {
 function objectAt(raw: unknown, field: string, where: string): Record<string, unknown> {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return refuse('not-an-object', field, where)
   return raw as Record<string, unknown>
-}
-
-/**
- * keyName is an unknown key as the console may draw it.
- *
- * A key the console does not have is **text a document chose**, and it ends up
- * in the skew banner, so it goes through the same sanitizer every other
- * job-written string does: a key shaped like a credential is neutralised, and a
- * key no class admits is not drawn at all. The path prefix (`runs[0]`) is the
- * console's own and is not passed through here.
- */
-function keyName(key: string): string {
-  const clean = sanitizeText(key, 'label', 'the key')
-  return clean.ok ? clean.text : 'a key the console will not draw'
-}
-
-/** closed refuses an object that carries a key the shape does not have. It is
- * what makes `{...doc, rogue: 1}` a refusal rather than a document with a field
- * nobody read. */
-function closed(raw: Record<string, unknown>, allowed: readonly string[], field: string, where: string): void {
-  for (const key of Object.keys(raw)) {
-    if (allowed.includes(key)) continue
-    const named = keyName(key)
-    return refuse('unknown-key', field === '' ? named : `${field}.${named}`, where)
-  }
 }
 
 /** required is the one door a key the shape needs comes through: absent, and the
@@ -518,9 +503,7 @@ function readingOf(raw: Record<string, unknown>, key: string, field: string): Re
  * a document this console has merely not learned to read, drawn `n/a`; a
  * value of the wrong shape at `leased_usd` -- or a negative one, which no money
  * field of this contract can hold -- is a document this console does not
- * understand, and it is refused by name rather than half-read. That is the
- * shape's own rule for every key it does not know (`closed`), applied to the
- * value rather than the name. */
+ * understand, and it is refused by name rather than half-read. */
 function optionalMoneyAt(raw: Record<string, unknown>, key: string, field: string, where: string): Reading {
   const at = field === '' ? key : `${field}.${key}`
   const value = raw[key]
@@ -787,9 +770,6 @@ export const LIVE_MARKERS: readonly string[] = Object.freeze([
   'ready',
 ])
 
-const CONNECTION_KEYS = ['state', 'reason', 'age_seconds']
-const BURN_KEYS = ['known', 'usd_per_min', 'fast']
-const KILL_KEYS = ['by', 'at', 'reason']
 /** TOTAL_KEYS is `JSONTotal`'s own key set (`internal/watch/json.go`), in the
  * struct's order. Exported so `schema.test.ts` can pin it against the struct,
  * as it pins `REPO_KEYS`, `RECORD_KEYS` and `RUN_KEYS`. */
@@ -811,10 +791,9 @@ export const TOTAL_KEYS = [
 /** REPO_KEYS is `JSONRepo`'s own key set (`internal/watch/json.go:42`): a
  * repository is a total, and the two keys it does *not* carry are `runs` and
  * `run_hours`, which are on `JSONTotal` alone. Review round 5 of PR 478: this
- * was `['slug', 'repo', ...TOTAL_KEYS]`, so `closed()` accepted those two on a
- * `repos[]` entry -- keys the struct cannot write, decoded as understood rather
- * than becoming the skew state this module promises for a key it does not know
- * ("the live half of this file closes every object it decodes"). The list is
+ * was `['slug', 'repo', ...TOTAL_KEYS]`, which listed those two on a `repos[]`
+ * entry -- keys the struct cannot write, pinned as the console's statement of
+ * what it has read. The list is
  * written out rather than spread, so a later key added to a *total* is a
  * decision about repositories too. Exported so `schema.test.ts` can pin it
  * against the struct the way it pins `RECORD_KEYS`.
@@ -836,11 +815,11 @@ export const REPO_KEYS = [
   'kill',
 ]
 /** RUN_KEYS is **every** JSON key of `JSONRun` (`internal/watch/json.go`), in
- * the struct's own order -- `runs[]`, the Live screen's feed. It is closed for
- * `RECORD_KEYS`'s reason and fails the same way: a key the struct writes and
- * this list does not have makes `closed()` refuse the whole document, so the
- * Live screen draws the skew state for a document it simply had not been told
- * about.
+ * the struct's own order -- `runs[]`, the Live screen's feed. Until the
+ * owner's ruling of 2026-10-30 a key the struct wrote and this list did not
+ * have refused the whole document, so the Live screen drew the skew state for a
+ * document it simply had not been told about -- the history below is that
+ * cost, and it is why an unknown key is now ignored.
  *
  * **`job`, `profile`, `provider`, `account` and `launched_by` arrived with
  * 0.9.0** (the project-centric job triple, and who launched a run), and this
@@ -947,22 +926,20 @@ export const FINISHED_KEYS = [
   'launched_by',
   'plan_task',
 ]
-const TOTALS_KEYS = ['runs', 'model_usd', 'model_notional_usd', 'compute_usd', 'total_usd', 'compute_not_estimated']
 /**
  * RECORD_KEYS is **every** JSON key of `runview.Row`
  * (`internal/runview/runview.go:57`), in the struct's own order, and the four
  * that carry no `omitempty` are among them: `terminal`, `settled`, `pushed` and
- * `follow_up`. That is not politeness -- `closed` refuses a key the shape does
- * not list, so a list that omits a key the CLI writes is a list that refuses a
- * real `runs ls --json` document, which is exactly what an earlier revision of
- * this file did: eleven keys, and every degraded document rejected at
- * `runs[0].terminal`.
+ * `follow_up`. Until the owner's ruling of 2026-10-30 a key the shape did not
+ * list refused the whole document, so a list that omitted a key the CLI writes
+ * refused a real `runs ls --json` document, which is exactly what an earlier
+ * revision of this file did: eleven keys, and every degraded document rejected
+ * at `runs[0].terminal`; the paragraphs below are the same drift, and the
+ * reason a key the console does not list is now ignored rather than refused.
  *
- * The list is therefore derived from the struct rather than from the fields the
- * console happens to read, and a key the CLI adds in a later version is *still*
- * refused -- which is the point of closing the shape: a document the console
- * does not fully understand becomes Task 3.2's skew state, not a half-drawn
- * list. Keys accepted and not read (`title`, `project_layer`,
+ * The list is derived from the struct rather than from the fields the console
+ * happens to read, and pinned to it, so it stays the console's statement of
+ * what it has read. Keys accepted and not read (`title`, `project_layer`,
  * `config_sha256`, `image_age_s`, `changed_files`, `rigor`, `artifact_count`, `artifact_bytes`,
  * `task_pr`, `record_pr`, `pr`, `pushed_head`, `started_at`, `draft_fallback`,
  * `pr_status_at`, `stale_draft`, `execution`, `batch`, `halt`, `previous_run`,
@@ -973,7 +950,7 @@ const TOTALS_KEYS = ['runs', 'model_usd', 'model_notional_usd', 'compute_usd', '
  * **`artifact_count` and `artifact_bytes` were missing, and a review found it.**
  * They sit between `outcome` and `task_pr` in the struct, so every
  * `runs ls --json` row for a run that delivered artifacts carried two keys this
- * list did not have and `closed()` refused the whole document as
+ * list did not have and the decoder refused the whole document as
  * `runs[0].artifact_count`. The pinning test could not catch it because the
  * expected list in that test was a second hand-written copy of this one: the
  * two agreed with each other and both were wrong. That test now reads the struct
@@ -990,8 +967,8 @@ const TOTALS_KEYS = ['runs', 'model_usd', 'model_notional_usd', 'compute_usd', '
  * between `reason` and `halt` in the struct, and it is written only on a row
  * whose status was derived while reading -- a run whose record was never
  * finalized and whose Cloud Batch job the platform preempted. It is the same
- * omission `title` and `launched_by` were: `closed()` refuses a key the shape
- * does not list, so a `runs ls --json` document carrying one preempted run
+ * omission `title` and `launched_by` were: the decoder then refused a key the
+ * shape did not list, so a `runs ls --json` document carrying one preempted run
  * would be refused whole as `runs[0].derived` until this list had the key. It
  * is accepted and not read yet -- the Runs screens draw `status` and `reason`,
  * and no screen draws the derivation as its own marker.
@@ -1081,7 +1058,6 @@ export const RECORD_KEYS = [
 function killAt(raw: unknown, field: string, where: string): KillView | null {
   if (raw === null || raw === undefined) return null
   const kill = objectAt(raw, field, where)
-  closed(kill, KILL_KEYS, field, where)
   return {
     by: optionalText(kill, 'by', field, where),
     at: optionalText(kill, 'at', field, where),
@@ -1091,7 +1067,6 @@ function killAt(raw: unknown, field: string, where: string): KillView | null {
 
 function burnAt(raw: unknown, field: string, where: string): BurnView {
   const burn = objectAt(raw, field, where)
-  closed(burn, BURN_KEYS, field, where)
   const known = boolAt(required(burn, 'known', field, where), `${field}.known`, where)
   return {
     known,
@@ -1107,16 +1082,13 @@ function burnAt(raw: unknown, field: string, where: string): BurnView {
 
 function totalsAt(raw: unknown, field: string, where: string): TotalsView {
   const total = objectAt(raw, field, where)
-  closed(total, TOTAL_KEYS, field, where)
   return totalsOf(total, field, where)
 }
 
 /**
- * totalsOf reads the budget fields off an object that has already been checked
- * against its own key set. A repository *is* a total with two more keys in front
- * of it (`RepoView extends TotalsView`), so `repoAt` reads the same fields
- * through here: running `closed` twice would refuse the repository's own `slug`
- * as a key the totals shape does not have.
+ * totalsOf reads the budget fields off a total. A repository *is* a total with
+ * two more keys in front of it (`RepoView extends TotalsView`), so `repoAt`
+ * reads the same fields through here.
  */
 function totalsOf(total: Record<string, unknown>, field: string, where: string): TotalsView {
   return {
@@ -1134,7 +1106,6 @@ function totalsOf(total: Record<string, unknown>, field: string, where: string):
 function repoAt(raw: unknown, index: number, where: string): RepoView {
   const field = `repos[${String(index)}]`
   const repo = objectAt(raw, field, where)
-  closed(repo, REPO_KEYS, field, where)
   return {
     slug: stringAt(required(repo, 'slug', field, where), `${field}.slug`, where),
     repo: stringAt(required(repo, 'repo', field, where), `${field}.repo`, where),
@@ -1145,7 +1116,6 @@ function repoAt(raw: unknown, index: number, where: string): RepoView {
 function runAt(raw: unknown, index: number, where: string): RunView {
   const field = `runs[${String(index)}]`
   const run = objectAt(raw, field, where)
-  closed(run, RUN_KEYS, field, where)
   return {
     run: stringAt(required(run, 'run', field, where), `${field}.run`, where),
     slug: stringAt(required(run, 'slug', field, where), `${field}.slug`, where),
@@ -1180,7 +1150,6 @@ function runAt(raw: unknown, index: number, where: string): RunView {
 function finishedAt(raw: unknown, index: number, list: string, where: string): FinishedView {
   const field = `${list}[${String(index)}]`
   const item = objectAt(raw, field, where)
-  closed(item, FINISHED_KEYS, field, where)
   const prUrl = item.pr_url
   return {
     run: stringAt(required(item, 'run', field, where), `${field}.run`, where),
@@ -1222,7 +1191,6 @@ function costAt(raw: unknown, field: string, where: string): CostView {
 function recordAt(raw: unknown, index: number, where: string): RecordView {
   const field = `runs[${String(index)}]`
   const record = objectAt(raw, field, where)
-  closed(record, RECORD_KEYS, field, where)
   const prUrl = record.pr_url
   return {
     run: stringAt(required(record, 'run', field, where), `${field}.run`, where),
@@ -1248,7 +1216,6 @@ function recordAt(raw: unknown, index: number, where: string): RecordView {
 function degradedTotalsAt(raw: unknown, where: string): DegradedTotalsView {
   const field = 'totals'
   const totals = objectAt(raw, field, where)
-  closed(totals, TOTALS_KEYS, field, where)
   return {
     runs: readingOf(totals, 'runs', `${field}.runs`),
     modelUsd: readingOf(totals, 'model_usd', `${field}.model_usd`),
@@ -1260,9 +1227,7 @@ function degradedTotalsAt(raw: unknown, where: string): DegradedTotalsView {
 }
 
 function liveAt(raw: Record<string, unknown>, where: string): LiveDocument {
-  closed(raw, LIVE_KEYS, '', where)
   const connection = objectAt(required(raw, 'connection', '', where), 'connection', where)
-  closed(connection, CONNECTION_KEYS, 'connection', where)
   const queuedNote = raw.queued_note
   return {
     shape: 'live',
@@ -1294,7 +1259,6 @@ function liveAt(raw: Record<string, unknown>, where: string): LiveDocument {
 }
 
 function degradedAt(raw: Record<string, unknown>, where: string): DegradedDocument {
-  closed(raw, DEGRADED_KEYS, '', where)
   return {
     shape: 'degraded',
     project: stringAt(required(raw, 'project', '', where), 'project', where),
@@ -1615,7 +1579,6 @@ function planNeedsAt(raw: Record<string, unknown>, key: string, field: string, w
 function planNodeAt(raw: unknown, index: number, plan: string, where: string): PlanNodeView {
   const field = `${plan}.nodes[${String(index)}]`
   const node = objectAt(raw, field, where)
-  closed(node, PLAN_NODE_KEYS, field, where)
   return {
     id: stringAt(required(node, 'id', field, where), `${field}.id`, where),
     title: stringAt(required(node, 'title', field, where), `${field}.title`, where),
@@ -1639,7 +1602,6 @@ function planNodeAt(raw: unknown, index: number, plan: string, where: string): P
 function planReleaseAt(raw: unknown, index: number, plan: string, where: string): PlanReleaseView {
   const field = `${plan}.releases[${String(index)}]`
   const release = objectAt(raw, field, where)
-  closed(release, PLAN_RELEASE_KEYS, field, where)
   return {
     version: stringAt(required(release, 'version', field, where), `${field}.version`, where),
     name: optionalText(release, 'name', field, where),
@@ -1655,7 +1617,6 @@ function planReleaseAt(raw: unknown, index: number, plan: string, where: string)
 function planAt(raw: unknown, index: number, where: string): PlanView {
   const field = `plans[${String(index)}]`
   const plan = objectAt(raw, field, where)
-  closed(plan, PLAN_KEYS, field, where)
   return {
     id: stringAt(required(plan, 'id', field, where), `${field}.id`, where),
     artifact: stringAt(required(plan, 'artifact', field, where), `${field}.artifact`, where),
@@ -1675,7 +1636,6 @@ function planAt(raw: unknown, index: number, where: string): PlanView {
 
 function planTotalsAt(raw: unknown, field: string, where: string): PlanTotalsView {
   const totals = objectAt(raw, field, where)
-  closed(totals, PLAN_TOTALS_KEYS, field, where)
   return {
     plans: readingOf(totals, 'plans', `${field}.plans`),
     tasks: readingOf(totals, 'tasks', `${field}.tasks`),
@@ -1687,7 +1647,6 @@ function planTotalsAt(raw: unknown, field: string, where: string): PlanTotalsVie
 function planStreamAt(raw: unknown, index: number, where: string): PlanStreamView {
   const field = `streams[${String(index)}]`
   const stream = objectAt(raw, field, where)
-  closed(stream, PLAN_STREAM_KEYS, field, where)
   return {
     name: stringAt(required(stream, 'name', field, where), `${field}.name`, where),
     theme: stringAt(required(stream, 'theme', field, where), `${field}.theme`, where),
@@ -1701,7 +1660,6 @@ function planStreamAt(raw: unknown, index: number, where: string): PlanStreamVie
 }
 
 function planStatusAt(raw: Record<string, unknown>, where: string): PlanStatusView {
-  closed(raw, PLAN_STATUS_KEYS, '', where)
   return {
     repo: stringAt(required(raw, 'repo', '', where), 'repo', where),
     plans: arrayAt(required(raw, 'plans', '', where), 'plans', where).map((item, index) =>
@@ -1965,7 +1923,6 @@ function coordinatorStringsAt(raw: unknown, field: string, where: string): reado
 
 function coordinatorPrAt(raw: unknown, field: string, where: string): CoordinatorPullRequest {
   const pr = objectAt(raw, field, where)
-  closed(pr, COORDINATOR_PR_KEYS, field, where)
   return {
     number: coordinatorNumberAt(required(pr, 'number', field, where), `${field}.number`, where),
     url: optionalText(pr, 'url', field, where),
@@ -1979,7 +1936,6 @@ function coordinatorPrAt(raw: unknown, field: string, where: string): Coordinato
 function coordinatorRunAt(raw: unknown, index: number, field: string, where: string): CoordinatorRun {
   const at = `${field}[${String(index)}]`
   const run = objectAt(raw, at, where)
-  closed(run, COORDINATOR_RUN_KEYS, at, where)
   return {
     id: stringAt(required(run, 'id', at, where), `${at}.id`, where),
     pr: coordinatorOptionalNumberAt(run, 'pr', at, where),
@@ -1997,7 +1953,6 @@ function coordinatorRunAt(raw: unknown, index: number, field: string, where: str
 function coordinatorRecordAt(raw: unknown, index: number, field: string, where: string): CoordinatorRecord {
   const at = `${field}[${String(index)}]`
   const record = objectAt(raw, at, where)
-  closed(record, COORDINATOR_RECORD_KEYS, at, where)
   const pr = record['pr']
   return {
     pr: pr === undefined || pr === null ? null : coordinatorPrAt(pr, `${at}.pr`, where),
@@ -2015,7 +1970,6 @@ function coordinatorRecordAt(raw: unknown, index: number, field: string, where: 
 function coordinatorCollisionAt(raw: unknown, index: number, field: string, where: string): CoordinatorCollision {
   const at = `${field}[${String(index)}]`
   const collision = objectAt(raw, at, where)
-  closed(collision, COORDINATOR_COLLISION_KEYS, at, where)
   return {
     a: stringAt(required(collision, 'a', at, where), `${at}.a`, where),
     b: stringAt(required(collision, 'b', at, where), `${at}.b`, where),
@@ -2027,7 +1981,6 @@ function coordinatorCollisionAt(raw: unknown, index: number, field: string, wher
 function coordinatorUnreadAt(raw: unknown, index: number, field: string, where: string): CoordinatorUnread {
   const at = `${field}[${String(index)}]`
   const unread = objectAt(raw, at, where)
-  closed(unread, COORDINATOR_UNREAD_KEYS, at, where)
   return {
     number: coordinatorNumberAt(required(unread, 'number', at, where), `${at}.number`, where),
     reason: stringAt(required(unread, 'reason', at, where), `${at}.reason`, where),
@@ -2039,7 +1992,6 @@ function coordinatorUnreadAt(raw: unknown, index: number, field: string, where: 
 
 function coordinatorStaleAt(raw: unknown, field: string, where: string): CoordinatorStale {
   const stale = objectAt(raw, field, where)
-  closed(stale, COORDINATOR_STALE_KEYS, field, where)
   return {
     since: timestampAt(required(stale, 'since', field, where), `${field}.since`, where),
     reason: stringAt(required(stale, 'reason', field, where), `${field}.reason`, where),
@@ -2048,7 +2000,6 @@ function coordinatorStaleAt(raw: unknown, field: string, where: string): Coordin
 
 function coordinatorViewAt(raw: unknown, field: string, where: string): CoordinatorView {
   const view = objectAt(raw, field, where)
-  closed(view, COORDINATOR_VIEW_KEYS, field, where)
   return {
     repo: stringAt(required(view, 'repo', field, where), `${field}.repo`, where),
     records: arrayAt(required(view, 'records', field, where), `${field}.records`, where).map((item, index) =>
@@ -2080,7 +2031,6 @@ function coordinatorViewAt(raw: unknown, field: string, where: string): Coordina
 function coordinatorRepoAt(raw: unknown, index: number, where: string): CoordinatorRepoView {
   const field = `repos[${String(index)}]`
   const repo = objectAt(raw, field, where)
-  closed(repo, COORDINATOR_REPO_KEYS, field, where)
   const stale = repo['stale']
   return {
     repo: stringAt(required(repo, 'repo', field, where), `${field}.repo`, where),
@@ -2091,7 +2041,6 @@ function coordinatorRepoAt(raw: unknown, index: number, where: string): Coordina
 }
 
 function coordinatorStatusAt(raw: Record<string, unknown>, where: string): CoordinatorStatusView {
-  closed(raw, COORDINATOR_STATUS_KEYS, '', where)
   return {
     repos: arrayAt(required(raw, 'repos', '', where), 'repos', where).map((item, index) =>
       coordinatorRepoAt(item, index, where),

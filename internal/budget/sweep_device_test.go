@@ -316,6 +316,40 @@ func TestSweepPairingNodeFailureStopsTheUser(t *testing.T) {
 	}
 }
 
+// TestSweepPairingDeleteFailureKeepsOtherDeletions: the nodes go in one write
+// for the whole pass, and a refusal of it is not the pass's own failure. It
+// holds back only the p~ users whose payload node would outlive them — the r~
+// and m~ deletions of the same interval are over trees this write never touched,
+// and a p~ user with no node under it has no payload to strand — while a sweep
+// that gave up here would leave every later interval's run users behind for as
+// long as one pairing node stayed undeletable.
+func TestSweepPairingDeleteFailureKeepsOtherDeletions(t *testing.T) {
+	e := newSweepEnv(t)
+	e.user(budgetUID(runA), 72*time.Hour)
+	e.user(devUID, 30*24*time.Hour) // no device node: the allowlist read makes it an orphan
+	e.user(pairUID, 2*time.Hour)
+	e.pairingNode(pairUID)
+	e.user(pairUID2, 2*time.Hour) // `fugaro pair` deletes the node on success, so this is the ordinary case
+	e.db.Deny("pairing")
+
+	rep, err := e.sw.Sweep(context.Background())
+	if err == nil {
+		t.Fatal("a refused node deletion was swallowed")
+	}
+	if got := e.users(); !reflect.DeepEqual(got, []string{pairUID}) {
+		t.Fatalf("users left = %v, want the run, device and node-less pairing users gone and the stranded pairing user kept", got)
+	}
+	if rep.UsersDeleted != 3 {
+		t.Fatalf("report = %+v, want the three users this pass deleted counted", rep)
+	}
+	if rep.PairingNodesDeleted != 0 {
+		t.Fatalf("report = %+v, want no node claimed as deleted", rep)
+	}
+	if !e.has("pairing/" + pairUID) {
+		t.Fatal("a node whose deletion was refused is gone from the tree")
+	}
+}
+
 // TestSweepReportsTheNodesItDeletedWhenTheUsersFail: the pairing nodes go
 // before the users, so a pass whose user deletion fails has still deleted the
 // subtree a p~ token could read. The report is what an operator reads
