@@ -1,13 +1,18 @@
 # Pending workflow changes
 
-**One file is pending: `console-windows.yml`** (the console's Windows
-installer pack, 2026-10-20 — a release-time job, not a pull-request check; see
-`## console-windows.yml` below). **Two other files stay staged here by design: `console-tests.yml` and `console-release.yml`.** Both were copied into `.github/workflows/` by the owner, and unlike every other file here their staged copies are kept, because their tests assert the copy under `.github/workflows/` is byte-identical to the staged one (see their sections below). Nothing else is pending: the shared package's test job, `shared-tests.yml` (mobile plan Task P4.3), was copied into `.github/workflows/` by the owner on 2026-10-22 (its staged copy is removed; see `## shared-tests.yml` below); Dependabot's watch over `console/`'s npm dependencies, `dependabot-console.yml`, was copied over `.github/dependabot.yml` on the owner's approval of 2026-10-23 (its staged copy is removed; see `## dependabot-console.yml` below); the mobile app's release workflow, `mobile-release.yml`, was copied into `.github/workflows/` on the owner's approval of 2026-10-23 (its staged copy is removed; see `## mobile-release.yml` below); the website's two manual deploy workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the owner (their staged copies are removed); `ci.yml` was copied in on 2026-10-17 (#504, staged copy removed in #508); and `images.yml` was copied in and its staged copy removed in `6b57ba9`, staged again by C1.14 for the credentials service's image leg, and that copy was applied and removed on 2026-10-30 (see `## images.yml` below). A future workflow change that a run needs is staged here as the real file plus the change, and the owner copies it in.
+**Two files are pending: `console-release-feed.yml`** (the console's update
+feed, electron-updater's `latest-mac.yml`, written and published by the console
+release workflow on the owner's go of 2026-10-30 — it supersedes
+`console-release.yml`; see `## console-release-feed.yml` below) **and
+`console-windows.yml`** (the console's Windows installer pack, 2026-10-20 — a
+release-time job, not a pull-request check; see `## console-windows.yml` below).
+**Two other files stay staged here by design: `console-tests.yml` and `console-release.yml`.** Both were copied into `.github/workflows/` by the owner, and unlike every other file here their staged copies are kept, because their tests assert the copy under `.github/workflows/` is byte-identical to the staged one (see their sections below). Nothing else is pending: the shared package's test job, `shared-tests.yml` (mobile plan Task P4.3), was copied into `.github/workflows/` by the owner on 2026-10-22 (its staged copy is removed; see `## shared-tests.yml` below); Dependabot's watch over `console/`'s npm dependencies, `dependabot-console.yml`, was copied over `.github/dependabot.yml` on the owner's approval of 2026-10-23 (its staged copy is removed; see `## dependabot-console.yml` below); the mobile app's release workflow, `mobile-release.yml`, was copied into `.github/workflows/` on the owner's approval of 2026-10-23 (its staged copy is removed; see `## mobile-release.yml` below); the website's two manual deploy workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the owner (their staged copies are removed); `ci.yml` was copied in on 2026-10-17 (#504, staged copy removed in #508); and `images.yml` was copied in and its staged copy removed in `6b57ba9`, staged again by C1.14 for the credentials service's image leg, and that copy was applied and removed on 2026-10-30 (see `## images.yml` below). A future workflow change that a run needs is staged here as the real file plus the change, and the owner copies it in.
 
 - **`shared-tests.yml`** — the whole CI job for `shared/`'s tests, mobile plan Task **P4.3**: a `main`-filtered push and pull request under `shared/**`, `contents: read`, `npm ci` and `npm test` on Node 22 and Node 26, and every `shared/*/mutation-proof.sh` in the package, every action pinned by full commit SHA. `shared/` is outside the Go module, so no job in `ci.yml` runs it. **Applied, not pending:** it was staged by a Fugaro run that cannot push a `.github/workflows/**` change, copied into `.github/workflows/shared-tests.yml` on 2026-10-22 and its staged copy removed; see `## shared-tests.yml` below, which also records what the job will report on `main`.
 - **`website-preview.yml`** and **`website-promote.yml`** — the website's two new workflows, both `workflow_dispatch`-only: one builds a chosen ref and deploys it to a Firebase Hosting preview channel of the site's own project and prints the preview URL, the other promotes an existing preview channel to live and is the owner's alone (`environment: website-live` plus a guard on `github.actor`). Staged by a Fugaro run that cannot push a `.github/workflows/**` change. **Read `docs/website/preview-promote.md` first**: it carries the owner-only one-time setup (the Workload Identity Federation pool and provider, the deployer service account and its Firebase Hosting roles, the `website-live` environment and the three repository variables) that both files need before they can run at all.
 - **`console-linux.yml`** — the console's **Linux build check**: one job on `ubuntu-latest` that packs the AppImage and the `.deb` on every pull request and every push to `main` and uploads them, holding no secret at all. Staged by the 2026-10-20 run that packages the console for Linux (the owner's ruling: Linux for 0.10.0, unsigned). It is its own workflow rather than a second job in `console-tests.yml` because the release gate's required-check list is derived from that file's job set; see `## console-linux.yml` below.
 - **`console-release-linux.yml`** — the console's signing, notarisation and publishing pipeline **with the Linux legs added**: a third job that builds and verifies the unsigned AppImage and `.deb`, and a `publish` that merges both legs, signs one merged `console-sha256sums.txt` keyless with cosign and attaches everything to `console-vX.Y.Z`. It runs on the release tag and **never on a pull request**, so it is the first of the three files here that are not pull-request checks. It supersedes the staged `console-release.yml`, so its copy-in is three commands; see `## console-release-linux.yml` below.
+- **`console-release-feed.yml`** — the console's signing, notarisation and publishing pipeline **with the console's update feed added**: the macOS `release` job writes electron-updater's `latest-mac.yml` beside the `.zip` it has just verified, sums it into the job's `console-sha256sums.txt` and uploads it with the other assets, and `publish` requires it, checks it against the sums and attaches it — so the release carries the feed under the one keyless cosign signature over the merged sums file. It runs on the release tag and **never on a pull request**. It supersedes the staged `console-release.yml`, so its copy-in is three commands; see `## console-release-feed.yml` below.
 - **`console-windows.yml`** — the console's **Windows pack**, and the second of the three files here that are **not** a pull-request check (`console-release-linux.yml` above is the first and `mobile-release.yml` below is the third): one job on `windows-latest` that typechecks, runs the unit suite and packs the unsigned NSIS installer **at release time only** — the release tag, or a `workflow_dispatch` before one, and **never on a pull request**, not even path-filtered — and uploads it, holding no secret at all. Staged by the 2026-10-20 run that plans the console's Windows build (the owner's ruling of that date: the console drives the **Linux** `fugaro` inside WSL, unsigned), and re-cut the same day for the owner's answer to that plan's decision D7, whose words were *"a waste of resources; if there are problems we will fix them then"*. **It is red until three things in `console/` land** — the `package:win` script and the `win32` fuse row, the POSIX repairs that let the unit suite run on a Windows runner, and the `win32-x64` Electron checksum pin — which is why it is staged now and copied in later; the file's own header says so first. It is its own workflow rather than a second job in `console-tests.yml` for the reason `console-linux.yml` gives below; see `## console-windows.yml` below.
 - **`mobile-release.yml`** — **applied on 2026-10-23, not pending** (copied into `.github/workflows/` and its staged copy removed; what follows is the record). The **mobile app's release**, staged on 2026-10-20 on the owner's rulings of 2026-10-19/20 and reworked on 2026-10-21 after the security review of #777 (the build runs from GitHub Actions on each release tag, and by hand). On every `mobile-v[0-9]+.[0-9]+.[0-9]+` tag (the app's own stream since the owner's ruling of 2026-10-22) and on a manual dispatch, **one job per platform** builds on EAS and submits the finished build to TestFlight's internal testers and to Play's internal-testing track, behind the `mobile-release` GitHub environment and its only required reviewer (the owner) — the same click that gates `console-release` and `website-live`. The two jobs are independent, **both are enabled**, and one repository variable (`MOBILE_RELEASE_DISABLED_PLATFORMS`) can turn either off; see `## mobile-release.yml` below, which carries the Android first-release checklist.
 - **`console-release-tag.yml`** — the console's **own release stream**: the staged `console-release.yml` with its trigger moved from the CLI's `vX.Y.Z` tag to the console's own `console-vX.Y.Z` tag, a step that refuses a tag whose X.Y.Z is not `console/package.json`'s own `version`, a step that refuses a version whose notes file `docs/releases/console/vX.Y.Z.md` is missing, and a `publish` whose release body is that notes file rather than the string it used to inline. The three release streams are independent (owner addendum 2026-10-22: CLI = animals, Console = fruits, Mobile = birds); nothing else in the file moved, and `scripts/release.sh` and `scripts/release-gate.sh` stay CLI-only. **Applied on 2026-10-23**: it was copied over the staged `console-release.yml` and into `.github/workflows/console-release.yml`, and its own staged copy is gone, so the byte-identity clause in `TestDocsConsoleReleaseWorkflowIsStagedAndPinned` holds on the new text; see `## console-release-tag.yml` below, which is now the record.
@@ -964,6 +969,116 @@ What *is* asserted offline is the workflow's shape: three jobs, the permissions
 each holds, `publish`'s `needs`, the action pins, that every `run:` step is
 valid shell, and that the two staged console-release files differ only where
 this change says they do.
+
+## `console-release-feed.yml`
+
+**This file supersedes `## console-release.yml` above.** It is that file as it
+runs today with the console's **update feed** added and nothing else, so it is
+copied over the staged `console-release.yml` **and** into
+`.github/workflows/console-release.yml`, which is why its copy-in has one more
+command than usual. Staged on **2026-10-30**, on the owner's approval of the
+console's auto-update. The step is **Task 4.4** of
+`docs/plans/2026-10-15-desktop-console.md`, whose own file list names the staged
+`docs/pending-workflows/console-release.yml`; the design behind it is
+**section 7.3** of `docs/design/desktop-console.md`, which is where
+electron-updater and its `latest-mac.yml` manifest are named as the feed client
+and its format. Those two are the whole citation — there is no separate
+auto-update plan and no decision number for this change. It runs on the release
+tag and **never on a pull request**, like the file it supersedes.
+
+What it adds, and nothing else in the file moved:
+
+1. **The feed itself**, in the macOS `release` job's verification step, after the
+   `.zip`'s copy inside the extracted archive has been verified and before that
+   step's sums file leaves the job: `latest-mac.yml`, with the tag's `version`,
+   one `files:` entry for the `.zip` (`url`, base64 SHA-512, `size`), the
+   top-level `path` and `sha512`, and an RFC 3339 UTC `releaseDate`. The packer
+   cannot write it — `build.publish` is `null` in `console/package.json`, so
+   electron-builder publishes nothing. **The `url` and `path` are the `.zip`'s
+   name as GitHub stores it**, not the name the packer gave it: the default
+   macOS artifact name carries a space and GitHub renders it as a dot, so the
+   step names the asset with `$(basename "$ZIP" | tr ' ' '.')` — a feed in the
+   packer's own spelling would point electron-updater at an asset that does not
+   exist. The file's own SHA-256 joins the job's `console-sha256sums.txt`, and
+   the file is uploaded with the other assets.
+2. **`publish` requires and attaches it**: the step that checks the macOS
+   artifact against its sums also refuses an artifact with no non-empty
+   `latest-mac.yml` and a feed the sums file does not list, and the publish step
+   `test -s`'s the feed like every other asset before `gh release create`. The
+   feed therefore travels under the merged `console-sha256sums.txt` that cosign
+   signs keyless, and it is attached to `console-vX.Y.Z` with the rest.
+
+**One consequence for the next website step, recorded here because that step is
+a different run.** The feed's entry in the release's `console-sha256sums.txt`
+makes that file name one asset that is not a download.
+`website/data/console-sha256sums.txt` is the release's file copied verbatim when
+the site's console downloads are turned on (W3.1), and
+`TestWebsiteConsoleReleaseFactsAreComplete` requires every name in it to resolve
+to an entry in `website/content/downloads.json`. So the run that refreshes the
+site after this change offers `latest-mac.yml` there, or leaves the sums file
+alone until it can; the workflow and this directory cannot decide that, and a
+copy-in that skips the note gets a red `main` instead of a quiet gap between the
+release and the page.
+
+**What it does not change**, which is the whole of the review: no new action
+(every `uses:` line and its SHA pin is unchanged), no new secret, no `env:` that
+names one, and nothing in `on:`, `permissions:`, `environment:`, the runners, the
+Linux leg, `--latest=false`, the draft-then-publish order or who may approve.
+`TestDocsConsoleReleaseFeedIsStagedAndPinned` compares the two files for exactly
+those, and refuses a feed file that is byte-identical to the one it supersedes.
+
+**No `blockmap`**: the feed carries the fields electron-updater needs from a full
+download and nothing else, and the differential download is a later decision
+that is off by default.
+
+**To copy it in**, from the repository root — the first command is the one that
+keeps `console-release.yml` and its staged copy byte-identical, which is what
+`TestDocsConsoleReleaseWorkflowIsStagedAndPinned` asserts:
+
+```sh
+cp docs/pending-workflows/console-release-feed.yml docs/pending-workflows/console-release.yml
+cp docs/pending-workflows/console-release-feed.yml .github/workflows/console-release.yml
+git rm docs/pending-workflows/console-release-feed.yml
+git add -A
+git commit -m "console: publish the update feed (latest-mac.yml) with the console release"
+```
+
+**And the two sentences that commit carries**, because both name the files this
+directory holds and both are held to the directory — the first by the Go test
+family's `pendingWorkflows`, the second by `website/test/readme.mjs`. Staging
+this file is what made them say "two"; with the staged copy gone, the directory
+holds `console-windows.yml` alone again.
+
+This directory's opening line, which stops at the end of its last sentence (the
+"**Two other files stay staged here by design**" sentence after it does not
+move):
+
+```
+**One file is pending: `console-windows.yml`** (the console's Windows
+installer pack, 2026-10-20 — a release-time job, not a pull-request check; see
+`## console-windows.yml` below).
+```
+
+And the last paragraph of `website/README.md`, whose first sentence goes back to
+what it said before this file was staged:
+
+```
+`docs/pending-workflows/` now holds one pending workflow,
+`docs/pending-workflows/console-windows.yml` — the console's Windows
+installer pack, which runs at release time only rather than on a pull request, and is copied in
+only after the packer and the unit suite can pass on a Windows runner.
+```
+
+The bullet this file has in the opening list stays after the copy-in as the
+record of what was applied, the way `console-release-linux.yml`'s does; only the
+opening line counts files, and that is the sentence the copy-in rewrites.
+
+Both are spliced in the tree this file was staged from: the same suite was run
+with the three commands above applied to a scratch copy, and with both sentences
+replaced, and it is green there. **The sentences are printed here rather than
+left to the copy-in's judgement because a stale one is a red `main`**: the
+opening line is read by `TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere`,
+which compares it with the directory in both directions.
 
 ## `console-windows.yml`
 
