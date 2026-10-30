@@ -44,8 +44,15 @@ func TestDocsCommitAuthorIsAClaim(t *testing.T) {
 		"refused at launch",
 		// The committer is not the launcher's: only the author half moves.
 		"the committer stays the run's own identity",
-		// The claim, and what a reader may not take it for.
+		// The claim, and what a reader may not take it for. The address check
+		// reaches a domain and nothing else, so the document states the limit
+		// rather than a refusal wider than the code's (forgeNoreply judges the
+		// domain alone, and internal/cli/run_author_test.go's
+		// TestRunAuthorCommitEmailOverridesMe pins a colleague's noreply
+		// address as accepted).
 		"is a claim, not a verified identity",
+		"the domain alone",
+		"a colleague's noreply id and login",
 		// Neither of the two runs that push nothing stamps.
 		"A review run and an artifact run stamp no trailer",
 		// The runner's own commits are the run's commits too.
@@ -61,6 +68,10 @@ func TestDocsCommitAuthorIsAClaim(t *testing.T) {
 	for _, want := range []string{
 		"the launcher's claim",
 		"a record",
+		// The same limit, stated in the file a reader takes for the model:
+		// only the address's domain is checked.
+		"only the domain",
+		"a colleague's noreply id and login",
 		"A launcher may approve a pull request their own name is on",
 		// The limit the trailers' own claim leans on, named where it already
 		// is: the agent shares the container and its user with the runner.
