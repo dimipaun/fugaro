@@ -389,6 +389,19 @@ of that source:
   `Podfile.lock`" is the CocoaPods arm of that sentence**, and on this version the lockfile
   carries no Firebase pod: the flag in the generated `Podfile` and the absence of `AdSupport`
   are what an iOS build can be read for.
+- **An iOS build of these packages needs `expo-build-properties`, and that is the one
+  dependency beyond the three** (**owner approval 2026-10-29**). `@react-native-firebase/app`'s
+  SPM installer raises on a static Podfile — `firebase_spm.rb`: *"SPM + static linkage is not
+  supported"* — and the stock Expo Podfile is one of the two static shapes it names (*"no
+  `use_frameworks!` (or `use_frameworks! false`) — pods build as static libraries"*); the fix
+  that file gives for this platform is *"Expo: set `ios.useFrameworks` to `"dynamic"` in the
+  `expo-build-properties` plugin config"*, and
+  `@react-native-firebase/app/plugin/src/pluginConfig.ts` and `plugin/src/ios/podfile.ts` say
+  the same where they reject the deprecated `ios.disableSPM`. So `mobile/app.config.js` carries
+  that one entry beside the Firebase three, and `mobile/src/app-config.test.js` refuses a
+  resolved config whose linkage is not `dynamic`. **This is a dependency the plan did not
+  name**: P7.1's line listed the three packages, and without the fourth an iOS build stops at
+  `pod install` before any of §4.2's switches is reached.
 - **Removing `com.google.android.gms.permission.AD_ID` is not the plugin's option** — neither
   package names the permission in its plugin source or its manifest — **and it is not a
   hand-written mod either**: Expo's own config turns `android.blockedPermissions` into exactly
@@ -539,7 +552,8 @@ and never a value, and nothing here is a secret-shaped literal. **And no task is
 it**: D259's acceptance is a ruling, not a green light — the gate was passed separately, on
 2026-10-22 — and the app wired **no** Firebase SDK until P7.1's commit of 2026-10-29 listed
 the three packages and the console's two files, which is the whole of what P7.1 wires: the
-plugins apply at prebuild, and no P7.2-P7.5 call is made.
+plugins apply at prebuild (with the fourth entry the iOS linkage needs, §4.2), and no
+P7.2-P7.5 call is made.
 
 **The second fence, and the owner's ruling leaves it shut.** `SECRET_SHAPES` is not
 the only list D111's item count is written into. **`SECRET_ITEMS`** — `mobile/src/accounts/secret.js`,
@@ -1002,7 +1016,10 @@ paths read from the environment, the build-time guard), `mobile/eas.json` (**mod
 `env` entries in each of its three build profiles, `development`, `preview` and `internal`),
 `mobile/firebase.json` (new — the app-root
 `react-native` block of §4.2), `mobile/.gitignore`, `mobile/package.json` (the three
-`@react-native-firebase` dependencies), `mobile/README.md` (the Expo Go sentence D260 asks
+`@react-native-firebase` dependencies, plus `expo-build-properties` — the fourth and last
+package, **owner approval 2026-10-29**, because the packages' own SPM installer refuses a
+static Podfile and names that plugin's `ios.useFrameworks` as the fix; §4.2's VERIFY note
+carries the source line), `mobile/README.md` (the Expo Go sentence D260 asks
 for), and `mobile/src/app-config.test.js` (the tracked-file and ignore rules of §4.3, the
 extension of the existing credential walk to `app.config.js`, and **the ad-ID test of §7.4**,
 which reads the plugin options, `mobile/firebase.json` and — when they exist — the generated

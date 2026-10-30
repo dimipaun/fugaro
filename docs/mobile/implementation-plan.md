@@ -684,7 +684,9 @@ premise of every task below. Its plan is
 the labels, the checks and the UNVERIFIED list all live there, and this section is its
 registration. **Approval is permission to start and not a claim that anything exists**: **P7.1 is built
 and P7.2–P7.5 are not** (updated 2026-10-29, in P7.1's own commit): `mobile/package.json`
-names the three `@react-native-firebase` packages, `mobile/firebase.json` and the plugin
+names the three `@react-native-firebase` packages and — added 2026-10-30, on the owner's
+approval of 2026-10-29, because those packages' SPM installer refuses a static iOS Podfile
+(the plan's §4.2 carries the source line) — `expo-build-properties`, `mobile/firebase.json` and the plugin
 entries in `mobile/app.config.js` are in the tree, and **neither native config file is** —
 they are never committed, and a build reads them from EAS file variables (§4.3). No
 telemetry module exists yet: `mobile/src/telemetry/` is P7.2's and P7.3's.

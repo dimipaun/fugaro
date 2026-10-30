@@ -208,7 +208,11 @@ when the native project is generated — EAS's own prebuild, or `npx expo prebui
 `GoogleService-Info.plist` at that moment. Expo Go is a fixed binary that can
 carry neither the plugins nor those files, so working on the app means a
 **development build** (`eas build --profile development`), and running it in Expo
-Go does not exercise anything this section is about.
+Go does not exercise anything this section is about. The same build resolves one
+more plugin beside them, `expo-build-properties` — an iOS build of these
+packages links **dynamic** frameworks or `pod install` stops ("SPM + static
+linkage is not supported", in `@react-native-firebase/app`'s own installer), and
+that plugin is the only place an Expo config says so.
 
 **The two native config files are never committed, and a build that cannot see
 them fails.** They are generated in the Firebase console for the telemetry

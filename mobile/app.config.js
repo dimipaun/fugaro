@@ -188,6 +188,33 @@ export const FIREBASE_PLUGINS = Object.freeze([
 ]);
 
 /**
+ * The one plugin entry the iOS build needs beside the three Firebase packages,
+ * and the owner's decision that allows it (owner approval 2026-10-29).
+ *
+ * `@react-native-firebase/app`'s own SPM installer **refuses a static
+ * Podfile**: `firebase_spm.rb` raises *"SPM + static linkage is not
+ * supported"* when any aggregate target builds as a static library -- which is
+ * the stock Expo Podfile, whose label that same file spells out as *"no
+ * `use_frameworks!` (or `use_frameworks! false`) -- pods build as static
+ * libraries"* -- and the remedy it names for this platform is
+ * *"Expo: set `ios.useFrameworks` to `"dynamic"` in the `expo-build-properties`
+ * plugin config, then re-run `npx expo prebuild`"* (`firebase_spm.rb`).
+ * `@react-native-firebase/app/plugin/src/pluginConfig.ts` and
+ * `plugin/src/ios/podfile.ts` say the same thing where they reject the
+ * deprecated `ios.disableSPM`.
+ *
+ * `expo-build-properties` is the package that writes `use_frameworks!` into the
+ * generated Podfile, so without it an iOS build of these three packages stops at
+ * `pod install`. **It is a fourth dependency and the only one allowed beyond the
+ * three** (owner approval 2026-10-29), it is SDK 58's own pinned version, and it
+ * reaches the Podfile and nothing else: no Android option here, and no value of
+ * it in this file.
+ */
+export const BUILD_PROPERTIES_PLUGINS = Object.freeze([
+  ['expo-build-properties', { ios: { useFrameworks: 'dynamic' } }],
+]);
+
+/**
  * The permissions the merged Android manifest must **not** declare
  * (plan §4.2 point 2, §7.4).
  *
@@ -407,7 +434,8 @@ function declaring(section) {
 }
 
 /**
- * `plugins` with the three Firebase entries appended (Task P7.1).
+ * `plugins` with the app's own entries appended -- the three Firebase ones and
+ * the build-properties one (Task P7.1).
  *
  * **Appended, not assigned**: `app.json` already lists `expo-secure-store` and
  * `expo-splash-screen`, and a config that replaced the list would drop both -
@@ -422,10 +450,11 @@ function pluginName(entry) {
   return Array.isArray(entry) ? entry[0] : entry;
 }
 
-function withFirebasePlugins(plugins) {
+function withAppPlugins(plugins) {
   const existing = Array.isArray(plugins) ? plugins : [];
   const named = new Set(existing.map(pluginName));
-  return [...existing, ...FIREBASE_PLUGINS.filter((entry) => !named.has(pluginName(entry)))];
+  const added = [...FIREBASE_PLUGINS, ...BUILD_PROPERTIES_PLUGINS];
+  return [...existing, ...added.filter((entry) => !named.has(pluginName(entry)))];
 }
 
 /**
@@ -486,7 +515,7 @@ export function resolveConfig(config, env = process.env) {
     // from.
     return {
       ...config,
-      plugins: withFirebasePlugins(config.plugins),
+      plugins: withAppPlugins(config.plugins),
       ios: iosSection(declaring(optionalSection('ios', config.ios, env)), env),
       android: androidSection(optionalSection('android', config.android, env), env),
     };
@@ -494,7 +523,7 @@ export function resolveConfig(config, env = process.env) {
 
   return {
     ...config,
-    plugins: withFirebasePlugins(config.plugins),
+    plugins: withAppPlugins(config.plugins),
     ios: iosSection(
       declaring({ ...(config.ios ?? {}), [FIELDS.ios.field]: read('ios', env) }),
       env,

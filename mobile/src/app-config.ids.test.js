@@ -74,6 +74,7 @@ import test from 'node:test';
 
 import appConfig, {
   BLOCKED_PERMISSIONS,
+  BUILD_PROPERTIES_PLUGINS,
   FIREBASE_PLUGINS,
   GOOGLE_SERVICES_VARIABLES,
   ID_PATTERNS,
@@ -119,7 +120,7 @@ const ANDROID = 'com.example.sample';
  */
 const DECLARED = {
   ...EXPO,
-  plugins: [...EXPO.plugins, ...FIREBASE_PLUGINS],
+  plugins: [...EXPO.plugins, ...FIREBASE_PLUGINS, ...BUILD_PROPERTIES_PLUGINS],
   ios: { ...EXPO.ios, infoPlist: { ITSAppUsesNonExemptEncryption: false } },
   android: { ...EXPO.android, blockedPermissions: [...BLOCKED_PERMISSIONS] },
 };

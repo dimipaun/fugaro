@@ -69,7 +69,7 @@ const NATIVE_ENV = Object.freeze({
 
 const DECLARED = Object.freeze({
   ...CONFIG.expo,
-  plugins: [...CONFIG.expo.plugins, ...FIREBASE_PLUGINS],
+  plugins: [...CONFIG.expo.plugins, ...FIREBASE_PLUGINS, ...BUILD_PROPERTIES_PLUGINS],
   ios: { ...CONFIG.expo.ios, infoPlist: { ITSAppUsesNonExemptEncryption: false } },
   android: { ...CONFIG.expo.android, blockedPermissions: [...BLOCKED_PERMISSIONS] },
 });
@@ -301,6 +301,7 @@ import { spawnSync } from 'node:child_process';
 
 import {
   BLOCKED_PERMISSIONS,
+  BUILD_PROPERTIES_PLUGINS,
   FIREBASE_PLUGINS,
   GOOGLE_SERVICES_VARIABLES,
   NATIVE_CONFIG_README_SECTION,
@@ -586,6 +587,69 @@ test('the app carries no advertising identifier, from the plugin options and fir
   // `android.blockedPermissions` becomes the `tools:node="remove"` entry.
   assert.deepEqual(BLOCKED_PERMISSIONS, ['com.google.android.gms.permission.AD_ID']);
   assert.equal(resolveConfig(CONFIG.expo, {}).android.blockedPermissions.includes(BLOCKED_PERMISSIONS[0]), true);
+});
+
+/**
+ * Every way the iOS build's framework linkage departs from what the pinned
+ * Firebase packages accept, or [].
+ *
+ * `@react-native-firebase/app`'s SPM installer **raises on a static Podfile** -
+ * `firebase_spm.rb`: *"SPM + static linkage is not supported"*, with the stock
+ * Expo Podfile named among the static shapes it detects - and the fix it names
+ * for this platform is `expo-build-properties` with
+ * `ios.useFrameworks: "dynamic"`. So an iOS build needs the entry, that option,
+ * and the package the entry names: the plugin is a config plugin, and a build
+ * whose `plugins` list names a package `mobile/package.json` does not declare
+ * cannot be resolved at all.
+ */
+function linkageFindings({ plugins, packageJson = MANIFEST }) {
+  const names = plugins.map((entry) => (Array.isArray(entry) ? entry[0] : entry));
+  const at = names.indexOf('expo-build-properties');
+  if (at < 0) {
+    return [
+      'the resolved config lists no expo-build-properties entry, and the pinned @react-native-firebase/app refuses a static Podfile: its SPM installer raises "SPM + static linkage is not supported" and names ios.useFrameworks "dynamic" as the fix for an Expo build',
+    ];
+  }
+  const found = [];
+  const entry = plugins[at];
+  const frameworks = Array.isArray(entry) ? entry[1]?.ios?.useFrameworks : undefined;
+  if (frameworks !== 'dynamic') {
+    found.push(
+      `expo-build-properties resolves ios.useFrameworks ${JSON.stringify(frameworks)}, and the pinned Firebase SPM products need "dynamic"`,
+    );
+  }
+  const declared = { ...(packageJson.dependencies ?? {}), ...(packageJson.devDependencies ?? {}) };
+  if (!('expo-build-properties' in declared)) {
+    found.push(
+      'the plugin entry names expo-build-properties and mobile/package.json does not declare it, so a build cannot resolve the plugin',
+    );
+  }
+  return found;
+}
+
+test('the iOS build resolves the dynamic frameworks the Firebase SPM products need', () => {
+  assert.deepEqual(linkageFindings({ plugins: resolveConfig(CONFIG.expo, {}).plugins }), []);
+
+  // The planted controls, one at a time: each is a state an iOS build would
+  // stop on, and each has to come back as a finding.
+  for (const [what, override, expected] of [
+    ['the entry gone', { plugins: [...FIREBASE_PLUGINS] }, /no expo-build-properties entry/],
+    [
+      'the linkage static, which the installer refuses',
+      { plugins: [['expo-build-properties', { ios: { useFrameworks: 'static' } }]] },
+      /ios\.useFrameworks "static"/,
+    ],
+    [
+      'the option absent',
+      { plugins: [['expo-build-properties', { android: { minSdkVersion: 24 } }]] },
+      /ios\.useFrameworks undefined/,
+    ],
+    ['the package undeclared', { plugins: [...BUILD_PROPERTIES_PLUGINS], packageJson: {} }, /does not declare it/],
+  ]) {
+    const findings = linkageFindings(override);
+    assert.equal(findings.length > 0, true, `${what} must be a finding`);
+    assert.match(findings.join('\n'), expected, what);
+  }
 });
 
 test('app.config.js carries no credential and no installation either', () => {
