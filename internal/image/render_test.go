@@ -1242,8 +1242,9 @@ func TestRenderCopiesConfiguredKeyFilesBeforeSource(t *testing.T) {
 // a directory entry — and each one is written into the Dockerfile's checkout
 // RUN as itself. A name holding a newline would end that instruction, and the
 // rest of the name would then be read as a Dockerfile instruction of its own,
-// so the render refuses the name instead of writing it, and the refusal names
-// the entry by its index and never echoes the name into the message.
+// so the render refuses the name instead of writing it. The refusal quotes the
+// path, which escapes the control character, so it names the file to rename
+// without writing the injection into a log.
 func TestKeyLayerRefusesControlCharacterInExpandedName(t *testing.T) {
 	root, cfg := keyFileCheckout(t)
 	testutil.WriteFiles(t, root, map[string]string{
@@ -1253,13 +1254,39 @@ func TestKeyLayerRefusesControlCharacterInExpandedName(t *testing.T) {
 	if err == nil {
 		t.Fatalf("a committed file name holding a newline was written into the Dockerfile:\n%s", got)
 	}
-	if body := err.Error(); strings.Contains(body, "RUN") || strings.ContainsAny(body, "\n\r\x1b") {
-		t.Errorf("the refusal echoes the name it refuses: %q", body)
+	if body := err.Error(); !strings.Contains(body, `".yarn/patches/patch\nRUN touch /pwned.patch"`) {
+		t.Errorf("the refusal does not name the file to rename: %q", body)
 	}
-	for _, name := range []string{".yarn/patches/it's.patch", `.yarn/patches/a\b.patch`, ".yarn/patches/a\x1bb.patch"} {
+	if body := err.Error(); strings.ContainsAny(body, "\n\r\x1b") {
+		t.Errorf("the refusal echoes the raw name it refuses: %q", body)
+	}
+	for _, name := range []string{".yarn/patches/a\rb.patch", ".yarn/patches/a\x1bb.patch", ".yarn/patches/a\x7fb.patch"} {
 		in := RenderInput{Workflow: "app", Base: config.BaseKind, Version: "dev", KeyFiles: []string{name}}
 		if _, err := Render(in); err == nil {
 			t.Errorf("Render wrote the key-file name %q into the Dockerfile", name)
+		}
+	}
+}
+
+// TestKeyLayerWritesQuotedAndLiteralNames: shellWords single-quotes each word
+// and escapes a quote inside one, and the checkout is a literal pathspec, so a
+// committed name holding a quote, a backslash or a glob character reaches git
+// as the character it holds. Only a control character is refused, so a
+// repository whose patches are named it's.patch keeps building.
+func TestKeyLayerWritesQuotedAndLiteralNames(t *testing.T) {
+	root, cfg := keyFileCheckout(t)
+	testutil.WriteFiles(t, root, map[string]string{
+		".yarn/patches/it's.patch": "patch\n",
+		`.yarn/patches/a\b.patch`:  "patch\n",
+		".yarn/patches/a[1].patch": "patch\n",
+	})
+	got, _, err := Dockerfile(root, cfg, "web", "dev")
+	if err != nil {
+		t.Fatalf("a key-file name holding a quote, a backslash or a glob was refused: %v", err)
+	}
+	for _, want := range []string{`'.yarn/patches/it'\''s.patch'`, `'.yarn/patches/a\b.patch'`, `'.yarn/patches/a[1].patch'`} {
+		if !strings.Contains(string(got), want) {
+			t.Errorf("the checkout line does not carry %s as a shell word:\n%s", want, got)
 		}
 	}
 }

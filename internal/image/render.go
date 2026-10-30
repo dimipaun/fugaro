@@ -14,7 +14,6 @@ import (
 	"slices"
 	"strings"
 	"text/template"
-	"unicode/utf8"
 
 	"github.com/bmatcuk/doublestar/v4"
 	"gopkg.in/yaml.v3"
@@ -53,26 +52,23 @@ var derived = template.Must(template.New("Dockerfile").
 // repository — a Yarn build, a few plugins, the patches a Yarn Berry checkout
 // applies — so 256 is far above any of them, while the layer stays bounded:
 // the expansion of a committed directory is otherwise a number the
-// repository's own file count chooses, not one this render does.
+// repository's own file count chooses, not one this render does. A directory
+// past the cap needs a workflow that renders its own Dockerfile instead
+// (docs/base-image.md, "The key-file layer").
 const maxKeyFilesPerEntry = 256
 
 // usableKeyFileName reports whether a name of the key-file layer can be
 // written into the Dockerfile as itself. Those names come out of the
 // repository's own tree — a glob match, the files under a directory entry — so
-// a committed name is input, not a name this render chose: a newline or a
-// carriage return would end the checkout RUN instruction, and the rest of the
-// name would then be read as a Dockerfile instruction of its own, while a
-// quote or a backslash is a character the single-quoted shell word and git's
-// pathspec would each read differently from the name they were given. A glob
-// character is not refused: the checkout is a literal pathspec, so a name
-// holding one is still the one file the layer asked for.
+// a committed name is input, not a name this render chose, and a newline or a
+// carriage return in one would end the checkout RUN instruction: the rest of
+// the name would then be read as a Dockerfile instruction of its own.
+// Everything else is safe here. shellWords single-quotes each word and escapes
+// a quote inside one, and the checkout is a literal pathspec, so a quote, a
+// backslash or a glob character reaches git as the character the name holds.
 func usableKeyFileName(name string) bool {
-	if !utf8.ValidString(name) {
-		return false
-	}
-	for _, r := range name {
-		switch {
-		case r < 0x20, r == 0x7f, r == '\'', r == '"', r == '\\':
+	for i := 0; i < len(name); i++ {
+		if b := name[i]; b < 0x20 || b == 0x7f {
 			return false
 		}
 	}
@@ -84,9 +80,9 @@ func Render(in RenderInput) ([]byte, error) {
 	if in.Image.Node != "" {
 		return nil, fmt.Errorf("image.node was removed in 0.7.0 (%s)", config.MigrationDoc)
 	}
-	for i, name := range in.KeyFiles {
+	for _, name := range in.KeyFiles {
 		if !usableKeyFileName(name) {
-			return nil, fmt.Errorf("key file %d cannot be written into the Dockerfile's checkout loop; its name holds a control character, a quote or a backslash, so rename it in the repository", i)
+			return nil, fmt.Errorf("key file %q holds a control character, which would end the Dockerfile's checkout RUN and start an instruction of its own; rename it in the repository", name)
 		}
 	}
 	for i, step := range in.Image.Setup {
@@ -261,7 +257,7 @@ func capKeyFileEntry(layer []string, entry, name string) error {
 		}
 	}
 	if n > maxKeyFilesPerEntry {
-		return fmt.Errorf("%s expands to %d key files, more than the %d one entry may contribute to the image", name, n, maxKeyFilesPerEntry)
+		return fmt.Errorf("%s expands to %d key files, more than the %d one entry may contribute to the image; a workflow whose directory is larger renders its own Dockerfile (docs/base-image.md)", name, n, maxKeyFilesPerEntry)
 	}
 	return nil
 }

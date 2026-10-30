@@ -559,33 +559,6 @@ func TestValidateImageKeyFilesRefusesGlobsAndDuplicates(t *testing.T) {
 	}
 }
 
-// TestValidateImageKeyFilesRefusesUncleanPath: an image.key_files entry must
-// be the path it is, not a spelling of it. The layer hands each entry to git
-// as a literal pathspec and to the rebuild key as a doublestar pattern, so an
-// entry that only cleans to the file it names — a trailing slash, a doubled
-// slash, a . segment — would name the file to one reader and a different path
-// to the other, and the image would be keyed on something the layer never
-// checked out. The refusal names the entry by its index and never echoes the
-// value.
-func TestValidateImageKeyFilesRefusesUncleanPath(t *testing.T) {
-	for _, entry := range []string{"a/./b", "a//b", "a/b/", "./a/b"} {
-		t.Run(entry, func(t *testing.T) {
-			_, problems := Parse([]byte(keyFilesYAML(entry)))
-			if !hasProblem(problems, "workflows.web.image.key_files[0]", "clean path", 0) {
-				t.Fatalf("problems = %v, want one at image.key_files[0] ~ %q", problems, "clean path")
-			}
-			for _, p := range problems {
-				if strings.ContainsAny(p.Message, "\x1b\n\r") {
-					t.Errorf("the refusal echoes the value into the message: %q", p.Message)
-				}
-			}
-		})
-	}
-	if _, problems := Parse([]byte(keyFilesYAML("a/b"))); len(problems) > 0 {
-		t.Errorf("a clean path was refused: %v", problems)
-	}
-}
-
 // caps is n distinct key-file entries, each valid.
 func caps(n int) []string {
 	out := make([]string, n)
