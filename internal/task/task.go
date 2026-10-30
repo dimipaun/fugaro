@@ -154,12 +154,12 @@ type Spec struct {
 	ProjectLayer *ProjectLayer `json:"project_layer,omitempty"`
 	// OAuthToken is the named Claude account (config.ClaudeAccountNameRE,
 	// at most config.MaxClaudeAccountNameLen characters, never
-	// config.DefaultClaudeAccount itself — "" means that) this run's
-	// agent.auth: oauth workflow used (docs/design/named-oauth-tokens.md).
-	// A runner before namedTokensSince refuses the field, since it is new
-	// and this package's decoder disallows unknown fields; the launching
-	// CLI checks the job's build record first, the same way it already
-	// does for ProjectLayer.
+	// config.DefaultClaudeAccount itself — "" means that — and never the name
+	// the bundle reserves, config.ReservedClaudeAccountName) this run's
+	// agent.auth: oauth workflow used (docs/design/named-oauth-tokens.md). A
+	// runner before namedTokensSince refuses the field, since it is new and
+	// this package's decoder disallows unknown fields; the launching CLI
+	// checks the job's build record first, as it does for ProjectLayer.
 	OAuthToken string `json:"oauth_token,omitempty"`
 	// CompressionOff, when true, disables agent.compression for this run
 	// only, overriding fugaro.yaml (fugaro run --no-compression;

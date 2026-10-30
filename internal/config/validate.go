@@ -50,24 +50,6 @@ func validBranchName(b string) bool {
 // a base branch (the local config's repos.<r>.base_branch).
 func ValidBranchName(b string) bool { return validBranchName(b) }
 
-// ReservedClaudeAccountName reports whether name is the one account name the
-// credentials bundle reserves for a credential of the platform's own
-// (reservedClaudeAccountName, claude_accounts.go): an account spoken by it
-// would leave one name meaning two credentials.
-//
-// It is exported for the surfaces outside this package that carry an account
-// name — a task spec's oauth_token (internal/task) — so each of them asks the
-// same predicate instead of keeping a copy of the name. The surfaces inside
-// this package (claude_accounts' own keys, a profile's claude_accounts entry)
-// call reservedClaudeAccountName directly.
-func ReservedClaudeAccountName(name string) bool { return reservedClaudeAccountName(name) }
-
-// ReservedClaudeAccountNameMessage is the one sentence every surface refuses
-// the reserved name with (reservedAccountNameMessage): an operator reads the
-// same words whichever file they wrote the name in, and the sentence never
-// echoes the name, which is untrusted text printed to a terminal.
-const ReservedClaudeAccountNameMessage = reservedAccountNameMessage
-
 // A workflow secret's variable is mounted into the runner's own
 // environment on the job and into the image build step, so it must not be
 // one that Fugaro sets, or that changes how the runner, git, a shell, the
@@ -876,3 +858,25 @@ func CheckModelID(m string) string {
 	}
 	return ""
 }
+
+// ReservedClaudeAccountName reports whether name is the one account name the
+// credentials bundle reserves for a credential of the platform's own
+// (reservedClaudeAccountName, claude_accounts.go): an account spoken by it
+// would leave one name meaning two credentials.
+//
+// It is exported for the surfaces outside this package that carry an account
+// name — a task spec's oauth_token (internal/task) — so each of them asks the
+// same predicate instead of keeping a copy of the name. The surfaces inside
+// this package (claude_accounts' own keys, a profile's claude_accounts entry)
+// call reservedClaudeAccountName directly.
+//
+// It is declared at the end of this file rather than beside the Validate
+// switch it serves, so that adding it moves no line above it: several docs
+// cite this file by line.
+func ReservedClaudeAccountName(name string) bool { return reservedClaudeAccountName(name) }
+
+// ReservedClaudeAccountNameMessage is the one sentence every surface refuses
+// the reserved name with (reservedAccountNameMessage): an operator reads the
+// same words whichever file they wrote the name in, and the sentence never
+// echoes the name, which is untrusted text printed to a terminal.
+const ReservedClaudeAccountNameMessage = reservedAccountNameMessage
