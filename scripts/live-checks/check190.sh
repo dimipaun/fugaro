@@ -17,7 +17,10 @@
 #             the commands a real run would run and the cleanup commands)
 # Needs:      bash, mktemp, gcloud, git, curl, awk and fugaro. Nothing is
 #             installed and nothing is fetched; if one of those is missing the
-#             script stops with one line naming it.
+#             script stops with one line naming it. YOUR account creates a
+#             bucket and a registry and sets IAM on both (storage.buckets.create,
+#             artifactregistry.repositories.create and setIamPolicy on each),
+#             which a project Owner has; it does not need to read Cloud Logging.
 # Where:      installation `fugaro` ONLY — project fugaro-dev, region us-east5.
 #             The project is HARD-CODED and `fugaro doctor` must answer that
 #             this is the fugaro-dev installation. Never belong, never another
@@ -25,11 +28,17 @@
 # Creates:    one throwaway Cloud Run service (fugaro-chk190) with IAM required
 #             and no public invoker, the Artifact Registry repository and image
 #             it is built into, the Secret Manager container that holds the
-#             sandbox repository's token for the proxy, and one branch on the
-#             sandbox repository. The Restore deletes all of them and asserts
-#             three counts read 0. A service, repository or secret of those
-#             names that was already there is a hard stop: this check never
-#             adopts, writes into or deletes what it did not create.
+#             sandbox repository's token for the proxy, its own staging bucket
+#             (fugaro-dev-chk190-staging, uniform access, us-east5) for the
+#             build's source, two grants to the installation's build account
+#             (artifactregistry.writer on that registry and
+#             storage.objectViewer on that bucket, nothing project-wide), and
+#             one branch on the sandbox repository. The Restore deletes all of
+#             them and asserts four counts read 0. A service, repository,
+#             secret or bucket of those names that was already there is a hard
+#             stop: this check never adopts, writes into or deletes what it did
+#             not create, and it writes nothing into the installation's own
+#             gs://fugaro-dev_cloudbuild.
 # Costs:      wall clock, not money: around two hours at the terminal. The
 #             cold-start wait is 35 minutes (CHECK190_IDLE_SECONDS) and the
 #             slow push is held open for an hour (CHECK190_SLOW_SECONDS). One
@@ -37,15 +46,14 @@
 #             while it runs.
 # Runs:       by YOU. No agent runs any step of this, and no agent has: what it
 #             measures is a live project and a real token.
-# Cleanup:    always: the service, the image, the repository, the secret, the
-#             branch and the source it staged under the installation's own
-#             bucket are deleted by the Restore, which runs from the exit trap
-#             too — so a Ctrl-C in the middle does not leave a service
-#             running. The three counts are checked before the scratch
-#             directory goes, and the directory is KEPT when a count is not 0,
-#             with a message saying where it is and what to delete by hand. The
-#             staging bucket itself is never created here: it must already be
-#             there and readable, or the run stops before anything is made.
+# Cleanup:    always: the service, the image, the repository (and its grant),
+#             the secret, the staging bucket with the source in it (and its
+#             grant) and the branch are deleted by the Restore, which runs from
+#             the exit trap too — so a Ctrl-C in the middle does not leave a
+#             service running, and a build still running is cancelled first.
+#             The four counts are checked before the scratch directory goes,
+#             and the directory is KEPT when a count is not 0, with a message
+#             saying where it is and what to delete by hand.
 # Output:     progress on stderr, ONE block on stdout headed CHECK 190 RESULT,
 #             to copy back to the coordinator. Exit 0 when every fact passed,
 #             1 when one did not (or a hard stop ended the run).
@@ -61,8 +69,8 @@
 # push would hold a token there for an hour.
 #
 # CHECK190_DRY_RUN, CHECK190_REPO, CHECK190_TOKEN_FILE, CHECK190_CURL_SECONDS,
-# CHECK190_IDLE_SECONDS, CHECK190_SLOW_SECONDS, CHECK190_BIG_MIB and
-# CHECK190_BUILD_SA exist for this script's own test: they shorten waits and
+# CHECK190_IDLE_SECONDS, CHECK190_SLOW_SECONDS, CHECK190_BIG_MIB,
+# CHECK190_GRANT_SECONDS, CHECK190_BUILD_WAIT_SECONDS and CHECK190_BUILD_SA exist for this script's own test: they shorten waits and
 # sizes, and none of them can point the check at another project, another
 # region or another service. CHECK190_REPO and CHECK190_TOKEN_FILE are the two
 # inputs the check cannot invent (the sandbox repository and the token file the
@@ -103,10 +111,17 @@ L=us-east5
 SVC=fugaro-chk190
 SECRET=fugaro-chk190-token
 IMG="${L}-docker.pkg.dev/${P}/${SVC}/${SVC}:chk190"
+# This check's own staging bucket. A bucket name is global, so it carries the
+# project's name; it is fixed rather than per run so the baseline guard can say
+# that one of this name was already there, which is a stop like the others.
+BUCKET_NAME="${P}-chk190-staging"
+BUCKET="gs://${BUCKET_NAME}"
 CURL_SECONDS=${CHECK190_CURL_SECONDS:-300}
 IDLE_SECONDS=${CHECK190_IDLE_SECONDS:-2100}
 SLOW_SECONDS=${CHECK190_SLOW_SECONDS:-3660}
 BIG_MIB=${CHECK190_BIG_MIB:-33}
+GRANT_SECONDS=${CHECK190_GRANT_SECONDS:-60}
+BUILD_WAIT_SECONDS=${CHECK190_BUILD_WAIT_SECONDS:-1800}
 BUILD_SA=${CHECK190_BUILD_SA:-}
 REPO=${CHECK190_REPO:-}
 TOKEN_FILE=${CHECK190_TOKEN_FILE:-}
@@ -168,6 +183,7 @@ SCRATCH_MARKER=".chk190-mine"
 SERVICE_MINE=""
 REPO_MINE=""
 SECRET_MINE=""
+BUCKET_MINE=""
 PUSHED=""
 SCRATCH_REMOVED=no
 COUNTS_OK=no
@@ -175,13 +191,15 @@ PRINTED=""
 FACTS_CAPTURED=""
 # The two 0600 files the identity token is written into, the name this run gave
 # its branch, the service's host, the build account resolved read-only, the
-# prefix this run staged the build's source under, and the flag that says a
-# build was attempted at all (the Restore removes the image only then).
+# prefix in this run's own bucket the build's source is staged under, the flag
+# that says a build was attempted at all (the Restore removes the image only
+# then) and the build's ID (the Restore cancels it if it is still running).
 AUTH_CONF=""
 GIT_CONF=""
 NAME=""
 HOST=""
 BUILD_ATTEMPTED=no
+BUILD_ID=""
 STAGING_PREFIX=""
 # The cleanup flag finish sets: a second Ctrl-C while the Restore is running
 # must not kill the shell that is running it (see finish).
@@ -196,6 +214,7 @@ scratch_up() {
   SERVICE_MINE="$SCRATCH/service-mine"
   REPO_MINE="$SCRATCH/repo-mine"
   SECRET_MINE="$SCRATCH/secret-mine"
+  BUCKET_MINE="$SCRATCH/bucket-mine"
   PUSHED="$SCRATCH/pushed"
   AUTH_CONF="$SCRATCH/idt.conf"
   GIT_CONF="$SCRATCH/gitconfig"
@@ -203,9 +222,7 @@ scratch_up() {
   # part, so two runs never share one and the Restore can name exactly what it
   # created.
   NAME=${SCRATCH##*.}
-  # Nameable by this run alone: the scratch directory's own name is unique and
-  # is deleted with it, so two runs of this check never share a staging prefix.
-  STAGING_PREFIX="gs://${P}_cloudbuild/chk190-source/${SCRATCH##*/}/"
+  STAGING_PREFIX="${BUCKET}/source/"
   if (cd "$SCRATCH" && git rev-parse --show-toplevel >/dev/null 2>&1); then
     die "Check 190 stopped: $SCRATCH is inside a git work tree, so what it writes could be committed by accident — set TMPDIR outside every repository and run again"
   fi
@@ -266,8 +283,8 @@ git_error_excerpt() {
 # lives in the repository). It runs from the exit trap too, so a Ctrl-C in the
 # middle does not leave a billed service behind.
 restore_run() {
-  if [ ! -f "$SERVICE_MINE" ] && [ ! -f "$REPO_MINE" ] && [ ! -f "$SECRET_MINE" ]; then
-    fact "restore" PASS "nothing of this check's was created (no service, no repository, no secret), so there is nothing to delete"
+  if [ ! -f "$SERVICE_MINE" ] && [ ! -f "$REPO_MINE" ] && [ ! -f "$SECRET_MINE" ] && [ ! -f "$BUCKET_MINE" ]; then
+    fact "restore" PASS "nothing of this check's was created (no service, no repository, no secret, no bucket), so there is nothing to delete"
     COUNTS_OK=yes
     return 0
   fi
@@ -298,6 +315,11 @@ restore_run() {
   else
     fact "branch-deleted" PASS "no branch was pushed: the run stopped before its first push, so there is none to delete"
   fi
+  if [ -n "$BUILD_ID" ]; then
+    # A build still running would push into the registry the next lines delete;
+    # cancelling one that already ended is refused, and that is fine.
+    gcloud builds cancel "$BUILD_ID" --project="${P:?}" --quiet >/dev/null 2>&1 || true
+  fi
   if [ -f "$SERVICE_MINE" ]; then
     gcloud run services delete "${SVC:?}" --project="${P:?}" --region="${L:?}" --quiet >&2 || true
   fi
@@ -313,33 +335,30 @@ restore_run() {
     # check inside the project.
     gcloud secrets delete "${SECRET:?}" --project="${P:?}" --quiet >&2 || true
   fi
-  if [ "$BUILD_ATTEMPTED" = yes ]; then
-    gcloud storage rm -r "${STAGING_PREFIX:?}" >&2 || true
-    # Read back rather than asserted: the rm above is best-effort (a failure
-    # there must not lose the rest of the block), so the row says what a listing
-    # found and not what the command was asked to do. `gcloud storage ls` on a
-    # prefix with nothing under it exits non-zero and says so on stderr
-    # ("matched no objects"), so the status alone does not separate "gone" from
-    # "could not be read": the message does.
-    local staged st_rc=0
-    staged=$(gcloud storage ls "${STAGING_PREFIX:?}" 2>"$SCRATCH/staged.err" | tr -d '\r' | { grep -v '^$' || true; } | wc -l | tr -d ' ') || st_rc=$?
-    if [ "$staged" != 0 ]; then
-      fact "restore-staged-source" FAIL "the build's source this run staged at ${STAGING_PREFIX} is still there (${staged} object(s)); the scratch directory does not help here, so remove it by hand: gcloud storage rm -r ${STAGING_PREFIX}"
-    elif [ "$st_rc" = 0 ] || grep -q 'matched no objects' "$SCRATCH/staged.err"; then
-      fact "restore-staged-source" PASS "the build's source this run staged at ${STAGING_PREFIX} is gone (the prefix is empty, and no bucket-wide delete was attempted)"
-    else
-      fact "restore-staged-source" FAIL "whether the build's source at ${STAGING_PREFIX} is still there cannot be read (the list exited ${st_rc} for a reason other than an empty prefix), so nothing is claimed about it: check it by hand with gcloud storage ls ${STAGING_PREFIX} and remove it with gcloud storage rm -r ${STAGING_PREFIX} if it is there"
-    fi
+  if [ -f "$BUCKET_MINE" ]; then
+    # The bucket with everything in it (the staged source): it is this run's
+    # own, so the whole of it goes, and its IAM binding with it.
+    gcloud storage rm -r "${BUCKET:?}" --quiet >&2 || true
   fi
-  local st rp sc
+  local st rp sc bk
   st=$(svc_state)
   rp=$(repo_state)
   sc=$(secret_state)
-  if [ "$st" = not-there ] && [ "$rp" = not-there ] && [ "$sc" = not-there ]; then
-    COUNTS_OK=yes
-    fact "restore" PASS "the service, the image's repository and the secret container this run created are gone"
+  bk=$(bucket_state)
+  if [ ! -f "$BUCKET_MINE" ]; then
+    fact "bucket-deleted" PASS "this run created no staging bucket, so there is none to delete"
+  elif [ "$bk" = not-there ]; then
+    fact "bucket-deleted" PASS "${BUCKET}, with the source staged in it and the build account's objectViewer binding, is gone (read back by a listing)"
+  elif [ "$bk" = there ]; then
+    fact "bucket-deleted" FAIL "${BUCKET} is still in ${P}: delete it by hand with gcloud storage rm -r ${BUCKET}"
   else
-    fact "restore" FAIL "counts after the Restore: service ${st}, repository ${rp}, secret ${sc} — each must read not-there. The scratch directory is kept: $SCRATCH. Delete by hand what is still there only if you know it is this check's"
+    fact "bucket-deleted" FAIL "whether ${BUCKET} is gone cannot be read (the list failed), so nothing is claimed about it: check it with gcloud storage buckets list --project=${P} --filter=name=${BUCKET_NAME} and delete it with gcloud storage rm -r ${BUCKET} if it is there"
+  fi
+  if [ "$st" = not-there ] && [ "$rp" = not-there ] && [ "$sc" = not-there ] && [ "$bk" = not-there ]; then
+    COUNTS_OK=yes
+    fact "restore" PASS "the service, the image's repository (with the build account's writer binding), the secret container and the staging bucket are gone: four counts read 0"
+  else
+    fact "restore" FAIL "counts after the Restore: service ${st}, repository ${rp}, secret ${sc}, bucket ${bk} — each must read not-there. The scratch directory is kept: $SCRATCH. Delete by hand what is still there only if you know it is this check's"
   fi
 }
 
@@ -519,6 +538,11 @@ secret_state() {
     --filter="name:${SECRET}" --format='value(name)'
 }
 
+bucket_state() {
+  list_state "${BUCKET_NAME:?}" gcloud storage buckets list --project="${P:?}" \
+    --filter="name=${BUCKET_NAME}" --format='value(name)'
+}
+
 guard_resources() {
   # Hard stop: neither the service nor the repository nor the secret is already
   # there — unless it is the one this check created, recorded right after its
@@ -550,7 +574,16 @@ guard_resources() {
     [ -f "$SECRET_MINE" ] \
       || stop "a secret named ${SECRET} is already in ${P}, and it is not this check's: this check never writes into or deletes a secret it did not create, and it will not overwrite one that may hold a real token. Delete it yourself if you know it is a leftover of an earlier attempt, then run again"
   fi
-  fact "baseline" PASS "no service, repository or secret of this check's names was in ${P} when it started"
+  local bk
+  bk=$(bucket_state)
+  if [ "$bk" = unreadable ]; then
+    stop "whether a bucket named ${BUCKET_NAME} is already in ${P} cannot be read: the list failed, and a failed call is not the answer 'it is not there'. Run 'gcloud storage buckets list --project=${P} --filter=name=${BUCKET_NAME}' by hand and read its answer, then run this check again. Nothing was created"
+  fi
+  if [ "$bk" = there ]; then
+    [ -f "$BUCKET_MINE" ] \
+      || stop "a bucket named ${BUCKET_NAME} is already in ${P}, and it is not this check's: this check never adopts, writes into or deletes a bucket it did not create. Look at it first (gcloud storage ls ${BUCKET}) and delete it yourself (gcloud storage rm -r ${BUCKET}) if it holds nothing but an earlier attempt's staged source; then run again"
+  fi
+  fact "baseline" PASS "no service, repository, secret or bucket of this check's names was in ${P} when it started"
 }
 
 # ------------------------------------------------------------- credentials
@@ -682,7 +715,9 @@ step_build_deploy() {
   # The build account: this check never builds as the project's default Compute
   # account, which on fugaro-dev has had roles/editor removed. It reads the
   # installation's own build accounts and takes the first, or the one
-  # CHECK190_BUILD_SA names.
+  # CHECK190_BUILD_SA names. Its installation grants are on its own repository's
+  # registry and nothing this check makes, so the two it needs here are granted
+  # below, on this check's own registry and bucket only.
   if [ -z "$BUILD_SA" ]; then
     BUILD_SA=$(gcloud iam service-accounts list --project="${P:?}" \
       --filter='email~^fugaro-b-' --format='value(email)' 2>/dev/null | head -n 1 || true)
@@ -690,19 +725,7 @@ step_build_deploy() {
   if [ -z "$BUILD_SA" ]; then
     stop "no build service account was found: this check builds the proxy as one of the installation's own accounts (fugaro-b-*), never as the project's default Compute account, and 'gcloud iam service-accounts list --project=${P} --filter=email~^fugaro-b-' printed none. Name one with CHECK190_BUILD_SA=<account>@${P}.iam.gserviceaccount.com and run again. Nothing was created"
   fi
-  say "building as ${BUILD_SA} (roles/artifactregistry.writer on the project, roles/storage.objectViewer on gs://${P}_cloudbuild, roles/logging.logWriter)"
-
-  # The staging bucket is the INSTALLATION's, not this check's: `gcloud builds
-  # submit` CREATES gs://<project>_cloudbuild when it is missing, and this run's
-  # Restore removes only its own prefix under it — so a bucket created here
-  # would outlive the check, with no record and nothing that deletes it. An
-  # unreadable bucket is therefore a stop BEFORE anything is created, and a
-  # failed listing is not the answer "it is not there" (see list_state).
-  if ! gcloud storage ls "gs://${P}_cloudbuild/" >/dev/null 2>"$SCRATCH/bucket.err"; then
-    fact "build-staging" FAIL "gs://${P}_cloudbuild/ could not be listed here (it is not there, or this account cannot read it), so the build was NOT started: 'gcloud builds submit' would create that staging bucket for this run's source, and the bucket is the installation's — this check creates only what its own Restore deletes. Nothing was created, built or deployed"
-    stop "gs://${P}_cloudbuild/ cannot be listed, and 'gcloud builds submit' would CREATE it to stage this run's source: a bucket is the installation's own (not this check's), so this check never creates one and has no record by which to remove it. Fix, per INSTALLATION fugaro (${P}), run by YOU: if the bucket exists, give YOUR account read on it (gcloud storage buckets add-iam-policy-binding gs://${P}_cloudbuild --member=user:YOUR-EMAIL --role=roles/storage.objectViewer); if it does not exist, create it once (gcloud storage buckets create gs://${P}_cloudbuild --project=${P} --location=${L} --uniform-bucket-level-access). Then run this check again. Nothing was created, built or deployed by this run"
-  fi
-  fact "build-staging" PASS "this run stages the build's source under ${STAGING_PREFIX}, inside the installation's own staging bucket (listed before anything was created, so gcloud creates nothing), and its Restore deletes that prefix again"
+  say "building as ${BUILD_SA}: this run grants it roles/artifactregistry.writer on its own registry ${SVC} and roles/storage.objectViewer on its own bucket ${BUCKET}, and nothing else"
 
   # The token's own container, created from the file with --data-file: the value
   # is in no argv, no log line and no environment variable of the service. The
@@ -755,21 +778,97 @@ step_build_deploy() {
     fi
   fi
 
+  # The bucket the build's source is staged in: this check's own, made here and
+  # deleted with its contents by the Restore, so nothing of this check's is
+  # written into a bucket of the installation's (gs://<project>_cloudbuild is
+  # never touched, and `gcloud builds submit` is told where to stage, so it
+  # creates nothing either). Same record-before-create rule as the repository.
+  local bk
+  bk=$(bucket_state)
+  if [ "$bk" = there ]; then
+    [ -f "$BUCKET_MINE" ] \
+      || stop "a bucket named ${BUCKET_NAME} is in ${P} and it is not this check's — this check creates its own staging bucket and never adopts one. Nothing was written into it; the secret container and the repository are deleted by this run's Restore"
+  else
+    : >"$BUCKET_MINE"
+    if ! gcloud storage buckets create "${BUCKET:?}" --project="${P:?}" --location="${L:?}" \
+      --uniform-bucket-level-access --quiet >&2; then
+      local made_b
+      made_b=$(bucket_state)
+      if [ "$made_b" = there ]; then
+        fact "staging-bucket" FAIL "the bucket create reported failure, but ${BUCKET} IS in ${P} now, so it is this check's and this run's Restore deletes it"
+        stop "the bucket create reported failure, but ${BUCKET} IS there now, so it is this check's: the record says so and this run's Restore deletes it. Nothing was built"
+      fi
+      if [ "$made_b" = unreadable ]; then
+        fact "staging-bucket" FAIL "the bucket create reported failure and whether ${BUCKET} is there now cannot be read, so the record of it is kept and this run's Restore tries to delete it"
+        stop "the bucket create reported failure and whether ${BUCKET} is there now cannot be read (the list failed), so the record of it is KEPT and this run's Restore tries to delete it. Check 'gcloud storage buckets list --project=${P} --filter=name=${BUCKET_NAME}' by hand. Nothing was built"
+      fi
+      rm -f "$BUCKET_MINE" || true
+      fact "staging-bucket" FAIL "${BUCKET} could not be created in ${P}/${L} (the name is global: another project may hold it, or YOUR account lacks storage.buckets.create, which an Owner has)"
+      stop "the staging bucket ${BUCKET} could not be created and is not in ${P}, so nothing was built: the record of it is removed again, and the secret container and the repository are deleted by this run's Restore. A bucket name is global, so another project may hold it; otherwise YOUR account needs storage.buckets.create on ${P}"
+    fi
+  fi
+  fact "staging-bucket" PASS "${BUCKET} (${L}, uniform bucket-level access) was created by this run to stage the build's source, and its Restore deletes it with everything in it; the installation's own gs://${P}_cloudbuild is not touched"
+
+  # The build account's two grants, each on a resource this run created, so the
+  # Restore's deletes of the registry and the bucket take the grants with them
+  # and nothing of the installation's IAM changes.
+  if ! gcloud artifacts repositories add-iam-policy-binding "${SVC:?}" --project="${P:?}" --location="${L:?}" \
+    --member="serviceAccount:${BUILD_SA}" --role=roles/artifactregistry.writer --quiet >&2; then
+    fact "grants" FAIL "${BUILD_SA} could not be granted roles/artifactregistry.writer on this run's registry ${SVC}"
+    stop "${BUILD_SA} could not be granted roles/artifactregistry.writer on this run's own registry ${SVC}, so the build could not push its image. YOUR account needs artifactregistry.repositories.setIamPolicy on it (an Owner has it). Nothing was built; the registry, the bucket and the secret container are deleted by this run's Restore"
+  fi
+  if ! gcloud storage buckets add-iam-policy-binding "${BUCKET:?}" \
+    --member="serviceAccount:${BUILD_SA}" --role=roles/storage.objectViewer --quiet >&2; then
+    fact "grants" FAIL "${BUILD_SA} could not be granted roles/storage.objectViewer on this run's bucket ${BUCKET}"
+    stop "${BUILD_SA} could not be granted roles/storage.objectViewer on this run's own bucket ${BUCKET}, so the build could not read its source. YOUR account needs storage.buckets.setIamPolicy on it (an Owner has it). Nothing was built; the registry, the bucket and the secret container are deleted by this run's Restore"
+  fi
+  fact "grants" PASS "${BUILD_SA}: roles/artifactregistry.writer on this run's registry ${SVC} and roles/storage.objectViewer on this run's bucket ${BUCKET}, nothing project-wide; both go with the registry and the bucket in the Restore"
+  # IAM is eventually consistent: a build that starts the second a grant lands
+  # can still be refused by it, and that refusal reads like a missing grant.
+  owner "waiting ${GRANT_SECONDS} s for the two grants to take effect"
+  sleep_bg "$GRANT_SECONDS"
+
   mkdir -p "$SCRATCH/build"
   cp "$PROXY_SRC/main.go" "$SCRATCH/build/main.go" || stop "the proxy source could not be copied into the scratch directory"
   write_dockerfile
   write_build_config
-  say "building ${IMG} (gcloud builds submit). If it offers to CREATE anything — the staging bucket, an API, a grant — say NO, stop, and report it: those are the installation's and are not this check's to accept"
+  say "building ${IMG} (gcloud builds submit --async, then read back until it ends). If it offers to CREATE anything — a bucket, an API, a grant — say NO, stop, and report it: those are the installation's and are not this check's to accept"
   BUILD_ATTEMPTED=yes
+  # --async, then the build's own status read back: a synchronous submit streams
+  # the log, and with CLOUD_LOGGING_ONLY that needs YOUR account to read Cloud
+  # Logging, which says nothing about whether the build passed. The status read
+  # needs only cloudbuild.builds.get.
   local build_rc=0
-  gcloud builds submit --project="${P:?}" --config="$SCRATCH/cloudbuild.yaml" \
+  BUILD_ID=$(gcloud builds submit --project="${P:?}" --config="$SCRATCH/cloudbuild.yaml" \
     --service-account="projects/${P}/serviceAccounts/${BUILD_SA}" \
-    --gcs-source-staging-dir="${STAGING_PREFIX:?}" "$SCRATCH/build" \
-    >&2 2>"$SCRATCH/build.err" || build_rc=$?
-  if [ "$build_rc" != 0 ]; then
-    fact "build-error" FAIL "gcloud builds submit (as ${BUILD_SA}) exited ${build_rc}: $(git_error_excerpt build). Likely causes, most likely first: the build config at ${SCRATCH}/cloudbuild.yaml lost its 'options: logging: CLOUD_LOGGING_ONLY' (a build that names its service account is refused without a logging option, before anything runs); the identity the build ran as cannot read the source this run staged at ${STAGING_PREFIX} (storage.objects.get; roles/storage.objectViewer on gs://${P}_cloudbuild); it cannot WRITE the image to Artifact Registry (artifactregistry.repositories.uploadArtifacts; roles/artifactregistry.writer on the project, since ${SVC} is created by this run); YOUR account lacks roles/iam.serviceAccountUser on it; the Cloud Build API is not enabled in ${P}; or the Go tag in the Dockerfile is not a tag that registry has. The grants are the installation's IAM, not this check's to change. Nothing was deployed, and the repository, the image, the staged source and the secret container are deleted by this run's Restore"
-    stop "the build failed (exit ${build_rc}), so nothing was deployed: the block's build-error row carries what gcloud said"
+    --gcs-source-staging-dir="${STAGING_PREFIX:?}" --async --format='value(id)' "$SCRATCH/build" \
+    2>"$SCRATCH/build.err") || build_rc=$?
+  BUILD_ID=$(printf '%s' "$BUILD_ID" | tr -d '\r' | grep -v '^$' | tail -n 1 || true)
+  if [ "$build_rc" != 0 ] || [ -z "$BUILD_ID" ]; then
+    fact "build" FAIL "gcloud builds submit (as ${BUILD_SA}) exited ${build_rc} and started no build: $(git_error_excerpt build). Likely causes, most likely first: YOUR account lacks roles/iam.serviceAccountUser on ${BUILD_SA}; the Cloud Build API is not enabled in ${P}; or the config at ${SCRATCH}/cloudbuild.yaml lost its 'options: logging: CLOUD_LOGGING_ONLY' (a build that names its service account is refused without one). Nothing was deployed, and the registry, the bucket with the staged source and the secret container are deleted by this run's Restore"
+    stop "the build was not started (exit ${build_rc}), so nothing was deployed: the block's build row carries what gcloud said"
   fi
+  local status="" detail="" waited=0 line
+  while :; do
+    line=$(gcloud builds describe "$BUILD_ID" --project="${P:?}" --format='value(status,failureInfo.detail)' 2>/dev/null || true)
+    status=$(printf '%s' "$line" | tr -d '\r' | head -n 1 | awk -F'\t' '{print $1}')
+    detail=$(printf '%s' "$line" | tr -d '\r' | head -n 1 | awk -F'\t' '{print $2}' | redact | cut -c1-300)
+    case "$status" in
+    QUEUED | PENDING | WORKING | "") ;;
+    *) break ;;
+    esac
+    if [ "$waited" -ge "$BUILD_WAIT_SECONDS" ]; then
+      status="still ${status:-unreadable}"
+      break
+    fi
+    sleep_bg 10
+    waited=$((waited + 10))
+  done
+  if [ "$status" != SUCCESS ]; then
+    fact "build" FAIL "build ${BUILD_ID} (as ${BUILD_SA}) ended ${status} after about ${waited} s: ${detail:-no failure detail}. Its log is in Cloud Logging (gcloud builds log ${BUILD_ID} --project=${P}, which needs YOUR account to read logs). Likely causes, most likely first: a grant above had not taken effect yet (run again); the Go tag in the Dockerfile is not a tag that registry has; or the build account cannot reach the registry or the bucket. Nothing was deployed, and the registry, the bucket and the secret container are deleted by this run's Restore"
+    stop "the build did not succeed (${status}), so nothing was deployed: the block's build row carries what Cloud Build said"
+  fi
+  fact "build" PASS "build ${BUILD_ID} as ${BUILD_SA} succeeded in about ${waited} s (read back by its status, not its log): ${IMG}"
 
   # Same rule as the secret's record above: a deploy that is interrupted is the
   # ordinary way to be left with a service that bills, so the record that says
@@ -786,7 +885,7 @@ step_build_deploy() {
       stop "the deploy reported failure and whether ${SVC} is there now cannot be read (the list failed), so the record of it is KEPT: a deploy that reported failure may still be serving and being billed, and the record is what makes this run's Restore delete it. Check 'gcloud run services list --project=${P} --region=${L} --filter=metadata.name=${SVC}' by hand; if the service is there, delete it yourself. Nothing else ran"
     fi
     rm -f "$SERVICE_MINE" || true
-    stop "the deploy failed and ${SVC} is not there, so nothing of this check's is running: the record is removed again, and the image, the repository, the staged source and the secret container are deleted by this run's Restore"
+    stop "the deploy failed and ${SVC} is not there, so nothing of this check's is running: the record is removed again, and the image, the repository, the staging bucket and the secret container are deleted by this run's Restore"
   fi
   local url_err=$SCRATCH/url.err
   URL=$(gcloud run services describe "${SVC:?}" --project="${P:?}" --region="${L:?}" --format='value(status.url)' 2>"$url_err") \
@@ -975,23 +1074,28 @@ step_slow_push() {
 # delete. Printed by --dry-run; nothing here is run.
 print_plan() {
   say "dry run: NOTHING below was run. A real run would run, in this order:"
-  say "  [network] gcloud storage ls gs://${P}_cloudbuild/ (a read, and a stop if it fails: the build's staging bucket must already be there, because 'gcloud builds submit' would CREATE it, and it is the installation's rather than this check's)"
   say "  [network, writes] gcloud secrets create ${SECRET} --project=${P} --data-file=<CHECK190_TOKEN_FILE>"
   say "  [network, writes] gcloud secrets add-iam-policy-binding ${SECRET} --project=${P} --member=serviceAccount:<project-number>-compute@developer.gserviceaccount.com --role=roles/secretmanager.secretAccessor"
   say "  [network, writes] gcloud artifacts repositories create ${SVC} --project=${P} --location=${L} --repository-format=docker"
-  say "  [network, writes] gcloud builds submit --project=${P} --config=${SCRATCH}/cloudbuild.yaml --service-account=<build account> --gcs-source-staging-dir=${STAGING_PREFIX} ${SCRATCH}/build (the config: one docker build of ${IMG}, images: [${IMG}], options.logging CLOUD_LOGGING_ONLY)"
+  say "  [network, writes] gcloud storage buckets create ${BUCKET} --project=${P} --location=${L} --uniform-bucket-level-access"
+  say "  [network, writes] gcloud artifacts repositories add-iam-policy-binding ${SVC} --project=${P} --location=${L} --member=serviceAccount:<build account> --role=roles/artifactregistry.writer"
+  say "  [network, writes] gcloud storage buckets add-iam-policy-binding ${BUCKET} --member=serviceAccount:<build account> --role=roles/storage.objectViewer"
+  say "  [local] a ${GRANT_SECONDS} s wait for the two grants to take effect"
+  say "  [network, writes] gcloud builds submit --project=${P} --config=${SCRATCH}/cloudbuild.yaml --service-account=<build account> --gcs-source-staging-dir=${STAGING_PREFIX} --async ${SCRATCH}/build (the config: one docker build of ${IMG}, images: [${IMG}], options.logging CLOUD_LOGGING_ONLY)"
+  say "  [network] gcloud builds describe <build id> --project=${P}, every 10 s until the build ends (its status, not its log: no Cloud Logging read is needed)"
   say "  [network, writes] gcloud run deploy ${SVC} ${DEPLOY_FLAGS[*]}"
   say "  [network] the probes: identity-token requests with curl to the service's own /chk190/stats and /chk190/health, and git clone (full and blobless), git push (small and above ${BIG_MIB} MiB on HTTP/1.1) and the slow push, all through the proxy to bitbucket.org"
   say "  [network, writes] one branch on $(repo_name): chk190/${NAME}, and its -slow sibling if that push ever completes"
   say "and its Restore (also from the exit trap) would run:"
   say "  [network, deletes] git push --delete the branches chk190/${NAME} and chk190/${NAME}-slow"
+  say "  [network, writes] gcloud builds cancel <build id> --project=${P} (refused, harmlessly, when the build already ended)"
   say "  [network, deletes] gcloud run services delete ${SVC} --project=${P} --region=${L}"
   say "  [network, deletes] gcloud artifacts docker images delete ${IMG} --project=${P} --delete-tags"
   say "  [network, deletes] gcloud artifacts repositories delete ${SVC} --project=${P} --location=${L}"
   say "  [network, deletes] gcloud secrets delete ${SECRET} --project=${P}"
-  say "  [network, deletes] gcloud storage rm -r ${STAGING_PREFIX}"
-  say "  [network] gcloud storage ls ${STAGING_PREFIX} (the read-back that says the staged source is gone; a prefix that cannot be read is a FAIL, not a PASS)"
-  say "What needed the network and your credentials in THIS dry run: fugaro doctor, the lists that ask whether the service, the repository and the secret are there, and the build-account list (all reads). Local only: the scratch directory and the Dockerfile in it."
+  say "  [network, deletes] gcloud storage rm -r ${BUCKET} (the bucket and the source staged in it)"
+  say "  [network] the four lists that read back the service, the repository, the secret and the bucket as gone"
+  say "What needed the network and your credentials in THIS dry run: fugaro doctor, the lists that ask whether the service, the repository, the secret and the bucket are there, and the build-account list (all reads). Local only: the scratch directory and the Dockerfile in it."
 }
 
 main() {
@@ -1023,8 +1127,8 @@ main() {
 # FAIL — not reached, and any other recorded key follows, in the order the run
 # recorded it. That is what makes the block safe to diff between two runs.
 BLOCK_KEYS=(fugaro-version project-region repo token-file deploy-iam-only proxy-source baseline scratch
-  build-staging service-config iam-policy unauthenticated-request clone-full clone-blobless push-small
-  push-big-http1 cold-start timeout-3600 branch-deleted restore-staged-source restore scratch-removed)
+  staging-bucket grants build service-config iam-policy unauthenticated-request clone-full clone-blobless push-small
+  push-big-http1 cold-start timeout-3600 branch-deleted bucket-deleted restore scratch-removed)
 
 print_block() { # print_block FACTS STATUS — always on the owner's own stdout
   local facts=$1 status=$2

@@ -119,8 +119,10 @@ ALLOWED = {
     ("auth", "print-identity-token"): (),
     ("projects", "describe"): ("--format",),
     ("iam", "service-accounts", "list"): ("--project", "--filter", "--format"),
-    ("storage", "ls"): (),
-    ("storage", "rm"): ("-r",),
+    ("storage", "rm"): ("-r", "--quiet"),
+    ("storage", "buckets", "create"): ("--project", "--location", "--uniform-bucket-level-access", "--quiet"),
+    ("storage", "buckets", "list"): ("--project", "--filter", "--format"),
+    ("storage", "buckets", "add-iam-policy-binding"): ("--member", "--role", "--quiet"),
     ("secrets", "create"): ("--project", "--replication-policy", "--data-file", "--quiet"),
     ("secrets", "add-iam-policy-binding"): ("--project", "--member", "--role", "--quiet"),
     ("secrets", "list"): ("--project", "--filter", "--format"),
@@ -128,8 +130,12 @@ ALLOWED = {
     ("artifacts", "repositories", "create"): ("--project", "--location", "--repository-format", "--description", "--quiet"),
     ("artifacts", "repositories", "list"): ("--project", "--location", "--filter", "--format"),
     ("artifacts", "repositories", "delete"): ("--project", "--location", "--quiet"),
+    ("artifacts", "repositories", "add-iam-policy-binding"): ("--project", "--location", "--member", "--role", "--quiet"),
     ("artifacts", "docker", "images", "delete"): ("--project", "--delete-tags", "--quiet"),
-    ("builds", "submit"): ("--project", "--tag", "--config", "--service-account", "--gcs-source-staging-dir", "--gcs-log-dir"),
+    ("builds", "submit"): ("--project", "--tag", "--config", "--service-account", "--gcs-source-staging-dir",
+                           "--gcs-log-dir", "--async", "--format"),
+    ("builds", "describe"): ("--project", "--format"),
+    ("builds", "cancel"): ("--project", "--quiet"),
     ("run", "deploy"): ("--project", "--region", "--image", "--no-allow-unauthenticated", "--timeout",
                         "--min-instances", "--max-instances", "--set-secrets", "--set-env-vars", "--quiet"),
     ("run", "services", "list"): ("--project", "--region", "--filter", "--format"),
@@ -175,18 +181,24 @@ elif sub == ("projects", "describe"):
     emit("123456789012")
 elif sub == ("iam", "service-accounts", "list"):
     emit("fugaro-b-1@fugaro-dev.iam.gserviceaccount.com")
-elif sub == ("storage", "ls"):
-    # The bucket guard and the staged-source read-back are both this call. A
-    # real listing of a prefix with nothing under it prints nothing and exits 0
-    # (an empty prefix is a `matched no objects` error only for the `**` form),
-    # so an empty listing here is the honest answer.
-    if mode == "bucket-missing":
-        sys.stderr.write("ERROR: (gcloud) gs://fugaro-dev_cloudbuild/ not found: 404\n")
+elif sub == ("storage", "buckets", "list"):
+    if mode == "bucket-there" or state_get("bucket") == "1":
+        emit("fugaro-dev-chk190-staging")
+elif sub == ("storage", "buckets", "create"):
+    if positionals[3:4] != ["gs://fugaro-dev-chk190-staging"]:
+        sys.stderr.write("ERROR: (gcloud) this check creates its own staging bucket only\n")
         sys.exit(1)
-    if mode == "staged-left":
-        emit("gs://fugaro-dev_cloudbuild/chk190-source/x/main.go")
+    state_set("bucket", "1")
+elif sub == ("storage", "buckets", "add-iam-policy-binding"):
+    if positionals[3:4] == ["gs://fugaro-dev_cloudbuild"]:
+        sys.stderr.write("ERROR: (gcloud) the installation's staging bucket is not this check's\n")
+        sys.exit(1)
+    if mode != "grants-ignored" and flag("--role") == "roles/storage.objectViewer" and state_get("bucket") == "1":
+        state_set("bucketgrant", flag("--member"))
 elif sub == ("storage", "rm"):
-    pass
+    if mode != "bucket-delete-fails" and positionals[2:3] == ["gs://fugaro-dev-chk190-staging"]:
+        state_set("bucket", "0")
+        state_set("bucketgrant", "0")
 elif sub == ("secrets", "create"):
     data = flag("--data-file")
     if not data or not os.path.exists(data):
@@ -207,6 +219,13 @@ elif sub == ("artifacts", "repositories", "list"):
         emit("projects/fugaro-dev/locations/us-east5/repositories/fugaro-chk190")
 elif sub == ("artifacts", "repositories", "delete"):
     state_set("repo", "0")
+    state_set("repogrant", "0")
+elif sub == ("artifacts", "repositories", "add-iam-policy-binding"):
+    if mode == "grant-fails":
+        sys.stderr.write("ERROR: (gcloud.artifacts.repositories.add-iam-policy-binding) PERMISSION_DENIED\n")
+        sys.exit(1)
+    if mode != "grants-ignored" and flag("--role") == "roles/artifactregistry.writer" and state_get("repo") == "1":
+        state_set("repogrant", flag("--member"))
 elif sub == ("artifacts", "docker", "images", "delete"):
     pass
 elif sub == ("builds", "submit"):
@@ -233,6 +252,31 @@ elif sub == ("builds", "submit"):
     if flag("--service-account") and not logging and not flag("--gcs-log-dir"):
         sys.stderr.write("ERROR: (gcloud.builds.submit) INVALID_ARGUMENT: invalid argument: if 'build.service_account' is specified, the build must either (a) specify 'build.logs_bucket', (b) use the REGIONAL_USER_OWNED_BUCKET default logs bucket, or (c) use CLOUD_LOGGING_ONLY / NONE logging.\n")
         sys.exit(1)
+    # The source goes to this check's own bucket and nowhere else: without
+    # --gcs-source-staging-dir gcloud would stage in (and create)
+    # gs://<project>_cloudbuild, which is the installation's.
+    staging = flag("--gcs-source-staging-dir")
+    if not staging.startswith("gs://fugaro-dev-chk190-staging/") or state_get("bucket") != "1":
+        sys.stderr.write("ERROR: (gcloud.builds.submit) the source must be staged in this check's own existing bucket, not %r\n" % staging)
+        sys.exit(1)
+    # The build runs as the named account, which can read the source and push
+    # the image only through the two grants this check makes on its own bucket
+    # and registry; the installation grants it neither.
+    member = "serviceAccount:" + flag("--service-account").split("/serviceAccounts/")[-1]
+    if mode == "build-fails":
+        state_set("build", "FAILURE\tBuild step 0 \"gcr.io/cloud-builders/docker\" failed: step exited with non-zero status: 1")
+    elif state_get("bucketgrant") != member:
+        state_set("build", "FAILURE\t" + member + " does not have storage.objects.get access to the Google Cloud Storage object.")
+    elif state_get("repogrant") != member:
+        state_set("build", "FAILURE\tPermission \"artifactregistry.repositories.uploadArtifacts\" denied on resource")
+    else:
+        state_set("build", "SUCCESS\t")
+    if has("--async"):
+        emit("fake-build-1")
+elif sub == ("builds", "describe"):
+    emit(state_get("build"))
+elif sub == ("builds", "cancel"):
+    pass
 elif sub == ("run", "deploy"):
     if mode == "deploy-fails":
         sys.stderr.write("ERROR: (gcloud.run.deploy) the deploy failed\n")
@@ -511,7 +555,7 @@ run190() { # dir extra-env...
     FAKE_CURL_STATE="$dir/state" FAKE_GIT_STATE="$dir/state" \
     CHECK190_REPO=workspace-a/repo-a CHECK190_TOKEN_FILE="$dir/token" \
     CHECK190_IDLE_SECONDS=0 CHECK190_SLOW_SECONDS=3 CHECK190_BIG_MIB=1 \
-    CHECK190_CURL_SECONDS=3 \
+    CHECK190_CURL_SECONDS=3 CHECK190_GRANT_SECONDS=0 CHECK190_BUILD_WAIT_SECONDS=0 \
     ${1+"$@"} \
     bash "$script" >"$dir/out" 2>"$dir/err" || status=$?
   out=$(cat "$dir/out")
@@ -536,7 +580,7 @@ run_copy() { # dir script extra-env...
     FAKE_CURL_STATE="$dir/state" FAKE_GIT_STATE="$dir/state" \
     CHECK190_REPO=workspace-a/repo-a CHECK190_TOKEN_FILE="$dir/token" \
     CHECK190_IDLE_SECONDS=0 CHECK190_SLOW_SECONDS=3 CHECK190_BIG_MIB=1 \
-    CHECK190_CURL_SECONDS=3 \
+    CHECK190_CURL_SECONDS=3 CHECK190_GRANT_SECONDS=0 CHECK190_BUILD_WAIT_SECONDS=0 \
     ${1+"$@"} \
     bash "$copy" >"$dir/out" 2>"$dir/err" || status=$?
   out=$(cat "$dir/out")
@@ -713,6 +757,21 @@ test_happy_path() {
   expect_absent "$build" "--tag=" "happy path: the build is not --tag, which cannot set logging"
   expect_contains "$(cat "$dir/logs/cloudbuild.yaml")" "logging: CLOUD_LOGGING_ONLY" "happy path: the build logs to Cloud Logging only"
   expect_contains "$(cat "$dir/logs/cloudbuild.yaml")" "us-east5-docker.pkg.dev/fugaro-dev/fugaro-chk190/" "happy path: the build pushes the check's own image"
+  expect_contains "$build" "--gcs-source-staging-dir=gs://fugaro-dev-chk190-staging/source/" "happy path: the source is staged in the check's own bucket"
+  expect_contains "$build" "--async" "happy path: the build is read back by its status, not by streaming its log"
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "builds describe fake-build-1" "happy path: the build's status was read back"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "_cloudbuild" "happy path: the installation's staging bucket is not touched"
+  expect_contains "$out" "FACT build: PASS" "happy path: the build row"
+
+  # The check's own bucket and grants: made by it, on its own resources only.
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "storage buckets create gs://fugaro-dev-chk190-staging --project=fugaro-dev --location=us-east5 --uniform-bucket-level-access" "happy path: the bucket is the check's own, uniform access, in the region"
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "artifacts repositories add-iam-policy-binding fugaro-chk190 --project=fugaro-dev --location=us-east5 --member=serviceAccount:fugaro-b-1@fugaro-dev.iam.gserviceaccount.com --role=roles/artifactregistry.writer" "happy path: writer on the check's own registry"
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "storage buckets add-iam-policy-binding gs://fugaro-dev-chk190-staging --member=serviceAccount:fugaro-b-1@fugaro-dev.iam.gserviceaccount.com --role=roles/storage.objectViewer" "happy path: objectViewer on the check's own bucket"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "projects add-iam-policy-binding" "happy path: no project-wide grant"
+  expect_contains "$out" "FACT staging-bucket: PASS" "happy path: the bucket row"
+  expect_contains "$out" "FACT grants: PASS" "happy path: the grants row"
+  expect_contains "$out" "FACT bucket-deleted: PASS" "happy path: the bucket is read back as gone"
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "storage rm -r gs://fugaro-dev-chk190-staging" "happy path: the bucket deleted with its contents"
 
   # Everything this run created was deleted again.
   expect_contains "$(cat "$dir/logs/gcloud.calls")" "run services delete fugaro-chk190" "happy path: the service deleted"
@@ -812,33 +871,71 @@ test_a_service_that_answers_unauthenticated_calls_stops_the_run() {
   expect_absent "$(cat "$dir/logs/git.calls")" "clone" "public service: no git request was sent"
 }
 
-# The staging bucket is the installation's and not this check's: `gcloud builds
-# submit` CREATES gs://<project>_cloudbuild when it is missing, and this run's
-# Restore removes only its own prefix under it. So a bucket that cannot be
-# listed is a stop BEFORE anything is created, and nothing is created.
-test_an_unreadable_staging_bucket_stops_before_anything_is_created() {
+# The staging bucket is this check's own, and one of its name that was already
+# there is a stop before anything is created: it is never adopted, written into
+# or deleted.
+test_a_staging_bucket_already_there_is_a_hard_stop() {
   local dir=$work/bucket
   prepare "$dir"
-  run190 "$dir" FAKE_GCLOUD_MODE=bucket-missing
-  expect_status "$status" 1 "staging bucket: the verdict"
-  expect_contains "$out" "FACT build-staging: FAIL" "staging bucket: the row"
-  expect_contains "$err" "would CREATE it to stage this run's source" "staging bucket: the stop names what gcloud would do"
-  expect_absent "$(cat "$dir/logs/gcloud.calls")" "secrets create" "staging bucket: no secret was created"
-  expect_absent "$(cat "$dir/logs/gcloud.calls")" "repositories create" "staging bucket: no repository was created"
-  expect_absent "$(cat "$dir/logs/gcloud.calls")" "run deploy" "staging bucket: nothing was deployed"
+  run190 "$dir" FAKE_GCLOUD_MODE=bucket-there
+  expect_status "$status" 1 "bucket already there: the verdict"
+  expect_contains "$err" "a bucket named fugaro-dev-chk190-staging is already in fugaro-dev, and it is not this check's" "bucket already there: the stop"
+  local calls
+  calls=$(cat "$dir/logs/gcloud.calls")
+  expect_absent "$calls" "create" "bucket already there: nothing was created"
+  expect_absent "$calls" "storage rm" "bucket already there: the bucket is not deleted"
 }
 
-# The `gcloud storage rm -r` above the read-back is best-effort — a failure
-# there must not lose the rest of the block — so the row says what a listing
-# found rather than what the command was asked to do. Check 91's Restore reads
-# its own staged source back for the same reason.
-test_a_staged_source_left_behind_is_a_failure() {
-  local dir=$work/staged
+# The installation grants the build account nothing on what this check makes,
+# so a build without the check's two grants is refused by Cloud Build, and the
+# row says so rather than the run carrying on to a deploy.
+test_a_build_without_the_grants_fails() {
+  local dir=$work/nogrants
   prepare "$dir"
-  run190 "$dir" FAKE_GCLOUD_MODE=staged-left
-  expect_status "$status" 1 "staged source: the verdict"
-  expect_contains "$out" "FACT restore-staged-source: FAIL — the build's source this run staged at gs://fugaro-dev_cloudbuild/chk190-source/" "staged source: the row names the prefix it read back"
-  expect_contains "$out" "is still there" "staged source: the row says the listing found it"
+  run190 "$dir" FAKE_GCLOUD_MODE=grants-ignored
+  expect_status "$status" 1 "no grants: the verdict"
+  expect_contains "$out" "FACT build: FAIL" "no grants: the build row"
+  expect_contains "$out" "storage.objects.get" "no grants: Cloud Build's own answer"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "run deploy" "no grants: nothing was deployed"
+  expect_contains "$out" "FACT bucket-deleted: PASS" "no grants: the bucket is still deleted"
+  expect_contains "$out" "FACT restore: PASS" "no grants: the Restore"
+}
+
+test_a_grant_that_fails_stops_before_the_build() {
+  local dir=$work/grantfails
+  prepare "$dir"
+  run190 "$dir" FAKE_GCLOUD_MODE=grant-fails
+  expect_status "$status" 1 "grant fails: the verdict"
+  expect_contains "$out" "FACT grants: FAIL" "grant fails: the row"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "builds submit" "grant fails: nothing was built"
+  expect_contains "$out" "FACT restore: PASS" "grant fails: the Restore"
+}
+
+test_a_failed_build_is_read_from_its_status() {
+  local dir=$work/buildfails
+  prepare "$dir"
+  run190 "$dir" FAKE_GCLOUD_MODE=build-fails
+  expect_status "$status" 1 "failed build: the verdict"
+  expect_contains "$out" "FACT build: FAIL — build fake-build-1" "failed build: the row names the build"
+  expect_contains "$out" "step exited with non-zero status" "failed build: Cloud Build's failure detail"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "run deploy" "failed build: nothing was deployed"
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "builds cancel fake-build-1" "failed build: the Restore cancels the build"
+}
+
+# The bucket is read back after its delete: a delete that did not take is a
+# FAIL with the command to run by hand, and the scratch directory is kept.
+test_a_bucket_left_behind_is_a_failure() {
+  local dir=$work/bucketleft
+  prepare "$dir"
+  run190 "$dir" FAKE_GCLOUD_MODE=bucket-delete-fails
+  expect_status "$status" 1 "bucket left: the verdict"
+  expect_contains "$out" "FACT bucket-deleted: FAIL — gs://fugaro-dev-chk190-staging is still in fugaro-dev" "bucket left: the row"
+  expect_contains "$out" "bucket there" "bucket left: the count that is not 0"
+  if [ -n "$scratch" ] && [ -d "$scratch" ]; then
+    kept+=("$scratch")
+  else
+    fail "bucket left: the scratch directory was removed although a count was not 0"
+  fi
 }
 
 # This check is the sandbox installation's and nobody else's: the project is
@@ -892,8 +989,11 @@ t test_a_slow_push_that_completes_is_a_failure
 t test_a_refused_large_push_is_recorded_with_the_front_ends_answer
 t test_a_branch_listing_that_fails_is_not_the_branch_is_gone
 t test_a_service_that_answers_unauthenticated_calls_stops_the_run
-t test_an_unreadable_staging_bucket_stops_before_anything_is_created
-t test_a_staged_source_left_behind_is_a_failure
+t test_a_staging_bucket_already_there_is_a_hard_stop
+t test_a_build_without_the_grants_fails
+t test_a_grant_that_fails_stops_before_the_build
+t test_a_failed_build_is_read_from_its_status
+t test_a_bucket_left_behind_is_a_failure
 t test_restore_leftover
 t test_never_belong
 
