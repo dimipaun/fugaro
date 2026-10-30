@@ -133,7 +133,7 @@ func TestDocsLicensingStatement(t *testing.T) {
 	// cannot drift back to a folder that takes nothing out of the core while
 	// this cross-check is on record. Task E3.1 realigned `LICENSING.md` to the
 	// same words (the website's licence wording is E3.2's, and still carries
-	// the older "reserved for net-new organisation features" until it lands).
+	// "the reserved `ee/` directory" on the community page until it lands).
 	// This read is why the test's name is in eeReadingTests.
 	eePage := strings.ToLower(flattenDoc(readRealEE(t, "README.md")))
 	for _, want := range []string{

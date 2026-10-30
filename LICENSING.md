@@ -38,7 +38,7 @@ MIT licence it was published under. Its third-party components keep their own li
 
 [`ee/`](ee/README.md) is excluded from the MIT licence and holds the **business-licensed features**,
 new ones and those moved out of the core, under [`ee/LICENSE`](ee/LICENSE): every file under it
-carries the two-line notice naming `LicenseRef-Fugaro-Subscription`, whose terms that file is. Three
+carries the two-line notice naming `LicenseRef-Fugaro-Subscription`, the terms in that file. Three
 parts of the core moved there, and each is business-licensed where it now lives: governance's policy
 and its stage tripwires in `ee/governance/`, `fugaro report` in `ee/report/`, and the coordinator in
 `ee/coordinator/`. Nothing under it has ever been released, and nothing outside `ee/` imports anything
