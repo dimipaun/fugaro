@@ -32,6 +32,8 @@ git push origin mobile-vX.Y.Z
 
 An **annotated** tag is recommended, and it is what the CLI's own path creates (`scripts/release.sh`'s step 5, and the manual fallback's `git tag -a vX.Y.Z`): the object carries its own message and date, and `git push origin mobile-vX.Y.Z` pushes that object with it. A **lightweight** tag works too — the workflow matches the ref name, not the object's type — and it peels correctly: after the push, `git ls-remote https://github.com/dimipaun/fugaro 'refs/tags/mobile-vX.Y.Z^{}' 'refs/tags/mobile-vX.Y.Z'` prints the tagged commit on the `^{}` line for an annotated tag and on the only line for a lightweight one, the same command the CLI's post-release step runs for `vX.Y.Z` (below, "Before you tag"). Never move, delete or re-create the tag: the stores keep what was submitted from it, and the fix for a bad release is a new version (below).
 
+**After each release, the website.** Once the build is submitted and verified, update the website wherever it names the app's latest version or links, run the website's tests (`npm run check` in `website/`, and `go test ./internal/cli -run Docs`), merge, then dispatch `website-preview`. The owner promotes: `website-promote` and the `website-live` approval click are the owner's.
+
 **The app's own notes, and its own name.** Both are the stream's, and neither is the CLI's:
 
 - **Highlights: `docs/releases/mobile/vX.Y.Z.md`**, in the same format as the CLI's `docs/releases/vX.Y.Z.md` ([docs/releases/README.md](releases/README.md); [docs/releases/mobile/README.md](releases/mobile/README.md) carries the app's own copy of the rule). The app's notes live in their own directory because the CLI's changelog reads `docs/releases/*.md` one level down and nothing else: an app note at the top level would enter the CLI's changelog, and the site's build refuses a top-level file that is not `vX.Y.Z.md`.
@@ -209,6 +211,8 @@ Only needed if `scripts/release.sh` can't run (no `gh`, or something it doesn't 
 **If a workflow refuses after the tag was pushed because the Highlights file is missing or empty** (`release.yml` and `images.yml` both fail in their first steps, so nothing is published): the tag can never be moved or deleted by the release process, so leave it and cut `vX.Y.(Z+1)` with the file committed. Deleting the tag is the repository owner's rollback decision ("Rolling back"), not part of the routine.
 
 Pull requests that touch `.goreleaser.yaml`, `release.yml` or the bump script run `goreleaser check` as the `check` job of `release.yml`. It is not a required check.
+
+**After each release, the website (a standing step, the owner's rule of 2026-10-30).** Once the release is published and verified, update the website: downloads, checksums, versions and links, wherever the site names the latest release. Run the website's tests (`npm run check` in `website/`, and `go test ./internal/cli -run Docs`), merge, then dispatch `website-preview`. The owner promotes: `website-promote` and the `website-live` approval click are the owner's. For the CLI the changelog and the home page's latest-release line follow the release's own notes and summary, so the step is mostly confirming that nothing else on the site still names the previous version.
 
 ## Rolling out the shared installation config
 
@@ -405,6 +409,13 @@ accept the checks of a merged pull request whose tree is identical).
    that was force-pushed or re-pointed after the run started stops the publish rather than
    putting artifacts from one commit under a tag naming another. Delete a leftover draft
    (`gh release delete console-vX.Y.Z`) and re-run; a new build needs a new tag.
+6. **Update the website** once the release is published and verified: `website/content/downloads.json`'s
+   `release.version` and each entry's `sha256`, and `website/data/console-sha256sums.txt` copied byte
+   for byte from the release's own `console-sha256sums.txt` after `cosign verify-blob` accepts it
+   (the file also names the update feed, `latest-mac.yml`, which is not a download, and the site's
+   checks pass over that one name). Run the website's tests (`npm run check` in `website/`, and
+   `go test ./internal/cli -run Docs`), merge, then dispatch `website-preview`. The owner promotes:
+   `website-promote` and the `website-live` approval click are the owner's.
 
 **The copy-in, applied on 2026-10-23.** The console workflow's tag-based trigger was staged as
 `docs/pending-workflows/console-release-tag.yml` and has been applied: it superseded the staged
