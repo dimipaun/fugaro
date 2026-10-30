@@ -8,6 +8,8 @@ package gitops
 import (
 	"bytes"
 	"context"
+	"errors"
+	"io/fs"
 	"maps"
 	"os"
 	"os/exec"
@@ -683,5 +685,131 @@ func TestStampEnvOutranksRepositoryHooksPath(t *testing.T) {
 	}
 	if ran, err := os.ReadFile(marker); err != nil || string(ran) != "repo-hook\n" {
 		t.Errorf("the repository's own hook directory ran %q, %v, want it once: the stamp's core.hooksPath outranks the repository's, and the hooks it names are chained to", ran, err)
+	}
+}
+
+// TestWriteStampHooksNoChainIsDistinctFromResolveLater: the two calls write
+// different hooks. WriteStampHooks with no chainTo looks the repository's own
+// hook directory up at the commit, which is what keeps a repository whose
+// hooks live in $GIT_DIR/hooks running (constraint 2);
+// WriteStampHooksNoChain chains nowhere, which is what makes a runner-owned
+// commit run no code of the checkout's (A3, follow-up 2a). One string cannot
+// mean both, so the two are separate calls.
+//
+// Mutation (make WriteStampHooksNoChain write the resolve-later hook): the
+// planted pre-commit runs on the no-chain commit, and this test fails with its
+// marker file present.
+func TestWriteStampHooksNoChainIsDistinctFromResolveLater(t *testing.T) {
+	t.Setenv("GIT_CONFIG_COUNT", "")
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "--quiet", "-b", "main", ".")
+	marker := filepath.Join(t.TempDir(), "ran")
+	planted := filepath.Join(t.TempDir(), "planted")
+	if err := os.MkdirAll(planted, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(planted, "pre-commit"), []byte("#!/bin/sh\necho ran >> "+marker+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	testutil.Git(t, dir, "config", "core.hooksPath", planted)
+
+	noChain := filepath.Join(t.TempDir(), "no-chain")
+	if err := WriteStampHooksNoChain(noChain); err != nil {
+		t.Fatal("WriteStampHooksNoChain:", err)
+	}
+	commitStamp(t, dir, StampEnv(runStamp(), noChain, nil), "no chain")
+	if _, err := os.Stat(marker); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("a runner-owned commit ran the repository's own pre-commit: %v", err)
+	}
+
+	later := filepath.Join(t.TempDir(), "later")
+	if err := WriteStampHooks(later, ""); err != nil {
+		t.Fatal("WriteStampHooks:", err)
+	}
+	left, err := os.ReadFile(filepath.Join(noChain, "pre-commit"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	right, err := os.ReadFile(filepath.Join(later, "pre-commit"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(left, right) {
+		t.Error("no-chain and resolve-later write the same hook")
+	}
+	commitStamp(t, dir, StampEnv(runStamp(), later, nil), "resolve later")
+	if _, err := os.Stat(marker); err != nil {
+		t.Errorf("the resolve-later hook did not run the repository's own pre-commit: %v", err)
+	}
+}
+
+// TestRunnerOwnCommitsRunNoRepositoryHook: a commit the runner makes runs no
+// hook of the checkout's, wherever the checkout keeps them — $GIT_DIR/hooks,
+// which git uses by default, and a core.hooksPath of the repository's own in
+// .git/config, which the agent can write. noHooks on every runner-owned git
+// call was that boundary, and a stamped runner commit must keep it: the stamp
+// directory replaces noHooks, so it is a directory that chains nowhere.
+//
+// Mutation (give the runner the agent's chaining hook directory): both planted
+// hooks run, and this test fails with its marker file present.
+func TestRunnerOwnCommitsRunNoRepositoryHook(t *testing.T) {
+	repo, _ := setup(t)
+	marker := filepath.Join(t.TempDir(), "ran")
+	script := "#!/bin/sh\necho ran >> " + marker + "\n"
+	gitDir, err := repo.GitDir(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configured := filepath.Join(t.TempDir(), "configured-hooks")
+	for _, root := range []string{filepath.Join(gitDir, "hooks"), configured} {
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{"prepare-commit-msg", "pre-commit", "post-commit"} {
+			if err := os.WriteFile(filepath.Join(root, name), []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	testutil.Git(t, repo.Dir, "config", "core.hooksPath", configured)
+
+	hooks := filepath.Join(t.TempDir(), "runner-hooks")
+	if err := WriteStampHooksNoChain(hooks); err != nil {
+		t.Fatal("WriteStampHooksNoChain:", err)
+	}
+	repo.CommitHooks, repo.CommitStamp = hooks, runStamp()
+	if err := repo.CommitEmpty(ctx, "the runner's own"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("a runner-owned commit ran a hook of the repository's: %v", err)
+	}
+	got := trailersOf(testutil.Git(t, repo.Dir, "log", "-1", "--format=%B"))
+	if want := []string{"run-1"}; !slices.Equal(got["fugaro-run"], want) {
+		t.Errorf("fugaro-run = %v, want %v: the runner's own commit was not stamped", got["fugaro-run"], want)
+	}
+}
+
+// TestInterpretTrailersIgnoresRepositoryTrailerCommand: the stamp reads its
+// trailers from the environment and writes them with the machine's git
+// configuration alone. trailer.<token>.command and trailer.<token>.command are
+// commands git runs and whose output replaces the trailer's value, and
+// .git/config is a file the run's agent can write: a stamp that ran inside the
+// checkout would let the agent decide what the run's trailers say.
+//
+// Mutation (run interpret-trailers without unsetting GIT_DIR and cd-ing out of
+// the repository): the planted command runs and blanks the value.
+func TestInterpretTrailersIgnoresRepositoryTrailerCommand(t *testing.T) {
+	dir, _, env := newStampRepo(t, runStamp(), "")
+	marker := filepath.Join(t.TempDir(), "ran")
+	testutil.Git(t, dir, "config", "trailer.fugaro-run.command", "sh -c 'echo ran >> "+marker+"; echo blanked'")
+	testutil.Git(t, dir, "config", "trailer.fugaro-run.ifexists", "replace")
+	msg := commitStamp(t, dir, env, "subject")
+	if _, err := os.Stat(marker); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the repository's trailer command ran: %v", err)
+	}
+	if got := trailersOf(msg)["fugaro-run"]; !slices.Equal(got, []string{"run-1"}) {
+		t.Errorf("fugaro-run = %v, want [run-1]: the repository's configuration decided the trailer", got)
 	}
 }

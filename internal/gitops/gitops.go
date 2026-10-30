@@ -171,12 +171,19 @@ func Open(dir string, env []string) (*Repo, error) {
 // configuration noHooks overrides is the whole point of it, and a repository's
 // core.hooksPath is where its hooks are. rev-parse is plumbing and runs no
 // hook.
+// The answer is made absolute here: rev-parse prints it relative to the
+// directory it was run in, and the hooks that carry it run in the root of the
+// working tree, not in the runner's own working directory.
 func (r *Repo) HooksDir(ctx context.Context) (string, error) {
 	var stdout bytes.Buffer
 	if err := r.gitRun(ctx, r.processEnv(), nil, nil, &stdout, "rev-parse", "--git-path", "hooks"); err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(stdout.String()), nil
+	dir := strings.TrimSpace(stdout.String())
+	if dir == "" || filepath.IsAbs(dir) {
+		return dir, nil
+	}
+	return filepath.Join(r.Dir, dir), nil
 }
 
 // GitDir returns the git directory git names for this checkout, absolute:
