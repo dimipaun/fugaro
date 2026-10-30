@@ -401,7 +401,7 @@ func TestValidateAcceptsALooserGovernanceValueWithNoLayer(t *testing.T) {
 // this package's, they are rendered from a policy.Ignored and nothing else, and
 // untagged there is no merge to produce one — so the entries are built by hand
 // here rather than driven through a command. The governance case is the one the
-// CLI's ceilling notes used to render end to end
+// CLI's ceiling notes used to render end to end
 // (TestValidateDoesNotClampTheProjectLayersGovernance says why they no longer
 // do).
 func TestClampWarningRendersEachKeysWords(t *testing.T) {

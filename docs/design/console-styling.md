@@ -542,7 +542,8 @@ whole answer is the run detail's Rigor row (§2.6).
 Reached from a `live-run` row. The header, its status strip and its halt banner sit above
 the two columns: the main column (stages → spend by stage → tolerated by the mode →
 diagnosis → logs → replay) beside the aside (ledger → pull request), with the warnings
-after both.
+after both. Two steps drew it — 3a the header, at a glance at the run, the timeline and
+the log window, 3b the ledger, the pull request and the replay scrubber.
 
 | Group | Class hooks |
 |---|---|
@@ -551,14 +552,16 @@ after both.
 | Status strip | `run-strip`, `run-strip-cell`, `run-strip-label`, `run-strip-value`, `run-status`, `run-outcome`, `run-stage`, `run-flags`, `run-settled`, `run-flags-state`, `run-stale`, `run-follow-up` |
 | Halt banner | `run-halt`, `run-halt-word`, `run-halt-reason`, `run-halt-where`, `run-halt-scope-word`, `run-halt-scope`, `run-halt-sep`, `run-halt-at-word`, `run-halt-at`, `run-halt-detail` |
 | Layout | `run-layout`, `run-main`, `run-aside` |
-| Ledger | `run-ledger`, `run-ledger-model`, `run-ledger-model-value`, `run-ledger-compute`, `run-ledger-compute-value`, `run-ledger-total`, `run-ledger-total-value`, `run-number`, `run-panel-title` |
+| Ledger | `run-ledger`, `run-ledger-hero`, `run-ledger-word`, `run-ledger-total-value`, `run-ledger-bar`, `run-ledger-rail`, `run-ledger-billed`, `run-ledger-estimate`, `run-ledger-legend`, `run-ledger-key`, `run-ledger-swatch`, `run-ledger-swatch-billed`, `run-ledger-swatch-estimate`, `run-ledger-key-word`, `run-ledger-model-value`, `run-ledger-compute-value`, `run-ledger-notional`, `run-ledger-notional-value`, `run-number`, `run-panel-title` |
+| Reconciliation | `run-recon`, `run-recon-word`, `run-recon-line`, `run-recon-label`, `run-reported-usd`, `run-charge-usd`, `run-recon-diff`, `run-recon-diff-warn`, `run-recon-diff-value`, `run-reported-warning`, `run-pin-warning` |
+| Spend splits | `run-split`, `run-split-word`, `run-split-caption`, `run-split-absent`, `run-route`, `run-route-name`, `run-route-usd`, `run-model`, `run-model-name`, `run-model-usd` |
 | Spend by stage | `run-spend-stages`, `run-spend-stage-list`, `run-spend-stage`, `run-spend-stage-name`, `run-spend-stage-duration`, `run-spend-stage-calls`, `run-spend-stage-agents`, `run-spend-stage-usd`, `run-spend-stage-notional`, `run-spend-stages-more`, `run-spend-stage-more` |
 | Tolerated by the mode | `run-tolerated`, `run-tolerated-total`, `run-tolerated-count`, `run-tolerated-list`, `run-tolerated-finding`, `run-tolerated-title`, `run-tolerated-label`, `run-tolerated-mode`, `run-tolerated-likelihood`, `run-tolerated-impact`, `run-tolerated-fix-cost`, `run-tolerated-class`, `run-tolerated-more`, `run-tolerated-dropped`, `run-tolerated-absent` |
 | Stages | `run-stages`, `run-stage-list`, `run-stage`, `run-stage-icon`, `run-stage-dot`, `run-stage-check`, `run-stage-cross`, `run-stage-name`, `run-stage-body`, `run-stage-passed`, `run-stage-bar`, `run-stage-track`, `run-stage-fill`, `run-stage-fill-failed`, `run-stage-count`, `run-stage-tests`, `run-stage-tests-word`, `run-stage-failures`, `run-stage-failures-word`, `run-stage-meta`, `run-stage-duration`, `run-stage-spend`, `run-stage-deadline` |
 | Pull request | `run-pr`, `run-pr-repo`, `run-pr-number`, `run-pr-sep`, `run-pr-url`, `run-pr-reason` |
 | Logs | `run-logs`, `run-log-list`, `run-log-line`, `run-log-time`, `run-log-severity`, `run-log-stage`, `run-log-message`, `run-log-note`, `run-log-dropped`, `run-log-of`, `run-log-total`, `run-log-refused`, `run-log-refused-count`, `run-log-link`, `run-log-link-note`, `run-log-tail`, `run-log-tail-line` |
-| Diagnosis | `run-diagnosis`, `run-failed`, `run-failed-word`, `run-failed-test`, `run-flaky`, `run-flaky-word`, `run-flaky-test`, `run-finding`, `run-finding-severity`, `run-finding-file`, `run-finding-summary`, `run-agent-message`, `run-agent-icon`, `run-agent-stroke`, `run-agent-said`, `run-agent-word`, `run-agent-text`, `run-report-path`, `run-report-word`, `run-report-value`, `run-comments-word`, `run-comments-path`, `run-comments-value`, `run-draft-note`, `run-follow-up-word`, `run-follow-up-pr`, `run-follow-up-comments-word`, `run-follow-up-comments`, `run-follow-up-session`, `run-reported`, `run-reported-usd`, `run-charged-word`, `run-charge-usd`, `run-reported-warning`, `run-pin-warning`, `run-route`, `run-route-name`, `run-route-usd`, `run-model`, `run-model-name`, `run-model-usd` |
-| Replay | `run-replay`, `run-replay-records`, `run-replay-count`, `run-replay-window-word`, `run-replay-window`, `run-replay-span`, `run-replay-from`, `run-replay-to`, `run-replay-scrubbed`, `run-replay-at`, `run-replay-note` |
+| Diagnosis | `run-diagnosis`, `run-failed`, `run-failed-word`, `run-failed-test`, `run-flaky`, `run-flaky-word`, `run-flaky-test`, `run-finding`, `run-finding-severity`, `run-finding-file`, `run-finding-summary`, `run-agent-message`, `run-agent-icon`, `run-agent-stroke`, `run-agent-said`, `run-agent-word`, `run-agent-text`, `run-report-path`, `run-report-word`, `run-report-value`, `run-comments-word`, `run-comments-path`, `run-comments-value`, `run-draft-note`, `run-follow-up-word`, `run-follow-up-pr`, `run-follow-up-comments-word`, `run-follow-up-comments`, `run-follow-up-session` |
+| Replay | `run-replay`, `run-replay-head`, `run-replay-note`, `run-replay-count`, `run-replay-records-word`, `run-replay-sep`, `run-replay-bound`, `run-replay-track`, `run-replay-rail`, `run-replay-fill`, `run-replay-tick`, `run-replay-tick-live`, `run-replay-tick-past`, `run-replay-playhead`, `run-replay-scrubbed`, `run-replay-at`, `run-replay-axis`, `run-replay-from`, `run-replay-mid`, `run-replay-to`, `run-replay-no-span`, `run-replay-window-line`, `run-replay-window` |
 | Warnings | `run-warning` |
 
 `data-*`: `data-theme`, `data-tone` on the status strip's `span.run-outcome`
@@ -586,15 +589,81 @@ all (a record written before C1.16) draws its whole figure in the billed cell as
 `~$X` rather than as plain dollars -- while one that carries a part equal to its
 whole figure, which is what a subscription run writes for a stage it settled without a
 gateway, draws a measured `$0.00` there and the figure once, under the notional mark, in
-the cell beside it; a notional part drawn as `~$X`; a pull
+the cell beside it; a notional part drawn as `~$X`; the ledger's bar drawn only when it can
+be (`svg.run-ledger-bar` is absent when the total is not a measured figure above zero, when
+the model line is not billed money or when the compute is neither measured nor estimated);
+the reconciliation's difference drawn only when both figures were measured, in
+`p.run-recon-diff-warn` only when it is not zero; an empty or absent spend split as the
+console's `n/a` with its reason (`p.run-split-absent`); a pull
 request with **no link at all** (`run.link` is typed `null`, and `PR_NO_LINK_REASON`
 explains why); logs bounded ("lines not drawn: N of M") and a count of refused lines; replay
-scrubbed / not scrubbed.
+scrubbed / not scrubbed (`p.run-replay-scrubbed`), a window with fewer than two distinct
+record times (`p.run-replay-no-span`), and a tick's tone beside its place
+(`line.run-replay-tick-past` past the playhead, `line.run-replay-tick-live` otherwise --
+the position is what carries the fact and the tone is the second channel).
 
-Readings: money (`usd`) throughout the ledger, the spend-by-stage rows, the diagnosis route
-and model splits, the reported/charged pair; counts for tests, failures, dropped lines,
+Readings: money (`usd`) throughout the ledger (the hero, the two legend rows, the plan's
+part and the reconciliation's three lines), the spend-by-stage rows, the spend splits; counts for tests, failures, dropped lines,
 calls, sub-agents, tolerated findings and their score axes, follow-up PRs and comments,
 replay records; **seconds** for a stage's duration and the replay window.
+
+**The ledger is one billed total and everything else read against it.** `p.run-ledger-hero`
+carries the caption `TOTAL CHARGED` and `total_usd` -- the dollars the table **billed**,
+and the figure the console draws exactly as the document wrote it: nothing on this screen
+adds anything to make a hero. `svg.run-ledger-bar` is two segments as shares **of that
+total**, the billed model figure solid (`rect.run-ledger-billed`) and the compute an
+outline (`rect.run-ledger-estimate`, dashes and a `non-scaling-stroke` hairline), and it is
+drawn only when the total is measured and above zero, the model line is billed money and
+the compute is measured or estimated; otherwise there is no bar and
+`ul.run-ledger-legend` still carries both figures as text with `li.run-ledger-key` rows
+(the swatch is `aria-hidden` and the word beside it is the reading), so no value is lost to
+a drawing that could not be made. The model line is the **billed** part of the model figure
+(`model_usd` less `model_notional_usd`), and the plan's part is drawn apart from it in
+`p.run-ledger-notional` under "Paid by the plan, not in the total" with the notional mark
+(`~$X`): it is **never** a segment of the bar and **never** inside the hero, because it is
+money nobody was charged. It is drawn exactly once -- a record whose whole model figure is
+the plan's (a subscription run, with the key or from before C1.16) draws that figure once,
+on the model line, under the notional mark, and no second line appears.
+
+**The reconciliation is the routed calls' two accounts, and the difference is a
+difference.** `div.run-recon` draws `reported_usd` and `charge_usd` as the document wrote
+them; both are `omitempty`, so an absent key is `n/a` and never `$0.00` (a run whose routed
+calls no provider priced is not a run that cost nothing). The third line is
+`charge_usd - reported_usd` **only when both were measured**, signed and drawn as money,
+and `n/a` with the reason "no provider reported a cost for this run's routed calls"
+otherwise; it carries `run-recon-diff-warn` exactly when it is not zero. The word is
+**Difference** and not the design's "Over-charged": the console can measure that the two
+accounts differ and cannot know which of them is wrong, so a word naming a cause would be a
+claim it cannot support. `reported_warning` and `pin_warnings` are the CLI's own sentences
+about this pair and are drawn verbatim under it -- the console draws what the run wrote and
+never a conclusion of its own.
+
+**The two splits are two scopes and are never summed.** `route_by` is the spend of the run's
+**routed** calls, so a Claude call -- which has no route -- is not in it, and the panel's
+`span.run-split-caption` says exactly that; `model_by` is the spend **by model**, and
+carries an `unattributed` entry of its own. They are splits of different scopes, which is
+why their figures do not add up to the hero, to each other, or to anything else, and why
+neither is totalled, compared or divided here: `div.run-split` draws the document's entries
+as they came, one `p.run-route` or `p.run-model` each, and an empty or absent split draws
+`p.run-split-absent` -- the console's `n/a` with the reason -- rather than a list that reads
+as "nothing was spent".
+
+**The scrubber is the ring's own window, and it draws no control.** `svg.run-replay-track`
+is the window's axis: `rect.run-replay-rail` is the 12 px track, one `line.run-replay-tick`
+is drawn per **record** at its timestamp's share of `from`..`to` (clamped to the ends), the
+`--live-fill` span runs from the window's start to the playhead, and
+`line.run-replay-playhead` is drawn **only** when something was scrubbed to, at that
+record's stamp. A ring with fewer than two distinct stamps has no span to place a tick on,
+so it draws the track with no positions and one line saying so. The playhead's time label
+sits in its own row under the track (`p.run-replay-scrubbed`, `span.run-replay-at` on the
+amber fill) because a text node inside a `preserveAspectRatio="none"` drawing would be
+stretched horizontally, and the three axis labels under it are the window's own
+`from`, middle and `to` (`span.run-replay-mid` is the midpoint of the two ends, a scale
+mark rather than a fact about the run). **The previous/next controls and "Show whole
+window" are not drawn**: `entry.ts` passes no ring to this screen, so on the real screen the
+ring is empty and a control over it would do nothing -- which is the one thing §5.1
+forbids. The bound note (`REPLAY_BOUND_NOTE`) and the reason nothing is scrubbed
+(`scrubbedBecause`) are drawn as text.
 
 **The spend-by-stage and tolerated panels are the document's own two blocks, and neither is
 drawn when the document carries nothing for it.** `section.run-spend-stages` draws the

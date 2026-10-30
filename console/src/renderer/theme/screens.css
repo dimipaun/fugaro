@@ -102,8 +102,7 @@ h2.projects-title {
 
 span.projects-repos-label,
 span.degraded-mode-word,
-span.spend-persons-word,
-span.run-replay-window-word {
+span.spend-persons-word {
   font-size: var(--font-size-xs);
   font-weight: var(--weight-medium);
   text-transform: uppercase;
@@ -864,38 +863,16 @@ p.projects-only-enrolled {
 
 /* ---- Run detail -----------------------------------------------------------
  *
- * The Run screen's header, its status strip, its stage timeline and its log
- * window are the redesign's now, and their rules live in `flight-deck.css`
- * against the same hooks (console redesign, step 3a). What is left here is the
- * drawing the step did not redraw: the ledger's three-figure grid, the Rigor
- * row, the spend-by-stage and tolerated panels, and the parts of the diagnosis,
- * logs and replay panels that step 3b moves. Their prose, labels and mono
- * values stay in the shared groups above -- the panels' contents are still these
- * screens' own sentences and their values are still compared character by
- * character.
+ * The Run screen's header, its status strip, its stage timeline, its ledger, its
+ * pull request panel, its log window and its replay scrubber are the redesign's
+ * now, and their rules live in `flight-deck.css` against the same hooks
+ * (console redesign, steps 3a and 3b). What is left here is the drawing those
+ * steps did not redraw: the Rigor row, the spend-by-stage and tolerated panels,
+ * and the parts of the diagnosis and log panels they left. Their prose, labels
+ * and mono values stay in the shared groups above -- the panels' contents are
+ * still these screens' own sentences and their values are still compared
+ * character by character.
  */
-
-/* The ledger is three figures read together (design section 3.8). */
-section.run-ledger {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--space-2xs) var(--space-sm);
-  align-items: baseline;
-}
-
-section.run-ledger p {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-2xs) var(--space-sm);
-}
-
-p.run-ledger-model,
-p.run-ledger-compute,
-p.run-ledger-total {
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-}
 
 /* Stages: the stage's name, its word and its deadline -- each with its word
  * (design section 2.6 and 3.5).
@@ -1006,7 +983,6 @@ span.run-flaky-word {
 span.run-agent-word,
 span.run-report-word,
 span.run-comments-word,
-span.run-charged-word,
 span.run-follow-up-word,
 span.run-follow-up-comments-word {
   color: var(--text-muted);
@@ -1040,19 +1016,6 @@ span.run-comments-value {
 span.run-route-name,
 span.run-model-name {
   color: var(--text-muted);
-}
-
-/* The replay line: how many records the frame carries, over what window, from
- * when to when, and whether it was scrubbed. */
-p.run-replay-span {
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-  font-size: var(--font-size-sm);
-}
-
-p.run-replay-scrubbed {
-  color: var(--warn);
-  font-size: var(--font-size-sm);
 }
 
 /* ---- Degraded and unavailable --------------------------------------------
@@ -2166,16 +2129,14 @@ span.coordinator-unread-retry {
 
 @media (max-width: 48.75em) {
   /* Any three-column figure group becomes two. */
-  div.spend-totals,
-  section.run-ledger {
+  div.spend-totals {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 35em) {
-  /* The ledger, the caps panel and the panels' source lines stack. */
-  div.spend-totals,
-  section.run-ledger {
+  /* The caps panel and the panels' source lines stack. */
+  div.spend-totals {
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -2305,7 +2266,6 @@ span.coordinator-unread-retry {
   span.run-agent-word,
   span.run-report-word,
   span.run-comments-word,
-  span.run-charged-word,
   span.run-follow-up-word,
   span.run-follow-up-comments-word,
   span.run-finding-severity,
@@ -2317,9 +2277,22 @@ span.coordinator-unread-retry {
   p.run-tolerated-total,
   p.run-tolerated-more,
   p.run-tolerated-absent,
-  p.run-ledger-model,
-  p.run-ledger-compute,
-  p.run-ledger-total,
+  span.run-ledger-word,
+  span.run-ledger-key-word,
+  span.run-recon-label,
+  h3.run-recon-word,
+  h3.run-split-word,
+  span.run-split-caption,
+  p.run-split-absent,
+  span.run-pr-repo,
+  span.run-pr-sep,
+  span.run-pr-number,
+  span.run-pr-url,
+  span.run-replay-bound,
+  span.run-replay-records-word,
+  p.run-replay-axis,
+  p.run-replay-no-span,
+  p.run-replay-window-line,
   span.projects-cap-scope,
   span.projects-cap-source,
   span.projects-kill-scope,
