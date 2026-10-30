@@ -5,7 +5,9 @@
 !go.sum
 !cmd/
 !internal/
+!ee/
 !images/
 !deploy/terraform/
 deploy/terraform/**/.terraform/
 internal/**/testdata/
+ee/**/testdata/

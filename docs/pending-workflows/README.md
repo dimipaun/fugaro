@@ -2076,8 +2076,9 @@ first real run is what settles those.
 holds the two earlier changes (the 0.7.0 hard cut `838e0b0` and the signing
 change `6b57ba9`, whose own record follows this section) and does **not** hold
 this one: the staged file here is that file plus the credentials service's
-image leg, and the `## `images.yml` — applied in `6b57ba9`` section below is the
-record of the change before this one, not of this one. The copy-in is the
+image leg and ee-reorg task E1.4's `ee/**` pull-request path filter, and the
+`## `images.yml` — applied in `6b57ba9`` section below is the record of the
+change before this one, not of this one. The copy-in is the
 owner's — a Fugaro run may not write `.github/workflows/**` (GitHub rejects the
 push) — and the one command is in **`images.yml`'s own copy-in steps** above.
 
@@ -2097,7 +2098,15 @@ and `matrix.base: [history]` lines are all carried over byte for byte. Two
 *comments* are not, and each is a hunk of its own below: a comment naming the
 jobs that hold `packages: write` and `id-token: write` is part of the trust
 boundary it describes, so both copies of it would otherwise be wrong. The diff
-against the committed file is six things:
+against the committed file is seven things:
+
+- **The pull-request `paths:` filter gains `ee/**`** (ee-reorg task **E1.4**,
+  D524): the base and history images build the tagged binary, so a change under
+  `ee/` changes what those two images contain and has to rebuild them. Without
+  it a pull request that edits `ee/` alone leaves both images as they were,
+  which is a stale image published from a release tag rather than a failed
+  check. The nightly and manual runs are unaffected: they build the latest
+  release tag's tree whatever the filter says.
 
 - **`version`'s "Which images this tree builds" list gains `credentials`:**
   `for k in history base credentials;`, plus six added comment lines above the

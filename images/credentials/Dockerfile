@@ -61,6 +61,7 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 COPY --from=fugaro /out/fugaro /usr/local/bin/fugaro
 USER 65532:65532
+LABEL org.opencontainers.image.licenses="MIT"
 # The service's entrypoint: Cloud Run sets no command and no args, so this CMD
 # is what the revision runs. It reads the three names the installation module
 # sets on the service (FUGARO_PROJECT, FUGARO_GCP_PROJECT, FUGARO_REGION) and
