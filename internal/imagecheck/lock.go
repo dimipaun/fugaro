@@ -159,9 +159,12 @@ func Update(ctx context.Context, w LockWriter, plan func(*Lock) (*Lock, error)) 
 		switch {
 		case err == nil:
 			return nil
-		case attempt > 0:
-			return fmt.Errorf("writing %s: a second writer changed it while this one held generation %d: %w", LockKey, gen, err)
 		case errors.Is(err, blobx.ErrExists), errors.Is(err, blobx.ErrConflict):
+			// Another writer was there. §3.4 re-reads and re-plans once; the
+			// second loss is the error below, which the operator acts on.
+			if attempt > 0 {
+				return fmt.Errorf("writing %s: a second writer changed it while this one held generation %d: %w", LockKey, gen, err)
+			}
 		default:
 			return fmt.Errorf("writing %s: %w", LockKey, err)
 		}
