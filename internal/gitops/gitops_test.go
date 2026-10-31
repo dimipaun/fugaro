@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -557,6 +558,99 @@ func TestCommitAllAheadAndClean(t *testing.T) {
 	}
 	if got := testutil.Git(t, repo.Dir, "log", "-1", "--format=%an"); got != "Fugaro" {
 		t.Fatalf("author = %q, want Fugaro", got)
+	}
+}
+
+// TestUntrackedListsWhatGitWouldAdd: the listing is exactly the set a commit
+// would take. An ignored file is not in it (and so cannot reach a commit
+// either), a tracked file is not untracked however much it changed, and a path
+// with a newline in it survives the NUL-separated read.
+func TestUntrackedListsWhatGitWouldAdd(t *testing.T) {
+	repo, _ := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WriteFiles(t, repo.Dir, map[string]string{
+		"a.txt":           "a\n",
+		"line\nbreak.txt": "b\n",
+		"build/out.bin":   "ignored\n",
+		"README.md":       "edited\n",
+	})
+	got, err := repo.Untracked(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.Sort(got)
+	want := []string{"a.txt", "line\nbreak.txt"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("Untracked = %q; want %q", got, want)
+	}
+}
+
+// TestCommitAllExceptHoldsTheNamedPathsBack: the commit carries everything but
+// the named paths, and the named ones stay in the tree untracked, where the
+// reader of the run finds them.
+func TestCommitAllExceptHoldsTheNamedPathsBack(t *testing.T) {
+	repo, _ := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WriteFiles(t, repo.Dir, map[string]string{
+		"a.txt":          "a\n",
+		"test_dup_case2": "\x7fELF\x00\x00",
+	})
+	changed, err := repo.CommitAllExcept(ctx, "leftover", []string{"test_dup_case2"})
+	if err != nil || !changed {
+		t.Fatalf("CommitAllExcept = %v, %v", changed, err)
+	}
+	if carried := testutil.Git(t, repo.Dir, "show", "--name-only", "--format=", "HEAD"); carried != "a.txt" {
+		t.Fatalf("the commit carries %q; want only a.txt", carried)
+	}
+	if got := testutil.Git(t, repo.Dir, "status", "--porcelain"); !strings.Contains(got, "?? test_dup_case2") {
+		t.Fatalf("status = %q; want the held-back path still untracked in the tree", got)
+	}
+	if got := testutil.Git(t, repo.Dir, "log", "-1", "--format=%s"); got != "leftover" {
+		t.Fatalf("subject = %q; want the message CommitAllExcept was given", got)
+	}
+}
+
+// TestCommitAllExceptWithEveryPathExceptedMakesNoCommit: staging everything is
+// how the call sees whether anything is left, and a tree whose every change is
+// held back leaves nothing — no commit, and the branch where it was.
+func TestCommitAllExceptWithEveryPathExceptedMakesNoCommit(t *testing.T) {
+	repo, _ := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	before := testutil.Git(t, repo.Dir, "rev-parse", "HEAD")
+	testutil.WriteFiles(t, repo.Dir, map[string]string{"test_dup_case2": "\x00\n"})
+	changed, err := repo.CommitAllExcept(ctx, "leftover", []string{"test_dup_case2"})
+	if err != nil || changed {
+		t.Fatalf("CommitAllExcept = %v, %v; want no commit", changed, err)
+	}
+	if after := testutil.Git(t, repo.Dir, "rev-parse", "HEAD"); after != before {
+		t.Fatalf("HEAD moved from %s to %s", before, after)
+	}
+}
+
+// TestCommitAllExceptReadsItsPathsAsLiterals: a file's name is data. A path
+// beginning with a colon reads as a pathspec's magic, so without the literal
+// read the reset fails and takes the whole leftover commit with it.
+func TestCommitAllExceptReadsItsPathsAsLiterals(t *testing.T) {
+	repo, _ := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WriteFiles(t, repo.Dir, map[string]string{
+		":magic.txt": "named like a pathspec\n",
+		"keep.txt":   "kept\n",
+	})
+	changed, err := repo.CommitAllExcept(ctx, "leftover", []string{":magic.txt"})
+	if err != nil || !changed {
+		t.Fatalf("CommitAllExcept = %v, %v", changed, err)
+	}
+	if carried := testutil.Git(t, repo.Dir, "show", "--name-only", "--format=", "HEAD"); carried != "keep.txt" {
+		t.Fatalf("the commit carries %q; want only keep.txt", carried)
 	}
 }
 

@@ -321,7 +321,16 @@ func (r *run) shadowFinalize(ctx context.Context) error {
 	if halt != nil {
 		leftover = leftoverHaltMessage
 	}
-	committed, err := r.repo.CommitAll(ctx, leftover)
+	// The champion's leftover commit holds back the artifacts finalize refuses
+	// (stray.go), and this arm holds back the same ones, so the two arms'
+	// changed paths and patch objects describe the same checkout of the same
+	// work — which is what a pair is scored on (D559). Nothing is recorded as
+	// refused here: this arm has no branch for a refusal to be about.
+	strays, err := r.strayArtifacts(ctx)
+	if err != nil {
+		return fmt.Errorf("listing what the run left untracked: %w", err)
+	}
+	committed, err := r.repo.CommitAllExcept(ctx, leftover, strayPaths(strays))
 	if err != nil {
 		return fmt.Errorf("committing leftover work: %w", err)
 	}

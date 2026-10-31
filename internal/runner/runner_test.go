@@ -676,14 +676,6 @@ func TestReviewRoundsTheModesCeilingLowers(t *testing.T) {
 	}
 }
 
-// TestFilingDoesNotSpendTheFinalizeReserveOnTheSuite: a run that left a
-// round open files its item at finalize, on finalize's context, which the
-// finalize reserve bounds. Filing only ever follows a round that did not ship,
-// so the run cannot be ready whatever the suite says on the filing commit:
-// running the suite again there buys nothing and, on a suite slower than the
-// reserve, spends the context the push needs. The suite here sleeps past the
-// reserve once the last review has run; the branch, the item and the review's
-// own reason must still reach the remote.
 // TestTheRunPushesTheCommitItsSuitePassed: the run's own last commit is the one
 // the suite ran on, so nothing finalize writes can break a test the run passed.
 // A test that pins a fact about the tree — this repository's own census of
