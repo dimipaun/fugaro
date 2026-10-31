@@ -145,7 +145,15 @@ func (s *checkoutStage) Apply(ctx context.Context, env initflow.Env) (initflow.O
 		// upgrade itself does without a terminal.
 		return initflow.Outcome{}, &initflow.NeedsYouError{Left: s.Left()}
 	}
-	u := s.upgradeCtx(ctx, env, loc)
+	// The refresh reads its context off the command (image_refresh.go), and the
+	// loop's own context is the run's: the steps stop when it does. The command
+	// belongs to the run, not to this stage, so the context it came with goes
+	// back when the stage is done: a later stage reads what it would have read
+	// had this one never run.
+	prev := s.e.r.cmd.Context()
+	s.e.r.cmd.SetContext(ctx)
+	defer s.e.r.cmd.SetContext(prev)
+	u := s.upgradeCtx(env, loc)
 	var changed []string
 	for _, p := range s.planFor(ctx, loc) {
 		r := stepResult{name: p.step.name, state: stepSkipped, reason: p.skip}
@@ -177,11 +185,8 @@ func (*checkoutStage) Verify(context.Context) error { return nil }
 // marker the cloud step refuses before it reads anything, so the pin and the
 // plugin move there and the images do not: what `fugaro upgrade --local` does
 // in the same session.
-func (s *checkoutStage) upgradeCtx(ctx context.Context, env initflow.Env, loc pluginwire.Location) *upgradeCtx {
+func (s *checkoutStage) upgradeCtx(env initflow.Env, loc pluginwire.Location) *upgradeCtx {
 	o := s.e.r.o
-	// The refresh reads its context off the command (image_refresh.go), and
-	// the loop's own context is the run's: the steps stop when it does.
-	s.e.r.cmd.SetContext(ctx)
 	return &upgradeCtx{
 		cmd: s.e.r.cmd,
 		w:   s.e.r.w,

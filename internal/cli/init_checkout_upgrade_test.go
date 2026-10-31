@@ -250,6 +250,102 @@ func TestUpdateLocalStepsRunInAgentSession(t *testing.T) {
 	}
 }
 
+// A checkout with no origin remote has no repository for the refresh to work
+// on: the cloud step is skipped — the pin and the plugin still move, which is
+// where this differs from fugaro upgrade, whose cloud step fails the same read
+// because there the refresh was asked for by name.
+func TestUpdateSkipsCloudOnlyWhereTheCheckoutHasNoOrigin(t *testing.T) {
+	_, root := upgradeRig(t)
+	settings := filepath.Join(root, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settings), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settings, []byte(wiredAt("v0.5.0")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	testutil.Git(t, root, "remote", "remove", "origin")
+	f := testutil.NewClaudePluginFake(t, "[]", "[]")
+	f.On(t, "plugins", userInstall("0.5.1"), argsInstall...)
+	useFakeClaude(t, f)
+	ran := fakeSteps(t, "", nil)
+
+	e, out := checkoutEngine(t, &initOptions{yes: true})
+	res := stageOutcome(t, e, checkoutStageOf(t, e))
+	if res.Failed != nil || len(res.Left) != 0 {
+		t.Fatalf("the checkout stage did not finish: failed %+v, left %+v\n%s", res.Failed, res.Left, out)
+	}
+	if !strings.Contains(out.String(), "cloud: skipped: this checkout has no origin repository to refresh") {
+		t.Errorf("the cloud step was not skipped by name:\n%s", out)
+	}
+	if len(*ran) != 0 {
+		t.Errorf("the refresh ran in a checkout with no repository to refresh: %q\n%s", *ran, out)
+	}
+	if r := pluginwire.Status(settings, "0.5.1", ""); r.Pin != pluginwire.OK {
+		t.Errorf("the pin was not moved in a checkout with no origin: %+v\n%s", r, out)
+	}
+	if len(f.Changes(t)) == 0 {
+		t.Errorf("the plugin was not installed in a checkout with no origin\n%s", out)
+	}
+}
+
+// The stage's own two other reasons to have nothing to do: a development build
+// has no release to move to, and a checkout Fugaro is not set up in is not one
+// of its checkouts. Both are skips with their own line, and in both nothing
+// runs.
+func TestUpdateSkipsWithoutAReleaseOrAFugaroCheckout(t *testing.T) {
+	t.Run("a development build", func(t *testing.T) {
+		_, root := upgradeRig(t)
+		settings := filepath.Join(root, ".claude", "settings.json")
+		if err := os.MkdirAll(filepath.Dir(settings), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(settings, []byte(wiredAt("v0.5.0")), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		ran := fakeSteps(t, "", nil)
+		withVersion(t, "")
+
+		e, out := checkoutEngine(t, &initOptions{yes: true})
+		st := checkoutStageOf(t, e)
+		status, err := st.Check(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if status.State != initflow.Skipped || !strings.Contains(status.Detail, "a development build has no release") {
+			t.Fatalf("a development build: %+v", status)
+		}
+		if _, err := st.Apply(t.Context(), initflow.Env{Yes: true}); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if len(*ran) != 0 || string(upgradeRead(t, settings)) != wiredAt("v0.5.0") {
+			t.Errorf("a development build ran something: steps %q\n%s", *ran, out)
+		}
+	})
+
+	t.Run("a checkout Fugaro is not set up in", func(t *testing.T) {
+		upgradeEnv(t, "0.5.1")
+		t.Chdir(t.TempDir())
+		testutil.Git(t, ".", "init", "--quiet")
+		ran := fakeSteps(t, "", nil)
+
+		e, out := checkoutEngine(t, &initOptions{yes: true})
+		st := checkoutStageOf(t, e)
+		status, err := st.Check(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if status.State != initflow.Skipped || !strings.Contains(status.Detail, "not a Fugaro checkout") {
+			t.Fatalf("a checkout with no fugaro.yaml and no wiring: %+v", status)
+		}
+		if _, err := st.Apply(t.Context(), initflow.Env{Yes: true}); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if len(*ran) != 0 {
+			t.Errorf("a checkout Fugaro is not set up in ran something: %q\n%s", *ran, out)
+		}
+	})
+}
+
 // The steps the checkout stage calls are fugaro upgrade's own, and fugaro
 // upgrade still runs them: the stage added a caller, not a copy.
 func TestUpgradeStillWorks(t *testing.T) {
