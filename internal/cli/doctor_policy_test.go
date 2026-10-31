@@ -346,11 +346,11 @@ func TestDoctorPolicyChecks(t *testing.T) {
 			t.Fatalf("policy-rules-skew = %+v (present %v), want a warning", c, ok)
 		}
 		if !strings.Contains(c.Problem, "the deployed rules are older than the marker "+projectpolicy.PathRulesMarker()) ||
-			!strings.Contains(c.Problem, "re-run 'fugaro update --firebase-project' with fugaro >= "+policySince) {
+			!strings.Contains(c.Problem, "re-run 'fugaro update' with fugaro >= "+policySince) {
 			t.Errorf("the check does not print the halt's own sentence: %+v", c)
 		}
-		if !strings.Contains(c.Fix, "fugaro update --firebase-project") {
-			t.Errorf("the check does not name the owner's fix: %+v", c)
+		if !strings.Contains(c.Fix, "fugaro update") || strings.Contains(c.Fix, "--firebase-project") {
+			t.Errorf("the check does not name the owner's fix, which is the converge's own rules stage and not the door that adopts a Firebase project: %+v", c)
 		}
 		if !strings.Contains(c.Fix, "newer Fugaro") {
 			t.Errorf("the fix does not warn that the rules may be a newer release's, which this template would replace: %+v", c)
@@ -515,7 +515,7 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		if !strings.Contains(c.Problem, "below the generation") || !strings.Contains(c.Problem, "publishing one is refused") {
 			t.Errorf("the check does not say the marker is below the generation a policy is read under: %+v", c)
 		}
-		if !strings.Contains(c.Fix, "fugaro update --firebase-project") {
+		if !strings.Contains(c.Fix, "fugaro update") || strings.Contains(c.Fix, "--firebase-project") {
 			t.Errorf("the check does not name the owner's fix: %+v", c)
 		}
 		// The sentence must not be the other state's. "the deployed rules are
@@ -565,7 +565,7 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		if !strings.Contains(c.Problem, "a published policy is read and enforced") {
 			t.Errorf("the between-generations body does not say the policy still governs: %+v", c)
 		}
-		if !strings.Contains(c.Fix, "fugaro update --firebase-project") {
+		if !strings.Contains(c.Fix, "fugaro update") || strings.Contains(c.Fix, "--firebase-project") {
 			t.Errorf("the check does not name the owner's fix: %+v", c)
 		}
 		// Generation 3's new conjunct is a *lockout* for any phone account with
@@ -614,7 +614,7 @@ func TestDoctorPolicyChecks(t *testing.T) {
 				t.Errorf("the body for a generation-%d marker carries %q, which is about rules it already has: %q", rulesDeviceGeneration, bad, c.Problem)
 			}
 		}
-		if !strings.Contains(c.Fix, "fugaro update --firebase-project") {
+		if !strings.Contains(c.Fix, "fugaro update") || strings.Contains(c.Fix, "--firebase-project") {
 			t.Errorf("the check does not name the owner's fix: %+v", c)
 		}
 		if !strings.Contains(c.Fix, "coordinator") || strings.Contains(c.Fix, "mailbox") {

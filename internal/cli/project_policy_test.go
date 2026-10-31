@@ -742,7 +742,11 @@ func TestProjectPolicyPublishRefusesOlderRules(t *testing.T) {
 	if err == nil {
 		t.Fatal("a publish behind the deployed rules was allowed")
 	}
-	if !strings.Contains(err.Error(), "records generation "+strconv.Itoa(projectpolicy.PolicyRulesVersion-1)) || !strings.Contains(err.Error(), "update --firebase-project") {
+	// The move is plain `fugaro update`, whose rules stage deploys this
+	// binary's generation over the state — not `--firebase-project`, the door
+	// that adopts a Firebase project this installation already has.
+	if !strings.Contains(err.Error(), "records generation "+strconv.Itoa(projectpolicy.PolicyRulesVersion-1)) ||
+		!strings.Contains(err.Error(), "fugaro update") || strings.Contains(err.Error(), "--firebase-project") {
 		t.Errorf("the refusal does not say the marker is below the generation a policy is read under: %v", err)
 	} // Not the marker-current state's sentence: "the deployed rules are older
 	// than the marker" is a claim about a document, and nothing here compared
@@ -1541,10 +1545,11 @@ func TestProjectReposEditRefusesWithoutTheRulesMarker(t *testing.T) {
 		what   string
 		marker any
 		want   string
-		// Where the refusal sends the operator. The rules marker is the state
-		// `fugaro update`'s own rules stage deploys over, so the missing-marker
-		// sentence names that one command; the pre-policy marker is worded by
-		// doctor's sentence, whose remedy is still the `--firebase-project` door.
+		// Where the refusal sends the operator. Both states are what
+		// `fugaro update`'s own rules stage deploys over, so both sentences now
+		// name that one command; the two are pinned as written, since a remedy
+		// that drifts back to the `--firebase-project` door sends the operator to
+		// adopt a Firebase project this installation already has.
 		fix string
 	}{
 		{"no marker at all", nil, "carry no policy marker", "run 'fugaro update'"},
@@ -1553,7 +1558,7 @@ func TestProjectReposEditRefusesWithoutTheRulesMarker(t *testing.T) {
 		// marker below it as its own case ("records generation N", the
 		// pre-policy sentence doctor prints): that is the marker behind this
 		// Fugaro's that still refuses the write.
-		{"a marker behind this Fugaro's", projectpolicy.PolicyRulesVersion - 1, "records generation", "update --firebase-project"},
+		{"a marker behind this Fugaro's", projectpolicy.PolicyRulesVersion - 1, "records generation", "re-run 'fugaro update' with fugaro"},
 	} {
 		t.Run(tc.what, func(t *testing.T) {
 			f := newProjectFixture(t, "")

@@ -80,6 +80,37 @@ func rulesNoBudget(lc *localcfg.Config) string {
 	return ""
 }
 
+// rulesForeignDatabase is why the stage must not read or write the database the
+// config names, "" when the pair agrees. The two halves are one fact — the
+// database a Firebase project's own — and `infra.DB.Check` is not this check: a
+// database that is EMPTY passes it whatever project the URL belongs to, so a
+// config whose two halves disagree had this stage write Fugaro's mark and its
+// rules into a database that is not the project's (the security review's
+// finding). The predicate is the one the history sweeper already refuses a
+// mismatched pair with (checkDatabaseHost), so one config cannot be safe to
+// sweep and unsafe to deploy into.
+func rulesForeignDatabase(lc *localcfg.Config) string {
+	if lc.Budget == nil || lc.Budget.RTDBURL == "" || lc.Budget.FirebaseProject == "" {
+		return ""
+	}
+	if checkDatabaseHost(lc.Budget.RTDBURL, lc.Budget.FirebaseProject) == nil {
+		return ""
+	}
+	return fmt.Sprintf("the config's budget.rtdb_url (%s) is not the database of the Firebase project its budget.firebase_project names (%s): a Firebase project's own database is <project>-default-rtdb, so one of the two is wrong and nothing here was read or written; fugaro update --firebase-project <project> records the pair together",
+		oneLine(lc.Budget.RTDBURL), oneLine(lc.Budget.FirebaseProject))
+}
+
+// rulesUnavailable is why the stage does not run, "" when it may: no shared
+// budget backend at all, or one whose database is not the Firebase project's
+// own. Both are reported and neither is a refusal that stops the run, because
+// `fugaro update`'s other stages are what the owner came for.
+func rulesUnavailable(lc *localcfg.Config) string {
+	if why := rulesNoBudget(lc); why != "" {
+		return why
+	}
+	return rulesForeignDatabase(lc)
+}
+
 // rulesStageState is the state one read of the deployed rules puts the stage in,
 // and the sentence its result carries: whether this generation has to be
 // deployed over them, or why it must not be and what that means.
@@ -92,6 +123,15 @@ func rulesNoBudget(lc *localcfg.Config) string {
 // be said about the deployed document at all; both are reported and neither
 // stops the run, because a run of `fugaro update` that refused to go on over a
 // credential it could not read would leave the owner no way through.
+//
+// The state between generation 1 and this one carries doctor's own sentence and
+// not a shorter one of the stage's: that deploy adds the mailbox subtree and the
+// device binding, and a phone account with no device node reads and writes
+// nothing under the rules it lands — a lock-out the operator has to know about
+// BEFORE confirming, which is what this detail is (the review screen prints it
+// beside the plan, and --yes prints it in the run's own account). It is one text
+// per state, doctor's, so the report and the deploy that follows it cannot
+// describe the same state differently.
 func rulesStageState(skew rulesSkew) (initflow.State, string) {
 	marker := projectpolicy.PathRulesMarker()
 	switch skew.kind {
@@ -102,7 +142,7 @@ func rulesStageState(skew rulesSkew) (initflow.State, string) {
 	case rulesSkewPrePolicy:
 		return initflow.Todo, fmt.Sprintf("the deployed security rules are generation %d, which predates the project policy: this Fugaro deploys generation %d", skew.gen, projectpolicy.RulesVersion)
 	case rulesSkewOlder:
-		return initflow.Todo, fmt.Sprintf("the deployed security rules are generation %d and this Fugaro deploys generation %d", skew.gen, projectpolicy.RulesVersion)
+		return initflow.Todo, rulesMarkerOlderText(skew.gen)
 	case rulesSkewDocument:
 		return initflow.Todo, "the deployed security rules are not the document this Fugaro generates: this Fugaro redeploys the generation a project policy is read under"
 	case rulesSkewNewer:
@@ -177,7 +217,7 @@ func (s *rulesStage) show(w io.Writer, acts []infra.DBAction) {
 // depend on it): a refusal from the database itself, a credential among them,
 // is what the operator has to fix.
 func (s *rulesStage) Check(ctx context.Context) (initflow.Status, error) {
-	if detail := rulesNoBudget(s.e.lc); detail != "" {
+	if detail := rulesUnavailable(s.e.lc); detail != "" {
 		return initflow.Status{State: initflow.Skipped, Detail: detail}, nil
 	}
 	_, st, detail, err := s.state(ctx)
@@ -188,7 +228,7 @@ func (s *rulesStage) Check(ctx context.Context) (initflow.Status, error) {
 }
 
 func (s *rulesStage) Plan(ctx context.Context, env initflow.Env) (initflow.Plan, error) {
-	if detail := rulesNoBudget(s.e.lc); detail != "" {
+	if detail := rulesUnavailable(s.e.lc); detail != "" {
 		return initflow.Plan{NothingToDo: true, Detail: detail}, nil
 	}
 	db, st, detail, err := s.state(ctx)
@@ -216,7 +256,7 @@ func (s *rulesStage) Plan(ctx context.Context, env initflow.Env) (initflow.Plan,
 // confirmed. Nothing is written when the state is not one this binary may
 // deploy over, and nothing is written when the database is already as planned.
 func (s *rulesStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
-	if detail := rulesNoBudget(s.e.lc); detail != "" {
+	if detail := rulesUnavailable(s.e.lc); detail != "" {
 		return initflow.Outcome{Detail: detail}, nil
 	}
 	db, st, detail, err := s.state(ctx)
@@ -257,7 +297,7 @@ func (s *rulesStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outc
 // claims a generation it did not land is one the doctor keeps reporting and
 // every later run would deploy again.
 func (s *rulesStage) Verify(ctx context.Context) error {
-	if detail := rulesNoBudget(s.e.lc); detail != "" {
+	if detail := rulesUnavailable(s.e.lc); detail != "" {
 		return nil
 	}
 	_, skew, err := s.read(ctx)

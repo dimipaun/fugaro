@@ -2422,8 +2422,10 @@ func doctorPolicyVsJobs(lc *localcfg.Config) *doctorCheck {
 // installation whose rules were deployed by a CLI of this generation never
 // reports a skew.
 //
-// A warning, not an error: the fix is the owner's `fugaro update --firebase-project`
-// and doctor cannot perform it.
+// A warning, not an error: the fix is the owner's `fugaro update` — whose rules
+// stage deploys this binary's generation, in the same run, for every state here
+// but the hand-edited marker the stage reports instead — and doctor cannot
+// perform it.
 //
 // The same check reports the marker's other wrong values: a value that is not a
 // generation this Fugaro may read at all (not an integer, or the negative one no
@@ -2491,7 +2493,7 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 		// branch).
 		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
 			Problem: rulesMarkerPrePolicyText(gen),
-			Fix: fmt.Sprintf("re-run 'fugaro update --firebase-project' with fugaro >= %s in your own terminal: it deploys the rules a policy is read under and records generation %d in the marker (if the rules deployed here came from a newer Fugaro than this one, upgrade instead — this release's template would replace them)",
+			Fix: fmt.Sprintf("re-run 'fugaro update' with fugaro >= %s in your own terminal: it deploys the rules a policy is read under and records generation %d in the marker (if the rules deployed here came from a newer Fugaro than this one, upgrade instead — this release's template would replace them)",
 				policySince, projectpolicy.RulesVersion)}}
 	case rulesSkewOlder:
 		// The state between the two generations, and the one the bump to
@@ -2513,7 +2515,7 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 		}
 		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
 			Problem: rulesMarkerOlderText(gen),
-			Fix: fmt.Sprintf("re-run 'fugaro update --firebase-project' in your own terminal from a Fugaro that deploys generation %d or newer: it deploys this release's document, which adds %s, and records its generation in the marker (if the rules deployed here came from a newer Fugaro than this one, upgrade instead — this release's template would replace them)",
+			Fix: fmt.Sprintf("re-run 'fugaro update' in your own terminal from a Fugaro that deploys generation %d or newer: it deploys this release's document, which adds %s, and records its generation in the marker (if the rules deployed here came from a newer Fugaro than this one, upgrade instead — this release's template would replace them)",
 				projectpolicy.RulesVersion, adds)}}
 	case rulesSkewUnreadableRules:
 		// A read that failed is not "the rules are current", and it is not the
@@ -2545,7 +2547,7 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 	// document is not the one this Fugaro generates.
 	return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
 		Problem: rulesSkewText(),
-		Fix:     fmt.Sprintf("re-run 'fugaro update --firebase-project' with fugaro >= %s in your own terminal: it redeploys the rules the policy is read under (if these rules came from a newer Fugaro than this one, upgrade instead — this template would replace them)", policySince)}}
+		Fix:     fmt.Sprintf("re-run 'fugaro update' with fugaro >= %s in your own terminal: it redeploys the rules the policy is read under (if these rules came from a newer Fugaro than this one, upgrade instead — this template would replace them)", policySince)}}
 }
 
 // The sentences below are the states in which a Fugaro must not deploy its own

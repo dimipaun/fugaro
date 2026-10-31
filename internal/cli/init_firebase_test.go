@@ -2,7 +2,9 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -1692,5 +1694,242 @@ func TestUpdateRulesStageReportsADatabaseThatIsNotOurs(t *testing.T) {
 	}
 	if db.Value(budget.PathMark) != nil {
 		t.Error("the run marked someone else's database as this installation's")
+	}
+}
+
+// rulesStageRig is the rules stage alone, on a rig's engine and local config.
+// Two of the states below cannot be reached through a whole `fugaro update`
+// hermetically — a database URL the stage must refuse before it opens it is not
+// one a test can point at a fake — and the stage's own refusals are where the
+// loop never sees them (its AgentError arm is inside the stage).
+func rulesStageRig(t *testing.T, r *initRig) (*rulesStage, *initEngine) {
+	t.Helper()
+	e := rigEngine(t, r, &initOptions{door: updateDoor.name})
+	return newRulesStage(e), e
+}
+
+// TestUpdateRulesStageRefusesForeignDatabase: budget.rtdb_url and
+// budget.firebase_project are one fact — the Firebase project's own database —
+// and infra.DB.Check does not make that check: a database that is EMPTY passes
+// it whatever project the URL names, so a config whose two halves disagree had
+// `fugaro update --yes` write Fugaro's mark and this binary's rules into a
+// database that is not the project's (the security review's finding). The
+// predicate is checkDatabaseHost, the one the history sweeper already refuses a
+// mismatched pair with, and the stage checks it before it opens anything: a URL
+// that is not the project's is a URL this stage has no business contacting.
+//
+// The URL is deliberately not loopback — checkDatabaseHost exempts loopback
+// hosts, which is what lets every other test in this file point at a fake — so
+// the refusal is reached without a client ever being built.
+func TestUpdateRulesStageRefusesForeignDatabase(t *testing.T) {
+	r := updateRig(t)
+	r.appendConfig(t, "budget: { mode: enforce, per_run_usd: 5, firebase_project: \"other-project\", rtdb_url: \"https://aurora-default-rtdb.us-east5.firebasedatabase.app\" }\n")
+	s, e := rulesStageRig(t, r)
+
+	st, err := s.Check(context.Background())
+	if err != nil {
+		t.Fatalf("the stage read a database the config does not own: %v", err)
+	}
+	if st.State != initflow.Skipped {
+		t.Errorf("the rules stage is %q, want skipped:\n%s", st.State, st.Detail)
+	}
+	for _, want := range []string{"budget.rtdb_url", "budget.firebase_project", "other-project", "aurora-default-rtdb", "not the database"} {
+		if !strings.Contains(st.Detail, want) {
+			t.Errorf("the skip does not name the mismatch: %q lacks %q", st.Detail, want)
+		}
+	}
+	if _, err := s.Apply(context.Background(), initflow.Env{Yes: true}); err != nil {
+		t.Fatalf("the refused stage did not stay quiet: %v", err)
+	}
+	if out := e.r.w.(*syncBuf).String(); strings.Contains(out, "deploys the security rules listed") {
+		t.Errorf("the refused stage offered to deploy into another project's database:\n%s", out)
+	}
+}
+
+// TestUpdateRulesStageRefusedInAgentSession: a coding agent's session may not
+// deploy security rules, and the refusal is the stage's own — askOrdinary's
+// AgentError arm, which runs before any confirmation — so a loop-level test
+// cannot see it (mutation M4: take that arm out and the loop's tests stay
+// green while `fugaro update` from an agent's session rewrites the rules every
+// run of the project serves).
+func TestUpdateRulesStageRefusedInAgentSession(t *testing.T) {
+	r, db := updateBudgetRig(t)
+	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.PolicyRulesVersion)
+	db.SetRules([]byte(`{"rules":{".read":false}}`))
+	s, _ := rulesStageRig(t, r)
+	t.Setenv("CLAUDECODE", "1")
+
+	_, err := s.Apply(context.Background(), initflow.Env{Yes: true})
+	var ae *initflow.AgentError
+	if !errors.As(err, &ae) {
+		t.Fatalf("a coding agent's session was allowed to deploy the rules: %v", err)
+	}
+	if !strings.Contains(err.Error(), "coding agent") {
+		t.Errorf("the refusal does not say why: %v", err)
+	}
+	if db.RulePuts() != 0 {
+		t.Error("the rules were deployed from a coding agent's session")
+	}
+	if got := rulesMarkerOn(t, db); got != strconv.Itoa(projectpolicy.PolicyRulesVersion) {
+		t.Errorf("the marker moved to %q in a coding agent's session", got)
+	}
+}
+
+// TestUpdateRulesRedeploysADocumentUnderACurrentMarker: the marker records this
+// generation and the *document* at .settings/rules is not the one this binary
+// generates — a console hand-edit of the rules file, which is the state doctor's
+// policy-rules-skew warning is written for. The deploy goes back over it, and the
+// marker write is denied for the length of the run: infra.DB.Plan records the
+// generation only when the marker is not already this one, so a plan that
+// rewrote it here would be a write per update of every installation, and this
+// run would fail on the write instead of ending with the document repaired (the
+// mutation this arm is for: drop the `!markerFound || markerGen !=
+// projectpolicy.RulesVersion` guard and this test fails, no other one does).
+func TestUpdateRulesRedeploysADocumentUnderACurrentMarker(t *testing.T) {
+	_, db := updateBudgetRig(t)
+	gen, err := rules.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+	db.SetRules([]byte(`{"rules":{".read":false}}`))
+	db.Deny(projectpolicy.PathRulesMarker())
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	if err != nil {
+		t.Fatalf("the deploy of a hand-edited document rewrote the marker it is already at: %v\n%s%s", err, out, errOut)
+	}
+	if !infra.SameJSON(db.Rules(), gen) {
+		t.Errorf("the deployed document is not this Fugaro's generation:\n%s", out)
+	}
+	if db.RulePuts() == 0 {
+		t.Error("the run reports a hand-edited document and deployed nothing")
+	}
+	if got, want := rulesMarkerOn(t, db), strconv.Itoa(projectpolicy.RulesVersion); got != want {
+		t.Errorf("the marker is %q, want %q", got, want)
+	}
+}
+
+// TestUpdateRulesRecoversFromAFailureAfterTheDeploy: Apply stops at the first
+// failure, so a marker write refused after the document landed leaves this
+// generation's rules under the old marker — the state a run that died between
+// the two writes leaves behind, and the one the marker exists to make
+// recoverable. The next `fugaro update` must repair it: the document is current
+// but the marker is not this generation's, so the stage deploys again (an
+// unchanged document, a written marker) rather than reading the pair as
+// deployed.
+func TestUpdateRulesRecoversFromAFailureAfterTheDeploy(t *testing.T) {
+	_, db := updateBudgetRig(t)
+	gen, err := rules.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.PolicyRulesVersion)
+	db.SetRules([]byte(`{"rules":{".read":false}}`))
+	db.Deny(projectpolicy.PathRulesMarker())
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	if err == nil {
+		t.Fatalf("the run reported success with the marker write refused:\n%s%s", out, errOut)
+	}
+	if !strings.Contains(ErrorText(err), projectpolicy.PathRulesMarker()) {
+		t.Errorf("the halt does not name the write that failed: %v", err)
+	}
+	if !infra.SameJSON(db.Rules(), gen) {
+		t.Fatal("the document did not land before the failure: this is not the state the test names")
+	}
+	if got := rulesMarkerOn(t, db); got != strconv.Itoa(projectpolicy.PolicyRulesVersion) {
+		t.Fatalf("the marker is %q: the fixture is not the state the test names", got)
+	}
+
+	db.Deny("")
+	out, errOut, err = executeStdin(t, "", "update", "--yes")
+	if err != nil {
+		t.Fatalf("the second update did not repair the marker: %v\n%s%s", err, out, errOut)
+	}
+	if got, want := rulesMarkerOn(t, db), strconv.Itoa(projectpolicy.RulesVersion); got != want {
+		t.Errorf("the repaired marker is %q, want %q:\n%s", got, want, out)
+	}
+	if !infra.SameJSON(db.Rules(), gen) {
+		t.Error("the repair left a document that is not this Fugaro's generation")
+	}
+}
+
+// TestUpdateTwiceLeavesTheRulesAndMarkerAlone: after the run that deployed this
+// generation, the next `fugaro update` must find the pair current and write
+// nothing at all — no rule deploy, no marker, no confirmation. A stage that
+// redeployed its own generation every run would make every update a security
+// write of a database it has no business touching.
+func TestUpdateTwiceLeavesTheRulesAndMarkerAlone(t *testing.T) {
+	_, db := updateBudgetRig(t)
+	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.PolicyRulesVersion)
+	db.SetRules([]byte(`{"rules":{".read":false}}`))
+	if out, errOut, err := executeStdin(t, "", "update", "--yes"); err != nil {
+		t.Fatalf("%v\n%s%s", err, out, errOut)
+	}
+	puts, marker := db.RulePuts(), rulesMarkerOn(t, db)
+	if puts == 0 || marker != strconv.Itoa(projectpolicy.RulesVersion) {
+		t.Fatalf("the first run deployed nothing: %d rule deploy(s), marker %q", puts, marker)
+	}
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s%s", err, out, errOut)
+	}
+	var res convergeJSON
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatalf("%v:\n%s", err, out)
+	}
+	if got := res.state(initflow.Rules); got != "done" {
+		t.Errorf("the rules stage is %q on the second update, want done:\n%s", got, out)
+	}
+	if db.RulePuts() != puts {
+		t.Errorf("the second update deployed the rules again: %d deploy(s), was %d", db.RulePuts(), puts)
+	}
+	if got := rulesMarkerOn(t, db); got != marker {
+		t.Errorf("the marker moved from %q to %q", marker, got)
+	}
+	if text := out + errOut; strings.Contains(text, "deploys the security rules listed") {
+		t.Errorf("the second update offered to deploy the rules it just deployed:\n%s", text)
+	}
+}
+
+// TestRulesStageDetailCarriesTheMobileLockOut: the state between generation 1
+// and this one is the deploy that adds the device binding, and a phone account
+// with no device node reads and writes nothing under the rules it lands. That is
+// a lock-out the operator has to know about BEFORE confirming, so the stage
+// carries doctor's own sentence for the state — not a shorter line of its own —
+// and the review screen prints it beside the plan the run's one confirmation
+// covers (mutation: replace the detail with the one-line sentence the stage used
+// to carry, and the run deploys it silently).
+func TestRulesStageDetailCarriesTheMobileLockOut(t *testing.T) {
+	r, db := updateBudgetRig(t)
+	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.PolicyRulesVersion)
+	db.SetRules([]byte(`{"rules":{".read":false}}`))
+	s, e := rulesStageRig(t, r)
+
+	st, err := s.Check(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != initflow.Todo {
+		t.Fatalf("the rules stage is %q, want todo:\n%s", st.State, st.Detail)
+	}
+	for _, want := range []string{"device node", "reads and writes nothing at all", projectpolicy.PathRulesMarker()} {
+		if !strings.Contains(st.Detail, want) {
+			t.Errorf("the plan detail lacks %q: %q", want, st.Detail)
+		}
+	}
+
+	e.previewed = []initflow.StageResult{{Name: initflow.Rules, State: st.State, Detail: st.Detail}}
+	var b syncBuf
+	e.r.w = &b
+	e.reviewScreen(context.Background(), "test")
+	screen := b.String()
+	if !strings.Contains(screen, "  rules:") {
+		t.Errorf("the review screen has no line for the rules deploy:\n%s", screen)
+	}
+	if !strings.Contains(screen, "device node") || !strings.Contains(screen, "reads and writes nothing at all") {
+		t.Errorf("the review screen does not show what the deploy locks out:\n%s", screen)
 	}
 }
