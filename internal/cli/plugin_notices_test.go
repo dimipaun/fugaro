@@ -49,11 +49,12 @@ func TestUpdateSkillsShowsWhatElseTheSettingsFileCarries(t *testing.T) {
 }
 
 // doctor reports them as informational lines: even --strict does not fail on
-// them (the pin itself is fine here).
+// them (the pin itself is fine here). They are audit lines, so --all names the
+// view that prints them.
 func TestDoctorStrictDoesNotFailOnSettingsNotices(t *testing.T) {
 	releaseBuild(t, "0.2.0")
 	wiringCheckout(t, hookedSettings)
-	out, _, err := executeStdin(t, "", "doctor", "--plugin", "--strict")
+	out, _, err := executeStdin(t, "", "doctor", "--plugin", "--strict", "--all")
 	if err != nil {
 		t.Fatalf("--strict failed on notices: %v\n%s", err, out)
 	}
@@ -70,7 +71,7 @@ func TestDoctorStrictDoesNotFailOnSettingsNotices(t *testing.T) {
 func TestCleanSettingsStillCarryTheCaveat(t *testing.T) {
 	releaseBuild(t, "0.2.0")
 	wiringCheckout(t, `{"model":"opus"}`)
-	out, _, _ := executeStdin(t, "", "doctor", "--plugin")
+	out, _, _ := executeStdin(t, "", "doctor", "--plugin", "--all")
 	if !strings.Contains(out, "this list is not exhaustive: read the file yourself") {
 		t.Errorf("doctor:\n%s", out)
 	}

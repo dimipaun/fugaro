@@ -473,8 +473,13 @@ func (s *Sweeper) deleteUsers(ctx context.Context, now time.Time, maxAge time.Du
 		return 0, len(nodes), errors.Join(errs...)
 	}
 	failed, err := s.Auth.DeleteUsers(ctx, del)
+	// Both halves of the warning are another program's: the uid is the Auth
+	// directory's own and the message the API's, and a control character in
+	// either would rewrite the terminal that reads the line or open a line of
+	// its own, so both go through the sanitiser registry.go already holds
+	// untrusted database text to.
 	for _, f := range failed {
-		s.warnf("Firebase user %s was not deleted: %s", f.UID, f.Message)
+		s.warnf("Firebase user %s was not deleted: %s", clipString(f.UID), clipString(f.Message))
 	}
 	if err != nil {
 		// The nodes above are deleted whatever happens here, so the count goes

@@ -56,7 +56,7 @@ L=us-east5                   # the installation's region
 [ "$P" = fugaro-dev ] && [ -n "$L" ] \
   || { echo "Check 91 stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L not empty)" >&2; exit 1; }
 # Hard stop 2: this is the fugaro-dev installation, not another one.
-fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \
+fugaro doctor --project fugaro --all | grep -q '^project: .*(GCP fugaro-dev,' \
   || { echo "Check 91 stopped: this is not the fugaro-dev installation" >&2; exit 1; }
 SVC=fugaro-chk91
 # Hard stop 3: the scratch directory is one THIS CHECK makes, and it is the

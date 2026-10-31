@@ -8,7 +8,10 @@
 > below is a contiguous run of the original lines, unedited; the headings and this note are the excerpt's own.
 > The landing pages' section below is the plan's intent as the owner wrote it on 2026-10-26; what the
 > four pages render today, and where that reading departs from this text, is `reconciliation.md`'s
-> D409, D410 and D411, which win over this file.
+> D409, D410, D411 and D412, which win over this file. D412 is the owner's second read of the four
+> pages on 2026-10-30: it supersedes this section's §5 reading of the calls to action, which now
+> carry a small mark each, and its one-screenshot-per-page reading, since each page shows the
+> console's every screen below the hero.
 
 ## Licensing context and action items (engineering rows)
 
