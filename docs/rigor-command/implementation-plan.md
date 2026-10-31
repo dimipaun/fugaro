@@ -6,9 +6,11 @@ plan's — D836).** Every decision in this design's block is answered
 2026-10-31, **D832–D839 on 2026-10-31, all as recommended**. The one decision the plan **cites** and
 does not own — **D854**, the settings design's, whether the `Layer` stage records the generation it
 read at the seed — is **answered by the owner on 2026-10-31: record the generation**, and R1 is
-written to that answer, with the within-run guard it also carries unconditional. The tasks are
-written to the answers above. Each task touches at most 12 files, names its tests, starts with
-a red step and ends at the gates below.
+written to that answer, with the within-run guard it also carries unconditional. **D900** — whether
+the setup wizard asks the project's rigor mode explicitly — was added to this design on 2026-10-31
+and is **answered by the owner the same day: it does**, and its task is **W**, at the end of the plan
+and after R0–R3 and S5. The tasks are written to the answers above. Each task touches at most 12
+files, names its tests, starts with a red step and ends at the gates below.
 
 ## Order, and what this plan does not own
 
@@ -59,6 +61,7 @@ order rather than a task in this plan. R3 is this plan's; S7 is the settings des
 | 4 | R5 | R4 (and the same code needs: R0, R1, R2, S5, and R3 or S7) |
 | 5 | R6 | R1–R5 |
 | 6 | R7, R8 | nothing (R7 lands nothing before the owner answers) |
+| 7 | W | R0, R1, R2, R3, S5, and R4's hotfix refusal (D834) |
 
 **R4 and R5 need R1 among their code needs — and that one is what makes the HARD RULE hold
 mechanically rather than by promise.** The row is the whole list (R0, R1, R2, S5, and R3 or S7 —
@@ -88,6 +91,16 @@ R0–R6; both target 0.15.0 with them. R7's first step is a question to the owne
 before the answer, so its level is the last row of the table and not a gate on anything. Whichever of
 R7 and R8 lands in the same release as R0–R6 has its user-visible half written into that release's
 notes by R6; a release that carries neither notes neither.
+
+**W is not a follow-up: it is D900's task, and it is the one task here that is not a `rigor`
+subcommand.** The owner's ruling of 2026-10-31 is that the setup wizard asks the project's rigor mode
+explicitly, and W is that question — a row of the wizard's own question table, the `--rigor <mode>`
+flag beside it, and the answer written into the one local layer file by R1's stage and published by
+the same run (the HARD RULE, F18). Its letter is the wizard's, not this family's, because the files it
+changes are the wizard's and the setup skill's; the tasks it needs are R0, R1, R2, R3 and the settings
+design's S5, plus R4's refusal of `hotfix` as a default (D834), and it is the last row of the table
+for that reason. A release that carries it is the one where `fugaro setup` asks the question, and R6's
+`### For operators` says so in the same notes.
 
 ## Gates (every task)
 
@@ -463,7 +476,9 @@ no layer and nothing in the cloud.
   elsewhere, see "Order"), `docs/releases/vX.Y.Z.md` (`### For operators`: "run `fugaro update`" and
   what it will ask — including that the stage **seeds** the local layer file when it is absent and
   otherwise **publishes** it when it is **`unpublished`**, with the diff and its confirmation, so the
-  operator knows the one command now does both), `website/data/release-summaries.yaml`, the
+  operator knows the one command now does both — and, in a release that also lands **W**, that
+  `fugaro setup` asks the project's rigor mode once and `fugaro update` never asks it),
+  `website/data/release-summaries.yaml`, the
   generated `website/content/cli-reference.md` (regenerated, not hand-edited).
 - **Red step:** the plugin's command test fails while the skill names `fugaro rigor set` before R4 is
   merged; it turns green on R4's branch.
@@ -493,12 +508,13 @@ neither is it, and no code reads one.
   is `overrideSecurity` in `internal/rigor/table.go`); `internal/rigor/filing.go` files one backlog
   item for what it deferred; its levels are **Pro's** (`internal/rigor/levels.go`, the other
   design's **O10** — `docs/review-levels-ab-jobmax/reconciliation.md` §4, the owner's ruling of
-  2026-10-30) and its rounds are 1 (`internal/rigor/rounds.go`), which `minRoundCeiling` clamps to
-  today's default of 2 while **O3** is open (the rigor-modes design's open item,
-  `docs/rigor-modes/reconciliation.md`). So a hand-written `rigor.default: hotfix` in a layer or in
-  a `fugaro.yaml` already reaches a mode that tolerates almost everything with **no gate at all**,
-  while `fugaro run --mode hotfix` cannot take effect (raise-only, D6) — the two doors disagree, and
-  only one of them is closed.
+  2026-10-30) and its rounds are **1**, the number it spends: **O3 is answered** (2026-10-31) — a mode
+  **may** go below today's default of two — so hotfix is **1/1**, and the answer sets the per-mode loop
+  defaults to **POC 1/1, Startup 2/2, Pro 3/3, Critical 3/5, Hotfix 1/1**, each pair being the first-line (inner) rounds and the senior rounds the mode runs **by default** — a default, not a cap: a task override, the recipe, the repository or the project layer can set either number higher or lower within the recipe's bounds (inner 1–3, senior 1–10). The `minRoundCeiling` clamp to two goes with the answer, in the task that implements the loop-defaults ruling (which also renames the ceiling names in `internal/rigor/rounds.go`, because a field never changes meaning), whose `Depends on O3` line the answer unblocks (`docs/rigor-modes/implementation-plan.md`) — so until that task lands the code still
+  clamps, and this paragraph is the ruling rather than a reading of `main`. So a hand-written
+  `rigor.default: hotfix` in a layer or in a `fugaro.yaml` already reaches a mode that tolerates
+  almost everything with **no gate at all**, while `fugaro run --mode hotfix` cannot take effect
+  (raise-only, D6) — the two doors disagree, and only one of them is closed.
 - **Nothing lands before the answer.** The design above refuses to *write* hotfix (D834) and says
   plainly that it does not close this (F13, D834's row); a task here that invented a gate would be
   making the product decision O-8-shaped decisions are for the owner. The question is therefore the
@@ -539,9 +555,164 @@ intent is discarded with **nothing said**, and the layer still parses.
   and the run reads one of them; saying nothing is what makes a hand-written layer lie, and a warning
   nobody reads is the same silence with more output.
 
+## W. `fugaro setup` asks the project's rigor mode explicitly (D900, answered 2026-10-31)
+
+The one task here that is not a `rigor` subcommand, and the one the owner asked for by name: the
+wizard asks the mode, because `defaults.rigor.default` is the key that decides how much review a whole
+project's runs get and a wizard that never names it leaves every project on the built-in default
+(`rigor.Default`, `internal/rigor/mode.go`) with nothing said — the "important and easy to miss" state
+the ruling of 2026-10-31 ends. Its letter is the wizard's and not this family's, because the files it
+changes are the wizard's and the setup skill's.
+
+- **The question is a row of `setupQuestions`, and that is what makes it required.** The wizard's
+  questions are one table (`internal/cli/setup.go`'s `setupQuestions`, the "table the phase's own
+  list" W3.5 built): `wizardStage` (`internal/cli/wizard_stage.go`) asks each row in the table's order
+  through `questionFor(flag)`, `Missing()` returns every row's `missing` name — which is what
+  `initflow.Run`'s non-interactive check turns into the one error naming all of them — and
+  `TestEveryWizardQuestionHasAFlag` (`internal/cli/setup_wizard_test.go`) holds the table to the run in
+  both directions, so a question with no flag, or a flag nobody can pass, fails there. W adds the row
+  `{what: "the project's rigor mode", label: "Rigor mode", flag: "--rigor", missing: "--rigor <mode>"}`
+  and asks it from `wizardStage.ask` with the other questions, after the name (the mode is about the
+  project the name settles). Nothing else about the phase moves: the answer is recorded on the run's
+  own options the way `o.cloud.gcpProject` and `o.cloud.region` are, and the phase still applies
+  nothing (`wizardStage.Apply` refuses).
+- **The four modes, the recommended answer first, and no silent default.** The question prints the
+  four project modes with one line each — what it costs and what review it runs — from the two tables
+  that already hold those answers (`internal/rigor/levels.go` for the levels, `internal/rigor/rounds.go`
+  for the rounds, whose defaults **O3's answer** set):
+  - **`pro` — the recommendation, printed first**: level 2, the senior review that decides readiness,
+    and no adversarial pass; by default 3 first-line and 3 senior rounds. It is the built-in default, so it is what a project
+    that says nothing already runs today, and the one line says so.
+  - `startup` — the same level 2 review, by default 2 first-line and 2 senior rounds: less spend, less to spend it on.
+  - `poc` — level 1 only (`levels.go`'s row turns L2 off and L1 on, so D723's first-line review runs
+    and decides readiness) and by default 1 first-line and 1 senior round: the cheapest mode there is.
+  - `critical` — level 2 **and** level 3, the adversarial pass after it; by default 3 first-line and 5
+    senior rounds: the most review, and the most money.
+  The four lines are printed before the prompt, the way the billing question prints its list, and the
+  prompt itself carries **no suggestion**: it is `initRun.prompt` with `def` empty
+  (`internal/cli/init_inputs.go`), so Enter is not an answer — an empty line prints "a value is
+  needed" and asks again — and the answer is validated against the closed vocabulary (`rigor.Parse`,
+  whose refusal names `rigor.ModeList()`), so a near miss is refused in the wizard's words exactly as
+  `fugaro run --mode` refuses it (F8). A default nobody typed is the state this task exists to end: on
+  every other question the wizard takes Enter as the answer, and here it must not.
+- **`hotfix` is not offered and not writable — D834 stands.** It is a per-run mode (D12's own door,
+  `fugaro run --mode hotfix`), the prompt does not list it, and `--rigor hotfix` is refused with the
+  sentence `fugaro rigor set` refuses it with: R4's refusal (D834), which names that operator door and
+  is owed on its own terms. W does not fork the sentence and does not close F13's missing gate, which
+  stays where R7 leaves it.
+- **The write is the R-chain's, and the run that asks publishes it (HARD RULE).** The answer never
+  edits a file from the question phase, which applies nothing: it is carried on the run's options into
+  **R1's `Layer` stage** (`internal/cli/init_layer_stage.go`), the one stage that writes and publishes
+  the one local layer file. Before it publishes, the stage splices `defaults.rigor.default: <mode>`
+  into that file — created when the project has published none, exactly as `rigor set` creates it
+  (D830, `TestRigorSetCreatesTheFileWhenNoLayerIsPublished`) — through **R2's `EditRigor`** over
+  `internal/yamledit` and the **shared write helper settings S5 lands**
+  (`internal/cli/settings_write.go`: the diff, the confirmation, the agent-session refusal, the backup,
+  the atomic write), which are the same two helpers `fugaro rigor set` (R4) calls. It then publishes
+  through `publishLayer` and fans out through `fanOutLayer` behind update's one confirmation. **No
+  second command**: the answer reaches runs in the setup run itself, which is F18's HARD RULE read
+  literally, and a run whose confirmation is declined leaves the file **`unpublished`** — the shared
+  state word, with `fugaro update` as the one documented next step — rather than a state only a
+  hand-edit or `fugaro config publish FILE` could fix. Where the file or the published layer already
+  carries a `defaults.rigor.default` (a project whose layer someone else published), the answer
+  replaces it and **the diff shows the value it replaces**, so a teammate's value is never overwritten
+  without the old one printed beside the new.
+- **Non-interactive: `--rigor <mode>`, and without it the run is refused.** `--rigor` is the row's flag
+  and the wizard's own spelling, registered with the flags `fugaro setup` and `fugaro update` already
+  share (`internal/cli/init.go`, beside `--name` and `--gcp-project`), and its help names only the
+  reader's door (`TestNoDoorsFlagHelpNamesTheOtherDoor`). A run that cannot ask — `--non-interactive`,
+  a pipe, `--json`, `--yes`, or `--print-vars` (`initRun.canAsk`) — is **refused with the question's
+  own text**, `--rigor <mode>`, in the one error the loop builds from `InputStage.Missing()`
+  (`wizardFlagsLeft`): the recommended answer is **not** taken for the caller, because a scripted setup
+  is where a silent default would be least visible. **`--yes` does not choose the mode either**: D12's
+  answer covers the ordinary steps a door owns, and this is a product decision the wizard asks, not a
+  step to confirm — so `fugaro setup --yes` with no `--rigor` is refused exactly as a run with no
+  terminal is. **`--rigor` is a first run's flag**: an installation that already has a project config
+  converges as `fugaro update` does (`announceAlreadySetUp`, `internal/cli/setup.go`), where the mode
+  is not asked and not written, and the flag there is refused naming **`fugaro rigor set`** — the one
+  command that changes a project default — rather than honoured as a second door to the same key.
+- **`fugaro update` asks nothing, and its summary shows the current mode.** `update` registers no
+  question phase at all: `wizardStage.ask` returns early when this run selected a project config
+  (`!creating`), so the mode is never re-asked and an answer already in the layer is never rewritten
+  by a converge. What the run says instead is one line in the summary it already prints — the review
+  screen's fact block (`internal/cli/init_review.go`'s `reviewScreen`, where `alert email:` and the
+  billing account are) — carrying the mode `rigor.Resolve` returns for the project
+  (`internal/rigor/resolve.go`) with its own source word, so a project that answered the question reads
+  `pro (project)` and one that has not reads the built-in default as the built-in default rather than
+  as a choice. The wording is **R3's** (`internal/cli/rigor_show.go`'s line for the project layer), not
+  a second sentence saying the same thing two ways.
+- **The console and the mobile app ask nothing, and this task adds nothing there.** Read: the console's
+  onboarding is two screens and one command (`console/src/main/onboarding.ts`, whose
+  `FUGARO_SETUP_COMMAND` is the string `fugaro setup`, pinned to the CLI's own declaration by a unit
+  test), and its own ruling is that **the console asks the operator for nothing** — it lists the
+  installations the CLI finds and, with none, prints the command to run. `fugaro setup` needs a real
+  terminal and the user's own credentials and refuses a coding agent's session, so the question is the
+  CLI's, asked at the operator's terminal; the console's screens, its `spawn`/IPC allow-lists and
+  `console/docs/json-contract.md` have nothing to change, and no console task is added (D836's own
+  reason). The mobile app has no setup path at all: nothing under `mobile/` or `shared/` names `fugaro
+  setup`, `defaults.rigor` or the layer, so there is nothing there to ask and no task.
+- **Docs, the skill, and the plugin's coverage.** `docs/gcp-setup.md` is the page a first-time user
+  follows, and its sentence listing the wizard's questions ("the GCP project ID …, the region … and the
+  name itself are each asked once with a suggestion that Enter takes") becomes false the moment this
+  question exists: the page adds the rigor question and says it is the one question with **no**
+  suggestion, inside `TestDocsGCPSetupStaysShort`'s line budget (`internal/cli/docs_gcp_setup_test.go`).
+  `plugin/skills/setup/SKILL.md` gains the sentence that tells the user's agent what the question is —
+  a project-wide decision the user makes once, whose answer is *not* the skill's `agent.review_rounds`
+  topic (that one is per repository, and the two must not be bundled, the rule
+  `TestSetupSkillSplitsMachineSizeAndReviewRounds` already holds the skill to) — and its step 1 block
+  (`fugaro setup --project <name>`) is unchanged. The plugin's command-and-flag coverage needs **no
+  test change**: the skill lint resolves every command and flag a skill names against the CLI tree
+  (`plugin/skills_lint_test.go`'s flag rule, and `plugin/setup_skill_test.go` for the `setup` lines), so
+  a `--rigor` the tree does not have is a failure and one it has is the coverage — the file to change
+  is the skill, not the test. `docs/setup-wizard/implementation-plan.md` is that folder's own plan and
+  its question table is there: the row is added with the owner's go for those files (the plan's "Files
+  other work owns" rule), and `docs/project-layer.md` §2/§7 and this folder's README are **R6's**, so
+  the sentence that says the wizard asks is written by R6's task in the release that lands W.
+- **Files (11):** `internal/cli/setup.go` (the `setupQuestions` row, the four lines it prints and the
+  refusal of `--rigor` on a converge), `internal/cli/init.go` (the `--rigor` flag and its help, and the
+  field the answer is recorded on), `internal/cli/wizard_stage.go` (the question itself),
+  `internal/cli/init_layer_stage.go` (R1's stage: the splice before the publish),
+  `internal/cli/init_review.go` (the summary line), `internal/cli/setup_rigor_test.go` (new),
+  `internal/cli/setup_wizard_test.go` (the table's contract, extended),
+  `internal/cli/init_layer_stage_test.go` (R1's file: the answer published by the same run),
+  `plugin/skills/setup/SKILL.md`, `docs/gcp-setup.md` and `docs/setup-wizard/implementation-plan.md`.
+  **Eleven files — five Go files, three test files and three documents — one under the plan's ceiling
+  of twelve**; W adds no file under `internal/rigor` and no new command, and nothing here is a fifth
+  helper beside `internal/cli/settings_write.go`.
+- **Red step:** `TestSetupAsksTheRigorModeWithNoSilentDefault` fails while no question prints the four
+  modes and Enter is still an answer (`setupQuestions` has no rigor row, so nothing prints and nothing
+  refuses).
+- **Tests:** `TestSetupAsksTheRigorModeWithNoSilentDefault` (the four lines, the recommendation first,
+  and that an empty answer is not accepted), `TestSetupRigorAnswerRefusesANearMiss` (the vocabulary),
+  `TestSetupRigorRefusesHotfix` (D834's sentence, naming `fugaro run --mode hotfix`),
+  `TestSetupWithoutATerminalIsRefusedWithTheRigorQuestion` (`--non-interactive`, `--yes`, `--json` and
+  a pipe: the one error names `--rigor <mode>`), `TestSetupYesNeverChoosesTheRigorMode` (the other half
+  of the same rule, asserted on its own), `TestSetupWritesTheRigorAnswerAndPublishesItInTheSameRun`
+  (one run: the file carries `defaults.rigor.default`, the object is published once, the fan-out runs —
+  the HARD RULE's test at this door, beside R1's `TestInstallationAtThePreviousVersionConverges`),
+  `TestSetupRigorAnswerShowsTheValueItReplaces` (a layer that already carries `pro`, the answer
+  `critical`: the diff shows both), `TestSetupRigorAnswerLeavesNoSecondCommandWhenDeclined` (the run's
+  confirmation declined: the file is `unpublished`, nothing is published, and the sentence names
+  `fugaro update`), `TestSetupRigorAnswerKeepsTheRestOfTheFile` (comments and unrelated keys survive
+  the splice — R2's own property, asserted here at this caller), `TestUpdateNeverAsksTheRigorQuestion`
+  (an existing project: no prompt at all, `--rigor` refused naming `fugaro rigor set`, and
+  `TestEveryWizardQuestionHasAFlag` still green with the new row), `TestUpdateSummaryShowsTheResolvedMode`
+  (the summary line, `pro (project)` for a layer that writes it and the built-in default otherwise),
+  `TestSetupInACodingAgentsSessionWritesNothing` (the shared helper's refusal, `--yes` included, with
+  the diff and the command it would have run printed).
+- **Hermetic:** `t.TempDir()` config home for the layer file and the local project config,
+  `internal/gcpfake` for the runs bucket, `internal/testutil`, `git init` for a fake checkout. No
+  apply, no deploy, no cloud call.
+- **Depends on:** **R0** (the layer file's path), **R1** (the stage that publishes it — without it the
+  answer is the second command the HARD RULE forbids), **R2** (`EditRigor`), **R3** (the summary line's
+  wording), the settings design's **S5** (the shared write helper) and **R4** (the sentence the refusal
+  of `hotfix` uses, D834). Not on R5, R6, R7 or R8; R7's missing gate is untouched by it.
+
 ## Live checks
 
 None. Every behaviour above is a local file edit, a local read or an offline resolution, and each is
 tested hermetically. R1's cloud write goes through the publish path the installation's existing
 update checks already exercise; no new check number is taken. R7 lands no behaviour until the owner
-answers, so it takes none either.
+answers, so it takes none either. **W** takes none of its own and adds none to `fugaro update`: the
+question is local, its write is R1's, and the one cloud write it causes is the same run's publish,
+which the existing update checks already cover.

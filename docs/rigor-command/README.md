@@ -4,10 +4,14 @@
 answered: **D830 and D831** by the owner's SD4 ruling of 2026-10-31, **D832–D839 on 2026-10-31, all
 as recommended**, and the one decision the plan **cites** from another design — **D854**, whether the
 `Layer` stage records the object generation it reads at the seed — **answered by the owner on
-2026-10-31: record the generation**. Nothing this design cites is left open: the spec and the plan
-are written to those answers and the tasks may start. The CLI tasks R0–R8 are 0.15.0's; the console
-half is not a task here (D836) — it is the read-only project view, and it queues for console 0.117.0
-with the rest of that work.
+2026-10-31: record the generation**. **D900**, this work's one later decision — whether the setup
+wizard asks the project's rigor mode explicitly — was added on 2026-10-31 at the owner's ask and
+**answered by the owner the same day: it does**, with task **W**
+([implementation-plan.md](implementation-plan.md)) and the ruling written out in
+[reconciliation.md](reconciliation.md) §3. Nothing this design cites is left open: the spec and the
+plan are written to those answers and the tasks may start. The CLI tasks R0–R8 and W are 0.15.0's; the
+console half is not a task here (D836) — it is the read-only project view, and it queues for console
+0.117.0 with the rest of that work.
 
 **Asked by:** the owner, 2026-10-31: "I want [the rigor mode default] at the project level, and we
 should have a fugaro command to manage that!"
@@ -50,8 +54,8 @@ machine** (the published generation has moved past the recorded one), which need
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The four command forms, where each one writes, how a change reaches a run, the safety rules around lowering a mode, the console read side and the migration of a hand-written block |
-| [reconciliation.md](reconciliation.md) | Each spec claim against the code on `main`: what exists, what is missing, what conflicts (findings F1–F17 in §1 and F18 in §2), and the decisions D830–D839 in §3. **Where it disagrees with `spec.md`, it wins** |
-| [implementation-plan.md](implementation-plan.md) | Tasks R0–R8 (at most 12 files each), the follow-up tasks R7 (F13) and R8 (F14), and the dependencies E1 (the editor task's `internal/yamledit`), E2, with tests, red steps, gates, SEC flags and levels. **Every decision in this design's block is answered (D830–D839), and the one it cites from another design, D854, is answered too (record the generation)** |
+| [reconciliation.md](reconciliation.md) | Each spec claim against the code on `main`: what exists, what is missing, what conflicts (findings F1–F17 in §1 and F18 in §2), and the decisions D830–D839 in §3, with **D900**, the one later decision, beside them. **Where it disagrees with `spec.md`, it wins** |
+| [implementation-plan.md](implementation-plan.md) | Tasks R0–R8 (at most 12 files each), the follow-up tasks R7 (F13) and R8 (F14), **W** (D900, the setup wizard's rigor question, which is not a `rigor` subcommand), and the dependencies E1 (the editor task's `internal/yamledit`), E2, with tests, red steps, gates, SEC flags and levels. **Every decision in this design's block is answered (D830–D839 and D900), and the one it cites from another design, D854, is answered too (record the generation)** |
 
 ## The joint order, and the rulings the rigor and settings designs share
 
@@ -110,7 +114,8 @@ file above it, and a path and a symbol survive.
 | Block | Use |
 | --- | --- |
 | **D830–D839** | this work's block, and **nothing beyond D839 is reserved**: **D830** (where `set` writes — the one local layer file) and **D831** (the `Layer` stage in `update`, with its seeding) are **answered** by the owner's SD4 ruling, and **D832–D839** are **answered 2026-10-31, all as recommended**. Taken above the merged Coordinator v2 design, which holds **D810–D829** (`docs/console-coordinator-v2`: D810–D819 the page, D820–D828 the terminal, D829 reserved) — this work's first block was D810–D819, which that design took while this branch was open, so the numbers moved rather than the work. The settings design (`docs/settings-commands`) now holds D840–D854, with D855–D859 reserved; D800–D809 are a gap, not this work's. **D854** is cited by R1 and is the **settings design's** — a number this block does not hold — and it is **answered by the owner on 2026-10-31: record the generation** |
-| **Checks** | none: every behaviour this work adds is a local file edit, a local read or an offline resolution, and the plan tests each one hermetically. The one cloud write it adds is `fugaro update`'s own layer stage, which the existing update path and its live checks already cover. No check number is taken |
+| **D900** | this work's one later decision, taken on 2026-10-31 above **every** number then in use, and **answered by the owner the same day**: it is task **W**, the setup wizard asks the project's rigor mode explicitly. The block it came from was re-checked the same day, not assumed: the highest number on `origin/main` was **D859** (`docs/settings-commands` holds D840–D854, with D855–D859 reserved), and the open pull requests held **D860–D879** (`docs/accounts-add`) and **D880–D899** (`docs/cloud-senior-review`) — nothing on `main` or in an open pull request reached D900, and nothing beyond it is reserved here. A later task that needs a number takes D901 and re-checks this line's facts rather than its conclusion |
+| **Checks** | none: every behaviour this work adds is a local file edit, a local read or an offline resolution, and the plan tests each one hermetically. The one cloud write it adds is `fugaro update`'s own layer stage, which the existing update path and its live checks already cover, and **W**'s write is that same stage's: no check number is taken |
 
 ## What this folder is not
 
