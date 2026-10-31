@@ -296,17 +296,32 @@ function withoutScheme(source: string): string | null {
 }
 
 /** CONTROL_RE is the characters a file name never carries and a reader always
- * obeys: a newline, a carriage return, a NUL, a tab, a delete, and the ones
- * Unicode spells outside ASCII -- the next-line character, the line and
- * paragraph separators, and the format characters, `\p{Cf}` (a bidi override, a
- * zero-width joiner, a byte-order mark). A control character is not a separator
- * any two readers agree on -- `x\nhome/<x>/secret.js` is one segment to
- * `HOME_PATH_RE` and two to a log line, a terminal or a decoder -- so one inside
- * a path is a way past the check below rather than part of a name. The three
- * Unicode line breaks are that same case spelled elsewhere, and a format
+ * obeys: the control characters, `\p{Cc}` -- ASCII's, and the C1 block above
+ * them, where the next-line character and the control-sequence introducer live
+ * -- the line and paragraph separators, and the format characters, `\p{Cf}` (a
+ * bidi override, a zero-width joiner, a byte-order mark). A control character is
+ * not a separator any two readers agree on -- `x\nhome/<x>/secret.js` is one
+ * segment to `HOME_PATH_RE` and two to a log line, a terminal or a decoder -- so
+ * one inside a path is a way past the check below rather than part of a name.
+ * The Unicode line breaks are that same case spelled elsewhere, and a format
  * character is that case made invisible: a reader that honours a bidi override
- * or a joiner reads a path this check never saw. */
-const CONTROL_RE = /[\x00-\x1f\x7f\x85\u2028\u2029\p{Cf}]/u
+ * or a joiner reads a path this check never saw.
+ *
+ * The family is written as the category rather than as the characters that were
+ * found: `\p{Cc}` is the whole control block, and the list it replaces was the
+ * ASCII half of it plus `\x85`, which is one C1 character among thirty-two. The
+ * line and paragraph separators are named on their own because neither is a
+ * control character -- `\p{Zl}` and `\p{Zp}` are separate categories -- and both
+ * are line breaks to a reader. */
+const CONTROL_RE = /[\p{Cc}\p{Cf}\u2028\u2029]/u
+
+/** SURROGATE_RE is half a code point, which is not a character at all. A lone
+ * surrogate has no UTF-8 encoding, so every reader that has to write one --
+ * a JSON encoder, a terminal, the processor -- substitutes a replacement
+ * character, and two such readers disagree about what the path says without
+ * either of them being wrong. A *pair* is a character and is kept: the test is
+ * the category `\p{Cs}`, which matches a code unit that is not part of one. */
+const SURROGATE_RE = /\p{Cs}/u
 
 /** QUERY_MARKERS are where a URL's query and its fragment begin, and neither is
  * part of a file's name: `x.js?token=<x>` is a file name with a credential after
@@ -321,12 +336,12 @@ const QUERY_MARKERS: readonly string[] = ['?', '#']
  * -- leaves a relative path pointing outside the app. What is refused here is
  * every way such a path is still *about* somewhere: a `..` segment, a leading
  * `~`, a colon or a percent-escape that another reader would decode into a
- * separator, a query or a fragment marker, a control character, and the empty
- * string, which is a path with no name in it at all. */
+ * separator, a query or a fragment marker, a control character, half a code
+ * point, and the empty string, which is a path with no name in it at all. */
 function unplaceable(rest: string): boolean {
   if (rest === '' || rest.startsWith('~')) return true
   if (rest.includes(':') || rest.includes('%')) return true
-  if (CONTROL_RE.test(rest)) return true
+  if (CONTROL_RE.test(rest) || SURROGATE_RE.test(rest)) return true
   if (QUERY_MARKERS.some((marker) => rest.includes(marker))) return true
   return rest.split('/').includes('..')
 }

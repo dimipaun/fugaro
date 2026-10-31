@@ -120,6 +120,17 @@ function tokenPlaceholder(): string {
  * can be handed a task title. */
 const PROSE_A = 'acme secret task text'
 
+/** The characters the scrubber refuses by category, built rather than written
+ * down: a control character and half a code point in this file would be the
+ * thing its own rule is about, and `\u009b` as a literal is the same defect a
+ * DSN-shaped literal is for `fakeSecrets` -- a reader, a scanner and a lexical
+ * highlighter cannot tell one that is inert from one that is not. */
+const C1_CSI = String.fromCharCode(0x9b)
+const NEL = String.fromCharCode(0x85)
+const LINE_SEPARATOR = String.fromCharCode(0x2028)
+const LONE_HIGH = String.fromCharCode(0xd800)
+const LONE_LOW = String.fromCharCode(0xdc00)
+
 /** poisonType is an exception type that is a path and a credential rather than a
  * name -- what a library that was handed a message puts in `type`. */
 function poisonType(): string {
@@ -675,6 +686,61 @@ describe('crash', () => {
       expect(kept, name).toBe('<external>')
       expect(kept, name).not.toContain('person-1')
     }
+  })
+
+  it('a path that carries a C1 control or a lone surrogate is refused too', () => {
+    // The C1 block is the half of `\p{Cc}` ASCII does not spell: U+009B is a
+    // control-sequence introducer a terminal acts on and a JSON encoder escapes,
+    // so a path holding one says something to one reader that it does not say to
+    // another -- which is the newline case with the newline in a code page. It
+    // is checked as U+009B and not as `\x85` alone, because `\x85` was the one
+    // C1 character this module already refused and the rule is the family rather
+    // than the character.
+    expect(scrubbedFrame(`${APP_ROOT}/dist/main/x${C1_CSI}.js`).filename).toBe('<external>')
+    expect(scrubbedFrame(`${APP_ROOT}/dist/main/x${NEL}home/person-1/x.js`).filename).toBe('<external>')
+    expect(scrubbedFrame(`${APP_ROOT}/dist/main/x${LINE_SEPARATOR}.js`).filename).toBe('<external>')
+    // A lone surrogate is half a code point: it has no UTF-8 encoding at all, so
+    // every reader that has to write one -- a JSON encoder, a terminal, the
+    // processor -- substitutes a replacement character and two readers disagree
+    // about what the path says without either of them being wrong.
+    for (const [name, half] of [
+      ['a lone high surrogate', LONE_HIGH],
+      ['a lone low surrogate', LONE_LOW],
+    ] as const) {
+      const kept = scrubbedFrame(`${APP_ROOT}/dist/main/x${half}.js`).filename
+      expect(kept, name).toBe('<external>')
+    }
+    // And the same two in a frame's `function`, which is the fixed word rather
+    // than a path: a name is a name, and half of a code point is not one.
+    for (const [name, half] of [
+      ['a lone high surrogate', LONE_HIGH],
+      ['a lone low surrogate', LONE_LOW],
+    ] as const) {
+      const scrubbed = scrubCrashEvent(
+        {
+          exception: {
+            values: [
+              { type: `Err${half}or`, stacktrace: { frames: [{ abs_path: `${APP_ROOT}/x.js`, function: `f${half}` }] } },
+            ],
+          },
+        },
+        APP_ROOT,
+      )
+      const value = scrubbed.exception?.values?.[0]
+      expect(value?.type, name).toBe('<unknown>')
+      expect(value?.stacktrace?.frames?.[0]?.function, name).toBe('<anonymous>')
+    }
+  })
+
+  it('a path that is not ASCII but is an ordinary name survives', () => {
+    // The refusal above is about characters no two readers agree on, not about
+    // letters outside ASCII: a directory whose name is really a name keeps it,
+    // and a rule that answered `<external>` to every non-ASCII path would be a
+    // rule that quietly stopped placing the frames of anyone who names things in
+    // their own language.
+    expect(scrubbedFrame(`${APP_ROOT}/dist/main/módulo.js`).filename).toBe('dist/main/módulo.js')
+    expect(scrubbedFrame(`${APP_ROOT}/源码/入口.js`).filename).toBe('源码/入口.js')
+    expect(scrubbedFrame(`${APP_ROOT}/dist/main/x-😀.js`).filename).toBe('dist/main/x-😀.js')
   })
 
   it.each([
