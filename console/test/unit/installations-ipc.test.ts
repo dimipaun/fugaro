@@ -47,6 +47,8 @@ import {
   invokeOperation,
 } from '../../src/preload/installations'
 import { createInstallationPicker } from '../../src/main/picker'
+import { UPDATES_SWITCH_UNWRITTEN, createUpdateSettings, nodeUpdatesFs, readUpdateSwitch } from '../../src/main/updatestore'
+import type { UpdateController } from '../../src/main/updates'
 import { TEMP_ROOTS } from '../../src/main/installationstate'
 import {
   INSTALLATIONS_MENU_LABEL,
@@ -1310,6 +1312,7 @@ describe('the picker’s window', () => {
         auto: false,
         setAuto: (on) => {
           calls.push(`setAuto:${String(on)}`)
+          return on
         },
         checkNow: () => {
           calls.push('checkNow')
@@ -1339,9 +1342,54 @@ describe('the picker’s window', () => {
     expect(frozenPaths(menu())).toEqual([])
   })
 
+  it('redraws the checkbox from the value in force when the write behind a click fails (U4b)', () => {
+    // The click is Electron's: the checkbox has already drawn `false` when the
+    // callback runs. A write that did not land leaves the file saying `true`, so
+    // the menu is drawn again from what `setAuto` answers -- and nothing thrown
+    // in the store reaches this process as an uncaught error dialog.
+    const directory = freshDirectory()
+    const controller: UpdateController = {
+      start: vi.fn(async () => undefined),
+      stop: vi.fn(),
+      checkNow: vi.fn(async () => undefined),
+      restartRequested: vi.fn(),
+      launchFlowIdle: vi.fn(),
+    }
+    const settings = createUpdateSettings({
+      directory,
+      controller: () => controller,
+      fs: { ...nodeUpdatesFs, writeFile: () => {
+        throw new Error('ENOSPC: no space left on device')
+      } },
+    })
+    const { picker, menu } = pickerOver({
+      updateMenu: {
+        auto: settings.auto,
+        setAuto: (on) => settings.setAuto(on),
+        checkNow: () => undefined,
+      },
+    })
+    picker.installMenu()
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      const toggle = appMenuItems(menu()).find((entry) => entry.label === UPDATE_AUTO_LABEL)
+      expect(() => toggle?.click?.({ checked: false })).not.toThrow()
+      expect(logged.mock.calls).toEqual([[UPDATES_SWITCH_UNWRITTEN]])
+    } finally {
+      logged.mockRestore()
+    }
+
+    // The switch did not move, so the controller is left exactly as it was: a
+    // failed write is not a reason to stop a timer the file still asks for.
+    expect(controller.start).not.toHaveBeenCalled()
+    expect(controller.stop).not.toHaveBeenCalled()
+    expect(appMenuItems(menu()).find((entry) => entry.label === UPDATE_AUTO_LABEL)?.checked).toBe(true)
+    expect(readUpdateSwitch(directory)).toBe(true)
+  })
+
   it('draws the checkbox checked when the store says the switch is on', () => {
     const { picker, menu } = pickerOver({
-      updateMenu: { auto: true, setAuto: () => undefined, checkNow: () => undefined },
+      updateMenu: { auto: true, setAuto: () => true, checkNow: () => undefined },
     })
     picker.installMenu()
     expect(appMenuItems(menu()).find((entry) => entry.label === UPDATE_AUTO_LABEL)?.checked).toBe(true)
