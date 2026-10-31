@@ -190,7 +190,7 @@ func budgetDBUnadopted(ctx context.Context, lc *localcfg.Config, db *infra.DB, d
 		return ""
 	}
 	return fmt.Sprintf("%s: nothing proves the database at %s is this installation's — an empty database passes every check that asks it, and the mark (%s) is the one proof there is — so it is not this installation's database, and %s. Drop the config's budget.firebase_project (with the budget.rtdb_url beside it, which is that project's database) and run `%s --firebase-project %s` once to adopt the installation's own Firebase project: the mark that door writes is what lets plain %s converge there from then on",
-		detail, oneLine(lc.Budget.RTDBURL), budget.PathMark, declined, program, oneLine(lc.GCPProject), program)
+		detail, oneLine(lc.Budget.RTDBURL), budget.PathMark, declined, program, firebaseProjectIDWord(lc.GCPProject), program)
 }
 
 // unadopted is budgetDBUnadopted for this stage: it is the stage that neither

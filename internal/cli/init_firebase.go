@@ -71,7 +71,7 @@ func (r *initRun) historyJob(ctx context.Context, c *infra.Clients, lc *localcfg
 		h.DeployJob = ok
 		if !ok && !r.historyNoted {
 			r.historyNoted = true
-			r.warn(fmt.Sprintf("the history job (the sweeper of crashed runs) is not deployed, so crashed runs are not cleaned up and old run users are not deleted: its image %s does not exist, and nothing builds it for you (like the dev base image until M7). From a checkout of this repository run\n  sh images/build-base.sh history %s\n  docker push %s\nthen run fugaro update --firebase-project %s again (gcloud auth configure-docker %s lets docker push there)", h.Image, h.Image, h.Image, r.o.firebaseProject(), strings.SplitN(h.Image, "/", 2)[0]))
+			r.warn(fmt.Sprintf("the history job (the sweeper of crashed runs) is not deployed, so crashed runs are not cleaned up and old run users are not deleted: its image %s does not exist, and nothing builds it for you (like the dev base image until M7). From a checkout of this repository run\n  sh images/build-base.sh history %s\n  docker push %s\nthen run fugaro update --firebase-project %s again (gcloud auth configure-docker %s lets docker push there)", h.Image, h.Image, h.Image, firebaseProjectIDWord(lc.GCPProject), strings.SplitN(h.Image, "/", 2)[0]))
 		}
 	}
 	spec.History = &h
@@ -105,7 +105,7 @@ func (r *initRun) coordinatorJob(ctx context.Context, c *infra.Clients, lc *loca
 	case cs.GitHubAppID == "":
 		if !r.coordinatorNoted {
 			r.coordinatorNoted = true
-			r.warn(fmt.Sprintf("the coordinator's aggregation job is not deployed: the local config records no GitHub App ID, and the sweep reads every repository through a token minted from one. Onboarding a GitHub repository records it (fugaro update --repo <owner/name> --github-app-id <id>), and the next fugaro update --firebase-project %s deploys the job.", r.o.firebaseProject()))
+			r.warn(fmt.Sprintf("the coordinator's aggregation job is not deployed: the local config records no GitHub App ID, and the sweep reads every repository through a token minted from one. Onboarding a GitHub repository records it (fugaro update --repo <owner/name> --github-app-id <id>), and the next fugaro update --firebase-project %s deploys the job.", firebaseProjectIDWord(lc.GCPProject)))
 		}
 	default:
 		ok, err := infra.CoordinatorImageExists(ctx, c, lc, cs)
