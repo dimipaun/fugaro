@@ -10,7 +10,8 @@ no code, no schema and no command, and it changes no existing file. The owner de
 takes a name and the token and does all the work. Better still, a flag that runs Anthropic's own login,
 takes the token from it and stores it, so the owner types nothing.
 
-**Reconciled against** `origin/main` at `0a1f5694` and the 19 pull requests open on 2026-10-31.
+**Reconciled against** `origin/main` at `0a1f5694`, re-checked against `ccc5f7e7` (after #1464, #1468
+and #1471 merged), and against the pull requests open on 2026-10-31.
 
 ## What it is
 
@@ -47,14 +48,15 @@ hand edit stands between the owner and a run.
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The command, its flags, the order of its work, the `--claude` login path, the inverse, what each existing command becomes, and the threat model |
-| [reconciliation.md](reconciliation.md) | Every spec claim against the code on `main` and against the 19 open pull requests: what exists, what is missing, what conflicts (findings F1–F19), the dependencies E1–E5, and the owner decisions D860–D870. **Where it disagrees with `spec.md`, it wins** |
+| [reconciliation.md](reconciliation.md) | Every spec claim against the code on `main` and against the open pull requests: what exists, what is missing, what conflicts (findings F1–F19), the
+dependencies E1–E5, and the owner decisions D860–D872. **Where it disagrees with `spec.md`, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Tasks A0–A6 (at most 12 files each), the shared-files table and the level order. **Nothing in it is approved** |
 
 ## Numbers this work holds
 
 | Block | Use |
 | --- | --- |
-| **D860–D879** | this work's block: **D860–D870** written, **D871–D879** reserved and unused. Taken above every number on `main` (the highest is **D829**, the tail of `docs/console-coordinator-v2`'s D810–D829) and above every open pull request's docs: the `rigor` design (#1463) renumbered itself to **D830–D839**, the `settings` design (#1464) takes **D840–D859**, the console auto-update plan (#1377) holds **D760–D772**, and the models block (**D780–D799**) sits below all of them. The token `D800` in `docs/` is the false positive `docs/models-commands/README.md` records (`U+D800` in #715's diff), not a decision |
+| **D860–D879** | this work's block: **D860–D872** written (D871 and D872 are the guard's, added in the fix round), **D873–D879** reserved and unused. Taken above every number on `main`, whose highest is now **D859** — the `settings` design merged as **#1464** with **D840–D859**, so the earlier reading of the tree (`D829`, the tail of `docs/console-coordinator-v2`'s D810–D829) is one merge behind. Below this block: the `rigor` design (#1463, still open) holds **D830–D839**, the console auto-update plan (#1377) holds **D760–D772**, and the models block (**D780–D799**) sits below all of them. Above it: **#1472** takes **D880–D899**. The token `D800` in `docs/` is the false positive `docs/models-commands/README.md` records (`U+D800` in #715's diff), not a decision |
 | **Checks** | none taken here. The `--claude` login needs a live check, and `docs/gcp-live-checklist.md` is another work stream's file (`docs/accounts-add` may not edit it), so the check is written in [spec.md](spec.md) §9 as **LC1–LC5** and the task that implements the flag moves it into the checklist under the number free at that merge. Its second half is [Check 35](../gcp-live-checklist.md) (**U2**), written and **never run** |
 
 ## What this design does not do

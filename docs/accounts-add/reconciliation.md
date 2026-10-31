@@ -1,6 +1,8 @@
 # `fugaro accounts add`: reconciliation against the code
 
-Read against `origin/main` at `0a1f5694` and the 19 pull requests open on 2026-10-31. Each finding is
+Read against `origin/main` at `ccc5f7e7` — which now carries #1464 (the settings design, D840–D859),
+#1468 and #1471 — and the pull requests open on 2026-10-31. The findings were first written against
+`0a1f5694` and re-checked against the merge; the rows that moved say so. Each finding is
 **Exists**, **Missing**, **Conflicts** or **Ungoverned**, with its consequence for [spec.md](spec.md).
 Citations name a file and a symbol, never a line number: a line number is stale the moment anything above
 it changes, and the pin this document serves is about the code's shape, not its layout.
@@ -27,11 +29,21 @@ prompt or stdin; `readHidden` / `readHiddenLine` are the echo-free terminal read
 `internal/cli/secrets.go`. *Consequence:* spec §2.2 steps 3 and 5 are calls, and the value's whole
 lifetime is already written down.
 
-**F3: Exists. The name grammar and the two reserved names.** `config.ClaudeAccountNameRE`,
-`config.DefaultClaudeAccount`, `config.reservedClaudeAccountName` (which refuses `bitbucket-token` and
-nothing else) and `config.ValidClaudeAccountRef` (which adds `default`'s own spelling). *Consequence:*
-the refusals of spec §2.4 are calls; the command adds only the "you may not add the default account as
-a named one" sentence, which is `ValidClaudeAccountRef`'s own distinction read the other way.
+**F3: Exists. The name grammar, and two reserved names with two different rules — which spec §2.4 had
+conflated.** `config.ClaudeAccountNameRE` and `config.MaxClaudeAccountNameLen` are the shape.
+`reservedClaudeAccountName` (`internal/config/claude_accounts.go`, `name == config.BitbucketSecret`)
+refuses **`bitbucket-token` only**, and `ValidClaudeAccountRef` refuses it with
+`reservedAccountNameMessage` — but `ValidClaudeAccountRef` **accepts `default`** (returns `""`, and only
+here: it is the unsuffixed `claude-oauth-token` a profile is meant to be able to list), while
+`ValidateClaudeAccounts` refuses `default` **as a definition**
+(`"default" is reserved for the unnamed claude-oauth-token secret and may not be configured here`).
+*Consequence:* `accounts add` **defines** an account, so it refuses `default` with
+`ValidateClaudeAccounts`'s own sentence and `bitbucket-token` through `ValidClaudeAccountRef` — it
+cannot reuse `ValidClaudeAccountRef` alone for the name check, because that function's answer for
+`default` is the one case where a reference and a definition differ. The refusals of spec §2.4 are those
+two calls, plus the pattern. (This row was wrong when the design was first written: it said the command
+"adds the two reserved names' refusals", which would have refused `default` with the wrong sentence and
+missed that `ValidClaudeAccountRef` already refuses `bitbucket-token`.)
 
 **F4: Exists. The read side.** `fugaro accounts ls` (`internal/cli/accounts.go`) prints the names a
 repository may choose among — `config.AllowedClaudeAccounts`'s own order — plus each account's
@@ -91,23 +103,28 @@ are the two converge doors, and both marshal the whole struct (`localcfg.Config.
 one key. *Consequence:* `accounts add` is the first targeted writer of the project's local config, and
 it is why F12 exists.
 
-**F12: Missing (dependency). `internal/yamledit` is not on `main`.** It is open PR **#1467**, whose own
+**F12: Missing (dependency). `internal/yamledit` is not on `main` — re-checked after the merge of
+#1464, #1468 and #1471, and still absent.** It is open PR **#1467**, whose own
 package doc promises exactly what this work needs: `SetScalar`, `AddListItem`, `RemoveListItem`,
 `UpsertSeqItemByKey`, `RemoveSeqItemByKey`, `Changed`, a result that re-parses, and refusals that never
 echo document bytes. *Consequence:* spec §2.3 depends on it. Dependency **E1**.
 
 **F13: Missing (dependency). `internal/cli/settings_write.go` is not on `main`.** It is the settings
-design's S5 (#1464), and its own shared-files table says the five helpers — the diff, the confirmation
-with the typed project name, the agent-session refusal, `backupFile`, `writeFileAtomic` — "exist once",
-and that "a second copy is the thing their plans and this one both forbid". *Consequence:* spec §2.2
-steps 4 and 7 call it. Dependency **E3**.
+design's S5 — whose **design** merged as #1464 on 2026-10-31 (D840–D859 are on `main`), while the
+**code** has not: `internal/cli/settings_write.go` is absent from the merged tree, so S5 is specified
+and unimplemented. Its own shared-files table says the five helpers — the diff, the confirmation with
+the typed project name, the agent-session refusal, `backupFile`, `writeFileAtomic` — "exist once", and
+that "a second copy is the thing their plans and this one both forbid". *Consequence:* spec §2.2 steps 4
+and 7 call it, and this design waits for the settings implementation, not merely for its PR. Dependency
+**E3**.
 
 **F14: Exists, and it binds. The ownership gate.** #1460, merged as `7efc78e0`, gives the migration
 `policyMigrationFor` / `budgetDBUnadopted`: a database in a Firebase project the installation never
 adopted is skipped rather than written. The settings design's S3 notes that the publish half must reach
 the node through the **same** call — one gate read, one ETag, one write path — with
 `TestUpdatePolicyPublishSkipsTheDatabaseTheRulesStageSkips` as the pin. That test **does not exist on
-`main`**: it arrives with E2 (#1464, unmerged at `0a1f5694`), which is why A2 cites it as the gate's pin
+`main`**: it arrives with E2 (#1464's S3, whose design merged while the code did not), which is why A2
+cites it as the gate's pin
 rather than as an existing check. *Consequence:* `accounts add`
 must not become a second writer with its own weaker gate: spec §2.5's first bullet is a hard
 requirement, not a preference.
@@ -141,7 +158,7 @@ settle the guard's floor, its alphabet and its line rule before anyone writes th
 
 **F18: Conflicts. The doc half is not four files, and nothing would go red if the converge half were
 dropped.** [docs/project-claude-accounts.md](../project-claude-accounts.md) is pinned by
-`internal/cli/docs_project_named_oauth_tokens_test.go` (eight `TestDocsProjectClaudeAccounts*` tests,
+`internal/cli/docs_project_named_oauth_tokens_test.go` (seven `TestDocsProjectClaudeAccounts*` tests,
 including `…CommandsExist`, which resolves every `fugaro …` line on the page against the real command
 tree) and by `internal/cli/docs_project_policy_reseed_test.go` (which cites the page's §5). The
 `claude setup-token`-then-`fugaro secrets set` pair also appears in `internal/cli/doctor.go`,
@@ -165,8 +182,8 @@ this document wins where it disagrees with [spec.md](spec.md).
 | E | What it is | What this design needs from it | Order |
 | --- | --- | --- | --- |
 | **E1** | `internal/yamledit` — **#1467, open** | The comment-preserving edit of `claude_accounts.<name>.allow_data_to` and `profiles.<p>.claude_accounts` (spec §2.3). If its API differs from the promise above, the accounts task adapts to it; if it does not merge, this work **may not write its own splice** — the settings design's shared-files rule — so A1 waits | E1 before A1 |
-| **E2** | Settings **S3** — `fugaro update` publishes the policy node from the local config — **#1464, open** | The publish half of spec §2.5 (F10). It must reach the node through `policyMigrationFor` (F14) E2 **before A2 starts**. A2's own red step (`TestAccountsAddLeavesNothingToRun`) asserts that the published node carries `accounts.<name>.allow_repos` and the job set carries the account's job, and neither is reachable until the `Policy` stage publishes from the local config (F10). Starting A2 earlier leaves only two ways to make that test green — weaken it or skip it — so the plan's stricter statement is the one this document means |
-| **E3** | Settings **S5** — `internal/cli/settings_write.go` — **#1464, open** | The diff, the confirmation, the agent refusal, `backupFile`, `writeFileAtomic`, in one copy (F13) | E3 before A1 |
+| **E2** | Settings **S3** — `fugaro update` publishes the policy node from the local config — **design merged as #1464; S3 unimplemented** | The publish half of spec §2.5 (F10), reaching the node through `policyMigrationFor` (F14). A2's own red step (`TestAccountsAddLeavesNothingToRun`) asserts that the published node carries `accounts.<name>.allow_repos` and the job set carries the account's job, and neither is reachable until the `Policy` stage publishes from the local config (F10). Starting A2 earlier leaves only two ways to make that test green — weaken it or skip it | E2 **before A2 starts** |
+| **E3** | Settings **S5** — `internal/cli/settings_write.go` — **design merged as #1464; S5 unimplemented** (the file is absent from the tree, F13) | The diff, the confirmation, the agent refusal, `backupFile`, `writeFileAtomic`, in one copy (F13) | E3 before A1 |
 | **E4** | The `claude` lookup and the pty decision | `claudeplugin.Find` is already production code (F16), so only the runner is new; the pty package's promotion is E5 | E4 with A0 |
 | **E5** | `go.mod`'s `creack/pty` comment and `internal/cli/docs_console_boundary_test.go`'s `consoleGoModRequireBaseline` (F15) | Whoever promotes the package updates the comment and the pin in the same PR. Neither file is an accounts task's. If the owner answers D862 with the paste alternative, E5 disappears | E5 with A0, or never |
 
@@ -195,4 +212,7 @@ answers.
 | **D869** | `--json`, and non-interactive use | **No `--json`.** `--token-stdin` is the scripted value path, `accounts ls --json` is the machine-readable read, and the command is refused in a coding agent's session | A `--json` report of the write: a machine-readable document for a write a person is supposed to confirm, with no reader on the console or mobile side (neither reads the local config) |
 | **D870** | Where does the live check live? | **Written in spec §9 as LC1–LC5, and moved into `docs/gcp-live-checklist.md` by the task that implements `--claude`**, under the number free at that merge, as Check 35's own row asks | Take a number in this design: reserving a number in a document for a file it may not write is exactly the collision the checklist's own paragraph records between two open plans, and a reservation is not a fact about the tree |
 
-**D871–D879 are reserved and unused.**
+| **D871** | The login's output holds more than one distinct token-shaped run — what does the capture store? | **Nothing: two or more distinct candidates is a refusal**, and the command falls back to the hidden prompt (§3.3), saying how many it saw. One candidate is the common case; the rule costs a paste only where the guard is genuinely unsure | "The last one wins": the login's output is a stream nobody has seen, so the last run can be a progress line, the child's echo of something the owner pasted, or a decoy from a hostile binary (§6(c)) — and it becomes the stored credential with no way to tell. The first-wins spelling has the same hole with the opposite bias. Either way the failure is silent until a run uses the token |
+| **D872** | A line containing `://` carries runs of 40+ characters from the token alphabet (the PKCE `code_challenge` is 43, `state` is another) — are they candidates? | **Never candidates, and nothing on such a line is withheld.** The cost is the opposite error: a token printed *on* a `://` line is not captured, and the command falls back to the paste with nothing stored. **LC1 settles the premise**: if it shows the token printed inside a URL, the exemption narrows to the login's own authorize URL rather than every `://` line | Offering them to the capture (the first draft of §3.2) means the command can **store the `code_challenge` as the account's token**: a value that is not a credential, that the store accepts, and that fails only when a run tries to use it — and the failure surfaces as an auth error on someone's run, not as a refusal at the terminal |
+
+**D873–D879 are reserved and unused.**

@@ -36,10 +36,24 @@ fugaro accounts add <name> [--repos owner/a,owner/b] [--profile NAME] [--claude]
 fugaro accounts rm <name>
 ```
 
-`<name>` is a Claude account name: `config.ClaudeAccountNameRE`
-(`internal/config/claude_accounts.go`), never `default` and never `bitbucket-token`
-(`reservedClaudeAccountName`, the same file). `accounts add` reuses `ValidClaudeAccountRef` for the
-shape and adds the two reserved names' refusals before it reads anything.
+`<name>` is a Claude account name: `config.ClaudeAccountNameRE` (`internal/config/claude_accounts.go`),
+never `bitbucket-token`, and never `default` — but not for the same reason, and the difference is in the
+code:
+
+- **`bitbucket-token`** is refused by `reservedClaudeAccountName` (the same file, `name ==
+  config.BitbucketSecret`), and `ValidClaudeAccountRef` refuses it too, with
+  `reservedAccountNameMessage`: it is a name the bundle already holds a credential under, so an account
+  of that name would leave one name meaning two credentials.
+- **`default` is a legal *reference* and an illegal *definition*.** `ValidClaudeAccountRef` returns `""`
+  for it — a profile may list `default`, and should: it is the unsuffixed `claude-oauth-token` every
+  repository already has — while `ValidateClaudeAccounts` refuses it as a key of `claude_accounts`
+  (`"default" is reserved for the unnamed claude-oauth-token secret and may not be configured here`).
+
+`accounts add` **defines** an account, so it refuses `default` with `ValidateClaudeAccounts`'s own
+sentence and refuses `bitbucket-token` through `ValidClaudeAccountRef`, whose shape half
+(`ClaudeAccountNameRE`, `MaxClaudeAccountNameLen`) it reuses. It does not use
+`ValidClaudeAccountRef` alone: that function's answer for `default` is the one case where the reference
+and the definition differ, and this command is the definition.
 
 ### 2.1 The flags
 
@@ -50,7 +64,9 @@ shape and adds the two reserved names' refusals before it reads anything.
   policy can bound, which is exactly what `projectWideRefusal` refuses today.
 - **`--profile`** — the profile whose `claude_accounts` gains the name. Default: the **only** profile in
   the local config, when there is exactly one. Two or more profiles without the flag is a refusal that
-  lists them (`config.JobProfile`, `internal/localcfg/localcfg.go`). Zero profiles is not a refusal: the
+  lists them (`config.JobProfile`, the type in `internal/config/config.go`; the `Profiles
+  map[string]config.JobProfile` field it reads is in `internal/localcfg/localcfg.go`). Zero profiles is
+  not a refusal: the
   account is declared and its token stored, and the command says in one line that no project job serves
   it (a per-repository job that selects it by `agent.oauth_token` is served by its own repository's
   root, §2.5).
@@ -128,7 +144,8 @@ read back is never written.
 | Refusal | Sentence (shape) | Where the rule comes from |
 | --- | --- | --- |
 | a coding agent's session | names the marker, says the owner runs it in a normal terminal, and writes nothing — `--yes` included | `agentenv.Marker` as `agentEnv` (`internal/cli/initsecrets.go`); the models design's D789 and the settings design's SD8 are the precedent |
-| `default`, `bitbucket-token` | the reserved-name sentence, naming the fix (a different name) | `reservedClaudeAccountName`, `internal/config/claude_accounts.go` |
+| `bitbucket-token` | `reservedAccountNameMessage`, naming the fix (a different name) | `ValidClaudeAccountRef` → `reservedClaudeAccountName`, `internal/config/claude_accounts.go` |
+| `default` | `"default" is reserved for the unnamed claude-oauth-token secret and may not be configured here` — the definition's rule, not the reference's: a profile may list `default`, `claude_accounts` may not define it | `ValidateClaudeAccounts`, same file |
 | a name that does not match the pattern | the pattern, never the name | `ValidClaudeAccountRef` |
 | no checkout and no `--repos` | names `--repos` and the field it fills | `projectWideRefusal`'s posture |
 | two or more profiles and no `--profile` | lists the profiles | `config.JobProfile` |
@@ -210,8 +227,15 @@ its output, so the owner reads nothing back and pastes nothing:
    (or refuses), so the pty is not an optimisation; it is the contract. The pty is allocated **only**
    when the owner's own stdin and stdout are terminals: `--claude` with a redirected stdin is refused
    (use `--token-stdin`).
-3. **Two copiers.** Owner's terminal → pty master, so the owner answers whatever the login asks; pty
-   master → Fugaro's stdout, so the owner sees the URL and the progress — **through the guard below**.
+3. **Two copiers, and the owner's terminal in raw mode.** Owner's terminal → pty master, so the owner
+   answers whatever the login asks; pty master → Fugaro's stdout, so the owner sees the URL and the
+   progress — **through the guard below**. The owner's terminal is put into **raw mode** for the
+   duration and restored on every exit path (including a signal), and the child runs in **its own
+   session** with the pty as its controlling terminal. Raw mode is what makes Ctrl-C work as the login
+   expects: the terminal stops turning it into a signal for *Fugaro*, the byte reaches the child through
+   the pty, and the child's own handling decides — which is also why Fugaro does not exit on Ctrl-C
+   while the login runs, and why the restore runs before it would. §3.4 item 5 is the check that
+   settles what the child does with it.
 4. **The environment is the owner's, minus anything Fugaro added.** In particular the child is not
    given the token (it does not exist yet) and no variable is set for it. Two variables are *checked*
    first and, when either is present, the command stops and says so: an exported
@@ -227,18 +251,37 @@ run ([docs/design/named-oauth-tokens.md](../design/named-oauth-tokens.md) §7, a
 [Check 35](../gcp-live-checklist.md)). So the guard does not parse a shape it has not seen. It is a
 *withholding* rule over the stream:
 
-- The copier works a **line at a time**. A line is not forwarded until its terminator arrives, so the
-  interactive prompts and the URL still appear promptly; nothing else is buffered.
+- The copier works a **line at a time, and flushes a partial line once the child goes idle**. A line is
+  not forwarded until its terminator arrives, so the prompts and the URL appear promptly — but a prompt
+  printed *without* a newline (`paste the code`, a spinner's frame) would otherwise be held back until
+  the child writes again, and the child is waiting for the owner's answer, so the login would hang with
+  an empty screen. After a short idle window with no byte from the child, the partial line is flushed to
+  the terminal **through this same guard** — withheld runs included — and the buffer is *kept*, so the
+  line's remaining bytes are still guarded against the whole line when its terminator arrives. The flush
+  is display only: the capture reads completed lines, never a flush, so a run split across two writes is
+  offered once and whole. LC2 is what settles whether a prompt needs it, and how long the idle window
+  must be.
 - In each forwarded line, every **maximal run of at least 40 characters from the token alphabet**
   (ASCII letters, digits, `-`, `_`) is replaced by a marker before the line reaches the terminal. Every
   such run is *offered to the capture*, not only the guarded ones, so a token printed inside a sentence
-  is taken as readily as one on a line of its own.
-- **A line that contains `://` is forwarded with no run withheld**, and any long run in it is offered to
-  the capture. This is deliberate: the login URL is the one thing the owner must be able to read, and
-  withholding a URL's own query string would break the flow. It is also the guard's one hole, it is
-  recorded here rather than hidden, and §3.3 is what covers it: a run offered from a URL line that looks
-  like a credential is captured, and the command **says a URL line carried one** so the owner can
-  revoke it if the guard was wrong about which string it was.
+  is taken as readily as one on a line of its own — the one exception is the URL line, next. A run is
+  offered when its line completes, never from a flush.
+- **A run on a line that contains `://` is never a candidate, and no run on such a line is withheld.**
+  The login's authorize URL carries runs of 40 or more characters from the very alphabet this guard
+  captures — the PKCE `code_challenge` is 43 characters, and `state` is another long run — so a guard
+  that offered them to the capture could **store the `code_challenge` as the account's token**: not a
+  credential at all, accepted by the store, and failing only when a run tried to use it. That is the
+  worse error of the two, so the URL line is exempt. The exemption's cost is the other error: a token
+  printed *on* a `://` line is not captured, and the command falls back to the hidden prompt with
+  nothing stored. **LC1 is what tests the exemption's premise**, and if it shows the token is printed
+  inside a URL the exemption is narrowed to the login's own authorize URL rather than every `://` line
+  (D872) — not quietly widened back.
+- **More than one distinct candidate stores nothing.** If the capture reaches the end of the login
+  holding candidates that differ from one another, the command stores nothing and falls back to the
+  hidden prompt (§3.3), saying how many it saw and that it will not choose. One candidate is the common
+  case; "the last one wins" is D871's alternative, and it would let a run of the login's own output —
+  a progress line, an echo of something the owner pasted, a decoy from a hostile binary (§6(c)) —
+  become the stored credential simply by coming later.
 - The captured candidate is held in a `[]byte`, `clear`ed after the store
   (`internal/cli/secrets.go`'s own idiom), and never converted to a `string` — a `string` copy cannot be
   zeroed and would sit in the heap until the GC moved it.
@@ -264,15 +307,20 @@ Five things are Anthropic's behaviour, not this repository's, and none of them i
 1. **How the token is printed** — on its own line, inside a sentence, with a label, or wrapped. §3.2's
    guard is built to survive every answer, including "in a sentence".
 2. **Whether a browser is needed**, and whether a code is pasted back. The pty copier is what lets the
-   owner answer whatever it asks; the design does not need the answer.
+   owner answer whatever it asks; the design does not need the answer, but LC2 records **what the
+   prompt looks like** — whether it ends with a newline, and how long the child is silent before it
+   prints one — because that is what §3.2's idle flush is sized against. A prompt that never prints a
+   newline and a prompt that prints one are the same code path with a different window.
 3. **Whether it logs out an existing login**, and whether it takes an account/profile flag. This is
    U2, and its answer decides the **docs' warning text** — what the page tells an owner who already has
    another account on the machine — and nothing in the code.
 4. **The token's length and alphabet**, which the guard's floor (40) and character class are guesses
    about. A token longer than 40 characters from that class is captured; nothing here depends on it
    being shorter than Secret Manager's 64 KiB ceiling, which `validateSecret` still applies.
-5. **The exit status of a cancelled login.** The copier forwards the owner's Ctrl-C to the child's
-   process group and treats every non-zero exit as "store nothing".
+5. **The exit status of a cancelled login.** The owner's Ctrl-C is a byte on the pty, not a signal to
+   Fugaro (§3.1 step 3: raw mode, the child in its own session), so what the child does with it is
+   Anthropic's behaviour. Every non-zero exit is "store nothing", and Fugaro restores the terminal
+   before it reports.
 
 ### 3.5 Platforms
 
@@ -342,6 +390,9 @@ the same residual risk.
 nothing to it and, in particular, never passes the token back. Two variables are *read* and stop the
 command when set (`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`): either one decides which account the
 login lands on, and a token minted for the wrong account is a token the owner did not mean to store.
+The check is a **refusal, not a deletion**: when either variable is set the command stops and **no child
+runs at all**, so there is never an environment Fugaro has edited for the child to make its own
+decisions in.
 The child is `claude`'s process, on its own pty and in its own session; Fugaro's Ctrl-C handling and the
 child's are not shared state.
 
@@ -352,8 +403,10 @@ before it runs. Fugaro runs it with an argument vector, never a shell. Beyond th
 about what it cannot do: a hostile `claude` on the owner's `PATH` can already steal anything the owner's
 `claude` can reach — it is the owner's own binary, run as the owner — and this command hands it one
 *specific* power, which is the ability to print a token-shaped string that Fugaro would then store as
-the account's credential. The confirmation of the path, and the fact that the guard captures the *last*
-candidate rather than the first, are the whole of the defence. An owner who does not trust `PATH` runs
+the account's credential. The confirmation of the path, and the fact that the guard stores a candidate
+only when it saw **exactly one distinct** one (D871) — two token-shaped strings, one of them a decoy,
+means the command stores nothing and falls back to the paste — are the whole of the defence. An owner
+who does not trust `PATH` runs
 `fugaro accounts add <name>` and pastes, which never executes anything.
 
 **(d) Tokens in crash reports.** The token reaches no stream Fugaro writes, so it reaches no crash
@@ -422,8 +475,8 @@ a *shape* (length, alphabet, which line) and never a value.
 
 | # | What it settles | How |
 | --- | --- | --- |
-| **LC1** | how `claude setup-token` prints the token | On a machine that has never run it: run it, and record only (a) whether the token stands alone on its line, (b) its length, (c) its alphabet, (d) whether anything precedes or follows it on the line. **Never the token.** This is what §3.2's guard is checked against |
-| **LC2** | the browser and the code | The same run: whether a browser opens, whether a URL is printed, whether a code is pasted back, and what the child prints between them |
+| **LC1** | how `claude setup-token` prints the token, **and whether it prints it inside a URL** | On a machine that has never run it: run it, and record only (a) whether the token stands alone on its line, (b) its length, (c) its alphabet, (d) whether anything precedes or follows it on the line, and (e) **whether the line it is on contains `://`**. **Never the token.** This is what §3.2's guard is checked against, and (e) is what settles the URL exemption: a token on a `://` line narrows the exemption (D872), a token off one leaves the rule as written |
+| **LC2** | the browser, the code, and **the shape of each prompt** | The same run: whether a browser opens, whether a URL is printed, whether a code is pasted back, what the child prints between them, and **for every prompt the owner has to answer: whether it ends with a newline, and how long the child is silent before it prints one**. That last pair is what §3.2's idle flush is sized against — a prompt that never prints a newline is the case the flush exists for, and the silence before it is the window |
 | **LC3** | multi-account (U2, Check 35) | On a machine already holding another account's login: whether `claude setup-token` logs out, whether it takes an account or profile flag (`claude setup-token --help` is the authority), and what it says about the existing login. This decides the **warning text** in `docs/project-claude-accounts.md`, nothing in the code |
 | **LC4** | the guard, end to end | `fugaro accounts add <name> --claude` on a throwaway installation, in the owner's terminal: confirm the token never appears on the terminal, that `~/.bash_history` holds only `fugaro accounts add <name> --claude`, that nothing under `~/.config/fugaro/` holds a value, and that a run with `--token <name>` starts |
 | **LC5** | the deploy half | After LC4: `gcloud run jobs describe` the new account's job and confirm exactly one `secret_env` entry for that account's secret, its service account holds `secretAccessor` on that secret and **no other account's**, and `fugaro doctor` is green |

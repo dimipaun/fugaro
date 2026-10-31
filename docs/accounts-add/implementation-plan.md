@@ -16,7 +16,7 @@ recorded length and alphabet, never a plausible credential in the source.
 
 | Level | Task | Blocked by |
 | --- | --- | --- |
-| 0 | **E1** `internal/yamledit` (#1467) · **E3** `internal/cli/settings_write.go` (#1464 S5) · **E2** `internal/cli/init_policy_migrate.go` publishing from the local config (#1464 S3) | other work streams |
+| 0 | **E1** `internal/yamledit` (#1467, still open) · **E3** `internal/cli/settings_write.go` (#1464's S5: the design merged, the file is not in the tree) · **E2** `internal/cli/init_policy_migrate.go` publishing from the local config (#1464's S3: the design merged, the stage still only migrates) | other work streams |
 | 1 | **A0** the pty answer, taken and pinned | D862/D863; E5's owner |
 | 2 | **A1** the local config edit | E1, E3, A0 |
 | 3 | **A2** the converge half, and the test that says the command is one command | A1, **E2 landed** |
@@ -122,26 +122,43 @@ no weaker gate. A new stage registered in `initStages` is **not** part of this t
 
 **SEC, and it gets the independent review on its own** — it is the only code in the design that runs
 another program. Goal: spec §3. Find the binary through `claudeplugin.Find`, run it as a child **on a
-pty** (Linux, macOS), copy its output a line at a time through the guard, offer every maximal run of
-`[A-Za-z0-9_-]` of 40 characters or more to the capture and withhold it, forward a line containing `://`
-whole and say so when such a line carried a run (the recorded hole), and fall back to the hidden prompt
-when parsing fails.
+pty** (Linux, macOS), copy its output a line at a time through the guard and flush a partial line once
+the child goes idle (§3.2; a prompt with no newline otherwise hangs the login), offer every maximal run
+of `[A-Za-z0-9_-]` of 40 characters or more to the capture and withhold it, treat a run on a line
+containing `://` as **no candidate at all** (D872: the `code_challenge` is 43 characters from the same
+alphabet, and offering it would store a non-credential), store nothing when two or more **distinct**
+candidates were seen (D871), and fall back to the hidden prompt when any of that leaves the command
+unsure.
 
 *Files (≤6):* `internal/cli/accounts_add_login.go` (the runner and the guard),
 `internal/cli/accounts_add.go` (the flag), `internal/cli/accounts_add_login_test.go`,
 `internal/cli/accounts_add_login_pty_test.go` (next to `secrets_pty_test.go`, whose pattern it follows),
 `internal/cli/accounts_add_claude_test.go`.
 *Named tests:* `TestAccountsAddClaudeGuardWithholdsTokenRuns` (**the red step**; a table: a token-shaped
-run of the recorded length and alphabet inside prose is withheld; a 39-character run is not; a URL line
-is forwarded whole and the command says a run rode on it),
+run of the recorded length and alphabet inside prose is withheld; a 39-character run is not; a run on a
+line containing `://` is **forwarded whole and stored nowhere** — the case a first cut that captures URL
+runs must fail; a line that is only a URL keeps its query string),
+`TestAccountsAddClaudeGuardRefusesTwoDistinctCandidates` (D871: two distinct runs anywhere in the login
+store nothing and fall back, two *identical* runs are one candidate and store),
+`TestAccountsAddClaudeGuardDoesNotStoreAChallenge` (the fake child prints a login URL whose
+`code_challenge` is a 43-character run and a token-shaped run after it; only the second is ever offered),
+`TestAccountsAddClaudeFlushesAPromptWithoutANewline` (the fake child prints `paste the code` and then
+waits; the text reaches the terminal before the child is answered — the hang the line-at-a-time copier
+has — and a run split across the flush and the rest of its line is offered once, whole),
+`TestAccountsAddClaudeRestoresTheTerminalOnEveryExit` (the pty test: the owner's terminal is in raw mode
+for the duration and out of it when the child exits non-zero, when the login is cancelled, and when the
+guard falls back — spec §3.1 step 3, whose Ctrl-C claim is only true while the restore runs),
 `TestAccountsAddClaudeWritesTheValueNowhere` (the fake child prints a value in every position the guard
 knows about; nothing reaching stdout, the config tree, a log line or an error message holds it),
 `TestAccountsAddClaudeFallsBackToTheHiddenPrompt` (an unparseable child is not a failure — the prompt
 runs, and the command says why),
 `TestAccountsAddClaudeRefusesWithoutTerminals`, `TestAccountsAddClaudeRefusesAHostileClaude`
 (`exec.ErrDot`, a non-directory-safe path, a directory),
-`TestAccountsAddClaudeChildEnvironment` (the child inherits no exported `CLAUDE_CODE_OAUTH_TOKEN` or
-`ANTHROPIC_API_KEY` the owner had set — spec §6(b)).
+`TestAccountsAddClaudeRefusesAnExportedCredential` (**the red step's sibling, and the spec's rule, not
+a stripping one**: with `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` set in the command's own
+environment, the command **stops and says so** and **no child is ever started** — the fake child's
+marker file is absent afterwards — because either variable decides which account the login lands on and
+the command declines to guess rather than editing the owner's environment, spec §3.1 step 4 and §6(b)).
 *Red step:* `TestAccountsAddClaudeGuardWithholdsTokenRuns` fails against a first copier that forwards the
 child's output verbatim. That failure **is** the reason the guard exists; the test is written first and
 the copier is written until it passes.
@@ -177,14 +194,15 @@ and the job shape as the rules they are, and keeps the version-3 rollout as hist
 `internal/cli/docs_project_policy_reseed_test.go`, `internal/cli/docs_named_oauth_tokens_test.go`,
 `docs/design/named-oauth-tokens.md`.
 *Named tests:* `GOFLAGS=-p=2 go test ./internal/cli/ -run Docs -count=1 -timeout 40m` (**the red step**:
-the eight `TestDocsProjectClaudeAccounts*` tests and `TestDocsProjectPolicyReseed*` fail on the old
+the seven `TestDocsProjectClaudeAccounts*` tests and `TestDocsProjectPolicyReseed*` fail on the old
 wording first — that is how the pins are found rather than guessed),
 plus `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestDocsProjectClaudeAccounts|TestDocsProjectNamedOAuthTokens|TestDocsNamedOAuthTokens' -count=1`.
 *Keep:* `…CommandsExist` resolves every `fugaro …` line on the page against the real command tree, so
 the page cannot name `accounts add` before A1–A4 land, and `…ExamplesValidate` runs the page's own
 examples — check every example against the command's real acceptance before writing it.
 *Shared:* §5 of the page is cited by `docs_project_policy_reseed_test.go`, and the settings design's own
-docs work (#1464) may be rewriting neighbouring sentences. Check before editing, and keep the pinned
+docs work (#1464, merged on 2026-10-31) has just rewritten neighbouring sentences in the same tree. Check
+before editing, and keep the pinned
 fact, not the pinned wording — the rule `CLAUDE.md` states.
 
 ## A6 — the surfaces that name the old pair, and the handoffs
@@ -223,8 +241,8 @@ reports it rather than editing a reserved file.
 | File | Who else holds it | What this work needs from it | The rule |
 | --- | --- | --- | --- |
 | `internal/yamledit/**` | **#1467** (E1) | `SetScalar`, `AddListItem`/`RemoveListItem`, `UpsertSeqItemByKey`, `Changed`, and refusals that never echo document bytes | Call it. A second splice is what the settings design's shared-files table forbids, and it is the one thing A1's red step would otherwise let through |
-| `internal/cli/settings_write.go` | **#1464 S5** (E3) | the diff, the typed confirmation, the agent refusal, `backupFile`, `writeFileAtomic` | Call it, do not copy it |
-| `internal/cli/init_policy_migrate.go` | **#1464 S3**, **#1460** (E2, F14) | a `Policy` stage that publishes from the local config and reaches the node through `policyMigrationFor` | Do not edit it here, and do not write a second publisher |
+| `internal/cli/settings_write.go` | **#1464's S5** (E3; the design merged, the file has not) | the diff, the typed confirmation, the agent refusal, `backupFile`, `writeFileAtomic` | Call it, do not copy it |
+| `internal/cli/init_policy_migrate.go` | **#1464's S3** (design merged, stage unchanged), **#1460** (E2, F14) | a `Policy` stage that publishes from the local config and reaches the node through `policyMigrationFor` | Do not edit it here, and do not write a second publisher |
 | `internal/cli/init_stages.go` | the update-door streams | the stage list A2 invokes | Read it. Registering a new stage here is not this work's edit |
 | `internal/cli/accounts.go` | nobody | the `accounts` parent, which already owns its `AddCommand` (F19) | This work's file; `internal/cli/root.go` stays closed |
 | `go.mod`, `internal/cli/docs_console_boundary_test.go` | the console-boundary stream (E5) | the pty require comment and the pin that holds it | One PR changes both, with the reason in the body; if D862 avoids the pty, neither changes |
