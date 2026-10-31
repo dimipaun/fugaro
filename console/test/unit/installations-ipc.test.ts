@@ -53,9 +53,12 @@ import {
   OPEN_EXTERNAL_FAILED,
   PICKER_ENTRY_URL,
   REVEAL_FAILED,
+  UPDATE_AUTO_LABEL,
+  UPDATE_NOW_LABEL,
   pickerOptions,
   pickerPreloadPath,
 } from '../../src/main/picker'
+import type { UpdateMenuOptions } from '../../src/main/picker'
 import { GETTING_STARTED_URL, FUGARO_INSTALL_COMMAND, FUGARO_SETUP_COMMAND } from '../../src/main/onboarding'
 import { ALLOWED_EXTERNAL_HOSTS, consoleWebPreferences, validateExternalUrl } from '../../src/main/window'
 import {
@@ -195,6 +198,7 @@ function pickerOver(
     readonly onRecordRemoved?: Parameters<typeof createInstallationPicker>[0]['onRecordRemoved']
     readonly openExternal?: (url: string) => Promise<boolean>
     readonly reveal?: (path: string) => Promise<boolean> | boolean
+    readonly updateMenu?: UpdateMenuOptions
   } = {},
 ) {
   const ipcMain = fakeIpcMain()
@@ -248,8 +252,43 @@ function pickerOver(
     ...(options.onChosen === undefined ? {} : { onChosen: options.onChosen }),
     ...(options.onRemoved === undefined ? {} : { onRemoved: options.onRemoved }),
     ...(options.onRecordRemoved === undefined ? {} : { onRecordRemoved: options.onRecordRemoved }),
+    ...(options.updateMenu === undefined ? {} : { updateMenu: options.updateMenu }),
   })
   return { picker, ipcMain, windows, opened, revealed, menu: () => applicationMenu }
+}
+
+/** appMenuItems is the application submenu as the tests read it: the one menu
+ * this app builds, holding `Installations…`, the update items when there are
+ * any, and Quit. */
+interface MenuItem {
+  readonly label?: string
+  readonly role?: string
+  readonly type?: string
+  readonly checked?: boolean
+  readonly submenu?: readonly MenuItem[]
+  readonly click?: (item: { readonly checked: boolean }) => void
+}
+
+function appMenuItems(installed: unknown): readonly MenuItem[] {
+  const top = installed as readonly MenuItem[]
+  expect(top).toHaveLength(3)
+  const items = top[0]?.submenu
+  if (items === undefined) throw new Error('the application menu has no submenu')
+  return items
+}
+
+/** frozenPaths is every path in the value that is frozen. Electron's
+ * `buildFromTemplate` sorts the template in place and assigns each item's
+ * `submenu`, so a frozen one throws at startup: this names whatever would. */
+function frozenPaths(value: unknown): readonly string[] {
+  const frozen: string[] = []
+  const walk = (node: unknown, at: string): void => {
+    if (typeof node !== 'object' || node === null) return
+    if (Object.isFrozen(node)) frozen.push(at)
+    for (const [key, child] of Object.entries(node)) walk(child, `${at}.${key}`)
+  }
+  walk(value, 'template')
+  return frozen
 }
 
 /** dashboardEvent and pickerEvent are forged events from each document, with the
@@ -1250,29 +1289,74 @@ describe('the picker’s window', () => {
   it('is opened from the menu item and from nowhere else', async () => {
     const { picker, windows, menu } = pickerOver()
     picker.installMenu()
-    const installed = menu() as readonly { readonly label?: string; readonly role?: string; readonly submenu?: readonly unknown[] }[]
     // Ours, then Electron's own Edit and Window menus (review S10).
-    expect(installed).toHaveLength(3)
-    expect(installed.slice(1).map((entry) => entry.role)).toEqual(['editMenu', 'windowMenu'])
-    const items = installed[0]?.submenu as readonly { readonly label?: string; readonly click?: () => void }[]
+    const installed = menu()
+    expect((installed as readonly MenuItem[]).slice(1).map((entry) => entry.role)).toEqual(['editMenu', 'windowMenu'])
+    const items = appMenuItems(installed)
     const item = items.find((entry) => entry.label === INSTALLATIONS_MENU_LABEL)
     expect(item, INSTALLATIONS_MENU_LABEL).toBeDefined()
     expect(INSTALLATIONS_MENU_LABEL).toBe('Installations…')
-    // Electron's `buildFromTemplate` writes into the template (it sorts it and
-    // assigns `submenu`), so a frozen one throws at startup: nothing in the value
-    // handed to it may be frozen, at any depth.
-    const frozen: string[] = []
-    const walk = (value: unknown, at: string): void => {
-      if (typeof value !== 'object' || value === null) return
-      if (Object.isFrozen(value)) frozen.push(at)
-      for (const [key, child] of Object.entries(value)) walk(child, `${at}.${key}`)
-    }
-    walk(installed, 'template')
-    expect(frozen).toEqual([])
+    expect(frozenPaths(installed)).toEqual([])
     expect(windows).toHaveLength(0)
-    item?.click?.()
+    item?.click?.({ checked: false })
     await Promise.resolve()
     expect(windows).toHaveLength(1)
+  })
+
+  it('carries the update switch and a check-now item when the entry hands them over (D768 (a))', async () => {
+    const calls: string[] = []
+    const { picker, menu } = pickerOver({
+      updateMenu: {
+        auto: false,
+        setAuto: (on) => {
+          calls.push(`setAuto:${String(on)}`)
+        },
+        checkNow: () => {
+          calls.push('checkNow')
+        },
+      },
+    })
+    picker.installMenu()
+    const items = appMenuItems(menu())
+
+    const toggle = items.find((entry) => entry.label === UPDATE_AUTO_LABEL)
+    expect(UPDATE_AUTO_LABEL).toBe('Check for Updates Automatically')
+    // Electron's own checkbox, drawn from the store's value: the test above
+    // proved a `checked` of `true` is not what this value is.
+    expect(toggle?.type).toBe('checkbox')
+    expect(toggle?.checked).toBe(false)
+    // The click is Electron's: it hands over the item, and the state the click
+    // moved it to is what moves the switch.
+    toggle?.click?.({ checked: true })
+    expect(calls).toEqual(['setAuto:true'])
+
+    const now = items.find((entry) => entry.label === UPDATE_NOW_LABEL)
+    expect(UPDATE_NOW_LABEL).toBe('Check for Updates Now')
+    now?.click?.({ checked: false })
+    expect(calls).toEqual(['setAuto:true', 'checkNow'])
+
+    // ...and the update items are not frozen either.
+    expect(frozenPaths(menu())).toEqual([])
+  })
+
+  it('draws the checkbox checked when the store says the switch is on', () => {
+    const { picker, menu } = pickerOver({
+      updateMenu: { auto: true, setAuto: () => undefined, checkNow: () => undefined },
+    })
+    picker.installMenu()
+    expect(appMenuItems(menu()).find((entry) => entry.label === UPDATE_AUTO_LABEL)?.checked).toBe(true)
+  })
+
+  it('has neither update item when the entry hands over no controller', () => {
+    // What `src/main/index.ts` passes on every platform that is not a packaged
+    // macOS app: no `updateMenu` at all, because `startUpdates` answered null,
+    // so the menu is exactly the one it was before U4.
+    const { picker, menu } = pickerOver()
+    picker.installMenu()
+    const labels = appMenuItems(menu()).map((entry) => entry.label)
+    expect(labels).toEqual([INSTALLATIONS_MENU_LABEL, undefined, undefined])
+    expect(labels).not.toContain(UPDATE_AUTO_LABEL)
+    expect(labels).not.toContain(UPDATE_NOW_LABEL)
   })
 })
 
