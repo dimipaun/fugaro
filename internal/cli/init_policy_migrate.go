@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/spf13/cobra"
+
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -87,11 +89,14 @@ func policyMigrationFor(ctx context.Context, lc *localcfg.Config) (m *policyMigr
 	node, derr := withDerivedMembers(raw, lc)
 	moved, changes, err := projectpolicy.Migrate(node)
 	switch {
-	case err != nil && derr != nil:
-		// The node needed the member the local config could not supply: the
-		// derivation's message says what about the config to fix, which is
-		// more than the migration's own note can (it says only that the
-		// block belongs to a publish).
+	case derr != nil:
+		// The derivation's own error is the refusal whether or not Migrate
+		// had one: a member the local config cannot state is a config a
+		// publish refuses too, and carrying on writes a node without the
+		// block a publish would have put there — the state a proxied run's
+		// whole admission is missing from. It also says more than Migrate's
+		// note can about the node it did refuse: the note says only that the
+		// block belongs to a publish, the derivation names the entry to fix.
 		return nil, true, derr
 	case err != nil:
 		return nil, true, policyMigrationRefusal(err)
@@ -109,16 +114,31 @@ func policyMigrationFor(ctx context.Context, lc *localcfg.Config) (m *policyMigr
 // this side of the skew: a *VersionError carries the shared sentence alone
 // (Migrate's contract: the caller prints SkewSentence), so a node ahead of this
 // Fugaro is told to upgrade the binary and one behind it — a version below the
-// chain's first step, which no migrator reaches and no release of this binary
-// ever wrote — is told the move that works. Anything else, a malformed node
-// among them, is returned as it came: it is not a skew and has no version to
-// word.
+// chain's first step, 1 or 2, which 0.8.0 and 0.8.5 wrote and no step reaches
+// (projectpolicy.VersionSince) — is told the move that works. Anything else, a
+// malformed node among them, is returned as it came: it is not a skew and has
+// no version to word.
 func policyMigrationRefusal(err error) error {
 	var ve *projectpolicy.VersionError
 	if errors.As(err, &ve) {
 		return userErr("%s", projectpolicy.SkewSentence(ve, projectpolicy.ReaderCLI))
 	}
 	return err
+}
+
+// policyMigrationWrite is the end of the write at both doors: the confirmation
+// the delete path takes, and the ETag-conditional write behind it. It is one
+// function because the decision is one decision — the node every run of the
+// project is admitted by, rewritten with what the operator has just read — and
+// a sentence worded twice is a sentence that can drift.
+//
+// What each door does around it is its own: the in-flight refusal, and where
+// the diff is printed (the stage refuses before it prints, the step after).
+func policyMigrationWrite(ctx context.Context, cmd *cobra.Command, m *policyMigration, yes bool) error {
+	if err := confirmRemoval(cmd, m.lc, yes, policyMigrationWhat+": every run of the project reads it, and the fields you edited into it by hand are carried over rather than published again"); err != nil {
+		return err
+	}
+	return m.write(ctx)
 }
 
 // derivedMembers is the top-level members the node gained on the way from raw
@@ -367,10 +387,7 @@ func (s *policyMigrateStage) Apply(ctx context.Context, env initflow.Env) (initf
 		return initflow.Outcome{}, userErr("%d run(s) are in flight: a run that is mid-flight read the policy this migration would rewrite, so it is refused without --yes; wait for them (fugaro runs ls), or pass --yes once you have read what it does", inflight)
 	}
 	m.print(cmd.OutOrStdout())
-	if err := confirmRemoval(cmd, m.lc, env.Yes, policyMigrationWhat+": every run of the project reads it, and the fields you edited into it by hand are carried over rather than published again"); err != nil {
-		return initflow.Outcome{}, err
-	}
-	if err := m.write(ctx); err != nil {
+	if err := policyMigrationWrite(ctx, cmd, m, env.Yes); err != nil {
 		return initflow.Outcome{}, err
 	}
 	return initflow.Outcome{Changed: true, Detail: fmt.Sprintf("migrated the published policy from version %d to %d in place", m.from, projectpolicy.Version)}, nil

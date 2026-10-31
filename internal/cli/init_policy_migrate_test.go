@@ -221,10 +221,11 @@ func TestUpdatePolicyMigrationRefusesANewerNode(t *testing.T) {
 }
 
 // TestUpdatePolicyMigrationRefusesAVersionNoMigratorReaches: a node below the
-// chain's first step is one no release of this Fugaro wrote (a hand-written
-// node). The migration cannot move it, and Migrate refuses it as the same
-// older-than-this-reader skew a publish does — so the remedy the operator reads
-// has to be the one that works there, not a bare sentence with no move.
+// chain's first step is one 0.8.0 or 0.8.5 wrote, and no step reaches it
+// (projectpolicy.VersionSince). The migration cannot move it, and Migrate
+// refuses it as the same older-than-this-reader skew a publish does — so the
+// remedy the operator reads has to be the one that works there, not a bare
+// sentence with no move.
 func TestUpdatePolicyMigrationRefusesAVersionNoMigratorReaches(t *testing.T) {
 	f := newProjectFixture(t, "")
 	f.db.Set(projectpolicy.PathShared(), map[string]any{
@@ -425,6 +426,42 @@ func TestUpdateMigrationDerivesTheBitbucketBlockFromLocalConfig(t *testing.T) {
 	}
 }
 
+// TestUpdateMigrationCarriesBitbucketAPIRoots: the owner's API-root allow-list
+// is the other member a publish copies into the node rather than derives, and
+// the run reads it there — so a migrated node has to carry it, and the diff has
+// to say where it came from. A node that states its own list keeps it: that
+// list is the node's, and this machine's config is not its to replace.
+func TestUpdateMigrationCarriesBitbucketAPIRoots(t *testing.T) {
+	const roots = "bitbucket_api_roots: [https://api.bitbucket.example/2.0]\n"
+	f := newProjectFixture(t, roots)
+	f.db.Set(projectpolicy.PathShared(), v3Node(nil))
+	h := newMigrationRig(t, f, &initOptions{})
+
+	out, err := h.apply(t, true)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	want := []string{"https://api.bitbucket.example/2.0"}
+	if got := publishedPolicy(t, f).BitbucketAPIRoots; !slices.Equal(got, want) {
+		t.Errorf("bitbucket_api_roots = %v, want %v: the run sends the project's Bitbucket token to these roots, and the node is where it reads them", got, want)
+	}
+	if !strings.Contains(out, "derived from the project's local config, as a publish derives them: "+bitbucketAPIRootsKey) {
+		t.Errorf("the diff does not say the local config supplied the allow-list:\n%s", out)
+	}
+
+	node := v3Node(nil)
+	node[bitbucketAPIRootsKey] = []string{"https://api.bitbucket.other/2.0"}
+	f = newProjectFixture(t, roots)
+	f.db.Set(projectpolicy.PathShared(), node)
+	h = newMigrationRig(t, f, &initOptions{})
+	if out, err := h.apply(t, true); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got := publishedPolicy(t, f).BitbucketAPIRoots; !slices.Equal(got, []string{"https://api.bitbucket.other/2.0"}) {
+		t.Errorf("bitbucket_api_roots = %v: the migration replaced the node's own list with this machine's config", got)
+	}
+}
+
 func TestUpdateMigrationKeepsHandEditedAllowListWhileDeriving(t *testing.T) {
 	f := newProjectFixture(t, bitbucketTokenConfig)
 	node := v3Node(v3NodeMountingTheBitbucketToken())
@@ -465,6 +502,61 @@ func TestUpdateMigrationDerivesTheBlockWhenNoProfileMountsTheToken(t *testing.T)
 	}
 	if want := []string{"bitbucket/workspace-a/api-*", "bitbucket/workspace-a/repo-a"}; !slices.Equal(p.BitbucketToken.AllowRepos, want) {
 		t.Errorf("bitbucket_token.allow_repos = %v, want %v", p.BitbucketToken.AllowRepos, want)
+	}
+}
+
+// bitbucketTokenTheNodeCannotRead is a local config the loader accepts and the
+// policy's own reader does not: config's allow_data_to rules cap neither the
+// length of an entry nor a segment of it, while a policy's allow_repos entry is
+// held to projectpolicy.MaxPatternLen — and the derivation is where the second
+// rule is applied (DeriveBitbucketToken), which is the sentence a publish
+// refuses this config with. The migration reads its config through the same
+// function, so it is the fixture for "the two doors refuse one config the same
+// way".
+var bitbucketTokenTheNodeCannotRead = "project_secrets:\n  bitbucket-token: { allow_data_to: [workspace-a/" +
+	strings.Repeat("r", projectpolicy.MaxPatternLen) + "] }\n"
+
+// TestUpdateMigrationRefusesWhenBitbucketDerivationFails: the block this stage
+// patches into the node is derived from the local config, and a config the
+// derivation refuses is one a publish refuses too — the entry would become an
+// allow_repos pattern the node's own decoder rejects. A migration that carried
+// on would write the node without the block, which is the state a proxied
+// run's whole admission is missing from: so the derivation's error is the
+// write's refusal, whether or not Migrate had one of its own.
+func TestUpdateMigrationRefusesWhenBitbucketDerivationFails(t *testing.T) {
+	f := newProjectFixture(t, bitbucketTokenTheNodeCannotRead)
+	f.db.Set(projectpolicy.PathShared(), v3Node(nil))
+	h := newMigrationRig(t, f, &initOptions{})
+
+	err := h.check()
+	if err == nil {
+		t.Fatal("a config whose Bitbucket block cannot be derived was accepted: the node migrates without the block a publish would write")
+	}
+	for _, want := range []string{"project_secrets.bitbucket-token.allow_data_to", "would publish the policy entry"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if got := nodeVersionOnTheFake(t, f); got != 3 {
+		t.Errorf("the node moved to version %d on a refusal", got)
+	}
+	if out, err := h.apply(t, true); err == nil {
+		t.Errorf("the migration wrote a node the derivation could not complete:\n%s", out)
+	}
+
+	// The parity the refusal claims: a publish of the same config is refused
+	// with the derivation's own sentence, so the operator reads one answer
+	// about one config whichever door they came through.
+	f2 := newProjectFixture(t, bitbucketTokenTheNodeCannotRead)
+	_, _, perr := execute(t, "project", "policy", "publish")
+	if perr == nil {
+		t.Fatal("a publish of this config was allowed, so the migration's refusal is not the parity it claims")
+	}
+	if !strings.Contains(perr.Error(), "would publish the policy entry") {
+		t.Errorf("the publish refuses with different words: %v", perr)
+	}
+	if v := f2.db.Value(projectpolicy.PathShared()); v != nil {
+		t.Errorf("the publish wrote a node anyway: %v", v)
 	}
 }
 

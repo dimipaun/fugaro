@@ -543,10 +543,7 @@ func policyStep(ctx context.Context, u *upgradeCtx) stepResult {
 	if inflight > 0 && !u.o.yes {
 		return stepResult{state: stepFailed, code: ExitUserError, reason: fmt.Sprintf("%d run(s) are in flight: a run that is mid-flight read the policy this migration would rewrite, so it is refused without --yes; wait for them (fugaro runs ls), or pass --yes once you have read what it does", inflight)}
 	}
-	if err := confirmRemoval(u.cmd, m.lc, u.o.yes, policyMigrationWhat+": every run of the project reads it, and the fields you edited into it by hand are carried over rather than published again"); err != nil {
-		return stepResult{state: stepFailed, code: ExitUserError, reason: oneLine(err.Error())}
-	}
-	if err := m.write(ctx); err != nil {
+	if err := policyMigrationWrite(ctx, u.cmd, m, u.o.yes); err != nil {
 		return stepResult{state: stepFailed, code: ExitUserError, reason: oneLine(err.Error())}
 	}
 	return stepResult{state: stepDone, reason: fmt.Sprintf("the published policy was migrated from version %d to %d in place", m.from, projectpolicy.Version)}

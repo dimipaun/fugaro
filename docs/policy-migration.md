@@ -71,12 +71,13 @@ node that is no longer there.
 - The node is one only a *newer* Fugaro can read: upgrade Fugaro first, then
   `fugaro update`; a `--delete` here would drop the fields that binary does
   know about, and the ones it does not.
-- The node's version is **below the chain's first step** (1 or 2, older than
-  the model that carries the migrators). No migration reaches it, and no
-  release of this CLI wrote it — a hand-written node, or one older than the
-  version model itself. Both doors refuse it with the sentence a publish uses
-  for the same state, whose remedy is this row: `fugaro project policy publish
-  --delete`, then a publish from this release.
+- The node's version is **below the chain's first step**: 1 or 2, which 0.8.0
+  and 0.8.5 wrote (`projectpolicy.VersionSince`), while the chain starts at 3,
+  the version 0.9.0 introduced. No step reaches them — the chain holds the move
+  0.14.0's bump needed, and a node older than the model the migrators read is
+  not one they can carry over. Both doors refuse it with the sentence a publish
+  uses for the same state, whose remedy is this row: `fugaro project policy
+  publish --delete`, then a publish from this release.
 - The node is malformed in a way no migration can fix (it is not a JSON object,
   its version is not an integer, no release ever wrote its version, a top-level
   key is written twice, or the migrated document is one the current reader

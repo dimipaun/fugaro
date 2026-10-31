@@ -52,7 +52,7 @@ Each checkout starts with a line `== ` and its directory, then one line per step
 - `the published policy is version Y` (`current`): the project's published policy node is already the version this `fugaro` writes. Asked nothing.
 - `no policy is published at ...` (`current`): the project has a budget backend and no node in it; every run falls back to the ceiling its job's environment carries. Not the same line as the one above, and not something to go looking for.
 - a reason naming the version the node carries and the one this `fugaro` writes (`done` without `--check`): the node is rewritten in place, after the diff printed above `== ` for the checkout and the project's name typed (or `--yes`). Nothing is deleted, and the fields the owner edited into the node by hand are kept.
-- `--local` (`skipped`): the reason names the update command (SKILL.md step 4), which does the same work for the node.
+- `--local` (`skipped`): the reason is the flag alone, because this mode runs the pin and plugin steps only and never reads the node; the upgrade command without `--local` is what migrates it (SKILL.md step 4).
 - `a coding agent's session` (`skipped`): always, in this session; the user runs the upgrade in their own terminal window.
 - `--check` (`skipped`, with a `note:`): `--check` makes no cloud call, so it cannot tell whether the node is current; the upgrade without `--check` migrates it.
 - `no local project config selects this checkout`, `not onboarded` (`skipped`): the same verdicts the cloud step's own line gives, and nothing here is the machine's to migrate.
