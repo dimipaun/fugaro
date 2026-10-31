@@ -540,6 +540,26 @@ describe('the packaging configuration the fuses belong to', () => {
       'dist/bundle/installations.html',
       'dist/bundle/installations.js',
       'dist/bundle/refusal.html',
+      // The build-time tree Task 2.1b's fix round A keeps out (see
+      // test/unit/build-files.test.ts for the list and the probe behind it):
+      // `@sentry/node` carries `@sentry/bundler-plugins` for *other people's*
+      // bundler builds, and the console, which bundles nothing at run time, was
+      // packing that subpath's whole dependency tree into the asar.
+      '!node_modules/@jridgewell/sourcemap-codec/**',
+      '!node_modules/@oxc-parser/**',
+      '!node_modules/@oxc-project/**',
+      '!node_modules/@sentry/bundler-plugins/**',
+      '!node_modules/balanced-match/**',
+      '!node_modules/brace-expansion/**',
+      '!node_modules/dotenv/**',
+      '!node_modules/glob/**',
+      '!node_modules/lru-cache/**',
+      '!node_modules/magic-string/**',
+      '!node_modules/minimatch/**',
+      '!node_modules/minipass/**',
+      '!node_modules/oxc-parser/**',
+      '!node_modules/path-scurry/**',
+      '!node_modules/sentry/**',
     ])
   })
 
@@ -549,12 +569,21 @@ describe('the packaging configuration the fuses belong to', () => {
     // matcher understands exactly the two shapes the list uses (a
     // `dir/sub/**/*.js` include and an exact path, either one negated), and
     // every pattern is asserted to be one of them, so a wider glob cannot slip
-    // past it.
+    // past it. The one shape added since is the negation that takes a
+    // *dependency tree* out (`!node_modules/.../**`, Task 2.1b fix round A): it
+    // names a directory rather than a file, so it is read as one and only when
+    // negated -- a positive `dir/**` would still widen the package and still
+    // fails here.
     const patterns = build.files ?? []
     for (const pattern of patterns) {
-      expect(pattern, `${pattern} is not a shape this test can read`).toMatch(
-        /^!?(?:[a-z]+\/[a-z]+\/\*\*\/\*\.js|[a-z]+(?:\/[a-z]+)*\/[a-z][a-z.-]*\.(?:js|html|css|json)|dist\/bundle\/[A-Za-z-]+\.woff2|THIRD_PARTY_NOTICES\.md|LICENSE\.md)$/,
-      )
+      const excludesATree = /^!node_modules\/(?:[a-z][a-z.-]*|@[a-z][a-z.-]*(?:\/[a-z][a-z.-]*)?)\/\*\*$/.test(pattern)
+      expect(
+        excludesATree ||
+          /^!?(?:[a-z]+\/[a-z]+\/\*\*\/\*\.js|[a-z]+(?:\/[a-z]+)*\/[a-z][a-z.-]*\.(?:js|html|css|json)|dist\/bundle\/[A-Za-z-]+\.woff2|THIRD_PARTY_NOTICES\.md|LICENSE\.md)$/.test(
+            pattern,
+          ),
+        `${pattern} is not a shape this test can read`,
+      ).toBe(true)
     }
     const ships = (file: string): boolean => {
       let shipped = false
@@ -611,8 +640,17 @@ describe('the packaging configuration the fuses belong to', () => {
     // is the served `.css` (Task 6.2) -- so no include names a `.map`, and a
     // pattern that started to would fail here. Task 2.1b's DSN artifact is the
     // one `.json` in the list, and it is a value the build baked in rather than
-    // a copy of any source.
-    for (const pattern of build.files ?? []) expect(pattern).toMatch(/\.(?:js|html|css|json|md|woff2)$/)
+    // a copy of any source. The `!node_modules/.../**` entries name a package's
+    // whole directory rather than a file and are asserted excluded, not
+    // included, so they take no part in this and are skipped rather than read
+    // as if they ended in nothing.
+    for (const pattern of build.files ?? []) {
+      if (pattern.startsWith('!node_modules/')) {
+        expect(pattern).toMatch(/\/\*\*$/)
+        continue
+      }
+      expect(pattern).toMatch(/\.(?:js|html|css|json|md|woff2)$/)
+    }
   })
 
   it('publishes nowhere: publish is null, not merely absent', () => {
@@ -789,7 +827,16 @@ describe('the packaging configuration the fuses belong to', () => {
     // put back what the README's `env -i` packaging step keeps out -- and, if it
     // held secrets, put them in a file in the checkout.
     expect(existsSync(join(CONSOLE_DIR, 'electron-builder.env'))).toBe(false)
-    for (const pattern of build.files ?? []) expect(pattern).not.toMatch(/\.env$|^\*|\/\*\*$/)
+    for (const pattern of build.files ?? []) {
+      // A pattern that ends in `/**` takes a whole tree into the package; the
+      // one exception is a negation, which takes one out (`!node_modules/...`,
+      // Task 2.1b's fix round A), and that shape is asserted separately.
+      if (pattern.startsWith('!node_modules/')) {
+        expect(pattern).toMatch(/^!node_modules\/[^\s]*\/\*\*$/)
+        continue
+      }
+      expect(pattern).not.toMatch(/\.env$|^\*|\/\*\*$/)
+    }
   })
 
   it('rebuilds no native module: the console has none, and a rebuild runs install scripts', () => {

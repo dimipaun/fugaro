@@ -105,6 +105,57 @@ const dsnArtifact = 'dist/main/crash-dsn.json'
  * name: the packing hook (it needs a devDependency) and the fixture loader. */
 const NEVER_SHIPPED: readonly string[] = ['dist/main/fuses.js', 'dist/source/fixture.js']
 
+/**
+ * BUILD_ONLY are the packages the console's production tree reaches only through
+ * `@sentry/bundler-plugins` -- the subpath `@sentry/node` carries so that a
+ * *bundler* can wrap a webpack, vite, rollup or esbuild build (Task 2.1b, fix
+ * round A). The console runs no bundler: the only bundling it does is
+ * `npm run build`, on a build machine, and `dist/bundle` is what that writes.
+ * The tree was in the asar and never loaded (the probe in the PR description
+ * walks `@sentry/electron/main` and the compiled `dist/main/crash-electron.js`
+ * and shows fourteen packages load, none of them these), so `build.files`
+ * excludes them by name and this list is what pins the exclusion.
+ *
+ * Every one of them is loadable-only-from-the-bundler-plugins-subpath, read off
+ * `package-lock.json`: `glob`, `minimatch`, `brace-expansion` and
+ * `balanced-match` arrive with it; `oxc-parser` and its nineteen
+ * platform-specific `@oxc-parser/binding-*` packages are how it parses source;
+ * `@oxc-project/types` and `magic-string` are that parser's types and code
+ * generator; `@jridgewell/sourcemap-codec` is what maps its output back;
+ * `sentry` is the newer bundler-side SDK it pulls in beside itself;
+ * `lru-cache`, `minipass`, `path-scurry` and `dotenv` are its own dependencies.
+ * A scope with no package name (`@oxc-parser`, `@oxc-project`) is excluded as a
+ * whole directory, which is what the packed tree holds.
+ */
+const BUILD_ONLY: readonly string[] = [
+  '@jridgewell/sourcemap-codec',
+  '@oxc-parser',
+  '@oxc-project',
+  '@sentry/bundler-plugins',
+  'balanced-match',
+  'brace-expansion',
+  'dotenv',
+  'glob',
+  'lru-cache',
+  'magic-string',
+  'minimatch',
+  'minipass',
+  'oxc-parser',
+  'path-scurry',
+  'sentry',
+]
+
+/**
+ * STILL_SHIPPED are the two packages that were candidates for the exclusion
+ * above and are **not** excluded, because they load. `debug` (shipped, and
+ * required by `electron-updater`) does `require('supports-color')` inside a
+ * `try` and swallows the failure -- an undeclared, optional require, so
+ * `package-lock.json` records the edge only under `@sentry/bundler-plugins` and
+ * `chalk`, and only a probe catches it. `supports-color` requires `has-flag`.
+ * Both stay; the probe in the PR description shows them loading.
+ */
+const STILL_SHIPPED: readonly string[] = ['has-flag', 'supports-color']
+
 /** globToRegExp turns one electron-builder `files` pattern into a matcher. `**`
  * spans directories, `*` and `?` do not cross a `/`. */
 function globToRegExp(pattern: string): RegExp {
@@ -231,6 +282,34 @@ describe('the packaged console carries what it loads', () => {
     for (const document of documents) {
       expect(patterns, `${document} is the source, not the served copy`).not.toContain(document)
     }
+  })
+
+  it('keeps the build-time packages out of the package (Task 2.1b, fix round A)', () => {
+    const patterns = buildFiles() ?? []
+    // Non-vacuity: a list that had emptied would make every assertion below true.
+    expect(patterns.length, 'build.files must exist for this list to mean anything').toBeGreaterThan(20)
+    expect(BUILD_ONLY.length).toBeGreaterThan(10)
+    for (const name of BUILD_ONLY) {
+      expect(patterns, `${name} is a build-time package and must be excluded by name`).toContain(
+        `!node_modules/${name}/**`,
+      )
+    }
+    // The two that do load -- `debug` requires `supports-color` from inside a
+    // `try`, undeclared, so no lockfile walk can see the edge -- stay shipped,
+    // and a later edit that quietly excluded them fails here.
+    for (const name of STILL_SHIPPED) {
+      expect(patterns, `${name} is loaded at run time and must stay in the package`).not.toContain(
+        `!node_modules/${name}/**`,
+      )
+    }
+    // And the negations are exactly these: a `!node_modules/...` entry that
+    // named something else would be a package going out of the bundle without
+    // ever being argued for here. The two compiled files Task 4.1 excludes are
+    // the other two negations in the list, and they are named.
+    const negations = patterns.filter((pattern) => pattern.startsWith('!'))
+    expect(negations.toSorted()).toEqual(
+      [...BUILD_ONLY.map((name) => `!node_modules/${name}/**`), ...NEVER_SHIPPED.map((path) => `!${path}`)].toSorted(),
+    )
   })
 
   it('the matcher itself: a directory, a glob and a negation', () => {

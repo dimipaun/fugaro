@@ -155,7 +155,28 @@ function toSdkEvent(event: ErrorEvent, appRoot: string): ErrorEvent {
  * this file owns: the DSN, `NO_IPC`, the non-offline transport, and `beforeSend`.
  * `scrubCrashEvent` is handed the event the SDK built and returns the event that
  * goes on the wire, through `toSdkEvent` above -- the one assertion in this
- * wiring, and the one place a reader auditing the hand-off should look. */
+ * wiring, and the one place a reader auditing the hand-off should look.
+ *
+ * **Errors only, and explicitly.** The client sends error events, and the two
+ * other kinds of payload a Sentry client can be handed are refused here rather
+ * than left to a default: `beforeSendTransaction` answers `null` for every
+ * transaction (a trace is a record of *how long the session ran and what it did*
+ * in that time, D733's rule is stack frames only, and `defaultIntegrations:
+ * false` means nothing in this client opens one in the first place -- so this is
+ * the line that holds if a later task adds one), and `beforeSendLog` answers
+ * `null` for every log line for the same reason a log line is the wrong shape
+ * for this rule: it is free text the console wrote about what it was doing.
+ * `beforeSend` above is the third and the one that matters most.
+ *
+ * `enableLogs` is deliberately *not* among them: the pinned 8.2.0 does not have
+ * it. `@sentry/electron`'s renderer JSDoc says logs "require `enableLogs` to be
+ * enabled in the Electron main process", but neither `ElectronMainOptions`,
+ * `@sentry/node`'s `NodeOptions` nor `@sentry/core`'s `Options` declares that
+ * key, and the main process has no such gate to switch -- so writing it here
+ * would be an untyped key that type-checked nowhere and did nothing.
+ * `beforeSendLog` is the control the version actually has, and the client sends
+ * no log without it answering, which is the behaviour the missing option was
+ * wanted for; the unit test pins all three names against the SDK's types. */
 export function startCrashReporting(input: CrashReportingInput): CrashReportingHandle {
   const dsn = input.dsn ?? crashDsnFromBuild(input.appRoot)
   const decision = crashReportingDecision({ dsn, optedIn: input.optedIn })
@@ -166,6 +187,8 @@ export function startCrashReporting(input: CrashReportingInput): CrashReportingH
     ipcMode: NO_IPC,
     transport: makeElectronTransport,
     beforeSend: (event) => toSdkEvent(event, input.appRoot),
+    beforeSendTransaction: () => null,
+    beforeSendLog: () => null,
   }
   initClient(options)
   return {

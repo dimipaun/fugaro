@@ -339,6 +339,48 @@ describe('what the client is told', () => {
     void handle.close()
   })
 
+  it('sends errors only: no transaction and no log leaves, whatever the client is handed', () => {
+    const appRoot = tempAppRoot()
+    writeCrashDsnArtifact(appRoot, dsnPlaceholder())
+    const handle = startCrashReporting({ optedIn: true, appRoot })
+    const options = harness.initOptions[0] ?? {}
+    // Two payloads the client can be handed beside an error, each refused by
+    // name rather than by a default that a later SDK could change. A
+    // transaction is a record of the session rather than a stack frame; a log
+    // is free text about what the console was doing. Neither is D733's "stack
+    // frames only", so neither may leave.
+    const beforeSendTransaction = options.beforeSendTransaction as () => unknown
+    const beforeSendLog = options.beforeSendLog as () => unknown
+    expect(typeof beforeSendTransaction).toBe('function')
+    expect(typeof beforeSendLog).toBe('function')
+    expect(beforeSendTransaction()).toBeNull()
+    expect(beforeSendLog()).toBeNull()
+    void handle.close()
+  })
+
+  it('names those three options in the pinned SDK’s own types, and not one that is not there', () => {
+    // The names above are the SDK's, and this is the check the module's header
+    // promises: they are read back out of the types of the version
+    // `package.json` pins (`save-exact`, so the files below are the ones the
+    // build compiles against), rather than trusted because they type-check.
+    // `enableLogs` is the one this round wanted and could not have:
+    // `@sentry/electron`'s renderer JSDoc names it, the pinned version declares
+    // it nowhere, and a key the type does not have would have been an untyped
+    // line that did nothing. If a later SDK adds it, this test fails on purpose
+    // -- the console's answer to "are logs collected" is then a real decision
+    // again instead of `beforeSendLog` alone.
+    const consoleDir = fileURLToPath(new URL('../..', import.meta.url))
+    const types = (relative: string): string => readFileSync(join(consoleDir, relative), 'utf8')
+    const options = types('node_modules/@sentry/core/build/types/types/options.d.ts')
+    expect(options).toMatch(/beforeSendTransaction\?:/)
+    expect(options).toMatch(/beforeSendLog\?:/)
+    const optionFiles = ['node_modules/@sentry/core/build/types/types/options.d.ts'] as const
+    for (const file of optionFiles) expect(types(file)).not.toMatch(/\benableLogs\??:/)
+    // And the Electron SDK's own options are the object the wiring hands
+    // `init`: it is `Options` above that the two callbacks come from.
+    expect(types('node_modules/@sentry/electron/main/sdk.d.ts')).toMatch(/ElectronMainOptions/)
+  })
+
   it('hands `init` the SDK transport that keeps nothing on disk', () => {
     const appRoot = tempAppRoot()
     const userData = harness.userData
