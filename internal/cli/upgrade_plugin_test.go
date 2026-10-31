@@ -85,7 +85,7 @@ func TestUpgradePluginCurrentRunsOnlyTheLists(t *testing.T) {
 	f := testutil.NewClaudePluginFake(t, ourMarket, userInstall("0.5.2"))
 	useFakeClaude(t, f)
 	root, _ := skillCheckout(t, wiredAt("v0.5.2"))
-	// pin and plugin current, policy and cloud skipped by --local: nothing to do.
+	// pin and plugin current, cloud, rules and policy skipped by --local: nothing to do.
 	out, _, err := executeStdin(t, "", "upgrade", "--local", root)
 	if err != nil || len(f.Changes(t)) != 0 || !strings.Contains(out, "plugin: current: installed 0.5.2") || !strings.Contains(out, "nothing to do: "+root) {
 		t.Fatalf("%v, changes %q\n%s", err, f.Changes(t), out)
