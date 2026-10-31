@@ -20,6 +20,7 @@
 // The patterns themselves are assembled from fragments for the same reason the
 // values are: a list of prefixes is a file a scanner flags.
 
+import { createHash } from 'node:crypto'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 
@@ -51,6 +52,87 @@ const SHAPES: readonly { readonly what: string; readonly re: RegExp }[] = [
   { what: 'a Google refresh token', re: /1\/\/0[0-9A-Za-z_-]{8}/ },
   { what: 'a JSON Web Token', re: new RegExp(inert('ey', 'J[A-Za-z0-9_-]{8,}', '\\.', '[A-Za-z0-9_-]{8,}')) },
 ]
+
+/**
+ * DSN_SHAPE is a Sentry DSN: the scheme, the 32-character public key, the host
+ * and the project id. It is a shape rather than a credential -- a DSN can only
+ * send events to one project and can read nothing -- and it is written as
+ * fragments for the same reason every other pattern here is: a file that spells
+ * one out is a file a scanner flags.
+ *
+ * It is deliberately **not** part of `SHAPES` above. `SHAPES` is scanned over
+ * the whole tree, and the tests that need a DSN-shaped value in hand (this file,
+ * `crash.test.ts`, `crash-electron.test.ts`) assemble one at run time -- which
+ * is inert to a reader and to a scanner, but still matches a regex over the
+ * file's *text*. The rule this shape belongs to is narrower and is the owner's
+ * ruling of 2026-10-31: the console's own DSN is a public constant of the build,
+ * it lives in exactly one file under `src/`, and no second one may appear
+ * anywhere under `src/` again.
+ */
+const DSN_SHAPE = new RegExp(inert('https', '://', '[0-9a-f]{32}', '@', '[A-Za-z0-9.-]+', '/', '[0-9]+'))
+
+/** DSN_ALLOWED is the whole allow-list, and it is one entry naming one file --
+ * not a directory and not a pattern, so a new file, a renamed one or a second
+ * literal in this one all fail `holds the DSN in exactly one file` below. The
+ * reason is the ruling that put it there. */
+const DSN_ALLOWED: readonly { readonly path: string; readonly why: string }[] = [
+  {
+    path: 'src/main/crash-dsn.ts',
+    why: 'the console\'s Sentry DSN, a public client key embedded by the owner\'s ruling of 2026-10-31 (desktop-console Task 2.1b)',
+  },
+]
+
+/**
+ * DSN_SHA256 is the one DSN the console is allowed to carry, pinned by the hash
+ * of its value rather than by the value: this file holds the digest, so the DSN
+ * itself still appears in exactly one file, and a *different* DSN that satisfies
+ * every shape check above -- right scheme, 32 hex characters, an EU host, a
+ * numeric project id -- is still refused here. That is the gap the shape checks
+ * leave: they say "a DSN and the right region", not "the project the owner
+ * created for this console", and a report sent to somebody else's project is
+ * lost with no error anywhere.
+ */
+const DSN_SHA256 = 'e2fed8dff2515876e406f528769bfbb7350a0149763e3986505e79b82a065294'
+
+/** DSN_SCANNED_EXTENSIONS are the kinds of file under `console/src/` a DSN-shaped
+ * literal could hide in. `.ts` is where a constant would go; `.html` and `.css`
+ * are the renderer's documents and stylesheets, which are shipped as they are and
+ * are read by anyone who opens the bundle; `.json` is a data file, which no
+ * glob's shape check would catch because it is not a module. Everything else
+ * under `src/` is a font, a licence text or a README, and none of them is a place
+ * an endpoint is configured. */
+const DSN_SCANNED_EXTENSIONS = ['.ts', '.html', '.css', '.json'] as const
+
+/** dsnFindings is every line of `text` that carries a DSN, as `line: a DSN`. It
+ * reports the position and never the value: a finding is a thing to go and look
+ * at, not a second copy of the string this scan exists to keep to one place. */
+function dsnFindings(text: string): string[] {
+  const out: string[] = []
+  for (const [index, line] of text.split('\n').entries()) {
+    if (DSN_SHAPE.test(line)) out.push(`${String(index + 1)}: a DSN`)
+  }
+  return out
+}
+
+/** dsnPlaceholder is a DSN's shape assembled at run time, for the planted-line
+ * check below -- the same helper the wiring's own test uses, and local for the
+ * same reason `inert` is. */
+function dsnPlaceholder(): string {
+  return inert('https', '://', 'a'.repeat(32), '@', 'example', '.invalid', '/', '1')
+}
+
+/** crashDsnValue is the one DSN, read out of the one file that holds it. It
+ * throws rather than answering undefined, because every check that uses it would
+ * otherwise pass by reading nothing; and it hands the value to a test rather than
+ * to the console, so this file still carries no DSN of its own. */
+function crashDsnValue(): string {
+  const source = readFileSync(join(ROOT, 'src/main/crash-dsn.ts'), 'utf8')
+  const value = /CONSOLE_CRASH_DSN\s*=\s*\n?\s*'([^']+)'/.exec(source)?.[1]
+  if (value === undefined) {
+    throw new Error('crash-dsn.ts no longer exports a single-quoted constant: the checks below would read nothing')
+  }
+  return value
+}
 
 /** SCANNED are the directories and files this rule covers: everything a reader
  * of this repository could copy a shape out of. `node_modules`, `dist` and the
@@ -236,5 +318,76 @@ describe('no line of this repository carries a secret-shaped string', () => {
     // `SCANNED` entry that stopped existing fails here rather than quietly.
     expect(scanned.length).toBeGreaterThan(20)
     expect(found).toEqual([])
+  })
+})
+
+describe('the console\'s DSN is one public constant in one file, and the only one', () => {
+  it('finds a DSN in a planted line, so the scans below can fail', () => {
+    // Checked against the thing it is supposed to catch, like the two scans
+    // above: the planted value is assembled here, so this file does not carry
+    // the shape it looks for either.
+    expect(dsnFindings(`export const CONSOLE_CRASH_DSN = '${dsnPlaceholder()}'`)).toEqual(['1: a DSN'])
+    // ...and the shapes that are not a DSN, so the scan is about a DSN rather
+    // than about any URL: the console names its own site and its own repository
+    // in the plainest way and neither is a reporting endpoint.
+    expect(dsnFindings('const site = "https://fugaro.dev"')).toEqual([])
+    expect(dsnFindings('const docs = "https://github.com/dimipaun/fugaro"')).toEqual([])
+  })
+
+  it('holds the DSN in exactly one file under `console/src/`, as exactly one literal', () => {
+    // The owner's ruling of 2026-10-31 gives the console a DSN it may carry in
+    // its own source, and this is the price of it: one file, named in
+    // `DSN_ALLOWED` above with the reason, and one literal inside it. A walk
+    // rather than a list, because the failure this guards against is a *second*
+    // place -- a copy into another module, a value moved into a shared constants
+    // file, a second one added "for the tests" -- and over every extension a
+    // second place could take rather than over `.ts` alone, because the renderer's
+    // documents and stylesheets and the data files under `src/` ship verbatim and
+    // a DSN in one of them would never be compiled, imported or type-checked.
+    const found: string[] = []
+    const carriers: string[] = []
+    const scanned: string[] = []
+    for (const file of filesUnder(join(ROOT, 'src'))) {
+      if (!DSN_SCANNED_EXTENSIONS.some((extension) => file.endsWith(extension))) continue
+      scanned.push(file)
+      for (const hit of dsnFindings(readFileSync(file, 'utf8'))) {
+        carriers.push(relative(ROOT, file))
+        found.push(`${relative(ROOT, file)}:${hit}`)
+      }
+    }
+    expect(scanned.length).toBeGreaterThan(20)
+    const allowed = DSN_ALLOWED.map((entry) => entry.path)
+    expect(
+      carriers.toSorted(),
+      `a DSN-shaped literal is in ${JSON.stringify(carriers)}; the allow-list is ${JSON.stringify(allowed)}, and it names files rather than directories or patterns`,
+    ).toEqual([...allowed].toSorted())
+    // One literal, not merely one file: a second value in the same file would
+    // be a second endpoint nobody meant to add.
+    expect(found, `the DSN-shaped literals are ${JSON.stringify(found)}`).toHaveLength(1)
+  })
+
+  it('reaches the EU region, and says so by its host', () => {
+    // The ruling names the EU region, and `ingest.de.sentry.io` is where that
+    // shows: a DSN copied from the console's US project would report to the
+    // wrong region and read no differently here.
+    const url = new URL(crashDsnValue())
+    expect(
+      url.hostname.endsWith('.ingest.de.sentry.io'),
+      `the DSN's host is ${url.hostname}, which is not the EU region`,
+    ).toBe(true)
+    // The two parts that make it a *project's* endpoint rather than any other
+    // URL with a key in it, so a placeholder or a swapped value fails here.
+    expect(url.username).toMatch(/^[0-9a-f]{32}$/)
+    expect(url.pathname).toMatch(/^\/[0-9]+$/)
+  })
+
+  it('is the exact DSN the owner created, and not another one that fits the shape', () => {
+    // The shape checks above are a region and a grammar, and a different project
+    // in the same region satisfies both: it would compile, type-check, pass every
+    // scan here and send this console's reports to somebody else's project, where
+    // nobody reads them and nothing says so. So the value is pinned by its digest
+    // rather than by its shape, and the digest lives here rather than the value,
+    // which keeps the DSN to the one file that holds it.
+    expect(createHash('sha256').update(crashDsnValue(), 'utf8').digest('hex')).toBe(DSN_SHA256)
   })
 })

@@ -1,0 +1,6 @@
+{
+  "name": "fugaro-console-crash-init-fixture",
+  "private": true,
+  "description": "The app `test/e2e/crash-init.spec.ts` launches: an Electron main process that drives the console's real crash wiring against the spec's loopback sink. It is an Electron app directory rather than a module so the SDK runs where it runs for real, and it is never packaged or published.",
+  "main": "main.cjs"
+}

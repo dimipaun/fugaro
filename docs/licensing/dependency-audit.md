@@ -10,6 +10,15 @@ left for counsel.
 Written 2026-10-27, against `console/package-lock.json` and `mobile/package-lock.json` as they stand
 at that date. Both are `lockfileVersion` 3.
 
+**The console's half was revised 2026-10-31**, for the crash reporter's dependency (desktop-console
+plan Task 2.1b, D733): `@sentry/electron` 8.2.0 and its tree, and with it the console's second
+runtime dependency. **Its shipped set was revised again the same day**, by Task 2.1b's fix round A:
+`@sentry/bundler-plugins` and everything only that subpath reaches are excluded by name in
+`build.files`, because nothing in them loads at run time, so the tree this revision counted as
+shipped is smaller than it says below. The licence table is still the whole lockfile, which is what
+it was always about, and the console's counts are read off the lockfile of that date. The mobile app's counts are still the 2026-10-27 ones and have drifted since — nothing in this
+revision looked at `mobile/`.
+
 ## Method
 
 Every number below was read out of the two lockfiles on disk. Nothing was installed, no registry was
@@ -27,23 +36,23 @@ The two things this method cannot see, stated rather than left implied:
   suspected of that; it is a limit of the method.
 - **A lockfile says who is installed, not what ships.** The `dev` flag means "no production
   dependency path needs this", and that is not the same question as "is this in the artifact". The
-  console's lockfile marks every one of its 367 packages `dev` (the console has no `dependencies`
-  block at all: electron-builder packs a build output, not `node_modules`), and `elkjs` — `dev` —
-  is the one whose file ends up in the asar. Where the distinction matters below, it is called out.
+  console's lockfile marks 349 of its 414 packages `dev` — tooling, the test runners, the packer —
+  and `elkjs` is one of those `dev` packages whose file nevertheless ends up in the asar. Where the
+  distinction matters below, it is called out.
 
 ## The console, `console/`
 
-367 packages, 8 of them direct, all 8 in `devDependencies`:
+414 packages, 10 of them direct, 8 in `devDependencies` and 2 in `dependencies`:
 
 | Licence | Packages |
 | --- | ---: |
-| MIT | 256 |
-| ISC | 36 |
-| Apache-2.0 | 32 |
+| MIT | 295 |
+| ISC | 37 |
+| Apache-2.0 | 34 |
 | MPL-2.0 | 12 |
+| BlueOak-1.0.0 | 11 |
 | BSD-3-Clause | 10 |
-| BlueOak-1.0.0 | 8 |
-| BSD-2-Clause | 6 |
+| BSD-2-Clause | 7 |
 | `WTFPL OR ISC` | 1 |
 | `WTFPL OR MIT` | 1 |
 | WTFPL | 1 |
@@ -51,15 +60,68 @@ The two things this method cannot see, stated rather than left implied:
 | 0BSD | 1 |
 | Python-2.0 | 1 |
 | EPL-2.0 | 1 |
+| FSL-1.1-Apache-2.0 | 1 |
 | **no licence declared** | **0** |
 
 What ships. `package.json`'s `build.files` packs an explicit list out of `dist/` plus `LICENSE.md`
 and `THIRD_PARTY_NOTICES.md`; nothing else under `console/` reaches the package, and
 `console/test/unit/build-files.test.ts` reads the requirement off the tree rather than restating it.
-The console's own code imports only `node:` builtins, `electron` and `@electron/fuses`, and the
-`@electron/fuses` import lives in `dist/main/fuses.js`, which `build.files` excludes by name. So the
-asar holds the console's own compiled output, one copied third-party file
-(`dist/bundle/elk-worker.min.js`), and the Electron runtime that electron-builder puts around it.
+electron-builder also packs the production `node_modules` subtree, which is what the two runtime
+dependencies below are for: the console's own code imports only `node:` builtins, `electron`,
+`@electron/fuses`, `electron-updater` and `@sentry/electron`, and only the last two are declared
+runtime dependencies, each reached from exactly one file under `src/main/`.
+`@electron/fuses`'s import lives in `dist/main/fuses.js`, which `build.files` excludes by name. So
+the asar holds the console's own compiled output, one copied third-party file
+(`dist/bundle/elk-worker.min.js`), the two runtime dependencies with their trees, and the Electron
+runtime that electron-builder puts around it.
+
+**The two runtime dependencies, and why each is there.**
+
+| Package | Version | Declared | Reached from | Why |
+| --- | --- | --- | --- | --- |
+| `electron-updater` | 6.8.10 | MIT | `src/main/updater-electron.ts` | The update client the console ships update checks and installs through (Task 4.4) |
+| `@sentry/electron` | 8.2.0 | MIT | `src/main/crash-electron.ts` | The crash reporter the owner approved in D733, wired behind a per-user switch that is off by default (Task 2.1b) |
+
+Neither is copyleft, and neither is in the table below. What both bring in is a tree of their own,
+packed beside them and reproduced section by section in `console/THIRD_PARTY_NOTICES.md` — sixteen
+packages for the update client, fourteen for the crash reporter, and `has-flag` 4.0.0, which reaches
+the lockfile through the crash reporter's bundler subpath but is loaded at run time by the update
+client's own `debug`. Every version in those sections is the one the lockfile pins, and since
+Task 2.1b's fix round A the file is no longer read off a machine: `console/test/unit/notices.test.ts`
+derives the shipped set from `package-lock.json` for each of the three targets the console is built
+for — darwin arm64 and x64 in the universal bundle, and linux x64 — and compares it with the file's
+sections in both directions, so a section cannot outlive the package it describes and a package that
+ships cannot lose its section.
+
+**And two of those packages carry other projects' code inside them.** `@sentry/server-utils` and
+`@sentry/server-runtime-injection` — two of the crash reporter's fourteen — each ship a `vendored/`
+directory under `build/cjs/` and `build/esm/` holding thirteen other projects' sources in all: the
+`@apm-js-collab` transformer and its bundler plugins and tracing hooks, `astring`, `debug`,
+`esquery`, `has-flag`, `meriyah`, `module-details-from-path`, `ms`, `semifies`, `source-map` and
+`supports-color`. Those are not packages of the archive, so they have no section of their own: the
+notices file's last section lists them with the versions and licences their packages' own
+`build/THIRD-PARTY-LICENSES.txt` — which both package and pack — states, and reproduces their
+licence texts. All open source; the one thing that has no text anywhere is
+`@apm-js-collab/code-transformer-bundler-plugins`, whose shipped entry declares MIT and carries no
+licence body, which the notices file records and which is with counsel. A third package,
+`@sentry/node` itself, carries three vendored files under `build/*/integrations/fs/vendored/`,
+and it attributes them a different way: the built files carry no banner and the package ships no
+`THIRD-PARTY-LICENSES.txt`, but the `sourcesContent` of the `.js.map` files beside them opens with
+the vendored source's own header, which names `@opentelemetry/instrumentation-fs@0.37.0`, the
+OpenTelemetry Authors and Apache-2.0, vendored from `opentelemetry-js-contrib@15ef750`. The
+notices file states that and points at the Apache-2.0 text it already reproduces.
+
+**One licence in the console's tree is not open source, and it is not in the package.** `sentry`
+0.45.0 — declared `FSL-1.1-Apache-2.0`, the Functional Source License 1.1 with a two-year conversion
+to Apache-2.0 — arrives with `@sentry/bundler-plugins` 11.7.0, which `@sentry/node` depends on and
+which the console neither calls nor configures: nothing in `console/src/` bundles anything with
+Sentry's build plugins. It was installed *and packed* until Task 2.1b's fix round A, which excludes
+that subpath's whole tree by name in `build.files` (nothing in the tree loads at run time, which the
+round's probe shows), so no distributed artifact carries it and `THIRD_PARTY_NOTICES.md` no longer
+reproduces its text. The fact stays recorded here because it is the one licence in the console's
+lockfile that restricts what a licensee may do rather than only what they must reproduce:
+`copyleftPattern` in `internal/eeboundary/licence_test.go` does not match it — FSL is not a copyleft
+family — so the rule passes and this paragraph is what records it.
 
 **Copyleft, and what each obliges.**
 
@@ -82,6 +144,21 @@ console's own `.css`, so its source is not in the artifact and MPL-2.0's obligat
 package is not shipped and no file of it is copied.
 
 **No package in the console's lockfile declares no licence.**
+
+**Five moderate advisories at the lockfile level, and none of them in the shipped set.** `npm audit
+--omit=dev` on 2026-10-31 answers five moderate, no high and no critical, over five entries and two
+underlying advisories: `minimatch`'s globparts amplification (a denial of service) and `glob`'s
+`AbortSignal` cancellation bypass (a post-timeout filesystem traversal, reported against `glob`
+*through* `minimatch`). The other three entries are the propagation path rather than a second
+problem — `@sentry/bundler-plugins`, which depends on them, and `@sentry/node` and
+`@sentry/electron`, which depend on it. Neither advisory is in the artifact: `glob`, `minimatch` and
+`@sentry/bundler-plugins` are all excluded by name in `build.files` (Task 2.1b's fix round A), so no
+distributed file carries the code either advisory is about. The two entries that do ship,
+`@sentry/node` and `@sentry/electron`, carry no advisory of their own — npm reports them because a
+dependency below them does — and the console calls neither build-plugin subpath. This paragraph is
+the read of that command on that date, not a standing claim: `npm audit` is a query against the
+registry's advisory database, and a package that gains an advisory later arrives here as a new
+paragraph rather than as a change to this one.
 
 ## The mobile app, `mobile/`
 
@@ -134,11 +211,14 @@ and the licence text verbatim.
 
 It is stale in three ways, none of them about `elkjs`:
 
-1. **"The Fugaro console ships one file that is not ours" is false of the artifact.** The packaged
-   app is an Electron app: `electron` 45.0.0 is pinned in `devDependencies` and in the
+1. **The artifact is an Electron app, and Electron's own notices are not in this file.** The
+   packaging is an Electron one: `electron` 45.0.0 is pinned in `devDependencies` and in the
    `electronDownload.checksums` block, and electron-builder wraps the asar in Electron's own runtime —
-   Chromium, Node and their third-party notices. Those are not in this file, and the sentence that
-   says only one file is not the console's invites a reader to stop looking. Electron's own notice
+   Chromium, Node and their third-party notices. The file's opening paragraph counts what the console
+   ships *beside* that runtime and cannot count what the runtime itself carries, so a reader who
+   stops there stops one layer short. (It said "one file that is not ours" until Task 4.4, which is
+   also when this item stopped being a quotation from it and became a statement about the artifact.)
+   Electron's own notice
    obligations are met by Electron's own distribution (its `LICENSE` and `LICENSES.chromium.html`
    travel with the runtime), but a reader of *this* file cannot tell that.
 2. **The file carries no copyright or attribution line for `elkjs`.** The EPL-2.0 text copied into it
@@ -223,6 +303,16 @@ Collected, so nothing here is buried in the prose above:
 - **Whether `mobile/` needs a `THIRD_PARTY_NOTICES.md`** before its first store submission, and what
   it has to carry for `expo`, React Native and React.
 - **The six app-store questions above**, against the licence's clauses 1.1 and 4.1.
+- **The Functional Source License in the console's dependency tree.** `sentry` 0.45.0
+  (`FSL-1.1-Apache-2.0`), through `@sentry/bundler-plugins`, is source-available rather than open
+  source: its terms restrict competing use until the licence converts to Apache-2.0 two years after
+  each release. Nothing in `console/src/` calls it, and `internal/eeboundary/licence_test.go`'s
+  copyleft rule does not match the identifier. Task 2.1b's fix round A took it out of what ships —
+  `build.files` excludes the bundler subpath's whole tree, so no distributed artifact carries it —
+  but it stays installed and in the lockfile as a dependency of `@sentry/node`, so whether a
+  FSL-1.1 package may sit in the build at all, and whether the crash reporter's dependency is
+  acceptable with it in the tree, is still counsel's call. Task 2.1b records it rather than deciding
+  it.
 - **Whether `node-forge`'s `(BSD-3-Clause OR GPL-2.0)` is read the way this audit reads it.** The
   audit takes BSD-3-Clause and records that in `copyleftAllowed`; if counsel reads the expression
   differently the allow-list entry is wrong and the dependency is a decision rather than a note.
@@ -243,3 +333,11 @@ Collected, so nothing here is buried in the prose above:
 `console/test/unit/lockfile.test.ts` and the console's `pinning.test.ts` enforce different, already
 existing things about `console/package-lock.json` (pinned versions, the lockfile's own shape); they
 say nothing about licences, and this audit does not change them.
+
+`console/test/unit/notices.test.ts` does, from this revision on: it derives the set of packages the
+packed console carries for each of its three targets out of the lockfile, `package.json`'s
+`dependencies` and `build.files`'s exclusions, and holds `THIRD_PARTY_NOTICES.md` to it in both
+directions — a package that ships with no section fails, and so does a section for a package that
+does not ship. That is the machine half of this document's "a lockfile says who is installed, not
+what ships" caveat: the audit still reasons about licences, and the test is what keeps the file in
+step with the artifact.
