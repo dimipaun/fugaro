@@ -115,9 +115,12 @@ type factsDriver struct {
 	objects       map[string][]byte
 	sizes         map[string]int64
 	fail          map[string]error
-	hold          time.Duration
+	wait          time.Duration // how long the driver's first read holds the bucket open
 	open          int
 	peak          int
+	held          bool          // the first read has already waited once
+	overlap       chan struct{} // closed the first time two reads are in flight at once
+	overlapOnce   sync.Once
 }
 
 // errNoSuchObject is the driver's missing object. ErrorCode reports it as
@@ -126,7 +129,10 @@ type factsDriver struct {
 var errNoSuchObject = errors.New("no such object")
 
 func newFactsDriver() *factsDriver {
-	return &factsDriver{objects: map[string][]byte{}, sizes: map[string]int64{}, fail: map[string]error{}}
+	return &factsDriver{
+		objects: map[string][]byte{}, sizes: map[string]int64{}, fail: map[string]error{},
+		overlap: make(chan struct{}),
+	}
 }
 
 func (d *factsDriver) ErrorCode(err error) gcerrors.ErrorCode {
@@ -196,9 +202,23 @@ func (d *factsDriver) NewRangeReader(_ context.Context, key string, offset, leng
 	if d.open > d.peak {
 		d.peak = d.open
 	}
+	colleague := d.open > 1
+	waitHere := !d.held && !colleague
+	d.held = true
 	d.mu.Unlock()
-	if d.hold > 0 {
-		time.Sleep(d.hold)
+	switch {
+	case colleague:
+		d.overlapOnce.Do(func() { close(d.overlap) })
+	case waitHere && d.wait > 0:
+		// The first read holds the bucket open until a colleague joins it,
+		// rather than for a fixed moment: what is being measured is the width
+		// of the pass, and a loaded machine may take a while to put a second
+		// read on the CPU. A pass that reads one at a time has no colleague to
+		// wait for and gives up at the bound.
+		select {
+		case <-d.overlap:
+		case <-time.After(d.wait):
+		}
 	}
 	d.mu.Lock()
 	d.open--
@@ -367,7 +387,11 @@ func TestFactsParallelEqualsSequential(t *testing.T) {
 		}
 	}
 	plain, d := factsBuckets(t, runs)
-	d.hold = 2 * time.Millisecond
+	// The declared width is a bound and not a sleep: the driver's first read
+	// waits this long for a second one to join it, so the assertion below
+	// measures the pass's width rather than the scheduler's promptness. Only
+	// the reference pass pays it, which is the pass that has no colleague.
+	d.wait = time.Second
 	from, to := day-1, day+1
 
 	var seqWarns []string
