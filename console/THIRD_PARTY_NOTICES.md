@@ -4,15 +4,26 @@
 
 The Fugaro console ships files that are not ours: the elkjs layout worker; the seven font files of
 Instrument Sans and IBM Plex Mono, both under the SIL Open Font License 1.1 (their versions and
-digests are `src/renderer/fonts/README.md`); and the update client the main process runs,
-`electron-updater` 6.8.10, with the fifteen packages of its tree. Every licence text is in this
-file, one section each: elkjs's first, then the two fonts', then the update client's and its
-tree's.
+digests are `src/renderer/fonts/README.md`); and the two runtime dependencies the main process
+runs, `electron-updater` 6.8.10 with the fifteen packages of its tree, and `@sentry/electron`
+8.2.0 with the thirty-one packages of its. Every licence text is in this file, one section each:
+elkjs's first, then the two fonts', then the update client's and its tree's, then the crash
+reporter's and its tree's.
 
-The update client is the console's one runtime dependency (design section 7.4), packed into the
-asar's `node_modules` because `dist/main/updater-electron.js` requires it at run time, and the
-fifteen packages of its tree are packed beside it. Their sections are the last sixteen in this file,
-and every version in them is the one `package-lock.json` pins.
+Both runtime dependencies are packed into the asar's `node_modules` because the main process
+requires them at run time -- `dist/main/updater-electron.js` for the update client, and
+`dist/main/crash-electron.js` for the crash reporter, which is the one file in the console that
+imports it (design sections 7.4 and 8.2) -- and the packages of their trees are packed beside
+them. Their sections are the last forty-seven in this file, and every version in them is the one
+`package-lock.json` pins.
+
+One name in the crash reporter's tree is worth reading twice rather than skimming: `sentry` 0.45.0,
+a package of `@sentry/bundler-plugins` 11.7.0, is under the **Functional Source License 1.1** --
+a source-available licence rather than an open-source one, and the only licence in this file that
+restricts what a licensee may do with the code rather than only what they must reproduce. It
+reaches the tree through `@sentry/node`'s bundler plugins, which the console does not use: the
+console bundles nothing with Sentry's plugins, and this file carries the text because the package
+is installed and packed, not because anything here calls it.
 
 The elkjs worker is `dist/bundle/elk-worker.min.js`, the layout worker of **elkjs 0.11.0**, copied
 verbatim by `npm run build` from `node_modules/elkjs/lib/elk-worker.min.js`.
@@ -1306,3 +1317,1624 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## @sentry/electron 8.2.0 -- MIT License
+
+The crash reporter the console's main process starts behind a per-user switch that is off by default
+(design sections 7.4 and 8.2; D733, D734), and one of the two runtime dependencies `package.json`
+declares. It is packed into the asar's `node_modules` because
+`dist/main/crash-electron.js` requires it at run time -- the one file in the console that imports
+it -- and the thirty packages of its tree are packed beside it.
+
+Its source is the `@sentry/electron@8.2.0` package from the npm registry
+(https://registry.npmjs.org/@sentry/electron/-/electron-8.2.0.tgz), whose repository is
+https://github.com/getsentry/sentry-electron.git.
+
+The licence text below is copied verbatim from that package's `LICENSE`.
+
+```text
+MIT License
+
+Copyright (c) 2018 Functional Software, Inc. dba Sentry
+Copyright (c) 2017 Tim Fish
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## @sentry/browser 11.7.0 -- MIT License
+
+One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+and packed beside it.
+
+Its source is the `@sentry/browser@11.7.0` package from the npm registry
+(https://registry.npmjs.org/@sentry/browser/-/browser-11.7.0.tgz), whose repository is
+https://github.com/getsentry/sentry-javascript.git.
+
+The licence text below is copied verbatim from that package's `LICENSE`.
+
+```text
+MIT License
+
+Copyright (c) 2019 Functional Software, Inc. dba Sentry
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## @sentry/browser-utils 11.7.0 -- MIT License
+
+One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+and packed beside it.
+
+Its source is the `@sentry/browser-utils@11.7.0` package from the npm registry
+(https://registry.npmjs.org/@sentry/browser-utils/-/browser-utils-11.7.0.tgz), whose repository is
+https://github.com/getsentry/sentry-javascript.git.
+
+The licence text below is copied verbatim from that package's `LICENSE`.
+
+```text
+MIT License
+
+Copyright (c) 2020 Functional Software, Inc. dba Sentry
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## web-vitals 6.2.3 -- Apache License 2.0
+
+One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+and packed beside it.
+
+Its source is the `web-vitals@6.2.3` package from the npm registry
+(https://registry.npmjs.org/web-vitals/-/web-vitals-6.2.3.tgz), whose repository is
+https://github.com/GoogleChrome/web-vitals.git.
+
+The licence text below is copied verbatim from that package's `LICENSE`.
+
+```text
+
+                                 Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+
+   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+   1. Definitions.
+
+      "License" shall mean the terms and conditions for use, reproduction,
+      and distribution as defined by Sections 1 through 9 of this document.
+
+      "Licensor" shall mean the copyright owner or entity authorized by
+      the copyright owner that is granting the License.
+
+      "Legal Entity" shall mean the union of the acting entity and all
+      other entities that control, are controlled by, or are under common
+      control with that entity. For the purposes of this definition,
+      "control" means (i) the power, direct or indirect, to cause the
+      direction or management of such entity, whether by contract or
+      otherwise, or (ii) ownership of fifty percent (50%) or more of the
+      outstanding shares, or (iii) beneficial ownership of such entity.
+
+      "You" (or "Your") shall mean an individual or Legal Entity
+      exercising permissions granted by this License.
+
+      "Source" form shall mean the preferred form for making modifications,
+      including but not limited to software source code, documentation
+      source, and configuration files.
+
+      "Object" form shall mean any form resulting from mechanical
+      transformation or translation of a Source form, including but
+      not limited to compiled object code, generated documentation,
+      and conversions to other media types.
+
+      "Work" shall mean the work of authorship, whether in Source or
+      Object form, made available under the License, as indicated by a
+      copyright notice that is included in or attached to the work
+      (an example is provided in the Appendix below).
+
+      "Derivative Works" shall mean any work, whether in Source or Object
+      form, that is based on (or derived from) the Work and for which the
+      editorial revisions, annotations, elaborations, or other modifications
+      represent, as a whole, an original work of authorship. For the purposes
+      of this License, Derivative Works shall not include works that remain
+      separable from, or merely link (or bind by name) to the interfaces of,
+      the Work and Derivative Works thereof.
+
+      "Contribution" shall mean any work of authorship, including
+      the original version of the Work and any modifications or additions
+      to that Work or Derivative Works thereof, that is intentionally
+      submitted to Licensor for inclusion in the Work by the copyright owner
+      or by an individual or Legal Entity authorized to submit on behalf of
+      the copyright owner. For the purposes of this definition, "submitted"
+      means any form of electronic, verbal, or written communication sent
+      to the Licensor or its representatives, including but not limited to
+      communication on electronic mailing lists, source code control systems,
+      and issue tracking systems that are managed by, or on behalf of, the
+      Licensor for the purpose of discussing and improving the Work, but
+      excluding communication that is conspicuously marked or otherwise
+      designated in writing by the copyright owner as "Not a Contribution."
+
+      "Contributor" shall mean Licensor and any individual or Legal Entity
+      on behalf of whom a Contribution has been received by Licensor and
+      subsequently incorporated within the Work.
+
+   2. Grant of Copyright License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      copyright license to reproduce, prepare Derivative Works of,
+      publicly display, publicly perform, sublicense, and distribute the
+      Work and such Derivative Works in Source or Object form.
+
+   3. Grant of Patent License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      (except as stated in this section) patent license to make, have made,
+      use, offer to sell, sell, import, and otherwise transfer the Work,
+      where such license applies only to those patent claims licensable
+      by such Contributor that are necessarily infringed by their
+      Contribution(s) alone or by combination of their Contribution(s)
+      with the Work to which such Contribution(s) was submitted. If You
+      institute patent litigation against any entity (including a
+      cross-claim or counterclaim in a lawsuit) alleging that the Work
+      or a Contribution incorporated within the Work constitutes direct
+      or contributory patent infringement, then any patent licenses
+      granted to You under this License for that Work shall terminate
+      as of the date such litigation is filed.
+
+   4. Redistribution. You may reproduce and distribute copies of the
+      Work or Derivative Works thereof in any medium, with or without
+      modifications, and in Source or Object form, provided that You
+      meet the following conditions:
+
+      (a) You must give any other recipients of the Work or
+          Derivative Works a copy of this License; and
+
+      (b) You must cause any modified files to carry prominent notices
+          stating that You changed the files; and
+
+      (c) You must retain, in the Source form of any Derivative Works
+          that You distribute, all copyright, patent, trademark, and
+          attribution notices from the Source form of the Work,
+          excluding those notices that do not pertain to any part of
+          the Derivative Works; and
+
+      (d) If the Work includes a "NOTICE" text file as part of its
+          distribution, then any Derivative Works that You distribute must
+          include a readable copy of the attribution notices contained
+          within such NOTICE file, excluding those notices that do not
+          pertain to any part of the Derivative Works, in at least one
+          of the following places: within a NOTICE text file distributed
+          as part of the Derivative Works; within the Source form or
+          documentation, if provided along with the Derivative Works; or,
+          within a display generated by the Derivative Works, if and
+          wherever such third-party notices normally appear. The contents
+          of the NOTICE file are for informational purposes only and
+          do not modify the License. You may add Your own attribution
+          notices within Derivative Works that You distribute, alongside
+          or as an addendum to the NOTICE text from the Work, provided
+          that such additional attribution notices cannot be construed
+          as modifying the License.
+
+      You may add Your own copyright statement to Your modifications and
+      may provide additional or different license terms and conditions
+      for use, reproduction, or distribution of Your modifications, or
+      for any such Derivative Works as a whole, provided Your use,
+      reproduction, and distribution of the Work otherwise complies with
+      the conditions stated in this License.
+
+   5. Submission of Contributions. Unless You explicitly state otherwise,
+      any Contribution intentionally submitted for inclusion in the Work
+      by You to the Licensor shall be under the terms and conditions of
+      this License, without any additional terms or conditions.
+      Notwithstanding the above, nothing herein shall supersede or modify
+      the terms of any separate license agreement you may have executed
+      with Licensor regarding such Contributions.
+
+   6. Trademarks. This License does not grant permission to use the trade
+      names, trademarks, service marks, or product names of the Licensor,
+      except as required for reasonable and customary use in describing the
+      origin of the Work and reproducing the content of the NOTICE file.
+
+   7. Disclaimer of Warranty. Unless required by applicable law or
+      agreed to in writing, Licensor provides the Work (and each
+      Contributor provides its Contributions) on an "AS IS" BASIS,
+      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+      implied, including, without limitation, any warranties or conditions
+      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+      PARTICULAR PURPOSE. You are solely responsible for determining the
+      appropriateness of using or redistributing the Work and assume any
+      risks associated with Your exercise of permissions under this License.
+
+   8. Limitation of Liability. In no event and under no legal theory,
+      whether in tort (including negligence), contract, or otherwise,
+      unless required by applicable law (such as deliberate and grossly
+      negligent acts) or agreed to in writing, shall any Contributor be
+      liable to You for damages, including any direct, indirect, special,
+      incidental, or consequential damages of any character arising as a
+      result of this License or out of the use or inability to use the
+      Work (including but not limited to damages for loss of goodwill,
+      work stoppage, computer failure or malfunction, or any and all
+      other commercial damages or losses), even if such Contributor
+      has been advised of the possibility of such damages.
+
+   9. Accepting Warranty or Additional Liability. While redistributing
+      the Work or Derivative Works thereof, You may choose to offer,
+      and charge a fee for, acceptance of support, warranty, indemnity,
+      or other liability obligations and/or rights consistent with this
+      License. However, in accepting such obligations, You may act only
+      on Your own behalf and on Your sole responsibility, not on behalf
+      of any other Contributor, and only if You agree to indemnify,
+      defend, and hold each Contributor harmless for any liability
+      incurred by, or claims asserted against, such Contributor by reason
+      of your accepting any such warranty or additional liability.
+
+   END OF TERMS AND CONDITIONS
+
+   APPENDIX: How to apply the Apache License to your work.
+
+      To apply the Apache License to your work, attach the following
+      boilerplate notice, with the fields enclosed by brackets "[]"
+      replaced with your own identifying information. (Don't include
+      the brackets!)  The text should be enclosed in the appropriate
+      comment syntax for the file format. We also recommend that a
+      file or class name and description of purpose be included on the
+      same "printed page" as the copyright notice for easier
+      identification within third-party archives.
+
+   Copyright 2020 Google LLC
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       https://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+```
+
+## @sentry/feedback 11.7.0 -- MIT License
+
+One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+and packed beside it.
+
+Its source is the `@sentry/feedback@11.7.0` package from the npm registry
+(https://registry.npmjs.org/@sentry/feedback/-/feedback-11.7.0.tgz), whose repository is
+https://github.com/getsentry/sentry-javascript.git.
+
+The licence text below is copied verbatim from that package's `LICENSE`.
+
+```text
+MIT License
+
+Copyright (c) 2023 Functional Software, Inc. dba Sentry
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## @sentry/replay-canvas 11.7.0 -- MIT License
+
+One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+and packed beside it.
+
+Its source is the `@sentry/replay-canvas@11.7.0` package from the npm registry
+(https://registry.npmjs.org/@sentry/replay-canvas/-/replay-canvas-11.7.0.tgz), whose repository is
+https://github.com/getsentry/sentry-javascript.git.
+
+The licence text below is copied verbatim from that package's `LICENSE`.
+
+```text
+MIT License
+
+Copyright (c) 2024 Functional Software, Inc. dba Sentry
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## @sentry/replay 11.7.0 -- MIT License
+
+One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+and packed beside it.
+
+Its source is the `@sentry/replay@11.7.0` package from the npm registry
+(https://registry.npmjs.org/@sentry/replay/-/replay-11.7.0.tgz), whose repository is
+https://github.com/getsentry/sentry-javascript.git.
+
+The licence text below is copied verbatim from that package's `LICENSE`.
+
+```text
+MIT License
+
+Copyright (c) 2022 Functional Software, Inc. dba Sentry
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## @sentry/conventions 0.27.0 -- MIT License
+
+One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+and packed beside it.
+
+Its source is the `@sentry/conventions@0.27.0` package from the npm registry
+(https://registry.npmjs.org/@sentry/conventions/-/conventions-0.27.0.tgz), whose repository is
+https://github.com/getsentry/sentry-conventions.git.
+
+The licence text below is copied verbatim from that package's `LICENSE`.
+
+```text
+MIT License
+
+Copyright (c) 2023-2025 Functional Software, Inc. dba Sentry
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## @sentry/core 11.7.0 -- MIT License
+
+One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+and packed beside it.
+
+Its source is the `@sentry/core@11.7.0` package from the npm registry
+(https://registry.npmjs.org/@sentry/core/-/core-11.7.0.tgz), whose repository is
+https://github.com/getsentry/sentry-javascript.git.
+
+The licence text below is copied verbatim from that package's `LICENSE`.
+
+```text
+MIT License
+
+Copyright (c) 2019 Functional Software, Inc. dba Sentry
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## @sentry/node 11.7.0 -- MIT License
+
+One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+and packed beside it.
+
+Its source is the `@sentry/node@11.7.0` package from the npm registry
+(https://registry.npmjs.org/@sentry/node/-/node-11.7.0.tgz), whose repository is
+https://github.com/getsentry/sentry-javascript.git.
+
+The licence text below is copied verbatim from that package's `LICENSE`.
+
+```text
+MIT License
+
+Copyright (c) 2023 Functional Software, Inc. dba Sentry
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## @opentelemetry/api 1.10.0 -- Apache License 2.0
+
+One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+and packed beside it.
+
+Its source is the `@opentelemetry/api@1.10.0` package from the npm registry
+(https://registry.npmjs.org/@opentelemetry/api/-/api-1.10.0.tgz), whose repository is
+open-telemetry/opentelemetry-js.
+
+The licence text below is copied verbatim from that package's `LICENSE`.
+
+```text
+                                 Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+
+   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+   1. Definitions.
+
+      "License" shall mean the terms and conditions for use, reproduction,
+      and distribution as defined by Sections 1 through 9 of this document.
+
+      "Licensor" shall mean the copyright owner or entity authorized by
+      the copyright owner that is granting the License.
+
+      "Legal Entity" shall mean the union of the acting entity and all
+      other entities that control, are controlled by, or are under common
+      control with that entity. For the purposes of this definition,
+      "control" means (i) the power, direct or indirect, to cause the
+      direction or management of such entity, whether by contract or
+      otherwise, or (ii) ownership of fifty percent (50%) or more of the
+      outstanding shares, or (iii) beneficial ownership of such entity.
+
+      "You" (or "Your") shall mean an individual or Legal Entity
+      exercising permissions granted by this License.
+
+      "Source" form shall mean the preferred form for making modifications,
+      including but not limited to software source code, documentation
+      source, and configuration files.
+
+      "Object" form shall mean any form resulting from mechanical
+      transformation or translation of a Source form, including but
+      not limited to compiled object code, generated documentation,
+      and conversions to other media types.
+
+      "Work" shall mean the work of authorship, whether in Source or
+      Object form, made available under the License, as indicated by a
+      copyright notice that is included in or attached to the work
+      (an example is provided in the Appendix below).
+
+      "Derivative Works" shall mean any work, whether in Source or Object
+      form, that is based on (or derived from) the Work and for which the
+      editorial revisions, annotations, elaborations, or other modifications
+      represent, as a whole, an original work of authorship. For the purposes
+      of this License, Derivative Works shall not include works that remain
+      separable from, or merely link (or bind by name) to the interfaces of,
+      the Work and Derivative Works thereof.
+
+      "Contribution" shall mean any work of authorship, including
+      the original version of the Work and any modifications or additions
+      to that Work or Derivative Works thereof, that is intentionally
+      submitted to Licensor for inclusion in the Work by the copyright owner
+      or by an individual or Legal Entity authorized to submit on behalf of
+      the copyright owner. For the purposes of this definition, "submitted"
+      means any form of electronic, verbal, or written communication sent
+      to the Licensor or its representatives, including but not limited to
+      communication on electronic mailing lists, source code control systems,
+      and issue tracking systems that are managed by, or on behalf of, the
+      Licensor for the purpose of discussing and improving the Work, but
+      excluding communication that is conspicuously marked or otherwise
+      designated in writing by the copyright owner as "Not a Contribution."
+
+      "Contributor" shall mean Licensor and any individual or Legal Entity
+      on behalf of whom a Contribution has been received by Licensor and
+      subsequently incorporated within the Work.
+
+   2. Grant of Copyright License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      copyright license to reproduce, prepare Derivative Works of,
+      publicly display, publicly perform, sublicense, and distribute the
+      Work and such Derivative Works in Source or Object form.
+
+   3. Grant of Patent License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      (except as stated in this section) patent license to make, have made,
+      use, offer to sell, sell, import, and otherwise transfer the Work,
+      where such license applies only to those patent claims licensable
+      by such Contributor that are necessarily infringed by their
+      Contribution(s) alone or by combination of their Contribution(s)
+      with the Work to which such Contribution(s) was submitted. If You
+      institute patent litigation against any entity (including a
+      cross-claim or counterclaim in a lawsuit) alleging that the Work
+      or a Contribution incorporated within the Work constitutes direct
+      or contributory patent infringement, then any patent licenses
+      granted to You under this License for that Work shall terminate
+      as of the date such litigation is filed.
+
+   4. Redistribution. You may reproduce and distribute copies of the
+      Work or Derivative Works thereof in any medium, with or without
+      modifications, and in Source or Object form, provided that You
+      meet the following conditions:
+
+      (a) You must give any other recipients of the Work or
+          Derivative Works a copy of this License; and
+
+      (b) You must cause any modified files to carry prominent notices
+          stating that You changed the files; and
+
+      (c) You must retain, in the Source form of any Derivative Works
+          that You distribute, all copyright, patent, trademark, and
+          attribution notices from the Source form of the Work,
+          excluding those notices that do not pertain to any part of
+          the Derivative Works; and
+
+      (d) If the Work includes a "NOTICE" text file as part of its
+          distribution, then any Derivative Works that You distribute must
+          include a readable copy of the attribution notices contained
+          within such NOTICE file, excluding those notices that do not
+          pertain to any part of the Derivative Works, in at least one
+          of the following places: within a NOTICE text file distributed
+          as part of the Derivative Works; within the Source form or
+          documentation, if provided along with the Derivative Works; or,
+          within a display generated by the Derivative Works, if and
+          wherever such third-party notices normally appear. The contents
+          of the NOTICE file are for informational purposes only and
+          do not modify the License. You may add Your own attribution
+          notices within Derivative Works that You distribute, alongside
+          or as an addendum to the NOTICE text from the Work, provided
+          that such additional attribution notices cannot be construed
+          as modifying the License.
+
+      You may add Your own copyright statement to Your modifications and
+      may provide additional or different license terms and conditions
+      for use, reproduction, or distribution of Your modifications, or
+      for any such Derivative Works as a whole, provided Your use,
+      reproduction, and distribution of the Work otherwise complies with
+      the conditions stated in this License.
+
+   5. Submission of Contributions. Unless You explicitly state otherwise,
+      any Contribution intentionally submitted for inclusion in the Work
+      by You to the Licensor shall be under the terms and conditions of
+      this License, without any additional terms or conditions.
+      Notwithstanding the above, nothing herein shall supersede or modify
+      the terms of any separate license agreement you may have executed
+      with Licensor regarding such Contributions.
+
+   6. Trademarks. This License does not grant permission to use the trade
+      names, trademarks, service marks, or product names of the Licensor,
+      except as required for reasonable and customary use in describing the
+      origin of the Work and reproducing the content of the NOTICE file.
+
+   7. Disclaimer of Warranty. Unless required by applicable law or
+      agreed to in writing, Licensor provides the Work (and each
+      Contributor provides its Contributions) on an "AS IS" BASIS,
+      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+      implied, including, without limitation, any warranties or conditions
+      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+      PARTICULAR PURPOSE. You are solely responsible for determining the
+      appropriateness of using or redistributing the Work and assume any
+      risks associated with Your exercise of permissions under this License.
+
+   8. Limitation of Liability. In no event and under no legal theory,
+      whether in tort (including negligence), contract, or otherwise,
+      unless required by applicable law (such as deliberate and grossly
+      negligent acts) or agreed to in writing, shall any Contributor be
+      liable to You for damages, including any direct, indirect, special,
+      incidental, or consequential damages of any character arising as a
+      result of this License or out of the use or inability to use the
+      Work (including but not limited to damages for loss of goodwill,
+      work stoppage, computer failure or malfunction, or any and all
+      other commercial damages or losses), even if such Contributor
+      has been advised of the possibility of such damages.
+
+   9. Accepting Warranty or Additional Liability. While redistributing
+      the Work or Derivative Works thereof, You may choose to offer,
+      and charge a fee for, acceptance of support, warranty, indemnity,
+      or other liability obligations and/or rights consistent with this
+      License. However, in accepting such obligations, You may act only
+      on Your own behalf and on Your sole responsibility, not on behalf
+      of any other Contributor, and only if You agree to indemnify,
+      defend, and hold each Contributor harmless for any liability
+      incurred by, or claims asserted against, such Contributor by reason
+      of your accepting any such warranty or additional liability.
+
+   END OF TERMS AND CONDITIONS
+
+   APPENDIX: How to apply the Apache License to your work.
+
+      To apply the Apache License to your work, attach the following
+      boilerplate notice, with the fields enclosed by brackets "[]"
+      replaced with your own identifying information. (Don't include
+      the brackets!)  The text should be enclosed in the appropriate
+      comment syntax for the file format. We also recommend that a
+      file or class name and description of purpose be included on the
+      same "printed page" as the copyright notice for easier
+      identification within third-party archives.
+
+   Copyright [yyyy] [name of copyright owner]
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+```
+
+## @sentry/bundler-plugins 11.7.0 -- MIT License
+
+One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+and packed beside it.
+
+Its source is the `@sentry/bundler-plugins@11.7.0` package from the npm registry
+(https://registry.npmjs.org/@sentry/bundler-plugins/-/bundler-plugins-11.7.0.tgz), whose repository is
+https://github.com/getsentry/sentry-javascript.git.
+
+The licence text below is copied verbatim from that package's `LICENSE`.
+
+```text
+# MIT License
+
+Copyright (c) 2022-2026, Sentry
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+- Redistributions of source code must retain the above copyright notice, this
+  list of conditions and the following disclaimer.
+
+- Redistributions in binary form must reproduce the above copyright notice,
+  this list of conditions and the following disclaimer in the documentation
+  and/or other materials provided with the distribution.
+
+- Neither the name of the copyright holder nor the names of its
+  contributors may be used to endorse or promote products derived from
+  this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+## dotenv 17.4.2 -- BSD 2-Clause License
+
+One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+and packed beside it.
+
+Its source is the `dotenv@17.4.2` package from the npm registry
+(https://registry.npmjs.org/dotenv/-/dotenv-17.4.2.tgz), whose repository is
+https://github.com/motdotla/dotenv.git.
+
+The licence text below is copied verbatim from that package's `LICENSE`.
+
+```text
+Copyright (c) 2015, Scott Motte
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+* Redistributions of source code must retain the above copyright notice, this
+  list of conditions and the following disclaimer.
+
+* Redistributions in binary form must reproduce the above copyright notice,
+  this list of conditions and the following disclaimer in the documentation
+  and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+## glob 13.0.6 -- Blue Oak Model License 1.0.0
+
+One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+and packed beside it.
+
+Its source is the `glob@13.0.6` package from the npm registry
+(https://registry.npmjs.org/glob/-/glob-13.0.6.tgz), whose repository is
+git@github.com:isaacs/node-glob.git.
+
+The licence text below is copied verbatim from that package's `LICENSE.md`.
+
+```text
+All packages under `src/` are licensed according to the terms in
+their respective `LICENSE` or `LICENSE.md` files.
+
+The remainder of this project is licensed under the Blue Oak
+Model License, as follows:
+
+-----
+
+# Blue Oak Model License
+
+Version 1.0.0
+
+## Purpose
+
+This license gives everyone as much permission to work with
+this software as possible, while protecting contributors
+from liability.
+
+## Acceptance
+
+In order to receive this license, you must agree to its
+rules.  The rules of this license are both obligations
+under that agreement and conditions to your license.
+You must not do anything with this software that triggers
+a rule that you cannot or will not follow.
+
+## Copyright
+
+Each contributor licenses you to do everything with this
+software that would otherwise infringe that contributor's
+copyright in it.
+
+## Notices
+
+You must ensure that everyone who gets a copy of
+any part of this software from you, with or without
+changes, also gets the text of this license or a link to
+<https://blueoakcouncil.org/license/1.0.0>.
+
+## Excuse
+
+If anyone notifies you in writing that you have not
+complied with [Notices](#notices), you can keep your
+license by taking all practical steps to comply within 30
+days after the notice.  If you do not do so, your license
+ends immediately.
+
+## Patent
+
+Each contributor licenses you to do everything with this
+software that would otherwise infringe any patent claims
+they can license or become able to license.
+
+## Reliability
+
+No contributor can revoke this license.
+
+## No Liability
+
+***As far as the law allows, this software comes as is,
+without any warranty or condition, and no contributor
+will be liable to anyone for any damages related to this
+software or this license, under any kind of legal claim.***
+```
+
+## minimatch 10.2.6 -- Blue Oak Model License 1.0.0
+
+One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+and packed beside it.
+
+Its source is the `minimatch@10.2.6` package from the npm registry
+(https://registry.npmjs.org/minimatch/-/minimatch-10.2.6.tgz), whose repository is
+git@github.com:isaacs/minimatch.
+
+The licence text below is copied verbatim from that package's `LICENSE.md`.
+
+```text
+# Blue Oak Model License
+
+Version 1.0.0
+
+## Purpose
+
+This license gives everyone as much permission to work with
+this software as possible, while protecting contributors
+from liability.
+
+## Acceptance
+
+In order to receive this license, you must agree to its
+rules. The rules of this license are both obligations
+under that agreement and conditions to your license.
+You must not do anything with this software that triggers
+a rule that you cannot or will not follow.
+
+## Copyright
+
+Each contributor licenses you to do everything with this
+software that would otherwise infringe that contributor's
+copyright in it.
+
+## Notices
+
+You must ensure that everyone who gets a copy of
+any part of this software from you, with or without
+changes, also gets the text of this license or a link to
+<https://blueoakcouncil.org/license/1.0.0>.
+
+## Excuse
+
+If anyone notifies you in writing that you have not
+complied with [Notices](#notices), you can keep your
+license by taking all practical steps to comply within 30
+days after the notice. If you do not do so, your license
+ends immediately.
+
+## Patent
+
+Each contributor licenses you to do everything with this
+software that would otherwise infringe any patent claims
+they can license or become able to license.
+
+## Reliability
+
+No contributor can revoke this license.
+
+## No Liability
+
+**_As far as the law allows, this software comes as is,
+without any warranty or condition, and no contributor
+will be liable to anyone for any damages related to this
+software or this license, under any kind of legal claim._**
+```
+
+## brace-expansion 5.0.12 -- MIT License
+
+One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+and packed beside it.
+
+Its source is the `brace-expansion@5.0.12` package from the npm registry
+(https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.12.tgz), whose repository is
+https://github.com/juliangruber/brace-expansion.git.
+
+The licence text below is copied verbatim from that package's `LICENSE`.
+
+```text
+MIT License
+
+Copyright Julian Gruber <julian@juliangruber.com>
+
+TypeScript port Copyright Isaac Z. Schlueter <i@izs.me>
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## balanced-match 4.0.4 -- MIT License
+
+One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+and packed beside it.
+
+Its source is the `balanced-match@4.0.4` package from the npm registry
+(https://registry.npmjs.org/balanced-match/-/balanced-match-4.0.4.tgz), whose repository is
+https://github.com/juliangruber/balanced-match.git.
+
+The licence text below is copied verbatim from that package's `LICENSE.md`.
+
+```text
+(MIT)
+
+Original code Copyright Julian Gruber <julian@juliangruber.com>
+
+Port to TypeScript Copyright Isaac Z. Schlueter <i@izs.me>
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## minipass 7.1.3 -- Blue Oak Model License 1.0.0
+
+One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+and packed beside it.
+
+Its source is the `minipass@7.1.3` package from the npm registry
+(https://registry.npmjs.org/minipass/-/minipass-7.1.3.tgz), whose repository is
+https://github.com/isaacs/minipass.
+
+The licence text below is copied verbatim from that package's `LICENSE.md`.
+
+```text
+# Blue Oak Model License
+
+Version 1.0.0
+
+## Purpose
+
+This license gives everyone as much permission to work with
+this software as possible, while protecting contributors
+from liability.
+
+## Acceptance
+
+In order to receive this license, you must agree to its
+rules.  The rules of this license are both obligations
+under that agreement and conditions to your license.
+You must not do anything with this software that triggers
+a rule that you cannot or will not follow.
+
+## Copyright
+
+Each contributor licenses you to do everything with this
+software that would otherwise infringe that contributor's
+copyright in it.
+
+## Notices
+
+You must ensure that everyone who gets a copy of
+any part of this software from you, with or without
+changes, also gets the text of this license or a link to
+<https://blueoakcouncil.org/license/1.0.0>.
+
+## Excuse
+
+If anyone notifies you in writing that you have not
+complied with [Notices](#notices), you can keep your
+license by taking all practical steps to comply within 30
+days after the notice.  If you do not do so, your license
+ends immediately.
+
+## Patent
+
+Each contributor licenses you to do everything with this
+software that would otherwise infringe any patent claims
+they can license or become able to license.
+
+## Reliability
+
+No contributor can revoke this license.
+
+## No Liability
+
+***As far as the law allows, this software comes as is,
+without any warranty or condition, and no contributor
+will be liable to anyone for any damages related to this
+software or this license, under any kind of legal claim.***
+```
+
+## path-scurry 2.0.2 -- Blue Oak Model License 1.0.0
+
+One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+and packed beside it.
+
+Its source is the `path-scurry@2.0.2` package from the npm registry
+(https://registry.npmjs.org/path-scurry/-/path-scurry-2.0.2.tgz), whose repository is
+https://github.com/isaacs/path-scurry.
+
+The licence text below is copied verbatim from that package's `LICENSE.md`.
+
+```text
+# Blue Oak Model License
+
+Version 1.0.0
+
+## Purpose
+
+This license gives everyone as much permission to work with
+this software as possible, while protecting contributors
+from liability.
+
+## Acceptance
+
+In order to receive this license, you must agree to its
+rules.  The rules of this license are both obligations
+under that agreement and conditions to your license.
+You must not do anything with this software that triggers
+a rule that you cannot or will not follow.
+
+## Copyright
+
+Each contributor licenses you to do everything with this
+software that would otherwise infringe that contributor's
+copyright in it.
+
+## Notices
+
+You must ensure that everyone who gets a copy of
+any part of this software from you, with or without
+changes, also gets the text of this license or a link to
+<https://blueoakcouncil.org/license/1.0.0>.
+
+## Excuse
+
+If anyone notifies you in writing that you have not
+complied with [Notices](#notices), you can keep your
+license by taking all practical steps to comply within 30
+days after the notice.  If you do not do so, your license
+ends immediately.
+
+## Patent
+
+Each contributor licenses you to do everything with this
+software that would otherwise infringe any patent claims
+they can license or become able to license.
+
+## Reliability
+
+No contributor can revoke this license.
+
+## No Liability
+
+***As far as the law allows, this software comes as is,
+without any warranty or condition, and no contributor
+will be liable to anyone for any damages related to this
+software or this license, under any kind of legal claim.***
+```
+
+## lru-cache 11.5.3 -- Blue Oak Model License 1.0.0
+
+One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+and packed beside it.
+
+Its source is the `lru-cache@11.5.3` package from the npm registry
+(https://registry.npmjs.org/lru-cache/-/lru-cache-11.5.3.tgz), whose repository is
+ssh://git@github.com/isaacs/node-lru-cache.git.
+
+The licence text below is copied verbatim from that package's `LICENSE.md`.
+
+```text
+# Blue Oak Model License
+
+Version 1.0.0
+
+## Purpose
+
+This license gives everyone as much permission to work with
+this software as possible, while protecting contributors
+from liability.
+
+## Acceptance
+
+In order to receive this license, you must agree to its
+rules.  The rules of this license are both obligations
+under that agreement and conditions to your license.
+You must not do anything with this software that triggers
+a rule that you cannot or will not follow.
+
+## Copyright
+
+Each contributor licenses you to do everything with this
+software that would otherwise infringe that contributor's
+copyright in it.
+
+## Notices
+
+You must ensure that everyone who gets a copy of
+any part of this software from you, with or without
+changes, also gets the text of this license or a link to
+<https://blueoakcouncil.org/license/1.0.0>.
+
+## Excuse
+
+If anyone notifies you in writing that you have not
+complied with [Notices](#notices), you can keep your
+license by taking all practical steps to comply within 30
+days after the notice.  If you do not do so, your license
+ends immediately.
+
+## Patent
+
+Each contributor licenses you to do everything with this
+software that would otherwise infringe any patent claims
+they can license or become able to license.
+
+## Reliability
+
+No contributor can revoke this license.
+
+## No Liability
+
+***As far as the law allows, this software comes as is,
+without any warranty or condition, and no contributor
+will be liable to anyone for any damages related to this
+software or this license, under any kind of legal claim.***
+```
+
+## magic-string 1.4.3 -- MIT License
+
+One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+and packed beside it.
+
+Its source is the `magic-string@1.4.3` package from the npm registry
+(https://registry.npmjs.org/magic-string/-/magic-string-1.4.3.tgz), whose repository is
+https://github.com/Rich-Harris/magic-string.git.
+
+The licence text below is copied verbatim from that package's `LICENSE`.
+
+```text
+Copyright 2018 Rich Harris
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+```
+
+## @jridgewell/sourcemap-codec 1.6.0 -- MIT License
+
+One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+and packed beside it.
+
+Its source is the `@jridgewell/sourcemap-codec@1.6.0` package from the npm registry
+(https://registry.npmjs.org/@jridgewell/sourcemap-codec/-/sourcemap-codec-1.6.0.tgz), whose repository is
+https://github.com/jridgewell/sourcemaps.git.
+
+The licence text below is copied verbatim from that package's `LICENSE`.
+
+```text
+Copyright 2024 Justin Ridgewell <justin@ridgewell.name>
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## oxc-parser 0.152.0 -- MIT License
+
+One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+and packed beside it.
+
+Its source is the `oxc-parser@0.152.0` package from the npm registry
+(https://registry.npmjs.org/oxc-parser/-/oxc-parser-0.152.0.tgz), whose repository is
+https://github.com/oxc-project/oxc.git.
+
+The licence text below is copied verbatim from that package's `LICENSE`.
+
+```text
+MIT License
+
+Copyright (c) 2024-present VoidZero Inc. & Contributors
+Copyright (c) 2023 Boshen
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## @oxc-parser/binding-linux-x64-gnu 0.152.0 -- MIT License
+
+One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+and packed beside it.
+
+Its source is the `@oxc-parser/binding-linux-x64-gnu@0.152.0` package from the npm registry
+(https://registry.npmjs.org/@oxc-parser/binding-linux-x64-gnu/-/binding-linux-x64-gnu-0.152.0.tgz), whose repository is
+https://github.com/oxc-project/oxc.git.
+
+**That package ships no licence file**: its `package.json` declares `"license": "MIT"` and
+nothing more, so there is no text to reproduce here.
+
+## @oxc-project/types 0.152.0 -- MIT License
+
+One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+and packed beside it.
+
+Its source is the `@oxc-project/types@0.152.0` package from the npm registry
+(https://registry.npmjs.org/@oxc-project/types/-/types-0.152.0.tgz), whose repository is
+https://github.com/oxc-project/oxc.git.
+
+The licence text below is copied verbatim from that package's `LICENSE`.
+
+```text
+MIT License
+
+Copyright (c) 2024-present VoidZero Inc. & Contributors
+Copyright (c) 2023 Boshen
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## sentry 0.45.0 -- Functional Source License 1.1, Apache 2.0 Future License
+
+One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+and packed beside it.
+
+Its source is the `sentry@0.45.0` package from the npm registry
+(https://registry.npmjs.org/sentry/-/sentry-0.45.0.tgz), whose repository is
+https://github.com/getsentry/cli.git.
+
+The licence text below is copied verbatim from that package's `LICENSE.md`.
+
+```text
+# Functional Source License, Version 1.1, Apache 2.0 Future License
+
+## Abbreviation
+
+FSL-1.1-Apache-2.0
+
+## Notice
+
+Copyright 2025 Functional Software, Inc. dba Sentry
+
+## Terms and Conditions
+
+### Licensor ("We")
+
+The party offering the Software under these Terms and Conditions.
+
+### The Software
+
+The "Software" is each version of the software that we make available under
+these Terms and Conditions, as indicated by our inclusion of these Terms and
+Conditions with the Software.
+
+### License Grant
+
+Subject to your compliance with this License Grant and the Patents,
+Redistribution and Trademark clauses below, we hereby grant you the right to
+use, copy, modify, create derivative works, publicly perform, publicly display
+and redistribute the Software for any Permitted Purpose identified below.
+
+### Permitted Purpose
+
+A Permitted Purpose is any purpose other than a Competing Use. A Competing Use
+means making the Software available to others in a commercial product or
+service that:
+
+1. substitutes for the Software;
+
+2. substitutes for any other product or service we offer using the Software
+   that exists as of the date we make the Software available; or
+
+3. offers the same or substantially similar functionality as the Software.
+
+Permitted Purposes specifically include using the Software:
+
+1. for your internal use and access;
+
+2. for non-commercial education;
+
+3. for non-commercial research; and
+
+4. in connection with professional services that you provide to a licensee
+   using the Software in accordance with these Terms and Conditions.
+
+### Patents
+
+To the extent your use for a Permitted Purpose would necessarily infringe our
+patents, the license grant above includes a license under our patents. If you
+make a claim against any party that the Software infringes or contributes to
+the infringement of any patent, then your patent license to the Software ends
+immediately.
+
+### Redistribution
+
+The Terms and Conditions apply to all copies, modifications and derivatives of
+the Software.
+
+If you redistribute any copies, modifications or derivatives of the Software,
+you must include a copy of or a link to these Terms and Conditions and not
+remove any copyright notices provided in or with the Software.
+
+### Disclaimer
+
+THE SOFTWARE IS PROVIDED "AS IS" AND WITHOUT WARRANTIES OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING WITHOUT LIMITATION WARRANTIES OF FITNESS FOR A PARTICULAR
+PURPOSE, MERCHANTABILITY, TITLE OR NON-INFRINGEMENT.
+
+IN NO EVENT WILL WE HAVE ANY LIABILITY TO YOU ARISING OUT OF OR RELATED TO THE
+SOFTWARE, INCLUDING INDIRECT, SPECIAL, INCIDENTAL OR CONSEQUENTIAL DAMAGES,
+EVEN IF WE HAVE BEEN INFORMED OF THEIR POSSIBILITY IN ADVANCE.
+
+### Trademarks
+
+Except for displaying the License Details and identifying us as the origin of
+the Software, you have no right under these Terms and Conditions to use our
+trademarks, trade names, service marks or product names.
+
+## Grant of Future License
+
+We hereby irrevocably grant you an additional license to use the Software under
+the Apache License, Version 2.0 that is effective on the second anniversary of
+the date we make the Software available. On or after that date, you may use the
+Software under the Apache License, Version 2.0, in which case the following
+will apply:
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use
+this file except in compliance with the License.
+
+You may obtain a copy of the License at
+
+http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software distributed
+under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+CONDITIONS OF ANY KIND, either express or implied. See the License for the
+specific language governing permissions and limitations under the License.
+
+<!-- packages/cli/LICENSE.md is a copy of ../LICENSE.md (the canonical source in this repo). Both files must remain byte-identical. -->
+```
+
+## supports-color 8.1.1 -- MIT License
+
+One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+and packed beside it.
+
+Its source is the `supports-color@8.1.1` package from the npm registry
+(https://registry.npmjs.org/supports-color/-/supports-color-8.1.1.tgz), whose repository is
+chalk/supports-color.
+
+The licence text below is copied verbatim from that package's `license`.
+
+```text
+MIT License
+
+Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+```
+
+## has-flag 4.0.0 -- MIT License
+
+One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+and packed beside it.
+
+Its source is the `has-flag@4.0.0` package from the npm registry
+(https://registry.npmjs.org/has-flag/-/has-flag-4.0.0.tgz), whose repository is
+sindresorhus/has-flag.
+
+The licence text below is copied verbatim from that package's `license`.
+
+```text
+MIT License
+
+Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+```
+
+## @sentry/opentelemetry 11.7.0 -- MIT License
+
+One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+and packed beside it.
+
+Its source is the `@sentry/opentelemetry@11.7.0` package from the npm registry
+(https://registry.npmjs.org/@sentry/opentelemetry/-/opentelemetry-11.7.0.tgz), whose repository is
+https://github.com/getsentry/sentry-javascript.git.
+
+The licence text below is copied verbatim from that package's `LICENSE`.
+
+```text
+MIT License
+
+Copyright (c) 2023 Functional Software, Inc. dba Sentry
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## @sentry/server-runtime-injection 11.7.0 -- MIT License
+
+One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+and packed beside it.
+
+Its source is the `@sentry/server-runtime-injection@11.7.0` package from the npm registry
+(https://registry.npmjs.org/@sentry/server-runtime-injection/-/server-runtime-injection-11.7.0.tgz), whose repository is
+https://github.com/getsentry/sentry-javascript.git.
+
+**That package ships no licence file**: its `package.json` declares `"license": "MIT"` and
+nothing more, so there is no text to reproduce here.
+
+## @sentry/server-utils 11.7.0 -- MIT License
+
+One of the thirty-one packages in `@sentry/electron` 8.2.0's tree, pinned in `package-lock.json`
+and packed beside it.
+
+Its source is the `@sentry/server-utils@11.7.0` package from the npm registry
+(https://registry.npmjs.org/@sentry/server-utils/-/server-utils-11.7.0.tgz), whose repository is
+https://github.com/getsentry/sentry-javascript.git.
+
+**That package ships no licence file**: its `package.json` declares `"license": "MIT"` and
+nothing more, so there is no text to reproduce here.

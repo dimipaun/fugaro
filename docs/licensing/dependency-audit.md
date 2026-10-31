@@ -10,6 +10,12 @@ left for counsel.
 Written 2026-10-27, against `console/package-lock.json` and `mobile/package-lock.json` as they stand
 at that date. Both are `lockfileVersion` 3.
 
+**The console's half was revised 2026-10-31**, for the crash reporter's dependency (desktop-console
+plan Task 2.1b, D733): `@sentry/electron` 8.2.0 and its tree, and with it the console's second
+runtime dependency. The console's counts below are read off the lockfile of that date. The mobile
+app's counts are still the 2026-10-27 ones and have drifted since — nothing in this revision looked
+at `mobile/`.
+
 ## Method
 
 Every number below was read out of the two lockfiles on disk. Nothing was installed, no registry was
@@ -27,23 +33,23 @@ The two things this method cannot see, stated rather than left implied:
   suspected of that; it is a limit of the method.
 - **A lockfile says who is installed, not what ships.** The `dev` flag means "no production
   dependency path needs this", and that is not the same question as "is this in the artifact". The
-  console's lockfile marks every one of its 367 packages `dev` (the console has no `dependencies`
-  block at all: electron-builder packs a build output, not `node_modules`), and `elkjs` — `dev` —
-  is the one whose file ends up in the asar. Where the distinction matters below, it is called out.
+  console's lockfile marks 349 of its 414 packages `dev` — tooling, the test runners, the packer —
+  and `elkjs` is one of those `dev` packages whose file nevertheless ends up in the asar. Where the
+  distinction matters below, it is called out.
 
 ## The console, `console/`
 
-367 packages, 8 of them direct, all 8 in `devDependencies`:
+414 packages, 10 of them direct, 8 in `devDependencies` and 2 in `dependencies`:
 
 | Licence | Packages |
 | --- | ---: |
-| MIT | 256 |
-| ISC | 36 |
-| Apache-2.0 | 32 |
+| MIT | 295 |
+| ISC | 37 |
+| Apache-2.0 | 34 |
 | MPL-2.0 | 12 |
+| BlueOak-1.0.0 | 11 |
 | BSD-3-Clause | 10 |
-| BlueOak-1.0.0 | 8 |
-| BSD-2-Clause | 6 |
+| BSD-2-Clause | 7 |
 | `WTFPL OR ISC` | 1 |
 | `WTFPL OR MIT` | 1 |
 | WTFPL | 1 |
@@ -51,15 +57,42 @@ The two things this method cannot see, stated rather than left implied:
 | 0BSD | 1 |
 | Python-2.0 | 1 |
 | EPL-2.0 | 1 |
+| FSL-1.1-Apache-2.0 | 1 |
 | **no licence declared** | **0** |
 
 What ships. `package.json`'s `build.files` packs an explicit list out of `dist/` plus `LICENSE.md`
 and `THIRD_PARTY_NOTICES.md`; nothing else under `console/` reaches the package, and
 `console/test/unit/build-files.test.ts` reads the requirement off the tree rather than restating it.
-The console's own code imports only `node:` builtins, `electron` and `@electron/fuses`, and the
-`@electron/fuses` import lives in `dist/main/fuses.js`, which `build.files` excludes by name. So the
-asar holds the console's own compiled output, one copied third-party file
-(`dist/bundle/elk-worker.min.js`), and the Electron runtime that electron-builder puts around it.
+electron-builder also packs the production `node_modules` subtree, which is what the two runtime
+dependencies below are for: the console's own code imports only `node:` builtins, `electron`,
+`@electron/fuses`, `electron-updater` and `@sentry/electron`, and only the last two are declared
+runtime dependencies, each reached from exactly one file under `src/main/`.
+`@electron/fuses`'s import lives in `dist/main/fuses.js`, which `build.files` excludes by name. So
+the asar holds the console's own compiled output, one copied third-party file
+(`dist/bundle/elk-worker.min.js`), the two runtime dependencies with their trees, and the Electron
+runtime that electron-builder puts around it.
+
+**The two runtime dependencies, and why each is there.**
+
+| Package | Version | Declared | Reached from | Why |
+| --- | --- | --- | --- | --- |
+| `electron-updater` | 6.8.10 | MIT | `src/main/updater-electron.ts` | The update client the console ships update checks and installs through (Task 4.4) |
+| `@sentry/electron` | 8.2.0 | MIT | `src/main/crash-electron.ts` | The crash reporter the owner approved in D733, wired behind a per-user switch that is off by default (Task 2.1b) |
+
+Neither is copyleft, and neither is in the table below. What both bring in is a tree of their own,
+packed beside them and reproduced section by section in `console/THIRD_PARTY_NOTICES.md` — sixteen
+packages for the update client and thirty-one for the crash reporter. Every version in those
+sections is the one the lockfile pins.
+
+**One licence in the console's tree is not open source.** `sentry` 0.45.0 — declared
+`FSL-1.1-Apache-2.0`, the Functional Source License 1.1 with a two-year conversion to Apache-2.0 —
+arrives with `@sentry/bundler-plugins` 11.7.0, which `@sentry/node` depends on and which the
+console neither calls nor configures: nothing in `console/src/` bundles anything with Sentry's
+build plugins, and the package is installed and packed rather than used. `copyleftPattern` in
+`internal/eeboundary/licence_test.go` does not match it — FSL is not a copyleft family — so the
+rule passes and this paragraph is the only place the fact is recorded. FSL's terms restrict
+competing use rather than merely requiring attribution, so whether an unused package under it is
+acceptable in a distributed artifact is a question for counsel, and it is listed as such below.
 
 **Copyleft, and what each obliges.**
 
@@ -134,11 +167,14 @@ and the licence text verbatim.
 
 It is stale in three ways, none of them about `elkjs`:
 
-1. **"The Fugaro console ships one file that is not ours" is false of the artifact.** The packaged
-   app is an Electron app: `electron` 45.0.0 is pinned in `devDependencies` and in the
+1. **The artifact is an Electron app, and Electron's own notices are not in this file.** The
+   packaging is an Electron one: `electron` 45.0.0 is pinned in `devDependencies` and in the
    `electronDownload.checksums` block, and electron-builder wraps the asar in Electron's own runtime —
-   Chromium, Node and their third-party notices. Those are not in this file, and the sentence that
-   says only one file is not the console's invites a reader to stop looking. Electron's own notice
+   Chromium, Node and their third-party notices. The file's opening paragraph counts what the console
+   ships *beside* that runtime and cannot count what the runtime itself carries, so a reader who
+   stops there stops one layer short. (It said "one file that is not ours" until Task 4.4, which is
+   also when this item stopped being a quotation from it and became a statement about the artifact.)
+   Electron's own notice
    obligations are met by Electron's own distribution (its `LICENSE` and `LICENSES.chromium.html`
    travel with the runtime), but a reader of *this* file cannot tell that.
 2. **The file carries no copyright or attribution line for `elkjs`.** The EPL-2.0 text copied into it
@@ -223,6 +259,14 @@ Collected, so nothing here is buried in the prose above:
 - **Whether `mobile/` needs a `THIRD_PARTY_NOTICES.md`** before its first store submission, and what
   it has to carry for `expo`, React Native and React.
 - **The six app-store questions above**, against the licence's clauses 1.1 and 4.1.
+- **The Functional Source License in the console's production tree.** `sentry` 0.45.0
+  (`FSL-1.1-Apache-2.0`), through `@sentry/bundler-plugins`, is source-available rather than open
+  source: its terms restrict competing use until the licence converts to Apache-2.0 two years after
+  each release. Nothing in `console/src/` calls it, and `internal/eeboundary/licence_test.go`'s
+  copyleft rule does not match the identifier, so the console ships it today on this audit's reading
+  alone. Whether an unused package under FSL 1.1 may be packed into a distributed artifact, and
+  whether the crash reporter's dependency is acceptable at all with it in the tree, is counsel's
+  call. Task 2.1b records it rather than deciding it.
 - **Whether `node-forge`'s `(BSD-3-Clause OR GPL-2.0)` is read the way this audit reads it.** The
   audit takes BSD-3-Clause and records that in `copyleftAllowed`; if counsel reads the expression
   differently the allow-list entry is wrong and the dependency is a decision rather than a note.
