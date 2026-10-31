@@ -41,11 +41,15 @@ const (
 )
 
 // NeedsBilling is whether a stage needs the GCP project to have billing: every
-// stage but the ones before the project's own and the plugin wiring, which
-// writes a local file only.
+// stage but the ones before the project's own and the ones that write local
+// files only — the plugin wiring, and the checkout's own steps, whose pin and
+// plugin write the checkout's settings and the user's own Claude Code. The
+// checkout's cloud step is the part of that stage that needs billing, and it is
+// the step that says so: waiting for billing on the stage would leave the two
+// local writes unmoved over a build that is asked for after both.
 func NeedsBilling(name string) bool {
 	switch name {
-	case Preflight, Project, Plugin:
+	case Preflight, Project, Plugin, Checkout:
 		return false
 	}
 	return true
@@ -305,6 +309,20 @@ type InputStage interface {
 type SelfConfirming interface {
 	SelfConfirming()
 }
+
+// LocalUnderAgent marks a stage whose writes are all on this machine: in a
+// coding agent's session it still applies, and it refuses there whatever
+// reaches outside the machine. Nothing else checks that for it, so the refusal
+// is the stage's own, and it must have one: a stage that implements this and
+// then writes to the cloud would do it.
+//
+// It exists for one stage, the checkout's inside fugaro update (internal/cli/
+// init_checkout_upgrade.go). A marker stops a run from doing what only a
+// person should confirm; the pin in the checkout's settings and the plugin in
+// the user's own Claude Code are neither — they are the same two writes the
+// user's own session makes with fugaro upgrade, on files it reads anyway — and
+// the cloud half of that stage keeps its refusal, in the step that makes it.
+type LocalUnderAgent interface{ LocalUnderAgent() }
 
 // StageError is a failure that carries the one-line fix.
 type StageError struct {

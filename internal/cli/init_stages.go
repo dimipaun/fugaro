@@ -156,8 +156,11 @@ func (e *initEngine) options() initflow.Options {
 // project it never creates) and minus the Batch backend's (the stage is
 // behind --provision-batch, which update refuses). So update's stages are
 // preflight, installation, Firebase, images, installation a second time,
-// secrets, plugin, the repository of the checkout it is run in (W5.1) and the
-// published policy node's migration. There is no services stage in either
+// secrets, plugin, the repository of the checkout it is run in (W5.1), the
+// published policy node's migration and the checkout's own steps: fugaro
+// upgrade's pin, plugin and cloud steps for that checkout
+// (init_checkout_upgrade.go, the owner's rule of 2026-10-30). There is no
+// services stage in either
 // list: initflow.Services is a slot in the canonical order nothing registers.
 func initStages(e *initEngine) []initflow.Stage {
 	e.images, e.repo = newImagesStage(e), newRepositoryStage(e)

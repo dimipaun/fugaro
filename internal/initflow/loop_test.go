@@ -989,6 +989,48 @@ func TestAgentEnvAnEmptyEnginePlanIsDone(t *testing.T) {
 	}
 }
 
+// localStage is a stage whose writes are all on this machine (LocalUnderAgent).
+type localStage struct{ *fake }
+
+func (*localStage) LocalUnderAgent() {}
+
+// A LocalUnderAgent stage is the one thing that applies in a coding agent's
+// session: its own writes are local, so the marker does not stop them, and the
+// refusal of what reaches outside stays the stage's (an AgentError from it is
+// the same needs-you).
+func TestLocalUnderAgentStageAppliesInAnAgentSession(t *testing.T) {
+	var log []string
+	f := &localStage{fake: &fake{name: Installation, log: &log}}
+	opts := Options{Yes: true, Terminal: true, Agent: "CLAUDECODE", Out: &bytes.Buffer{}}
+	res, err := Run(context.Background(), []Stage{f}, opts)
+	if err != nil || res.Failed != nil {
+		t.Fatalf("err %v res %+v", err, res)
+	}
+	if count(log, "apply") != 1 || states(res)[Installation] != Changed {
+		t.Errorf("it did not apply: log %v states %v", log, states(res))
+	}
+
+	// A refusal from inside it (its cloud half) is needs-you, not a failure,
+	// and nothing else runs.
+	var log2 []string
+	g := &localStage{fake: &fake{name: Installation, log: &log2, applyErr: &AgentError{Marker: "CLAUDECODE"}}}
+	res, err = Run(context.Background(), []Stage{g}, opts)
+	if err != nil || res.Failed != nil || len(res.Left) != 1 || res.ExitCode() != 1 {
+		t.Fatalf("err %v res %+v", err, res)
+	}
+	if !strings.Contains(res.Stages[0].Detail, "coding agent") {
+		t.Errorf("the refusal's own words are missing: %+v", res.Stages[0])
+	}
+
+	// The same stage without a marker takes the ordinary path.
+	var log3 []string
+	h := &localStage{fake: &fake{name: Installation, log: &log3}}
+	res, err = Run(context.Background(), []Stage{h}, yesOpts())
+	if err != nil || count(log3, "apply") != 1 {
+		t.Fatalf("err %v log %v", err, log3)
+	}
+}
+
 func TestAgentErrorFromAStageIsNeedsYou(t *testing.T) {
 	// A refusal inside an engine (its confirmation) is the same needs-you.
 	var log []string

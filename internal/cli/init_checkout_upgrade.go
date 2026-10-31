@@ -4,8 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
@@ -45,6 +50,18 @@ func (*checkoutStage) Name() string { return initflow.Checkout }
 // otherwise ask for the run's own typed name.
 func (*checkoutStage) SelfConfirming() {}
 
+// LocalUnderAgent: in a coding agent's session the loop applies this stage
+// instead of leaving it for the user (initflow.LocalUnderAgent), because every
+// write it makes is on this machine — the checkout's .claude/settings.json and
+// the plugin in the user's own Claude Code — and those are the two writes the
+// user's own session makes with fugaro upgrade, on files it reads anyway. What
+// reaches outside the machine the stage refuses itself: under a marker its plan
+// drops the cloud step, with that step's own sentence (cloudAgentRefusal), and
+// the step refuses the marker again if it is ever reached another way. So the
+// pin and the plugin move in an agent's session, --yes or not, and nothing else
+// does.
+func (*checkoutStage) LocalUnderAgent() {}
+
 func (s *checkoutStage) Left() initflow.Left {
 	return initflow.Left{Stage: initflow.Checkout, Kind: initflow.LeftCommand, Text: selfCommand() + " upgrade"}
 }
@@ -72,28 +89,86 @@ type plannedStep struct {
 	skip string
 }
 
-// planFor is the steps this checkout's run has. The cloud step is the one that
-// can drop out: the refresh resolves the repository from the checkout's
-// origin, and a checkout with none has nothing for it to refresh — a skip
-// here, not the failure fugaro upgrade makes of that read, because there the
-// user asked for the refresh by name and here the step is one of a run. Every
-// other reason the refresh skips (no fugaro.yaml, a teammate checkout, one
-// not onboarded, a development build, a custom base) is cloudCheck's own
-// verdict, and cloudStep says it itself.
-func (s *checkoutStage) planFor(ctx context.Context, loc pluginwire.Location) []plannedStep {
-	cloudSkip := ""
-	if _, err := checkoutRepo(ctx, loc.Root); err != nil {
-		cloudSkip = "this checkout has no origin repository to refresh (" + oneLine(err.Error()) + ")"
+// planFor is the steps this checkout's run has, and the steps it does not:
+// three reasons drop the cloud step, and none of them is a skip over a
+// failure. A coding agent's session leaves the cloud out (U7: the pin and the
+// plugin move there, the images do not — what fugaro upgrade --local does in
+// the same session), the step never having been reached to say it itself
+// because the loop applied this stage for its local half. A checkout with no
+// origin remote has no repository for the refresh to resolve — a skip here,
+// not the failure fugaro upgrade makes of that read, because there the user
+// asked for the refresh by name and here the step is one of a run. A checkout
+// whose fugaro.yaml names another project is not this run's to touch.
+//
+// Everything else is the steps' own: every other reason the refresh skips (no
+// fugaro.yaml, a teammate checkout, one not onboarded, a development build, a
+// custom base) is cloudCheck's verdict and cloudStep says it, and every other
+// reason it fails — an origin that is not owner/name, a checkout git cannot
+// read — is a failure here too, not a skip.
+func (s *checkoutStage) planFor(ctx context.Context, env initflow.Env, loc pluginwire.Location) ([]plannedStep, error) {
+	u := s.upgradeCtx(env, loc)
+	pinSkip, cloudSkip := "", ""
+	switch other, err := s.namesAnotherProject(loc); {
+	case err != nil:
+		return nil, err
+	case other != "":
+		pinSkip, cloudSkip = other, other
+	case u.agent != "":
+		cloudSkip = cloudAgentRefusal(u)
+	default:
+		origin, err := hasOriginRemote(ctx, loc.Root)
+		if err != nil {
+			return nil, fmt.Errorf("reading the checkout's remotes: %w", err)
+		}
+		if !origin {
+			cloudSkip = "this checkout has no origin repository to refresh"
+		}
 	}
 	steps := make([]plannedStep, 0, len(checkoutSteps))
 	for _, step := range checkoutSteps {
 		p := plannedStep{step: step}
-		if step.name == "cloud" {
+		switch step.name {
+		case "pin":
+			p.skip = pinSkip
+		case "cloud":
 			p.skip = cloudSkip
 		}
 		steps = append(steps, p)
 	}
-	return steps
+	return steps, nil
+}
+
+// namesAnotherProject is why this checkout is not the one this run is for: its
+// fugaro.yaml names a project that is not this run's, or none at all. The
+// plugin stage gates on exactly this (init_plugin_stage.go), for the same
+// reason: a checkout of another project is not touched — its pin and its job
+// images least of all. A fugaro.yaml that cannot be read is not a pass but a
+// failure: unknown is not the same as matching, and it could name any project.
+func (s *checkoutStage) namesAnotherProject(loc pluginwire.Location) (string, error) {
+	data, err := readFugaroYAML(filepath.Join(loc.Root, "fugaro.yaml"))
+	switch {
+	case err == nil:
+		if p, perr := config.ProjectOf(data); perr != nil || p != s.e.lc.Name {
+			return "this checkout's fugaro.yaml names another project (or none), not " + pluginwire.Printable(s.e.lc.Name) + ": its plugin pin and its job images are not moved here", nil
+		}
+	case !errors.Is(err, os.ErrNotExist):
+		return "", fmt.Errorf("this checkout's fugaro.yaml cannot be read, so which project it names is unknown and its plugin pin and its job images are not moved: %s", oneLine(err.Error()))
+	}
+	return "", nil
+}
+
+// hasOriginRemote: whether the checkout has an origin remote at all. It is the
+// one case where the cloud step is dropped here: the refresh resolves the
+// repository from the origin, and a checkout with none has nothing to resolve.
+// A git read that fails is not that case and is an error, as it is under
+// fugaro upgrade: the step is dropped only for a checkout that answers, and
+// answers that it has no origin.
+func hasOriginRemote(ctx context.Context, root string) (bool, error) {
+	out, err := gitCmd(ctx, root, "remote").Output()
+	if err != nil {
+		return false, err
+	}
+	return slices.Contains(strings.Fields(string(out)), "origin"), nil
 }
 
 // detail is the stage's one line, in both the read-only view and the plan: the
@@ -114,20 +189,75 @@ func (s *checkoutStage) detail(steps []plannedStep, loc pluginwire.Location) str
 	return line
 }
 
+// Check answers whether this checkout has anything to do, by running the steps
+// in their check mode: the same mode fugaro upgrade --check uses (u.o.check),
+// which reads and decides and never writes, never asks and never calls the
+// cloud. Every step at this release is a checkout already at it, and a second
+// fugaro update then writes nothing, builds nothing and needs no terminal.
+// Anything else is something for the apply, which reports it in the step's own
+// words — and a step that fails in its check mode fails the stage here, at the
+// same point the apply would.
 func (s *checkoutStage) Check(ctx context.Context) (initflow.Status, error) {
 	loc, why := s.checkout()
 	if why != "" {
 		return initflow.Status{State: initflow.Skipped, Detail: why}, nil
 	}
-	return initflow.Status{State: initflow.Todo, Detail: s.detail(s.planFor(ctx, loc), loc)}, nil
+	steps, err := s.planFor(ctx, initflow.Env{}, loc)
+	if err != nil {
+		return initflow.Status{}, err
+	}
+	var current []string
+	todo := false
+	for _, p := range steps {
+		if p.skip != "" {
+			// Not this checkout's step at all: nothing to do about it here.
+			continue
+		}
+		// Every step is checked, not just up to the first with something to
+		// do: a step that fails here fails the run before any of them
+		// writes, where the pin would otherwise have moved before the cloud
+		// step was read.
+		switch r := s.checkStep(ctx, p.step, loc); r.state {
+		case stepFailed:
+			return initflow.Status{}, errors.New(r.reason)
+		case stepCurrent:
+			current = append(current, p.step.name)
+		default:
+			todo = true
+		}
+	}
+	if todo || len(current) == 0 {
+		return initflow.Status{State: initflow.Todo, Detail: s.detail(steps, loc)}, nil
+	}
+	return initflow.Status{State: initflow.Done, Detail: "up to date: " + strings.Join(current, ", ")}, nil
 }
 
-func (s *checkoutStage) Plan(ctx context.Context, _ initflow.Env) (initflow.Plan, error) {
+// checkStep is one step of the sequence in its check mode: read-only, no
+// prompt, and quiet. The notes and warnings a check prints — the fork warning,
+// the caveat on the deployed job's config copy — belong to the apply that
+// really runs the step, not to a look at whether there is anything to do.
+func (s *checkoutStage) checkStep(ctx context.Context, step upgradeStep, loc pluginwire.Location) stepResult {
+	u := s.upgradeCtx(initflow.Env{}, loc)
+	u.o.check = true
+	u.w = io.Discard
+	c := *s.e.r.cmd // the run's command, its output silenced: the steps' side notes go there
+	c.SetOut(io.Discard)
+	c.SetErr(io.Discard)
+	c.SetContext(ctx)
+	u.cmd = &c
+	return step.run(ctx, u)
+}
+
+func (s *checkoutStage) Plan(ctx context.Context, env initflow.Env) (initflow.Plan, error) {
 	loc, why := s.checkout()
 	if why != "" {
 		return initflow.Plan{NothingToDo: true, Detail: why}, nil
 	}
-	return initflow.Plan{Detail: s.detail(s.planFor(ctx, loc), loc)}, nil
+	steps, err := s.planFor(ctx, env, loc)
+	if err != nil {
+		return initflow.Plan{}, err
+	}
+	return initflow.Plan{Detail: s.detail(steps, loc)}, nil
 }
 
 // Apply runs the steps in upgrade's order and stops at the first that fails,
@@ -137,6 +267,10 @@ func (s *checkoutStage) Apply(ctx context.Context, env initflow.Env) (initflow.O
 	loc, why := s.checkout()
 	if why != "" {
 		return initflow.Outcome{Detail: why}, nil
+	}
+	steps, err := s.planFor(ctx, env, loc)
+	if err != nil {
+		return initflow.Outcome{}, err
 	}
 	if !env.Yes && !env.Interactive {
 		// The cloud step asks before every change, each billable build
@@ -155,7 +289,7 @@ func (s *checkoutStage) Apply(ctx context.Context, env initflow.Env) (initflow.O
 	defer s.e.r.cmd.SetContext(prev)
 	u := s.upgradeCtx(env, loc)
 	var changed []string
-	for _, p := range s.planFor(ctx, loc) {
+	for _, p := range steps {
 		r := stepResult{name: p.step.name, state: stepSkipped, reason: p.skip}
 		if p.skip == "" {
 			r = p.step.run(ctx, u)
@@ -191,7 +325,7 @@ func (s *checkoutStage) upgradeCtx(env initflow.Env, loc pluginwire.Location) *u
 		cmd: s.e.r.cmd,
 		w:   s.e.r.w,
 		o: upgradeOptions{yes: env.Yes, allowFork: o.allowFork, refresh: refreshOptions{
-			imageSource: o.imageSource, expectDigests: o.expectDigests, cloud: o.cloud}},
+			imageSource: o.imageSource, expectDigests: o.expectDigests, cloud: o.cloud, in: s.e.r.in}},
 		loc:   loc,
 		agent: s.e.options().Agent,
 	}
