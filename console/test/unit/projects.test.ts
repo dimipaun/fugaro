@@ -685,15 +685,17 @@ describe('renderProjects', () => {
     const tree = renderProjects(factory, buildProjectsModel(inputs({ budget: null })), 'light')
     const drawn_ = panel(tree, 'repositories')
     expect(drawn_.getAttribute('data-state')).toBe('unavailable')
-    // No count, no list of either kind, and no claim about a cap nobody read.
+    // No count, no card of any of the three kinds, and no claim about a cap
+    // nobody read.
     expect(all(drawn_, 'projects-count')).toEqual([])
-    expect(all(drawn_, 'projects-enrolled-repo')).toEqual([])
-    expect(all(drawn_, 'projects-seen-repo')).toEqual([])
-    expect(all(drawn_, 'projects-only-seen')).toEqual([])
+    expect(all(drawn_, 'projects-repo-card')).toEqual([])
+    expect(all(drawn_, 'projects-only-enrolled-repo')).toEqual([])
+    expect(all(drawn_, 'projects-only-seen-repo')).toEqual([])
+    expect(all(drawn_, 'projects-repo-both')).toEqual([])
     const text = drawnText(drawn_)
     expect(text).toContain('enrolled repositories are unknown')
     expect(text).toContain('fugaro budget show --json')
-    expect(text).not.toContain('running with no cap row')
+    expect(text).not.toContain('Running with no cap row.')
   })
 
   it('draws a compute the document did not estimate as n/a, never as a free $0.00', () => {
