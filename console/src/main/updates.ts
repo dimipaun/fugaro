@@ -404,6 +404,16 @@ export function createUpdateController(deps: UpdatePolicyDeps): UpdateController
       live = false
       generation += 1
       clearTimer()
+      // **The download is forgotten with the rest.** `stop()` is not only the
+      // quitting process's: the switch going off stops this controller, and the
+      // switch coming back on starts it again -- with the bytes of a download
+      // the console did not choose in this run still on disk, and a notice that
+      // promises them. A version kept across a stop is a version a later press
+      // installs, so all three go: what is installable, and both deferrals that
+      // exist to deliver it.
+      installable = null
+      readyDeferred = null
+      restartDeferred = null
     },
     checkNow,
     restartRequested: (version: string) => {

@@ -156,7 +156,11 @@ export const REVEAL_FAILED = 'the console could not open the installation’s di
  * the switch is kept. */
 export interface UpdateMenuOptions {
   readonly auto: boolean
-  readonly setAuto: (on: boolean) => void
+  /** setAuto moves the switch and answers the value it holds afterwards, read
+   * from wherever the switch is kept: Electron has already drawn the state this
+   * click moved its checkbox to, and a write that did not land is only visible
+   * as this answer disagreeing with it. */
+  readonly setAuto: (on: boolean) => boolean
   readonly checkNow: () => void
 }
 
@@ -1163,30 +1167,60 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
     })
   }
 
+  /** drawnAuto is the value the update checkbox is drawn with. Electron's own
+   * checkbox moves itself on the click, before anything is written, so a click
+   * whose write did not land leaves the menu showing a switch this console is
+   * not using -- and the value that *is* in force only comes back from
+   * `setAuto`, which reads it from wherever the switch is kept and answers
+   * rather than throwing (a throw here would be Electron's uncaught-error
+   * dialog over the running app). The menu is built again from that answer when
+   * the two disagree. */
+  let drawnAuto = deps.updateMenu?.auto ?? false
+
+  const installMenu = (): void => {
+    const updateMenu = deps.updateMenu
+    deps.menu.setApplicationMenu(
+      deps.menu.buildFromTemplate(
+        installationsMenuTemplate({
+          appName: 'Fugaro console',
+          ...(updateMenu === undefined
+            ? {}
+            : {
+                updateMenu: {
+                  auto: drawnAuto,
+                  setAuto: (on) => {
+                    const actual = updateMenu.setAuto(on)
+                    if (actual !== on) {
+                      drawnAuto = actual
+                      installMenu()
+                    }
+                    return actual
+                  },
+                  checkNow: () => {
+                    updateMenu.checkNow()
+                  },
+                },
+              }),
+          onOpen: () => {
+            open().catch((error: unknown) => {
+              console.error('[console] the installation picker could not be opened:', error)
+            })
+          },
+          onQuit: () => {
+            // The real quit is Electron's `role: 'quit'`; the callback exists
+            // so a test can hold the item's action without an app to quit.
+          },
+        }),
+      ),
+    )
+  }
+
   return {
     installation: current,
     open,
     openInstallation,
     answer: answerFor,
-    installMenu(): void {
-      deps.menu.setApplicationMenu(
-        deps.menu.buildFromTemplate(
-          installationsMenuTemplate({
-            appName: 'Fugaro console',
-            ...(deps.updateMenu === undefined ? {} : { updateMenu: deps.updateMenu }),
-            onOpen: () => {
-              open().catch((error: unknown) => {
-                console.error('[console] the installation picker could not be opened:', error)
-              })
-            },
-            onQuit: () => {
-              // The real quit is Electron's `role: 'quit'`; the callback exists
-              // so a test can hold the item's action without an app to quit.
-            },
-          }),
-        ),
-      )
-    },
+    installMenu,
     get refusal(): string | null {
       return registry.refusal
     },

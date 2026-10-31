@@ -17,9 +17,23 @@
 //     the rename never happens";
 //   - a toggle that starts the controller before it writes the store fails
 //     "starts the timer again when the switch comes back on", because the gate
-//     `start()` reads is the file.
+//     `start()` reads is the file;
+//   - a reader that follows the name instead of `lstat`ing it fails "reads a
+//     symlink, a directory and an oversized file as on, and leaves each where it
+//     is" (U4b);
+//   - a reader that says its line on every read fails "says its one line once,
+//     however many times the gate reads the file" (U4b).
 
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import {
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 
@@ -29,6 +43,7 @@ import { RELEASES_URL, UPDATE_INTERVAL_MS, createUpdateController } from '../../
 import type { UpdaterPort } from '../../src/main/updates'
 import {
   UPDATES_DIR_MODE,
+  UPDATES_FILE_MAX_BYTES,
   UPDATES_FILE_MODE,
   UPDATES_FILE_NAME,
   UPDATES_FILE_UNREADABLE,
@@ -76,9 +91,13 @@ function recordingFs(): UpdatesFs & {
       calls.push(`rename:${from}:${to}`)
       nodeUpdatesFs.rename(from, to)
     },
-    readFile: (path) => {
-      calls.push(`readFile:${path}`)
-      return nodeUpdatesFs.readFile(path)
+    lstat: (path) => {
+      calls.push(`lstat:${path}`)
+      return nodeUpdatesFs.lstat(path)
+    },
+    readFile: (path, maxBytes) => {
+      calls.push(`readFile:${path}:${maxBytes}`)
+      return nodeUpdatesFs.readFile(path, maxBytes)
     },
     unlink: (path) => {
       calls.push(`unlink:${path}`)
@@ -185,6 +204,74 @@ describe('the update switch’s file', () => {
     expect(statSync(path).isDirectory()).toBe(true)
   })
 
+  it('reads a symlink as on, and follows it nowhere (U4b)', () => {
+    // The gate is read on a path, and the one answer it must never give is one
+    // read out of a name somebody else chose: `lstat` does not follow the link,
+    // so a symlink is refused as not a regular file rather than parsed -- the
+    // target is never opened, and neither the link nor the file behind it is
+    // removed or replaced.
+    const directory = freshDirectory()
+    const path = join(directory, UPDATES_FILE_NAME)
+    const target = join(freshDirectory(), 'elsewhere.json')
+    writeFileSync(target, 'false')
+    symlinkSync(target, path)
+
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      expect(readUpdateSwitch(directory)).toBe(true)
+      expect(logged).toHaveBeenCalledTimes(1)
+      expect(logged.mock.calls[0]?.[0]).toBe(UPDATES_FILE_UNREADABLE)
+    } finally {
+      logged.mockRestore()
+    }
+    expect(lstatSync(path).isSymbolicLink()).toBe(true)
+    expect(readFileSync(target, 'utf8')).toBe('false')
+  })
+
+  it('reads a file longer than one boolean as on, and leaves it untouched (U4b)', () => {
+    // The refusal has to come from the length rather than from a truncated
+    // parse: this file is a valid `false` with padding after it, so a reader
+    // that took the first few bytes and parsed those would answer **off** --
+    // and stop the checks on a file nobody moved.
+    const directory = freshDirectory()
+    const path = join(directory, UPDATES_FILE_NAME)
+    const oversized = `false${' '.repeat(UPDATES_FILE_MAX_BYTES)}`
+    writeFileSync(path, oversized)
+
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      expect(readUpdateSwitch(directory)).toBe(true)
+      expect(logged).toHaveBeenCalledTimes(1)
+      expect(logged.mock.calls[0]?.[0]).toBe(UPDATES_FILE_UNREADABLE)
+    } finally {
+      logged.mockRestore()
+    }
+    expect(readFileSync(path, 'utf8')).toBe(oversized)
+
+    // ...and the cap still admits the file a hand editor leaves: `false` and its
+    // newline is inside it, and is read as off.
+    const newline = freshDirectory()
+    writeFileSync(join(newline, UPDATES_FILE_NAME), 'false\n')
+    expect(readUpdateSwitch(newline)).toBe(false)
+  })
+
+  it('says its one line once, however many times the gate reads the file (U4b)', () => {
+    // The gate reads this switch before every check, every prompt and every
+    // install, so a bad file nobody is going to repair would otherwise be one
+    // line per read. The header comment promises one, and one is what an
+    // operator watching the log gets.
+    const directory = freshDirectory()
+    writeFileSync(join(directory, UPDATES_FILE_NAME), '{"auto":false}')
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      for (let read = 0; read < 5; read += 1) expect(readUpdateSwitch(directory)).toBe(true)
+      expect(logged).toHaveBeenCalledTimes(1)
+      expect(logged.mock.calls[0]?.[0]).toBe(UPDATES_FILE_UNREADABLE)
+    } finally {
+      logged.mockRestore()
+    }
+  })
+
   it('writes only when the value changes', () => {
     // Off twice is one write. The second call is the one a menu item that is
     // clicked twice makes, and a file rewritten then is a file whose mtime --
@@ -219,7 +306,8 @@ describe('the update switch’s file', () => {
       rename: () => {
         throw new Error('ENOSPC: no space left on device')
       },
-      readFile: (target) => nodeUpdatesFs.readFile(target),
+      lstat: (target) => nodeUpdatesFs.lstat(target),
+      readFile: (target, maxBytes) => nodeUpdatesFs.readFile(target, maxBytes),
       unlink: (target) => nodeUpdatesFs.unlink(target),
     }
 
