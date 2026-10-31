@@ -4,10 +4,11 @@
 answered by the owner on 2026-10-31 (SD1–SD5 with named answers, the rest as recommended); the
 answers are in [reconciliation.md](reconciliation.md) §3, and the plan is written to them. The
 design's own decisions — everything the audit left open that is not one of its SDs — are
-**D840–D854**, in [reconciliation.md](reconciliation.md) §4: **D840–D853 were answered the same day,
-every one as recommended**, and **D854 — the stale local copy that could overwrite a newer publish —
-has no recorded owner ruling and stays OPEN**, with both its outcomes written out so either can land
-without the rest of the design moving. **D855–D859** are reserved and unused. Nothing is built yet.
+**D840–D854**, in [reconciliation.md](reconciliation.md) §4: **every one of the fifteen was answered
+by the owner on 2026-10-31 as recommended**, and **D854 — the stale local copy that could overwrite a
+newer publish — is answered with them: the generation is recorded**, so a stage refuses to publish
+over a published generation that has moved. **D855–D859** are reserved and unused. Nothing is built
+yet.
 
 **Asked by:** the owner, 2026-10-31: "for project level and repo level settings, in fact for ALL
 the settings, you should not expect people to edit the text file directly, but have Fugaro commands
@@ -52,14 +53,14 @@ This work adds:
    the local config, the stage that publishes the project layer (the same stage the `rigor` design's
    R1 builds — one stage, not two), the re-converge of provider drift (D787), and the migration that
    imports the node's `credentials.*` and `clone_urls` into new local-config blocks so the console is
-   never the only writer again. **D854 decides whether a third guard joins them** — remembering the
-   generation this machine's file was written from, so a stale copy cannot replace a newer publish —
-   and it is open, so the stages are written with and without it.
+   never the only writer again. **D854 adds a third guard to them** — the stage remembers the
+   generation this machine's file was written from, so a stale copy cannot replace a newer publish,
+   which is the owner's answer of 2026-10-31.
 
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The read command and its columns, the write path, the seven dedicated families, the publish foundation, the registry, the shared mechanics the `models` and `rigor` designs already own, the migration of a hand-edited installation, and the console contract section a Settings view will need |
-| [reconciliation.md](reconciliation.md) | Findings F1–F20 against the code on `main`, the owner's answers to SD1–SD18, and this design's own decisions D840–D854 (D840–D853 with the owner's answer of 2026-10-31, D854 open with both outcomes and the cost of each). **Where it disagrees with [spec.md](spec.md), it wins** |
+| [reconciliation.md](reconciliation.md) | Findings F1–F20 against the code on `main`, the owner's answers to SD1–SD18, and this design's own decisions D840–D854, every one with the owner's answer of 2026-10-31. **Where it disagrees with [spec.md](spec.md), it wins** |
 | [implementation-plan.md](implementation-plan.md) | Tasks S0–S11 (at most 12 files each), the external dependencies E1–E3, and the order; each task names its tests, starts with a red step and carries a SEC flag where it writes policy, the layer or a credential block. **The first slice is S0–S3**; S11 is the end-to-end converge test |
 
 ## The joint order, and the rulings the three designs share
@@ -113,7 +114,7 @@ stages and the same editor.
 
 | Block | Use |
 | --- | --- |
-| **D840–D859** | this work's block: **D840–D854** written, **D840–D853 answered by the owner on 2026-10-31, every one as recommended**, and **D854 — the stale local copy, refusing to publish over a generation that has moved, with the three-way state and a re-seed under confirmation — open**, its two outcomes recorded in §4; **D855–D859** reserved and unused. Verified free as follows: on `main` the highest number anywhere in `docs/` is **D829** (`docs/console-coordinator-v2/reconciliation.md`, the tail of that work's D810–D829), and the highest in any open pull request's docs is **D839** (`docs/rigor-command/README.md`, PR #1463, which renumbered its block to **D830–D839**). The models block (D780–D799) and the console auto-update plan's block (D760–D772, #1377) are below both |
+| **D840–D859** | this work's block: **D840–D854** written and **all answered by the owner on 2026-10-31, every one as recommended**; **D854 — the stale local copy — is answered by recording the generation and refusing to publish over one that has moved, with the three-way state and a re-seed under confirmation**; **D855–D859** reserved and unused. Verified free as follows: on `main` the highest number anywhere in `docs/` is **D829** (`docs/console-coordinator-v2/reconciliation.md`, the tail of that work's D810–D829), and the highest in any open pull request's docs is **D839** (`docs/rigor-command/README.md`, PR #1463, which renumbered its block to **D830–D839**). The models block (D780–D799) and the console auto-update plan's block (D760–D772, #1377) are below both |
 | **The collision this design waited on, resolved** | **PR #1463 (`docs/rigor-command`) had claimed D810–D829, which `main`'s `docs/console-coordinator-v2` already holds.** PR #1463 has since renumbered itself to **D830–D839**, so this design takes **D840**, the next free number above every block written on `main` and in an open pull request. Nothing here cites the rigor design by its old numbers; where it does cite it — the local layer file that `rigor set` writes (**D830**) and the `Layer` stage in `fugaro update` that publishes it with seeding (**D831**) — it cites the renumbered decisions. What the earlier reading recorded, and what it cost, is in [reconciliation.md](reconciliation.md) §5 |
 | **Checks** | **none taken.** Everything this design adds is a local file edit, an offline read, or a stage of `fugaro update` whose cloud writes go through the publish paths the installation's existing update checks already exercise. The one verification that would need a check number — the first `update` importing a node-only block on a real installation — is the same path `fugaro project policy publish` already runs in the live checklist, and no new operator step is added |
 
