@@ -50,10 +50,16 @@ The output is four sections.
    `fugaro update` as the way to publish it — the state the layer stage of D831 closes. The word is
    the shared one: `fugaro config layer` and doctor call the same state, decided by the same sha256
    comparison (README, "the rulings the rigor and settings designs share").
-2. **The area rules of both layers.** Every rule the project layer carries and every rule a
-   repository of this project carries, each as `layer (project|repo owner/repo-a)`, `name`, `match`
-   and `mode`, in the layer's own order. A rule whose mode is below the project default is flagged:
-   it is a rule that lowers, which is legal (D21) and worth seeing.
+2. **The area rules of both layers, as far as this machine can read them.** Every rule the project
+   layer carries, and every rule carried by a repository of this project that has a **checkout
+   here** — each as `layer (project|repo owner/repo-a)`, `name`, `match` and `mode`, in the layer's
+   own order. The
+   repository half is bounded exactly as §2.3 is: a repository's rules come from its `fugaro.yaml` at
+   its base branch in a remembered checkout, so a repository with no checkout on this machine
+   contributes **no rows here** — it is §2.3's `unknown` row and its sentence, never a rule this
+   section did not read. The project half is always complete, because the project layer is read for
+   the project rather than for a checkout (D839). A rule whose mode is below the project default is
+   flagged: it is a rule that lowers, which is legal (D21) and worth seeing.
 3. **The resolved mode per repository**, over the project's `repos:` entries, one row each. With no
    `--path`, a row is the mode a run that touches no matching path would resolve:
 
@@ -93,13 +99,14 @@ within a version (D835). It has a JSON Schema in `schemas/` like the other wire 
 in that order, with the members those sections name. **`layer` is the one member with no text
 section of its own**, and it is not decoration: it says *which* layers were read and how they stand
 relative to each other, which is the input the four sections are resolved from and what §2.1 reports
-in prose as its `unpublished` line. It carries four members:
+in prose as its `unpublished` line. It carries five members:
 
 | Member | What it is |
 | --- | --- |
 | `published` | the project layer this document was resolved against: `{"generation": N, "sha256": "..."}` — the same two values §2.1 prints in text. **Absent**, not `null`, when the project has never published one, the rule §2.3 already sets for `mode` and `from` |
 | `local` | §1's local layer file: `{"path": "...", "sha256": "..."}`. **Absent**, not `null`, when the file does not exist |
 | `source` | where `published` was read from: `"bucket"` or `"cache"` — the two the paragraph above names, the distinction §2.1 carries in text as the cache note |
+| `note` | the read's own warning, verbatim: the resolver's `foundLayer.Note` (`internal/cli/layer_resolve.go`), `""` when the bucket answered. On `"cache"` it is the sentence saying so and how old the copy is ("using the cached project layer of `<project>`, `<N>` days old"); when the value is unknown it is the reason, not a guess. It is the text §2.1 prints beside the value, so a consumer reading `"source": "cache"` can say **why** the bucket was not the source instead of reporting a bare enum |
 | `unpublished` | `true` only when both `published` and `local` are present **and** their `sha256`s differ; `false` otherwise, because with either absent there is nothing to compare. §2.1's `unpublished` line prints exactly when this is `true`, so the two never disagree — and `fugaro config layer` and doctor decide the same state from the same two sha256s |
 
 The member is provenance and nothing else: `show` neither writes nor fetches (D839), so `layer`
@@ -131,8 +138,14 @@ becomes `<mode>`. In order:
    there is no `--layer` flag and no config key for it (D830, answered), so there is nothing to
    resolve and nothing to record. Two absences are not the same absence:
    - the file does not exist and the project has **no** published layer: it is created from the
-     local config's own anchors (`version`, `project`, `gcp_project`), because there is nothing to
-     lose;
+     local config's own anchors (`version`, `project`, `gcp_project`) **plus the `defaults:` block
+     the command is there to write** — the created document already carries
+     `defaults.rigor.default: <mode>`, so what is published is the change that was asked for and not
+     an empty shell. The three anchors alone would parse — the layer validator
+     (`internal/config/layer.go`'s `validateLayer`) requires no `defaults:` at all — which is
+     exactly the trap: they would publish a layer whose only content is a project name, and the
+     owner's edit would then have to be a *second* command. Because there is nothing to lose, the
+     file is created with the edit already in it;
    - the file does not exist while the project **has** a published layer: that is a refusal, not a
      creation. Publishing a fresh, nearly empty layer over the project's real one is the one mistake
      this command must not make, and the remedy is named in the message: run **`fugaro update`**,

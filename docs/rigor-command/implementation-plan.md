@@ -54,10 +54,13 @@ positions in the [README](README.md)'s joint order rather than tasks in this pla
 | 5 | R6 | R1–R5 |
 | 6 | R7, R8 | nothing (R7 lands nothing before the owner answers) |
 
-**R4 and R5 need R1, so the HARD RULE holds mechanically and not by promise.** A `set` that lands
-without the publish stage leaves the owner's next step as `fugaro config publish FILE` — the second
-command the HARD RULE forbids (F18) — so no task here may write the layer before the task that
-publishes it has landed, and the table says so in the same column it says everything else:
+**R4 and R5 need R1 among their four code needs — and that one is what makes the HARD RULE hold
+mechanically rather than by promise.** The row is the whole list (R0, R1, R2 and S5); the three
+bullets below are about the entry the HARD RULE turns on, which is not the only one the row names:
+they say nothing about R0, R2 or S5, and nothing here may be read as shortening the row. A `set` that
+lands without the publish stage leaves the owner's next step as `fugaro config publish FILE` — the
+second command the HARD RULE forbids (F18) — so no task here may write the layer before the task
+that publishes it has landed, and the table says so in the same column it says everything else:
 
 - **R1's publish half is what makes `set`'s last line true.** R4 ends by printing `next: fugaro
   update` (spec §3 step 7); that sentence is only honest once `update` publishes the layer.
@@ -98,9 +101,10 @@ key exist** — there is nothing to resolve and nothing to record.
   local path and whether the published object is `unpublished`, with sha256s),
   `internal/cli/doctor_layer.go` and `internal/cli/doctor_layer_test.go`. `docs/project-layer.md`
   (§6 and §7) is R6's, so that this task's diff stays code.
-- **What R0 changes in `doctor_layer.go`, which already exists (9.2 KB, so this is an addition and
-  not a rewrite).** It **adds one function**, `localLayerFileCheck(lc *localcfg.Config, rf resolvedFile)
-  []doctorCheck`, and **one check ID**, `local-layer-file`; it appends that function's result to
+- **What R0 changes in `doctor_layer.go`, which already exists — 9,205 bytes on `main` at
+  `709574da`, so this is an addition and not a rewrite.** It **adds one function**,
+  `localLayerFileCheck(lc *localcfg.Config, rf resolvedFile) []doctorCheck`, and **one check ID**,
+  `local-layer-file`; it appends that function's result to
   `doctorLayerChecks`'s output and touches nothing else. The existing checks and their IDs stay
   exactly as they are: `project-layer` (the layer that applies, or that none does), `project-layer-drift`
   (the repository's *last run* against the published layer — **a different comparison, not the state
@@ -185,7 +189,13 @@ splice is a design, while two editors is a bug waiting for one of them to be fix
   `internal/yamledit`'s own fixtures are about documents, not about fugaro's keys.
 - **The interface, stated once here.** `at` is the path to the block: `{"defaults", "rigor"}` for the
   project layer, `{"rigor"}` for a repository's file (R5). The ops are `SetDefault(mode)`,
-  `RemoveDefault()`, `SetArea(name, match, mode)`, `RenameArea(match, name)` and `RemoveArea(match)`.
+  `RemoveDefault()`, `SetArea(match, name, mode)`, `RenameArea(match, name)` and `RemoveArea(match)`.
+  **An area argument list reads `match` first, in all three ops, because the glob is the key**: a
+  rule is addressed by its glob (spec §5), while `--name` is what may be *set* on it and is required
+  only when the glob is new. `name` is therefore never the subject of an op and never first; a
+  signature that put it first (`SetArea(name, match, mode)`) reads as "address the rule called
+  `name`", which is the bug this ordering prevents — and with `RenameArea` writing them the other way
+  round, the two would disagree with each other, which is how a caller comes to swap them.
   `EditRigor` locates, maps and splices; it never re-emits the document, and a refusal returns the
   input untouched so a caller can compare bytes to know nothing was written.
 - **Two checks, and neither stands in for the other.** *Structural validity* is
@@ -244,10 +254,11 @@ splice is a design, while two editors is a bug waiting for one of them to be fix
   the same comparison `config layer` and doctor make),
   `TestRigorShowResolvesThroughRigorResolve` (a mode `show` prints is `rigor.Resolve`'s answer for
   the same inputs — the resolver is called, not re-implemented),
-  `TestRigorShowJSONLayerNamesWhatWasRead` (spec §2's `layer` member: `published` and `local` present
-  with their sha256s, `source` one of the two words, `unpublished` true only when both are there and
-  differ — and **absent**, never `null`, for a project that has published nothing and for a machine
-  with no local file), `TestRigorShowJSONMatchesSchema`,
+  `TestRigorShowJSONLayerNamesWhatWasRead` (spec §2's `layer` member: `published` and `local`
+  present with their sha256s, `source` one of the two words, `note` carrying the cache read's own
+  sentence and not only the enum, `unpublished` true only when both are there and differ — and
+  `published` and `local` **absent**, never `null`, for a project that has published nothing and for
+  a machine with no local file), `TestRigorShowJSONMatchesSchema`,
   `TestRigorShowJSONNeverSaysRequestOrReached`, `TestRigorShowWritesNothing`,
   `TestRigorGroupHasNoFloorFlag` (the family's `set`/`unset`/`show` take no flag that writes a floor:
   SD10's line, asserted rather than remembered).
@@ -274,7 +285,9 @@ It writes the key that decides how much review a whole project gets, and `unset`
   `--yes` does not stand in), `TestRigorSetRaisingAsksYesNo`,
   `TestRigorSetRefusesWithNoLocalFileWhileALayerIsPublished` (the message's remedy is **`fugaro
   update`**, which is the one documented command; it names no flag and no second command),
-  `TestRigorSetCreatesTheFileWhenNoLayerIsPublished`,
+  `TestRigorSetCreatesTheFileWhenNoLayerIsPublished` (the created document carries the local
+  config's anchors **and** `defaults.rigor.default: <mode>` — not three bare keys — and it parses
+  through `config.ParseProjectLayer` against the same anchor the publisher uses, spec §3 step 4),
   `TestRigorSetRefusesInAnAgentSessionEvenWithYes` (in that session the command **prints the diff and
   the command it would have run and writes nothing**, `--yes` included — SD9's wording, the same
   F15 pins for `update`'s own write), `TestRigorSetAreaAddsARuleAndRequiresAName`,
@@ -344,10 +357,13 @@ neither is it, and no code reads one.
   what the gate should be. What `hotfix` does today, once something resolves it:
   `internal/rigor/label.go` gives it the security gate alone (every other band is tolerated, its row
   is `overrideSecurity` in `internal/rigor/table.go`); `internal/rigor/filing.go` files one backlog
-  item for what it deferred; its levels are **Pro's** (`internal/rigor/levels.go`, O10's ruling) and
-  its rounds are 1 (`internal/rigor/rounds.go`), which `minRoundCeiling` clamps to today's default of
-  2 while O3 is open. So a hand-written `rigor.default: hotfix` in a layer or in a `fugaro.yaml`
-  already reaches a mode that tolerates almost everything with **no gate at all**, while
+  item for what it deferred; its levels are **Pro's** (`internal/rigor/levels.go`, the other
+  design's **O10** — `docs/review-levels-ab-jobmax/reconciliation.md` §4, the owner's ruling of
+  2026-10-30) and its rounds are 1 (`internal/rigor/rounds.go`), which `minRoundCeiling` clamps to
+  today's default of 2 while **O3** is open (the rigor-modes design's open item,
+  `docs/rigor-modes/reconciliation.md`). So a hand-written `rigor.default: hotfix` in a layer or in
+  a `fugaro.yaml` already reaches a mode that tolerates almost everything with **no gate at all**,
+  while
   `fugaro run --mode hotfix` cannot take effect (raise-only, D6) — the two doors disagree, and only
   one of them is closed.
 - **Nothing lands before the answer.** The design above refuses to *write* hotfix (D834) and says

@@ -158,17 +158,24 @@ spec §3 states it where the steps are.
 
 **F16: Exists. Each repository's file can be read at its ref with no network.** The remembered
 checkouts (`internal/localcfg/checkouts.go`, `CheckoutsVersion`, `LoadCheckouts` and
-`Checkouts.ProjectCheckouts`) record where this machine has each repository, and `agentAtRef`
-(`internal/cli/run.go`) already reads a `fugaro.yaml` at a ref from a local checkout with no fetch;
-`checkoutConfig` (`internal/cli/cloud.go`) reads the current one, and `cachedProjectLayer` (same
-file) resolves the layer for a checkout. *Consequence:* `show`'s per-repository rows are a local
-read, and a repository with no checkout is shown as unknown (D839, spec §2.3).
+`Checkouts.ProjectCheckouts`) record where this machine has each repository; `readFugaroYAMLAtRef`
+(`internal/cli/run.go`) reads a `fugaro.yaml` **at a given ref** from such a checkout with no fetch,
+and `agentAtRef` (same file) is a caller of it — the read `show`'s per-repository rows need, because
+it is the **base branch** that must be read and not the working tree. The neighbouring
+`checkoutConfig` (`internal/cli/cloud.go`) is **not** that read and does not stand in for it: it
+parses the checkout the command is standing in, at whatever state that tree is in — the current
+file, not an arbitrary ref — and `cachedProjectLayer` (same file) resolves the layer for a checkout.
+*Consequence:* `show`'s per-repository rows are a local read at a ref, and a repository with no
+checkout is shown as unknown (D839, spec §2.3) rather than read from the working tree, which would
+answer for this machine instead of for the branch the run will use.
 
 **F17: Exists. The console reads no rigor configuration.** Its sources are the CLI documents listed
 in `docs/design/desktop-console.md` §2.1; rigor reaches it only through each run's `rigor` block in
 `fugaro watch --json` (`console/docs/json-contract.md` §5). The console's project view is planned,
-not built (`docs/console-dependency-graph/reconciliation.md`, plan P6). *Consequence:* no console
-task in this plan (D836).
+not built: it is plan **P6** in `docs/coordinator/implementation-plan.md` (§5, "The console's
+project view"), which `docs/console-dependency-graph/implementation-plan.md` cites as
+"Coordinator **P6**" — one plan, one folder, and this document names the folder that holds it.
+*Consequence:* no console task in this plan (D836).
 
 ## 2. What the commands must not become
 
@@ -218,8 +225,12 @@ Reported rather than fixed, because each needs its own decision and its own revi
   `hotfix` **does** today, once something resolves it, is in three places and is not nothing:
   `internal/rigor/label.go` gives it the security gate alone (every other band is tolerated),
   `internal/rigor/filing.go` files one backlog item for what it deferred, and its levels and rounds
-  are **Pro's** — `internal/rigor/levels.go`'s row is Pro's set (O10) and `internal/rigor/rounds.go`
-  gives it 1 round, which `minRoundCeiling` clamps to today's default of 2 while O3 is open. So a
+  are **Pro's** — `internal/rigor/levels.go`'s row is Pro's set (**O10**, the other design's ruling:
+  `docs/review-levels-ab-jobmax/reconciliation.md` §4, taken by the owner on 2026-10-30 — hotfix
+  takes Pro's levels, L2 on with L1 as Pro has it, because the spec set defaults for POC, Startup,
+  Pro and Critical only) and `internal/rigor/rounds.go` gives it 1 round, which `minRoundCeiling`
+  clamps to today's default of 2 while **O3** is open (the rigor-modes design's own open item,
+  `docs/rigor-modes/reconciliation.md` — whether a mode may reduce the round ceiling). So a
   hand-written `rigor.default: hotfix` in a layer or in a `fugaro.yaml` already reaches a mode that
   tolerates almost everything, with no gate at all, while `fugaro run --mode hotfix` cannot take
   effect (raise-only, D6). This design refuses to *write* hotfix as a default — a different check,
