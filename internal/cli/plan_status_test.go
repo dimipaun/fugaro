@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -734,5 +735,57 @@ func TestPlanMergesCapsTheLookups(t *testing.T) {
 	}
 	if merged, known := merge(fmt.Sprintf("https://github.com/acme/app/pull/%d", planMaxLookups+3)); !merged || !known {
 		t.Errorf("the newest run's pull request = %v, %v, want merged: the newest are asked first", merged, known)
+	}
+}
+
+// TestPlanMergesGhLookupsStayEightWide: a read asks gh about at most
+// planLookupWorkers pull requests at once. GitHub's secondary rate limits
+// discourage concurrent requests, and this read is not the listing's own —
+// its width is the bucket's. The fake gh is what measures it: each run marks
+// itself live in a directory, counts the marks, holds for a moment and then
+// unmarks itself, so the widest count any run saw is the widest the lookups
+// got. Mutation caught: putting planMerges back on parallel(), which is
+// lsWorkers wide.
+func TestPlanMergesGhLookupsStayEightWide(t *testing.T) {
+	dir := t.TempDir()
+	live, counts := filepath.Join(dir, "live"), filepath.Join(dir, "counts")
+	if err := os.Mkdir(live, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	testutil.FakeCommand(t, "gh", fmt.Sprintf(`mkdir -p '%[1]s'
+: > "%[1]s/$$"
+printf '%%s\n' "$(ls '%[1]s' | wc -l)" >> '%[2]s'
+sleep 0.1
+rm -f "%[1]s/$$"
+echo MERGED
+`, live, counts))
+
+	facts := []plan.RunFact{}
+	for i := 1; i <= planMaxLookups; i++ {
+		facts = append(facts, plan.RunFact{
+			RunID: fmt.Sprintf("20261025-%06d-aaaa", i), Repo: "acme/app",
+			PRURL: fmt.Sprintf("https://github.com/acme/app/pull/%d", i),
+		})
+	}
+	planMerges(context.Background(), facts, "acme/app", func(string) {})
+
+	b, err := os.ReadFile(counts)
+	if err != nil {
+		t.Fatalf("gh was never asked: %v", err)
+	}
+	counted := strings.Fields(string(b))
+	if len(counted) != planMaxLookups {
+		t.Fatalf("the fake gh ran %d times, want one per lookup, %d", len(counted), planMaxLookups)
+	}
+	widest := 0
+	for _, field := range counted {
+		n, err := strconv.Atoi(field)
+		if err != nil {
+			t.Fatalf("the fake gh counted %q: %v", field, err)
+		}
+		widest = max(widest, n)
+	}
+	if widest > planLookupWorkers {
+		t.Errorf("gh was asked about %d pull requests at once, want at most %d: GitHub's secondary rate limits discourage concurrent requests", widest, planLookupWorkers)
 	}
 }
