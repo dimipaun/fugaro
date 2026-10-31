@@ -1,12 +1,14 @@
 # `fugaro rigor`: managing a project's rigor mode with one command
 
-**Status: D830 and D831 are answered — the owner's SD4 ruling of 2026-10-31; D832–D839 are
-recommendations with no answer yet, and the plan is written to them. The tasks queue behind CLI
-0.15.0.** Nothing D832–D839 carry is approved.
+**Status: design approved; tasks queue for CLI 0.15.0 (and console 0.117.0).** Every decision is
+answered: **D830 and D831** by the owner's SD4 ruling of 2026-10-31, and **D832–D839 on 2026-10-31,
+all as recommended**. The spec and the plan are written to those answers and the tasks may start. The
+CLI tasks R0–R8 are 0.15.0's; the console half is not a task here (D836) — it is the read-only
+project view, and it queues for console 0.117.0 with the rest of that work.
 
 **Asked by:** the owner, 2026-10-31: "I want [the rigor mode default] at the project level, and we
 should have a fugaro command to manage that!"
-**Reconciled against** `origin/main` at `709574da` (2026-10-31). This design is the second half of
+**Reconciled against** `origin/main` at `7efc78e0` (2026-10-31). This design is the second half of
 one piece of work; the first is the **settings** design, and the rulings the two share are stated
 once, below.
 
@@ -35,7 +37,7 @@ literally.
 | --- | --- |
 | [spec.md](spec.md) | The four command forms, where each one writes, how a change reaches a run, the safety rules around lowering a mode, the console read side and the migration of a hand-written block |
 | [reconciliation.md](reconciliation.md) | Each spec claim against the code on `main`: what exists, what is missing, what conflicts (findings F1–F17 in §1 and F18 in §2), and the decisions D830–D839 in §3. **Where it disagrees with `spec.md`, it wins** |
-| [implementation-plan.md](implementation-plan.md) | Tasks R0–R8 (at most 12 files each), the follow-up tasks R7 (F13) and R8 (F14), and the dependencies E1 (the editor task's `internal/yamledit`), E2, with tests, red steps, gates, SEC flags and levels. **Nothing D832–D839 carry is approved** |
+| [implementation-plan.md](implementation-plan.md) | Tasks R0–R8 (at most 12 files each), the follow-up tasks R7 (F13) and R8 (F14), and the dependencies E1 (the editor task's `internal/yamledit`), E2, with tests, red steps, gates, SEC flags and levels. **Every decision it cites is answered (D830–D839)** |
 
 ## The joint order, and the rulings the rigor and settings designs share
 
@@ -86,14 +88,16 @@ file above it, and a path and a symbol survive.
 
 | Block | Use |
 | --- | --- |
-| **D830–D839** | this work's block, and **nothing beyond D839 is reserved**: **D830** (where `set` writes — the one local layer file) and **D831** (the `Layer` stage in `update`, with its seeding) are **answered**; **D832–D839** are recommendations with no answer yet. Taken above the merged Coordinator v2 design, which holds **D810–D829** (`docs/console-coordinator-v2`: D810–D819 the page, D820–D828 the terminal, D829 reserved) — this work's first block was D810–D819, which that design took while this branch was open, so the numbers moved rather than the work. The highest number written anywhere else is D799 (the models plan's reserved tail: D796–D799); D800–D809 are a gap, not this work's |
+| **D830–D839** | this work's block, and **nothing beyond D839 is reserved**: **D830** (where `set` writes — the one local layer file) and **D831** (the `Layer` stage in `update`, with its seeding) are **answered** by the owner's SD4 ruling, and **D832–D839** are **answered 2026-10-31, all as recommended**. Taken above the merged Coordinator v2 design, which holds **D810–D829** (`docs/console-coordinator-v2`: D810–D819 the page, D820–D828 the terminal, D829 reserved) — this work's first block was D810–D819, which that design took while this branch was open, so the numbers moved rather than the work. The highest number written anywhere else is D799 (the models plan's reserved tail: D796–D799); D800–D809 are a gap, not this work's |
 | **Checks** | none: every behaviour this work adds is a local file edit, a local read or an offline resolution, and the plan tests each one hermetically. The one cloud write it adds is `fugaro update`'s own layer stage, which the existing update path and its live checks already cover. No check number is taken |
 
 ## What this folder is not
 
-- **Not code.** It is a design the owner decides on. R0–R8 are tasks for a later run.
-- **Not an approval.** Only D830 and D831 are answered; no task here may start before the owner
-  answers the decisions it cites.
+- **Not code.** It is a design, and the owner has decided it: R0–R8 are tasks for a later run, in
+  this release's queue.
+- **Not a licence to widen it.** Every decision this folder held is answered (D830–D839), so a task
+  here may start — but a task that finds a *new* decision reports it rather than picking an answer,
+  and the decisions answered above are not reopened by an implementer's convenience.
 - **Not a new rigor mode or a change to the resolver.** `internal/rigor` orders the modes and
   settles the precedence once; nothing here re-states or moves either.
 - **Not a floor.** A project default is a default: a narrower layer may lower it (D21), and the

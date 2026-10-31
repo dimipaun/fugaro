@@ -1,10 +1,10 @@
 # `fugaro rigor`: implementation plan
 
-**D830 and D831 are answered** (the owner's SD4 ruling of 2026-10-31) and R0–R2 are written to that
-answer; **D832–D839 are recommendations with no answer yet** ([reconciliation.md](reconciliation.md)
-§3), and a decision answered the other way changes the tasks that cite it. Each task touches at most
-12 files, names its tests, starts with a red step, targets **CLI 0.15.0** and ends at the gates
-below.
+**Design approved; the tasks here queue for CLI 0.15.0 (and console 0.117.0, which is not this
+plan's — D836).** Every decision is answered ([reconciliation.md](reconciliation.md) §3): **D830 and
+D831** by the owner's SD4 ruling of 2026-10-31, **D832–D839 on 2026-10-31, all as recommended**. The
+tasks are written to those answers. Each task touches at most 12 files, names its tests, starts with
+a red step and ends at the gates below.
 
 ## Order, and what this plan does not own
 
@@ -102,7 +102,7 @@ key exist** — there is nothing to resolve and nothing to record.
   `internal/cli/doctor_layer.go` and `internal/cli/doctor_layer_test.go`. `docs/project-layer.md`
   (§6 and §7) is R6's, so that this task's diff stays code.
 - **What R0 changes in `doctor_layer.go`, which already exists — 9,205 bytes on `main` at
-  `709574da`, so this is an addition and not a rewrite.** It **adds one function**,
+  `7efc78e0`, so this is an addition and not a rewrite.** It **adds one function**,
   `localLayerFileCheck(lc *localcfg.Config, rf resolvedFile) []doctorCheck`, and **one check ID**,
   `local-layer-file`; it appends that function's result to
   `doctorLayerChecks`'s output and touches nothing else. The existing checks and their IDs stay
@@ -148,6 +148,10 @@ installation that has never had one.
   stage is appended **after `e.policy`**, the slot the design chose (D831), in the same function
   that appends it. `docs/project-layer.md` (§7 and §8) is R6's, the same as R0's, so this task's
   diff stays code.
+- **The guard settings S3 attaches here too (D854, answered yes).** The stage refuses to publish when
+  the published object's generation moved since the seed read it — someone else published while this
+  update ran — rather than overwriting an object this update never read; the same guard the settings
+  design's policy stage carries, so the two stages cannot disagree about the object they write.
 - **Red step:** `TestUpdateSeedsTheLocalLayerFromThePublishedOne` fails while no stage writes a local
   layer file.
 - **Tests:** `TestUpdateSeedsTheLocalLayerFromThePublishedOne` (no local file, a published layer: the
@@ -163,6 +167,8 @@ installation that has never had one.
   `TestUpdateLayerStageRefusesAFileThatDoesNotParse`,
   `TestUpdateLayerStageRefusesExecutableChangesWithoutTheFlag` (the same banner and refusal
   `config publish` gives), `TestUpdateLayerStageAppliesNothingInAnAgentSessionEvenWithYes`,
+  `TestUpdateLayerStageRefusesWhenTheGenerationMovedSinceTheSeed` (the guard above: a publish that
+  landed between the seed and the write is a refusal, and the owner's file is left as it is),
   `TestInstallationAtThePreviousVersionConverges` (an installation whose local layer predates this
   release ends the update with it published — the HARD RULE's own test).
 - **Hermetic:** `internal/gcpfake` for the runs bucket, `t.TempDir()` for the state and the layer
@@ -332,9 +338,11 @@ no layer and nothing in the cloud.
   commands; the hand edit stays as the reference; the floor sentence names **`fugaro rigor floor`**
   rather than a flag on `set` (SD10), and the table gains `fugaro rigor floor`'s row only when that
   command ships — nothing here may document a command that does not exist),
-  `docs/rigor-command/README.md` (the status line, and the "joint order and shared rulings" section —
-  which is **shared with the settings design and must stay word for word in both**: a change to one
-  is a change to the other in the same release), `plugin/skills/working/SKILL.md` (owned
+  `docs/rigor-command/README.md` (the status line — **approved, tasks queue for CLI 0.15.0 (and
+  console 0.117.0)** as it reads now, which this task moves to *shipped* in the release that lands
+  R0–R5, so the folder never claims a version that is not out — and the "joint order and shared
+  rulings" section, which is **shared with the settings design and must stay word for word in both**:
+  a change to one is a change to the other in the same release), `plugin/skills/working/SKILL.md` (owned
   elsewhere, see "Order"), `docs/releases/vX.Y.Z.md` (`### For operators`: "run `fugaro update`" and
   what it will ask — including that the stage **seeds** the local layer file when it is absent and
   otherwise **publishes** it when it is **`unpublished`**, with the diff and its confirmation, so the
@@ -353,6 +361,15 @@ sentence when it refuses a follow-up's hotfix — but no such key exists: `schem
 `rigor` block carries `default` and `areas` only, `internal/config/scope.go` has two rigor rows and
 neither is it, and no code reads one.
 
+- **What `hotfix` is today, plainly.** It is a **mode value**, and that is all: it resolves like
+  `pro` (its levels are Pro's set and its bands are Pro's, bar the security override below), it is
+  **never a default** in any layer — no built-in, no document, and this design's `set` refuses to
+  write it (D834) — and it is **not writable by `fugaro rigor set`** in any of its four forms. What
+  does not exist is the *gate*: the base-branch opt-in D12 names. So the honest reading of this
+  design's approval is that `hotfix` is settled as a value and the gate is not settled at all. **The
+  gate stays its own future design task**, with its own design and its own independent review; the
+  approval of 2026-10-31 answers D830–D839 and **not D12**, and F13 is left exactly where it is,
+  recorded and unsolved.
 - **Its first step is a question, not code.** Put the current behaviour in front of the owner and ask
   what the gate should be. What `hotfix` does today, once something resolves it:
   `internal/rigor/label.go` gives it the security gate alone (every other band is tolerated, its row
@@ -363,9 +380,8 @@ neither is it, and no code reads one.
   today's default of 2 while **O3** is open (the rigor-modes design's open item,
   `docs/rigor-modes/reconciliation.md`). So a hand-written `rigor.default: hotfix` in a layer or in
   a `fugaro.yaml` already reaches a mode that tolerates almost everything with **no gate at all**,
-  while
-  `fugaro run --mode hotfix` cannot take effect (raise-only, D6) — the two doors disagree, and only
-  one of them is closed.
+  while `fugaro run --mode hotfix` cannot take effect (raise-only, D6) — the two doors disagree, and
+  only one of them is closed.
 - **Nothing lands before the answer.** The design above refuses to *write* hotfix (D834) and says
   plainly that it does not close this (F13, D834's row); a task here that invented a gate would be
   making the product decision O-8-shaped decisions are for the owner. The question is therefore the

@@ -1,10 +1,10 @@
 # `fugaro rigor`: the spec
 
-The commands below are written to the answer of each decision (D830–D839,
-[reconciliation.md](reconciliation.md) §3): **D830** (where `set` writes) and **D831** (the `Layer`
-stage in `update`) are **answered** — the owner's SD4 ruling of 2026-10-31 — and D832–D839 are the
-recommended answer, each still open. A decision answered the other way changes the paragraph that
-names it. Repository names are placeholders (`owner/repo-a`, `owner/repo-b`); modes are
+**Design approved; the tasks queue for CLI 0.15.0 (and console 0.117.0).** The commands below are
+written to the answer of each decision (D830–D839, [reconciliation.md](reconciliation.md) §3):
+**D830** (where `set` writes) and **D831** (the `Layer` stage in `update`) are **answered** — the
+owner's SD4 ruling of 2026-10-31 — and **D832–D839 are answered on 2026-10-31, every one as
+recommended**. Repository names are placeholders (`owner/repo-a`, `owner/repo-b`); modes are
 `internal/rigor`'s five words (`poc`, `startup`, `pro`, `critical`, `hotfix`).
 
 ## 1. The rule this serves
@@ -327,7 +327,11 @@ name it:
   written below one changes nothing at the floor. When `show` can see a floor it prints it, and both
   `show` and `set` name **`fugaro rigor floor`** as the command that changes one (SD10); this
   command family's `set` never grows a floor flag.
-- **`hotfix` is never a default** in any layer (D834), in any of the four forms.
+- **`hotfix` is never a default** in any layer (D834), in any of the four forms. What `hotfix` is
+  today is a **mode value and nothing more**: it resolves like `pro`, no layer defaults to it, and no
+  form here writes it. The gate D12 names does not exist (F13), **this design does not build it**,
+  and nothing in this folder may be read as evidence that it does: it stays its own future design
+  task, with its own independent review, and nothing lands before the owner's answer.
 - **A project layer that changes executable keys is still gated.** `update`'s layer stage publishes
   through the same `publishLayer` the explicit door uses, so a change to `commands.*` or
   `image.*` still needs `--executable-changes`; the command that writes rigor never touches those
