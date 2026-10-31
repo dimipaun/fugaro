@@ -269,15 +269,23 @@ func TestBitbucketAPIRootUnreadablePolicy(t *testing.T) {
 // directly, so the state it refuses cannot be built from runner_test.
 func TestRemoveStampHooksRefusesAPathNotDirectlyUnderTempDir(t *testing.T) {
 	r := &run{d: Deps{Log: slog.New(slog.DiscardHandler)}}
+	// Both directories are the test's to remove whatever the guard does with
+	// them. The run-shaped one matters: it is made where writeStampHooks makes
+	// its own, directly under the temporary directory, so a guard that stopped
+	// working would leave a fugaro-stamp-* directory in /tmp behind every run
+	// of this test — and a test that pins the removal is exactly the one that
+	// cannot rely on it.
 	elsewhere := filepath.Join(t.TempDir(), "hooks")
 	r.stampHooks = filepath.Join(elsewhere, "agent")
 	if err := os.MkdirAll(r.stampHooks, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { os.RemoveAll(elsewhere) })
 	own, err := os.MkdirTemp("", "fugaro-stamp-")
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { os.RemoveAll(own) })
 	r.runnerHooks = filepath.Join(own, "runner")
 	if err := os.MkdirAll(r.runnerHooks, 0o755); err != nil {
 		t.Fatal(err)
