@@ -1,29 +1,37 @@
 # `fugaro rigor`: the spec
 
-The commands below are written to the recommended answer of each decision (D810–D819,
-[reconciliation.md](reconciliation.md) §3). A decision answered the other way changes the paragraph
-that names it. Repository names are placeholders (`owner/repo-a`, `owner/repo-b`); modes are
+The commands below are written to the answer of each decision (D830–D839,
+[reconciliation.md](reconciliation.md) §3): **D830** (where `set` writes) and **D831** (the `Layer`
+stage in `update`) are **answered** — the owner's SD4 ruling of 2026-10-31 — and D832–D839 are the
+recommended answer, each still open. A decision answered the other way changes the paragraph that
+names it. Repository names are placeholders (`owner/repo-a`, `owner/repo-b`); modes are
 `internal/rigor`'s five words (`poc`, `startup`, `pro`, `critical`, `hotfix`).
 
 ## 1. The rule this serves
 
 `fugaro update` is the whole upgrade (`CLAUDE.md`, HARD RULE). So:
 
-- `fugaro rigor set` and `unset` **edit local files and read**. Neither writes the runs bucket, a
-  job, a secret or anything else in the cloud (D810).
+- **There is one local layer file**, `~/.config/fugaro/projects/<project>-layer.yaml`, and **no flag
+  and no config key names it** (D830, answered): the path is the project's own name under the
+  config home's `projects/` directory, which is where the project's config already lives. `fugaro
+  rigor set` and `unset` edit that file and read; neither writes the runs bucket, a job, a secret or
+  anything else in the cloud.
 - The project default and the project's area rules reach every run through the **project layer**,
-  so the change reaches the cloud through the next `fugaro update`, whose layer stage publishes the
-  local layer file (D811). Each write command ends by printing `next: fugaro update` and nothing
-  else — no `config publish`, no per-repository `update --repo`.
+  so the change reaches the cloud through the next `fugaro update`, whose `Layer` stage publishes
+  the local layer file (D831, answered). The **first** `update` after this ships **seeds** the file
+  from the published layer when it is absent, so an installation that has never had a local file
+  gets one that is exactly the layer in effect before anything is edited. Each write command ends by
+  printing `next: fugaro update` and nothing else — no `config publish`, no per-repository
+  `update --repo`.
 - `--repo R` writes the repository's own `fugaro.yaml` in its checkout's working tree, which the
-  user's own branch and review carry; the command never commits or pushes (D813).
+  user's own branch and review carry; the command never commits or pushes (D833).
 
 ## 2. `fugaro rigor show [--json] [--repo R] [--path P]... [--offline]`
 
-Offline by default in the sense that matters: it reads this machine's project config, the project
-layer (the published object, or the local layer cache when the bucket cannot be reached, saying
-which it used) and each repository's `fugaro.yaml` at its base branch in this machine's remembered
-checkouts. It writes nothing. `--path P` (repeatable) is the same declaration `fugaro run --path`
+Offline by default in the sense that matters: it reads this machine's project config, the local
+layer file (§1's one path, when it exists), the published project layer (or the local layer cache
+when the bucket cannot be reached, saying which it used) and each repository's `fugaro.yaml` at its
+base branch in this machine's remembered checkouts. It writes nothing. `--path P` (repeatable) is the same declaration `fugaro run --path`
 takes, and it is the only way `show` can answer the area question the way a run will.
 
 The output is four sections.
@@ -32,7 +40,7 @@ The output is four sections.
    generation and sha256, and **where the value comes from**: `project` (the layer sets it) or
    `default` (the layer sets none, so Fugaro's own default `pro` decides). When the local layer file
    differs from the published object, a `drift` line says so, names both sha256s and adds
-   `fugaro update` as the way to publish it — the state the layer stage of D811 closes.
+   `fugaro update` as the way to publish it — the state the layer stage of D831 closes.
 2. **The area rules of both layers.** Every rule the project layer carries and every rule a
    repository of this project carries, each as `layer (project|repo owner/repo-a)`, `name`, `match`
    and `mode`, in the layer's own order. A rule whose mode is below the project default is flagged:
@@ -48,7 +56,7 @@ The output is four sections.
    | `area` | the strictest area rule that matched `--path`, with its own name and mode; `-` when `--path` matched none, `(no paths declared)` when `--path` was not given |
    | `source` | `checkout <path>` when the repository's `fugaro.yaml` was read at its base branch from a remembered checkout, or `unknown (no checkout on this machine)` |
 
-   A repository with no checkout on this machine is **never guessed** (D819). Its row reads
+   A repository with no checkout on this machine is **never guessed** (D839). Its row reads
    `unknown | -` in the `mode` and `from` columns, with the sentence "no checkout on this machine:
    this repository's own `fugaro.yaml` was not read, so its mode may be lower or higher than the
    project default" — the project default is §2.1's line, not a value printed in this row as if it
@@ -62,38 +70,48 @@ The output is four sections.
    repository's mode.
 4. **The floors, and what they hold.** The review-level floor the published policy carries
    (`localcfg.Config.ReviewFloor`, D722/G1), per mode, with the line that it is outside every layer
-   and this command cannot lower it. Then one line stating that the mode floors (the sensitive-path
-   set of D8/D18/D21, `docs/rigor-modes` plan T1.5) are **not built yet**, so nothing is shown for
-   them; the task that builds them adds them to this section (E2).
+   and this command cannot lower it — and, naming where a floor is changed, **`fugaro rigor floor`
+   (SD10: `show`, `set`, `unset`), which is a subcommand of this family and not a flag on `set`**
+   (SD10; reconciliation §4). Then one line stating that the mode floors (the sensitive-path set of
+   D8/D18/D21, `docs/rigor-modes` plan T1.5) are **not built yet**, so nothing is shown for them;
+   the task that builds them adds them to this section (E2).
 
 `--json` prints one document, `{"version": 1, "project": ..., "layer": {...}, "default": {...},
 "areas": [...], "repositories": [...], "floors": {...}}`, whose members are only ever added to
-within a version (D815). It has a JSON Schema in `schemas/` like the other wire formats.
+within a version (D835). It has a JSON Schema in `schemas/` like the other wire formats.
 
 ## 3. `fugaro rigor set <mode>`
 
-Edits **the project layer's local source file** and nothing else (D810): `defaults.rigor.default`
+Edits **the one local layer file** and nothing else (D830, answered): `defaults.rigor.default`
 becomes `<mode>`. In order:
 
 1. **Validate the vocabulary.** `<mode>` must be one of `internal/rigor.Modes` (`poc`, `startup`,
    `pro`, `critical`, `hotfix`); a near miss ("Pro", "critical ") is refused with the vocabulary in
    the message, as `fugaro run --mode` refuses it.
-2. **Refuse `hotfix`.** `hotfix` is not a default in any layer (D814, D12): it is off the axis,
+2. **Refuse `hotfix`.** `hotfix` is not a default in any layer (D834, D12): it is off the axis,
    ranks below every on-axis mode, and is reached by an operator's own `fugaro run --mode hotfix`.
    The refusal names that command and never offers a flag that would write it. This refusal is owed
    on its own terms: D12's base-branch opt-in does not exist today (F13), and nothing here closes
    that gate or may be read as evidence that it exists.
-3. **Refuse in a coding agent's session.** The target file is outside every repository, in the
-   owner's own config home, so `set` and `unset` of the project layer are refused where
-   `fugaro config publish` is refused (`agentenv.Marker`, F15) — before the diff is printed and
-   whether or not `--yes` was typed. `show` runs anywhere, and §4's `--repo R` form writes a
-   repository's own file and is allowed: an agent may edit the tree it was given.
-4. **Resolve the file.** `--layer FILE` when given; else the path the local project config records;
-   else `~/.config/fugaro/projects/<project>-layer.yaml`. A file that does not exist **and** a
-   project with no published layer is created from the local config's own anchors (`version`,
-   `project`, `gcp_project`). A file that does not exist while the project **has** a published layer
-   is refused: publishing a fresh, nearly empty layer over the project's real one is the one
-   mistake this command must not make (D810).
+3. **Write nothing in a coding agent's session.** The target file is outside every repository, in
+   the owner's own config home, so `set` and `unset` of the project layer are refused where
+   `fugaro config publish` is refused (`agentenv.Marker`, F15), and in the same words the `models`
+   commands use (SD9, D789 there): the command **prints the diff and the command it would have run,
+   and writes nothing** — `--yes` included, since `--yes` answers a prompt and not this refusal.
+   `show` runs anywhere, and §4's `--repo R` form writes a repository's own file and is allowed: an
+   agent may edit the tree it was given.
+4. **Resolve the file.** It is §1's one path, `~/.config/fugaro/projects/<project>-layer.yaml`:
+   there is no `--layer` flag and no config key for it (D830, answered), so there is nothing to
+   resolve and nothing to record. Two absences are not the same absence:
+   - the file does not exist and the project has **no** published layer: it is created from the
+     local config's own anchors (`version`, `project`, `gcp_project`), because there is nothing to
+     lose;
+   - the file does not exist while the project **has** a published layer: that is a refusal, not a
+     creation. Publishing a fresh, nearly empty layer over the project's real one is the one mistake
+     this command must not make, and the remedy is named in the message: run **`fugaro update`**,
+     whose `Layer` stage seeds the file from the published layer (D831), and then set the mode. (A
+     `config layer pull` that only fetched the published object would be a second door for the same
+     job; this design does not add one and does not name a command it cannot offer.)
 5. **Check the result.** The edited document must `config.ParseProjectLayer` cleanly, against the
    same anchor the publisher uses, and must pass `Area.Validate` on every rule it touches.
 6. **Show, confirm, back up, write.** The command prints the line diff, asks for confirmation at a
@@ -101,36 +119,42 @@ becomes `<mode>`. In order:
    timestamp>` (mode 0600) and writes the new one atomically (temporary file, rename, mode 0600) —
    `backupFile` and `writeFileAtomic` (`internal/cli/init.go`), the pair `fugaro restore` and the
    `models` plan already use.
-7. **Hand off.** It prints `next: fugaro update`, which publishes it (D811).
+7. **Hand off.** It prints `next: fugaro update`, which publishes it (D831).
 
 **Lowering is the sensitive direction.** When the new mode ranks below the project's current
 resolved default, the confirmation is the **typed project name**, as `fugaro project repos rm`
-asks (`confirmTypedStrict`), and `--yes` does not stand in for it (D812). Raising, or setting a
-mode equal to the current one, is an ordinary y/N. The command always prints, next to the diff,
-the review floor and the sentence that this command cannot lower it.
+asks (`confirmTypedStrict`), and `--yes` does not stand in for it (D832). Raising, or setting a
+mode equal to the current one, is an ordinary y/N. The command always prints, next to the diff, the
+review floor, the sentence that this command cannot lower it, and the command that can —
+**`fugaro rigor floor`** (SD10).
 
 ## 4. `fugaro rigor set <mode> --repo R`
 
-Edits the repository's own `fugaro.yaml` in its checkout's working tree and nothing else (D813),
+Edits the repository's own `fugaro.yaml` in its checkout's working tree and nothing else (D833),
 exactly as `fugaro models use` does (D781 there):
 
 - It resolves the checkout (the current directory when it is that repository's checkout, else the
-  remembered one) and refuses when there is none, naming `--layer`-free remedies only.
+  remembered one) and refuses when there is none, naming remedies that need no flag.
 - It sets `rigor.default: <mode>`, inserting the `rigor:` block when the file has none, keeping
   every comment and every other byte (the same line-edit shape `setGCPProjectLine` uses).
-- `hotfix` is refused here too (D814).
+- `hotfix` is refused here too (D834).
 - A mode **lower** than what the repository resolves today asks for the typed project name; equal or
   higher asks y/N.
+- **A coding agent's session cannot answer the typed name, and it is not asked to.** The file is
+  inside the repository and an agent may edit it, so the write is not refused the way §3's is — but a
+  lowering here needs a confirmation only the owner can give, so in that session the command prints
+  the diff and the command it would have run and **writes nothing** (SD9, F15's wording in §3 step
+  3); `--yes` is not an answer to a typed name either way (D832). Raising, or setting an equal mode,
+  is an ordinary y/N an agent's session can answer.
 - It prints the diff and asks for confirmation (`--yes` outside a terminal). It **never** commits,
   pushes or opens a pull request: the change reaches runs when the user's branch is merged to the
   base branch, which is what every run reads (D25).
-- An agent's session is allowed: this file is inside the repository, and an agent may edit it
-  anyway. `show` runs anywhere.
+- `show` runs anywhere.
 
 ## 5. `fugaro rigor set <mode> --area <glob> [--name NAME]`
 
 Edits an area rule in the project layer's `defaults.rigor.areas`, or — with `--repo R` — in that
-repository's own `rigor.areas` (D818):
+repository's own `rigor.areas` (D838):
 
 - The rule is addressed by its **glob**. A glob the target layer already carries has its `mode`
   replaced; a glob it does not carry is **added**, and then `--name` is required, because a rule
@@ -144,11 +168,11 @@ repository's own `rigor.areas` (D818):
   `MaxAreaPattern` characters; the name must pass `areaNameRE`, at most `MaxAreaName` characters —
   and the layer must carry at most `MaxAreas` rules.
 - Confirmation, backup and atomic write are `set <mode>`'s. A rule whose mode is below the project
-  default asks for the typed project name (D812).
+  default asks for the typed project name (D832).
 
 ## 6. `fugaro rigor unset [--repo R] [--area <glob>]`
 
-The reverse, through the same check, diff, backup and atomic write (D817):
+The reverse, through the same check, diff, backup and atomic write (D837):
 
 - `unset --area <glob>` removes that rule from the target layer, and says which layer decides those
   paths again.
@@ -157,16 +181,20 @@ The reverse, through the same check, diff, backup and atomic write (D817):
 - **It writes nothing in place of what it removes.** Writing `pro` instead would freeze Fugaro's
   built-in default into the owner's configuration and be indistinguishable from a deliberate pin;
   removing the key is the only spelling that says "the layer below decides".
-- Removing a project default **raises** the review level only where the removed value was below
-  what now decides; removing it where it was a *lowering* is the sensitive direction and asks for
-  the typed project name, by the same comparison `set` uses.
+- **Which way an `unset` moves the mode depends on where the removed value sat.** Removing a value
+  that sat **above** what now decides **lowers** it — `critical` removed while the layer below says
+  `pro` means the project reviews less — and that is the sensitive direction: it asks for the typed
+  project name, by the same comparison `set` uses. Removing a value that sat **below** what now
+  decides **raises** it — `startup` removed while `pro` now decides means the project reviews more
+  — and that is an ordinary y/N. The comparison is `Rank`'s, the same one `set` uses for its own
+  lowering; this command does not have a second one.
 - Nothing to remove is a **no-op with a sentence and exit 0** ("the project layer sets no default;
   `pro` (Fugaro's own default) decides"), so a script that unsets twice is not a failed run. When
   the target file itself does not exist, that is the same answer, not an error.
 
 ## 7. `--json` stability, and what a consumer may rely on
 
-`fugaro rigor show --json` is a versioned document (D815):
+`fugaro rigor show --json` is a versioned document (D835):
 
 - `"version": 1` at the top, and a JSON Schema at `schemas/rigor-show.schema.json`, loaded and
   exercised by `schemas/schemas_test.go` like every other wire format.
@@ -184,7 +212,7 @@ The reverse, through the same check, diff, backup and atomic write (D817):
 
 ## 8. The console
 
-No console task is in this plan (D816). The console reads CLI documents and never reads
+No console task is in this plan (D836). The console reads CLI documents and never reads
 `~/.config/fugaro` or the runs bucket itself; when its project view ships (`docs/coordinator` plan
 P6, not built), it reads `fugaro rigor show --json` the way it reads every other document, for a
 one-line read-only display of the project default per installation. Nothing on that screen writes,
@@ -197,7 +225,7 @@ A project layer written by hand before these commands exist must keep working, a
 whose `fugaro.yaml` already carries a `rigor:` block must be left alone by a command that does not
 name it:
 
-- **Not a re-marshalled struct, and not a re-emitted tree either (D810).** A struct round trip
+- **Not a re-marshalled struct, and not a re-emitted tree either (D830).** A struct round trip
   (`config.ProjectLayer`) drops comments and key order outright. A `yaml.Node` tree round trip keeps
   comments and key order but re-emits the parts it did not change with the encoder's own quoting and
   indentation, so it is not byte-preserving either. The write is therefore a **splice**: the document
@@ -205,15 +233,19 @@ name it:
   bytes that node occupies are replaced in place, leaving every other byte — comments (the block's
   own commented examples and any commented entry included), key order, quoting style, blank lines and
   unknown-to-this-command keys — exactly as it was.
-- **One editor, two anchors.** The same splice serves both targets, because the shapes are the same:
-  `defaults.rigor` in the project layer file and `rigor` in a repository's `fugaro.yaml` carry the
-  same `default` and `areas`. What differs is the path the editor is pointed at, and whether the edit
-  is a scalar (`default`) or a sequence item (`areas`) — a distinction the node tree decides, which a
-  line-oriented editor cannot make. `setGCPProjectLine` (`internal/cli/init_fugaroyaml.go`) is the
-  precedent for the splice itself on the simplest case, one scalar on one line; it is not a second
-  strategy, and R5 does not re-implement the locator. The plan's R2 owns the editor, R4 and R5 are
-  its two callers, and their tests differ in what they assert — bytes preserved around a scalar
-  versus around a list item — rather than in the write path they use.
+- **One editor, three documents.** The splice is not written for rigor: it is **the** shared
+  comment-preserving YAML editor this CLI has, and the settings work and the `models` plan use the
+  same one (the plan's R2 must be it or call it — never a second copy under a private name). The
+  three documents it serves are the **local project config** (`~/.config/fugaro/projects/
+  <project>.yaml`), the **local layer file** (§1's one path) and a repository's **`fugaro.yaml`**;
+  the same `rigor:` shape appears in the last two, at `defaults.rigor` and at `rigor`, so what
+  differs between them is the path the editor is pointed at, plus whether the edit is a scalar
+  (`default`) or a sequence item (`areas`) — a distinction the node tree decides and a line-oriented
+  editor cannot make. `setGCPProjectLine` (`internal/cli/init_fugaroyaml.go`) is the precedent for
+  the splice on the simplest case, one scalar on one line; it is not a second strategy, and R5 does
+  not re-implement the locator. R2 owns the editor, R4 and R5 are two of its callers, and their tests
+  differ in what they assert — bytes preserved around a scalar versus around a list item — rather
+  than in the write path they use.
 - The edited document is re-parsed — `config.ParseProjectLayer` for the project layer, the
   repository file's own config parse for `--repo R` — and must decode to the old document plus
   exactly the intended change (a test compares the two decoded layers field by field). This is one of
@@ -234,13 +266,16 @@ name it:
 - **No secret** is read, printed or stored: no key, token or credential is named by any of these
   forms.
 - **No cloud write** by `show`, `set` or `unset`. The one cloud write this design adds is `fugaro
-  update`'s own layer stage, and it is `update`'s write: the same confirmation, the same
+  update`'s own `Layer` stage, and it is `update`'s write: the same confirmation, the same
   executable-key gate and the same agent-session refusal every other stage of that command carries.
-- **The floors are read and shown, never written.** `set`/`unset` write a default; the security
-  floors (D8, D18, D21) and the review floor (D722/G1) stay outside every layer, and a mode written
-  below one changes nothing at the floor. When `show` can see a floor it prints it; it never offers
-  a flag that writes one.
-- **`hotfix` is never a default** in any layer (D814), in any of the four forms.
+  The **seeding** half of that stage is not a cloud write at all: it reads the published layer and
+  writes §1's local file, inside `update`, where the agent-session refusal is already in force.
+- **The floors are read and shown here, never written here.** `set`/`unset` write a default; the
+  security floors (D8, D18, D21) and the review floor (D722/G1) stay outside every layer, and a mode
+  written below one changes nothing at the floor. When `show` can see a floor it prints it, and both
+  `show` and `set` name **`fugaro rigor floor`** as the command that changes one (SD10); this
+  command family's `set` never grows a floor flag.
+- **`hotfix` is never a default** in any layer (D834), in any of the four forms.
 - **A project layer that changes executable keys is still gated.** `update`'s layer stage publishes
   through the same `publishLayer` the explicit door uses, so a change to `commands.*` or
   `image.*` still needs `--executable-changes`; the command that writes rigor never touches those
