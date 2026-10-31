@@ -36,8 +36,8 @@ func implementLeaving(name string, leave leftOver) step {
 }
 
 // compiledBinary is a build's leftover as a compiler writes one: a megabyte of
-// bytes that are not text, without the executable bit (a .o, a .wasm, an
-// archive), which is the half of the rule that reads the content.
+// bytes that are not text — the ELF header carries the first NUL, whatever the
+// file's mode is.
 func compiledBinary(t *testing.T, req agent.Request, name string) {
 	t.Helper()
 	b := make([]byte, 1<<20)
@@ -47,8 +47,8 @@ func compiledBinary(t *testing.T, req agent.Request, name string) {
 	}
 }
 
-// executableScript is a file that is text and marked executable, which is the
-// half of the rule that reads the mode.
+// executableScript is text the run marked executable: a file finalize commits
+// like any other, because a mode is not a build's signature.
 func executableScript(t *testing.T, req agent.Request, name string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(req.Dir, name), []byte("#!/bin/sh\necho hello\n"), 0o755); err != nil {
@@ -101,25 +101,23 @@ func TestFinalizeRefusesAnUntrackedBinary(t *testing.T) {
 	}
 }
 
-// TestFinalizeRefusesAnUntrackedExecutable: the other half of the rule. A file
-// a stage left executable, whatever it holds, is a build's product rather than
-// the run's work, and the run says so rather than committing it.
-func TestFinalizeRefusesAnUntrackedExecutable(t *testing.T) {
+// TestFinalizeCommitsAnUntrackedScript: what the rule deliberately leaves
+// alone. A file the run left executable and forgot to commit is a script
+// someone wrote — text, which a reviewer can read — and the leftover commit is
+// exactly the mechanism that saves it. Refusing it would fail a run over work
+// that is the repository's, which is why the refusal reads the content and not
+// the mode.
+func TestFinalizeCommitsAnUntrackedScript(t *testing.T) {
 	h := newHarness(t, "", nil)
-	rec, err := h.run(t, implementLeaving("test_dup_case2", executableScript), review("ship", 0))
+	rec, err := h.run(t, implementLeaving("deploy.sh", executableScript), review("ship", 0))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rec.Outcome != runstore.OutcomeDraft || rec.Status != runstore.StatusFailed {
-		t.Fatalf("record = %+v; want a draft: the run left a file finalize must not commit", rec)
+	if rec.Reason != "uncommitted changes were committed at finalize, after the last verified test run" {
+		t.Fatalf("reason = %q; want the ordinary leftover-commit reason, not a refusal", rec.Reason)
 	}
-	if !strings.Contains(rec.Reason, "test_dup_case2") {
-		t.Errorf("reason = %q; want it to name the file that was refused", rec.Reason)
-	}
-	for _, f := range branchFiles(t, h, rec.Branch) {
-		if f == "test_dup_case2" {
-			t.Errorf("the branch carries the executable finalize refused")
-		}
+	if !slices.Contains(branchFiles(t, h, rec.Branch), "deploy.sh") {
+		t.Errorf("the branch does not carry the script finalize committed: %v", branchFiles(t, h, rec.Branch))
 	}
 }
 
