@@ -68,6 +68,16 @@ const (
 	Secrets       = "secrets"
 	Plugin        = "plugin"
 	Repository    = "repository"
+	// Rules is the deployed security rules generation
+	// (internal/cli/init_rules_stage.go): the document a project policy is
+	// read under, and its marker. It comes after the repository stage and
+	// BEFORE the policy stage, because the policy stage's write is gated on
+	// that marker — a policy written under rules that predate the policy
+	// model is a policy no run reads — so a run that migrates the node
+	// without deploying the rules first refuses its own work and leaves the
+	// whole upgrade for a second command (the owner's rule of 2026-10-30:
+	// fugaro update is the whole upgrade).
+	Rules = "rules"
 	// Credentials is the owner-run stage that applies the credentials service
 	// (docs/credentials-service, D146; C1.20). It is the only writer of the
 	// installation's credentials_service variable, it is always typed at a
@@ -132,10 +142,16 @@ var order = []slot{
 	// output and grant each job's account an invoker on it.
 	{name: Credentials, needs: []string{Installation2}, noYes: true},
 	{name: Repository, needs: []string{Installation2, Secrets}},
+	// The rules generation is what the policy node is READ under, so it is
+	// deployed before the node that depends on it: the policy stage's write
+	// holds the publisher's gate, which refuses a node under rules that
+	// predate the policy model, and a run whose rules are stale would refuse
+	// its own migration and leave the upgrade unfinished.
+	{name: Rules, needs: []string{Repository}},
 	// The policy node is what every run of the project is admitted by, and
 	// the repository stage is the last writer of the installation those runs
 	// read it against.
-	{name: Policy, needs: []string{Repository}},
+	{name: Policy, needs: []string{Repository, Rules}},
 	// The checkout's own steps (fugaro upgrade's pin, plugin and cloud steps)
 	// run after the repository stage: the images the cloud step refreshes are
 	// that repository's, and the onboarding the repository stage does is what
@@ -151,9 +167,10 @@ var order = []slot{
 // covers (design m11 §9, "one confirmation"): the Terraform applies of the
 // installation, the Firebase root, the history job and the repository, and
 // what goes with them (the state bucket, the Viewer-read removal, the
-// Firestore marks and rules, the image copies that add tags, the local
-// config). Everything else is never covered by it: the project's creation and
-// billing, a secret, and the plugin wiring (its own y/N).
+// Firestore marks and rules, the deployed security rules generation, the image
+// copies that add tags, the local config). Everything else is never covered by
+// it: the project's creation and billing, a secret, and the plugin wiring (its
+// own y/N).
 //
 // The map answers for WHOLE STAGES, and that is the whole of what it says. A
 // step finer than its stage — the Firestore database's location inside
@@ -164,7 +181,7 @@ var order = []slot{
 // only place that knows which front door is running and so which steps that
 // door owns.
 var runCovered = map[string]bool{
-	Installation: true, Firebase: true, Images: true, Installation2: true, Repository: true,
+	Installation: true, Firebase: true, Images: true, Installation2: true, Repository: true, Rules: true,
 }
 
 // RunCovers reports whether the run's one confirmation may cover the stage's
