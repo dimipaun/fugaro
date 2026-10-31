@@ -268,6 +268,19 @@ func TestReducePackageLockToNameAndVersion(t *testing.T) {
 	if got := reduced(t, "package-lock.json", v1); !slices.Equal(got, []string{factOf("left-pad", "1.3.0", "sha512-aaa"), factOf("loose-envify", "1.4.0", "")}) {
 		t.Errorf("a lockfileVersion 1 lock: %v", got)
 	}
+	// npm writes an integrity for the tarball it packed for a file: dependency
+	// and for the archive it built a git checkout into, so a source that is not
+	// the registry's is refused beside an integrity as well as without one: the
+	// integrity is of an artifact no digest of the registry's own can be
+	// compared with, and the name and version beside it do not say which one
+	// this is (D618).
+	for _, resolved := range []string{
+		"file:vendor/a-1.0.0.tgz",
+		"git+https://example.invalid/owner/repo-a.git#aaaa",
+	} {
+		refused(t, "package-lock.json", `{"packages":{"node_modules/a":{"version":"1.0.0","resolved":"`+resolved+`","integrity":"sha512-aaa"}}}`, UnkeyedNonRegistry)
+		refused(t, "package-lock.json", `{"lockfileVersion":1,"dependencies":{"a":{"version":"1.0.0","resolved":"`+resolved+`","integrity":"sha512-aaa"}}}`, UnkeyedNonRegistry)
+	}
 }
 
 // TestReducePackageLockEntryUnderABareNodeModulesSegment: a path that ends at
@@ -341,6 +354,25 @@ func TestReducePnpmLock(t *testing.T) {
 	}
 	tarball := "packages:\n  left-pad@1.3.0:\n    resolution:\n      tarball: https://example.invalid/left-pad-1.3.0.tgz\n"
 	refused(t, "pnpm-lock.yaml", tarball, UnkeyedNonRegistry)
+	// A v9 snapshot key carries the peer suffixes the entry's resolution was
+	// made under, while the packages entry for the same package is keyed
+	// without them. Keying by the text of the key would read one package as
+	// two and key a second fact, with no integrity, beside the one the lock
+	// states.
+	peers := "lockfileVersion: '9.0'\npackages:\n  react-dom@18.3.1:\n    resolution: {integrity: sha512-ccc}\n" +
+		"snapshots:\n  react-dom@18.3.1(react@18.3.1):\n    dependencies:\n      react: 18.3.1\n"
+	if got := reduced(t, "pnpm-lock.yaml", peers); !slices.Equal(got, []string{factOf("react-dom", "18.3.1", "sha512-ccc")}) {
+		t.Errorf("a key with a peer suffix = %v, want the packages entry's fact alone", got)
+	}
+	// An integrity and a tarball URL may hold a comma, and a split that ignores
+	// the quotes cuts the value in two: the fact would then be keyed by text no
+	// artifact was hashed into.
+	comma := "packages:\n  left-pad@1.3.0:\n    resolution: {integrity: \"sha512-aa,bb\"}\n"
+	if got := reduced(t, "pnpm-lock.yaml", comma); !slices.Equal(got, []string{factOf("left-pad", "1.3.0", "sha512-aa,bb")}) {
+		t.Errorf("an integrity holding a comma = %v, want the whole integrity", got)
+	}
+	commaURL := "packages:\n  left-pad@1.3.0:\n    resolution: {tarball: \"https://example.invalid/a,b.tgz\"}\n"
+	refused(t, "pnpm-lock.yaml", commaURL, UnkeyedNonRegistry)
 }
 
 func TestReduceYarnLock(t *testing.T) {
@@ -387,6 +419,17 @@ func TestReduceYarnLock(t *testing.T) {
 	// no reading of the URL alone can tell from another registry's tarball, and
 	// the integrity beside it is the archive's.
 	refused(t, "yarn.lock", "\"left-pad@x/y\":\n  version \"1.3.0\"\n  resolved \"https://codeload.github.com/x/y/tar.gz/abc\"\n  integrity sha512-aaa\n", UnkeyedNonRegistry)
+	// A header states one descriptor for each range the entry resolved, and
+	// every descriptor is a source the entry was resolved from: reading the
+	// first one alone keys a header whose second descriptor is a git specifier
+	// as the registry's, and the archive beside it is the repository's.
+	refused(t, "yarn.lock", "\"left-pad@^1.3.0, left-pad@github:x/y#abc\":\n  version \"1.3.0\"\n  resolved \"https://codeload.github.com/x/y/tar.gz/abc\"\n  integrity sha512-aaa\n", UnkeyedNonRegistry)
+	refused(t, "yarn.lock", "\"left-pad@npm:^1.3.0, left-pad@portal:./x\":\n  version: 1.3.0\n  resolution: \"left-pad@npm:1.3.0\"\n  checksum: 10c0/abcdef\n", UnkeyedNonRegistry)
+	// The same header with two registry descriptors is one entry: a header is
+	// read for its descriptors and not refused for holding more than one.
+	if got := reduced(t, "yarn.lock", "\"left-pad@^1.3.0, left-pad@~1.3.0\":\n  version \"1.3.0\"\n  resolved \"https://registry.yarnpkg.com/left-pad/-/left-pad-1.3.0.tgz#bbbb\"\n  integrity sha512-bbb\n"); !slices.Equal(got, []string{factOf("left-pad", "1.3.0", "sha512-bbb")}) {
+		t.Errorf("a header with two registry descriptors: %v", got)
+	}
 }
 
 func TestReduceGoSum(t *testing.T) {
@@ -553,6 +596,17 @@ reference = "private"
 	}
 }
 
+// TestTOMLFieldsReadAValueHoldingAComma: a TOML value may hold a comma — a
+// directory or archive name, a URL — and a reader that splits the table on
+// every comma reads the second half of that value as a field of its own, so
+// the value a file states is cut in two and what is read is text no file wrote.
+func TestTOMLFieldsReadAValueHoldingAComma(t *testing.T) {
+	got := tomlFields(`{directory = "vendor/a,b", hash = "sha256:aaaa"}`)
+	if got["directory"] != "vendor/a,b" || got["hash"] != "sha256:aaaa" {
+		t.Errorf("tomlFields(a value holding a comma) = %v", got)
+	}
+}
+
 func TestReduceUVLock(t *testing.T) {
 	// uv writes the sdist's and each wheel's hash, and both are the integrity
 	// of the one version they are of.
@@ -592,6 +646,33 @@ func TestReducePipfileLock(t *testing.T) {
 	// does not serve.
 	refused(t, "Pipfile.lock", `{"default":{"left-pad":{"git":"https://example.invalid/owner/repo-a.git","ref":"aaaa"}}}`, UnkeyedNonRegistry)
 	refused(t, "Pipfile.lock", `{"default":{"left-pad":{"path":"./lib"}}}`, UnkeyedNonRegistry)
+	// An entry that states no hashes is keyed only when the lock says it came
+	// from PyPI's own index (D618): the same name and version served by a
+	// private index is another artifact, and a fact with an empty integrity
+	// cannot tell the two apart.
+	private := `{"_meta":{"sources":[{"name":"pypi","url":"https://pypi.org/simple"},` +
+		`{"name":"internal","url":"https://packages.example.invalid/simple"}]},"default":{`
+	refused(t, "Pipfile.lock", private+`"left-pad":{"version":"==1.3.0","index":"internal"}}}`, UnkeyedNonRegistry)
+	// An entry naming no index came from the lock's default source, which is
+	// the first one it lists, and one naming the default source by name is the
+	// same entry.
+	for _, data := range []string{
+		private + `"left-pad":{"version":"==1.3.0"}}}`,
+		private + `"left-pad":{"version":"==1.3.0","index":"pypi"}}}`,
+		`{"_meta":{"sources":[{"name":"pypi","url":"https://pypi.org/simple"}]},"default":{"left-pad":{"version":"==1.3.0"}}}`,
+	} {
+		if got := reduced(t, "Pipfile.lock", data); !slices.Equal(got, []string{factOf("left-pad", "1.3.0", "")}) {
+			t.Errorf("an entry from the default index with no hashes = %v, want an empty integrity", got)
+		}
+	}
+	// An index the lock does not list is not PyPI's, and an entry that names
+	// one states no artifact any registry's digest can be compared with.
+	refused(t, "Pipfile.lock", `{"default":{"left-pad":{"version":"==1.3.0","index":"internal"}}}`, UnkeyedNonRegistry)
+	// The hashes are the artifact's own, so an entry that states them is keyed
+	// whatever index it names.
+	if got := reduced(t, "Pipfile.lock", private+`"left-pad":{"version":"==1.3.0","index":"internal","hashes":["sha256:aaaa"]}}}`); !slices.Equal(got, []string{factOf("left-pad", "1.3.0", "sha256:aaaa")}) {
+		t.Errorf("an entry from a private index with hashes = %v", got)
+	}
 }
 
 func TestReduceCargoLock(t *testing.T) {

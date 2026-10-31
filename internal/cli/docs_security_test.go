@@ -47,6 +47,10 @@ func TestSecurityMdStatesTheModelAndItsLimits(t *testing.T) {
 		"**It is not a boundary between the repositories that share an image.**",
 		"so they contribute no fact of the key",
 		"the same class as the `image.setup` of the repository that built the key",
+		// The one empty integrity the key reads from a convention rather than
+		// from a line in the file: pnpm's bare key, whose registry `.npmrc`
+		// configures and the key never reads.
+		"**One ecosystem's empty integrity rests on a convention the file does not state.**",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("SECURITY.md never says %q", want)

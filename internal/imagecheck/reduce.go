@@ -284,6 +284,34 @@ func hasControl(s string) bool {
 	return strings.ContainsFunc(s, func(r rune) bool { return r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) })
 }
 
+// splitOutsideQuotes splits s on sep, leaving a separator inside a quoted run
+// alone. A key file states values a comma may sit inside — a tarball URL, a
+// directory path — and a plain split would cut one of those in half and read
+// the tail as a field of its own, so the value would key as text no artifact
+// was ever hashed into. A backslash escape inside a double-quoted run is
+// skipped, which is how TOML's basic strings write a quote.
+func splitOutsideQuotes(s string, sep byte) []string {
+	var out []string
+	start, quote := 0, byte(0)
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case quote != 0:
+			switch {
+			case c == '\\' && quote == '"' && i+1 < len(s):
+				i++
+			case c == quote:
+				quote = 0
+			}
+		case c == '"' || c == '\'':
+			quote = c
+		case c == sep:
+			out = append(out, s[start:i])
+			start = i + 1
+		}
+	}
+	return append(out, s[start:])
+}
+
 // joinedHashes is the integrity a file states for one package: the artifact
 // hashes it lists, sorted and deduplicated so that the order a file writes them
 // in cannot matter, and joined, because a package with several wheels or
@@ -507,10 +535,11 @@ func defaultRegistryURL(value string, hosts ...string) bool {
 }
 
 // pnpmEntry is one packages or snapshots entry: the package its key names, and
-// the integrity its resolution line states. The two maps hold the same keys —
-// a snapshots entry restates a package's own dependencies and not its
-// resolution — so an entry is read from whichever section states the integrity
-// and the key is what the fact is keyed by.
+// the integrity its resolution line states. The two maps name the same packages
+// — a snapshots entry restates a package's own dependencies and not its
+// resolution — so an entry is read from whichever section states the integrity,
+// and the sections' entries are keyed by the package the key names rather than
+// by the text of the key, which the two sections write differently.
 type pnpmEntry struct {
 	name, version string
 	integrity     string
@@ -607,6 +636,18 @@ func reducePnpmLock(rel string, data []byte) ([]string, error) {
 			unplaced = true
 			return true
 		}
+		// The entries are keyed by the package the key names and not by the
+		// text of the key: a v9 snapshot key carries the peer suffixes its
+		// resolution was made under — `x@1.0.0(react@18.0.0)` — while the
+		// packages entry for the same x is keyed without them, and a map keyed
+		// by the text would read the two as two packages and key a second
+		// fact, with no integrity, for a package the lock resolved once. The
+		// entry's own body lines still land here, since key is what they merge
+		// onto. A key that names a source keeps its text, which is what the
+		// refusal for it quotes.
+		if e.name != "" {
+			key = e.name + "@" + e.version
+		}
 		entries[key] = entries[key].merged(e)
 		return true
 	})
@@ -662,7 +703,7 @@ func pnpmResolution(text string) pnpmEntry {
 	e := pnpmEntry{}
 	body := strings.TrimSpace(strings.TrimPrefix(text, "resolution:"))
 	body = strings.TrimSuffix(strings.TrimPrefix(body, "{"), "}")
-	for _, field := range strings.Split(body, ",") {
+	for _, field := range splitOutsideQuotes(body, ',') {
 		k, v, ok := strings.Cut(field, ":")
 		if !ok {
 			continue
@@ -792,35 +833,40 @@ func reduceYarnLock(rel string, data []byte) ([]string, error) {
 				return false
 			}
 			key := strings.Trim(strings.TrimSuffix(text, ":"), `"'`)
-			if i := strings.IndexByte(key, ','); i >= 0 {
-				key = strings.TrimSpace(key[:i])
-			}
-			name := yarnName(key)
-			// An alias's header states the alias and the package it points at —
-			// `lodash@npm:evil-pkg@^1.0.0` in Berry, and the same in Yarn 1 —
-			// so the name this reads is not a package's, and the version and
-			// integrity beside it are the aliased package's. A name holding a
-			// scheme is that header, and the entry is not the registry's
-			// (D618) — as it is not for a git descriptor's header, whose name
-			// is not a package name either.
-			if name != "__metadata" && strings.Contains(name, ":") {
-				err = set.fail(UnkeyedNonRegistry, key)
-				return false
-			}
-			// The header states the specifier the entry resolved as well as the
-			// name, and a git, file, link or URL specifier is a source no
-			// registry served, whatever the line beside it says (D618). Yarn 1
-			// writes that specifier in the header for a git dependency while its
-			// resolved line is a plain codeload URL, which no reading of the URL
-			// alone can tell from another registry's tarball, and Berry writes it
-			// as the scheme of the range.
+			// The header states one descriptor for each range the entry
+			// resolved, separated by commas, and every descriptor is a source
+			// the entry was resolved from. Reading the first one alone keys an
+			// entry whose second descriptor is a git or file specifier as the
+			// registry's, which it is not (D618).
+			descriptors := splitOutsideQuotes(key, ',')
+			name := yarnName(strings.Trim(strings.TrimSpace(descriptors[0]), `"'`))
 			if name != "__metadata" {
-				if i := strings.LastIndexByte(key, '@'); i > 0 && yarnNonRegistrySpecifier(key[i+1:]) {
-					err = set.fail(UnkeyedNonRegistry, key)
-					return false
+				for _, d := range descriptors {
+					d = strings.Trim(strings.TrimSpace(d), `"'`)
+					// An alias's descriptor states the alias and the package it
+					// points at — `lodash@npm:evil-pkg@^1.0.0` in Berry, and the
+					// same in Yarn 1 — so the name this reads is not a package's,
+					// and the version and integrity beside it are the aliased
+					// package's. A name holding a scheme is that descriptor, and
+					// the entry is not the registry's (D618) — as it is not for a
+					// git descriptor's, whose name is not a package name either.
+					if strings.Contains(yarnName(d), ":") {
+						err = set.fail(UnkeyedNonRegistry, key)
+						return false
+					}
+					// The descriptor states the specifier the entry resolved as
+					// well as the name, and a git, file, link or URL specifier is
+					// a source no registry served, whatever the line beside it
+					// says (D618). Yarn 1 writes that specifier in the header for
+					// a git dependency while its resolved line is a plain
+					// codeload URL, which no reading of the URL alone can tell
+					// from another registry's tarball, and Berry writes it as the
+					// scheme of the range.
+					if i := strings.LastIndexByte(d, '@'); i > 0 && yarnNonRegistrySpecifier(d[i+1:]) {
+						err = set.fail(UnkeyedNonRegistry, key)
+						return false
+					}
 				}
-			}
-			if name != "__metadata" {
 				cur, inEntry = yarnSpec{name: name}, true
 			}
 			return true
@@ -1278,7 +1324,7 @@ func tomlFields(value string) map[string]string {
 		return nil
 	}
 	out := map[string]string{}
-	for _, field := range strings.Split(strings.TrimSuffix(strings.TrimPrefix(v, "{"), "}"), ",") {
+	for _, field := range splitOutsideQuotes(strings.TrimSuffix(strings.TrimPrefix(v, "{"), "}"), ',') {
 		key, val, ok := strings.Cut(field, "=")
 		if !ok {
 			continue
@@ -1320,17 +1366,52 @@ type pipfileEntry struct {
 	Git     string   `json:"git"`
 	Path    string   `json:"path"`
 	File    string   `json:"file"`
+	// Index is the source this entry came from, written only when it is not
+	// the lock's default one: it names an entry of _meta.sources.
+	Index string `json:"index"`
+}
+
+// pipfileSource is one entry of a Pipfile.lock's _meta.sources.
+type pipfileSource struct {
+	Name string `json:"name"`
+	URL  string `json:"url"`
+}
+
+// pipfileIndex is the URL of the index an entry came from. An entry naming
+// none came from the lock's default source, which is the first _meta.sources
+// lists — that is the order pipenv tries them in — or PyPI when the lock lists
+// none. An entry naming a source the lock does not list resolves to nothing,
+// and an index that resolves to nothing is not PyPI's, so an entry that states
+// no hashes and names one is refused rather than keyed with an empty integrity
+// (D618).
+func pipfileIndex(index string, sources []pipfileSource) string {
+	if index == "" {
+		if len(sources) > 0 {
+			return sources[0].URL
+		}
+		return "https://pypi.org/simple"
+	}
+	for _, s := range sources {
+		if s.Name == index {
+			return s.URL
+		}
+	}
+	return ""
 }
 
 // reducePipfileLock reduces Pipfile.lock. Its default and develop sections
 // both hold the packages pip would install, so both are read (§2.3, "every
 // entry"), and pip writes each version with the == its own requirement syntax
 // uses. The integrity is the hashes pip writes for the artifacts the version
-// resolved to (D618).
+// resolved to, and an entry that states none is keyed only when the lock says
+// it came from PyPI's own index (D618).
 func reducePipfileLock(rel string, data []byte) ([]string, error) {
 	var doc struct {
 		Default map[string]pipfileEntry `json:"default"`
 		Develop map[string]pipfileEntry `json:"develop"`
+		Meta    struct {
+			Sources []pipfileSource `json:"sources"`
+		} `json:"_meta"`
 	}
 	if err := json.Unmarshal(data, &doc); err != nil {
 		return nil, &UnkeyedError{Path: rel, Reason: UnkeyedUnreadable, Detail: err.Error()}
@@ -1351,6 +1432,17 @@ func reducePipfileLock(rel string, data []byte) ([]string, error) {
 			// one of those.
 			if !strings.HasPrefix(e.Version, "==") {
 				return nil, set.fail(UnkeyedUnpinned, fmt.Sprintf("%s (%s)", name, e.Version))
+			}
+			// An entry with no hashes is keyed only when the lock says it came
+			// from PyPI's own index (D618): the same name and version served by
+			// a private index is another artifact, and a fact with an empty
+			// integrity cannot tell the two apart.
+			if len(e.Hashes) == 0 && !pypiIndexURL(pipfileIndex(e.Index, doc.Meta.Sources)) {
+				from := "the default index"
+				if e.Index != "" {
+					from = "the " + e.Index + " index"
+				}
+				return nil, set.fail(UnkeyedNonRegistry, fmt.Sprintf("%s (no hashes, and from %s)", name, from))
 			}
 			if err := set.add(pypiName(name), strings.TrimPrefix(e.Version, "=="), joinedHashes(e.Hashes)); err != nil {
 				return nil, err

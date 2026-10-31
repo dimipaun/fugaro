@@ -74,10 +74,19 @@ func TestDocsSharedImagesDesign(t *testing.T) {
 		// source-in-version.
 		"states the source in its `version` field",
 		"its header states the git specifier or the `owner/repo`",
-		// The two reductions round 2 fixed: go.sum's two hashes are joined, and
-		// a pnpm block resolution is read.
-		"both are joined in the order the file writes them",
+		// The two reductions round 2 fixed, and the claim round 3 corrected:
+		// go.sum's two hashes are joined, the order a file writes them in is
+		// not a fact, and a pnpm block resolution is read.
+		"both are joined into one integrity, **sorted and deduplicated**",
+		"would be another key",
 		"A `resolution:` written as a block",
+		// Round 3's three gaps: a pnpm v9 snapshot key's peers name the same
+		// package as the packages entry, every yarn descriptor is a source,
+		// and a Pipfile entry with no hashes is read through its own index.
+		"and the `packages` entry for the same x are one package and one fact",
+		"**every** range it lists, not only the first",
+		"An entry that states no hashes is keyed only when the lock says it came from PyPI's own index",
+		"That convention is the one place the key rests on a file it does not read",
 		// §3.1's entries are the three quoted literals, quotes and all.
 		"a package entry is the fact's three quoted literals",
 		"\"\\\"left-pad\\\" \\\"1.3.0\\\" \\\"sha512-aaa\\\"\"",

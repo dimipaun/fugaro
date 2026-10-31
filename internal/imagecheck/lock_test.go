@@ -26,7 +26,7 @@ func entryUnder(key string) string {
 	return `"` + key + `":{"key":"` + key + `",` +
 		`"image":"registry.example/fugaro-shared/img-` + key[:12] + `",` +
 		`"digest":"` + baseDigest + `","base_ref":"web","base_digest":"` + baseDigest + `",` +
-		`"packages":["left-pad@1.3.0"],"tools":["node@22.11.0"],` +
+		`"packages":["\"left-pad\" \"1.3.0\" \"\""],"tools":["node@22.11.0"],` +
 		`"built_at":"2026-10-29T09:12:04Z","build_id":"1234",` +
 		`"repositories":["owner/repo-a"],"jobs":{"owner/repo-a":"fugaro-repo-a-web"},` +
 		`"last_used_at":"2026-10-29T09:40:11Z"}`
