@@ -1,21 +1,37 @@
 # Console auto-update: the implementation plan for desktop-console Task 4.4
 
-**Status: a plan. The owner's go of 2026-10-30 approves the auto-update task chain (Task 4.4 of
-[2026-10-15-desktop-console.md](2026-10-15-desktop-console.md), "L1") for console 0.116.0, and no
-task is approved beyond the owner's auto-update go.** It does not approve any change to the
+**Status: shipped in console 0.116.0 (release #1452).** The owner's go of 2026-10-30 approved the
+auto-update task chain (Task 4.4 of [2026-10-15-desktop-console.md](2026-10-15-desktop-console.md),
+"L1") for console 0.116.0, and no task was approved beyond it. It did not approve any change to the
 console's other surfaces, a new IPC operation, a new spawn row, or any redesign step. Decisions
-D760 to D772 are this plan's; the owner answered all of them on 2026-10-30, as recommended, so no
-task waits on a decision.
+D760 to D772 are this plan's; the owner answered all of them on 2026-10-30, as recommended, and
+answered **D762 again** the same day, in the opposite direction — that one is amended below. The
+whole chain is on `main` today but for the first console release after 0.116.0, which D771 leaves
+to a later cut.
 
-**Where the code stands (origin/main, 2026-10-30).** No auto-update code exists: no
-`electron-updater` import, no `autoUpdater`, no `src/main/updates.ts`. The tree actively forbids
-one until this task: `console/test/unit/pinning.test.ts` keeps the runtime `dependencies` empty and
-has a test named *ships no update client until Task 4.4 writes the code that uses it*;
-`console/test/unit/fuses.test.ts` pins `build.publish` to `null` ("Task 4.4 is the auto-update
-task, and the feed is its decision"). The staged and applied `console-release.yml` publish
-`console-vX.Y.Z` with `--latest=false` and attach no `latest-mac.yml`. Check 59b
-(`docs/gcp-live-checklist.md`) is written but NOT RUNNABLE, and still names `0.110.0`/`0.111.0`
-as its versions.
+**Where the code stands.** The updater is in the tree and in the release. **U1 (#1378)** is the
+policy — `console/src/main/updates.ts` and `console/test/unit/updates.test.ts`, with no electron
+import and no dependency. **U2 (#1379)** stages the feed and **#1390** copies it in, so the applied
+`console-release.yml` now writes `latest-mac.yml` in the macOS `release` job, lists it in
+`console-sha256sums.txt` and attaches it (D765). **U3 (#1392)** puts `electron-updater` **6.8.10**
+in `console/package.json`'s runtime `dependencies` — the only entry it has — adds the adapter
+`console/src/main/updater-electron.ts`, and starts the controller from `console/src/main/index.ts`
+after `whenReady`. **U3b (#1438)** hardens the install path: `autoInstallOnAppQuit` is always
+false, and an update installs **only through the notice's "Restart to update"**, only the download
+that notice named, and only while no launch flow is active. **U4 (#1439)** is the off switch —
+**Check for Updates Automatically** and **Check for Updates Now** in the application menu, whose
+state is the one boolean `<userData>/updates.json` — and **U4b (#1444)**, **U4c (#1446)** and
+**U4d (#1455)** are its follow-ups: a failed switch write is caught, the switch file is read and
+opened without following a link, and the tests U4c's review asked for. **U5 (#1443)** is the docs:
+`docs/design/desktop-console.md` §5.1 rule 10, §7.3 and §7.4, Task 4.4's text in
+`docs/plans/2026-10-15-desktop-console.md`, Check 59b's preconditions in `docs/gcp-live-checklist.md`
+and `console/README.md`.
+
+Two pins that forbade the updater now pin it instead: `console/test/unit/pinning.test.ts` holds the
+runtime allow-list at `electron-updater` and imports it from `updater-electron.ts` and nowhere
+else, and `console/test/unit/fuses.test.ts` still pins `build.publish` to `null`, which is what
+D765 keeps true. Check 59b is written and still **NOT RUNNABLE**: it installs `0.116.0` by hand
+and needs the first console release after it, which is not cut yet (D771).
 
 ## 1. Decisions
 
@@ -23,7 +39,7 @@ as its versions.
 |---|---|---|---|
 | **D760** | Update channel | **Stable console releases only**: tags `console-vX.Y.Z`, not draft, not prerelease. No beta channel. | Owner, 2026-10-30. One release line keeps the feed and Check 59b simple. |
 | **D761** | Check frequency | **At launch, then every 6 hours while the app is open.** | Owner, 2026-10-30. Matches design §7.3 ("on launch and then on a long interval"). |
-| **D762** | Install behaviour | **Download quietly, then a non-blocking "Restart to update" prompt; if ignored, install on quit. Never restart on its own.** | Owner, 2026-10-30. §7.3's "never silently install without telling the user". |
+| **D762** | Install behaviour | **AMENDED 2026-10-30, with what shipped in U3b (#1438): `autoInstallOnAppQuit` is always false, and an update installs only through the notice's "Restart to update", only the download that notice named. Nothing is ever installed on quit.** The answer as planned was: **Download quietly, then a non-blocking "Restart to update" prompt; if ignored, install on quit. Never restart on its own.** | Owner, 2026-10-30; **amended by the owner on 2026-10-30, after U1's review, and built in U3b (#1438).** §7.3's "never silently install without telling the user" reads literally: a "Later" nobody comes back to is not a telling, so installing on quit would install a version the operator was never shown; the prompt is the only install path, and the version it names is the only one an answer may install. |
 | **D763** | A launch in progress | **Never install or restart while the launch flow is active** (a launch in flight, or its confirm window open). The updater defers the prompt and any install until the flow is idle. | Owner, 2026-10-30. A restart mid-launch would kill the process that holds the launch write path. |
 | **D764** | How the client finds the newest release | The console's releases share `dimipaun/fugaro` with the CLI's and are published `--latest=false`, so electron-updater's GitHub provider (which reads the repository's releases and would meet `vX.Y.Z` CLI releases with no `latest-mac.yml`) and GitHub's `releases/latest` both point at the wrong thing. **The updater lists the repository's releases itself** (one unauthenticated `GET https://api.github.com/repos/dimipaun/fugaro/releases`, a fixed `User-Agent` with no version or machine data), keeps only strict `console-vX.Y.Z` tags per D760, takes the highest, refuses anything not above the running version, and only then hands electron-updater a **generic** feed at `https://github.com/dimipaun/fugaro/releases/download/console-vX.Y.Z/`. | Plan, 2026-10-30; **confirmed by the owner, 2026-10-30.** The only design that satisfies D760 with the release layout the owner ruled on 2026-10-17. |
 | **D765** | Who writes `latest-mac.yml` | **The release workflow** (macOS `release` job, after verification, before the sums are written), so `build.publish` stays `null`, no `app-update.yml` enters the bundle, and the manifest is listed in `console-sha256sums.txt` and so covered by the keyless cosign signature. | Plan, 2026-10-30; **confirmed by the owner, 2026-10-30.** Setting a `publish` provider would widen the pinned build keys and put a feed URL in the bundle that D764 replaces anyway. |
@@ -64,7 +80,8 @@ clock, and not before; stable-only filter (drafts, prereleases, `vX.Y.Z` CLI tag
 dropped); downgrade and same-version refused; feed URL built only for the allow-listed host and a
 strict tag; no identifier in any request (headers asserted on what the fake receives); the
 prompt and `quitAndInstall` never run while the launch flow is busy and run once it goes idle;
-`autoInstallOnAppQuit` true and `quitAndInstall` only after the user's restart.
+`autoInstallOnAppQuit` true in U1's own slice and **false from U3b on, with no install on quit
+(D762, amended)**, and `quitAndInstall` only after the user's restart.
 **Red step:** the launch-flow test against a controller that installs on `update-downloaded`
 regardless of the flow, and the no-identifier test against a request carrying a machine id.
 **Depends on:** nothing (D760 to D763 answered; D764 vetoable).
@@ -171,3 +188,16 @@ No level has two writers of one file. `updates.ts` has two writers, U1 then U3, 
 
 **Launched 2026-10-30:** U1 as run `20261030-161924-1755` and U2 as run `20261030-161930-84ca`,
 both from `main`, both file-disjoint from every open PR and running task; merged as #1378 and #1379, and the feed workflow was copied in as #1390. U3 launched after U1 merged.
+
+**And the rest of the chain, in the order it merged.** U3 (**#1392**), the dependency and the
+adapter; U3b (**#1438**), the install path hardened — the notice's "Restart to update", the named
+download, no launch flow active, `autoInstallOnAppQuit` false, which is D762 as amended; U4
+(**#1439**), the two menu items and `updates.json`; U5 (**#1443**), the docs and Check 59b's
+preconditions; then U4b (**#1444**), a failed switch write caught, U4c (**#1446**), the switch file
+read and opened without following a link, and U4d (**#1455**), the switch tests U4c's review asked
+for — tests only, and the one PR of the chain that merged after the tag below.
+
+**Released as console 0.116.0 "Peach" (#1452)**, the first build that carries an updater, cut with
+U1 to U5, U3b, U4b and U4c merged; U4d followed it and changed no shipped behaviour. 0.116.0
+cannot update itself (D771): an operator installs it by hand, and Check 59b then runs on that
+installation against the **first console release after it**, which is still to be cut.
