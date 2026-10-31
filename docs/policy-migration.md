@@ -33,14 +33,26 @@ deleting it:
    from `project_secrets.bitbucket-token.allow_data_to` in the project's local
    config, together with the `bitbucket_api_roots` allow-list. The stage
    derives both from the local config with the publisher's own functions and
-   patches them into the node before migrating it, so the operator is not sent
-   back to a republish they do not need. A project whose local config states
-   none derives nothing, and a node that then cannot be read fails closed;
+   patches them into the node **before** migrating it, so the operator is not
+   sent back to a republish they do not need. It does that whether or not the
+   migration would have refused: a node whose profiles mount no Bitbucket
+   credential migrates cleanly without the block, and the runs that read the
+   migrated node afterwards would fail closed on a block a publish would have
+   written. Only a member the node does not already carry is written, so a
+   block the owner narrowed by hand is not the local config's to replace. A
+   project whose local config states none derives nothing, and a node that then
+   cannot be read fails closed;
 5. it prints **one diff** — what each step changes, what is kept as it is, what
    was derived from the local config — and writes the node back with the ETag
    it read, after the project's name is typed at a real terminal (or `--yes`
    where a confirmation is enough for the operator; a run that is still in
-   flight refuses `--yes` first, exactly as `publish --delete` does).
+   flight stops the write unless `--yes` is passed, exactly as `publish
+   --delete` does with it).
+
+`fugaro upgrade --check` does not read the node at all: the node lives in the
+project's Realtime Database and reading it needs credentials, and `--check`'s
+own promise is that it makes no cloud call. It says the policy step cannot tell
+instead, and the upgrade without `--check` is what migrates it.
 
 The write is a writer's write, so it holds the same posture a publish does: a
 node carrying top-level keys this Fugaro does not model is refused, untouched,
@@ -59,6 +71,12 @@ node that is no longer there.
 - The node is one only a *newer* Fugaro can read: upgrade Fugaro first, then
   `fugaro update`; a `--delete` here would drop the fields that binary does
   know about, and the ones it does not.
+- The node's version is **below the chain's first step** (1 or 2, older than
+  the model that carries the migrators). No migration reaches it, and no
+  release of this CLI wrote it — a hand-written node, or one older than the
+  version model itself. Both doors refuse it with the sentence a publish uses
+  for the same state, whose remedy is this row: `fugaro project policy publish
+  --delete`, then a publish from this release.
 - The node is malformed in a way no migration can fix (it is not a JSON object,
   its version is not an integer, no release ever wrote its version, a top-level
   key is written twice, or the migrated document is one the current reader

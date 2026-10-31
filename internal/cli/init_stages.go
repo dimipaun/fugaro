@@ -156,9 +156,9 @@ func (e *initEngine) options() initflow.Options {
 // project it never creates) and minus the Batch backend's (the stage is
 // behind --provision-batch, which update refuses). So update's stages are
 // preflight, installation, Firebase, images, installation a second time,
-// secrets, plugin and the repository of the checkout it is run in (W5.1).
-// There is no services stage in either list: initflow.Services is a slot in
-// the canonical order nothing registers.
+// secrets, plugin, the repository of the checkout it is run in (W5.1) and the
+// published policy node's migration. There is no services stage in either
+// list: initflow.Services is a slot in the canonical order nothing registers.
 func initStages(e *initEngine) []initflow.Stage {
 	e.images, e.repo = newImagesStage(e), newRepositoryStage(e)
 	stages := []initflow.Stage{&preflightStage{e}, newInstallationStage(e), newFirebaseStage(e), e.images, newInstallation2Stage(e)}

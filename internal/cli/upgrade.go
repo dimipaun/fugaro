@@ -18,8 +18,8 @@ import (
 )
 
 // fugaro upgrade (docs/design/upgrade.md): each checkout brought up to this
-// binary in three steps, pin, plugin and cloud, stopping that checkout at
-// the first step that fails; every checkout is tried, one summary ends the
+// binary in four steps, pin, plugin, cloud and policy, stopping that checkout
+// at the first step that fails; every checkout is tried, one summary ends the
 // run, and the exit code is the worst.
 
 type upgradeOptions struct {
@@ -113,11 +113,13 @@ steps, stopping that checkout at the first step that fails:
           in an older version: migrated in place (never deleted and
           published again), after a diff of what changes, what is kept and
           what is derived from the local config, and the project's name typed
-          at a terminal. --yes confirms it, and is refused while a run is in
-          flight. Skipped where there is no local project config or the
-          repository is not onboarded, and in a coding agent's session, with
-          the command to run in your own terminal. This is what fugaro
-          update does for the same node; both doors run it.
+          at a terminal. --yes confirms it, and is the way past the refusal a
+          run in flight makes without it. Skipped where there is no local
+          project config or the repository is not onboarded, and in a coding
+          agent's session, with the command to run in your own terminal. It
+          reads the published node, so --check makes no call here either and
+          says it cannot tell. This is what fugaro update does for the same
+          node; both doors run it.
 
 It never upgrades fugaro itself: brew upgrade dimipaun/tap/fugaro && fugaro
 upgrade is the whole sequence.
@@ -127,10 +129,11 @@ session (CLAUDECODE and the like) the cloud and policy steps are skipped
 before they read anything, never attempted, with the command to run in your
 own terminal, so the exit code is 0 when the local steps succeeded. --check
 writes nothing, runs no claude command and makes no cloud call: it reads the
-settings file, Claude Code's record of installed plugins, the local project
-config and the published policy node, prints what each step would do and
-exits 1 when anything is stale (build records are not read). Without --yes,
---local or --check it needs a real terminal. There is no --json.
+settings file, Claude Code's record of installed plugins and the local project
+config, prints what each step would do and exits 1 when anything is stale
+(build records are not read, and the published policy node is not either: the
+policy step says it cannot tell). Without --yes, --local or --check it needs a
+real terminal. There is no --json.
 
 Exit codes: 0 every checkout finished or had nothing to do; 1 a refusal, a
 failed local step, a cloud step that cannot start from the checkout's files
@@ -475,18 +478,33 @@ func pinStep(_ context.Context, u *upgradeCtx) stepResult {
 	return stepResult{state: stepDone, reason: "pinned to " + ch.Tag + " in " + shown + ": review it with git diff and commit it like any change"}
 }
 
-// policyStep is the last step of the sequence, and the same migration `fugaro update`'s policy stage makes for
-// the checkout's project (init_policy_migrate.go), with the same diff, the
-// same typed confirmation and the same refusals — the two front doors of one
-// upgrade, so neither can carry a node the other would refuse. It runs before
-// the cloud step because it is the cheap half of the same question: a node an
-// older Fugaro wrote is what the runs the cloud step refreshes are admitted by.
+// checkPolicyCaveat is what --check says for the step it cannot answer: whether
+// the published policy node is current is a fact of the project's Realtime
+// Database and of nothing in the checkout, and reading it there is the cloud
+// call the flag promises not to make (cloudStep's checkJobCopyCaveat is the
+// same shape for the same reason).
+const checkPolicyCaveat = "fugaro upgrade --check makes no cloud call, so it cannot tell whether the published policy node is current or an older Fugaro's; run fugaro upgrade (or fugaro update) without --check to migrate it in place, after the diff and the typed confirmation"
+
+// policyStep is the last step of the sequence, and the same migration `fugaro
+// update`'s policy stage makes for the checkout's project
+// (init_policy_migrate.go), with the same diff, the same typed confirmation and
+// the same refusals — the two front doors of one upgrade, so neither can carry
+// a node the other would refuse. It is last because the cloud step's verdicts
+// are read first: a real local-file error stops the checkout in every mode,
+// --check included, and a checkout with nothing to refresh is skipped, neither
+// of which a step of this one's may pre-empt.
 //
 // The step is skipped, not failed, where there is nothing here to migrate from:
 // a teammate's checkout has no local project config, and a repository that is
 // not onboarded has no node of this project's to read (resolveCloudRepo's
-// cloudNotHere, the same verdict the cloud step uses).
+// cloudNotHere, the same verdict the cloud step uses). Under --check it is
+// skipped before anything is read, like the cloud step's own caveat: the node
+// lives in the project's Realtime Database, and reading it needs credentials.
 func policyStep(ctx context.Context, u *upgradeCtx) stepResult {
+	if u.o.check {
+		fmt.Fprintf(u.w, "note: %s\n", checkPolicyCaveat)
+		return stepResult{state: stepSkipped, reason: "--check makes no cloud call, so the published policy node is not read: run fugaro upgrade without --check to migrate it in place"}
+	}
 	if u.o.local {
 		return stepResult{state: stepSkipped, reason: "--local"}
 	}
@@ -507,15 +525,15 @@ func policyStep(ctx context.Context, u *upgradeCtx) stepResult {
 	if policyNodeUnreachable(lc) {
 		return stepResult{state: stepSkipped, reason: policyNoDBReason}
 	}
-	m, err := policyMigrationFor(ctx, lc)
+	m, published, err := policyMigrationFor(ctx, lc)
 	if err != nil {
 		return stepResult{state: stepFailed, code: ExitUserError, reason: oneLine(err.Error())}
 	}
-	if m == nil {
+	switch {
+	case !published:
+		return stepResult{state: stepCurrent, reason: policyNoneDetail()}
+	case m == nil:
 		return stepResult{state: stepCurrent, reason: fmt.Sprintf("the published policy is version %d", projectpolicy.Version)}
-	}
-	if u.o.check {
-		return stepResult{state: stepStale, reason: fmt.Sprintf("the published policy is version %d and this fugaro writes version %d: fugaro upgrade migrates it in place, after the diff and a typed confirmation", m.from, projectpolicy.Version)}
 	}
 	m.print(u.w)
 	inflight, err := runsInFlight(ctx, m.db, m.lc)

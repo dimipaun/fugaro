@@ -67,31 +67,58 @@ func policyNodeUnreachable(lc *localcfg.Config) bool {
 }
 
 // policyMigrationFor reads the published node and works out what it would be
-// written as, or nil when there is nothing to migrate: no node is published, or
-// it is already the version this Fugaro writes.
-func policyMigrationFor(ctx context.Context, lc *localcfg.Config) (*policyMigration, error) {
+// written as. published is whether a node is there at all — a project with a
+// budget backend and no published policy is a state of its own, and one the
+// delete and show paths already word ("runs fall back to the ceiling their
+// job's environment carries"), not the same thing as a node already at this
+// version. The migration is nil when there is nothing to migrate.
+func policyMigrationFor(ctx context.Context, lc *localcfg.Config) (m *policyMigration, published bool, err error) {
 	lc, db, err := budgetDBFor(ctx, lc)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	etag, found, raw, err := readPolicyNode(ctx, db, lc)
-	if err != nil || !found {
-		return nil, err
-	}
-	moved, changes, err := projectpolicy.Migrate(raw)
 	if err != nil {
-		if moved, changes, err = migrateWithDerivedMembers(raw, lc, err); err != nil {
-			return nil, err
-		}
+		return nil, false, err
 	}
-	if len(changes) == 0 {
-		return nil, nil
+	if !found {
+		return nil, false, nil
+	}
+	node, derr := withDerivedMembers(raw, lc)
+	moved, changes, err := projectpolicy.Migrate(node)
+	switch {
+	case err != nil && derr != nil:
+		// The node needed the member the local config could not supply: the
+		// derivation's message says what about the config to fix, which is
+		// more than the migration's own note can (it says only that the
+		// block belongs to a publish).
+		return nil, true, derr
+	case err != nil:
+		return nil, true, policyMigrationRefusal(err)
+	case len(changes) == 0:
+		return nil, true, nil
 	}
 	if err := refuseMigrationUnknownKeys(moved); err != nil {
-		return nil, err
+		return nil, true, err
 	}
 	return &policyMigration{lc: lc, db: db, etag: etag, from: changes[0].From,
-		moved: moved, changes: changes, derived: derivedMembers(moved, raw)}, nil
+		moved: moved, changes: changes, derived: derivedMembers(moved, raw)}, true, nil
+}
+
+// policyMigrationRefusal is Migrate's own refusal with the remedy that fits
+// this side of the skew: a *VersionError carries the shared sentence alone
+// (Migrate's contract: the caller prints SkewSentence), so a node ahead of this
+// Fugaro is told to upgrade the binary and one behind it — a version below the
+// chain's first step, which no migrator reaches and no release of this binary
+// ever wrote — is told the move that works. Anything else, a malformed node
+// among them, is returned as it came: it is not a skew and has no version to
+// word.
+func policyMigrationRefusal(err error) error {
+	var ve *projectpolicy.VersionError
+	if errors.As(err, &ve) {
+		return userErr("%s", projectpolicy.SkewSentence(ve, projectpolicy.ReaderCLI))
+	}
+	return err
 }
 
 // derivedMembers is the top-level members the node gained on the way from raw
@@ -120,49 +147,51 @@ const (
 	policyNoDBReason     = "the project's config names no Firebase budget backend, so there is no published policy node to read"
 )
 
-// migrateWithDerivedMembers retries the migration with the members Migrate
-// cannot derive from the node — the Bitbucket block and the API-root
-// allow-list — patched in from the project's local config, using the
+// withDerivedMembers patches into the node the members a publish would have
+// derived from the project's local config and the node cannot state — the
+// bitbucket_token block and the bitbucket_api_roots allow-list — using the
 // publisher's own functions (DeriveBitbucketToken, and the config's
-// bitbucket_api_roots, which the publisher copies).
+// bitbucket_api_roots, which the publisher copies). The returned node is the
+// input byte for byte when there was nothing to add.
 //
-// It runs only when Migrate failed with a note, which is Migrate's own way of
-// saying the local config is what is missing: a version-3 node whose profile
-// mounts the project's Bitbucket credential is refused there because the block
-// that credential is bounded by (bitbucket_token.allow_repos) is derived at
-// publish, and a step whose only input is the node cannot state it. Everything
-// else — a malformed node, a node ahead of this Fugaro — is that failure, as it
-// came.
+// It runs whether or not the migration would have refused, and before it: a
+// version-3 node whose profile mounts the project's Bitbucket credential is
+// refused by Migrate (the block that credential is bounded by is derived at
+// publish, and a step whose only input is the node cannot state it), but a node
+// with no profile mounting the token migrates cleanly without the block — and
+// the migrated node is then read by every run of the project, where a block a
+// publish would have written is missing and the project's Bitbucket runs fail
+// closed. Both are the same omission and get the same answer.
 //
-// The members are patched into the node and the migration is retried rather
-// than written after it, so the retried Migrate judges the document the node
-// actually becomes (its own strict read of the result is what accepts it), and
-// so the diff the operator reads is a diff of bytes that were migrated.
-func migrateWithDerivedMembers(raw []byte, lc *localcfg.Config, first error) ([]byte, []projectpolicy.Change, error) {
-	var me *projectpolicy.MalformedError
-	if !errors.As(first, &me) || me.Note == "" {
-		return nil, nil, first
-	}
-	profiles := policyProfiles(lc)
-	token, err := projectpolicy.DeriveBitbucketToken(profiles, lc.ProjectSecrets)
-	if err != nil {
-		return nil, nil, userErr("%v", err)
+// A member the node already carries is never rewritten: the block is the
+// node's, and the owner may have narrowed its allow-list by hand. The error is
+// the derivation's own (the config's allow_data_to cannot become a policy
+// entry), and it is the caller's to place: only a node that needed the block
+// is stopped by it.
+func withDerivedMembers(raw []byte, lc *localcfg.Config) ([]byte, error) {
+	carries := func(key string) bool {
+		before, was, err := jsonMember(raw, key)
+		return err == nil && was && !projectpolicy.IsNull(before)
 	}
 	node := raw
-	if token != nil {
-		if node, err = patchPolicyJSON(node, bitbucketTokenKey, token); err != nil {
-			return nil, nil, userErr("deriving the policy's %s block from %s: %v", bitbucketTokenKey, lc.Name, err)
+	if !carries(bitbucketTokenKey) {
+		token, err := projectpolicy.DeriveBitbucketToken(policyProfiles(lc), lc.ProjectSecrets)
+		if err != nil {
+			return raw, userErr("%v", err)
+		}
+		if token != nil {
+			if node, err = patchPolicyJSON(node, bitbucketTokenKey, token); err != nil {
+				return raw, userErr("deriving the policy's %s block from %s: %v", bitbucketTokenKey, lc.Name, err)
+			}
 		}
 	}
-	if len(lc.BitbucketAPIRoots) > 0 {
+	if !carries(bitbucketAPIRootsKey) && len(lc.BitbucketAPIRoots) > 0 {
+		var err error
 		if node, err = patchPolicyJSON(node, bitbucketAPIRootsKey, lc.BitbucketAPIRoots); err != nil {
-			return nil, nil, userErr("carrying %s's %s allow-list into the policy: %v", lc.Name, bitbucketAPIRootsKey, err)
+			return raw, userErr("carrying %s's %s allow-list into the policy: %v", lc.Name, bitbucketAPIRootsKey, err)
 		}
 	}
-	if len(derivedMembers(node, raw)) == 0 {
-		return nil, nil, first
-	}
-	return projectpolicy.Migrate(node)
+	return node, nil
 }
 
 // refuseMigrationUnknownKeys is P8 at this stage's write: a node carrying
@@ -231,10 +260,20 @@ func (m *policyMigration) print(w io.Writer) {
 // engines: it shows its own diff and takes its own confirmation, and refuses a
 // coding agent's session and a run with no terminal and no --yes.
 type policyMigrateStage struct {
-	e       *initEngine
-	planned bool
-	m       *policyMigration
-	err     error
+	e         *initEngine
+	planned   bool
+	m         *policyMigration
+	published bool
+	err       error
+}
+
+// policyNoneDetail is what both doors say for a project that has a budget
+// backend and no node in it. It is the state the delete and show paths already
+// word, and it is not the same thing as a node already at this version: an
+// operator told "the published policy is version 4" would go looking for a
+// policy that is not there.
+func policyNoneDetail() string {
+	return fmt.Sprintf("no policy is published at %s: runs fall back to the ceiling their job's environment carries", projectpolicy.PathShared())
 }
 
 func newPolicyMigrateStage(e *initEngine) *policyMigrateStage { return &policyMigrateStage{e: e} }
@@ -249,12 +288,12 @@ func (policyMigrateStage) Left() initflow.Left {
 // plan reads the node once per run: the stage's check, its plan and its apply
 // all ask the same question, and the answer is what the confirmation is made
 // against.
-func (s *policyMigrateStage) plan(ctx context.Context) (*policyMigration, error) {
+func (s *policyMigrateStage) plan(ctx context.Context) (*policyMigration, bool, error) {
 	if !s.planned {
 		s.planned = true
-		s.m, s.err = policyMigrationFor(ctx, s.e.lc)
+		s.m, s.published, s.err = policyMigrationFor(ctx, s.e.lc)
 	}
-	return s.m, s.err
+	return s.m, s.published, s.err
 }
 
 // Check reports what the published node is. A refusal here is the run's, not a
@@ -265,11 +304,14 @@ func (s *policyMigrateStage) Check(ctx context.Context) (initflow.Status, error)
 	if policyNodeUnreachable(s.e.lc) {
 		return initflow.Status{State: initflow.Skipped, Detail: policyNoDBReason}, nil
 	}
-	m, err := s.plan(ctx)
+	m, published, err := s.plan(ctx)
 	if err != nil {
 		return initflow.Status{}, err
 	}
-	if m == nil {
+	switch {
+	case !published:
+		return initflow.Status{State: initflow.Done, Detail: policyNoneDetail()}, nil
+	case m == nil:
 		return initflow.Status{State: initflow.Done, Detail: fmt.Sprintf("the published policy is version %d", projectpolicy.Version)}, nil
 	}
 	return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the published policy is version %d and this Fugaro writes version %d", m.from, projectpolicy.Version)}, nil
@@ -279,11 +321,14 @@ func (s *policyMigrateStage) Plan(ctx context.Context, env initflow.Env) (initfl
 	if policyNodeUnreachable(s.e.lc) {
 		return initflow.Plan{NothingToDo: true, Detail: policyNoDBReason}, nil
 	}
-	m, err := s.plan(ctx)
+	m, published, err := s.plan(ctx)
 	if err != nil {
 		return initflow.Plan{}, err
 	}
-	if m == nil {
+	switch {
+	case !published:
+		return initflow.Plan{NothingToDo: true, Detail: policyNoneDetail()}, nil
+	case m == nil:
 		return initflow.Plan{NothingToDo: true, Detail: fmt.Sprintf("the published policy is version %d", projectpolicy.Version)}, nil
 	}
 	if env.Interactive || env.Yes {
@@ -292,10 +337,13 @@ func (s *policyMigrateStage) Plan(ctx context.Context, env initflow.Env) (initfl
 	return initflow.Plan{Detail: fmt.Sprintf("migrate the published policy from version %d to %d in place, after your confirmation", m.from, projectpolicy.Version)}, nil
 }
 
-// Apply is the write. The refusals are the four the delete path has, in the
+// Apply is the write. The refusals are the ones the delete path has, in the
 // same order and the same words where they are the same refusal: a coding
-// agent's session, a run in flight (which --yes does not confirm here either),
-// no terminal (--yes is the confirmation then), and the typed project name.
+// agent's session, a run in flight without --yes, no terminal (--yes is the
+// confirmation then), and the typed project name. --yes is the way past the
+// in-flight refusal once the operator has read what the migration does, which
+// is what that refusal itself tells them — the same reading
+// `fugaro project policy publish --delete` has (internal/cli/project_cmd.go).
 func (s *policyMigrateStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
 	if marker := agentMarker(os.Getenv); marker != "" {
 		return initflow.Outcome{}, &initflow.AgentError{Marker: marker}
@@ -303,7 +351,7 @@ func (s *policyMigrateStage) Apply(ctx context.Context, env initflow.Env) (initf
 	if policyNodeUnreachable(s.e.lc) {
 		return initflow.Outcome{Detail: policyNoDBReason}, nil
 	}
-	m, err := s.plan(ctx)
+	m, _, err := s.plan(ctx)
 	if err != nil {
 		return initflow.Outcome{}, err
 	}

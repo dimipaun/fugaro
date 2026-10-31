@@ -203,8 +203,13 @@ func TestUpdatePolicyMigrationRefusesANewerNode(t *testing.T) {
 	if err == nil {
 		t.Fatal("a node written by a newer Fugaro was accepted")
 	}
-	if !strings.Contains(err.Error(), fmt.Sprint(projectpolicy.Version+1)) {
-		t.Errorf("the refusal does not name the version it read: %v", err)
+	// Migrate answers with the shared sentence alone; the remedy is the
+	// caller's to word (projectpolicy.SkewSentence), and a refusal with no
+	// move in it leaves the operator with nothing to do.
+	for _, want := range []string{fmt.Sprint(projectpolicy.Version + 1), "upgrade Fugaro (fugaro upgrade)"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
 	}
 	if got := nodeVersionOnTheFake(t, f); got != projectpolicy.Version+1 {
 		t.Errorf("the node moved to version %d", got)
@@ -212,6 +217,67 @@ func TestUpdatePolicyMigrationRefusesANewerNode(t *testing.T) {
 	out, err2 := h.apply(t, true)
 	if err2 == nil {
 		t.Errorf("the write went ahead over a newer node:\n%s", out)
+	}
+}
+
+// TestUpdatePolicyMigrationRefusesAVersionNoMigratorReaches: a node below the
+// chain's first step is one no release of this Fugaro wrote (a hand-written
+// node). The migration cannot move it, and Migrate refuses it as the same
+// older-than-this-reader skew a publish does — so the remedy the operator reads
+// has to be the one that works there, not a bare sentence with no move.
+func TestUpdatePolicyMigrationRefusesAVersionNoMigratorReaches(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version": 1, "budget": map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"allow_repos": []string{"github/acme/app"},
+	})
+	h := newMigrationRig(t, f, &initOptions{})
+
+	err := h.check()
+	if err == nil {
+		t.Fatal("a version-1 node, which no migrator reaches, was accepted")
+	}
+	for _, want := range []string{"version 1", "fugaro project policy publish --delete"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if got := nodeVersionOnTheFake(t, f); got != 1 {
+		t.Errorf("the node moved to version %d", got)
+	}
+	out, err2 := h.apply(t, true)
+	if err2 == nil {
+		t.Errorf("a node no migrator reaches was written over:\n%s", out)
+	}
+}
+
+// TestUpdatePolicyMigrationSaysWhenNothingIsPublished: a project with a budget
+// backend and no node in it is a state of its own, and both doors word it the
+// way the delete and show paths do. "the published policy is version 4" would
+// send the operator looking for a policy that is not there.
+func TestUpdatePolicyMigrationSaysWhenNothingIsPublished(t *testing.T) {
+	f := newProjectFixture(t, "")
+	h := newMigrationRig(t, f, &initOptions{})
+
+	st, err := h.s.Check(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != initflow.Done || !strings.Contains(st.Detail, "no policy is published") {
+		t.Fatalf("the check says %s %q, want the no-policy detail", st.State, st.Detail)
+	}
+	if strings.Contains(st.Detail, fmt.Sprintf("version %d", projectpolicy.Version)) {
+		t.Errorf("the check claims a node that is not there: %q", st.Detail)
+	}
+	plan, err := h.s.Plan(context.Background(), initflow.Env{Yes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.NothingToDo || !strings.Contains(plan.Detail, "no policy is published") {
+		t.Errorf("the plan says %+v, want the no-policy detail", plan)
+	}
+	if v := f.db.Value(projectpolicy.PathShared()); v != nil {
+		t.Errorf("the stage published a node of its own: %v", v)
 	}
 }
 
@@ -254,6 +320,25 @@ func TestUpdatePolicyMigrationSurfacesRunsInFlight(t *testing.T) {
 	}
 	if got := nodeVersionOnTheFake(t, f); got != 3 {
 		t.Errorf("the node moved to version %d while a run was in flight", got)
+	}
+}
+
+// TestUpdatePolicyMigrationTakesYesWhileARunIsInFlight pins the other half of
+// that refusal: --yes is the way past it, which is what the refusal's own words
+// tell the operator to use, and the same reading `publish --delete` has. The
+// two doors and their help text have to say this one way.
+func TestUpdatePolicyMigrationTakesYesWhileARunIsInFlight(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), v3Node(nil))
+	f.db.Set("agents", map[string]any{"proj-1234": map[string]any{"run-1": map[string]any{"repo": "github/acme/app"}}})
+	h := newMigrationRig(t, f, &initOptions{})
+
+	out, err := h.apply(t, true)
+	if err != nil {
+		t.Fatalf("--yes did not confirm the migration a run in flight stops without it: %v\n%s", err, out)
+	}
+	if got := nodeVersionOnTheFake(t, f); got != projectpolicy.Version {
+		t.Errorf("the node is version %d, want %d", got, projectpolicy.Version)
 	}
 }
 
@@ -359,7 +444,34 @@ func TestUpdateMigrationKeepsHandEditedAllowListWhileDeriving(t *testing.T) {
 	}
 }
 
-func TestUpdateMigrationWithoutBitbucketProfileDerivesNothing(t *testing.T) {
+// TestUpdateMigrationDerivesTheBlockWhenNoProfileMountsTheToken: the block a
+// publish derives is not a statement about a profile mounting the token — a
+// proxied per-repository job holds no credential at all and reads the block as
+// its whole admission — so a node with no profile mounting it still has to come
+// out of the migration carrying it. Without the derivation the node migrates
+// cleanly and the project's Bitbucket runs fail closed afterwards.
+func TestUpdateMigrationDerivesTheBlockWhenNoProfileMountsTheToken(t *testing.T) {
+	f := newProjectFixture(t, bitbucketTokenWithoutAProfile)
+	f.db.Set(projectpolicy.PathShared(), v3Node(nil))
+	h := newMigrationRig(t, f, &initOptions{})
+
+	out, err := h.apply(t, true)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	p := publishedPolicy(t, f)
+	if p.BitbucketToken == nil {
+		t.Fatalf("the migrated node carries no bitbucket_token block, and this config derives one:\n%s", out)
+	}
+	if want := []string{"bitbucket/workspace-a/api-*", "bitbucket/workspace-a/repo-a"}; !slices.Equal(p.BitbucketToken.AllowRepos, want) {
+		t.Errorf("bitbucket_token.allow_repos = %v, want %v", p.BitbucketToken.AllowRepos, want)
+	}
+}
+
+// TestUpdateMigrationWithoutABitbucketCredentialDerivesNothing: a config that
+// states no Bitbucket credential has nothing to derive from, so the migrated
+// node carries no block and the diff claims none.
+func TestUpdateMigrationWithoutABitbucketCredentialDerivesNothing(t *testing.T) {
 	f := newProjectFixture(t, "")
 	f.db.Set(projectpolicy.PathShared(), v3Node(nil))
 	h := newMigrationRig(t, f, &initOptions{})
@@ -436,6 +548,38 @@ func TestUpgradeRunsThePolicyMigration(t *testing.T) {
 	}
 	if got := reflect.ValueOf(upgradeSteps[3].run).Pointer(); got != reflect.ValueOf(policyStep).Pointer() {
 		t.Error("the policy step is registered under some other function")
+	}
+}
+
+// TestUpgradePolicyCheckMakesNoCloudCall: --check's own description, the
+// command's help and the upgrade skill all promise it makes no cloud call and
+// needs no credentials. The published node is not in the checkout — it is in
+// the project's Realtime Database — so the step says it cannot tell instead of
+// reading it. The read is denied on the fake for the length of this test and
+// the stage's own check is run under the same denial, so the skip above is a
+// skip and not a denial that failed quietly.
+func TestUpgradePolicyCheckMakesNoCloudCall(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), v3Node(nil))
+	f.db.DenyRead(projectpolicy.PathShared())
+	out := &syncBuf{}
+	cmd := NewRootCmd()
+	cmd.SetOut(out)
+	u := &upgradeCtx{cmd: cmd, w: out, loc: pluginwire.Location{Root: f.dir}}
+	u.o.check = true
+
+	r := policyStep(context.Background(), u)
+	if r.state != stepSkipped {
+		t.Fatalf("the step is %s, want skipped: %s", r.state, r.reason)
+	}
+	if !strings.Contains(out.String(), "makes no cloud call") || !strings.Contains(out.String(), "cannot tell") {
+		t.Errorf("--check does not say it cannot tell:\n%s", out.String())
+	}
+	if got := nodeVersionOnTheFake(t, f); got != 3 {
+		t.Errorf("the node moved to version %d under --check", got)
+	}
+	if err := newMigrationRig(t, f, &initOptions{}).check(); err == nil {
+		t.Fatal("the denied read went through, so the skip above proves nothing")
 	}
 }
 

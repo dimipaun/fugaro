@@ -403,6 +403,9 @@ func (e *initEngine) reviewScreen(ctx context.Context, why string) {
 	if e.previewState(initflow.Plugin) == initflow.Todo {
 		sep = append(sep, "the plugin wiring (its own y/N)")
 	}
+	if e.previewState(initflow.Policy) == initflow.Todo {
+		sep = append(sep, "migrating the published policy node in place (type the project's name)")
+	}
 	if len(sep) == 0 {
 		sep = append(sep, "nothing else is waiting in this run")
 	}

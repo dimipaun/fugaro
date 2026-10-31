@@ -3996,11 +3996,13 @@ steps, stopping that checkout at the first step that fails:
           in an older version: migrated in place (never deleted and
           published again), after a diff of what changes, what is kept and
           what is derived from the local config, and the project's name typed
-          at a terminal. --yes confirms it, and is refused while a run is in
-          flight. Skipped where there is no local project config or the
-          repository is not onboarded, and in a coding agent's session, with
-          the command to run in your own terminal. This is what fugaro
-          update does for the same node; both doors run it.
+          at a terminal. --yes confirms it, and is the way past the refusal a
+          run in flight makes without it. Skipped where there is no local
+          project config or the repository is not onboarded, and in a coding
+          agent's session, with the command to run in your own terminal. It
+          reads the published node, so --check makes no call here either and
+          says it cannot tell. This is what fugaro update does for the same
+          node; both doors run it.
 
 It never upgrades fugaro itself: brew upgrade dimipaun/tap/fugaro && fugaro
 upgrade is the whole sequence.
@@ -4010,10 +4012,11 @@ session (CLAUDECODE and the like) the cloud and policy steps are skipped
 before they read anything, never attempted, with the command to run in your
 own terminal, so the exit code is 0 when the local steps succeeded. --check
 writes nothing, runs no claude command and makes no cloud call: it reads the
-settings file, Claude Code's record of installed plugins, the local project
-config and the published policy node, prints what each step would do and
-exits 1 when anything is stale (build records are not read). Without --yes,
---local or --check it needs a real terminal. There is no --json.
+settings file, Claude Code's record of installed plugins and the local project
+config, prints what each step would do and exits 1 when anything is stale
+(build records are not read, and the published policy node is not either: the
+policy step says it cannot tell). Without --yes, --local or --check it needs a
+real terminal. There is no --json.
 
 Exit codes: 0 every checkout finished or had nothing to do; 1 a refusal, a
 failed local step, a cloud step that cannot start from the checkout's files
