@@ -1747,11 +1747,15 @@ func TestUpdateRulesStageRefusesForeignDatabase(t *testing.T) {
 }
 
 // TestUpdateRulesStageRefusedInAgentSession: a coding agent's session may not
-// deploy security rules, and the refusal is the stage's own — askOrdinary's
-// AgentError arm, which runs before any confirmation — so a loop-level test
-// cannot see it (mutation M4: take that arm out and the loop's tests stay
-// green while `fugaro update` from an agent's session rewrites the rules every
-// run of the project serves).
+// deploy security rules. What it pins is that the stage's apply refuses the
+// marker, not which layer of it does the refusing: there are two — askOrdinary's
+// own AgentError arm (init_review.go) and ask's, which every path on from
+// askOrdinary reaches — and this level cannot tell them apart, because
+// runCovers (the reason askOrdinary checks the marker first) answers false
+// under one itself, so askOrdinary without its arm arrives at ask with nothing
+// observable in between. Removing either arm alone leaves this test green: it
+// guards the pair (`fugaro update` from an agent's session taking the rules
+// over the ones every run of the project serves).
 func TestUpdateRulesStageRefusedInAgentSession(t *testing.T) {
 	r, db := updateBudgetRig(t)
 	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.PolicyRulesVersion)

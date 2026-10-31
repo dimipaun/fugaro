@@ -56,8 +56,11 @@
 // wherever it is present.
 //
 // **No secret is read, and no value is printed.** The only environment this
-// file looks at is the two variables above plus the two switches named below;
-// nothing else in the environment reaches the config. The error messages repeat
+// file looks at is the two identity variables above, the two native config
+// variables below, the two switches named below, and -- through
+// `native-config-guard.js`, which owns the build-time guard -- the platform EAS
+// names (`EAS_BUILD_PLATFORM`); nothing else in the environment reaches the
+// config. The error messages repeat
 // **no value**: an identifier is public, but a variable that was mistyped into
 // holding something else must not have it printed into a build log -- so the
 // messages describe the shape the value must have and never echo it.
@@ -105,12 +108,21 @@
 //
 // On a build worker the value of a file variable is the **path** the file was
 // written to, which is exactly what the plugin's `googleServicesFile` field
-// wants, so the variable is copied through and never inspected. **Neither is
-// required here**: an unset variable leaves the field absent and nothing throws,
-// because `eas-cli` resolves this file locally (see `resolveConfig`) on a machine
-// that has neither file. The guard that refuses a build profile missing them is
-// P7.1b's, and the profile wiring is `eas.json`'s -- this file only reads what it
-// is handed, and an error message here never repeats a value (see `missing`).
+// wants, so the variable is copied through and never inspected. **Nothing is
+// required in the dev/lint state**: an unset variable leaves the field absent
+// and nothing throws, because `eas-cli` resolves this file locally (see
+// `resolveConfig`) on a machine that has neither file. **In a build it is the
+// other way round (D260, P7.1b)**: `resolveConfig` refuses -- naming the
+// platform, the variable, where to change that name and README's section, and
+// never a value -- when a platform being built resolves to no readable file.
+// Prebuild refuses a missing file too, from the plugin's own code and after the
+// upload; this is the earlier and plainer stop on the same fact.
+// `native-config-guard.js` is that guard, and
+// `mobile/README.md`'s "Building for internal testing" says the same to the
+// owner. **The delivery mechanism is EAS environment variables with file
+// visibility**, set in the EAS environments the profiles name: `eas.json`
+// carries no `env`, because one would override them and replace the path with a
+// literal.
 //
 // The two **advertising-id** settings are the other half, and they are structural
 // rather than promised: `@react-native-firebase/analytics`'s iOS plugin takes
@@ -120,6 +132,13 @@
 // manifest through Expo's own `android.blockedPermissions`. The Android
 // collection switches themselves are **not** here: the SDK reads them from
 // `mobile/firebase.json` at build time (see that file).
+
+import {
+  GOOGLE_SERVICES_FIELD,
+  builtPlatforms,
+  nativeConfigError,
+  nativeConfigMissing,
+} from './native-config-guard.js';
 
 /** The two variables, by platform. The names are this task's, and a rename is deliberate. */
 export const ID_VARIABLES = Object.freeze({
@@ -316,9 +335,6 @@ export const NATIVE_CONFIG_VARIABLES = Object.freeze({
   android: 'GOOGLE_SERVICES_JSON',
 });
 
-/** The field of `expo` each native config file path is written to. */
-const GOOGLE_SERVICES_FIELD = 'googleServicesFile';
-
 /**
  * Android's advertising-id permission: the one Play reads as "this app uses the
  * advertising id". `@react-native-firebase/analytics` turns the SDK's *reading*
@@ -449,12 +465,22 @@ export function resolveConfig(config, env = process.env) {
     );
   }
 
-  return withFirebase(
+  const resolved = withFirebase(
     config,
     declaring({ ...(config.ios ?? {}), [FIELDS.ios.field]: read('ios', env) }),
     { ...(config.android ?? {}), [FIELDS.android.field]: read('android', env) },
     env,
   );
+
+  // D260: a build whose resolved config carries no readable native config file
+  // is a stop, not a build. The subject is the **file** the config resolved to
+  // and never the variable name, and the check runs only in a build arm -- the
+  // dev arm above returns before it, so `npm test`, `expo start` and `eas-cli`'s
+  // local resolution are untouched by it.
+  const missing = nativeConfigMissing(resolved, builtPlatforms(env));
+  if (missing.length > 0) throw nativeConfigError(missing[0], NATIVE_CONFIG_VARIABLES[missing[0]]);
+
+  return resolved;
 }
 
 /**

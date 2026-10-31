@@ -188,6 +188,23 @@ agent runs any of the commands below**: each needs the owner's Expo, Apple and
 Google accounts, and no Expo token, App Store Connect key or Play
 service-account key goes into an agent's session (D120, Global Constraint 9).
 
+**A development build, not Expo Go (D260).** The Firebase SDKs are native and
+the app reads its Firebase configuration from native config files, so **Expo Go
+cannot run this app** — every build below is a **development build** made by
+EAS, and `npx expo start` against Expo Go is not a way to run it. The two native
+files (`google-services.json` for Android, `GoogleService-Info.plist` for iOS)
+reach the build as **EAS file environment variables**: on the worker each
+variable's value is the path EAS wrote the file to, and the build's config
+resolves that path onto `ios.googleServicesFile` / `android.googleServicesFile`
+for the `@react-native-firebase` config plugin. **Neither file is ever
+committed** — `mobile/.gitignore` names both — so an EAS build whose environment
+carries no such file (or a path that names no file) **fails at config time, by
+design**: the failure names the platform, the variable `mobile/app.config.js`
+reads for it, and this section. Prebuild refuses a missing file as well, from
+the plugin's own code and once the upload has already happened; this check is
+the earlier and plainer stop on the same fact. The guard is
+`native-config-guard.js`, and `src/native-config-guard.test.js` is its test.
+
 **Prerequisites: run `npm install` in `mobile/` first; the SDK is Expo SDK 58.**
 The manifest declares the app's runtime packages (`expo` 58.x, `react-native`
 0.88, `react` 19.3, `expo-secure-store` 58.x and
@@ -376,9 +393,15 @@ switch set — a developer's `expo start`, and `npm test` — **nothing is
 required**, so no store account is needed to run anything here; a variable that
 is set is still validated and used (that is the state `eas-cli` resolves the
 file in, above), and a static identity planted in `app.json` is dropped rather
-than passed through, so the file stays the single site for them. The file reads
-the two variables and the two switches, and **nothing else in the environment
-reaches the config**: it holds no credential, and it cannot.
+than passed through, so the file stays the single site for them. **The native
+config files are required by the same two switches**, with one difference: when
+that check runs, `EAS_BUILD_PLATFORM` narrows it to the platform EAS named — so
+`FUGARO_REQUIRE_IDS=1` on its own, and any build whose environment names no
+platform (which is what `eas-cli`'s local resolution looks like), requires
+**both** files, while one naming `android` requires only Android's. The file
+reads the two identities, the two native config variables, the two switches and
+that platform name, and **nothing else in the environment reaches the config**:
+it holds no credential, and it cannot.
 
 **The export-compliance answer is declared, not asked again.** `app.config.js`
 merges `ios.infoPlist.ITSAppUsesNonExemptEncryption: false` into every

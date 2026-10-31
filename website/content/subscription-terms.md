@@ -270,10 +270,13 @@ prompts, model output, credentials, run records, logs or cloud data. Customer Da
 systems the Customer controls and with the third parties the Customer chooses under section 7.4
 (Third parties the Customer chooses).
 
-7.3 **Crash reports and diagnostics.** The Software may send crash reports and basic diagnostic
-data to the Licensor, and the Customer may not disable this reporting. The data collected by
-Licensor does not include Customer Data, such as code, prompts, repository contents or credentials.
-The Licensor shall use it only to identify and fix faults and to improve the Software.
+7.3 **Crash reports and diagnostics.** The Software does not send crash reports or other
+diagnostic data unless a User turns crash reporting on. It is off by default, and each User can
+turn it on or off at any time in the desktop console's settings. When it is on, the Software sends only the
+type of an error and the source locations inside the Software's own code, to the Licensor's
+crash-reporting processor (Sentry, hosted in the European Union). It does not send error messages,
+file paths, user names, environment values or host names, and it never sends the Customer's
+repository contents, credentials or task text.
 
 7.4 **Third parties the Customer chooses.** The Software and the Core send the Customer's code and
 prompts to the AI model providers, code hosts and cloud providers that the Customer configures,
