@@ -161,7 +161,7 @@ func TestChecklistHasCheck52(t *testing.T) {
 		"P=fugaro-dev",
 		`[ "$P" = fugaro-dev ] && [ -n "$L" ] \`,
 		`|| { echo "Check 52 stopped: re-run the whole setup block`,
-		`fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,'`,
+		`fugaro doctor --project fugaro --all | grep -q '^project: .*(GCP fugaro-dev,'`,
 		`|| { echo "Check 52 stopped: this is not the fugaro-dev installation" >&2; exit 1; }`,
 		`git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$'`,
 		`|| { echo "Check 52 stopped: this checkout's origin is not the sandbox" >&2; exit 1; }`,
@@ -756,7 +756,7 @@ func TestChecklistHasCheck49(t *testing.T) {
 		// `cp ".before-49" ""` and put nothing back.
 		"C=$HOME/.config/fugaro/projects/fugaro.yaml",
 		`|| { echo "Check 49 stopped: re-run the whole setup block`,
-		`fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,'`,
+		`fugaro doctor --project fugaro --all | grep -q '^project: .*(GCP fugaro-dev,'`,
 		`|| { echo "Check 49 stopped: this is not the fugaro-dev installation" >&2; exit 1; }`,
 		`git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$'`,
 		`|| { echo "Check 49 stopped: this checkout's origin is not the sandbox" >&2; exit 1; }`,
@@ -1513,7 +1513,7 @@ func TestChecklistHasCheck50(t *testing.T) {
 		// is gone.
 		"C=$HOME/.config/fugaro/projects/fugaro.yaml",
 		`|| { echo "Check 50 stopped: re-run the whole setup block`,
-		`fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,'`,
+		`fugaro doctor --project fugaro --all | grep -q '^project: .*(GCP fugaro-dev,'`,
 		`|| { echo "Check 50 stopped: this is not the fugaro-dev installation" >&2; exit 1; }`,
 		`git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$'`,
 		`|| { echo "Check 50 stopped: this checkout's origin is not the sandbox" >&2; exit 1; }`,

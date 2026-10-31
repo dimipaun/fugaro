@@ -51,7 +51,7 @@ fugaro budget show
 
 It shows the mode (`observe` or `enforce`), the caps, today's counters (UTC), the headroom, the kill switches and the runs in flight, and needs the Viewer role on the project's Firebase project. Narrow it with `--repo <owner/name>`, widen it with `--all`, and use `--json` to parse it. If it refuses, report that the user lacks the role or the project has no budget backend, and carry on without it.
 
-In a project that has published a project policy (`config/policy/shared`), the ceiling every enrolled repository's runs read is that node, not the copy in a repository's job environment: `fugaro doctor` says whether one is published, and `fugaro project policy show` prints it. Raising it is the user's decision too, so re-running `fugaro update --repo` is not the fix for a cap the policy carries.
+In a project that has published a project policy (`config/policy/shared`), the ceiling every enrolled repository's runs read is that node, not the copy in a repository's job environment: `fugaro doctor --all` says whether one is published, and `fugaro project policy show` prints it. Raising it is the user's decision too, so re-running `fugaro update --repo` is not the fix for a cap the policy carries.
 
 Mention a kill switch that is on, a cap close to its limit, or no headroom. Changing any of it belongs to the user (a budget admin), and so does a ceiling the published policy carries — one policy publish for every enrolled repository, rather than a re-converge per repository. You never run those commands; if the user asks how, show them this and let them run it in their own terminal window, not through the agent:
 

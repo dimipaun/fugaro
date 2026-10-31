@@ -3,6 +3,8 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -148,11 +150,13 @@ func TestDoctorDefaultIsOneScreen(t *testing.T) {
 		}
 	}
 	// And it says where they went, so nobody reads a short output as a clean one.
-	if !strings.Contains(got, "security findings: `fugaro doctor --security`") {
-		t.Errorf("the default view hides security findings without saying so:\n%s", got)
-	}
-	if !strings.Contains(got, "more findings: `fugaro doctor --all`") {
+	// This state's own hardware is measured, not wrong: its one counted finding
+	// is provider-zdr-unverified, which is the audit class and not the sweep's.
+	if !strings.Contains(got, "1 more finding: `fugaro doctor --all`") {
 		t.Errorf("the default view hides its audit findings without saying so:\n%s", got)
+	}
+	if strings.Contains(got, "security finding") {
+		t.Errorf("the default view counts a measurement as a security finding:\n%s", got)
 	}
 	// The pointers are the last thing on the screen: a reader who reads to the
 	// bottom of a short output learns that there is more of it.
@@ -208,25 +212,39 @@ func TestDoctorNoAuditFindingsNoPointer(t *testing.T) {
 // 2026-10-31). The screen ends with one pointer line per kind — the security
 // sweep's and the rest of the audit class — each naming the flag that prints
 // them, and each counted, not listed.
+//
+// The two counted here are findings, not measurements: provider-zdr-unverified
+// is a privacy setting doctor cannot read from here, and runs-bucket-iam-1 is
+// one instance's grant. The summary lines of the same sweeps (runs-bucket-iam,
+// token-signers) are what doctor measured, and the verdict says so by not
+// counting them.
 func TestDoctorDefaultEndsWithAuditPointer(t *testing.T) {
 	got := doctorDefaultOutput(t, []doctorCheck{
 		{ID: "installation", OK: true},
 		{ID: "provider-zdr-unverified", Severity: "info", Problem: "whether provider-a holds the traffic under zero data retention is unverified"},
+		{ID: "runs-bucket-iam-1", Severity: "info", Problem: "user:x@example.com can write anywhere in gs://fugaro-runs-proj-1234 (roles/storage.objectAdmin): expected only for an operator"},
 		{ID: "routing-resolution", Severity: "info", Problem: "no repository this machine's config names resolves the switch"},
 		{ID: "token-signers", Severity: "info", Problem: "who can sign sign-in tokens for the budget database: 1 service account"},
+		{ID: "runs-bucket-iam", Severity: "info", Problem: "the runs bucket's IAM: the installation's own accounts only"},
 		{ID: "project-layer", Severity: "info", OK: true, Problem: "project layer aurora generation 12 applies"},
 	})
 	lines := strings.Split(strings.TrimRight(got, "\n"), "\n")
 	if len(lines) != 3 {
 		t.Fatalf("the screen is %d lines, want the verdict and the two pointers:\n%s", len(lines), got)
 	}
-	if lines[0] != "fugaro doctor: ok — everything checked is ok" {
+	// The verdict may never contradict the pointers: "everything checked is ok"
+	// above "2 more findings" is the reading the owner ruled out, so a screen
+	// that points at a finding says the weaker thing.
+	if lines[0] != "fugaro doctor: nothing to do" {
 		t.Errorf("the verdict is not the first line: %q", lines[0])
+	}
+	if strings.Contains(got, "everything checked is ok") {
+		t.Errorf("the verdict says everything is ok above a pointer to a finding:\n%s", got)
 	}
 	if lines[1] != "1 security finding: `fugaro doctor --security`" {
 		t.Errorf("the security pointer is not the second line: %q", lines[1])
 	}
-	if lines[2] != "2 more findings: `fugaro doctor --all`" {
+	if lines[2] != "1 more finding: `fugaro doctor --all`" {
 		t.Errorf("the audit pointer is not the last line: %q", lines[2])
 	}
 
@@ -269,7 +287,45 @@ func TestDoctorDefaultIsAddressedToTheReader(t *testing.T) {
 // default view — the owner's complaint was that it crowded out the items — and
 // the default view says how many it left out, so a short output is never read
 // as a clean one. --security prints them.
+//
+// The sweep's per-instance findings are what the pointer counts; its summary
+// lines are measurements (see the second half, and TestDoctorMeasurementIsNotAFinding).
 func TestDoctorSecurityIsBehindItsFlag(t *testing.T) {
+	g := gcpfake.NewGCS(t)
+	r := newDoctorRig(t)
+	// A write grant on the runs bucket and no launcher or operator named: the
+	// finding is info severity, and it is a finding all the same — somebody
+	// this installation cannot place holds a write role (infra.RunsBucketFindings).
+	r.withRunsBucket(t, g, "", gcpfake.Binding{Role: "roles/storage.objectAdmin",
+		Members: []string{"user:x@example.com"}})
+
+	quiet, _, _ := execute(t, "doctor", "--dir", t.TempDir())
+	if strings.Contains(quiet, "runs-bucket-iam") {
+		t.Errorf("the default view prints the bucket sweep:\n%s", quiet)
+	}
+	if !strings.Contains(quiet, "1 security finding: `fugaro doctor --security`") {
+		t.Errorf("the default view hides a security finding without saying so:\n%s", quiet)
+	}
+
+	shown, _, _ := execute(t, "doctor", "--security", "--dir", t.TempDir())
+	if !strings.Contains(shown, "runs-bucket-iam-1") {
+		t.Errorf("--security does not print the bucket sweep:\n%s", shown)
+	}
+	// Whole, not clipped: a reader who asked for the sweep gets the answer,
+	// and the sweep's answers are longer than one screen line by nature.
+	if !strings.Contains(shown, "expected only for an operator") {
+		t.Errorf("--security prints a clipped bucket sweep:\n%s", shown)
+	}
+	if strings.Contains(shown, "security findings: `fugaro doctor --security`") {
+		t.Errorf("--security still says findings are hidden:\n%s", shown)
+	}
+}
+
+// TestDoctorMeasurementIsNotAFinding is the owner's rule of 2026-10-31: an
+// installation whose sweep measured its IAM and found nothing to act on gets
+// the one ok line, and no pointer at all. The same lines are still in --all
+// and in --security: only the default view's verdict leaves them out.
+func TestDoctorMeasurementIsNotAFinding(t *testing.T) {
 	r := newDoctorRig(t)
 	r.withLaunchers(t)
 	r.run.AddJob("fugaro-acme-app-web", "2", "2Gi")
@@ -280,21 +336,21 @@ func TestDoctorSecurityIsBehindItsFlag(t *testing.T) {
 	if strings.Contains(quiet, "launcher-jobs") {
 		t.Errorf("the default view prints the launcher sweep:\n%s", quiet)
 	}
-	if !strings.Contains(quiet, "security findings: `fugaro doctor --security`") {
-		t.Errorf("the default view hides security findings without saying so:\n%s", quiet)
+	if strings.Contains(quiet, "finding") || strings.Contains(quiet, "--security") {
+		t.Errorf("a measurement is counted as a finding:\n%s", quiet)
 	}
 
+	// A reader who asks for the sweep gets it whole, measurement and all.
 	shown, _, _ := execute(t, "doctor", "--security", "--dir", t.TempDir())
 	if !strings.Contains(shown, "launcher-jobs") {
 		t.Errorf("--security does not print the launcher sweep:\n%s", shown)
 	}
-	// Whole, not clipped: a reader who asked for the sweep gets the answer,
-	// and the sweep's answers are longer than one screen line by nature.
 	if !strings.Contains(shown, "migration doing what it says") {
 		t.Errorf("--security prints a clipped launcher sweep:\n%s", shown)
 	}
-	if strings.Contains(shown, "security findings: `fugaro doctor --security`") {
-		t.Errorf("--security still says findings are hidden:\n%s", shown)
+	all, _, _ := execute(t, "doctor", "--all", "--dir", t.TempDir())
+	if !strings.Contains(all, "launcher-jobs") {
+		t.Errorf("--all does not print the launcher sweep:\n%s", all)
 	}
 }
 
@@ -429,11 +485,56 @@ func TestDoctorNeverHidesAFinding(t *testing.T) {
 				t.Errorf("%s at severity %q fails doctor and the default view does not print it", id, sev)
 			}
 		}
-		// The measurement is the half that moves behind --all: same ID, an
-		// info severity, nothing wrong.
+	}
+
+	// The audit half: an info line the default view counts rather than prints.
+	// A measurement is never counted, so an ID that is not on the allow-list
+	// stays a finding here — that is the ruling's default, and it is what keeps
+	// a check added later from going unmentioned.
+	for _, id := range []string{
+		"provider-zdr-unverified", "runs-bucket-iam-1", "job-token-grant-2", "launcher-jobs-public",
+		"project-account-stored", "a-check-added-later",
+	} {
 		info := doctorCheck{ID: id, Severity: "info", Problem: "what doctor measured"}
 		if got := doctorClassOf(info); got != doctorClassAudit {
-			t.Errorf("%s as a measurement is %q, want %q", id, got, doctorClassAudit)
+			t.Errorf("%s at an info severity is %q, want %q", id, got, doctorClassAudit)
+		}
+		if !strings.Contains(doctorDefaultOutput(t, []doctorCheck{info}), "1 more finding") &&
+			!strings.Contains(doctorDefaultOutput(t, []doctorCheck{info}), "1 security finding") {
+			t.Errorf("%s at an info severity is not counted anywhere in the default view:\n%s", id, doctorDefaultOutput(t, []doctorCheck{info}))
+		}
+	}
+
+	// The measurement allow-list, the other way: an ID on it at an info severity
+	// is measured, counted by no view and printed by --all. Nothing on this list
+	// may be a check that fails doctor (the loop above holds that end: the same
+	// IDs at "" and at "warning" are items).
+	for _, id := range []string{
+		"cli-version", "plugin-install", "cosign", "provider-price-catalog",
+		"routing-resolution", "routing-cache-markers", "project-layer", "project-layer-drift",
+		"shared-config", "shared-config-differs", "xdg-temp-dir", "policy-published",
+		"policy-rules-skew", "launcher-jobs", "token-signers", "token-signers-owners",
+		"secret-readers-unexpected", "runs-bucket-iam", "job-token-grant",
+		"credentials-service-deployers", "batch-apis", "creds-rules",
+		"plugin-settings-caveat", "plugin-settings-1",
+	} {
+		c := doctorCheck{ID: id, Severity: "info", Problem: "what doctor measured"}
+		if got := doctorClassOf(c); got != doctorClassMeasure {
+			t.Errorf("%s at an info severity is %q, want %q", id, got, doctorClassMeasure)
+		}
+		if checksFail([]doctorCheck{c}, true) {
+			t.Errorf("%s is a measurement and fails doctor: %+v", id, c)
+		}
+	}
+
+	// The per-instance IDs of those same sweeps are findings: runs-bucket-iam-1
+	// is one grant doctor could not place, and its summary line is the
+	// measurement. A prefix in the allow-list would swallow it, which is why the
+	// list holds whole IDs.
+	for _, id := range []string{"runs-bucket-iam-1", "job-token-grant-2", "token-signers-3", "launcher-jobs-public"} {
+		c := doctorCheck{ID: id, Severity: "info", Problem: "one instance's own finding"}
+		if got := doctorClassOf(c); got != doctorClassAudit {
+			t.Errorf("%s is %q, want %q: the per-instance IDs are findings, not measurements", id, got, doctorClassAudit)
 		}
 	}
 
@@ -442,6 +543,115 @@ func TestDoctorNeverHidesAFinding(t *testing.T) {
 		hidden := doctorClassOf(c) == "" || doctorClassOf(c) == doctorClassAudit
 		if hidden && checksFail([]doctorCheck{c}, true) {
 			t.Errorf("%s is hidden from the default view and fails doctor: %+v", c.ID, c)
+		}
+	}
+}
+
+// doctorCleanRig is the installation the owner's rule of 2026-10-31 is about:
+// every check doctor runs on it passes or is a measurement doctor made. It is
+// built from the real checks — the rig's fakes, a recorded base image, the
+// verifier a base pin needs, and the plugin wiring an installation writes — so
+// "a clean installation prints one line" is a fact about what doctor emits, not
+// about a fixture assembled to make the view look right.
+//
+// configure runs on the rig before the clean state is completed, for a test
+// that needs one real finding in it.
+func doctorCleanRig(t *testing.T, configure func(*doctorRig)) (*doctorRig, string) {
+	t.Helper()
+	r := newDoctorRig(t)
+	if configure != nil {
+		configure(r)
+	}
+	data, err := os.ReadFile(r.cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(r.cfgPath, append(data, []byte("base_images: {base: ghcr.io/example/base:1}\n")...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(r.dir, "cosign")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", r.dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	// No installed plugin of this machine's own: what Claude Code installed is
+	// read from a directory the test owns.
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	root, _ := skillCheckout(t, wiredAt("v0.2.0"))
+	return r, root
+}
+
+// TestDoctorCleanInstallationIsOneLine is the owner's rule, on the real
+// emissions: an installation with nothing wrong prints one line and no pointer,
+// whatever the sweep measured on the way. The measurements are not lost — --all
+// and --json carry every one of them.
+func TestDoctorCleanInstallationIsOneLine(t *testing.T) {
+	_, root := doctorCleanRig(t, nil)
+	out, _, err := execute(t, "doctor", "--dir", root)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if out != "fugaro doctor: ok — everything checked is ok\n" {
+		t.Errorf("a clean installation printed:\n%s", out)
+	}
+	all, _, _ := execute(t, "doctor", "--all", "--dir", root)
+	for _, want := range []string{"launcher-jobs", "policy-published", "provider-price-catalog", "secret-readers-unexpected"} {
+		if !strings.Contains(all, want) {
+			t.Errorf("--all does not print the measurement %s:\n%s", want, all)
+		}
+	}
+}
+
+// TestDoctorRealFindingPrintsItAndThePointer: the same rig with one real item
+// and one real finding the default view holds. The item prints, the finding is
+// counted rather than printed, and the pointer is the last line.
+func TestDoctorRealFindingPrintsItAndThePointer(t *testing.T) {
+	_, root := doctorCleanRig(t, func(r *doctorRig) {
+		g := gcpfake.NewGCS(t)
+		r.withRunsBucket(t, g, "", gcpfake.Binding{Role: "roles/storage.objectAdmin",
+			Members: []string{"user:x@example.com"}})
+	})
+	// The plugin is pinned behind this binary: a warning the reader fixes.
+	settings := filepath.Join(root, ".claude", "settings.json")
+	if err := os.WriteFile(settings, []byte(wiredAt("v0.1.0")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, _, _ := execute(t, "doctor", "--dir", root)
+	if !strings.Contains(out, "warning plugin-pin: ") {
+		t.Errorf("the default view does not print the real item:\n%s", out)
+	}
+	if !strings.Contains(out, "1 security finding: `fugaro doctor --security`") {
+		t.Errorf("the default view does not count the real finding:\n%s", out)
+	}
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if last := lines[len(lines)-1]; !strings.Contains(last, "`fugaro doctor --security`") {
+		t.Errorf("the pointer is not the last line: %q\n%s", last, out)
+	}
+}
+
+// TestDoctorDoesNotClipAFixCommand: a fix is a command, and a command cut at
+// the edge of a terminal is a command somebody pastes and gets wrong. The
+// item's own sentence is bounded to the line; the fix goes on its own line, in
+// full, however long it is.
+func TestDoctorDoesNotClipAFixCommand(t *testing.T) {
+	long := "gcloud storage buckets remove-iam-policy-binding gs://fugaro-runs-proj-1234 --member=user:a-very-long-member-name@example.com --role=roles/storage.objectAdmin"
+	got := doctorDefaultOutput(t, []doctorCheck{
+		{ID: "runs-bucket-iam-1", Severity: "warning", Problem: "a member holds a write role on the bucket", Fix: long},
+	})
+	if !strings.Contains(got, long) {
+		t.Errorf("the fix command is not printed in full:\n%s", got)
+	}
+	if strings.Contains(got, "\u2026") {
+		t.Errorf("the default view clipped the item:\n%s", got)
+	}
+	// A decision's choices are commands too: each one is printed whole.
+	decision := "store the value you mean with `fugaro secrets set app-api-key --repo owner/repo-a`, or disable the repository copy's versions with gcloud secrets versions disable app-api-key --project proj-1234"
+	got = doctorDefaultOutput(t, []doctorCheck{
+		{ID: "secret-scope-shadowed", Severity: "warning", Problem: "app-api-key: both copies exist", Fix: decision},
+	})
+	for _, want := range []string{"`fugaro secrets set app-api-key --repo owner/repo-a`", "gcloud secrets versions disable app-api-key --project proj-1234"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("a decision choice is clipped (%q missing):\n%s", want, got)
 		}
 	}
 }
@@ -477,14 +687,15 @@ func TestDoctorJSONKeepsEveryCheckAndClassifiesIt(t *testing.T) {
 		t.Fatalf("--all changed what --json carries: %d checks against %d", len(full.Checks), len(plain.Checks))
 	}
 	classes := map[string]bool{
-		doctorClassActionable: true, doctorClassUpdate: true, doctorClassAudit: true, doctorClassDecision: true,
+		doctorClassActionable: true, doctorClassUpdate: true, doctorClassAudit: true,
+		doctorClassDecision: true, doctorClassMeasure: true,
 	}
 	for _, c := range full.Checks {
 		if c.ID == "" {
 			t.Fatalf("a check has no id: %+v", c)
 		}
 		if c.Class != "" && !classes[c.Class] {
-			t.Errorf("%s carries the class %q, which is not one of the four views use: %+v", c.ID, c.Class, c)
+			t.Errorf("%s carries the class %q, which is not one of the classes the views use: %+v", c.ID, c.Class, c)
 		}
 		if !c.OK && c.Problem == "" {
 			t.Errorf("%s is not ok and carries no problem in --json: %+v", c.ID, c)

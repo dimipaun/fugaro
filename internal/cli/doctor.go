@@ -52,8 +52,11 @@ type doctorCheck struct {
 	Severity string `json:"severity,omitempty"`
 	// Class is which view prints the check: "actionable" (something is wrong,
 	// one fix), "update" (`fugaro update` puts it right), "decision" (the
-	// owner's choice, with the command for each) or "audit" (what doctor
-	// measured, and the IAM and security sweep). It is attached by
+	// owner's choice, with the command for each), "measure" (what doctor
+	// measured or could not measure, with nothing to do about it: printed by
+	// --all, counted by no view) or "audit" (a finding the default view counts
+	// in its pointer line rather than printing: the IAM and security sweep's
+	// own, and anything doctor has not classified). It is attached by
 	// classifyDoctorChecks, never by the check itself, so the human view and
 	// --json cannot disagree about what the default view hides. A check that
 	// carries none is a passing check nothing prints.
@@ -1736,18 +1739,23 @@ func emitDoctor(cmd *cobra.Command, o doctorOutput, asJSON bool, view doctorView
 	} else {
 		out := cmd.OutOrStdout()
 		// The release line is the "a tag can be moved" audit sentence, three
-		// hundred characters of it: --all prints it, and the default view
-		// starts at the verdict.
+		// hundred characters of it; the project line and the secret list are
+		// context, not work. All three belong to --all: the default view ends
+		// with its pointer lines, and a line after them is a line a reader who
+		// stopped at the pointer never sees (a clean installation prints the one
+		// ok line and nothing else).
 		if view.all {
 			if l := releaseLine(); l != "" {
 				fmt.Fprintln(out, l)
 			}
 		}
 		printDoctorReport(out, o.Checks, view)
-		if p := o.Project; p != nil {
-			fmt.Fprintf(out, "project: %s (GCP %s, %s)\n", p.Name, p.GCPProject, p.Region)
+		if view.all {
+			if p := o.Project; p != nil {
+				fmt.Fprintf(out, "project: %s (GCP %s, %s)\n", p.Name, p.GCPProject, p.Region)
+			}
+			printDoctorSecrets(out, o.Secrets)
 		}
-		printDoctorSecrets(out, o.Secrets)
 	}
 	if !o.OK {
 		return &ExitError{Code: ExitUserError, Err: fmt.Errorf("fugaro doctor found a problem; see above")}

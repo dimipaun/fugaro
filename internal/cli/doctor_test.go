@@ -523,7 +523,9 @@ func TestDoctorFugaroYAML(t *testing.T) {
 
 // TestDoctorNeverPrintsSecretValues: doctor lists a repository's secrets by
 // name (design: "secrets by name from secrets ls"), and the value never
-// reaches stdout, stderr or --json, in either outcome.
+// reaches stdout, stderr or --json, in either outcome. The list is context and
+// not work, so it prints under --all: the default view is the verdict and what
+// to do, and a clean installation is one line.
 func TestDoctorNeverPrintsSecretValues(t *testing.T) {
 	r := newDoctorRig(t)
 	dir := checkoutWith(t, map[string]string{"fugaro.yaml": cliMinimalYAML})
@@ -531,7 +533,7 @@ func TestDoctorNeverPrintsSecretValues(t *testing.T) {
 	const value = "super-secret-token-value-ABC123"
 	putSecret(t, r.sm, "proj-1234", mustSlug("github", "acme/app"), "claude-oauth-token", []byte(value))
 
-	out, errOut, err := execute(t, "doctor")
+	out, errOut, err := execute(t, "doctor", "--all")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, errOut)
 	}

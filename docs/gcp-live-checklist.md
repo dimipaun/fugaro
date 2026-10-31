@@ -1336,7 +1336,7 @@ esac
 **And this block has a sixth stop, but only from step 5 on.** Steps 1 to 4 are **one** `fugaro setup` run: the questions, the project's typed confirmation and the picker all come before the first apply, and the installation stage — the stage whose apply writes this check's local config (`internal/cli/init.go`: `install()` calls `writeConfig` once the installation root's apply has succeeded) — applies **inside step 4**. A block re-run at the start of step 2, 3 or 4 would therefore find no local config, and `fugaro doctor --project fugaro` would fail for the right reason and hard-stop the check mid-run. From **step 5** onwards — the first step whose shell can resolve the installation — add this stop to the block and re-run it:
 
 ```bash
-fugaro doctor --project fugaro 2>/dev/null | grep -q "(GCP ${P:?}," \
+fugaro doctor --project fugaro --all 2>/dev/null | grep -q "(GCP ${P:?}," \
   || { echo "Check 27 stopped: the fugaro installation this shell resolves is not the throwaway one (doctor's project: line does not name $P)" >&2; exit 1; }
 ```
 
@@ -1750,7 +1750,7 @@ S=/tmp/check38-state
 # installation's billing and IAM policy, the shared config and the update
 # check), so the stop below means "doctor did not confirm fugaro-dev" — a
 # foreign checkout, or a doctor that could not run here at all.
-fugaro doctor --project fugaro --gcp-project "${P:?re-run the Check 38 guard block (source it: . ./check38-env.sh)}" | grep -q '^project: .*(GCP fugaro-dev,' \
+fugaro doctor --project fugaro --gcp-project "${P:?re-run the Check 38 guard block (source it: . ./check38-env.sh)}" --all | grep -q '^project: .*(GCP fugaro-dev,' \
   || { echo "Check 38 stopped: doctor printed no project: fugaro-dev line. Either this is not the fugaro-dev installation, or --project fugaro disagrees with this checkout's project:, or doctor itself failed (it needs usable credentials and reads billing and IAM). Run 'fugaro doctor --project fugaro' here yourself and read its output before going on." >&2; exit 1; }
 
 git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
@@ -2034,7 +2034,7 @@ L=us-east5                   # the installation's region, which is the repositor
 # argument that gcloud would resolve from its ambient configuration.
 [ "$P" = fugaro-dev ] && [ -n "$L" ] \
   || { echo "Check 42 stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L must not be empty)" >&2; exit 1; }
-fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \
+fugaro doctor --project fugaro --all | grep -q '^project: .*(GCP fugaro-dev,' \
   || { echo "Check 42 stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)" >&2; exit 1; }
 git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
   || { echo "Check 42 stopped: this checkout's origin is not the sandbox (edgeappinc/fugarosandbox)" >&2; exit 1; }
@@ -2126,7 +2126,7 @@ I=${L:?re-run the Check 43 setup block}-docker.pkg.dev/${P:?re-run the Check 43 
 
 [ "$P" = fugaro-dev ] && [ -n "$L" ] && [ -n "$R" ] && [ -n "$U" ] \
   || { echo "Check 43 stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L R=$R U=$U must not be empty)" >&2; exit 1; }
-fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \
+fugaro doctor --project fugaro --all | grep -q '^project: .*(GCP fugaro-dev,' \
   || { echo "Check 43 stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)" >&2; exit 1; }
 git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
   || { echo "Check 43 stopped: this checkout's origin is not the sandbox (edgeappinc/fugarosandbox)" >&2; exit 1; }
@@ -2657,7 +2657,7 @@ J=fugaro                     # the installation's NAME: --project takes this, no
 # owner's ambient project is a *-prod one).
 [ "$P" = fugaro-dev ] \
   || { echo "Check 45 stopped: re-run the whole setup block (P=$P must be fugaro-dev)" >&2; exit 1; }
-fugaro doctor --project "${J:?}" | grep -q '^project: .*(GCP fugaro-dev,' \
+fugaro doctor --project "${J:?}" --all | grep -q '^project: .*(GCP fugaro-dev,' \
   || { echo "Check 45 stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused this checkout)" >&2; exit 1; }
 git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
   || { echo "Check 45 stopped: this checkout's origin is not the sandbox (edgeappinc/fugarosandbox)" >&2; exit 1; }
@@ -2692,7 +2692,7 @@ J=fugaro                     # the installation's NAME: --project takes this, no
 
 [ "$P" = fugaro-dev ] \
   || { echo "Check 46 stopped: re-run the whole setup block (P=$P must be fugaro-dev)" >&2; exit 1; }
-fugaro doctor --project "${J:?}" | grep -q '^project: .*(GCP fugaro-dev,' \
+fugaro doctor --project "${J:?}" --all | grep -q '^project: .*(GCP fugaro-dev,' \
   || { echo "Check 46 stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused this checkout)" >&2; exit 1; }
 git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
   || { echo "Check 46 stopped: this checkout's origin is not the sandbox (edgeappinc/fugarosandbox)" >&2; exit 1; }
@@ -2777,7 +2777,7 @@ TASK='Do not change any file and do not open a pull request. Reply with the sing
 # fugaro doctor's project: line is the local config's project (no cloud call). A
 # doctor that refused the checkout (--project disagreeing with the checkout's
 # project:) prints no project: line at all, so the grep fails either way.
-fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \
+fugaro doctor --project fugaro --all | grep -q '^project: .*(GCP fugaro-dev,' \
   || { echo "Check 49 stopped: this is not the fugaro-dev installation" >&2; exit 1; }
 # The checkout steps 3 and 8 run `fugaro update --repo` in: the sandbox, never
 # EdgeWeb's or EdgeServer's.
@@ -3073,7 +3073,7 @@ START=/tmp/chk50-run-started-at
 # fugaro doctor's project: line is the local config's project (no cloud call). A
 # doctor that refused the checkout (--project disagreeing with the checkout's
 # project:) prints no project: line at all, so the grep fails either way.
-fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \
+fugaro doctor --project fugaro --all | grep -q '^project: .*(GCP fugaro-dev,' \
   || { echo "Check 50 stopped: this is not the fugaro-dev installation" >&2; exit 1; }
 # The checkout every write below happens in: the sandbox, never EdgeWeb's or
 # EdgeServer's.
@@ -3407,7 +3407,7 @@ L=us-east5                   # the installation's region
 # argument gcloud resolves from its ambient configuration.
 [ "$P" = fugaro-dev ] && [ -n "$L" ] \
   || { echo "Check 52 stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L not empty)" >&2; exit 1; }
-fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \
+fugaro doctor --project fugaro --all | grep -q '^project: .*(GCP fugaro-dev,' \
   || { echo "Check 52 stopped: this is not the fugaro-dev installation" >&2; exit 1; }
 git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
   || { echo "Check 52 stopped: this checkout's origin is not the sandbox" >&2; exit 1; }
@@ -3809,7 +3809,7 @@ B=chk58                      # this check's batch label, on every launch; the fr
 # owner's ambient project is a *-prod one).
 [ "$P" = fugaro-dev ] && [ -n "$L" ] && [ -n "$R" ] && [ -n "$S" ] && [ -n "$W" ] && [ -n "$B" ] \
   || { echo "Check 58 stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L R=$R S=$S W=$W B=$B must not be empty)" >&2; exit 1; }
-fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \
+fugaro doctor --project fugaro --all | grep -q '^project: .*(GCP fugaro-dev,' \
   || { echo "Check 58 stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)" >&2; exit 1; }
 git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
   || { echo "Check 58 stopped: this checkout's origin is not the sandbox (edgeappinc/fugarosandbox)" >&2; exit 1; }
@@ -4384,7 +4384,7 @@ CO=$(git rev-parse --show-toplevel)         # the sandbox checkout: the working 
 # argument a command would resolve from its ambient configuration.
 [ "$P" = fugaro-dev ] && [ -n "$V" ] && [ -n "$CHK" ] && [ -n "$SPAWNLOG" ] && [ -n "$IDENTITIES" ] && [ -n "$CO" ] \
   || { echo "Check 59a stopped: re-run the whole setup block (P=$P must be fugaro-dev; V=$V CHK=$CHK SPAWNLOG=$SPAWNLOG IDENTITIES=$IDENTITIES CO=$CO must not be empty)" >&2; exit 1; }
-fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \
+fugaro doctor --project fugaro --all | grep -q '^project: .*(GCP fugaro-dev,' \
   || { echo "Check 59a stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)" >&2; exit 1; }
 git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
   || { echo "Check 59a stopped: this checkout's origin is not the sandbox (edgeappinc/fugarosandbox)" >&2; exit 1; }
@@ -4627,7 +4627,7 @@ CO=$(git rev-parse --show-toplevel)         # the sandbox checkout
 
 [ "$P" = fugaro-dev ] && [ -n "$CHK" ] && [ -n "$OLD" ] && [ -n "$NEW" ] && [ -n "$IDENTITIES" ] && [ -n "$CO" ] \
   || { echo "Check 59b stopped: re-run the whole setup block (P=$P must be fugaro-dev; CHK=$CHK OLD=$OLD NEW=$NEW IDENTITIES=$IDENTITIES CO=$CO must not be empty)" >&2; exit 1; }
-fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \
+fugaro doctor --project fugaro --all | grep -q '^project: .*(GCP fugaro-dev,' \
   || { echo "Check 59b stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)" >&2; exit 1; }
 git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
   || { echo "Check 59b stopped: this checkout's origin is not the sandbox (edgeappinc/fugarosandbox)" >&2; exit 1; }
@@ -4709,7 +4709,7 @@ P=fugaro-dev                 # HARD-CODED, never `gcloud config get-value projec
 L=us-east5                   # the installation's region
 [ "$P" = fugaro-dev ] && [ -n "$L" ] \
   || { echo "Check 60 stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L not empty)" >&2; exit 1; }
-fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \
+fugaro doctor --project fugaro --all | grep -q '^project: .*(GCP fugaro-dev,' \
   || { echo "Check 60 stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)" >&2; exit 1; }
 git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
   || { echo "Check 60 stopped: this checkout's origin is not the sandbox (edgeappinc/fugarosandbox)" >&2; exit 1; }
@@ -6608,7 +6608,7 @@ C=$HOME/.config/fugaro/projects/fugaro.yaml
 set -u
 [ "$P" = fugaro-dev ] || { echo "Check 81 stopped: this check runs on fugaro-dev only (never belong)" >&2; exit 1; }
 command -v fugaro >/dev/null || { echo "Check 81 stopped: no fugaro on PATH" >&2; exit 1; }
-fugaro doctor --project fugaro 2>/dev/null | grep -q '^project: .*(GCP fugaro-dev,' || {
+fugaro doctor --project fugaro --all 2>/dev/null | grep -q '^project: .*(GCP fugaro-dev,' || {
   echo "Check 81 stopped: installation 'fugaro' is not the fugaro-dev installation on this machine" >&2; exit 1; }
 [ -r "$C" ] || { echo "Check 81 stopped: no project config at $C (read the project line of 'fugaro doctor --project fugaro')" >&2; exit 1; }
 # DB is the host alone, with no scheme (the same strip check 82's guard and
@@ -6942,7 +6942,7 @@ C=$HOME/.config/fugaro/projects/fugaro.yaml
 set -u
 [ "$P" = fugaro-dev ] || { echo "Check 82 stopped: this check runs on fugaro-dev only (never belong)" >&2; exit 1; }
 command -v fugaro >/dev/null || { echo "Check 82 stopped: no fugaro on PATH" >&2; exit 1; }
-fugaro doctor --project fugaro 2>/dev/null | grep -q '^project: .*(GCP fugaro-dev,' || {
+fugaro doctor --project fugaro --all 2>/dev/null | grep -q '^project: .*(GCP fugaro-dev,' || {
   echo "Check 82 stopped: installation 'fugaro' is not the fugaro-dev installation on this machine" >&2; exit 1; }
 [ -r "$C" ] || { echo "Check 82 stopped: no project config at $C (read the project line of 'fugaro doctor --project fugaro')" >&2; exit 1; }
 DB=$(sed -n 's|^ *rtdb_url: *||p' "$C" | tr -d "\"'" | sed -e 's|^https://||' -e 's|/*$||' | head -1)
@@ -7023,7 +7023,7 @@ wc -c < internal/budget/rules/testdata/rules.golden.json 2>/dev/null || true    
    - **`null` (the marker was absent)** — **there was no line before, and there is none after**: `doctorRulesSkew` returns early with no line at all when the marker is absent (generation 0 is not a state to warn about — there is nothing to compare), so this step **cannot** observe a warning disappearing. Record exactly that: "the marker was absent; doctor printed no `policy-rules-skew` line before the deploy and none after, so the transition was not observed as a warning" — and check step 5's read-back instead, which is what says the deploy recorded the generation.
 
    ```bash
-   fugaro doctor --project fugaro | grep -c policy-rules-skew   # 0
+   fugaro doctor --project fugaro --all | grep -c policy-rules-skew   # 0
    fugaro doctor --strict --project fugaro >/dev/null; echo "doctor --strict exit: $?"
    ```
    **FACT:** the count (`0`) — a `grep -c` of 0 is the pass, and a line here is a deploy that did not land — and `doctor --strict`'s exit code; when it is not 0, the failing check ids, because a `policy-rules-skew` **warning** here is a deploy that did not land and any **other** warning is a separate finding (`token-signers`, a caps gap) that this check records and does not own. If step 1's marker was already **`4`**, this step is **not run**: record "the installation was already on generation 4; the transition was not observed" — an installation that has been on this release's generation since its deploy is the normal case, and pretending to have watched a transition that did not happen is worse than recording that it was not needed.
@@ -7394,7 +7394,7 @@ C=$HOME/.config/fugaro/projects/fugaro.yaml
 set -u
 [ "$P" = fugaro-dev ] || { echo "Check 92 stopped: this check runs on fugaro-dev only (never belong)" >&2; exit 1; }
 command -v fugaro >/dev/null || { echo "Check 92 stopped: no fugaro on PATH" >&2; exit 1; }
-fugaro doctor --project fugaro 2>/dev/null | grep -q '^project: .*(GCP fugaro-dev,' || {
+fugaro doctor --project fugaro --all 2>/dev/null | grep -q '^project: .*(GCP fugaro-dev,' || {
   echo "Check 92 stopped: installation 'fugaro' is not the fugaro-dev installation on this machine" >&2; exit 1; }
 [ -r "$C" ] || { echo "Check 92 stopped: no project config at $C (read the project line of 'fugaro doctor --project fugaro')" >&2; exit 1; }
 DB=$(sed -n 's|^ *rtdb_url: *||p' "$C" | tr -d "\"'" | sed -e 's|^https://||' -e 's|/*$||' | head -1)
@@ -7519,7 +7519,7 @@ case "$GCP" in
 esac
 command -v fugaro >/dev/null || { echo "Check 94 stopped: no fugaro on PATH" >&2; exit 1; }
 command -v gcloud >/dev/null || { echo "Check 94 stopped: no gcloud on PATH" >&2; exit 1; }
-fugaro doctor --project "$I" 2>/dev/null | grep -q "^project: .*(GCP $GCP," || {
+fugaro doctor --project "$I" --all 2>/dev/null | grep -q "^project: .*(GCP $GCP," || {
   echo "Check 94 stopped: installation '$I' is not the $GCP installation on this machine" >&2; exit 1; }
 export FUGARO_PROJECT="$I"                      # every later fugaro command is pinned to it
 W=/tmp/chk94; mkdir -p "$W"
@@ -7739,7 +7739,7 @@ case "$CHK95_SANDBOX_REPO" in
   *edgeappinc*) echo "Check 95 stopped: the repository names EdgeAppInc; no step of this check may touch a production checkout" >&2; exit 1 ;;
 esac
 command -v fugaro >/dev/null && command -v gcloud >/dev/null || { echo "Check 95 stopped: fugaro or gcloud is not on PATH" >&2; exit 1; }
-fugaro doctor --project "$I" 2>/dev/null | grep -q "^project: .*(GCP $GCP," || {
+fugaro doctor --project "$I" --all 2>/dev/null | grep -q "^project: .*(GCP $GCP," || {
   echo "Check 95 stopped: installation '$I' is not the $GCP installation on this machine" >&2; exit 1; }
 export FUGARO_PROJECT="$I"
 W=/tmp/chk95; mkdir -p "$W"
@@ -8273,7 +8273,7 @@ case "$CHK99_SANDBOX_REPO" in
   *edgeappinc*) echo "Check 99 stopped: the repository names EdgeAppInc; no step of this check may touch a production checkout" >&2; exit 1 ;;
 esac
 command -v fugaro >/dev/null && command -v gcloud >/dev/null || { echo "Check 99 stopped: fugaro or gcloud is not on PATH" >&2; exit 1; }
-fugaro doctor --project "$I" 2>/dev/null | grep -q "^project: .*(GCP $GCP," || {
+fugaro doctor --project "$I" --all 2>/dev/null | grep -q "^project: .*(GCP $GCP," || {
   echo "Check 99 stopped: installation '$I' is not the $GCP installation on this machine" >&2; exit 1; }
 export FUGARO_PROJECT="$I"
 W=/tmp/chk99; mkdir -p "$W"
@@ -8342,7 +8342,7 @@ print("accounts:", json.dumps(p.get("accounts")))'
    echo "--- the credentials' states, and what the views say now ---"
    marks
    fugaro accounts ls --project "$I" | head -20
-   fugaro doctor --project "$I" | grep -E '^(project|.*creds-)' | head -10
+   fugaro doctor --project "$I" --all | grep -E '^(project|.*creds-)' | head -10
    echo "--- the sandbox workflow's agent.auth must be cascade (restore this line too) ---"
    fugaro runs ls --repo "$CHK99_SANDBOX_REPO" --since 0 | head -5
    ```
@@ -8424,7 +8424,7 @@ for r in json.load(sys.stdin).get("runs",[]):
     print(r.get("run"), "credential:", r.get("credential"))'
    # The views, once the service has written the mark:
    fugaro accounts ls --project "$I" | grep -E "($CHK99_A1|$CHK99_A2|default)" 
-   fugaro doctor --project "$I" | grep -A3 'creds-broken'
+   fugaro doctor --project "$I" --all | grep -A3 'creds-broken'
    db "creds/marks/$CHK99_A2.json" | python3 -m json.tool     # wants {"state":"broken", ...}
    gcloud storage cat "gs://fugaro-runs-${GCP:?}/runs/$SLUG/$RID_BROKEN/result.json" --project="${GCP:?}" \
      | python3 -c 'import json,sys
@@ -8509,7 +8509,7 @@ print("cost:", json.dumps(r.get("cost")))'
    # Nothing of the check's own in the run listings, and the bundle's entries untouched by name:
    fugaro runs ls --repo "$CHK99_SANDBOX_REPO" --since 0 --json \
      | grep -c -e "$RID_CASC" -e "$RID_BROKEN" -e "$RID_WAIT" -e "$RID_OAUTH"   # may be non-zero only while a run is listed
-   fugaro doctor --project "$I" | grep -c 'creds-broken'                        # 0
+   fugaro doctor --project "$I" --all | grep -c 'creds-broken'                        # 0
    fugaro accounts ls --project "$I" | head -10
    fugaro creds ls --project "$I" | head -20                                    # names and versions only, never a value
    gcloud run services describe fugaro-credentials --project="${GCP:?}" --region="${L:?}" \
@@ -9656,7 +9656,7 @@ W=/tmp/chk124; mkdir -p "$W"
 
 [ "$P" = fugaro-dev ] && [ -n "$L" ] && [ -n "$R" ] && [ -n "$U" ] \
   || { echo "Check 124 stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L R=$R U=$U must not be empty)" >&2; exit 1; }
-fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \
+fugaro doctor --project fugaro --all | grep -q '^project: .*(GCP fugaro-dev,' \
   || { echo "Check 124 stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)" >&2; exit 1; }
 git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
   || { echo "Check 124 stopped: this checkout's origin is not the sandbox (edgeappinc/fugarosandbox)" >&2; exit 1; }
@@ -9874,7 +9874,7 @@ W=/tmp/chk124; mkdir -p "$W"
 
 [ "$P" = fugaro-dev ] && [ -n "$L" ] && [ -n "$R" ] && [ -n "$U" ] \
   || { echo "Check 124 stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L R=$R U=$U must not be empty)" >&2; exit 1; }
-fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \
+fugaro doctor --project fugaro --all | grep -q '^project: .*(GCP fugaro-dev,' \
   || { echo "Check 124 stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)" >&2; exit 1; }
 git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
   || { echo "Check 124 stopped: this checkout's origin is not the sandbox (edgeappinc/fugarosandbox)" >&2; exit 1; }
@@ -10004,7 +10004,7 @@ W=/tmp/chk124; mkdir -p "$W"
 
 [ "$P" = fugaro-dev ] && [ -n "$L" ] && [ -n "$R" ] && [ -n "$U" ] \
   || { echo "Check 124 stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L R=$R U=$U must not be empty)" >&2; exit 1; }
-fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \
+fugaro doctor --project fugaro --all | grep -q '^project: .*(GCP fugaro-dev,' \
   || { echo "Check 124 stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)" >&2; exit 1; }
 git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
   || { echo "Check 124 stopped: this checkout's origin is not the sandbox (edgeappinc/fugarosandbox)" >&2; exit 1; }
@@ -10158,7 +10158,7 @@ W=/tmp/chk124; mkdir -p "$W"
 
 [ "$P" = fugaro-dev ] && [ -n "$L" ] && [ -n "$R" ] && [ -n "$U" ] \
   || { echo "Check 124 stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L R=$R U=$U must not be empty)" >&2; exit 1; }
-fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \
+fugaro doctor --project fugaro --all | grep -q '^project: .*(GCP fugaro-dev,' \
   || { echo "Check 124 stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)" >&2; exit 1; }
 git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
   || { echo "Check 124 stopped: this checkout's origin is not the sandbox (edgeappinc/fugarosandbox)" >&2; exit 1; }

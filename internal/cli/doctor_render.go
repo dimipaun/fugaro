@@ -10,8 +10,11 @@ import (
 // reader has to do — one sentence and one fix per item — because the owner
 // pasted a full run (seven warnings, about fifteen informational lines, several
 // sentences of six hundred characters) and asked who was meant to read it. The
-// informational and audit findings are still there, behind --all; the security
-// ones behind --security as well.
+// measurements and the audit findings are still there, behind --all; the
+// security ones behind --security as well. An installation with nothing wrong
+// prints one line and no pointer (the owner's rule of 2026-10-31): what doctor
+// measured is not a finding to announce, so the classes below keep the two
+// apart and the unclassified default is the finding.
 //
 // doctorDefaultMaxLines is what the tests hold the default view to on the state
 // the owner pasted, and doctorLineLimit is the width one line may take: a
@@ -33,9 +36,20 @@ const (
 	// doctorClassDecision is the owner's to choose: the state is valid, and the
 	// line names the command for each choice.
 	doctorClassDecision = "decision"
-	// doctorClassAudit is what doctor measured rather than what it found wrong,
-	// and the IAM and security sweep: --all, and --security for the security
-	// half.
+	// doctorClassMeasure is what doctor measured or could not measure, with
+	// nothing the reader has to do about it: the price catalog's age, the
+	// launcher grant count, who can sign a budget token, whether a policy is
+	// published. The default view counts none of them and prints none of them —
+	// an installation with nothing wrong is one line (the owner's rule of
+	// 2026-10-31), and a measurement is not a finding to announce. --all prints
+	// them, and --security prints the security half of them.
+	doctorClassMeasure = "measure"
+	// doctorClassAudit is a finding the default view counts in its pointer line
+	// rather than printing: the IAM and security sweep's own (an unverified
+	// provider privacy setting, a bucket grant whose shape is not the one this
+	// Fugaro writes), and every info check doctor has not classified at all,
+	// which is the safe default — so a short output is never read as a clean
+	// one, and a check added later is never hidden by omission.
 	doctorClassAudit = "audit"
 )
 
@@ -110,34 +124,73 @@ var doctorDecisionIDs = map[string]bool{
 	"provider-secret-name":              true,
 }
 
-// doctorAuditPrefixes are the informational lines: what doctor measured,
-// where a value came from, what is unmeasured, what the wiring carries. None of
-// them is an action, and the owner's complaint was that they crowded out the
-// lines that are.
-var doctorAuditPrefixes = []string{"plugin-settings-"}
-
-// doctorAuditIDs are the same, by their whole name: a prefix would swallow a
-// neighbour that is not informational (project-layer is the layer that applies,
-// project-layer-copy is a stale copy that has to be republished).
+// doctorMeasureIDs are the checks whose info-severity line is a measurement
+// doctor made or a read it could not make, and never something the reader has
+// to do: the price catalog's age, the launcher grant count, who can sign a
+// budget token, the repositories a project's account token reaches, whether a
+// policy is published, where the config lives, what the wiring in
+// .claude/settings.json carries, the tool lookups that did not answer.
 //
-// An audit ID is what doctor measured, and several of them are a measurement
-// in one state and a finding in another: provider-price-catalog is an age to
-// read and a stale catalog, project-layer-drift is a layer that moved on and a
-// run that applied none. The class is therefore never the ID alone — see
-// doctorClassOf: a check that is not ok and carries a severity is a finding
-// whatever its ID, and a finding is never hidden.
-var doctorAuditIDs = map[string]bool{
-	"provider-price-catalog":  true,
-	"provider-zdr-unverified": true,
-	"routing-resolution":      true,
-	"routing-cache-markers":   true,
-	"project-layer":           true,
-	"project-layer-drift":     true,
-	"shared-config":           true,
-	"shared-config-differs":   true,
-	"xdg-temp-dir":            true,
-	"policy-published":        true,
+// The list is explicit, and it is a list rather than a rule (an "info severity
+// and not ok" test would swallow them all) because the default of
+// doctorClassOf is the safe one: an info check doctor has not classified is a
+// finding the pointer line counts, never a measurement nobody hears about.
+//
+// Measured once, at an info severity: every one of these IDs also has a
+// warning-or-worse line that is a finding — a stale catalog, a drift, a
+// signer that is not the installation's own account, a bucket grant whose
+// shape is not the one this Fugaro writes — and the severity guard in
+// doctorClassOf is what keeps those in the default view.
+var doctorMeasureIDs = map[string]bool{
+	// The update lookup did not answer. Nothing about this installation is
+	// wrong, and the newer-release case is the warning variant of the same ID.
+	"cli-version": true,
+	// pluginwire's own "never a failure" states: not installed, cannot
+	// compare. "installed differs" is a warning, and a finding.
+	"plugin-install": true,
+	// The verifier a base pin needs. The check's own comment is the reason it
+	// is here: an absent binary "is not a wrong state", and the pin's own
+	// refusal names it when a person needs it.
+	"cosign":                        true,
+	"provider-price-catalog":        true,
+	"routing-resolution":            true,
+	"routing-cache-markers":         true,
+	"project-layer":                 true,
+	"project-layer-drift":           true,
+	"shared-config":                 true,
+	"shared-config-differs":         true,
+	"xdg-temp-dir":                  true,
+	"policy-published":              true,
+	"policy-rules-skew":             true,
+	"launcher-jobs":                 true,
+	"token-signers":                 true,
+	"token-signers-owners":          true,
+	"token-signers-google-agents":   true,
+	"secret-readers-unexpected":     true,
+	"runs-bucket-iam":               true,
+	"job-token-grant":               true,
+	"credentials-service-deployers": true,
+	"batch-artifact-boundary":       true,
+	// The Batch sweep's "not checked: this is a test configuration" line, one
+	// per API it does not read there. The warning variant of the same ID is a
+	// read that failed.
+	"batch-apis":           true,
+	"batch-job-definition": true,
+	"batch-image-family":   true,
+	"batch-log-sink":       true,
+	"batch-network":        true,
+	"batch-subnetwork":     true,
+	// A read that did not happen: the credential marks, the rules document.
+	"creds-broken": true,
+	"creds-rules":  true,
 }
+
+// doctorMeasurePrefixes are the measurements doctor emits once per instance:
+// plugin-settings-<n> is the list of what the wiring carries, one line per
+// notice. A prefix is right here and wrong for the checks above: the sweep's
+// per-instance IDs (runs-bucket-iam-1, job-token-grant-1, token-signers-2) are
+// findings doctor reports, not measurements.
+var doctorMeasurePrefixes = []string{"plugin-settings-"}
 
 // doctorActionableInfoIDs are the informational checks that are an action all
 // the same: the fix is one thing the reader runs, and hiding it would hide work.
@@ -163,31 +216,52 @@ func doctorClassOf(c doctorCheck) string {
 	case finding && doctorHasPrefix(c.ID, doctorUpdatePrefixes):
 		return doctorClassUpdate
 	case doctorDecisionIDs[c.ID]:
+		// A decision is the owner's whatever its severity, and the default
+		// view names the command for each choice: it is never a measurement.
 		return doctorClassDecision
+	case c.OK:
+		// A check that passes and still carries a severity is a measurement,
+		// not a finding: project-account-stored names the repositories a
+		// project's token reaches when nothing is wrong with it.
+		return doctorClassMeasure
+	case c.Severity == "info" && doctorIsMeasurement(c.ID):
+		// A measurement: doctor read a fact, or could not read one, and the
+		// reader has nothing to do about it. It is never counted as a finding,
+		// so an installation with nothing wrong ends at its one ok line.
+		return doctorClassMeasure
 	case doctorHasPrefix(c.ID, doctorSecurityPrefixes):
 		if finding {
 			// A warning-severity security finding is never hidden.
 			return doctorClassActionable
 		}
+		// The sweep's own finding at an info severity: a grant it could not
+		// derive, a provider setting nobody can read from here. Counted in the
+		// pointer line, printed under --security and --all.
 		return doctorClassAudit
 	case finding:
-		// A finding is an item whatever its ID: the audit list is what doctor
-		// measured, and taking it as a class on its own hid a stale price
-		// catalog and a run that applied no project layer — both warnings,
-		// both of which fail --strict while the view says there is nothing to
-		// do.
+		// A finding is an item whatever its ID: taking a list of measured IDs
+		// as a class on its own hid a stale price catalog and a run that
+		// applied no project layer — both warnings, both of which fail
+		// --strict while the view says there is nothing to do.
 		return doctorClassActionable
-	case doctorAuditIDs[c.ID] || doctorHasPrefix(c.ID, doctorAuditPrefixes):
-		return doctorClassAudit
-	case c.OK:
-		// A check that passes and still carries a severity is a measurement,
-		// not a finding: project-account-stored names the repositories a
-		// project's token reaches when nothing is wrong with it.
-		return doctorClassAudit
-	case c.Severity == "info" && !doctorActionableInfoIDs[c.ID]:
+	case doctorActionableInfoIDs[c.ID]:
+		// An info check whose one fix is a command: gcp-project-line is not a
+		// measurement, it is work.
+		return doctorClassActionable
+	case c.Severity == "info":
+		// An info check doctor has not classified: a finding the pointer line
+		// counts, never a measurement nobody hears about (the ruling's default,
+		// so a check added later is never hidden).
 		return doctorClassAudit
 	}
 	return doctorClassActionable
+}
+
+// doctorIsMeasurement reports whether a check is one of the measurements
+// doctorClassOf's allow-list names: an exact ID, or one of the per-instance
+// prefixes (plugin-settings-<n>).
+func doctorIsMeasurement(id string) bool {
+	return doctorMeasureIDs[id] || doctorHasPrefix(id, doctorMeasurePrefixes)
 }
 
 // hasAnyPrefix reports whether id is one of prefixes or carries one as its own
@@ -221,10 +295,10 @@ type doctorView struct {
 
 // doctorAuditHeld are the audit findings a view left out of its lines: the
 // security sweep's, and the rest of the audit class. Only a check that is not
-// ok is a finding — the audit class is a measurement when it passes (the runs
-// bucket's IAM is the installation's own accounts, the launcher grants are
-// these two over that job), and a measurement nobody has to look at is not
-// something a pointer line has to announce.
+// ok is a finding, and only a finding is counted: the measurements are what
+// doctor read and found nothing in, and a pointer to them on every clean run
+// is how a reader learns to skip the line (the owner's rule of 2026-10-31: an
+// installation with nothing wrong prints one line and no pointer).
 type doctorAuditHeld struct {
 	security int
 	other    int
@@ -243,6 +317,14 @@ func doctorVisible(checks []doctorCheck, v doctorView) (shown, auditSecurity []d
 		}
 		security := doctorHasPrefix(c.ID, doctorSecurityPrefixes)
 		switch {
+		case class == doctorClassMeasure:
+			// A measurement: --all carries it, and --security carries the
+			// security half of it (a reader who asks for the sweep gets the
+			// sweep's own answers). The default view never prints one and never
+			// counts one as a finding.
+			if security && v.security {
+				auditSecurity = append(auditSecurity, c)
+			}
 		case class != doctorClassAudit:
 			shown = append(shown, c)
 		case v.all:
@@ -268,11 +350,20 @@ func printDoctorReport(w io.Writer, checks []doctorCheck, v doctorView) {
 	}
 	shown, auditSecurity, held := doctorVisible(checks, v)
 	todo, decisions := doctorSplit(shown)
-	if len(shown) == 0 {
+	switch {
+	case len(shown) == 0 && held.security+held.other == 0:
+		// Nothing to do and nothing left out: the one line the owner asked
+		// for. Every measurement doctor made is still in --all and --json.
 		fmt.Fprintln(w, "fugaro doctor: ok — everything checked is ok")
-	} else {
+	case len(shown) == 0:
+		// Nothing to do, and audit findings the default view did not print:
+		// not the ok line, because the pointer lines under it would contradict
+		// it ("all fine" above "2 security findings" is the reading the owner
+		// ruled out).
+		fmt.Fprintln(w, "fugaro doctor: nothing to do")
+	default:
 		fmt.Fprintln(w, doctorVerdict(len(todo), len(decisions)))
-		fmt.Fprintln(w, "an error stops Fugaro until it is fixed (doctor exits 1); a warning is wrong, and Fugaro still runs. `fugaro doctor --all` prints every check.")
+		fmt.Fprintln(w, doctorLegend)
 		for _, c := range todo {
 			printDoctorItem(w, c)
 		}
@@ -315,6 +406,12 @@ func doctorSplit(shown []doctorCheck) (todo, decisions []doctorCheck) {
 	}
 	return todo, decisions
 }
+
+// doctorLegend is the line under the verdict that says what its words cost,
+// because they are doctor's exit code: an error stops Fugaro until it is fixed
+// and exits 1; a warning is wrong and Fugaro still runs, which is what
+// --strict changes.
+const doctorLegend = "an error exits 1 and stops Fugaro until it is fixed; a warning is wrong, Fugaro still runs, and `--strict` exits 1 on it too"
 
 // doctorVerdict is the one line that says how much there is: the work, and the
 // choices, because a reader of a decision is not being handed a task.
@@ -367,11 +464,11 @@ func printDoctorItem(w io.Writer, c doctorCheck) {
 	}
 	if doctorClassOf(c) == doctorClassDecision {
 		// A decision names the command for each choice, and both have to
-		// survive: they go on their own lines rather than one of them being
-		// clipped away.
+		// survive: they go on their own lines, in full, because a command cut
+		// at the edge of the terminal is a command somebody runs.
 		fmt.Fprintln(w, doctorClip(head, doctorLineLimit))
 		for _, choice := range doctorChoices(fix) {
-			fmt.Fprintln(w, "  "+doctorClip(choice, doctorLineLimit-2))
+			fmt.Fprintln(w, "  "+choice)
 		}
 		return
 	}
@@ -379,8 +476,11 @@ func printDoctorItem(w io.Writer, c doctorCheck) {
 		fmt.Fprintln(w, head+" "+fix)
 		return
 	}
+	// The sentence is clipped, the fix never is: only the fix is a command,
+	// and a clipped one is worse than a long line (the terminal wraps, and the
+	// copy of a command that is not all there is what the clip would cost).
 	fmt.Fprintln(w, doctorClip(head, doctorLineLimit))
-	fmt.Fprintln(w, "  "+doctorClip(fix, doctorLineLimit-2))
+	fmt.Fprintln(w, "  "+fix)
 }
 
 // doctorChoices splits a decision's fix into its choices. The checks word them
@@ -477,9 +577,9 @@ func doctorShortFor(id string) (doctorShort, bool) {
 	if s, ok := doctorShorts[id]; ok {
 		return s, true
 	}
-	for prefix, s := range doctorShortsByPrefix {
-		if strings.HasPrefix(id, prefix) {
-			return s, true
+	for _, p := range doctorShortsByPrefix {
+		if strings.HasPrefix(id, p.prefix) {
+			return p.short, true
 		}
 	}
 	return doctorShort{}, false
@@ -498,8 +598,11 @@ func doctorExpand(s, id string) string {
 		return s
 	}
 	name := id
-	for prefix := range doctorShortsByPrefix {
-		name = strings.TrimPrefix(id, prefix)
+	for _, p := range doctorShortsByPrefix {
+		if strings.HasPrefix(id, p.prefix) {
+			name = strings.TrimPrefix(id, p.prefix)
+			break
+		}
 	}
 	return strings.ReplaceAll(s, "%s", name)
 }
@@ -557,10 +660,22 @@ var doctorShorts = map[string]doctorShort{
 // per instance (image-config-<workflow>): the instance's own name is in the
 // check's text, and the full text stays in --all and --json. A %s in a short
 // form is the instance's name, taken from the ID.
-var doctorShortsByPrefix = map[string]doctorShort{
+//
+// The order is the order of the slice and not of a map, so two prefixes that
+// both match an ID resolve the same way on every run: a map's iteration order
+// is randomised, and a check whose sentence changed between two runs of the
+// same binary would be a bug nobody could reproduce.
+var doctorShortsByPrefix = []doctorPrefixShort{
 	// No short fix: the check's own names the workflow, and its workflow is the
 	// one thing a hand-run build needs.
-	"image-config-": {problem: "its job image was built from image settings it no longer resolves to."},
+	{prefix: "image-config-", short: doctorShort{problem: "its job image was built from image settings it no longer resolves to."}},
+}
+
+// doctorPrefixShort is one per-instance short form: the ID prefix doctor gives
+// the check, and the form itself.
+type doctorPrefixShort struct {
+	prefix string
+	short  doctorShort
 }
 
 // firstSentence is a check's first sentence: the default view prints one, and
