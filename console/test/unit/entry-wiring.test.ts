@@ -93,6 +93,7 @@ import {
   SWITCHER_NAME_CLASS,
   SWITCHER_VERSION_CLASS,
   VIEW_PANEL_CLASS,
+  VIEWS,
   bootDashboard,
   isMacPlatform,
   SHORTCUT_ROWS,
@@ -102,7 +103,7 @@ import {
 } from '../../src/renderer/entry'
 import { decodeSnapshot } from '../../src/shared/schema'
 import { NO_PLAN_CHECKOUT } from '../../src/source/source'
-import { READING_STILL, READING_STILL_MS } from '../../src/renderer/screens/reading'
+import { READING_STILL, READING_STILL_MS, READING_WORDS } from '../../src/renderer/screens/reading'
 import {
   NO_CHECKOUT_CHOICE_LABEL,
   NO_CHECKOUT_HEADLINE,
@@ -2707,7 +2708,7 @@ describe('the graph’s plan read when it refuses', () => {
  * section is about -- the read is on its way and the panel must say so -- only
  * exists while one is outstanding. A released holder answers every later read
  * with the same value, so one holder can serve a read the operator makes twice. */
-function holding(): { readonly reply: AReply; readonly release: (value: unknown) => void } {
+function holding(): { readonly reply: () => unknown; readonly release: (value: unknown) => void } {
   let answered: { readonly value: unknown } | null = null
   const waiters: ((value: unknown) => void)[] = []
   return {
@@ -2830,6 +2831,18 @@ describe('the placeholder a tab switch draws', () => {
     expect(operationOf(document), 'the coordinator read draws its own refusal').toBe('coordinator.status')
     expect(holdsText(panelOf(document), COORDINATOR_REFUSAL)).toBe(true)
     expect(holdsText(panelOf(document), GRAPH_REFUSAL)).toBe(false)
+  })
+
+  it('asks the operator to read the tab by the word the navigation gave it', () => {
+    // The placeholder names the tab the operator just pressed, so the word is
+    // the button's own and not a second name for the same view: "Reading Caps…"
+    // under a tab labelled Projects would be the console asking its reader to
+    // check a name it drew itself.
+    const words: Readonly<Record<string, string>> = READING_WORDS
+    expect(Object.keys(words)).toHaveLength(VIEWS.length)
+    for (const entry of VIEWS) {
+      expect(words[entry.id], `the ${entry.id} view has no placeholder word`).toBe(entry.label)
+    }
   })
 
   it('draws the placeholder for the Graph only when there is nothing to redraw', async () => {

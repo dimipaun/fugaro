@@ -45,8 +45,9 @@ export type ReadingTab = 'live' | 'graph' | 'spend' | 'projects' | 'coordinator'
 /** ReadingWords is the tab's own name, and it is the navigation's word and not
  * a second copy of it: `VIEWS` labels the button the operator just pressed, and
  * the placeholder would be asking them again to read a name that disagrees with
- * the tab it is under. The entry's `READING_TABS` is asserted against `VIEWS` by
- * `entry-wiring.test.ts`, so a renamed tab cannot leave this table behind. */
+ * the tab it is under. `entry-wiring.test.ts` asserts this table against `VIEWS`
+ * -- the same five tabs, the same five words -- so a renamed tab cannot leave
+ * the words behind. */
 export const READING_WORDS: Readonly<Record<ReadingTab, string>> = Object.freeze({
   live: 'Live',
   graph: 'Graph',
