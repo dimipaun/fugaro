@@ -175,10 +175,6 @@ func initStages(e *initEngine) []initflow.Stage {
 	// are launched against (see the stage's own file for why it is a
 	// migration and never a delete and a republish).
 	stages = append(stages, newSecretsStage(e), newPluginStage(e), e.repo)
-	// The checkout's own upgrade steps: the plugin pin, the plugin in Claude
-	// Code and the repository's job images, which `fugaro upgrade` used to be
-	// a second command for (the owner's rule of 2026-10-30, update alone).
-	stages = append(stages, newCheckoutUpgradeStage(e))
 	stages = append(stages, newPolicyMigrateStage(e))
 	// The Batch backend's provisioning is the owner's step and nothing else
 	// reaches it: the stage is registered only under its own flag, and

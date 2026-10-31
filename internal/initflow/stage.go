@@ -74,14 +74,6 @@ const (
 	// service — an apply that ran first would plan that grant against a
 	// resource that is not there yet.
 	Credentials = "credentials"
-	// Checkout is `fugaro upgrade`'s checkout steps inside `fugaro update`
-	// (internal/cli/init_checkout_upgrade.go): the plugin pin in the
-	// checkout's .claude/settings.json, the plugin in Claude Code and the
-	// repository's job images. It comes after the repository stage — the
-	// images are a repository's and the pin is the checkout's, and both are
-	// read off files the stages before it settle — and before Policy, whose
-	// node those jobs' runs are admitted by.
-	Checkout = "checkout"
 	// Policy is the published policy node's migration in place
 	// (internal/cli/init_policy_migrate.go, the owner's rule of 2026-10-30:
 	// fugaro update is the whole upgrade). It comes after the repository
@@ -129,10 +121,6 @@ var order = []slot{
 	// output and grant each job's account an invoker on it.
 	{name: Credentials, needs: []string{Installation2}, noYes: true},
 	{name: Repository, needs: []string{Installation2, Secrets}},
-	// The checkout's own upgrade steps run after the repository stage, whose
-	// files they are about, and before the policy node, which is what the
-	// jobs they refresh are admitted by.
-	{name: Checkout, needs: []string{Repository}},
 	// The policy node is what every run of the project is admitted by, and
 	// the repository stage is the last writer of the installation those runs
 	// read it against.
