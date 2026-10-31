@@ -160,7 +160,7 @@ otherwise select for a cloud command, and never calls Secret Manager, never
 reads or prints a token value, only names.
 
 The state column is not local. When the selected project has a Firebase budget
-backend (budget.rtdb_url, which fugaro update --firebase-project writes), each account's
+backend (budget.rtdb_url, which fugaro update --firebase-project <gcp-project-id> writes), each account's
 credential state is read from that database as you, with your Application
 Default Credentials — the creds/marks subtree the credentials service writes,
 which an admin's rules grant the read of — and printed beside the name as
