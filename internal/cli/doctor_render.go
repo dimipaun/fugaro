@@ -522,12 +522,16 @@ var doctorUpdateFixes = map[string]string{
 	// The rules are not reached by a plain update: --firebase-project is what
 	// deploys them, and the check's own fix says the same.
 	"policy-rules-skew": "run `fugaro update --firebase-project`",
-	// The images stage rebuilds the jobs, and writing a job's environment is
-	// the checkout's repository stage.
-	"policy-vs-jobs": "run `fugaro update --repo .`",
 	// A check that cannot even be read outside a checkout says so in its own
 	// text: update is the whole upgrade, and it runs in the repository.
 	"plugin-pin": "run `fugaro update` in the repository's checkout",
+
+	// policy-vs-jobs has no line of its own, because the whole `fugaro update`
+	// is its remedy: the stage list (init_stages.go) is images — the rebuild
+	// the check's own text names — and then the checkout's repository stage,
+	// which is what writes a job's environment. `--repo .` runs the second of
+	// those and stops, so a reader who ran it would still be on the runner
+	// image that predates this Fugaro, which is the state the check reports.
 }
 
 // doctorShortProblem is the one sentence the default view prints for a check.
@@ -654,6 +658,31 @@ var doctorShorts = map[string]doctorShort{
 	"billing-api":                       {"the Cloud Billing API is disabled on the project, so doctor and run cannot read the billing state.", ""},
 	"terraform":                         {"terraform is not on the PATH.", "install terraform 1.9 or later"},
 	"docker":                            {"docker is not on the PATH.", "install docker"},
+
+	// The security sweep's warnings. They are printed in the default view — a
+	// warning-severity finding is never hidden — and their own sentence names a
+	// member, a role and a container, which on the installations the sweep
+	// exists for is longer than one screen line: the clip cut it where the names
+	// are, which is the one part the reader needs. The short form says the state
+	// in one line and leaves the names to --all and --json.
+	//
+	// The fix stays the check's own here: it carries the member's real name in a
+	// command that can be pasted, and a short fix would have to leave a
+	// placeholder where that name goes.
+	//
+	// The wording covers every state of its ID, because an ID is all the lookup
+	// has and these checks report both a grant doctor could not derive and a
+	// read that did not happen.
+	"secret-readers-unexpected": {"a secret this checkout's jobs mount grants a reader Fugaro cannot place, or could not be read.", ""},
+	"launcher-jobs":             {"which Cloud Run jobs a launcher can start could not be checked.", ""},
+	"launcher-jobs-public":      {"a Cloud Run job can be started by allUsers or allAuthenticatedUsers, which is anyone.", ""},
+	"launcher-jobs-unread":      {"the IAM policy of some Cloud Run jobs could not be read, so whether a launcher can start them is unknown.", ""},
+	"batch-launcher-iam":        {"the launchers' roles/batch.jobsEditor grant in this project is not the one Fugaro writes, or could not be read.", ""},
+	"allow-list-uncovered":      {"the published policy does not admit a repository this machine's config names.", ""},
+	"creds-broken":              {"a Claude account's token was refused, and no work routes to it until an operator clears the mark.", ""},
+	"creds-unknown-state":       {"a credential mark carries a state this Fugaro does not read, so the account is held rather than available.", ""},
+	"creds-rules":               {"the deployed budget rules do not carry the credentials family this Fugaro writes, or could not be read.", ""},
+	"token-signers":             {"who can sign the budget database's sign-in tokens could not be read.", ""},
 }
 
 // doctorShortsByPrefix are the short forms for the checks doctor emits once
@@ -669,6 +698,19 @@ var doctorShortsByPrefix = []doctorPrefixShort{
 	// No short fix: the check's own names the workflow, and its workflow is the
 	// one thing a hand-run build needs.
 	{prefix: "image-config-", short: doctorShort{problem: "its job image was built from image settings it no longer resolves to."}},
+	// The sweep's per-instance warnings, one for a member and one for a job
+	// account: doctor numbers their IDs (runs-bucket-iam-1, job-token-grant-2,
+	// token-signers-3) and their own sentence carries the whole triple, so each
+	// gets the one line above and keeps its own fix — the one that names the
+	// member.
+	//
+	// A short form is only ever reached from the default view, and the info
+	// lines these prefixes also match (a sweep's own summary, a signer the
+	// installation designed for) are measurements, which that view never prints:
+	// the full text is what --all and --security show either way.
+	{prefix: "token-signers-", short: doctorShort{problem: "somebody who is not a signer Fugaro designs for can sign sign-in tokens, or the policy could not be read."}},
+	{prefix: "runs-bucket-iam-", short: doctorShort{problem: "a grant on the runs bucket that Fugaro does not write, or one it could not read."}},
+	{prefix: "job-token-grant-", short: doctorShort{problem: "a job account's read grant on the budget token objects is not one Fugaro writes, or could not be read."}},
 }
 
 // doctorPrefixShort is one per-instance short form: the ID prefix doctor gives

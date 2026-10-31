@@ -379,6 +379,71 @@ func TestDoctorDefaultShowsAWarningSecurityFinding(t *testing.T) {
 	}
 }
 
+// TestDoctorSweepWarningsAreOneLine: the security sweep's warnings are printed
+// in the default view — a warning-severity finding is never hidden — and their
+// own sentence names a member, a role and a container in one breath, which on
+// the installations the sweep exists for is more than a screen line. The
+// fallback was firstSentence, and for these the first sentence runs to the end
+// of a paragraph, so the clip cut the line exactly where the names are (the
+// review's finding). Every one of them now has a short form whose sentence fits
+// the head budget whole, and the names stay in --all and --json.
+func TestDoctorSweepWarningsAreOneLine(t *testing.T) {
+	// The sentence alone has to fit: printDoctorItem clips the head when the
+	// head and its fix do not fit together, so a sentence that fits the budget
+	// is the one thing that can never be cut.
+	fits := func(t *testing.T, c doctorCheck) {
+		t.Helper()
+		head := doctorSeverityWord(c) + " " + c.ID + ": " + doctorShortProblem(c)
+		if len([]rune(head)) > doctorLineLimit {
+			t.Errorf("%s's sentence does not fit one screen line: %d runes, limit %d: %q",
+				c.ID, len([]rune(head)), doctorLineLimit, head)
+		}
+	}
+	// On the check's own worst text: what a short form is for is not clipping
+	// whatever the check itself says.
+	long := "a problem in the check's own words, long enough that a clipped head would cut it where the names are: " +
+		strings.Repeat("member@example.com (roles/example.role) on gs://a-bucket, ", 4)
+	for id := range doctorShorts {
+		if id == "secret-scope-shadowed" {
+			// The one entry that is not a sentence of its own: a decision has to
+			// name the container it is about, so doctorShortProblem keeps the
+			// check's own first words and adds the clause behind them, and the
+			// head is as long as the name (doctorShortProblem's special case).
+			continue
+		}
+		fits(t, doctorCheck{ID: id, Severity: "warning", Problem: long, Fix: long})
+	}
+	for _, p := range doctorShortsByPrefix {
+		fits(t, doctorCheck{ID: p.prefix + "2", Severity: "warning", Problem: long, Fix: long})
+	}
+
+	// And on a real emission: a bucket grant the sweep cannot place, read from
+	// the rig's own policy. Its line is one sentence now, and the member, the
+	// role and the bucket are what --all carries.
+	g := gcpfake.NewGCS(t)
+	r := newDoctorRig(t)
+	odd := gcpfake.Binding{Role: "projects/example/roles/customWriter", Members: []string{"group:platform@example.com"}}
+	r.withRunsBucket(t, g, dbLists, append(hardenedPolicy(), odd)...)
+	got, _, _ := execute(t, "doctor", "--dir", t.TempDir())
+	const head = "warning runs-bucket-iam-1: "
+	line := ""
+	for _, l := range strings.Split(got, "\n") {
+		if strings.HasPrefix(l, head) {
+			line = l
+		}
+	}
+	if line == "" {
+		t.Fatalf("the default view does not print the sweep's warning finding:\n%s", got)
+	}
+	if want := head + "a grant on the runs bucket that Fugaro does not write, or one it could not read."; line != want {
+		t.Errorf("the sweep's finding is not its short form: %q, want %q", line, want)
+	}
+	all, _, _ := execute(t, "doctor", "--all", "--dir", t.TempDir())
+	if !strings.Contains(all, "group:platform@example.com") {
+		t.Errorf("--all does not carry the member the default line leaves out:\n%s", all)
+	}
+}
+
 // TestDoctorAllPrintsEveryCheck: --all is the long-standing output — one line
 // per check, informational and audit lines included — so nothing an operator
 // could read before is gone.
@@ -436,6 +501,19 @@ func TestDoctorUpdateItemsAreOneCommand(t *testing.T) {
 		if got := doctorDefaultOutput(t, []doctorCheck{ok}); !strings.Contains(got, "fugaro doctor: ok") {
 			t.Errorf("%s still prints when it passes:\n%s", id, got)
 		}
+	}
+
+	// policy-vs-jobs is the one update item whose command may not be narrowed:
+	// the check is about jobs still on a runner image that predates this
+	// Fugaro, and `fugaro update --repo .` runs the checkout's repository
+	// stage and nothing else — it writes a job's environment, and the jobs stay
+	// on that image. Plain `fugaro update` is the whole converge, images stage
+	// first (init_stages.go), and it is what the line names.
+	narrowed := doctorCheck{ID: "policy-vs-jobs", Severity: "warning",
+		Problem: "the jobs are deployed from the runner image ghcr.io/example/runner:1, which predates this Fugaro",
+		Fix:     "fugaro image refresh moves the jobs to this release's runner image (then fugaro update --repo . in your own terminal)"}
+	if line := doctorItemLine(t, narrowed); !strings.HasSuffix(line, "run `fugaro update`") {
+		t.Errorf("policy-vs-jobs' line does not name the whole update: %q", line)
 	}
 
 	// A check `fugaro update` does not put right is not an update item, and its
