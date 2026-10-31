@@ -139,6 +139,12 @@ const TOTAL_FIELDS = Object.freeze([
   'leased_usd',
   'daily_cap_usd',
   'percent',
+  // `max_parallel` -- the concurrent-run cap a launch is checked against -- is
+  // written by `watch --json` now and lives on `total` alone (a repository has
+  // no cap of its own, which is why `REPO_FIELDS` does not carry it): accepted
+  // here like every other field of the shape, and read by nothing, because no
+  // screen draws a cap bar yet. `null` is a document whose writer had none.
+  'max_parallel',
   'burn',
   'kill',
   'runs',

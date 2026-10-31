@@ -224,6 +224,29 @@ test('a document carrying leased_usd is read, and nothing is drawn from it', () 
   assert.equal(judged.document.repos[0].spent.value, 0.8);
 });
 
+test('a document carrying max_parallel is read, and nothing is drawn from it', () => {
+  // `max_parallel` -- the concurrent-run cap a launch is checked against -- is
+  // on `total` now, so a document from this CLI carries a key the phone's own
+  // shape did not have; without it named, every live document would be refused
+  // whole as `unknown-field`. Nothing is read from it: no screen draws a cap
+  // bar, and a figure nothing renders is one nobody checked. `null` is a
+  // document whose writer had no cap to report, and it is accepted too.
+  const judged = validateDocument(wire({ total: { ...wire().total, max_parallel: 4 } }));
+  assert.equal(judged.ok, true);
+  assert.deepEqual(judged.document.total, validateDocument(wire()).document.total);
+  assert.equal(validateDocument(wire({ total: { ...wire().total, max_parallel: null } })).ok, true);
+  // It is the total's alone: a cap is the project's, not a repository's, so a
+  // `repos[]` entry carrying it is a document no version of the CLI writes and
+  // stays an unknown field there.
+  const repo = {
+    slug: 'acme/app', repo: 'acme/app', counted_usd: 1, spent_usd: 0.8, notional_usd: 0,
+    daily_cap_usd: null, percent: null,
+    burn: { known: true, usd_per_min: 0, fast: false }, kill: null,
+  };
+  assert.equal(validateDocument(wire({ repos: [repo] })).ok, true);
+  assert.equal(validateDocument(wire({ repos: [{ ...repo, max_parallel: 4 }] })).code, DOCUMENT_CODES.UNKNOWN_FIELD);
+});
+
 test('a kill switch is a fact, and an absent one is not a killed project', () => {
   const killed = validateDocument(
     wire({ total: { ...wire().total, kill: { by: 'operator', at: '2025-11-09T11:00:00Z', reason: 'cap' } } }),

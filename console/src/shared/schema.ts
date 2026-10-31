@@ -783,6 +783,14 @@ export const TOTAL_KEYS = [
   'leased_usd',
   'daily_cap_usd',
   'percent',
+  // Written by the CLI since the release that added it, and declared here as
+  // part of the struct's key set before any view reads it: `TOTAL_KEYS` is
+  // `JSONTotal`'s own keys, pinned against `internal/watch/json.go` by
+  // `schema.test.ts`, so a key the struct writes belongs in this list. The
+  // concurrent-runs cap bar is the view that will read it; a document from an
+  // older CLI carries no such key at all, and `null` is one whose writer had
+  // no cap to report -- never `0`.
+  'max_parallel',
   'burn',
   'kill',
   'runs',
