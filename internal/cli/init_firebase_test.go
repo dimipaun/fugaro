@@ -1933,3 +1933,32 @@ func TestRulesStageDetailCarriesTheMobileLockOut(t *testing.T) {
 		t.Errorf("the review screen does not show what the deploy locks out:\n%s", screen)
 	}
 }
+
+// TestRulesStageNotCoveredNoteWithoutTheFlag: firebaseVerified answers
+// (false, "") for the one case it cannot word — no --firebase-project at all —
+// and firebaseReason pasted that into "the Firebase project is ", so the run
+// that deploys into the project's own database without the flag told the
+// operator a sentence that stopped after "is". The note is what asks the step
+// for its own typed confirmation, so half a sentence is the one thing it cannot
+// be.
+func TestRulesStageNotCoveredNoteWithoutTheFlag(t *testing.T) {
+	r := &initRun{cmd: NewRootCmd(), o: &initOptions{}, w: &syncBuf{}, projectName: initProjectName, gcpProject: initProject,
+		review: &runReview{state: reviewTaken, firebase: func(context.Context) (bool, string) { return false, "" }}}
+	got := r.firebaseReason()
+	// The note is embedded before the loop's "; it asks for its own", so it has
+	// to end on a word of its own: the old text ended on "is".
+	if strings.HasSuffix(got, " is") || strings.HasSuffix(got, " ") || strings.HasSuffix(got, ", ") {
+		t.Fatalf("the note stops mid-sentence: %q", got)
+	}
+	for _, want := range []string{"--firebase-project", "this installation's"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the note does not say what is missing and what it is missing from: %q", got)
+		}
+	}
+	// The verified case is still covered: the note is only for a project this
+	// run cannot point at.
+	r.review.firebase = func(context.Context) (bool, string) { return true, "verified as Fugaro's" }
+	if got := r.firebaseReason(); got != "" {
+		t.Errorf("a verified Firebase project is not covered by the run: %q", got)
+	}
+}
