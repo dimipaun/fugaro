@@ -13,6 +13,17 @@ each left where it was: `internal/cli/init_stages.go`'s `initStages` still appen
 the same order (`newRulesStage`, `newPolicyMigrateStage`, `newCheckoutStage`), `internal/cli/init.go`
 still appends none, and `internal/cli/doctor_layer.go` is byte for byte the file R0 extends.
 
+**Re-checked at `4053a300`** (2026-10-31), the merge of `origin/main` (`48754c01`) into this
+branch: `main`'s side of it gained the console's graph redesign (`console/**` and
+`docs/design/console-styling.md`) and the settings design's own folder (`docs/settings-commands`),
+and **not one file or symbol this folder names changed with it** — `internal/initflow/stage.go`,
+`internal/cli/init_stages.go`, `internal/cli/init.go`, `internal/cli/doctor_layer.go`,
+`internal/cli/config_publish.go`, `internal/localcfg/localcfg.go`, `internal/cli/layer_resolve.go`,
+`internal/config/layer.go`, `internal/rigor/*` and `console/docs/json-contract.md` are identical
+between `7efc78e0` and the merge, so every finding below reads as it did at the baseline. The
+baseline line above stays `7efc78e0` because that is the commit the claims were *made* against; a
+reader checking one still uses the file and the symbol, not this file's history.
+
 - **No line numbers anywhere in this folder**, for the reason
   `docs/rigor-modes/reconciliation.md` gives: a line number is wrong the first time anyone edits the
   file above it, and a path and a symbol survive. Every claim below names the file and the symbol, so

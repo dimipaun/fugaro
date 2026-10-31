@@ -34,11 +34,36 @@ generation. Repository names are placeholders (`owner/repo-a`, `owner/repo-b`); 
 
 ## 2. `fugaro rigor show [--json] [--repo R] [--path P]... [--offline]`
 
-Offline by default in the sense that matters: it reads this machine's project config, the local
-layer file (§1's one path, when it exists), the published project layer (or the local layer cache
-when the bucket cannot be reached, saying which it used) and each repository's `fugaro.yaml` at its
-base branch in this machine's remembered checkouts. It writes nothing. `--path P` (repeatable) is the same declaration `fugaro run --path`
-takes, and it is the only way `show` can answer the area question the way a run will.
+It **writes** nothing, and none of its reads is a cloud write: this machine's project config, the
+local layer file (§1's one path, when it exists), the published project layer (or the local layer
+cache when the bucket cannot be reached, saying which it used) and each repository's `fugaro.yaml`
+at its base branch in this machine's remembered checkouts. `--path P` (repeatable) is the same
+declaration `fugaro run --path` takes, and it is the only way `show` can answer the area question
+the way a run will.
+
+**`--offline` is what forbids the bucket read.** Without it the published layer is the bucket's
+object and the cache is the fallback; with it the cache is the only source — the copy the resolver
+already keeps (`localcfg.SharedCacheEntry`), and only while it is inside the resolver's offline
+limit (seven days, decision L13) — so `layer.source` is `"cache"` and `layer.note` carries the cache
+sentence. With no copy for this project, or one past the limit, `published` is **absent** and `note`
+says which of the two it is ("no project layer of `<project>` is cached", or "the cached project
+layer of `<project>` is `<N>` days old, over the 7-day offline limit") — the reason, never a bare
+enum and never a guess. It is the flag `fugaro config show` and `fugaro validate` already carry
+(`layerOptions.Offline`), with the same meaning. `show` is not "offline by default": it *writes*
+nothing, which is a different claim, and without the flag it reads the bucket like every other
+reader.
+
+**`--repo R` narrows the repository half to one repository.** §2.2 lists the project layer's rules
+plus R's, §2.3 carries R's single row, and `--json`'s `repositories` array carries one member with
+the same shape; §2.1 (the project default, the layer and its state) and §2.4 (the floors) are the
+project's and are not narrowed, and no other member of the document changes. R is the `owner/name`
+every other command takes, validated the way `fugaro run --repo` validates it (`task.CanonicalRepo`),
+and it must name one of the project's `repos:` entries — the set §2.3 iterates, because these four
+sections are one project's answer; a value the project does not carry is refused with that set
+named, rather than answered from a layer that is not its own. With `--repo R` and no checkout of R
+on this machine, §2.3's `unknown` row and its sentence are unchanged: narrowing the question never
+turns a missing read into an answer. `--repo` and `--path` compose — `--path`'s declarations are
+repository-relative, so with `--repo R` they are read against R.
 
 **Every mode this document prints comes from `rigor.Resolve`** (`internal/rigor/resolve.go`), the one
 function that orders the modes and settles the precedence between area, repository, project and
@@ -111,15 +136,16 @@ within a version (D835). It has a JSON Schema in `schemas/` like the other wire 
 in that order, with the members those sections name. **`layer` is the one member with no text
 section of its own**, and it is not decoration: it says *which* layers were read and how they stand
 relative to each other, which is the input the four sections are resolved from and what §2.1 reports
-in prose as its `unpublished` line. It carries five members:
+in prose as its `unpublished` line. It carries six members:
 
 | Member | What it is |
 | --- | --- |
 | `published` | the project layer this document was resolved against: `{"generation": N, "sha256": "..."}` — the same two values §2.1 prints in text. **Absent**, not `null`, when the project has never published one, the rule §2.3 already sets for `mode` and `from` |
+| `recorded` | `{"generation": N}` — the generation the local layer file's bytes are known to correspond to: the one an `update` seeded it from, or the one it was last published at (the local project config's `layer_generation`, D854 answered), which is what §2.1's line uses to name the cause. **Absent**, not `null`, when nothing is recorded (every installation before the first `update` records one). Every door that writes the file from a published object, or publishes it, records the generation it wrote at — R1's stage and `fugaro config publish` go through one `publishLayer` (R0) — so the member does not go stale behind the owner's back, and a file whose bytes equal the published object's never reads as a stale copy because a publish `show` cannot see forgot to record. With `published` and `unpublished: true` a consumer compares the two generations itself, because the console reads this document and never `~/.config/fugaro` (§8, D836): `recorded.generation` equal to `published.generation` is a **local edit** (the owner's change, to publish), and one **older** is a **stale copy from another machine** (the published object has moved past it, so publishing would revert someone else's publish and the file is what to re-seed). It is never a value from a newer CLI's document: a generation is an integer the reader may compare, and a consumer that does not recognise the member ignores it |
 | `local` | §1's local layer file: `{"path": "...", "sha256": "..."}`. **Absent**, not `null`, when the file does not exist |
 | `source` | where `published` was read from: `"bucket"` or `"cache"` — the two the paragraph above names, the distinction §2.1 carries in text as the cache note |
 | `note` | the read's own warning, verbatim: the resolver's `foundLayer.Note` (`internal/cli/layer_resolve.go`), `""` when the bucket answered. On `"cache"` it is the sentence saying so and how old the copy is ("using the cached project layer of `<project>`, `<N>` days old"); when the value is unknown it is the reason, not a guess. It is the text §2.1 prints beside the value, so a consumer reading `"source": "cache"` can say **why** the bucket was not the source instead of reporting a bare enum |
-| `unpublished` | `true` only when both `published` and `local` are present **and** their `sha256`s differ; `false` otherwise, because with either absent there is nothing to compare. §2.1's `unpublished` line prints exactly when this is `true`, so the two never disagree — and `fugaro config layer` and doctor decide the same state from the same two sha256s. **The boolean is the state, not its cause**, and a consumer that wants the cause compares `published.generation` with the local project config's recorded `layer_generation` (D854 answered): equal means a **local edit** — the owner's change, to publish — and a recorded value older than the published one means a **stale copy from another machine**, to re-seed, which is the distinction §2.1's line prints in text |
+| `unpublished` | `true` only when both `published` and `local` are present **and** their `sha256`s differ; `false` otherwise, because with either absent there is nothing to compare. §2.1's `unpublished` line prints exactly when this is `true`, so the two never disagree — and `fugaro config layer` and doctor decide the same state from the same two sha256s. **The boolean is the state, not its cause**, and the cause is read off `recorded` beside it |
 
 The member is provenance and nothing else: `show` neither writes nor fetches (D839), so `layer`
 describes the bytes it read, and a consumer can tell a stale local file from a stale published
@@ -188,12 +214,23 @@ becomes `<mode>`. In order:
    how the two drift apart, and D830's whole point is that there is one of each.
 7. **Hand off.** It prints `next: fugaro update`, which publishes it (D831).
 
-**Lowering is the sensitive direction.** When the new mode ranks below the project's current
-resolved default, the confirmation is the **typed project name**, as `fugaro project repos rm`
-asks (`confirmTypedStrict`), and `--yes` does not stand in for it (D832). Raising, or setting a
-mode equal to the current one, is an ordinary y/N. The command always prints, next to the diff, the
-review floor, the sentence that this command cannot lower it, and the command that can —
-**`fugaro rigor floor`** (SD10).
+**Lowering is the sensitive direction, and its baseline is a resolution, never a key looked up in
+one file.** The mode the new one is compared against is what this project resolves to *today* —
+`rigor.Resolve`'s answer for these inputs (`--repo R` and `--path` included, when they were given),
+read before anything is written — not the value of one `default` key: with a repository's
+`rigor.default`, the project layer's `defaults.rigor.default` and an area rule all in play, the mode
+that decides is whichever one `Resolve` picks, and a comparison against any other one would either
+ask for the typed name over a harmless change or miss a real lowering. When the new mode ranks below
+that answer, the confirmation is the **typed project name**, as `fugaro project repos rm` asks
+(`confirmTypedStrict`), and `--yes` does not stand in for it (D832). Raising, or setting a mode equal
+to the resolved one, is an ordinary y/N. **A project that has published no layer and has no local
+file is not the exception**: nothing sets a default there, so the resolution returns Fugaro's
+built-in one, `pro` (`internal/rigor`'s `Default`, §2.1's `default` row) — `poc` and `startup` are
+lowerings that ask for the typed name on that first `set`, and `pro` and `critical` are not
+(`hotfix` is refused outright, step 2). The comparison is `Rank`'s, the same order `unset` uses
+(§6); this family has one of them. The command always prints, next to the diff, the review floor,
+the sentence that this command cannot lower it, and the command that can — **`fugaro rigor floor`**
+(SD10).
 
 ## 4. `fugaro rigor set <mode> --repo R`
 
@@ -234,8 +271,10 @@ repository's own `rigor.areas` (D838):
 - The glob must pass `Area.Validate` — repository-relative, no `..`, a `doublestar` pattern, at most
   `MaxAreaPattern` characters; the name must pass `areaNameRE`, at most `MaxAreaName` characters —
   and the layer must carry at most `MaxAreas` rules.
-- Confirmation, backup and atomic write are `set <mode>`'s. A rule whose mode is below the project
-  default asks for the typed project name (D832).
+- Confirmation, backup and atomic write are `set <mode>`'s. A rule whose mode ranks below what its
+  glob resolves to today asks for the typed project name (D832), by §3's comparison — the same
+  resolution, with the rule's own paths as the input, so a rule that lowers is caught wherever it
+  sits in the precedence (§2's one rule).
 
 ## 6. `fugaro rigor unset [--repo R] [--area <glob>]`
 
@@ -248,13 +287,22 @@ The reverse, through the same check, diff, backup and atomic write (D837):
 - **It writes nothing in place of what it removes.** Writing `pro` instead would freeze Fugaro's
   built-in default into the owner's configuration and be indistinguishable from a deliberate pin;
   removing the key is the only spelling that says "the layer below decides".
-- **Which way an `unset` moves the mode depends on where the removed value sat.** Removing a value
-  that sat **above** what now decides **lowers** it — `critical` removed while the layer below says
-  `pro` means the project reviews less — and that is the sensitive direction: it asks for the typed
-  project name, by the same comparison `set` uses. Removing a value that sat **below** what now
-  decides **raises** it — `startup` removed while `pro` now decides means the project reviews more
-  — and that is an ordinary y/N. The comparison is `Rank`'s, the same one `set` uses for its own
-  lowering; this command does not have a second one.
+- **Which way an `unset` moves the mode is the before and the after of one resolution.** The command
+  resolves twice with `rigor.Resolve`, on the same inputs `set` gives it (`--repo R` and `--path`
+  included): once on the document as it is, once on the document with the key or the rule removed —
+  which is "the layer below decides" read exactly, since the layer below is whatever `Resolve`
+  returns once the key is gone — both in memory and neither written. `Rank` compares the two in that
+  order: when the mode that decides **after** ranks **below** the one that decided before, the
+  change **lowers** the mode —
+  `critical` removed while `pro` now decides means the project reviews less — and that is the
+  sensitive direction, so it asks for the typed project name, by the same comparison and the same
+  call §3's lowering makes. When it ranks **above**, the change **raises** — `startup` removed while
+  `pro` now decides means the project reviews more — and that is an ordinary y/N, as an equal pair
+  is, since nothing moved. Reading "what now decides" off a hand-picked layer below would be wrong
+  wherever one key is written in more than one layer — a repository's `rigor.default` under a
+  project `defaults.rigor.default`, an area rule that outranks both, a repository with no checkout
+  here — because *which* layer decides those paths is `Resolve`'s answer and nobody else's (§2's one
+  rule), and the two resolutions are that answer, before and after.
 - Nothing to remove is a **no-op with a sentence and exit 0** ("the project layer sets no default;
   `pro` (Fugaro's own default) decides"), so a script that unsets twice is not a failed run. When
   the target file itself does not exist, that is the same answer, not an error.

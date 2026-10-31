@@ -113,11 +113,16 @@ it is R1's, and this task adds its **field**, because this is the task that alre
   stage, which its S3 declares in the same struct. One record per stage that publishes, both
   `omitempty`, neither a second home: a local file's own record, never wire, and an installation
   that carries neither decodes exactly as it does today (D854, answered; the settings design's
-  `reconciliation.md` §4 names both fields). R1 writes and reads `layer_generation`.
+  `reconciliation.md` §4 names both fields). R1 writes and reads `layer_generation`, and the
+  explicit door writes it too: `fugaro config publish` publishes through the same `publishLayer`
+  (D831), and `fugaro rigor show` must not read a `config publish` as a stale copy the moment the
+  owner edits the file afterwards — so **every** door that writes the file from a published object,
+  or publishes it, records the generation it wrote at.
 - **Files (7):** `internal/localcfg/localcfg.go` (`LayerFile` — the path, derived from the project
   name; the same directory helper the project config uses — and `layer_generation` above),
   `internal/localcfg/localcfg_test.go`,
-  `internal/cli/config_publish.go` (the FILE argument becomes optional and defaults to that path),
+  `internal/cli/config_publish.go` (the FILE argument becomes optional and defaults to that path,
+  and the publish records the generation it wrote at),
   `internal/cli/config_publish_test.go`, `internal/cli/config_show.go` (`config layer` prints the
   local path and whether the published object is `unpublished`, with sha256s),
   `internal/cli/doctor_layer.go` and `internal/cli/doctor_layer_test.go`. `docs/project-layer.md`
@@ -151,7 +156,9 @@ it is R1's, and this task adds its **field**, because this is the task that alre
 - **Tests:** `TestLayerFileIsTheProjectNameUnderProjects` (the path, and that a project name that is
   not a single path element is refused), `TestConfigPublishWithNoFilePublishesTheLocalLayer`,
   `TestConfigPublishRefusesWhenTheLocalFileDoesNotExist` (the message names `fugaro update`, not a
-  flag), `TestConfigLayerPrintsTheLocalPathAndItsUnpublishedState`,
+  flag), `TestConfigPublishRecordsTheGenerationItWroteAt` (the explicit door writes the record, so
+  an edit made after a `config publish` reads as a local edit and not as another machine's copy),
+  `TestConfigLayerPrintsTheLocalPathAndItsUnpublishedState`,
   `TestDoctorReportsALocalLayerFileThatIsUnpublished` (the new `local-layer-file` check's ID, its
   severity, and that it says `unpublished` — the shared word — with the existing `project-layer*`
   checks asserted unchanged in the same test so the addition is shown not to have moved them,
@@ -190,10 +197,13 @@ installation that has never had one.
   `Layer = "layer"` to that block, beside `Policy` and `Checkout`, and **adds the slot** to `order`:
   `{name: Layer, needs: []string{Repository}}`, placed between the `Policy` slot and the `Checkout`
   slot — the position D831 chose. Its `needs` name the installation's own stage, `Repository`, the
-  way `Checkout`'s slot does; `needs` records why the order is what it is and gates nothing (the
-  order gates), so no entry here may be read as a new dependency of the layer on the policy node.
-  Third, `Checkout`'s existing slot gains `Layer` in its `needs`, which is what the stage-order test
-  below reads as "the layer is published before the images are refreshed".
+  way `Checkout`'s slot does. `needs` is not a second ordering engine: the loop walks `order`, so an
+  entry gates nothing at run time — but it is **checked**, not merely documentary, because
+  `TestStageOrderMatchesDependencies` (below) requires every entry to name a stage that comes earlier
+  in `order` and fails on one that does not. So no entry here may be read as a new dependency of the
+  layer on the policy node, and no entry may name a stage that does not precede it either. Third,
+  `Checkout`'s existing slot gains `Layer` in its `needs`, which is what the stage-order test below
+  reads as "the layer is published before the images are refreshed".
 - **`internal/initflow/loop_test.go` changes with them.** `TestStageOrderMatchesDependencies` pins
   the stage count (fifteen) **and** the exact order
   (`… Repository, Rules, Policy, Checkout, Compute`), and checks every `needs` entry against it, so
@@ -362,9 +372,12 @@ splice is a design, while two editors is a bug waiting for one of them to be fix
   the same inputs — the resolver is called, not re-implemented),
   `TestRigorShowJSONLayerNamesWhatWasRead` (spec §2's `layer` member: `published` and `local`
   present with their sha256s, `source` one of the two words, `note` carrying the cache read's own
-  sentence and not only the enum, `unpublished` true only when both are there and differ — and
-  `published` and `local` **absent**, never `null`, for a project that has published nothing and for
-  a machine with no local file), `TestRigorShowJSONMatchesSchema`,
+  sentence and not only the enum, `recorded` carrying the local project config's `layer_generation`
+  and **absent** when nothing is recorded, `unpublished` true only when both are there and differ
+  (**both causes covered**: a local edit, `recorded` equal to `published`, and a stale copy,
+  `recorded` older — the pair a consumer reads to choose between publishing and re-seeding, spec
+  §2's `layer` table) — and that `published` and `local` are **absent**, never `null`, for a project
+  that has published nothing and for a machine with no local file), `TestRigorShowJSONMatchesSchema`,
   `TestRigorShowJSONNeverSaysRequestOrReached`, `TestRigorShowWritesNothing`,
   `TestRigorGroupHasNoFloorFlag` (the family's `set`/`unset`/`show` take no flag that writes a floor:
   SD10's line, asserted rather than remembered).
