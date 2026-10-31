@@ -125,33 +125,46 @@ export function renderBusy(factory: SectionFactory, label: string, theme: SkewTh
   // is told, so announcing an empty element as well would be noise.
   spinner.setAttribute('aria-hidden', 'true')
   root.append(spinner)
-  literal(mark(factory, root, BUSY_STILL_MARK_CLASS), BUSY_STILL_MARK)
-  literal(mark(factory, root, BUSY_LABEL_CLASS), label)
+  const stillMark = factory.create('span')
+  stillMark.setAttribute('class', BUSY_STILL_MARK_CLASS)
+  literal(stillMark, BUSY_STILL_MARK)
+  root.append(stillMark)
+  const word = factory.create('span')
+  word.setAttribute('class', BUSY_LABEL_CLASS)
+  literal(word, label)
+  root.append(word)
   const still = factory.create('p')
   still.setAttribute('class', BUSY_STILL_CLASS)
   literal(still, READING_STILL)
   return { root, still }
 }
 
-function mark(factory: SectionFactory, parent: SectionElement, className: string): SectionElement {
-  const element = factory.create('span')
-  element.setAttribute('class', className)
-  parent.append(element)
-  return element
-}
-
 /** SectionRead is one screen's read lifecycle. */
 export interface SectionRead {
   /**
-   * begin marks a section busy and answers the token for the read it is about.
+   * start takes the next sequence token for a read that is about to be made.
    *
-   * **It draws synchronously**, before any await, and that is the whole point:
-   * the operator's click is answered in the frame it happened in. `slot` is the
-   * section's own empty first child (`BUSY_SLOT_CLASS`) and the caller empties
-   * it before each call -- the mark of a read that is still in flight is not a
-   * reason to stack a second one.
+   * **It draws nothing, and that is deliberate.** On the first entry into a tab
+   * the panel holds that tab's placeholder and the section this read belongs to
+   * has not been drawn yet, so there is nowhere to put a mark; `mark` is what
+   * puts one up, at the moment the section exists. What `start` does is make the
+   * order of the operator's changes the order of the tokens, and it is called
+   * **before the await** -- which is what keeps a slow earlier answer from
+   * overwriting a later one.
    */
-  begin(host: SectionElement, slot: SectionElement, label: string): number
+  start(): number
+  /**
+   * mark puts the busy mark up in one section for one token, and arms the line a
+   * slow read adds to it.
+   *
+   * **It draws synchronously**, so the operator's click is answered in the frame
+   * it happened in, and it is called with the section the read belongs to: the
+   * mark goes at the top of that section, and the section's own `data-busy` and
+   * `aria-busy` are what the stylesheet dims the rest of it by. A token that is
+   * no longer the newest is not drawn -- the section belongs to the newest
+   * change, and the older read is on its way out.
+   */
+  mark(token: number, host: SectionElement, slot: SectionElement, label: string): void
   /**
    * settle answers whether this token is the newest one asked for, and clears
    * the busy state when it is. A read that lands with an older token is dropped:
@@ -197,10 +210,13 @@ export function sectionRead(options: {
   }
 
   return {
-    begin(host: SectionElement, slot: SectionElement, label: string): number {
-      end()
+    start(): number {
       token += 1
-      const mine = token
+      return token
+    },
+    mark(mine: number, host: SectionElement, slot: SectionElement, label: string): void {
+      if (mine !== token) return
+      end()
       host.setAttribute(BUSY_ATTRIBUTE, 'true')
       host.setAttribute(BUSY_BUSY_ATTRIBUTE, 'true')
       const drawn = renderBusy(options.factory, label, options.theme)
@@ -213,7 +229,6 @@ export function sectionRead(options: {
         if (mine !== token || held !== host) return
         drawn.root.append(drawn.still)
       }, stillMs)
-      return mine
     },
     settle(mine: number): boolean {
       if (mine !== token) return false
@@ -222,6 +237,44 @@ export function sectionRead(options: {
     },
     end,
   }
+}
+
+/** STAMP_CLASS is the cached view's own line, STAMP_LEAD its first words and
+ * STAMP_REFRESH_CLASS the control beside it. The words are this file's own
+ * vocabulary, like the busy mark's, so `literal` is the only writer they need. */
+export const STAMP_CLASS = 'console-stamp'
+export const STAMP_REFRESH_CLASS = 'console-stamp-refresh'
+export const STAMP_LEAD = 'as of'
+export const STAMP_REFRESH_LABEL = 'Refresh'
+
+/** DrawnStamp is the stamp and the control the caller wires: this file draws the
+ * action and attaches no listener, because a listener needs a document and only
+ * the caller has one. */
+export interface DrawnStamp {
+  readonly root: SectionElement
+  readonly refresh: SectionElement
+}
+
+/**
+ * renderStamp draws the line a view that came out of the session cache is drawn
+ * with: when it was read, and the one control that reads it again.
+ *
+ * **A cached figure is never silently old.** The stamp is what makes the
+ * difference between "this is the view" and "this is the view as of 14:05"
+ * visible, and the refresh control is the door the operator's own doubt goes
+ * through -- both of them are drawn for every cached view, fresh or not, so a
+ * figure that arrived without a read is always labelled as such.
+ */
+export function renderStamp(factory: SectionFactory, at: number): DrawnStamp {
+  const root = factory.create('p')
+  root.setAttribute('class', STAMP_CLASS)
+  literal(root, `${STAMP_LEAD} ${stampOf(at)}`)
+  const refresh = factory.create('button')
+  refresh.setAttribute('class', STAMP_REFRESH_CLASS)
+  refresh.setAttribute('type', 'button')
+  literal(refresh, STAMP_REFRESH_LABEL)
+  root.append(refresh)
+  return { root, refresh }
 }
 
 /** CACHE_LIMIT is how many views a session keeps. It is small on purpose: the

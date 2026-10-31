@@ -424,6 +424,97 @@ function drawnPairs(): ReadonlySet<string> {
   return pairs
 }
 
+/** Binding is one name a file binds to an element it drew: the name, what it
+ * holds, and where in the file it was bound. */
+interface Binding {
+  readonly at: number
+  readonly name: string
+  readonly tag: string
+  readonly classes: readonly string[]
+  /** `create` is the raw `factory.create` shape, which is the one `sole` counts;
+   * `createNS` is its SVG twin and `emitter` is a screen's own. */
+  readonly shape: 'create' | 'createNS' | 'emitter'
+}
+
+/** elementBindings is every name a file binds to an element it drew, in source
+ * order. It is the **one** reading of the two shapes the renderer draws
+ * through, and it has three readers: `drawnAttributes` turns each binding into
+ * an event, `sole` counts the raw ones, and `drawnOnce` counts both. */
+function elementBindings(text: string): readonly Binding[] {
+  const lists = classListsIn(text)
+  const found: Binding[] = []
+  // The optional wrapper is `literal(cell(element, factory, 'span',
+  // 'degraded-mode'), 'polling')`, which binds the span the same way.
+  for (const match of text.matchAll(/(?:const|let)\s+(\w+)\s*=\s*(?:\w+\(\s*)?(?:make|cell|makeNS|cellNS|drawn|drawnNS|textCell|numberCell)\(/g)) {
+    const args = callArguments(text, match.index + (match[0]?.length ?? 0) - 1)
+    const at = args.findIndex((argument) => argument.trim() === 'factory')
+    if (at === -1) continue
+    const tag = literalsIn(args[at + 1] ?? '')[0]
+    if (tag === undefined) continue
+    const classes: string[] = []
+    for (const argument of args.slice(at + 2)) {
+      const trimmed = argument.trim()
+      for (const className of literalsIn(trimmed)) if (CLASS_LITERAL.test(className)) classes.push(className)
+      const spread = /^\.\.\.(\w+)$/.exec(trimmed)?.[1]
+      if (spread === undefined) continue
+      for (const one of (lists.get(spread) ?? '').matchAll(/'([a-z][a-z0-9-]*)'/g)) classes.push(one[1] ?? '')
+    }
+    found.push({ at: match.index, name: match[1] ?? '', tag, classes, shape: 'emitter' })
+  }
+  for (const match of text.matchAll(/(?:const|let)\s+(\w+)\s*=\s*factory\.create\('([a-z][a-z0-9]*)'\)/g)) {
+    found.push({ at: match.index, name: match[1] ?? '', tag: match[2] ?? '', classes: [], shape: 'create' })
+  }
+  for (const match of text.matchAll(/(?:const|let)\s+(\w+)\s*=\s*factory\.createNS\('([a-z][a-z0-9]*)'\)/g)) {
+    found.push({ at: match.index, name: match[1] ?? '', tag: match[2] ?? '', classes: [], shape: 'createNS' })
+  }
+  return found.sort((left, right) => left.at - right.at)
+}
+
+/** drawnOnce is the element a file draws under one name **exactly once**,
+ * whichever shape drew it. It answers what a frame's field holds: `spend.ts`
+ * draws `const caps = cell(root, factory, 'section', 'spend-caps')` and calls no
+ * other `caps` its own, so `frame.caps` is that section. */
+function drawnOnce(bindings: readonly Binding[]): ReadonlyMap<string, { tag: string; classes: string[] }> {
+  const counts = new Map<string, number>()
+  const drawn = new Map<string, { tag: string; classes: string[] }>()
+  for (const binding of bindings) {
+    counts.set(binding.name, (counts.get(binding.name) ?? 0) + 1)
+    drawn.set(binding.name, { tag: binding.tag, classes: [...binding.classes] })
+  }
+  return new Map([...drawn].filter(([name]) => counts.get(name) === 1))
+}
+
+/** fillerHosts is the element each function's parameter is filled with, keyed
+ * `function\u0000parameter`: the shape the owner's rule of 2026-10-31 gives the
+ * Spend screen, where a frame draws one element per read and the entry fills
+ * that element when the read answers. The walk cannot run a call, so the
+ * parameter is read from the call sites' own arguments, and an argument naming
+ * a frame's part (`frame.caps`) from `drawnOnce`. A call whose argument resolves
+ * to nothing (`entry.ts`'s `drawn.caps`, in a file that draws no `caps`) binds
+ * nothing, so the answer is a union over the call sites rather than a decision
+ * about any one of them -- and an argument the file cannot read is skipped
+ * rather than guessed at. */
+function fillerHosts(
+  text: string,
+  once: ReadonlyMap<string, { tag: string; classes: string[] }>,
+): ReadonlyMap<string, { tag: string; classes: string[] }> {
+  const hosts = new Map<string, { tag: string; classes: string[] }>()
+  for (const match of text.matchAll(/(?:export\s+)?function\s+(\w+)\s*\(([^)]*)\)/g)) {
+    const name = match[1] ?? ''
+    const parameters = (match[2] ?? '').split(',').map((one) => /\w+/.exec(one)?.[0] ?? '')
+    for (const call of text.matchAll(new RegExp(`\\b${name}\\(`, 'g'))) {
+      const args = callArguments(text, (call.index ?? 0) + (call[0]?.length ?? 0) - 1)
+      parameters.forEach((parameter, at) => {
+        const part = /^\w+\.(\w+)$/.exec((args[at] ?? '').trim())?.[1]
+        if (part === undefined) return
+        const host = once.get(part)
+        if (host !== undefined) hosts.set(`${name}\u0000${parameter}`, host)
+      })
+    }
+  }
+  return hosts
+}
+
 /** drawnAttributes is which attributes the console sets on which elements, keyed
  * `tag.class`. It is the second half of §7.4's "a rule that styles a hook
  * nothing emits": a rule may name a class the code draws and an attribute §2
@@ -433,7 +524,7 @@ function drawnPairs(): ReadonlySet<string> {
  * totals line rather than on the marker span inside them.
  *
  * The reading is a walk in source order, because the code reuses its names: a
- * screen's `element` is a `section.spend-caps` in `capsPanel()` and a
+ * screen's `element` is a `section.spend-caps` in `fillSpendCaps()` and a
  * `div.spend-chart` in `chart()`, so each `const name = <emitter>` rebinds, a
  * `setAttribute('class', …)` on the name adds to its classes, and an attribute
  * write on the name is recorded against every class it then carries.
@@ -449,7 +540,20 @@ function drawnPairs(): ReadonlySet<string> {
  * (`rows.push(row)`, `buttons.set(entry.id, button)`), and the element is
  * resolved from the walk where the walk has it and from the file where the file
  * creates that name exactly once -- which is the honest limit of a scan that
- * cannot run the code: a name the file reuses is one only the order can read. */
+ * cannot run the code: a name the file reuses is one only the order can read.
+ *
+ * **The third shape is a filler, and it is the owner's rule of 2026-10-31 in the
+ * code's own terms.** Spend is drawn as a frame with named parts -- one element
+ * per read, each with its own busy slot -- and the entry **fills** a part when
+ * that part's read answers: `fillSpendCaps(factory, caps, element)` writes
+ * `element.setAttribute('data-available', …)`, and `element` is not the
+ * filler's to draw. It is the frame's, `renderSpendFrame`'s `caps`, drawn in
+ * another function; the walk cannot run a call, so it resolves the parameter
+ * from the arguments the call sites pass (`fillerHosts`), and an argument that
+ * names a frame's part (`frame.caps`, `drawn.caps`) from the element the file
+ * draws under that name exactly once (`drawnOnce`). A screen that adopts the
+ * helper draws its parts the same way, so the shape is read rather than
+ * excepted. */
 function drawnAttributes(): ReadonlyMap<string, ReadonlySet<string>> {
   const attributes = new Map<string, Set<string>>()
   for (const dir of RENDERER) for (const file of sourceFiles(dir)) {
@@ -465,10 +569,16 @@ function drawnAttributes(): ReadonlyMap<string, ReadonlySet<string>> {
     for (const match of text.matchAll(/(\w+)\.set\([^,()]*,\s*(\w+)\)/g)) holds.set(match[1] ?? '', match[2] ?? '')
     const created = new Map<string, { tag: string; classes: string[] }>()
     const times = new Map<string, number>()
-    for (const match of text.matchAll(/(?:const|let)\s+(\w+)\s*=\s*factory\.create\('([a-z][a-z0-9]*)'\)/g)) {
-      const name = match[1] ?? ''
-      times.set(name, (times.get(name) ?? 0) + 1)
-      created.set(name, { tag: match[2] ?? '', classes: [] })
+    // `elementBindings` is read once and used twice: `times` and `created` are the
+    // file's whole answer and are read before the walk runs (`sole` is a container
+    // loop's fallback, and a loop written above the drawing it walks has to see a
+    // name the file creates below it), and the same bindings become the walk's
+    // events further down.
+    const drawn = elementBindings(text)
+    for (const binding of drawn) {
+      if (binding.shape !== 'create') continue
+      times.set(binding.name, (times.get(binding.name) ?? 0) + 1)
+      created.set(binding.name, { tag: binding.tag, classes: [] })
     }
     for (const match of text.matchAll(/(\w+)\.setAttribute\('class',\s*(?:'([^']*)'|(\w+))\)/g)) {
       const shape = created.get(match[1] ?? '')
@@ -479,29 +589,12 @@ function drawnAttributes(): ReadonlyMap<string, ReadonlySet<string>> {
     }
     const sole = (name: string): { tag: string; classes: string[] } | undefined =>
       times.get(name) === 1 ? created.get(name) : undefined
-    // The optional wrapper is `literal(cell(element, factory, 'span',
-    // 'degraded-mode'), 'polling')`, which binds the span the same way.
-    for (const match of text.matchAll(/(?:const|let)\s+(\w+)\s*=\s*(?:\w+\(\s*)?(?:make|cell|makeNS|cellNS|drawn|drawnNS|textCell|numberCell)\(/g)) {
-      const name = match[1] ?? ''
-      const args = callArguments(text, match.index + (match[0]?.length ?? 0) - 1)
-      const at = args.findIndex((argument) => argument.trim() === 'factory')
-      if (at === -1) continue
-      const tag = literalsIn(args[at + 1] ?? '')[0]
-      if (tag === undefined) continue
-      const classes: string[] = []
-      for (const argument of args.slice(at + 2)) {
-        const trimmed = argument.trim()
-        for (const className of literalsIn(trimmed)) if (CLASS_LITERAL.test(className)) classes.push(className)
-        const spread = /^\.\.\.(\w+)$/.exec(trimmed)?.[1]
-        if (spread === undefined) continue
-        for (const one of (lists.get(spread) ?? '').matchAll(/'([a-z][a-z0-9-]*)'/g)) classes.push(one[1] ?? '')
-      }
-      events.push({ at: match.index, apply: () => bindings.set(name, { tag, classes }) })
-    }
-    for (const match of text.matchAll(/(?:const|let)\s+(\w+)\s*=\s*factory\.create(?:NS)?\('([a-z][a-z0-9]*)'\)/g)) {
-      const name = match[1] ?? ''
-      const tag = match[2] ?? ''
-      events.push({ at: match.index, apply: () => bindings.set(name, { tag, classes: [] }) })
+    const hosts = fillerHosts(text, drawnOnce(drawn))
+    for (const binding of drawn) {
+      events.push({
+        at: binding.at,
+        apply: () => bindings.set(binding.name, { tag: binding.tag, classes: [...binding.classes] }),
+      })
     }
     for (const match of text.matchAll(/(\w+)\.setAttribute\('class',\s*(?:'([^']*)'|(\w+))\)/g)) {
       const name = match[1] ?? ''
@@ -536,10 +629,15 @@ function drawnAttributes(): ReadonlyMap<string, ReadonlySet<string>> {
       const name = match[1] ?? ''
       const attribute = match[2] ?? ''
       if (attribute === 'class') continue
+      // A write on the enclosing function's own parameter is the filler's, and
+      // the parameter's element is the one its call sites passed -- the section
+      // the frame drew, not whatever the file last bound that name to.
+      const enclosing = enclosingHelper(text, match.index)
+      const host = enclosing === null ? undefined : hosts.get(`${enclosing}\u0000${name}`)
       events.push({
         at: match.index,
         apply: () => {
-          const bound = bindings.get(name)
+          const bound = host ?? bindings.get(name)
           if (bound === undefined) return
           for (const className of new Set(bound.classes)) {
             const key = `${bound.tag}.${className}`

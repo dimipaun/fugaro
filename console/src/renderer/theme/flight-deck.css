@@ -2695,6 +2695,10 @@ span.console-busy-spinner {
 }
 
 @keyframes console-busy-turn {
+  from {
+    transform: rotate(0turn);
+  }
+
   to {
     transform: rotate(1turn);
   }
@@ -2711,17 +2715,28 @@ p.console-busy-still {
   color: var(--text-3);
 }
 
-section[data-busy='true'] > *:not(div.console-busy-slot),
-div[data-busy='true'] > *:not(div.console-busy-slot) {
+section[data-busy='true'] > *:not(.console-busy-slot),
+div[data-busy='true'] > *:not(.console-busy-slot) {
   opacity: 0.55;
 }
 
 @media (prefers-reduced-motion: reduce) {
   span.console-busy-spinner {
     display: none;
+    /* `display` alone would leave the animation running on an element nobody
+     * sees; the design's rule is that the arm stops it on the selector that
+     * started it, so a later rule that put the ring back would still draw it
+     * still. */
+    animation: none;
   }
 
   span.console-busy-still-mark {
     display: inline;
+  }
+}
+
+@media (forced-colors: active) {
+  span.console-busy-spinner {
+    animation: none;
   }
 }

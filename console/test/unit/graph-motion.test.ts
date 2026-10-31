@@ -223,6 +223,17 @@ const RUNNING: readonly string[] = Object.freeze(['implementing', 'in review', '
  * `opacity`, and neither keyframe may touch anything else. */
 const DASHES: readonly string[] = Object.freeze(['graph-comet', 'graph-flow'])
 
+/** BUSY_SPINNER is the one selector outside the graph screen the theme animates:
+ * the ring of the busy mark (`renderer/section.ts`, drawn into a section's own
+ * slot while its read is in flight), and BUSY_KEYFRAME is the single turn it is
+ * animated by. Design section 3.9's amendment of 2026-10-31 is where the
+ * exception is bounded -- one element, one keyframe, `transform` and nothing
+ * else, no animation at all under forced colors, and under reduced motion the
+ * element is not drawn at all -- and the cases below are that paragraph's four
+ * claims, so the exception cannot widen without one of them failing. */
+const BUSY_SPINNER = 'span.console-busy-spinner'
+const BUSY_KEYFRAME = 'console-busy-turn'
+
 /** declared is the one value a rule selecting `className` gives a property, or
  * `null` when no rule gives it one. The last rule wins, as it does in the
  * cascade, so a base rule and an arm that both set a property read as the arm. */
@@ -240,44 +251,58 @@ function declared(className: string, property: string): string | null {
 // ---------------------------------------------------------------------------
 
 describe('the graph’s motion in the stylesheets', () => {
-  it('declares exactly three keyframes, and every one of them is the graph’s', () => {
+  it('declares the graph’s three keyframes and the busy mark’s one turn', () => {
     const found = themeKeyframes()
-    // The count is the design's ("Three keyframes, no more"), and the names are
-    // what each one is for: a comet on a running card, a pulse on a critical one
-    // and a flow along a critical edge.
-    expect(found.map((one) => one.name).sort()).toEqual(['graph-comet', 'graph-flow', 'graph-pulse'])
+    // The count is the design's ("Three keyframes, no more", plus the busy mark's
+    // single turn the amendment of 2026-10-31 adds), and the names are what each
+    // one is for: a comet on a running card, a pulse on a critical one, a flow
+    // along a critical edge, and the ring a section's busy mark turns by.
+    expect(found.map((one) => one.name).sort()).toEqual([BUSY_KEYFRAME, 'graph-comet', 'graph-flow', 'graph-pulse'].sort())
     for (const keyframe of found) {
-      expect(keyframe.file, `${keyframe.name} is not the graph screen’s`).toBe('screens.css')
+      // Each one belongs to the file of the screen it is drawn on: the graph's
+      // three to `screens.css` beside the screen, the busy mark's to
+      // `flight-deck.css` beside the chrome that draws it.
+      expect(keyframe.file, `${keyframe.name} is not drawn by the file it belongs to`).toBe(
+        keyframe.name === BUSY_KEYFRAME ? 'flight-deck.css' : 'screens.css',
+      )
       expect(keyframe.steps.length, `${keyframe.name} has no steps`).toBeGreaterThan(1)
     }
   })
 
-  it('animates nothing outside the graph screen, in any stylesheet of the theme', () => {
+  it('animates nothing outside the graph screen and the busy mark, in any stylesheet of the theme', () => {
     // **The case that matters.** The design's section 3.9 amendment lets exactly
     // one screen move, and everything above it in that section still holds for
     // every other screen -- including the rule that no figure animates anywhere.
     // A rule that animates a row, a bar or a figure fails here by name, which is
-    // the only way a claim about the *rest* of the console can be tested.
+    // the only way a claim about the *rest* of the console can be tested. The
+    // busy mark's ring is the amendment of 2026-10-31's one exception, and it is
+    // allowed **by selector**: the ring itself, and nothing else beside it.
     const animating = animationRules().filter(animates)
     expect(animating.length, 'no rule animates anything, so this case proves nothing').toBeGreaterThan(0)
     const outside = animating
-      .filter((rule) => !rule.selector.includes('section.graph'))
+      .filter((rule) => !rule.selector.includes('section.graph') && rule.selector !== BUSY_SPINNER)
       .map((rule) => `${rule.file}: ${rule.selector}`)
-    expect(outside, 'a rule animates something the graph screen does not draw').toEqual([])
+    expect(outside, 'a rule animates something no screen of the theme draws').toEqual([])
+    // And the exception is taken rather than merely granted: a licence nothing
+    // uses is a licence with nothing behind it.
+    expect(animating.some((rule) => rule.selector === BUSY_SPINNER), 'the busy mark’s exception is not taken').toBe(true)
   })
 
-  it('moves opacity, and a dash along each of the two paths, and nothing else', () => {
+  it('moves opacity, a dash along each of the two paths, and the busy mark’s own turn, and nothing else', () => {
     // The pulse is an opacity. The other two are dashes: a path's `d` is an
     // attribute the layout answered, so `stroke-dashoffset` is the one property
     // that carries a dash along it -- the flow's along the critical edge and the
     // comet's around the card. The exception is bounded to those two keyframes by
     // name, so a third state that reached for it fails here, and so does a comet
-    // that started moving something else.
+    // that started moving something else. The busy mark's turn is the second
+    // bounded licence, and it is `transform` for `console-busy-turn` alone.
     const allowed = new Set(['opacity', 'stroke-dashoffset'])
+    const turning = new Set(['transform'])
     for (const keyframe of themeKeyframes()) {
+      const licence = keyframe.name === BUSY_KEYFRAME ? turning : allowed
       for (const step of keyframe.steps) {
         for (const one of step) {
-          expect(allowed.has(one.property), `${keyframe.name} animates ${one.property}`).toBe(true)
+          expect(licence.has(one.property), `${keyframe.name} animates ${one.property}`).toBe(true)
           if (one.property === 'stroke-dashoffset') {
             expect(DASHES, `${keyframe.name} may not animate a dash offset`).toContain(keyframe.name)
           }
@@ -303,6 +328,22 @@ describe('the graph’s motion in the stylesheets', () => {
         ?.steps.flat()
         .map((one) => one.property),
     ).toEqual(['opacity', 'opacity', 'opacity'])
+    // And the busy mark's licence is taken the same way: a transform on the turn
+    // and on nothing else, declared by the ring and by no other selector.
+    expect(
+      new Set(
+        themeKeyframes()
+          .find((one) => one.name === BUSY_KEYFRAME)
+          ?.steps.flat()
+          .map((one) => one.property),
+      ),
+      'the busy mark animates something other than its own turn',
+    ).toEqual(turning)
+    const ring = animationRules().filter((rule) => rule.selector === BUSY_SPINNER)
+    expect(
+      ring.some((rule) => rule.declarations.some((one) => one.value.includes(BUSY_KEYFRAME))),
+      'the ring is turned by another keyframe',
+    ).toBe(true)
   })
 
   it('draws every animated state with the hook the rules select, on the graph screen only', () => {
@@ -353,6 +394,13 @@ describe('the graph’s motion in the stylesheets', () => {
     // still style above is the one a browser computes rather than one a longer
     // selector in the motion block overrules.
     expect(armMisses(REDUCED), 'reduced motion leaves an animated selector running').toEqual([])
+    // The busy mark's arm is the design's "not drawn at all" rather than a
+    // restatement, because the mark has no static drawing to be left as: a frozen
+    // ring is a picture of half a circle rather than of reading. So the element
+    // goes and the static word takes its place -- and both are read here, because
+    // a `display: none` with no word behind it would be a mark that says nothing.
+    expect(declared('console-busy-spinner', 'display')).toBe('none')
+    expect(declared('console-busy-still-mark', 'display')).toBe('inline')
     // And the freeze the arm is written beside is still the global one: the graph
     // restates its own states, it does not replace the rule every other screen
     // still needs.
@@ -372,7 +420,11 @@ describe('the graph’s motion in the stylesheets', () => {
     expect(still).toContain("[data-critical='true']")
     expect(still).toContain('graph-edge-path')
     for (const rule of arm) {
-      expect(rule.selector, 'a forced-colors animation rule is not the graph screen’s').toContain('section.graph')
+      // Every forced-colors animation rule is the graph screen's or the busy
+      // mark's ring: the arm stops the turn there, and it draws no animation
+      // anywhere else in the theme.
+      const mine = rule.selector.includes('section.graph') || rule.selector === BUSY_SPINNER
+      expect(mine, 'a forced-colors animation rule is neither the graph screen’s nor the busy mark’s').toBe(true)
     }
     expect(armMisses(FORCED), 'forced colors leaves an animated selector running').toEqual([])
   })
