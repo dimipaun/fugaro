@@ -1181,16 +1181,35 @@
       document.head.appendChild(tag)
     }
 
-    // The pixel: its own queue first, so nothing is lost to the fetch, and then its script. It
-    // says whether it ran, which is what the key events of this page gate their own sends on —
-    // an id nobody supplied is a loader that did not load, and not a queue that is sent through
+    // The pixel: its own stub first, so nothing is lost to the fetch, and then its script. The
+    // stub is Meta's own shape, and the half of it that matters is `callMethod`: `fbevents.js`
+    // attaches that method to the stub it finds and drains the queue through it once, and from
+    // then on a call pushed onto the queue is never read again. So a call is handed to
+    // `callMethod` whenever one is there — a stub that only ever pushed would strand every event
+    // a visitor's press sends after the load, and the withdrawal's revoke with them, which is
+    // the privacy page's own claim about the pixel.
+    //
+    // It says whether it ran, which is what the key events of this page gate their own sends on
+    // — an id nobody supplied is a loader that did not load, and not a queue that is sent through
     // namelessly.
     function pixel(origin, id) {
       if (!origin || !id) return false
-      window.fbq = window.fbq || function () {
-        window.fbq.queue.push(Array.prototype.slice.call(arguments))
+      if (!window.fbq) {
+        var stub = function () {
+          return stub.callMethod ? stub.callMethod.apply(stub, arguments) : stub.queue.push(arguments)
+        }
+        if (!window._fbq) window._fbq = stub
+        stub.push = stub
+        stub.loaded = true
+        stub.version = '2.0'
+        stub.queue = []
+        window.fbq = stub
       }
-      window.fbq.queue = window.fbq.queue || []
+      // Before `init`, because that is the call the pixel is configured by: Meta's own automatic
+      // collection — the button clicks it gathers and the page metadata it reads — is not this
+      // page's, and the campaign's events are the three the handlers send and nothing else. The
+      // id is the pixel's own, which is why the configuration names it.
+      window.fbq('set', 'autoConfig', false, id)
       window.fbq('init', id)
       window.fbq('track', 'PageView', { page_location: page })
       fetchScript(origin, '/en_US/fbevents.js')
