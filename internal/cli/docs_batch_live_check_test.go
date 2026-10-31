@@ -74,7 +74,7 @@ var check124GuardLines = []string{
 	`: "${CHK124_OWNER_RUN:?export CHK124_OWNER_RUN=yes first`,
 	`[ "$P" = fugaro-dev ] && [ -n "$L" ] && [ -n "$R" ] && [ -n "$U" ]`,
 	"Check 124 stopped: re-run the whole setup block",
-	`fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,'`,
+	`fugaro doctor --project fugaro --all | grep -q '^project: .*(GCP fugaro-dev,'`,
 	"Check 124 stopped: this is not the fugaro-dev installation",
 	`git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$'`,
 	"Check 124 stopped: this checkout's origin is not the sandbox (edgeappinc/fugarosandbox)",
