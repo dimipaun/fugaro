@@ -156,8 +156,11 @@ func (e *initEngine) options() initflow.Options {
 // project it never creates) and minus the Batch backend's (the stage is
 // behind --provision-batch, which update refuses). So update's stages are
 // preflight, installation, Firebase, images, installation a second time,
-// secrets, plugin, the repository of the checkout it is run in (W5.1) and the
-// published policy node's migration. There is no services stage in either
+// secrets, plugin, the repository of the checkout it is run in (W5.1), the
+// published policy node's migration and the checkout's own steps: fugaro
+// upgrade's pin, plugin and cloud steps for that checkout
+// (init_checkout_upgrade.go, the owner's rule of 2026-10-30). There is no
+// services stage in either
 // list: initflow.Services is a slot in the canonical order nothing registers.
 func initStages(e *initEngine) []initflow.Stage {
 	e.images, e.repo = newImagesStage(e), newRepositoryStage(e)
@@ -176,6 +179,11 @@ func initStages(e *initEngine) []initflow.Stage {
 	// migration and never a delete and a republish).
 	stages = append(stages, newSecretsStage(e), newPluginStage(e), e.repo)
 	stages = append(stages, newPolicyMigrateStage(e))
+	// The checkout's own steps (fugaro upgrade's pin, plugin and cloud steps)
+	// are a stage of this run too: fugaro update is the whole upgrade, so the
+	// one command the user runs may not leave the checkout it runs in behind
+	// (init_checkout_upgrade.go, the owner's rule of 2026-10-30).
+	stages = append(stages, newCheckoutStage(e))
 	// The Batch backend's provisioning is the owner's step and nothing else
 	// reaches it: the stage is registered only under its own flag, and
 	// `backend: cloud-batch` stays refused by config validation until the
