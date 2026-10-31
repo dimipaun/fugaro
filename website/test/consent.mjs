@@ -110,12 +110,11 @@ const CAMPAIGN_ORIGINS = [CAMPAIGN.metaOrigin, CAMPAIGN.linkedinOrigin, CAMPAIGN
 // `/save/` — which is also the spelling the gate's path check has to read.
 const CAMPAIGN_PAGE = 'save/index.html'
 const CAMPAIGN_PATH = '/save/'
-// The pixel id the cases below plant into a built page's banner, because it is the one value
-// the owner has not supplied: `site.yaml` carries it empty, which is the loader switched off,
-// so a case that watches the pixel load has to put a value there itself. The partner id needs
-// no planting — the owner supplied it (2026-10-31) and the built page carries it — and the
-// cases that read it are the shipped-state and withdrawal cases, on the page as served.
-const META_ID = 'TESTMETA0001'
+// The pixel id, read from `site.yaml` rather than written here: the owner supplied it on
+// 2026-10-31, so the built page carries it and the cases below run the page as served — exactly
+// as they do for the partner id. A literal in this file would be the second copy of the id that
+// the file's own rule refuses.
+const META_ID = CAMPAIGN.metaPixelID
 // The consent banner's early decision (the owner's ruling of 2026-10-23, the redesign's Step 3:
 // JavaScript allowed, same-origin only; the banner must not cover the first screen's content).
 // A page that renders the banner loads it after the site's one script; it is a first-party file
@@ -1338,23 +1337,21 @@ function campaignRequests(page) {
   return page.requests.filter((url) => CAMPAIGN_ORIGINS.some((origin) => String(url).startsWith(origin)))
 }
 
-/**
- * A built campaign page with the pixel's id planted in its banner, because `site.yaml` ships
- * that one empty and an empty id is the loader switched off. The partner id is not planted:
- * the owner supplied it (2026-10-31), the built banner already carries it, and planting a
- * second value would be a case watching a configuration the site does not have. Nothing else
- * about the page changes: the origins, the booking link and the path are the ones the build
- * wrote.
- */
-function withPixelId(html) {
-  const planted = html.replace('data-meta-pixel-id ', `data-meta-pixel-id="${META_ID}" `)
-  assert.ok(planted.includes(`data-meta-pixel-id="${META_ID}"`), 'the fixture did not plant the pixel id in the banner, so no case below could watch the pixel load')
-  assert.ok(/data-linkedin-partner-id="[^"]+"/.test(planted), 'the built campaign page carries no partner id, so no case below could watch the insight tag load')
-  return planted
-}
+/** The campaign page the cases below run, as the artifact serves it. */
+const CAMPAIGN_HTML = pageOf(SHIPPED, CAMPAIGN_PAGE)
 
-/** The campaign page the cases below run, with the pixel's id in place beside the owner's. */
-const CAMPAIGN_HTML = withPixelId(pageOf(SHIPPED, CAMPAIGN_PAGE))
+/**
+ * The same page with one of the two vendors' ids as a case wants it: the file's own rule is
+ * that an empty id is the loader switched off (R3), and both ids are the owner's now (ruling of
+ * 2026-10-31), so the switched-off state is one a case writes into the markup rather than one
+ * the artifact ships. Nothing else about the page changes: the origins, the booking link and the
+ * path are the ones the build wrote.
+ */
+function withVendorId(attribute, id, html) {
+  const written = new RegExp(`${attribute}="[^"]*"`)
+  assert.match(html, written, `the built campaign page carries no ${attribute} for a case to write a value into`)
+  return html.replace(written, `${attribute}="${id}"`)
+}
 
 /**
  * The cookies the campaign withdrawal deletes, read out of the script the site ships rather
@@ -1410,15 +1407,21 @@ test('the marketing grant loads the three vendors on the page they were built fo
   assert.equal(page.store[CONSENT_KEY], 'granted', 'the press that answered the campaign question did not answer the site\'s, on a page where both were open')
 
   // The vendors are told the page without its query and without its fragment (F22), and the
-  // pixel is told nothing else: `init`, then one `PageView`.
+  // pixel is told nothing else: the automatic collection off, then its id, then one `PageView`.
+  // The order is Meta's own — `autoConfig` is read while the pixel is configured, which is what
+  // `init` does — and the page's events are the three the handlers send rather than the button
+  // clicks and page metadata Meta would collect for it.
   const page_location = `https://site.example${CAMPAIGN_PATH}`
   const fbq = (page.window.fbq.queue ?? []).map((entry) => Array.from(entry))
   assert.deepEqual(
-    fbq.map((call) => call.slice(0, 2).map(String)),
-    [['init', META_ID], ['track', 'PageView']],
-    `the pixel was handed ${JSON.stringify(fbq.map((c) => String(c[0])))}: its id once and one page view is what the campaign asks for`,
+    fbq,
+    [
+      ['set', 'autoConfig', false, META_ID],
+      ['init', META_ID],
+      ['track', 'PageView', { page_location }],
+    ],
+    `the pixel was handed ${JSON.stringify(fbq)}: the automatic collection off before the id, and then one page view on the page it was built for`,
   )
-  assert.deepEqual(fbq[1][2], { page_location }, 'the pixel was handed an address other than the page\'s path')
   assert.deepEqual(
     (page.window.lintrk.q ?? []).map((entry) => Array.from(entry)),
     [['track', { page_location }]],
@@ -1449,78 +1452,30 @@ test('the marketing grant loads the three vendors on the page they were built fo
   }
 })
 
-test('an empty vendor id is a loader that does not load, which is the pixel\'s state today', () => {
-  // No planted ids: the page the site actually serves. The booking widget has no id to need,
-  // so it loads; the pixel is configured but switched off, which is what its empty `site.yaml`
-  // value means until the owner supplies one (R3); and the insight tag now loads, because the
-  // owner has supplied its id (ruling of 2026-10-31) — which is the other half of the switch.
-  assert.equal(CAMPAIGN.metaPixelID, '', 'site.yaml names a pixel id, so this case is no longer the shipped state')
+test('an empty vendor id is a loader that does not load, and site.yaml carries neither as empty', () => {
+  // Both ids are the owner's now (ruling of 2026-10-31: the partner id, and the pixel id the
+  // owner supplied on the same day), so the shipped page loads all three — which is what the
+  // case above reads — and the switched-off state is the one the file's own rule describes: an
+  // empty id is the loader switched off (R3). It is written into the markup here, because the
+  // artifact no longer ships it, and what it has to keep true is that the two loaders are wired
+  // around it: nothing is fetched, and no queue is created, for a vendor whose id is empty.
+  assert.notEqual(CAMPAIGN.metaPixelID, '', 'site.yaml carries no pixel id: the owner supplied one on 2026-10-31, and an empty value is the loader switched off (R3)')
   assert.notEqual(CAMPAIGN.linkedinPartnerID, '', 'site.yaml carries no partner id, so the shipped page has no insight tag and this case could not tell a switched-off loader from a missing one')
 
-  const page = runPage(pageOf(SHIPPED, CAMPAIGN_PAGE), { location: CAMPAIGN_LOCATION })
+  const blanked = withVendorId(
+    'data-linkedin-partner-id',
+    '',
+    withVendorId('data-meta-pixel-id', '', CAMPAIGN_HTML),
+  )
+  const page = runPage(blanked, { location: CAMPAIGN_LOCATION })
   page.click('granted')
   assert.deepEqual(
     campaignRequests(page),
-    [
-      `${CAMPAIGN.linkedinOrigin}/li.lms-analytics/insight.min.js`,
-      `${CAMPAIGN.calendlyOrigin}/assets/external/widget.js`,
-    ],
-    'with the pixel id empty the page still asked a vendor for something other than the insight tag and the booking widget',
+    [`${CAMPAIGN.calendlyOrigin}/assets/external/widget.js`],
+    'with both ids empty the page still asked a vendor for something other than the booking widget: the widget has no id to need, and the two tags are switched off by theirs',
   )
-  assert.ok(!page.window.fbq, 'the page queued a pixel call while `site.yaml` carries no pixel id, so a switched-off loader is not switched off')
-})
-
-test('the shipped page loads the insight tag after consent only, and the withdrawal stops it', () => {
-  // The owner's partner id is in `site.yaml` now (ruling of 2026-10-31), so the two halves the
-  // id was planted for are read off the SHIPPED page instead: nothing of LinkedIn is fetched
-  // before the visitor answers, the insight tag is fetched after a grant — handed the page's
-  // path and no query — and a withdrawal deletes the cookies its script leaves behind, exactly
-  // as it does for the planted ids above.
-  assert.notEqual(CAMPAIGN.linkedinPartnerID, '', 'site.yaml carries no partner id, so the shipped page has no insight tag to watch load')
-  const insight = `${CAMPAIGN.linkedinOrigin}/li.lms-analytics/insight.min.js`
-  const shippedCampaignPage = () => pageOf(SHIPPED, CAMPAIGN_PAGE)
-
-  // Never before the visitor answers: not on a first visit, and not on a visit that carries
-  // the site's own analytics grant from an earlier page (F17).
-  const first = runPage(shippedCampaignPage(), { location: CAMPAIGN_LOCATION })
-  assert.deepEqual(campaignRequests(first), [], 'the shipped campaign page fetched the insight tag before the visitor answered the campaign question')
-  const analyticsOnly = runPage(shippedCampaignPage(), { location: CAMPAIGN_LOCATION, storage: { [CONSENT_KEY]: 'granted' } })
-  assert.deepEqual(campaignRequests(analyticsOnly), [], 'the shipped campaign page fetched the insight tag on an analytics-only consent')
-
-  // After the grant: the insight tag, the booking widget, and nothing of a pixel whose id is
-  // empty — and the address it is handed is the page's path without its query or fragment (F22).
-  const granted = runPage(shippedCampaignPage(), { location: CAMPAIGN_LOCATION })
-  granted.click('granted')
-  assert.deepEqual(
-    campaignRequests(granted),
-    [insight, `${CAMPAIGN.calendlyOrigin}/assets/external/widget.js`],
-    'the shipped page did not load exactly the insight tag and the booking widget after the grant',
-  )
-  assert.deepEqual(
-    (granted.window.lintrk.q ?? []).map((entry) => Array.from(entry)),
-    [['track', { page_location: `https://site.example${CAMPAIGN_PATH}` }]],
-    'the insight tag the shipped id loaded was handed an address other than the page\'s path',
-  )
-  assert.ok(!/leaked/.test(JSON.stringify(granted.window.lintrk.q)), `the insight tag was handed the page's query string or fragment: ${JSON.stringify(granted.window.lintrk.q)}`)
-
-  // The withdrawal: the stored grant loads the tag again, and declining deletes what its
-  // script left in this origin — the LinkedIn cookies the privacy statement prints.
-  const withdrawn = runPage(shippedCampaignPage(), {
-    location: CAMPAIGN_LOCATION,
-    storage: { [MARKETING_CONSENT_KEY]: 'granted' },
-    cookies: [...marketingCookies().map((name) => `${name}=planted; path=/`), '_gate=1; path=/'],
-  })
-  assert.deepEqual(campaignRequests(withdrawn), [insight, `${CAMPAIGN.calendlyOrigin}/assets/external/widget.js`], 'the stored campaign grant did not load the insight tag, so the withdrawal below would prove nothing')
-  withdrawn.click('denied')
-  assert.equal(withdrawn.store[MARKETING_CONSENT_KEY], 'denied', 'withdrawing did not overwrite the stored campaign grant')
-  const left = withdrawn.held()
-  for (const name of marketingCookies()) {
-    assert.ok(!left.includes(name), `${name} survived the withdrawal of the shipped insight tag's consent`)
-  }
-  assert.ok(left.includes('_gate'), 'the withdrawal deleted a cookie that is not one of the two tags\'')
-
-  const next = runPage(shippedCampaignPage(), { location: CAMPAIGN_LOCATION, storage: withdrawn.store })
-  assert.deepEqual(campaignRequests(next), [], 'the withdrawn consent still loaded the insight tag on the next page view')
+  assert.ok(!page.window.fbq, 'the page queued a pixel call while the id it was built with is empty, so a switched-off loader is not switched off')
+  assert.ok(!page.window.lintrk, 'the page queued an insight-tag call while the id it was built with is empty')
 })
 
 test('withdrawing the marketing consent stops the three and deletes the cookies the two tags set', () => {
