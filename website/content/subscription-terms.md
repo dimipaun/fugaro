@@ -3,7 +3,7 @@
 
 # Fugaro Subscription Terms
 
-Approved by counsel; revision to section 7.3 pending counsel review. Dated 2026-10-28.
+Approved by counsel. Dated 2026-10-28.
 
 # Part A. General
 

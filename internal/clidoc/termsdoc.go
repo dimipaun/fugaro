@@ -20,9 +20,9 @@ const (
 
 	// termsStatus is the line the page shows above the agreement. It named a
 	// draft until counsel approved the text (the owner's word of 2026-10-30),
-	// and names the one section counsel has not yet seen since the owner's
-	// opt-in ruling of 2026-10-31 rewrote it.
-	termsStatus = "Approved by counsel; revision to section 7.3 pending counsel review"
+	// and counsel approved section 7.3 as revised to the opt-in ruling of
+	// 2026-10-31 (the owner's word of 2026-10-31).
+	termsStatus = "Approved by counsel"
 )
 
 var termsHeaderBlock = securityHeader + "\n<!-- source: " + termsSource + " -->\n\n"
