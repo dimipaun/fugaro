@@ -319,6 +319,14 @@ func TestUpdatePolicyMigrationSurfacesRunsInFlight(t *testing.T) {
 	if !strings.Contains(err.Error(), "run(s) are in flight") || !strings.Contains(err.Error(), "fugaro runs ls") {
 		t.Errorf("the refusal is not the in-flight one: %v", err)
 	}
+	// The refusal is the whole of what the operator gets: the check is before
+	// the diff (policyMigrationConfirm), which is what the upgrade step runs
+	// too, so the two doors refuse one state in the same words and print the
+	// same nothing — a diff shown for a write that does not happen is a
+	// document the operator cannot act on without a second run.
+	if strings.Contains(out, "rewritten in place as version") {
+		t.Errorf("the diff was printed for a write that was refused:\n%s", out)
+	}
 	if got := nodeVersionOnTheFake(t, f); got != 3 {
 		t.Errorf("the node moved to version %d while a run was in flight", got)
 	}
@@ -340,6 +348,60 @@ func TestUpdatePolicyMigrationTakesYesWhileARunIsInFlight(t *testing.T) {
 	}
 	if got := nodeVersionOnTheFake(t, f); got != projectpolicy.Version {
 		t.Errorf("the node is version %d, want %d", got, projectpolicy.Version)
+	}
+}
+
+// TestUpdatePolicyMigrationVerifiesTheNodeItWrote: Verify is the read-back the
+// write ends with, and the version is what it watches: a write that did not
+// land, or a node another writer moved back under it, is a policy this Fugaro
+// would keep rewriting on every run.
+func TestUpdatePolicyMigrationVerifiesTheNodeItWrote(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), v3Node(nil))
+	h := newMigrationRig(t, f, &initOptions{})
+
+	if out, err := h.apply(t, true); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if err := h.s.Verify(context.Background()); err != nil {
+		t.Fatalf("the node the migration has just written does not verify: %v", err)
+	}
+	f.db.Set(projectpolicy.PathShared(), v3Node(nil))
+	err := h.s.Verify(context.Background())
+	if err == nil {
+		t.Fatal("a node back at version 3 verified")
+	}
+	if !strings.Contains(err.Error(), "still version 3") {
+		t.Errorf("the refusal is not the version one: %v", err)
+	}
+}
+
+// TestUpdatePolicyMigrationVerifyReadsTheNodeBack: the version alone is not the
+// verification. Migrate short-circuits on a node already at this version, so a
+// run of it over the bytes read back never reaches the reader gate — the gate
+// it ran judged the document the walk was about to write, not what the database
+// now holds. This node is version 4 and unreadable (the budget block is strict),
+// which is the write a version-only check would have called verified.
+func TestUpdatePolicyMigrationVerifyReadsTheNodeBack(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), v3Node(nil))
+	h := newMigrationRig(t, f, &initOptions{})
+
+	if out, err := h.apply(t, true); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version": projectpolicy.Version, "budget": map[string]any{"mode": "enforce", "per_run_usd": 5, "no_such_field": 1},
+		"allow_repos": []string{"github/acme/app"},
+	})
+	err := h.s.Verify(context.Background())
+	if err == nil {
+		t.Fatal("a node at this version that the reader refuses verified")
+	}
+	for _, want := range []string{"cannot be read back", "no_such_field"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal lacks %q: %v", want, err)
+		}
 	}
 }
 

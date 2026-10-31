@@ -535,15 +535,7 @@ func policyStep(ctx context.Context, u *upgradeCtx) stepResult {
 	case m == nil:
 		return stepResult{state: stepCurrent, reason: fmt.Sprintf("the published policy is version %d", projectpolicy.Version)}
 	}
-	m.print(u.w)
-	inflight, err := runsInFlight(ctx, m.db, m.lc)
-	if err != nil {
-		return stepResult{state: stepFailed, code: ExitUserError, reason: oneLine(err.Error())}
-	}
-	if inflight > 0 && !u.o.yes {
-		return stepResult{state: stepFailed, code: ExitUserError, reason: fmt.Sprintf("%d run(s) are in flight: a run that is mid-flight read the policy this migration would rewrite, so it is refused without --yes; wait for them (fugaro runs ls), or pass --yes once you have read what it does", inflight)}
-	}
-	if err := policyMigrationWrite(ctx, u.cmd, m, u.o.yes); err != nil {
+	if err := policyMigrationConfirm(ctx, u.cmd, m, u.o.yes, u.w); err != nil {
 		return stepResult{state: stepFailed, code: ExitUserError, reason: oneLine(err.Error())}
 	}
 	return stepResult{state: stepDone, reason: fmt.Sprintf("the published policy was migrated from version %d to %d in place", m.from, projectpolicy.Version)}

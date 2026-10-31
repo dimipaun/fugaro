@@ -126,15 +126,27 @@ func policyMigrationRefusal(err error) error {
 	return err
 }
 
-// policyMigrationWrite is the end of the write at both doors: the confirmation
-// the delete path takes, and the ETag-conditional write behind it. It is one
-// function because the decision is one decision — the node every run of the
-// project is admitted by, rewritten with what the operator has just read — and
-// a sentence worded twice is a sentence that can drift.
+// policyMigrationConfirm is the tail both doors run, to the line and in the
+// order: the in-flight refusal, the diff, and the write behind the
+// confirmation the delete path takes. It is one function because the decision
+// is one decision — the node every run of the project is admitted by,
+// rewritten with what the operator has just read — and all three of its parts
+// are that decision: a sentence worded twice is a sentence that can drift, and
+// an order kept twice is one that can differ, which is what it was before this
+// (the step printed the diff and then refused, showing a document the operator
+// could not act on without a second run of the same command).
 //
-// What each door does around it is its own: the in-flight refusal, and where
-// the diff is printed (the stage refuses before it prints, the step after).
-func policyMigrationWrite(ctx context.Context, cmd *cobra.Command, m *policyMigration, yes bool) error {
+// What each door does around it is its own: the agent-session refusal and the
+// absent node's detail, and how a failure is worded where the door reports one.
+func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMigration, yes bool, w io.Writer) error {
+	inflight, err := runsInFlight(ctx, m.db, m.lc)
+	if err != nil {
+		return err
+	}
+	if inflight > 0 && !yes {
+		return userErr("%d run(s) are in flight: a run that is mid-flight read the policy this migration would rewrite, so it is refused without --yes; wait for them (fugaro runs ls), or pass --yes once you have read what it does", inflight)
+	}
+	m.print(w)
 	if err := confirmRemoval(cmd, m.lc, yes, policyMigrationWhat+": every run of the project reads it, and the fields you edited into it by hand are carried over rather than published again"); err != nil {
 		return err
 	}
@@ -379,15 +391,7 @@ func (s *policyMigrateStage) Apply(ctx context.Context, env initflow.Env) (initf
 		return initflow.Outcome{Detail: "No changes"}, nil
 	}
 	cmd := s.e.r.cmd
-	inflight, err := runsInFlight(ctx, m.db, m.lc)
-	if err != nil {
-		return initflow.Outcome{}, err
-	}
-	if inflight > 0 && !env.Yes {
-		return initflow.Outcome{}, userErr("%d run(s) are in flight: a run that is mid-flight read the policy this migration would rewrite, so it is refused without --yes; wait for them (fugaro runs ls), or pass --yes once you have read what it does", inflight)
-	}
-	m.print(cmd.OutOrStdout())
-	if err := policyMigrationWrite(ctx, cmd, m, env.Yes); err != nil {
+	if err := policyMigrationConfirm(ctx, cmd, m, env.Yes, cmd.OutOrStdout()); err != nil {
 		return initflow.Outcome{}, err
 	}
 	return initflow.Outcome{Changed: true, Detail: fmt.Sprintf("migrated the published policy from version %d to %d in place", m.from, projectpolicy.Version)}, nil
@@ -395,6 +399,14 @@ func (s *policyMigrateStage) Apply(ctx context.Context, env initflow.Env) (initf
 
 // Verify reads the node back: a write that claims a version it did not land is
 // a policy this Fugaro would keep rewriting on every run.
+//
+// The version is not the whole of the answer. Migrate short-circuits on a node
+// already at this version (from == Version), so it never reaches the reader
+// gate it ends its walk with — and that gate judged the document the walk was
+// about to write, not the bytes the database now holds. Decode is that gate,
+// called here on what was read back: a node at this version that the current
+// reader refuses is a write that landed a policy no run of the project can
+// admit itself by.
 func (s *policyMigrateStage) Verify(ctx context.Context) error {
 	if s.m == nil {
 		return nil
@@ -412,6 +424,9 @@ func (s *policyMigrateStage) Verify(ctx context.Context) error {
 	}
 	if len(changes) > 0 {
 		return fmt.Errorf("the published policy is still version %d", changes[0].From)
+	}
+	if _, _, err := projectpolicy.Decode(raw); err != nil {
+		return fmt.Errorf("the published policy was written but cannot be read back: %w", err)
 	}
 	return nil
 }
