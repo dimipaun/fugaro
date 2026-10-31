@@ -178,13 +178,18 @@ func lockLike(base string) bool {
 // keyed by the packages beside it, whose image would then be built for the
 // other repository's toolchain. (.nvmrc and its siblings are mise's idiomatic
 // version files.)
+//
+// The names are a convention, not a list, because the list cannot be closed:
+// .python-version, .node-version, .ruby-version, .go-version,
+// .terraform-version and the rest are all named after the tool they pin, and a
+// nameless file here would be one this package drops while the repository's
+// image is built for another repository's toolchain.
 func toolLike(base string) bool {
 	switch base {
-	case ".tool-versions", ".python-version", ".node-version", ".nvmrc", ".ruby-version",
-		".go-version", "rust-toolchain", "rust-toolchain.toml":
+	case ".nvmrc", ".sdkmanrc", "global.json", "rust-toolchain", "rust-toolchain.toml":
 		return true
 	}
-	return false
+	return strings.HasSuffix(base, "-version")
 }
 
 // reducedSet is the set one key file states while it is being read: the pairs
@@ -337,13 +342,14 @@ func npmName(p string, e npmPackage) (string, bool) {
 func reducePnpmLock(rel string, data []byte) ([]string, error) {
 	set := newSet(rel)
 	var err error
-	section := ""
+	section, sawSection, unplaced := "", false, false
 	eachLine(data, func(indent int, text string) bool {
 		if text == "" || strings.HasPrefix(text, "#") {
 			return true
 		}
 		if indent == 0 {
 			section = strings.TrimSuffix(text, ":")
+			sawSection = sawSection || section == "packages" || section == "snapshots"
 			return true
 		}
 		if section != "packages" && section != "snapshots" {
@@ -351,6 +357,7 @@ func reducePnpmLock(rel string, data []byte) ([]string, error) {
 		}
 		i := strings.IndexByte(text, ':')
 		if indent != 2 || i < 0 {
+			unplaced = true
 			return true
 		}
 		name, version, ok := pnpmKey(text[:i])
@@ -365,6 +372,15 @@ func reducePnpmLock(rel string, data []byte) ([]string, error) {
 	})
 	if err != nil {
 		return nil, err
+	}
+	// A section this reader names, holding a line it could not place and
+	// yielding no entry, is written in a shape it does not understand — an
+	// indentation of its own — and the empty set would key the repository as
+	// if it depended on nothing, which is the set every other such repository
+	// would take too. A section with no line in it at all states no
+	// dependencies and is read as that.
+	if sawSection && set.count == 0 && unplaced {
+		return nil, set.fail(UnkeyedUnreadable, "the packages section states no entry at the indent this reads")
 	}
 	return set.pairs(), nil
 }
@@ -398,7 +414,13 @@ func reduceYarnLock(rel string, data []byte) ([]string, error) {
 			return true
 		}
 		if indent == 0 {
-			inEntry = false
+			// An entry that never stated a version is one this reader would
+			// otherwise drop, and the set would then be short by a package the
+			// file does resolve.
+			if inEntry {
+				err = set.fail(UnkeyedUnpinned, entry)
+				return false
+			}
 			key := strings.Trim(strings.TrimSuffix(text, ":"), `"'`)
 			if i := strings.IndexByte(key, ','); i >= 0 {
 				key = strings.TrimSpace(key[:i])
@@ -428,6 +450,9 @@ func reduceYarnLock(rel string, data []byte) ([]string, error) {
 	})
 	if err != nil {
 		return nil, err
+	}
+	if inEntry {
+		return nil, set.fail(UnkeyedUnpinned, entry)
 	}
 	return set.pairs(), nil
 }
@@ -612,7 +637,7 @@ const gemSpecIndent = 4
 func reduceGemfileLock(rel string, data []byte) ([]string, error) {
 	set := newSet(rel)
 	var err error
-	inSpecs := false
+	inSpecs, sawSpecs, unplaced := false, false, false
 	eachLine(data, func(indent int, text string) bool {
 		switch {
 		case text == "":
@@ -621,9 +646,18 @@ func reduceGemfileLock(rel string, data []byte) ([]string, error) {
 			inSpecs = false
 			return true
 		case text == "specs:":
-			inSpecs = true
+			inSpecs, sawSpecs = true, true
 			return true
-		case !inSpecs, indent != gemSpecIndent:
+		case !inSpecs:
+			return true
+		case indent != gemSpecIndent:
+			// Deeper than an entry is that entry's own dependency line, which
+			// states the range it was resolved from rather than a resolved
+			// version. At or above the entry indent it is a specs list written
+			// at another indent, whose entries this reader would drop.
+			if _, _, ok := gemSpec(text); ok && indent < gemSpecIndent {
+				unplaced = true
+			}
 			return true
 		}
 		name, version, ok := gemSpec(text)
@@ -638,6 +672,14 @@ func reduceGemfileLock(rel string, data []byte) ([]string, error) {
 	})
 	if err != nil {
 		return nil, err
+	}
+	// A specs list holding an entry this reader could not place and yielding
+	// no entry of its own is what an indented differently leaves, and the empty
+	// set would key the repository as if it had no gems — the set every other
+	// such repository would take too. A list with no line under it at all
+	// states no gems and is read as that.
+	if sawSpecs && set.count == 0 && unplaced {
+		return nil, set.fail(UnkeyedUnreadable, "the specs list states no entry at the indent this reads")
 	}
 	return set.pairs(), nil
 }
@@ -668,24 +710,29 @@ func reduceRequirements(rel string, data []byte) ([]string, error) {
 	var err error
 	pending := ""
 	eachLine(data, func(indent int, text string) bool {
+		text = strings.TrimSpace(text)
 		if pending != "" {
 			text, pending = pending+" "+text, ""
-		}
-		if i := strings.IndexByte(text, ';'); i >= 0 {
-			text = text[:i]
 		}
 		if strings.HasPrefix(text, "#") {
 			return true
 		}
 		if i := strings.Index(text, " #"); i >= 0 {
-			text = text[:i]
+			text = strings.TrimSpace(text[:i])
 		}
-		text = strings.TrimSpace(text)
-		if text == "" {
-			return true
-		}
+		// The continuation is read before the marker is cut: pip writes the
+		// two together, so `name==1.0 ; python_version < "3.11" \` is one pin
+		// whose hashes are the lines after it, and cutting at the ; first takes
+		// the \ with it — every --hash line would then be read as a requirement
+		// of its own and the file refused.
 		if strings.HasSuffix(text, `\`) {
 			pending = strings.TrimSpace(strings.TrimSuffix(text, `\`))
+			return true
+		}
+		if i := strings.IndexByte(text, ';'); i >= 0 {
+			text = strings.TrimSpace(text[:i])
+		}
+		if text == "" {
 			return true
 		}
 		fields := strings.Fields(text)

@@ -336,13 +336,15 @@ func applyJobPatch(ctx context.Context, c *Clients, job string, body []byte) err
 	return nil
 }
 
-// WorkflowJobUpdate is a planned direct update of a checkout: clone
-// workflow's job: its container's image alone. Unlike the check job, a
-// clone workflow's job carries no embedded spec to rewrite: there is
-// nothing to keep in step with it, because there is no per-repository
-// image or build record to compare against (fugaro image refresh always
-// moves it straight to base_images.base). Only PlanWorkflowJob makes one,
-// and ApplyWorkflowJob writes it at most once.
+// WorkflowJobUpdate is a planned direct update of a workflow job whose
+// container checks the repository out itself — checkout: clone, and checkout:
+// shared — of its container's image alone. Unlike the check job, such a job
+// carries no embedded spec to rewrite: there is nothing on the job to keep in
+// step with it, because nothing there is compared against a per-repository
+// record. A clone job's image is the local config's base image; a shared
+// job's is the lock's digest for the repository's key, and it is the lock, not
+// the job, that says which image that is. Only PlanWorkflowJob makes one, and
+// ApplyWorkflowJob writes it at most once.
 type WorkflowJobUpdate struct {
 	job                string
 	oldImage, newImage string

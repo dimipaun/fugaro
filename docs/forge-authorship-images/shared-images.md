@@ -90,7 +90,7 @@ The workflow's key files are the evidence set; each is reduced by its own format
 | `pnpm-lock.yaml`, `pnpm-lock.yml` | every `packages` / `snapshots` key, split at the last `@` into name and version, with pnpm 6's leading `/` and a peer suffix in parentheses (pnpm 7 and later) neither part of the name nor of the version |
 | `yarn.lock` | every entry header line `"name@range":` (the first of the ranges it lists) with its `version` field, which Yarn 1 writes after a space and Berry after a colon; the `__metadata` block is the lock's own header and is ignored |
 | `go.sum`, `go.work.sum` | every `module version` line, with the `/go.mod`-suffixed duplicates skipped, so each module@version appears once |
-| `requirements.txt`, `requirements*.txt` | every `name==version` pin, with the name as PEP 503 normalises it and any extras dropped from the name: a pin's `--hash` continuation lines, its environment marker and a full-line comment are the pin's own and are not facts. A line that is not a pin — `-r`, a URL, an editable install, an option, an unpinned name — makes the repository **unkeyed**, because the file then does not state what pip would install |
+| `requirements.txt`, `requirements*.txt` | every `name==version` pin, with the name as PEP 503 normalises it and any extras dropped from the name: a pin's `--hash` continuation lines, its environment marker and a full-line comment are the pin's own and are not facts. pip-tools and `uv pip compile --universal` write the marker and the continuation together (`name==1.0 ; python_version < "3.11" \`), so the backslash ends the marker and the hashes after it belong to that pin. A line that is not a pin — `-r`, a URL, an editable install, an option, an unpinned name — makes the repository **unkeyed**, because the file then does not state what pip would install |
 | `poetry.lock`, `uv.lock`, `Pipfile.lock` | each `[[package]]` / `package` entry's `name` and `version`. Pipfile.lock's `default` and `develop` sections are both read, and the `==` its versions are written with is pip's operator, not part of the version |
 | `Cargo.lock` | each `[[package]]` entry's `name` and `version`, the workspace's own crate included: it is one of the lock's packages |
 | `Gemfile.lock`, `composer.lock` | each `specs` / `packages` entry's `name` and `version`; both of Bundler's resolving blocks (GEM, GIT, PATH) and both of composer's (`packages`, `packages-dev`) are read, and Dev-only dependencies are not exempt (O6) |
@@ -108,15 +108,23 @@ none of them makes a repository unkeyed:
 | a path `image.key_files` names | by its own name when the table above knows the format — an operator may key a lockfile the built-ins do not — nothing when the file states no resolved set, and unkeyed when it is a lock or tool file of an ecosystem the table does not name |
 
 Anything else — a lock file of another format, a tool file that is not a mise config, a
-`requirements.txt` that is not pinned — makes the repository **unkeyed** (§2.5). Dev-only
+`requirements.txt` that is not pinned — makes the repository **unkeyed** (§2.5). A tool file is
+recognised by the convention of its name rather than by a list that closes: `.nvmrc`, `.sdkmanrc`,
+`global.json`, `rust-toolchain.toml` and the `-version` files (`.python-version`,
+`.terraform-version`, …) are all named after the tool they pin, and one Fugaro read as "no fact"
+would key the repository while its image was installed for another repository's toolchain. Dev-only
 dependencies are not exempt: they make a key like any other, because the owner did not choose to
 exempt them (O6).
 
 A key file that cannot be read in full makes the repository unkeyed for the same reason: one larger
 than 8 MiB, or holding more than 200 000 entries, is refused rather than truncated, because a set
-read in part is a different set and it would take another repository's key. `internal/imagecheck/reduce.go`
-is this table: `Reduce(name, bytes)` returns the pairs, nothing for a file that states no resolved
-set, or the reason the file leaves the repository unkeyed.
+read in part is a different set and it would take another repository's key. The same holds for a
+file whose named section — a pnpm `packages`/`snapshots`, a Bundler `specs:` list, a lockfile entry —
+holds a line at an indent the reducer cannot place and yields no entry: the empty set it would
+otherwise return is not "no dependencies" but "read nothing", and every such repository would take
+one key. A section with no line in it at all does state no dependencies, and is read as that.
+`internal/imagecheck/reduce.go` is this table: `Reduce(name, bytes)` returns the pairs, nothing for a
+file that states no resolved set, or the reason the file leaves the repository unkeyed.
 
 ### 2.4 Canonical form and the hash
 
@@ -223,6 +231,14 @@ one's job name as it is at update time (the operator's machine reads the job, so
 the answer to "is a job pointing at this image?" (§9) and to `image ls` (§7). `last_used_at` is the
 last time a refresh placed a repository on the image (§9's age is measured from it), which keeps
 §3.3's one-writer rule whole: a launch reads the lock (D619's warning) and writes nothing.
+
+A job — one repository and one workflow — is on **at most one entry** of the whole lock. A job runs
+one image, and a launch that asked which one it is would otherwise take whichever entry it met
+first; so `ParseLock` refuses a lock that names one job on two entries, naming the job, the
+repository and both keys, and the schema says the same in `jobs`. It is a rule about two entries at
+once, which no schema validating one entry can state. The rule is what a fork keeps: when a choice
+moves a repository's job to a new image (§5, §6), the entry it left no longer names that job, so the
+job is on the new entry alone.
 
 ### 3.2 Strict decoding, and the schema
 

@@ -268,6 +268,19 @@ func TestReduceRequirements(t *testing.T) {
 	if got := reduced(t, "requirements.txt", "requests==2.31.0 \\\n    --hash=sha256:aaaa \\\n    --hash=sha256:bbbb\n"); !slices.Equal(got, []string{"requests@2.31.0"}) {
 		t.Errorf("a pinned requirement with hashes: %v", got)
 	}
+	// The marker and the hashes are written together — pip-tools and
+	// `uv pip compile --universal` write the pin's environment marker and end
+	// the marker with the continuation backslash — so the pin is one pin whose
+	// hashes follow it, and the marker is no more a fact than the hashes are.
+	marked := "typing-extensions==4.12.2 ; python_version < \"3.11\" \\\n" +
+		"    --hash=sha256:aaaa \\\n    --hash=sha256:bbbb\n"
+	if got := reduced(t, "requirements.txt", marked); !slices.Equal(got, []string{"typing-extensions@4.12.2"}) {
+		t.Errorf("a marker and hashes on one pin: %v", got)
+	}
+	// The same pin without hashes is the shape a hand-written file has.
+	if got := reduced(t, "requirements.txt", "typing-extensions==4.12.2 ; python_version < \"3.11\"\n"); !slices.Equal(got, []string{"typing-extensions@4.12.2"}) {
+		t.Errorf("a marker with no hashes: %v", got)
+	}
 }
 
 func TestReduceUnpinnedRequirementsIsUnkeyed(t *testing.T) {
@@ -373,6 +386,14 @@ func TestReduceUnknownFormatIsUnkeyed(t *testing.T) {
 		".python-version",
 		".nvmrc",
 		".ruby-version",
+		// A tool file is refused by the convention of its name, not by a list
+		// that closes: .terraform-version, .sdkmanrc and global.json pin a
+		// toolchain as much as .nvmrc does, and one Fugaro dropped would key
+		// the repository while its image was installed by another toolchain.
+		".terraform-version",
+		".java-version",
+		".sdkmanrc",
+		"global.json",
 	} {
 		_, err := Reduce(path, []byte("some lock or tool file"))
 		if err == nil {
@@ -385,6 +406,47 @@ func TestReduceUnknownFormatIsUnkeyed(t *testing.T) {
 		}
 		if unkeyed.Path != path {
 			t.Errorf("Reduce(%s) refused %s", path, unkeyed.Path)
+		}
+	}
+}
+
+// TestReduceSectionWithNoReadableEntryIsUnkeyed: a reducer reads its entries
+// at one indent, and a file whose entries sit at another one would otherwise
+// reduce to the empty set — which is not "no dependencies" but "read nothing",
+// and it is the set every other such repository would take. A named section
+// this reader reads no entry from is refused for the same reason a file over
+// the entry cap is: a set read in part is a different set.
+func TestReduceSectionWithNoReadableEntryIsUnkeyed(t *testing.T) {
+	for _, c := range []struct{ path, data string }{
+		{"pnpm-lock.yaml", "lockfileVersion: '9.0'\npackages:\n    left-pad@1.3.0:\n        resolution: {integrity: sha512-aaa}\n"},
+		{"pnpm-lock.yaml", "lockfileVersion: '9.0'\nsnapshots:\n    react@18.3.1: {}\n"},
+		{"Gemfile.lock", "GEM\n  remote: https://rubygems.org/\n  specs:\n  rake (13.0.6)\n"},
+		{"yarn.lock", "left-pad@^1.3.0:\n  resolved \"https://registry.yarnpkg.com/left-pad/-/left-pad-1.3.0.tgz\"\n"},
+		{"yarn.lock", "left-pad@^1.3.0:\n  version \"1.3.0\"\n\n@scope/pkg@^2.0.0:\n  resolved \"https://example.invalid/pkg.tgz\"\n"},
+	} {
+		_, err := Reduce(c.path, []byte(c.data))
+		if err == nil {
+			t.Errorf("Reduce(%s) read %q as a set", c.path, c.data)
+			continue
+		}
+		var unkeyed *UnkeyedError
+		if !errors.As(err, &unkeyed) {
+			t.Errorf("Reduce(%s): %v, want a refusal", c.path, err)
+		}
+	}
+	// The two shapes the rule must not take with it: a section that holds no
+	// entry at all is an empty set, and so is the empty lockfile.
+	for _, c := range []struct{ path, data string }{
+		{"pnpm-lock.yaml", "lockfileVersion: '9.0'\nimporters:\n  .: {}\n"},
+		{"Gemfile.lock", "GEM\n  remote: https://rubygems.org/\n  specs:\n\nPLATFORMS\n  ruby\n"},
+		{"yarn.lock", "# yarn lockfile v1\n\n\n"},
+	} {
+		pairs, err := Reduce(c.path, []byte(c.data))
+		if err != nil {
+			t.Errorf("Reduce(%s): %v, want no refusal", c.path, err)
+		}
+		if len(pairs) != 0 {
+			t.Errorf("Reduce(%s) = %v, want no fact", c.path, pairs)
 		}
 	}
 }
