@@ -1098,11 +1098,13 @@ app.on('before-quit', (event) => {
   // process on its way out.
   updates?.stop()
   // The reporter goes with the child, and the quit waits for both: `close`
-  // flushes the request the transport has in flight and gives up on it after the
-  // SDK's own timeout, so a report that was on its way is not cut off by the
-  // process ending. The two run together rather than one after the other,
-  // because neither has anything to do with the other -- one is a socket and one
-  // is a `SIGTERM`.
+  // gives up on the request the transport has in flight after
+  // `CLOSE_TIMEOUT_MS` -- the console's own bound, because neither the client's
+  // `close` nor the electron-net transport carries one -- so a report that was on
+  // its way is not cut off by the process ending, and a stalled endpoint is not
+  // a quit that never happens. The two run together rather than one after the
+  // other, because neither has anything to do with the other -- one is a socket
+  // and one is a `SIGTERM`.
   void Promise.all([
     crashReporting?.close() ?? Promise.resolve(),
     boundSource.close().catch(() => undefined),

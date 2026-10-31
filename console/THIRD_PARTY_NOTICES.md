@@ -2174,9 +2174,13 @@ nothing more, so there is no text to reproduce there.
 
 **And it carries other projects' code besides.** See the section at the end of this file.
 
-## The code the two Sentry server packages vendor
+## The code the Sentry server packages vendor
 
-The two sections above are not only Sentry's code. `@sentry/server-utils` and
+The three sections above are not only Sentry's code, and the three packages account for what
+they carry in three different ways: the two `@sentry/server-*` packages with a licence file
+beside it, the one `@sentry/node` with a header inside the source maps of it.
+
+`@sentry/server-utils` and
 `@sentry/server-runtime-injection` each carry a `vendored/` directory under `build/cjs/` and
 `build/esm/` holding whole copies of other projects' sources, compiled in; the two formats carry
 the same projects. **Neither directory names a version, a repository or a licence** -- there is no
@@ -2268,15 +2272,39 @@ rather than a licensing doubt -- but the shipped file is what an installed copy 
 this section can honestly report. **It is flagged for counsel in the pull request**, because it is
 a licensing question and not a code decision: no change in this round turns on it.
 
-**A third package of the archive carries vendored files, and no statement beside them.**
-`@sentry/node` -- which the console packs, and which is the crash reporter's own base package --
-has `build/cjs/integrations/fs/vendored/` and its `esm` and `types` twins, holding three files
-(`constants`, `instrumentation`, `utils`). Nothing in them and nothing beside them names an
-upstream project, a version or a licence, and the package ships no `THIRD-PARTY-LICENSES.txt` the
-way the two server packages do, so **this file cannot state a licence for them from what ships**.
-They are recorded here so that the list of vendored code in the archive is complete, and left as
-a question for counsel rather than answered with a guess; it is flagged with the rest of this
-section in the pull request.
+**A third package of the archive carries vendored files, and its attribution is in its source
+maps rather than beside them.** `@sentry/node` -- which the console packs, and which is the crash
+reporter's own base package -- has `build/cjs/integrations/fs/vendored/` and its `esm` and
+`types` twins, holding three built files (`constants`, `instrumentation`, `utils`) in each
+compiled format and a fourth under `types/` (the type-only `types.d.ts`). The emitted `.js` and
+`.d.ts` files carry no banner, and the package ships no `THIRD-PARTY-LICENSES.txt` the way the two
+server packages do. What does name them is the `sourcesContent` of the six `.js.map` files beside
+the two compiled formats: the first lines of every vendored source are that source's header, and
+they are the same six times, which is where the following is read from:
+
+```text
+/*
+ * Copyright The OpenTelemetry Authors
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * NOTICE from the Sentry authors:
+ * - Vendored from: https://github.com/open-telemetry/opentelemetry-js-contrib/tree/15ef7506553f631ea4181391e0c5725a56f0d082/packages/instrumentation-fs
+ * - Upstream version: @opentelemetry/instrumentation-fs@0.37.0
+ */
+```
+
+So the vendored code is `@opentelemetry/instrumentation-fs@0.37.0`, an OpenTelemetry Authors
+project at upstream version `15ef7506553f631ea4181391e0c5725a56f0d082` of
+`opentelemetry-js-contrib`, and its licence is Apache-2.0, whose text is reproduced in full in
+this file's `## @opentelemetry/api 1.10.0` section above. The maps are inside the packed app, so
+an installed copy carries the attribution too, and the file it sits in is the compiled output's
+own source map: the header is a comment in the original TypeScript, and the build strips it from
+what it emits. `instrumentation.js.map` carries five further lines after those, the Sentry authors'
+list of what they changed on the way in -- TypeScript strictness adjustments, OpenTelemetry's
+tracer APIs replaced with Sentry's spans, the upstream `fs_error` span attribute replaced with
+the conventions-backed `error.type`. The four `.d.ts.map` files under `types/` carry no
+`sourcesContent` at all, so the declarations have nothing beside them; they are the declarations
+of these same files, and the attribution above is the one that covers them.
 
 ### astring 1.9.0 (MIT)
 

@@ -1108,14 +1108,17 @@ describe('crash', () => {
     ).toEqual({ exception: { values: [{ type: 'Error', stacktrace: { frames: [] } }] } })
   })
 
-  it('no minidump, no session and no client report', () => {
+  it('no minidump, no session, no client report and no loader hook', () => {
     // Each option is pinned by name, because the wiring's whole safety is that
     // the SDK is told these things rather than trusted to default to them. The
-    // names are the pinned SDK's own (@sentry/core 11.7.0): `sendDefaultPii` is
-    // `dataCollection.userInfo` there, and `autoSessionTracking` no longer
-    // exists at all -- a session now arrives only through the
+    // names are the pinned SDK's own (@sentry/core 11.7.0, @sentry/node 11.7.0):
+    // `sendDefaultPii` is `dataCollection.userInfo` there, `autoSessionTracking`
+    // no longer exists at all -- a session now arrives only through the
     // `mainProcessSessionIntegration` that `defaultIntegrations: false` keeps
-    // out, which is why the key is gone rather than renamed.
+    // out, which is why the key is gone rather than renamed -- and
+    // `enableRuntimeChannelInjection` is the newer one, added because the
+    // client's constructor installs a `Module.registerHooks` loader hook unless
+    // it is told not to (see the test below for the name's own check).
     expect(CRASH_CLIENT_OPTIONS).toEqual({
       dataCollection: { userInfo: false },
       sendClientReports: false,
@@ -1123,6 +1126,7 @@ describe('crash', () => {
       maxBreadcrumbs: 0,
       includeLocalVariables: false,
       defaultIntegrations: false,
+      enableRuntimeChannelInjection: false,
     })
     expect(Object.isFrozen(CRASH_CLIENT_OPTIONS)).toBe(true)
   })

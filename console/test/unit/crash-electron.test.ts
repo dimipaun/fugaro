@@ -43,7 +43,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { inert } from '../support/fakeSecrets'
 import { scrubCrashEvent, type CrashEvent } from '../../src/main/crash'
-import { crashDsnFromBuild, startCrashReporting } from '../../src/main/crash-electron'
+import { CLOSE_TIMEOUT_MS, crashDsnFromBuild, startCrashReporting } from '../../src/main/crash-electron'
 import { CRASH_DSN_VARIABLE, writeCrashDsnArtifact } from '../../tools/crash-dsn'
 
 /** harness is the shared state the mocked SDK writes into. It is `vi.hoisted`
@@ -58,6 +58,12 @@ const harness = vi.hoisted(() => ({
   transport: { send: async (_envelope: unknown): Promise<unknown> => ({ statusCode: 200 }) },
   /** How many times the client was closed. */
   closes: 0,
+  /** Every timeout `close` was handed, in order. `undefined` is the unbounded
+   * wait, and it is the thing this wiring must never pass. */
+  closeTimeouts: [] as (number | undefined)[],
+  /** Whether the client's transport has a send that never settles. It is the
+   * endpoint a quit must not wait on. */
+  stalled: false,
   /** How many times the mocked SDK's `init` patched `utilityProcess.fork` the
    * way the pinned `configureUtilityProcessIPC` does. */
   forksPatched: 0,
@@ -114,9 +120,20 @@ vi.mock('@sentry/electron/main', () => ({
     harness.forksPatched += 1
     utility.process.fork = utility.patched
   },
-  close: async () => {
+  close: async (timeout?: number) => {
     harness.closes += 1
-    return true
+    harness.closeTimeouts.push(timeout)
+    // The real client flushes what the transport has in flight and gives up when
+    // the timeout it was handed expires (`@sentry/core`'s `Client.flush` races
+    // the client's own processing and `transport.flush` against it). Handed no
+    // timeout it waits for the send to settle, however long that takes -- and
+    // `harness.stalled` is a send that never settles. `transport.flush` in the
+    // electron-net transport has no timeout of its own either, which is why the
+    // bound has to come from here.
+    if (!harness.stalled) return true
+    if (timeout === undefined) return await new Promise<boolean>(() => undefined)
+    await new Promise((resolve) => setTimeout(resolve, timeout))
+    return false
   },
   makeElectronTransport: (options: unknown) => ({
     send: async (envelope: unknown) => {
@@ -207,6 +224,8 @@ beforeEach(() => {
   harness.initOptions = []
   harness.sent = []
   harness.closes = 0
+  harness.closeTimeouts = []
+  harness.stalled = false
   harness.forksPatched = 0
   utility.process.fork = utility.real
   artifactReads.paths = []
@@ -447,6 +466,13 @@ describe('what the client is told', () => {
     // Neither `Classic` (1) nor `Protocol` (2): the SDK's `IPCMode` has no
     // member for "off", so the adapter spells it 0 and this pins the number.
     expect(options.ipcMode).toBe(0)
+    // And the one the options object does not cover, because it is not an
+    // integration: `false` here is what keeps the client's constructor from
+    // calling `registerDiagnosticsChannelInjection()`, which on this Node is
+    // `Module.registerHooks` -- a loader hook over every module the process
+    // loads, with no unregister in Node to take it back off. The option is read
+    // as `!== false`, so `true` or a missing key installs it.
+    expect(options.enableRuntimeChannelInjection).toBe(false)
     // Nothing else is added: an integrations list here would be a way to turn
     // one of those back on without touching CRASH_CLIENT_OPTIONS.
     expect(options.integrations).toBeUndefined()
@@ -472,7 +498,7 @@ describe('what the client is told', () => {
     void handle.close()
   })
 
-  it('names those three options in the pinned SDK’s own types, and not one that is not there', () => {
+  it('names every option it sets in the pinned SDK’s own types, and not one that is not there', () => {
     // The names above are the SDK's, and this is the check the module's header
     // promises: they are read back out of the types of the version
     // `package.json` pins (`save-exact`, so the files below are the ones the
@@ -490,6 +516,19 @@ describe('what the client is told', () => {
     expect(options).toMatch(/beforeSendLog\?:/)
     const optionFiles = ['node_modules/@sentry/core/build/types/types/options.d.ts'] as const
     for (const file of optionFiles) expect(types(file)).not.toMatch(/\benableLogs\??:/)
+    // `enableRuntimeChannelInjection` is the console's own newer one, and it is
+    // `@sentry/node`'s rather than `@sentry/core`'s -- the option that decides
+    // whether the client's constructor installs a process-wide module-loader
+    // hook. Both halves are pinned: the name in the types the version declares,
+    // and the `!== false` the client reads it with, because an option read as
+    // `=== true` would be off for the missing key and this wiring would be
+    // pinned against nothing.
+    const nodeTypes = types('node_modules/@sentry/node/build/types/types.d.ts')
+    expect(nodeTypes).toMatch(/enableRuntimeChannelInjection\?: boolean/)
+    expect(types('node_modules/@sentry/electron/main/sdk.d.ts')).toMatch(/NodeOptions/)
+    expect(types('node_modules/@sentry/node/build/cjs/sdk/client.js')).toContain(
+      'options.enableRuntimeChannelInjection !== false',
+    )
     // A name existing is not a name working, and the round that asked for
     // `beforeSendTransaction` asked for it as "the line that holds": the pinned
     // version declares the callback and also declares that it runs only under
@@ -516,6 +555,31 @@ describe('what the client is told', () => {
     const appRoot = tempAppRoot()
     await startCrashReporting({ optedIn: null, appRoot }).close()
     expect(harness.closes).toBe(0)
+  })
+
+  it('gives the close a bound, so a stalled transport cannot hold the quit', async () => {
+    // `index.ts` waits for this on `before-quit`, so what it waits on has to end
+    // on its own. The client's own answer is the flush timeout plus a transport
+    // whose `flush` has none, which on a stalled endpoint is a wait that never
+    // ends -- the console would never quit. The bound is the wiring's.
+    vi.useFakeTimers()
+    try {
+      const appRoot = tempAppRoot()
+      writeCrashDsnArtifact(appRoot, dsnPlaceholder())
+      const handle = startCrashReporting({ optedIn: true, appRoot })
+      harness.stalled = true
+      const closing = handle.close()
+      // The number is pinned as well as the name: it is the wiring's own
+      // decision, and a later round that changed it would be changing how long a
+      // quit may wait rather than a detail.
+      expect(CLOSE_TIMEOUT_MS).toBe(2000)
+      expect(harness.closeTimeouts, 'the client was handed a bound rather than left to wait').toEqual([CLOSE_TIMEOUT_MS])
+      await vi.advanceTimersByTimeAsync(CLOSE_TIMEOUT_MS)
+      await closing
+      expect(harness.closes).toBe(1)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

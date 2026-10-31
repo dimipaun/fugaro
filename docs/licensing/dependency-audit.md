@@ -104,9 +104,12 @@ notices file's last section lists them with the versions and licences their pack
 licence texts. All open source; the one thing that has no text anywhere is
 `@apm-js-collab/code-transformer-bundler-plugins`, whose shipped entry declares MIT and carries no
 licence body, which the notices file records and which is with counsel. A third package,
-`@sentry/node` itself, carries three vendored files under `build/*/integrations/fs/vendored/` that
-nothing in the package attributes or licenses — recorded in the same section as an open question
-for counsel, since nothing that ships answers it.
+`@sentry/node` itself, carries three vendored files under `build/*/integrations/fs/vendored/`,
+and it attributes them a different way: the built files carry no banner and the package ships no
+`THIRD-PARTY-LICENSES.txt`, but the `sourcesContent` of the `.js.map` files beside them opens with
+the vendored source's own header, which names `@opentelemetry/instrumentation-fs@0.37.0`, the
+OpenTelemetry Authors and Apache-2.0, vendored from `opentelemetry-js-contrib@15ef750`. The
+notices file states that and points at the Apache-2.0 text it already reproduces.
 
 **One licence in the console's tree is not open source, and it is not in the package.** `sentry`
 0.45.0 — declared `FSL-1.1-Apache-2.0`, the Functional Source License 1.1 with a two-year conversion

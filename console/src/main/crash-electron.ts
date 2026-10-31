@@ -94,6 +94,19 @@ const DSN_ARTIFACT_PATH = ['dist', 'main', 'crash-dsn.json']
  * request. */
 const MAX_DSN_LENGTH = 2048
 
+/** CLOSE_TIMEOUT_MS is how long `close` waits for what the transport has in
+ * flight before giving up on it. It is the wiring's number rather than the
+ * SDK's: the client's own `close` has no timeout of its own to pass on, and the
+ * electron-net transport's `flush` -- the thing that would be waited on -- has
+ * none either, so a `close()` that named no bound would wait for the send to
+ * settle, however long that takes. `index.ts` holds `before-quit` for this
+ * promise, so an unbounded one is a console that never quits when the reporting
+ * endpoint is the thing that is broken -- which is the state a crash reporter is
+ * most likely to be in when somebody quits the app. Two seconds is long enough
+ * for a request already on the wire and short enough that a person does not
+ * notice the quit. */
+export const CLOSE_TIMEOUT_MS = 2000
+
 /** NO_IPC is the SDK's `IPCMode` with neither of its two bits set, and the union
  * has no member for it: `Classic` (1) and `Protocol` (2) are the two ways the
  * SDK listens to renderers, and the console wants neither. Spelled as the number
@@ -242,7 +255,7 @@ export function startCrashReporting(input: CrashReportingInput): CrashReportingH
   }
   return {
     close: async () => {
-      await closeClient().catch(() => false)
+      await closeClient(CLOSE_TIMEOUT_MS).catch(() => false)
     },
   }
 }

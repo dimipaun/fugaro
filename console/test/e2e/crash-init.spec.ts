@@ -55,6 +55,15 @@
 //     original fork back the moment `init` returns, and this asserts the global
 //     the app is left with is not the SDK's. (The console forks no utility
 //     process today; the patch would be inert, which is not the same as absent.)
+//   - **no process-wide loader hook.** The same client constructor calls
+//     `registerDiagnosticsChannelInjection()`, which on Electron 45's Node is
+//     `Module.registerHooks({ resolve, load })` -- a hook over every module this
+//     process loads, for the rest of its life. Unlike the fork patch there is
+//     nothing to restore: Node has no `unregisterHooks`, so the only shape that
+//     works is an option that never installs it, and this is the assertion that
+//     the option did. The API is wrapped *before* the SDK is required, because a
+//     hook that was installed leaves no trace to read afterwards, and the
+//     orchestrion global the hook's callback writes is checked as well.
 //   - **the dynamic import is the one the build emits.** `dist/main/index.js`'s
 //     `import('./crash-electron.js')` is read out of the built file, resolved
 //     against a copy of `dist/main/` inside a directory named `app.asar` and
@@ -129,6 +138,8 @@ function itemsOf(envelope: string): readonly Item[] {
 interface Report {
   readonly fatal?: string
   readonly forkWrapped?: boolean
+  readonly loaderHooks?: readonly string[]
+  readonly orchestrion?: unknown
   readonly entryImport?: { readonly loaded?: boolean }
   readonly before?: readonly string[]
   readonly after?: readonly string[]
@@ -316,6 +327,17 @@ test('the real client sends the scrubbed event, and nothing else', async () => {
   expect(report.forkWrapped, 'the SDK\'s patch on electron.utilityProcess.fork is gone by the time the app runs').toBe(
     false,
   )
+
+  // **No process-wide loader hook was installed.** The pinned `NodeClient`
+  // calls `registerDiagnosticsChannelInjection()` in its constructor, and on
+  // this Node that is `Module.registerHooks({ resolve, load })`: a loader hook
+  // for the whole process that Node offers no way to remove, so nothing -- not
+  // `close()` and not this wiring -- could take it back off. It is refused by
+  // an option instead, and this is the observation that the option worked: the
+  // API was never reached, and the global the SDK's bookkeeping hangs off
+  // (`GLOBAL_OBJ.__SENTRY_ORCHESTRION__`, set by the hook's callback) is absent.
+  expect(report.loaderHooks ?? [], 'the SDK installed no module-loader hook').toEqual([])
+  expect(report.orchestrion ?? null, 'no orchestrion bookkeeping is left on the global').toBeNull()
 
   // **The emitted dynamic import loads**, from the packed layout: the specifier
   // above is the built file's rather than the source's, and the fixture imported

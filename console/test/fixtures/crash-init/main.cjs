@@ -33,6 +33,7 @@
 
 const { app, ipcMain, protocol, session, utilityProcess } = require('electron')
 const { readdirSync, writeFileSync } = require('node:fs')
+const Module = require('node:module')
 const { join } = require('node:path')
 const { homedir, hostname } = require('node:os')
 const { pathToFileURL } = require('node:url')
@@ -83,6 +84,24 @@ function listing(root) {
   }
 }
 
+/** loaderHooks is every module-loader hook the SDK installed, in order, named by
+ * the hooks it registered. Node has no `unregisterHooks`, so a process-wide
+ * loader hook is observable only *before* it is installed -- which is why this
+ * is a wrapper rather than a read of some state afterwards. */
+const loaderHooks = []
+
+/** watchLoaderHooks wraps `Module.registerHooks` before anything is required: on
+ * the Node the pinned Electron embeds the SDK reaches for this API first, and it
+ * rewrites matching modules for the life of the process. */
+function watchLoaderHooks() {
+  const real = Module.registerHooks
+  if (typeof real !== 'function') return
+  Module.registerHooks = function (hooks, ...rest) {
+    loaderHooks.push(Object.keys(hooks ?? {}).join(','))
+    return real.call(this, hooks, ...rest)
+  }
+}
+
 app
   .whenReady()
   .then(async () => {
@@ -93,6 +112,7 @@ app
     // The default session is a getter that throws before the app is ready, which
     // is why every one of these wrappers is inside this callback.
     watch(session.defaultSession, 'registerPreloadScript', recorded.preloads)
+    watchLoaderHooks()
 
     const { startCrashReporting } = require(join(consoleRoot, 'dist', 'main', 'crash-electron.js'))
     const sdk = require('@sentry/electron/main')
@@ -110,6 +130,16 @@ app
     // spec's header carries what that patch costs and why the console takes it
     // off. What is read here is the global the *app* is left with.
     const forkWrapped = typeof utilityProcess.fork === 'function' && types.isProxy(utilityProcess.fork)
+
+    // **No process-wide loader hook.** The SDK's `NodeClient` constructor calls
+    // `registerDiagnosticsChannelInjection()`, which on this Node rewrites
+    // matching modules through `Module.registerHooks` -- for the life of the
+    // process, and with no way to remove it, `close()` included. The wiring
+    // refuses it with an option rather than a restore, which is the only shape
+    // that works for a hook Node offers no unregister for; what is read here is
+    // that the API was never reached and that the global the SDK's bookkeeping
+    // hangs off was never created.
+    const orchestrion = globalThis.__SENTRY_ORCHESTRION__ ?? null
 
     // **The dynamic import the build emits.** The spec reads the specifier out
     // of `dist/main/index.js`, lays a copy of `dist/main/` out inside a directory
@@ -164,7 +194,11 @@ app
 
     writeFileSync(
       reportPath,
-      JSON.stringify({ forkWrapped, entryImport, before, after: listing(userData), recorded }, null, 2),
+      JSON.stringify(
+        { forkWrapped, loaderHooks, orchestrion, entryImport, before, after: listing(userData), recorded },
+        null,
+        2,
+      ),
     )
     await handle.close()
     app.quit()

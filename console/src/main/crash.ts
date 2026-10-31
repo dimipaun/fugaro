@@ -109,7 +109,15 @@ export function crashReportingDecision(input: CrashReportingInput): CrashReporti
  *     account of who was running the app or for how long;
  *   - nothing is added to the events -- no automatic stacktrace attached to a
  *     message that would then be sent, and no default integrations, because the
- *     integrations are the ones that collect what the three lines above refuse.
+ *     integrations are the ones that collect what the three lines above refuse;
+ *   - nothing is done to the *process* -- no runtime channel injection, which on
+ *     the Node the pinned Electron embeds is `Module.registerHooks`: a loader
+ *     hook over every module the process loads from then on, installed by the
+ *     client's own constructor whatever it is handed, and with no unregister
+ *     anywhere in Node to take it back off. It rewrites matching modules in
+ *     place, and what it rewrites is other people's code on its way into this
+ *     process, which is a surface no crash reporter needs and this console does
+ *     not accept.
  *
  * What is left out beyond this object is not an option of the client: **native
  * crash minidumps** (they are process memory, and D733's "stack frames only" is
@@ -133,6 +141,7 @@ export const CRASH_CLIENT_OPTIONS = Object.freeze({
   maxBreadcrumbs: 0,
   includeLocalVariables: false,
   defaultIntegrations: false,
+  enableRuntimeChannelInjection: false,
 })
 
 /** CrashFrame is one frame as the reporter hands it over: everything the
