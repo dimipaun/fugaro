@@ -141,15 +141,22 @@ becomes `<mode>`. In order:
    there is no `--layer` flag and no config key for it (D830, answered), so there is nothing to
    resolve and nothing to record **of the path** — D854's *generation* record is another question,
    open in the settings design (R1). Two absences are not the same absence:
-   - the file does not exist and the project has **no** published layer: it is created from the
-     local config's own anchors (`version`, `project`, `gcp_project`) **plus the `defaults:` block
-     the command is there to write** — the created document already carries
-     `defaults.rigor.default: <mode>`, so what is published is the change that was asked for and not
-     an empty shell. The three anchors alone would parse — the layer validator
-     (`internal/config/layer.go`'s `validateLayer`) requires no `defaults:` at all — which is
-     exactly the trap: they would publish a layer whose only content is a project name, and the
-     owner's edit would then have to be a *second* command. Because there is nothing to lose, the
-     file is created with the edit already in it;
+   - the file does not exist and the project has **no** published layer: it is created as a
+     **project layer document**, in the published layer's own format, carrying the layer's three
+     anchor keys (`version`, `project`, `gcp_project` — `layerTopKeys` in `internal/config/layer.go`)
+     **plus the `defaults:` block the command is there to write** — the created document already
+     carries `defaults.rigor.default: <mode>`, so what is published is the change that was asked for
+     and not an empty shell. **The template is the layer format, not the local project config.** The
+     three anchor *values* come from the installation's local project config
+     (`internal/localcfg.Config`: its `Version`, `Name` and `GCPProject`), and nothing else of that
+     file does: it holds keys the layer does not have (`region`, `runs_bucket`, `base_images`,
+     `image_source`, `backend`), and the layer parser refuses any top-level key outside its own set
+     (`config.ParseProjectLayer`'s "is not a project layer key"), so copying the local config into
+     this file would write a document that does not parse at all. The three anchors alone would
+     parse — the layer validator (`internal/config/layer.go`'s `validateLayer`) requires no
+     `defaults:` at all — which is exactly the trap: they would publish a layer whose only content
+     is a project name, and the owner's edit would then have to be a *second* command. Because there
+     is nothing to lose, the file is created with the edit already in it;
    - the file does not exist while the project **has** a published layer: that is a refusal, not a
      creation. Publishing a fresh, nearly empty layer over the project's real one is the one mistake
      this command must not make, and the remedy is named in the message: run **`fugaro update`**,

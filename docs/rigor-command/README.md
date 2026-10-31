@@ -87,7 +87,7 @@ not exist.
 | 1 | the editor task | `internal/yamledit` — the shared editor package above, and nothing else |
 | 2 | settings | the policy stage (S3) |
 | 3 | settings | the read half (S0–S2, S4) |
-| 4 | rigor | the layer stage (R0, R1) |
+| 4 | rigor | the local layer file, then the stage that publishes it: **R0** (the path `LayerFile`, `config publish`'s default and doctor's `local-layer-file` check — no stage yet) and **R1** (the `Layer` stage in `update` that seeds and publishes it, which needs R0's file) |
 | 5 | settings | set (S5) — the shared write helper R4 and R5 call, `internal/cli/settings_write.go`: diff, confirmation, agent-session refusal, backup, atomic write |
 | 6 | rigor and models | rigor R2–R5, and the `models` work |
 

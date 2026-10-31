@@ -127,7 +127,11 @@ a new one.
 diff/backup/write triple `fugaro restore` (`internal/cli/restore.go`, which calls `backupFile`,
 `writeFileAtomic` and `lineDiff`) and the `models` plan (its D790) already use.
 `setGCPProjectLine` (`internal/cli/init_fugaroyaml.go`) is a precedent for a targeted edit of one
-line of `fugaro.yaml` that keeps the rest. *Consequence:* the commands reuse all four; only the
+line of a repository's **`fugaro.yaml`** that keeps the rest — the file `prepareAnchor` (same file)
+builds the path of, `filepath.Join(root, "fugaro.yaml")`, in the checkout the command was run in.
+It is not an edit of the installation's local project config
+(`~/.config/fugaro/projects/<project>.yaml`): that file holds the `gcp_project` the *line* carries,
+and it is read, never rewritten here. *Consequence:* the commands reuse all four; only the
 document-tree edit itself is new, and it is **not rigor's to write**: it is the editor task's
 `internal/yamledit` (the README's joint order, position 1), and R2 is the thin caller `EditRigor`
 over it. That package **does not exist on `main` yet** — no `internal/yamledit` directory, and
@@ -168,8 +172,10 @@ spec §3 states it where the steps are.
 
 **F16: Exists. Each repository's file can be read at its ref with no network.** The remembered
 checkouts (`internal/localcfg/checkouts.go`, `CheckoutsVersion`, `LoadCheckouts` and
-`Checkouts.ProjectCheckouts`) record where this machine has each repository; `readFugaroYAMLAtRef`
-(`internal/cli/project_job.go`, a test seam over `checkoutFugaroYAMLAtRef`) reads a `fugaro.yaml`
+`Checkouts.ProjectCheckouts`) record where this machine has each repository; **two names in
+`internal/cli/project_job.go`** do the read — the seam `readFugaroYAMLAtRef` (the package-level
+`readFugaroYAMLAtRef = checkoutFugaroYAMLAtRef`, which a test replaces and the callers go through)
+and the function it is assigned from, `checkoutFugaroYAMLAtRef` — which reads a `fugaro.yaml`
 **at a given ref** from such a checkout with no fetch, and `agentAtRef` (`internal/cli/run.go`) is a
 caller of it — the read `show`'s per-repository rows need, because it is the **base branch** that
 must be read and not the working tree. The neighbouring

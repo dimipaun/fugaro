@@ -158,17 +158,32 @@ installation that has never had one.
   `Layer` in its `needs` beside the `Repository` it already has, and appends the new stage **after
   `e.policy` and before `newCheckoutStage`** (`internal/cli/init_stages.go`: the same function
   appends `e.policy` and then the checkout stage, so the new append goes between them).
-- **Files (6):** `internal/initflow/stage.go` (the `Layer` stage name, its slot after `Policy` and
-  before `Checkout`, its own `needs` and `Checkout`'s gained `Layer`),
-  `internal/initflow/stage_test.go`, `internal/cli/init_layer_stage.go` (new: the seed, the read,
+- **Files (6):** `internal/initflow/stage.go` (three edits, all named here),
+  `internal/initflow/loop_test.go`, `internal/cli/init_layer_stage.go` (new: the seed, the read,
   the diff, the confirmation, `publishLayer` and `fanOutLayer`),
   `internal/cli/init_layer_stage_test.go`
   (new), **`internal/cli/init_stages.go`** (registering the stage — the stages are appended in
   `initStages`, where `newRulesStage`, `newPolicyMigrateStage` and `newCheckoutStage` already are;
   **not `internal/cli/init.go`**, which holds the command and the engine but appends no stage), and
-  `internal/cli/config_publish.go` (the shared publish path, so the two doors cannot disagree). The
-  slot is the one D831 chose, and the bullet above fixes where in that function it lands.
+  `internal/cli/config_publish.go` (the shared publish path, so the two doors cannot disagree).
   `docs/project-layer.md` (§7 and §8) is R6's, the same as R0's, so this task's diff stays code.
+- **The three edits in `internal/initflow/stage.go`, and they are all required.** A stage name the
+  package does not know is not a stage: `internal/initflow` holds its names as **constants** in one
+  block (`Preflight`, `Project`, …, `Policy`, `Checkout`, `Compute`) and its canonical order as the
+  **`order` slot slice** below them, and the loop walks `order`. So this task **adds the constant**
+  `Layer = "layer"` to that block, beside `Policy` and `Checkout`, and **adds the slot** to `order`:
+  `{name: Layer, needs: []string{Repository}}`, placed between the `Policy` slot and the `Checkout`
+  slot — the position D831 chose. Its `needs` name the installation's own stage, `Repository`, the
+  way `Checkout`'s slot does; `needs` records why the order is what it is and gates nothing (the
+  order gates), so no entry here may be read as a new dependency of the layer on the policy node.
+  Third, `Checkout`'s existing slot gains `Layer` in its `needs`, which is what the stage-order test
+  below reads as "the layer is published before the images are refreshed".
+- **`internal/initflow/loop_test.go` changes with them.** `TestStageOrderMatchesDependencies` pins
+  the stage count (fifteen) **and** the exact order
+  (`… Repository, Rules, Policy, Checkout, Compute`), and checks every `needs` entry against it, so
+  the new constant and slot move it to sixteen with `Layer` between `Policy` and `Checkout`, and
+  `Checkout`'s gained need is the second assertion it already makes. **There is no
+  `internal/initflow/stage_test.go`**: the package's tests are `loop_test.go`.
 - **The guard the settings design's stage carries attaches here too — and D854 is open, so this task
   does not decide it.** The stage refuses to publish when the published object's generation moved
   since the seed read it — someone else published while this update ran — rather than overwriting an
@@ -200,7 +215,10 @@ installation that has never had one.
     with this paragraph, and it covers only a publish inside the one run from then on.
 - **Red step:** `TestUpdateSeedsTheLocalLayerFromThePublishedOne` fails while no stage writes a local
   layer file.
-- **Tests:** `TestUpdateSeedsTheLocalLayerFromThePublishedOne` (no local file, a published layer: the
+- **Tests:** `TestStageOrderMatchesDependencies` (`internal/initflow/loop_test.go`: sixteen stages,
+  with `Layer` between `Policy` and `Checkout` in the order it pins, and `Checkout`'s `needs`
+  carrying `Layer` — the slot registration the loop reads),
+  `TestUpdateSeedsTheLocalLayerFromThePublishedOne` (no local file, a published layer: the
   file appears with the published bytes, mode 0600, and the update says what it wrote),
   `TestUpdateSeedWritesNothingWhenTheLocalFileExists` (an owner's file is never overwritten by the
   seed, even when it differs — that is the publish half's job, after a diff),
