@@ -31,9 +31,28 @@
 //      percent-escape or a separator left over from another platform, and a value
 //      that is not the shape it is claimed to be. Where it keeps something it
 //      keeps the least it can -- a type and a function name only when they read
-//      as names -- and the path case below is this round's **mutation** proof: the
-//      refusal of a traversing path is one edit away from a directory name on the
-//      wire.
+//      as names -- and the traversal case below was that round's **mutation**
+//      proof: the refusal of a traversing path is one edit away from a directory
+//      name on the wire.
+//   4. **The rest of the input is refused too** (fix round 3, T2.1c). A URL's
+//      query or fragment, a control character, an archive marker that is only part
+//      of a segment, an event string that is not the shape it claims, a getter
+//      that throws and a position that is not a finite number are each refused
+//      rather than trimmed or trusted -- and the archive case below is this
+//      round's **mutation** proof: a search that finds `app.asar/` inside a
+//      segment, rather than as one, puts `acme-merger/x.js` on the wire.
+//   5. **Every field is read once, and each value is held to its own range**
+//      (fix round 4, T2.1d). A property of a library's event can be a getter, and
+//      a getter is free to answer differently on each read -- so a field read
+//      once for the check and again for the copy is checked as one value and sent
+//      as another. Every field, at every level, is therefore read once into a
+//      local that is both checked and copied; a timestamp is kept only when it is
+//      finite, a position only when it is a whole number of at least zero; and
+//      the line breaks and invisible marks Unicode spells outside ASCII are
+//      refused beside the ASCII control characters. The read-once case below is
+//      this round's **mutation** proof: with the copy reading `event_id` from the
+//      event again, the token-shaped placeholder is on the wire in place of the
+//      id.
 //
 // The module under test is pure: it reads no environment, opens no file, calls
 // nothing, and holds no DSN, host or endpoint. The scan in `holds no
@@ -53,6 +72,8 @@ import {
   crashReportingDecision,
   scrubCrashEvent,
   type CrashEvent,
+  type CrashFrame,
+  type ScrubbedCrashEvent,
   type ScrubbedFrame,
 } from '../../src/main/crash'
 
@@ -137,6 +158,82 @@ function scrubbedFrame(abs_path: string, filename?: string, appRoot = APP_ROOT):
   // hole in the middle of a report.
   if (kept === undefined) throw new Error('the frame was dropped')
   return kept
+}
+
+/** positioned is one frame's position through the whole scrubber: `lineno` and
+ * `colno` as a library may have written them, which is why they arrive here as
+ * `unknown` rather than as the numbers the type claims. */
+function positioned(lineno: unknown, colno: unknown): ScrubbedFrame | undefined {
+  const frame = { abs_path: `${APP_ROOT}/dist/main/index.js`, lineno, colno }
+  return scrubCrashEvent(
+    { exception: { values: [{ type: 'Error', stacktrace: { frames: [frame as unknown as CrashFrame] } }] } },
+    APP_ROOT,
+  ).exception?.values?.[0]?.stacktrace?.frames?.[0]
+}
+
+/** proxyThrowingOn is an event whose named property is a getter that throws. The
+ * reporter's event is a library's object rather than a plain one, and a property
+ * of one can be a `Proxy` whose handler throws. */
+function proxyThrowingOn(property: string): CrashEvent {
+  const event: Record<string, unknown> = { level: 'error' }
+  return new Proxy(event, {
+    get(target, key, receiver) {
+      if (key === property) throw new Error(`a throwing getter on ${property}`)
+      return Reflect.get(target, key, receiver)
+    },
+  }) as unknown as CrashEvent
+}
+
+/** throwingValues is the same case one level down: the exception's own `values`
+ * accessor throws, so the read that decides whether there is an exception at all
+ * is the one that goes wrong. */
+function throwingValues(): CrashEvent {
+  const exception: Record<string, unknown> = {}
+  Object.defineProperty(exception, 'values', {
+    get() {
+      throw new Error('a throwing getter on values')
+    },
+    enumerable: true,
+  })
+  return { exception } as unknown as CrashEvent
+}
+
+/** throwingFrameField is the same case again, inside a frame: the guard around
+ * each frame field keeps a value of the wrong type out, and a guard is not what
+ * stops a getter. */
+function throwingFrameField(): CrashEvent {
+  const frame: Record<string, unknown> = { abs_path: `${APP_ROOT}/dist/main/index.js` }
+  Object.defineProperty(frame, 'abs_path', {
+    get() {
+      throw new Error('a throwing getter on abs_path')
+    },
+    enumerable: true,
+  })
+  return { exception: { values: [{ type: 'Error', stacktrace: { frames: [frame] } }] } } as unknown as CrashEvent
+}
+
+/** changingOnSecondRead is an object whose named property answers `first` when
+ * it is read once and `second` on every read after that. A property of a
+ * library's event is not necessarily a value: a lazily computed field and a
+ * `Proxy` are both free to answer differently each time, and a field read twice
+ * -- once to check it and once to copy it -- is then checked as one value and
+ * sent as another. `base` is where the getter is defined, for a case that needs
+ * the frame's other fields beside the changing one. */
+function changingOnSecondRead(
+  property: string,
+  first: unknown,
+  second: unknown,
+  base: Record<string, unknown> = {},
+): Record<string, unknown> {
+  let reads = 0
+  Object.defineProperty(base, property, {
+    get() {
+      reads += 1
+      return reads === 1 ? first : second
+    },
+    enumerable: true,
+  })
+  return base
 }
 
 describe('crash', () => {
@@ -398,6 +495,54 @@ describe('crash', () => {
     expect(scrubbedFrame('', undefined)).toEqual({ filename: '<external>' })
   })
 
+  it.each([
+    ['NaN', Number.NaN],
+    ['Infinity', Number.POSITIVE_INFINITY],
+    ['a fraction', 1.5],
+    ['a negative', -1],
+    ['a numeric string', '12'],
+  ] as [string, unknown][])('a lineno that is %s is dropped', (_name, value) => {
+    expect(positioned(value, 4)).toEqual({ filename: 'dist/main/index.js', colno: 4 })
+  })
+
+  it.each([
+    ['NaN', Number.NaN],
+    ['Infinity', Number.POSITIVE_INFINITY],
+    ['a fraction', 1.5],
+    ['a negative', -1],
+    ['a numeric string', '12'],
+  ] as [string, unknown][])('a colno that is %s is dropped', (_name, value) => {
+    expect(positioned(12, value)).toEqual({ filename: 'dist/main/index.js', lineno: 12 })
+  })
+
+  it('a position that is a whole number of at least zero is kept', () => {
+    // The other half of the two rules above: a position is a place in a file,
+    // and a whole number is one -- so what the reporter wrote is reported, and
+    // only what JSON would have written as `null`, and the fractions and
+    // negatives a file has no line at, are dropped.
+    expect(positioned(12, 4)).toEqual({ filename: 'dist/main/index.js', lineno: 12, colno: 4 })
+    // Zero is the first line and the first column, which is a position a build
+    // really writes for a frame it could not walk into -- so it is kept, and it
+    // is the case a truthiness check would have dropped.
+    expect(positioned(0, 0)).toEqual({ filename: 'dist/main/index.js', lineno: 0, colno: 0 })
+  })
+
+  it.each([
+    ['NaN', Number.NaN],
+    ['Infinity', Number.POSITIVE_INFINITY],
+    ['-Infinity', Number.NEGATIVE_INFINITY],
+    ['a numeric string', '1767225600'],
+  ] as [string, unknown][])('a timestamp that is %s is dropped', (_name, value) => {
+    // A timestamp is the one number on the event, and JSON writes all three of
+    // `NaN` and the infinities as `null` -- so a kept one reaches the processor
+    // as a time this module never checked rather than as a time it did.
+    expect(scrubCrashEvent({ timestamp: value }, APP_ROOT)).toEqual({})
+  })
+
+  it('a timestamp that is a finite number is kept', () => {
+    expect(scrubCrashEvent({ timestamp: 1767225600 }, APP_ROOT)).toEqual({ timestamp: 1767225600 })
+  })
+
   it('the scrubber cuts a frame path that arrives as a URL, and refuses a URL that is not a file', () => {
     // A path is not always a path: a build reports frames as `file://` URLs as
     // often as it reports them bare, and an Electron frame comes as an `app://`
@@ -466,6 +611,70 @@ describe('crash', () => {
     expect(scrubbedFrame(`file:${APP_ROOT}/dist/main/index.js`).filename).toBe('<external>')
     // The form every reporter writes is still a path, host or no host.
     expect(scrubbedFrame(`file://${APP_ROOT}/dist/main/index.js`).filename).toBe('dist/main/index.js')
+  })
+
+  it('a path that carries a query or a fragment is refused rather than trimmed', () => {
+    // A `?` and a `#` are where a URL's query and its fragment begin, so
+    // `x.js?token=<x>` is a file name with a credential after it. Refused whole
+    // rather than trimmed at the marker, and that is the safer of the two: the
+    // SDK that built the URL may itself have cut the path at the marker, so what
+    // is left before it can be a name the frame never had -- and a wrong name on
+    // the wire is not safer than the fixed word, which is the choice this module
+    // already makes for a percent-escape.
+    const token = tokenPlaceholder()
+    const sources = [
+      `file://${APP_ROOT}/dist/main/x.js?token=${token}`,
+      `file://${APP_ROOT}/dist/main/x.js#${DIRECTORY_A}`,
+      `file://${APP_ROOT}/dist/main/x.js?token=${token}#frag`,
+      `${APP_ROOT}/dist/main/x.js?token=${token}`,
+    ]
+    const kept = sources.map((source) => scrubbedFrame(source).filename)
+    expect(JSON.stringify(kept)).not.toContain(token)
+    expect(JSON.stringify(kept)).not.toContain(DIRECTORY_A)
+    expect(kept).toEqual(sources.map(() => '<external>'))
+  })
+
+  it('a path that carries a control character is refused whole', () => {
+    // A control character is not a separator two readers agree on: the home
+    // check below reads `x\nhome/<x>/secret.js` as one segment, while a log line,
+    // a terminal and a decoder read it as two -- so the newline is a way *past*
+    // the check rather than part of a name.
+    expect(scrubbedFrame('/opt/console/x\nhome/person-1/secret.js', undefined, '/opt/console').filename).toBe(
+      '<external>',
+    )
+    // The same case spelled outside ASCII: Unicode has three more line breaks --
+    // the next-line character and the line and paragraph separators -- and each
+    // one is a break to some reader and a character to another, so a path that
+    // hides a home directory behind one is the newline case again.
+    expect(scrubbedFrame('/opt/console/x\u0085home/person-1/secret.js', undefined, '/opt/console').filename).toBe(
+      '<external>',
+    )
+    expect(scrubbedFrame('/opt/console/x\u2028home/person-1/secret.js', undefined, '/opt/console').filename).toBe(
+      '<external>',
+    )
+    expect(scrubbedFrame('/opt/console/x\u2029home/person-1/secret.js', undefined, '/opt/console').filename).toBe(
+      '<external>',
+    )
+    for (const [name, source] of [
+      ['a newline inside the app', `${APP_ROOT}/x\nhome/person-1/secret.js`],
+      ['a carriage return', `${APP_ROOT}/dist/main/x\r.js`],
+      ['a NUL', `${APP_ROOT}/dist/main/x\x00.js`],
+      ['a tab', `${APP_ROOT}/dist/main/x\t.js`],
+      ['a delete', `${APP_ROOT}/dist/main/x\x7f.js`],
+      // The Unicode line breaks, and the invisible marks that go with them: a
+      // bidi override turns the rest of a line around, and a zero-width joiner
+      // is a character a reader does not see -- so a name carrying either one
+      // says something to the reader that the bytes do not.
+      ['a next-line character', `${APP_ROOT}/dist/main/x\u0085.js`],
+      ['a line separator', `${APP_ROOT}/dist/main/x\u2028.js`],
+      ['a paragraph separator', `${APP_ROOT}/dist/main/x\u2029.js`],
+      ['a bidi override', `${APP_ROOT}/dist/main/x\u202e.js`],
+      ['a zero-width joiner', `${APP_ROOT}/dist/main/x\u200d.js`],
+    ] as const) {
+      const kept = scrubbedFrame(source).filename
+      expect(kept, name).toBe('<external>')
+      expect(kept, name).not.toContain('person-1')
+    }
   })
 
   it.each([
@@ -547,6 +756,29 @@ describe('crash', () => {
     expect(packaged('/opt/vendor/node_modules/dep-a/index.js')).toBe('<external>')
   })
 
+  it('the archive marker counts only as a whole path segment', () => {
+    // `app.asar` is a directory *name*, so a directory whose name merely ends in
+    // it is a directory on somebody's disk: a search that finds the marker
+    // anywhere inside a segment cuts at the wrong place and puts the next
+    // directory on the wire. This is this round's **mutation** proof -- with a
+    // substring search in place of the segment-anchored one, the first case below
+    // is `acme-merger/x.js`.
+    const packaged = (abs_path: string): string | undefined =>
+      scrubCrashEvent(
+        { exception: { values: [{ type: 'Error', stacktrace: { frames: [{ abs_path }] } }] } },
+        PACKAGED_ROOT,
+      ).exception?.values?.[0]?.stacktrace?.frames?.[0]?.filename
+
+    expect(packaged('/tmp/person-1-secret-app.asar/acme-merger/x.js')).toBe('<external>')
+    // The review's surviving mutant: a relative path that ends in the archive,
+    // which the rooted-path check refuses before the marker is read at all.
+    expect(scrubbedFrame('foo/app.asar/x.js').filename).toBe('<external>')
+    // A real archive is still a path, and it is cut at its own segment whether or
+    // not the app root above it matched.
+    expect(packaged(`${PACKAGED_ROOT}/app.asar/dist/main/index.js`)).toBe('dist/main/index.js')
+    expect(packaged('/opt/elsewhere/vendor/app.asar/dist/main/index.js')).toBe('dist/main/index.js')
+  })
+
   it('the scrubber keeps a type and a name only when they read as one', () => {
     // `type` and `function` are strings a library filled in, and a library can be
     // handed a sentence: an exception whose type is its message, a frame whose
@@ -599,6 +831,181 @@ describe('crash', () => {
     // be read as one.
     expect(scrubCrashEvent(null, APP_ROOT)).toEqual({})
     expect(scrubCrashEvent(undefined, APP_ROOT)).toEqual({})
+  })
+
+  it.each([
+    ['a path', `${APP_ROOT}/dist/main/x.js`],
+    ['a newline', `node\n${DIRECTORY_A}`],
+    ['a long string', 'a'.repeat(65)],
+    ['a token-shaped placeholder', tokenPlaceholder()],
+  ])('an event_id that is %s is dropped', (_name, value) => {
+    expect(scrubCrashEvent({ event_id: value }, APP_ROOT)).toEqual({})
+  })
+
+  it.each([
+    ['a path', `${APP_ROOT}/dist/main/x.js`],
+    ['a newline', `node\n${DIRECTORY_A}`],
+    ['a long string', 'a'.repeat(17)],
+    ['a token-shaped placeholder', tokenPlaceholder()],
+  ])('a platform that is %s is dropped', (_name, value) => {
+    expect(scrubCrashEvent({ platform: value }, APP_ROOT)).toEqual({})
+  })
+
+  it.each([
+    ['a path', `${APP_ROOT}/dist/main/x.js`],
+    ['a newline', `console-0.116.0\n${DIRECTORY_A}`],
+    ['a long string', 'a'.repeat(65)],
+    ['a token-shaped placeholder', tokenPlaceholder()],
+  ])('a release that is %s is dropped', (_name, value) => {
+    expect(scrubCrashEvent({ release: value }, APP_ROOT)).toEqual({})
+  })
+
+  it('the event strings are kept when they are the shapes the reporter writes', () => {
+    // The other half of the rule above: the three patterns are not a refusal of
+    // the fields, they are what the fields look like when the reporter wrote
+    // them. The id is the generator's 32 lower-case hex characters -- an
+    // upper-case hex string is a hex string and not that id -- and the release is
+    // bounded at 64 characters.
+    expect(
+      scrubCrashEvent({ event_id: '0'.repeat(32), platform: 'node', release: 'console-0.116.0' }, APP_ROOT),
+    ).toEqual({ event_id: '0'.repeat(32), platform: 'node', release: 'console-0.116.0' })
+    expect(scrubCrashEvent({ event_id: 'A'.repeat(32) }, APP_ROOT)).toEqual({})
+    expect(scrubCrashEvent({ release: 'a'.repeat(64) }, APP_ROOT)).toEqual({ release: 'a'.repeat(64) })
+  })
+
+  it.each([
+    ['the exception', proxyThrowingOn('exception')],
+    ['the values', throwingValues()],
+    ['a frame field', throwingFrameField()],
+    ['an event field', proxyThrowingOn('event_id')],
+  ] as [string, CrashEvent][])(
+    'an event whose getter throws on %s comes back empty rather than throwing',
+    (_position, event) => {
+      // `beforeSend` runs inside the reporter, so a throw here is a crash in the
+      // crash reporter -- and a getter is not a value the guards above can check
+      // before it runs. What comes back is the empty event rather than the fields
+      // that were readable: a field read past a throwing sibling is one this
+      // module cannot claim it checked.
+      expect(scrubCrashEvent(event, APP_ROOT)).toEqual({})
+    },
+  )
+
+  it('every event field is read once, so a getter that answers again cannot pass the allow-list', () => {
+    // A field read twice is checked on one read and copied on another, and a
+    // getter is free to answer differently each time -- so a value that reads as
+    // an event id when the allow-list checks it and as a credential when the
+    // output copies it is a credential on the wire with every check passed. Each
+    // field is therefore read exactly once into a local, and the local is what is
+    // checked and what is copied.
+    //
+    // This is this round's **mutation** proof: putting the property read back
+    // into the copy -- `{ event_id: event.event_id }` beside the local the check
+    // reads -- is one edit away from the line the fix writes, and the first case
+    // below then holds the token-shaped placeholder in place of the id.
+    const token = tokenPlaceholder()
+    const scrubbedEvent = (property: string, first: unknown): ScrubbedCrashEvent =>
+      scrubCrashEvent(changingOnSecondRead(property, first, token) as unknown as CrashEvent, APP_ROOT)
+    const cases: readonly (readonly [string, unknown, ScrubbedCrashEvent])[] = [
+      ['event_id', '0'.repeat(32), { event_id: '0'.repeat(32) }],
+      ['timestamp', 1767225600, { timestamp: 1767225600 }],
+      ['platform', 'node', { platform: 'node' }],
+      ['level', 'error', { level: 'error' }],
+      ['release', 'console-0.116.0', { release: 'console-0.116.0' }],
+    ]
+    for (const [property, first, expected] of cases) {
+      const scrubbed = scrubbedEvent(property, first)
+      expect(scrubbed, property).toEqual(expected)
+      expect(JSON.stringify(scrubbed), property).not.toContain(token)
+    }
+  })
+
+  it('every exception field is read once, so a getter that answers again cannot pass the allow-list', () => {
+    // The same rule one level down, at every position an exception has: the
+    // exception itself, its `values`, a value's `type` and `stacktrace`, and the
+    // `frames` inside it.
+    const token = tokenPlaceholder()
+    const frames = [{ abs_path: `${APP_ROOT}/dist/main/index.js` }]
+    const first = { type: 'Error', stacktrace: { frames } }
+    const expected = {
+      exception: { values: [{ type: 'Error', stacktrace: { frames: [{ filename: 'dist/main/index.js' }] } }] },
+    }
+    const changingValues = changingOnSecondRead('values', [first], token)
+    const scrubbed = [
+      // The exception itself, and its `values`.
+      scrubCrashEvent(
+        changingOnSecondRead('exception', { values: [first] }, token) as unknown as CrashEvent,
+        APP_ROOT,
+      ),
+      scrubCrashEvent({ exception: changingValues } as unknown as CrashEvent, APP_ROOT),
+      // A value's `type`, and its `stacktrace`.
+      scrubCrashEvent(
+        {
+          exception: {
+            values: [changingOnSecondRead('type', 'Error', token, { stacktrace: first.stacktrace })],
+          },
+        } as unknown as CrashEvent,
+        APP_ROOT,
+      ),
+      scrubCrashEvent(
+        {
+          exception: {
+            values: [changingOnSecondRead('stacktrace', first.stacktrace, token, { type: 'Error' })],
+          },
+        } as unknown as CrashEvent,
+        APP_ROOT,
+      ),
+      // ...and the `frames` inside it.
+      scrubCrashEvent(
+        {
+          exception: {
+            values: [{ type: 'Error', stacktrace: changingOnSecondRead('frames', frames, token) }],
+          },
+        } as unknown as CrashEvent,
+        APP_ROOT,
+      ),
+    ]
+    for (const one of scrubbed) {
+      expect(one).toEqual(expected)
+      expect(JSON.stringify(one)).not.toContain(token)
+    }
+  })
+
+  it('every frame field is read once, so a getter that answers again cannot pass the allow-list', () => {
+    // And once more inside a frame: the name, the path the cut reads (`abs_path`
+    // when it is there and `filename` otherwise), and the three fields beside
+    // them.
+    const token = tokenPlaceholder()
+    const path = `${APP_ROOT}/dist/main/index.js`
+    const scrubbedFrameOf = (frame: Record<string, unknown>): ScrubbedFrame | undefined =>
+      scrubCrashEvent(
+        { exception: { values: [{ type: 'Error', stacktrace: { frames: [frame as unknown as CrashFrame] } }] } },
+        APP_ROOT,
+      ).exception?.values?.[0]?.stacktrace?.frames?.[0]
+    const cases: readonly (readonly [string, Record<string, unknown>, ScrubbedFrame])[] = [
+      ['function', changingOnSecondRead('function', 'run', token), { filename: '<external>', function: 'run' }],
+      ['abs_path', changingOnSecondRead('abs_path', path, token), { filename: 'dist/main/index.js' }],
+      ['filename', changingOnSecondRead('filename', path, token), { filename: 'dist/main/index.js' }],
+      [
+        'lineno',
+        changingOnSecondRead('lineno', 12, token, { abs_path: path }),
+        { filename: 'dist/main/index.js', lineno: 12 },
+      ],
+      [
+        'colno',
+        changingOnSecondRead('colno', 4, token, { abs_path: path }),
+        { filename: 'dist/main/index.js', colno: 4 },
+      ],
+      [
+        'in_app',
+        changingOnSecondRead('in_app', true, token, { abs_path: path }),
+        { filename: 'dist/main/index.js', in_app: true },
+      ],
+    ]
+    for (const [property, frame, expected] of cases) {
+      const scrubbed = scrubbedFrameOf(frame)
+      expect(scrubbed, property).toEqual(expected)
+      expect(JSON.stringify(scrubbed), property).not.toContain(token)
+    }
   })
 
   it('an exception that is not one is dropped, and an empty values list is not read', () => {
