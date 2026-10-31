@@ -99,9 +99,12 @@ function literal(element: SectionElement, text: string): SectionElement {
   return element
 }
 
-/** DrawnBusy is the mark and the line a slow read adds to it. */
+/** DrawnBusy is the mark and the line a slow read adds to it. `label` is the
+ * word naming what is being read, which a second change to the same section
+ * rewrites rather than drawing a second mark. */
 export interface DrawnBusy {
   readonly root: SectionElement
+  readonly label: SectionElement
   readonly still: SectionElement
 }
 
@@ -136,7 +139,7 @@ export function renderBusy(factory: SectionFactory, label: string, theme: SkewTh
   const still = factory.create('p')
   still.setAttribute('class', BUSY_STILL_CLASS)
   literal(still, READING_STILL)
-  return { root, still }
+  return { root, label: word, still }
 }
 
 /** SectionRead is one screen's read lifecycle. */
@@ -194,6 +197,13 @@ export function sectionRead(options: {
   let token = 0
   let handle: ReturnType<typeof setTimeout> | null = null
   let held: SectionElement | null = null
+  /** heldMark is the mark this section is already wearing. A second change to
+   * the same section **rewrites its label** rather than stacking a second mark
+   * under the first: the section says what it is reading now, and two lines --
+   * one for the window the operator has already replaced -- would be a section
+   * arguing with itself. The still line the first read may have added stays
+   * with the element, which is true: this section has been reading that long. */
+  let heldMark: DrawnBusy | null = null
 
   const clearTimer = (): void => {
     if (handle === null) return
@@ -203,6 +213,7 @@ export function sectionRead(options: {
 
   const end = (): void => {
     clearTimer()
+    heldMark = null
     if (held === null) return
     held.removeAttribute(BUSY_ATTRIBUTE)
     held.removeAttribute(BUSY_BUSY_ATTRIBUTE)
@@ -216,12 +227,15 @@ export function sectionRead(options: {
     },
     mark(mine: number, host: SectionElement, slot: SectionElement, label: string): void {
       if (mine !== token) return
+      const worn = held === host ? heldMark : null
       end()
       host.setAttribute(BUSY_ATTRIBUTE, 'true')
       host.setAttribute(BUSY_BUSY_ATTRIBUTE, 'true')
-      const drawn = renderBusy(options.factory, label, options.theme)
-      slot.append(drawn.root)
+      const drawn = worn ?? renderBusy(options.factory, label, options.theme)
+      if (worn === null) slot.append(drawn.root)
+      else literal(drawn.label, label)
       held = host
+      heldMark = drawn
       handle = timers.setTimeout(() => {
         handle = null
         // The mark a later change put up is not this read's to write into, and
