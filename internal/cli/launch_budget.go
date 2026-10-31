@@ -194,7 +194,7 @@ func policyReadErr(err error) error {
 	case errors.As(err, &me):
 		return userErr("%v", err)
 	case errors.Is(err, rtdb.ErrPermission):
-		return userErr("%v: the deployed rules no longer let this project read its own policy; if they are older than %s, run fugaro update --firebase-project again with this Fugaro", err, projectpolicy.PathRulesMarker())
+		return userErr("%v: the deployed rules no longer let this project read its own policy; if they are older than %s, run fugaro update again in your own terminal with this Fugaro, whose rules stage deploys the generation that marker is about", err, projectpolicy.PathRulesMarker())
 	case errors.Is(err, rtdb.ErrUnavailable):
 		return remote(err)
 	default:

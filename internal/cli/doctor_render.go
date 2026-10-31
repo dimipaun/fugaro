@@ -74,10 +74,16 @@ const (
 //     installation: `fugaro upgrade --local` (or the marketplace command in
 //     Claude Code) is what installs it.
 //
-// policy-rules-skew is here and its line names --firebase-project, because a
-// plain `fugaro update` does not reach the rules: the flag is what deploys
-// them. And cli-version's line names the upgrade first: the newer release is
-// not installed yet, so `fugaro update` alone would run the old binary.
+// policy-rules-skew is here, and its line is the plain `fugaro update`: the
+// rules stage (init_rules_stage.go, the owner's rule of 2026-10-30) deploys
+// this release's document over a marker that is absent or below this
+// generation, and over a document that is not the one this Fugaro generates —
+// what the warning sent the reader here for. The line named
+// --firebase-project until that stage existed, and a bare --firebase-project
+// is not a command at all: it is a string flag, so `fugaro update
+// --firebase-project` fails on the missing value. And cli-version's line names
+// the upgrade first: the newer release is not installed yet, so `fugaro
+// update` alone would run the old binary.
 var doctorUpdatePrefixes = []string{
 	"cli-version",
 	"plugin-pin",
@@ -560,9 +566,6 @@ var doctorUpdateFixes = map[string]string{
 	// update behind it is what brings the installation and the checkout to the
 	// version (CLAUDE.md's hard rule: those two commands are the whole upgrade).
 	"cli-version": "run `brew upgrade fugaro`, then `fugaro update`",
-	// The rules are not reached by a plain update: --firebase-project is what
-	// deploys them, and the check's own fix says the same.
-	"policy-rules-skew": "run `fugaro update --firebase-project`",
 	// A check that cannot even be read outside a checkout says so in its own
 	// text: update is the whole upgrade, and it runs in the repository.
 	"plugin-pin": "run `fugaro update` in the repository's checkout",
