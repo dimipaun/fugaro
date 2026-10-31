@@ -432,12 +432,6 @@ var censusOutputDirs = []string{
 	// repository text.
 	consoleDirName + "/.screenshots",
 	consoleDirName + "/screenshots",
-	// The crash reporter's build step (`tsconfig.crash-dsn.json`, Task 2.1b),
-	// which `npm run build` compiles and then runs to write the DSN artifact.
-	// The artifact itself is under the console's dist/ above; this tree is the
-	// compiled tool, and it is a copy of tools/crash-dsn/ rather than text of
-	// its own.
-	consoleDirName + "/.crash-dsn",
 	// mobile/.gitignore
 	"mobile/dist",
 	"mobile/web-build",
@@ -872,7 +866,6 @@ func TestCensusOutputAndExemptArePinned(t *testing.T) {
 		{consoleDirName + "/playwright-report/index.html", true},
 		{consoleDirName + "/.record-fixture/fixture.json", true},
 		{consoleDirName + "/.bundle-renderer/bundle.js", true},
-		{consoleDirName + "/.crash-dsn/index.js", true},
 		{"mobile/dist/index.html", true},
 		{"mobile/web-build/index.html", true},
 		{"mobile/.expo/cache/state.json", true},
@@ -1031,7 +1024,6 @@ var censusIgnored = []struct {
 	{consoleDirName + "/.gitignore", ".bundle-renderer/", consoleDirName + "/.bundle-renderer/bundle.js", false},
 	{consoleDirName + "/.gitignore", ".screenshots/", consoleDirName + "/.screenshots/screenshots.mjs", false},
 	{consoleDirName + "/.gitignore", "/screenshots/", consoleDirName + "/screenshots/MANIFEST.json", false},
-	{consoleDirName + "/.gitignore", ".crash-dsn/", consoleDirName + "/.crash-dsn/index.js", false},
 	{"mobile/.gitignore", "node_modules/", "mobile/node_modules/expo/index.js", false},
 	{"mobile/.gitignore", ".expo/", "mobile/.expo/cache/state.json", false},
 	{"mobile/.gitignore", ".metro-health-check*", "mobile/.metro-health-check.json", false},

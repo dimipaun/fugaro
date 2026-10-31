@@ -92,15 +92,6 @@ const bundlerOutputs = [
   ...FONT_FILES.map(({ file }) => `dist/bundle/${file}`),
 ]
 
-/** dsnArtifact is the file Task 2.1b's build step writes, into the same compiled
- * tree `build.files` already carries: the crash reporter's DSN, baked in by the
- * release build and read back at startup by `src/main/crash-electron.ts`. It is
- * named here for exactly the reason the bundles are -- a `build.files` that
- * carried every `.js` of the main process and not this one would ship a console
- * that can never report, and the development tree, which has no artifact at all
- * on a build without the variable, would not show it. */
-const dsnArtifact = 'dist/main/crash-dsn.json'
-
 /** NEVER_SHIPPED are the two compiled files Task 4.1 keeps out of the package by
  * name: the packing hook (it needs a devDependency) and the fixture loader. */
 const NEVER_SHIPPED: readonly string[] = ['dist/main/fuses.js', 'dist/source/fixture.js']
@@ -280,7 +271,6 @@ describe('the packaged console carries what it loads', () => {
       ...preloads,
       ...runtime,
       ...bundlerOutputs,
-      dsnArtifact,
     ])
     expect(missing, 'these files are loaded at runtime and are not in build.files').toEqual([])
     for (const excluded of NEVER_SHIPPED) {

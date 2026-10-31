@@ -11,16 +11,18 @@
 // transport. Everything else the fake does not model is a thing this file
 // asserts the adapter never asked for.
 //
-//   1. **Nothing starts before the switch is read, and nothing starts without a
-//      DSN.** The gate is `./crash`'s, and this file is about the half the
-//      wiring owns: that a closed answer calls no `init` at all rather than
-//      starting a reporter that decides later to send nothing.
+//   1. **Nothing starts before the switch is read.** The gate is `./crash`'s,
+//      and this file is about the half the wiring owns: that a closed answer
+//      calls no `init` at all rather than starting a reporter that decides later
+//      to send nothing. The DSN is no longer part of that question -- since the
+//      owner's ruling of 2026-10-31 it is `./crash-dsn`'s constant, carried by
+//      every build rather than supplied to one -- so a yes is the whole input.
 //   2. **What reaches the transport is the scrubbed event, and only it.** The
 //      headline case below is this slice's mutation proof: with `beforeSend`
 //      changed to hand the event back untouched, the token, the home path and
 //      the message are what the transport receives.
 //   3. **The entry loads this module only when the gate can open, and the wiring
-//      reads the artifact only for a switch that says yes.** The gate is an
+//      asks the gate with the switch and nothing else.** The gate is an
 //      allow test on both sides -- `optedIn === true` -- so a state nobody has
 //      defined yet is off without either file knowing its name. Both are claims
 //      about files this suite cannot import (one of them imports Electron's
@@ -34,7 +36,7 @@
 //      only assert what the fake had been told to do, and into a real Electron
 //      main process running the pinned SDK.
 
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -43,8 +45,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { inert } from '../support/fakeSecrets'
 import { scrubCrashEvent, type CrashEvent } from '../../src/main/crash'
-import { CLOSE_TIMEOUT_MS, crashDsnFromBuild, startCrashReporting } from '../../src/main/crash-electron'
-import { CRASH_DSN_VARIABLE, writeCrashDsnArtifact } from '../../tools/crash-dsn'
+import { CONSOLE_CRASH_DSN } from '../../src/main/crash-dsn'
+import { CLOSE_TIMEOUT_MS, startCrashReporting } from '../../src/main/crash-electron'
 
 /** harness is the shared state the mocked SDK writes into. It is `vi.hoisted`
  * because the factory below is hoisted above this file's imports, so it cannot
@@ -84,25 +86,6 @@ const utility = vi.hoisted(() => {
 })
 
 vi.mock('electron', () => ({ utilityProcess: utility.process }))
-
-/** artifactReads is every path this module graph asked `node:fs` to read, in
- * order. It is a probe rather than a fake -- the real `readFileSync` still runs,
- * and the value a reader gets is the file's -- so that "the artifact was not
- * read" is an observation about the wiring's own call and not an inference from
- * the fact that a read of a missing file answers null anyway. */
-const artifactReads = vi.hoisted(() => ({ paths: [] as string[] }))
-
-vi.mock('node:fs', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('node:fs')>()
-  const reading = actual.readFileSync as (...args: unknown[]) => unknown
-  return {
-    ...actual,
-    readFileSync: (path: unknown, ...rest: unknown[]) => {
-      artifactReads.paths.push(String(path))
-      return reading(path, ...rest)
-    },
-  }
-})
 
 vi.mock('@sentry/electron/main', () => ({
   init: (options: Record<string, unknown>) => {
@@ -149,7 +132,8 @@ vi.mock('@sentry/electron/main', () => ({
  * assembled from fragments at run time, for the reason `fakeSecrets` exists and
  * for the same reason the scrubber's own test does it: a DSN-shaped literal in
  * this repository is a defect even when it is invented, and `example.invalid` is
- * the reserved name, so nothing here resolves anywhere. */
+ * the reserved name, so nothing here resolves anywhere. It stands in for the
+ * `dsn` a caller supplies where the embedded constant would otherwise go. */
 function dsnPlaceholder(): string {
   return inert('https', '://', 'a'.repeat(32), '@', 'example', '.invalid', '/', '1')
 }
@@ -159,9 +143,8 @@ function tokenPlaceholder(): string {
   return inert('gh', 'p_', 'a'.repeat(36))
 }
 
-/** tempAppRoot is a fresh temp directory per test: the DSN artifact's root and
- * the prefix a kept frame's path is cut at. It is what `app.getAppPath()`
- * answers with, and the DSN the build wrote is the only thing in it. */
+/** tempAppRoot is a fresh temp directory per test: what `app.getAppPath()`
+ * answers with, and the prefix a kept frame's path is cut at. */
 function tempAppRoot(): string {
   return mkdtempSync(join(tmpdir(), 'fugaro-crash-app-'))
 }
@@ -171,15 +154,6 @@ function tempAppRoot(): string {
  * app root is a temp directory here. */
 function appFrame(appRoot: string, ...rest: string[]): string {
   return join(appRoot, ...rest)
-}
-
-/** writeRawDsn puts arbitrary bytes where the artifact goes. The happy path goes
- * through the build step itself (`writeCrashDsnArtifact`); this is for the two
- * files the build step never writes -- one that is not JSON, and one that is
- * JSON of another shape -- which the reader still has to refuse. */
-function writeRawDsn(appRoot: string, contents: string): void {
-  mkdirSync(join(appRoot, 'dist', 'main'), { recursive: true })
-  writeFileSync(join(appRoot, 'dist', 'main', 'crash-dsn.json'), contents)
 }
 
 /** hostileEvent is an event as a reporter builds one for a real crash: the
@@ -228,7 +202,6 @@ beforeEach(() => {
   harness.stalled = false
   harness.forksPatched = 0
   utility.process.fork = utility.real
-  artifactReads.paths = []
 })
 
 afterEach(() => {
@@ -238,10 +211,6 @@ afterEach(() => {
 describe('the crash reporter starts only when the gate opens', () => {
   it('starts nothing while the switch is unread, off, or not a yes', () => {
     const appRoot = tempAppRoot()
-    // The DSN the build was given is present in every case below: the point is
-    // that a DSN alone does not open the gate, which is D734 and the reason the
-    // switch is read first.
-    writeCrashDsnArtifact(appRoot, dsnPlaceholder())
     for (const [name, optedIn] of [
       ['unread', null],
       ['off', false],
@@ -255,88 +224,20 @@ describe('the crash reporter starts only when the gate opens', () => {
     }
   })
 
-  it('does not read the build\'s DSN artifact for a switch that is not a yes', () => {
-    // The order the wiring asks the gate in is a claim about the disk, and this
-    // is the disk: the artifact is present in every case below, so a wiring that
-    // read it first would be visible here as a path the probe recorded, and the
-    // null a read of a missing file answers with could not stand in for that.
-    const appRoot = tempAppRoot()
-    writeCrashDsnArtifact(appRoot, dsnPlaceholder())
-    for (const optedIn of [null, false, 'true', 1, { consent: true }]) {
-      void startCrashReporting({ optedIn, appRoot }).close()
-    }
-    expect(artifactReads.paths.filter((path) => path.includes('crash-dsn.json'))).toEqual([])
-
-    // ...and the same probe answers for the other direction, so a wiring that
-    // had stopped reading the artifact altogether could not pass the assertion
-    // above by reading nothing anywhere.
-    artifactReads.paths = []
-    void startCrashReporting({ optedIn: true, appRoot }).close()
-    expect(artifactReads.paths.filter((path) => path.includes('crash-dsn.json'))).toHaveLength(1)
-  })
-
-  it('starts nothing when the build carried no DSN, or a blank one', () => {
-    const appRoot = tempAppRoot()
-    // No artifact at all: the dormant build the owner's ruling describes.
-    void startCrashReporting({ optedIn: true, appRoot })
-    expect(harness.initOptions).toEqual([])
-    // A build that was handed a blank variable writes nothing, so the next call
-    // sees the same absent artifact: the blank value and the unset one are one
-    // case here, which is what they are on the build side too.
-    writeCrashDsnArtifact(appRoot, '   ')
-    void startCrashReporting({ optedIn: true, appRoot })
-    expect(harness.initOptions).toEqual([])
-    // And a file that is not the shape the build step writes is refused rather
-    // than read for whatever it holds.
-    writeRawDsn(appRoot, 'not json at all')
-    expect(crashDsnFromBuild(appRoot)).toBeNull()
-    const wrongShape = tempAppRoot()
-    writeRawDsn(wrongShape, JSON.stringify({ endpoint: 'somewhere' }))
-    expect(crashDsnFromBuild(wrongShape)).toBeNull()
-    void startCrashReporting({ optedIn: true, appRoot: wrongShape })
-    expect(harness.initOptions).toEqual([])
-  })
-
-  it('reads the artifact the build step writes, and nothing from the environment', () => {
-    // The two halves of one mechanism, held together: `npm run build`'s last
-    // step writes the artifact and this module reads it, so what the build puts
-    // down has to be what the app picks up. The env is set to a different value
-    // on purpose -- the running console is launched by whatever launcher a
-    // person used, so the environment is not the build's, and reading it would
-    // be reading a setting of the machine.
-    const appRoot = tempAppRoot()
-    const dsn = dsnPlaceholder()
-    expect(writeCrashDsnArtifact(appRoot, dsn)).toBe('written')
-    vi.stubEnv(CRASH_DSN_VARIABLE, 'a value the running app must not read')
-    expect(crashDsnFromBuild(appRoot)).toBe(dsn)
-    vi.unstubAllEnvs()
-  })
-
-  it('the build step removes the artifact when it was given no DSN', () => {
-    // This is the dormant release: the owner's build without the variable. The
-    // removal is the assertion that matters -- an artifact an earlier build left
-    // in the same directory would otherwise ship one build's DSN inside a bundle
-    // whose builder believes reporting is off.
-    const appRoot = tempAppRoot()
-    expect(writeCrashDsnArtifact(appRoot, dsnPlaceholder())).toBe('written')
-    expect(crashDsnFromBuild(appRoot)).not.toBeNull()
-    expect(writeCrashDsnArtifact(appRoot, '   ')).toBe('removed')
-    expect(crashDsnFromBuild(appRoot)).toBeNull()
-    expect(writeCrashDsnArtifact(appRoot, undefined)).toBe('removed')
-    expect(crashDsnFromBuild(appRoot)).toBeNull()
-  })
-
-  it('the build step names the release variable once, and the app never reads it', () => {
-    // One spelling in the tree, and this is it: a second one could only drift
-    // from this one, and a drifted name means a release build the owner believes
-    // reports and a console that stays dormant.
-    expect(CRASH_DSN_VARIABLE).toBe('FUGARO_CONSOLE_CRASH_DSN')
+  it('takes the DSN from no environment variable and no file', () => {
+    // The ruling of 2026-10-31 in one assertion: the DSN is compiled in, so the
+    // running console reads nothing for it -- not the environment of whatever
+    // launcher started it, and not a file beside the bundle. Spelling the
+    // cancelled variable here pins the absence: a wiring that read it would have
+    // to name it, and this file would be the second place it appeared.
     const reader = readFileSync(
       fileURLToPath(new URL('../../src/main/crash-electron.ts', import.meta.url)),
       'utf8',
     )
-    expect(reader).not.toContain(CRASH_DSN_VARIABLE)
+    expect(reader).not.toContain('FUGARO_CONSOLE_CRASH_DSN')
     expect(reader).not.toContain('process.env')
+    expect(reader).not.toContain('node:fs')
+    expect(reader).toContain("import { CONSOLE_CRASH_DSN } from './crash-dsn'")
   })
 
   it('puts electron.utilityProcess.fork back the way the SDK found it', () => {
@@ -350,7 +251,6 @@ describe('the crash reporter starts only when the gate opens', () => {
     // is a *problem*; `test/e2e/crash-init.spec.ts` holds the real one to the
     // same answer, and this is the half that fails when the restore is dropped.
     const appRoot = tempAppRoot()
-    writeCrashDsnArtifact(appRoot, dsnPlaceholder())
     const handle = startCrashReporting({ optedIn: true, appRoot })
     expect(harness.forksPatched, 'the mocked SDK patches fork during init').toBe(1)
     expect(
@@ -360,12 +260,22 @@ describe('the crash reporter starts only when the gate opens', () => {
     void handle.close()
   })
 
-  it('starts the client with the artifact DSN when the switch says yes', () => {
+  it('starts the client with the embedded constant when the switch says yes', () => {
     const appRoot = tempAppRoot()
-    const dsn = dsnPlaceholder()
-    writeCrashDsnArtifact(appRoot, dsn)
     const handle = startCrashReporting({ optedIn: true, appRoot })
     expect(harness.initOptions).toHaveLength(1)
+    expect(harness.initOptions[0]?.dsn).toBe(CONSOLE_CRASH_DSN)
+    void handle.close()
+  })
+
+  it('starts the client with a DSN the caller supplied instead of the constant', () => {
+    // The tests and the e2e fixture point the wiring at a sink of their own, so
+    // the `dsn` input stays. It is the only thing that can displace the
+    // constant, and it is not a decision about reporting: the switch is still
+    // the whole gate.
+    const appRoot = tempAppRoot()
+    const dsn = dsnPlaceholder()
+    const handle = startCrashReporting({ optedIn: true, appRoot, dsn })
     expect(harness.initOptions[0]?.dsn).toBe(dsn)
     void handle.close()
   })
@@ -415,15 +325,12 @@ describe('the crash reporter starts only when the gate opens', () => {
     expect(entry.slice(allow, entry.indexOf('}', load))).toContain('startCrashReporting(')
   })
 
-  it('the wiring reads the build\'s DSN artifact only for a switch that says yes', () => {
-    // The one order that matters inside the wiring, and it is an allow test
-    // too: `crashDsnFromBuild` is on the yes side of `input.optedIn === true`,
-    // which is the half of the gate about the disk -- a start whose switch is
-    // off must not have opened the artifact the build wrote -- and
-    // `crashReportingDecision` is asked once, after it, about the switch and the
-    // DSN together. There is no separate switch-first call any more: the reason
-    // it existed (`'no-dsn'`) was a spelling of "a yes whose DSN has not been
-    // read yet", which is what the expression below says outright.
+  it('the wiring asks the gate with the switch alone, and the constant is the fallback', () => {
+    // The one shape that matters inside the wiring, read as text because the
+    // module imports the pinned SDK. The gate's input is `{ optedIn }` and
+    // nothing else -- no DSN, so no `'no-dsn'` branch and no reason to test for
+    // one -- and the DSN that reaches `init` is the caller's if there is one and
+    // `./crash-dsn`'s constant otherwise.
     const wiring = withoutComments(
       readFileSync(fileURLToPath(new URL('../../src/main/crash-electron.ts', import.meta.url)), 'utf8'),
     )
@@ -432,14 +339,15 @@ describe('the crash reporter starts only when the gate opens', () => {
         wiring,
       )
     if (start === null) throw new Error('the scan found no startCrashReporting: it would pass by finding nothing')
-    expect(start[0]).toContain(
-      'const dsn = input.dsn ?? (input.optedIn === true ? crashDsnFromBuild(input.appRoot) : null)',
-    )
-    const artifactAt = start[0].indexOf('crashDsnFromBuild(input.appRoot)')
-    const decideAt = start[0].indexOf('crashReportingDecision({ dsn, optedIn: input.optedIn })')
-    expect(artifactAt, 'the artifact is read at all').toBeGreaterThan(-1)
-    expect(decideAt, 'the gate decides after the artifact is read').toBeGreaterThan(artifactAt)
-    expect(start[0]).not.toContain("reason !== 'no-dsn'")
+    expect(start[0]).toContain('crashReportingDecision({ optedIn: input.optedIn })')
+    expect(start[0]).toContain('dsn: input.dsn ?? CONSOLE_CRASH_DSN')
+    expect(start[0]).not.toContain('no-dsn')
+    // The decision is asked before anything is started, which is the whole
+    // ordering claim left in a wiring that no longer reads a disk.
+    const decideAt = start[0].indexOf('crashReportingDecision({ optedIn: input.optedIn })')
+    const initAt = start[0].indexOf('initClient(')
+    expect(decideAt, 'the gate is asked at all').toBeGreaterThan(-1)
+    expect(initAt, 'the client starts only after the gate answers').toBeGreaterThan(decideAt)
   })
 })
 
@@ -455,7 +363,6 @@ function withoutComments(source: string): string {
 describe('what the client is told', () => {
   it('carries no default integrations and no IPC of either kind', () => {
     const appRoot = tempAppRoot()
-    writeCrashDsnArtifact(appRoot, dsnPlaceholder())
     const handle = startCrashReporting({ optedIn: true, appRoot })
     const options = harness.initOptions[0] ?? {}
     // `defaultIntegrations: false` is what keeps out the three the header of
@@ -481,7 +388,6 @@ describe('what the client is told', () => {
 
   it('sends errors only: no transaction and no log leaves, whatever the client is handed', () => {
     const appRoot = tempAppRoot()
-    writeCrashDsnArtifact(appRoot, dsnPlaceholder())
     const handle = startCrashReporting({ optedIn: true, appRoot })
     const options = harness.initOptions[0] ?? {}
     // Two payloads the client can be handed beside an error, each refused by
@@ -545,7 +451,6 @@ describe('what the client is told', () => {
 
   it('closes the client when the caller closes the handle', async () => {
     const appRoot = tempAppRoot()
-    writeCrashDsnArtifact(appRoot, dsnPlaceholder())
     const handle = startCrashReporting({ optedIn: true, appRoot })
     await handle.close()
     expect(harness.closes).toBe(1)
@@ -565,7 +470,6 @@ describe('what the client is told', () => {
     vi.useFakeTimers()
     try {
       const appRoot = tempAppRoot()
-      writeCrashDsnArtifact(appRoot, dsnPlaceholder())
       const handle = startCrashReporting({ optedIn: true, appRoot })
       harness.stalled = true
       const closing = handle.close()
@@ -586,8 +490,6 @@ describe('what the client is told', () => {
 describe('what reaches the transport', () => {
   it('a thrown error arrives scrubbed, and nothing else does', async () => {
     const appRoot = tempAppRoot()
-
-    writeCrashDsnArtifact(appRoot, dsnPlaceholder())
     const handle = startCrashReporting({ optedIn: true, appRoot })
     const options = harness.initOptions[0] ?? {}
     const beforeSend = options.beforeSend as (event: CrashEvent) => unknown

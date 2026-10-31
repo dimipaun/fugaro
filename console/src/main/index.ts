@@ -898,14 +898,14 @@ async function main(): Promise<void> {
   // third state D734 makes off is off here because it is not a yes rather than
   // because this file knows its name. What follows from it is the whole of this
   // slice's cost: in a console whose switch is not a yes, `./crash-electron` and
-  // the fourteen packages `@sentry/electron/main` reaches are never loaded, the
-  // artifact the build wrote is never read, and no client exists to start -- so
-  // a start that reports nothing pays nothing for the wiring that would.
+  // the fourteen packages `@sentry/electron/main` reaches are never loaded and no
+  // client exists to start -- so a start that reports nothing pays nothing for
+  // the wiring that would, and the DSN sitting one import away is never read.
   //
-  // Everything after the yes is `startCrashReporting`'s: the build's DSN
-  // artifact, and the two ways a yes can still end without a client (a build
-  // that was given no DSN, and a caller that passed its own). That is why this
-  // file needs no opinion about them -- and why it imports nothing from
+  // Everything after the yes is `startCrashReporting`'s: the DSN constant the
+  // build carries (`./crash-dsn`), and the one way a yes can still end without a
+  // client, which is a caller that passed a DSN of its own. That is why this
+  // file needs no opinion about either -- and why it imports nothing from
   // `./crash` to ask a question `===` answers.
   //
   // The reporter is wired here rather than beside the window because a crash

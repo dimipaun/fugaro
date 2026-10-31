@@ -505,19 +505,16 @@ describe('the packaging configuration the fuses belong to', () => {
     // packing hook (it needs a devDependency) and the fixture loader (tests and
     // the recorder) -- are excluded by name.
     //
-    // The one non-JavaScript file the main process loads at runtime is Task
-    // 2.1b's DSN artifact, named exactly like the preloads: `npm run build`
-    // writes `dist/main/crash-dsn.json` only when the release build was given a
-    // DSN, and `src/main/crash-electron.ts` reads it back at startup. It is not
-    // a `.js` module and no glob would carry it, so it is an exact path -- and a
-    // list that omitted it would ship a console whose reporting can never start.
-    // Note what it is not: a source map, or any other build output of `tsc`.
+    // Every include is a `.js` module, one of the `.html` documents, or the
+    // served `.css`: since the owner's ruling of 2026-10-31 the crash reporter's
+    // DSN is a compiled constant rather than an artifact beside the bundle, so
+    // the list carries no data file at all -- and no source map, or any other
+    // build output of `tsc`.
     expect(build.files).toEqual([
       'LICENSE.md',
       'THIRD_PARTY_NOTICES.md',
       'dist/main/**/*.js',
       '!dist/main/fuses.js',
-      'dist/main/crash-dsn.json',
       'dist/preload/index.js',
       'dist/preload/installations.js',
       'dist/preload/confirm.js',
@@ -634,9 +631,9 @@ describe('the packaging configuration the fuses belong to', () => {
     ]) {
       expect(ships(dead), `${dead} must not ship`).toBe(false)
     }
-    // And the one file the main process reads that is not compiled JavaScript:
-    // it is data rather than code, and it is still loaded at runtime.
-    expect(ships('dist/main/crash-dsn.json'), 'the crash reporter reads this at startup').toBe(true)
+    // And nothing in the packed bundle is a data file either: the DSN is a
+    // compiled constant, so there is no `.json` for the main process to read.
+    expect(ships('dist/main/crash-dsn.json'), 'the DSN is not a shipped artifact').toBe(false)
   })
 
   it('ships no source map', () => {
@@ -644,9 +641,8 @@ describe('the packaging configuration the fuses belong to', () => {
     // the asar is a full copy of the sources with a pointer to it. Every
     // include in the list ends in `.js`, names one of the `.html` documents, or
     // is the served `.css` (Task 6.2) -- so no include names a `.map`, and a
-    // pattern that started to would fail here. Task 2.1b's DSN artifact is the
-    // one `.json` in the list, and it is a value the build baked in rather than
-    // a copy of any source. The `!node_modules/.../**` entries name a package's
+    // pattern that started to would fail here -- and since the owner's ruling of
+    // 2026-10-31 no entry is anything else. The `!node_modules/.../**` entries name a package's
     // whole directory rather than a file and are asserted excluded, not
     // included, so they take no part in this and are skipped rather than read
     // as if they ended in nothing.

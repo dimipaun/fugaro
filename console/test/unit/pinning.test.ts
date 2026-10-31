@@ -276,8 +276,10 @@ describe('console/package.json', () => {
   // `dependencies` entry names is packed into the shipped asar, so a row here
   // is a package the operator's download carries: electron-updater downloads
   // and installs code, and @sentry/electron is the crash reporter the owner's
-  // ruling of 2026-10-30 names, which the build wires in only when it was given
-  // a DSN and the installation's own switch says on (Task 2.1b). Task 4.4 added
+  // ruling of 2026-10-30 names, which the wiring starts only when the
+  // installation's own switch says on; the DSN it reports to is a constant of
+  // the build rather than an input of it (the owner's ruling of 2026-10-31,
+  // Task 2.1b). Task 4.4 added
   // the first with the one file that imports it; Task 2.1b adds the second the
   // same way, and the boundary below is what keeps the two to one importer each.
   const runtimeDependencyAllowList: string[] = ['electron-updater', '@sentry/electron']
@@ -336,6 +338,23 @@ describe('console/package.json', () => {
       specifiers,
       `@sentry/electron is reached as ${JSON.stringify(specifiers)}; it must be reached as src/main/crash-electron.ts and '@sentry/electron/main' and nothing else`,
     ).toEqual(['main/crash-electron.ts: @sentry/electron/main'])
+  })
+
+  it('keeps the DSN in one file, reached from one file', () => {
+    // The owner's ruling of 2026-10-31 puts the console's Sentry DSN in the
+    // build as a public constant. One file holds it and one file reads it: a
+    // second importer would be a second place reporting is wired, and the value
+    // would then have two readers to drift between. `test/unit/secret-hygiene`
+    // pins the *value* side of the same ruling -- that it is the only
+    // DSN-shaped literal under `src/` -- and this is the reach side.
+    const importers = sourceFiles()
+      .filter((file) => /(?:from|require\(|import\(|import)\s*['"][^'"]*crash-dsn(?:\.js)?['"]/.test(codeOnly(file.source)))
+      .map((file) => file.path)
+      .toSorted()
+    expect(
+      importers,
+      `the DSN module is imported by ${JSON.stringify(importers)}; it must be imported by src/main/crash-electron.ts and by nothing else`,
+    ).toEqual(['main/crash-electron.ts'])
   })
 
   // One test per section, each naming its own offender, so "a ^ was added to

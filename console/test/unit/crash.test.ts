@@ -77,15 +77,6 @@ import {
   type ScrubbedFrame,
 } from '../../src/main/crash'
 
-/** DSN_PLACEHOLDER is a DSN's shape -- scheme, public key, host, project id --
- * assembled from fragments at run time, for the reason `fakeSecrets` exists: a
- * DSN-shaped literal in this repository is a defect even when it is invented. The
- * host is `example.invalid`, the name reserved for exactly this, so nothing here
- * resolves anywhere and no reporting host is named by this file. */
-function dsnPlaceholder(): string {
-  return inert('https', '://', 'a'.repeat(32), '@', 'example', '.invalid', '/', '1')
-}
-
 /** APP_ROOT is the directory the console's own code is loaded from, as a
  * developer's checkout has it. It is a placeholder path rather than a real one:
  * the tests below are about which part of a path survives, and a path under a
@@ -145,14 +136,13 @@ function poisonType(): string {
 type HostileEvent = CrashEvent & Record<string, unknown>
 
 /** startupStub stands in for the console that starts reporting at launch: it
- * asks the gate once, at startup, holding the DSN the build was given, and would
- * initialise the client if the answer were `enabled`. The switch has not been
- * read at that moment -- which is the plan's red step, and why the field is not
- * in the call at all: `undefined` is the absence of an answer, while `null` is an
- * answer that is not `true`. So what the stub gets back is `off`, and nothing is
- * ever sent. */
-function startupStub(dsn: string | null): { readonly started: boolean } {
-  return { started: crashReportingDecision({ dsn }).enabled }
+ * asks the gate once, at startup, and would initialise the client if the answer
+ * were `enabled`. The switch has not been read at that moment -- which is the
+ * plan's red step, and why the field is not in the call at all: `undefined` is
+ * the absence of an answer, while `null` is an answer that is not `true`. So
+ * what the stub gets back is `off`, and nothing is ever sent. */
+function startupStub(): { readonly started: boolean } {
+  return { started: crashReportingDecision({}).enabled }
 }
 
 /** scrubbedFrame is one frame through the whole scrubber, which is the only
@@ -249,23 +239,22 @@ function changingOnSecondRead(
 
 describe('crash', () => {
   it('nothing is enabled before the switch is read', () => {
-    expect(startupStub(dsnPlaceholder())).toEqual({ started: false })
-    expect(startupStub(null)).toEqual({ started: false })
+    expect(startupStub()).toEqual({ started: false })
     // The unread switch is the field's absence, and it reports itself as unread
     // rather than as an operator who said no: D734's third state is worth a word
     // of its own precisely so that a log line can tell the two apart.
-    expect(crashReportingDecision({ dsn: dsnPlaceholder(), optedIn: undefined })).toEqual({
+    expect(crashReportingDecision({ optedIn: undefined })).toEqual({
       enabled: false,
       reason: 'opt-in-not-read',
     })
-    expect(crashReportingDecision({ dsn: dsnPlaceholder() })).toEqual({
+    expect(crashReportingDecision({})).toEqual({
       enabled: false,
       reason: 'opt-in-not-read',
     })
   })
 
   it('nothing is enabled with the switch off', () => {
-    expect(crashReportingDecision({ dsn: dsnPlaceholder(), optedIn: false })).toEqual({
+    expect(crashReportingDecision({ optedIn: false })).toEqual({
       enabled: false,
       reason: 'opt-in-off',
     })
@@ -278,44 +267,27 @@ describe('crash', () => {
     // that is not permission -- an installation that stores the node and leaves it
     // empty -- while `undefined` is no answer at all, which the case above reports
     // as unread.
-    const dsn = dsnPlaceholder()
     for (const optedIn of ['true', 'false', 'yes', 1, 0, {}, []]) {
-      expect(crashReportingDecision({ dsn, optedIn }), JSON.stringify(optedIn)).toEqual({
+      expect(crashReportingDecision({ optedIn }), JSON.stringify(optedIn)).toEqual({
         enabled: false,
         reason: 'opt-in-off',
       })
     }
-    expect(crashReportingDecision({ dsn, optedIn: null })).toEqual({ enabled: false, reason: 'opt-in-off' })
-    expect(crashReportingDecision({ dsn, optedIn: true })).toEqual({ enabled: true, reason: 'enabled' })
-    // ...and no DSN in the build is still the last word, so a document cannot
-    // smuggle its way past the two lines above either.
-    expect(crashReportingDecision({ dsn: undefined, optedIn: 'true' })).toEqual({
-      enabled: false,
-      reason: 'opt-in-off',
-    })
+    expect(crashReportingDecision({ optedIn: null })).toEqual({ enabled: false, reason: 'opt-in-off' })
+    expect(crashReportingDecision({ optedIn: true })).toEqual({ enabled: true, reason: 'enabled' })
   })
 
-  it('nothing is enabled without a DSN that is one, whatever the switch says', () => {
-    // The dormant build the owner ruled for: the switch may be on and the DSN
-    // missing, empty or whitespace, and the answer is still off -- so a release
-    // that was built without the value sends nothing rather than failing.
-    for (const dsn of [undefined, null, '', '   ', '\t\n']) {
-      expect(crashReportingDecision({ dsn, optedIn: true })).toEqual({
-        enabled: false,
-        reason: 'no-dsn',
-      })
-    }
-    // The reason is a word for a log line and never the value, which is a URL
-    // with a key in it.
-    const decision = crashReportingDecision({ dsn: dsnPlaceholder(), optedIn: true })
-    expect(JSON.stringify(decision)).not.toContain(dsnPlaceholder())
-  })
-
-  it('enabled only when the switch is read, is on, and the build carries a DSN', () => {
-    expect(crashReportingDecision({ dsn: dsnPlaceholder(), optedIn: true })).toEqual({
-      enabled: true,
-      reason: 'enabled',
-    })
+  it('the switch is the whole gate, and the DSN is not part of it', () => {
+    // The owner's ruling of 2026-10-31 in one assertion. The gate used to have a
+    // fourth answer -- `'no-dsn'`, for a yes whose build had been given no DSN --
+    // and the ruling removed the input that could produce it: the DSN is a
+    // constant of every build (`./crash-dsn`), so there is no missing value for
+    // a release to be built without and no reason for a log line to name.
+    expect(crashReportingDecision({ optedIn: true })).toEqual({ enabled: true, reason: 'enabled' })
+    const source = readFileSync(fileURLToPath(new URL('../../src/main/crash.ts', import.meta.url)), 'utf8')
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+    expect(code).not.toContain('no-dsn')
+    expect(code, 'the gate reads no DSN: it is not an input of this module').not.toMatch(/\bdsn\b/i)
   })
 
   it('holds no environment read, no file, no network call and no endpoint', () => {

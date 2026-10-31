@@ -8,11 +8,14 @@
 // that amends it to describe what this code does.
 //
 // The owner's ruling of 2026-10-30 is that the console gains a crash reporter
-// now and ships **dormant**: nothing is sent, because no DSN is configured, and
-// the switch is **opt-in** -- off unless the installation's setting says on. The
-// window before that setting has been read is a third state rather than a slow
-// "off" (D734): in it, nothing is sent either, which is the whole of the
-// promise that an opted-out operator never sends one report.
+// now and ships **dormant**: nothing is sent while nothing has read the
+// installation's setting, and the switch is **opt-in** -- off unless that
+// setting says on. The window before the setting has been read is a third state
+// rather than a slow "off" (D734): in it, nothing is sent either, which is the
+// whole of the promise that an opted-out operator never sends one report. The
+// DSN is no longer part of the dormancy -- since the owner's ruling of 2026-10-31
+// it is a constant of every build (`./crash-dsn`) -- so the switch is the one
+// thing that decides, which is what D734 always said it should be.
 //
 // F33 is why the payload is an **allow-list**. A Go panic value, an Electron
 // error message and a JS exception string all carry repository names, branch
@@ -22,8 +25,9 @@
 //
 // The module is therefore pure and static, and it is deliberately importless:
 // it reads no environment, opens no file, makes no call, and holds no DSN, no
-// host and no endpoint. The DSN arrives with the SDK slice as a build-time value
-// the owner sets and nobody commits. The types below are structural for the same
+// host and no endpoint. The DSN lives beside it in `./crash-dsn`, which is the
+// one file under `src/` a DSN-shaped string is allowed in, and this file is not
+// told about it at all. The types below are structural for the same
 // reason -- the SDK slice hands `scrubCrashEvent` the very event its own
 // `beforeSend` receives -- and the event they describe is deliberately not the
 // SDK's own: they are `readonly` where it is mutable, so the hand-off back costs
@@ -44,10 +48,13 @@
  * present and empty decodes to `null`, which is an answer. */
 export type CrashOptIn = boolean | null | undefined
 
-/** CrashReportingInput is everything the gate is allowed to look at: the DSN the
- * build was given, and the switch. There is deliberately nothing else -- no
- * environment, no clock, no state -- so the decision cannot depend on anything
- * the SDK slice has to remember to pass.
+/** CrashReportingInput is everything the gate is allowed to look at: the switch,
+ * and nothing else. There is deliberately no DSN here since the owner's ruling of
+ * 2026-10-31 -- the value is a constant of the build rather than an input that
+ * can be missing, so a gate that asked about it would be asking a question whose
+ * answer is always yes -- and nothing else either: no environment, no clock, no
+ * state, so the decision cannot depend on anything the SDK slice has to remember
+ * to pass.
  *
  * The switch is typed `unknown` rather than `CrashOptIn` because of where it
  * comes from: a settings node in a document this console did not write, decoded
@@ -56,15 +63,18 @@ export type CrashOptIn = boolean | null | undefined
  * admitted only the three good values would move that refusal into a cast at the
  * call site. */
 export interface CrashReportingInput {
-  readonly dsn?: string | null
   readonly optedIn?: unknown
 }
 
 /** CrashReportingReason is the word a log line gets, and it is a word rather
- * than the DSN: a reason ends up pasted into an issue, and a DSN is a URL with a
- * key in it. One word per way of being off, because "off" alone would leave the
- * dormant build indistinguishable from a build whose DSN the owner never set. */
-export type CrashReportingReason = 'enabled' | 'opt-in-not-read' | 'opt-in-off' | 'no-dsn'
+ * than a value: a reason ends up pasted into an issue. One word per way of being
+ * off, because "off" alone could not tell an operator who said no from a console
+ * that has not read the setting yet -- and those are different answers, one of
+ * them being D734's third state. There were four words while the DSN was a build
+ * input and a build without one was a third way of sending nothing; since the
+ * owner's ruling of 2026-10-31 the DSN is a constant of every build, so there is
+ * no such state left to name. */
+export type CrashReportingReason = 'enabled' | 'opt-in-not-read' | 'opt-in-off'
 
 export interface CrashReportingDecision {
   readonly enabled: boolean
@@ -74,9 +84,10 @@ export interface CrashReportingDecision {
 /**
  * crashReportingDecision is the gate, as a question asked afresh each time it
  * matters: the setting can change, and a reporter started under an open gate
- * must not keep sending under a closed one. The switch is read first, so a
- * console that has not read the setting says so rather than blaming the build
- * for the DSN it was never asked about.
+ * must not keep sending under a closed one. The switch is the whole of it -- the
+ * DSN is the build's own constant, so there is nothing beside the switch that
+ * could close this gate, and the gate is therefore exactly "did the operator
+ * turn it on".
  *
  * The gate is strict: `true` and nothing else opens it. The value arrives from a
  * document this console did not write, so `"true"`, `1`, `"yes"` and an object
@@ -84,15 +95,10 @@ export interface CrashReportingDecision {
  * one of them as an operator's consent -- which is the one answer this gate may
  * not guess at. Everything that is not `true` is an answer that is off, except
  * the absence of an answer, which is the unread case and says so.
- *
- * A DSN that is only whitespace is no DSN: the value comes from a build the
- * owner configures, and an empty one is what an unset variable looks like.
  */
 export function crashReportingDecision(input: CrashReportingInput): CrashReportingDecision {
   if (input.optedIn === undefined) return { enabled: false, reason: 'opt-in-not-read' }
   if (input.optedIn !== true) return { enabled: false, reason: 'opt-in-off' }
-  const dsn = input.dsn
-  if (typeof dsn !== 'string' || dsn.trim() === '') return { enabled: false, reason: 'no-dsn' }
   return { enabled: true, reason: 'enabled' }
 }
 

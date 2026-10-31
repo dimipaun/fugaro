@@ -47,13 +47,13 @@
 // SDK's event survives the scrubber, and no breadcrumb, user, request, context or
 // extra is among them.
 //
-// **The DSN is the build's, never the repository's.** No agent and no commit
-// holds one: `npm run build`'s last step (`tools/crash-dsn/`, where the release
-// build's variable is spelled) writes the value into the build's own
-// `dist/main/`, so a build that was given no such variable produces no artifact
-// and initialises nothing. This module reads the artifact back and never writes
-// it, and it never looks at the environment: the value the running console would
-// find there is whatever launched it, which is not the build's.
+// **The DSN is one public constant, not a secret and not a build input.** It is
+// `./crash-dsn`'s `CONSOLE_CRASH_DSN`, embedded by the owner's ruling of
+// 2026-10-31: a Sentry DSN can only send events, so it is a value a repository
+// may hold and a shipped app cannot hide anyway. Nothing is built, written or
+// read for it at run time, and this module never looks at the environment -- a
+// DSN the running console found there would be whatever launched it rather than
+// the project the console reports to.
 //
 // **Where a frame's path comes from.** The SDK hands `beforeSend` whatever its
 // own stack parser built, and in the main process that is a real file's
@@ -65,9 +65,6 @@
 // from that URL in `beforeSend` would be this module inventing a path the SDK
 // never built. A frame's name and line still reach the processor; only the
 // archive-relative file is lost.
-
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 
 import { utilityProcess } from 'electron'
 
@@ -81,18 +78,7 @@ import {
 } from '@sentry/electron/main'
 
 import { crashReportingDecision, CRASH_CLIENT_OPTIONS, scrubCrashEvent } from './crash'
-
-/** DSN_ARTIFACT_PATH is the artifact's path inside the app, relative to
- * `app.getAppPath()`. It is `dist/main/` because that is what the build compiles
- * and what `build.files` packs; the JSON and not a `.js` module, because what
- * this module does with it is read a value rather than execute one. */
-const DSN_ARTIFACT_PATH = ['dist', 'main', 'crash-dsn.json']
-
-/** MAX_DSN_LENGTH bounds what the artifact may contribute. The file is the
- * build's own, so a value longer than a DSN can be is a file that is not the one
- * the build wrote -- and reading it anyway would put whatever it holds on a
- * request. */
-const MAX_DSN_LENGTH = 2048
+import { CONSOLE_CRASH_DSN } from './crash-dsn'
 
 /** CLOSE_TIMEOUT_MS is how long `close` waits for what the transport has in
  * flight before giving up on it. It is the wiring's number rather than the
@@ -123,39 +109,17 @@ export interface CrashReportingHandle {
   readonly close: () => Promise<void>
 }
 
-/** CrashReportingInput is the caller's side of the gate. `dsn` is the build's
- * artifact when the caller does not supply one; `appRoot` is both the DSN
- * artifact's root and the prefix every kept frame's path is cut at. There is
- * deliberately no switch here beyond `optedIn`, which until the switch slice
- * lands is `null`: nothing has read the installation's setting yet, and D734
- * makes that third state off. */
+/** CrashReportingInput is the caller's side of the gate. `dsn` is the embedded
+ * constant when the caller does not supply one, and it exists for the tests and
+ * the e2e fixture, which point a real client at a sink of their own; `appRoot`
+ * is the prefix every kept frame's path is cut at. There is deliberately no
+ * switch here beyond `optedIn`, which until the switch slice lands is `null`:
+ * nothing has read the installation's setting yet, and D734 makes that third
+ * state off. */
 export interface CrashReportingInput {
   readonly optedIn: unknown
   readonly appRoot: string
   readonly dsn?: string | null
-}
-
-/** crashDsnFromBuild reads the DSN the build wrote, and answers null for every
- * way of not having one: no file, a file that is not the shape, an empty string.
- * It never throws -- this runs at startup, and a console that refused to launch
- * because a build artifact was missing would be worse than a console that
- * reports nothing, which is exactly the dormant build. */
-export function crashDsnFromBuild(appRoot: string): string | null {
-  let raw: string
-  try {
-    raw = readFileSync(join(appRoot, ...DSN_ARTIFACT_PATH), 'utf8')
-  } catch {
-    return null
-  }
-  try {
-    const parsed: unknown = JSON.parse(raw)
-    if (typeof parsed !== 'object' || parsed === null) return null
-    const dsn = (parsed as { readonly dsn?: unknown }).dsn
-    if (typeof dsn !== 'string' || dsn.trim() === '' || dsn.length > MAX_DSN_LENGTH) return null
-    return dsn
-  } catch {
-    return null
-  }
 }
 
 /** toSdkEvent runs the scrubber and hands its result back as the SDK's own event
@@ -174,10 +138,11 @@ function toSdkEvent(event: ErrorEvent, appRoot: string): ErrorEvent {
 /** startCrashReporting asks the gate and, only when it opens, initialises the
  * SDK's main-process client. A closed gate is not an error and not a log line:
  * it is the console's normal state, and the answer the switch slice will change.
- * The switch is read before the build's DSN artifact, and it is asked as an
- * allow test, so the disk is untouched by a start that could not have reported
- * anything anyway -- and `index.ts` asks the same question (`optedIn === true`)
- * before it decides to load this module at all.
+ * The switch is the gate's whole input, and it is an allow test, so a state
+ * nobody has defined yet -- the `null` this slice is called with, and whatever
+ * the switch slice adds beside `true` -- is off without this file having to know
+ * its name. `index.ts` asks the same question (`optedIn === true`) before it
+ * decides to load this module at all.
  *
  * The options are `CRASH_CLIENT_OPTIONS` corrected against 8.2.0, plus the four
  * this file owns: the DSN, `NO_IPC`, the non-offline transport, and `beforeSend`.
@@ -220,19 +185,16 @@ function toSdkEvent(event: ErrorEvent, appRoot: string): ErrorEvent {
  * no log without it answering, which is the behaviour the missing option was
  * wanted for; the unit test pins all three names against the SDK's types. */
 export function startCrashReporting(input: CrashReportingInput): CrashReportingHandle {
-  // The switch is read before the artifact is, and it is an **allow** test rather
-  // than a list of the answers that shut the gate: only a switch that says yes
-  // opens a file, and a state nobody has defined yet -- the `null` this slice is
-  // called with, and whatever the switch slice adds beside `true` -- is off
-  // without this file having to know its name. The DSN the build wrote is opened
-  // only for that yes; a caller that passed one still has `crashReportingDecision`
-  // decide below, against the switch it was handed.
-  const dsn = input.dsn ?? (input.optedIn === true ? crashDsnFromBuild(input.appRoot) : null)
-  const decision = crashReportingDecision({ dsn, optedIn: input.optedIn })
+  // The switch is the gate's whole input, and `crashReportingDecision` is asked
+  // rather than tested inline so that the reason it answers is a word the same
+  // module spells for both this wiring and `./crash`'s own test. Nothing else
+  // can close the gate: the DSN is a constant of this build rather than an input
+  // that can be missing, so a yes is a yes.
+  const decision = crashReportingDecision({ optedIn: input.optedIn })
   if (!decision.enabled) return { close: () => Promise.resolve() }
   const options: ElectronMainOptions = {
     ...CRASH_CLIENT_OPTIONS,
-    dsn: dsn ?? undefined,
+    dsn: input.dsn ?? CONSOLE_CRASH_DSN,
     ipcMode: NO_IPC,
     transport: makeElectronTransport,
     beforeSend: (event) => toSdkEvent(event, input.appRoot),
