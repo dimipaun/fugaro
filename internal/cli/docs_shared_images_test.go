@@ -51,7 +51,41 @@ func TestDocsSharedImagesDesign(t *testing.T) {
 		// memory, so the caller bounds its own read.
 		"The bound is on bytes already in memory, so the caller bounds its own read",
 		// §2.4's escaping rule: a fact is one line whatever it holds.
-		"Each fact is written as a **quoted Go string literal**",
+		"Each literal is a **quoted Go string literal**",
+		// §2.4's encoding rule, which review round 2 found missing: the three
+		// fields are each their own literal, the third always written, so two
+		// different triples can never be one fact — and the key's version moved
+		// with the change.
+		"key v2",
+		"Each of the three is its own quoted literal, one space between",
+		"The three fields are encoded apart because a fact must be injective",
+		"which the spelling without per-field quoting could not say",
+		// §2.3's empty-integrity rule and the table that names each ecosystem's
+		// default registry, which is what "this source is the default registry's"
+		// means per format.
+		"A package a file states no integrity for is keyed only when the file also says it came from the",
+		"| Ecosystem | The default registry, and what the format writes for it |",
+		"and a key that is a bare `name@version` is the default registry's by the format's convention",
+		// §2.3's no-facts paragraph: those files run during the install and are
+		// not facts of the key — the claim C6 and SECURITY.md repeat.
+		"**The no-facts table is a statement about the key, not about what those files do.**",
+		// The three source shapes read one step earlier, in the header or in the
+		// version: a Yarn alias, a Yarn git or codeload dependency, npm v1's
+		// source-in-version.
+		"states the source in its `version` field",
+		"its header states the git specifier or the `owner/repo`",
+		// The two reductions round 2 fixed: go.sum's two hashes are joined, and
+		// a pnpm block resolution is read.
+		"both are joined in the order the file writes them",
+		"A `resolution:` written as a block",
+		// §3.1's entries are the three quoted literals, quotes and all.
+		"a package entry is the fact's three quoted literals",
+		"\"\\\"left-pad\\\" \\\"1.3.0\\\" \\\"sha512-aaa\\\"\"",
+		// §3.1's one-job rule reads the repository and the name, and says what
+		// that cannot catch — the rename C8b1b's refresh owns.
+		"catch is one job **renamed** between two entries",
+		// §4 compares the whole facts.
+		"resolved to the same artifacts, compared as the three quoted literals",
 		// Reuse compares whole facts, so the integrity is part of it (D618).
 		"only when it holds the whole set at the same versions and the\nsame integrities",
 		// T6(c) as resolved: propose-then-confirm, and the unattended refusal.

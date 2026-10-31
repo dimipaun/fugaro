@@ -203,6 +203,16 @@ func TestLockRefusesTwoKeysForOneRepositoryWorkflow(t *testing.T) {
 	if _, err := ParseLock([]byte(two)); err != nil {
 		t.Errorf("ParseLock refused one repository's two workflows on two images: %v", err)
 	}
+	// Two repositories whose jobs happen to carry the SAME name are two jobs
+	// too, and they may be on two images: a repository's job names are its own,
+	// so reading the name alone would refuse this lock. One job RENAMED between
+	// two entries is what neither reading catches — §3.1 names that as the
+	// refresh's job, C8b1b — because a name is all the lock states of a job.
+	twoRepos := `{"version":1,"images":{` + entryUnder(lockKeyHex) + `,` +
+		strings.ReplaceAll(entryUnder(otherLockKeyHex), "owner/repo-a", "owner/repo-b") + `}}`
+	if _, err := ParseLock([]byte(twoRepos)); err != nil {
+		t.Errorf("ParseLock refused two repositories' same-named jobs on two images: %v", err)
+	}
 }
 
 // TestLockReadForbiddenIsAnError: the lock's read is strict, so a refusal is

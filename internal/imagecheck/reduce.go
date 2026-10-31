@@ -7,6 +7,7 @@ import (
 	"maps"
 	"path"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -87,9 +88,10 @@ func (e *UnkeyedError) Error() string {
 // Reduce returns the facts the key file rel states about its resolved set,
 // sorted and deduplicated: the package half of the key (design §2.3, §2.4).
 // One row of that table per format, and the file's name is what states the
-// format. Each fact is `name@version@integrity` — the integrity or checksum
-// the file states for those two, which D618 made part of the key — or
-// `name@version` alone when the file states none for that package.
+// format. Each fact is one package's name, version and integrity written as
+// three quoted string literals (factOf), the integrity being the checksum the
+// file states for that version's artifact — which D618 made part of the key —
+// and written as an empty literal when the file states none.
 //
 // Three answers, and the third is the one that matters:
 //
@@ -226,10 +228,11 @@ func newSet(rel string) *reducedSet {
 
 // add records one package as the fact the file states for it: its name, the
 // version it resolved to, and the integrity or checksum of the artifact that
-// version was resolved to (D618) — which a lockfile that states none leaves
-// out, because the fact is what the file says and not what a registry would
-// say. The three are one fact string, so the pair a name and a version with a
-// new integrity make is a different fact from the same pair without one.
+// version was resolved to (D618) — an empty third when the lockfile states
+// none, because the fact is what the file says and not what a registry would
+// say, and written either way so that the set is a set of triples. Each field
+// is encoded on its own (factOf), so the triple a name and a version with a
+// new integrity make is a different fact from any other triple.
 func (s *reducedSet) add(name, version, integrity string) error {
 	s.count++
 	switch {
@@ -240,19 +243,34 @@ func (s *reducedSet) add(name, version, integrity string) error {
 	case strings.ContainsAny(name, " \t") || strings.ContainsAny(version, " \t") || strings.ContainsAny(integrity, " \t"):
 		return s.fail(UnkeyedUnreadable, fmt.Sprintf("%q@%q", name, version))
 	case strings.Contains(version, "@") || hasControl(name) || hasControl(version) || hasControl(integrity):
-		// The fact's fields are split from the right — a name may hold an @
-		// (a scoped npm name) and a version may not, since one that does would
-		// let name, version and integrity be read as different fields — and no
-		// ecosystem writes a NUL in a name or any other control character in
-		// either of the three.
+		// No ecosystem writes an @ in a version or a control character in any of
+		// the three: an npm alias, a git URL and a file path are what a lock
+		// writes where a version stands, and each of those is a source the
+		// reducers refuse one step earlier. One that reaches here is refused
+		// rather than keyed by.
 		return s.fail(UnkeyedUnreadable, fmt.Sprintf("%q@%q", name, version))
 	}
-	fact := name + "@" + version
-	if integrity != "" {
-		fact += "@" + integrity
-	}
-	s.seen[fact] = struct{}{}
+	s.seen[factOf(name, version, integrity)] = struct{}{}
 	return nil
+}
+
+// factOf writes one package's fact (§2.4): its name, its version and its
+// integrity, each as a quoted Go string literal, one space between them, and
+// the third written even when the file states no integrity for that package.
+//
+// One literal per field is what makes a fact's fields the fields the file
+// stated. A fact is text a key file supplied: a name may hold an @ (an npm
+// lock writes one for an entry outside node_modules) and a version and an
+// integrity may hold anything, so one string `name@version@integrity` is not
+// injective: the name "s@1" at version "h" and the name "s" at version "1"
+// with the integrity "h" are that one string, and a key built over it would
+// make one dependency set of two. A quoted literal ends at the first
+// unescaped quote after its opening one, and quoting escapes the quote and the
+// backslash, so three of them in a row are three fields whatever they hold.
+// No field holds a space (add refuses one), so the space between them is a
+// separator a reader can split on as plainly as it can read the fields.
+func factOf(name, version, integrity string) string {
+	return strconv.Quote(name) + " " + strconv.Quote(version) + " " + strconv.Quote(integrity)
 }
 
 // hasControl reports whether s holds a C0 or C1 control character or DEL. §2.4
@@ -365,6 +383,17 @@ func reduceNPMLock(rel string, data []byte) ([]string, error) {
 			if !npmRegistrySource(e.Resolved) {
 				return nil, set.fail(UnkeyedNonRegistry, fmt.Sprintf("%s (resolved from %s)", name, e.Resolved))
 			}
+			// An entry under node_modules is a package npm fetched, and npm
+			// writes the tarball's URL for one of those: without an integrity,
+			// that URL is the only thing that says which artifact the version
+			// is, and the fact can be verified only when it is the default
+			// registry's (D618). An entry outside node_modules is a workspace
+			// member's own path (npmName), which is the repository's tree rather
+			// than an artifact the registry served, and it holds no artifact to
+			// verify.
+			if e.Integrity == "" && strings.Contains(p, "node_modules/") && !defaultRegistryURL(e.Resolved, npmRegistries...) {
+				return nil, set.fail(UnkeyedNonRegistry, fmt.Sprintf("%s (no integrity, and resolved from %q)", name, e.Resolved))
+			}
 			if err := set.add(name, e.Version, e.Integrity); err != nil {
 				return nil, err
 			}
@@ -379,8 +408,19 @@ func reduceNPMLock(rel string, data []byte) ([]string, error) {
 				if d == nil {
 					continue
 				}
+				if strings.Contains(d.Version, ":") {
+					// Version 1 of this format states the source in the version
+					// field for a package npm did not take from the registry:
+					// `git+https://github.com/x/y.git#abc`, `github:x/y#abc`,
+					// `file:../lib`. A version holding a scheme is that source,
+					// and the entry is not the registry's (D618).
+					return set.fail(UnkeyedNonRegistry, fmt.Sprintf("%s (%s)", name, d.Version))
+				}
 				if !npmRegistrySource(d.Resolved) {
 					return set.fail(UnkeyedNonRegistry, fmt.Sprintf("%s (resolved from %s)", name, d.Resolved))
+				}
+				if d.Integrity == "" && !defaultRegistryURL(d.Resolved, npmRegistries...) {
+					return set.fail(UnkeyedNonRegistry, fmt.Sprintf("%s (no integrity, and resolved from %q)", name, d.Resolved))
 				}
 				if err := set.add(name, d.Version, d.Integrity); err != nil {
 					return err
@@ -424,9 +464,7 @@ func npmName(p string, e npmPackage) (string, bool) {
 // tarball's http(s) URL, and npm 7 and later write none at all for a workspace
 // member's own entry, which is the repository's tree. Everything else — git+,
 // file:, link:, a bare path — is a source the registry does not hold, and a
-// package from one leaves the repository unkeyed (D618). An entry that states
-// no source is read as the registry's, since the lock states nothing that
-// refuses it.
+// package from one leaves the repository unkeyed (D618).
 func npmRegistrySource(resolved string) bool {
 	switch {
 	case resolved == "":
@@ -435,6 +473,28 @@ func npmRegistrySource(resolved string) bool {
 		return true
 	}
 	return false
+}
+
+// npmRegistries are the hosts an npm package's tarball comes from by default:
+// registry.npmjs.org is npm's own registry, and Yarn 1 writes
+// registry.yarnpkg.com for the same packages.
+var npmRegistries = []string{"registry.npmjs.org", "registry.yarnpkg.com"}
+
+// defaultRegistryURL reports whether a URL is served by one of the hosts named.
+// The host is what says which registry a file resolved from, and it is what a
+// fact with no integrity needs (D618): a URL at any other host is a registry
+// the ecosystem's default one did not serve, so nothing beside the name and
+// the version says which artifact the version is.
+func defaultRegistryURL(value string, hosts ...string) bool {
+	rest, ok := strings.CutPrefix(value, "https://")
+	if !ok {
+		return false
+	}
+	host, _, _ := strings.Cut(rest, "/")
+	if h, _, ok := strings.Cut(host, ":"); ok {
+		host = h
+	}
+	return slices.Contains(hosts, host)
 }
 
 // pnpmEntry is one packages or snapshots entry: the package its key names, and
@@ -473,6 +533,13 @@ func reducePnpmLock(rel string, data []byte) ([]string, error) {
 	entries := map[string]pnpmEntry{}
 	section, sawSection, unplaced := "", false, false
 	key := ""
+	// resolutionIndent is the indent of a `resolution:` line whose body is on
+	// the lines under it, or -1 when no such line is open: pnpm writes a
+	// resolution that does not fit on one line as a block — the tarball, the
+	// git URL and the integrity each on a line of its own — and reading only
+	// the schema line would key the entry as one with no source and no
+	// integrity at all.
+	resolutionIndent := -1
 	eachLine(data, func(indent int, text string) bool {
 		if text == "" || strings.HasPrefix(text, "#") {
 			return true
@@ -480,7 +547,7 @@ func reducePnpmLock(rel string, data []byte) ([]string, error) {
 		if indent == 0 {
 			section = strings.TrimSuffix(text, ":")
 			sawSection = sawSection || section == "packages" || section == "snapshots"
-			key = ""
+			key, resolutionIndent = "", -1
 			return true
 		}
 		if section != "packages" && section != "snapshots" {
@@ -496,11 +563,21 @@ func reducePnpmLock(rel string, data []byte) ([]string, error) {
 				unplaced = true
 				return true
 			}
+			if resolutionIndent >= 0 && indent > resolutionIndent {
+				entries[key] = entries[key].merged(pnpmResolution("resolution: " + text))
+				return true
+			}
+			resolutionIndent = -1
 			if i := strings.Index(text, "resolution:"); i == 0 {
+				if strings.TrimSpace(strings.TrimPrefix(text, "resolution:")) == "" {
+					resolutionIndent = indent
+					return true
+				}
 				entries[key] = entries[key].merged(pnpmResolution(text))
 			}
 			return true
 		}
+		resolutionIndent = -1
 		// The key line ends at its separator colon, and the key may hold a
 		// colon of its own: an alias's key is `alias@npm:left-pad@1.3.0` and a
 		// git resolution's holds a URL. So the separator is the first colon
@@ -613,14 +690,48 @@ func pnpmKey(raw string) (name, version string, ok bool) {
 
 // yarnSpec is one yarn.lock entry while it is being read: the name its header
 // states, the version, the integrity the entry carries (Yarn 1's integrity
-// line, Berry's checksum), and the source its resolved or resolution line
-// names, which is what says whether the entry came from a registry (D618).
+// line, Berry's checksum), and what its resolved or resolution line names,
+// which is what says whether the entry came from a registry (D618).
 type yarnSpec struct {
 	name, version string
 	integrity     string
-	source        string
-	versioned     bool
+	// kind is what the resolved or resolution line named, and source is that
+	// value as the refusal names it: the two are what decides whether the entry
+	// may be keyed at all.
+	kind      yarnSourceKind
+	source    string
+	versioned bool
 }
+
+// yarnSourceKind is how the source a yarn.lock entry's resolved or resolution
+// line names is served, which is what the entry's fact rests on beside its
+// integrity.
+type yarnSourceKind int
+
+const (
+	// yarnSourceUnstated: the entry wrote no resolved or resolution line at
+	// all, so nothing says where the version came from.
+	yarnSourceUnstated yarnSourceKind = iota
+	// yarnSourceDefaultRegistry: the ecosystem's default registry — Berry's
+	// npm: scheme for a registry package, patch: for one whose artifact a patch
+	// file changed, virtual: for a projection of one, and Yarn 1's tarball URL
+	// at registry.npmjs.org or registry.yarnpkg.com. The name and the version
+	// are enough to say which artifact the version is.
+	yarnSourceDefaultRegistry
+	// yarnSourceOwnTree: Berry's workspace: scheme, a member of the
+	// repository's own tree. The image holds no artifact for one of those, so
+	// what the lock states for it — a name and a version — is all there is.
+	yarnSourceOwnTree
+	// yarnSourceRegistry: a URL at a host that is not the default registry's.
+	// It may be another registry, in which case its artifact is the one the
+	// integrity beside it is of, and a fact with no integrity cannot be built
+	// from it (D618).
+	yarnSourceRegistry
+	// yarnSourceOther: a source the registry never served — a git, file, link,
+	// exec or portal scheme, or an alias's or a git descriptor's header — which
+	// leaves the repository unkeyed whether an integrity is beside it or not.
+	yarnSourceOther
+)
 
 // reduceYarnLock reduces yarn.lock, both Yarn 1's and Berry's. The two differ
 // in the separator after version — a space, or a colon — and Berry writes a
@@ -641,8 +752,21 @@ func reduceYarnLock(rel string, data []byte) ([]string, error) {
 			err = set.fail(UnkeyedUnpinned, cur.name)
 			return false
 		}
-		if cur.source != "" {
+		if cur.kind == yarnSourceOther {
 			err = set.fail(UnkeyedNonRegistry, fmt.Sprintf("%s@%s (resolved from %s)", cur.name, cur.version, cur.source))
+			return false
+		}
+		// An entry with no integrity is keyed only when its source is the
+		// ecosystem's default registry (D618): nothing then says which artifact
+		// the version is. Berry writes a checksum for every entry it resolved,
+		// so the entry with no integrity and no resolved line is Yarn 1's,
+		// while an entry whose tarball is at the default registry keeps its key.
+		if cur.integrity == "" && cur.kind == yarnSourceUnstated {
+			err = set.fail(UnkeyedNonRegistry, fmt.Sprintf("%s@%s (states no integrity and no source)", cur.name, cur.version))
+			return false
+		}
+		if cur.integrity == "" && cur.kind == yarnSourceRegistry {
+			err = set.fail(UnkeyedNonRegistry, fmt.Sprintf("%s@%s (no integrity, and resolved from %s)", cur.name, cur.version, cur.source))
 			return false
 		}
 		if err = set.add(cur.name, cur.version, cur.integrity); err != nil {
@@ -662,7 +786,32 @@ func reduceYarnLock(rel string, data []byte) ([]string, error) {
 			if i := strings.IndexByte(key, ','); i >= 0 {
 				key = strings.TrimSpace(key[:i])
 			}
-			if name := yarnName(key); name != "__metadata" {
+			name := yarnName(key)
+			// An alias's header states the alias and the package it points at —
+			// `lodash@npm:evil-pkg@^1.0.0` in Berry, and the same in Yarn 1 —
+			// so the name this reads is not a package's, and the version and
+			// integrity beside it are the aliased package's. A name holding a
+			// scheme is that header, and the entry is not the registry's
+			// (D618) — as it is not for a git descriptor's header, whose name
+			// is not a package name either.
+			if name != "__metadata" && strings.Contains(name, ":") {
+				err = set.fail(UnkeyedNonRegistry, key)
+				return false
+			}
+			// The header states the specifier the entry resolved as well as the
+			// name, and a git, file, link or URL specifier is a source no
+			// registry served, whatever the line beside it says (D618). Yarn 1
+			// writes that specifier in the header for a git dependency while its
+			// resolved line is a plain codeload URL, which no reading of the URL
+			// alone can tell from another registry's tarball, and Berry writes it
+			// as the scheme of the range.
+			if name != "__metadata" {
+				if i := strings.LastIndexByte(key, '@'); i > 0 && yarnNonRegistrySpecifier(key[i+1:]) {
+					err = set.fail(UnkeyedNonRegistry, key)
+					return false
+				}
+			}
+			if name != "__metadata" {
 				cur, inEntry = yarnSpec{name: name}, true
 			}
 			return true
@@ -682,7 +831,7 @@ func reduceYarnLock(rel string, data []byte) ([]string, error) {
 		case strings.HasPrefix(text, "checksum"):
 			cur.integrity = yarnValue(text, "checksum")
 		case strings.HasPrefix(text, "resolved"), strings.HasPrefix(text, "resolution"):
-			cur.source = yarnSource(yarnValue(text, strings.Fields(text)[0]))
+			cur.kind, cur.source = classifyYarnSource(yarnValue(text, strings.Fields(text)[0]))
 		}
 		return true
 	})
@@ -704,35 +853,80 @@ func yarnValue(text, field string) string {
 	return strings.Trim(v, `"'`)
 }
 
-// yarnSource is the non-registry source a resolved or resolution line names, or
-// "" for one a registry served. Berry writes the resolved package as
-// `name@npm:1.3.0`, `name@patch:…` (a registry package whose artifact a patch
-// file changed, and a key file of its own) or `name@workspace:…` (a member of
-// the repository's own tree, which is not a dependency the registry holds but
-// is part of the set); Yarn 1 writes the tarball's URL. A git, file, link,
-// exec, portal or http source is one whose artifact the registry did not serve,
-// and it leaves the repository unkeyed (D618).
-func yarnSource(value string) string {
-	if value == "" || yarnRegistrySource(value) {
-		return ""
+// classifyYarnSource reads a resolved or resolution line, and answers what it
+// named and how that is served. Berry writes the resolved package as
+// `name@npm:1.3.0`, `name@patch:…`, `name@virtual:…` or `name@workspace:…`,
+// and Yarn 1 writes the tarball's URL. An alias's line is the aliased
+// package's (`lodash@npm:evil-pkg@1.0.0`, read as the name before it), a git,
+// file, link, exec or portal source is one the registry never served, and a
+// URL at a host is a registry's — the default registry's, or another's, whose
+// tarball is then only what the integrity beside it says it is (D618).
+func classifyYarnSource(value string) (yarnSourceKind, string) {
+	if value == "" {
+		return yarnSourceUnstated, ""
 	}
-	// Berry's form has the package's name before the source, and the name may
-	// have an @ of its own (a scoped name), so the source is what follows the
-	// last one — the same split the fact's fields take.
-	if i := strings.LastIndexByte(value, '@'); i >= 0 && yarnRegistrySource(value[i+1:]) {
-		return ""
+	source := yarnSourceURL(value)
+	switch {
+	case strings.HasPrefix(source, "workspace:"):
+		return yarnSourceOwnTree, source
+	case strings.HasPrefix(source, "npm:"), strings.HasPrefix(source, "patch:"), strings.HasPrefix(source, "virtual:"):
+		return yarnSourceDefaultRegistry, source
+	case defaultRegistryURL(source, npmRegistries...):
+		return yarnSourceDefaultRegistry, source
+	case strings.HasPrefix(source, "http://"), strings.HasPrefix(source, "https://"):
+		return yarnSourceRegistry, source
+	}
+	return yarnSourceOther, source
+}
+
+// yarnNonRegistrySpecifier reports whether a header's range names the source
+// the entry resolved from rather than a version: the schemes Yarn 1 writes a
+// git, ssh or file specifier with, and Berry's exec: and portal: for a package
+// run or linked from outside the registry. The schemes that mean the registry
+// (npm:, patch:, virtual:) and workspace: are not among them.
+//
+// The last form is Yarn 1's owner/repo shorthand for a GitHub repository, which
+// carries no scheme at all. A version range and a dist-tag hold no slash, so a
+// range with neither a scheme nor a slash rule left to read it as is the
+// shorthand, and the entry resolved from a repository rather than from a
+// registry. Reading it from the header is what makes it visible at all: the
+// resolved line beside it is a codeload archive, a plain https URL at a host
+// that is not the default registry's, and no reading of that URL alone can tell
+// it from another registry's tarball.
+func yarnNonRegistrySpecifier(value string) bool {
+	for _, scheme := range []string{
+		"exec:", "portal:", "file:", "link:", "git:", "git+", "ssh:",
+		"github:", "gitlab:", "bitbucket:", "http://", "https://",
+	} {
+		if strings.HasPrefix(value, scheme) {
+			return true
+		}
+	}
+	return !yarnScheme(value) && strings.Contains(value, "/")
+}
+
+// yarnSourceURL is the source a resolved or resolution value names. Berry
+// writes the package's name before it, and the name may have an @ of its own
+// (a scoped name), so the source is what follows the last one when what follows
+// it is a scheme — the same split the fact's fields take. Yarn 1 writes the
+// source alone, and its tarball URLs are read whole: a URL with a userinfo @ in
+// it is not a name with a scheme after it.
+func yarnSourceURL(value string) string {
+	if i := strings.LastIndexByte(value, '@'); i >= 0 && yarnScheme(value[i+1:]) {
+		return value[i+1:]
 	}
 	return value
 }
 
-// yarnRegistrySource reports whether a resolved value, on its own, names a
-// source a registry served: Yarn 1 states the tarball's URL there, Berry a
-// scheme naming the registry it took the package from, and a workspace or a
-// patched registry package, which are resolved from the repository's own tree
-// or from a key file of its own.
-func yarnRegistrySource(value string) bool {
-	for _, prefix := range []string{"npm:", "patch:", "workspace:", "virtual:", "http://", "https://"} {
-		if strings.HasPrefix(value, prefix) {
+// yarnScheme reports whether a value begins with one of the schemes a yarn.lock
+// writes for a resolution: Berry's, and the URL and VCS schemes Yarn 1 writes
+// for a package it did not take from a registry.
+func yarnScheme(value string) bool {
+	for _, scheme := range []string{
+		"npm:", "patch:", "virtual:", "workspace:", "exec:", "portal:",
+		"file:", "link:", "git:", "git+", "http://", "https://",
+	} {
+		if strings.HasPrefix(value, scheme) {
 			return true
 		}
 	}
@@ -749,22 +943,26 @@ func yarnName(key string) string {
 	return key
 }
 
-// goModule is one module's two go.sum lines: the hash of the module's own zip,
-// from the line whose version has no /go.mod suffix, and the hash of its
+// goModule is one module's go.sum lines: the hashes of the module's own zip,
+// from the lines whose version has no /go.mod suffix, and the hashes of its
 // go.mod. A module's integrity is the zip's — the artifact the module is built
 // from (D618) — and a module the file states only a /go.mod line for is one
 // whose zip was never brought in, and what the file states for it is that hash.
+// Each is a list, because go.sum may state a hash for one module at one version
+// more than once — the go command appends a line for every hash it verifies —
+// and reading the last line alone would make the fact, and so the key, depend
+// on the order the file happened to write them in.
 type goModule struct {
 	name, version string
-	zipHash       string
-	modHash       string
+	zipHashes     []string
+	modHashes     []string
 }
 
 func (m goModule) integrity() string {
-	if m.zipHash != "" {
-		return m.zipHash
+	if len(m.zipHashes) > 0 {
+		return joinedHashes(m.zipHashes)
 	}
-	return m.modHash
+	return joinedHashes(m.modHashes)
 }
 
 // reduceGoSum reduces go.sum and go.work.sum. Each line is a module path, a
@@ -795,9 +993,9 @@ func reduceGoSum(rel string, data []byte) ([]string, error) {
 		m := modules[key]
 		m.name, m.version = name, version
 		if mod {
-			m.modHash = fields[2]
+			m.modHashes = append(m.modHashes, fields[2])
 		} else {
-			m.zipHash = fields[2]
+			m.zipHashes = append(m.zipHashes, fields[2])
 		}
 		modules[key] = m
 		return true
@@ -949,7 +1147,15 @@ func reducePoetryLock(rel string, data []byte) ([]string, error) {
 			return nil, set.fail(UnkeyedNonRegistry, fmt.Sprintf("%s (%s from %s)", pypiName(p.name), p.source["type"], p.source["url"]))
 		}
 		hashes := append(slices.Clone(p.hashes), metadata[pypiName(p.name)]...)
-		if err := set.add(pypiName(p.name), p.version, joinedHashes(hashes)); err != nil {
+		integrity := joinedHashes(hashes)
+		// poetry writes a package it did not take from PyPI as a legacy source
+		// at the index it did take it from, and one it did take from PyPI may
+		// be written that way too. Without a hash, only a source that is PyPI's
+		// own index says which artifact the version is (D618).
+		if integrity == "" && p.source["type"] == "legacy" && !pypiIndexURL(p.source["url"]) {
+			return nil, set.fail(UnkeyedNonRegistry, fmt.Sprintf("%s (no hashes, and from %s)", pypiName(p.name), p.source["url"]))
+		}
+		if err := set.add(pypiName(p.name), p.version, integrity); err != nil {
 			return nil, err
 		}
 	}
@@ -961,7 +1167,9 @@ func reducePoetryLock(rel string, data []byte) ([]string, error) {
 // editable at "."), or a git, path, directory, file or URL source, and a
 // package from one of those leaves the repository unkeyed (D618). Its hashes
 // are its sdist's and each of its wheels', which are the integrity the key
-// takes.
+// takes, and a package with no hash is keyed only when its source is PyPI's
+// own index — the project's own entry being the repository's tree, which holds
+// no artifact.
 func reduceUVLock(rel string, data []byte) ([]string, error) {
 	packages, _ := readTOMLPackages(data)
 	set := newSet(rel)
@@ -971,16 +1179,33 @@ func reduceUVLock(rel string, data []byte) ([]string, error) {
 				return nil, set.fail(UnkeyedNonRegistry, fmt.Sprintf("%s (%s: %s)", pypiName(p.name), field, v))
 			}
 		}
+		ownTree := false
 		for _, field := range []string{"editable", "virtual"} {
-			if v := p.source[field]; v != "" && v != "." {
-				return nil, set.fail(UnkeyedNonRegistry, fmt.Sprintf("%s (%s: %s)", pypiName(p.name), field, v))
+			if v := p.source[field]; v != "" {
+				if v != "." {
+					return nil, set.fail(UnkeyedNonRegistry, fmt.Sprintf("%s (%s: %s)", pypiName(p.name), field, v))
+				}
+				ownTree = true
 			}
 		}
-		if err := set.add(pypiName(p.name), p.version, joinedHashes(p.hashes)); err != nil {
+		integrity := joinedHashes(p.hashes)
+		if integrity == "" && !ownTree && !pypiIndexURL(p.source["registry"]) {
+			return nil, set.fail(UnkeyedNonRegistry, fmt.Sprintf("%s (no hashes, and from %q)", pypiName(p.name), p.source["registry"]))
+		}
+		if err := set.add(pypiName(p.name), p.version, integrity); err != nil {
 			return nil, err
 		}
 	}
 	return set.pairs(), nil
+}
+
+// pypiIndexURL reports whether a URL is PyPI's own: the simple index a lock
+// states as its source, and the host PyPI serves the files from. Any other
+// index is one whose artifact nothing beside a package's name and version
+// names, so a fact with no hash cannot be built from a package resolved there
+// (D618).
+func pypiIndexURL(value string) bool {
+	return defaultRegistryURL(value, "pypi.org", "files.pythonhosted.org")
 }
 
 // reduceCargoLock reduces Cargo.lock. A package's source is the registry's
@@ -990,7 +1215,8 @@ func reduceUVLock(rel string, data []byte) ([]string, error) {
 // own, or one a path depends on — which is a tree rather than an artifact any
 // registry served, and it is keyed by its name and version like the workspace
 // crate §2.3 includes. A registry package's integrity is its checksum, the hash
-// Cargo wrote for the published archive.
+// Cargo wrote for the published archive, and a package from any other index is
+// keyed without one only when that index is crates.io's (D618).
 func reduceCargoLock(rel string, data []byte) ([]string, error) {
 	packages, _ := readTOMLPackages(data)
 	set := newSet(rel)
@@ -1002,11 +1228,25 @@ func reduceCargoLock(rel string, data []byte) ([]string, error) {
 		default:
 			return nil, set.fail(UnkeyedNonRegistry, fmt.Sprintf("%s (%s)", p.name, p.sourceString))
 		}
-		if err := set.add(p.name, p.version, joinedHashes(p.hashes)); err != nil {
+		checksum := joinedHashes(p.hashes)
+		if checksum == "" && p.sourceString != "" && !cargoDefaultSource(p.sourceString) {
+			return nil, set.fail(UnkeyedNonRegistry, fmt.Sprintf("%s (no checksum, and from %s)", p.name, p.sourceString))
+		}
+		if err := set.add(p.name, p.version, checksum); err != nil {
 			return nil, err
 		}
 	}
 	return set.pairs(), nil
+}
+
+// cargoDefaultSource reports whether a Cargo source string is crates.io's own
+// index: the git index Cargo wrote before the sparse protocol and the sparse
+// index it writes now. A package from another registry is one whose version
+// alone does not say which artifact it is, so a checksum is what its fact
+// needs, and without one the repository is unkeyed (D618).
+func cargoDefaultSource(source string) bool {
+	return source == "registry+https://github.com/rust-lang/crates.io-index" ||
+		strings.HasPrefix(source, "sparse+https://index.crates.io/")
 }
 
 // tomlString reads a TOML value that is a string. Anything else — an inline
@@ -1155,6 +1395,13 @@ func reduceComposerLock(rel string, data []byte) ([]string, error) {
 		if integrity == "" {
 			integrity = p.Source.Reference
 		}
+		// A package with neither is one the lock states no artifact for. The
+		// registry composer would take it from is in the repository's
+		// composer.json, which the key carries no fact of, so nothing beside
+		// the name and the version says what would be installed (D618).
+		if integrity == "" {
+			return nil, set.fail(UnkeyedNonRegistry, fmt.Sprintf("%s (no dist shasum and no source reference)", p.Name))
+		}
 		if err := set.add(p.Name, p.Version, integrity); err != nil {
 			return nil, err
 		}
@@ -1167,12 +1414,18 @@ func reduceComposerLock(rel string, data []byte) ([]string, error) {
 // under it.
 const gemSpecIndent = 4
 
-// gemEntry is one entry of a Gemfile.lock specs: list, and the integrity the
+// gemEntry is one entry of a Gemfile.lock specs: list, the integrity the
 // CHECKSUMS section states for it — the digest of the gem Bundler installed
-// (D618). The section is written after every block, so the entries are read
+// (D618) — and the block it was written in: a GEM block names the server its
+// gems came from, and a PATH block names gems in the repository's own tree.
+// The CHECKSUMS section is written after every block, so the entries are read
 // first and added once it has been.
 type gemEntry struct {
 	name, version string
+	// ownTree is whether the block is a PATH one, and remotes are the GEM
+	// block's remote: lines as written.
+	ownTree bool
+	remotes []string
 }
 
 // reduceGemfileLock reduces Gemfile.lock. Every block that resolves packages —
@@ -1190,6 +1443,8 @@ func reduceGemfileLock(rel string, data []byte) ([]string, error) {
 	var err error
 	inSpecs, sawSpecs, unplaced := false, false, false
 	inChecksums, inGit, sawGit := false, false, false
+	inGem, inPath := false, false
+	var remotes []string
 	gitRemote := ""
 	eachLine(data, func(indent int, text string) bool {
 		switch {
@@ -1200,9 +1455,14 @@ func reduceGemfileLock(rel string, data []byte) ([]string, error) {
 			inChecksums = text == "CHECKSUMS"
 			inGit = text == "GIT"
 			sawGit = sawGit || inGit
+			inGem, inPath = text == "GEM", text == "PATH"
+			remotes = nil
 			return true
 		case inGit && strings.HasPrefix(text, "remote:"):
 			gitRemote = strings.TrimSpace(strings.TrimPrefix(text, "remote:"))
+			return true
+		case (inGem || inPath) && strings.HasPrefix(text, "remote:"):
+			remotes = append(remotes, strings.TrimSpace(strings.TrimPrefix(text, "remote:")))
 			return true
 		case inChecksums:
 			name, version, digest, ok := gemChecksum(text)
@@ -1230,7 +1490,7 @@ func reduceGemfileLock(rel string, data []byte) ([]string, error) {
 			err = set.fail(UnkeyedUnreadable, text)
 			return false
 		}
-		specs[name+"\x00"+version] = gemEntry{name: name, version: version}
+		specs[name+"\x00"+version] = gemEntry{name: name, version: version, ownTree: inPath, remotes: slices.Clone(remotes)}
 		return true
 	})
 	if err != nil {
@@ -1243,7 +1503,16 @@ func reduceGemfileLock(rel string, data []byte) ([]string, error) {
 	// function of the lockfile and not of Go's map iteration.
 	for _, key := range slices.Sorted(maps.Keys(specs)) {
 		e := specs[key]
-		if err := set.add(e.name, e.version, joinedHashes(checksums[key])); err != nil {
+		integrity := joinedHashes(checksums[key])
+		// A gem with no CHECKSUMS digest is keyed only when its block resolved
+		// it from rubygems.org — the server the ecosystem's default is — or when
+		// the block is a PATH one, whose gems Bundler takes from the checkout
+		// (D618). Most Gemfile.locks are written without the section, so this
+		// is the ordinary shape of the rule and not its exception.
+		if integrity == "" && !e.ownTree && !rubygemsRemotes(e.remotes) {
+			return nil, set.fail(UnkeyedNonRegistry, fmt.Sprintf("%s (no checksum, and from %s)", e.name, gemSourceText(e.remotes)))
+		}
+		if err := set.add(e.name, e.version, integrity); err != nil {
 			return nil, err
 		}
 	}
@@ -1256,6 +1525,32 @@ func reduceGemfileLock(rel string, data []byte) ([]string, error) {
 		return nil, set.fail(UnkeyedUnreadable, "the specs list states no entry at the indent this reads")
 	}
 	return set.pairs(), nil
+}
+
+// rubygemsRemotes reports whether every remote a GEM block states is the gem
+// server itself. Bundler writes each gem's source as a remote: line in the
+// block the gem is listed in, and a gem with no CHECKSUMS digest is keyed only
+// when that source is rubygems.org (D618): from another server, nothing beside
+// the name and the version says which artifact the version is.
+func rubygemsRemotes(remotes []string) bool {
+	if len(remotes) == 0 {
+		return false
+	}
+	for _, remote := range remotes {
+		if !defaultRegistryURL(remote, "rubygems.org") {
+			return false
+		}
+	}
+	return true
+}
+
+// gemSourceText is the remote a refusal names: the block's own remote: lines,
+// or the fact that it stated none.
+func gemSourceText(remotes []string) string {
+	if len(remotes) == 0 {
+		return "a block that states no remote"
+	}
+	return strings.Join(remotes, ", ")
 }
 
 // gemSpec reads one entry of a Gemfile.lock specs: list, name (version).

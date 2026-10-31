@@ -421,7 +421,15 @@ from it. **Not sized here** beyond: L, security-sensitive throughout.
   `internal/cli/docs_registry_readers_test.go` (new).
 - **Behaviour:** states that a repository's image holds its source at the baked commit and that
   anyone with pull rights on its registry reads it; context repositories are not baked; image builds
-  are Cloud Build cost outside the run budget (D621).
+  are Cloud Build cost outside the run budget (D621). It also states, for the shared
+  dependency-layer images (`shared-images.md`), that the key's integrity rules are what keep two
+  repositories from sharing an image built from two different artifacts, and that they are **not** a
+  boundary between repositories of one installation: the key files that state no package version —
+  `.npmrc`, `.pnpmfile.cjs`, a plugin under `.yarn/plugins/` or a `.yarn/cache`, a patch under
+  `.yarn/patches/`, a `package.json` `scripts` entry, a `go.mod` `replace` directive — run during the
+  install the image bakes or point it elsewhere and contribute no fact of the key, so a repository on
+  a shared key can change what the next build of that key installs for every repository already on it
+  (the class of §2.2's inherited `image.setup`).
 - **Tests:** `TestDocsRegistryReaders`, `TestDocsBuildsOutsideRunBudget`.
 - **Command:** `go test ./internal/cli/ -run 'Docs' -count=1`; `go run ./internal/clidoc`; in
   `website/`, `npm run check`.

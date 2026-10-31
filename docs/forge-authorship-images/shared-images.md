@@ -67,10 +67,11 @@ and base image count**. The integrity is the one each key file states for that p
 (D618, answered 2026-10-31), and it is part of the package input and not a fifth one: a version is
 what a lockfile resolved to, and the integrity or checksum beside it is what that version *was* —
 the artifact the image is built from — so two repositories that resolved one version to two
-artifacts are two dependency sets and two keys. §2.3 and §2.4 state the rule and its two
-consequences: a package from a source that is not the ecosystem's registry leaves the repository
-unkeyed (§2.5), and a file that states no integrity for a package contributes the name and the
-version alone.
+artifacts are two dependency sets and two keys. §2.3 and §2.4 state the rule and its consequences: a
+package from a source that is not the ecosystem's registry leaves the repository unkeyed (§2.5), and
+a package a file states **no** integrity for is keyed only when the file also says it came from the
+ecosystem's **default registry** — the rule §2.3 states, with each ecosystem's default registry
+named there — so a name and a version alone never stand in for an artifact.
 
 One case sits outside those four and is not a fifth input: a key file whose format §2.3 does not
 name cannot be reduced, and the repository is then **unkeyed** (§2.5) rather than hashed — a format
@@ -95,10 +96,30 @@ The workflow's key files are the evidence set; each is reduced by its own format
 carries the integrity or checksum the file states for that version's artifact** (D618): npm's
 `integrity`, go.sum's `h1:` hash, Cargo's `checksum`, composer's `dist.shasum` or, for a package it
 took from a VCS, its `source.reference`, Bundler's `CHECKSUMS`, Poetry's and uv's artifact hashes,
-pipenv's hashes, and the `--hash` lines a pip pin carries. A file that states none for a package
-contributes that package's name and version alone — the fact is what the file says and not what a
-registry would say. The four remaining shapes below are the exceptions the design names; every other
-key file is unkeyed (§2.5):
+pipenv's hashes, and the `--hash` lines a pip pin carries.
+
+**A package a file states no integrity for is keyed only when the file also says it came from the
+ecosystem's default registry** (D618, as the reviewer's probes of 2026-10-31 refined it): name and
+version then say which artifact it is, because that registry serves one artifact per version of a
+package. A source the file states that is *not* the default registry — a private index, a mirror, a
+second registry — is fine beside an integrity, since the integrity is of the artifact whatever host
+served it; what it cannot be is the only thing an entry has. Where the format's own convention says a
+source belongs and the file states none — a Bundler `GEM` block with no `remote:` line, a composer
+entry with neither a `dist.shasum` nor a `source.reference` — the entry is not the default
+registry's either, and it leaves the repository unkeyed:
+
+| Ecosystem | The default registry, and what the format writes for it |
+| --- | --- |
+| npm | `registry.npmjs.org`, and Yarn's own alias of it, `registry.yarnpkg.com`: the host of the entry's `resolved` URL |
+| pnpm | the same two hosts, and a key that is a bare `name@version` is the default registry's by the format's convention, which writes no source line for one |
+| Go modules | `proxy.golang.org`, and the module path's own origin: go.sum states an `h1:` hash for every module it records |
+| crates.io | the git index and the sparse index (`index.crates.io`), which are what a `source` line names |
+| PyPI | `pypi.org` and `files.pythonhosted.org`: a uv or Poetry `registry` source, and Poetry's *absent* `[package.source]`, which is PyPI by the format's convention. A Poetry `legacy` source is a registry whatever host it names, so it is keyed only beside the artifact hashes it states |
+| RubyGems | `rubygems.org`: the `remote:` of the `GEM` block the entry is written in. A `PATH` gem is the repository's own tree and is keyed by the version the lock states for it |
+| Packagist | `repo.packagist.org`, which composer.lock does **not** name per entry: a package's `dist.url` is the vendor's own archive host (a packagist package's is GitHub's), so an entry stating neither a shasum nor a reference is unkeyed rather than read as the default registry's |
+
+The four remaining shapes below are the exceptions the design names; every other key file is unkeyed
+(§2.5):
 
 - A package a file resolves from **a source that is not the ecosystem's registry** leaves the
   repository **unkeyed**, never keyed by the versions beside it: the artifact is one the registry
@@ -112,17 +133,28 @@ key file is unkeyed (§2.5):
   `git`, `path`, `directory`, `file` or `url` source or an `editable`/`virtual` source that is not
   `.`; a Pipfile entry's `git`, `path` or `file`; a Cargo `source` that is neither the registry, the
   sparse index nor absent; a Bundler `GIT` block; a composer `dev-` branch or `path` repository.
+  **Three of those are read one step earlier than the source line, because the source line does not
+  name a source**: a Yarn alias's header (`lodash@npm:evil-pkg@^1.0.0`) and a Yarn git descriptor's
+  are the header, and the resolved line beside an alias is the *aliased* package's; a Yarn 1 git
+  dependency's resolved line is a codeload archive, a plain `https` URL at a host no host check can
+  tell from another registry's tarball, while its header states the git specifier or the `owner/repo`
+  shorthand the dependency was declared with; an npm lockfile v1 (and a `packages` entry with no
+  `resolved`) states the source in its `version` field, so a `version` holding a scheme — a git URL,
+  `github:owner/repo#ref`, `file:…` — is a source and not a version. Each is refused rather than
+  keyed.
 - The repository's **own tree is not such a source**: an npm workspace member's entry, a crate the
-  Cargo lock writes with no source of its own, a uv or Poetry project's own entry, and a Bundler
-  `PATH` gem are part of the set the lock resolves, and they are keyed by the version the lock
-  states for them.
+  Cargo lock writes with no source of its own, a uv or Poetry project's own entry, a Berry
+  `workspace:` entry and a Bundler `PATH` gem are part of the set the lock resolves, and they are
+  keyed by the version the lock states for them: the image holds no artifact for one of those, so the
+  name and the version are all there is to say about it.
 - A **version that is not a version** — a composer `dev-main`, a branch a lock wrote under a moving
   reference — is one the registry served but not one that identifies an artifact, and it is the same
   answer for the same reason.
 - Strictness around the fact's three fields is part of the reduction: the fields are split from the
-  right, so a **name may hold an `@`** (a scoped npm name) and a **version may not**, and a NUL in a
-  name or any other control character in any of the three is refused (`UnkeyedUnreadable`) rather
-  than keyed by.
+  right, so a **name may hold an `@`** (a scoped npm name) and a **version may not**, no field holds
+  whitespace, and a NUL in a name or any other control character in any of the three is refused
+  (`UnkeyedUnreadable`) rather than keyed by. §2.4 says what that buys: the fields are encoded apart,
+  so no fact can hold one of the fields of another.
 
 Each file's own reduction:
 
@@ -130,9 +162,9 @@ Each file's own reduction:
 | --- | --- |
 | `package-lock.json` | every entry of `packages` with a `version` (the root `""` entry is skipped: it is the repository, not a dependency), as its `name` (the path after the last `node_modules/`, or the entry's own name for a workspace member's entry, which is written under the member's path) and `version`, transitives included |
 | `npm-shrinkwrap.json` | `package-lock.json`'s reduction: one format under the two names npm writes it under, and a repository's lockfile is whichever of them npm wrote |
-| `pnpm-lock.yaml`, `pnpm-lock.yml` | every `packages` / `snapshots` key, split at the last `@` into name and version, with pnpm 6's leading `/` and a peer suffix in parentheses (pnpm 7 and later) neither part of the name nor of the version |
+| `pnpm-lock.yaml`, `pnpm-lock.yml` | every `packages` / `snapshots` key, split at the last `@` into name and version, with pnpm 6's leading `/` and a peer suffix in parentheses (pnpm 7 and later) neither part of the name nor of the version. A `resolution:` written as a block — the field on its own line with `integrity:` or `tarball:` under it, which older locks write — is read like the one-line form, and a `resolution:` with an empty body is refused rather than keyed with no source and no integrity beside it |
 | `yarn.lock` | every entry header line `"name@range":` (the first of the ranges it lists) with its `version` field, which Yarn 1 writes after a space and Berry after a colon; the `__metadata` block is the lock's own header and is ignored |
-| `go.sum`, `go.work.sum` | every `module version` line, with a `/go.mod`-suffixed line merged into the module it names rather than a second fact, so each module@version appears once; the integrity is the module's own hash, from the line that is not the `/go.mod` one where the file states both |
+| `go.sum`, `go.work.sum` | every `module version` line, with a `/go.mod`-suffixed line merged into the module it names rather than a second fact, so each module@version appears once; the integrity is the module's own hash, from the line that is not the `/go.mod` one where the file states both. Where the file states **two** `h1:` lines for one module at one version — the go command appends a line for every hash it verifies — both are joined in the order the file writes them: keeping the last line alone would make the fact, and so the key, depend on that order, and the same two lines in the other order would be another key |
 | `requirements.txt`, `requirements*.txt` | every `name==version` pin, with the name as PEP 503 normalises it and any extras dropped from the name, and with the `--hash` values it carries as its integrity; its environment marker and a full-line comment are the pin's own and are not facts. pip-tools and `uv pip compile --universal` write the marker and the continuation together (`name==1.0 ; python_version < "3.11" \`), so the backslash ends the marker and the hashes after it belong to that pin. A line that is not a pin — `-r`, a URL, an editable install, an option, an unpinned name — makes the repository **unkeyed**, because the file then does not state what pip would install |
 | `poetry.lock`, `uv.lock`, `Pipfile.lock` | each `[[package]]` / `package` entry's `name` and `version`, with the artifact hashes the entry states — Poetry's `files` list or `[metadata.files]` table, uv's `sdist` and `wheels`, Pipfile's `hashes` — as its integrity. Pipfile.lock's `default` and `develop` sections are both read, and the `==` its versions are written with is pip's operator, not part of the version |
 | `Cargo.lock` | each `[[package]]` entry's `name` and `version` with its `checksum`, the workspace's own crate included: it is one of the lock's packages, and it states no checksum of its own |
@@ -149,6 +181,20 @@ none of them makes a repository unkeyed:
 | `pnpm-workspace.yaml` | nothing: it names the workspace's members, not a resolved set |
 | `.npmrc`, `.yarnrc`, `.yarnrc.yml`, `.pnpmfile.cjs`, `.yarn/releases/…`, `.yarn/plugins/…`, `.yarn/patches/…`, and the `.patch` or `.diff` path a pnpm `patchedDependencies` entry names | nothing: they configure the install and patch its inputs, so a change to one rebuilds the image (the key files and `ImageConfigHash`), and none of them names a version |
 | a path `image.key_files` names | by its own name when the table above knows the format — an operator may key a lockfile the built-ins do not, or a manifest beside one, which states ranges and contributes nothing — and **unkeyed** when neither table names it (§2.5): the default for a key file is unkeyed, never "no dependencies", because a file Fugaro does not read is not a file that resolved to nothing |
+
+**The no-facts table is a statement about the key, not about what those files do.** Most of them
+either run during the install the image bakes or point that install somewhere else: `.npmrc` and
+`.yarnrc.yml` name registries, `.pnpmfile.cjs` and a plugin under `.yarn/plugins/` are code the
+package manager loads, a patch under `.yarn/patches/` or the path a pnpm `patchedDependencies` entry
+names rewrites a package's source before it is installed, a `package.json` `scripts` entry —
+`preinstall`, `postinstall`, and whatever a dependency's own scripts do — executes as the install
+runs, a `.yarn/cache` holds artifacts an install may reuse instead of fetching, and a `go.mod`
+`replace` directive sends a module to another tree than the one its version names. None of that is a
+fact of the key, and the integrity rules above do **not** stand between repositories of one
+installation: a repository that can change one of those files changes what the next build of that key
+installs for **every** repository already on it. That is the same class as the `image.setup` of the
+repository that first built the key, which the rest inherit (§2.2): image sharing is a decision about
+repositories an installation already trusts, and the key is not a boundary between them.
 
 Anything else — any key file named in `key_files` that neither table names — makes the repository
 **unkeyed** (§2.5) and is never read as "no dependencies". The default answer for an unknown file is
@@ -189,34 +235,47 @@ table is reached.
 The canonical form is text, one line per fact, with a version line first:
 
 ```
-key v1
+key v2
 base:"<base_ref>@<base_digest>"
-pkg:"<name>@<version>@<integrity>"
+pkg:"<name>" "<version>" "<integrity>"
 tool:"<tool>@<version>"
 ```
 
 - A `pkg:` fact is the name, the version and the integrity or checksum the file states for that
-  version's artifact (D618), and the three fields are split from the right: a name may hold an `@`
-  (a scoped npm name), a version may not, and the integrity never does. A package whose file states
-  no integrity contributes `name@version` alone, which is the same fact a file that states one for
-  every other package writes for it.
+  version's artifact (D618). **Each of the three is its own quoted literal, one space between
+  them**, and the third is written even when the file states no integrity for that package, so a
+  fact is always three literals: `"left-pad" "1.3.0" "sha512-aaa"`, and `"left-pad" "1.3.0" ""` for
+  a package the file states no integrity for.
+- **The three fields are encoded apart because a fact must be injective.** A name, a version and an
+  integrity are all text a key file supplied, and any of them may hold the characters a joined
+  spelling would use as separators — an `@` in an npm lockfile's own path-derived name, an
+  integrity that is itself text. One string `name@version@integrity` makes two different triples one
+  fact, and a key built over it would hand one dependency set another's image: npm's
+  `"node_modules/s@1": {"version": "h", "resolved": "…"}` and `"node_modules/s": {"version": "1",
+  "integrity": "h"}` are the same string `s@1@h`. Quoting each field fixes that, and the encoding
+  is pinned by a test with those two shapes in it. Because of it **no fact can hold one of the
+  fields of another**, which the spelling without per-field quoting could not say.
+- A field never holds a space: a name, a version or an integrity with whitespace in it is a shape no
+  ecosystem writes, and the file is refused (`UnkeyedUnreadable`). So the space between the three
+  literals is a separator a reader can split on, and a fact read back gives back its three fields.
 - The fact's fields are used as the file states them, after the ecosystem's own canonicalisation
   where it defines one (PyPI's PEP 503 normalisation, which folds case, `-`, `_` and `.`; the Go
   module path as written, which is case-sensitive). A control character in a name, a version or an
   integrity, a NUL in a name, or an `@` in a version is not a shape any ecosystem writes: the file
-  is refused (`UnkeyedUnreadable`) rather than keyed by it, so no fact can hold a field of another's.
-- Each fact is written as a **quoted Go string literal** (`strconv.Quote`), which is the quotes in
-  the block above. A name, a version or an integrity is text a key file supplied, and a fact holding
-  a newline would otherwise end its line and have the rest of it read as further facts: a package
-  named `left-pad@1.0.0\npkg:react@18.3.1` would hash as a two-package set and take that set's key —
-  and so be served its image. Quoting escapes that newline, and every other control character, quote
-  and backslash, so one fact is one line whatever it holds.
+  is refused (`UnkeyedUnreadable`) rather than keyed by it.
+- Each literal is a **quoted Go string literal** (`strconv.Quote`), which is the quotes in the block
+  above. A name, a version or an integrity is text a key file supplied, and a fact holding a newline
+  would otherwise end its line and have the rest of it read as further facts: a package named
+  `left-pad\npkg:"react"` would hash as a further fact and take its key — and so be served its image.
+  Quoting escapes that newline, and every other control character, quote and backslash, so one fact
+  is one line whatever it holds.
 - Every line is **deduplicated** and the lines after the version line are sorted bytewise, so the
   order of files, of entries in a file and of JSON or YAML keys cannot matter.
 - The bytes end with a single newline. The hash is the lower-case hex **SHA-256** of those bytes,
   computed over UTF-8 with no BOM.
-- `key v1` is the reduction's version: a change to §2.3's rules starts a new key universe instead of
-  silently reusing images built under the old rules.
+- `key v2` is the reduction's version: a change to §2.3's rules, or to this encoding, starts a new
+  key universe instead of silently reusing images built under the old rules. The version is the
+  canonical form's first line, so the two universes cannot collide.
 
 ### 2.5 What the key ignores, and where it is computed
 
@@ -273,7 +332,7 @@ directory.
       "digest": "sha256:…",
       "base_ref": "ghcr.io/<owner>/fugaro-base:0.15.0",
       "base_digest": "sha256:…",
-      "packages": ["left-pad@1.3.0@sha512-aaa", "react@18.3.1@sha512-bbb"],
+      "packages": ["\"left-pad\" \"1.3.0\" \"sha512-aaa\"", "\"react\" \"18.3.1\" \"sha512-bbb\""],
       "tools": ["node@22.11.0"],
       "built_at": "2026-10-29T09:12:04Z",
       "build_id": "…",
@@ -286,7 +345,9 @@ directory.
 ```
 
 `packages` and `tools` are the resolved set the image was built from, as §2.4's lines without their
-`pkg:` and `tool:` prefixes. §4 decides a reuse from them, because a hash cannot be compared for
+`pkg:` and `tool:` prefixes — a package entry is the fact's three quoted literals, quotes included,
+because that is the text the key hashed and the text §4 compares, and a decoded pair would put back
+the joining the encoding exists to avoid. §4 decides a reuse from them, because a hash cannot be compared for
 containment: an entry holding only its key could never be a superset of anything. §5 calls a
 repository diverged when the entry it is on does not hold its set. A refresh stores the set it just
 resolved, beside the key it hashed from it.
@@ -301,7 +362,13 @@ A job — one repository and one workflow — is on **at most one entry** of the
 one image, and a launch that asked which one it is would otherwise take whichever entry it met
 first; so `ParseLock` refuses a lock that names one job on two entries, naming the job, the
 repository and both keys, and the schema says the same in `jobs`. It is a rule about two entries at
-once, which no schema validating one entry can state. The rule is what a fork keeps: when a choice
+once, which no schema validating one entry can state. **What it reads is the pair the entry states —
+the repository its `jobs` map is keyed by, and the job name beside it —** since two repositories may
+carry the same job name, and reading the name alone would refuse a lock that places one repository's
+job on one image while another repository's job of that name is on a second. What the pair cannot
+catch is one job **renamed** between two entries: a name is all the lock states of a job, so only the
+writer that knows the rename can, and §3.3's refresh is that writer — C8b1b's job, and the reason the
+rule is not claimed to be more than it is. The rule is what a fork keeps: when a choice
 moves a repository's job to a new image (§5, §6), the entry it left no longer names that job, so the
 job is on the new entry alone.
 
@@ -355,8 +422,9 @@ Two operators' machines can refresh the same key at the same time. Two mechanism
 
 A superset reuses an existing image **only when it holds the whole set at the same versions and the
 same integrities**. Before building a key, the refresh looks for an existing lock entry that holds
-the repository's entire dependency set with identical `pkg:` lines — the same names at the same
-versions, resolved to the same artifacts — and may hold more. The toolchain and the base image are
+the repository's entire dependency set with identical `pkg:` facts — the same names at the same
+versions, resolved to the same artifacts, compared as the three quoted literals §2.4 writes, since
+two different triples are two different strings there — and may hold more. The toolchain and the base image are
 not superset-able: the base must be the identical ref and digest, and the `tool:` lines identical,
 because an extra tool or a different base changes
 what the image is, while an extra package only widens what is installed. When several entries

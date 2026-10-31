@@ -19,9 +19,9 @@ const packageLockFixture = `{
   "packages": {
     "": {"name": "app", "version": "1.0.0"},
     "node_modules/left-pad": {"version": "1.3.0", "resolved": "https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz", "integrity": "sha512-aaa"},
-    "node_modules/react": {"version": "18.3.1", "integrity": "sha512-bbb"},
-    "node_modules/react/node_modules/loose-envify": {"version": "1.4.0"},
-    "node_modules/@scope/pkg": {"name": "@scope/pkg", "version": "2.0.0"}
+    "node_modules/react": {"version": "18.3.1", "resolved": "https://registry.npmjs.org/react/-/react-18.3.1.tgz", "integrity": "sha512-bbb"},
+    "node_modules/react/node_modules/loose-envify": {"version": "1.4.0", "resolved": "https://registry.npmjs.org/loose-envify/-/loose-envify-1.4.0.tgz"},
+    "node_modules/@scope/pkg": {"name": "@scope/pkg", "version": "2.0.0", "resolved": "https://registry.npmjs.org/@scope/pkg/-/pkg-2.0.0.tgz"}
   }
 }`
 
@@ -183,6 +183,11 @@ const composerLockFixture = `{
   ]
 }`
 
+// The wants below state a fact with factOf, so that a want says the three
+// fields it means: the encoding itself is pinned literally by
+// TestReduceThreeFieldsAreEncodedApart and by key_test's canonical form, and a
+// change to it fails there rather than passing here.
+
 // reduced is Reduce's answer for one fixture, with the failure that is a
 // refusal reported rather than skipped.
 func reduced(t *testing.T, path, data string) []string {
@@ -226,9 +231,16 @@ func refused(t *testing.T, path, data string, reason UnkeyedReason) {
 func TestReducePackageLockToNameAndVersion(t *testing.T) {
 	// npm's lock and its shrinkwrap name are one format: a repository's lock
 	// file is whichever name npm wrote, and the two reduce alike. Each fact is
-	// the entry's own integrity beside its name and version (D618), and an
-	// entry that states none contributes the pair without one.
-	want := []string{"@scope/pkg@2.0.0", "left-pad@1.3.0@sha512-aaa", "loose-envify@1.4.0", "react@18.3.1@sha512-bbb"}
+	// the entry's own integrity beside its name and version (D618), written as
+	// an empty third field when the entry states none — which only an entry
+	// resolved from the default registry may have
+	// (TestReduceEmptyIntegrityNeedsTheDefaultRegistry).
+	want := []string{
+		factOf("@scope/pkg", "2.0.0", ""),
+		factOf("left-pad", "1.3.0", "sha512-aaa"),
+		factOf("loose-envify", "1.4.0", ""),
+		factOf("react", "18.3.1", "sha512-bbb"),
+	}
 	for _, path := range []string{"package-lock.json", "package-lock.json", "npm-shrinkwrap.json"} {
 		if got := reduced(t, path, packageLockFixture); !slices.Equal(got, want) {
 			t.Errorf("Reduce(%s) = %v, want %v", path, got, want)
@@ -236,24 +248,24 @@ func TestReducePackageLockToNameAndVersion(t *testing.T) {
 	}
 	// A nested path's name is the path after the last node_modules/, and the
 	// root entry is the repository itself, not a dependency.
-	if got := reduced(t, "package-lock.json", `{"packages":{"":{"name":"app","version":"9.9.9"},"node_modules/a/node_modules/b":{"version":"2.0.0"}}}`); !slices.Equal(got, []string{"b@2.0.0"}) {
+	if got := reduced(t, "package-lock.json", `{"packages":{"":{"name":"app","version":"9.9.9"},"node_modules/a/node_modules/b":{"version":"2.0.0","resolved":"https://registry.npmjs.org/b/-/b-2.0.0.tgz"}}}`); !slices.Equal(got, []string{factOf("b", "2.0.0", "")}) {
 		t.Errorf("a nested entry or the root entry: %v", got)
 	}
 	// A workspace member's entry is written under its own path and names
 	// itself, which is the name the lock states for it.
-	if got := reduced(t, "package-lock.json", `{"packages":{"":{"name":"app","version":"9.9.9"},"packages/a":{"name":"@app/a","version":"1.0.0"}}}`); !slices.Equal(got, []string{"@app/a@1.0.0"}) {
+	if got := reduced(t, "package-lock.json", `{"packages":{"":{"name":"app","version":"9.9.9"},"packages/a":{"name":"@app/a","version":"1.0.0"}}}`); !slices.Equal(got, []string{factOf("@app/a", "1.0.0", "")}) {
 		t.Errorf("a workspace member's own entry: %v", got)
 	}
 	// An entry with no version states no resolved version (a link or a
 	// workspace member's own entry): it is not a fact, and it is skipped.
-	if got := reduced(t, "package-lock.json", `{"packages":{"":{},"node_modules/a":{"link":true},"node_modules/b":{"version":"1.0.0"}}}`); !slices.Equal(got, []string{"b@1.0.0"}) {
+	if got := reduced(t, "package-lock.json", `{"packages":{"":{},"node_modules/a":{"link":true},"node_modules/b":{"version":"1.0.0","resolved":"https://registry.npmjs.org/b/-/b-1.0.0.tgz"}}}`); !slices.Equal(got, []string{factOf("b", "1.0.0", "")}) {
 		t.Errorf("an entry with no version: %v", got)
 	}
 	// npm 6's lock has no packages map: it nests each package's dependencies
 	// under it, and every level states a version, a resolved tarball and an
 	// integrity of its own.
-	v1 := `{"name":"app","lockfileVersion":1,"dependencies":{"left-pad":{"version":"1.3.0","resolved":"https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz","integrity":"sha512-aaa","dependencies":{"loose-envify":{"version":"1.4.0"}}}}}`
-	if got := reduced(t, "package-lock.json", v1); !slices.Equal(got, []string{"left-pad@1.3.0@sha512-aaa", "loose-envify@1.4.0"}) {
+	v1 := `{"name":"app","lockfileVersion":1,"dependencies":{"left-pad":{"version":"1.3.0","resolved":"https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz","integrity":"sha512-aaa","dependencies":{"loose-envify":{"version":"1.4.0","resolved":"https://registry.npmjs.org/loose-envify/-/loose-envify-1.4.0.tgz"}}}}}`
+	if got := reduced(t, "package-lock.json", v1); !slices.Equal(got, []string{factOf("left-pad", "1.3.0", "sha512-aaa"), factOf("loose-envify", "1.4.0", "")}) {
 		t.Errorf("a lockfileVersion 1 lock: %v", got)
 	}
 }
@@ -261,13 +273,17 @@ func TestReducePackageLockToNameAndVersion(t *testing.T) {
 func TestReducePnpmLock(t *testing.T) {
 	// A package's integrity is in its packages entry's resolution, and a
 	// snapshots entry of the same package adds no fact of its own.
-	want := []string{"left-pad@1.3.0@sha512-aaa", "react-dom@18.3.1", "react@18.3.1@sha512-bbb"}
+	want := []string{
+		factOf("left-pad", "1.3.0", "sha512-aaa"),
+		factOf("react", "18.3.1", "sha512-bbb"),
+		factOf("react-dom", "18.3.1", ""),
+	}
 	if got := reduced(t, "pnpm-lock.yaml", pnpmLockFixture); !slices.Equal(got, want) {
 		t.Errorf("Reduce(pnpm-lock.yaml) = %v, want %v", got, want)
 	}
 	// pnpm 6 wrote the keys with the registry path's leading slash; the name
 	// is what pnpm's own path states, without it.
-	if got := reduced(t, "pnpm-lock.yaml", "packages:\n  /left-pad@1.3.0: {}\n"); !slices.Equal(got, []string{"left-pad@1.3.0"}) {
+	if got := reduced(t, "pnpm-lock.yaml", "packages:\n  /left-pad@1.3.0: {}\n"); !slices.Equal(got, []string{factOf("left-pad", "1.3.0", "")}) {
 		t.Errorf("a key with a leading slash: %v", got)
 	}
 	// A key that states no version is a dependency whose version is not in
@@ -275,11 +291,21 @@ func TestReducePnpmLock(t *testing.T) {
 	if _, err := Reduce("pnpm-lock.yaml", []byte("packages:\n  left-pad: {}\n")); err == nil {
 		t.Error("a packages key with no version was reduced")
 	}
+	// pnpm writes a resolution that does not fit on one line as a block: the
+	// integrity is on the line under `resolution:`, and reading only the
+	// schema line would key the entry as one that states neither an integrity
+	// nor a source.
+	block := "packages:\n  left-pad@1.3.0:\n    resolution:\n      integrity: sha512-aaa\n"
+	if got := reduced(t, "pnpm-lock.yaml", block); !slices.Equal(got, []string{factOf("left-pad", "1.3.0", "sha512-aaa")}) {
+		t.Errorf("a block resolution: %v", got)
+	}
+	tarball := "packages:\n  left-pad@1.3.0:\n    resolution:\n      tarball: https://example.invalid/left-pad-1.3.0.tgz\n"
+	refused(t, "pnpm-lock.yaml", tarball, UnkeyedNonRegistry)
 }
 
 func TestReduceYarnLock(t *testing.T) {
 	// Yarn 1 writes an integrity line, and it is the fact's third field.
-	want := []string{"@scope/pkg@2.0.0@sha512-aaa", "left-pad@1.3.0@sha512-bbb"}
+	want := []string{factOf("@scope/pkg", "2.0.0", "sha512-aaa"), factOf("left-pad", "1.3.0", "sha512-bbb")}
 	if got := reduced(t, "yarn.lock", yarnLockFixture); !slices.Equal(got, want) {
 		t.Errorf("Reduce(yarn.lock) = %v, want %v", got, want)
 	}
@@ -287,7 +313,7 @@ func TestReduceYarnLock(t *testing.T) {
 	// checksum is the integrity, and its __metadata block is not an entry:
 	// version 8 is the lock's format version, and a package called __metadata
 	// does not exist.
-	if got := reduced(t, "yarn.lock", yarnBerryLockFixture); !slices.Equal(got, []string{"left-pad@1.3.0@10c0/abcdef"}) {
+	if got := reduced(t, "yarn.lock", yarnBerryLockFixture); !slices.Equal(got, []string{factOf("left-pad", "1.3.0", "10c0/abcdef")}) {
 		t.Errorf("a Yarn Berry lock: %v", got)
 	}
 	// A workspace member is the repository's own tree rather than an artifact
@@ -300,33 +326,65 @@ func TestReduceYarnLock(t *testing.T) {
   languageName: unknown
   linkType: soft
 `
-	if got := reduced(t, "yarn.lock", berry); !slices.Equal(got, []string{"@app/a@0.0.0-use.local", "left-pad@1.3.0@10c0/abcdef"}) {
+	if got := reduced(t, "yarn.lock", berry); !slices.Equal(got, []string{factOf("@app/a", "0.0.0-use.local", ""), factOf("left-pad", "1.3.0", "10c0/abcdef")}) {
 		t.Errorf("a Berry workspace member: %v", got)
 	}
+	// An alias and a package resolved from a git repository (Berry's git:
+	// scheme, and the codeload URL Yarn 1 writes for a GitHub dependency) are
+	// not the registry's: the alias's header names two packages, and a git or
+	// archive URL is a source no registry served.
+	refused(t, "yarn.lock", "\"lodash@npm:evil-pkg@^1.0.0\":\n  version: 1.0.0\n  resolution: \"lodash@npm:evil-pkg@1.0.0\"\n", UnkeyedNonRegistry)
+	refused(t, "yarn.lock", "\"lodash@npm:evil-pkg@^1.0.0\":\n  version \"1.0.0\"\n  resolved \"https://registry.yarnpkg.com/evil-pkg/-/evil-pkg-1.0.0.tgz#aaaa\"\n  integrity sha512-aaa\n", UnkeyedNonRegistry)
+	refused(t, "yarn.lock", "\"y@https://github.com/x/y.git#commit=abc\":\n  version: 1.0.0\n  resolution: \"y@https://github.com/x/y.git#commit=abc\"\n", UnkeyedNonRegistry)
+	// Berry writes a checksum for the archive it resolved, so the probe is the
+	// same entry with one: the checksum is of the repository's commit, not of a
+	// registry's tarball, and the header is what says so.
+	refused(t, "yarn.lock", "\"y@https://github.com/x/y.git#commit=abc\":\n  version: 1.0.0\n  resolution: \"y@https://github.com/x/y.git#commit=abc\"\n  checksum: 10c0/abcdef\n", UnkeyedNonRegistry)
+	refused(t, "yarn.lock", "left-pad@^1.3.0:\n  version \"1.3.0\"\n  resolved \"https://codeload.github.com/x/y/tar.gz/abc\"\n", UnkeyedNonRegistry)
+	// Yarn 1's GitHub dependency: package.json's shorthand specifier, which is
+	// what the header repeats, resolving to a codeload archive. The resolved URL
+	// is a plain https one at a host that is not the default registry's, which
+	// no reading of the URL alone can tell from another registry's tarball, and
+	// the integrity beside it is the archive's.
+	refused(t, "yarn.lock", "\"left-pad@x/y\":\n  version \"1.3.0\"\n  resolved \"https://codeload.github.com/x/y/tar.gz/abc\"\n  integrity sha512-aaa\n", UnkeyedNonRegistry)
 }
 
 func TestReduceGoSum(t *testing.T) {
 	// One module is one fact: the /go.mod line is the same module at the same
 	// version, and the integrity is the module's own hash — the zip's, from the
 	// line that is not the /go.mod one.
-	want := []string{"github.com/pkg/errors@v0.9.1@h1:aaaa", "golang.org/x/text@v0.14.0@h1:cccc"}
+	want := []string{
+		factOf("github.com/pkg/errors", "v0.9.1", "h1:aaaa"),
+		factOf("golang.org/x/text", "v0.14.0", "h1:cccc"),
+	}
 	if got := reduced(t, "go.sum", goSumFixture); !slices.Equal(got, want) {
 		t.Errorf("Reduce(go.sum) = %v, want %v", got, want)
 	}
 	// The order of a module's two lines is the file's, not the fact's.
 	swapped := "github.com/pkg/errors v0.9.1/go.mod h1:bbbb\ngithub.com/pkg/errors v0.9.1 h1:aaaa\n"
-	if got := reduced(t, "go.sum", swapped); !slices.Equal(got, []string{"github.com/pkg/errors@v0.9.1@h1:aaaa"}) {
+	if got := reduced(t, "go.sum", swapped); !slices.Equal(got, []string{factOf("github.com/pkg/errors", "v0.9.1", "h1:aaaa")}) {
 		t.Errorf("a /go.mod line before the module's: %v", got)
 	}
 	// A module the file states only a /go.mod line for is one whose zip was
 	// never brought in, and the hash the file states for it is what the key
 	// takes.
-	if got := reduced(t, "go.sum", "github.com/pkg/errors v0.9.1/go.mod h1:bbbb\n"); !slices.Equal(got, []string{"github.com/pkg/errors@v0.9.1@h1:bbbb"}) {
+	if got := reduced(t, "go.sum", "github.com/pkg/errors v0.9.1/go.mod h1:bbbb\n"); !slices.Equal(got, []string{factOf("github.com/pkg/errors", "v0.9.1", "h1:bbbb")}) {
 		t.Errorf("a module with only a /go.mod line: %v", got)
 	}
 	// A module path is case-sensitive and is used as the file writes it.
-	if got := reduced(t, "go.sum", "github.com/BurntSushi/toml v1.4.0 h1:aaaa\n"); !slices.Equal(got, []string{"github.com/BurntSushi/toml@v1.4.0@h1:aaaa"}) {
+	if got := reduced(t, "go.sum", "github.com/BurntSushi/toml v1.4.0 h1:aaaa\n"); !slices.Equal(got, []string{factOf("github.com/BurntSushi/toml", "v1.4.0", "h1:aaaa")}) {
 		t.Errorf("a mixed-case module path: %v", got)
+	}
+	// A module Go verified twice at one version has two h1 lines, and both are
+	// its hashes: reading the last one alone would give the module one fact or
+	// another depending on the order the file wrote them in.
+	one := "github.com/pkg/errors v0.9.1 h1:aaaa\ngithub.com/pkg/errors v0.9.1 h1:bbbb\n"
+	other := "github.com/pkg/errors v0.9.1 h1:bbbb\ngithub.com/pkg/errors v0.9.1 h1:aaaa\n"
+	if got := reduced(t, "go.sum", one); !slices.Equal(got, []string{factOf("github.com/pkg/errors", "v0.9.1", "h1:aaaa,h1:bbbb")}) {
+		t.Errorf("two h1 lines for one module: %v", got)
+	}
+	if reducedKey(t, "go.sum", one) != reducedKey(t, "go.sum", other) {
+		t.Error("two h1 lines for one module took two keys, one per order")
 	}
 	// A line without a hash states no artifact: the key cannot carry an
 	// integrity the file does not have.
@@ -336,21 +394,21 @@ func TestReduceGoSum(t *testing.T) {
 func TestReduceRequirements(t *testing.T) {
 	// PyPI normalisation folds case and -/_/. to one name (§2.4), so the pin
 	// Left_Pad==1.3.0 is the fact left-pad@1.3.0.
-	want := []string{"left-pad@1.3.0", "requests@2.31.0", "urllib3@2.0.7"}
+	want := []string{factOf("left-pad", "1.3.0", ""), factOf("requests", "2.31.0", ""), factOf("urllib3", "2.0.7", "")}
 	if got := reduced(t, "requirements.txt", requirementsFixture); !slices.Equal(got, want) {
 		t.Errorf("Reduce(requirements.txt) = %v, want %v", got, want)
 	}
 	// An extras pin is a pin, and its extras are not part of the version.
-	if got := reduced(t, "requirements.txt", "requests[security]==2.31.0\n"); !slices.Equal(got, []string{"requests@2.31.0"}) {
+	if got := reduced(t, "requirements.txt", "requests[security]==2.31.0\n"); !slices.Equal(got, []string{factOf("requests", "2.31.0", "")}) {
 		t.Errorf("a pin with extras: %v", got)
 	}
 	// pip-compile writes a requirement's hashes as continuation lines: they
 	// are the pin's integrity (D618), and the order a file writes them in is
 	// not a fact.
-	if got := reduced(t, "requirements.txt", "requests==2.31.0 \\\n    --hash=sha256:aaaa \\\n    --hash=sha256:bbbb\n"); !slices.Equal(got, []string{"requests@2.31.0@sha256:aaaa,sha256:bbbb"}) {
+	if got := reduced(t, "requirements.txt", "requests==2.31.0 \\\n    --hash=sha256:aaaa \\\n    --hash=sha256:bbbb\n"); !slices.Equal(got, []string{factOf("requests", "2.31.0", "sha256:aaaa,sha256:bbbb")}) {
 		t.Errorf("a pinned requirement with hashes: %v", got)
 	}
-	if got := reduced(t, "requirements.txt", "requests==2.31.0 --hash=sha256:bbbb --hash=sha256:aaaa\n"); !slices.Equal(got, []string{"requests@2.31.0@sha256:aaaa,sha256:bbbb"}) {
+	if got := reduced(t, "requirements.txt", "requests==2.31.0 --hash=sha256:bbbb --hash=sha256:aaaa\n"); !slices.Equal(got, []string{factOf("requests", "2.31.0", "sha256:aaaa,sha256:bbbb")}) {
 		t.Errorf("the same hashes in the other order: %v", got)
 	}
 	// The marker and the hashes are written together — pip-tools and
@@ -359,11 +417,11 @@ func TestReduceRequirements(t *testing.T) {
 	// hashes follow it, and the marker is no more a fact than the hashes are.
 	marked := "typing-extensions==4.12.2 ; python_version < \"3.11\" \\\n" +
 		"    --hash=sha256:aaaa \\\n    --hash=sha256:bbbb\n"
-	if got := reduced(t, "requirements.txt", marked); !slices.Equal(got, []string{"typing-extensions@4.12.2@sha256:aaaa,sha256:bbbb"}) {
+	if got := reduced(t, "requirements.txt", marked); !slices.Equal(got, []string{factOf("typing-extensions", "4.12.2", "sha256:aaaa,sha256:bbbb")}) {
 		t.Errorf("a marker and hashes on one pin: %v", got)
 	}
 	// The same pin without hashes is the shape a hand-written file has.
-	if got := reduced(t, "requirements.txt", "typing-extensions==4.12.2 ; python_version < \"3.11\"\n"); !slices.Equal(got, []string{"typing-extensions@4.12.2"}) {
+	if got := reduced(t, "requirements.txt", "typing-extensions==4.12.2 ; python_version < \"3.11\"\n"); !slices.Equal(got, []string{factOf("typing-extensions", "4.12.2", "")}) {
 		t.Errorf("a marker with no hashes: %v", got)
 	}
 }
@@ -400,7 +458,7 @@ func TestReduceUnpinnedRequirementsIsUnkeyed(t *testing.T) {
 func TestReducePoetryLock(t *testing.T) {
 	// A poetry package's files list carries the hashes of the artifacts the
 	// version resolved to, and they are the fact's integrity (D618).
-	want := []string{"left-pad@1.3.0@sha256:aaa,sha256:bbb", "requests@2.31.0"}
+	want := []string{factOf("left-pad", "1.3.0", "sha256:aaa,sha256:bbb"), factOf("requests", "2.31.0", "")}
 	if got := reduced(t, "poetry.lock", poetryLockFixture); !slices.Equal(got, want) {
 		t.Errorf("Reduce(poetry.lock) = %v, want %v", got, want)
 	}
@@ -418,7 +476,7 @@ left-pad = [
     {file = "left_pad-1.3.0.tar.gz", hash = "sha256:aaa"},
 ]
 `
-	if got := reduced(t, "poetry.lock", old); !slices.Equal(got, []string{"left-pad@1.3.0@sha256:aaa"}) {
+	if got := reduced(t, "poetry.lock", old); !slices.Equal(got, []string{factOf("left-pad", "1.3.0", "sha256:aaa")}) {
 		t.Errorf("a poetry lock before 1.8: %v", got)
 	}
 	// poetry writes a dependency with no version for a path or git source:
@@ -450,7 +508,7 @@ type = "legacy"
 url = "https://pypi.example.invalid/simple"
 reference = "private"
 `
-	if got := reduced(t, "poetry.lock", legacy); !slices.Equal(got, []string{"left-pad@1.3.0@sha256:aaa"}) {
+	if got := reduced(t, "poetry.lock", legacy); !slices.Equal(got, []string{factOf("left-pad", "1.3.0", "sha256:aaa")}) {
 		t.Errorf("a poetry legacy source: %v", got)
 	}
 }
@@ -458,7 +516,7 @@ reference = "private"
 func TestReduceUVLock(t *testing.T) {
 	// uv writes the sdist's and each wheel's hash, and both are the integrity
 	// of the one version they are of.
-	want := []string{"left-pad@1.3.0@sha256:aaa,sha256:bbb", "requests@2.31.0"}
+	want := []string{factOf("left-pad", "1.3.0", "sha256:aaa,sha256:bbb"), factOf("requests", "2.31.0", "")}
 	if got := reduced(t, "uv.lock", uvLockFixture); !slices.Equal(got, want) {
 		t.Errorf("Reduce(uv.lock) = %v, want %v", got, want)
 	}
@@ -469,7 +527,7 @@ name = "app"
 version = "0.1.0"
 source = { virtual = "." }
 `
-	if got := reduced(t, "uv.lock", root); !slices.Equal(got, []string{"app@0.1.0"}) {
+	if got := reduced(t, "uv.lock", root); !slices.Equal(got, []string{factOf("app", "0.1.0", "")}) {
 		t.Errorf("a uv project entry: %v", got)
 	}
 	for _, source := range []string{
@@ -486,7 +544,7 @@ source = { virtual = "." }
 func TestReducePipfileLock(t *testing.T) {
 	// Pipfile.lock is JSON and writes the version with pip's == prefix; its
 	// develop section is not exempt (§2.3), and its hashes are the integrity.
-	want := []string{"left-pad@1.3.0@sha256:aaaa", "pytest@7.4.0", "requests@2.31.0"}
+	want := []string{factOf("left-pad", "1.3.0", "sha256:aaaa"), factOf("pytest", "7.4.0", ""), factOf("requests", "2.31.0", "")}
 	if got := reduced(t, "Pipfile.lock", pipfileLockFixture); !slices.Equal(got, want) {
 		t.Errorf("Reduce(Pipfile.lock) = %v, want %v", got, want)
 	}
@@ -500,7 +558,7 @@ func TestReduceCargoLock(t *testing.T) {
 	// Cargo's lock holds the workspace's own crate beside its dependencies,
 	// as §2.3's row states: every [[package]] entry, and the crate is one. A
 	// registry package's integrity is its checksum.
-	want := []string{"app@0.1.0", "libc@0.2.155@aaaa"}
+	want := []string{factOf("app", "0.1.0", ""), factOf("libc", "0.2.155", "aaaa")}
 	if got := reduced(t, "Cargo.lock", cargoLockFixture); !slices.Equal(got, want) {
 		t.Errorf("Reduce(Cargo.lock) = %v, want %v", got, want)
 	}
@@ -511,7 +569,7 @@ version = "0.2.155"
 source = "sparse+https://index.crates.io/"
 checksum = "aaaa"
 `
-	if got := reduced(t, "Cargo.lock", sparse); !slices.Equal(got, []string{"libc@0.2.155@aaaa"}) {
+	if got := reduced(t, "Cargo.lock", sparse); !slices.Equal(got, []string{factOf("libc", "0.2.155", "aaaa")}) {
 		t.Errorf("a sparse registry source: %v", got)
 	}
 	// A crate from a git repository is not one the registry published (D618).
@@ -528,14 +586,14 @@ func TestReduceGemfileLock(t *testing.T) {
 	// indented under it and are not entries, DEPENDENCIES' ranges and BUNDLED
 	// WITH's version are not specs at all, and CHECKSUMS is the integrity of
 	// the gems the specs name (D618).
-	want := []string{"rake@13.0.6@sha256=aaaa", "rspec@3.13.0@sha256=bbbb"}
+	want := []string{factOf("rake", "13.0.6", "sha256=aaaa"), factOf("rspec", "3.13.0", "sha256=bbbb")}
 	if got := reduced(t, "Gemfile.lock", gemfileLockFixture); !slices.Equal(got, want) {
 		t.Errorf("Reduce(Gemfile.lock) = %v, want %v", got, want)
 	}
 	// A lock written before Bundler 2.5 has no CHECKSUMS section, and its
 	// entries are keyed by their name and version alone.
 	noChecksums := strings.Split(gemfileLockFixture, "CHECKSUMS")[0]
-	if got := reduced(t, "Gemfile.lock", noChecksums); !slices.Equal(got, []string{"rake@13.0.6", "rspec@3.13.0"}) {
+	if got := reduced(t, "Gemfile.lock", noChecksums); !slices.Equal(got, []string{factOf("rake", "13.0.6", ""), factOf("rspec", "3.13.0", "")}) {
 		t.Errorf("a Gemfile.lock with no CHECKSUMS section: %v", got)
 	}
 	// A gem Bundler took from a git repository is one the gem server did not
@@ -545,7 +603,7 @@ func TestReduceGemfileLock(t *testing.T) {
 	// A PATH block names a gem in a tree Bundler installs from the checkout
 	// rather than from an artifact, and it is keyed by its version.
 	path := "PATH\n  remote: engines/library\n  specs:\n    library (0.1.0)\n"
-	if got := reduced(t, "Gemfile.lock", path); !slices.Equal(got, []string{"library@0.1.0"}) {
+	if got := reduced(t, "Gemfile.lock", path); !slices.Equal(got, []string{factOf("library", "0.1.0", "")}) {
 		t.Errorf("a PATH block: %v", got)
 	}
 }
@@ -554,7 +612,7 @@ func TestReduceComposerLock(t *testing.T) {
 	// Dev dependencies are not exempt (§2.3), so packages-dev reduces too, and
 	// the integrity is the dist's shasum or, for a package composer took from
 	// a VCS, the source's reference — the commit it was installed at.
-	want := []string{"monolog/monolog@2.9.1@aaaa", "phpunit/phpunit@10.5.0@bbbb"}
+	want := []string{factOf("monolog/monolog", "2.9.1", "aaaa"), factOf("phpunit/phpunit", "10.5.0", "bbbb")}
 	if got := reduced(t, "composer.lock", composerLockFixture); !slices.Equal(got, want) {
 		t.Errorf("Reduce(composer.lock) = %v, want %v", got, want)
 	}
@@ -654,10 +712,166 @@ func TestReduceIntegrityIsPartOfTheKey(t *testing.T) {
 			t.Errorf("%s: one integrity stated twice took another key", c.path)
 		}
 		// And the fact itself is the name, the version and the integrity, in
-		// that order, split from the right.
+		// that order.
 		facts := reduced(t, c.path, c.one)
-		if len(facts) != 1 || strings.Count(facts[0], "@") != 2 {
-			t.Errorf("%s: %v, want one name@version@integrity fact", c.path, facts)
+		if len(facts) != 1 || !strings.HasPrefix(facts[0], `"`) || strings.Count(facts[0], `"`) != 6 {
+			t.Errorf("%s: %v, want one name, version and integrity fact", c.path, facts)
+		}
+	}
+}
+
+// TestReduceThreeFieldsAreEncodedApart: one package's fact encodes each of its
+// three fields on its own, so two files that state different triples cannot
+// make one fact. Each pair below states the same text under the one string
+// name@version@integrity — the name "s@1" at version "h" and the name "s" at
+// version "1" with the integrity "h" are `s@1@h` both ways, and so are the
+// pairs the other three formats state — so a reduction that wrote that string
+// would give two different dependency sets one key, and one repository the
+// image built from the other's artifact.
+func TestReduceThreeFieldsAreEncodedApart(t *testing.T) {
+	for _, c := range []struct{ path, one, other string }{
+		{
+			// An npm lock states the source as a resolved URL, so the pair is
+			// keyed without it and with it.
+			"package-lock.json",
+			`{"packages":{"node_modules/s@1":{"version":"h","resolved":"https://registry.npmjs.org/s/-/s-h.tgz"}}}`,
+			`{"packages":{"node_modules/s":{"version":"1","resolved":"https://registry.npmjs.org/s/-/s-1.tgz","integrity":"h"}}}`,
+		},
+		{
+			// go.sum states a hash on every line, and the hash may hold an @:
+			// a module named s@1 at v1 hashed h1:aaa is the text of a module
+			// named s at 1 hashed v1@h1:aaa.
+			"go.sum",
+			"s@1 v1 h1:aaa\n",
+			"s 1 v1@h1:aaa\n",
+		},
+		{
+			// The spec's name and version, and the digest the CHECKSUMS
+			// section gives for it, are the same text both ways.
+			"Gemfile.lock",
+			"GEM\n  remote: https://rubygems.org/\n  specs:\n    s@1 (h)\n\nCHECKSUMS\n  s@1 (h) sha256=aaa\n",
+			"GEM\n  remote: https://rubygems.org/\n  specs:\n    s (1)\n\nCHECKSUMS\n  s (1) h@sha256=aaa\n",
+		},
+		{
+			// composer writes the name, the version and the dist's shasum as
+			// three JSON fields, and any of them may hold an @.
+			"composer.lock",
+			`{"packages":[{"name":"s@1","version":"h","dist":{"shasum":"aaaa"}}]}`,
+			`{"packages":[{"name":"s","version":"1","dist":{"shasum":"h@aaaa"}}]}`,
+		},
+	} {
+		facts := reduced(t, c.path, c.one)
+		others := reduced(t, c.path, c.other)
+		// The encoding is pinned literally here: three quoted literals, the
+		// third written even when the file states no integrity for the entry.
+		if c.path == "package-lock.json" && !slices.Equal(facts, []string{`"s@1" "h" ""`}) {
+			t.Errorf("%s: %v, want one fact of three quoted fields", c.path, facts)
+		}
+		if slices.Equal(facts, others) {
+			t.Errorf("%s: two different triples reduced to one fact %v", c.path, facts)
+		}
+		if reducedKey(t, c.path, c.one) == reducedKey(t, c.path, c.other) {
+			t.Errorf("%s: two different triples took one key", c.path)
+		}
+	}
+}
+
+// TestReduceEmptyIntegrityNeedsTheDefaultRegistry: a fact with no integrity is
+// one the file states no artifact hash for, and it is keyed only when the
+// source beside it is the ecosystem's default registry — where the name and
+// the version are enough to say which artifact it is (D618). A stated source
+// that is not that registry, and a source the format's convention says should
+// be there and is not, leave the repository unkeyed.
+func TestReduceEmptyIntegrityNeedsTheDefaultRegistry(t *testing.T) {
+	// The default registry with no integrity is the ordinary shape of a lock
+	// written before the format carried hashes.
+	for _, c := range []struct{ path, data string }{
+		{"package-lock.json", `{"packages":{"node_modules/left-pad":{"version":"1.3.0","resolved":"https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz"}}}`},
+		{"package-lock.json", `{"dependencies":{"left-pad":{"version":"1.3.0","resolved":"https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz"}}}`},
+		{"pnpm-lock.yaml", "packages:\n  left-pad@1.3.0: {}\n"},
+		{"yarn.lock", "left-pad@^1.3.0:\n  version \"1.3.0\"\n  resolved \"https://registry.yarnpkg.com/left-pad/-/left-pad-1.3.0.tgz#aaaa\"\n"},
+		{"yarn.lock", "\"left-pad@npm:^1.3.0\":\n  version: 1.3.0\n  resolution: \"left-pad@npm:1.3.0\"\n"},
+		{"Gemfile.lock", "GEM\n  remote: https://rubygems.org/\n  specs:\n    rake (13.0.6)\n"},
+		{"poetry.lock", "[[package]]\nname = \"left-pad\"\nversion = \"1.3.0\"\n"},
+		{"uv.lock", "[[package]]\nname = \"left-pad\"\nversion = \"1.3.0\"\nsource = { registry = \"https://pypi.org/simple\" }\n"},
+		{"Cargo.lock", "[[package]]\nname = \"libc\"\nversion = \"0.2.155\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"},
+	} {
+		if _, err := Reduce(c.path, []byte(c.data)); err != nil {
+			t.Errorf("Reduce(%s, %q): %v, want the fact keyed", c.path, c.data, err)
+		}
+	}
+	// A source the file states, and that is not the default registry's: the
+	// version alone does not say which artifact it is. Each of these is the
+	// shape the format writes for a private registry, and the private
+	// registry is fine beside an integrity — what it cannot be is the only
+	// thing an entry has.
+	for _, c := range []struct{ what, path, data string }{
+		{
+			"an npm entry with no resolved line",
+			"package-lock.json",
+			`{"packages":{"node_modules/left-pad":{"version":"1.3.0"}}}`,
+		},
+		{
+			"an npm entry from another registry",
+			"package-lock.json",
+			`{"packages":{"node_modules/left-pad":{"version":"1.3.0","resolved":"https://npm.example.invalid/left-pad/-/left-pad-1.3.0.tgz"}}}`,
+		},
+		{
+			"a Yarn 1 entry with no resolved line",
+			"yarn.lock",
+			"left-pad@^1.3.0:\n  version \"1.3.0\"\n",
+		},
+		{
+			"a Yarn 1 entry from another registry",
+			"yarn.lock",
+			"left-pad@^1.3.0:\n  version \"1.3.0\"\n  resolved \"https://npm.example.invalid/left-pad/-/left-pad-1.3.0.tgz\"\n",
+		},
+		{
+			"a Bundler block from another gem server",
+			"Gemfile.lock",
+			"GEM\n  remote: https://gems.example.invalid/\n  specs:\n    rake (13.0.6)\n",
+		},
+		{
+			"a Bundler block that states no remote",
+			"Gemfile.lock",
+			"GEM\n  specs:\n    rake (13.0.6)\n",
+		},
+		{
+			"a poetry legacy source that is not PyPI",
+			"poetry.lock",
+			"[[package]]\nname = \"left-pad\"\nversion = \"1.3.0\"\n\n[package.source]\ntype = \"legacy\"\nurl = \"https://pypi.example.invalid/simple\"\n",
+		},
+		{
+			"a uv index that is not PyPI",
+			"uv.lock",
+			"[[package]]\nname = \"left-pad\"\nversion = \"1.3.0\"\nsource = { registry = \"https://pypi.example.invalid/simple\" }\n",
+		},
+		{
+			"a Cargo package from another registry",
+			"Cargo.lock",
+			"[[package]]\nname = \"libc\"\nversion = \"0.2.155\"\nsource = \"registry+https://cargo.example.invalid/index\"\n",
+		},
+		{
+			"a composer package with neither shasum nor reference",
+			"composer.lock",
+			`{"packages":[{"name":"monolog/monolog","version":"2.9.1","dist":{"type":"zip","shasum":""}}]}`,
+		},
+	} {
+		refused(t, c.path, c.data, UnkeyedNonRegistry)
+	}
+	// The same sources with an integrity beside them are the registry's
+	// artifact whatever host served it: the hash is what binds the version.
+	for _, c := range []struct{ path, data string }{
+		{"package-lock.json", `{"packages":{"node_modules/left-pad":{"version":"1.3.0","resolved":"https://npm.example.invalid/left-pad/-/left-pad-1.3.0.tgz","integrity":"sha512-aaa"}}}`},
+		{"yarn.lock", "left-pad@^1.3.0:\n  version \"1.3.0\"\n  resolved \"https://npm.example.invalid/left-pad/-/left-pad-1.3.0.tgz\"\n  integrity sha512-aaa\n"},
+		{"Gemfile.lock", "GEM\n  remote: https://gems.example.invalid/\n  specs:\n    rake (13.0.6)\n\nCHECKSUMS\n  rake (13.0.6) sha256=aaaa\n"},
+		{"poetry.lock", "[[package]]\nname = \"left-pad\"\nversion = \"1.3.0\"\nfiles = [{file = \"a.whl\", hash = \"sha256:aaa\"}]\n\n[package.source]\ntype = \"legacy\"\nurl = \"https://pypi.example.invalid/simple\"\n"},
+		{"uv.lock", "[[package]]\nname = \"left-pad\"\nversion = \"1.3.0\"\nsource = { registry = \"https://pypi.example.invalid/simple\" }\nsdist = { url = \"a.tar.gz\", hash = \"sha256:aaa\" }\n"},
+		{"Cargo.lock", "[[package]]\nname = \"libc\"\nversion = \"0.2.155\"\nsource = \"registry+https://cargo.example.invalid/index\"\nchecksum = \"aaaa\"\n"},
+		{"composer.lock", `{"packages":[{"name":"monolog/monolog","version":"2.9.1","source":{"type":"git","reference":"aaaa"}}]}`},
+	} {
+		if _, err := Reduce(c.path, []byte(c.data)); err != nil {
+			t.Errorf("Reduce(%s, %q): %v, want the fact keyed", c.path, c.data, err)
 		}
 	}
 }
@@ -687,6 +901,35 @@ func TestReduceNonRegistrySourceIsUnkeyed(t *testing.T) {
 			"a git dependency of npm 6's lock",
 			"package-lock.json",
 			`{"dependencies":{"left-pad":{"version":"1.3.0","resolved":"git+ssh://example.invalid/owner/repo-a.git#aaaa"}}}`,
+		},
+		{
+			// Version 1 of this format writes the source in the version field
+			// for a package it did not take from the registry, and takes no
+			// resolved line for one of those: a version holding a scheme is
+			// that source, whatever the scheme is.
+			"a git URL as the version of npm 6's lock",
+			"package-lock.json",
+			`{"dependencies":{"left-pad":{"version":"git+https://github.com/x/y.git#abc"}}}`,
+		},
+		{
+			"a GitHub shorthand as the version of npm 6's lock",
+			"package-lock.json",
+			`{"dependencies":{"left-pad":{"version":"github:x/y#abc"}}}`,
+		},
+		{
+			"a path as the version of npm 6's lock",
+			"package-lock.json",
+			`{"dependencies":{"left-pad":{"version":"file:../foo"}}}`,
+		},
+		{
+			"a tarball as the version of npm 6's lock",
+			"package-lock.json",
+			`{"dependencies":{"left-pad":{"version":"file:vendor/x.tgz"}}}`,
+		},
+		{
+			"an alias of npm 6's lock",
+			"package-lock.json",
+			`{"dependencies":{"alias":{"version":"npm:left-pad@1.3.0","resolved":"https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz","integrity":"sha512-aaa"}}}`,
 		},
 		{
 			"a pnpm git resolution",
@@ -768,19 +1011,18 @@ func TestReduceNonRegistrySourceIsUnkeyed(t *testing.T) {
 	}
 }
 
-// TestReduceRefusesAFactNoFieldCanHold: the facts are split from the right —
-// the name may hold an @ (a scoped npm name) and the version may not, and the
-// integrity never does — and a control character in any of the three is not
-// something an ecosystem writes. A file stating one is refused rather than
-// keyed by it.
+// TestReduceRefusesAFactNoFieldCanHold: no ecosystem writes an @ in a version,
+// a space in any of the three fields, or a control character in any of them,
+// and a file stating one is refused rather than keyed by it — the fact a
+// reduction would build from it is one no registry could have produced.
 func TestReduceRefusesAFactNoFieldCanHold(t *testing.T) {
 	refused(t, "package-lock.json", `{"packages":{"node_modules/a":{"version":"1.0.0@sha512-aaa","integrity":"sha512-aaa"}}}`, UnkeyedUnreadable)
-	refused(t, "package-lock.json", `{"packages":{"node_modules/a":{"version":"1.0.0\u0007"}}}`, UnkeyedUnreadable)
-	refused(t, "package-lock.json", `{"packages":{"node_modules/a\u0000b":{"version":"1.0.0"}}}`, UnkeyedUnreadable)
+	refused(t, "package-lock.json", `{"packages":{"node_modules/a":{"version":"1.0.0\u0007","resolved":"https://registry.npmjs.org/a/-/a-1.0.0.tgz"}}}`, UnkeyedUnreadable)
+	refused(t, "package-lock.json", `{"packages":{"node_modules/a\u0000b":{"version":"1.0.0","resolved":"https://registry.npmjs.org/a/-/a-1.0.0.tgz"}}}`, UnkeyedUnreadable)
 	refused(t, "package-lock.json", `{"packages":{"node_modules/a":{"version":"1.0.0","integrity":"sha512-a\u0000aa"}}}`, UnkeyedUnreadable)
-	// A name that holds an @ is the case the split-from-the-right rule exists
-	// for, and it still reduces: the version is the field before the integrity.
-	if got := reduced(t, "package-lock.json", `{"packages":{"node_modules/@scope/pkg":{"version":"1.0.0","integrity":"sha512-aaa"}}}`); !slices.Equal(got, []string{"@scope/pkg@1.0.0@sha512-aaa"}) {
+	// A name that holds an @ is the case the encoding exists for, and it still
+	// reduces: the name is its own field, so the @ in it is not a separator.
+	if got := reduced(t, "package-lock.json", `{"packages":{"node_modules/@scope/pkg":{"version":"1.0.0","integrity":"sha512-aaa"}}}`); !slices.Equal(got, []string{factOf("@scope/pkg", "1.0.0", "sha512-aaa")}) {
 		t.Errorf("a scoped name: %v", got)
 	}
 }

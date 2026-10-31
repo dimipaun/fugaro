@@ -11,7 +11,10 @@ import (
 // what stops a repository with one extra package paying for a build, and it
 // is deliberately narrow — an image is reused only when it holds the whole
 // set at the same versions and the same integrities, never when it holds a
-// subset, and the toolchain and the base have to be identical.
+// subset, and the toolchain and the base have to be identical. The packages
+// are compared as the facts the reduction wrote them — one package per literal
+// triple (§2.4) — so the comparison is over triples and not over a text two
+// different triples could share.
 //
 // The cost of a reuse is stated in the design and is the owner's answer
 // (O6): the repository's image then contains packages it does not depend

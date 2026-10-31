@@ -60,8 +60,9 @@ type LockedImage struct {
 	// BaseRef and BaseDigest are the base the build ran FROM.
 	BaseRef    string `json:"base_ref"`
 	BaseDigest string `json:"base_digest"`
-	// Packages and Tools are this image's own resolved set, as
-	// "name@version@integrity" and "tool@version" — §2.4's pkg: and tool:
+	// Packages and Tools are this image's own resolved set, as one package per
+	// fact — its name, version and integrity as three quoted string literals
+	// (reduce.go's factOf) — and as "tool@version": §2.4's pkg: and tool:
 	// lines without their prefix, the integrity being the one the key file
 	// stated for that version's artifact (D618). They are what §4 compares:
 	// an entry may be reused only when it holds the whole set at the same
@@ -117,18 +118,28 @@ func ParseLock(data []byte) (*Lock, error) {
 // other entry saying otherwise, and §9's "is a job pointing at this image?"
 // would then answer with whichever entry the reader met first. A repository
 // whose two workflows are on two images is two jobs, and is not this.
+//
+// The job is the pair the entry states — the repository its Jobs map is keyed
+// by, and the job name beside it — because the pair is what a job is: two
+// repositories may carry the same job name, and reading the name alone would
+// refuse a lock that places one repository's job on one image while another
+// repository's job of that name is on a second. What the pair cannot catch is
+// one job renamed between two entries, since a name is all the lock states of
+// it; §3.3 leaves that to the refresh (C8b1b), which writes both entries.
 func (l *Lock) checkOneJobPerEntry() error {
-	seen := map[string]string{}
+	type job struct{ repo, name string }
+	seen := map[job]string{}
 	for _, key := range slices.Sorted(maps.Keys(l.Images)) {
 		for _, repo := range slices.Sorted(maps.Keys(l.Images[key].Jobs)) {
-			job := l.Images[key].Jobs[repo]
-			if job == "" {
+			name := l.Images[key].Jobs[repo]
+			if name == "" {
 				continue
 			}
-			if prev, ok := seen[job]; ok && prev != key {
-				return fmt.Errorf("the image lock: job %s of %s is on two images (%s and %s), and a job runs one image: an entry is wrong and the lock has to be repaired before a launch reads it", job, repo, prev, key)
+			j := job{repo: repo, name: name}
+			if prev, ok := seen[j]; ok && prev != key {
+				return fmt.Errorf("the image lock: job %s of %s is on two images (%s and %s), and a job runs one image: an entry is wrong and the lock has to be repaired before a launch reads it", name, repo, prev, key)
 			}
-			seen[job] = key
+			seen[j] = key
 		}
 	}
 	return nil

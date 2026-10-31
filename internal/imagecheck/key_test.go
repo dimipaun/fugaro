@@ -15,7 +15,7 @@ func resolvedWeb() Resolved {
 	return Resolved{
 		BaseRef:    "web",
 		BaseDigest: baseDigest,
-		Packages:   []string{"left-pad@1.3.0", "react@18.3.1"},
+		Packages:   []string{factOf("left-pad", "1.3.0", ""), factOf("react", "18.3.1", "")},
 		Tools:      []string{"node@22.11.0"},
 	}
 }
@@ -34,18 +34,18 @@ func TestKeyIdenticalForIdenticalDependencySets(t *testing.T) {
 		{"the same facts in another order", Resolved{
 			BaseRef:    "web",
 			BaseDigest: baseDigest,
-			Packages:   []string{"react@18.3.1", "left-pad@1.3.0"},
+			Packages:   []string{factOf("react", "18.3.1", ""), factOf("left-pad", "1.3.0", "")},
 			Tools:      []string{"node@22.11.0"},
 		}},
 		{"the same fact named twice", Resolved{
 			BaseRef:    "web",
 			BaseDigest: baseDigest,
-			Packages:   []string{"react@18.3.1", "left-pad@1.3.0", "react@18.3.1"},
+			Packages:   []string{factOf("react", "18.3.1", ""), factOf("left-pad", "1.3.0", ""), factOf("react", "18.3.1", "")},
 			Tools:      []string{"node@22.11.0", "node@22.11.0"},
 		}},
 		{"the same facts, toolchain first", Resolved{
 			Tools:      []string{"node@22.11.0"},
-			Packages:   []string{"react@18.3.1", "left-pad@1.3.0"},
+			Packages:   []string{factOf("react", "18.3.1", ""), factOf("left-pad", "1.3.0", "")},
 			BaseRef:    "web",
 			BaseDigest: baseDigest,
 		}},
@@ -92,13 +92,13 @@ func TestKeyIgnoresOrderCommentsFormattingRepoNameAndCommands(t *testing.T) {
 	got := canonical(Resolved{
 		BaseRef:    "web",
 		BaseDigest: baseDigest,
-		Packages:   []string{"react@18.3.1", "left-pad@1.3.0", "react@18.3.1"},
+		Packages:   []string{factOf("react", "18.3.1", ""), factOf("left-pad", "1.3.0", ""), factOf("react", "18.3.1", "")},
 		Tools:      []string{"node@22.11.0"},
 	})
-	want := "key v1\n" +
+	want := "key v2\n" +
 		"base:\"web@" + baseDigest + "\"\n" +
-		"pkg:\"left-pad@1.3.0\"\n" +
-		"pkg:\"react@18.3.1\"\n" +
+		`pkg:"\"left-pad\" \"1.3.0\" \"\""` + "\n" +
+		`pkg:"\"react\" \"18.3.1\" \"\""` + "\n" +
 		"tool:\"node@22.11.0\"\n"
 	if got != want {
 		t.Errorf("canonical form =\n%q\nwant\n%q", got, want)
