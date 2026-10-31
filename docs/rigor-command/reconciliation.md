@@ -47,7 +47,7 @@ cache of the cloud's copy and never the owner's source. *Consequence:* a command
 the owner publishes from" cannot be written before that file has a name. **D830 answers it by
 convention, not by a new key** (SD4, answered): the file is
 `~/.config/fugaro/projects/<project>-layer.yaml` — the project's own name beside its config — so
-there is no flag and no config key to add, and nothing to record **for the path**: D854's question is
+there is no flag and no config key to add, and nothing to record **of the path**: D854's question is
 a different one — whether the *generation* the stage reads at the seed is recorded — and it is open,
 not answered here (see §3). R0 builds the path and the door; R1 gives the file its first content on
 an installation that has none.

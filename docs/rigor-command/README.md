@@ -37,13 +37,13 @@ publishes it after showing the diff; `rigor set` and `unset` edit that one file.
 therefore one command whose next step is the one documented command, which is the HARD RULE read
 literally.
 
-**Where it writes nothing of its own: D854, which is open.** The stage refuses to overwrite an object
-whose generation moved since it read it, and **whether it records that generation** is the settings
-design's decision — D854, open there, cited here, and not answered here. R1 carries both outcomes:
-with the record, the local project config holds the generation the local file was written from and
-`unpublished` in `show` and doctor can say whether the file is the owner's own edit or a stale copy
-from another machine; without it, the guard covers one `update` and a stale copy would revert a
-newer publish.
+**One thing this shape does not settle: D854, which is open.** The stage refuses to overwrite an
+object whose generation moved since it read it, and **whether it records that generation** is the
+settings design's decision — D854, cited here, open there, and not answered here. R1 carries both
+outcomes: with the record, the local project config holds the generation the local file was last
+written from, and `unpublished` in `show` and in doctor can say whether the file is the owner's own
+edit or a stale copy from another machine; without it, the guard covers one `update` and a stale
+copy would revert a newer publish.
 
 | File | Role |
 | --- | --- |
