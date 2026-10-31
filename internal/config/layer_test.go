@@ -631,7 +631,26 @@ func TestProjectLayerNeverEchoesCredentialsOrLongText(t *testing.T) {
 	}
 }
 
+// TestProjectLayerRefusesCheckoutSharedUntil0150: a profile is the other
+// way a workflow gets its checkout, so the corpus's shared profile, valid
+// only behind sharedShipped, is refused today with the sentence a
+// repository's own fugaro.yaml gets.
+func TestProjectLayerRefusesCheckoutSharedUntil0150(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "project-layer", "valid", "checkout-shared-profile.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	l, ps := ParseProjectLayer(data, LayerAnchor{Project: "aurora", GCPProject: "proj-1234"})
+	if l != nil || !hasProblem(ps, "profiles.p.checkout", SharedCheckoutRefusal, 0) {
+		t.Errorf("a profile declaring checkout: shared parsed to %v with problems %v, want refused at profiles.p.checkout", l, ps)
+	}
+}
+
+// TestProjectLayerCorpus walks the valid and invalid project-layer corpus.
+// It runs with sharedShipped on because valid/ holds a checkout: shared
+// profile, a shape only the release that ships shared images accepts.
 func TestProjectLayerCorpus(t *testing.T) {
+	sharedShipped(t)
 	a := LayerAnchor{Project: "aurora", GCPProject: "proj-1234"}
 	for _, kind := range []string{"valid", "invalid"} {
 		files, err := filepath.Glob(filepath.Join("..", "..", "testdata", "project-layer", kind, "*.yaml"))
@@ -651,5 +670,35 @@ func TestProjectLayerCorpus(t *testing.T) {
 				t.Errorf("%s: parsed without problems, want invalid", f)
 			}
 		}
+	}
+}
+
+// TestReviewFloorNotInLayer is D722's boundary, and it is a test rather than a
+// change: the owner's review-level floor is published through the policy node
+// and read from there, and this package gains no key for it. The project layer
+// is written by the launcher and published to the runs bucket, so a floor in
+// it could be dropped by the very launcher the floor is meant to bind
+// (docs/design/bucket-iam.md §10 L1, L2) — the key must stay unreadable here.
+// The layer is decoded with KnownFields, so the key alone is what refuses it,
+// at the top level and under defaults: alike.
+func TestReviewFloorNotInLayer(t *testing.T) {
+	for _, body := range []string{
+		"review_floor:\n  pro: [l2]\n",
+		"defaults:\n  review_floor:\n    pro: [l2]\n",
+	} {
+		if got := layerProblems(t, layerHead+body); !strings.Contains(got, "review_floor") {
+			t.Errorf("a layer writing %q gave problems %q, want one naming review_floor", body, got)
+		}
+	}
+	// The repository's own file is the launcher's too — the branch the run
+	// checks out is the one the agent can edit mid-run — so it refuses the key
+	// on the same strict decode, with no field for it on this package's Config.
+	// The problem has to name the key: any other refusal (a file that is not
+	// valid YAML, a missing required field) would satisfy a bare "it was
+	// refused" too.
+	if _, ps := Parse([]byte(minimalRepo + "review_floor:\n  pro: [l2]\n")); len(ps) == 0 {
+		t.Error("fugaro.yaml accepted review_floor:, and the floor is the owner's key")
+	} else if got := problemsText(ps); !strings.Contains(got, "review_floor") {
+		t.Errorf("fugaro.yaml refused the file with %q, want a problem naming review_floor", got)
 	}
 }

@@ -281,6 +281,22 @@ func userMember(m string) (string, error) {
 	return m, nil
 }
 
+// sameUserMemberFold reports whether two member texts name the same person,
+// comparing the address with its case folded.
+//
+// It is the self-removal guard's own comparison and nothing else — a local-CLI
+// guard, not the rule the lists are read or written by: roles.go places an
+// identity on these lists exactly (operatorMember, meMember), and which members
+// a list holds, what a change writes and what an apply grants are unchanged. The
+// guard is the one reader that cannot afford the exact spelling, because the
+// person it is about is spelled once by the machine that typed their identity
+// and once by the member IAM handed back. The empty member is on no list and
+// equals nothing here: meMember answers it for an identity that cannot be told,
+// and reading that as "not the caller" is what the guard exists to prevent.
+func sameUserMemberFold(a, b string) bool {
+	return a != "" && b != "" && strings.EqualFold(a, b)
+}
+
 // userLocalConfig refuses a selection that has no file to write: a shared
 // config carries no terraform block (F42), so its two "lists" are empty and
 // would be a lie, and a change has nowhere to go.
@@ -369,13 +385,19 @@ func userEdit(cmd *cobra.Command, o cloudOptions, role, member string, add bool)
 	// last-operator check below: a caller who is the only operator is told they
 	// cannot take themselves off the list rather than that the list would be
 	// left empty, because somebody else removing them is the way out of both
-	// and the count is a consequence of whose member this is. The caller is
-	// placed the way every role check places them (roles.go): meMember writes
-	// the local config's own `user:` as the member the two lists hold, so this
-	// is not a second comparison of addresses. An identity lc.Me cannot tell is
-	// refused below rather than placed: the empty member it would answer is on
-	// no list, so reading its error as "not the caller" is what let an operator
-	// remove themselves.
+	// and the count is a consequence of whose member this is. meMember turns the
+	// identity into the member text the two lists hold (roles.go), and the two
+	// spellings it puts side by side come from different hands: this
+	// invocation's identity keeps the case its owner typed (`user:` in the
+	// config, else git config user.email), while a list written from the
+	// members IAM hands back is lower-cased. An address's case is not part of
+	// who it is, so both sides are placed with the case folded
+	// (sameUserMemberFold) — a guard that read Person-1@Example.test and
+	// user:person-1@example.test as two people would let an operator remove
+	// themselves from the one list that is who can be told to settle the
+	// installation. An identity lc.Me cannot tell is refused below rather than
+	// placed: the empty member it would answer is on no list, so reading its
+	// error as "not the caller" is what let an operator remove themselves.
 	if !add && r == userOperatorRole {
 		// An identity that cannot be read is refused rather than treated as
 		// the empty member: the empty member is on no list (meMember), so the
@@ -386,7 +408,8 @@ func userEdit(cmd *cobra.Command, o cloudOptions, role, member string, add bool)
 			return userErr("nothing was written: fugaro user rm cannot tell whether %s is the identity this invocation is running as, because %v (set user in the local config %s, or git config user.email, and rerun this). An operator must not remove themselves from %s — the operators list is who can be told to settle the installation — so with the identity unread the removal is refused rather than compared against a member that is on no list",
 				safetext.Field(who), err, safetext.Field(sel.Path), safetext.Field(onDisk.Name))
 		}
-		if operatorOf(lc, me) && who == meMember(me) {
+		caller := meMember(me)
+		if slices.ContainsFunc(lc.Terraform.Operators, func(m string) bool { return sameUserMemberFold(m, caller) }) && sameUserMemberFold(who, caller) {
 			return userErr("you cannot remove yourself from the operators of %s: %s is the identity this invocation is running as, and the operators list is who can be told to settle the installation — run its update, add a member, read its budget — so another operator has to remove you, or a project Owner from outside the list: nothing was written",
 				safetext.Field(onDisk.Name), safetext.Field(who))
 		}

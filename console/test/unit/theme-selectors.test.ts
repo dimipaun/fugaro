@@ -103,7 +103,7 @@ const RAIL_HOOKS: readonly string[] = Object.freeze([
  * (`div.console-rail-head`, `header.degraded-header`). Stripping one is what
  * turns a token into the class a rule would select; a token with any other
  * prefix is not a hook. */
-const ELEMENT_PREFIX = /^(?:a|aside|button|code|details|div|dl|figure|form|g|h1|h2|h3|header|input|label|li|main|nav|ol|p|path|pre|rect|section|span|summary|svg|table|tbody|td|text|th|tr|tspan|ul)\./
+const ELEMENT_PREFIX = /^(?:a|aside|button|code|dd|details|div|dl|figure|form|g|h1|h2|h3|header|input|label|li|main|nav|ol|p|path|pre|rect|section|span|summary|svg|table|tbody|td|text|th|tr|tspan|ul)\./
 
 /** HOOK is what a token has to look like to be a hook rather than a word of
  * prose. A class hook carries one of the prefixes §2's tables and prose are
@@ -112,7 +112,7 @@ const ELEMENT_PREFIX = /^(?:a|aside|button|code|details|div|dl|figure|form|g|h1|
  * attribute hook is a `data-*` or an `aria-*`. Everything else the section
  * mentions (`class`, `title`, `role`, `putReading`, `UNAVAILABLE_MARK`,
  * `path:line`) names no hook a stylesheet could select. */
-const HOOK = /^(?:(?:live|spend|projects|run|degraded|graph|coordinator|console|unavailable|installation)(?:-[a-z0-9-]+)?|(?:data|aria)-[a-z0-9-]+)$/
+const HOOK = /^(?:(?:live|spend|projects|run|degraded|graph|coordinator|console|unavailable|installation|notice)(?:-[a-z0-9-]+)?|(?:data|aria)-[a-z0-9-]+|hidden)$/
 
 /** CLASS_HOOK is the class half of `HOOK`, and `SUFFIX` is the shorthand §2.7
  * and §2.8 write their hook sets with: the degraded screen's section is two
@@ -123,6 +123,11 @@ const HOOK = /^(?:(?:live|spend|projects|run|degraded|graph|coordinator|console|
  * A `-suffix` is a hook of the name it abbreviates, and reading §2 literally
  * without them would refuse to license `degraded-run-repo` while §2 names it two
  * characters further left -- the same defect the `HOOK`/table split avoids.
+ *
+ * **§2.14 adds `notice`, and `hidden` is a hook of its own.** A notice's card is
+ * one family of hooks (`notice`, `notice-mark`, `notice-facts`, ...) and §2.14
+ * is where they are listed; `hidden` is the attribute the theme puts a thing
+ * away with, and the reset's `[hidden]` rule is the one rule that selects it.
  *
  * **§2.7 abbreviates two ways in one paragraph, so both are read.** The run row
  * is `degraded-run-id`, `-repo`, `-status`, ... — the suffix **replaces** the
@@ -137,7 +142,7 @@ const HOOK = /^(?:(?:live|spend|projects|run|degraded|graph|coordinator|console|
  * follows, and any token that is neither is skipped -- so the `-num` of §2.10's
  * prose, which follows a `cell(...)` signature rather than a hook, licenses
  * nothing. */
-const CLASS_HOOK = /^(?:live|spend|projects|run|degraded|graph|coordinator|console|unavailable|installation)-[a-z0-9-]+$/
+const CLASS_HOOK = /^(?:live|spend|projects|run|degraded|graph|coordinator|console|unavailable|installation|notice)-[a-z0-9-]+$/
 
 /** SUFFIX is one `-suffix`, or a run of them joined by `/` as §2.7's
  * `-word`/`-at`/`-age` is written. */

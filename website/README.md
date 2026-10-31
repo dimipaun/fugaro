@@ -1279,7 +1279,9 @@ added or removed without this sentence moving fails there:
     count, and both are named: the hero's illustration — `figure.hero-shot`, the terminal
     card the bold redesign draws beside the copy, which is a picture with a caption rather
     than the page's opening prose, and which `test/fold.mjs`'s rule 1 takes out of the lead
-    region in the same way — and the block the first `h2` belongs to, which is how the
+    region in the same way (the four campaign heroes carry the class on the console screen
+    they show rather than on a drawn card, `CampaignHero.astro`, D411, and it is a picture
+    there for the same reason) — and the block the first `h2` belongs to, which is how the
     slider's tab labels stayed out of the region when the block's heading moved above them.
     Before the bold redesign the same region held the request the hero printed under the
     headline, the promise, its three calls to action and the slider's three tab labels: 30
@@ -1830,7 +1832,12 @@ the site's console downloads follow the console's own release), so `release.vers
 artifacts, the same signing and notarisation, and the same derived URLs. **And on 2026-10-24 it
 moved again, to `console-v0.110.0`, which is the release the console's own stream published:**
 `release.version`, the four `sha256` values and the sums file moved as before, and the Linux pair
-came with them, so the section grew the block below.
+came with them, so the section grew the block below. **On 2026-10-30 it moved to
+`console-v0.115.0`**, the first release whose sums file also names the update feed,
+`latest-mac.yml`: the feed is summed so the one cosign signature covers it, but it is
+electron-updater's to fetch and not a download. The sums file is still copied byte for byte,
+and the two checks that every name in it is offered (`TestWebsiteConsoleReleaseFactsAreComplete`
+and `website/test/console.mjs`) pass over that one name.
 
 **The tag's prefix is checked in the build, not only in the gates.** `src/lib/console-downloads.mjs`
 reads `CONSOLE_TAG="<prefix>$VERSION"` out of `.github/workflows/console-release.yml` and refuses a
@@ -1918,7 +1925,14 @@ it is served because `public/` is served, and it is what `test/console-screens.m
 file's `alt` texts to.
 
 `src/components/ScreenshotSlider.astro` renders the rows of `data/console-screens.yaml` and
-nothing else, so adding, replacing or removing a screenshot is a data-file edit and a file:
+nothing else, so adding, replacing or removing a screenshot is a data-file edit and a file. Two
+things are worth knowing before editing the file. The four campaign pages' heroes are a second
+consumer of those rows: each variant names one in `data/landing.yaml` and the loader refuses a
+name no row carries, so removing a row a variant names stops the campaign build rather than
+quietly shrinking a page (D411). And the homepage's "See it" panel is the same component over
+`data/home-screens.yaml`, not over this file — its console rows mirror these three files and
+`test/home.mjs` holds them equal row for row, so a change here reaches the homepage only through
+that file:
 
 1. **The file**, under `public/screenshots/`. The name is letters, digits, dots, dashes and
    underscores; the extension is one the slider serves — `png`, `jpg`, `jpeg`, `webp` or `avif`.

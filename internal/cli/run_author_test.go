@@ -57,10 +57,13 @@ func setLocalUser(t *testing.T, user string) {
 }
 
 // TestRunAuthorFromLocalConfig: a repository that opted in (git.author:
-// launcher) gets a task carrying the launcher's own identity, taken from the
-// local config's user: — the name being git's user.name, else the address's
-// local part (git has no user.name in these fixtures, so it is the local
-// part).
+// launcher) gets a task whose author's address is this machine's own identity —
+// the local config's `user:`, someone@example.com — and whose name is that
+// address's local part, which is what launchAuthor falls back to because the
+// checkout baseBranchCheckout builds has no user.name for git to answer with
+// (testutil.IsolateGit empties git's own config). Each fact is asserted on its
+// own field: a rule that stopped reading the local config, or one that took a
+// name from anywhere but the address, is caught by the field it changed.
 func TestRunAuthorFromLocalConfig(t *testing.T) {
 	f := newCloudFixture(t)
 	writeBuildRecord(t, f, appSlug, "web", releaseAuthor)
@@ -69,9 +72,14 @@ func TestRunAuthorFromLocalConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	spec := readSpec(t, f, "20261030-100000-abcd")
-	want := &task.Person{Name: "someone", Email: "someone@example.com"}
-	if spec.Author == nil || *spec.Author != *want {
-		t.Fatalf("author = %+v, want %+v: the launch recorded no author for a repository that opted in", spec.Author, want)
+	if spec.Author == nil {
+		t.Fatal("the launch recorded no author for a repository that opted in")
+	}
+	if spec.Author.Email != "someone@example.com" {
+		t.Errorf("author email = %q, want the local config's own user: (someone@example.com)", spec.Author.Email)
+	}
+	if spec.Author.Name != "someone" {
+		t.Errorf("author name = %q, want the address's local part, which is what a checkout with no user.name falls back to", spec.Author.Name)
 	}
 }
 
@@ -463,10 +471,13 @@ func TestValidateWarnsThatGitAuthorNeedsEveryJobImage(t *testing.T) {
 	}
 }
 
-// TestGitAuthorSinceIsTheReleaseTheChecklistNames holds gitAuthorSince to the
-// reader that states its number: docs/release.md's Before-you-tag bullet,
-// which is where a release verifies the constant against the tag actually cut,
-// and which carries the field's own constant (authorSince) in the same bullet.
+// TestGitAuthorSinceIsTheReleaseTheChecklistNames holds gitAuthorSince and
+// authorSince each to the half of docs/release.md's Before-you-tag bullet that
+// states its own number — the reader a release verifies the constants against
+// the tag actually cut. Each half is read apart from the other: the two
+// constants name the same release today, so a check that read the number from
+// the whole bullet would pass with either one wrong as long as the other was
+// right, which is the mistake the two spellings invite.
 func TestGitAuthorSinceIsTheReleaseTheChecklistNames(t *testing.T) {
 	var bullet string
 	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
@@ -478,10 +489,21 @@ func TestGitAuthorSinceIsTheReleaseTheChecklistNames(t *testing.T) {
 	if bullet == "" {
 		t.Fatal("docs/release.md's Before-you-tag list has no gitAuthorSince bullet")
 	}
-	if !strings.Contains(bullet, "currently `\""+gitAuthorSince+"\"`") {
-		t.Errorf("docs/release.md's gitAuthorSince bullet does not carry the constant's release (%q)", gitAuthorSince)
+	// The bullet's second half is where it turns to the task field the same
+	// release carries, and its own constant with it.
+	gitAuthorHalf, fieldHalf, ok := strings.Cut(bullet, "**The same release carries")
+	if !ok {
+		t.Fatal("docs/release.md's gitAuthorSince bullet no longer states the task field's own constant in a half of its own")
 	}
-	if !strings.Contains(bullet, "`authorSince`") || !strings.Contains(bullet, "currently `\""+authorSince+"\"`") {
-		t.Errorf("docs/release.md's gitAuthorSince bullet does not carry the task field's own constant and release (%q): the two gates ship together", authorSince)
+	for _, c := range []struct{ name, half, release string }{
+		{"gitAuthorSince", gitAuthorHalf, gitAuthorSince},
+		{"authorSince", fieldHalf, authorSince},
+	} {
+		if !strings.Contains(c.half, "`"+c.name+"`") {
+			t.Errorf("the half of docs/release.md's gitAuthorSince bullet about %s does not name the constant", c.name)
+		}
+		if !strings.Contains(c.half, "currently `\""+c.release+"\"`") {
+			t.Errorf("the half of docs/release.md's gitAuthorSince bullet about %s does not carry its release (%q)", c.name, c.release)
+		}
 	}
 }

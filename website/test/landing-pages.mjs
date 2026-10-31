@@ -37,15 +37,19 @@
 //      rendered mobile and desktop reading is owner-run (G2.5). What can be held here is that
 //      the layout's campaign rules and the sections' own rules sit inside breakpoints, so a
 //      phone gets a layout of its own rather than the wide one squeezed.
-//   7. **The hero's own picture is drawn in the markup.** Each hero carries the campaign's
-//      illustration: inline SVG, so nothing is fetched and no raster file is added (F14), with
-//      the variant's tone on it — its own accent and its own motif, keyed off `data-tone` — a
-//      name for a reader who is not shown it, and no text inside the drawing, because a picture
-//      made of words is a second paragraph the page's word ceiling would have to count. The
-//      drawing is the page's own and not a variant's media: a variant that names a video or an
-//      image still takes the media slot at the top of the page instead, and renders no drawing
-//      (D409's row records the owner's feedback of 2026-10-30, which asked for the picture as
-//      well as the band's absence; F14, G2.5).
+//   7. **The hero's own picture is the console's own screen.** Each variant names a `screenshot`
+//      — a file of `website/public/screenshots/` that has to be a row of
+//      `website/data/console-screens.yaml` — and the hero renders that capture large, with the
+//      row's own alt text, caption and pixel size: one picture per hero, fetched with the page,
+//      from an origin the build already serves (F14, D190). The campaign's own drawing is the
+//      fallback: it is what a hero shows while a variant names no screen, it is inline SVG, so
+//      nothing is fetched and no raster file is added, and it carries the variant's tone — its own
+//      accent and its own motif, keyed off `data-tone` — a name for a reader who is not shown it,
+//      and no text inside the drawing, because a picture made of words is a second paragraph the
+//      page's word ceiling would have to count. A variant that names a video or an image takes
+//      the media slot at the top of the page instead, and renders no picture in the hero at all
+//      (the owner's feedback of 2026-10-30 asked for the picture as well as the band's absence:
+//      D409's row records the band, D411's the picture; F14, G2.5).
 //
 // **Red step** (the plan's own, recorded here as the plan requires — the line this file printed
 // before the template existed): the first case below failed with
@@ -63,7 +67,7 @@ import path from 'node:path'
 
 import { loadLanding } from '../src/lib/landing.mjs'
 import { DIST, SITE, builtPages, cssRules, filesUnder, findAll, parse, servedFile, siteFacts, textOf, tokenize, walk } from './lib/html.mjs'
-import { buildCopy } from './lib/build.mjs'
+import { buildCopy, dropCampaignScreenshots } from './lib/build.mjs'
 
 const LANDING = loadLanding()
 const FACTS = siteFacts()
@@ -103,9 +107,10 @@ function sectionsFor(variant) {
 /** The four pages this file is about, as the variant and the file the build serves it from. */
 const PAGES = LANDING.variants.map((variant) => ({ variant, rel: `${variant.name}/index.html` }))
 
-/** One built page, by its path relative to `dist/`. */
-function pageOf(rel) {
-  const page = builtPages(DIST).find((entry) => entry.rel === rel)
+/** One built page, by its path relative to `dist/`. A case that reads a copy passes the copy's
+ * own index; the shipped build is the default. */
+function pageOf(rel, dist = DIST) {
+  const page = builtPages(dist).find((entry) => entry.rel === rel)
   assert.ok(page, `${rel} was not built`)
   return page
 }
@@ -271,14 +276,20 @@ test('a variant whose figure is published renders the band, with the entry it wa
   const built = buildCopy(t, ({ site }) => {
     const file = path.join(site, 'data', 'landing.yaml')
     const before = readFileSync(file, 'utf8')
-    // The block is written once per variant and `tone: scale` names the one being changed, so
-    // the figure lands on /scale and on no other page.
-    const after = before.replace(
-      '    tone: scale\n    proof_number:\n      value: unmeasured\n      source: unmeasured\n',
-      `    tone: scale\n    proof_number:\n      value: "${FIGURE}"\n      source: ${SOURCE}\n`,
+    // The variants are told apart by their own `path:` lines, so the block the figure is written
+    // into is cut out by that marker rather than by the keys around it: the figure lands on
+    // /scale and on no other page, whatever else the variant carries.
+    const at = before.indexOf('  - path: /scale\n')
+    assert.notEqual(at, -1, 'the fixture found no /scale variant in the copy, so no case below could read the band')
+    const next = before.indexOf('\n  - path: ', at + 1)
+    const end = next === -1 ? before.length : next
+    const block = before.slice(at, end)
+    const patched = block.replace(
+      '      value: unmeasured\n      source: unmeasured\n',
+      `      value: "${FIGURE}"\n      source: ${SOURCE}\n`,
     )
-    assert.notEqual(after, before, 'the fixture did not give /scale a figure in the copy, so no case below could read the band')
-    writeFileSync(file, after)
+    assert.notEqual(patched, block, 'the fixture did not give /scale a figure in the copy, so no case below could read the band')
+    writeFileSync(file, before.slice(0, at) + patched + before.slice(end))
   })
   assert.equal(built.status, 0, `the campaign build failed with a figure named:\n${built.output}`)
 
@@ -391,11 +402,11 @@ test('the hero carries the booking action, above the picture and before every ot
     // picture. The picture is the biggest thing in the hero and it may not be the reason the
     // booking link is below the fold.
     const order = [...walk(hero)]
-      .filter((el) => ['h1', 'a', 'svg'].includes(el.name))
+      .filter((el) => ['h1', 'a', 'img', 'svg'].includes(el.name))
       .map((el) => el.name)
     assert.deepEqual(
       order,
-      ['h1', 'a', 'svg'],
+      ['h1', 'a', 'img'],
       `${rel}'s hero draws ${JSON.stringify(order)}: the headline first, then the booking action, then the picture — the action sits directly under the supporting line and above the picture at every width (the owner's feedback of 2026-10-30)`,
     )
 
@@ -450,11 +461,16 @@ test('no partner logo is rendered, and the social-proof section is hidden while 
       !sectionsOf(html).includes('social-proof'),
       `${rel} renders the social-proof section while website/data/landing.yaml names no partner: the section is hidden until one exists (F11, D405)`,
     )
-    // Every picture on the page is one the data file names: the site's own wordmark, and — when
-    // the file carries them — a variant's media and the partners' logos. A picture the file does
-    // not name is a logo or a photograph nobody gave permission for, which is what F11 and F12
-    // refuse and what the empty `partner_logos` above is the state of today.
-    const named = new Set(['/logo.png', ...PAGES.map(({ variant }) => variant.image), ...LANDING.partnerLogos.map((logo) => logo.image)].filter(Boolean))
+    // Every picture on the page is one the data file names: the site's own wordmark, the
+    // variant's console screen (named in `landing.yaml`, described in `console-screens.yaml`) and
+    // — when the file carries them — a variant's media and the partners' logos. A picture the file
+    // does not name is a logo or a photograph nobody gave permission for, which is what F11 and
+    // F12 refuse and what the empty `partner_logos` above is the state of today.
+    const named = new Set([
+      '/logo.png',
+      ...PAGES.flatMap(({ variant }) => [variant.image, variant.screenshot?.src]),
+      ...LANDING.partnerLogos.map((logo) => logo.image),
+    ].filter(Boolean))
     for (const src of findAll(doc, (el) => el.name === 'img').map((el) => el.attrs.get('src'))) {
       assert.ok(
         named.has(src),
@@ -530,16 +546,19 @@ test('a variant that names a video renders it in the hero, and one whose file is
     ['main', 'video', 'h1'],
     `the /save page draws ${JSON.stringify(order.slice(0, 3))}; the video is the campaign's own and sits at the top of the hero, above the headline (F14)`,
   )
-  // The drawing stands down for the variant that brought its own media: the owner's file is
-  // what the top of that page is for, and two pictures of the same campaign would be one too
-  // many (D409's row, F14). Asserted here because `art` is the one behaviour no shipped page
-  // can read — every variant in website/data/landing.yaml names neither a video nor an image,
-  // so only this copy, where one does, reaches the prop's false half.
-  const saveArt = findAll(parse(save.html), (el) => el.name === 'svg' && (el.attrs.get('class') ?? '').split(/\s+/).includes('campaign-hero-art'))
+  // The hero's own picture stands down for the variant that brought its own media: the owner's
+  // file is what the top of that page is for, and two pictures of the same campaign would be one
+  // too many (D409's and D411's rows, F14). Both halves of the picture are read — the console screen the
+  // variant names and the drawing a variant with no screen would fall back to — because `art` is
+  // the one behaviour no shipped page can read: every variant in website/data/landing.yaml names
+  // neither a video nor an image, so only this copy, where one does, reaches the prop's false half.
+  const saveHero = findAll(parse(save.html), (el) => el.attrs.get('data-section') === 'hero')
+  assert.equal(saveHero.length, 1, 'the copy built no /save hero to read the picture off')
+  const savePicture = findAll(saveHero[0], (el) => el.name === 'img' || el.name === 'svg')
   assert.equal(
-    saveArt.length,
+    savePicture.length,
     0,
-    `/save renders ${saveArt.length} hero illustration(s) although its variant names a video: a variant with media of its own takes the media slot and the hero draws nothing beside it (F14, G2.5)`,
+    `/save renders ${savePicture.length} hero picture(s) although its variant names a video: a variant with media of its own takes the media slot and the hero draws nothing beside it (F14, G2.5)`,
   )
 
   // The variant whose file the owner has not produced: no player, and the page is otherwise
@@ -561,13 +580,15 @@ test('a variant that names a video renders it in the hero, and one whose file is
     2,
     '/crew lost a booking link along with the missing video: the page keeps the hero action and the closing band without the file it names (F14, G2.5)',
   )
-  // And the drawing is there: `/crew` names a video the repository does not carry, so the
-  // variant has no media and the hero draws the campaign's picture — the same fallback the four
-  // shipped pages take today, reached here by a variant that did name a file (F14, G2.5).
+  // And the picture is there: `/crew` names a video the repository does not carry, so the variant
+  // has no media the loader can report and the hero draws the console screen the variant names —
+  // the same picture the four shipped pages take today, reached here by a variant that did name a
+  // file (F14, G2.5).
+  const crewPicture = findAll(parse(crew.html), 'img').filter((el) => el.attrs.get('src') === LANDING.variants.find((one) => one.name === 'crew').screenshot.src)
   assert.equal(
-    findAll(parse(crew.html), (el) => el.name === 'svg' && (el.attrs.get('class') ?? '').split(/\s+/).includes('campaign-hero-art')).length,
+    crewPicture.length,
     1,
-    "/crew's hero draws no illustration although the video it names is not served: a variant whose media the build does not hold renders the page complete, with the campaign's picture in the hero rather than a hole (F14, G2.5)",
+    '/crew\'s hero draws no picture although the video it names is not served: a variant whose media the build does not hold renders the page complete, with the console screen its claim is proved by in the hero rather than a hole (F14, G2.5)',
   )
 })
 
@@ -639,7 +660,7 @@ test('the campaign sections are laid out at more than one width', () => {
     const { html } = pageOf(rel)
     const styles = findAll(parse(html), (el) => el.name === 'style').map((el) => el.raw ?? '').join('\n')
     const rules = cssRules(styles)
-    for (const selector of ['.campaign-steps', '.campaign-calls', '.campaign-hero-art']) {
+    for (const selector of ['.campaign-steps', '.campaign-calls', '.campaign-hero-shot']) {
       assert.ok(
         rules.some((rule) => (rule.conditions ?? []).length > 0 && rule.selector.includes(selector)),
         `${rel} declares ${selector} at one width only: the sections stack on a phone and sit in a row on a wide viewport, and the gates have no browser — this is the static half, and the rendered reading is G2.5's (spec §6)`,
@@ -648,20 +669,117 @@ test('the campaign sections are laid out at more than one width', () => {
   }
 })
 
-// ---- 7. the hero's own picture (the owner's feedback of 2026-10-30; F14, G2.5) -------------
+// ---- 7. the hero's own picture (the owner's instruction of 2026-10-30; F14, D190, G2.5) -----
 
-/** The hero band of one built page, and the illustration it draws. */
-function artOf(rel) {
-  const { html } = pageOf(rel)
+/** The hero band of one built page. */
+function heroOf(rel, dist = DIST) {
+  const { html } = pageOf(rel, dist)
   const hero = findAll(parse(html), (el) => el.attrs.get('data-section') === 'hero')
   assert.equal(hero.length, 1, `${rel} marks ${hero.length} hero sections; the page has one`)
-  const drawings = findAll(hero[0], (el) => el.name === 'svg' && (el.attrs.get('class') ?? '').split(/\s+/).includes('campaign-hero-art'))
+  return { html, hero: hero[0] }
+}
+
+/**
+ * A build of the repository with the four variants' screenshots left out of the data file: on
+ * that copy the campaign's own drawing is the hero's picture, which is the state the three cases
+ * below read. The shipped file names a screen on every variant, so the fallback is reached by no
+ * page the repository builds — and a fallback nothing reads is a fallback nothing keeps.
+ */
+function withoutScreenshots(t) {
+  const built = buildCopy(t, ({ site }) => {
+    assert.ok(dropCampaignScreenshots(site), 'the fixture found no screenshots to take out of the copy\'s website/data/landing.yaml, so the state below is not the one it means to build')
+  })
+  assert.equal(built.status, 0, `the campaign build failed with no screenshot named:\n${built.output}`)
+  return built.dist
+}
+
+test('the hero shows the console screen its variant names, once, with the row\'s own words and size', () => {
+  // The console page's own slider, as the set of screens the site serves: the campaign heroes
+  // draw from the same four files and add none of their own (the four are `console-screens.yaml`'s
+  // rows, and the hero's `src` is the row's).
+  const consolePage = pageOf('console/index.html')
+  const served = new Set(findAll(parse(consolePage.html), (el) => el.name === 'img').map((el) => el.attrs.get('src')))
+
+  for (const { variant, rel } of PAGES) {
+    const { hero } = heroOf(rel)
+    const screen = variant.screenshot
+    assert.ok(
+      screen,
+      `${rel}'s variant names no screenshot: the hero's picture is a real screen of the console, and every variant in website/data/landing.yaml names the one its claim is proved by (the owner's instruction of 2026-10-30)`,
+    )
+
+    // One picture, and it is the screen: the drawing is the fallback for a variant that names
+    // none, so the two never share a hero.
+    const pictures = findAll(hero, (el) => el.name === 'img' || el.name === 'svg')
+    assert.equal(
+      pictures.length,
+      1,
+      `${rel}'s hero carries ${pictures.length} picture(s): the hero's picture is one, and it is the console screen the variant names — the drawing stands down for it rather than sitting beside it (the owner's instruction of 2026-10-30)`,
+    )
+    assert.equal(pictures[0].name, 'img', `${rel}'s hero's one picture is a <${pictures[0].name}>: the variant names a screenshot, so the picture is that file and not the campaign's drawing (the owner's instruction of 2026-10-30)`)
+    const img = pictures[0]
+
+    // The bytes are the site's own: a path the build already served for the console page, on no
+    // other origin, and no second copy of the file for the campaign (F14, D190).
+    assert.equal(
+      img.attrs.get('src'),
+      screen.src,
+      `${rel}'s hero shows ${JSON.stringify(img.attrs.get('src'))}, and the screen the variant names is served at ${JSON.stringify(screen.src)}: the hero fetches the row's own file and adds none`,
+    )
+    assert.ok(!/^[a-z][a-z0-9+.-]*:|^\/\//i.test(img.attrs.get('src')), `${rel}'s hero asks for its picture at ${JSON.stringify(img.attrs.get('src'))}, which is another origin: the campaign pages fetch the screens the site already serves and admit no new host (F14, F20)`)
+    assert.ok(servedFile(DIST, screen.src) !== null, `${rel}'s hero shows ${screen.src}, which the build does not serve, so the page carries a request for nothing (F14)`)
+    assert.ok(
+      served.has(screen.src),
+      `${rel}'s hero shows ${screen.src}, and the console page's own slider does not: the campaigns' screens are the console's four, by their existing names, rather than pictures the campaign pages bring with them (D190)`,
+    )
+
+    // What describes the picture is the data file's, once: the alt text a reader who is not shown
+    // the picture gets, the caption under it, and the pixels that reserve its box before its bytes
+    // land — the same row the console page renders, so the two pages cannot describe one file
+    // differently (D190).
+    assert.equal(img.attrs.get('alt'), screen.alt, `${rel}'s hero picture is described as ${JSON.stringify(img.attrs.get('alt'))}, and website/data/console-screens.yaml describes ${screen.file} as ${JSON.stringify(screen.alt)}: one picture has one alt text, and the campaign page carries no second copy of the sentence (D190)`)
+    assert.equal(img.attrs.get('width'), String(screen.width), `${rel}'s hero picture declares no width of the row's own (${screen.width}): the two attributes are what reserve the picture's box before its bytes land, and the page shifts as it arrives without them`)
+    assert.equal(img.attrs.get('height'), String(screen.height), `${rel}'s hero picture declares no height of the row's own (${screen.height}): the two attributes are what reserve the picture's box before its bytes land, and the page shifts as it arrives without them`)
+
+    // The picture is the hero's, so it is fetched with the page rather than when it comes near the
+    // viewport, and it is what a reader on paid traffic came for.
+    assert.equal(img.attrs.get('loading'), 'eager', `${rel}'s hero picture is not fetched with the page (loading=${JSON.stringify(img.attrs.get('loading'))}): the hero's picture is the first screen's, so it is not deferred until it scrolls near (the owner's instruction of 2026-10-30)`)
+    assert.equal(img.attrs.get('fetchpriority'), 'high', `${rel}'s hero picture carries no fetchpriority="high": the campaign pages are built for paid traffic, and the picture the page is about is the one to ask for first (the owner's instruction of 2026-10-30)`)
+
+    // The figure is the site's hero-picture slot, which is what takes a hero's picture out of the
+    // page's opening prose: the screen's alt text is the console's own and is written for a reader
+    // who is not shown the picture, and `budget.mjs`'s lead reader and `fold.mjs`'s rule 1 both
+    // read this class to leave it out of the lead (`CampaignHero.astro`).
+    const figures = findAll(hero, (el) => el.name === 'figure')
+    assert.equal(figures.length, 1, `${rel}'s hero carries ${figures.length} figures; the picture and its caption are one`)
+    assert.deepEqual(
+      (figures[0].attrs.get('class') ?? '').split(/\s+/),
+      ['campaign-hero-shot', 'hero-shot'],
+      `${rel}'s hero figure is classed ${JSON.stringify(figures[0].attrs.get('class'))}: the campaign's own class and the site's \`hero-shot\`, which is the one the lead readers take a hero's picture out of a page's opening by — without it the screen's alt text would be counted as the campaign's lead (D188)`,
+    )
+    const captions = findAll(figures[0], (el) => el.name === 'figcaption')
+    assert.equal(captions.length, 1, `${rel}'s hero picture carries ${captions.length} captions; the screen's own line is one`)
+    assert.equal(textOf(captions[0]).trim(), screen.caption, `${rel}'s hero picture is captioned ${JSON.stringify(textOf(captions[0]).trim())}, and the row for ${screen.file} carries ${JSON.stringify(screen.caption)}: the caption is the data file's, and the page types none of its own (D190)`)
+
+    assert.equal(
+      findAll(hero, (el) => el.name === 'svg' && (el.attrs.get('class') ?? '').split(/\s+/).includes('campaign-hero-art')).length,
+      0,
+      `${rel}'s hero draws the campaign's own illustration as well as the console screen: the screen replaces the drawing, and a hero with two pictures has one too many (the owner's instruction of 2026-10-30)`,
+    )
+  }
+})
+
+/** The hero band of one built page, and the illustration it draws (a page built without a
+ * screenshot named, `withoutScreenshots()` above). */
+function artOf(rel, dist = DIST) {
+  const { html, hero } = heroOf(rel, dist)
+  const drawings = findAll(hero, (el) => el.name === 'svg' && (el.attrs.get('class') ?? '').split(/\s+/).includes('campaign-hero-art'))
   assert.equal(
     drawings.length,
     1,
-    `${rel} draws ${drawings.length} hero illustrations: every campaign page carries the campaign's one picture, and it is the hero's own (the owner's feedback of 2026-10-30)`,
+    `${rel} draws ${drawings.length} hero illustrations although its variant names no screenshot: the campaign's own drawing is the hero's picture for a variant that names none, and it is the hero's own (the owner's feedback of 2026-10-30, and the fallback the owner's instruction of 2026-10-30 keeps)`,
   )
-  return { html, hero: hero[0], svg: drawings[0] }
+  return { html, hero, svg: drawings[0] }
 }
 
 /**
@@ -686,10 +804,11 @@ function artMarkup(html) {
   return assert.fail('the hero illustration is never closed, so its markup cannot be read')
 }
 
-test('the hero draws the campaign\'s picture inline, named, and with no request of its own', () => {
+test('the hero draws the campaign\'s picture inline, named, and with no request of its own', async (t) => {
+  const dist = withoutScreenshots(t)
   const drawings = new Set()
   for (const { variant, rel } of PAGES) {
-    const { html, svg } = artOf(rel)
+    const { html, svg } = artOf(rel, dist)
 
     // Inline SVG, so nothing is fetched: no picture file, no icon font, no raster asset. The
     // markup is read whole because a drawing can make a request through an element this file
@@ -731,10 +850,11 @@ test('the hero draws the campaign\'s picture inline, named, and with no request 
   assert.equal(drawings.size, PAGES.length, `the four campaign pages draw ${drawings.size} distinct picture(s): a picture that is the same markup on every page is a drawing with no tone, whatever the attribute above says (the owner's feedback of 2026-10-30)`)
 })
 
-test('the hero\'s picture sits under the words on a phone, and every tone paints its own accent', () => {
+test('the hero\'s picture sits under the words on a phone, and every tone paints its own accent', async (t) => {
+  const dist = withoutScreenshots(t)
   const TONES = LANDING.variants.map((variant) => variant.tone)
   for (const { rel } of PAGES) {
-    const { html } = artOf(rel)
+    const { html } = artOf(rel, dist)
     const doc = parse(html)
     const order = [...walk(doc)].filter((el) => el.name === 'h1' || (el.name === 'svg' && (el.attrs.get('class') ?? '').split(/\s+/).includes('campaign-hero-art')))
     assert.deepEqual(
@@ -808,9 +928,10 @@ test('the hero\'s picture sits under the words on a phone, and every tone paints
 // `url(…)` — a background image, an SVG filter, a font — is a second origin on four pages built
 // for paid traffic, and `origins.mjs` and `privacy.mjs` are the site-wide halves of the same
 // rule. Nothing here is a host; what this reads is the local shape of it.
-test('the hero\'s picture is drawn flat and framed by nothing, and the campaign styles fetch nothing', () => {
+test('the hero\'s picture is drawn flat and framed by nothing, and the campaign styles fetch nothing', async (t) => {
+  const dist = withoutScreenshots(t)
   for (const { rel } of PAGES) {
-    const { html } = artOf(rel)
+    const { html } = artOf(rel, dist)
     const markup = artMarkup(html)
     for (const guilty of [
       /<linearGradient/i,

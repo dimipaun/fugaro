@@ -3,14 +3,14 @@
 
 # Fugaro Subscription Terms
 
-Draft: under counsel review; not yet in force. Dated 2026-10-28.
+Approved by counsel. Dated 2026-10-28.
 
 # Part A. General
 
 ## 1. Parties and acceptance
 
-1.1 These Terms are an agreement between **[LICENSOR LEGAL NAME]**, [a corporation incorporated
-under the laws of [JURISDICTION]], of [ADDRESS] (the **"Licensor"**), and the business that
+1.1 These Terms are an agreement between **DSSD SOFTWARE INC**, a corporation incorporated
+under the laws of Ontario, of 1621 Maple Ridge Dr., Mississauga, Ontario, L4W 3R6, Canada (the **"Licensor"**), and the business that
 accepts them (the **"Customer"**).
 
 1.2 **Acceptance.** The Customer accepts these Terms when it first does any of the following: (a)
@@ -293,7 +293,7 @@ use that information only to provide the Subscription, License Keys, support and
 eligibility for a Free Plan and enforce the limit of one free seat per legal person, to contact
 the Customer and its Users about the Customer's License Key, and to comply with its legal
 obligations. The Licensor shall handle all of the information it collects and processes in
-accordance with its privacy notice at **[PRIVACY NOTICE URL]** and applicable law.
+accordance with its privacy notice at **https://fugaro.dev/privacy** and applicable law.
 
 ## 8. Support and updates
 
@@ -707,7 +707,7 @@ of this section is void.
 ## 32. Notices
 
 All notices under these Terms shall be in writing and sent to the addresses stated in the Order
-Form (for the Licensor, **[NOTICE EMAIL AND ADDRESS]**). Notices take effect on receipt. Email is
+Form (for the Licensor, **dimi@fugaro.dev, and 1621 Maple Ridge Dr., Mississauga, Ontario, L4W 3R6, Canada**). Notices take effect on receipt. Email is
 sufficient for notices.
 
 ## 33. Order of precedence and entire agreement

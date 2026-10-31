@@ -679,13 +679,19 @@ func TestSpecCloneSetsRemoteEnv(t *testing.T) {
 // shared dependency-layer image and clones the repository's own source at
 // launch. It declares the dependency-layer keys — the ones checkout: clone
 // refuses and this kind exists to accept.
+//
+// It is written as baked, which accepts the same keys: validation refuses
+// checkout: shared until 0.15.0 builds a shared image (config/image.go's
+// sharedCheckoutShipped), and sharedInputs moves the parsed workflow onto the
+// kind afterwards. What these tests pin is the job a shared workflow's spec
+// gets, not how its fugaro.yaml was validated.
 const sharedYAML = `version: 1
 project: aurora
 git: { provider: github, base_branch: main }
 agent: { auth: vertex }
 workflows:
   web:
-    checkout: shared
+    checkout: baked
     image: { apt: [libvips-dev], tools: { node: "24.19.0" }, key_files: [patches] }
     commands: { build: npm run build, test: npm test }
   api:
@@ -698,6 +704,9 @@ func sharedInputs(t *testing.T) Inputs {
 	t.Helper()
 	in := cloneInputs(t)
 	in.Cfg = parseCfg(t, []byte(sharedYAML))
+	web := in.Cfg.Workflows["web"]
+	web.Checkout = config.CheckoutShared
+	in.Cfg.Workflows["web"] = web
 	return in
 }
 
@@ -3077,6 +3086,36 @@ func TestLocalEntryDisagreeingWithNodeRefused(t *testing.T) {
 	}
 	if !spec.BitbucketProxied {
 		t.Error("BitbucketProxied = false with no local entry and a node admitting this repository with proxy: true, want true: the node is the one source, and an absent entry disagrees with nothing (G15)")
+	}
+}
+
+// TestLocalProxyForAnotherRepositoryWithEmptyNode: the local entry's proxy
+// switch and its allow_data_to are read for THIS repository, not on their own.
+// An entry that proxies workspace-b/other says nothing about acme/sandbox, so
+// a node that admits nothing disagrees with it about nothing: the run is not
+// refused, and this repository is not proxied — the fact is the node's answer
+// for this repository, which is false (G15).
+//
+// The mutant this test kills is the local entry consulted without its
+// allow-list: read entry.Proxy as the local answer (drop entry.AllowsData) and
+// every row below turns into the refusal "disagree about acme/sandbox".
+func TestLocalProxyForAnotherRepositoryWithEmptyNode(t *testing.T) {
+	const otherRepoEntry = "project_secrets:\n  bitbucket-token:\n    allow_data_to: [\"workspace-b/other\"]\n    proxy: true\n"
+	for name, node := range map[string]*projectpolicy.Policy{
+		"the project published no bitbucket_token block": {},
+		"the node's block admits no repository":          publishedNode(t, true),
+	} {
+		spec, err := Repo(proxiedSandboxInputs(t, otherRepoEntry, node))
+		if err != nil {
+			t.Errorf("%s: Repo = %v, want no error: the entry proxies another repository, which is not a disagreement about acme/sandbox", name, err)
+			continue
+		}
+		if spec.BitbucketProxied {
+			t.Errorf("%s: BitbucketProxied = true, want false: the node admits this repository nowhere, and the entry is about workspace-b/other (G15)", name)
+		}
+		if got, present := repoBitbucketProxied(t, spec); present {
+			t.Errorf("%s: the tfvars' repo.bitbucket_proxied = %v, want the key omitted: this repository is not proxied, whatever the entry says about another one", name, got)
+		}
 	}
 }
 

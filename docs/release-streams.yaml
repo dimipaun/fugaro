@@ -22,8 +22,8 @@ streams:
     # Badger is 0.10, Camel 0.11, and one name per minor after that.
     names: [Badger, Camel, Dolphin, Gecko, Hippo, Koala, Moose]
     # The last CLI release, v0.11.3 "Camel three"; 0.12.0 "Dolphin" is next.
-    current: "0.13.0"
-    next: Hippo
+    current: "0.14.0"
+    next: Koala
     tag_prefix: v
 
   - name: console
@@ -32,10 +32,10 @@ streams:
     # which is the CLI's Camel, and it never goes below 0.110.0: the console's
     # updater refuses a downgrade (docs/release.md, "Console releases"). Apple
     # and Lemon are avoided, and internal/streams refuses them.
-    names: [Cherry, Mango, Melon, Nectarine, Orange, Papaya]
-    # The last console release, console-v0.114.0 "Orange"; 0.115.0 "Papaya" is next.
-    current: "0.114.0"
-    next: Papaya
+    names: [Cherry, Mango, Melon, Nectarine, Orange, Papaya, Peach]
+    # The last console release, console-v0.115.0 "Papaya"; 0.116.0 "Peach" is next.
+    current: "0.115.0"
+    next: Peach
     tag_prefix: console-v
 
   - name: mobile

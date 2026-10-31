@@ -70,6 +70,7 @@ import {
   resolveSpecifier,
   themeStylesheetSources,
 } from '../../tools/bundle-renderer/index'
+import { NOTICE_HIDE_DETAILS, NOTICE_SHOW_DETAILS } from '../../src/shared/notice'
 import { CONSOLE_ROOT, builtFile, builtListing, builtPath } from '../support/built'
 import {
   FakeDocument,
@@ -608,15 +609,74 @@ describe('the bundle in a document', () => {
     const { document } = await runBundle({ ok: true, data: aReducedCompatibility() })
     const root = document.body.children[0]
     expect(root, 'the reduced banner was not mounted').toBeDefined()
-    expect(root?.attributes.get('class')).toBe('console-skew')
+    expect(root?.attributes.get('class')).toBe('notice console-skew')
     expect(root?.attributes.get('data-mode')).toBe('reduced')
     expect(root?.attributes.get('data-skew')).toBe('irregular')
     const hidden = everyNode(root as FakeNode)
       .map((node) => node.attributes.get('data-hidden'))
       .filter((view): view is string => view !== undefined)
     expect(hidden).toEqual(['spend', 'caps', 'kill'])
-    // The banner names both versions, and the CLI's is drawn as itself.
+    // The card names both versions, and the CLI's is drawn as itself.
     expect(textOf(root as FakeNode)).toContain('9.9.9')
+  })
+
+  it('puts the notice away on a dismissal, and leaves the chip saying so', async () => {
+    const { document } = await runBundle({ ok: true, data: aReducedCompatibility() })
+    const notice = document.body.children[0] as FakeNode
+    const chip = everyNode(document.body).find(
+      (node) => node.attributes.get('class') === 'console-reduced-chip',
+    )
+    expect(chip, 'the reduced mode draws no chip').toBeDefined()
+    expect(document.body.children[0], 'the notice left its place in the document').toBe(notice)
+    const dismiss = everyNode(notice).find((node) => node.attributes.get('class') === 'notice-dismiss')
+    expect(dismiss, 'the reduced notice draws no dismiss button').toBeDefined()
+    ;(dismiss as FakeNode).click()
+    expect(notice.attributes.has('hidden')).toBe(true)
+    expect(document.activeElement, 'the chip is where the keyboard lands').toBe(chip)
+    // A dismissal is the session's: nothing is stored and nothing is asked of
+    // the bridge, so the chip is the only thing that brings the notice back.
+    ;(chip as FakeNode).click()
+    expect(notice.attributes.has('hidden')).toBe(false)
+  })
+
+  it('flips the disclosure, and Escape is not a way out', async () => {
+    const { document } = await runBundle({ ok: true, data: aReducedCompatibility() })
+    const notice = document.body.children[0] as FakeNode
+    const toggle = everyNode(notice).find((node) => node.attributes.get('class') === 'notice-toggle') as FakeNode
+    const details = everyNode(notice).find((node) => node.attributes.get('class') === 'notice-details') as FakeNode
+    expect(details.attributes.has('hidden')).toBe(true)
+    toggle.click()
+    expect(toggle.attributes.get('aria-expanded')).toBe('true')
+    expect(details.attributes.has('hidden')).toBe(false)
+    expect(toggle.textContent).toBe(NOTICE_HIDE_DETAILS)
+    toggle.click()
+    expect(toggle.attributes.get('aria-expanded')).toBe('false')
+    expect(details.attributes.has('hidden')).toBe(true)
+    expect(toggle.textContent).toBe(NOTICE_SHOW_DETAILS)
+    // The card is not a dialog: a key press on it is not a dismissal.
+    notice.press('Escape')
+    expect(notice.attributes.has('hidden')).toBe(false)
+  })
+
+  it("draws no chip in the ok mode, for the console's own version and a newer one", async () => {
+    // The chip is the reduced mode's standing statement and nothing else's: a
+    // console that reads what it is driving says nothing about versions, and a
+    // refused one has no dashboard for a chip to stand in.
+    const answers: readonly Record<string, unknown>[] = [
+      anOkCompatibility(),
+      { ...anOkCompatibility(), skew: 'newer', cliVersion: '0.14.0' },
+    ]
+    for (const data of answers) {
+      const { document } = await runBundle({ ok: true, data })
+      expect(
+        everyNode(document.body).filter((node) => node.attributes.get('class') === 'console-reduced-chip'),
+        String(data['skew']),
+      ).toHaveLength(0)
+      expect(
+        everyNode(document.body).filter((node) => (node.attributes.get('class') ?? '').split(' ').includes('notice')),
+        String(data['skew']),
+      ).toHaveLength(0)
+    }
   })
 
   it('draws the refusal screen when there is no bridge at all', async () => {
