@@ -141,11 +141,12 @@ const repo = site.facts.repository
             <p>
               Google is asked for one page view per page and no user id, with Google Signals and
               ads personalisation off; the pixel is asked for one page view per page and nothing
-              of its own. Three events go to both, under their own names: <code>demo_booked</code>{' '}
-              (a booking in Calendly's widget), <code>install_click</code> (a press of{' '}
-              <strong>Install free</strong>) and <code>whatsapp_click</code> (a press of the chat
-              link), each on the campaign page whose buttons those are. Each carries nothing but
-              its own name.
+              of its own. Three events go to both, each under the name its vendor gives it: a
+              booking in Calendly's widget, <code>demo_booked</code> to Google and{' '}
+              <code>Lead</code> to Meta; a press of <strong>Install free</strong>,{' '}
+              <code>install_click</code> and <code>ViewContent</code>; and a press of the chat
+              link, <code>whatsapp_click</code> and <code>Contact</code>. Each is sent on the
+              campaign page whose buttons those are and carries nothing but its own name.
             </p>
           </div>
 

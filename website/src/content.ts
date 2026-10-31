@@ -544,13 +544,15 @@ export interface AnalyticsFacts {
 }
 
 /**
- * The campaign measurement's configuration (G2.3, D401): the two vendor ids and the
+ * The marketing measurement's configuration (G2.3, D401): the two vendor ids and the
  * one origin each of the three loaders fetches its script from. An empty id disables
- * its loader, which is the state the file ships in — the owner has not supplied a
- * pixel id or a partner id, and this repository invents none (R3).
+ * its loader, and this repository invents no identifier the owner did not supply (R3);
+ * the owner supplied both ids on 2026-10-31, so both loaders have something to load
+ * with. The pixel is the site's — its id and origin sit on every page's banner — while
+ * the insight tag and Calendly's widget run on the four campaign pages alone.
  */
 export interface MarketingFacts {
-  /** The Meta pixel's id, empty until the owner supplies it. */
+  /** The Meta pixel's id, which every page's banner hands the loader. */
   metaPixelID: string
   /** The origin the pixel's own script is fetched from. */
   metaOrigin: string

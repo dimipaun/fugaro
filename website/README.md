@@ -108,25 +108,34 @@ planted second copy fails. The id, the audit trail and the choices behind them:
   the site ships no inline script. `test/origins.mjs` holds the policy to that exact token
   list, and refuses any token it does not carry.
 
-**G2.3 is the task that added the second question** (D401), on the four campaign pages only —
-`/save`, `/control`, `/scale` and `/crew` — and the three loads it covers: Meta's pixel,
-LinkedIn's insight tag and Calendly's booking widget.
+**G2.3 is the task that added the second question** (D401), asked on **every page** since the
+owner's ruling of 2026-10-31, and the three loads it covers: Meta's pixel, which loads wherever
+the visitor reads, and LinkedIn's insight tag and Calendly's booking widget, which stay on the
+four campaign pages — `/save`, `/control`, `/scale` and `/crew`.
 
-- **A separate consent under its own key**, `fugaro:marketing-consent`, and not a second value
-  under the analytics key: a visitor who answered the site's question is not asked again on
-  every page they read, and one who answered the campaign's question has not answered the
-  site's. The banner asks both on a campaign page, and one press answers the questions that
-  were open on it.
-- **The configuration is the banner's markup**, in `data-marketing-*` attributes: the page the
-  loader was built for, the two vendor ids, the three origins and the booking link
-  `data/landing.yaml` writes. `site.js` names no host, so a page that is not one of the four
-  carries none of it and loads none of them, and a campaign page served from another path
-  loads none of them either.
+- **A separate consent under its own key**, `fugaro:marketing-consent:v2`, and not a second
+  value under the analytics key: a visitor who answered the site's question has not answered
+  the marketing one, and one who answered the marketing question is not asked about analytics
+  again. The banner asks both wherever it appears, and one press answers the questions that
+  were open on it. The key carries `:v2` because the question the pixel is behind is no longer
+  the campaign pages' alone: a visitor who answered the narrower question under `:v1` is asked
+  once more on their next page rather than read as having granted the pixel, which is the
+  version bump this site's key already exists for. The analytics key did not move: that
+  question is unchanged.
+- **The configuration is the banner's markup**, in `data-marketing-*` attributes: the pixel's
+  id and origin on every page's banner, the four campaign pages' own page-and-vendors
+  configuration beside it on those four, and `data-marketing-ask` on every bar that asks the
+  question. `site.js` names no host, so a page whose banner carries no id loads nothing of it,
+  and a campaign page served from another path loads neither the insight tag nor the widget.
+  The privacy page's bar carries the key and the pixel's configuration without the ask marker:
+  it may take a marketing answer back and may not give one.
 - **An empty id is a loader switched off** (R3), and this repository publishes no identifier
-  the owner did not supply. The owner supplied the LinkedIn Partner ID on 2026-10-31, so the
-  insight tag loads on the four campaign pages behind the campaign consent; the pixel's id is
-  still theirs to supply and stays empty, which is the loader switched off. `internal/cli`'s
-  boundary test pins the pixel id empty, the partner id present and the three origins exact.
+  the owner did not supply. The owner supplied the LinkedIn Partner ID and Meta's pixel id
+  (`site.yaml` is the one place either is written) on 2026-10-31, so both load behind the
+  marketing consent — the pixel on every page, the insight tag on the four. `internal/cli`'s
+  boundary test pins the pixel id
+  present (an empty one is the loader switched off, which is what that test exists to refuse
+  now that the id is the owner's), the partner id present and the three origins exact.
 - **Each vendor is handed the page's path and no query** (F22): the site builds the address it
   reports from the origin and the path, and passes it to the pixel and the insight tag as
   `page_location` rather than leaving them to read the address in the window, so what this site
@@ -151,10 +160,16 @@ LinkedIn's insight tag and Calendly's booking widget.
   that the gate loads from exactly the origins the policy admits. The Calendly booking link
   itself stays a plain `<a href>`: a visitor who declines the campaign consent keeps it.
 
-**G2.4 is the task that added the funnel and the pass-through** — three key events to GA4, and
-the campaign parameters a visitor arrived through, onto the booking address and nothing else.
+**G2.4 is the task that added the funnel and the pass-through** — three key events to GA4 and,
+since the owner's ruling of 2026-10-31, the same three to Meta's pixel under that vendor's own
+names, plus the campaign parameters a visitor arrived through, onto the booking address and
+nothing else.
 
-- **Three events, and only after the analytics grant.** `install_click` and `whatsapp_click`
+- **Three events, each behind its own grant.** On the analytics grant they go to GA4 as
+  `install_click`, `whatsapp_click` and `demo_booked`; on the marketing grant the same three
+  presses go to the pixel as Meta's `ViewContent`, `Contact` and `Lead`. One press is one event
+  per open gate and never two: a visitor who has granted one answer and not the other is
+  measured by that one alone. `install_click` and `whatsapp_click`
   are presses of the two secondary calls to action, found by the ids the markup gives them;
   `demo_booked` is the widget's own booking report, and it is taken only when the message *is*
   that report — the widget posts several others over the same channel, its frame's height and a
@@ -162,10 +177,11 @@ the campaign parameters a visitor arrived through, onto the booking address and 
   the widget was drawn — AND it comes from the frame Calendly's script built inside this page's
   container AND from the origin the booking link names. Anything else is dropped unread —
   another origin, another window of the page, another of the widget's messages — and no field
-  of the message is forwarded. None of the three carries a parameter, and none is sent before
-  the visitor has granted analytics or after a withdrawal; the count is the funnel, and the
-  campaign's own attribution reaches GA4 through the owner's Calendly-to-GA4 integration rather
-  than through this site (F22).
+  of the message is forwarded. None of the three carries a parameter, and each waits for the
+  grant it travels under — analytics for GA4's, marketing for the pixel's — so a visitor who has
+  answered neither has neither, and withdrawing what was granted stops that vendor's events with
+  it; the count is the funnel, and the campaign's own attribution reaches GA4 through the owner's
+  Calendly-to-GA4 integration rather than through this site (F22).
 - **The campaign parameters go onto the booking address and nowhere else.** The five `utm_*`
   names the agenda's links carry, each value decoded and encoded again — a `+` in the visitor's
   query read as the space a browser reads it as, and the `%20` this page writes read back the
@@ -192,8 +208,9 @@ added or removed without this sentence moving fails there:
   exist.
 - `test/origins.mjs` — nothing loads from a host that is not this site (images and embeds
   may also come from `allowed_hosts`), inline scripts are on a hash allow-list — empty since
-  W3.2, because the site ships no inline script at all — and the one third-party origin D93
-  admits appears only as the consent banner's configuration. It also reads the shipped
+  W3.2, because the site ships no inline script at all — and the third-party origins D93 and
+  D401 admit appear only as the consent banner's configuration, the pixel's on every page and
+  the campaign pages' two on those four. It also reads the shipped
   `public/scripts/site.js` for the gate's contract (no URL, no second analytics vendor, the
   consent decision compared with `granted`) and `firebase.json`'s Content-Security-Policy
   against the token list Google's documentation states, refusing an extra origin, an
