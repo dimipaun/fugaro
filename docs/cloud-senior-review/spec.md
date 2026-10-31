@@ -214,6 +214,27 @@ alternative — reuse `ship|changes` and let the launcher map `changes` to *fix 
 *fix first* from *reject*, so a coordinator would launch a fix round on a pull request a human
 should have looked at.
 
+**The review stage's own result *is* this artifact — it is not an in-run verdict.** The review job
+runs the same `review` stage review mode runs, and that stage today passes `runner.VerdictSchema` as
+its `--json-schema` and reads the result with `runner.ParseVerdict`
+(`internal/runner/reviewmode.go:444` and `:465`; `internal/runner/runner.go:2674`,
+`:2752`). Two words and `required: ["verdict", "findings"]`. **A review job that emitted its findings
+only into the file would hand that reader a result with no verdict in it**, and `ParseVerdict` would
+answer with a finding of its own — *"review produced no parseable verdict: nothing in the result was a
+verdict"*, severity `blocker` (`internal/runner/verdict.go:53`) — so a complete, careful review would be
+recorded as an unreadable one, and in review mode the run's outcome would be decided by a sentence
+about the parser rather than by anything the reviewer found. **So the review job passes
+`schemas/review.schema.json` as its `--json-schema` and decodes with the artifact's own reader**; the
+artifact's three words and the in-run pair share no reader *and no producer*. Nothing about the two
+words changes for the coding run, whose `review` stage keeps `VerdictSchema` exactly as it is.
+
+**And when the artifact cannot be read, the run is failed — not given a verdict it did not write.**
+The in-run posture synthesises a `blocker` finding so the loop fixes what it could not read; the
+independent review has no loop to fix it and a coordinator that reads artifacts, so a synthesized
+finding would be a code finding invented by the parser. The review job ends as an **invalid verdict**
+(`endReviewInvalidVerdict`'s shape: `StatusFailed`, `OutcomeNone`, the reason the decoder's own,
+`internal/runner/reviewmode.go:815`), and §6's rule holds — an unreadable verdict is never a `ship`.
+
 **The artifact is versioned like every other wire shape here.** A new field is additive and keeps
 `schema_version`; removing or retyping one bumps it; a field whose meaning must change gets a new
 name (`CLAUDE.md`'s "a field never changes meaning"). The JSON Schema lands in `schemas/` with the
@@ -328,7 +349,11 @@ cannot express (§3), and it is the reason the two vocabularies stay apart.
 **A verdict that cannot be read is not a `ship`.** A missing, unparseable or truncated artifact, a
 review run that failed, or a review that ended without writing its artifact is an **infra fault the
 coordinator reports**, never a silent approval — the same posture `runner.ParseVerdict` takes when a
-review produces no parseable verdict (it becomes a blocker rather than a pass).
+review produces no parseable verdict, which is to refuse the pass. The review job refuses it the other
+way round from the in-run path, and §3 says why: the coding run turns an unreadable verdict into a
+`blocker` finding for the loop to fix, while the review job has no loop and **ends the run invalid**,
+because a `blocker` sentence about the parser, stored beside real findings, is a code finding nobody
+wrote. Either way the coordinator sees a run that did not produce a verdict and says so.
 
 **The verdict artifact's integrity.** A coded run must not be able to forge its reviewer's verdict
 (§7). What makes that true, honestly: the review run's id is minted by the launcher **after** the

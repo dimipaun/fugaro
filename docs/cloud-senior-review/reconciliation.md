@@ -40,7 +40,7 @@ to this design:
 number **written** on `main` is **D859** (the `settings` design's D840–D859, merged as #1464); the
 highest in any open pull request is **D879** (reserved by #1470's D860–D879, of which D860–D870 are
 written). **D880 is therefore the next free number**, and this work's block is **D880–D899**, of
-which **D880–D889 are written** and D890–D899 reserved. `D800` in `docs/` is the false positive the
+which **D880–D890 are written** and D891–D899 reserved. `D800` in `docs/` is the false positive the
 `docs/models-commands/` README records (`U+D800` inside a quoted value), not a decision. The check
 register reads **124 as the next free number above 123** and the Cloud Batch backend took it, so this
 work claims **Check 125**.
@@ -234,10 +234,26 @@ before the reporter wakes.
 task that adds `fugaro review` regenerates the page and, if that is not allowed in its scope, says so
 in its own pull request rather than hand-editing the file (**E4**).
 
+**F23. `Exists` — the `review` stage's result is parsed by the in-run reader, so a review that writes
+only an artifact has no verdict at all.** `internal/runner/reviewmode.go:444` passes
+`runner.VerdictSchema` as the stage's `--json-schema` and `:465` reads the result with
+`runner.ParseVerdict`, which is also the coding run's path (`internal/runner/runner.go:2674`, `:2752`).
+`VerdictSchema`'s `verdict` enum is `ship|changes` and its `required` is `["verdict","findings"]`
+(`internal/runner/verdict.go:18`), and `ParseVerdict` answers a result it cannot read with a finding of
+its own — `severity: "blocker"`, `summary: "review produced no parseable verdict: " + why`, the last
+`why` being *"nothing in the result was a verdict"* (`:53`, `:46`). **Consequence:** `spec.md` §3's
+review job writes `review.json`, and if its stage result carried the findings only in the file, the
+stage's reader would find no verdict and the run's outcome would be decided by a sentence about the
+parser — a *blocker* finding nobody wrote, stored beside real ones, for a review that may have been
+complete and correct. The two formats' separation is therefore not only about readers: the review job
+must also pass **its own** schema to its own stage and read it with **its own** decoder, and an
+unreadable artifact must end the run **invalid** (`endReviewInvalidVerdict`,
+`internal/runner/reviewmode.go:815`) rather than fabricate a finding (**D890**).
+
 ## 4. Owner decisions
 
-Recommendation first in each, with the cost of the alternative. **D880–D889 are this work's block;
-D890–D899 are reserved and unused.**
+Recommendation first in each, with the cost of the alternative. **D880–D890 are this work's block;
+D891–D899 are reserved and unused.**
 
 - **D880. The trigger is a new command, `fugaro review --pr N`.** *Recommended:* a command, because
   the review job is a different job with a different account and a different token scope, and only a
@@ -311,6 +327,17 @@ D890–D899 are reserved and unused.**
   because that file is another work stream's. *Cost of the alternative:* write the row now — it means
   touching a file the 0.15.0 rulings name, and the register's own rule is that a claim is settled at
   its merge, so a row written here could still have to be renumbered.
+- **D890. The review job's stage passes its own schema and reads its own artifact.** *Recommended:* the
+  review job hands `schemas/review.schema.json` to its stage and decodes the result with the artifact's
+  own reader; `runner.VerdictSchema` and `runner.ParseVerdict` are **not** on a review job's path, and a
+  result the artifact's decoder refuses ends the run as an **invalid verdict**
+  (`endReviewInvalidVerdict`: `StatusFailed`, `OutcomeNone`, the decoder's reason) rather than a
+  synthesized `blocker` finding (**F23**). The coding run's `review` stage keeps `VerdictSchema` and its
+  `blocker`-finding posture untouched. *Cost of the alternative:* leave the stage on `VerdictSchema` —
+  nothing new to build, and it costs the design its own vocabulary: `fix first` and `reject` are not
+  deliverable through a two-word schema, so the artifact would have to be a *second* thing the reviewer
+  writes beside the verdict the stage actually parsed, with two results that can disagree, and the run's
+  outcome decided by whichever one the parser read.
 
 ## 5. Dependencies
 

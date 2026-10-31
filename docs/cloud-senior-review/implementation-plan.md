@@ -5,8 +5,8 @@
 own gate: a task starts only when the decisions it names are answered.
 
 **Written to:** [spec.md](spec.md) and [reconciliation.md](reconciliation.md). **Where they
-disagree, the reconciliation wins.** The findings (**F1–F22**), the dependencies (**E1–E6**) and the
-decisions (**D880–D889**) are that document's, and each task below names the ones it needs.
+disagree, the reconciliation wins.** The findings (**F1–F23**), the dependencies (**E1–E6**) and the
+decisions (**D880–D890**) are that document's, and each task below names the ones it needs.
 
 **Rules every task obeys** (this repository's own, not this plan's invention):
 
@@ -117,7 +117,7 @@ nothing here needs it), `internal/cli/root.go`, `internal/cli/api.go`, `website/
 
 ### R3. The review artifact: `review.json`, `review.md` and its schema
 
-**Decisions:** D884, D886. **Findings:** F7, F11, F12, F13. **Depends on:** R2.
+**Decisions:** D884, D886, D890. **Findings:** F7, F11, F12, F13, **F23**. **Depends on:** R2.
 
 - **Files:** `internal/runner/reviewartifact.go` (new), `internal/runner/reviewartifact_test.go`
   (new), `schemas/review.schema.json` (new), `schemas/schemas_test.go` (the corpus check),
@@ -130,14 +130,24 @@ nothing here needs it), `internal/cli/root.go`, `internal/cli/api.go`, `website/
   `fix first`, `reject`}, `overview`, `strengths[]`, `issues[]` (`severity`, `class`, `file`, `line`,
   `summary`, `fix`, `evidence`; the three anchored axes when D884's sub-question says carry them),
   `security`, `performance`, `test_coverage`, `mutation_checks[]` — written through the existing
-  artifact stage/upload path, plus `review.md` rendered from it.
+  artifact stage/upload path, plus `review.md` rendered from it. **The stage's own request carries
+  this schema, not `runner.VerdictSchema` (D890, F23)**: the review mode's stage call and its
+  `ParseVerdict` are made conditional on the mode being a review *job*, so the coding run's `review`
+  stage is byte-for-byte what it is today.
 - **Tests:** `TestReviewArtifactRoundTrips`, `TestReviewArtifactSchemaMatchesStruct` (the
   schema-vs-Go check `schemas/schemas_test.go` already runs for every shape),
   `TestReviewArtifactRefusesAFourthVerdictWord`, `TestReviewArtifactTruncatedIsAFailure` (D886: a
-  clipped result is a failed review, never a short `ship`, mirroring `ParseVerdict`'s posture),
-  `TestReviewMarkdownMatchesTheJSON` (section for section).
+  clipped result is a failed review, never a short `ship`),
+  `TestReviewMarkdownMatchesTheJSON` (section for section), and two for F23:
+  `TestReviewJobStageIsNotParsedAsAnInRunVerdict` (the review job's result is decoded by the artifact's
+  reader and never reaches `ParseVerdict` — and, the other way round, the coding run's `review` stage
+  still passes `VerdictSchema`) and `TestUnreadableReviewArtifactEndsTheRunInvalid` (a result with no
+  artifact in it ends `StatusFailed`/`OutcomeNone` with the decoder's reason, and **no** synthesized
+  `blocker` finding is stored).
 - **Red step:** `TestReviewArtifactRoundTrips` fails on an unknown task field: the artifact has no
-  writer and no schema. **SEC flag:** none of its own — but see R4, whose data this shape carries.
+  writer and no schema; `TestReviewJobStageIsNotParsedAsAnInRunVerdict` fails because the stage's
+  request still carries `VerdictSchema`. **SEC flag:** none of its own — but see R4, whose data this
+  shape carries.
 - **Commit:** `runner: the independent review's versioned verdict artifact`.
 
 ### R4. The mutation check
