@@ -463,8 +463,15 @@ func publishedPolicyOf(raw []byte, exists bool) (*projectpolicy.Policy, error) {
 	case !found:
 		return nil, nil
 	case len(p.UnknownKeys) > 0:
-		return nil, userErr("%s lists %s, which this Fugaro does not know: publishing would drop them; upgrade Fugaro (fugaro upgrade), or fix the node by hand",
-			projectpolicy.PathShared(), unknownPolicyKeysText(p.UnknownKeys))
+		// The count is named and the values never are: what a key nobody
+		// models holds is the node's, and the publisher prints it in no
+		// message (the keys themselves are printed escaped, which only
+		// says which names were not understood). The remedy is the one
+		// that works, and for the owner's rule of 2026-10-30 it is two
+		// commands: a newer Fugaro knows the keys, and `fugaro update` is
+		// what carries the node over without a deletion.
+		return nil, userErr("%s lists %d key(s) this Fugaro does not know (%s): publishing would drop them; upgrade Fugaro (fugaro upgrade), then run 'fugaro update' to migrate the node in place, or fix the node by hand",
+			projectpolicy.PathShared(), len(p.UnknownKeys), unknownPolicyKeysText(p.UnknownKeys))
 	}
 	return p, nil
 }

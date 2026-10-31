@@ -156,9 +156,9 @@ func (e *initEngine) options() initflow.Options {
 // project it never creates) and minus the Batch backend's (the stage is
 // behind --provision-batch, which update refuses). So update's stages are
 // preflight, installation, Firebase, images, installation a second time,
-// secrets, plugin and the repository of the checkout it is run in (W5.1).
-// There is no services stage in either list: initflow.Services is a slot in
-// the canonical order nothing registers.
+// secrets, plugin, the repository of the checkout it is run in (W5.1) and the
+// published policy node's migration. There is no services stage in either
+// list: initflow.Services is a slot in the canonical order nothing registers.
 func initStages(e *initEngine) []initflow.Stage {
 	e.images, e.repo = newImagesStage(e), newRepositoryStage(e)
 	stages := []initflow.Stage{&preflightStage{e}, newInstallationStage(e), newFirebaseStage(e), e.images, newInstallation2Stage(e)}
@@ -170,7 +170,12 @@ func initStages(e *initEngine) []initflow.Stage {
 	if e.r.o.provisionCredentials {
 		stages = append(stages, newCredentialsStage(e))
 	}
+	// The policy stage last: it rewrites the published node every run of the
+	// project is admitted by, and the stages before it are what those runs
+	// are launched against (see the stage's own file for why it is a
+	// migration and never a delete and a republish).
 	stages = append(stages, newSecretsStage(e), newPluginStage(e), e.repo)
+	stages = append(stages, newPolicyMigrateStage(e))
 	// The Batch backend's provisioning is the owner's step and nothing else
 	// reaches it: the stage is registered only under its own flag, and
 	// `backend: cloud-batch` stays refused by config validation until the
