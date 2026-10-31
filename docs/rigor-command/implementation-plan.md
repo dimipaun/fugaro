@@ -183,7 +183,8 @@ installation that has never had one.
   appends `e.policy` and then the checkout stage, so the new append goes between them).
 - **Files (6):** `internal/initflow/stage.go` (three edits, all named here),
   `internal/initflow/loop_test.go`, `internal/cli/init_layer_stage.go` (new: the seed, the read,
-  the diff, the confirmation, `publishLayer` and `fanOutLayer`),
+  the diff, the confirmation, and the calls into `publishLayer` and `fanOutLayer`, which already exist in
+  `config_publish.go`),
   `internal/cli/init_layer_stage_test.go`
   (new), **`internal/cli/init_stages.go`** (registering the stage — the stages are appended in
   `initStages`, where `newRulesStage`, `newPolicyMigrateStage` and `newCheckoutStage` already are;
