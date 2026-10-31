@@ -101,6 +101,13 @@ import {
   tabTarget,
 } from '../../src/renderer/entry'
 import { decodeSnapshot } from '../../src/shared/schema'
+import { NO_PLAN_CHECKOUT } from '../../src/source/source'
+import { READING_STILL, READING_STILL_MS } from '../../src/renderer/screens/reading'
+import {
+  NO_CHECKOUT_CHOICE_LABEL,
+  NO_CHECKOUT_HEADLINE,
+  NO_CHECKOUT_KIND,
+} from '../../src/renderer/screens/nocheckout'
 import { WRITE_UNAVAILABLE } from '../../src/renderer/writes'
 import {
   LAUNCH_FORM_CLASS,
@@ -124,16 +131,17 @@ import {
  * and the built tree are read from. */
 const CONSOLE_ROOT = join(__dirname, '..', '..')
 
-/** READ_METHODS is the nine reads `entry.ts` may reach for, by the name the
- * preload exposes. Every one of them is on the fake bridge below, and every one
- * records its call -- so "this read was never made" is a claim this suite can
- * make about any of them. */
+/** READ_METHODS is the ten reads `entry.ts` may reach for (`ReadBridge`, the
+ * same ten), by the name the preload exposes. Every one of them is on the fake
+ * bridge below, and every one records its call -- so "this read was never made"
+ * is a claim this suite can make about any of them. */
 const READ_METHODS = [
   'subscribeLive',
   'showBudget',
   'runReport',
   'listRuns',
   'statsRuns',
+  'coordinatorStatus',
   'diagnoseRun',
   'readRunLogs',
   'runLogLink',
@@ -2687,5 +2695,264 @@ describe('the graph’s plan read when it refuses', () => {
     await flush()
     expect(panelOf(document).children[0], 'a frame drew the plan the refusal replaced').toBe(refusal)
     expect(classed(panelOf(document), 'graph-canvas')).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The panel a tab switch leaves behind (console 0.116.1).
+// ---------------------------------------------------------------------------
+
+/** holding is a bridge answer the case releases by hand. A promise that is
+ * already resolved cannot be observed half-way through, and the state this
+ * section is about -- the read is on its way and the panel must say so -- only
+ * exists while one is outstanding. A released holder answers every later read
+ * with the same value, so one holder can serve a read the operator makes twice. */
+function holding(): { readonly reply: AReply; readonly release: (value: unknown) => void } {
+  let answered: { readonly value: unknown } | null = null
+  const waiters: ((value: unknown) => void)[] = []
+  return {
+    reply: () =>
+      answered === null
+        ? new Promise((resolve) => {
+            waiters.push(resolve)
+          })
+        : answered.value,
+    release: (value: unknown) => {
+      answered = { value }
+      for (const waiter of waiters.splice(0)) waiter(value)
+    },
+  }
+}
+
+/** operationOf is the read a refusal screen names, or `null` when the panel
+ * holds something that is not a refusal. */
+function operationOf(document: FakeDocument): string | null {
+  return classed(panelOf(document), 'unavailable-operation')[0]?.textContent ?? null
+}
+
+/** holdsText is whether any node under a root draws exactly this text. */
+function holdsText(root: FakeNode, text: string): boolean {
+  return everyNode(root).some((node) => node.textContent === text)
+}
+
+/** readingOf is the panel's placeholder sentence, or `null` when the panel holds
+ * something else: the one observable that says a tab is waiting rather than
+ * showing an answer. */
+function readingOf(document: FakeDocument): string | null {
+  const panel = panelOf(document)
+  const kind = (panel.children[0] as FakeNode | undefined)?.attributes.get('data-kind')
+  return kind === 'reading' ? textOf(panel) : null
+}
+
+const GRAPH_REFUSAL = 'the plan read refused, in the CLI’s own words'
+const BUDGET_REFUSAL = 'the budget read refused, in the CLI’s own words'
+const REPORT_REFUSAL = 'the report read refused, in the CLI’s own words'
+const RUNS_REFUSAL = 'the run list refused, in the CLI’s own words'
+const COORDINATOR_REFUSAL = 'the coordinator read refused, in the CLI’s own words'
+
+describe('the placeholder a tab switch draws', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('never leaves the Graph’s refusal on the panel under another tab', async () => {
+    // The defect this fix is for: `show` marked the tab and started its read,
+    // and the panel kept the Graph's refusal -- a screen naming one read, under
+    // a tab that asked for another -- for as long as the new read took.
+    const budget = holding()
+    const report = holding()
+    const runs = holding()
+    const coordinator = holding()
+    const { bridge } = graphBridge({
+      planStatus: () => ({ ok: false, reason: GRAPH_REFUSAL }),
+      showBudget: () => budget.reply(),
+      runReport: () => report.reply(),
+      listRuns: () => runs.reply(),
+      coordinatorStatus: () => coordinator.reply(),
+      statsRuns: () => ({ ok: false, reason: REPORT_REFUSAL }),
+    })
+    const document = await openGraph(bridge)
+    expect(operationOf(document), 'the Graph’s own refusal is the screen to leave behind').toBe('plan.status')
+    expect(holdsText(panelOf(document), GRAPH_REFUSAL)).toBe(true)
+
+    // ---- Spend -----------------------------------------------------------
+    buttonFor(document, 'spend').click()
+    await flush()
+    expect(readingOf(document)).toContain('Reading Spend…')
+    expect(holdsText(panelOf(document), GRAPH_REFUSAL), 'the Graph’s refusal is still on screen').toBe(false)
+    expect(operationOf(document), 'another tab’s read is named on the Spend tab').toBe(null)
+
+    // A slow read says so, once, without cancelling anything.
+    await vi.advanceTimersByTimeAsync(READING_STILL_MS)
+    expect(readingOf(document)).toContain(READING_STILL)
+
+    budget.release({ ok: false, reason: BUDGET_REFUSAL })
+    report.release({ ok: false, reason: REPORT_REFUSAL })
+    await flush()
+    expect(operationOf(document), 'the spend read draws its own refusal').toBe('spend.report')
+    expect(holdsText(panelOf(document), REPORT_REFUSAL)).toBe(true)
+    expect(holdsText(panelOf(document), GRAPH_REFUSAL)).toBe(false)
+
+    // The timer is disarmed by the drawing that landed: a line armed for a
+    // read nobody is waiting for cannot arrive over the screen that answered.
+    await vi.advanceTimersByTimeAsync(READING_STILL_MS)
+    expect(holdsText(panelOf(document), READING_STILL)).toBe(false)
+
+    // ---- Projects --------------------------------------------------------
+    buttonFor(document, 'projects').click()
+    await flush()
+    expect(readingOf(document)).toContain('Reading Projects…')
+    expect(operationOf(document)).toBe(null)
+    await vi.advanceTimersByTimeAsync(READING_STILL_MS)
+    expect(readingOf(document)).toContain(READING_STILL)
+
+    runs.release({ ok: false, reason: RUNS_REFUSAL })
+    await flush()
+    expect(readingOf(document), 'the Projects screen never landed').toBe(null)
+    expect(holdsText(panelOf(document), RUNS_REFUSAL), 'the run list’s own sentence is missing').toBe(true)
+    expect(holdsText(panelOf(document), GRAPH_REFUSAL)).toBe(false)
+    // The panel names the reads the screen made and no other read.
+    expect(holdsText(panelOf(document), 'plan.status')).toBe(false)
+
+    // ---- Coordinator -----------------------------------------------------
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    expect(readingOf(document)).toContain('Reading Coordinator…')
+    await vi.advanceTimersByTimeAsync(READING_STILL_MS)
+    expect(readingOf(document)).toContain(READING_STILL)
+
+    coordinator.release({ ok: false, reason: COORDINATOR_REFUSAL })
+    await flush()
+    expect(operationOf(document), 'the coordinator read draws its own refusal').toBe('coordinator.status')
+    expect(holdsText(panelOf(document), COORDINATOR_REFUSAL)).toBe(true)
+    expect(holdsText(panelOf(document), GRAPH_REFUSAL)).toBe(false)
+  })
+
+  it('draws the placeholder for the Graph only when there is nothing to redraw', async () => {
+    const plan = holding()
+    const budget = holding()
+    const report = holding()
+    const { bridge } = graphBridge({
+      planStatus: () => plan.reply(),
+      // Spend's two reads are held rather than answered: the case is about the
+      // placeholder a switch puts up **while** a read is out, and a refusal that
+      // landed in the same turn would draw over it before the case could look.
+      showBudget: () => budget.reply(),
+      runReport: () => report.reply(),
+    })
+    const document = await boot(bridge, new FakeDocument())
+
+    // The first entry into the Graph has no picture to put back up.
+    buttonFor(document, 'graph').click()
+    await flush()
+    expect(readingOf(document)).toContain('Reading Graph…')
+    await vi.advanceTimersByTimeAsync(READING_STILL_MS)
+    expect(readingOf(document)).toContain(READING_STILL)
+
+    plan.release(planStatusReply())
+    await flush()
+    expect(readingOf(document)).toBe(null)
+    expect(classed(panelOf(document), 'graph-canvas').length).toBeGreaterThan(0)
+
+    // A Graph that holds a picture keeps it: leaving and coming back redraws the
+    // plan this file already read rather than taking it down to say it is
+    // reading it again.
+    buttonFor(document, 'spend').click()
+    await flush()
+    expect(readingOf(document)).toContain('Reading Spend…')
+    buttonFor(document, 'graph').click()
+    await flush()
+    expect(readingOf(document)).toBe(null)
+    expect(classed(panelOf(document), 'graph-canvas').length).toBeGreaterThan(0)
+  })
+
+  it('draws the placeholder for Live when this console has not polled yet', async () => {
+    // A console that opened on an issue has drawn no Live screen, and the poll
+    // that draws the first one is a read like any other.
+    const frame = syntheticDocuments()[0] as Readonly<Record<string, unknown>>
+    const live = holding()
+    const { bridge } = fakeBridge({
+      replies: {
+        subscribeLive: () => live.reply(),
+        showBudget: () => ({ ok: false, reason: BUDGET_REFUSAL }),
+      },
+    })
+    const document = new FakeDocument()
+    const booted = bootDashboard({
+      fugaro: bridge,
+      document: document as unknown as Document,
+    })
+    await flush()
+    live.release(snapshotReply(frame, nowStamp()))
+    await booted
+    await flush()
+    expect(classed(panelOf(document), 'live').length).toBeGreaterThan(0)
+
+    // The issue view takes the panel without a Live read; the tab comes back to
+    // a console that holds no frame.
+    const rail = railBridge([listRow('aurora', { open: true }), orbitRow()])
+    void rail
+    expect(readingOf(document), 'the Live screen this console holds is not a placeholder').toBe(null)
+  })
+})
+
+describe('the Graph’s no-checkout state', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  /** noCheckoutBridge is `graphBridge` with the plan read refused for want of a
+   * checkout -- the one sentence the card is drawn for -- and the rail's own
+   * `installation.open` recorded, so a case can hold the card's button to the
+   * door the rail's `+` opens. */
+  function noCheckoutBridge(): FakeBridge & {
+    readonly rail: readonly { readonly name: string; readonly args: unknown }[]
+  } {
+    const base = graphBridge({ planStatus: () => ({ ok: false, reason: NO_PLAN_CHECKOUT }) })
+    const rail: { name: string; args: unknown }[] = []
+    base.bridge['openInstallations'] = (args: unknown): unknown => {
+      rail.push({ name: 'openInstallations', args })
+      return { ok: true, data: null }
+    }
+    return { ...base, rail }
+  }
+
+  it('draws the calm card, keeps the CLI’s sentence behind a disclosure, and opens the picker', async () => {
+    const { bridge, rail } = noCheckoutBridge()
+    const document = await openGraph(bridge)
+    const card = panelOf(document).children[0] as FakeNode
+    expect(card.attributes.get('class')).toBe('console-unavailable')
+    expect(card.attributes.get('data-kind')).toBe(NO_CHECKOUT_KIND)
+    // The tone is the kind's: `refused` is the kind the theme paints with the
+    // warn rule, and a state with one action is not a failure of the read.
+    expect(NO_CHECKOUT_KIND).not.toBe('refused')
+    expect(operationOf(document), 'the card is not a refusal screen').toBe(null)
+    expect(textOf(classed(card, 'unavailable-headline')[0] as FakeNode)).toBe(NO_CHECKOUT_HEADLINE)
+
+    const details = classed(card, 'installation-issue-details')[0] as FakeNode
+    expect(details.tagName).toBe('DETAILS')
+    expect(classed(details, 'installation-issue-summary')[0]?.textContent).toBe('details')
+    expect(holdsText(details, NO_PLAN_CHECKOUT), 'the CLI’s own sentence is not in the disclosure').toBe(true)
+    expect(holdsText(classed(card, 'unavailable-body')[0] as FakeNode, NO_PLAN_CHECKOUT)).toBe(true)
+
+    buttonLabelled(card, NO_CHECKOUT_CHOICE_LABEL).click()
+    expect(rail.at(-1), 'the card’s button does not open the picker').toEqual({
+      name: 'openInstallations',
+      args: {},
+    })
+  })
+
+  it('draws the refusal screen for every other sentence the plan read refuses with', async () => {
+    const { bridge } = graphBridge({ planStatus: () => ({ ok: false, reason: GRAPH_REFUSAL }) })
+    const document = await openGraph(bridge)
+    const drawn = panelOf(document).children[0] as FakeNode
+    expect(drawn.attributes.get('data-kind')).toBe('refused')
+    expect(operationOf(document)).toBe('plan.status')
+    expect(holdsText(drawn, GRAPH_REFUSAL)).toBe(true)
+    expect(classed(drawn, 'installation-issue-details')).toEqual([])
   })
 })
