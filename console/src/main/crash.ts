@@ -296,12 +296,17 @@ function withoutScheme(source: string): string | null {
 }
 
 /** CONTROL_RE is the characters a file name never carries and a reader always
- * obeys: a newline, a carriage return, a NUL, a tab, a delete. A control
- * character is not a separator any two readers agree on -- `x\nhome/<x>/secret.js`
- * is one segment to `HOME_PATH_RE` and two to a log line, a terminal or a
- * decoder -- so one inside a path is a way past the check below rather than part
- * of a name. */
-const CONTROL_RE = /[\x00-\x1f\x7f]/
+ * obeys: a newline, a carriage return, a NUL, a tab, a delete, and the ones
+ * Unicode spells outside ASCII -- the next-line character, the line and
+ * paragraph separators, and the format characters, `\p{Cf}` (a bidi override, a
+ * zero-width joiner, a byte-order mark). A control character is not a separator
+ * any two readers agree on -- `x\nhome/<x>/secret.js` is one segment to
+ * `HOME_PATH_RE` and two to a log line, a terminal or a decoder -- so one inside
+ * a path is a way past the check below rather than part of a name. The three
+ * Unicode line breaks are that same case spelled elsewhere, and a format
+ * character is that case made invisible: a reader that honours a bidi override
+ * or a joiner reads a path this check never saw. */
+const CONTROL_RE = /[\x00-\x1f\x7f\x85\u2028\u2029\p{Cf}]/u
 
 /** QUERY_MARKERS are where a URL's query and its fragment begin, and neither is
  * part of a file's name: `x.js?token=<x>` is a file name with a credential after
@@ -357,10 +362,14 @@ function appRelative(source: string, appRoot: string): string {
 }
 
 /** frameSource is the path to cut: the absolute one when the reporter has it,
- * and the relative one otherwise. */
+ * and the relative one otherwise. Each of the two is read once, so a frame whose
+ * accessor answers with a path when the field is looked at and with something
+ * else when it is copied has no second answer to give. */
 function frameSource(frame: CrashFrame): string | null {
-  if (typeof frame.abs_path === 'string' && frame.abs_path !== '') return frame.abs_path
-  if (typeof frame.filename === 'string' && frame.filename !== '') return frame.filename
+  const absPath = frame.abs_path
+  if (typeof absPath === 'string' && absPath !== '') return absPath
+  const filename = frame.filename
+  if (typeof filename === 'string' && filename !== '') return filename
   return null
 }
 
@@ -373,6 +382,15 @@ function scrubName(name: unknown, fallback: string): string | undefined {
   return IDENTIFIER_RE.test(name) ? name : fallback
 }
 
+/** wholePosition is a frame's position as the report may carry it: a whole
+ * number of at least zero, which is what a line or a column in a file is. A
+ * fraction is not a line, a negative one is not a place in a file, and the `NaN`
+ * and the infinities JSON writes as `null` are not positions either -- so what
+ * reaches the processor is a position it can point at or nothing at all. */
+function wholePosition(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : undefined
+}
+
 /** scrubFrame is the frame allow-list: the name, the app-relative path and the
  * position in the file. A *frame* in is a frame out, because the shape of the
  * stack is what the processor groups by -- a frame with no path to place is
@@ -381,19 +399,22 @@ function scrubName(name: unknown, fallback: string): string | undefined {
  * that is not a frame is not one this module declined to place: it is not a
  * frame at all, and it is dropped by `scrubValue` before it reaches here.
  *
- * The position is kept only when it is a *finite* number: `NaN` and the
- * infinities are not positions a file has, and JSON writes every one of them as
- * `null` -- a value the processor would have to read as a position it was never
- * given. */
+ * Every field is read once, into a local, and the local is what is checked and
+ * what is copied: a frame is a library's object, and a property of one answers
+ * as often as it is asked -- so a field read twice would be checked as one value
+ * and sent as another. */
 function scrubFrame(frame: CrashFrame, appRoot: string): ScrubbedFrame {
   const source = frameSource(frame)
   const name = scrubName(frame.function, ANONYMOUS)
+  const lineno = wholePosition(frame.lineno)
+  const colno = wholePosition(frame.colno)
+  const inApp = frame.in_app
   return {
     filename: source === null ? EXTERNAL : appRelative(source, appRoot),
     ...(name === undefined ? {} : { function: name }),
-    ...(typeof frame.lineno === 'number' && Number.isFinite(frame.lineno) ? { lineno: frame.lineno } : {}),
-    ...(typeof frame.colno === 'number' && Number.isFinite(frame.colno) ? { colno: frame.colno } : {}),
-    ...(typeof frame.in_app === 'boolean' ? { in_app: frame.in_app } : {}),
+    ...(lineno === undefined ? {} : { lineno }),
+    ...(colno === undefined ? {} : { colno }),
+    ...(typeof inApp === 'boolean' ? { in_app: inApp } : {}),
   }
 }
 
@@ -439,7 +460,14 @@ function scrubValue(
  * be a getter that throws -- a `Proxy`, a class with a throwing accessor -- so
  * the guard that makes each read safe is the wrong shape for that case. An event
  * that throws anywhere is the empty event, since a field read past a throwing
- * sibling is a field this module cannot claim it checked. */
+ * sibling is a field this module cannot claim it checked.
+ *
+ * Every field is read exactly once, at every level of the event, into a local
+ * that is what the allow-list checks and what the output copies. A getter can
+ * answer differently on each read, so a field read twice is a field where one
+ * value passes the check and another is sent: the id that is checked is the id
+ * that goes on the wire, and the same holds for a timestamp, a frame's path and
+ * the rest. */
 export function scrubCrashEvent(event: CrashEvent | null | undefined, appRoot: string): ScrubbedCrashEvent {
   try {
     if (event === null || event === undefined || typeof event !== 'object') return {}
@@ -483,19 +511,22 @@ const RELEASE_RE = /^[A-Za-z0-9][A-Za-z0-9.+-]{0,63}$/
  * named. The three string fields are held to their own shapes as well as to being
  * strings, because "a string the reporter wrote" is the assumption an allow-list
  * may not make: the value arrives from a library, and a library that was handed a
- * path, a token or a sentence puts it in whichever field is nearest. */
+ * path, a token or a sentence puts it in whichever field is nearest.
+ *
+ * Each field is read exactly once, into a local, and the local is what the
+ * allow-list checks and what the output copies -- a property read once for the
+ * check and again for the copy is checked as one value and sent as another. */
 function scrubFields(event: CrashEvent): ScrubbedCrashEvent {
+  const eventId = event.event_id
+  const timestamp = event.timestamp
+  const platform = event.platform
+  const level = event.level
+  const release = event.release
   return {
-    ...(typeof event.event_id === 'string' && EVENT_ID_RE.test(event.event_id)
-      ? { event_id: event.event_id }
-      : {}),
-    ...(typeof event.timestamp === 'number' ? { timestamp: event.timestamp } : {}),
-    ...(typeof event.platform === 'string' && PLATFORM_RE.test(event.platform)
-      ? { platform: event.platform }
-      : {}),
-    ...(LEVELS.includes(event.level as CrashLevel) ? { level: event.level as CrashLevel } : {}),
-    ...(typeof event.release === 'string' && RELEASE_RE.test(event.release)
-      ? { release: event.release }
-      : {}),
+    ...(typeof eventId === 'string' && EVENT_ID_RE.test(eventId) ? { event_id: eventId } : {}),
+    ...(typeof timestamp === 'number' && Number.isFinite(timestamp) ? { timestamp } : {}),
+    ...(typeof platform === 'string' && PLATFORM_RE.test(platform) ? { platform } : {}),
+    ...(LEVELS.includes(level as CrashLevel) ? { level: level as CrashLevel } : {}),
+    ...(typeof release === 'string' && RELEASE_RE.test(release) ? { release } : {}),
   }
 }
