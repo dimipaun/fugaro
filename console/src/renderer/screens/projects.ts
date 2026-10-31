@@ -1240,35 +1240,32 @@ function repositoriesPanel(factory: ScreenFactory, model: ProjectRepositories): 
   return element
 }
 
-/** jobsPanel is the project's runs, capped, with the count of what was left
- * out: a list that silently ended at fifty rows would be a lie about the
- * project's size. */
 /** ABSENT_MARK is the console's own `n/a` (`UNAVAILABLE_MARK`), named as a
  * module constant so the sink scan reads a string this file declares rather
  * than a value it imported. */
 const ABSENT_MARK = UNAVAILABLE_MARK
 
-/** maybeCell is `textCell` for a column a record may leave out: the value
- * through the sanitizer when the record carries one, and **the console's `n/a`**
- * when it does not.
+/** putMaybe writes one column a record may leave out -- the repository, the
+ * workflow, the stage, the two actors, the timestamp -- into the cell the caller
+ * has already drawn: the record's own value through `putText` when it carries
+ * one, and **the console's `n/a`** when it does not.
+ *
+ * The cell is drawn by the caller rather than here, because the selector scan
+ * reads a column's tag at the emitter call site and a tag handed to a helper as
+ * a parameter is one no stylesheet rule may qualify (`run.ts`'s `putMaybe` and
+ * `live.ts`'s `putActor` take the element for the same reason).
  *
  * A table cell is never omitted: one row drawn with a cell fewer shifts every
- * column after it, so the absent case draws the mark rather than nothing -- the
- * same choice `run.ts`'s `putMaybe` makes for the run's own columns. Nothing is
- * invented either way, and the raw value never reaches the mark's path: the
- * document's string goes through `putText`, and a refused one is `putText`'s own
- * `n/a` with the refusal in the `title`. */
-function maybeCell(
-  parent: ScreenElement,
-  factory: ScreenFactory,
-  tag: string,
-  raw: string | null,
-  textClass: TextClass,
-  field: string,
-  ...classes: string[]
-): ScreenElement {
-  if (raw === null || raw === '') return literal(cell(parent, factory, tag, ...classes), ABSENT_MARK)
-  return textCell(parent, factory, tag, raw, textClass, field, ...classes)
+ * column after it, so the absent case draws the mark rather than nothing.
+ * Nothing is invented either way, and the raw value never reaches the mark's
+ * path: the document's string goes through `putText`, and a refused one is
+ * `putText`'s own `n/a` with the refusal in the `title`. */
+function putMaybe(element: ScreenElement, raw: string | null, textClass: TextClass, field: string): void {
+  if (raw === null || raw === '') {
+    literal(element, ABSENT_MARK)
+    return
+  }
+  putText(element, raw, textClass, field)
 }
 
 /** jobHead is one column header of the jobs table. */
@@ -1317,19 +1314,19 @@ function jobsPanel(factory: ScreenFactory, model: ProjectJobs): ScreenElement {
   for (const job of model.rows) {
     const line = cell(body, factory, 'tr', 'projects-job')
     textCell(line, factory, 'td', job.run, 'runId', 'runs[].run', 'projects-job-run')
-    maybeCell(line, factory, 'td', job.repo, 'repository', 'runs[].repo', 'projects-job-repo')
-    maybeCell(line, factory, 'td', job.workflow, 'label', 'runs[].workflow', 'projects-job-workflow')
+    putMaybe(cell(line, factory, 'td', 'projects-job-repo'), job.repo, 'repository', 'runs[].repo')
+    putMaybe(cell(line, factory, 'td', 'projects-job-workflow'), job.workflow, 'label', 'runs[].workflow')
     // `status` is a string from the run record, so it goes through `putText`
     // like every other one: a value a document chose is not vocabulary the
     // console may write into the document unwatched.
     textCell(line, factory, 'td', job.status, 'label', 'runs[].status', 'projects-job-status')
-    maybeCell(line, factory, 'td', job.stage, 'label', 'runs[].stage', 'projects-job-stage')
-    maybeCell(line, factory, 'td', job.requestedBy, 'person', 'runs[].requested_by', 'projects-job-by')
+    putMaybe(cell(line, factory, 'td', 'projects-job-stage'), job.stage, 'label', 'runs[].stage')
+    putMaybe(cell(line, factory, 'td', 'projects-job-by'), job.requestedBy, 'person', 'runs[].requested_by')
     // Who started the job, beside who asked for it: the short form of
     // `launched_by`, drawn as a `label` (`shared/launcher.ts` says why not
     // `person`), and the mark for a row the record does not name.
-    maybeCell(line, factory, 'td', launcherCell(job.launchedBy), 'label', 'runs[].launched_by', 'projects-job-started-by')
-    maybeCell(line, factory, 'td', job.created, 'label', 'runs[].created', 'projects-job-created')
+    putMaybe(cell(line, factory, 'td', 'projects-job-started-by'), launcherCell(job.launchedBy), 'label', 'runs[].launched_by')
+    putMaybe(cell(line, factory, 'td', 'projects-job-created'), job.created, 'label', 'runs[].created')
     if (showMode) rigorCell(cell(line, factory, 'td', 'projects-job-mode-cell'), factory, job.rigor)
     numberCell(line, factory, 'td', job.cost.model, 'usd', 'projects-job-model')
     numberCell(line, factory, 'td', job.cost.compute, 'usd', 'projects-job-compute')
