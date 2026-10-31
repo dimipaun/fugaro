@@ -14,13 +14,14 @@
 // version here too, with its own table of refusals ("*", "latest", ">=0",
 // ">=22.12.0"). A range there would have been the one float left.
 //
-// The runtime `dependencies` section is empty, and that is asserted below.
-// Task 1.0 pinned electron-updater there for Task 4.4's auto-update, but Task
-// 4.1's review found it shipped in the bundle with nothing importing it while
-// this release has no auto-update; it was removed (Task 4.1, review round 2),
-// and Task 4.4 re-adds it, exactly pinned, when it writes the code that uses
-// it -- an edit to the allow-list below. Design D9's "no framework runtime, no
-// charting library" is about what the renderer bundles, so the test allows a
+// The runtime `dependencies` section holds one package, and that is asserted
+// below, twice over. Task 1.0 pinned electron-updater there for Task 4.4's
+// auto-update; Task 4.1's review found it shipped in the bundle with nothing
+// importing it while this release has no auto-update, so it was removed (Task
+// 4.1, review round 2), and Task 4.4 adds it back -- exactly pinned, with the
+// code that uses it, which is the allow-list edit below and the import boundary
+// the second test asserts. Design D9's "no framework runtime, no charting
+// library" is about what the renderer bundles, so the test allows a
 // main-process runtime dependency by name rather than forbidding one outright.
 //
 // The test is written in two halves on purpose. The first half is the checker
@@ -34,7 +35,8 @@
 // in sync") is test/unit/lockfile.test.ts; `npm ci` in the task's command is
 // what checks the tree itself.
 
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
@@ -44,6 +46,39 @@ import { describe, expect, it } from 'vitest'
 // started from anywhere (the repository root, console/, an IDE) and still read
 // the same file.
 const consolePackageJSON = fileURLToPath(new URL('../../package.json', import.meta.url))
+
+/** SOURCE_ROOT is `console/src`, walked by the import boundary below. */
+const SOURCE_ROOT = fileURLToPath(new URL('../../src', import.meta.url))
+
+/** SourceFile is one file the import boundary looks at, by its path under
+ * `console/src/`. */
+interface SourceFile {
+  readonly path: string
+  readonly source: string
+}
+
+/** codeOnly is a file's source with its comments removed: the scan is about
+ * what the code imports, and `src/main/updater-electron.ts` discusses
+ * electron-updater at length on purpose. */
+function codeOnly(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+}
+
+/** sourceFiles reads every `.ts` file under `console/src/`. */
+function sourceFiles(): readonly SourceFile[] {
+  const walk = (directory: string, prefix: string): SourceFile[] => {
+    const out: SourceFile[] = []
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const relative = prefix === '' ? entry.name : `${prefix}/${entry.name}`
+      if (entry.isDirectory()) out.push(...walk(join(directory, entry.name), relative))
+      else if (entry.name.endsWith('.ts')) {
+        out.push({ path: relative, source: readFileSync(join(directory, entry.name), 'utf8') })
+      }
+    }
+    return out
+  }
+  return walk(SOURCE_ROOT, '')
+}
 
 // The dependency sections package.json is allowed to carry. All four are held
 // to the same rule: a peer or optional dependency that floats is the same
@@ -226,12 +261,12 @@ describe('console/package.json', () => {
   // Design D9 is a claim about the RENDERER -- it bundles no framework runtime
   // and no charting library -- and section 5.2 applies the pinning rule to
   // "dependencies and devDependencies alike", so a runtime dependency is
-  // allowed as long as it is exact and belongs to the main process. Today there
-  // is none: everything a `dependencies` entry names is packed into the shipped
-  // asar, and the one Task 1.0 pinned (electron-updater, for Task 4.4) had no
-  // importer, so it shipped dead code that downloads and installs code. Task
-  // 4.4 adds it back here, with the code that uses it.
-  const runtimeDependencyAllowList: string[] = []
+  // allowed as long as it is exact and belongs to the main process. There is
+  // one: everything a `dependencies` entry names is packed into the shipped
+  // asar, and electron-updater downloads and installs code, so it is the
+  // package whose presence needs the most saying. Task 4.4 adds it, with the
+  // one file that imports it.
+  const runtimeDependencyAllowList: string[] = ['electron-updater']
 
   it('ships exactly the main process runtime dependencies it names', () => {
     const runtime = Object.keys((pkg.dependencies ?? {}) as Record<string, string>).toSorted()
@@ -241,11 +276,29 @@ describe('console/package.json', () => {
     ).toEqual(runtimeDependencyAllowList.toSorted())
   })
 
-  it('ships no update client until Task 4.4 writes the code that uses it', () => {
-    // Named separately from the list above: the one package whose whole job is
-    // fetching and installing a new bundle must not ride along unused.
-    const runtime = (pkg.dependencies ?? {}) as Record<string, string>
-    expect(runtime).not.toHaveProperty('electron-updater')
+  it('imports the update client from one file, and from no other', () => {
+    // Named separately from the list above, because the pinning rule alone
+    // would be satisfied by the package sitting in the tree unused: the point
+    // of the allow-list is that a runtime dependency is *reached*, and the
+    // point of this test is that it is reached from exactly one place. The
+    // update client is the package that fetches and installs a new bundle, and
+    // `src/main/updater-electron.ts` is where the policy's `UpdaterPort` is
+    // filled -- the file that also removes the identifier the library sends.
+    // A second importer is a second place a feed URL, a header or a download
+    // can be configured, which is the surface Task 4.4 exists to keep to one.
+    // The four shapes are every way a module reaches a package: `import x from`,
+    // `import { x } from`, a bare `import 'electron-updater'` for its side
+    // effects, and `require`/`import()` at call time.
+    const importers = sourceFiles()
+      .filter((file) =>
+        /(?:from|require\(|import\(|import)\s*['"]electron-updater['"]/.test(codeOnly(file.source)),
+      )
+      .map((file) => file.path)
+      .toSorted()
+    expect(
+      importers,
+      `electron-updater is imported by ${JSON.stringify(importers)}; it must be imported by src/main/updater-electron.ts and by nothing else`,
+    ).toEqual(['main/updater-electron.ts'])
   })
 
   // One test per section, each naming its own offender, so "a ^ was added to

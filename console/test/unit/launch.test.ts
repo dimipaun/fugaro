@@ -1789,3 +1789,85 @@ describe('a launch that was stopped, and one that failed outright', () => {
     expect(second.outcomeUnknown).toBe(true)
   })
 })
+
+// The flow's own answer about itself, and the one thing the update policy is
+// allowed to know about this file (desktop-console plan Task 4.4, design
+// section 7.3): a signed update replaces the process that owns the launch write
+// path, so nothing prompts or installs while a launch is in flight.
+// ---------------------------------------------------------------------------
+
+describe('the flow’s answer about itself', () => {
+  it('is busy from the reservation until the launch is released, and idle either side', async () => {
+    const confirmer = heldConfirmer()
+    const held = runner({ confirmer })
+    expect(held.isIdle()).toBe(true)
+
+    const launched = held.launch(request())
+    // The reservation is taken **before** `build`'s first `await`, so the flow
+    // is busy from the moment the call is made: a check that ran in the window
+    // between the call and the window opening would be reading a flow that is
+    // about to have a launch in it.
+    expect(held.isIdle()).toBe(false)
+    await untilSettled()
+    expect(held.isIdle()).toBe(false)
+
+    confirmer.decide(false)
+    await launched
+    expect(held.isIdle()).toBe(true)
+  })
+
+  it('tells its idle listeners once per transition, and never for a release that leaves it busy', async () => {
+    const confirmer = heldConfirmer()
+    const held = runner({ confirmer })
+    let told = 0
+    held.onIdle(() => {
+      told += 1
+    })
+
+    const first = held.launch(request())
+    await untilSettled()
+    expect(told).toBe(0)
+    confirmer.decide(false)
+    await first
+    expect(told).toBe(1)
+
+    // A second launch, and a second transition: the listener is called for each
+    // one, which is what makes "a download that finished mid-launch is offered
+    // when that launch ends" true for the launch after it too.
+    const second = held.launch(request())
+    await untilSettled()
+    confirmer.decide(false)
+    await second
+    expect(told).toBe(2)
+  })
+
+  it('tells nobody while another launch is still in flight', async () => {
+    // The release of one launch is not the flow going idle when a second is
+    // still held: a listener that fired there would offer an update while
+    // another launch's record is still being written, which is the whole thing
+    // this answer exists to prevent.
+    const confirmer = heldConfirmer()
+    const held = runner({ confirmer })
+    let told = 0
+    held.onIdle(() => {
+      told += 1
+    })
+
+    const first = held.launch(request())
+    await untilSettled()
+    const second = held.launch(request({ installation: OTHER_PROJECT }))
+    await untilSettled()
+    const ids = [...confirmer.openRunIds]
+    expect(ids).toHaveLength(2)
+
+    confirmer.decideWindow(ids[0] as string, false)
+    await first
+    expect(held.isIdle()).toBe(false)
+    expect(told).toBe(0)
+
+    confirmer.decideWindow(ids[1] as string, false)
+    await second
+    expect(held.isIdle()).toBe(true)
+    expect(told).toBe(1)
+  })
+})

@@ -648,6 +648,10 @@ test.describe('the renderer entry, in the real window', () => {
     }
     const again = await launch(stub.env)
     try {
+      // The card is drawn before the boot's `listInstallations` round trip and
+      // the header's chip after it, so `domcontentloaded` alone can see the one
+      // without the other.
+      await expect(again.page.locator('button.console-reduced-chip')).toHaveCount(1)
       const drawn = await again.page.evaluate(() => ({
         hidden: document.querySelector('section.console-skew')?.hasAttribute('hidden') ?? null,
         chips: document.querySelectorAll('button.console-reduced-chip').length,
