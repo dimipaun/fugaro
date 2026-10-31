@@ -361,10 +361,11 @@ func (d *WatchDeps) emit(o *watchOptions, v watch.View, header bool) error {
 
 // maxParallelOf is the max_parallel a launch is checked against
 // (checkMaxParallel, run.go), as the --json document carries it in total: the
-// selected config's own value, the one source that cap has. A config that
-// names none leaves it null -- unknown, never 0 (which a cap bar would draw as
-// a limit of none) and never the engine's default 20 (a cap no config named
-// and no launcher compared against).
+// selected config's own value, the one source that cap has, resolved by the
+// config layer. A file that names none is resolved to the engine's default
+// (20) there, and 20 is reported because that is what the launcher compares
+// against: the resolved cap, not a guess. Null -- unknown -- is for a config
+// this command cannot read at all.
 func maxParallelOf(lc *localcfg.Config) *int {
 	if lc == nil || lc.MaxParallel < 1 {
 		return nil
