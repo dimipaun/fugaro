@@ -93,7 +93,7 @@ launch on. `deploy/terraform/gcp/roots/installation/tests/project_job.tftest.hcl
 `FUGARO_GITHUB_APP_PRIVATE_KEY` from the installation's project-wide copy at version `latest`, and the
 job's own service account holds `roles/secretmanager.secretAccessor` on it (the retention the run
 records as open, D131/C3.9) — and `docs/accounts-add/` (PR #1470) deploys exactly that job for a named
-account (`+ standard/github/team-a`), as does `fugaro run --token team-a`.
+account (its `+ standard/github/team-a` spelling), as does `fugaro run --token team-a`.
 
 **Consequence:** the read-only scope of §2 needs a **job that does not exist yet** — a per-account
 review-only job variant and service account whose `secret_env` holds the account's OAuth token and no

@@ -144,9 +144,9 @@ itself**: a GitHub App's private key can mint *any* subset the App holds, so a j
 key can mint a write token whatever the launcher asked for.
 
 **`fugaro run --token <name>` already puts the token on a job that mounts that key, and this design's
-first draft said otherwise.** The shared project job of `(profile, provider, account)` — the job an
-`accounts add` deploys (`+ standard/github/team-a`) and the job a coding run on that account executes
-— mounts `FUGARO_GITHUB_APP_PRIVATE_KEY` from the installation's project-wide copy, with
+first draft said otherwise.** The shared project job of `(profile, provider, account)` — the job
+[docs/accounts-add/](../accounts-add/README.md) deploys for a named account (`+ standard/github/team-a`
+in that design) and the job a coding run on that account executes — mounts `FUGARO_GITHUB_APP_PRIVATE_KEY` from the installation's project-wide copy, with
 `secretAccessor` for that job's own service account
 (`deploy/terraform/gcp/roots/installation/tests/project_job.tftest.hcl`'s
 `shared_job_mounting_the_app_key_keeps_the_accessor`, which pins both the mount and the grant). So a
